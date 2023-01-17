@@ -6,9 +6,20 @@ class TftHttpClient extends HttpClient
 {
     protected string $baseUrl = 'https://raw.githubusercontent.com/The-Forbidden-Trove/tft-data-prices/master/lsc';
 
-    public function searchFor(string $key, array $data): mixed
+    private array $data = [];
+
+    public function searchFor(string $key): mixed
     {
-        foreach ($data['data'] as $line) {
+        if (empty($this->data)) {
+            array_merge(
+                $this->data,
+                $this->getBulkSetsPrices(),
+                $this->getBulkInvitationPrices(),
+                $this->getBulkMapsPrices(),
+            );
+        }
+
+        foreach ($this->data['data'] as $line) {
             if ($line['name'] == $key) {
                 return $line;
             }
@@ -25,5 +36,10 @@ class TftHttpClient extends HttpClient
     public function getBulkSetsPrices(): array
     {
         return $this->get('bulk-sets.json')->toArray();
+    }
+
+    public function getBulkMapsPrices(): array
+    {
+        return $this->get('bulk-maps.json')->toArray();
     }
 }

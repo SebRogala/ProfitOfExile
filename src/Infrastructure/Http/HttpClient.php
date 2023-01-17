@@ -13,7 +13,7 @@ abstract class HttpClient
     {
     }
 
-    abstract public function searchFor(string $key, array $data): mixed;
+    abstract public function searchFor(string $key): mixed;
 
     protected function get(string $path = ''): ResponseInterface
     {

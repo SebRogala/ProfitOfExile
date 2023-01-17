@@ -8,9 +8,19 @@ class PoeNinjaHttpClient extends HttpClient
 
     private string $league = 'Sanctum';
 
-    public function searchFor(string $key, array $data): mixed
+    private array $data = [];
+
+    public function searchFor(string $key): mixed
     {
-        foreach ($data['lines'] as $line) {
+        if (empty($this->data)) {
+            array_merge(
+                $this->data,
+                $this->getCurrencyPrices(),
+                $this->getFragmentPrices(),
+            );
+        }
+
+        foreach ($this->data['lines'] as $line) {
             if ($line['detailsId'] == $key) {
                 return $line;
             }
@@ -22,5 +32,10 @@ class PoeNinjaHttpClient extends HttpClient
     public function getCurrencyPrices(): array
     {
         return $this->get(sprintf('currencyoverview?league=%s&type=Currency&language=en', $this->league))->toArray();
+    }
+
+    public function getFragmentPrices(): array
+    {
+        return $this->get(sprintf('currencyoverview?league=%s&type=Fragment&language=en', $this->league))->toArray();
     }
 }
