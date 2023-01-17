@@ -52,7 +52,7 @@ class UpdateRegistryHandler
                 )
             ],
         ];
-//dd($jsonData);
+
         $jsonString = json_encode($jsonData, JSON_PRETTY_PRINT);
         $fp = fopen($this->path, 'w');
         fwrite($fp, $jsonString);
