@@ -13,7 +13,7 @@ class PoeNinjaHttpClient extends HttpClient
     public function searchFor(string $key): mixed
     {
         if (empty($this->data)) {
-            array_merge(
+            $this->data = array_merge_recursive(
                 $this->data,
                 $this->getCurrencyPrices(),
                 $this->getFragmentPrices(),

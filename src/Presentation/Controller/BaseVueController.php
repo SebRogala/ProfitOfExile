@@ -30,7 +30,7 @@ class BaseVueController extends AbstractController
 
 //        $res = $client->getBulkSetsPrices();
 
-        $command = new UpdateRegistry();
+        $command = new UpdateRegistry(true);
 
         $commandBus->handle($command);
 
