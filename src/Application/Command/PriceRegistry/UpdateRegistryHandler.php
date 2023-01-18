@@ -6,7 +6,7 @@ use App\Domain\Item\Currency\ChaosOrb;
 use App\Domain\Item\Currency\DivineOrb;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
 use App\Domain\Item\Map\ShaperGuardianMap;
-use App\Domain\Strategy\ShaperFragmentsStrategy;
+use App\Domain\Strategy\WitnessedShaperGuardianMaps;
 use App\Infrastructure\Http\PoeNinjaHttpClient;
 use App\Infrastructure\Http\TftHttpClient;
 
