@@ -2,6 +2,7 @@
 
 namespace App\Application\Command\PriceRegistry;
 
+use App\Domain\Item\Currency\ChaosOrb;
 use App\Domain\Item\Currency\DivineOrb;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
 use App\Domain\Item\Map\ShaperGuardianMap;
@@ -33,6 +34,10 @@ class UpdateRegistryHandler
 
         $jsonData = [
             'timestamp' => (new \DateTime())->format('U'),
+            [
+                'item' => ChaosOrb::class,
+                'ninjaInChaos' => 1,
+            ],
             [
                 'item' => DivineOrb::class,
                 'ninjaInChaos' => $divPrice,
