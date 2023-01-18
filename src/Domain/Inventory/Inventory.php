@@ -10,6 +10,11 @@ class Inventory
 
     public function add(Item $item, int $quantity = 1):void
     {
-        $this->items[] = $item;
+        $this->items[$item::class] = @(int)$this->items[$item::class] + $quantity;
+    }
+
+    public function getItems(): array
+    {
+        return $this->items;
     }
 }

@@ -2,6 +2,8 @@
 
 namespace App\Domain\Item\Currency;
 
-abstract class Currency
+use App\Domain\Item\Item;
+
+abstract class Currency extends Item
 {
 }
