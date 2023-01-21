@@ -1,3 +1,7 @@
 controllers:
     resource: ../src/Presentation/Controller/
     type: attribute
+
+price_registry:
+    resource: ../src/Presentation/PriceRegistry
+    type: attribute
