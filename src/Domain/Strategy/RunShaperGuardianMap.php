@@ -2,18 +2,17 @@
 
 namespace App\Domain\Strategy;
 
-use App\Domain\Inventory\Inventory;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
 use App\Domain\Item\Map\ShaperGuardianMap;
 
-class WitnessedShaperGuardianMaps extends Strategy
+class RunShaperGuardianMap extends Strategy
 {
     public function yieldRewards(): mixed
     {
         return [
             [
                 'item' => new ShaperGuardianFragment(),
-                'quantity' => 4,
+                'quantity' => 1,
                 'probability' => 100,
             ],
         ];
@@ -24,18 +23,8 @@ class WitnessedShaperGuardianMaps extends Strategy
         $this->requiredComponents = [
             [
                 'item' => new ShaperGuardianMap(),
-                'quantity' => 4,
+                'quantity' => 1,
             ],
         ];
-    }
-
-    protected function setAverageTime(): void
-    {
-        // TODO: Implement setAverageTime() method.
-    }
-
-    public function run(Inventory $inventory): void
-    {
-        // TODO: Implement run() method.
     }
 }

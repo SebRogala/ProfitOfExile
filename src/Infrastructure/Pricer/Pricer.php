@@ -11,10 +11,11 @@ class Pricer
     {
     }
 
-    public function priceInventory(Inventory $inventory): array
+    public function priceInventory(Inventory $inventory, array $boughtSummary = []): array
     {
         $result = [
-            'totalChaos' => 0,
+            'totalWorthInChaos' => 0,
+            'items' => [],
         ];
 
         $items = $inventory->getItems();
@@ -23,10 +24,32 @@ class Pricer
             $itemPriceData = $this->pricesQuery->findDataFor($item);
 
             if (isset($itemPriceData['ninjaInChaos'])) {
-                $result['totalChaos'] += $itemPriceData['ninjaInChaos'] * $quantity;
+                $price = $itemPriceData['ninjaInChaos'];
             } else {
-                $result['totalChaos'] += $itemPriceData['tftInChaos'] * $quantity;
+                $price = $itemPriceData['tftInChaos'];
             }
+
+            $result['totalWorthInChaos'] += $price * $quantity;
+            $result['items'][$item] = [
+                'singularPrice' => $price,
+                'quantity' => $quantity,
+                'summedPrice' => $price * $quantity,
+            ];
+        }
+
+        if (!empty($boughtSummary)) {
+            $result = $this->calculateSummary($result, $boughtSummary);
+        }
+
+        return $result;
+    }
+
+    private function calculateSummary($result, $boughtSummary)
+    {
+        $result['bought'] = $boughtSummary;
+
+        foreach ($boughtSummary as $item) {
+            $result['profit'] = $result['totalWorthInChaos'] - $item['totalPrice'];
         }
 
         return $result;
