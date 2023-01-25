@@ -17,6 +17,7 @@ class PoeNinjaHttpClient extends HttpClient
                 $this->data,
                 $this->getCurrencyPrices(),
                 $this->getFragmentPrices(),
+                $this->getInvitationPrices(),
             );
         }
 
@@ -37,5 +38,10 @@ class PoeNinjaHttpClient extends HttpClient
     public function getFragmentPrices(): array
     {
         return $this->get(sprintf('currencyoverview?league=%s&type=Fragment&language=en', $this->league))->toArray();
+    }
+
+    public function getInvitationPrices(): array
+    {
+        return $this->get(sprintf('itemoverview?league=%s&type=Invitation&language=en', $this->league))->toArray();
     }
 }

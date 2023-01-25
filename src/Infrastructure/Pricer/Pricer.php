@@ -4,7 +4,9 @@ namespace App\Infrastructure\Pricer;
 
 use App\Application\Query\Pricer\PricesQuery;
 use App\Domain\Inventory\Inventory;
+use App\Domain\Item\Fragment\MavenSplinter;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
+use App\Domain\Item\Map\MavenWrit;
 use App\Domain\Item\Set\ShaperSet;
 
 class Pricer
@@ -16,8 +18,9 @@ class Pricer
     public function priceInventory(Inventory $inventory, array $boughtSummary = []): array
     {
         $result = [
-            'totalWorthInChaos' => 0,
             'items' => [],
+            'bought' => [],
+            'totalWorthInChaos' => 0,
         ];
 
         $items = $this->convertToSets($inventory);
@@ -49,10 +52,13 @@ class Pricer
     private function calculateSummary($result, $boughtSummary)
     {
         $result['bought'] = $boughtSummary;
+        $result['totalExpenses'] = 0;
 
         foreach ($boughtSummary as $item) {
-            $result['profit'] = $result['totalWorthInChaos'] - $item['totalPrice'];
+            $result['totalExpenses'] += $item['totalPrice'];
         }
+
+        $result['profit'] = $result['totalWorthInChaos'] - $result['totalExpenses'];
 
         return $result;
     }
@@ -63,6 +69,12 @@ class Pricer
         while ($inventory->hasItems($shaperGuardianFragment, 4)) {
             $inventory->removeItems($shaperGuardianFragment, 4);
             $inventory->add(new ShaperSet());
+        }
+
+        $mavenSplinter = new MavenSplinter();
+        while ($inventory->hasItems($mavenSplinter, 10)) {
+            $inventory->removeItems($mavenSplinter, 10);
+            $inventory->add(new MavenWrit());
         }
 
         return $inventory->getItems();

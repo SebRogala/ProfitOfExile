@@ -2,6 +2,6 @@
 
 namespace App\Domain\Item\Map;
 
-class ShaperGuardianMap extends Map
+class MavenWrit extends Invitation
 {
 }

@@ -5,10 +5,14 @@ namespace App\Application\Command\PriceRegistry;
 use App\Domain\Item\Currency\BlueLifeforce;
 use App\Domain\Item\Currency\ChaosOrb;
 use App\Domain\Item\Currency\DivineOrb;
+use App\Domain\Item\Currency\OrbOfScouring;
 use App\Domain\Item\Currency\PurpleLifeforce;
 use App\Domain\Item\Currency\YellowLifeforce;
+use App\Domain\Item\Fragment\MavenSplinter;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
+use App\Domain\Item\Map\MavenWrit;
 use App\Domain\Item\Map\ShaperGuardianMap;
+use App\Domain\Item\Map\TheFormed;
 use App\Domain\Item\Set\ShaperSet;
 use App\Infrastructure\Http\PoeNinjaHttpClient;
 use App\Infrastructure\Http\TftHttpClient;
@@ -46,6 +50,10 @@ class UpdateRegistryHandler
                 'ninjaInChaos' => $divPrice,
             ],
             [
+                'item' => OrbOfScouring::class,
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('orb-of-scouring')['chaosEquivalent'],
+            ],
+            [
                 'item' => YellowLifeforce::class,
                 'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('vivid-crystallised-lifeforce')['receive']['value'],
             ],
@@ -81,6 +89,20 @@ class UpdateRegistryHandler
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['pay']['value'],
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['pay']['value'],
                 )
+            ],
+            [
+                'item' => TheFormed::class,
+                'tftInChaos' => $this->tftHttpClient->searchFor('The Formed')['chaos'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('mavens-invitation:-the-formed')['chaosValue'],
+            ],
+            [
+                'item' => MavenSplinter::class,
+                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('crescent-splinter')['chaosEquivalent'],
+            ],
+            [
+                'item' => MavenWrit::class,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Maven\'s Writ')['chaos'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('the-mavens-writ')['receive']['value'],
             ],
         ];
 

@@ -6,5 +6,4 @@ use App\Domain\Item\Item;
 
 abstract class Map extends Item
 {
-    abstract public function getRewards(): array;
 }

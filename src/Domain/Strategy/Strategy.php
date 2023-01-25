@@ -18,7 +18,7 @@ abstract class Strategy
             $this->setRequiredItems();
 
             foreach ($this->requiredComponents as $requiredComponent) {
-                $inventory->removeItems($requiredComponent['item']);
+                $inventory->removeItems($requiredComponent['item'], $requiredComponent['quantity']);
             }
 
             if (!empty($this->addedStrategies)) {
