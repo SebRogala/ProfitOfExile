@@ -2,8 +2,11 @@
 
 namespace App\Application\Command\PriceRegistry;
 
+use App\Domain\Item\Currency\BlueLifeforce;
 use App\Domain\Item\Currency\ChaosOrb;
 use App\Domain\Item\Currency\DivineOrb;
+use App\Domain\Item\Currency\PurpleLifeforce;
+use App\Domain\Item\Currency\YellowLifeforce;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
 use App\Domain\Item\Map\ShaperGuardianMap;
 use App\Domain\Strategy\WitnessedShaperGuardianMaps;
@@ -41,6 +44,18 @@ class UpdateRegistryHandler
             [
                 'item' => DivineOrb::class,
                 'ninjaInChaos' => $divPrice,
+            ],
+            [
+                'item' => YellowLifeforce::class,
+                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('vivid-crystallised-lifeforce')['receive']['value'],
+            ],
+            [
+                'item' => BlueLifeforce::class,
+                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('primal-crystallised-lifeforce')['receive']['value'],
+            ],
+            [
+                'item' => PurpleLifeforce::class,
+                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('wild-crystallised-lifeforce')['receive']['value'],
             ],
             [
                 'item' => ShaperGuardianMap::class,
