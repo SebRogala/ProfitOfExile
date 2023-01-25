@@ -9,7 +9,7 @@ use App\Domain\Item\Currency\PurpleLifeforce;
 use App\Domain\Item\Currency\YellowLifeforce;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
 use App\Domain\Item\Map\ShaperGuardianMap;
-use App\Domain\Strategy\WitnessedShaperGuardianMaps;
+use App\Domain\Item\Set\ShaperSet;
 use App\Infrastructure\Http\PoeNinjaHttpClient;
 use App\Infrastructure\Http\TftHttpClient;
 
@@ -47,15 +47,15 @@ class UpdateRegistryHandler
             ],
             [
                 'item' => YellowLifeforce::class,
-                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('vivid-crystallised-lifeforce')['receive']['value'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('vivid-crystallised-lifeforce')['receive']['value'],
             ],
             [
                 'item' => BlueLifeforce::class,
-                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('primal-crystallised-lifeforce')['receive']['value'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('primal-crystallised-lifeforce')['receive']['value'],
             ],
             [
                 'item' => PurpleLifeforce::class,
-                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('wild-crystallised-lifeforce')['receive']['value'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('wild-crystallised-lifeforce')['receive']['value'],
             ],
             [
                 'item' => ShaperGuardianMap::class,
@@ -63,8 +63,19 @@ class UpdateRegistryHandler
             ],
             [
                 'item' => ShaperGuardianFragment::class,
-                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
+//                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
                 'ninjaInChaos' => $this->calculatePriceOfFour(
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['pay']['value'],
+                )
+            ],
+            [
+                'item' => ShaperSet::class,
+//                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
+                'tftInChaos' => $divPrice / 3,
+                'ninjaInChaos' => $this->calculateSumPriceOfFour(
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['pay']['value'],
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['pay']['value'],
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['pay']['value'],
@@ -81,7 +92,12 @@ class UpdateRegistryHandler
 
     private function calculatePriceOfFour($price1, $price2, $price3, $price4): float
     {
-        return (1/$price1 + 1/$price2 + 1/$price3 + 1/$price4) / 4;
+        return $this->calculateSumPriceOfFour($price1, $price2, $price3, $price4) / 4;
+    }
+
+    private function calculateSumPriceOfFour($price1, $price2, $price3, $price4): float
+    {
+        return (1/$price1 + 1/$price2 + 1/$price3 + 1/$price4);
     }
 
     private function shouldUpdate(bool $shouldForceUpdate): bool

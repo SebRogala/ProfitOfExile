@@ -34,8 +34,4 @@ class WitnessedShaperGuardianMaps extends Strategy
         // TODO: Implement setAverageTime() method.
     }
 
-    public function run(Inventory $inventory): void
-    {
-        // TODO: Implement run() method.
-    }
 }

@@ -12,23 +12,25 @@ abstract class Strategy
 
     protected int $averageTime = 0;
 
-    public function run(Inventory $inventory): void
+    public function run(Inventory $inventory, int $cycles = 1): void
     {
-        $this->setRequiredItems();
+        for ($i = 0; $i < $cycles; $i++) {
+            $this->setRequiredItems();
 
-        foreach ($this->requiredComponents as $requiredComponent) {
-            $inventory->removeItems($requiredComponent['item']);
-        }
-
-        if (!empty($this->addedStrategies)) {
-            /* @var $addedStrategy Strategy */
-            foreach ($this->addedStrategies as $addedStrategy) {
-                $addedStrategy->run($inventory);
+            foreach ($this->requiredComponents as $requiredComponent) {
+                $inventory->removeItems($requiredComponent['item']);
             }
-        }
 
-        foreach ($this->yieldRewards() as $yieldReward) {
-            $inventory->add($yieldReward['item']);
+            if (!empty($this->addedStrategies)) {
+                /* @var $addedStrategy Strategy */
+                foreach ($this->addedStrategies as $addedStrategy) {
+                    $addedStrategy->run($inventory);
+                }
+            }
+
+            foreach ($this->yieldRewards() as $yieldReward) {
+                $inventory->add($yieldReward['item'], $yieldReward['quantity']);
+            }
         }
     }
 

@@ -2,11 +2,8 @@
 
 namespace App\Domain\Item\Set;
 
-use App\Domain\Item\Value;
+use App\Domain\Item\Item;
 
-abstract class Set
+abstract class Set extends Item
 {
-    abstract public function getElementalValue(): Value;
-    abstract public function getBulkValue(): Value;
-    abstract public function getRewards();
 }

@@ -4,6 +4,8 @@ namespace App\Infrastructure\Pricer;
 
 use App\Application\Query\Pricer\PricesQuery;
 use App\Domain\Inventory\Inventory;
+use App\Domain\Item\Fragment\ShaperGuardianFragment;
+use App\Domain\Item\Set\ShaperSet;
 
 class Pricer
 {
@@ -18,15 +20,15 @@ class Pricer
             'items' => [],
         ];
 
-        $items = $inventory->getItems();
+        $items = $this->convertToSets($inventory);
 
         foreach ($items as $item => $quantity) {
             $itemPriceData = $this->pricesQuery->findDataFor($item);
 
-            if (isset($itemPriceData['ninjaInChaos'])) {
-                $price = $itemPriceData['ninjaInChaos'];
-            } else {
+            if (isset($itemPriceData['tftInChaos'])) {
                 $price = $itemPriceData['tftInChaos'];
+            } else {
+                $price = $itemPriceData['ninjaInChaos'];
             }
 
             $result['totalWorthInChaos'] += $price * $quantity;
@@ -53,5 +55,16 @@ class Pricer
         }
 
         return $result;
+    }
+
+    private function convertToSets(Inventory $inventory): array
+    {
+        $shaperGuardianFragment = new ShaperGuardianFragment();
+        while ($inventory->hasItems($shaperGuardianFragment, 4)) {
+            $inventory->removeItems($shaperGuardianFragment, 4);
+            $inventory->add(new ShaperSet());
+        }
+
+        return $inventory->getItems();
     }
 }
