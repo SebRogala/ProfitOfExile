@@ -11,7 +11,7 @@ class Pricer
     {
     }
 
-    public function priceInventory(Inventory $inventory, array $boughtSummary = []): array
+    public function priceInventory(Inventory $inventory): array
     {
         $result = [
             'items' => [],
@@ -35,6 +35,8 @@ class Pricer
                 'summedPrice' => $price * $quantity,
             ];
         }
+
+        $boughtSummary = $inventory->getBuyerSummary();
 
         if (!empty($boughtSummary)) {
             $result = $this->calculateSummary($result, $boughtSummary);

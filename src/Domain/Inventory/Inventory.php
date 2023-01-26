@@ -48,4 +48,9 @@ class Inventory
             unset($this->items[$item::class]);
         }
     }
+
+    public function getBuyerSummary(): array
+    {
+        return $this->buyer->getSummary();
+    }
 }

@@ -12,6 +12,21 @@ abstract class Strategy
 
     protected int $averageTime = 0;
 
+    public function __invoke(Inventory $inventory, int $cycles = 1, $strategies = []): void
+    {
+        if (!empty($strategies)){
+            if (!is_array($strategies)) {
+                $strategies = [$strategies];
+            }
+
+            foreach ($strategies as $strategy) {
+                $this->combineWith($strategy);
+            }
+        }
+
+        $this->run($inventory, $cycles);
+    }
+
     public function run(Inventory $inventory, int $cycles = 1): void
     {
         for ($i = 0; $i < $cycles; $i++) {
