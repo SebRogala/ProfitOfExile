@@ -39,9 +39,9 @@ abstract class Strategy
         $this->addedStrategies[] = $strategy;
     }
 
-    abstract protected function yieldRewards(): mixed;
-
     abstract protected function setRequiredItems(): void;
+
+    abstract protected function yieldRewards(): mixed;
 
 //    abstract protected function setAverageTime(): void;
 

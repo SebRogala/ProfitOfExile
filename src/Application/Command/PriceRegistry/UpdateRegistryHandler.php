@@ -10,6 +10,8 @@ use App\Domain\Item\Currency\PurpleLifeforce;
 use App\Domain\Item\Currency\YellowLifeforce;
 use App\Domain\Item\Fragment\MavenSplinter;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
+use App\Domain\Item\Fragment\UberElderElderFragment;
+use App\Domain\Item\Fragment\UberElderShaperFragment;
 use App\Domain\Item\Map\MavenWrit;
 use App\Domain\Item\Map\ShaperGuardianMap;
 use App\Domain\Item\Map\TheFormed;
@@ -91,13 +93,23 @@ class UpdateRegistryHandler
                 )
             ],
             [
+                'item' => UberElderShaperFragment::class,
+                'ninjaInChaos' => ($this->poeNinjaHttpClient->searchFor('fragment-of-shape')['chaosEquivalent']
+                + $this->poeNinjaHttpClient->searchFor('fragment-of-knowledge')['chaosEquivalent']) / 2,
+            ],
+            [
+                'item' => UberElderElderFragment::class,
+                'ninjaInChaos' => ($this->poeNinjaHttpClient->searchFor('fragment-of-emptiness')['chaosEquivalent']
+                + $this->poeNinjaHttpClient->searchFor('fragment-of-terror')['chaosEquivalent']) / 2,
+            ],
+            [
                 'item' => TheFormed::class,
                 'tftInChaos' => $this->tftHttpClient->searchFor('The Formed')['chaos'],
                 'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('mavens-invitation:-the-formed')['chaosValue'],
             ],
             [
                 'item' => MavenSplinter::class,
-                'ninjaInChaos' => 1/$this->poeNinjaHttpClient->searchFor('crescent-splinter')['chaosEquivalent'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('crescent-splinter')['chaosEquivalent'],
             ],
             [
                 'item' => MavenWrit::class,

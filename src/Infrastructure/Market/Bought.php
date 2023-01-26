@@ -15,4 +15,14 @@ class Bought
     {
         $inventory->add($this->item, $this->quantity);
     }
+
+    public function item(): Item
+    {
+        return $this->item;
+    }
+
+    public function quantity(): int
+    {
+        return $this->quantity;
+    }
 }

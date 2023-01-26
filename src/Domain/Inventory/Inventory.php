@@ -3,14 +3,18 @@
 namespace App\Domain\Inventory;
 
 use App\Domain\Item\Item;
+use App\Infrastructure\Market\Buyer;
 
 class Inventory
 {
-    private array $items = [];
+    public function __construct(private SetConverter $setConverter, private Buyer $buyer)
+    {
+    }
 
     public function add(Item $item, int $quantity = 1): void
     {
         $this->items[$item::class] = @(int)$this->items[$item::class] + $quantity;
+        $this->setConverter->convertToSets($this);
     }
 
     public function getItems(): array
@@ -34,7 +38,8 @@ class Inventory
     public function removeItems(Item $item, int $quantity = 1): void
     {
         if (!$this->hasItems($item, $quantity)) {
-            throw new ItemNotFoundInInventoryException();
+            $boughtItems = $this->buyer->buy($item, $quantity);
+            $this->add($boughtItems->item(), $boughtItems->quantity());
         }
 
         $this->items[$item::class] = $this->items[$item::class] - $quantity;
