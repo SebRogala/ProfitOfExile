@@ -4,10 +4,11 @@ namespace App\Domain\Inventory;
 
 use App\Domain\Item\Item;
 use App\Infrastructure\Market\Buyer;
+use App\Infrastructure\Pricer\Pricer;
 
 class Inventory
 {
-    public function __construct(private SetConverter $setConverter, private Buyer $buyer)
+    public function __construct(private SetConverter $setConverter, private Buyer $buyer, private Pricer $pricer)
     {
     }
 
@@ -52,5 +53,10 @@ class Inventory
     public function getBuyerSummary(): array
     {
         return $this->buyer->getSummary();
+    }
+
+    public function evaluateItems(): array
+    {
+        return $this->pricer->priceInventory($this);
     }
 }
