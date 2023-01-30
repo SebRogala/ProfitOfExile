@@ -12,6 +12,8 @@ abstract class Strategy
 
     protected int $averageTime = 0;
 
+    protected int $occurrenceProbability = 100;
+
     public function __invoke(Inventory $inventory, int $cycles = 1, $strategies = []): void
     {
         if (!empty($strategies)){
@@ -46,6 +48,8 @@ abstract class Strategy
             foreach ($this->yieldRewards() as $yieldReward) {
                 $inventory->add($yieldReward['item'], $yieldReward['quantity']);
             }
+
+            $inventory->logStrategy($this);
         }
     }
 
@@ -54,13 +58,24 @@ abstract class Strategy
         $this->addedStrategies[] = $strategy;
     }
 
+    public function getAverageTime(): int
+    {
+        return $this->averageTime;
+    }
+
+    public function getRequiredItems(): array
+    {
+        return $this->requiredComponents;
+    }
+
+    public function getOccurrenceProbability(): int
+    {
+        return $this->occurrenceProbability;
+    }
+
     abstract protected function setRequiredItems(): void;
 
-    abstract protected function yieldRewards(): mixed;
+    abstract public function yieldRewards(): mixed;
 
 //    abstract protected function setAverageTime(): void;
-
-    protected function checkForRequiredItems(Inventory $inventory)
-    {
-    }
 }

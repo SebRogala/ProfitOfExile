@@ -7,6 +7,7 @@ use App\Domain\Inventory\Inventory;
 
 class Pricer
 {
+
     public function __construct(private PricesQuery $pricesQuery)
     {
     }
@@ -20,13 +21,7 @@ class Pricer
         ];
 
         foreach ($inventory->getItems() as $item => $quantity) {
-            $itemPriceData = $this->pricesQuery->findDataFor($item);
-
-            if (isset($itemPriceData['tftInChaos'])) {
-                $price = $itemPriceData['tftInChaos'];
-            } else {
-                $price = $itemPriceData['ninjaInChaos'];
-            }
+            $price = $this->getPriceForSelling($item);
 
             $result['totalWorthInChaos'] += $price * $quantity;
             $result['items'][$item] = [
@@ -57,5 +52,18 @@ class Pricer
         $result['profit'] = $result['totalWorthInChaos'] - $result['totalExpenses'];
 
         return $result;
+    }
+
+    private function getPriceForSelling($item): float
+    {
+        $itemPriceData = $this->pricesQuery->findDataFor($item);
+
+        if (isset($itemPriceData['tftInChaos'])) {
+            $price = $itemPriceData['tftInChaos'];
+        } else {
+            $price = $itemPriceData['ninjaInChaos'];
+        }
+
+        return $price;
     }
 }

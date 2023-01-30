@@ -8,11 +8,13 @@ use App\Domain\Item\Currency\YellowLifeforce;
 
 class RunSimpleHarvest extends Strategy
 {
+    protected int $averageTime = 120;
+
     protected function setRequiredItems(): void
     {
     }
 
-    protected function yieldRewards(): mixed
+    public function yieldRewards(): mixed
     {
         return [
             [

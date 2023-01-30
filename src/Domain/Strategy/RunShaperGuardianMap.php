@@ -7,6 +7,8 @@ use App\Domain\Item\Map\ShaperGuardianMap;
 
 class RunShaperGuardianMap extends Strategy
 {
+    protected int $averageTime = 60 * 2 + 30;
+
     public function yieldRewards(): mixed
     {
         return [

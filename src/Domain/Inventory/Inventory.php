@@ -3,11 +3,14 @@
 namespace App\Domain\Inventory;
 
 use App\Domain\Item\Item;
+use App\Domain\Strategy\Strategy;
 use App\Infrastructure\Market\Buyer;
 use App\Infrastructure\Pricer\Pricer;
 
 class Inventory
 {
+    private array $evaluatedStrategies = [];
+
     public function __construct(private SetConverter $setConverter, private Buyer $buyer, private Pricer $pricer)
     {
     }
@@ -58,5 +61,54 @@ class Inventory
     public function evaluateItems(): array
     {
         return $this->pricer->priceInventory($this);
+    }
+
+    public function getEvaluatedStrategies(): array
+    {
+        return $this->evaluatedStrategies;
+    }
+
+    public function logStrategy(Strategy $strategy): void
+    {
+        if (!array_key_exists($strategy::class, $this->evaluatedStrategies)) {
+            $this->evaluatedStrategies[$strategy::class] = [
+                'ranTimes' => 0,
+                'time' => 0,
+                'expenses' => [],
+                'rewards' => [],
+            ];
+        }
+
+        $this->evaluatedStrategies[$strategy::class]['ranTimes']++;
+        $this->evaluatedStrategies[$strategy::class]['time'] += $strategy->getAverageTime();
+
+        foreach ($strategy->getRequiredItems() as $requiredComponent) {
+            if (!array_key_exists(
+                $requiredComponent['item']::class,
+                $this->evaluatedStrategies[$strategy::class]['expenses']
+            )) {
+                $this->evaluatedStrategies[$strategy::class]['expenses'][$requiredComponent['item']::class] = [
+                    'item' => $requiredComponent['item'],
+                    'quantity' => 0,
+                ];
+            }
+
+            $this->evaluatedStrategies[$strategy::class]['expenses'][$requiredComponent['item']::class]['quantity'] += $requiredComponent['quantity'];
+        }
+
+        foreach ($strategy->yieldRewards() as $reward) {
+            if (!array_key_exists(
+                $reward['item']::class,
+                $this->evaluatedStrategies[$strategy::class]['rewards']
+            )) {
+                $this->evaluatedStrategies[$strategy::class]['rewards'][$reward['item']::class] = [
+                    'probability' => $reward['probability'],
+                    'item' => $reward['item'],
+                    'quantity' => 0,
+                ];
+            }
+
+            $this->evaluatedStrategies[$strategy::class]['rewards'][$reward['item']::class]['quantity'] += $reward['quantity'];
+        }
     }
 }
