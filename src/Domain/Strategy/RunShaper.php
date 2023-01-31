@@ -7,6 +7,8 @@ use App\Domain\Item\Set\ShaperSet;
 
 class RunShaper extends Strategy
 {
+    protected int $averageTime = 60 * 8;
+
     protected function setRequiredItems(): void
     {
         $this->requiredComponents = [

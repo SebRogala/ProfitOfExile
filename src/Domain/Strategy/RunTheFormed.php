@@ -9,6 +9,8 @@ use App\Domain\Item\Map\TheFormed;
 
 class RunTheFormed extends Strategy
 {
+    protected int $averageTime = 140; //2min 20s
+
     protected function setRequiredItems(): void
     {
         $this->requiredComponents = [

@@ -3,6 +3,7 @@
 namespace App\Infrastructure\Pricer\Query;
 
 use App\Application\Query\Pricer\PricesQuery;
+use App\Domain\Item\Currency\DivineOrb;
 
 class FilePricerQuery implements PricesQuery
 {
@@ -26,5 +27,10 @@ class FilePricerQuery implements PricesQuery
         }
 
         return [];
+    }
+
+    public function getDivinePrice(): float
+    {
+        return $this->findDataFor(DivineOrb::class)['ninjaInChaos'];
     }
 }

@@ -39,11 +39,16 @@ class Inventory
         return true;
     }
 
+    public function buy(Item $item, int $quantity = 1): void
+    {
+        $boughtItems = $this->buyer->buy($item, $quantity);
+        $this->add($boughtItems->item(), $boughtItems->quantity());
+    }
+
     public function removeItems(Item $item, int $quantity = 1): void
     {
         if (!$this->hasItems($item, $quantity)) {
-            $boughtItems = $this->buyer->buy($item, $quantity);
-            $this->add($boughtItems->item(), $boughtItems->quantity());
+            $this->buy($item, $quantity);
         }
 
         $this->items[$item::class] = $this->items[$item::class] - $quantity;
@@ -63,9 +68,9 @@ class Inventory
         return $this->pricer->priceInventory($this);
     }
 
-    public function getEvaluatedStrategies(): array
+    public function evaluateStrategies(): array
     {
-        return $this->evaluatedStrategies;
+        return $this->pricer->priceStrategies($this->evaluatedStrategies);
     }
 
     public function logStrategy(Strategy $strategy): void
@@ -74,6 +79,7 @@ class Inventory
             $this->evaluatedStrategies[$strategy::class] = [
                 'ranTimes' => 0,
                 'time' => 0,
+                'occurrenceProbability' => $strategy->getOccurrenceProbability(),
                 'expenses' => [],
                 'rewards' => [],
             ];
