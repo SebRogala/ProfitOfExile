@@ -8,14 +8,19 @@ use App\Domain\Item\Currency\DivineOrb;
 use App\Domain\Item\Currency\OrbOfScouring;
 use App\Domain\Item\Currency\PurpleLifeforce;
 use App\Domain\Item\Currency\YellowLifeforce;
+use App\Domain\Item\Fragment\ElderGuardianFragment;
 use App\Domain\Item\Fragment\MavenSplinter;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
 use App\Domain\Item\Fragment\UberElderElderFragment;
 use App\Domain\Item\Fragment\UberElderShaperFragment;
+use App\Domain\Item\Map\ElderGuardianMap;
 use App\Domain\Item\Map\MavenWrit;
 use App\Domain\Item\Map\ShaperGuardianMap;
 use App\Domain\Item\Map\TheFormed;
+use App\Domain\Item\Map\TheTwisted;
+use App\Domain\Item\Set\ElderSet;
 use App\Domain\Item\Set\ShaperSet;
+use App\Domain\Item\Set\UberElderSet;
 use App\Infrastructure\Http\PoeNinjaHttpClient;
 use App\Infrastructure\Http\TftHttpClient;
 
@@ -72,6 +77,10 @@ class UpdateRegistryHandler
                 'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Maps')['chaos'],
             ],
             [
+                'item' => ElderGuardianMap::class,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Elder Maps')['chaos'],
+            ],
+            [
                 'item' => ShaperGuardianFragment::class,
 //                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
                 'ninjaInChaos' => $this->calculatePriceOfFour(
@@ -79,6 +88,15 @@ class UpdateRegistryHandler
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['pay']['value'],
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['pay']['value'],
                     $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['pay']['value'],
+                )
+            ],
+            [
+                'item' => ElderGuardianFragment::class,
+                'ninjaInChaos' => $this->calculatePriceOfFour(
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['pay']['value'],
                 )
             ],
             [
@@ -93,6 +111,16 @@ class UpdateRegistryHandler
                 )
             ],
             [
+                'item' => ElderSet::class,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Elder Set')['chaos'],
+                'ninjaInChaos' => $this->calculateSumPriceOfFour(
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['pay']['value'],
+                )
+            ],
+            [
                 'item' => UberElderShaperFragment::class,
                 'ninjaInChaos' => ($this->poeNinjaHttpClient->searchFor('fragment-of-shape')['chaosEquivalent']
                 + $this->poeNinjaHttpClient->searchFor('fragment-of-knowledge')['chaosEquivalent']) / 2,
@@ -103,9 +131,18 @@ class UpdateRegistryHandler
                 + $this->poeNinjaHttpClient->searchFor('fragment-of-terror')['chaosEquivalent']) / 2,
             ],
             [
+                'item' => UberElderSet::class,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Uber Elder Set')['chaos'],
+            ],
+            [
                 'item' => TheFormed::class,
                 'tftInChaos' => $this->tftHttpClient->searchFor('The Formed')['chaos'],
                 'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('mavens-invitation:-the-formed')['chaosValue'],
+            ],
+            [
+                'item' => TheTwisted::class,
+                'tftInChaos' => $this->tftHttpClient->searchFor('The Twisted')['chaos'],
+                'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('mavens-invitation:-the-twisted')['chaosValue'],
             ],
             [
                 'item' => MavenSplinter::class,
