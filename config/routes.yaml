@@ -5,3 +5,7 @@ controllers:
 price_registry:
     resource: ../src/Presentation/PriceRegistry
     type: attribute
+
+strategies:
+    resource: ../src/Presentation/Strategies
+    type: attribute

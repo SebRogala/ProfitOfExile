@@ -73,6 +73,9 @@ class Inventory
     public function getEndSummary(): array
     {
         return array_merge_recursive(
+            [
+                'totalTimeInMinutes' => $this->getTotalRunTime() / 60
+            ],
             $this->evaluateStrategies(),
             $this->evaluateItems()
         );
