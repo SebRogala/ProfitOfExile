@@ -15,6 +15,7 @@ class TheFormedWithShaper extends AbstractController
     public function index(Inventory $inventory): Response
     {
         (new WitnessedShaperGuardianRotationWithHarvestEndedWithShaper())($inventory);
+        (new WitnessedShaperGuardianRotationWithHarvestEndedWithShaper())($inventory);
 
         return new JsonResponse($inventory->getEndSummary());
     }

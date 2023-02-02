@@ -15,6 +15,7 @@ class TheTwisted extends AbstractController
     public function index(Inventory $inventory): Response
     {
         (new WitnessedElderGuardianRotation())($inventory);
+        (new WitnessedElderGuardianRotation())($inventory);
 
         return new JsonResponse($inventory->getEndSummary());
     }
