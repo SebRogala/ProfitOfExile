@@ -11,6 +11,8 @@ class Inventory
 {
     private array $evaluatedStrategies = [];
 
+    private int $totalRunTime = 0;
+
     public function __construct(private SetConverter $setConverter, private Buyer $buyer, private Pricer $pricer)
     {
     }
@@ -68,9 +70,27 @@ class Inventory
         return $this->pricer->priceInventory($this);
     }
 
+    public function getEndSummary(): array
+    {
+        return array_merge_recursive(
+            $this->evaluateStrategies(),
+            $this->evaluateItems()
+        );
+    }
+
     public function evaluateStrategies(): array
     {
         return $this->pricer->priceStrategies($this->evaluatedStrategies);
+    }
+
+    public function addStrategyTime(int $seconds): void
+    {
+        $this->totalRunTime += $seconds;
+    }
+
+    public function getTotalRunTime(): int
+    {
+        return $this->totalRunTime;
     }
 
     public function logStrategy(Strategy $strategy): void

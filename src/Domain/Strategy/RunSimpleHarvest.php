@@ -10,7 +10,7 @@ class RunSimpleHarvest extends Strategy
 {
     protected int $averageTime = 120;
 
-    protected int $occurrenceProbability = 80;
+    protected int $occurrenceProbability = 90;
 
     protected function setRequiredItems(): void
     {
@@ -21,17 +21,17 @@ class RunSimpleHarvest extends Strategy
         return [
             [
                 'item' => new YellowLifeforce(),
-                'quantity' => 200,
+                'quantity' => 250,
                 'probability' => 100,
             ],
             [
                 'item' => new BlueLifeforce(),
-                'quantity' => 100,
+                'quantity' => 150,
                 'probability' => 100,
             ],
             [
                 'item' => new PurpleLifeforce(),
-                'quantity' => 100,
+                'quantity' => 150,
                 'probability' => 100,
             ],
         ];

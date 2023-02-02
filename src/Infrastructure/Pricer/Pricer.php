@@ -33,9 +33,19 @@ class Pricer
 
         $boughtSummary = $inventory->getBuyerSummary();
 
+        $result['bought'] = $boughtSummary;
+        $result['totalExpenses'] = 0;
+
         if (!empty($boughtSummary)) {
-            $result = $this->calculateSummary($result, $boughtSummary);
+            foreach ($boughtSummary as $item) {
+                $result['totalExpenses'] += $item['totalPrice'];
+            }
         }
+
+        $result['profit'] = $result['totalWorthInChaos'] - $result['totalExpenses'];
+
+        $result['chaosPerHour'] = $this->calculatePricePerHour($inventory->getTotalRunTime(),  $result['profit']);
+        $result['divPerHour'] = $result['chaosPerHour'] / $this->pricesQuery->getDivinePrice();
 
         return $result;
     }

@@ -50,6 +50,7 @@ abstract class Strategy
             }
 
             $inventory->logStrategy($this);
+            $inventory->addStrategyTime($this->getAverageTime());
         }
     }
 
@@ -76,6 +77,4 @@ abstract class Strategy
     abstract protected function setRequiredItems(): void;
 
     abstract public function yieldRewards(): mixed;
-
-//    abstract protected function setAverageTime(): void;
 }
