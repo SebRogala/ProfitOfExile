@@ -16,6 +16,7 @@ class TftHttpClient extends HttpClient
                 $this->getBulkSetsPrices(),
                 $this->getBulkInvitationPrices(),
                 $this->getBulkMapsPrices(),
+                $this->getLifeforcePrices(),
             );
         }
 
@@ -41,5 +42,10 @@ class TftHttpClient extends HttpClient
     public function getBulkMapsPrices(): array
     {
         return $this->get('bulk-maps.json')->toArray();
+    }
+
+    public function getLifeforcePrices(): array
+    {
+        return $this->get('bulk-lifeforce.json')->toArray();
     }
 }
