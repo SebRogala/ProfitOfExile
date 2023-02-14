@@ -185,6 +185,12 @@ class UpdateRegistryHandler
 
         $diff = (new \DateTime())->diff((new \DateTime())->setTimestamp($jsonData['timestamp']));
 
-        return $diff->i > 60;
+        return
+            $diff->i
+            +
+            ($diff->h * 60)
+            +
+            (($diff->d * 24 * 60))
+            > 60;
     }
 }
