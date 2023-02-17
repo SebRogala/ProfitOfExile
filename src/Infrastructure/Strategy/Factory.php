@@ -4,6 +4,7 @@ namespace App\Infrastructure\Strategy;
 
 use App\Domain\Strategy\Exception\StrategyNotFoundException;
 use App\Domain\Strategy\RunSimpleHarvest;
+use App\Domain\Strategy\RunTheFormed;
 use App\Domain\Strategy\Strategy;
 use App\Domain\Strategy\RunShaper;
 use App\Domain\Strategy\RunShaperGuardianMap;
@@ -14,6 +15,7 @@ class Factory
         'run-shaper' => RunShaper::class,
         'run-shaper-guardian-map' => RunShaperGuardianMap::class,
         'simple-harvest' => RunSimpleHarvest::class,
+        'run-the-formed' => RunTheFormed::class,
     ];
 
     public static function create(string $name): Strategy

@@ -10,20 +10,26 @@ class Runner
     {
     }
 
-    public function handle(Inventory $inventory, array $strategies):void
+    public function handle(Inventory $inventory, array $strategies): void
     {
         foreach ($strategies as $strategyName => $data) {
-//            $additionalStrategies = key_exists('strategies', $data) ? $data['strategies'] : [];
-
             if (key_exists('strategies', $data)) {
-                for ($i = 0; $i < $data['times']; $i++) {
+                for ($i = 0; $i < $data['series']; $i++) {
                     $this->handle($inventory, $data['strategies']);
                 }
             }
 
             $strategy = $this->factory->create($strategyName);
-            $strategy($inventory, $data['times']);
-//            $strategy($inventory, $data['times'], $additionalStrategies);
+
+            $defaults = [
+                'series' => 1,
+                'averageTime' => $strategy->getAverageTime(),
+                'occurrenceProbability' => $strategy->getOccurrenceProbability(),
+            ];
+
+            $data = array_merge($defaults, $data);
+
+            $strategy($inventory, $data);
         }
     }
 }
