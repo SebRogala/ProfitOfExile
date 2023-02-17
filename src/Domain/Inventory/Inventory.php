@@ -13,13 +13,22 @@ class Inventory
 
     private int $totalRunTime = 0;
 
+    private array $items = [];
+
     public function __construct(private SetConverter $setConverter, private Buyer $buyer, private Pricer $pricer)
     {
     }
 
-    public function add(Item $item, int $quantity = 1): void
+    public function add(Item $item, float $quantity = 1): void
     {
-        $this->items[$item::class] = @(int)$this->items[$item::class] + $quantity;
+        if (!$this->hasItems($item, 0)) {
+            $this->items[$item::class] = [
+                "item" => $item,
+                "quantity" => 0,
+            ];
+        }
+        $this->items[$item::class]["quantity"] += $quantity;
+
         $this->setConverter->convertToSets($this);
     }
 
@@ -34,7 +43,7 @@ class Inventory
             return false;
         }
 
-        if ($this->items[$item::class] < $quantity) {
+        if ($this->items[$item::class]["quantity"] < $quantity) {
             return false;
         }
 
@@ -53,9 +62,9 @@ class Inventory
             $this->buy($item, $quantity);
         }
 
-        $this->items[$item::class] = $this->items[$item::class] - $quantity;
+        $this->items[$item::class]["quantity"] -= $quantity;
 
-        if ($this->items[$item::class] === 0) {
+        if ($this->items[$item::class]["quantity"] <= 0) {
             unset($this->items[$item::class]);
         }
     }
@@ -74,7 +83,7 @@ class Inventory
     {
         return array_merge_recursive(
             [
-                'totalTimeInMinutes' => $this->getTotalRunTime() / 60
+                'totalTimeInMinutes' => $this->getTotalRunTime() / 60,
             ],
             $this->evaluateStrategies(),
             $this->evaluateItems()

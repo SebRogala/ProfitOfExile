@@ -20,14 +20,14 @@ class Pricer
             'totalWorthInChaos' => 0,
         ];
 
-        foreach ($inventory->getItems() as $item => $quantity) {
-            $price = $this->getPriceForSelling($item);
+        foreach ($inventory->getItems() as $itemName => $item) {
+            $price = $this->getPriceForSelling($itemName);
 
-            $result['totalWorthInChaos'] += $price * $quantity;
-            $result['items'][$item] = [
+            $result['totalWorthInChaos'] += $price * $item['quantity'];
+            $result['items'][$itemName] = [
                 'singularPrice' => $price,
-                'quantity' => $quantity,
-                'summedPrice' => $price * $quantity,
+                'quantity' => $item['quantity'],
+                'summedPrice' => $price * $item['quantity'],
             ];
         }
 
