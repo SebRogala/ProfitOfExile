@@ -16,14 +16,17 @@ class Compose extends AbstractController
     {
         //TODO: Take strategies from real request
         $postedStrategies = [
-            'run-shaper-guardian-map' => [
-                'series' => 4,
+            'wrapper' => [
+                'series' => 2,
                 'strategies' => [
-//                    'run-simple-harvest' => []
-                ]
+                    'run-shaper-guardian-map' => [
+                        'series' => 4,
+                        'strategies' => [],
+                    ],
+                    'run-the-formed' => [],
+                    'run-shaper' => [],
+                ],
             ],
-            'run-the-formed' => [],
-            'run-shaper' => [],
         ];
 
         $runner->handle($inventory, $postedStrategies);

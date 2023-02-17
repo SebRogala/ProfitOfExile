@@ -8,10 +8,12 @@ use App\Domain\Strategy\RunTheFormed;
 use App\Domain\Strategy\Strategy;
 use App\Domain\Strategy\RunShaper;
 use App\Domain\Strategy\RunShaperGuardianMap;
+use App\Domain\Strategy\Wrapper;
 
 class Factory
 {
     public const STRATEGIES = [
+        'wrapper' => Wrapper::class,
         'run-shaper' => RunShaper::class,
         'run-shaper-guardian-map' => RunShaperGuardianMap::class,
         'run-simple-harvest' => RunSimpleHarvest::class,
