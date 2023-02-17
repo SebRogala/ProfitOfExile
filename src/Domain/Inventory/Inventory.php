@@ -107,8 +107,8 @@ class Inventory
 
     public function logStrategy(Strategy $strategy): void
     {
-        if (!array_key_exists($strategy::class, $this->evaluatedStrategies)) {
-            $this->evaluatedStrategies[$strategy::class] = [
+        if (!array_key_exists($strategy->name(), $this->evaluatedStrategies)) {
+            $this->evaluatedStrategies[$strategy->name()] = [
                 'ranTimes' => 0,
                 'time' => 0,
                 'occurrenceProbability' => $strategy->getOccurrenceProbability(),
@@ -117,36 +117,36 @@ class Inventory
             ];
         }
 
-        $this->evaluatedStrategies[$strategy::class]['ranTimes']++;
-        $this->evaluatedStrategies[$strategy::class]['time'] += $strategy->getAverageTime();
+        $this->evaluatedStrategies[$strategy->name()]['ranTimes']++;
+        $this->evaluatedStrategies[$strategy->name()]['time'] += $strategy->getAverageTime();
 
         foreach ($strategy->getRequiredItems() as $requiredComponent) {
             if (!array_key_exists(
                 $requiredComponent['item']::class,
-                $this->evaluatedStrategies[$strategy::class]['expenses']
+                $this->evaluatedStrategies[$strategy->name()]['expenses']
             )) {
-                $this->evaluatedStrategies[$strategy::class]['expenses'][$requiredComponent['item']::class] = [
+                $this->evaluatedStrategies[$strategy->name()]['expenses'][$requiredComponent['item']::class] = [
                     'item' => $requiredComponent['item'],
                     'quantity' => 0,
                 ];
             }
 
-            $this->evaluatedStrategies[$strategy::class]['expenses'][$requiredComponent['item']::class]['quantity'] += $requiredComponent['quantity'];
+            $this->evaluatedStrategies[$strategy->name()]['expenses'][$requiredComponent['item']::class]['quantity'] += $requiredComponent['quantity'];
         }
 
         foreach ($strategy->yieldRewards() as $reward) {
             if (!array_key_exists(
                 $reward['item']::class,
-                $this->evaluatedStrategies[$strategy::class]['rewards']
+                $this->evaluatedStrategies[$strategy->name()]['rewards']
             )) {
-                $this->evaluatedStrategies[$strategy::class]['rewards'][$reward['item']::class] = [
+                $this->evaluatedStrategies[$strategy->name()]['rewards'][$reward['item']::class] = [
                     'probability' => $reward['probability'],
                     'item' => $reward['item'],
                     'quantity' => 0,
                 ];
             }
 
-            $this->evaluatedStrategies[$strategy::class]['rewards'][$reward['item']::class]['quantity'] += $reward['quantity'];
+            $this->evaluatedStrategies[$strategy->name()]['rewards'][$reward['item']::class]['quantity'] += $reward['quantity'];
         }
     }
 }

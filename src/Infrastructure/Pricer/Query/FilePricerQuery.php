@@ -6,6 +6,7 @@ use App\Application\Command\PriceRegistry\UpdateRegistry;
 use App\Application\CommandBus;
 use App\Application\Query\Pricer\PricesQuery;
 use App\Domain\Item\Currency\DivineOrb;
+use App\Domain\Item\Item;
 
 class FilePricerQuery implements PricesQuery
 {
@@ -23,10 +24,10 @@ class FilePricerQuery implements PricesQuery
         $this->data = json_decode($jsonString, true);
     }
 
-    public function findDataFor(string $name): array
+    public function findDataFor(Item $item): array
     {
         foreach ($this->data as $data) {
-            if (!empty($data['item']) && $data['item'] == $name) {
+            if (!empty($data['item']) && $data['item'] == $item::class) {
                 return $data;
             }
         }
@@ -36,6 +37,6 @@ class FilePricerQuery implements PricesQuery
 
     public function getDivinePrice(): float
     {
-        return $this->findDataFor(DivineOrb::class)['ninjaInChaos'];
+        return $this->findDataFor(new DivineOrb())['ninjaInChaos'];
     }
 }

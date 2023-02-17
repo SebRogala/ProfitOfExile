@@ -41,6 +41,13 @@ abstract class Strategy
         }
     }
 
+    public function name(): string
+    {
+        $splitNamespace = explode('\\', static::class);
+
+        return array_pop($splitNamespace);
+    }
+
     public function getAverageTime(): int
     {
         return $this->averageTime;

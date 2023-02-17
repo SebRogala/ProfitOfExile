@@ -14,7 +14,7 @@ class Factory
     public const STRATEGIES = [
         'run-shaper' => RunShaper::class,
         'run-shaper-guardian-map' => RunShaperGuardianMap::class,
-        'simple-harvest' => RunSimpleHarvest::class,
+        'run-simple-harvest' => RunSimpleHarvest::class,
         'run-the-formed' => RunTheFormed::class,
     ];
 

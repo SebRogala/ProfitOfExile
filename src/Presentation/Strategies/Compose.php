@@ -19,7 +19,7 @@ class Compose extends AbstractController
             'run-shaper-guardian-map' => [
                 'series' => 4,
                 'strategies' => [
-//                    'simple-harvest' => []
+//                    'run-simple-harvest' => []
                 ]
             ],
             'run-the-formed' => [],
