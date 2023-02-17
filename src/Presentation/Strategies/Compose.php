@@ -21,7 +21,6 @@ class Compose extends AbstractController
                 'strategies' => [
                     'run-shaper-guardian-map' => [
                         'series' => 4,
-                        'strategies' => [],
                     ],
                     'run-the-formed' => [],
                     'run-shaper' => [],
