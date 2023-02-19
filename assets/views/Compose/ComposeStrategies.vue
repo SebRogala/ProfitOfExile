@@ -1,48 +1,9 @@
 <template>
-    <!--{{availableStrategies}}-->
-    <v-card
-        class="mb-1"
-        variant="outlined"
-        v-for="(strat, key) in composedStrategies">
-
-        <v-card-title>
-            {{ strat.name }}
-        </v-card-title>
-
-        <v-card-text>
-            <v-text-field
-                class="mb-5"
-                label="Run times"
-                variant="outlined"
-                density="compact"
-                hide-details
-                v-model="strat.series"
-            ></v-text-field>
-            <v-text-field
-                class="mb-5"
-                label="Average time to run"
-                variant="outlined"
-                density="compact"
-                hide-details
-                v-model="strat.averageTime"
-            ></v-text-field>
-            <v-text-field
-                label="Probability"
-                variant="outlined"
-                density="compact"
-                hide-details
-                v-model="strat.probability"
-            ></v-text-field>
-        </v-card-text>
-
-        <v-card-actions>
-            <v-btn
-                color="error"
-                @click="composedStrategies.splice(key, 1)"
-            >Remove
-            </v-btn>
-        </v-card-actions>
-    </v-card>
+    <manage-strategy
+        v-for="(strat, key) in composedStrategies"
+        :value="strat"
+        @deleted="composedStrategies.splice(key, 1)"
+    ></manage-strategy>
 
     <v-btn
         color="success"
@@ -67,8 +28,10 @@
 </template>
 
 <script>
+import ManageStrategy from "./ManageStrategy";
 export default {
     name: 'ComposeStrategies',
+    components: {ManageStrategy},
     data() {
         return {
             addStrategyOverlay: false,
