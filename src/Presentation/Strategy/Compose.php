@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Presentation\Strategies;
+namespace App\Presentation\Strategy;
 
 use App\Domain\Inventory\Inventory;
 use App\Infrastructure\Strategy\Runner;
@@ -11,22 +11,21 @@ use Symfony\Component\Routing\Annotation\Route;
 
 class Compose extends AbstractController
 {
-    #[Route("/strat/compose", name: "compose", methods: ["GET"])]
+    #[Route("/strategy/compose", name: "compose", methods: ["GET"])]
     public function index(Inventory $inventory, Runner $runner): Response
     {
         //TODO: Take strategies from real request
         $postedStrategies = [
-            'run-shaper-guardian-map' => [
-                'times' => 4,
+            'wrapper' => [
+                'series' => 2,
                 'strategies' => [
-                    'simple-harvest' => [
-                        'times' => 1,
-                    ]
-                ]
+                    'run-shaper-guardian-map' => [
+                        'series' => 4,
+                    ],
+                    'run-the-formed' => [],
+                    'run-shaper' => [],
+                ],
             ],
-            'run-shaper' => [
-                'times' => 1,
-            ]
         ];
 
         $runner->handle($inventory, $postedStrategies);

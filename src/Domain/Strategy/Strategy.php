@@ -8,45 +8,32 @@ abstract class Strategy
 {
     protected array $requiredComponents = [];
 
-    protected array $addedStrategies = [];
-
     protected int $averageTime = 0;
 
     protected int $occurrenceProbability = 100;
 
-    public function __invoke(Inventory $inventory, int $cycles = 1, $strategies = []): void
+    public function __invoke(Inventory $inventory, array $data): void
     {
-        if (!empty($strategies)){
-            if (!is_array($strategies)) {
-                $strategies = [$strategies];
-            }
-
-            foreach ($strategies as $strategy) {
-                $this->combineWith($strategy);
-            }
-        }
-
-        $this->run($inventory, $cycles);
+        $this->run($inventory, $data);
     }
 
-    public function run(Inventory $inventory, int $cycles = 1): void
+    public function run(Inventory $inventory, array $data): void
     {
-        for ($i = 0; $i < $cycles; $i++) {
+        $this->averageTime = $data['averageTime'];
+        $this->occurrenceProbability = $data['occurrenceProbability'];
+
+        for ($i = 0; $i < $data['series']; $i++) {
             $this->setRequiredItems();
 
             foreach ($this->requiredComponents as $requiredComponent) {
                 $inventory->removeItems($requiredComponent['item'], $requiredComponent['quantity']);
             }
 
-            if (!empty($this->addedStrategies)) {
-                /* @var $addedStrategy Strategy */
-                foreach ($this->addedStrategies as $addedStrategy) {
-                    $addedStrategy->run($inventory);
-                }
-            }
-
             foreach ($this->yieldRewards() as $yieldReward) {
-                $inventory->add($yieldReward['item'], $yieldReward['quantity']);
+                $inventory->add(
+                    $yieldReward['item'],
+                    $yieldReward['quantity'] * ($yieldReward['probability'] / 100) * ($this->occurrenceProbability / 100)
+                );
             }
 
             $inventory->logStrategy($this);
@@ -54,9 +41,11 @@ abstract class Strategy
         }
     }
 
-    public function combineWith(Strategy $strategy): void
+    public function name(): string
     {
-        $this->addedStrategies[] = $strategy;
+        $splitNamespace = explode('\\', static::class);
+
+        return array_pop($splitNamespace);
     }
 
     public function getAverageTime(): int

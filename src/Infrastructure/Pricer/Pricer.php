@@ -20,14 +20,13 @@ class Pricer
             'totalWorthInChaos' => 0,
         ];
 
-        foreach ($inventory->getItems() as $item => $quantity) {
-            $price = $this->getPriceForSelling($item);
-
-            $result['totalWorthInChaos'] += $price * $quantity;
-            $result['items'][$item] = [
+        foreach ($inventory->getItems() as $item) {
+            $price = $this->getPriceForSelling($item['item']);
+            $result['totalWorthInChaos'] += $price * $item['quantity'];
+            $result['items'][$item['item']->name()] = [
                 'singularPrice' => $price,
-                'quantity' => $quantity,
-                'summedPrice' => $price * $quantity,
+                'quantity' => $item['quantity'],
+                'summedPrice' => $price * $item['quantity'],
             ];
         }
 
@@ -44,7 +43,7 @@ class Pricer
 
         $result['profit'] = $result['totalWorthInChaos'] - $result['totalExpenses'];
 
-        $result['chaosPerHour'] = $this->calculatePricePerHour($inventory->getTotalRunTime(),  $result['profit']);
+        $result['chaosPerHour'] = $this->calculatePricePerHour($inventory->getTotalRunTime(), $result['profit']);
         $result['divPerHour'] = $result['chaosPerHour'] / $this->pricesQuery->getDivinePrice();
 
         return $result;
@@ -80,9 +79,9 @@ class Pricer
 
         $result = [];
 
-        foreach ($expenses as $name => $expense) {
-            $price = $this->getPriceForSelling($name);
-            $result[$name] = [
+        foreach ($expenses as $expense) {
+            $price = $this->getPriceForSelling($expense['item']);
+            $result[$expense['item']->name()] = [
                 'singularPrice' => $price,
                 'quantity' => $expense['quantity'],
                 'summedPrice' => $price * $expense['quantity'],
@@ -105,10 +104,10 @@ class Pricer
             'divPerHour' => 0,
         ];
 
-        foreach ($strategy['rewards'] as $name => $reward) {
-            $price = $this->getPriceForSelling($name);
+        foreach ($strategy['rewards'] as $reward) {
+            $price = $this->getPriceForSelling($reward['item']);
             $summedPrice = $price * $reward['quantity'] * ($reward['probability'] / 100);
-            $result['rewards'][$name] = [
+            $result['rewards'][$reward['item']->name()] = [
                 'probability' => $reward['probability'],
                 'singularPrice' => $price,
                 'quantity' => $reward['quantity'],
@@ -119,7 +118,7 @@ class Pricer
             $result['summedPrice'] += $summedPrice;
         }
 
-        $result['chaosPerHour'] = $this->calculatePricePerHour($strategy['time'],  $result['summedPrice']);
+        $result['chaosPerHour'] = $this->calculatePricePerHour($strategy['time'], $result['summedPrice']);
         $result['divPerHour'] = $result['chaosPerHour'] / $this->pricesQuery->getDivinePrice();
 
         return $result;

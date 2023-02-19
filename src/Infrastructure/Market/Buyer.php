@@ -15,7 +15,7 @@ class Buyer
 
     public function buy(Item $item, int $quantity = 1): ?Bought
     {
-        $res = $this->pricesQuery->findDataFor($item::class);
+        $res = $this->pricesQuery->findDataFor($item);
 
         if (empty($res)) {
             //potentially throw new exception
@@ -33,18 +33,18 @@ class Buyer
 
     private function addToSummary(Item $item, int $quantity, float $price, string $source): void
     {
-        if (!key_exists($item::class, $this->summary)) {
-            $this->summary[$item::class] = [
-                'item' => $item::class,
+        if (!key_exists($item->name(), $this->summary)) {
+            $this->summary[$item->name()] = [
+                'item' => $item->name(),
                 'quantity' => 0,
                 'totalPrice' => 0,
                 'source' => '',
             ];
         }
 
-        $this->summary[$item::class]['quantity'] += $quantity;
-        $this->summary[$item::class]['totalPrice'] += $price;
-        $this->summary[$item::class]['source'] = $source;
+        $this->summary[$item->name()]['quantity'] += $quantity;
+        $this->summary[$item->name()]['totalPrice'] += $price;
+        $this->summary[$item->name()]['source'] = $source;
     }
 
     public function getSummary(): array

@@ -190,7 +190,7 @@ class UpdateRegistryHandler
             +
             ($diff->h * 60)
             +
-            (($diff->d * 24 * 60))
+            ($diff->d * 24 * 60)
             > 60;
     }
 }

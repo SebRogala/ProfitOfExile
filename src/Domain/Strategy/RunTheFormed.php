@@ -5,6 +5,7 @@ namespace App\Domain\Strategy;
 use App\Domain\Item\Currency\OrbOfScouring;
 use App\Domain\Item\Fragment\MavenSplinter;
 use App\Domain\Item\Fragment\ShaperGuardianFragment;
+use App\Domain\Item\Map\ShaperGuardianMap;
 use App\Domain\Item\Map\TheFormed;
 
 class RunTheFormed extends Strategy
@@ -21,7 +22,7 @@ class RunTheFormed extends Strategy
             [
                 'item' => new OrbOfScouring(),
                 'quantity' => 15,       // approx quant needed for rerolling 75%
-            ]
+            ],
         ];
     }
 
@@ -35,7 +36,12 @@ class RunTheFormed extends Strategy
             ],
             [
                 'item' => new ShaperGuardianFragment(),
-                'quantity' => 2,
+                'quantity' => 1,
+                'probability' => 100,
+            ],
+            [
+                'item' => new ShaperGuardianMap(),
+                'quantity' => 1,
                 'probability' => 100,
             ],
         ];
