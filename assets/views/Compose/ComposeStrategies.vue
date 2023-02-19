@@ -43,7 +43,16 @@ export default {
                     "averageTime": 480,
                     "probability": 100,
                     "series": 1,
-                    "strategies": []
+                    "strategies": [
+                        {
+                            "key": "run-shaper",
+                            "name": "RunShaper",
+                            "averageTime": 480,
+                            "probability": 100,
+                            "series": 1,
+                            "strategies": []
+                        }
+                    ]
                 }
             ]
         }

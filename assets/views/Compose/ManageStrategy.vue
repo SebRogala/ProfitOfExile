@@ -1,7 +1,7 @@
 <template>
     <v-card
         class="mb-1"
-        variant="outlined"
+        variant="elevated"
     >
         <v-card-title>
             {{ value.name }}
@@ -18,7 +18,7 @@
             ></v-text-field>
             <v-text-field
                 class="mb-5"
-                label="Average time to run"
+                label="Average time to run (seconds)"
                 variant="outlined"
                 density="compact"
                 hide-details
@@ -31,6 +31,16 @@
                 hide-details
                 v-model="value.probability"
             ></v-text-field>
+
+            <p v-if="value.strategies.length" class="text-h6 mt-3">Composed strategies:</p>
+
+            <manage-strategy
+                class="mt-3 ml-10"
+                v-for="(strat, key) in value.strategies"
+                :value="strat"
+                @deleted="value.strategies.splice(key, 1)"
+            ></manage-strategy>
+
         </v-card-text>
 
         <v-card-actions>
