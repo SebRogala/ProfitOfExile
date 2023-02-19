@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Presentation\Strategies;
+namespace App\Presentation\Strategy;
 
 use App\Infrastructure\Strategy\Factory;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -8,9 +8,9 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
 
-class GetStrategies extends AbstractController
+class GetAll extends AbstractController
 {
-    #[Route("/strat/get-strategies", name: "get-strategies", methods: ["GET"])]
+    #[Route("/strategy/get-all", name: "get-strategies", methods: ["GET"])]
     public function index(): Response
     {
         $ret = [];

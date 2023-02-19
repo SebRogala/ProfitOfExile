@@ -6,6 +6,6 @@ price_registry:
     resource: ../src/Presentation/PriceRegistry
     type: attribute
 
-strategies:
-    resource: ../src/Presentation/Strategies
+strategy:
+    resource: ../src/Presentation/Strategy
     type: attribute
