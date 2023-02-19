@@ -8,31 +8,46 @@
         </v-card-title>
 
         <v-card-text>
-            <v-text-field
-                class="mb-5"
-                label="Run times"
-                variant="outlined"
-                density="compact"
-                hide-details
-                v-model="value.series"
-            ></v-text-field>
-            <v-text-field
-                class="mb-5"
-                label="Average time to run (seconds)"
-                variant="outlined"
-                density="compact"
-                hide-details
-                v-model="value.averageTime"
-            ></v-text-field>
-            <v-text-field
-                label="Probability"
-                variant="outlined"
-                density="compact"
-                hide-details
-                v-model="value.probability"
-            ></v-text-field>
+            <v-row>
+                <v-col
+                    cols="2"
+                >
+                    <v-text-field
+                        class="mb-5"
+                        label="Run times"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        v-model="value.series"
+                    ></v-text-field>
+                </v-col>
+                <v-col
+                    cols="2"
+                >
+                    <v-text-field
+                        class="mb-5"
+                        label="Average time to run (seconds)"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        v-model="value.averageTime"
+                    ></v-text-field>
+                </v-col>
+                <v-col
+                    cols="2"
+                >
+                    <v-text-field
+                        label="Probability"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        v-model="value.probability"
+                    ></v-text-field>
+                </v-col>
+            </v-row>
 
-            <p v-if="value.strategies.length" class="text-h6 mt-3">Composed strategies:</p>
+
+            <p v-if="value.strategies.length" class="text-h6 text-grey-darken-2">Composed strategies:</p>
 
             <manage-strategy
                 class="mt-3 ml-10"
@@ -61,12 +76,10 @@ export default {
         value: Object
     },
     data() {
-        return {
-        }
+        return {}
     },
     mounted() {
     },
-    methods: {
-    }
+    methods: {}
 }
 </script>
