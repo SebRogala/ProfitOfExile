@@ -24,6 +24,7 @@ class Pricer
             $price = $this->getPriceForSelling($item['item']);
             $result['totalWorthInChaos'] += $price * $item['quantity'];
             $result['items'][$item['item']->name()] = [
+                'name' => $item['item']->name(),
                 'singularPrice' => $price,
                 'quantity' => $item['quantity'],
                 'summedPrice' => $price * $item['quantity'],

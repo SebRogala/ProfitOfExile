@@ -3,9 +3,12 @@
 namespace App\Domain\Strategy;
 
 use App\Domain\Inventory\Inventory;
+use App\Domain\Trait\Name;
 
 abstract class Strategy
 {
+    use Name;
+
     protected array $requiredComponents = [];
 
     protected int $averageTime = 0;
@@ -39,13 +42,6 @@ abstract class Strategy
             $inventory->logStrategy($this);
             $inventory->addStrategyTime($this->getAverageTime());
         }
-    }
-
-    public function name(): string
-    {
-        $splitNamespace = explode('\\', static::class);
-
-        return array_pop($splitNamespace);
     }
 
     public function getAverageTime(): int

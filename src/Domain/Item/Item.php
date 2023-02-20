@@ -2,12 +2,9 @@
 
 namespace App\Domain\Item;
 
+use App\Domain\Trait\Name;
+
 abstract class Item
 {
-    public function name(): string
-    {
-        $splitNamespace = explode('\\', static::class);
-
-        return array_pop($splitNamespace);
-    }
+    use Name;
 }

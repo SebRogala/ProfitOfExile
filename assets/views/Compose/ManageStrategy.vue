@@ -67,7 +67,7 @@
             <v-btn
                 color="success"
                 @click="showAdder = true"
-            >Add strategy
+            >Add strategy (to {{ value.name }})
             </v-btn>
         </v-card-actions>
 

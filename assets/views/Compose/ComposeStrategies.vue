@@ -6,20 +6,34 @@
         @deleted="composedStrategies.splice(key, 1)"
     ></manage-strategy>
 
-    <v-btn
-        color="success"
-        @click="addStrategyOverlay = true"
-    >
-        Add strategy
-    </v-btn>
+    <div class="mt-3">
+        <v-btn
+            color="success"
+            @click="addStrategyOverlay = true"
+        >
+            Add strategy
+        </v-btn>
 
-    <v-btn
-        class="ml-6"
-        color="info"
-        @click="sendRequest"
-    >
-        Send
-    </v-btn>
+        <v-btn
+            class="ml-4"
+            color="info"
+            @click="sendRequest"
+        >
+            Send
+        </v-btn>
+
+        <v-btn
+            class="ml-16"
+            color="warning"
+            @click="composedStrategies = []"
+        >
+            Clear
+        </v-btn>
+    </div>
+
+    <results
+        :results="results"
+    ></results>
 
     <add-strategy
         v-model:show-adder="addStrategyOverlay"
@@ -31,15 +45,17 @@
 <script>
 import ManageStrategy from "./ManageStrategy";
 import AddStrategy from "./AddStrategy";
+import Results from "./Results";
 
 export default {
     name: 'ComposeStrategies',
-    components: {AddStrategy, ManageStrategy},
+    components: {Results, AddStrategy, ManageStrategy},
     data() {
         return {
             addStrategyOverlay: false,
             availableStrategies: [],
-            composedStrategies: []
+            composedStrategies: [],
+            results: {}
         }
     },
     mounted() {
@@ -56,7 +72,7 @@ export default {
         },
         sendRequest() {
             this.$api.post('/strategy/compose', this.composedStrategies).then(res => {
-
+                this.results = res.data;
             });
         }
     }
