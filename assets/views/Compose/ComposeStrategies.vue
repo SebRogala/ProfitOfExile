@@ -1,9 +1,8 @@
 <template>
     <manage-strategy
-        v-for="(strat, key) in composedStrategies"
-        :value="strat"
+        :value="composedStrategies"
         :available-strategies="availableStrategies"
-        @deleted="composedStrategies.splice(key, 1)"
+        @deleted="deleteStrategy"
     ></manage-strategy>
 
     <div class="mt-3">
@@ -69,6 +68,9 @@ export default {
         },
         addNewStrategy(data) {
             this.composedStrategies.push(data);
+        },
+        deleteStrategy(key) {
+            this.composedStrategies.splice(key, 1)
         },
         sendRequest() {
             this.$api.post('/strategy/compose', this.composedStrategies).then(res => {

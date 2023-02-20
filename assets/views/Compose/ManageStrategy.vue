@@ -1,105 +1,115 @@
 <template>
-    <v-card
-        class="mb-1"
-        variant="elevated"
+    <v-timeline
+        class="pb-1"
+        density="compact"
+        side="end"
     >
-        <v-card-title>
-            {{ value.name }}
-        </v-card-title>
+        <v-timeline-item
+            v-for="(strategy, key) in value"
+            size="small"
+        >
+            <div class="text-h6">{{ strategy.name }}</div>
 
-        <v-card-text>
-            <v-row>
-                <v-col
-                    cols="2"
+            <div class="d-flex justify-space-between flex-grow-1 pt-2 pb-3" style="max-width: 500px">
+                <v-text-field
+                    style="width: 150px"
+                    class="mr-2"
+                    label="Run times"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    v-model="strategy.series"
+                ></v-text-field>
+
+                <v-text-field
+                    style="width: 150px"
+                    class="mr-2"
+                    label="Time to run (seconds)"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    v-model="strategy.averageTime"
+                ></v-text-field>
+
+                <v-text-field
+                    style="width: 150px"
+                    class="mr-2"
+                    label="Probability"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                    v-model="strategy.probability"
+                ></v-text-field>
+
+                <v-btn
+                    color="error"
+                    variant="flat"
+                    icon="mdi-close"
+                    size="x-small"
+                    @click="$emit('deleted', key)"
                 >
-                    <v-text-field
-                        label="Run times"
-                        variant="outlined"
-                        density="compact"
-                        hide-details
-                        v-model="value.series"
-                    ></v-text-field>
-                </v-col>
-                <v-col
-                    cols="2"
-                >
-                    <v-text-field
-                        label="Average time to run (seconds)"
-                        variant="outlined"
-                        density="compact"
-                        hide-details
-                        v-model="value.averageTime"
-                    ></v-text-field>
-                </v-col>
-                <v-col
-                    cols="2"
-                >
-                    <v-text-field
-                        label="Probability"
-                        variant="outlined"
-                        density="compact"
-                        hide-details
-                        v-model="value.probability"
-                    ></v-text-field>
-                </v-col>
-            </v-row>
-
-
-            <p v-if="value.strategies.length" class="text-h6 text-grey-darken-2 mt-2">Composed strategies:</p>
-
-            <manage-strategy
-                class="mt-3 ml-16"
-                v-for="(strat, key) in value.strategies"
-                :value="strat"
-                :available-strategies="availableStrategies"
-                @deleted="value.strategies.splice(key, 1)"
-            ></manage-strategy>
-
-        </v-card-text>
-
-        <v-card-actions>
-            <v-btn
-                color="error"
-                @click="$emit('deleted')"
-            >Remove
-            </v-btn>
+                </v-btn>
+            </div>
 
             <v-btn
                 color="success"
-                @click="showAdder = true"
-            >Add strategy (to {{ value.name }})
+                variant="outlined"
+                @click="openAdder(key)"
+            >Add strategy (to {{ strategy.name }})
             </v-btn>
-        </v-card-actions>
+
+            <manage-strategy
+                class="ml-7 mt-4"
+                :value="strategy.strategies"
+                :available-strategies="availableStrategies"
+                @deleted="deleteStrategy"
+            ></manage-strategy>
+        </v-timeline-item>
 
         <add-strategy
             v-model:show-adder="showAdder"
             :available-strategies="availableStrategies"
             @strategyAdded="addNewStrategy"
         ></add-strategy>
-    </v-card>
+    </v-timeline>
 </template>
 
 <script>
 import AddStrategy from "./AddStrategy";
+
 export default {
     name: 'ManageStrategy',
     components: {AddStrategy},
     emits: ['deleted'],
     props: {
-        value: Object,
+        value: Array,
         availableStrategies: Array
     },
     data() {
         return {
             showAdder: false,
+            toAddIndex: null,
         }
     },
     mounted() {
     },
     methods: {
         addNewStrategy(data) {
-            this.value.strategies.push(data);
+            this.value[this.toAddIndex].strategies.push(data);
+        },
+        deleteStrategy(key) {
+            this.value.splice(key, 1)
+        },
+        openAdder(key) {
+            this.showAdder = true;
+            this.toAddIndex = key;
         }
     }
 }
 </script>
+
+<style>
+.v-timeline-item__body {
+    width: 100%;
+}
+</style>

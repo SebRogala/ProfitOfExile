@@ -21,7 +21,7 @@
     "dependencies": {
         "axios": "^0.27.2",
         "vue-router": "^4.1.2",
-        "vuetify": "^3.0.1",
-        "webpack-plugin-vuetify": "^2.0.0"
+        "vuetify": "^3.1.5",
+        "webpack-plugin-vuetify": "^2.0.1"
     }
 }
