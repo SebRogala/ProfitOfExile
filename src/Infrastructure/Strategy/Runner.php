@@ -12,14 +12,13 @@ class Runner
 
     public function handle(Inventory $inventory, array $strategies): void
     {
-        foreach ($strategies as $strategyName => $data) {
+        foreach ($strategies as $data) {
             if (key_exists('strategies', $data)) {
                 for ($i = 0; $i < $data['series']; $i++) {
                     $this->handle($inventory, $data['strategies']);
                 }
             }
-
-            $strategy = $this->factory->create($strategyName);
+            $strategy = $this->factory->create($data['key']);
 
             $defaults = [
                 'series' => 1,

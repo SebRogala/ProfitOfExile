@@ -13,13 +13,19 @@
         Add strategy
     </v-btn>
 
+    <v-btn
+        class="ml-6"
+        color="info"
+        @click="sendRequest"
+    >
+        Send
+    </v-btn>
+
     <add-strategy
         v-model:show-adder="addStrategyOverlay"
         :available-strategies="availableStrategies"
         @strategyAdded="addNewStrategy"
     ></add-strategy>
-
-    <pre>{{ composedStrategies }}</pre>
 </template>
 
 <script>
@@ -47,6 +53,11 @@ export default {
         },
         addNewStrategy(data) {
             this.composedStrategies.push(data);
+        },
+        sendRequest() {
+            this.$api.post('/strategy/compose', this.composedStrategies).then(res => {
+
+            });
         }
     }
 }
