@@ -46,10 +46,10 @@ export default {
                     title: "Compose Strategies",
                     value: '/compose'
                 },
-                {
-                    title: "Shaper Rotation",
-                    value: '/rotation/full-shaper-invitation'
-                },
+                // {
+                //     title: "Shaper Rotation",
+                //     value: '/rotation/full-shaper-invitation'
+                // },
             ]
         }
     }

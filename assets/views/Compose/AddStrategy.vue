@@ -1,6 +1,10 @@
 <template>
-    <v-overlay :model-value="showAdder" @click:outside="$emit('update:showAdder')" @update="$emit('update:showAdder')"
-               contained class="align-center justify-center">
+    <v-overlay
+        :model-value="showAdder"
+        @click:outside="$emit('update:showAdder')"
+        @update="$emit('update:showAdder')"
+        class="align-center justify-center"
+    >
         <div style="max-width: 600px" class="align-center justify-center">
             <v-btn
                 v-for="strat in availableStrategies"

@@ -13,7 +13,6 @@
                     cols="2"
                 >
                     <v-text-field
-                        class="mb-5"
                         label="Run times"
                         variant="outlined"
                         density="compact"
@@ -25,7 +24,6 @@
                     cols="2"
                 >
                     <v-text-field
-                        class="mb-5"
                         label="Average time to run (seconds)"
                         variant="outlined"
                         density="compact"
@@ -47,12 +45,13 @@
             </v-row>
 
 
-            <p v-if="value.strategies.length" class="text-h6 text-grey-darken-2">Composed strategies:</p>
+            <p v-if="value.strategies.length" class="text-h6 text-grey-darken-2 mt-2">Composed strategies:</p>
 
             <manage-strategy
-                class="mt-3 ml-10"
+                class="mt-3 ml-16"
                 v-for="(strat, key) in value.strategies"
                 :value="strat"
+                :available-strategies="availableStrategies"
                 @deleted="value.strategies.splice(key, 1)"
             ></manage-strategy>
 

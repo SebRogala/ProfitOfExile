@@ -8,9 +8,9 @@
 
     <v-btn
         color="success"
-        icon="mdi-plus"
-        @click="addStrategyOverlay = !addStrategyOverlay"
+        @click="addStrategyOverlay = true"
     >
+        Add strategy
     </v-btn>
 
     <add-strategy
@@ -25,6 +25,7 @@
 <script>
 import ManageStrategy from "./ManageStrategy";
 import AddStrategy from "./AddStrategy";
+
 export default {
     name: 'ComposeStrategies',
     components: {AddStrategy, ManageStrategy},
@@ -32,25 +33,7 @@ export default {
         return {
             addStrategyOverlay: false,
             availableStrategies: [],
-            composedStrategies: [
-                {
-                    "key": "run-shaper",
-                    "name": "RunShaper",
-                    "averageTime": 480,
-                    "probability": 100,
-                    "series": 1,
-                    "strategies": [
-                        {
-                            "key": "run-shaper",
-                            "name": "RunShaper",
-                            "averageTime": 480,
-                            "probability": 100,
-                            "series": 1,
-                            "strategies": []
-                        }
-                    ]
-                }
-            ]
+            composedStrategies: []
         }
     },
     mounted() {
