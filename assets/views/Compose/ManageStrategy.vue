@@ -64,22 +64,43 @@
                 @click="$emit('deleted')"
             >Remove
             </v-btn>
+
+            <v-btn
+                color="success"
+                @click="showAdder = true"
+            >Add strategy
+            </v-btn>
         </v-card-actions>
+
+        <add-strategy
+            v-model:show-adder="showAdder"
+            :available-strategies="availableStrategies"
+            @strategyAdded="addNewStrategy"
+        ></add-strategy>
     </v-card>
 </template>
 
 <script>
+import AddStrategy from "./AddStrategy";
 export default {
     name: 'ManageStrategy',
+    components: {AddStrategy},
     emits: ['deleted'],
     props: {
-        value: Object
+        value: Object,
+        availableStrategies: Array
     },
     data() {
-        return {}
+        return {
+            showAdder: false,
+        }
     },
     mounted() {
     },
-    methods: {}
+    methods: {
+        addNewStrategy(data) {
+            this.value.strategies.push(data);
+        }
+    }
 }
 </script>

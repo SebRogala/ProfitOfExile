@@ -2,6 +2,7 @@
     <manage-strategy
         v-for="(strat, key) in composedStrategies"
         :value="strat"
+        :available-strategies="availableStrategies"
         @deleted="composedStrategies.splice(key, 1)"
     ></manage-strategy>
 
