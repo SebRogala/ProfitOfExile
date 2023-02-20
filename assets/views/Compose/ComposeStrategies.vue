@@ -12,26 +12,21 @@
     >
     </v-btn>
 
-    <v-overlay v-model="addStrategyOverlay" contained class="align-center justify-center">
-        <div style="max-width: 600px" class="align-center justify-center">
-            <v-btn
-                v-for="strat in availableStrategies"
-                class="ma-1"
-                @click="addNewStrategy(strat)"
-            >
-                {{ strat.name }}
-            </v-btn>
-        </div>
-    </v-overlay>
+    <add-strategy
+        v-model:show-adder="addStrategyOverlay"
+        :available-strategies="availableStrategies"
+        @strategyAdded="addNewStrategy"
+    ></add-strategy>
 
     <pre>{{ composedStrategies }}</pre>
 </template>
 
 <script>
 import ManageStrategy from "./ManageStrategy";
+import AddStrategy from "./AddStrategy";
 export default {
     name: 'ComposeStrategies',
-    components: {ManageStrategy},
+    components: {AddStrategy, ManageStrategy},
     data() {
         return {
             addStrategyOverlay: false,
@@ -66,16 +61,8 @@ export default {
                 this.availableStrategies = res.data;
             });
         },
-        addNewStrategy(strat) {
-            this.composedStrategies.push({
-                "key": strat.key,
-                "name": strat.name,
-                "averageTime": strat.averageTime,
-                "probability": strat.probability,
-                "series": 1,
-                "strategies": []
-            });
-            this.addStrategyOverlay = false;
+        addNewStrategy(data) {
+            this.composedStrategies.push(data);
         }
     }
 }
