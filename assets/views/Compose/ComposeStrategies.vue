@@ -2,6 +2,7 @@
     <manage-strategy
         :value="composedStrategies"
         :available-strategies="availableStrategies"
+        :depth="0"
         @deleted="deleteStrategy"
     ></manage-strategy>
 
@@ -69,8 +70,8 @@ export default {
         addNewStrategy(data) {
             this.composedStrategies.push(data);
         },
-        deleteStrategy(key) {
-            this.composedStrategies.splice(key, 1)
+        deleteStrategy(obj) {
+            this.composedStrategies.splice(obj.key, 1)
         },
         sendRequest() {
             this.$api.post('/strategy/compose', this.composedStrategies).then(res => {

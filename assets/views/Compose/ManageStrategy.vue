@@ -7,6 +7,7 @@
         <v-timeline-item
             v-for="(strategy, key) in value"
             size="small"
+            :dot-color="colors[depth]"
         >
             <div class="text-h6">{{ strategy.name }}</div>
 
@@ -46,7 +47,7 @@
                     variant="flat"
                     icon="mdi-close"
                     size="x-small"
-                    @click="$emit('deleted', key)"
+                    @click="emitDelete(key)"
                 >
                 </v-btn>
             </div>
@@ -62,6 +63,8 @@
                 class="ml-7 mt-4"
                 :value="strategy.strategies"
                 :available-strategies="availableStrategies"
+                :parent-array-key="key"
+                :depth="depth+1"
                 @deleted="deleteStrategy"
             ></manage-strategy>
         </v-timeline-item>
@@ -83,12 +86,22 @@ export default {
     emits: ['deleted'],
     props: {
         value: Array,
-        availableStrategies: Array
+        availableStrategies: Array,
+        depth: Number,
+        parentArrayKey: Number
     },
     data() {
         return {
             showAdder: false,
             toAddIndex: null,
+            colors: [
+                "#424242",
+                "#F4511E",
+                "#689F38",
+                "#40C4FF",
+                "#6A1B9A",
+                "#1B5E20",
+            ]
         }
     },
     mounted() {
@@ -97,12 +110,15 @@ export default {
         addNewStrategy(data) {
             this.value[this.toAddIndex].strategies.push(data);
         },
-        deleteStrategy(key) {
-            this.value.splice(key, 1)
+        deleteStrategy(obj) {
+            this.value[obj.parentKey].strategies.splice(obj.key, 1)
         },
         openAdder(key) {
             this.showAdder = true;
             this.toAddIndex = key;
+        },
+        emitDelete(key) {
+            this.$emit('deleted', {key: key, parentKey: this.parentArrayKey})
         }
     }
 }
