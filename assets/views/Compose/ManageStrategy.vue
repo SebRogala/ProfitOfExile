@@ -52,21 +52,21 @@
                 </v-btn>
             </div>
 
-            <v-btn
-                color="success"
-                variant="outlined"
-                @click="openAdder(key)"
-            >Add strategy (to {{ strategy.name }})
-            </v-btn>
-
             <manage-strategy
-                class="ml-7 mt-4"
+                class="ml-7 mb-4"
                 :value="strategy.strategies"
                 :available-strategies="availableStrategies"
                 :parent-array-key="key"
                 :depth="depth+1"
                 @deleted="deleteStrategy"
             ></manage-strategy>
+
+            <v-btn
+                color="success"
+                variant="outlined"
+                @click="openAdder(key)"
+            >Add strategy (to {{ strategy.name }})
+            </v-btn>
         </v-timeline-item>
 
         <add-strategy

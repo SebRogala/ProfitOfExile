@@ -14,6 +14,7 @@ import router from "./router";
 import vuetify from './plugins/vuetify'
 import api from "./plugins/api";
 import datetime from "./plugins/datetime";
+import storage from "./plugins/storage"
 
 import Vue from './App'
 
@@ -22,4 +23,5 @@ createApp(Vue)
   .use(vuetify)
   .use(api)
   .use(datetime)
+  .use(storage)
   .mount('#app');

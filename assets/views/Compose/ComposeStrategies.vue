@@ -19,13 +19,17 @@
             color="info"
             @click="sendRequest"
         >
-            Send
+            Calculate
         </v-btn>
+
+        <save-strategy
+            :strategies="composedStrategies"
+        ></save-strategy>
 
         <v-btn
             class="ml-16"
             color="warning"
-            @click="composedStrategies = []"
+            @click="composedStrategies = []; results = {}"
         >
             Clear
         </v-btn>
@@ -46,10 +50,11 @@
 import ManageStrategy from "./ManageStrategy";
 import AddStrategy from "./AddStrategy";
 import Results from "./Results";
+import SaveStrategy from "./SaveStrategy";
 
 export default {
     name: 'ComposeStrategies',
-    components: {Results, AddStrategy, ManageStrategy},
+    components: {SaveStrategy, Results, AddStrategy, ManageStrategy},
     data() {
         return {
             addStrategyOverlay: false,
