@@ -8,15 +8,15 @@
 // any CSS you import will output into a single css file (app.css in this case)
 import './styles/app.css';
 
-import { createApp } from 'vue';
+import Vue from './App'
+import {createApp} from 'vue';
 import router from "./router";
 
 import vuetify from './plugins/vuetify'
 import api from "./plugins/api";
 import datetime from "./plugins/datetime";
 import storage from "./plugins/storage"
-
-import Vue from './App'
+import filters from "./plugins/filters";
 
 createApp(Vue)
   .use(router)
@@ -24,4 +24,5 @@ createApp(Vue)
   .use(api)
   .use(datetime)
   .use(storage)
+  .use(filters)
   .mount('#app');

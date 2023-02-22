@@ -1,12 +1,5 @@
 <template>
-    <manage-strategy
-        :value="composedStrategies"
-        :available-strategies="availableStrategies"
-        :depth="0"
-        @deleted="deleteStrategy"
-    ></manage-strategy>
-
-    <div class="mt-3">
+    <div class="mb-6 mt-4">
         <v-btn
             color="success"
             @click="addStrategyOverlay = true"
@@ -40,8 +33,16 @@
     </div>
 
     <results
+        v-if="results.totalTimeInMinutes"
         :results="results"
     ></results>
+
+    <manage-strategy
+        :value="composedStrategies"
+        :available-strategies="availableStrategies"
+        :depth="0"
+        @deleted="deleteStrategy"
+    ></manage-strategy>
 
     <add-strategy
         v-model:show-adder="addStrategyOverlay"

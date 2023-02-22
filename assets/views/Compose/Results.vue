@@ -1,30 +1,33 @@
 <template>
-    <v-row v-show="results.totalTimeInMinutes" class="mt-4 mb-4">
+    <v-row class="pt-6 pb-6">
         <v-col
             cols="3"
         >
-            <p>Time: {{ results.totalTimeInMinutes }} min</p>
+            <p>Time: {{ $filters.number(results.totalTimeInMinutes) }} min</p>
         </v-col>
         <v-col
             cols="3"
         >
-            <p>Chaos per hour: {{ results.chaosPerHour }}</p>
+            <p>Chaos per hour: {{ $filters.number(results.chaosPerHour) }}</p>
         </v-col>
         <v-col
             cols="3"
         >
-            <p>Div per hour: {{ results.divPerHour }}</p>
+            <p>Div per hour: {{ $filters.number(results.divPerHour) }}</p>
         </v-col>
         <v-col
             cols="3"
         >
-            <p>Profit: {{ results.profit }} (chaos)</p>
+            <p>Profit: {{ $filters.number(results.profit) }} (chaos)</p>
         </v-col>
     </v-row>
 
-    <v-table density="compact" v-show="results.items">
+    <v-table
+        class="pb-6"
+        density="compact"
+    >
         <thead>
-        <tr>
+        <tr class="font-weight-bold">
             <th class="text-left">
                 Name
             </th>
@@ -45,9 +48,9 @@
             :key="item.name"
         >
             <td>{{ item.name }}</td>
-            <td>{{ item.singularPrice }}</td>
+            <td>{{ $filters.number(item.singularPrice) }}</td>
             <td>{{ item.quantity }}</td>
-            <td>{{ item.summedPrice }}</td>
+            <td>{{ $filters.number(item.summedPrice) }}</td>
         </tr>
         </tbody>
     </v-table>
