@@ -22,6 +22,17 @@ const storage = {
 
             return null;
         };
+
+        app.config.globalProperties.$storage.getStrategyNames = () => {
+            let strategies = JSON.parse(localStorage.getItem('storedStrategies'));
+
+            if (null === strategies) {
+                return [];
+            }
+
+            return Object.keys(strategies);
+        };
+
     },
 };
 

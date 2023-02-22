@@ -26,6 +26,10 @@
             :strategies="composedStrategies"
         ></save-strategy>
 
+        <load-strategy
+            @loaded="strategyLoaded"
+        ></load-strategy>
+
         <v-btn
             class="ml-16"
             color="warning"
@@ -51,10 +55,11 @@ import ManageStrategy from "./ManageStrategy";
 import AddStrategy from "./AddStrategy";
 import Results from "./Results";
 import SaveStrategy from "./SaveStrategy";
+import LoadStrategy from "./LoadStrategy";
 
 export default {
     name: 'ComposeStrategies',
-    components: {SaveStrategy, Results, AddStrategy, ManageStrategy},
+    components: {LoadStrategy, SaveStrategy, Results, AddStrategy, ManageStrategy},
     data() {
         return {
             addStrategyOverlay: false,
@@ -82,6 +87,9 @@ export default {
             this.$api.post('/strategy/compose', this.composedStrategies).then(res => {
                 this.results = res.data;
             });
+        },
+        strategyLoaded(data) {
+            this.composedStrategies = data;
         }
     }
 }
