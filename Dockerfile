@@ -6,6 +6,7 @@
 # https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact
 ARG PHP_VERSION=8.1
 ARG CADDY_VERSION=2
+ARG NODE_VERSION=18.10
 
 # "php" stage
 FROM php:${PHP_VERSION}-fpm-alpine AS symfony_php
@@ -125,3 +126,14 @@ COPY --from=dunglas/mercure:v0.11 /srv/public /srv/mercure-assets/
 COPY --from=symfony_caddy_builder /usr/bin/caddy /usr/bin/caddy
 COPY --from=symfony_php /srv/app/public public/
 COPY docker/caddy/Caddyfile /etc/caddy/Caddyfile
+
+FROM node:${NODE_VERSION} AS symfony_node
+
+ARG USER_ID=1000
+
+ENV APP_ENV=dev
+RUN usermod -u ${USER_ID} node
+COPY docker/node/entrypoint.sh /entrypoint.sh
+USER node
+WORKDIR /var/www
+ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]

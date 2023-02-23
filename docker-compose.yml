@@ -58,7 +58,6 @@ services:
 ###> symfony/mercure-bundle ###
 ###< symfony/mercure-bundle ###
 
-
   database:
     image: mariadb:10.5.16
     command: ["--default-authentication-plugin=mysql_native_password"]
@@ -76,6 +75,15 @@ services:
       # Where our data will be persisted
     volumes:
       - db-data-mysql:/var/lib/mysql:rw
+  
+  node:
+    build:
+      context: .
+      target: symfony_node
+      args: 
+        USER_ID: ${USER_ID:-1000}
+    volumes:
+      - ./:/var/www
 
 volumes:
   php_socket:
