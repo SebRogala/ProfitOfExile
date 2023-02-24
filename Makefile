@@ -1,4 +1,4 @@
-.PHONY: build-prod build-dev up-prod up-dev down-prod down-dev restart-prod-container restart-dev-container
+.PHONY: build-prod build-dev up-prod up-dev down-prod down-dev restart-prod restart-dev
 
 build-prod:
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
@@ -18,16 +18,16 @@ down-prod:
 down-dev:
 	docker-compose -f docker-compose.yml -f docker-compose.override.yml down
 
-restart-prod-container:
+restart-prod:
 ifdef container
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml restart $(container)
 else
-	@echo "required container=[container name]"
+	docker-compose -f docker-compose.yml -f docker-compose.prod.yml restart
 endif
 
-restart-dev-container:
+restart-dev:
 ifdef container
 	docker-compose -f docker-compose.yml -f docker-compose.override.yml restart $(container)
 else
-	@echo "required container=[container name]"
+	docker-compose -f docker-compose.yml -f docker-compose.override.yml restart
 endif
