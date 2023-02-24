@@ -26,3 +26,6 @@ services:
     ports:
       - "5432:5432"
 ###< doctrine/doctrine-bundle ###
+  node:
+    environment:
+      APP_ENV: dev
