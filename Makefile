@@ -9,14 +9,17 @@ build-dev:
 up-prod:
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
-up-dev:
+up:
 	docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
 
 down-prod:
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
 
-down-dev:
+down:
 	docker-compose -f docker-compose.yml -f docker-compose.override.yml down
+
+rewatch:
+	docker-compose -f docker-compose.yml -f docker-compose.override.yml restart node
 
 restart-dev:
 ifdef container
