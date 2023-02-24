@@ -6,14 +6,14 @@ function helper {
 
 function watch {
 	cd /var/www
-	npm install
-	npm run-script watch
+	yarn
+	yarn watch
 }
 
 function build {
 	cd /var/www
-	npm install
-	npm run-script build
+	yarn
+	yarn build
 }
 
 case $APP_ENV in

@@ -6,7 +6,7 @@
 # https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact
 ARG PHP_VERSION=8.1
 ARG CADDY_VERSION=2
-ARG NODE_VERSION=18.10
+ARG NODE_VERSION=14.21.3
 
 # "php" stage
 FROM php:${PHP_VERSION}-fpm-alpine AS symfony_php
@@ -129,11 +129,7 @@ COPY docker/caddy/Caddyfile /etc/caddy/Caddyfile
 
 FROM node:${NODE_VERSION} AS symfony_node
 
-ARG USER_ID=1000
-
 ENV APP_ENV=dev
-RUN usermod -u ${USER_ID} node
 COPY docker/node/entrypoint.sh /entrypoint.sh
-USER node
 WORKDIR /var/www
 ENTRYPOINT ["/bin/bash", "/entrypoint.sh"]
