@@ -16,8 +16,6 @@ function build {
 	npm run-script build
 }
 
-echo $APP_ENV
-
 case $APP_ENV in
 	'prod')
 		build
