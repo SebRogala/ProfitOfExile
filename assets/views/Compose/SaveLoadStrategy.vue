@@ -47,6 +47,16 @@
                                 >
                                     Load
                                 </v-btn>
+
+                                <v-btn
+                                    class="ml-1"
+                                    variant="tonal"
+                                    size="small"
+                                    color="error"
+                                    @click="remove(strategy)"
+                                >
+                                    Delete
+                                </v-btn>
                             </td>
                         </tr>
                         </tbody>
@@ -109,6 +119,10 @@ export default {
         load(name) {
             this.dialog = false;
             this.$emit('loaded', this.$storage.getStrategy(name));
+        },
+        remove(name) {
+            this.$storage.deleteStrategy(name);
+            this.getStrategies();
         },
         async save() {
             if (!this.composedStrategy.length) {

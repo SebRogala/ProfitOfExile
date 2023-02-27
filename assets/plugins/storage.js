@@ -33,6 +33,14 @@ const storage = {
             return Object.keys(strategies);
         };
 
+        app.config.globalProperties.$storage.deleteStrategy = (strategyName) => {
+            let strategies = JSON.parse(localStorage.getItem('storedStrategies')) || {};
+
+            delete strategies[strategyName];
+
+            localStorage.setItem('storedStrategies', JSON.stringify(strategies));
+        };
+
     },
 };
 
