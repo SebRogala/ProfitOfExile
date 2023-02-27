@@ -16,7 +16,7 @@ down-prod:
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
 
 down:
-	docker-compose -f docker-compose.yml -f docker-compose.override.yml down
+	docker-compose -f docker-compose.yml -f docker-compose.override.yml down --remove-orphans
 
 rewatch:
 	docker-compose -f docker-compose.yml -f docker-compose.override.yml restart node
