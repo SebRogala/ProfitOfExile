@@ -19,18 +19,43 @@
             </v-card-title>
             <v-card-text>
                 <v-container>
-                    <v-btn
-                        v-for="strategy in strategies"
-                        class="ma-1"
-                        variant="text"
-                        color="info"
-                        @click="load(strategy)"
+                    <v-table
+                        class="mb-4"
+                        density="compact"
                     >
-                        {{ strategy }}
-                    </v-btn>
+                        <thead>
+                        <tr>
+                            <th class="text-left">
+                                Name
+                            </th>
+                            <th class="text-left">
+                                Actions
+                            </th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr
+                            v-for="strategy in strategies"
+                        >
+                            <td>{{ strategy }}</td>
+                            <td>
+                                <v-btn
+                                    variant="tonal"
+                                    size="small"
+                                    color="primary"
+                                    @click="load(strategy)"
+                                >
+                                    Load
+                                </v-btn>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </v-table>
 
                     <v-form ref="form" v-if="composedStrategy.length">
+                        <span class="text-h6">Save strategy</span>
                         <v-text-field
+                            class="mt-2"
                             label="Strategy name"
                             variant="outlined"
                             density="compact"
@@ -73,7 +98,7 @@ export default {
     data() {
         return {
             newStrategyName: "",
-            dialog: true,
+            dialog: false,
             strategies: []
         }
     },
@@ -97,8 +122,8 @@ export default {
                 return;
             }
 
-            this.$storage.saveStrategy(this.newStrategyName, this.composedStrategy);
             this.dialog = false;
+            this.$storage.saveStrategy(this.newStrategyName, this.composedStrategy);
             this.$emit('saved');
         }
     }
