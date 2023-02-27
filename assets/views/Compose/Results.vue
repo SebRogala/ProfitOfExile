@@ -32,10 +32,10 @@
                 Name
             </th>
             <th class="text-left">
-                Singular price
+                Quantity
             </th>
             <th class="text-left">
-                Quantity
+                Singular price
             </th>
             <th class="text-left">
                 Sum (chaos)
@@ -48,8 +48,8 @@
             :key="item.name"
         >
             <td>{{ item.name }}</td>
-            <td>{{ $filters.number(item.singularPrice) }}</td>
             <td>{{ item.quantity }}</td>
+            <td>{{ $filters.number(item.singularPrice) }}</td>
             <td>{{ $filters.number(item.summedPrice) }}</td>
         </tr>
         </tbody>
