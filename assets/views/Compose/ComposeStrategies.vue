@@ -15,18 +15,16 @@
             Calculate
         </v-btn>
 
-        <save-strategy
-            :strategies="composedStrategies"
-        ></save-strategy>
-
-        <load-strategy
+        <save-load-strategy
+            :composedStrategy="composedStrategies"
             @loaded="strategyLoaded"
-        ></load-strategy>
+            @saved="clear"
+        ></save-load-strategy>
 
         <v-btn
             class="ml-16"
             color="warning"
-            @click="composedStrategies = []; results = {}"
+            @click="clear"
         >
             Clear
         </v-btn>
@@ -55,12 +53,11 @@
 import ManageStrategy from "./ManageStrategy";
 import AddStrategy from "./AddStrategy";
 import Results from "./Results";
-import SaveStrategy from "./SaveStrategy";
-import LoadStrategy from "./LoadStrategy";
+import SaveLoadStrategy from "./SaveLoadStrategy";
 
 export default {
     name: 'ComposeStrategies',
-    components: {LoadStrategy, SaveStrategy, Results, AddStrategy, ManageStrategy},
+    components: {SaveLoadStrategy, Results, AddStrategy, ManageStrategy},
     data() {
         return {
             addStrategyOverlay: false,
@@ -91,6 +88,10 @@ export default {
         },
         strategyLoaded(data) {
             this.composedStrategies = data;
+        },
+        clear() {
+            this.composedStrategies = [];
+            this.results = {}
         }
     }
 }

@@ -1,34 +1,51 @@
 <template>
     <v-dialog
-        style="width: 400px"
         v-model="dialog"
         persistent
     >
         <template v-slot:activator="{ props }">
             <v-btn
-                class="ml-10"
+                class="ml-4"
                 color="primary"
                 v-bind="props"
+                @click="getStrategies"
             >
-                Save
+                Save / Load
             </v-btn>
         </template>
         <v-card>
             <v-card-title>
-                <span class="text-h5">Strategy name</span>
+                <span class="text-h5">Manage storing strategies</span>
             </v-card-title>
             <v-card-text>
                 <v-container>
-                    <v-form ref="form">
+                    <v-btn
+                        v-for="strategy in strategies"
+                        class="ma-1"
+                        variant="text"
+                        color="info"
+                        @click="load(strategy)"
+                    >
+                        {{ strategy }}
+                    </v-btn>
+
+                    <v-form ref="form" v-if="composedStrategy.length">
                         <v-text-field
-                            label="Name"
+                            label="Strategy name"
                             variant="outlined"
                             density="compact"
-                            v-model="name"
+                            v-model="newStrategyName"
                             :rules="[
                                     v => !!v || 'Strategy name is required'
                                   ]"
                         ></v-text-field>
+                        <v-btn
+                            color="success"
+                            variant="tonal"
+                            @click="save"
+                        >
+                            Save
+                        </v-btn>
                     </v-form>
                 </v-container>
             </v-card-text>
@@ -41,13 +58,6 @@
                 >
                     Close
                 </v-btn>
-                <v-btn
-                    color="blue-darken-1"
-                    variant="text"
-                    @click="save"
-                >
-                    Confirm
-                </v-btn>
             </v-card-actions>
         </v-card>
     </v-dialog>
@@ -55,19 +65,28 @@
 
 <script>
 export default {
-    name: "SaveStrategy",
+    name: "SaveLoadStrategy",
     props: {
-        strategies: Array,
+        composedStrategy: Array,
     },
+    emits: ['loaded', 'saved'],
     data() {
         return {
-            name: "",
-            dialog: false,
+            newStrategyName: "",
+            dialog: true,
+            strategies: []
         }
     },
     methods: {
+        getStrategies() {
+            this.strategies = this.$storage.getStrategyNames();
+        },
+        load(name) {
+            this.dialog = false;
+            this.$emit('loaded', this.$storage.getStrategy(name));
+        },
         async save() {
-            if (!this.strategies.length) {
+            if (!this.composedStrategy.length) {
                 this.dialog = false;
                 return;
             }
@@ -78,8 +97,9 @@ export default {
                 return;
             }
 
-            this.$storage.saveStrategy(this.name, this.strategies);
+            this.$storage.saveStrategy(this.newStrategyName, this.composedStrategy);
             this.dialog = false;
+            this.$emit('saved');
         }
     }
 }
