@@ -1,0 +1,106 @@
+<template>
+    <v-dialog
+        v-model="dialog"
+        persistent
+    >
+        <template v-slot:activator="{ props }">
+            <v-btn
+                class="ml-4"
+                color="primary"
+                v-bind="props"
+                @click="getStrategies"
+            >
+                Save / Load
+            </v-btn>
+        </template>
+        <v-card>
+            <v-card-title>
+                <span class="text-h5">Manage storing strategies</span>
+            </v-card-title>
+            <v-card-text>
+                <v-container>
+                    <v-btn
+                        v-for="strategy in strategies"
+                        class="ma-1"
+                        variant="text"
+                        color="info"
+                        @click="load(strategy)"
+                    >
+                        {{ strategy }}
+                    </v-btn>
+
+                    <v-form ref="form" v-if="composedStrategy.length">
+                        <v-text-field
+                            label="Strategy name"
+                            variant="outlined"
+                            density="compact"
+                            v-model="newStrategyName"
+                            :rules="[
+                                    v => !!v || 'Strategy name is required'
+                                  ]"
+                        ></v-text-field>
+                        <v-btn
+                            color="success"
+                            variant="tonal"
+                            @click="save"
+                        >
+                            Save
+                        </v-btn>
+                    </v-form>
+                </v-container>
+            </v-card-text>
+            <v-card-actions>
+                <v-spacer></v-spacer>
+                <v-btn
+                    color="blue-darken-1"
+                    variant="text"
+                    @click="dialog = false"
+                >
+                    Close
+                </v-btn>
+            </v-card-actions>
+        </v-card>
+    </v-dialog>
+</template>
+
+<script>
+export default {
+    name: "SaveLoadStrategy",
+    props: {
+        composedStrategy: Array,
+    },
+    emits: ['loaded', 'saved'],
+    data() {
+        return {
+            newStrategyName: "",
+            dialog: true,
+            strategies: []
+        }
+    },
+    methods: {
+        getStrategies() {
+            this.strategies = this.$storage.getStrategyNames();
+        },
+        load(name) {
+            this.dialog = false;
+            this.$emit('loaded', this.$storage.getStrategy(name));
+        },
+        async save() {
+            if (!this.composedStrategy.length) {
+                this.dialog = false;
+                return;
+            }
+
+            const {valid} = await this.$refs.form.validate()
+
+            if (!valid) {
+                return;
+            }
+
+            this.$storage.saveStrategy(this.newStrategyName, this.composedStrategy);
+            this.dialog = false;
+            this.$emit('saved');
+        }
+    }
+}
+</script>
