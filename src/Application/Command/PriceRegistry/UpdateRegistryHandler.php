@@ -63,17 +63,17 @@ class UpdateRegistryHandler
             [
                 'item' => YellowLifeforce::class,
                 'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('vivid-crystallised-lifeforce')['receive']['value'],
-                'tftInChaos' => $this->tftHttpClient->searchFor('Vivid')['chaos'] / 1000,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Vivid (Yellow)')['chaos'] / 1000,
             ],
             [
                 'item' => BlueLifeforce::class,
                 'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('primal-crystallised-lifeforce')['receive']['value'],
-                'tftInChaos' => $this->tftHttpClient->searchFor('Primal')['chaos'] / 1000,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Primal (Blue)')['chaos'] / 1000,
             ],
             [
                 'item' => PurpleLifeforce::class,
                 'ninjaInChaos' => $this->poeNinjaHttpClient->searchFor('wild-crystallised-lifeforce')['receive']['value'],
-                'tftInChaos' => $this->tftHttpClient->searchFor('Wild')['chaos'] / 1000,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Wild (Purple)')['chaos'] / 1000,
             ],
             [
                 'item' => ShaperGuardianMap::class,
