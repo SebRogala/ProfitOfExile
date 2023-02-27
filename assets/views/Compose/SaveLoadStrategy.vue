@@ -49,6 +49,17 @@
                                 </v-btn>
 
                                 <v-btn
+                                    v-if="composedStrategy.length"
+                                    class="ml-1"
+                                    variant="tonal"
+                                    size="small"
+                                    color="warning"
+                                    @click="overwrite(strategy)"
+                                >
+                                    Overwrite
+                                </v-btn>
+
+                                <v-btn
                                     class="ml-1"
                                     variant="tonal"
                                     size="small"
@@ -124,6 +135,11 @@ export default {
             this.$storage.deleteStrategy(name);
             this.getStrategies();
         },
+        async overwrite(name) {
+            this.dialog = false;
+            this.$storage.saveStrategy(name, this.composedStrategy);
+            this.$emit('saved');
+        },
         async save() {
             if (!this.composedStrategy.length) {
                 this.dialog = false;
@@ -138,6 +154,7 @@ export default {
 
             this.dialog = false;
             this.$storage.saveStrategy(this.newStrategyName, this.composedStrategy);
+            this.newStrategyName = '';
             this.$emit('saved');
         }
     }
