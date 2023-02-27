@@ -11,6 +11,6 @@ trait Name
         $string = array_pop($splitNamespace);
         $parts = preg_split('/(?=[A-Z])/', $string);
 
-        return implode(' ', $parts);
+        return trim(implode(' ', $parts));
     }
 }
