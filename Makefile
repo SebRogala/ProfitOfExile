@@ -1,4 +1,4 @@
-.PHONY: build-prod build-dev up-prod up-dev down-prod down-dev rewatch restart-dev
+.PHONY: build-prod build-dev up up-prod down down-prod rewatch restart-dev
 
 build-prod:
 	docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
