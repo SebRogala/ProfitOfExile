@@ -40,9 +40,10 @@
                             <td>{{ strategy }}</td>
                             <td>
                                 <v-btn
-                                    variant="tonal"
+                                    variant="outlined"
+                                    class="mr-4"
                                     size="small"
-                                    color="primary"
+                                    color="info"
                                     @click="load(strategy)"
                                 >
                                     Load
@@ -51,7 +52,7 @@
                                 <v-btn
                                     v-if="composedStrategy.length"
                                     class="ml-1"
-                                    variant="tonal"
+                                    variant="text"
                                     size="small"
                                     color="warning"
                                     @click="overwrite(strategy)"
@@ -61,7 +62,7 @@
 
                                 <v-btn
                                     class="ml-1"
-                                    variant="tonal"
+                                    variant="text"
                                     size="small"
                                     color="error"
                                     @click="remove(strategy)"
@@ -87,7 +88,7 @@
                         ></v-text-field>
                         <v-btn
                             color="success"
-                            variant="tonal"
+                            variant="outlined"
                             @click="save"
                         >
                             Save

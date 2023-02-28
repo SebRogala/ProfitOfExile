@@ -9,7 +9,7 @@
                 <v-list-item
                     v-for="(item,i) in leftMenuItems"
                     :key="i"
-                    active-color="primary"
+                    active-color="light-blue-lighten-2"
                     :value="item"
                     :to="item.value"
                 >
