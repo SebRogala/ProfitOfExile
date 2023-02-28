@@ -1,15 +1,14 @@
 import {createVuetify} from 'vuetify'
 import 'vuetify/dist/vuetify.min.css'
+import colors from 'vuetify/lib/util/colors'
 
 const opts = {
     theme: {
+        defaultTheme: 'dark',
         themes: {
-            light: {
+            dark: {
                 colors: {
-                    primary: '#1565c0',
-                    secondary: '#64b5f6',
-                    accent: '#78002e',
-                    error: '#d50000',
+                    primary: colors.indigo.base,
                 }
             },
         }
