@@ -87,40 +87,40 @@ class UpdateRegistryHandler
                 'item' => ShaperGuardianFragment::class,
 //                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
                 'ninjaInChaos' => $this->calculatePriceOfFour(
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['chaosEquivalent'],
                 )
             ],
             [
                 'item' => ElderGuardianFragment::class,
                 'ninjaInChaos' => $this->calculatePriceOfFour(
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['chaosEquivalent'],
                 )
             ],
             [
                 'item' => ShaperSet::class,
-//                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
-                'tftInChaos' => $divPrice / 3,
+                'tftInChaos' => $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
+//                'tftInChaos' => $divPrice / 3,
                 'ninjaInChaos' => $this->calculateSumPriceOfFour(
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['chaosEquivalent'],
                 )
             ],
             [
                 'item' => ElderSet::class,
                 'tftInChaos' => $this->tftHttpClient->searchFor('Elder Set')['chaos'],
                 'ninjaInChaos' => $this->calculateSumPriceOfFour(
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['pay']['value'],
-                    $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['pay']['value'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['chaosEquivalent'],
+                    $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['chaosEquivalent'],
                 )
             ],
             [
@@ -171,7 +171,7 @@ class UpdateRegistryHandler
 
     private function calculateSumPriceOfFour($price1, $price2, $price3, $price4): float
     {
-        return (1/$price1 + 1/$price2 + 1/$price3 + 1/$price4);
+        return ($price1 + $price2 + $price3 + $price4);
     }
 
     private function shouldUpdate(bool $shouldForceUpdate): bool
