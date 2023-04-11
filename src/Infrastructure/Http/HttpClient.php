@@ -9,7 +9,7 @@ abstract class HttpClient
 {
     protected string $baseUrl = '';
 
-    public function __construct(protected HttpClientInterface $client)
+    public function __construct(protected HttpClientInterface $client, protected string $league)
     {
     }
 

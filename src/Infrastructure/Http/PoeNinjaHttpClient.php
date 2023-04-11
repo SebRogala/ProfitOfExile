@@ -6,8 +6,6 @@ class PoeNinjaHttpClient extends HttpClient
 {
     protected string $baseUrl = 'https://poe.ninja/api/data';
 
-    private string $league = 'Sanctum';
-
     private array $data = [];
 
     public function searchFor(string $key): mixed

@@ -26,7 +26,7 @@ class TftHttpClient extends HttpClient
             }
         }
 
-        return null;
+        return ['chaos' => 0];
     }
 
     public function getBulkInvitationPrices(): array
