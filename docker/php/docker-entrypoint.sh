@@ -7,18 +7,13 @@ if [ "${1#-}" != "$1" ]; then
 fi
 
 if [ "$1" = 'php-fpm' ] || [ "$1" = 'php' ] || [ "$1" = 'bin/console' ]; then
-	PHP_INI_RECOMMENDED="$PHP_INI_DIR/php.ini-production"
-	if [ "$APP_ENV" != 'prod' ]; then
-		PHP_INI_RECOMMENDED="$PHP_INI_DIR/php.ini-development"
-	fi
-	ln -sf "$PHP_INI_RECOMMENDED" "$PHP_INI_DIR/php.ini"
-
-	mkdir -p var/cache var/log
-
-	# The first time volumes are mounted, the project needs to be recreated
+	# Install the project the first time PHP is started
+	# After the installation, the following block can be deleted
 	if [ ! -f composer.json ]; then
 		CREATION=1
-		composer create-project "$SKELETON $SYMFONY_VERSION" tmp --stability="$STABILITY" --prefer-dist --no-progress --no-interaction --no-install
+
+		rm -Rf tmp/
+		composer create-project "symfony/skeleton $SYMFONY_VERSION" tmp --stability="$STABILITY" --prefer-dist --no-progress --no-interaction --no-install
 
 		cd tmp
 		composer require "php:>=$PHP_VERSION"
@@ -30,19 +25,19 @@ if [ "$1" = 'php-fpm' ] || [ "$1" = 'php' ] || [ "$1" = 'bin/console' ]; then
 	fi
 
 	if [ "$APP_ENV" != 'prod' ]; then
-		rm -f .env.local.php
 		composer install --prefer-dist --no-progress --no-interaction
 	fi
 
 	if grep -q ^DATABASE_URL= .env; then
+		# After the installation, the following block can be deleted
 		if [ "$CREATION" = "1" ]; then
-			echo "To finish the installation please press Ctrl+C to stop Docker Compose and run: docker-compose up --build"
+			echo "To finish the installation please press Ctrl+C to stop Docker Compose and run: docker compose up --build"
 			sleep infinity
 		fi
 
 		echo "Waiting for db to be ready..."
 		ATTEMPTS_LEFT_TO_REACH_DATABASE=60
-		until [ $ATTEMPTS_LEFT_TO_REACH_DATABASE -eq 0 ] || DATABASE_ERROR=$(php bin/console dbal:run-sql "SELECT 1" 2>&1); do
+		until [ $ATTEMPTS_LEFT_TO_REACH_DATABASE -eq 0 ] || DATABASE_ERROR=$(bin/console dbal:run-sql "SELECT 1" 2>&1); do
 			if [ $? -eq 255 ]; then
 				# If the Doctrine command exits with 255, an unrecoverable error occurred
 				ATTEMPTS_LEFT_TO_REACH_DATABASE=0

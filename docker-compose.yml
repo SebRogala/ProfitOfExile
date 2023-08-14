@@ -4,10 +4,9 @@ services:
   php:
     build:
       context: .
-      target: symfony_php
+      target: app_php
       args:
         SYMFONY_VERSION: ${SYMFONY_VERSION:-}
-        SKELETON: ${SKELETON:-symfony/skeleton}
         STABILITY: ${STABILITY:-stable}
     volumes:
       - php_socket:/var/run/php
@@ -18,24 +17,24 @@ services:
       start_period: 30s
     environment:
       # Run "composer require symfony/orm-pack" to install and configure Doctrine ORM
-      DATABASE_URL: mysql://symfony:ChangeMe@database:3306/app?serverVersion=mariadb-10.5.16&charset=utf8mb4
+      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-!ChangeMe!}@database:5432/${POSTGRES_DB:-app}?serverVersion=${POSTGRES_VERSION:-15}&charset=${POSTGRES_CHARSET:-utf8}
       # Run "composer require symfony/mercure-bundle" to install and configure the Mercure integration
       MERCURE_URL: ${CADDY_MERCURE_URL:-http://caddy/.well-known/mercure}
       MERCURE_PUBLIC_URL: https://${SERVER_NAME:-localhost}/.well-known/mercure
-      MERCURE_JWT_SECRET: ${CADDY_MERCURE_JWT_SECRET:-!ChangeMe!}
+      MERCURE_JWT_SECRET: ${CADDY_MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
     depends_on:
-      - database
+      - mongo
 
   caddy:
     build:
       context: .
-      target: symfony_caddy
+      target: app_caddy
     depends_on:
       - php
     environment:
       SERVER_NAME: ${SERVER_NAME:-localhost, caddy:80}
-      MERCURE_PUBLISHER_JWT_KEY: ${CADDY_MERCURE_JWT_SECRET:-!ChangeMe!}
-      MERCURE_SUBSCRIBER_JWT_KEY: ${CADDY_MERCURE_JWT_SECRET:-!ChangeMe!}
+      MERCURE_PUBLISHER_JWT_KEY: ${CADDY_MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
+      MERCURE_SUBSCRIBER_JWT_KEY: ${CADDY_MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
     volumes:
       - php_socket:/var/run/php
       - caddy_data:/data
@@ -53,29 +52,17 @@ services:
       - target: 443
         published: ${HTTP3_PORT:-443}
         protocol: udp
-
-# Mercure is installed as a Caddy module, prevent the Flex recipe from installing another service
-###> symfony/mercure-bundle ###
-###< symfony/mercure-bundle ###
-
-  database:
-    image: mariadb:10.5.16
-    command: ["--default-authentication-plugin=mysql_native_password"]
+        
+  mongo:
+    image: mongo:4.4
     environment:
-      MYSQL_DATABASE: 'app'
-      MYSQL_USER: 'symfony'
-      MYSQL_PASSWORD: 'ChangeMe'
-      MYSQL_ROOT_PASSWORD: 'ChangeMe'
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ChangeMe
     ports:
-      # <Port exposed> : < MySQL Port running inside container>
-      - '3306:3306'
-    expose:
-      # Opens port 3306 on the container
-      - '3306'
-      # Where our data will be persisted
+      - '27017:27017'
     volumes:
-      - db-data-mysql:/var/lib/mysql:rw
-  
+      - db-data-mongo:/data/db
+        
   node:
     build:
       context: .
@@ -83,13 +70,14 @@ services:
     volumes:
       - ./:/var/www
 
+# Mercure is installed as a Caddy module, prevent the Flex recipe from installing another service
+###> symfony/mercure-bundle ###
+###< symfony/mercure-bundle ###
+
 volumes:
   php_socket:
   caddy_data:
   caddy_config:
+  db-data-mongo:
 ###> symfony/mercure-bundle ###
 ###< symfony/mercure-bundle ###
-
-###> doctrine/doctrine-bundle ###
-  db-data-mysql:
-###< doctrine/doctrine-bundle ###

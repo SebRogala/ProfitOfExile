@@ -13,7 +13,7 @@ Otherwise, use [this affiliate link](https://m.do.co/c/5d8aabe3ab80) to get $100
 Then, click on the "Marketplace" tab under the "Choose an image" section and search for the app named "Docker".
 This will provision an Ubuntu server with the latest versions of Docker and Docker Compose already installed!
 
-To test, the cheapest plan will be enough, but for real production usage you'll probably want to pick a plan in the "general purpose" section that will fit your needs.
+For test purposes, cheapest plans will be enough, even though you might want at least 2GB of RAM to execute Docker Compose for the first time. For real production usage, you'll probably want to pick a plan in the "general purpose" section that will fit your needs.
 
 ![Deploying a Symfony app on DigitalOcean with Docker Compose](digitalocean-droplet.png)
 
@@ -65,8 +65,8 @@ Go into the directory containing your project (`<project-name>`), and start the 
 ```console
 SERVER_NAME=your-domain-name.example.com \
 APP_SECRET=ChangeMe \
-CADDY_MERCURE_JWT_SECRET=ChangeMe \
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+CADDY_MERCURE_JWT_SECRET=ChangeThisMercureHubJWTSecretKey \
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 Be sure to replace `your-domain-name.example.com` by your actual domain name and to set the values of `APP_SECRET`, `CADDY_MERCURE_JWT_SECRET` to cryptographically secure random values.
@@ -81,11 +81,25 @@ Alternatively, if you don't want to expose an HTTPS server but only an HTTP one,
 ```console
 SERVER_NAME=:80 \
 APP_SECRET=ChangeMe \
-CADDY_MERCURE_JWT_SECRET=ChangeMe \
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+CADDY_MERCURE_JWT_SECRET=ChangeThisMercureHubJWTSecretKey \
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## Deploying on Multiple Nodes
 
 If you want to deploy your app on a cluster of machines, you can use [Docker Swarm](https://docs.docker.com/engine/swarm/stack-deploy/),
 which is compatible with the provided Compose files.
+To deploy on Kubernetes, take a look at [the Helm chart provided with API Platform](https://api-platform.com/docs/deployment/kubernetes/), which can be easily adapted for use with Symfony Docker.
+
+## Configuring a Load Balancer or a Reverse Proxy
+
+Since Caddy 2.5, XFF values of incoming requests will be ignored to prevent spoofing.
+So if Caddy is not the first server being connected to by your clients (for example when a CDN is in front of Caddy), you may configure `trusted_proxies` with a list of IP ranges (CIDRs) from which incoming requests are trusted to have sent good values for these headers.
+As a shortcut, `private_ranges` may be configured to trust all private IP ranges.
+
+```diff
+-php_fastcgi unix//var/run/php/php-fpm.sock
++php_fastcgi unix//var/run/php/php-fpm.sock {
++    trusted_proxies private_ranges
++}
+```

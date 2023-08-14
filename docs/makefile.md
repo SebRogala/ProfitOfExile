@@ -5,7 +5,7 @@ To use it, create a new `Makefile` file at the root of your project. Copy/paste
 the content in the template section. To view all the available commands, run `make`.
 
 For example, in the [getting started section](/README.md#getting-started), the
-`docker-compose` commands could be replaced by:
+`docker compose` commands could be replaced by:
 
 1. Run `make build` to build fresh images
 2. Run `make up` (detached mode without logs)
@@ -20,7 +20,8 @@ If you want to run make from within the `php` container, in the [Dockerfile](/Do
 add:
 
 ```diff
-gnu-libiconv \
+gettext \
+git \
 +make \
 ```
 
@@ -28,13 +29,13 @@ And rebuild the PHP image.
 
 **PS**: If using Windows, you have to install [chocolatey.org](https://chocolatey.org/)
 or use [Cygwin](http://cygwin.com) to use the `make` command. Check out this
-[StackOverflow question](https://stackoverflow.com/q/2532234/633864) for more explanations. 
+[StackOverflow question](https://stackoverflow.com/q/2532234/633864) for more explanations.
 
 ## The template
 
 ```Makefile
 # Executables (local)
-DOCKER_COMP = docker-compose
+DOCKER_COMP = docker compose
 
 # Docker containers
 PHP_CONT = $(DOCKER_COMP) exec php
@@ -42,15 +43,15 @@ PHP_CONT = $(DOCKER_COMP) exec php
 # Executables
 PHP      = $(PHP_CONT) php
 COMPOSER = $(PHP_CONT) composer
-SYMFONY  = $(PHP_CONT) bin/console
+SYMFONY  = $(PHP) bin/console
 
 # Misc
 .DEFAULT_GOAL = help
-.PHONY        = help build up start down logs sh composer vendor sf cc
+.PHONY        : help build up start down logs sh composer vendor sf cc
 
-## —— 🎵 🐳 The Symfony-docker Makefile 🐳 🎵 ——————————————————————————————————
+## —— 🎵 🐳 The Symfony Docker Makefile 🐳 🎵 ——————————————————————————————————
 help: ## Outputs this help screen
-	@grep -E '(^[a-zA-Z0-9_-]+:.*?##.*$$)|(^##)' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}{printf "\033[32m%-30s\033[0m %s\n", $$1, $$2}' | sed -e 's/\[32m##/[33m/'
+	@grep -E '(^[a-zA-Z0-9\./_-]+:.*?##.*$$)|(^##)' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}{printf "\033[32m%-30s\033[0m %s\n", $$1, $$2}' | sed -e 's/\[32m##/[33m/'
 
 ## —— Docker 🐳 ————————————————————————————————————————————————————————————————
 build: ## Builds the Docker images
