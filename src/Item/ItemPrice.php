@@ -7,12 +7,25 @@ namespace App\Item;
 use Doctrine\ODM\MongoDB\Mapping\Annotations as ODM;
 use Doctrine\ODM\MongoDB\Types\Type;
 
-#[ODM\Document]
+#[ODM\Document(repositoryClass: ItemPriceRepository::class)]
 class ItemPrice
 {
     #[ODM\Id]
     private $id;
 
     #[ODM\Field(type: Type::STRING)]
-    private string $name = 'test';
+    public readonly string $name;
+
+    #[ODM\Field(type: Type::FLOAT)]
+    public readonly ?float $ninjaInChaos;
+
+    #[ODM\Field(type: Type::FLOAT)]
+    public readonly ?float $tftInChaos;
+
+    public function __construct(string $name, ?float $ninjaInChaos, ?float $tftInChaos)
+    {
+        $this->name = $name;
+        $this->ninjaInChaos = $ninjaInChaos;
+        $this->tftInChaos = $tftInChaos;
+    }
 }

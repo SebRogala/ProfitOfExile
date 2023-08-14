@@ -1,11 +1,11 @@
 controllers:
-    resource: ../src/Presentation/Controller/
+    resource: ../src/HttpAction
     type: attribute
-
-price_registry:
-    resource: ../src/Presentation/PriceRegistry
-    type: attribute
-
-strategy:
-    resource: ../src/Presentation/Strategy
-    type: attribute
+#
+#price_registry:
+#    resource: ../src/Presentation/PriceRegistry
+#    type: attribute
+#
+#strategy:
+#    resource: ../src/Presentation/Strategy
+#    type: attribute
