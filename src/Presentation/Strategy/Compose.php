@@ -3,7 +3,7 @@
 namespace App\Presentation\Strategy;
 
 use App\Domain\Inventory\Inventory;
-use App\Infrastructure\Strategy\Runner;
+use App\StrategyBuilder\Runner;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;

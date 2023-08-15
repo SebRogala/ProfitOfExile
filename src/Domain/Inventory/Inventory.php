@@ -2,10 +2,10 @@
 
 namespace App\Domain\Inventory;
 
-use App\Domain\Item\Item;
-use App\Domain\Strategy\Strategy;
 use App\Infrastructure\Market\Buyer;
 use App\Infrastructure\Pricer\Pricer;
+use App\Item\Item;
+use App\StrategyBuilder\Strategy\Strategy;
 
 class Inventory
 {

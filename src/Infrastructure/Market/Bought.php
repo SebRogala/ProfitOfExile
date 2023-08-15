@@ -3,7 +3,7 @@
 namespace App\Infrastructure\Market;
 
 use App\Domain\Inventory\Inventory;
-use App\Domain\Item\Item;
+use App\Item\Item;
 
 class Bought
 {

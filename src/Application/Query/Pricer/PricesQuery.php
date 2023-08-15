@@ -2,7 +2,7 @@
 
 namespace App\Application\Query\Pricer;
 
-use App\Domain\Item\Item;
+use App\Item\Item;
 
 interface PricesQuery
 {

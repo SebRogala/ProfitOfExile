@@ -5,8 +5,8 @@ namespace App\Infrastructure\Pricer\Query;
 use App\Application\Command\PriceRegistry\UpdateRegistry;
 use App\Application\CommandBus;
 use App\Application\Query\Pricer\PricesQuery;
-use App\Domain\Item\Currency\DivineOrb;
-use App\Domain\Item\Item;
+use App\Item\Currency\DivineOrb;
+use App\Item\Item;
 
 class FilePricerQuery implements PricesQuery
 {

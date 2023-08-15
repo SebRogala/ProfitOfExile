@@ -2,15 +2,15 @@
 
 namespace App\Domain\Inventory;
 
-use App\Domain\Item\Fragment\ElderGuardianFragment;
-use App\Domain\Item\Fragment\MavenSplinter;
-use App\Domain\Item\Fragment\ShaperGuardianFragment;
-use App\Domain\Item\Fragment\UberElderElderFragment;
-use App\Domain\Item\Fragment\UberElderShaperFragment;
-use App\Domain\Item\Map\MavenWrit;
-use App\Domain\Item\Set\ElderSet;
-use App\Domain\Item\Set\ShaperSet;
-use App\Domain\Item\Set\UberElderSet;
+use App\Item\Fragment\ElderGuardianFragment;
+use App\Item\Fragment\MavenSplinter;
+use App\Item\Fragment\ShaperGuardianFragment;
+use App\Item\Fragment\UberElderElderFragment;
+use App\Item\Fragment\UberElderShaperFragment;
+use App\Item\Map\MavenWrit;
+use App\Item\Set\ElderSet;
+use App\Item\Set\ShaperSet;
+use App\Item\Set\UberElderSet;
 
 class SetConverter
 {

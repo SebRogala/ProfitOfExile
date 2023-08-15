@@ -2,27 +2,27 @@
 
 namespace App\Application\Command\PriceRegistry;
 
-use App\Domain\Item\Currency\BlueLifeforce;
-use App\Domain\Item\Currency\ChaosOrb;
-use App\Domain\Item\Currency\DivineOrb;
-use App\Domain\Item\Currency\OrbOfScouring;
-use App\Domain\Item\Currency\PurpleLifeforce;
-use App\Domain\Item\Currency\YellowLifeforce;
-use App\Domain\Item\Fragment\ElderGuardianFragment;
-use App\Domain\Item\Fragment\MavenSplinter;
-use App\Domain\Item\Fragment\ShaperGuardianFragment;
-use App\Domain\Item\Fragment\UberElderElderFragment;
-use App\Domain\Item\Fragment\UberElderShaperFragment;
-use App\Domain\Item\Map\ElderGuardianMap;
-use App\Domain\Item\Map\MavenWrit;
-use App\Domain\Item\Map\ShaperGuardianMap;
-use App\Domain\Item\Map\TheFormed;
-use App\Domain\Item\Map\TheTwisted;
-use App\Domain\Item\Set\ElderSet;
-use App\Domain\Item\Set\ShaperSet;
-use App\Domain\Item\Set\UberElderSet;
-use App\Infrastructure\Http\PoeNinjaHttpClient;
-use App\Infrastructure\Http\TftHttpClient;
+use App\Item\Currency\BlueLifeforce;
+use App\Item\Currency\ChaosOrb;
+use App\Item\Currency\DivineOrb;
+use App\Item\Currency\OrbOfScouring;
+use App\Item\Currency\PurpleLifeforce;
+use App\Item\Currency\YellowLifeforce;
+use App\Item\Fragment\ElderGuardianFragment;
+use App\Item\Fragment\MavenSplinter;
+use App\Item\Fragment\ShaperGuardianFragment;
+use App\Item\Fragment\UberElderElderFragment;
+use App\Item\Fragment\UberElderShaperFragment;
+use App\Item\Map\ElderGuardianMap;
+use App\Item\Map\MavenWrit;
+use App\Item\Map\ShaperGuardianMap;
+use App\Item\Map\TheFormed;
+use App\Item\Map\TheTwisted;
+use App\Item\Set\ElderSet;
+use App\Item\Set\ShaperSet;
+use App\Item\Set\UberElderSet;
+use App\PriceUpdater\Http\PoeNinjaHttpClient;
+use App\PriceUpdater\Http\TftHttpClient;
 
 class UpdateRegistryHandler
 {

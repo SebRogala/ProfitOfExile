@@ -2,7 +2,8 @@
 
 namespace App\HttpAction;
 
-use App\Item\ItemPrice;
+use App\Item\Fragment\ShaperGuardianFragment;
+use App\Item\ItemPrice\ItemPrice;
 use Doctrine\ODM\MongoDB\DocumentManager;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -24,13 +25,13 @@ class Home extends AbstractController
         //$documentManager->persist($price);
         //$documentManager->flush();
 
-//dd($documentManager->getRepository(ItemPrice::class)->findAll());
+dd($documentManager->getRepository(ItemPrice::class)->get(new ShaperGuardianFragment()));
 //dd($documentManager->getRepository(ItemPrice::class)->clear());
 
         //return new JsonResponse(['ok']);
-        $qb = $documentManager->createQueryBuilder();
+        //$qb = $documentManager->createQueryBuilder();
 
-        $qb->remove(ItemPrice::class)->getQuery()->execute();
+        //$qb->remove(ItemPrice::class)->getQuery()->execute();
 
         //$documentManager->flush();
 

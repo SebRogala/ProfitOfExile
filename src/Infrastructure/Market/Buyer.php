@@ -3,7 +3,7 @@
 namespace App\Infrastructure\Market;
 
 use App\Application\Query\Pricer\PricesQuery;
-use App\Domain\Item\Item;
+use App\Item\Item;
 
 class Buyer
 {

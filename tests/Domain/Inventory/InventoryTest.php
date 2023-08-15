@@ -3,8 +3,8 @@
 namespace App\Tests\Domain\Inventory;
 
 use App\Domain\Inventory\Inventory;
-use App\Domain\Item\Currency\ChaosOrb;
-use App\Domain\Item\Currency\DivineOrb;
+use App\Item\Currency\ChaosOrb;
+use App\Item\Currency\DivineOrb;
 use PHPUnit\Framework\TestCase;
 
 class InventoryTest extends TestCase

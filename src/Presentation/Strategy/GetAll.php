@@ -2,7 +2,7 @@
 
 namespace App\Presentation\Strategy;
 
-use App\Infrastructure\Strategy\Factory;
+use App\StrategyBuilder\Factory;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
