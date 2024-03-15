@@ -62,6 +62,7 @@ export default {
         return {
             addStrategyOverlay: false,
             availableStrategies: [],
+            items: [],
             composedStrategies: [],
             results: {}
         }
@@ -73,6 +74,10 @@ export default {
         loadData() {
             this.$api.get('/strategy/get-all').then(res => {
                 this.availableStrategies = res.data;
+            });
+
+            this.$api.get('/item/get-all').then(res => {
+                this.items = res.data;
             });
         },
         addNewStrategy(data) {

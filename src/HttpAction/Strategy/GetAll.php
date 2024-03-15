@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Presentation\Strategy;
+namespace App\HttpAction\Strategy;
 
 use App\StrategyBuilder\Factory;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -10,13 +10,17 @@ use Symfony\Component\Routing\Annotation\Route;
 
 class GetAll extends AbstractController
 {
+    public function __construct(private Factory $factory)
+    {
+    }
+
     #[Route("/strategy/get-all", name: "get-strategies", methods: ["GET"])]
     public function index(): Response
     {
         $ret = [];
 
         foreach (Factory::STRATEGIES as $stratName => $x) {
-            $strategy = Factory::create($stratName);
+            $strategy = $this->factory->create($stratName);
 
             $ret[] = [
                 'key' => $stratName,

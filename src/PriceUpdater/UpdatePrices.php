@@ -47,130 +47,157 @@ class UpdatePrices
 
         $divPrice = $this->poeNinjaHttpClient->searchFor('divine-orb')['chaosEquivalent'];
 
-        $prices[] = new ItemPrice(ChaosOrb::class, 1, null);
-        $prices[] = new ItemPrice(DivineOrb::class, $divPrice, null);
         $prices[] = new ItemPrice(
-            OrbOfScouring::class,
-            $this->poeNinjaHttpClient->searchFor('orb-of-scouring')['chaosEquivalent'],
-            null
+            new ChaosOrb(),
+            1,
+            null,
+            $this->poeNinjaHttpClient->getIcon(1)
         );
         $prices[] = new ItemPrice(
-            YellowLifeforce::class,
+            new DivineOrb(),
+            $divPrice,
+            null,
+            $this->poeNinjaHttpClient->getIcon(3)
+        );
+        $prices[] = new ItemPrice(
+            new OrbOfScouring(),
+            $this->poeNinjaHttpClient->searchFor('orb-of-scouring')['chaosEquivalent'],
+            null,
+            $this->poeNinjaHttpClient->getIcon(14)
+        );
+        $prices[] = new ItemPrice(
+            new YellowLifeforce(),
             $this->poeNinjaHttpClient->searchFor('vivid-crystallised-lifeforce')['receive']['value'],
             $this->tftHttpClient->searchFor('Vivid (Yellow)')['chaos'] / $this->tftHttpClient->searchFor(
                 'Vivid (Yellow)'
-            )['ratio']
+            )['ratio'],
+            $this->poeNinjaHttpClient->getIcon(211)
         );
         $prices[] = new ItemPrice(
-            BlueLifeforce::class,
+            new BlueLifeforce(),
             $this->poeNinjaHttpClient->searchFor('primal-crystallised-lifeforce')['receive']['value'],
             $this->tftHttpClient->searchFor('Primal (Blue)')['chaos'] / $this->tftHttpClient->searchFor(
                 'Primal (Blue)'
-            )['ratio']
+            )['ratio'],
+            $this->poeNinjaHttpClient->getIcon(212)
         );
         $prices[] = new ItemPrice(
-            PurpleLifeforce::class,
+            new PurpleLifeforce(),
             $this->poeNinjaHttpClient->searchFor('wild-crystallised-lifeforce')['receive']['value'],
             $this->tftHttpClient->searchFor('Wild (Purple)')['chaos'] / $this->tftHttpClient->searchFor(
                 'Wild (Purple)'
-            )['ratio']
+            )['ratio'],
+            $this->poeNinjaHttpClient->getIcon(210)
         );
         $prices[] = new ItemPrice(
-            ShaperGuardianMap::class,
+            new ShaperGuardianMap(),
             $this->calculatePriceOfFour(
                 $this->poeNinjaHttpClient->searchFor('forge-of-the-phoenix-map-t16-gen-17')['chaosValue'],
                 $this->poeNinjaHttpClient->searchFor('lair-of-the-hydra-map-t16-gen-17')['chaosValue'],
                 $this->poeNinjaHttpClient->searchFor('lair-of-the-hydra-map-t16-gen-17')['chaosValue'],
                 $this->poeNinjaHttpClient->searchFor('pit-of-the-chimera-map-t16-gen-17')['chaosValue'],
             ),
-            $this->tftHttpClient->searchFor('Shaper Maps')['chaos']
+            $this->tftHttpClient->searchFor('Shaper Maps')['chaos'],
+            $this->poeNinjaHttpClient->getIcon(103389)
         );
         $prices[] = new ItemPrice(
-            ElderGuardianMap::class,
+            new ElderGuardianMap(),
             null,   //how to get that?
-            $this->tftHttpClient->searchFor('Elder Maps')['chaos']
+            $this->tftHttpClient->searchFor('Elder Maps')['chaos'],
+            $this->poeNinjaHttpClient->getIcon(111) /// ??????
         );
         $prices[] = new ItemPrice(
-            ShaperGuardianFragment::class,
+            new ShaperGuardianFragment(),
             $this->calculatePriceOfFour(
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['chaosEquivalent'],
             ),
-            $this->tftHttpClient->searchFor('Shaper Set')['chaos'] / 4
+            $this->tftHttpClient->searchFor('Shaper Set')['chaos'] / 4,
+            $this->poeNinjaHttpClient->getIcon(40)
         );
         $prices[] = new ItemPrice(
-            ElderGuardianFragment::class,
+            new ElderGuardianFragment(),
             $this->calculatePriceOfFour(
                 $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['chaosEquivalent'],
             ),
-            $this->tftHttpClient->searchFor('Elder Set')['chaos'] / 4
+            $this->tftHttpClient->searchFor('Elder Set')['chaos'] / 4,
+            $this->poeNinjaHttpClient->getIcon(111)
         );
         $prices[] = new ItemPrice(
-            ShaperSet::class,
+            new ShaperSet(),
             $this->calculateSumPriceOfFour(
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-hydra')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-minotaur')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-chimera')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-the-phoenix')['chaosEquivalent'],
             ),
-            $this->tftHttpClient->searchFor('Shaper Set')['chaos']
+            $this->tftHttpClient->searchFor('Shaper Set')['chaos'],
+            ''
         );
         $prices[] = new ItemPrice(
-            ElderSet::class,
+            new ElderSet(),
             $this->calculateSumPriceOfFour(
                 $this->poeNinjaHttpClient->searchFor('fragment-of-purification')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-enslavement')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-constriction')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-eradication')['chaosEquivalent'],
             ),
-            $this->tftHttpClient->searchFor('Elder Set')['chaos']
+            $this->tftHttpClient->searchFor('Elder Set')['chaos'],
+            ''
         );
         $prices[] = new ItemPrice(
-            UberElderShaperFragment::class,
+            new UberElderShaperFragment(),
             ($this->poeNinjaHttpClient->searchFor('fragment-of-shape')['chaosEquivalent']
                 + $this->poeNinjaHttpClient->searchFor('fragment-of-knowledge')['chaosEquivalent']) / 2,
-            null
+            null,
+            $this->poeNinjaHttpClient->getIcon(113)
         );
         $prices[] = new ItemPrice(
-            UberElderElderFragment::class,
+            new UberElderElderFragment(),
             ($this->poeNinjaHttpClient->searchFor('fragment-of-emptiness')['chaosEquivalent']
                 + $this->poeNinjaHttpClient->searchFor('fragment-of-terror')['chaosEquivalent']) / 2,
-            null
+            null,
+            $this->poeNinjaHttpClient->getIcon(114)
         );
         $prices[] = new ItemPrice(
-            UberElderSet::class,
+            new UberElderSet(),
             $this->calculateSumPriceOfFour(
                 $this->poeNinjaHttpClient->searchFor('fragment-of-emptiness')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-terror')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-shape')['chaosEquivalent'],
                 $this->poeNinjaHttpClient->searchFor('fragment-of-knowledge')['chaosEquivalent'],
             ),
-            $this->tftHttpClient->searchFor('Uber Elder Set')['chaos']
+            $this->tftHttpClient->searchFor('Uber Elder Set')['chaos'],
+            ''
         );
         $prices[] = new ItemPrice(
-            TheFormed::class,
+            new TheFormed(),
             $this->poeNinjaHttpClient->searchFor('mavens-invitation:-the-formed')['chaosValue'],
-            $this->tftHttpClient->searchFor('The Formed')['chaos']
+            $this->tftHttpClient->searchFor('The Formed')['chaos'],
+            $this->poeNinjaHttpClient->getIcon(55759)
         );
         $prices[] = new ItemPrice(
-            TheTwisted::class,
+            new TheTwisted(),
             $this->poeNinjaHttpClient->searchFor('mavens-invitation:-the-twisted')['chaosValue'],
-            $this->tftHttpClient->searchFor('The Twisted')['chaos']
+            $this->tftHttpClient->searchFor('The Twisted')['chaos'],
+            $this->poeNinjaHttpClient->getIcon(55756)
         );
         $prices[] = new ItemPrice(
-            MavenSplinter::class,
+            new MavenSplinter(),
             $this->poeNinjaHttpClient->searchFor('crescent-splinter')['chaosEquivalent'],
-            null
+            null,
+            $this->poeNinjaHttpClient->getIcon(142)
         );
         $prices[] = new ItemPrice(
-            MavenWrit::class,
+            new MavenWrit(),
             $this->poeNinjaHttpClient->searchFor('the-mavens-writ')['chaosEquivalent'],
-            $this->tftHttpClient->searchFor('Maven\'s Writ')['chaos']
+            $this->tftHttpClient->searchFor('Maven\'s Writ')['chaos'],
+            $this->poeNinjaHttpClient->getIcon(143)
         );
 
         $this->itemPriceRepository->addMany($prices);

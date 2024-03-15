@@ -11,7 +11,7 @@ abstract class Strategy
 
     protected array $requiredComponents = [];
 
-    protected int $averageTime = 0;
+    protected int $averageTime = 0; //in secoconds
 
     protected int $occurrenceProbability = 100;
 
@@ -20,7 +20,7 @@ abstract class Strategy
         $this->run($inventory, $data);
     }
 
-    public function run(Inventory $inventory, array $data): void
+    protected function run(Inventory $inventory, array $data): void
     {
         $this->averageTime = $data['averageTime'];
         $this->occurrenceProbability = $data['occurrenceProbability'];

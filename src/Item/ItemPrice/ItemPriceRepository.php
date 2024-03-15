@@ -20,7 +20,12 @@ class ItemPriceRepository extends DocumentRepository
 
     public function get(Item $item): ItemPrice
     {
-        return $this->findOneBy(['name' => $item::class]);
+        return $this->findOneBy(['namespace' => $item::class]);
+    }
+
+    public function getByNameKey(string $nameKey): ?ItemPrice
+    {
+        return $this->findOneBy(['nameKey' => $nameKey]);
     }
 
     public function removeAll(): void

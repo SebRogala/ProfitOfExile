@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Presentation\Strategy;
+namespace App\HttpAction\Strategy;
 
 use App\Domain\Inventory\Inventory;
 use App\StrategyBuilder\Runner;

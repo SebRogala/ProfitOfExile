@@ -24,6 +24,8 @@ class Runner
                 'series' => 1,
                 'averageTime' => $strategy->getAverageTime(),
                 'occurrenceProbability' => $strategy->getOccurrenceProbability(),
+                'requiredItems' => [],
+                'rewards' => [],
             ];
 
             $data = array_merge($defaults, $data);

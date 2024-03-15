@@ -8,6 +8,8 @@ class PoeNinjaHttpClient extends HttpClient
 
     private array $data = [];
 
+    private array $currencyDetails = [];
+
     public function searchFor(string $key): mixed
     {
         if (empty($this->data)) {
@@ -23,6 +25,23 @@ class PoeNinjaHttpClient extends HttpClient
         foreach ($this->data['lines'] as $line) {
             if ($line['detailsId'] == $key) {
                 return $line;
+            }
+        }
+
+        return null;
+    }
+
+    public function getIcon(int $id): ?string
+    {
+        foreach ($this->data['currencyDetails'] as $line) {
+            if (@$line['id'] == $id) {
+                return $line['icon'];
+            }
+        }
+
+        foreach ($this->data['lines'] as $line) {
+            if (@$line['id'] == $id) {
+                return $line['icon'];
             }
         }
 

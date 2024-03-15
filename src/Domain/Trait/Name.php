@@ -2,15 +2,20 @@
 
 namespace App\Domain\Trait;
 
+use App\Helper\StringManipulation;
+
 trait Name
 {
     public function name(): string
     {
         $splitNamespace = explode('\\', static::class);
-
         $string = array_pop($splitNamespace);
-        $parts = preg_split('/(?=[A-Z])/', $string);
 
-        return trim(implode(' ', $parts));
+        return StringManipulation::splitWords($string);
+    }
+
+    public function nameKey(): string
+    {
+        return StringManipulation::toKebabCase($this->name());
     }
 }
