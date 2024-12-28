@@ -1,0 +1,10 @@
+security:
+    # ...
+    firewalls:
+        # 'main' is the name of the firewall (can be chosen freely)
+        main:
+            # 'pattern' is a regular expression matched against the incoming
+            # request URL. If there's a match, authentication is triggered
+            pattern: ^/admin
+            # the rest of options depend on the authentication mechanism
+            # ...
