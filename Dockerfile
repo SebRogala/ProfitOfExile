@@ -1,131 +1,100 @@
-# the different stages of this Dockerfile are meant to be built into separate images
+#syntax=docker/dockerfile:1
+
+# Versions
+FROM dunglas/frankenphp:1-php8.3 AS frankenphp_upstream
+
+# The different stages of this Dockerfile are meant to be built into separate images
 # https://docs.docker.com/develop/develop-images/multistage-build/#stop-at-a-specific-build-stage
 # https://docs.docker.com/compose/compose-file/#target
 
 
-# https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact
-ARG PHP_VERSION=8.1
-ARG CADDY_VERSION=2
+# Base FrankenPHP image
+FROM frankenphp_upstream AS frankenphp_base
+
 ARG NODE_VERSION=14.21.3
 
-# "php" stage
-FROM php:${PHP_VERSION}-fpm-alpine AS symfony_php
+WORKDIR /app
+
+VOLUME /app/var/
 
 # persistent / runtime deps
-RUN apk add --no-cache \
-		acl \
-		fcgi \
-		file \
-		gettext \
-		git \
-	;
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	acl \
+	file \
+	gettext \
+	git \
+	&& rm -rf /var/lib/apt/lists/*
 
-ARG APCU_VERSION=5.1.21
 RUN set -eux; \
-	apk add --no-cache --virtual .build-deps \
-		$PHPIZE_DEPS \
-		icu-data-full \
-		icu-dev \
-		libzip-dev \
-		zlib-dev \
-	; \
-	\
-	docker-php-ext-configure zip; \
-	docker-php-ext-install -j$(nproc) \
-		intl \
-		zip \
-	; \
-	pecl install \
-		apcu-${APCU_VERSION} \
-	; \
-	pecl clear-cache; \
-	docker-php-ext-enable \
+	install-php-extensions \
+		@composer \
 		apcu \
+		intl \
 		opcache \
-	; \
-	\
-	runDeps="$( \
-		scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \
-			| tr ',' '\n' \
-			| sort -u \
-			| awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
-	)"; \
-	apk add --no-cache --virtual .phpexts-rundeps $runDeps; \
-	\
-	apk del .build-deps
-
-COPY docker/php/docker-healthcheck.sh /usr/local/bin/docker-healthcheck
-RUN chmod +x /usr/local/bin/docker-healthcheck
-
-HEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD ["docker-healthcheck"]
-
-RUN ln -s $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini
-COPY docker/php/conf.d/symfony.prod.ini $PHP_INI_DIR/conf.d/symfony.ini
-
-COPY docker/php/php-fpm.d/zz-docker.conf /usr/local/etc/php-fpm.d/zz-docker.conf
-
-COPY docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint
-RUN chmod +x /usr/local/bin/docker-entrypoint
-
-VOLUME /var/run/php
-
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+		zip \
+	;
 
 # https://getcomposer.org/doc/03-cli.md#composer-allow-superuser
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
-ENV PATH="${PATH}:/root/.composer/vendor/bin"
+ENV PHP_INI_SCAN_DIR=":$PHP_INI_DIR/app.conf.d"
 
-WORKDIR /srv/app
-
-# Allow to choose skeleton
-ARG SKELETON="symfony/skeleton"
-ENV SKELETON ${SKELETON}
-
-# Allow to use development versions of Symfony
-ARG STABILITY="stable"
-ENV STABILITY ${STABILITY}
-
-# Allow to select skeleton version
-ARG SYMFONY_VERSION=""
-ENV SYMFONY_VERSION ${SYMFONY_VERSION}
-
-# Download the Symfony skeleton and leverage Docker cache layers
-RUN composer create-project "${SKELETON} ${SYMFONY_VERSION}" . --stability=$STABILITY --prefer-dist --no-dev --no-progress --no-interaction; \
-	composer clear-cache
-
+###> recipes ###
 RUN docker-php-ext-install mysqli pdo pdo_mysql
+###< recipes ###
 
-COPY . .
+COPY --link frankenphp/conf.d/10-app.ini $PHP_INI_DIR/app.conf.d/
+COPY --link --chmod=755 frankenphp/docker-entrypoint.sh /usr/local/bin/docker-entrypoint
+COPY --link frankenphp/Caddyfile /etc/caddy/Caddyfile
+
+ENTRYPOINT ["docker-entrypoint"]
+
+HEALTHCHECK --start-period=60s CMD curl -f http://localhost:2019/metrics || exit 1
+CMD [ "frankenphp", "run", "--config", "/etc/caddy/Caddyfile" ]
+
+# Dev FrankenPHP image
+FROM frankenphp_base AS frankenphp_dev
+
+ENV APP_ENV=dev XDEBUG_MODE=off
+
+RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
+
+RUN set -eux; \
+	install-php-extensions \
+		xdebug \
+	;
+
+COPY --link frankenphp/conf.d/20-app.dev.ini $PHP_INI_DIR/app.conf.d/
+
+CMD [ "frankenphp", "run", "--config", "/etc/caddy/Caddyfile", "--watch" ]
+
+# Prod FrankenPHP image
+FROM frankenphp_base AS frankenphp_prod
+
+ENV APP_ENV=prod
+ENV FRANKENPHP_CONFIG="import worker.Caddyfile"
+
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+COPY --link frankenphp/conf.d/20-app.prod.ini $PHP_INI_DIR/app.conf.d/
+COPY --link frankenphp/worker.Caddyfile /etc/caddy/worker.Caddyfile
+
+# prevent the reinstallation of vendors at every changes in the source code
+COPY --link composer.* symfony.* ./
+RUN set -eux; \
+	composer install --no-cache --prefer-dist --no-dev --no-autoloader --no-scripts --no-progress
+
+# copy sources
+COPY --link . ./
+RUN rm -Rf frankenphp/
 
 RUN set -eux; \
 	mkdir -p var/cache var/log; \
-	composer install --prefer-dist --no-dev --no-progress --no-scripts --no-interaction; \
 	composer dump-autoload --classmap-authoritative --no-dev; \
-	composer symfony:dump-env prod; \
+	composer dump-env prod; \
 	composer run-script --no-dev post-install-cmd; \
-	chmod +x bin/console; sync
-VOLUME /srv/app/var
-
-ENTRYPOINT ["docker-entrypoint"]
-CMD ["php-fpm"]
-
-FROM caddy:${CADDY_VERSION}-builder-alpine AS symfony_caddy_builder
-
-RUN xcaddy build \
-	--with github.com/dunglas/mercure \
-	--with github.com/dunglas/mercure/caddy \
-	--with github.com/dunglas/vulcain \
-	--with github.com/dunglas/vulcain/caddy
-
-FROM caddy:${CADDY_VERSION} AS symfony_caddy
-
-WORKDIR /srv/app
-
-COPY --from=dunglas/mercure:v0.11 /srv/public /srv/mercure-assets/
-COPY --from=symfony_caddy_builder /usr/bin/caddy /usr/bin/caddy
-COPY --from=symfony_php /srv/app/public public/
-COPY docker/caddy/Caddyfile /etc/caddy/Caddyfile
+	chmod +x bin/console; sync;
 
 FROM node:${NODE_VERSION} AS symfony_node
 
