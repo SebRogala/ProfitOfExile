@@ -11,8 +11,6 @@ FROM dunglas/frankenphp:1-php8.3 AS frankenphp_upstream
 # Base FrankenPHP image
 FROM frankenphp_upstream AS frankenphp_base
 
-ARG NODE_VERSION=14.21.3
-
 WORKDIR /app
 
 VOLUME /app/var/
@@ -96,7 +94,7 @@ RUN set -eux; \
 	composer run-script --no-dev post-install-cmd; \
 	chmod +x bin/console; sync;
 
-FROM node:${NODE_VERSION} AS symfony_node
+FROM node:14.21.3 AS symfony_node
 
 ENV APP_ENV=dev
 COPY docker/node/entrypoint.sh /entrypoint.sh
