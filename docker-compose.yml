@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    container_name: profitofexile_app
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://profitofexile:profitofexile@postgres:5432/profitofexile}
+    networks:
+      - infra
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.profitofexile.rule=Host(`profitofexile.localhost`)"
+      - "traefik.http.routers.profitofexile.entrypoints=websecure"
+      - "traefik.http.routers.profitofexile.tls=true"
+      - "traefik.http.services.profitofexile.loadbalancer.server.port=8080"
+
+networks:
+  infra:
+    external: true
