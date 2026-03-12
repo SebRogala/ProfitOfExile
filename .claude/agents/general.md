@@ -8,6 +8,7 @@ Universal coding principles for all implementation and fix agents. This is the b
 - Don't over-engineer. Implement what's needed for the current task, not speculative future requirements.
 - Preserve intent and nuance. When modifying existing code, understand why it was written that way before changing it. Don't simplify away meaning.
 - Read the project's CLAUDE.md before starting work. It contains project-specific conventions, anti-patterns, and constraints that override general principles.
+- ARCHITECTURE.md is the single source of truth for structural decisions (directory layout, module boundaries, tech stack choices). When agent configs or other docs conflict with ARCHITECTURE.md, ARCHITECTURE.md wins.
 
 ## MCP Context Loading
 
