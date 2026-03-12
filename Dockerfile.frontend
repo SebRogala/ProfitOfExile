@@ -1,11 +1,12 @@
-# Placeholder: will be replaced by SvelteKit dev server (npm run dev -- --host)
-# when the frontend scaffold is introduced.
 FROM node:22-alpine
-
-RUN npm install -g serve@14
 
 WORKDIR /app
 
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+
+COPY frontend/ .
+
 EXPOSE 5173
 
-CMD ["serve", "-s", ".", "-l", "5173"]
+CMD ["npm", "run", "dev"]
