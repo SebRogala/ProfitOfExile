@@ -13,6 +13,3 @@ docs/
 # CI / agent tooling
 .github/
 .claude/
-
-# Test files
-**/*_test.go
