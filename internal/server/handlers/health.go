@@ -21,7 +21,7 @@ type healthResponse struct {
 
 // Health returns an HTTP handler that responds with the server health status.
 // When a database pool is provided, it pings the database and returns 503 on
-// failure. When pool is nil (e.g. in tests), the DB check is skipped.
+// failure. When pool is nil (e.g. in tests), DB is reported as "unavailable".
 func Health(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp := healthResponse{
