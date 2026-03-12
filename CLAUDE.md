@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ProfitOfExile is a **Path of Exile 1 profit simulation platform** being rewritten from PHP/Symfony + Vue 3 to **Go + SvelteKit**. It models farming strategies as composable trees, fetches live prices from multiple market sources, simulates inventory flows with automatic set conversions, and calculates profitability per strategy.
 
-The original PHP codebase exists only in git history (commit `537e37e` and earlier) as architectural reference — do not restore or modify it. The current repo contains design documents (`BACKBONE.md`, `EPICS.md`, `ARCHITECTURE.md`) as the Go rewrite is starting.
+The original PHP codebase exists only in git history (commit `537e37e` and earlier) as architectural reference — do not restore or modify it. The current repo contains `BACKBONE.md` as the authoritative design reference. Epics and tasks are tracked in YouTrack (project POE).
 
 ## Early Prototypes (`/var/www/poe`)
 
@@ -33,12 +33,14 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 - Tailwind CSS for styling
 - Built to static files, served by Go backend
 
-### Database: PostgreSQL
-- Tables: `strategies`, `price_cache`, `profiles`, `conversion_rules`
-- JSONB columns for strategy trees and price data
+### Database: PostgreSQL + TimescaleDB
+- Application tables: `strategies`, `profiles`, `conversion_rules`
+- TimescaleDB hypertables for time-series price data (gems, currency, fragments, cards, uniques)
+- JSONB columns for strategy trees
 
-### Deployment: Docker on CapRover
+### Deployment: Docker on Coolify
 - Multi-stage Dockerfile: Node build (SvelteKit) → Go build → minimal runtime image
+- Separate container for price collector service (24/7 data collection)
 
 ## Core Domain Concepts
 
@@ -53,7 +55,7 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 ## Key Design Documents
 
 - `BACKBONE.md` — Authoritative design reference. Full architecture, data source specs, domain model, API contracts, and feature roadmap. **When in doubt, refer to BACKBONE.**
-- `EPICS.md` — Epic breakdown for implementation. Dependency graph: Foundation → Price Engine → Simulation Engine → Strategies/Frontend/Breakpoints.
+- **YouTrack (project POE)** — Epics and task breakdown. All implementation tracking lives in the tracker, not in files.
 
 ## Data Sources
 
