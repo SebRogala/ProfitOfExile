@@ -1,9 +1,15 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     container_name: profitofexile_app
+    volumes:
+      - .:/app
+      - go-pkg:/root/go/pkg
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql://profitofexile:profitofexile@postgres:5432/profitofexile}
+      - PORT=8080
     networks:
       - infra
     restart: unless-stopped
@@ -13,6 +19,26 @@ services:
       - "traefik.http.routers.profitofexile.entrypoints=websecure"
       - "traefik.http.routers.profitofexile.tls=true"
       - "traefik.http.services.profitofexile.loadbalancer.server.port=8080"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: profitofexile_frontend
+    volumes:
+      - ./frontend:/app
+    networks:
+      - infra
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.profitofexile-frontend.rule=Host(`frontend.profitofexile.localhost`)"
+      - "traefik.http.routers.profitofexile-frontend.entrypoints=websecure"
+      - "traefik.http.routers.profitofexile-frontend.tls=true"
+      - "traefik.http.services.profitofexile-frontend.loadbalancer.server.port=5173"
+
+volumes:
+  go-pkg:
 
 networks:
   infra:
