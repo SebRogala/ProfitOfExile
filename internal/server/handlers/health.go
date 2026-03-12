@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Version is set at build time via ldflags:
@@ -17,8 +19,20 @@ type healthResponse struct {
 }
 
 // Health returns an HTTP handler that responds with the server health status.
-func Health() http.HandlerFunc {
+// When a database pool is provided, it pings the database and returns 503 on
+// failure. When pool is nil (e.g. in tests), the DB check is skipped.
+func Health(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if pool != nil {
+			if err := pool.Ping(r.Context()); err != nil {
+				slog.Error("health: database ping failed", "error", err)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"status":"error","version":"` + Version + `"}`))
+				return
+			}
+		}
+
 		resp := healthResponse{
 			Status:  "ok",
 			Version: Version,

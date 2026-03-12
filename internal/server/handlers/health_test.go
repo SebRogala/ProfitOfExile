@@ -11,7 +11,7 @@ import (
 
 func TestHealth(t *testing.T) {
 	router := chi.NewRouter()
-	router.Get("/api/health", Health())
+	router.Get("/api/health", Health(nil))
 
 	tests := []struct {
 		name           string

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"profitofexile/internal/db"
 	"profitofexile/internal/server"
 )
 
@@ -27,7 +28,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := server.NewRouter()
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		slog.Error("DATABASE_URL is required")
+		fmt.Fprintln(os.Stderr, "DATABASE_URL environment variable must be set")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+
+	pool, err := db.NewPool(ctx, databaseURL)
+	if err != nil {
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+	slog.Info("database connected")
+
+	router := server.NewRouter(pool)
 
 	srv := &http.Server{
 		Addr:         ":" + port,

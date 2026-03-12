@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewRouter_HealthRoute(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	w := httptest.NewRecorder()
