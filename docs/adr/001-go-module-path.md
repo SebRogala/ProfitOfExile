@@ -29,7 +29,7 @@ Use `profitofexile` as the Go module path in `go.mod`:
 ```
 module profitofexile
 
-go 1.22
+go 1.22.0
 ```
 
 All internal packages are imported as `profitofexile/internal/{module}/...`.

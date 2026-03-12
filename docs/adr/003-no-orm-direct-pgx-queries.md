@@ -23,7 +23,7 @@ Use **pgx v5** directly with raw SQL queries. No ORM layer.
 
 - All repository implementations in `internal/{module}/infrastructure/postgres_repo.go` use `pgxpool.Pool` for connection pooling
 - Queries are written as SQL strings, executed via `pool.Query()`, `pool.QueryRow()`, or `pool.Exec()`
-- Row scanning is done manually or via `pgx/v5/pgxscan` for struct scanning where convenient
+- Row scanning is done manually or via `github.com/georgysavva/scany/v2/pgxscan` for struct scanning where convenient
 - Migrations are managed by `golang-migrate` with timestamped SQL files in `db/migrations/`
 - Transactions are managed directly via `pool.BeginTx(ctx, pgx.TxOptions{})`
 
@@ -34,7 +34,7 @@ Use **pgx v5** directly with raw SQL queries. No ORM layer.
 - Full SQL control — queries are explicit, debuggable, and optimizable without ORM translation layers
 - PostgreSQL-specific features (JSONB operators, CTEs, window functions, LISTEN/NOTIFY) are first-class
 - No ORM magic to debug when queries behave unexpectedly
-- pgx v5 is the fastest Go PostgreSQL driver by benchmark
+- pgx v5 is a high-performance Go PostgreSQL driver with native type support
 
 ### Negative
 
@@ -60,7 +60,7 @@ A code-generation-based ORM with a schema DSL and graph traversal API.
 
 A lightweight extension to `database/sql` that adds struct scanning via reflection.
 
-**Rejected because**: sqlx uses `database/sql` under the hood, which means a pgx connection is proxied through the standard driver interface — losing pgx's native type support (JSONB, UUID, arrays). pgx v5 with `pgxscan` provides equivalent struct scanning convenience without sacrificing native type handling.
+**Rejected because**: sqlx uses `database/sql` under the hood, which means a pgx connection is proxied through the standard driver interface — losing pgx's native type support (JSONB, UUID, arrays). pgx v5 with `scany/pgxscan` provides equivalent struct scanning convenience without sacrificing native type handling.
 
 ## References
 
