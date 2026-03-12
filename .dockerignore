@@ -1,0 +1,18 @@
+# Development tooling
+.air.toml
+tmp/
+
+# Docker files (not needed inside build context)
+Dockerfile*
+docker-compose*.yml
+
+# Documentation
+*.md
+docs/
+
+# CI / agent tooling
+.github/
+.claude/
+
+# Test files
+**/*_test.go
