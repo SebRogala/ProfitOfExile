@@ -8,4 +8,4 @@ CREATE TABLE IF NOT EXISTS strategies (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_strategies_league ON strategies (league);
+CREATE INDEX IF NOT EXISTS idx_strategies_league ON strategies (league);
