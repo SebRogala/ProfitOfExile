@@ -25,13 +25,17 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     container_name: profitofexile_frontend
-    ports:
-      - "5173:5173"
     volumes:
       - ./frontend:/app
     networks:
       - infra
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.profitofexile-frontend.rule=Host(`frontend.profitofexile.localhost`)"
+      - "traefik.http.routers.profitofexile-frontend.entrypoints=websecure"
+      - "traefik.http.routers.profitofexile-frontend.tls=true"
+      - "traefik.http.services.profitofexile-frontend.loadbalancer.server.port=5173"
 
 volumes:
   go-pkg:
