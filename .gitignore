@@ -2,4 +2,5 @@
 .mcp.json
 .env
 bin/
+server
 tmp/
