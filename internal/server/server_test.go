@@ -94,7 +94,10 @@ func TestNewRouter_StaticCatchAllServesFiles(t *testing.T) {
 		t.Fatalf("GET / status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	body, _ := io.ReadAll(w.Body)
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
 	if !strings.Contains(string(body), "ProfitOfExile") {
 		t.Errorf("GET / body = %q, want it to contain %q", string(body), "ProfitOfExile")
 	}
@@ -117,8 +120,25 @@ func TestNewRouter_StaticCatchAllFallbackForUnknownPaths(t *testing.T) {
 		t.Fatalf("GET /strategies/lab status = %d, want %d", w.Code, http.StatusOK)
 	}
 
-	body, _ := io.ReadAll(w.Body)
+	body, err := io.ReadAll(w.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
 	if !strings.Contains(string(body), "ProfitOfExile") {
 		t.Errorf("GET /strategies/lab body = %q, want SPA fallback with %q", string(body), "ProfitOfExile")
+	}
+}
+
+func TestNewRouter_NilFrontendFSReturns404ForNonAPIPaths(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	// With no frontendFS, non-API paths should return 404 or 405.
+	if w.Code == http.StatusOK {
+		t.Errorf("GET / with nil frontendFS status = %d, want non-200 (404 or 405)", w.Code)
 	}
 }
