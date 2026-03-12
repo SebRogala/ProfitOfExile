@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +17,9 @@ import (
 	"profitofexile/internal/db"
 	"profitofexile/internal/server"
 )
+
+//go:embed all:frontend_build
+var frontendEmbed embed.FS
 
 func main() {
 	port := os.Getenv("PORT")
@@ -54,7 +59,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := server.NewRouter(pool)
+	frontendFS, err := fs.Sub(frontendEmbed, "frontend_build")
+	if err != nil {
+		slog.Error("failed to load embedded frontend", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to load embedded frontend assets.")
+		os.Exit(1)
+	}
+
+	router := server.NewRouter(pool, frontendFS)
 
 	srv := &http.Server{
 		Addr:         ":" + port,

@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+	--color-poe-dark: #1a1a2e;
+	--color-poe-gold: #c9aa71;
+	--color-poe-muted: #8a8a9a;
+	--color-poe-light: #e0e0e0;
+}
