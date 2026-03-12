@@ -4,10 +4,16 @@ Server-side implementation principles. Extends the general agent with Go archite
 
 ## Architecture Patterns
 
-- Follow the project's package structure: `cmd/server/` for entrypoint, `internal/` for all business logic.
+ARCHITECTURE.md is the single source of truth for structural decisions (directory layout, module boundaries, tech stack choices).
+
+- **Hexagonal + CQRS + UseCase**: The project follows ports-and-adapters architecture with separated write (UseCase) and read (Query/Handler) paths.
+- Follow the project's package structure: `cmd/server/` for entrypoint, `internal/` for vertical slice modules.
+- Each module (`internal/{module}/`) contains three layers: `domain/`, `application/`, `infrastructure/`.
 - Domain invariants belong in domain types, not in handlers. A type should never be in an invalid state after construction.
-- Services orchestrate operations across domain types and repositories. Keep them focused on a single use case.
-- Use interfaces at package boundaries. Concrete implementations live in infrastructure packages.
+- **UseCases** (in `application/`) orchestrate write operations — one struct per operation with `Execute(req) (resp, error)`. Query handlers in `application/` handle reads.
+- **Infrastructure** (in `infrastructure/`) contains adapters: HTTP clients, PostgreSQL repositories, external service integrations. Domain never imports infrastructure.
+- Use interfaces (ports) defined in `domain/` at module boundaries. Concrete implementations live in `infrastructure/`.
+- **Cross-module hooks**: Use simple observer pattern for inter-module communication (e.g., price update triggers lab recomputation). No event bus.
 
 ## Go Conventions
 
@@ -42,29 +48,46 @@ Server-side implementation principles. Extends the general agent with Go archite
 
 ```
 cmd/
-└── server/          # main.go entrypoint
+└── server/                    # main.go entrypoint
 internal/
-├── domain/          # Business types, interfaces (no external dependencies)
-│   ├── strategy/    # Strategy tree, simulation
-│   ├── inventory/   # Shared inventory, set converter
-│   ├── price/       # Price types, source interfaces
-│   └── market/      # Market source abstractions
-├── handler/         # HTTP handlers (thin — validate, call service, respond)
-├── service/         # Use case orchestration
-├── repository/      # pgx implementations of domain interfaces
-├── pricefeed/       # poe.ninja + TFT API clients
-└── config/          # Configuration loading
+├── price/                     # Vertical slice: Multi-Source Price Engine
+│   ├── domain/                # PriceBook, SourcePrice, interfaces (ports)
+│   ├── application/           # UseCases: FetchPrices, RefreshPrices; Queries: GetPrices
+│   └── infrastructure/        # Adapters: NinjaClient, TftClient, PostgresRepo
+├── lab/                       # Vertical slice: Lab Farming Dashboard
+│   ├── domain/                # Analysis, Gem, GemColor, GemPool types
+│   ├── application/           # UseCases: AnalyzeFont, AnalyzeTransfigure; Queries
+│   └── infrastructure/        # Adapters: GemColorResolver, PostgresRepo
+├── simulation/                # Vertical slice: Simulation Engine (future)
+│   ├── domain/                # Strategy, Inventory, SetConverter, Runner
+│   ├── application/           # UseCases: RunSimulation
+│   └── infrastructure/        # Adapters: PostgresRepo
+└── server/                    # HTTP layer (thin)
+    ├── server.go              # chi router, middleware, startup
+    ├── handlers/              # HTTP handlers per module
+    └── scheduler/             # Background tick + hook registry
 ```
 
 ### Domain Layer Rules
 
 - Domain types are plain Go structs with constructor functions enforcing invariants.
-- Domain interfaces define what infrastructure the domain needs — domain never imports infrastructure.
+- Domain interfaces (ports) define what infrastructure the domain needs — domain never imports infrastructure.
 - Value objects are small immutable types (ItemName, Source, Price).
+
+### Application Layer Rules
+
+- One UseCase struct per write operation with `Execute(req) (resp, error)`.
+- Query handlers for reads may skip domain and go directly to repository.
+- Application code depends on domain ports, never on infrastructure directly.
+
+### Infrastructure Layer Rules
+
+- Contains adapters that implement domain ports: HTTP clients, database repositories, external APIs.
+- Each adapter lives in the module it serves, not in a shared package.
 
 ### Handler Layer Rules
 
-- Handlers are thin — parse request, call service, encode response.
+- Handlers are thin — parse request, call application layer, encode response.
 - Use middleware for cross-cutting concerns (logging, auth, CORS).
 - Static file serving via Go `embed` package for the compiled SvelteKit frontend.
 
