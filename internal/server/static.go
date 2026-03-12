@@ -3,6 +3,7 @@ package server
 import (
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 )
 
@@ -21,15 +22,13 @@ func StaticHandler(fsys fs.FS) http.Handler {
 			return
 		}
 
-		// Strip leading slash for fs.Open.
+		// Strip leading slash for fs.Stat.
 		fsPath := path[1:]
-		f, err := fsys.Open(fsPath)
-		if err != nil {
+		if _, err := fs.Stat(fsys, fsPath); err != nil {
 			// File not found — serve index.html for SPA fallback.
 			serveIndex(w, fsys)
 			return
 		}
-		f.Close()
 
 		fileServer.ServeHTTP(w, r)
 	})
@@ -47,5 +46,7 @@ func serveIndex(w http.ResponseWriter, fsys fs.FS) {
 	defer f.Close()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	io.Copy(w, f)
+	if _, err := io.Copy(w, f); err != nil {
+		slog.Error("failed to write index.html response", "error", err)
+	}
 }
