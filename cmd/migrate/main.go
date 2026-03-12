@@ -13,26 +13,37 @@ import (
 )
 
 func main() {
-	os.Exit(run())
+	databaseURL := os.Getenv("DATABASE_URL")
+	if err := run(os.Args[1:], databaseURL); err != nil {
+		slog.Error("migrate", "error", err)
+		os.Exit(1)
+	}
 }
 
-func run() int {
-	databaseURL := os.Getenv("DATABASE_URL")
+// run executes the migrate CLI with the given arguments and database URL.
+// It validates inputs before attempting any database operations.
+func run(args []string, databaseURL string) error {
 	if databaseURL == "" {
-		slog.Error("DATABASE_URL is required")
-		fmt.Fprintln(os.Stderr, "DATABASE_URL environment variable must be set")
-		return 1
+		return fmt.Errorf("database URL is required")
 	}
 
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: migrate <up|down [N]|force VERSION|version>")
-		return 1
+	if len(args) == 0 {
+		return fmt.Errorf("usage: migrate <up|down [N]|force VERSION|version>")
+	}
+
+	cmd := args[0]
+
+	// Validate command before creating the migrate instance.
+	switch cmd {
+	case "up", "down", "force", "version":
+		// valid command
+	default:
+		return fmt.Errorf("unknown command: %s", cmd)
 	}
 
 	m, err := migrate.New("file://db/migrations", databaseURL)
 	if err != nil {
-		slog.Error("failed to create migrate instance", "error", err)
-		return 1
+		return fmt.Errorf("create migrate instance: %w", err)
 	}
 	defer func() {
 		srcErr, dbErr := m.Close()
@@ -44,14 +55,11 @@ func run() int {
 		}
 	}()
 
-	cmd := os.Args[1]
-
 	switch cmd {
 	case "up":
 		err = m.Up()
 		if err != nil && !errors.Is(err, migrate.ErrNoChange) {
-			slog.Error("migration up failed", "error", err)
-			return 1
+			return fmt.Errorf("migration up: %w", err)
 		}
 		if errors.Is(err, migrate.ErrNoChange) {
 			slog.Info("no new migrations to apply")
@@ -61,48 +69,38 @@ func run() int {
 
 	case "down":
 		n := 1
-		if len(os.Args) >= 3 {
-			n, err = strconv.Atoi(os.Args[2])
+		if len(args) >= 2 {
+			n, err = strconv.Atoi(args[1])
 			if err != nil {
-				slog.Error("invalid step count", "value", os.Args[2], "error", err)
-				return 1
+				return fmt.Errorf("invalid step count %q: %w", args[1], err)
 			}
 		}
 		err = m.Steps(-n)
 		if err != nil {
-			slog.Error("migration down failed", "error", err)
-			return 1
+			return fmt.Errorf("migration down: %w", err)
 		}
 		slog.Info("rolled back migrations", "steps", n)
 
 	case "force":
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: migrate force VERSION")
-			return 1
+		if len(args) < 2 {
+			return fmt.Errorf("usage: migrate force VERSION")
 		}
-		version, ferr := strconv.Atoi(os.Args[2])
+		version, ferr := strconv.Atoi(args[1])
 		if ferr != nil {
-			slog.Error("invalid version", "value", os.Args[2], "error", ferr)
-			return 1
+			return fmt.Errorf("invalid version %q: %w", args[1], ferr)
 		}
 		if err = m.Force(version); err != nil {
-			slog.Error("migration force failed", "error", err)
-			return 1
+			return fmt.Errorf("migration force: %w", err)
 		}
 		slog.Info("forced migration version", "version", version)
 
 	case "version":
 		version, dirty, verr := m.Version()
 		if verr != nil {
-			slog.Error("failed to get migration version", "error", verr)
-			return 1
+			return fmt.Errorf("get migration version: %w", verr)
 		}
 		fmt.Printf("version: %d, dirty: %v\n", version, dirty)
-
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\nusage: migrate <up|down [N]|force VERSION|version>\n", cmd)
-		return 1
 	}
 
-	return 0
+	return nil
 }
