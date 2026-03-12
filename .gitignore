@@ -2,8 +2,10 @@
 .mcp.json
 .env
 bin/
-server
+/server
 tmp/
 frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
+cmd/server/frontend_build/*
+!cmd/server/frontend_build/.gitkeep
