@@ -4,3 +4,6 @@
 bin/
 server
 tmp/
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
