@@ -1,6 +1,7 @@
 .PHONY: build test qa up down migrate migrate-down
 
 build:
+	@docker compose exec app true 2>/dev/null || $(MAKE) up
 	docker compose exec app go build -o bin/server ./cmd/server
 
 test:
