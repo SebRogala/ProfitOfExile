@@ -11,8 +11,7 @@ import (
 )
 
 // NewRouter creates a chi router with middleware and mounted routes.
-// The pinger must not be nil; use handlers.NopPinger in tests that don't
-// require database access. The frontendFS parameter provides the embedded
+// The pinger must not be nil. The frontendFS parameter provides the embedded
 // SvelteKit build output; if nil, no static file serving is configured.
 func NewRouter(pinger handlers.Pinger, frontendFS fs.FS) http.Handler {
 	r := chi.NewRouter()
@@ -23,8 +22,8 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS) http.Handler {
 
 	r.Get("/api/health", handlers.Health(pinger))
 
-	// Serve static frontend files with SPA fallback. Registered last so
-	// API routes take precedence (chi matches more specific routes first).
+	// Serve static frontend files with SPA fallback. The wildcard pattern never
+	// shadows explicit API routes because chi's radix tree prefers exact matches.
 	if frontendFS != nil {
 		r.Handle("/*", StaticHandler(frontendFS))
 	}
