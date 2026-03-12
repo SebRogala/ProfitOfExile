@@ -1,5 +1,8 @@
 -- Seed data for strategies table
--- Covers: leaf node, series wrapper, nested tree with conversion rules,
+-- WARNING: edit_tokens below are for development/testing only.
+-- Production tokens must be cryptographically random.
+--
+-- Covers: leaf node, series wrapper, wrapper tree with conversion rules,
 -- empty tree edge case, cross-league data
 
 INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_at) VALUES
@@ -55,7 +58,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
     '2026-03-10 14:15:00+00'
 ),
 
--- 3. Fragment set conversion strategy (tests inventory cascade)
+-- 3. Fragment set conversion strategy (includes conversion_rules for inventory cascade scenarios)
 -- All four guardian fragments are produced so the conversion rule can fire
 (
     'a1b2c3d4-0003-4000-8000-000000000003',
