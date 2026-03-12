@@ -25,10 +25,13 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     container_name: profitofexile_frontend
+    ports:
+      - "5173:5173"
     volumes:
       - ./frontend:/app
     networks:
       - infra
+    restart: unless-stopped
 
 volumes:
   go-pkg:
