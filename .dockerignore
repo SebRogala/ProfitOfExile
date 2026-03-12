@@ -13,3 +13,8 @@ docs/
 # CI / agent tooling
 .github/
 .claude/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
