@@ -16,6 +16,7 @@ var Version = "dev"
 type healthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
+	DB      string `json:"db"`
 }
 
 // Health returns an HTTP handler that responds with the server health status.
@@ -23,19 +24,21 @@ type healthResponse struct {
 // failure. When pool is nil (e.g. in tests), the DB check is skipped.
 func Health(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if pool != nil {
-			if err := pool.Ping(r.Context()); err != nil {
-				slog.Error("health: database ping failed", "error", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"status":"error","version":"` + Version + `"}`))
-				return
-			}
-		}
-
 		resp := healthResponse{
 			Status:  "ok",
 			Version: Version,
+		}
+		httpStatus := http.StatusOK
+
+		if pool == nil {
+			resp.DB = "unavailable"
+		} else if err := pool.Ping(r.Context()); err != nil {
+			slog.Error("health: database ping failed", "error", err)
+			resp.Status = "degraded"
+			resp.DB = "error"
+			httpStatus = http.StatusServiceUnavailable
+		} else {
+			resp.DB = "ok"
 		}
 
 		data, err := json.Marshal(resp)
@@ -46,6 +49,7 @@ func Health(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(httpStatus)
 		w.Write(data)
 	}
 }

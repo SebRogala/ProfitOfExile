@@ -21,10 +21,10 @@ func TestHealth(t *testing.T) {
 		wantContentType string
 	}{
 		{
-			name:           "GET returns 200",
+			name:           "GET returns 200 with db unavailable when pool is nil",
 			method:         http.MethodGet,
 			wantStatus:     http.StatusOK,
-			wantBody:       &healthResponse{Status: "ok", Version: "dev"},
+			wantBody:       &healthResponse{Status: "ok", Version: "dev", DB: "unavailable"},
 			wantContentType: "application/json",
 		},
 		{
@@ -72,6 +72,9 @@ func TestHealth(t *testing.T) {
 				}
 				if got.Version != tt.wantBody.Version {
 					t.Errorf("Version = %q, want %q", got.Version, tt.wantBody.Version)
+				}
+				if got.DB != tt.wantBody.DB {
+					t.Errorf("DB = %q, want %q", got.DB, tt.wantBody.DB)
 				}
 			}
 		})
