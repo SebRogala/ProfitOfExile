@@ -105,10 +105,36 @@ The final results table must display:
 Raw price-based ROI is misleading without market context. A gem showing +263c profit is a trap if every farmer targets it and the price crashes before you sell. The system must track and surface:
 
 **Price History & Snapshots:**
-- Store timestamped price snapshots in PostgreSQL (gem prices, listing counts, computed ROIs)
-- Snapshot frequency: at least every 2-4 hours during active league (configurable)
-- poe.ninja provides daily historical data but that's too coarse — intraday resolution catches crashes that happen in hours
+- Store timestamped price snapshots in TimescaleDB hypertables (gem prices, listing counts, computed ROIs)
+- Snapshot frequency: **every 15 minutes** — poe.ninja `Cache-Control: max-age=1800` means data refreshes every 30 min; 15-min polling is the optimal ceiling
+- Data retention: 15-min granularity for 7 days → hourly continuous aggregate after 7 days → daily after 30 days (TimescaleDB handles automatically)
 - Show price trend sparklines alongside ROI in strategy results
+- Scale estimate (gems only): ~800 data points/snapshot × 96 snapshots/day = ~77k rows/day, ~7M/league, ~28M/year. With all data types: 3-5× more.
+
+**Listing Velocity as Leading Indicator:**
+- **Price is a lagging indicator. Listings predict price.** Validated with real data (Mar 2026):
+- Track listing count deltas alongside price deltas per item
+
+| Signal | Listings | Price | Meaning |
+|--------|----------|-------|---------|
+| Safe target | Shrinking | Rising | Real demand outpacing supply |
+| Demand absorbing | Growing | Holding | Stable for now, watch closely |
+| Saturation / crash incoming | Growing | Dropping | GET OUT — farmers flooding |
+| Equilibrium | Stable | Stable | Boring but safe |
+
+- **Thin market filter**: items with <5 listings produce unreliable signals — flag as LOW_CONFIDENCE
+
+**Anomaly Detection & Classification:**
+- **T+0 detection**: flag when `listings_delta > 20 AND price_delta > 50%` in a single snapshot → `ANOMALY`
+- **T+1h classification** based on follow-up behavior:
+
+| Type | Follow-up Signature |
+|------|---------------------|
+| **Streamer effect** | Price holds, new sellers keep appearing from many accounts |
+| **Price fixing** | Price crashes + listings vanish when fixer pulls out |
+| **Dump / hype fading** | Price dropping + listings growing, items sit unsold |
+
+- Limitation: poe.ninja doesn't provide per-seller data, so initial classification relies on follow-up behavior patterns
 
 **Saturation Detection:**
 - Track listing count changes over time per item
@@ -322,15 +348,26 @@ This data is only used locally for AI-assisted brainstorming. It is never shared
 - Results tables with source comparison
 - League selector dropdown
 
-### Database: PostgreSQL
-- Already running on CapRover
-- Tables: strategies, price_cache, profiles, conversion_rules
-- JSONB columns for strategy trees and price data
-- No ORM — plain SQL queries
+### Database: PostgreSQL + TimescaleDB
+- PostgreSQL with TimescaleDB extension for time-series price data
+- Application tables: strategies, profiles, conversion_rules (standard PostgreSQL)
+- Price history: TimescaleDB hypertables per data type (gems, currency, fragments, cards, uniques)
+- `time_bucket()` for aggregation, automatic compression for old data, continuous aggregates for downsampling
+- JSONB columns for strategy trees
+- No ORM — plain SQL queries via `pgx` (TimescaleDB is just SQL)
 
-### Deployment: Docker on CapRover
+### Price Collector Service (VPS)
+- Standalone Go service deployed alongside ProfitOfExile
+- Internal cron: fetches poe.ninja every 15 minutes, stores in TimescaleDB
+- REST API: `GET /snapshots?hours=24`, `GET /latest`, `GET /health`
+- Deployed on subdomain (e.g., `poe-prices.domain.com`)
+- No auth — read-only public price data
+- Runs 24/7 on VPS (local WSL cron has gaps during PC sleep)
+
+### Deployment: Docker on Coolify
 - Multi-stage Dockerfile: Node build (SvelteKit) → Go build → minimal final image
-- Single container, connects to existing Postgres
+- Single container for main app, connects to Postgres+TimescaleDB
+- Separate container for price collector service
 - Go binary serves everything
 
 ---
@@ -355,9 +392,13 @@ This data is only used locally for AI-assisted brainstorming. It is never shared
 - [ ] Port font farming strategy (probabilistic type)
 
 ### v2 — Analysis & Intelligence
+- [ ] Price collector service (Go, standalone, 15-min cron, REST API)
+- [ ] TimescaleDB schema: hypertables, continuous aggregates, compression policies
+- [ ] Listing velocity tracking and saturation signals
+- [ ] Anomaly detection with T+1h classification (streamer/fix/dump)
 - [ ] Breakpoint analyzer (sell-vs-chain optimization)
-- [ ] Price history tracking and charts
-- [ ] Market intelligence: saturation detection, liquidity scoring, competition risk (see §2.6)
+- [ ] Price history charts and sparklines
+- [ ] Risk-adjusted ROI (liquidity × saturation penalty)
 - [ ] Strategy versioning (history of changes)
 - [ ] User profile (DB-backed, AI brainstorming context)
 
