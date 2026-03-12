@@ -37,14 +37,6 @@ func TestHealth(t *testing.T) {
 		wantContentType string
 	}{
 		{
-			name:            "GET returns 200 with db unavailable when pinger is nil",
-			pinger:          nil,
-			method:          http.MethodGet,
-			wantStatus:      http.StatusOK,
-			wantBody:        &healthResponse{Status: "ok", Version: "dev", DB: "unavailable"},
-			wantContentType: "application/json",
-		},
-		{
 			name:            "GET returns 200 with db ok when ping succeeds",
 			pinger:          healthyPinger,
 			method:          http.MethodGet,
@@ -61,20 +53,30 @@ func TestHealth(t *testing.T) {
 			wantContentType: "application/json",
 		},
 		{
+			name: "GET returns 503 with db error when context is cancelled",
+			pinger: &mockPinger{
+				PingFn: func(ctx context.Context) error { return context.Canceled },
+			},
+			method:          http.MethodGet,
+			wantStatus:      http.StatusServiceUnavailable,
+			wantBody:        &healthResponse{Status: "degraded", Version: "dev", DB: "error"},
+			wantContentType: "application/json",
+		},
+		{
 			name:       "POST returns 405 Method Not Allowed",
-			pinger:     nil,
+			pinger:     NopPinger{},
 			method:     http.MethodPost,
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
 			name:       "PUT returns 405 Method Not Allowed",
-			pinger:     nil,
+			pinger:     NopPinger{},
 			method:     http.MethodPut,
 			wantStatus: http.StatusMethodNotAllowed,
 		},
 		{
 			name:       "DELETE returns 405 Method Not Allowed",
-			pinger:     nil,
+			pinger:     NopPinger{},
 			method:     http.MethodDelete,
 			wantStatus: http.StatusMethodNotAllowed,
 		},
@@ -120,9 +122,18 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestHealth_NilPingerPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic when pinger is nil, but did not panic")
+		}
+	}()
+	Health(nil)
+}
+
 func TestHealthResponseJSONFields(t *testing.T) {
 	router := chi.NewRouter()
-	router.Get("/api/health", Health(nil))
+	router.Get("/api/health", Health(NopPinger{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	w := httptest.NewRecorder()

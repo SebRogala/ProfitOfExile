@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"profitofexile/internal/server/handlers"
 )
 
 func TestNewRouter_HealthRoute(t *testing.T) {
-	router := NewRouter(nil)
+	router := NewRouter(handlers.NopPinger{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	w := httptest.NewRecorder()

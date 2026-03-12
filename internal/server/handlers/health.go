@@ -13,10 +13,23 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// NopPinger is a Pinger that always succeeds. Use in tests that don't
+// require database access.
+type NopPinger struct{}
+
+// Ping always returns nil.
+func (NopPinger) Ping(context.Context) error { return nil }
+
 // Version is set at build time via ldflags:
 //
 //	go build -ldflags "-X profitofexile/internal/server/handlers.Version=<sha>"
 var Version = "dev"
+
+// Health status constants for the health endpoint.
+const (
+	statusOK       = "ok"
+	statusDegraded = "degraded"
+)
 
 // DB status constants for the health endpoint.
 const (
@@ -32,24 +45,22 @@ type healthResponse struct {
 }
 
 // Health returns an HTTP handler that responds with the server health status.
-// When a Pinger is provided, it pings the database and returns 503 on
-// failure. When pinger is nil (e.g. in tests), DB is reported as "unavailable"
-// but the overall status remains "ok" with HTTP 200 — this path exists for
-// test convenience and should not occur in production.
+// It pings the database and returns 503 on failure. The pinger must not be nil;
+// use NopPinger in tests that don't require database access.
 func Health(pinger Pinger) http.HandlerFunc {
+	if pinger == nil {
+		panic("handlers.Health: pinger must not be nil (use NopPinger for tests)")
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		resp := healthResponse{
-			Status:  "ok",
+			Status:  statusOK,
 			Version: Version,
 		}
 		httpStatus := http.StatusOK
 
-		if pinger == nil {
-			slog.Warn("health: database pool is nil, reporting DB as unavailable")
-			resp.DB = dbStatusUnavailable
-		} else if err := pinger.Ping(r.Context()); err != nil {
+		if err := pinger.Ping(r.Context()); err != nil {
 			slog.Error("health: database ping failed", "error", err)
-			resp.Status = "degraded"
+			resp.Status = statusDegraded
 			resp.DB = dbStatusError
 			httpStatus = http.StatusServiceUnavailable
 		} else {

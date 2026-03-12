@@ -10,8 +10,8 @@ import (
 )
 
 // NewRouter creates a chi router with middleware and mounted routes.
-// The pinger parameter may be nil in tests that don't require database access;
-// in production it must be non-nil for the health endpoint to report DB status.
+// The pinger must not be nil; use handlers.NopPinger in tests that don't
+// require database access.
 func NewRouter(pinger handlers.Pinger) http.Handler {
 	r := chi.NewRouter()
 
