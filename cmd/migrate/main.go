@@ -74,6 +74,9 @@ func run(args []string, databaseURL string) error {
 			if err != nil {
 				return fmt.Errorf("invalid step count %q: %w", args[1], err)
 			}
+			if n <= 0 {
+				return fmt.Errorf("step count must be a positive integer, got %d", n)
+			}
 		}
 		err = m.Steps(-n)
 		if err != nil {
@@ -97,6 +100,10 @@ func run(args []string, databaseURL string) error {
 	case "version":
 		version, dirty, verr := m.Version()
 		if verr != nil {
+			if errors.Is(verr, migrate.ErrNilVersion) {
+				fmt.Println("no migrations applied yet")
+				return nil
+			}
 			return fmt.Errorf("get migration version: %w", verr)
 		}
 		fmt.Printf("version: %d, dirty: %v\n", version, dirty)

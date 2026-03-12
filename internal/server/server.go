@@ -5,21 +5,21 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/server/handlers"
 )
 
 // NewRouter creates a chi router with middleware and mounted routes.
-// The pool parameter may be nil in tests that don't require database access.
-func NewRouter(pool *pgxpool.Pool) http.Handler {
+// The pinger parameter may be nil in tests that don't require database access;
+// in production it must be non-nil for the health endpoint to report DB status.
+func NewRouter(pinger handlers.Pinger) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(handlers.SlogRecoverer)
 
-	r.Get("/api/health", handlers.Health(pool))
+	r.Get("/api/health", handlers.Health(pinger))
 
 	return r
 }

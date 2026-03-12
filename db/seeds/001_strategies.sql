@@ -1,12 +1,13 @@
 -- Seed data for strategies table
--- Covers: leaf node, series wrapper, nested tree with conversion rules, empty tree edge case, cross-league data
+-- Covers: leaf node, series wrapper, nested tree with conversion rules,
+-- empty tree edge case, cross-league data
 
 INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_at) VALUES
 
 -- 1. Simple leaf strategy: farming Divine Orbs in maps
 (
     'a1b2c3d4-0001-4000-8000-000000000001',
-    'tok_divine_maps_a1b2',
+    'tok_divine_maps_a1b2c3d4e5f6',
     'Divine Orb Mapping',
     'Mirage',
     '{
@@ -24,7 +25,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
 -- 2. Wrapper strategy: Lab farming with enchant sub-strategies
 (
     'a1b2c3d4-0002-4000-8000-000000000002',
-    'tok_lab_farm_b3c4',
+    'tok_lab_farm_b3c4d5e6f7g8',
     'Merciless Lab Enchant Farm',
     'Mirage',
     '{
@@ -58,7 +59,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
 -- All four guardian fragments are produced so the conversion rule can fire
 (
     'a1b2c3d4-0003-4000-8000-000000000003',
-    'tok_shaper_frags_c5d6',
+    'tok_shaper_frags_c5d6e7f8',
     'Shaper Fragment Farming',
     'Mirage',
     '{
@@ -118,7 +119,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
 -- 4. Edge case: empty tree (newly created strategy)
 (
     'a1b2c3d4-0004-4000-8000-000000000004',
-    'tok_empty_strat_d7e8',
+    'tok_empty_strat_d7e8f9g0',
     'Untitled Strategy',
     'Mirage',
     '{}',
@@ -129,7 +130,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
 -- 5. Font of Divine Skill strategy (probability-based transfigured gem farming, cross-league)
 (
     'a1b2c3d4-0005-4000-8000-000000000005',
-    'tok_font_divine_e9f0',
+    'tok_font_divine_e9f0a1b2',
     'Font of Divine Skill',
     'Settlers',
     '{

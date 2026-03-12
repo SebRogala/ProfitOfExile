@@ -44,6 +44,7 @@ func main() {
 	pool, err := db.NewPool(ctx, databaseURL)
 	if err != nil {
 		slog.Error("failed to connect to database", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to connect to database. Check DATABASE_URL and ensure PostgreSQL is running.")
 		os.Exit(1)
 	}
 	defer pool.Close()
@@ -51,12 +52,12 @@ func main() {
 
 	m, err := migrate.New("file://db/migrations", databaseURL)
 	if err != nil {
-		slog.Error("auto-migrate failed", "error", err)
+		slog.Error("auto-migrate: failed to initialize migrator", "error", err)
 		os.Exit(1)
 	}
 	err = m.Up()
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		slog.Error("auto-migrate failed", "error", err)
+		slog.Error("auto-migrate: failed to apply migrations", "error", err)
 		os.Exit(1)
 	}
 	if errors.Is(err, migrate.ErrNoChange) {
