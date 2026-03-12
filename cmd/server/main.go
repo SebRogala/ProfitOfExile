@@ -12,6 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+
 	"profitofexile/internal/db"
 	"profitofexile/internal/server"
 )
@@ -44,6 +48,31 @@ func main() {
 	}
 	defer pool.Close()
 	slog.Info("database connected")
+
+	m, err := migrate.New("file://db/migrations", databaseURL)
+	if err != nil {
+		slog.Error("auto-migrate failed", "error", err)
+		os.Exit(1)
+	}
+	err = m.Up()
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		slog.Error("auto-migrate failed", "error", err)
+		os.Exit(1)
+	}
+	if errors.Is(err, migrate.ErrNoChange) {
+		slog.Info("migrations: no new migrations to apply")
+	} else {
+		slog.Info("migrations: applied successfully")
+	}
+	srcErr, dbErr := m.Close()
+	if srcErr != nil {
+		slog.Error("failed to close migration source", "error", srcErr)
+		os.Exit(1)
+	}
+	if dbErr != nil {
+		slog.Error("failed to close migration database", "error", dbErr)
+		os.Exit(1)
+	}
 
 	router := server.NewRouter(pool)
 
