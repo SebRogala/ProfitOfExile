@@ -33,10 +33,33 @@ func run(args []string, databaseURL string) error {
 
 	cmd := args[0]
 
-	// Validate command before creating the migrate instance.
+	// Validate command and its arguments before creating the migrate instance.
+	var downSteps int
+	var forceVersion int
 	switch cmd {
-	case "up", "down", "force", "version":
-		// valid command
+	case "up", "version":
+		// no additional arguments to validate
+	case "down":
+		downSteps = 1
+		if len(args) >= 2 {
+			n, parseErr := strconv.Atoi(args[1])
+			if parseErr != nil {
+				return fmt.Errorf("invalid step count %q: %w", args[1], parseErr)
+			}
+			if n <= 0 {
+				return fmt.Errorf("step count must be a positive integer, got %d", n)
+			}
+			downSteps = n
+		}
+	case "force":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: migrate force VERSION")
+		}
+		fv, parseErr := strconv.Atoi(args[1])
+		if parseErr != nil {
+			return fmt.Errorf("invalid version %q: %w", args[1], parseErr)
+		}
+		forceVersion = fv
 	default:
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
@@ -68,34 +91,17 @@ func run(args []string, databaseURL string) error {
 		}
 
 	case "down":
-		n := 1
-		if len(args) >= 2 {
-			n, err = strconv.Atoi(args[1])
-			if err != nil {
-				return fmt.Errorf("invalid step count %q: %w", args[1], err)
-			}
-			if n <= 0 {
-				return fmt.Errorf("step count must be a positive integer, got %d", n)
-			}
-		}
-		err = m.Steps(-n)
+		err = m.Steps(-downSteps)
 		if err != nil {
 			return fmt.Errorf("migration down: %w", err)
 		}
-		slog.Info("rolled back migrations", "steps", n)
+		slog.Info("rolled back migrations", "steps", downSteps)
 
 	case "force":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: migrate force VERSION")
-		}
-		version, ferr := strconv.Atoi(args[1])
-		if ferr != nil {
-			return fmt.Errorf("invalid version %q: %w", args[1], ferr)
-		}
-		if err = m.Force(version); err != nil {
+		if err = m.Force(forceVersion); err != nil {
 			return fmt.Errorf("migration force: %w", err)
 		}
-		slog.Info("forced migration version", "version", version)
+		slog.Info("forced migration version", "version", forceVersion)
 
 	case "version":
 		version, dirty, verr := m.Version()

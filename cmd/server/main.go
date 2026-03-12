@@ -12,10 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
-
 	"profitofexile/internal/db"
 	"profitofexile/internal/server"
 )
@@ -50,27 +46,12 @@ func main() {
 	defer pool.Close()
 	slog.Info("database connected")
 
-	m, err := migrate.New("file://db/migrations", databaseURL)
-	if err != nil {
-		slog.Error("auto-migrate: failed to initialize migrator", "error", err)
+	// Auto-migrate: apply pending migrations before binding the server.
+	// Fail-fast on error per ADR-004.
+	if err := db.MigrateUp("file://db/migrations", databaseURL); err != nil {
+		slog.Error("auto-migrate failed", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to apply database migrations. Check migration files and database state.")
 		os.Exit(1)
-	}
-	err = m.Up()
-	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		slog.Error("auto-migrate: failed to apply migrations", "error", err)
-		os.Exit(1)
-	}
-	if errors.Is(err, migrate.ErrNoChange) {
-		slog.Info("migrations: no new migrations to apply")
-	} else {
-		slog.Info("migrations: applied successfully")
-	}
-	srcErr, dbErr := m.Close()
-	if srcErr != nil {
-		slog.Warn("failed to close migration source", "error", srcErr)
-	}
-	if dbErr != nil {
-		slog.Warn("failed to close migration database", "error", dbErr)
 	}
 
 	router := server.NewRouter(pool)
