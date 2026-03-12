@@ -1,4 +1,4 @@
-.PHONY: build test qa up down migrate migrate-down
+.PHONY: build test qa up down migrate migrate-down migrate-force
 
 build:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
@@ -17,7 +17,13 @@ down:
 	docker compose down
 
 migrate:
-	@echo "migrate: not yet implemented (see POE-15)"
+	@docker compose exec app true 2>/dev/null || $(MAKE) up
+	docker compose exec app go run ./cmd/migrate up
 
 migrate-down:
-	@echo "migrate-down: not yet implemented (see POE-15)"
+	@docker compose exec app true 2>/dev/null || $(MAKE) up
+	docker compose exec app go run ./cmd/migrate down 1
+
+migrate-force:
+	@docker compose exec app true 2>/dev/null || $(MAKE) up
+	docker compose exec app go run ./cmd/migrate force $(VERSION)
