@@ -1,3 +1,5 @@
 .idea/
 .mcp.json
 .env
+bin/
+tmp/
