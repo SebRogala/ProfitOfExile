@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -18,6 +21,12 @@ func main() {
 		port = "8080"
 	}
 
+	if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+		slog.Error("invalid PORT value", "port", port)
+		fmt.Fprintf(os.Stderr, "PORT must be a number between 1 and 65535, got %q\n", port)
+		os.Exit(1)
+	}
+
 	router := server.NewRouter()
 
 	srv := &http.Server{
@@ -28,21 +37,27 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Start server in a goroutine so we can listen for shutdown signals.
+	// Start server in a goroutine, sending errors back to the main goroutine
+	// so deferred cleanup can run before exit.
+	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("server starting", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	// Wait for SIGINT/SIGTERM or a server startup error.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server failed to start", "error", err)
 			os.Exit(1)
 		}
-	}()
-
-	// Wait for SIGINT or SIGTERM.
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-
-	slog.Info("shutting down server", "signal", sig.String())
+	case sig := <-quit:
+		slog.Info("shutting down server", "signal", sig.String())
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
