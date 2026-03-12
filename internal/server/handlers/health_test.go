@@ -80,3 +80,29 @@ func TestHealth(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthResponseJSONFields(t *testing.T) {
+	router := chi.NewRouter()
+	router.Get("/api/health", Health(nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	var raw map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&raw); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+
+	requiredFields := []string{"status", "version", "db"}
+	for _, field := range requiredFields {
+		if _, ok := raw[field]; !ok {
+			t.Errorf("response JSON missing required field %q", field)
+		}
+	}
+
+	if len(raw) != len(requiredFields) {
+		t.Errorf("response JSON has %d fields, want %d", len(raw), len(requiredFields))
+	}
+}
