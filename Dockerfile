@@ -17,6 +17,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
+# NOTE: COPY . . brings frontend/ source into this stage even though it is not
+# needed (only the build output from stage 0 matters). .dockerignore cannot
+# exclude frontend/ per-stage without breaking the frontend-build stage above.
+# Acceptable for now; Go module cache is already preserved by the earlier
+# go.mod/go.sum layer.
 COPY . .
 # Place SvelteKit build output where the Go embed directive expects it.
 COPY --from=frontend-build /app/build ./cmd/server/frontend_build
