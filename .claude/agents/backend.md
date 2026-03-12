@@ -17,7 +17,7 @@ ARCHITECTURE.md is the single source of truth for structural decisions (director
 
 ## Go Conventions
 
-- **Go 1.22+**: Use standard library HTTP routing (`http.NewServeMux` with method patterns) or chi router.
+- **Go 1.22+**: Use chi router for HTTP routing (`github.com/go-chi/chi/v5`). See `go.mod` and `internal/server/server.go`.
 - **Error handling**: Return errors, don't panic. Wrap with `fmt.Errorf("context: %w", err)` for chain preservation.
 - **Naming**: Follow Go conventions — short receiver names, unexported by default, exported only at package API boundaries.
 - **Constructors**: Use `New*` functions that validate invariants and return `(*T, error)` when construction can fail.
