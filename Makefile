@@ -1,13 +1,17 @@
-.PHONY: build run test up down migrate migrate-down
+.PHONY: build run test up down migrate migrate-down qa
+
+GO_RUN = docker run --rm -v $(CURDIR):/app -w /app golang:1.23
 
 build:
-	go build -o bin/server ./cmd/server
+	$(GO_RUN) go build -o bin/server ./cmd/server
 
 run:
-	go run ./cmd/server
+	$(GO_RUN) go run ./cmd/server
 
 test:
-	go test -race ./...
+	$(GO_RUN) go test -race ./...
+
+qa: test
 
 up:
 	docker compose up -d
