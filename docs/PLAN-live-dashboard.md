@@ -188,6 +188,13 @@ Phase 2: Price collector (data starts accumulating)
 
 **Key insight:** Phase 2 is time-sensitive — every day without the collector is lost price history. Phases 3+4 can be built at any pace since the data is accumulating in the background.
 
+### Historical Data Migration
+- **Source:** `/var/www/poe/data/price-history.jsonl` (~70 snapshots, 33 hours, 2.7 MB)
+- **What:** One-shot Go or Node script that reads JSONL and INSERTs into `gem_snapshots`
+- **When:** Run once after TimescaleDB schema is up, before collector starts
+- **Mapping:** Each JSONL line has `timestamp` + per-gem `{ base, trans, roi, baseLst, transLst }` per variant → flattens into hypertable rows
+- **Bonus:** Keep `price-snapshot.mjs` running until collector is deployed — migrate all accumulated JSONL at cutover
+
 ---
 
 ## Open Questions
