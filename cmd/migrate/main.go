@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,11 +37,11 @@ func main() {
 	switch cmd {
 	case "up":
 		err = m.Up()
-		if err != nil && err != migrate.ErrNoChange {
+		if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 			slog.Error("migration up failed", "error", err)
 			os.Exit(1)
 		}
-		if err == migrate.ErrNoChange {
+		if errors.Is(err, migrate.ErrNoChange) {
 			slog.Info("no new migrations to apply")
 		} else {
 			slog.Info("migrations applied successfully")
