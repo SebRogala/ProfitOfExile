@@ -1,5 +1,5 @@
 -- Seed data for strategies table
--- Covers: leaf node, series wrapper, nested tree with conversion rules
+-- Covers: leaf node, series wrapper, nested tree with conversion rules, empty tree edge case, cross-league data
 
 INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_at) VALUES
 
@@ -55,6 +55,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
 ),
 
 -- 3. Fragment set conversion strategy (tests inventory cascade)
+-- All four guardian fragments are produced so the conversion rule can fire
 (
     'a1b2c3d4-0003-4000-8000-000000000003',
     'tok_shaper_frags_c5d6',
@@ -79,6 +80,22 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
                 "series": 1,
                 "inputs": [{"item": "Chaos Orb", "quantity": 12}],
                 "outputs": [{"item": "Fragment of the Hydra", "quantity": 1, "probability": 1.0}],
+                "duration_seconds": 0
+            },
+            {
+                "type": "leaf",
+                "name": "Fragment of the Minotaur",
+                "series": 1,
+                "inputs": [{"item": "Chaos Orb", "quantity": 14}],
+                "outputs": [{"item": "Fragment of the Minotaur", "quantity": 1, "probability": 1.0}],
+                "duration_seconds": 0
+            },
+            {
+                "type": "leaf",
+                "name": "Fragment of the Chimera",
+                "series": 1,
+                "inputs": [{"item": "Chaos Orb", "quantity": 13}],
+                "outputs": [{"item": "Fragment of the Chimera", "quantity": 1, "probability": 1.0}],
                 "duration_seconds": 0
             }
         ],
@@ -109,7 +126,7 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
     '2026-03-12 00:00:00+00'
 ),
 
--- 5. Font of Divine Skill strategy (probability-based gem farming)
+-- 5. Font of Divine Skill strategy (probability-based transfigured gem farming, cross-league)
 (
     'a1b2c3d4-0005-4000-8000-000000000005',
     'tok_font_divine_e9f0',
@@ -119,11 +136,11 @@ INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_
         "type": "leaf",
         "name": "Font of Divine Skill",
         "series": 20,
-        "inputs": [{"item": "Maven''s Writ", "quantity": 1}],
+        "inputs": [{"item": "Skill Gem", "quantity": 3}],
         "outputs": [
-            {"item": "Awakened Gem (RED)", "quantity": 1, "probability": 0.15},
-            {"item": "Awakened Gem (GREEN)", "quantity": 1, "probability": 0.10},
-            {"item": "Awakened Gem (BLUE)", "quantity": 1, "probability": 0.12}
+            {"item": "Transfigured Gem (RED)", "quantity": 1, "probability": 0.15},
+            {"item": "Transfigured Gem (GREEN)", "quantity": 1, "probability": 0.10},
+            {"item": "Transfigured Gem (BLUE)", "quantity": 1, "probability": 0.12}
         ],
         "duration_seconds": 600
     }',
