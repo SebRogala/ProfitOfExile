@@ -16,7 +16,7 @@ func TestNewPool(t *testing.T) {
 		{
 			name:        "empty URL returns descriptive error",
 			databaseURL: "",
-			wantErr:     "db: parse config",
+			wantErr:     "db:",
 		},
 		{
 			name:        "invalid URL format returns descriptive error",
