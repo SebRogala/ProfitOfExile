@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ProfitOfExile is a **Path of Exile 1 profit simulation platform** being rewritten from PHP/Symfony + Vue 3 to **Go + SvelteKit**. It models farming strategies as composable trees, fetches live prices from multiple market sources, simulates inventory flows with automatic set conversions, and calculates profitability per strategy.
 
-The original PHP codebase exists only in git history (commit `537e37e` and earlier) as architectural reference — do not restore or modify it. The current repo contains only design documents (`BACKBONE.md`, `EPICS.md`) as the Go rewrite hasn't started yet.
+The original PHP codebase exists only in git history (commit `537e37e` and earlier) as architectural reference — do not restore or modify it. The current repo contains design documents (`BACKBONE.md`, `EPICS.md`, `ARCHITECTURE.md`) as the Go rewrite is starting.
 
 ## Early Prototypes (`/var/www/poe`)
 
