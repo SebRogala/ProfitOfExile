@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -14,6 +15,16 @@ import (
 // the database at databaseURL. It returns nil when migrations are applied
 // successfully or when there are no new migrations to apply.
 func MigrateUp(migrationsPath, databaseURL string) error {
+	// golang-migrate uses lib/pq which defaults to sslmode=require.
+	// Append sslmode=disable when not explicitly set, matching pgx behavior.
+	if !strings.Contains(databaseURL, "sslmode=") {
+		if strings.Contains(databaseURL, "?") {
+			databaseURL += "&sslmode=disable"
+		} else {
+			databaseURL += "?sslmode=disable"
+		}
+	}
+
 	m, err := migrate.New(migrationsPath, databaseURL)
 	if err != nil {
 		return fmt.Errorf("create migrate instance: %w", err)

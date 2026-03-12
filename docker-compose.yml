@@ -15,10 +15,10 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.profitofexile.rule=Host(`profitofexile.localhost`)"
-      - "traefik.http.routers.profitofexile.entrypoints=websecure"
-      - "traefik.http.routers.profitofexile.tls=true"
-      - "traefik.http.services.profitofexile.loadbalancer.server.port=8080"
+      - "traefik.http.routers.profitofexile-api.rule=Host(`profitofexile.localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.profitofexile-api.entrypoints=websecure"
+      - "traefik.http.routers.profitofexile-api.tls=true"
+      - "traefik.http.services.profitofexile-api.loadbalancer.server.port=8080"
 
   frontend:
     build:
@@ -33,9 +33,10 @@ services:
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.profitofexile-frontend.rule=Host(`frontend.profitofexile.localhost`)"
+      - "traefik.http.routers.profitofexile-frontend.rule=Host(`profitofexile.localhost`)"
       - "traefik.http.routers.profitofexile-frontend.entrypoints=websecure"
       - "traefik.http.routers.profitofexile-frontend.tls=true"
+      - "traefik.http.routers.profitofexile-frontend.priority=1"
       - "traefik.http.services.profitofexile-frontend.loadbalancer.server.port=5173"
 
 volumes:
