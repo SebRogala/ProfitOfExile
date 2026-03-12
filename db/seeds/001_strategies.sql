@@ -1,0 +1,132 @@
+-- Seed data for strategies table
+-- Covers: leaf node, series wrapper, nested tree with conversion rules
+
+INSERT INTO strategies (id, edit_token, name, league, tree, created_at, updated_at) VALUES
+
+-- 1. Simple leaf strategy: farming Divine Orbs in maps
+(
+    'a1b2c3d4-0001-4000-8000-000000000001',
+    'tok_divine_maps_a1b2',
+    'Divine Orb Mapping',
+    'Mirage',
+    '{
+        "type": "leaf",
+        "name": "T16 Map Farm",
+        "series": 10,
+        "inputs": [{"item": "Chaos Orb", "quantity": 3}],
+        "outputs": [{"item": "Divine Orb", "quantity": 1, "probability": 0.05}],
+        "duration_seconds": 300
+    }',
+    '2026-03-01 12:00:00+00',
+    '2026-03-01 12:00:00+00'
+),
+
+-- 2. Wrapper strategy: Lab farming with enchant sub-strategies
+(
+    'a1b2c3d4-0002-4000-8000-000000000002',
+    'tok_lab_farm_b3c4',
+    'Merciless Lab Enchant Farm',
+    'Mirage',
+    '{
+        "type": "wrapper",
+        "name": "Lab Run",
+        "series": 5,
+        "children": [
+            {
+                "type": "leaf",
+                "name": "Helmet Enchant",
+                "series": 1,
+                "inputs": [{"item": "Offering to the Goddess", "quantity": 1}],
+                "outputs": [{"item": "Enchanted Helmet", "quantity": 1, "probability": 0.25}],
+                "duration_seconds": 480
+            },
+            {
+                "type": "leaf",
+                "name": "Boot Enchant",
+                "series": 1,
+                "inputs": [],
+                "outputs": [{"item": "Enchanted Boots", "quantity": 1, "probability": 0.33}],
+                "duration_seconds": 0
+            }
+        ]
+    }',
+    '2026-03-05 08:30:00+00',
+    '2026-03-10 14:15:00+00'
+),
+
+-- 3. Fragment set conversion strategy (tests inventory cascade)
+(
+    'a1b2c3d4-0003-4000-8000-000000000003',
+    'tok_shaper_frags_c5d6',
+    'Shaper Fragment Farming',
+    'Mirage',
+    '{
+        "type": "wrapper",
+        "name": "Shaper Set Assembly",
+        "series": 4,
+        "children": [
+            {
+                "type": "leaf",
+                "name": "Fragment of the Phoenix",
+                "series": 1,
+                "inputs": [{"item": "Chaos Orb", "quantity": 15}],
+                "outputs": [{"item": "Fragment of the Phoenix", "quantity": 1, "probability": 1.0}],
+                "duration_seconds": 0
+            },
+            {
+                "type": "leaf",
+                "name": "Fragment of the Hydra",
+                "series": 1,
+                "inputs": [{"item": "Chaos Orb", "quantity": 12}],
+                "outputs": [{"item": "Fragment of the Hydra", "quantity": 1, "probability": 1.0}],
+                "duration_seconds": 0
+            }
+        ],
+        "conversion_rules": [
+            {
+                "inputs": [
+                    {"item": "Fragment of the Phoenix", "quantity": 1},
+                    {"item": "Fragment of the Hydra", "quantity": 1},
+                    {"item": "Fragment of the Minotaur", "quantity": 1},
+                    {"item": "Fragment of the Chimera", "quantity": 1}
+                ],
+                "output": {"item": "Shaper Set", "quantity": 1}
+            }
+        ]
+    }',
+    '2026-03-08 16:00:00+00',
+    '2026-03-11 09:45:00+00'
+),
+
+-- 4. Edge case: empty tree (newly created strategy)
+(
+    'a1b2c3d4-0004-4000-8000-000000000004',
+    'tok_empty_strat_d7e8',
+    'Untitled Strategy',
+    'Mirage',
+    '{}',
+    '2026-03-12 00:00:00+00',
+    '2026-03-12 00:00:00+00'
+),
+
+-- 5. Font of Divine Skill strategy (probability-based gem farming)
+(
+    'a1b2c3d4-0005-4000-8000-000000000005',
+    'tok_font_divine_e9f0',
+    'Font of Divine Skill',
+    'Settlers',
+    '{
+        "type": "leaf",
+        "name": "Font of Divine Skill",
+        "series": 20,
+        "inputs": [{"item": "Maven''s Writ", "quantity": 1}],
+        "outputs": [
+            {"item": "Awakened Gem (RED)", "quantity": 1, "probability": 0.15},
+            {"item": "Awakened Gem (GREEN)", "quantity": 1, "probability": 0.10},
+            {"item": "Awakened Gem (BLUE)", "quantity": 1, "probability": 0.12}
+        ],
+        "duration_seconds": 600
+    }',
+    '2026-02-15 20:00:00+00',
+    '2026-03-01 11:00:00+00'
+);
