@@ -66,12 +66,10 @@ func main() {
 	}
 	srcErr, dbErr := m.Close()
 	if srcErr != nil {
-		slog.Error("failed to close migration source", "error", srcErr)
-		os.Exit(1)
+		slog.Warn("failed to close migration source", "error", srcErr)
 	}
 	if dbErr != nil {
-		slog.Error("failed to close migration database", "error", dbErr)
-		os.Exit(1)
+		slog.Warn("failed to close migration database", "error", dbErr)
 	}
 
 	router := server.NewRouter(pool)
