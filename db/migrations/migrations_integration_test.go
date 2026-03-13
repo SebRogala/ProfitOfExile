@@ -97,7 +97,7 @@ func TestMigrationUpDownReversibility(t *testing.T) {
 	}
 
 	// Roll back all migrations.
-	if err := m.Steps(-1); err != nil {
+	if err := m.Down(); err != nil && err != migrate.ErrNoChange {
 		t.Fatalf("migrate down: %v", err)
 	}
 
