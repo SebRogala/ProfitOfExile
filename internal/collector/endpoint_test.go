@@ -167,6 +167,135 @@ func TestEndpointNameConstants(t *testing.T) {
 	}
 }
 
+func TestParseEndpointOverrides_numericWithoutUnitIgnored(t *testing.T) {
+	// time.ParseDuration requires a unit suffix — "1800" alone is invalid.
+	t.Setenv("NOUNIT_MAX_AGE", "1800")
+	t.Setenv("NOUNIT_FALLBACK_INTERVAL", "900")
+	t.Setenv("NOUNIT_MIN_SLEEP", "30")
+
+	cfg := ParseEndpointOverrides("NOUNIT")
+
+	if cfg.MaxAge != 0 {
+		t.Errorf("MaxAge = %v, want 0 (numeric without unit suffix should be ignored)", cfg.MaxAge)
+	}
+	if cfg.FallbackInterval != 0 {
+		t.Errorf("FallbackInterval = %v, want 0 (numeric without unit suffix should be ignored)", cfg.FallbackInterval)
+	}
+	if cfg.MinSleep != 0 {
+		t.Errorf("MinSleep = %v, want 0 (numeric without unit suffix should be ignored)", cfg.MinSleep)
+	}
+}
+
+func TestParseEndpointOverrides_ninjaIntervalAliasNotHandled(t *testing.T) {
+	// The NINJA_INTERVAL deprecated alias is handled in cmd/collector/main.go,
+	// not in ParseEndpointOverrides. Setting PREFIX_INTERVAL should have no
+	// effect on parsed config — the alias wiring is caller responsibility.
+	t.Setenv("ALIAS_INTERVAL", "20m")
+
+	cfg := ParseEndpointOverrides("ALIAS")
+
+	// FallbackInterval should be zero because _INTERVAL is not a recognized
+	// suffix — only _FALLBACK_INTERVAL is parsed.
+	if cfg.FallbackInterval != 0 {
+		t.Errorf("FallbackInterval = %v, want 0 (_INTERVAL is not parsed, only _FALLBACK_INTERVAL)", cfg.FallbackInterval)
+	}
+}
+
+func TestNinjaIntervalAlias_mergePattern(t *testing.T) {
+	// Simulates the NINJA_INTERVAL deprecated alias pattern used in
+	// cmd/collector/main.go: when FALLBACK_INTERVAL is not set via overrides
+	// but NINJA_INTERVAL is set, the alias value is applied after merge.
+	t.Setenv("LEGACY_FALLBACK_INTERVAL", "")
+
+	overrides := ParseEndpointOverrides("LEGACY")
+
+	// FallbackInterval not set via overrides — zero value.
+	if overrides.FallbackInterval != 0 {
+		t.Fatalf("precondition: FallbackInterval = %v, want 0", overrides.FallbackInterval)
+	}
+
+	base := DefaultNinjaConfig()
+	merged := MergeEndpointConfig(base, overrides)
+
+	// Simulate the alias: if overrides.FallbackInterval == 0 and legacy alias
+	// is set, apply it to the merged config.
+	legacyInterval := 20 * time.Minute // simulates parsed NINJA_INTERVAL=20m
+	if overrides.FallbackInterval == 0 {
+		merged.FallbackInterval = legacyInterval
+	}
+
+	if merged.FallbackInterval != 20*time.Minute {
+		t.Errorf("FallbackInterval = %v, want %v (legacy alias should override base)", merged.FallbackInterval, 20*time.Minute)
+	}
+}
+
+func TestNinjaIntervalAlias_fallbackIntervalTakesPrecedence(t *testing.T) {
+	// When FALLBACK_INTERVAL is explicitly set, the legacy INTERVAL alias
+	// should NOT override it. This mirrors the main.go guard:
+	// if ninjaOverrides.FallbackInterval == 0 && ninjaIntervalStr != "" { ... }
+	t.Setenv("PRIO_FALLBACK_INTERVAL", "25m")
+
+	overrides := ParseEndpointOverrides("PRIO")
+
+	if overrides.FallbackInterval != 25*time.Minute {
+		t.Fatalf("precondition: FallbackInterval = %v, want %v", overrides.FallbackInterval, 25*time.Minute)
+	}
+
+	base := DefaultNinjaConfig()
+	merged := MergeEndpointConfig(base, overrides)
+
+	// Simulate the alias guard: only apply if overrides.FallbackInterval == 0.
+	legacyInterval := 20 * time.Minute
+	if overrides.FallbackInterval == 0 {
+		merged.FallbackInterval = legacyInterval
+	}
+
+	// FALLBACK_INTERVAL wins over the legacy alias.
+	if merged.FallbackInterval != 25*time.Minute {
+		t.Errorf("FallbackInterval = %v, want %v (explicit FALLBACK_INTERVAL should take precedence over alias)", merged.FallbackInterval, 25*time.Minute)
+	}
+}
+
+func TestMergeEndpointConfig_jitterOverrides(t *testing.T) {
+	base := DefaultNinjaConfig()
+	overrides := EndpointConfig{
+		JitterMin: 5 * time.Second,
+		JitterMax: 15 * time.Second,
+	}
+
+	merged := MergeEndpointConfig(base, overrides)
+
+	if merged.JitterMin != 5*time.Second {
+		t.Errorf("JitterMin = %v, want %v (should be overridden)", merged.JitterMin, 5*time.Second)
+	}
+	if merged.JitterMax != 15*time.Second {
+		t.Errorf("JitterMax = %v, want %v (should be overridden)", merged.JitterMax, 15*time.Second)
+	}
+	// Other fields should retain base values.
+	if merged.MaxAge != 1800*time.Second {
+		t.Errorf("MaxAge = %v, want %v (should retain base)", merged.MaxAge, 1800*time.Second)
+	}
+}
+
+func TestDefaultNinjaConfig_functionalFieldsAreNil(t *testing.T) {
+	// DefaultNinjaConfig only sets scalar configuration. Callers must
+	// provide FetchFunc, StoreFunc, and StalenessFunc for their endpoint.
+	cfg := DefaultNinjaConfig()
+
+	if cfg.FetchFunc != nil {
+		t.Error("FetchFunc should be nil — caller must set it")
+	}
+	if cfg.StoreFunc != nil {
+		t.Error("StoreFunc should be nil — caller must set it")
+	}
+	if cfg.StalenessFunc != nil {
+		t.Error("StalenessFunc should be nil — caller must set it")
+	}
+	if cfg.Name != "" {
+		t.Errorf("Name = %q, want empty — caller must set it", cfg.Name)
+	}
+}
+
 func TestFetchResult_zeroValueIsNotModified(t *testing.T) {
 	// A zero-value FetchResult should have NotModified=false.
 	var r FetchResult
