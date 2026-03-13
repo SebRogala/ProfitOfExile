@@ -322,6 +322,38 @@ func TestFetchGems_requestIncludesLeague(t *testing.T) {
 	}
 }
 
+func TestFetchGems_requestIncludesUserAgent(t *testing.T) {
+	var receivedUserAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUserAgent = r.Header.Get("User-Agent")
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	_, _ = f.FetchGems(context.Background(), "Standard")
+
+	if receivedUserAgent != ninjaUserAgent {
+		t.Errorf("User-Agent = %q, want %q", receivedUserAgent, ninjaUserAgent)
+	}
+}
+
+func TestFetchCurrency_requestIncludesUserAgent(t *testing.T) {
+	var receivedUserAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUserAgent = r.Header.Get("User-Agent")
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaCurrencyLine]{})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	_, _ = f.FetchCurrency(context.Background(), "Standard")
+
+	if receivedUserAgent != ninjaUserAgent {
+		t.Errorf("User-Agent = %q, want %q", receivedUserAgent, ninjaUserAgent)
+	}
+}
+
 // newTestResolver creates a gemcolor.Resolver pre-seeded with the given
 // name->color mappings. Colors are specified as strings (e.g. "RED", "BLUE").
 func newTestResolver(colors map[string]string) *gemcolor.Resolver {
