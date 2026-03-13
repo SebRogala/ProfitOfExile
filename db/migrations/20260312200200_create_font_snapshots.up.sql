@@ -1,0 +1,14 @@
+CREATE TABLE font_snapshots (
+    time     TIMESTAMPTZ NOT NULL,
+    color    TEXT        NOT NULL,
+    variant  TEXT        NOT NULL,
+    pool     INTEGER,
+    ev       NUMERIC(10,2),
+    min_val  NUMERIC(10,2),
+    max_val  NUMERIC(10,2),
+    PRIMARY KEY (time, color, variant)
+);
+
+SELECT create_hypertable('font_snapshots', 'time');
+
+CREATE INDEX idx_font_snapshots_color_variant ON font_snapshots (color, variant, time DESC);
