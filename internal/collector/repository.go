@@ -9,6 +9,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// SnapshotStore defines the interface that Repository implements.
+// Used by the Scheduler and other consumers to decouple from pgxpool.
+type SnapshotStore interface {
+	LastGemSnapshotTime(ctx context.Context) (time.Time, error)
+	InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error)
+	InsertCurrencySnapshots(ctx context.Context, snapTime time.Time, snapshots []CurrencySnapshot) (int, error)
+	LatestSnapshot(ctx context.Context) (*SnapshotSummary, error)
+}
+
 // Repository handles snapshot persistence in TimescaleDB.
 type Repository struct {
 	pool *pgxpool.Pool

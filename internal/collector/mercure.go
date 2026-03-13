@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// mercureClient is a shared HTTP client for Mercure publish calls.
+// Reused across calls to benefit from connection pooling.
+var mercureClient = &http.Client{Timeout: 5 * time.Second}
+
 // PublishMercureEvent posts an event to the Mercure hub.
 // If mercureURL or jwtSecret is empty, the publish is silently skipped (Mercure
 // not configured). Publish failures are returned as errors but callers should
@@ -31,8 +35,7 @@ func PublishMercureEvent(ctx context.Context, mercureURL, jwtSecret, topic, payl
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer "+jwtSecret)
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := mercureClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("mercure: publish to %s: %w", mercureURL, err)
 	}
