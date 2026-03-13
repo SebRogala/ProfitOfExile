@@ -350,6 +350,122 @@ func TestInsertCurrencySnapshots_onConflictDoNothing(t *testing.T) {
 	}
 }
 
+func TestLatestSnapshot_emptyTables(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	// Use a unique time far in the past to avoid interference with other test data.
+	// We test the COALESCE fallback by querying when there are potentially no rows.
+	// The LatestSnapshot method uses COALESCE(MAX(time), '1970-01-01'::timestamptz),
+	// which should return the epoch time when no rows exist at all (or at least
+	// not fail with an error).
+	summary, err := repo.LatestSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("LatestSnapshot on potentially empty tables: %v", err)
+	}
+
+	// Summary should be non-nil and have valid (possibly zero-ish) values.
+	if summary == nil {
+		t.Fatal("expected non-nil SnapshotSummary, got nil")
+	}
+
+	// Gem and currency counts should be >= 0 (there may be data from other tests).
+	if summary.GemCount < 0 {
+		t.Errorf("GemCount = %d, want >= 0", summary.GemCount)
+	}
+	if summary.CurrencyCount < 0 {
+		t.Errorf("CurrencyCount = %d, want >= 0", summary.CurrencyCount)
+	}
+}
+
+func TestQueryGemSnapshots_roundTrip(t *testing.T) {
+	pool := integrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	snapTime := time.Now().UTC().Truncate(time.Microsecond)
+
+	gems := []GemSnapshot{
+		{Name: "Spark", Variant: "20/20", Chaos: 45.75, Listings: 120, IsTransfigured: false, GemColor: "BLUE"},
+		{Name: "Spark of Nova", Variant: "default", Chaos: 200.00, Listings: 15, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Detonate Dead", Variant: "default", Chaos: 2.50, Listings: 300, IsTransfigured: false, GemColor: "RED"},
+	}
+
+	t.Cleanup(func() {
+		_, err := pool.Exec(context.Background(),
+			"DELETE FROM gem_snapshots WHERE time = $1", snapTime)
+		if err != nil {
+			t.Logf("cleanup warning: failed to delete test rows: %v", err)
+		}
+	})
+
+	_, err := repo.InsertGemSnapshots(ctx, snapTime, gems)
+	if err != nil {
+		t.Fatalf("InsertGemSnapshots: %v", err)
+	}
+
+	// Query with a 1-hour window -- our snapTime is "now" so it should be included.
+	snapshots, err := repo.QueryGemSnapshots(ctx, 1)
+	if err != nil {
+		t.Fatalf("QueryGemSnapshots: %v", err)
+	}
+
+	// Find our test gems in the results (there may be data from other tests).
+	found := map[string]GemSnapshot{}
+	for _, s := range snapshots {
+		if s.Time.Equal(snapTime) {
+			found[s.Name] = s
+		}
+	}
+
+	if len(found) != 3 {
+		t.Fatalf("found %d test gems at snapTime, want 3", len(found))
+	}
+
+	// Verify field mapping for Spark.
+	spark, ok := found["Spark"]
+	if !ok {
+		t.Fatal("Spark not found in results")
+	}
+	if spark.Variant != "20/20" {
+		t.Errorf("Spark Variant = %q, want %q", spark.Variant, "20/20")
+	}
+	if math.Abs(spark.Chaos-45.75) > 0.01 {
+		t.Errorf("Spark Chaos = %v, want 45.75", spark.Chaos)
+	}
+	if spark.Listings != 120 {
+		t.Errorf("Spark Listings = %d, want 120", spark.Listings)
+	}
+	if spark.IsTransfigured {
+		t.Error("Spark IsTransfigured = true, want false")
+	}
+	if spark.GemColor != "BLUE" {
+		t.Errorf("Spark GemColor = %q, want %q", spark.GemColor, "BLUE")
+	}
+
+	// Verify transfigured gem.
+	sparkNova, ok := found["Spark of Nova"]
+	if !ok {
+		t.Fatal("Spark of Nova not found in results")
+	}
+	if !sparkNova.IsTransfigured {
+		t.Error("Spark of Nova IsTransfigured = false, want true")
+	}
+	if math.Abs(sparkNova.Chaos-200.00) > 0.01 {
+		t.Errorf("Spark of Nova Chaos = %v, want 200.00", sparkNova.Chaos)
+	}
+
+	// Verify third gem.
+	dd, ok := found["Detonate Dead"]
+	if !ok {
+		t.Fatal("Detonate Dead not found in results")
+	}
+	if dd.GemColor != "RED" {
+		t.Errorf("Detonate Dead GemColor = %q, want %q", dd.GemColor, "RED")
+	}
+}
+
 func TestLatestSnapshot_afterInserts(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()

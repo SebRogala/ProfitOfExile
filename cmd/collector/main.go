@@ -90,7 +90,11 @@ func main() {
 	repo := collector.NewRepository(pool)
 	logger := slog.Default()
 
-	scheduler := collector.NewScheduler(
+	if mercureJWTSecret == "" {
+		slog.Warn("MERCURE_JWT_SECRET not set, Mercure publishing disabled")
+	}
+
+	scheduler, err := collector.NewScheduler(
 		repo,
 		[]collector.Fetcher{fetcher},
 		resolver,
@@ -100,6 +104,11 @@ func main() {
 		mercureJWTSecret,
 		logger,
 	)
+	if err != nil {
+		slog.Error("failed to create scheduler", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to create scheduler. Check configuration.")
+		os.Exit(1)
+	}
 
 	slog.Info("collector starting",
 		"league", league,
@@ -123,16 +132,19 @@ func main() {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		summary, err := repo.LatestSnapshot(r.Context())
 		if err != nil {
+			slog.Error("health endpoint: failed to fetch latest snapshot", "error", err)
 			http.Error(w, `{"status":"error"}`, http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"status":       "ok",
 			"lastSnapshot": summary.LastGemTime.Format(time.RFC3339),
 			"uptime":       time.Since(startedAt).Round(time.Second).String(),
-		})
+		}); err != nil {
+			slog.Error("health endpoint: encode response", "error", err)
+		}
 	})
 
 	mux.HandleFunc("GET /latest", func(w http.ResponseWriter, r *http.Request) {
@@ -144,21 +156,26 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"lastGemTime":      summary.LastGemTime.Format(time.RFC3339),
 			"gemCount":         summary.GemCount,
 			"lastCurrencyTime": summary.LastCurrencyTime.Format(time.RFC3339),
 			"currencyCount":    summary.CurrencyCount,
-		})
+		}); err != nil {
+			slog.Error("latest endpoint: encode response", "error", err)
+		}
 	})
 
 	mux.HandleFunc("GET /snapshots", func(w http.ResponseWriter, r *http.Request) {
 		hoursStr := r.URL.Query().Get("hours")
 		hours := 24
 		if hoursStr != "" {
-			if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 && h <= 168 {
-				hours = h
+			h, err := strconv.Atoi(hoursStr)
+			if err != nil || h < 1 || h > 168 {
+				http.Error(w, `{"error":"hours must be an integer between 1 and 168"}`, http.StatusBadRequest)
+				return
 			}
+			hours = h
 		}
 
 		snapshots, err := repo.QueryGemSnapshots(r.Context(), hours)
@@ -169,11 +186,13 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"hours": hours,
 			"count": len(snapshots),
 			"data":  snapshots,
-		})
+		}); err != nil {
+			slog.Error("snapshots endpoint: encode response", "error", err)
+		}
 	})
 
 	srv := &http.Server{

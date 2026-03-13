@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -22,6 +23,7 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a scheduler that runs collection at the given interval.
+// interval must be positive and fetchers must not be empty.
 func NewScheduler(
 	repo SnapshotStore,
 	fetchers []Fetcher,
@@ -31,7 +33,14 @@ func NewScheduler(
 	mercureURL string,
 	mercureSecret string,
 	logger *slog.Logger,
-) *Scheduler {
+) (*Scheduler, error) {
+	if interval <= 0 {
+		return nil, fmt.Errorf("scheduler: interval must be positive, got %s", interval)
+	}
+	if len(fetchers) == 0 {
+		return nil, fmt.Errorf("scheduler: at least one fetcher is required")
+	}
+
 	return &Scheduler{
 		repo:          repo,
 		fetchers:      fetchers,
@@ -41,7 +50,7 @@ func NewScheduler(
 		mercureURL:    mercureURL,
 		mercureSecret: mercureSecret,
 		logger:        logger,
-	}
+	}, nil
 }
 
 // Run starts the collection loop. It checks for recent snapshots on startup to
@@ -51,10 +60,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Startup: check if a recent snapshot already exists.
 	last, err := s.repo.LastGemSnapshotTime(ctx)
 	if err != nil {
-		s.logger.Error("startup: failed to check last snapshot time", "error", err)
-	}
-
-	if err == nil && !last.IsZero() && time.Since(last) < s.interval {
+		s.logger.Error("startup: failed to check last snapshot time, collecting immediately", "error", err)
+		s.collect(ctx)
+	} else if !last.IsZero() && time.Since(last) < s.interval {
 		s.logger.Info("recent snapshot exists, waiting for next tick",
 			"last", last.Format(time.RFC3339),
 			"age", time.Since(last).Round(time.Second).String(),
@@ -80,20 +88,23 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // collect runs a single collection cycle across all fetchers.
 func (s *Scheduler) collect(ctx context.Context) {
 	start := time.Now().UTC()
-	now := start
+	now := start // now is the snapshot timestamp; start tracks wall-clock for duration logging.
 
 	totalGems := 0
 	totalCurrencies := 0
+	errorCount := 0
 
 	for i, fetcher := range s.fetchers {
 		// Fetch gems.
 		gems, err := fetcher.FetchGems(ctx, s.league)
 		if err != nil {
 			s.logger.Error("fetch gems failed", "fetcher", i, "error", err)
+			errorCount++
 		} else if len(gems) > 0 {
 			inserted, err := s.repo.InsertGemSnapshots(ctx, now, gems)
 			if err != nil {
 				s.logger.Error("insert gem snapshots failed", "fetcher", i, "error", err)
+				errorCount++
 			} else {
 				totalGems += inserted
 			}
@@ -103,10 +114,12 @@ func (s *Scheduler) collect(ctx context.Context) {
 		currencies, err := fetcher.FetchCurrency(ctx, s.league)
 		if err != nil {
 			s.logger.Error("fetch currency failed", "fetcher", i, "error", err)
+			errorCount++
 		} else if len(currencies) > 0 {
 			inserted, err := s.repo.InsertCurrencySnapshots(ctx, now, currencies)
 			if err != nil {
 				s.logger.Error("insert currency snapshots failed", "fetcher", i, "error", err)
+				errorCount++
 			} else {
 				totalCurrencies += inserted
 			}
@@ -117,22 +130,30 @@ func (s *Scheduler) collect(ctx context.Context) {
 	if s.resolver != nil {
 		if err := s.resolver.UpsertDiscoveries(ctx); err != nil {
 			s.logger.Error("upsert gem color discoveries failed", "error", err)
+			errorCount++
 		}
 	}
 
 	// Publish Mercure event (non-fatal on failure).
-	payload, _ := json.Marshal(map[string]string{
+	payload, err := json.Marshal(map[string]string{
 		"league":    s.league,
 		"timestamp": now.Format(time.RFC3339),
 	})
-	if err := PublishMercureEvent(ctx, s.mercureURL, s.mercureSecret, "prices-updated", string(payload)); err != nil {
+	if err != nil {
+		s.logger.Error("marshal mercure payload", "error", err)
+	} else if err := PublishMercureEvent(ctx, s.mercureURL, s.mercureSecret, "prices-updated", string(payload)); err != nil {
 		s.logger.Warn("mercure publish failed", "error", err)
 	}
 
 	elapsed := time.Since(start)
-	s.logger.Info("snapshot complete",
+	logLevel := slog.LevelInfo
+	if errorCount > 0 && totalGems == 0 && totalCurrencies == 0 {
+		logLevel = slog.LevelError
+	}
+	s.logger.Log(ctx, logLevel, "snapshot complete",
 		"gems", totalGems,
 		"currencies", totalCurrencies,
+		"errors", errorCount,
 		"duration", elapsed.Round(time.Millisecond).String(),
 	)
 }

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"profitofexile/internal/price/gemcolor"
 )
 
 // testNinjaFetcher creates a NinjaFetcher pointing at the given test server
@@ -317,6 +319,102 @@ func TestFetchGems_requestIncludesLeague(t *testing.T) {
 	}
 	if !strings.Contains(receivedPath, "type=SkillGem") {
 		t.Errorf("request path = %q, want type=SkillGem parameter", receivedPath)
+	}
+}
+
+// newTestResolver creates a gemcolor.Resolver pre-seeded with the given
+// name->color mappings. Colors are specified as strings (e.g. "RED", "BLUE").
+func newTestResolver(colors map[string]string) *gemcolor.Resolver {
+	m := make(map[string]gemcolor.Color, len(colors))
+	for name, c := range colors {
+		m[name] = gemcolor.Color(c)
+	}
+	return gemcolor.NewResolverFromMap(m)
+}
+
+func TestFetchGems_resolverPopulatesGemColor(t *testing.T) {
+	// When a resolver is provided, FetchGems should populate GemColor from the resolver.
+	payload := ninjaResponse[ninjaGemLine]{
+		Lines: []ninjaGemLine{
+			gemLine("Arc", "20/20", 15.5, 300, "gem"),
+			gemLine("Cleave", "", 5.0, 100, "melee"),
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+
+	resolver := newTestResolver(map[string]string{
+		"Arc":    "BLUE",
+		"Cleave": "RED",
+	})
+
+	f := NewNinjaFetcher(resolver)
+	f.baseURL = server.URL
+	gems, err := f.FetchGems(context.Background(), "Standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(gems) != 2 {
+		t.Fatalf("got %d gems, want 2", len(gems))
+	}
+
+	if gems[0].GemColor != "BLUE" {
+		t.Errorf("Arc GemColor = %q, want %q", gems[0].GemColor, "BLUE")
+	}
+	if gems[1].GemColor != "RED" {
+		t.Errorf("Cleave GemColor = %q, want %q", gems[1].GemColor, "RED")
+	}
+}
+
+func TestFetchGems_resolverUnresolvedGemColorEmpty(t *testing.T) {
+	// When the resolver cannot resolve a gem, GemColor should be empty.
+	payload := ninjaResponse[ninjaGemLine]{
+		Lines: []ninjaGemLine{
+			gemLine("Unknown Gem", "", 10.0, 50, "gem"),
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+
+	resolver := newTestResolver(map[string]string{}) // no known gems
+
+	f := NewNinjaFetcher(resolver)
+	f.baseURL = server.URL
+	gems, err := f.FetchGems(context.Background(), "Standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(gems) != 1 {
+		t.Fatalf("got %d gems, want 1", len(gems))
+	}
+	if gems[0].GemColor != "" {
+		t.Errorf("GemColor = %q, want empty string for unresolved gem", gems[0].GemColor)
+	}
+}
+
+func TestFetchGems_contextCancellation(t *testing.T) {
+	// A cancelled context should propagate through the HTTP call and return an error.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Delay response so cancellation can take effect.
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := f.FetchGems(ctx, "Standard")
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
 	}
 }
 
