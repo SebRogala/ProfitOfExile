@@ -8,8 +8,8 @@ import (
 	"strconv"
 
 	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+
+	"profitofexile/internal/db"
 )
 
 func main() {
@@ -64,7 +64,7 @@ func run(args []string, databaseURL string) error {
 		return fmt.Errorf("unknown command: %s", cmd)
 	}
 
-	m, err := migrate.New("file://db/migrations", databaseURL)
+	m, err := db.NewMigrate(db.MigrationsFS, databaseURL)
 	if err != nil {
 		return fmt.Errorf("create migrate instance: %w", err)
 	}

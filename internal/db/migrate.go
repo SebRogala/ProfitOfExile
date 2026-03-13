@@ -1,20 +1,25 @@
 package db
 
 import (
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
-// MigrateUp applies all pending migrations from the given source path against
-// the database at databaseURL. It returns nil when migrations are applied
-// successfully or when there are no new migrations to apply.
-func MigrateUp(migrationsPath, databaseURL string) error {
+//go:embed all:migrations
+var MigrationsFS embed.FS
+
+// NewMigrate creates a *migrate.Migrate instance using an embedded filesystem
+// as the migration source. Both MigrateUp and cmd/migrate use this to avoid
+// duplicating source driver setup.
+func NewMigrate(migrationsFS fs.FS, databaseURL string) (*migrate.Migrate, error) {
 	// golang-migrate uses lib/pq which defaults to sslmode=require.
 	// Append sslmode=disable when not explicitly set, matching pgx behavior.
 	if !strings.Contains(databaseURL, "sslmode=") {
@@ -25,9 +30,26 @@ func MigrateUp(migrationsPath, databaseURL string) error {
 		}
 	}
 
-	m, err := migrate.New(migrationsPath, databaseURL)
+	driver, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
-		return fmt.Errorf("create migrate instance: %w", err)
+		return nil, fmt.Errorf("create iofs migration source: %w", err)
+	}
+
+	m, err := migrate.NewWithSourceInstance("iofs", driver, databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("create migrate instance: %w", err)
+	}
+
+	return m, nil
+}
+
+// MigrateUp applies all pending migrations from the embedded filesystem against
+// the database at databaseURL. It returns nil when migrations are applied
+// successfully or when there are no new migrations to apply.
+func MigrateUp(migrationsFS fs.FS, databaseURL string) error {
+	m, err := NewMigrate(migrationsFS, databaseURL)
+	if err != nil {
+		return err
 	}
 	defer closeMigrate(m)
 
