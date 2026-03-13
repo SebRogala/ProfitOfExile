@@ -217,7 +217,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 			*retryCount = 0
 			return ep.FallbackInterval
 		}
-		return 30 * time.Second
+		return ep.MinSleep
 	}
 
 	// 200 OK — new data available.
@@ -252,7 +252,17 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 
 // calculateSleep computes the optimal sleep duration based on the endpoint's
 // MaxAge and the response's Age header. Clamps to [MinSleep, FallbackInterval].
+// Logs a warning when the CDN-reported age exceeds MaxAge (stale-while-revalidate).
 func (s *Scheduler) calculateSleep(ep EndpointConfig, ageSeconds int) time.Duration {
+	maxAgeSec := int(ep.MaxAge.Seconds())
+	if maxAgeSec > 0 && ageSeconds > maxAgeSec {
+		s.logger.Warn("response age exceeds max-age (stale-while-revalidate)",
+			"endpoint", ep.Name,
+			"age", ageSeconds,
+			"maxAge", maxAgeSec,
+		)
+	}
+
 	ageDur := time.Duration(ageSeconds) * time.Second
 	sleep := ep.MaxAge - ageDur + 5*time.Second
 
