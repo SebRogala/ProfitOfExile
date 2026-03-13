@@ -11,7 +11,7 @@ import (
 
 // Scheduler orchestrates periodic price data collection from external sources.
 type Scheduler struct {
-	repo          *Repository
+	repo          SnapshotStore
 	fetchers      []Fetcher
 	resolver      *gemcolor.Resolver
 	interval      time.Duration
@@ -23,7 +23,7 @@ type Scheduler struct {
 
 // NewScheduler creates a scheduler that runs collection at the given interval.
 func NewScheduler(
-	repo *Repository,
+	repo SnapshotStore,
 	fetchers []Fetcher,
 	resolver *gemcolor.Resolver,
 	interval time.Duration,
@@ -79,8 +79,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 // collect runs a single collection cycle across all fetchers.
 func (s *Scheduler) collect(ctx context.Context) {
-	start := time.Now()
-	now := time.Now().UTC()
+	start := time.Now().UTC()
+	now := start
 
 	totalGems := 0
 	totalCurrencies := 0
@@ -117,10 +117,6 @@ func (s *Scheduler) collect(ctx context.Context) {
 	if s.resolver != nil {
 		if err := s.resolver.UpsertDiscoveries(ctx); err != nil {
 			s.logger.Error("upsert gem color discoveries failed", "error", err)
-		}
-
-		if unresolved := s.resolver.UnresolvedGems(); len(unresolved) > 0 {
-			s.logger.Warn("unresolved gem colors", "count", len(unresolved), "gems", unresolved)
 		}
 	}
 
