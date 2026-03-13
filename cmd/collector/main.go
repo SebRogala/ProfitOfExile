@@ -111,7 +111,7 @@ func main() {
 	gemEndpoint.FetchFunc = fetcher.FetchGemsEndpoint
 	gemEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
 		if len(result.GemData) == 0 {
-			return 0, fmt.Errorf("gem endpoint returned 200 with empty data — possible transient API issue")
+			return 0, fmt.Errorf("gem endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
 		}
 		return repo.InsertGemSnapshots(ctx, snapTime, result.GemData)
 	}
@@ -124,7 +124,7 @@ func main() {
 	currencyEndpoint.FetchFunc = fetcher.FetchCurrencyEndpoint
 	currencyEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
 		if len(result.CurrencyData) == 0 {
-			return 0, fmt.Errorf("currency endpoint returned 200 with empty data — possible transient API issue")
+			return 0, fmt.Errorf("currency endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
 		}
 		return repo.InsertCurrencySnapshots(ctx, snapTime, result.CurrencyData)
 	}
