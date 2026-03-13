@@ -17,6 +17,7 @@ type GemSnapshot struct {
 	Chaos          float64
 	Listings       int
 	IsTransfigured bool
+	IsCorrupted    bool
 	GemColor       string // RED, GREEN, BLUE, WHITE, or "" if unresolved
 }
 
