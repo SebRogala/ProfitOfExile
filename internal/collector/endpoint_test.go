@@ -289,6 +289,17 @@ func TestDefaultNinjaConfig_functionalFieldsAreNil(t *testing.T) {
 	}
 }
 
+func TestParseEndpointOverrides_zeroMaxRetriesIgnored(t *testing.T) {
+	// parsePositiveInt rejects n <= 0, so MAX_RETRIES=0 should be ignored.
+	t.Setenv("ZERO_MAX_RETRIES", "0")
+
+	cfg := ParseEndpointOverrides("ZERO")
+
+	if cfg.MaxRetries != 0 {
+		t.Errorf("MaxRetries = %d, want 0 (zero should be rejected by parsePositiveInt)", cfg.MaxRetries)
+	}
+}
+
 func TestFetchResult_zeroValueIsNotModified(t *testing.T) {
 	// A zero-value FetchResult should have NotModified=false.
 	var r FetchResult

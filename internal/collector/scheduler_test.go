@@ -504,6 +504,119 @@ func TestScheduler_calculateSleep(t *testing.T) {
 	}
 }
 
+func TestScheduler_startupJitter(t *testing.T) {
+	s := &Scheduler{logger: slog.Default()}
+
+	tests := []struct {
+		name      string
+		jitterMin time.Duration
+		jitterMax time.Duration
+		wantZero  bool
+	}{
+		{
+			name:      "JitterMax=0 returns 0",
+			jitterMin: 0,
+			jitterMax: 0,
+			wantZero:  true,
+		},
+		{
+			name:      "JitterMax <= JitterMin returns 0",
+			jitterMin: 5 * time.Second,
+			jitterMax: 5 * time.Second,
+			wantZero:  true,
+		},
+		{
+			name:      "JitterMax < JitterMin returns 0",
+			jitterMin: 10 * time.Second,
+			jitterMax: 5 * time.Second,
+			wantZero:  true,
+		},
+		{
+			name:      "valid range returns value in [JitterMin, JitterMax)",
+			jitterMin: 2 * time.Second,
+			jitterMax: 7 * time.Second,
+			wantZero:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ep := EndpointConfig{
+				JitterMin: tt.jitterMin,
+				JitterMax: tt.jitterMax,
+			}
+			got := s.startupJitter(ep)
+			if tt.wantZero {
+				if got != 0 {
+					t.Errorf("startupJitter() = %v, want 0", got)
+				}
+			} else {
+				if got < tt.jitterMin || got >= tt.jitterMax {
+					t.Errorf("startupJitter() = %v, want in [%v, %v)", got, tt.jitterMin, tt.jitterMax)
+				}
+			}
+		})
+	}
+}
+
+func TestScheduler_nilStoreFuncDoesNotPanic(t *testing.T) {
+	// Verifies the nil StoreFunc guard in fetchAndStore: the scheduler should
+	// complete without panic when StoreFunc is nil.
+	var fetchCalled int32
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: nil, // intentionally nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&fetchCalled) == 0 {
+		t.Error("fetch should have been called with nil StoreFunc")
+	}
+}
+
+func TestScheduler_calculateSleepZeroMaxAge(t *testing.T) {
+	s := &Scheduler{logger: slog.Default()}
+
+	ep := EndpointConfig{
+		MaxAge:           0, // misconfigured zero MaxAge
+		FallbackInterval: 30 * time.Minute,
+		MinSleep:         30 * time.Second,
+	}
+
+	// With MaxAge=0, sleep = 0 - 0 + 5s = 5s, which is < MinSleep 30s, so clamps to MinSleep.
+	got := s.calculateSleep(ep, 0)
+	if got != 30*time.Second {
+		t.Errorf("calculateSleep(MaxAge=0, age=0) = %v, want %v (MinSleep)", got, 30*time.Second)
+	}
+
+	// With MaxAge=0 and age=100, sleep = 0 - 100s + 5s = -95s, clamps to MinSleep.
+	got = s.calculateSleep(ep, 100)
+	if got != 30*time.Second {
+		t.Errorf("calculateSleep(MaxAge=0, age=100) = %v, want %v (MinSleep)", got, 30*time.Second)
+	}
+}
+
 func TestScheduler_storeErrorDoesNotCrash(t *testing.T) {
 	var fetchCount int32
 
@@ -924,6 +1037,132 @@ func TestScheduler_upsertDiscoveriesCalledOnlyForGems(t *testing.T) {
 	}
 	if atomic.LoadInt32(&currStoreCalled) == 0 {
 		t.Error("currency endpoint store should have been called")
+	}
+}
+
+func TestScheduler_etagPropagatedAcrossFetchCycles(t *testing.T) {
+	// Verifies the core cache-aware polling contract: a 200 response with
+	// ETag="abc" causes the next FetchFunc call to receive etag="abc".
+	var mu sync.Mutex
+	var receivedEtags []string
+	callCount := 0
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           50 * time.Millisecond,
+		FallbackInterval: 50 * time.Millisecond,
+		MaxRetries:       3,
+		MinSleep:         1 * time.Millisecond,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			mu.Lock()
+			receivedEtags = append(receivedEtags, etag)
+			callCount++
+			c := callCount
+			mu.Unlock()
+
+			if c == 1 {
+				// First call: return 200 with ETag.
+				return &FetchResult{
+					GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
+					ETag:    `"abc"`,
+					Age:     0,
+				}, nil
+			}
+			// Subsequent calls: return 304 to keep looping quickly.
+			return &FetchResult{NotModified: true, ETag: `"abc"`, Age: 0}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return len(result.GemData), nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedEtags) < 2 {
+		t.Fatalf("expected at least 2 fetch calls, got %d", len(receivedEtags))
+	}
+	if receivedEtags[0] != "" {
+		t.Errorf("first fetch etag = %q, want empty string", receivedEtags[0])
+	}
+	if receivedEtags[1] != `"abc"` {
+		t.Errorf("second fetch etag = %q, want %q (ETag should propagate)", receivedEtags[1], `"abc"`)
+	}
+}
+
+func TestScheduler_retryCountResetsOn200AfterMultiple304s(t *testing.T) {
+	// Verifies that retryCount resets to 0 on a 200 response, so subsequent
+	// 304s get the full retry budget again instead of exhausting immediately.
+	var mu sync.Mutex
+	callCount := 0
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           50 * time.Millisecond,
+		FallbackInterval: 50 * time.Millisecond,
+		MaxRetries:       2,
+		MinSleep:         1 * time.Millisecond,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			mu.Lock()
+			callCount++
+			c := callCount
+			mu.Unlock()
+
+			// Calls 1-2: 304, call 3: 200, calls 4+: 304
+			switch {
+			case c <= 2:
+				return &FetchResult{NotModified: true, ETag: `"v1"`, Age: 0}, nil
+			case c == 3:
+				return &FetchResult{
+					GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
+					ETag:    `"v2"`,
+					Age:     0,
+				}, nil
+			default:
+				return &FetchResult{NotModified: true, ETag: `"v2"`, Age: 0}, nil
+			}
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return len(result.GemData), nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// With MaxRetries=2: calls 1,2 are 304 (retryCount 1,2), call 3 is 200
+	// (retryCount resets to 0), calls 4,5 are 304 (retryCount 1,2), call 6
+	// would exhaust. If reset did NOT happen, call 4 would already exhaust
+	// (retryCount would be 3 > MaxRetries=2) and we would get a long sleep.
+	// With MinSleep=1ms and 200ms window, we should get at least 5 calls.
+	if callCount < 5 {
+		t.Errorf("expected at least 5 fetch calls (proving retry reset), got %d", callCount)
 	}
 }
 
