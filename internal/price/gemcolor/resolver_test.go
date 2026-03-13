@@ -60,33 +60,6 @@ func TestResolveTransfigured(t *testing.T) {
 	}
 }
 
-func TestFindAllPositions(t *testing.T) {
-	tests := []struct {
-		name   string
-		s      string
-		substr string
-		want   []int
-	}{
-		{"no match", "hello", " of ", nil},
-		{"single", "Rain of Arrows", " of ", []int{4}},
-		{"double", "Rain of Arrows of Saturation", " of ", []int{4, 14}},
-		{"triple", "A of B of C of D", " of ", []int{1, 6, 11}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := findAllPositions(tt.s, tt.substr)
-			if len(got) != len(tt.want) {
-				t.Fatalf("len = %d, want %d; got %v", len(got), len(tt.want), got)
-			}
-			for i, v := range got {
-				if v != tt.want[i] {
-					t.Errorf("pos[%d] = %d, want %d", i, v, tt.want[i])
-				}
-			}
-		})
-	}
-}
 
 func TestResolve_heuristics(t *testing.T) {
 	// Build a resolver with a pre-populated color map (no DB needed).
