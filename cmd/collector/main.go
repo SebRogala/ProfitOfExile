@@ -42,16 +42,30 @@ func main() {
 		league = "Mirage"
 	}
 
+	// Build endpoint configuration from defaults + env var overrides.
+	ninjaDefaults := collector.DefaultNinjaConfig()
+	ninjaOverrides := collector.ParseEndpointOverrides("NINJA")
+	ninjaCfg := collector.MergeEndpointConfig(ninjaDefaults, ninjaOverrides)
+
+	// NINJA_INTERVAL is a legacy alias for NINJA_FALLBACK_INTERVAL.
+	// If NINJA_FALLBACK_INTERVAL was not set via overrides but NINJA_INTERVAL
+	// exists, use it and log a deprecation warning.
 	ninjaIntervalStr := os.Getenv("NINJA_INTERVAL")
-	if ninjaIntervalStr == "" {
-		ninjaIntervalStr = "15m"
+	if ninjaOverrides.FallbackInterval == 0 && ninjaIntervalStr != "" {
+		slog.Warn("NINJA_INTERVAL is deprecated, use NINJA_FALLBACK_INTERVAL instead",
+			"value", ninjaIntervalStr,
+		)
+		parsed, err := time.ParseDuration(ninjaIntervalStr)
+		if err != nil {
+			slog.Error("invalid NINJA_INTERVAL", "value", ninjaIntervalStr, "error", err)
+			fmt.Fprintf(os.Stderr, "NINJA_INTERVAL must be a valid duration (e.g. 15m), got %q\n", ninjaIntervalStr)
+			os.Exit(1)
+		}
+		ninjaCfg.FallbackInterval = parsed
 	}
-	ninjaInterval, err := time.ParseDuration(ninjaIntervalStr)
-	if err != nil {
-		slog.Error("invalid NINJA_INTERVAL", "value", ninjaIntervalStr, "error", err)
-		fmt.Fprintf(os.Stderr, "NINJA_INTERVAL must be a valid duration (e.g. 15m), got %q\n", ninjaIntervalStr)
-		os.Exit(1)
-	}
+
+	// Use FallbackInterval as the scheduler interval for the legacy scheduler.
+	ninjaInterval := ninjaCfg.FallbackInterval
 
 	mercureURL := os.Getenv("MERCURE_URL")
 	if mercureURL == "" {
