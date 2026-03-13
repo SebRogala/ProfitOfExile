@@ -74,11 +74,16 @@ func (r *Resolver) load(ctx context.Context) error {
 // Names that cannot be resolved are tracked and returned by UnresolvedGems.
 func (r *Resolver) Resolve(name string) (string, bool) {
 	r.mu.RLock()
-	if color, ok := r.colors[name]; ok {
-		r.mu.RUnlock()
+	color, inColors := r.colors[name]
+	_, inUnresolved := r.unresolved[name]
+	r.mu.RUnlock()
+
+	if inColors {
 		return color, true
 	}
-	r.mu.RUnlock()
+	if inUnresolved {
+		return "", false
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -86,6 +91,9 @@ func (r *Resolver) Resolve(name string) (string, bool) {
 	// Double-check after acquiring write lock.
 	if color, ok := r.colors[name]; ok {
 		return color, true
+	}
+	if _, ok := r.unresolved[name]; ok {
+		return "", false
 	}
 
 	if color, ok := r.resolve(name); ok {
@@ -128,38 +136,23 @@ func (r *Resolver) resolve(name string) (string, bool) {
 	return "", false
 }
 
-// resolveTransfigured finds all " of " positions in searchName and tries stripping
-// from the rightmost one progressively until a base gem is found in the color map.
+// resolveTransfigured progressively strips the rightmost " of X" suffix from
+// searchName until a base gem is found in the color map.
 //
 // Example: "Rain of Arrows of Saturation"
-//
-//	positions: [4, 18]
-//	try "Rain of Arrows" (strip at 18) -> found!
+//   - strip " of Saturation" -> try "Rain of Arrows" -> found!
 func resolveTransfigured(searchName string, colors map[string]string) (string, bool) {
-	positions := findAllPositions(searchName, " of ")
-	// Try from rightmost to leftmost.
-	for i := len(positions) - 1; i >= 0; i-- {
-		base := searchName[:positions[i]]
-		if color, ok := colors[base]; ok {
+	s := searchName
+	for {
+		pos := strings.LastIndex(s, " of ")
+		if pos == -1 {
+			return "", false
+		}
+		s = s[:pos]
+		if color, ok := colors[s]; ok {
 			return color, true
 		}
 	}
-	return "", false
-}
-
-// findAllPositions returns all starting indices of substr in s.
-func findAllPositions(s, substr string) []int {
-	var positions []int
-	idx := 0
-	for {
-		pos := strings.Index(s[idx:], substr)
-		if pos == -1 {
-			break
-		}
-		positions = append(positions, idx+pos)
-		idx += pos + len(substr)
-	}
-	return positions
 }
 
 // UpsertDiscoveries writes newly resolved gem colors back to the gem_colors table.
