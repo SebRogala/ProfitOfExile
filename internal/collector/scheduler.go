@@ -51,6 +51,11 @@ func NewScheduler(
 		if err := ep.Validate(); err != nil {
 			return nil, fmt.Errorf("scheduler: endpoint %d: %w", i, err)
 		}
+		if ep.Source == "" {
+			logger.Warn("endpoint has empty Source, rate limiting will be skipped",
+				"endpoint", ep.Name,
+			)
+		}
 	}
 
 	// Build per-source semaphores (limits concurrent requests to the same API
@@ -64,8 +69,12 @@ func NewScheduler(
 		}
 	}
 
+	// Defensive copy to prevent caller mutations from affecting the scheduler.
+	eps := make([]EndpointConfig, len(endpoints))
+	copy(eps, endpoints)
+
 	return &Scheduler{
-		endpoints:     endpoints,
+		endpoints:     eps,
 		resolver:      resolver,
 		league:        league,
 		mercureURL:    mercureURL,
@@ -130,11 +139,17 @@ func (s *Scheduler) startupJitter(ep EndpointConfig) time.Duration {
 	return ep.JitterMin + time.Duration(rand.Int64N(int64(spread)))
 }
 
+// endpointState holds per-goroutine mutable state for a running endpoint.
+// Encapsulates the ETag and retry counter that persist across fetch cycles.
+type endpointState struct {
+	lastETag   string
+	retryCount int
+}
+
 // runEndpoint is the core loop for a single endpoint. It handles startup
 // staleness checks, fetching, storing, and cache-aware sleep calculation.
 func (s *Scheduler) runEndpoint(ctx context.Context, ep EndpointConfig) {
-	var lastETag string
-	retryCount := 0
+	state := &endpointState{}
 
 	// Startup staleness check: if recent data exists, skip the first fetch.
 	if sleep := s.checkStaleness(ctx, ep); sleep > 0 {
@@ -154,7 +169,7 @@ func (s *Scheduler) runEndpoint(ctx context.Context, ep EndpointConfig) {
 			return
 		}
 
-		sleep := s.fetchAndStore(ctx, ep, &lastETag, &retryCount)
+		sleep := s.fetchAndStore(ctx, ep, state)
 
 		select {
 		case <-ctx.Done():
@@ -167,6 +182,11 @@ func (s *Scheduler) runEndpoint(ctx context.Context, ep EndpointConfig) {
 // checkStaleness checks whether a recent snapshot exists for the endpoint. If
 // the data is fresh enough (within MaxAge), it returns the calculated sleep
 // duration. Returns 0 to indicate an immediate fetch is needed.
+//
+// On StalenessFunc error, falls back to immediate fetch. This assumes errors
+// are transient (e.g., container startup order). Permanent DB errors (missing
+// table, wrong permissions) will cause repeated fetch-store-fail cycles at
+// MinSleep intervals until the DB issue is resolved.
 func (s *Scheduler) checkStaleness(ctx context.Context, ep EndpointConfig) time.Duration {
 	if ep.StalenessFunc == nil {
 		return 0
@@ -200,7 +220,7 @@ func (s *Scheduler) checkStaleness(ctx context.Context, ep EndpointConfig) time.
 
 // fetchAndStore executes one fetch-store cycle and returns the sleep duration
 // before the next cycle.
-func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastETag *string, retryCount *int) time.Duration {
+func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state *endpointState) time.Duration {
 	// Acquire source semaphore; defer release to guard against panics.
 	sem := s.semaphores[ep.Source]
 	if sem != nil {
@@ -212,7 +232,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 		}
 	}
 
-	result, err := ep.FetchFunc(ctx, s.league, *lastETag)
+	result, err := ep.FetchFunc(ctx, s.league, state.lastETag)
 
 	if err != nil {
 		s.logger.Error("fetch failed",
@@ -232,26 +252,26 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 
 	// 304 Not Modified — data hasn't changed.
 	if result.NotModified {
-		*retryCount++
+		state.retryCount++
 		s.logger.Info("source returned 304 Not Modified",
 			"endpoint", ep.Name,
-			"retries", *retryCount,
+			"retries", state.retryCount,
 		)
-		if *retryCount > ep.MaxRetries {
+		if state.retryCount > ep.MaxRetries {
 			s.logger.Info("max 304 retries exceeded, falling back",
 				"endpoint", ep.Name,
 				"fallback", ep.FallbackInterval.String(),
 			)
-			*retryCount = 0
+			state.retryCount = 0
 			return ep.FallbackInterval
 		}
 		return ep.MinSleep
 	}
 
 	// 200 OK — new data available.
-	*retryCount = 0
+	state.retryCount = 0
 	if result.ETag != "" {
-		*lastETag = result.ETag
+		state.lastETag = result.ETag
 	}
 
 	snapTime := time.Now().UTC()
@@ -284,7 +304,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 
 // calculateSleep computes the optimal sleep duration based on the endpoint's
 // MaxAge and the response's Age header. Clamps to [MinSleep, FallbackInterval].
-// Logs a warning when the CDN-reported age exceeds MaxAge (stale-while-revalidate).
+// Logs at debug level when the CDN-reported age exceeds MaxAge (stale-while-revalidate).
 func (s *Scheduler) calculateSleep(ep EndpointConfig, ageSeconds int) time.Duration {
 	maxAgeSec := int(ep.MaxAge.Seconds())
 	if maxAgeSec > 0 && ageSeconds > maxAgeSec {

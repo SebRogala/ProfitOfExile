@@ -57,7 +57,7 @@ type ninjaGemLine struct {
 }
 
 // ninjaCurrencyLine represents a single currency entry from the poe.ninja
-// stash/item/overview endpoint.
+// economy/stash/current/item/overview endpoint.
 type ninjaCurrencyLine struct {
 	CurrencyTypeName string  `json:"currencyTypeName"`
 	ChaosEquivalent  float64 `json:"chaosEquivalent"`

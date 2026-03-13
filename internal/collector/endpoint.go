@@ -17,9 +17,11 @@ const (
 	EndpointNinjaCurrency = "ninja-currency"
 )
 
-// FetchResult holds the outcome of a single endpoint fetch. Concrete typed
-// fields (GemData, CurrencyData) avoid the need for type assertions; the
-// StoreFunc closure on EndpointConfig reads the appropriate field.
+// FetchResult holds the outcome of a single endpoint fetch as a tagged union.
+// Exactly one of three states is valid: NotModified=true (no data), GemData
+// populated, or CurrencyData populated. Validate() enforces mutual exclusivity
+// at runtime and is called at every construction site. If the number of data
+// types grows beyond two, refactor to a discriminated interface pattern.
 type FetchResult struct {
 	GemData      []GemSnapshot
 	CurrencyData []CurrencySnapshot
@@ -70,7 +72,8 @@ type EndpointConfig struct {
 	// FetchFunc fetches data from the external source.
 	FetchFunc FetchFunc
 
-	// StoreFunc persists the fetched data.
+	// StoreFunc persists the fetched data. Nil is valid — fetch results will
+	// be discarded with a warning log (useful for dry-run or testing).
 	StoreFunc StoreFunc
 
 	// StalenessFunc returns the last snapshot time for startup check.
@@ -87,8 +90,9 @@ type EndpointConfig struct {
 	FallbackInterval time.Duration
 
 	// MaxRetries is the number of consecutive 304 Not Modified responses
-	// allowed before falling back to FallbackInterval sleep. The
-	// (MaxRetries+1)th consecutive 304 triggers the fallback.
+	// allowed before falling back to FallbackInterval sleep. After MaxRetries
+	// consecutive 304s, the next 304 triggers a FallbackInterval sleep and
+	// resets the counter.
 	MaxRetries int
 
 	// MinSleep is the minimum time between fetches, even when cache math
@@ -104,8 +108,10 @@ type EndpointConfig struct {
 }
 
 // Validate checks EndpointConfig invariants: Name must be non-empty, FetchFunc
-// must be non-nil, FallbackInterval must be positive, and Source should be
-// non-empty (logged as warning if empty since rate limiting will be skipped).
+// must be non-nil, FallbackInterval must be positive, and MinSleep must not
+// exceed FallbackInterval. Returns a list of warnings (e.g., empty Source) that
+// the caller should log. StoreFunc is intentionally not required — nil means
+// fetch results are discarded (see scheduler.go).
 func (c EndpointConfig) Validate() error {
 	if c.Name == "" {
 		return fmt.Errorf("empty Name")
@@ -115,11 +121,6 @@ func (c EndpointConfig) Validate() error {
 	}
 	if c.FallbackInterval <= 0 {
 		return fmt.Errorf("endpoint %q: non-positive FallbackInterval", c.Name)
-	}
-	if c.Source == "" {
-		slog.Warn("endpoint has empty Source, rate limiting will be skipped",
-			"endpoint", c.Name,
-		)
 	}
 	if c.MinSleep > 0 && c.FallbackInterval > 0 && c.MinSleep > c.FallbackInterval {
 		return fmt.Errorf("endpoint %q: MinSleep (%s) exceeds FallbackInterval (%s)", c.Name, c.MinSleep, c.FallbackInterval)
@@ -147,7 +148,15 @@ func DefaultNinjaConfig() EndpointConfig {
 // invalid values, or have zero/non-positive values are left at their zero
 // value — the caller should merge with defaults via MergeEndpointConfig.
 // Zero-valued fields in the returned config mean "not overridden", so it is
-// not possible to intentionally override a field to zero.
+// not possible to intentionally override a field to zero. If a future field
+// legitimately needs zero as a valid override, switch to pointer fields.
+//
+// Jitter fields (JitterMin, JitterMax) are intentionally not exposed as env
+// vars; they are only configurable programmatically via MergeEndpointConfig.
+//
+// Invalid env var values are logged at Warn level and silently ignored,
+// falling back to defaults. The log message includes the rejected value and
+// the parse error to aid debugging.
 //
 // Supported env vars (for prefix "NINJA"):
 //
