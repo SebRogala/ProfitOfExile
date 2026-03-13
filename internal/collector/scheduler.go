@@ -60,7 +60,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Startup: check if a recent snapshot already exists.
 	last, err := s.repo.LastGemSnapshotTime(ctx)
 	if err != nil {
-		s.logger.Error("startup: failed to check last snapshot time, collecting immediately", "error", err)
+		// DB check failed — fall through to collect anyway. If the DB is truly
+		// unreachable, collect() will independently report its own errors.
+		s.logger.Error("startup: failed to check last snapshot time (degraded startup, attempting collect)", "error", err)
 		s.collect(ctx)
 	} else if !last.IsZero() && time.Since(last) < s.interval {
 		s.logger.Info("recent snapshot exists, waiting for next tick",
@@ -87,8 +89,12 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 // collect runs a single collection cycle across all fetchers.
 func (s *Scheduler) collect(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	start := time.Now().UTC()
-	now := start // now is the snapshot timestamp; start tracks wall-clock for duration logging.
+	snapTime := start
 
 	totalGems := 0
 	totalCurrencies := 0
@@ -101,7 +107,7 @@ func (s *Scheduler) collect(ctx context.Context) {
 			s.logger.Error("fetch gems failed", "fetcher", i, "error", err)
 			errorCount++
 		} else if len(gems) > 0 {
-			inserted, err := s.repo.InsertGemSnapshots(ctx, now, gems)
+			inserted, err := s.repo.InsertGemSnapshots(ctx, snapTime, gems)
 			if err != nil {
 				s.logger.Error("insert gem snapshots failed", "fetcher", i, "error", err)
 				errorCount++
@@ -116,7 +122,7 @@ func (s *Scheduler) collect(ctx context.Context) {
 			s.logger.Error("fetch currency failed", "fetcher", i, "error", err)
 			errorCount++
 		} else if len(currencies) > 0 {
-			inserted, err := s.repo.InsertCurrencySnapshots(ctx, now, currencies)
+			inserted, err := s.repo.InsertCurrencySnapshots(ctx, snapTime, currencies)
 			if err != nil {
 				s.logger.Error("insert currency snapshots failed", "fetcher", i, "error", err)
 				errorCount++
@@ -135,9 +141,10 @@ func (s *Scheduler) collect(ctx context.Context) {
 	}
 
 	// Publish Mercure event (non-fatal on failure).
+	// Marshal failure = programming bug (Error); publish failure = transient infra issue (Warn).
 	payload, err := json.Marshal(map[string]string{
 		"league":    s.league,
-		"timestamp": now.Format(time.RFC3339),
+		"timestamp": snapTime.Format(time.RFC3339),
 	})
 	if err != nil {
 		s.logger.Error("marshal mercure payload", "error", err)
