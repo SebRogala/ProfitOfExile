@@ -5,14 +5,13 @@ package migrations_test
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"profitofexile/internal/db"
 )
 
 func testSetup(t *testing.T) (*pgxpool.Pool, *migrate.Migrate) {
@@ -31,17 +30,7 @@ func testSetup(t *testing.T) (*pgxpool.Pool, *migrate.Migrate) {
 		t.Fatalf("connect to database: %v", err)
 	}
 
-	// golang-migrate uses lib/pq which requires explicit sslmode.
-	migrateURL := dbURL
-	if !strings.Contains(migrateURL, "sslmode=") {
-		if strings.Contains(migrateURL, "?") {
-			migrateURL += "&sslmode=disable"
-		} else {
-			migrateURL += "?sslmode=disable"
-		}
-	}
-
-	m, err := migrate.New("file://.", migrateURL)
+	m, err := db.NewMigrate(db.MigrationsFS, dbURL)
 	if err != nil {
 		pool.Close()
 		t.Fatalf("create migrate instance: %v", err)
@@ -188,9 +177,9 @@ func TestTimescaleDBMigrations(t *testing.T) {
 
 	t.Run("gem_colors known entries", func(t *testing.T) {
 		knownGems := map[string]string{
-			"Arc":             "BLUE",
-			"Cleave":          "RED",
-			"Rain of Arrows":  "GREEN",
+			"Arc":            "BLUE",
+			"Cleave":         "RED",
+			"Rain of Arrows": "GREEN",
 		}
 
 		for gem, wantColor := range knownGems {

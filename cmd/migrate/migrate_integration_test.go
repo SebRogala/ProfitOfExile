@@ -99,16 +99,6 @@ func TestRunForceValidation(t *testing.T) {
 func TestRunUpDownVersion(t *testing.T) {
 	dbURL := testDatabaseURL(t)
 
-	// run() uses "file://db/migrations" relative to CWD; chdir to project root.
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get working directory: %v", err)
-	}
-	if err := os.Chdir("../../"); err != nil {
-		t.Fatalf("chdir to project root: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(origDir) })
-
 	// Apply all migrations.
 	if err := run([]string{"up"}, dbURL); err != nil {
 		t.Fatalf("migrate up: %v", err)
