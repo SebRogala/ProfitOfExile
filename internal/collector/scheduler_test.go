@@ -981,10 +981,11 @@ func TestScheduler_oneEndpointFailureDoesNotAffectOther(t *testing.T) {
 }
 
 func TestScheduler_upsertDiscoveriesCalledOnlyForGems(t *testing.T) {
-	// Use a map-based resolver; UpsertDiscoveries will return an error since
-	// there is no database, but the error is logged non-fatally. The test
-	// verifies the scheduler completes without crashing for both endpoints
-	// when a resolver is present.
+	// Verifies the scheduler completes without crashing when a resolver is
+	// present. UpsertDiscoveries will return an error (no database) but the
+	// error is logged non-fatally. Note: this test does not verify that
+	// UpsertDiscoveries is called exclusively for gems -- that would require a
+	// spy/mock on the resolver. It only asserts both endpoints store data.
 	resolver := newTestResolver(map[string]string{"Arc": "BLUE"})
 
 	var gemStoreCalled, currStoreCalled int32
@@ -1399,5 +1400,198 @@ func TestScheduler_emptySourceNoSemaphore(t *testing.T) {
 
 	if atomic.LoadInt32(&fetchCalled) == 0 {
 		t.Error("endpoint with empty Source should still execute fetches")
+	}
+}
+
+func TestScheduler_storeErrorReturnsMinSleepNotFallback(t *testing.T) {
+	// When StoreFunc returns an error, fetchAndStore must return ep.MinSleep
+	// (retry sooner), not ep.FallbackInterval. This ensures transient DB errors
+	// trigger a quick retry rather than a long wait.
+	s := &Scheduler{
+		logger:     slog.Default(),
+		semaphores: map[string]chan struct{}{},
+	}
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, errors.New("connection refused")
+		},
+	}
+
+	state := &endpointState{}
+	got := s.fetchAndStore(context.Background(), ep, state)
+
+	if got != ep.MinSleep {
+		t.Errorf("fetchAndStore on store error = %v, want %v (MinSleep)", got, ep.MinSleep)
+	}
+	// Ensure it is NOT FallbackInterval.
+	if got == ep.FallbackInterval {
+		t.Errorf("fetchAndStore on store error should return MinSleep, not FallbackInterval (%v)", ep.FallbackInterval)
+	}
+}
+
+func TestScheduler_checkStalenessMinSleepFloor(t *testing.T) {
+	// When the remaining freshness window is very small (computed sleep <
+	// MinSleep), checkStaleness must clamp up to MinSleep.
+	s := &Scheduler{logger: slog.Default()}
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MinSleep:         30 * time.Second,
+		StalenessFunc: func(ctx context.Context) (time.Time, error) {
+			// Data is 29m55s old: remaining = 30m - 29m55s = 5s, plus 5s buffer = 10s.
+			// 10s < MinSleep 30s, so should clamp to 30s.
+			return time.Now().UTC().Add(-29*time.Minute - 55*time.Second), nil
+		},
+	}
+
+	got := s.checkStaleness(context.Background(), ep)
+	if got < ep.MinSleep {
+		t.Errorf("checkStaleness = %v, want >= %v (MinSleep floor)", got, ep.MinSleep)
+	}
+}
+
+func TestScheduler_304DoesNotOverwriteLastETag(t *testing.T) {
+	// Verifies that a 304 response with a different ETag value does NOT
+	// overwrite lastETag. Call 1 returns 200 with ETag "v1", call 2 returns
+	// 304 with ETag "v2", call 3 must still receive etag="v1".
+	var mu sync.Mutex
+	var receivedEtags []string
+	callCount := 0
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           50 * time.Millisecond,
+		FallbackInterval: 50 * time.Millisecond,
+		MaxRetries:       5,
+		MinSleep:         1 * time.Millisecond,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			mu.Lock()
+			receivedEtags = append(receivedEtags, etag)
+			callCount++
+			c := callCount
+			mu.Unlock()
+
+			switch c {
+			case 1:
+				// 200 with ETag "v1".
+				return &FetchResult{
+					GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
+					ETag:    `"v1"`,
+					Age:     0,
+				}, nil
+			case 2:
+				// 304 with a DIFFERENT ETag "v2" -- must NOT overwrite lastETag.
+				return &FetchResult{NotModified: true, ETag: `"v2"`, Age: 0}, nil
+			default:
+				// Subsequent: 304 to keep looping.
+				return &FetchResult{NotModified: true, Age: 0}, nil
+			}
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return len(result.GemData), nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedEtags) < 3 {
+		t.Fatalf("expected at least 3 fetch calls, got %d", len(receivedEtags))
+	}
+	if receivedEtags[0] != "" {
+		t.Errorf("call 1 etag = %q, want empty", receivedEtags[0])
+	}
+	if receivedEtags[1] != `"v1"` {
+		t.Errorf("call 2 etag = %q, want %q", receivedEtags[1], `"v1"`)
+	}
+	// Call 3 must still have "v1", NOT "v2" from the 304 response.
+	if receivedEtags[2] != `"v1"` {
+		t.Errorf("call 3 etag = %q, want %q (304 must not overwrite lastETag)", receivedEtags[2], `"v1"`)
+	}
+}
+
+func TestScheduler_panicInFetchFuncDoesNotCrashOtherEndpoints(t *testing.T) {
+	// When one endpoint's FetchFunc panics, the recover handler should catch
+	// it so the other endpoint continues running and Run() returns nil.
+	var currencyStored int32
+
+	panickingEp := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: time.Hour,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			panic("simulated FetchFunc panic")
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
+		},
+	}
+
+	workingEp := EndpointConfig{
+		Name:             EndpointNinjaCurrency,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: time.Hour,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return &FetchResult{CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			atomic.AddInt32(&currencyStored, 1)
+			return 1, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{panickingEp, workingEp}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned error = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop within 2s after context cancellation")
+	}
+
+	if atomic.LoadInt32(&currencyStored) == 0 {
+		t.Error("currency endpoint should have stored data despite gem endpoint panic")
 	}
 }
