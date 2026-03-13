@@ -30,7 +30,8 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 
 ### Frontend: SvelteKit
 - SvelteKit with `adapter-static` (no Node runtime in production)
-- Tailwind CSS for styling
+- Tailwind CSS v4 (CSS-first config — `@theme` in `app.css`, no `tailwind.config.js`)
+- Svelte 5 with runes (`$props()`, `{@render children()}`)
 - Built to static files, served by Go backend
 
 ### Database: PostgreSQL + TimescaleDB
@@ -41,6 +42,20 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 ### Deployment: Docker on Coolify
 - Multi-stage Dockerfile: Node build (SvelteKit) → Go build → minimal runtime image
 - Separate container for price collector service (24/7 data collection)
+
+## Dev Environment
+
+- `make up` → `docker compose up -d` — Go (air) + SvelteKit (Vite) both hot-reload in Docker
+- Single domain: `profitofexile.localhost` — Traefik routes `/api` → Go, everything else → Vite
+- No local Go/Node tooling needed — everything runs in containers, use `docker compose exec` for CLI
+- Infra stack at `/var/www/infra`: Traefik, Postgres, Redis, Mailpit (shared `infra` network)
+- Global HTTP→HTTPS redirect configured on Traefik entrypoint level
+
+## Gotchas
+
+- `golang-migrate` uses `lib/pq` (not `pgx`) — requires explicit `sslmode=disable` for local Postgres. Handled in `internal/db/migrate.go` but watch for it in test helpers too.
+- `go:embed` requires `frontend/build/.gitkeep` so the embed directive works without running a Node build. Dev mode serves no frontend from Go — that's Vite's job via Traefik.
+- Frontend `node_modules` uses a named Docker volume to prevent host bind mount from overwriting installed deps.
 
 ## Core Domain Concepts
 
