@@ -18,6 +18,16 @@ import (
 // rate-limiting.
 const perSourceSemaphoreCapacity = 3
 
+// mercureTopicPrefix namespaces Mercure topics for the shared hub.
+const mercureTopicPrefix = "poe/collector/"
+
+// mercureTopicSuffix maps endpoint names to source-agnostic topic suffixes.
+// Falls back to the raw endpoint name if not present in the map.
+var mercureTopicSuffix = map[string]string{
+	EndpointNinjaGems:     "gems",
+	EndpointNinjaCurrency: "currency",
+}
+
 // Scheduler orchestrates price data collection with independent goroutines per
 // endpoint. Each endpoint runs its own fetch-sleep loop with cache-aware sleep
 // calculation. Endpoints sharing a Source field share a rate-limit semaphore.
@@ -291,7 +301,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 		)
 
 		// Post-collect: conditional gem color upsert (gems only) + Mercure publish.
-		s.postCollect(ctx, ep.Name, snapTime)
+		s.postCollect(ctx, ep.Name, snapTime, inserted)
 	} else {
 		s.logger.Warn("no StoreFunc configured, fetch result discarded",
 			"endpoint", ep.Name,
@@ -329,8 +339,10 @@ func (s *Scheduler) calculateSleep(ep EndpointConfig, ageSeconds int) time.Durat
 }
 
 // postCollect handles actions after a successful fetch: Mercure publish for all
-// endpoints, gem color upsert for the gems endpoint only.
-func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTime time.Time) {
+// endpoints, gem color upsert for the gems endpoint only. The inserted count
+// is forwarded to downstream subscribers so they can short-circuit analysis
+// when no new data arrived.
+func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTime time.Time, inserted int) {
 	// Gem color resolver — only for the gems endpoint.
 	if endpointName == EndpointNinjaGems && s.resolver != nil {
 		if err := s.resolver.UpsertDiscoveries(ctx); err != nil {
@@ -341,11 +353,19 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 		}
 	}
 
+	// Build per-endpoint topic: "poe/collector/gems", "poe/collector/currency".
+	suffix, ok := mercureTopicSuffix[endpointName]
+	if !ok {
+		suffix = endpointName
+	}
+	topic := mercureTopicPrefix + suffix
+
 	// Mercure publish (non-fatal on failure).
-	payload, err := json.Marshal(map[string]string{
+	payload, err := json.Marshal(map[string]any{
 		"league":    s.league,
 		"endpoint":  endpointName,
 		"timestamp": snapTime.Format(time.RFC3339),
+		"inserted":  inserted,
 	})
 	if err != nil {
 		s.logger.Error("marshal mercure payload",
@@ -355,7 +375,7 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 		return
 	}
 
-	if err := PublishMercureEvent(ctx, s.mercureURL, s.mercureSecret, "prices-updated", string(payload)); err != nil {
+	if err := PublishMercureEvent(ctx, s.mercureURL, s.mercureSecret, topic, string(payload)); err != nil {
 		s.logger.Warn("mercure publish failed",
 			"endpoint", endpointName,
 			"error", err,
