@@ -182,7 +182,7 @@ func TestTimescaleDBMigrations(t *testing.T) {
 			t.Fatalf("count gem_colors: %v", err)
 		}
 		if count < 700 {
-			t.Errorf("gem_colors count = %d, want >= 700 (seed has 766 entries)", count)
+			t.Errorf("gem_colors count = %d, want >= 700 (seed has 750 entries)", count)
 		}
 	})
 

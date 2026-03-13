@@ -4,6 +4,9 @@
 // the base gem name stored in the gem_colors table. The Resolver applies a set of
 // heuristic stripping rules (Vaal prefix, Greater prefix, " of X" suffix) to find
 // the base gem and inherit its color.
+//
+// Awakened variants (e.g., "Awakened Empower Support") are expected to be seeded
+// directly in the gem_colors table rather than resolved via prefix stripping.
 package gemcolor
 
 import (
@@ -15,6 +18,39 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Color represents a gem attribute color.
+type Color string
+
+const (
+	ColorRed   Color = "RED"
+	ColorGreen Color = "GREEN"
+	ColorBlue  Color = "BLUE"
+	ColorWhite Color = "WHITE"
+)
+
+// Valid returns true if the color is one of the four valid gem colors.
+func (c Color) Valid() bool {
+	switch c {
+	case ColorRed, ColorGreen, ColorBlue, ColorWhite:
+		return true
+	}
+	return false
+}
+
+// String returns the string representation of the color.
+func (c Color) String() string {
+	return string(c)
+}
+
+// ParseColor converts a string to a Color, returning an error for invalid values.
+func ParseColor(s string) (Color, error) {
+	c := Color(s)
+	if !c.Valid() {
+		return "", fmt.Errorf("invalid gem color %q: must be RED, GREEN, BLUE, or WHITE", s)
+	}
+	return c, nil
+}
+
 // Resolver resolves gem names to colors (RED/GREEN/BLUE/WHITE).
 // It loads gem_colors rows into an in-memory map and applies suffix-stripping
 // heuristics for transfigured/vaal/greater gem variants.
@@ -22,8 +58,8 @@ type Resolver struct {
 	pool *pgxpool.Pool
 
 	mu          sync.RWMutex
-	colors      map[string]string // name -> color
-	discovered  map[string]string // newly resolved names not yet in DB
+	colors      map[string]Color // name -> color
+	discovered  map[string]Color // newly resolved names not yet in DB
 	unresolved  map[string]struct{}
 }
 
@@ -31,8 +67,8 @@ type Resolver struct {
 func NewResolver(ctx context.Context, pool *pgxpool.Pool) (*Resolver, error) {
 	r := &Resolver{
 		pool:       pool,
-		colors:     make(map[string]string),
-		discovered: make(map[string]string),
+		colors:     make(map[string]Color),
+		discovered: make(map[string]Color),
 		unresolved: make(map[string]struct{}),
 	}
 
@@ -52,27 +88,36 @@ func (r *Resolver) load(ctx context.Context) error {
 	defer rows.Close()
 
 	for rows.Next() {
-		var name, color string
-		if err := rows.Scan(&name, &color); err != nil {
+		var name, rawColor string
+		if err := rows.Scan(&name, &rawColor); err != nil {
 			return fmt.Errorf("scan gem_colors row: %w", err)
+		}
+		color, err := ParseColor(rawColor)
+		if err != nil {
+			return fmt.Errorf("validate gem_colors row %q: %w", name, err)
 		}
 		r.colors[name] = color
 	}
 
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate gem_colors rows: %w", err)
+	}
+	return nil
 }
 
 // Resolve returns the color for a gem name.
 //
 // Resolution order:
 //  1. Direct lookup in the loaded map
-//  2. Vaal prefix: strip "Vaal ", look up base name
-//  3. Greater prefix: strip "Greater ", look up base name
+//  2. Vaal prefix: strip "Vaal ", look up base name, then try transfigured suffix
+//  3. Greater prefix: strip "Greater ", look up base name, then try transfigured suffix
 //  4. Transfigured suffix: progressively strip rightmost " of X"
 //
 // Newly resolved names are cached and can be persisted via UpsertDiscoveries.
 // Names that cannot be resolved are tracked and returned by UnresolvedGems.
-func (r *Resolver) Resolve(name string) (string, bool) {
+// Callers MUST check UnresolvedGems after batch resolution to detect and log
+// gems that could not be mapped to a color.
+func (r *Resolver) Resolve(name string) (Color, bool) {
 	r.mu.RLock()
 	color, inColors := r.colors[name]
 	_, inUnresolved := r.unresolved[name]
@@ -107,7 +152,7 @@ func (r *Resolver) Resolve(name string) (string, bool) {
 }
 
 // resolve applies heuristic stripping rules to find the base gem color.
-func (r *Resolver) resolve(name string) (string, bool) {
+func (r *Resolver) resolve(name string) (Color, bool) {
 	// 1. Vaal prefix: "Vaal Cleave" -> "Cleave"
 	if strings.HasPrefix(name, "Vaal ") {
 		base := name[5:]
@@ -126,6 +171,10 @@ func (r *Resolver) resolve(name string) (string, bool) {
 		if color, ok := r.colors[base]; ok {
 			return color, true
 		}
+		// Greater transfigured: strip Greater prefix then try " of X" stripping.
+		if color, ok := resolveTransfigured(base, r.colors); ok {
+			return color, true
+		}
 	}
 
 	// 3. Transfigured suffix: progressively strip rightmost " of X"
@@ -141,7 +190,7 @@ func (r *Resolver) resolve(name string) (string, bool) {
 //
 // Example: "Rain of Arrows of Saturation"
 //   - strip " of Saturation" -> try "Rain of Arrows" -> found!
-func resolveTransfigured(searchName string, colors map[string]string) (string, bool) {
+func resolveTransfigured(searchName string, colors map[string]Color) (Color, bool) {
 	s := searchName
 	for {
 		pos := strings.LastIndex(s, " of ")
@@ -165,7 +214,7 @@ func (r *Resolver) UpsertDiscoveries(ctx context.Context) error {
 	}
 
 	// Copy under read lock.
-	toInsert := make(map[string]string, len(r.discovered))
+	toInsert := make(map[string]Color, len(r.discovered))
 	for name, color := range r.discovered {
 		toInsert[name] = color
 	}

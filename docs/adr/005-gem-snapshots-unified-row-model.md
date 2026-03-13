@@ -1,4 +1,4 @@
-# ADR-005: gem_snapshots Unified Row Model — Base and Transfigured Prices Side-by-Side
+# ADR-005: gem_snapshots Separate Row Model — One Row Per Gem Observation
 
 ## Status
 
@@ -13,54 +13,53 @@ The Font of Divine Skill strategy (the first implemented analysis in `/var/www/p
 Key considerations:
 
 1. poe.ninja returns base and transfigured gems as separate items in its API response, but they share a canonical gem name (e.g., "Cleave" and "Cleave of Tenuity" share the base name "Cleave").
-2. Profitability queries join base gem cost with transfigured gem value. In a separate-row model this requires a self-join on `(name, variant, time)` — expensive on a hypertable with millions of rows.
-3. TimescaleDB continuous aggregates work most efficiently on a single hypertable. A self-join query cannot be materialized as a continuous aggregate without significant workarounds.
+2. Profitability queries join base gem cost with transfigured gem value. In a separate-row model this requires a self-join on `(name, variant, time)`.
+3. TimescaleDB continuous aggregates work most efficiently on a single hypertable.
 4. Non-transfigured gems still need to be stored (base cost is always needed); transfigured-only entries are valid when no base gem exists.
 
 ## Decision
 
-Store base gem and transfigured gem prices in a single row, with transfigured columns nullable:
+Store each gem observation as its own row, with `is_transfigured` and `gem_color` columns to distinguish base from transfigured entries:
 
 ```sql
 CREATE TABLE gem_snapshots (
-    time             TIMESTAMPTZ NOT NULL,
-    name             TEXT        NOT NULL,
-    variant          TEXT        NOT NULL,     -- "1", "20", "1/20", "20/20"
-    base_chaos       NUMERIC(10,2),
-    base_listings    INTEGER,
-    trans_chaos      NUMERIC(10,2),
-    trans_listings   INTEGER,
-    is_transfigured  BOOLEAN     NOT NULL DEFAULT false,
-    gem_color        TEXT,                     -- RED/GREEN/BLUE/WHITE, NULL if unknown
+    time             TIMESTAMPTZ   NOT NULL,
+    name             TEXT          NOT NULL,
+    variant          TEXT          NOT NULL,     -- "1", "20", "1/20", "20/20"
+    chaos            NUMERIC(10,2),
+    listings         INTEGER,
+    is_transfigured  BOOLEAN       NOT NULL DEFAULT false,
+    gem_color        TEXT,                       -- RED/GREEN/BLUE/WHITE, NULL if unknown
     PRIMARY KEY (time, name, variant)
 );
 ```
 
-The collector (POE-18) is responsible for pairing base and transfigured prices at write time by matching on `(name, variant)`. When only a base gem exists, `trans_chaos` and `trans_listings` are NULL. When only a transfigured gem exists (no known base), `base_chaos` and `base_listings` are NULL.
+The collector (POE-18) writes one row per gem per snapshot interval. Base and transfigured gems are stored as separate rows. ROI queries that need to compare base and transfigured prices use a self-join on the base gem name (derived by stripping the transfigured suffix).
 
-ROI queries read a single row — no join required. Continuous aggregates (`gem_snapshots_hourly`, `gem_snapshots_daily`) aggregate both price columns in one materialization pass.
+Continuous aggregates (`gem_snapshots_hourly`, `gem_snapshots_daily`) aggregate per row, and the `gem_color` column enables grouping by color without joining the `gem_colors` lookup table.
 
 ## Consequences
 
 ### Positive
 
-- ROI calculation requires no join — single-row read eliminates the most expensive query pattern.
-- Continuous aggregates can materialize base and transfigured averages together, enabling efficient hourly/daily rollups.
-- Schema is self-documenting: a row with both columns populated is a paired gem; NULL `trans_*` means no transfigured variant was observed.
+- Simple, flat schema that maps 1:1 to the poe.ninja API response — no pairing logic needed at ingestion time.
+- The collector writes each gem independently, reducing write-path complexity and eliminating pairing bugs.
+- Continuous aggregates can materialize averages per gem, and the `gem_color` column enables color-based grouping in queries.
+- Schema naturally supports gems that exist only as base or only as transfigured without NULL column semantics.
 
 ### Negative
 
-- The collector must pair base and transfigured entries at ingestion time rather than at query time. If the pairing logic has bugs, correcting historical data requires a backfill.
-- Rows where only `trans_*` is populated (no known base) are valid but semantically awkward — the `is_transfigured` flag distinguishes them.
-- Adding a second transfigured variant per base (unlikely in PoE1 but possible in future patches) would require a schema change.
+- ROI calculation requires a self-join on `(base_name, variant, time)` to pair base and transfigured prices. This is more expensive than a single-row read but is mitigated by the `idx_gem_snapshots_name_variant` index.
+- The self-join cannot be directly materialized as a TimescaleDB continuous aggregate. ROI rollups require a custom view or application-level computation on top of the hourly/daily aggregates.
+- `gem_color` is denormalized from the `gem_colors` table into each snapshot row. If a gem's color is corrected, historical rows retain the old value (acceptable — color assignments are stable across a league).
 
 ## Alternatives Considered
 
-### Separate rows for base and transfigured gems
+### Unified row model (base + transfigured prices side-by-side)
 
-Store each poe.ninja item as its own row. Use a discriminator column or rely on the gem name suffix to distinguish base from transfigured. ROI queries join on `(name, variant, time)`.
+Store base and transfigured prices in a single row with `base_chaos`, `base_listings`, `trans_chaos`, `trans_listings` columns. ROI queries read a single row — no join required.
 
-**Rejected because**: A self-join on a TimescaleDB hypertable at query time is expensive and cannot be materialized as a continuous aggregate without a custom view layer. The Font of Divine Skill analysis runs this join for every gem in every color bucket — the query cost scales with data volume and would degrade over time.
+**Rejected because**: The collector must pair base and transfigured entries at write time, adding complexity and fragility. If pairing logic has bugs, correcting historical data requires a backfill. The simpler separate-row model pushes pairing to query time where it can be corrected without data migration.
 
 ### Separate tables for base gems and transfigured gems
 
