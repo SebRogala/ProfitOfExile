@@ -18,38 +18,23 @@ func testNinjaFetcher(t *testing.T, server *httptest.Server) *NinjaFetcher {
 	return f
 }
 
+// gemLine builds a ninjaGemLine with the given discriminator set.
+func gemLine(name, variant string, chaos float64, listings int, discriminator string) ninjaGemLine {
+	line := ninjaGemLine{
+		Name:         name,
+		Variant:      variant,
+		ChaosValue:   chaos,
+		ListingCount: listings,
+	}
+	line.TradeFilter.Query.Type.Discriminator = discriminator
+	return line
+}
+
 func TestFetchGems_validResponse(t *testing.T) {
 	payload := ninjaResponse[ninjaGemLine]{
 		Lines: []ninjaGemLine{
-			{
-				Name:         "Arc",
-				Variant:      "20/20",
-				ChaosValue:   15.5,
-				ListingCount: 300,
-				TradeFilter: func() struct {
-					Query struct {
-						Type struct {
-							Discriminator string `json:"discriminator"`
-						} `json:"type"`
-					} `json:"query"`
-				} {
-					var tf struct {
-						Query struct {
-							Type struct {
-								Discriminator string `json:"discriminator"`
-							} `json:"type"`
-						} `json:"query"`
-					}
-					tf.Query.Type.Discriminator = "gem"
-					return tf
-				}(),
-			},
-			{
-				Name:         "Vaal Grace",
-				Variant:      "",
-				ChaosValue:   1.2,
-				ListingCount: 50,
-			},
+			gemLine("Arc", "20/20", 15.5, 300, "gem"),
+			gemLine("Vaal Grace", "", 1.2, 50, ""),
 		},
 	}
 
@@ -141,62 +126,16 @@ func TestFetchGems_heistFiltered(t *testing.T) {
 	if len(gems) != 1 {
 		t.Fatalf("got %d gems, want 1 (Heist gem should be filtered)", len(gems))
 	}
-
-	// Verify the Heist gem is NOT present.
-	for _, g := range gems {
-		if strings.Contains(g.Name, "Trarthus") {
-			t.Errorf("Heist gem %q should have been filtered", g.Name)
-		}
+	if gems[0].Name != "Arc" {
+		t.Errorf("remaining gem = %q, want %q", gems[0].Name, "Arc")
 	}
 }
 
 func TestFetchGems_transfiguredDetection(t *testing.T) {
 	payload := ninjaResponse[ninjaGemLine]{
 		Lines: []ninjaGemLine{
-			{
-				Name: "Arc of Surging",
-				TradeFilter: func() struct {
-					Query struct {
-						Type struct {
-							Discriminator string `json:"discriminator"`
-						} `json:"type"`
-					} `json:"query"`
-				} {
-					var tf struct {
-						Query struct {
-							Type struct {
-								Discriminator string `json:"discriminator"`
-							} `json:"type"`
-						} `json:"query"`
-					}
-					tf.Query.Type.Discriminator = "alt_lightning"
-					return tf
-				}(),
-				ChaosValue:   200,
-				ListingCount: 10,
-			},
-			{
-				Name: "Cleave",
-				TradeFilter: func() struct {
-					Query struct {
-						Type struct {
-							Discriminator string `json:"discriminator"`
-						} `json:"type"`
-					} `json:"query"`
-				} {
-					var tf struct {
-						Query struct {
-							Type struct {
-								Discriminator string `json:"discriminator"`
-							} `json:"type"`
-						} `json:"query"`
-					}
-					tf.Query.Type.Discriminator = "melee"
-					return tf
-				}(),
-				ChaosValue:   1,
-				ListingCount: 500,
-			},
+			gemLine("Arc of Surging", "", 200, 10, "alt_lightning"),
+			gemLine("Cleave", "", 1, 500, "melee"),
 		},
 	}
 
