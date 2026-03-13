@@ -26,7 +26,8 @@ COPY . .
 # Place SvelteKit build output where the Go embed directive expects it.
 COPY --from=frontend-build /app/build ./cmd/server/frontend_build
 
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/server ./cmd/server
+ARG GIT_SHA=dev
+RUN CGO_ENABLED=0 go build -ldflags="-s -w -X profitofexile/internal/server/handlers.Version=${GIT_SHA}" -o /bin/server ./cmd/server
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/collector ./cmd/collector
 
 # Stage 2: Minimal production image (collector)

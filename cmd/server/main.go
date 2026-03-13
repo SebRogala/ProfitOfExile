@@ -53,7 +53,7 @@ func main() {
 
 	// Auto-migrate: apply pending migrations before binding the server.
 	// Fail-fast on error per ADR-004.
-	if err := db.MigrateUp("file://db/migrations", databaseURL); err != nil {
+	if err := db.MigrateUp(db.MigrationsFS, databaseURL); err != nil {
 		slog.Error("auto-migrate failed", "error", err)
 		fmt.Fprintln(os.Stderr, "Failed to apply database migrations. Check migration files and database state.")
 		os.Exit(1)
