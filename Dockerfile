@@ -27,9 +27,22 @@ COPY . .
 COPY --from=frontend-build /app/build ./cmd/server/frontend_build
 
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/server ./cmd/server
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/collector ./cmd/collector
 
-# Stage 2: Minimal production image
-FROM gcr.io/distroless/static-debian12
+# Stage 2: Minimal production image (collector)
+# NOTE: build with --target to select image:
+#   docker build --target server   -t profitofexile-server .
+#   docker build --target collector -t profitofexile-collector .
+FROM gcr.io/distroless/static-debian12 AS collector
+
+COPY --from=build /bin/collector /collector
+
+EXPOSE 8090
+
+ENTRYPOINT ["/collector"]
+
+# Stage 3: Minimal production image (server) — default target
+FROM gcr.io/distroless/static-debian12 AS server
 
 COPY --from=build /bin/server /server
 

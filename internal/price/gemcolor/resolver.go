@@ -63,6 +63,17 @@ type Resolver struct {
 	unresolved  map[string]struct{}
 }
 
+// NewResolverFromMap creates a resolver pre-seeded with a static color map.
+// Useful for testing or CLI tools that do not need database-backed resolution.
+// UpsertDiscoveries returns an error if called on a resolver created this way (no database pool).
+func NewResolverFromMap(colors map[string]Color) *Resolver {
+	return &Resolver{
+		colors:     colors,
+		discovered: make(map[string]Color),
+		unresolved: make(map[string]struct{}),
+	}
+}
+
 // NewResolver creates a resolver pre-loaded from the gem_colors table.
 func NewResolver(ctx context.Context, pool *pgxpool.Pool) (*Resolver, error) {
 	r := &Resolver{
@@ -206,7 +217,12 @@ func resolveTransfigured(searchName string, colors map[string]Color) (Color, boo
 
 // UpsertDiscoveries writes newly resolved gem colors back to the gem_colors table.
 // It uses INSERT ... ON CONFLICT DO NOTHING so concurrent resolvers don't conflict.
+// Returns an error if called on a resolver created via NewResolverFromMap (no database pool).
 func (r *Resolver) UpsertDiscoveries(ctx context.Context) error {
+	if r.pool == nil {
+		return fmt.Errorf("resolver: UpsertDiscoveries requires a database-backed resolver")
+	}
+
 	r.mu.RLock()
 	if len(r.discovered) == 0 {
 		r.mu.RUnlock()

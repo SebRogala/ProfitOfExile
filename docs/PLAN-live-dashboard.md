@@ -6,13 +6,11 @@
 
 ---
 
-## Phase 1 — Infrastructure (tonight / this week)
+## Phase 1 — Infrastructure ✅ COMPLETE
 
-### 1.1 VPS Migration: CapRover → Coolify
-- **What:** Migrate VPS hosting platform to Coolify
-- **Why:** CapRover is end-of-life for this project; Coolify handles Docker Compose natively
-- **Blocker:** Everything else. No deployment without this.
-- **Manual work:** DNS, SSL, Coolify install, test deploy
+### 1.1 VPS Migration: CapRover → Coolify ✅ DONE
+- **What:** Migrated VPS hosting platform to Coolify with TimescaleDB
+- Coolify handles Docker Compose natively, DNS/SSL configured
 
 ### 1.2 TimescaleDB Schema (POE-19) ✅ DONE — PR #8, merged 2026-03-13
 - **What:** PostgreSQL + TimescaleDB extension (local infra + VPS)
@@ -27,6 +25,13 @@
 - **Gem color resolver:** `internal/price/gemcolor/` — in-memory resolver with Vaal/Greater prefix stripping, progressive " of " suffix stripping, dynamic discovery + upsert
 - **Tests:** Unit tests for resolver, integration tests for migrations + resolver against real TimescaleDB
 - **Scale:** ~800 gems × 96 snapshots/day = ~77k rows/day, ~7M rows/league
+
+### 1.3 Mercure SSE Hub (POE-12) ✅ DONE — PR #9, merged 2026-03-13
+- **What:** Added Mercure hub to shared infra for real-time SSE updates
+- **Infra:** `dunglas/mercure` service in `/var/www/infra/docker-compose.yml`
+- **Routing:** Traefik `websecure` entrypoint at `mercure.localhost` with TLS
+- **App:** `MERCURE_URL` + `MERCURE_JWT_SECRET` env vars in ProfitOfExile `docker-compose.yml`
+- **Dev mode:** Anonymous subscriptions + permissive CORS
 
 ---
 
@@ -163,10 +168,10 @@ Go endpoints serving computed analysis from TimescaleDB data. The math is simple
 ## Build Order (Dependency Chain)
 
 ```
-Phase 1: VPS + Coolify + TimescaleDB
+Phase 1: VPS + Coolify + TimescaleDB + Mercure ✅ COMPLETE
     │
     ▼
-Phase 2: Price collector (data starts accumulating)
+Phase 2: Price collector (data starts accumulating)  ← YOU ARE HERE
     │
     ├──▶ Phase 3: Analysis API endpoints (can develop locally against collected data)
     │       │
