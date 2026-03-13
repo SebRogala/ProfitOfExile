@@ -199,6 +199,12 @@ func TestResolver_UpsertDiscoveries_integration(t *testing.T) {
 		t.Fatalf("UpsertDiscoveries: %v", err)
 	}
 
+	// Clean up the inserted row so test is idempotent.
+	// Registered before assertions so it runs even if assertions fail.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM gem_colors WHERE name = $1", "Arc of Surging")
+	})
+
 	// Verify the discovery was written to the database.
 	var color string
 	err = pool.QueryRow(ctx, "SELECT color FROM gem_colors WHERE name = $1", "Arc of Surging").Scan(&color)
@@ -208,11 +214,6 @@ func TestResolver_UpsertDiscoveries_integration(t *testing.T) {
 	if color != "BLUE" {
 		t.Errorf("upserted color = %q, want BLUE", color)
 	}
-
-	// Clean up the inserted row so test is idempotent.
-	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM gem_colors WHERE name = $1", "Arc of Surging")
-	})
 }
 
 func TestResolver_UnresolvedGems_integration(t *testing.T) {
