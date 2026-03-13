@@ -42,15 +42,26 @@ func main() {
 		league = "Mirage"
 	}
 
+	// Build endpoint configuration from defaults + env var overrides.
+	ninjaDefaults := collector.DefaultNinjaConfig()
+	ninjaOverrides := collector.ParseEndpointOverrides("NINJA")
+	ninjaCfg := collector.MergeEndpointConfig(ninjaDefaults, ninjaOverrides)
+
+	// NINJA_INTERVAL is a legacy alias for NINJA_FALLBACK_INTERVAL.
+	// If NINJA_FALLBACK_INTERVAL was not set via overrides but NINJA_INTERVAL
+	// exists, use it and log a deprecation warning.
 	ninjaIntervalStr := os.Getenv("NINJA_INTERVAL")
-	if ninjaIntervalStr == "" {
-		ninjaIntervalStr = "15m"
-	}
-	ninjaInterval, err := time.ParseDuration(ninjaIntervalStr)
-	if err != nil {
-		slog.Error("invalid NINJA_INTERVAL", "value", ninjaIntervalStr, "error", err)
-		fmt.Fprintf(os.Stderr, "NINJA_INTERVAL must be a valid duration (e.g. 15m), got %q\n", ninjaIntervalStr)
-		os.Exit(1)
+	if ninjaOverrides.FallbackInterval == 0 && ninjaIntervalStr != "" {
+		slog.Warn("NINJA_INTERVAL is deprecated, use NINJA_FALLBACK_INTERVAL instead",
+			"value", ninjaIntervalStr,
+		)
+		parsed, err := time.ParseDuration(ninjaIntervalStr)
+		if err != nil {
+			slog.Error("invalid NINJA_INTERVAL", "value", ninjaIntervalStr, "error", err)
+			fmt.Fprintf(os.Stderr, "NINJA_INTERVAL must be a valid duration (e.g. 15m), got %q\n", ninjaIntervalStr)
+			os.Exit(1)
+		}
+		ninjaCfg.FallbackInterval = parsed
 	}
 
 	mercureURL := os.Getenv("MERCURE_URL")
@@ -94,11 +105,36 @@ func main() {
 		slog.Warn("MERCURE_JWT_SECRET not set, Mercure publishing disabled")
 	}
 
+	// Build per-endpoint configs for the goroutine-per-endpoint scheduler.
+	gemEndpoint := ninjaCfg
+	gemEndpoint.Name = collector.EndpointNinjaGems
+	gemEndpoint.FetchFunc = fetcher.FetchGemsEndpoint
+	gemEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
+		if len(result.GemData) == 0 {
+			return 0, fmt.Errorf("gem endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
+		}
+		return repo.InsertGemSnapshots(ctx, snapTime, result.GemData)
+	}
+	gemEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
+		return repo.LastGemSnapshotTime(ctx)
+	}
+
+	currencyEndpoint := ninjaCfg
+	currencyEndpoint.Name = collector.EndpointNinjaCurrency
+	currencyEndpoint.FetchFunc = fetcher.FetchCurrencyEndpoint
+	currencyEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
+		if len(result.CurrencyData) == 0 {
+			return 0, fmt.Errorf("currency endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
+		}
+		return repo.InsertCurrencySnapshots(ctx, snapTime, result.CurrencyData)
+	}
+	currencyEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
+		return repo.LastCurrencySnapshotTime(ctx)
+	}
+
 	scheduler, err := collector.NewScheduler(
-		repo,
-		[]collector.Fetcher{fetcher},
+		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint},
 		resolver,
-		ninjaInterval,
 		league,
 		mercureURL,
 		mercureJWTSecret,
@@ -112,7 +148,7 @@ func main() {
 
 	slog.Info("collector starting",
 		"league", league,
-		"interval", ninjaInterval.String(),
+		"fallbackInterval", ninjaCfg.FallbackInterval.String(),
 		"port", port,
 	)
 

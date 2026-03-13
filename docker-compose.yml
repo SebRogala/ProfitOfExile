@@ -53,7 +53,11 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql://profitofexile:profitofexile@postgres:5432/profitofexile}
       - PORT=8090
       - LEAGUE=${LEAGUE:-Mirage}
-      - NINJA_INTERVAL=${NINJA_INTERVAL:-15m}
+      # - NINJA_INTERVAL=15m       # deprecated (POE-22), use NINJA_FALLBACK_INTERVAL. Remove after v1.1.
+      # - NINJA_FALLBACK_INTERVAL=30m
+      # - NINJA_MAX_AGE=30m
+      # - NINJA_MAX_RETRIES=5
+      # - NINJA_MIN_SLEEP=30s
       - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
     networks:
