@@ -3,7 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
-	"sync"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -22,9 +22,23 @@ func (m *mockFetcher) FetchCurrency(ctx context.Context, league string) ([]Curre
 	return m.FetchCurrencyFn(ctx, league)
 }
 
+// newTestScheduler builds a Scheduler with a short interval suitable for tests.
+func newTestScheduler(store SnapshotStore, fetcher Fetcher, interval time.Duration) *Scheduler {
+	return NewScheduler(
+		store,
+		[]Fetcher{fetcher},
+		nil, // no gem color resolver in unit tests
+		interval,
+		"Standard",
+		"", // no Mercure in unit tests
+		"",
+		slog.Default(),
+	)
+}
+
 func TestScheduler_recentSnapshotSkipsFirstFetch(t *testing.T) {
-	// When the last snapshot is recent (within interval), the scheduler should
-	// skip the first fetch and wait for the next tick.
+	// When the last snapshot is recent (within interval), Run should skip the
+	// first collect call and wait for the next tick.
 	recentTime := time.Now().UTC().Add(-5 * time.Minute)
 	fetchCalled := false
 
@@ -46,34 +60,28 @@ func TestScheduler_recentSnapshotSkipsFirstFetch(t *testing.T) {
 			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
 		},
 		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			fetchCalled = true
 			return nil, nil
 		},
 	}
 
-	// Simulate the startup check: if last snapshot is within interval, skip.
-	interval := 15 * time.Minute
-	lastSnap, err := store.LastGemSnapshotTime(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
 
-	shouldSkip := !lastSnap.IsZero() && time.Since(lastSnap) < interval
-	if !shouldSkip {
-		// Only fetch if not skipping.
-		_, _ = fetcher.FetchGems(context.Background(), "Standard")
-	}
+	// Run briefly then cancel — enough time for the startup check, not a full tick.
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
 
-	if !shouldSkip {
-		t.Error("expected to skip first fetch when snapshot is recent")
-	}
 	if fetchCalled {
 		t.Error("fetcher should not have been called when snapshot is recent")
 	}
 }
 
 func TestScheduler_staleSnapshotFetchesImmediately(t *testing.T) {
-	// When the last snapshot is stale (older than interval), fetch immediately.
+	// When the last snapshot is older than the interval, Run should call collect
+	// immediately on startup.
 	staleTime := time.Now().UTC().Add(-30 * time.Minute)
 	fetchCalled := false
 
@@ -99,32 +107,33 @@ func TestScheduler_staleSnapshotFetchesImmediately(t *testing.T) {
 		},
 	}
 
-	interval := 15 * time.Minute
-	lastSnap, err := store.LastGemSnapshotTime(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
 
-	shouldSkip := !lastSnap.IsZero() && time.Since(lastSnap) < interval
-	if !shouldSkip {
-		_, _ = fetcher.FetchGems(context.Background(), "Standard")
-	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
 
-	if shouldSkip {
-		t.Error("should NOT skip when snapshot is stale")
-	}
 	if !fetchCalled {
-		t.Error("fetcher should have been called when snapshot is stale")
+		t.Error("fetcher should have been called immediately when snapshot is stale")
 	}
 }
 
 func TestScheduler_emptyTableFetchesImmediately(t *testing.T) {
-	// When no snapshots exist (zero time), fetch immediately.
+	// When no snapshots exist (zero time returned), Run should fetch immediately.
 	fetchCalled := false
 
 	store := &mockStore{
 		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
 			return time.Time{}, nil
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			return len(s), nil
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			return len(s), nil
 		},
 	}
 
@@ -138,127 +147,92 @@ func TestScheduler_emptyTableFetchesImmediately(t *testing.T) {
 		},
 	}
 
-	interval := 15 * time.Minute
-	lastSnap, err := store.LastGemSnapshotTime(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
 
-	shouldSkip := !lastSnap.IsZero() && time.Since(lastSnap) < interval
-	if !shouldSkip {
-		_, _ = fetcher.FetchGems(context.Background(), "Standard")
-	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
 
-	if shouldSkip {
-		t.Error("should NOT skip when table is empty (zero time)")
-	}
 	if !fetchCalled {
 		t.Error("fetcher should have been called when no snapshots exist")
 	}
 }
 
-func TestScheduler_fetcherErrorDoesNotAffectOtherFetchers(t *testing.T) {
-	// When gem fetch fails, currency fetch should still run.
+func TestScheduler_gemFetchErrorDoesNotBlockCurrencyFetch(t *testing.T) {
+	// When gem fetch fails, currency fetch should still run and be stored.
 	gemErr := errors.New("ninja API timeout")
-	currencyCalled := false
+	currencyInserted := 0
+
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, nil // force immediate collect
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			return len(s), nil
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			currencyInserted += len(s)
+			return len(s), nil
+		},
+	}
 
 	fetcher := &mockFetcher{
 		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
 			return nil, gemErr
 		},
 		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			currencyCalled = true
 			return []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}, nil
 		},
 	}
 
-	store := &mockStore{
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
-		},
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
 
-	// Simulate a fetch cycle: both fetchers run independently.
-	ctx := context.Background()
-	league := "Standard"
-	snapTime := time.Now().UTC()
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
 
-	// Gem fetch — expect error, but proceed.
-	gems, err := fetcher.FetchGems(ctx, league)
-	if err == nil {
-		t.Error("expected gem fetch error")
-	}
-	if gems != nil {
-		t.Error("expected nil gems on error")
-	}
-
-	// Currency fetch — should succeed independently.
-	currencies, err := fetcher.FetchCurrency(ctx, league)
-	if err != nil {
-		t.Fatalf("unexpected currency error: %v", err)
-	}
-
-	if !currencyCalled {
-		t.Error("currency fetcher should have been called despite gem fetch error")
-	}
-
-	// Store the successful currency result.
-	count, err := store.InsertCurrencySnapshots(ctx, snapTime, currencies)
-	if err != nil {
-		t.Fatalf("unexpected insert error: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("inserted count = %d, want 1", count)
+	if currencyInserted != 1 {
+		t.Errorf("currency inserted = %d, want 1 (gem error should not block currency)", currencyInserted)
 	}
 }
 
-func TestScheduler_contextCancellation(t *testing.T) {
-	// When context is cancelled, fetcher calls should return promptly.
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var mu sync.Mutex
-	fetchStarted := false
+func TestScheduler_contextCancellationStopsRun(t *testing.T) {
+	// Run should return nil promptly when ctx is cancelled.
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Now().UTC(), nil // recent — skip first collect
+		},
+	}
 
 	fetcher := &mockFetcher{
 		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			mu.Lock()
-			fetchStarted = true
-			mu.Unlock()
-			// Simulate a long-running fetch that respects context.
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(5 * time.Second):
-				return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-			}
+			return nil, nil
 		},
 		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, ctx.Err()
+			return nil, nil
 		},
 	}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = fetcher.FetchGems(ctx, "Standard")
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, time.Hour) // long interval — won't tick
 
-	// Give the goroutine time to start, then cancel.
-	time.Sleep(10 * time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
 	cancel()
 
-	// Wait for the fetch to complete — should be nearly instant after cancel.
 	select {
-	case <-done:
-		// Success — fetch returned after cancellation.
-	case <-time.After(2 * time.Second):
-		t.Fatal("fetcher did not shut down within 2s after context cancellation")
-	}
-
-	mu.Lock()
-	started := fetchStarted
-	mu.Unlock()
-	if !started {
-		t.Error("fetch goroutine never started")
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned error = %v, want nil", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Run did not stop within 500ms after context cancellation")
 	}
 }
