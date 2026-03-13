@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -387,6 +388,26 @@ func TestFetchResult_Validate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEndpointConfig_Validate_minSleepExceedsFallbackInterval(t *testing.T) {
+	ep := EndpointConfig{
+		Name:             "test",
+		FetchFunc:        func(ctx context.Context, league string, etag string) (*FetchResult, error) { return nil, nil },
+		FallbackInterval: 30 * time.Second,
+		MinSleep:         60 * time.Second,
+	}
+
+	err := ep.Validate()
+	if err == nil {
+		t.Fatal("expected error when MinSleep exceeds FallbackInterval, got nil")
+	}
+	if !strings.Contains(err.Error(), "MinSleep") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "MinSleep")
+	}
+	if !strings.Contains(err.Error(), "exceeds FallbackInterval") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "exceeds FallbackInterval")
 	}
 }
 
