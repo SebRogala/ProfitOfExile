@@ -30,26 +30,17 @@ func integrationPool(t *testing.T) *pgxpool.Pool {
 
 	t.Cleanup(func() { pool.Close() })
 
-	// TimescaleDB guard: check that hypertable function is available and tables exist.
-	var exists bool
-	err = pool.QueryRow(ctx,
-		"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'gem_snapshots')").
-		Scan(&exists)
-	if err != nil {
-		t.Fatalf("check gem_snapshots table: %v", err)
-	}
-	if !exists {
-		t.Skip("gem_snapshots table not found, skipping (TimescaleDB migrations not applied)")
-	}
-
-	err = pool.QueryRow(ctx,
-		"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'currency_snapshots')").
-		Scan(&exists)
-	if err != nil {
-		t.Fatalf("check currency_snapshots table: %v", err)
-	}
-	if !exists {
-		t.Skip("currency_snapshots table not found, skipping (TimescaleDB migrations not applied)")
+	// TimescaleDB guard: verify required hypertables exist before running tests.
+	for _, table := range []string{"gem_snapshots", "currency_snapshots"} {
+		var exists bool
+		if err := pool.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)", table).
+			Scan(&exists); err != nil {
+			t.Fatalf("check %s table: %v", table, err)
+		}
+		if !exists {
+			t.Skipf("%s table not found, skipping (TimescaleDB migrations not applied)", table)
+		}
 	}
 
 	return pool
@@ -375,8 +366,12 @@ func TestLatestSnapshot_afterInserts(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM gem_snapshots WHERE time = $1", snapTime)
-		_, _ = pool.Exec(context.Background(), "DELETE FROM currency_snapshots WHERE time = $1", snapTime)
+		if _, err := pool.Exec(context.Background(), "DELETE FROM gem_snapshots WHERE time = $1", snapTime); err != nil {
+			t.Logf("cleanup warning: failed to delete gem_snapshots test rows: %v", err)
+		}
+		if _, err := pool.Exec(context.Background(), "DELETE FROM currency_snapshots WHERE time = $1", snapTime); err != nil {
+			t.Logf("cleanup warning: failed to delete currency_snapshots test rows: %v", err)
+		}
 	})
 
 	if _, err := repo.InsertGemSnapshots(ctx, snapTime, gems); err != nil {
