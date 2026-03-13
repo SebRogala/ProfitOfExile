@@ -524,3 +524,186 @@ func TestFetchGemsEndpoint_parsesETagAndAge(t *testing.T) {
 		t.Errorf("got %d gems, want 1", len(result.GemData))
 	}
 }
+
+func TestFetchGemsEndpoint_noIfNoneMatchWhenEtagEmpty(t *testing.T) {
+	var receivedIfNoneMatch string
+	var headerPresent bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedIfNoneMatch = r.Header.Get("If-None-Match")
+		_, headerPresent = r.Header["If-None-Match"]
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{
+			Lines: []ninjaGemLine{gemLine("Arc", "20/20", 10, 100, "gem")},
+		})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	_, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if headerPresent {
+		t.Errorf("If-None-Match header should not be present when etag is empty, got %q", receivedIfNoneMatch)
+	}
+}
+
+func TestFetchGemsEndpoint_ifNoneMatchHeaderSentWithEtag(t *testing.T) {
+	var receivedIfNoneMatch string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedIfNoneMatch = r.Header.Get("If-None-Match")
+		w.Header().Set("ETag", `"test-etag"`)
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	_, err := f.FetchGemsEndpoint(context.Background(), "Standard", `"test-etag"`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if receivedIfNoneMatch != `"test-etag"` {
+		t.Errorf("If-None-Match = %q, want %q", receivedIfNoneMatch, `"test-etag"`)
+	}
+}
+
+func TestFetchGemsEndpoint_missingAgeHeaderReturnsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// No Age header set.
+		w.Header().Set("ETag", `"no-age"`)
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{
+			Lines: []ninjaGemLine{gemLine("Arc", "20/20", 10, 100, "gem")},
+		})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Age != 0 {
+		t.Errorf("Age = %d, want 0 when Age header is missing", result.Age)
+	}
+}
+
+func TestFetchGemsEndpoint_invalidAgeHeaderReturnsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Age", "not-a-number")
+		w.Header().Set("ETag", `"invalid-age"`)
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{
+			Lines: []ninjaGemLine{gemLine("Arc", "20/20", 10, 100, "gem")},
+		})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Age != 0 {
+		t.Errorf("Age = %d, want 0 when Age header is invalid", result.Age)
+	}
+}
+
+func TestFetchGemsEndpoint_etagCapturedFromResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"captured-etag"`)
+		w.Header().Set("Age", "100")
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{
+			Lines: []ninjaGemLine{gemLine("Arc", "20/20", 10, 100, "gem")},
+		})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.ETag != `"captured-etag"` {
+		t.Errorf("ETag = %q, want %q", result.ETag, `"captured-etag"`)
+	}
+}
+
+func TestFetchCurrencyEndpoint_populatedWithETagAndAge(t *testing.T) {
+	payload := ninjaResponse[ninjaCurrencyLine]{
+		Lines: []ninjaCurrencyLine{
+			{
+				CurrencyTypeName: "divine",
+				ChaosEquivalent:  210.5,
+				Sparkline: struct {
+					TotalChange float64 `json:"totalChange"`
+				}{TotalChange: -2.3},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"currency-etag"`)
+		w.Header().Set("Age", "900")
+		json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.FetchCurrencyEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.NotModified {
+		t.Error("expected NotModified = false for 200 response")
+	}
+	if result.ETag != `"currency-etag"` {
+		t.Errorf("ETag = %q, want %q", result.ETag, `"currency-etag"`)
+	}
+	if result.Age != 900 {
+		t.Errorf("Age = %d, want 900", result.Age)
+	}
+	if len(result.CurrencyData) != 1 {
+		t.Fatalf("got %d currencies, want 1", len(result.CurrencyData))
+	}
+	if result.CurrencyData[0].CurrencyID != "divine" {
+		t.Errorf("CurrencyID = %q, want %q", result.CurrencyData[0].CurrencyID, "divine")
+	}
+	if result.CurrencyData[0].Chaos != 210.5 {
+		t.Errorf("Chaos = %v, want %v", result.CurrencyData[0].Chaos, 210.5)
+	}
+}
+
+func TestFetchCurrencyEndpoint_304NotModified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"curr-etag"` {
+			w.Header().Set("ETag", `"curr-etag"`)
+			w.Header().Set("Age", "600")
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaCurrencyLine]{})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.FetchCurrencyEndpoint(context.Background(), "Standard", `"curr-etag"`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.NotModified {
+		t.Error("expected NotModified = true for 304 response")
+	}
+	if result.ETag != `"curr-etag"` {
+		t.Errorf("ETag = %q, want %q", result.ETag, `"curr-etag"`)
+	}
+	if result.Age != 600 {
+		t.Errorf("Age = %d, want 600", result.Age)
+	}
+}
