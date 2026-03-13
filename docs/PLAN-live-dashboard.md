@@ -14,29 +14,19 @@
 - **Blocker:** Everything else. No deployment without this.
 - **Manual work:** DNS, SSL, Coolify install, test deploy
 
-### 1.2 TimescaleDB on VPS
-- **What:** PostgreSQL + TimescaleDB extension on the VPS (Coolify-managed container)
-- **Schema design (POE-19):**
-  ```sql
-  -- Gem price snapshots (hypertable)
-  CREATE TABLE gem_snapshots (
-      time        TIMESTAMPTZ NOT NULL,
-      name        TEXT NOT NULL,          -- "Molten Strike"
-      variant     TEXT NOT NULL,          -- "20/20", "1/20", "20", "1"
-      chaos_value NUMERIC(10,2),
-      listings    INTEGER,
-      is_transfigured BOOLEAN DEFAULT false,
-      gem_color   TEXT,                   -- RED/GREEN/BLUE (nullable for non-transfigured)
-      PRIMARY KEY (time, name, variant)
-  );
-  SELECT create_hypertable('gem_snapshots', 'time');
-
-  -- Continuous aggregates for hourly/daily rollups
-  -- Compression policy: compress chunks older than 7 days
-  -- Retention policy: raw data 90 days, aggregates 1 year
-  ```
+### 1.2 TimescaleDB Schema (POE-19) ✅ DONE — PR #8, merged 2026-03-13
+- **What:** PostgreSQL + TimescaleDB extension (local infra + VPS)
+- **Infra:** Shared Postgres image swapped to `timescaledb/timescaledb:2.17.2-pg16`
+- **Schema implemented:**
+  - `gem_snapshots` hypertable — separate-row model (one row per gem per variant per snapshot, `chaos`/`listings`/`is_transfigured`/`gem_color`)
+  - `font_snapshots` hypertable — per-color per-variant pool stats
+  - `exchange_snapshots` hypertable — empower/enlighten/enhance prices
+  - `gcp_snapshots` hypertable — GCP chaos price
+  - `gem_colors` lookup table — ~750 entries seeded from RePoE data
+- **Policies:** Compression (7d), retention (90d), continuous aggregates (hourly + daily rollups)
+- **Gem color resolver:** `internal/price/gemcolor/` — in-memory resolver with Vaal/Greater prefix stripping, progressive " of " suffix stripping, dynamic discovery + upsert
+- **Tests:** Unit tests for resolver, integration tests for migrations + resolver against real TimescaleDB
 - **Scale:** ~800 gems × 96 snapshots/day = ~77k rows/day, ~7M rows/league
-- **Gem color map:** Seed from `/var/www/poe/data/gem-colors.json` (500+ entries) into a `gem_colors` lookup table, or embed in collector binary
 
 ---
 
