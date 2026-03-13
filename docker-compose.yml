@@ -41,6 +41,26 @@ services:
       - "traefik.http.routers.profitofexile-frontend.priority=1"
       - "traefik.http.services.profitofexile-frontend.loadbalancer.server.port=5173"
 
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: profitofexile_collector
+    volumes:
+      - .:/app
+      - go-pkg:/root/go/pkg
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://profitofexile:profitofexile@postgres:5432/profitofexile}
+      - PORT=8090
+      - LEAGUE=${LEAGUE:-Mirage}
+      - NINJA_INTERVAL=${NINJA_INTERVAL:-15m}
+      - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
+      - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
+    networks:
+      - infra
+    restart: unless-stopped
+    command: ["air", "-c", ".air.collector.toml"]
+
 volumes:
   go-pkg:
   frontend_node_modules:
