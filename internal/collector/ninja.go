@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -53,8 +54,9 @@ type ninjaGemLine struct {
 	} `json:"tradeFilter"`
 }
 
-// ninjaCurrencyLine represents a single currency entry in the poe.ninja Currency
-// item overview response. Fields match the stash/current/item/overview endpoint.
+// ninjaCurrencyLine represents a single currency entry from poe.ninja's unified
+// stash/item/overview endpoint (not the legacy /currencyoverview). Uses
+// chaosEquivalent and receiveSparkLine fields.
 type ninjaCurrencyLine struct {
 	CurrencyTypeName string  `json:"currencyTypeName"`
 	ChaosEquivalent  float64 `json:"chaosEquivalent"`
@@ -85,7 +87,7 @@ func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnaps
 			continue
 		}
 
-		// Skip Heist-exclusive gems (Trarthus variants).
+		// Skip Heist-only alternative quality gems (Trarthus variants) -- not obtainable in standard league play.
 		if strings.Contains(line.Name, "Trarthus") {
 			continue
 		}
@@ -162,7 +164,8 @@ func (f *NinjaFetcher) get(ctx context.Context, url string, dst any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http get %s: unexpected status %d", url, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("http get %s: status %d: %s", url, resp.StatusCode, string(body))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {

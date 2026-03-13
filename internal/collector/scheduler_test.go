@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -23,8 +25,9 @@ func (m *mockFetcher) FetchCurrency(ctx context.Context, league string) ([]Curre
 }
 
 // newTestScheduler builds a Scheduler with a short interval suitable for tests.
+// Panics on invalid configuration since test inputs should always be valid.
 func newTestScheduler(store SnapshotStore, fetcher Fetcher, interval time.Duration) *Scheduler {
-	return NewScheduler(
+	s, err := NewScheduler(
 		store,
 		[]Fetcher{fetcher},
 		nil, // no gem color resolver in unit tests
@@ -34,6 +37,19 @@ func newTestScheduler(store SnapshotStore, fetcher Fetcher, interval time.Durati
 		"",
 		slog.Default(),
 	)
+	if err != nil {
+		panic("newTestScheduler: " + err.Error())
+	}
+	return s
+}
+
+// newFailingMercureServer creates an httptest server that always returns 500
+// for Mercure publish requests. Used to verify that Mercure failures are non-fatal.
+func newFailingMercureServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
 }
 
 func TestScheduler_recentSnapshotSkipsFirstFetch(t *testing.T) {
@@ -199,6 +215,102 @@ func TestScheduler_gemFetchErrorDoesNotBlockCurrencyFetch(t *testing.T) {
 
 	if currencyInserted != 1 {
 		t.Errorf("currency inserted = %d, want 1 (gem error should not block currency)", currencyInserted)
+	}
+}
+
+func TestScheduler_leaguePassedToFetchers(t *testing.T) {
+	// Verify that the scheduler passes the configured league to fetchers.
+	var receivedGemLeague, receivedCurrencyLeague string
+
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, nil // force immediate collect
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			return len(s), nil
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			return len(s), nil
+		},
+	}
+
+	fetcher := &mockFetcher{
+		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
+			receivedGemLeague = league
+			return nil, nil
+		},
+		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
+			receivedCurrencyLeague = league
+			return nil, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler(store, []Fetcher{fetcher}, nil, 15*time.Minute, "Mirage", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+
+	if receivedGemLeague != "Mirage" {
+		t.Errorf("FetchGems received league = %q, want %q", receivedGemLeague, "Mirage")
+	}
+	if receivedCurrencyLeague != "Mirage" {
+		t.Errorf("FetchCurrency received league = %q, want %q", receivedCurrencyLeague, "Mirage")
+	}
+}
+
+func TestScheduler_mercureFailureIsNonFatal(t *testing.T) {
+	// A Mercure publish failure should not prevent the collect cycle from
+	// completing successfully or affect snapshot insertion.
+	gemsInserted := 0
+
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, nil // force immediate collect
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			gemsInserted += len(s)
+			return len(s), nil
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			return len(s), nil
+		},
+	}
+
+	fetcher := &mockFetcher{
+		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
+			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
+		},
+		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
+			return nil, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Point Mercure at a server that always returns 500.
+	mercureServer := newFailingMercureServer(t)
+	defer mercureServer.Close()
+
+	s, err := NewScheduler(store, []Fetcher{fetcher}, nil, 15*time.Minute, "Standard",
+		mercureServer.URL, "test-secret", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+
+	if gemsInserted != 1 {
+		t.Errorf("gems inserted = %d, want 1 (Mercure failure should not block snapshot insertion)", gemsInserted)
 	}
 }
 

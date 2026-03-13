@@ -28,8 +28,8 @@ type GemSnapshot struct {
 }
 
 // CurrencySnapshot represents a single currency price observation matching the
-// currency_snapshots hypertable columns. Volume is not populated by poe.ninja's
-// item overview endpoint and is stored as NULL.
+// currency_snapshots hypertable columns. The currency_snapshots table also has a
+// volume column, which is not populated by this fetcher (defaults to NULL in the DB).
 type CurrencySnapshot struct {
 	Time            time.Time
 	CurrencyID      string

@@ -63,6 +63,17 @@ type Resolver struct {
 	unresolved  map[string]struct{}
 }
 
+// NewResolverFromMap creates a resolver pre-seeded with a static color map.
+// Useful for testing or CLI tools that do not need database-backed resolution.
+// UpsertDiscoveries will panic if called on a resolver created this way.
+func NewResolverFromMap(colors map[string]Color) *Resolver {
+	return &Resolver{
+		colors:     colors,
+		discovered: make(map[string]Color),
+		unresolved: make(map[string]struct{}),
+	}
+}
+
 // NewResolver creates a resolver pre-loaded from the gem_colors table.
 func NewResolver(ctx context.Context, pool *pgxpool.Pool) (*Resolver, error) {
 	r := &Resolver{

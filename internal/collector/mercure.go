@@ -2,6 +2,10 @@ package collector
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,13 +17,44 @@ import (
 // Reused across calls to benefit from connection pooling.
 var mercureClient = &http.Client{Timeout: 5 * time.Second}
 
+// signMercureJWT creates an HS256-signed JWT with publish permissions for the
+// Mercure hub. The secret is used as the HMAC-SHA256 signing key.
+func signMercureJWT(secret string) (string, error) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	claims := map[string]any{
+		"mercure": map[string]any{
+			"publish": []string{"*"},
+		},
+	}
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("marshal JWT claims: %w", err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	unsigned := header + "." + payload
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(unsigned))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	return unsigned + "." + signature, nil
+}
+
 // PublishMercureEvent posts an event to the Mercure hub.
-// If mercureURL or jwtSecret is empty, the publish is silently skipped (Mercure
-// not configured). Publish failures are returned as errors but callers should
-// treat them as non-fatal — the snapshot was already stored successfully.
-func PublishMercureEvent(ctx context.Context, mercureURL, jwtSecret, topic, payload string) error {
-	if mercureURL == "" || jwtSecret == "" {
+// If mercureURL or publisherSecret is empty, the publish is silently skipped
+// (Mercure not configured). The publisherSecret is the HMAC key used to sign a
+// JWT with publish permissions. Publish failures are returned as errors but
+// callers should treat them as non-fatal — the snapshot was already stored
+// successfully.
+func PublishMercureEvent(ctx context.Context, mercureURL, publisherSecret, topic, payload string) error {
+	if mercureURL == "" || publisherSecret == "" {
 		return nil
+	}
+
+	token, err := signMercureJWT(publisherSecret)
+	if err != nil {
+		return fmt.Errorf("mercure: sign JWT: %w", err)
 	}
 
 	form := url.Values{
@@ -33,7 +68,7 @@ func PublishMercureEvent(ctx context.Context, mercureURL, jwtSecret, topic, payl
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", "Bearer "+jwtSecret)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := mercureClient.Do(req)
 	if err != nil {
