@@ -1,12 +1,14 @@
 CREATE TABLE exchange_snapshots (
-    time      TIMESTAMPTZ NOT NULL,
-    gem_name  TEXT        NOT NULL,
+    time      TIMESTAMPTZ   NOT NULL,
+    name      TEXT          NOT NULL,
     chaos     NUMERIC(10,2),
     listings  INTEGER,
-    PRIMARY KEY (time, gem_name)
+    PRIMARY KEY (time, name)
 );
 
 SELECT create_hypertable('exchange_snapshots', 'time');
+
+CREATE INDEX idx_exchange_snapshots_name ON exchange_snapshots (name, time DESC);
 
 CREATE TABLE gcp_snapshots (
     time  TIMESTAMPTZ NOT NULL PRIMARY KEY,
