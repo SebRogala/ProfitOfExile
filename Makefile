@@ -1,4 +1,4 @@
-.PHONY: build test qa up down migrate migrate-down migrate-force
+.PHONY: build test qa up down migrate migrate-down migrate-force build-collector collect logs-collector
 
 build:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
@@ -27,3 +27,14 @@ migrate-down:
 migrate-force:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
 	docker compose exec app go run ./cmd/migrate force $(VERSION)
+
+build-collector:
+	@docker compose exec collector true 2>/dev/null || $(MAKE) up
+	docker compose exec collector go build -o bin/collector ./cmd/collector
+
+collect:
+	@docker compose exec collector true 2>/dev/null || $(MAKE) up
+	docker compose exec collector sh
+
+logs-collector:
+	docker compose logs -f collector
