@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -311,6 +312,177 @@ func TestScheduler_mercureFailureIsNonFatal(t *testing.T) {
 
 	if gemsInserted != 1 {
 		t.Errorf("gems inserted = %d, want 1 (Mercure failure should not block snapshot insertion)", gemsInserted)
+	}
+}
+
+func TestNewScheduler_zeroIntervalReturnsError(t *testing.T) {
+	store := &mockStore{}
+	fetcher := &mockFetcher{}
+
+	_, err := NewScheduler(store, []Fetcher{fetcher}, nil, 0, "Standard", "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected error for zero interval, got nil")
+	}
+	if !strings.Contains(err.Error(), "interval must be positive") {
+		t.Errorf("error = %q, want it to mention 'interval must be positive'", err.Error())
+	}
+}
+
+func TestNewScheduler_negativeIntervalReturnsError(t *testing.T) {
+	store := &mockStore{}
+	fetcher := &mockFetcher{}
+
+	_, err := NewScheduler(store, []Fetcher{fetcher}, nil, -5*time.Second, "Standard", "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected error for negative interval, got nil")
+	}
+	if !strings.Contains(err.Error(), "interval must be positive") {
+		t.Errorf("error = %q, want it to mention 'interval must be positive'", err.Error())
+	}
+}
+
+func TestNewScheduler_emptyFetchersReturnsError(t *testing.T) {
+	store := &mockStore{}
+
+	_, err := NewScheduler(store, []Fetcher{}, nil, 15*time.Minute, "Standard", "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected error for empty fetchers, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one fetcher") {
+		t.Errorf("error = %q, want it to mention 'at least one fetcher'", err.Error())
+	}
+}
+
+func TestNewScheduler_nilFetchersReturnsError(t *testing.T) {
+	store := &mockStore{}
+
+	_, err := NewScheduler(store, nil, nil, 15*time.Minute, "Standard", "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected error for nil fetchers, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least one fetcher") {
+		t.Errorf("error = %q, want it to mention 'at least one fetcher'", err.Error())
+	}
+}
+
+func TestScheduler_gemInsertErrorDoesNotBlockCurrencyInsert(t *testing.T) {
+	// When gem snapshot insertion fails, currency snapshots should still be inserted.
+	currencyInserted := 0
+
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, nil // force immediate collect
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			return 0, errors.New("gem insert: disk full")
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			currencyInserted += len(s)
+			return len(s), nil
+		},
+	}
+
+	fetcher := &mockFetcher{
+		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
+			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
+		},
+		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
+			return []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+
+	if currencyInserted != 1 {
+		t.Errorf("currency inserted = %d, want 1 (gem insert error should not block currency)", currencyInserted)
+	}
+}
+
+func TestScheduler_currencyInsertErrorDoesNotBlockGemInsert(t *testing.T) {
+	// When currency snapshot insertion fails, gem snapshots should still have been inserted.
+	gemsInserted := 0
+
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, nil // force immediate collect
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			gemsInserted += len(s)
+			return len(s), nil
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			return 0, errors.New("currency insert: connection lost")
+		},
+	}
+
+	fetcher := &mockFetcher{
+		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
+			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
+		},
+		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
+			return []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+
+	if gemsInserted != 1 {
+		t.Errorf("gems inserted = %d, want 1 (currency insert error should not block gems)", gemsInserted)
+	}
+}
+
+func TestScheduler_lastSnapshotTimeErrorCollectsImmediately(t *testing.T) {
+	// When LastGemSnapshotTime returns an error, the scheduler should fall back
+	// to collecting immediately rather than skipping or waiting.
+	fetchCalled := false
+
+	store := &mockStore{
+		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, errors.New("connection refused")
+		},
+		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
+			return len(s), nil
+		},
+		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
+			return len(s), nil
+		},
+	}
+
+	fetcher := &mockFetcher{
+		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
+			fetchCalled = true
+			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
+		},
+		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
+			return nil, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newTestScheduler(store, fetcher, 15*time.Minute)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+
+	if !fetchCalled {
+		t.Error("fetcher should have been called immediately when LastGemSnapshotTime returns an error")
 	}
 }
 
