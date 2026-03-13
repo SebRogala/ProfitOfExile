@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SnapshotStore defines the interface that Repository implements.
-// Used by the Scheduler to decouple from the concrete pgxpool-backed Repository.
+// SnapshotStore defines the persistence interface for snapshot data. Used by
+// main.go to wire endpoint closures and by test mocks.
 type SnapshotStore interface {
 	LastGemSnapshotTime(ctx context.Context) (time.Time, error)
 	LastCurrencySnapshotTime(ctx context.Context) (time.Time, error)

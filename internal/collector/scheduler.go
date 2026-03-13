@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -39,7 +39,22 @@ func NewScheduler(
 		return nil, fmt.Errorf("scheduler: at least one endpoint is required")
 	}
 
-	// Build per-source semaphores (capacity 3 per source).
+	// Validate required fields on each endpoint to catch misconfiguration at
+	// startup rather than as a runtime panic inside a goroutine.
+	for i, ep := range endpoints {
+		if ep.Name == "" {
+			return nil, fmt.Errorf("scheduler: endpoint %d has empty Name", i)
+		}
+		if ep.FetchFunc == nil {
+			return nil, fmt.Errorf("scheduler: endpoint %d (%s) has nil FetchFunc", i, ep.Name)
+		}
+		if ep.FallbackInterval <= 0 {
+			return nil, fmt.Errorf("scheduler: endpoint %d (%s) has non-positive FallbackInterval", i, ep.Name)
+		}
+	}
+
+	// Build per-source semaphores (capacity 3 per source — allows all current
+	// endpoints plus headroom for future ones without blocking).
 	sems := make(map[string]chan struct{})
 	for _, ep := range endpoints {
 		if ep.Source != "" {
@@ -70,6 +85,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					s.logger.Error("endpoint goroutine panicked",
+						"endpoint", ep.Name,
+						"panic", r,
+					)
+				}
+			}()
 
 			// Startup jitter: random delay between JitterMin and JitterMax.
 			jitter := s.startupJitter(ep)
@@ -103,7 +126,7 @@ func (s *Scheduler) startupJitter(ep EndpointConfig) time.Duration {
 		return 0
 	}
 	spread := ep.JitterMax - ep.JitterMin
-	return ep.JitterMin + time.Duration(rand.Int63n(int64(spread)))
+	return ep.JitterMin + time.Duration(rand.Int64N(int64(spread)))
 }
 
 // runEndpoint is the core loop for a single endpoint. It handles startup
@@ -177,11 +200,12 @@ func (s *Scheduler) checkStaleness(ctx context.Context, ep EndpointConfig) time.
 // fetchAndStore executes one fetch-store cycle and returns the sleep duration
 // before the next cycle.
 func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastETag *string, retryCount *int) time.Duration {
-	// Acquire source semaphore.
+	// Acquire source semaphore; defer release to guard against panics.
 	sem := s.semaphores[ep.Source]
 	if sem != nil {
 		select {
 		case sem <- struct{}{}:
+			defer func() { <-sem }()
 		case <-ctx.Done():
 			return 0
 		}
@@ -189,13 +213,16 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 
 	result, err := ep.FetchFunc(ctx, s.league, *lastETag)
 
-	// Release source semaphore.
-	if sem != nil {
-		<-sem
-	}
-
 	if err != nil {
 		s.logger.Error("fetch failed",
+			"endpoint", ep.Name,
+			"error", err,
+		)
+		return ep.FallbackInterval
+	}
+
+	if err := result.Validate(); err != nil {
+		s.logger.Error("invalid fetch result",
 			"endpoint", ep.Name,
 			"error", err,
 		)
@@ -231,19 +258,19 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 	if ep.StoreFunc != nil {
 		inserted, err := ep.StoreFunc(ctx, snapTime, result)
 		if err != nil {
-			s.logger.Error("store failed",
+			s.logger.Error("store failed, skipping post-collect and retrying sooner",
 				"endpoint", ep.Name,
 				"error", err,
 			)
-		} else {
-			s.logger.Info("snapshot stored",
-				"endpoint", ep.Name,
-				"inserted", inserted,
-			)
+			return ep.MinSleep
 		}
+		s.logger.Info("snapshot stored",
+			"endpoint", ep.Name,
+			"inserted", inserted,
+		)
 	}
 
-	// Post-collect: gem color upsert + Mercure publish.
+	// Post-collect: conditional gem color upsert (gems only) + Mercure publish.
 	s.postCollect(ctx, ep.Name, snapTime)
 
 	// Calculate sleep from cache headers.

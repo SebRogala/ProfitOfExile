@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// Canonical endpoint name constants. Used by main.go config and scheduler's
-// postCollect gate to identify which endpoints have completed.
+// Canonical endpoint name constants. Used by main.go to configure endpoints
+// and by postCollect to conditionally run endpoint-specific logic (e.g., gem
+// color upsert).
 const (
 	EndpointNinjaGems     = "ninja-gems"
 	EndpointNinjaCurrency = "ninja-currency"
@@ -28,6 +29,18 @@ type FetchResult struct {
 	ETag         string
 	Age          int  // seconds since origin server generated the response
 	NotModified  bool // true when source returned 304 Not Modified
+}
+
+// Validate checks FetchResult invariants: a NotModified result must have no
+// data, and at most one of GemData/CurrencyData may be populated.
+func (r *FetchResult) Validate() error {
+	if r.NotModified && (len(r.GemData) > 0 || len(r.CurrencyData) > 0) {
+		return fmt.Errorf("FetchResult: NotModified=true but data slices are populated")
+	}
+	if len(r.GemData) > 0 && len(r.CurrencyData) > 0 {
+		return fmt.Errorf("FetchResult: both GemData and CurrencyData are populated")
+	}
+	return nil
 }
 
 // FetchFunc fetches data from an external source. The etag parameter is the
@@ -67,8 +80,9 @@ type EndpointConfig struct {
 	// Nil means always fetch on startup.
 	StalenessFunc StalenessFunc
 
-	// MaxAge is the expected cache duration of the source data (e.g. 1800s
-	// for poe.ninja). Used with Age to calculate optimal sleep time.
+	// MaxAge is the assumed cache duration of the source data. The default for
+	// poe.ninja endpoints is 1800s (30 minutes). Used with Age to calculate
+	// optimal sleep time.
 	MaxAge time.Duration
 
 	// FallbackInterval is the polling interval when no cache headers are
@@ -84,10 +98,10 @@ type EndpointConfig struct {
 	// exceeds MaxAge (stale-while-revalidate).
 	MinSleep time.Duration
 
-	// JitterMin is the minimum random jitter added to sleep duration.
+	// JitterMin is the minimum random startup delay before the first fetch.
 	JitterMin time.Duration
 
-	// JitterMax is the maximum random jitter added to sleep duration.
+	// JitterMax is the maximum random startup delay before the first fetch.
 	JitterMax time.Duration
 }
 
@@ -121,27 +135,13 @@ func ParseEndpointOverrides(prefix string) EndpointConfig {
 	var cfg EndpointConfig
 
 	if v := os.Getenv(prefix + "_MAX_AGE"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			slog.Warn("invalid env var, ignoring",
-				"var", prefix+"_MAX_AGE",
-				"value", v,
-				"error", err,
-			)
-		} else {
+		if d, err := parsePositiveDuration(prefix+"_MAX_AGE", v); err == nil {
 			cfg.MaxAge = d
 		}
 	}
 
 	if v := os.Getenv(prefix + "_FALLBACK_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			slog.Warn("invalid env var, ignoring",
-				"var", prefix+"_FALLBACK_INTERVAL",
-				"value", v,
-				"error", err,
-			)
-		} else {
+		if d, err := parsePositiveDuration(prefix+"_FALLBACK_INTERVAL", v); err == nil {
 			cfg.FallbackInterval = d
 		}
 	}
@@ -160,14 +160,7 @@ func ParseEndpointOverrides(prefix string) EndpointConfig {
 	}
 
 	if v := os.Getenv(prefix + "_MIN_SLEEP"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			slog.Warn("invalid env var, ignoring",
-				"var", prefix+"_MIN_SLEEP",
-				"value", v,
-				"error", err,
-			)
-		} else {
+		if d, err := parsePositiveDuration(prefix+"_MIN_SLEEP", v); err == nil {
 			cfg.MinSleep = d
 		}
 	}
@@ -176,6 +169,8 @@ func ParseEndpointOverrides(prefix string) EndpointConfig {
 }
 
 // MergeEndpointConfig applies non-zero overrides on top of a base config.
+// Only timing and numeric fields are merged; identity fields (Name, Source) and
+// function fields (FetchFunc, StoreFunc, StalenessFunc) are never overridden.
 // Zero-valued fields in overrides are ignored, preserving the base defaults.
 func MergeEndpointConfig(base, overrides EndpointConfig) EndpointConfig {
 	if overrides.MaxAge > 0 {
@@ -206,4 +201,26 @@ func parsePositiveInt(s string) (int, error) {
 		return 0, fmt.Errorf("not a positive integer: %q", s)
 	}
 	return n, nil
+}
+
+// parsePositiveDuration parses a duration string and rejects non-positive values.
+// Logs a warning and returns an error for invalid or non-positive durations.
+func parsePositiveDuration(varName, value string) (time.Duration, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		slog.Warn("invalid env var, ignoring",
+			"var", varName,
+			"value", value,
+			"error", err,
+		)
+		return 0, err
+	}
+	if d <= 0 {
+		slog.Warn("non-positive duration env var, ignoring",
+			"var", varName,
+			"value", value,
+		)
+		return 0, fmt.Errorf("non-positive duration: %q", value)
+	}
+	return d, nil
 }

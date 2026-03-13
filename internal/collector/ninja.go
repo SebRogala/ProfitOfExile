@@ -238,10 +238,16 @@ func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag str
 	// Parse Age header (seconds since origin generated the response).
 	age := 0
 	if ageStr := resp.Header.Get("Age"); ageStr != "" {
-		if parsed, parseErr := strconv.Atoi(ageStr); parseErr == nil && parsed >= 0 {
+		parsed, parseErr := strconv.Atoi(ageStr)
+		if parseErr != nil {
+			slog.Warn("invalid Age header, defaulting to 0",
+				"raw", ageStr, "url", rawURL, "error", parseErr)
+		} else if parsed < 0 {
+			slog.Warn("negative Age header, defaulting to 0",
+				"raw", ageStr, "url", rawURL)
+		} else {
 			age = parsed
 		}
-		// Invalid Age header is silently ignored (defaults to 0).
 	}
 
 	// Parse ETag from response.
