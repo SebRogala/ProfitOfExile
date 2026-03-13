@@ -201,15 +201,14 @@ func TestParseEndpointOverrides_ninjaIntervalAliasNotHandled(t *testing.T) {
 	}
 }
 
-func TestNinjaIntervalAlias_mergePattern(t *testing.T) {
-	// Simulates the NINJA_INTERVAL deprecated alias pattern used in
-	// cmd/collector/main.go: when FALLBACK_INTERVAL is not set via overrides
-	// but NINJA_INTERVAL is set, the alias value is applied after merge.
-	t.Setenv("LEGACY_FALLBACK_INTERVAL", "")
+func TestNinjaIntervalAlias_mergePreservesBase(t *testing.T) {
+	// When no env var overrides are set, MergeEndpointConfig retains the base
+	// FallbackInterval. This verifies the starting condition that the alias
+	// pattern in main.go relies on: if overrides.FallbackInterval == 0, the
+	// base default (30m) is active after merge, and the alias is free to
+	// override it.
+	overrides := ParseEndpointOverrides("LEGACY_NOMATCH_XYZ")
 
-	overrides := ParseEndpointOverrides("LEGACY")
-
-	// FallbackInterval not set via overrides — zero value.
 	if overrides.FallbackInterval != 0 {
 		t.Fatalf("precondition: FallbackInterval = %v, want 0", overrides.FallbackInterval)
 	}
@@ -217,15 +216,9 @@ func TestNinjaIntervalAlias_mergePattern(t *testing.T) {
 	base := DefaultNinjaConfig()
 	merged := MergeEndpointConfig(base, overrides)
 
-	// Simulate the alias: if overrides.FallbackInterval == 0 and legacy alias
-	// is set, apply it to the merged config.
-	legacyInterval := 20 * time.Minute // simulates parsed NINJA_INTERVAL=20m
-	if overrides.FallbackInterval == 0 {
-		merged.FallbackInterval = legacyInterval
-	}
-
-	if merged.FallbackInterval != 20*time.Minute {
-		t.Errorf("FallbackInterval = %v, want %v (legacy alias should override base)", merged.FallbackInterval, 20*time.Minute)
+	// Base default is preserved when no override is set.
+	if merged.FallbackInterval != 30*time.Minute {
+		t.Errorf("FallbackInterval = %v, want %v (base default should be preserved when override is zero)", merged.FallbackInterval, 30*time.Minute)
 	}
 }
 

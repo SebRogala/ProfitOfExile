@@ -272,18 +272,3 @@ func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag str
 	}, nil
 }
 
-// ClampAge checks if age exceeds maxAge and clamps it, logging a warning.
-// This handles the stale-while-revalidate edge case where poe.ninja's CDN
-// may serve responses with age > max-age. Returns the clamped age in seconds.
-func ClampAge(age int, maxAge time.Duration, endpoint string) int {
-	maxAgeSec := int(maxAge.Seconds())
-	if maxAgeSec > 0 && age > maxAgeSec {
-		slog.Warn("response age exceeds max-age, clamping",
-			"endpoint", endpoint,
-			"age", age,
-			"maxAge", maxAgeSec,
-		)
-		return maxAgeSec
-	}
-	return age
-}
