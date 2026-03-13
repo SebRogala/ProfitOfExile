@@ -612,6 +612,27 @@ func TestFetchGemsEndpoint_invalidAgeHeaderReturnsZero(t *testing.T) {
 	}
 }
 
+func TestFetchGemsEndpoint_negativeAgeHeaderReturnsZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Age", "-5")
+		w.Header().Set("ETag", `"neg-age"`)
+		json.NewEncoder(w).Encode(ninjaResponse[ninjaGemLine]{
+			Lines: []ninjaGemLine{gemLine("Arc", "20/20", 10, 100, "gem")},
+		})
+	}))
+	defer server.Close()
+
+	f := testNinjaFetcher(t, server)
+	result, err := f.FetchGemsEndpoint(context.Background(), "Standard", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Age != 0 {
+		t.Errorf("Age = %d, want 0 when Age header is negative", result.Age)
+	}
+}
+
 func TestFetchGemsEndpoint_etagCapturedFromResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"captured-etag"`)
