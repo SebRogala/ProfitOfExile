@@ -694,8 +694,9 @@ func TestScheduler_recentCurrencySnapshotSkipsFirstFetch(t *testing.T) {
 }
 
 func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
-	// MaxRetries=3: the scheduler retries 3 times (retryCount 1..3), then on the
-	// 4th 304 (retryCount > MaxRetries) it resets and sleeps FallbackInterval.
+	// MaxRetries=3: allows 304 responses at MinSleep while retryCount <= MaxRetries
+	// (1..3), then the 4th 304 (retryCount=4 > MaxRetries) resets and sleeps
+	// FallbackInterval.
 	// With MinSleep=1ms the first retry cycle completes almost immediately, so
 	// we assert at least MaxRetries+1 fetches occurred (exhausting one full cycle).
 	const maxRetries = 3
@@ -1244,5 +1245,159 @@ func TestScheduler_mercurePublishFiresPerEndpoint(t *testing.T) {
 	}
 	if !hasCurrency {
 		t.Error("expected Mercure publish for currency endpoint")
+	}
+}
+
+func TestNewScheduler_emptyNameReturnsError(t *testing.T) {
+	ep := EndpointConfig{
+		Name:             "", // empty
+		Source:           "ninja",
+		FetchFunc:        func(ctx context.Context, league string, etag string) (*FetchResult, error) { return nil, nil },
+		FallbackInterval: 30 * time.Minute,
+	}
+
+	_, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected error for empty Name, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty Name") {
+		t.Errorf("error = %q, want it to mention 'empty Name'", err.Error())
+	}
+}
+
+func TestNewScheduler_nilFetchFuncReturnsError(t *testing.T) {
+	ep := EndpointConfig{
+		Name:             "test-endpoint",
+		Source:           "ninja",
+		FetchFunc:        nil, // nil
+		FallbackInterval: 30 * time.Minute,
+	}
+
+	_, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected error for nil FetchFunc, got nil")
+	}
+	if !strings.Contains(err.Error(), "nil FetchFunc") {
+		t.Errorf("error = %q, want it to mention 'nil FetchFunc'", err.Error())
+	}
+}
+
+func TestNewScheduler_nonPositiveFallbackIntervalReturnsError(t *testing.T) {
+	tests := []struct {
+		name             string
+		fallbackInterval time.Duration
+	}{
+		{name: "zero FallbackInterval", fallbackInterval: 0},
+		{name: "negative FallbackInterval", fallbackInterval: -5 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ep := EndpointConfig{
+				Name:             "test-endpoint",
+				Source:           "ninja",
+				FetchFunc:        func(ctx context.Context, league string, etag string) (*FetchResult, error) { return nil, nil },
+				FallbackInterval: tt.fallbackInterval,
+			}
+
+			_, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+			if err == nil {
+				t.Fatal("expected error for non-positive FallbackInterval, got nil")
+			}
+			if !strings.Contains(err.Error(), "non-positive FallbackInterval") {
+				t.Errorf("error = %q, want it to mention 'non-positive FallbackInterval'", err.Error())
+			}
+		})
+	}
+}
+
+func TestScheduler_invalidFetchResultDoesNotCallStore(t *testing.T) {
+	// When FetchFunc returns a FetchResult that fails Validate() (both GemData
+	// and CurrencyData populated), StoreFunc must NOT be called and the
+	// scheduler should continue running (sleep FallbackInterval, not crash).
+	var storeCalled int32
+	var fetchCount int32
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           50 * time.Millisecond,
+		FallbackInterval: 50 * time.Millisecond,
+		MaxRetries:       3,
+		MinSleep:         1 * time.Millisecond,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCount, 1)
+			// Return an invalid result: both data fields populated.
+			return &FetchResult{
+				GemData:      []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
+				CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}},
+			}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			atomic.AddInt32(&storeCalled, 1)
+			return 0, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&storeCalled) != 0 {
+		t.Error("StoreFunc should NOT be called when FetchResult.Validate() fails")
+	}
+	if atomic.LoadInt32(&fetchCount) == 0 {
+		t.Error("FetchFunc should have been called at least once")
+	}
+}
+
+func TestScheduler_emptySourceNoSemaphore(t *testing.T) {
+	// An endpoint with Source="" should run without panic and no semaphore
+	// should be created for it.
+	var fetchCalled int32
+
+	ep := EndpointConfig{
+		Name:             "custom-endpoint",
+		Source:           "", // empty source
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 1, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	// Verify no semaphore was created for empty source.
+	if len(s.semaphores) != 0 {
+		t.Errorf("expected 0 semaphores for empty source, got %d", len(s.semaphores))
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&fetchCalled) == 0 {
+		t.Error("endpoint with empty Source should still execute fetches")
 	}
 }

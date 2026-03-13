@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -311,5 +312,100 @@ func TestFetchResult_zeroValueIsNotModified(t *testing.T) {
 	}
 	if r.Age != 0 {
 		t.Error("zero-value FetchResult should have Age=0")
+	}
+}
+
+func TestFetchResult_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		result  FetchResult
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid gem data only",
+			result:  FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}},
+			wantErr: false,
+		},
+		{
+			name:    "valid currency data only",
+			result:  FetchResult{CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}},
+			wantErr: false,
+		},
+		{
+			name:    "valid empty result (no data, not modified false)",
+			result:  FetchResult{},
+			wantErr: false,
+		},
+		{
+			name: "NotModified with GemData populated returns error",
+			result: FetchResult{
+				NotModified: true,
+				GemData:     []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
+			},
+			wantErr: true,
+			errMsg:  "NotModified=true but data slices are populated",
+		},
+		{
+			name: "NotModified with CurrencyData populated returns error",
+			result: FetchResult{
+				NotModified:  true,
+				CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}},
+			},
+			wantErr: true,
+			errMsg:  "NotModified=true but data slices are populated",
+		},
+		{
+			name: "both GemData and CurrencyData populated returns error",
+			result: FetchResult{
+				GemData:      []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}},
+				CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}},
+			},
+			wantErr: true,
+			errMsg:  "both GemData and CurrencyData are populated",
+		},
+		{
+			name:    "NotModified with no data is valid",
+			result:  FetchResult{NotModified: true},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.result.Validate()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestParseEndpointOverrides_negativeDurationIgnored(t *testing.T) {
+	// parsePositiveDuration explicitly rejects d <= 0, so valid-but-negative
+	// durations like "-5s" should be ignored, leaving the field at zero.
+	t.Setenv("NEG_MAX_AGE", "-5s")
+	t.Setenv("NEG_FALLBACK_INTERVAL", "-30m")
+	t.Setenv("NEG_MIN_SLEEP", "-1s")
+
+	cfg := ParseEndpointOverrides("NEG")
+
+	if cfg.MaxAge != 0 {
+		t.Errorf("MaxAge = %v, want 0 (negative duration should be ignored)", cfg.MaxAge)
+	}
+	if cfg.FallbackInterval != 0 {
+		t.Errorf("FallbackInterval = %v, want 0 (negative duration should be ignored)", cfg.FallbackInterval)
+	}
+	if cfg.MinSleep != 0 {
+		t.Errorf("MinSleep = %v, want 0 (negative duration should be ignored)", cfg.MinSleep)
 	}
 }
