@@ -56,9 +56,8 @@ type ninjaGemLine struct {
 	} `json:"tradeFilter"`
 }
 
-// ninjaCurrencyLine represents a single currency entry from poe.ninja's unified
-// stash/item/overview endpoint (not the legacy /currencyoverview). Uses
-// chaosEquivalent and receiveSparkLine fields.
+// ninjaCurrencyLine represents a single currency entry from the poe.ninja
+// stash/item/overview endpoint.
 type ninjaCurrencyLine struct {
 	CurrencyTypeName string  `json:"currencyTypeName"`
 	ChaosEquivalent  float64 `json:"chaosEquivalent"`
@@ -94,7 +93,6 @@ func (f *NinjaFetcher) FetchGemsEndpoint(ctx context.Context, league string, eta
 	}
 
 	if hr.NotModified {
-		slog.Info("ninja: gems not modified (304)", "etag", etag)
 		return &FetchResult{
 			NotModified: true,
 			ETag:        hr.ETag,
@@ -111,11 +109,15 @@ func (f *NinjaFetcher) FetchGemsEndpoint(ctx context.Context, league string, eta
 	snapshots := f.convertGemLines(resp.Lines)
 
 	slog.Info("ninja: fetched gems", "total_api", len(resp.Lines), "after_filter", len(snapshots), "age", hr.Age, "etag", hr.ETag)
-	return &FetchResult{
+	result := &FetchResult{
 		GemData: snapshots,
 		ETag:    hr.ETag,
 		Age:     hr.Age,
-	}, nil
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("ninja: gems result invalid: %w", err)
+	}
+	return result, nil
 }
 
 // FetchCurrencyEndpoint is a FetchFunc-compatible method that fetches Currency
@@ -129,7 +131,6 @@ func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string,
 	}
 
 	if hr.NotModified {
-		slog.Info("ninja: currency not modified (304)", "etag", etag)
 		return &FetchResult{
 			NotModified: true,
 			ETag:        hr.ETag,
@@ -146,11 +147,15 @@ func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string,
 	snapshots := convertCurrencyLines(resp.Lines)
 
 	slog.Info("ninja: fetched currency", "count", len(snapshots), "age", hr.Age, "etag", hr.ETag)
-	return &FetchResult{
+	result := &FetchResult{
 		CurrencyData: snapshots,
 		ETag:         hr.ETag,
 		Age:          hr.Age,
-	}, nil
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("ninja: currency result invalid: %w", err)
+	}
+	return result, nil
 }
 
 // convertGemLines filters and transforms raw API gem lines into GemSnapshots.

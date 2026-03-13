@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"runtime/debug"
 	"sync"
 	"time"
 
 	"profitofexile/internal/price/gemcolor"
 )
+
+// perSourceSemaphoreCapacity is the number of concurrent requests allowed per
+// source (e.g., "ninja"). Limits concurrent requests to the same API to avoid
+// rate-limiting.
+const perSourceSemaphoreCapacity = 3
 
 // Scheduler orchestrates price data collection with independent goroutines per
 // endpoint. Each endpoint runs its own fetch-sleep loop with cache-aware sleep
@@ -39,27 +45,21 @@ func NewScheduler(
 		return nil, fmt.Errorf("scheduler: at least one endpoint is required")
 	}
 
-	// Validate required fields on each endpoint to catch misconfiguration at
-	// startup rather than as a runtime panic inside a goroutine.
+	// Validate each endpoint configuration at startup to surface
+	// misconfiguration early rather than as a runtime panic inside a goroutine.
 	for i, ep := range endpoints {
-		if ep.Name == "" {
-			return nil, fmt.Errorf("scheduler: endpoint %d has empty Name", i)
-		}
-		if ep.FetchFunc == nil {
-			return nil, fmt.Errorf("scheduler: endpoint %d (%s) has nil FetchFunc", i, ep.Name)
-		}
-		if ep.FallbackInterval <= 0 {
-			return nil, fmt.Errorf("scheduler: endpoint %d (%s) has non-positive FallbackInterval", i, ep.Name)
+		if err := ep.Validate(); err != nil {
+			return nil, fmt.Errorf("scheduler: endpoint %d: %w", i, err)
 		}
 	}
 
-	// Build per-source semaphores (capacity 3 per source — allows all current
-	// endpoints plus headroom for future ones without blocking).
+	// Build per-source semaphores (limits concurrent requests to the same API
+	// to avoid rate-limiting).
 	sems := make(map[string]chan struct{})
 	for _, ep := range endpoints {
 		if ep.Source != "" {
 			if _, ok := sems[ep.Source]; !ok {
-				sems[ep.Source] = make(chan struct{}, 3)
+				sems[ep.Source] = make(chan struct{}, perSourceSemaphoreCapacity)
 			}
 		}
 	}
@@ -87,9 +87,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					s.logger.Error("endpoint goroutine panicked",
+					s.logger.Error("endpoint goroutine panicked — this endpoint will stop collecting permanently",
 						"endpoint", ep.Name,
 						"panic", r,
+						"stack", string(debug.Stack()),
 					)
 				}
 			}()
@@ -268,10 +269,14 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 			"endpoint", ep.Name,
 			"inserted", inserted,
 		)
-	}
 
-	// Post-collect: conditional gem color upsert (gems only) + Mercure publish.
-	s.postCollect(ctx, ep.Name, snapTime)
+		// Post-collect: conditional gem color upsert (gems only) + Mercure publish.
+		s.postCollect(ctx, ep.Name, snapTime)
+	} else {
+		s.logger.Warn("no StoreFunc configured, fetch result discarded",
+			"endpoint", ep.Name,
+		)
+	}
 
 	// Calculate sleep from cache headers.
 	return s.calculateSleep(ep, result.Age)
@@ -283,7 +288,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, lastET
 func (s *Scheduler) calculateSleep(ep EndpointConfig, ageSeconds int) time.Duration {
 	maxAgeSec := int(ep.MaxAge.Seconds())
 	if maxAgeSec > 0 && ageSeconds > maxAgeSec {
-		s.logger.Warn("response age exceeds max-age (stale-while-revalidate)",
+		s.logger.Debug("response age exceeds max-age (stale-while-revalidate)",
 			"endpoint", ep.Name,
 			"age", ageSeconds,
 			"maxAge", maxAgeSec,
