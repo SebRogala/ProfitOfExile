@@ -13,7 +13,7 @@ ALTER TABLE font_snapshots SET (
 
 ALTER TABLE exchange_snapshots SET (
     timescaledb.compress,
-    timescaledb.compress_segmentby = 'gem_name',
+    timescaledb.compress_segmentby = 'name',
     timescaledb.compress_orderby = 'time DESC'
 );
 
@@ -41,12 +41,10 @@ SELECT
     time_bucket('1 hour', time) AS bucket,
     name,
     variant,
-    avg(base_chaos)              AS avg_base_chaos,
-    avg(trans_chaos)             AS avg_trans_chaos,
-    avg(base_listings::numeric)  AS avg_base_listings,
-    avg(trans_listings::numeric) AS avg_trans_listings,
-    last(gem_color, time)        AS gem_color,
-    last(is_transfigured, time)  AS is_transfigured
+    avg(chaos)              AS avg_chaos,
+    avg(listings::numeric)  AS avg_listings,
+    last(gem_color, time)   AS gem_color,
+    last(is_transfigured, time) AS is_transfigured
 FROM gem_snapshots
 GROUP BY bucket, name, variant
 WITH NO DATA;
@@ -64,11 +62,9 @@ SELECT
     time_bucket('1 day', bucket) AS bucket,
     name,
     variant,
-    avg(avg_base_chaos)          AS avg_base_chaos,
-    avg(avg_trans_chaos)         AS avg_trans_chaos,
-    avg(avg_base_listings)       AS avg_base_listings,
-    avg(avg_trans_listings)      AS avg_trans_listings,
-    last(gem_color, bucket)      AS gem_color,
+    avg(avg_chaos)          AS avg_chaos,
+    avg(avg_listings)       AS avg_listings,
+    last(gem_color, bucket) AS gem_color,
     last(is_transfigured, bucket) AS is_transfigured
 FROM gem_snapshots_hourly
 GROUP BY time_bucket('1 day', bucket), name, variant
