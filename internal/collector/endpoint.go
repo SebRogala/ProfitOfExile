@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -146,8 +147,7 @@ func ParseEndpointOverrides(prefix string) EndpointConfig {
 	}
 
 	if v := os.Getenv(prefix + "_MAX_RETRIES"); v != "" {
-		var n int
-		_, err := parsePositiveInt(v)
+		n, err := parsePositiveInt(v)
 		if err != nil {
 			slog.Warn("invalid env var, ignoring",
 				"var", prefix+"_MAX_RETRIES",
@@ -155,7 +155,6 @@ func ParseEndpointOverrides(prefix string) EndpointConfig {
 				"error", err,
 			)
 		} else {
-			n, _ = parsePositiveInt(v)
 			cfg.MaxRetries = n
 		}
 	}
@@ -200,16 +199,10 @@ func MergeEndpointConfig(base, overrides EndpointConfig) EndpointConfig {
 	return base
 }
 
-// parsePositiveInt parses a string as a positive integer.
+// parsePositiveInt parses a string as a positive integer (> 0).
 func parsePositiveInt(s string) (int, error) {
-	var n int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("not a positive integer: %q", s)
-		}
-		n = n*10 + int(c-'0')
-	}
-	if n <= 0 {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
 		return 0, fmt.Errorf("not a positive integer: %q", s)
 	}
 	return n, nil
