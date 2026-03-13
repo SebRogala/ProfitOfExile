@@ -7,45 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// mockFetcher implements Fetcher with configurable function fields.
-type mockFetcher struct {
-	FetchGemsFn     func(ctx context.Context, league string) ([]GemSnapshot, error)
-	FetchCurrencyFn func(ctx context.Context, league string) ([]CurrencySnapshot, error)
-}
-
-func (m *mockFetcher) FetchGems(ctx context.Context, league string) ([]GemSnapshot, error) {
-	return m.FetchGemsFn(ctx, league)
-}
-
-func (m *mockFetcher) FetchCurrency(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-	return m.FetchCurrencyFn(ctx, league)
-}
-
-// newTestScheduler builds a Scheduler with a short interval suitable for tests.
-// Panics on invalid configuration since test inputs should always be valid.
-func newTestScheduler(store SnapshotStore, fetcher Fetcher, interval time.Duration) *Scheduler {
-	s, err := NewScheduler(
-		store,
-		[]Fetcher{fetcher},
-		nil, // no gem color resolver in unit tests
-		interval,
-		"Standard",
-		"", // no Mercure in unit tests
-		"",
-		slog.Default(),
-	)
-	if err != nil {
-		panic("newTestScheduler: " + err.Error())
-	}
-	return s
-}
-
 // newFailingMercureServer creates an httptest server that always returns 500
-// for Mercure publish requests. Used to verify that Mercure failures are non-fatal.
+// for Mercure publish requests.
 func newFailingMercureServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,457 +22,279 @@ func newFailingMercureServer(t *testing.T) *httptest.Server {
 }
 
 func TestScheduler_recentSnapshotSkipsFirstFetch(t *testing.T) {
-	// When the last snapshot is recent (within interval), Run should skip the
-	// first collect call and wait for the next tick.
 	recentTime := time.Now().UTC().Add(-5 * time.Minute)
-	fetchCalled := false
+	var fetchCalled int32
 
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return len(result.GemData), nil
+		},
+		StalenessFunc: func(ctx context.Context) (time.Time, error) {
 			return recentTime, nil
-		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			fetchCalled = true
-			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, nil
 		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
 
-	// Run briefly then cancel — enough time for the startup check, not a full tick.
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
 
-	if fetchCalled {
+	if atomic.LoadInt32(&fetchCalled) != 0 {
 		t.Error("fetcher should not have been called when snapshot is recent")
 	}
 }
 
 func TestScheduler_staleSnapshotFetchesImmediately(t *testing.T) {
-	// When the last snapshot is older than the interval, Run should call collect
-	// immediately on startup.
-	staleTime := time.Now().UTC().Add(-30 * time.Minute)
-	fetchCalled := false
+	staleTime := time.Now().UTC().Add(-60 * time.Minute)
+	var fetchCalled int32
 
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return len(result.GemData), nil
+		},
+		StalenessFunc: func(ctx context.Context) (time.Time, error) {
 			return staleTime, nil
-		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			fetchCalled = true
-			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, nil
 		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
 
-	if !fetchCalled {
+	if atomic.LoadInt32(&fetchCalled) == 0 {
 		t.Error("fetcher should have been called immediately when snapshot is stale")
 	}
 }
 
 func TestScheduler_emptyTableFetchesImmediately(t *testing.T) {
-	// When no snapshots exist (zero time returned), Run should fetch immediately.
-	fetchCalled := false
+	var fetchCalled int32
 
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, nil
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{}, nil
 		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return len(s), nil
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
 		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			fetchCalled = true
-			return nil, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, nil
+		StalenessFunc: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, nil // zero time = no data
 		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
 
-	if !fetchCalled {
+	if atomic.LoadInt32(&fetchCalled) == 0 {
 		t.Error("fetcher should have been called when no snapshots exist")
 	}
 }
 
-func TestScheduler_gemFetchErrorDoesNotBlockCurrencyFetch(t *testing.T) {
-	// When gem fetch fails, currency fetch should still run and be stored.
-	gemErr := errors.New("ninja API timeout")
-	currencyInserted := 0
+func TestScheduler_fetchErrorSleepsFallbackInterval(t *testing.T) {
+	var fetchCount int32
 
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, nil // force immediate collect
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: time.Hour,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCount, 1)
+			return nil, errors.New("ninja API timeout")
 		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			currencyInserted += len(s)
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			return nil, gemErr
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}, nil
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
 		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
-
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	<-done
-
-	if currencyInserted != 1 {
-		t.Errorf("currency inserted = %d, want 1 (gem error should not block currency)", currencyInserted)
-	}
-}
-
-func TestScheduler_leaguePassedToFetchers(t *testing.T) {
-	// Verify that the scheduler passes the configured league to fetchers.
-	var receivedGemLeague, receivedCurrencyLeague string
-
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, nil // force immediate collect
-		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			receivedGemLeague = league
-			return nil, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			receivedCurrencyLeague = league
-			return nil, nil
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler(store, []Fetcher{fetcher}, nil, 15*time.Minute, "Mirage", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
 
-	if receivedGemLeague != "Mirage" {
-		t.Errorf("FetchGems received league = %q, want %q", receivedGemLeague, "Mirage")
+	if atomic.LoadInt32(&fetchCount) != 1 {
+		t.Errorf("fetch count = %d, want 1 (should fetch once then sleep on error)", atomic.LoadInt32(&fetchCount))
 	}
-	if receivedCurrencyLeague != "Mirage" {
-		t.Errorf("FetchCurrency received league = %q, want %q", receivedCurrencyLeague, "Mirage")
+}
+
+func TestScheduler_leaguePassedToFetchFunc(t *testing.T) {
+	var receivedLeague string
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			receivedLeague = league
+			return &FetchResult{}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Mirage", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if receivedLeague != "Mirage" {
+		t.Errorf("FetchFunc received league = %q, want %q", receivedLeague, "Mirage")
 	}
 }
 
 func TestScheduler_mercureFailureIsNonFatal(t *testing.T) {
-	// A Mercure publish failure should not prevent the collect cycle from
-	// completing successfully or affect snapshot insertion.
-	gemsInserted := 0
+	var storeCount int32
 
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, nil // force immediate collect
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
 		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			gemsInserted += len(s)
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			atomic.AddInt32(&storeCount, 1)
+			return len(result.GemData), nil
 		},
 	}
 
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, nil
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	// Point Mercure at a server that always returns 500.
 	mercureServer := newFailingMercureServer(t)
 	defer mercureServer.Close()
 
-	s, err := NewScheduler(store, []Fetcher{fetcher}, nil, 15*time.Minute, "Standard",
-		mercureServer.URL, "test-secret", slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", mercureServer.URL, "test-secret", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
 
-	if gemsInserted != 1 {
-		t.Errorf("gems inserted = %d, want 1 (Mercure failure should not block snapshot insertion)", gemsInserted)
+	if atomic.LoadInt32(&storeCount) == 0 {
+		t.Error("store should have been called despite Mercure failure")
 	}
 }
 
-func TestNewScheduler_zeroIntervalReturnsError(t *testing.T) {
-	store := &mockStore{}
-	fetcher := &mockFetcher{}
-
-	_, err := NewScheduler(store, []Fetcher{fetcher}, nil, 0, "Standard", "", "", slog.Default())
+func TestNewScheduler_emptyEndpointsReturnsError(t *testing.T) {
+	_, err := NewScheduler([]EndpointConfig{}, nil, "Standard", "", "", slog.Default())
 	if err == nil {
-		t.Fatal("expected error for zero interval, got nil")
+		t.Fatal("expected error for empty endpoints, got nil")
 	}
-	if !strings.Contains(err.Error(), "interval must be positive") {
-		t.Errorf("error = %q, want it to mention 'interval must be positive'", err.Error())
+	if !strings.Contains(err.Error(), "at least one endpoint") {
+		t.Errorf("error = %q, want it to mention 'at least one endpoint'", err.Error())
 	}
 }
 
-func TestNewScheduler_negativeIntervalReturnsError(t *testing.T) {
-	store := &mockStore{}
-	fetcher := &mockFetcher{}
-
-	_, err := NewScheduler(store, []Fetcher{fetcher}, nil, -5*time.Second, "Standard", "", "", slog.Default())
+func TestNewScheduler_nilEndpointsReturnsError(t *testing.T) {
+	_, err := NewScheduler(nil, nil, "Standard", "", "", slog.Default())
 	if err == nil {
-		t.Fatal("expected error for negative interval, got nil")
+		t.Fatal("expected error for nil endpoints, got nil")
 	}
-	if !strings.Contains(err.Error(), "interval must be positive") {
-		t.Errorf("error = %q, want it to mention 'interval must be positive'", err.Error())
-	}
-}
-
-func TestNewScheduler_emptyFetchersReturnsError(t *testing.T) {
-	store := &mockStore{}
-
-	_, err := NewScheduler(store, []Fetcher{}, nil, 15*time.Minute, "Standard", "", "", slog.Default())
-	if err == nil {
-		t.Fatal("expected error for empty fetchers, got nil")
-	}
-	if !strings.Contains(err.Error(), "at least one fetcher") {
-		t.Errorf("error = %q, want it to mention 'at least one fetcher'", err.Error())
-	}
-}
-
-func TestNewScheduler_nilFetchersReturnsError(t *testing.T) {
-	store := &mockStore{}
-
-	_, err := NewScheduler(store, nil, nil, 15*time.Minute, "Standard", "", "", slog.Default())
-	if err == nil {
-		t.Fatal("expected error for nil fetchers, got nil")
-	}
-	if !strings.Contains(err.Error(), "at least one fetcher") {
-		t.Errorf("error = %q, want it to mention 'at least one fetcher'", err.Error())
-	}
-}
-
-func TestScheduler_gemInsertErrorDoesNotBlockCurrencyInsert(t *testing.T) {
-	// When gem snapshot insertion fails, currency snapshots should still be inserted.
-	currencyInserted := 0
-
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, nil // force immediate collect
-		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return 0, errors.New("gem insert: disk full")
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			currencyInserted += len(s)
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}, nil
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
-
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	<-done
-
-	if currencyInserted != 1 {
-		t.Errorf("currency inserted = %d, want 1 (gem insert error should not block currency)", currencyInserted)
-	}
-}
-
-func TestScheduler_currencyInsertErrorDoesNotBlockGemInsert(t *testing.T) {
-	// When currency snapshot insertion fails, gem snapshots should still have been inserted.
-	gemsInserted := 0
-
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, nil // force immediate collect
-		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			gemsInserted += len(s)
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return 0, errors.New("currency insert: connection lost")
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}, nil
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
-
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	<-done
-
-	if gemsInserted != 1 {
-		t.Errorf("gems inserted = %d, want 1 (currency insert error should not block gems)", gemsInserted)
-	}
-}
-
-func TestScheduler_lastSnapshotTimeErrorCollectsImmediately(t *testing.T) {
-	// When LastGemSnapshotTime returns an error, the scheduler should fall back
-	// to collecting immediately rather than skipping or waiting.
-	fetchCalled := false
-
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Time{}, errors.New("connection refused")
-		},
-		InsertGemSnapshotsFn: func(ctx context.Context, st time.Time, s []GemSnapshot) (int, error) {
-			return len(s), nil
-		},
-		InsertCurrencySnapshotsFn: func(ctx context.Context, st time.Time, s []CurrencySnapshot) (int, error) {
-			return len(s), nil
-		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			fetchCalled = true
-			return []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}, nil
-		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, nil
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, 15*time.Minute)
-
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	<-done
-
-	if !fetchCalled {
-		t.Error("fetcher should have been called immediately when LastGemSnapshotTime returns an error")
+	if !strings.Contains(err.Error(), "at least one endpoint") {
+		t.Errorf("error = %q, want it to mention 'at least one endpoint'", err.Error())
 	}
 }
 
 func TestScheduler_contextCancellationStopsRun(t *testing.T) {
-	// Run should return nil promptly when ctx is cancelled.
-	store := &mockStore{
-		LastGemSnapshotTimeFn: func(ctx context.Context) (time.Time, error) {
-			return time.Now().UTC(), nil // recent — skip first collect
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: time.Hour,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return &FetchResult{}, nil
 		},
-	}
-
-	fetcher := &mockFetcher{
-		FetchGemsFn: func(ctx context.Context, league string) ([]GemSnapshot, error) {
-			return nil, nil
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
 		},
-		FetchCurrencyFn: func(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-			return nil, nil
+		StalenessFunc: func(ctx context.Context) (time.Time, error) {
+			return time.Now().UTC(), nil
 		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s := newTestScheduler(store, fetcher, time.Hour) // long interval — won't tick
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -518,5 +308,232 @@ func TestScheduler_contextCancellationStopsRun(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Run did not stop within 500ms after context cancellation")
+	}
+}
+
+func TestScheduler_multipleEndpointsRunConcurrently(t *testing.T) {
+	var gemFetchCount, currencyFetchCount int32
+
+	gemEp := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&gemFetchCount, 1)
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 1, nil
+		},
+	}
+
+	currencyEp := EndpointConfig{
+		Name:             EndpointNinjaCurrency,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&currencyFetchCount, 1)
+			return &FetchResult{CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 1, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{gemEp, currencyEp}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&gemFetchCount) == 0 {
+		t.Error("gem endpoint should have been fetched")
+	}
+	if atomic.LoadInt32(&currencyFetchCount) == 0 {
+		t.Error("currency endpoint should have been fetched")
+	}
+}
+
+func TestScheduler_stalenessCheckErrorFetchesImmediately(t *testing.T) {
+	var fetchCalled int32
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
+		},
+		StalenessFunc: func(ctx context.Context) (time.Time, error) {
+			return time.Time{}, errors.New("connection refused")
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&fetchCalled) == 0 {
+		t.Error("fetcher should have been called immediately when StalenessFunc returns an error")
+	}
+}
+
+func TestScheduler_nilStalenessFuncFetchesImmediately(t *testing.T) {
+	var fetchCalled int32
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCalled, 1)
+			return &FetchResult{}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&fetchCalled) == 0 {
+		t.Error("fetcher should have been called when StalenessFunc is nil")
+	}
+}
+
+func TestScheduler_calculateSleep(t *testing.T) {
+	s := &Scheduler{logger: slog.Default()}
+
+	tests := []struct {
+		name       string
+		ep         EndpointConfig
+		ageSeconds int
+		want       time.Duration
+	}{
+		{
+			name: "fresh response sleeps near MaxAge",
+			ep: EndpointConfig{
+				MaxAge:           30 * time.Minute,
+				FallbackInterval: 30 * time.Minute,
+				MinSleep:         30 * time.Second,
+			},
+			ageSeconds: 0,
+			want:       30*time.Minute + 5*time.Second,
+		},
+		{
+			name: "aged response sleeps shorter",
+			ep: EndpointConfig{
+				MaxAge:           30 * time.Minute,
+				FallbackInterval: 30 * time.Minute,
+				MinSleep:         30 * time.Second,
+			},
+			ageSeconds: 1500,
+			want:       5*time.Minute + 5*time.Second,
+		},
+		{
+			name: "stale response clamps to MinSleep",
+			ep: EndpointConfig{
+				MaxAge:           30 * time.Minute,
+				FallbackInterval: 30 * time.Minute,
+				MinSleep:         30 * time.Second,
+			},
+			ageSeconds: 2000,
+			want:       30 * time.Second,
+		},
+		{
+			name: "sleep capped at FallbackInterval",
+			ep: EndpointConfig{
+				MaxAge:           60 * time.Minute,
+				FallbackInterval: 30 * time.Minute,
+				MinSleep:         30 * time.Second,
+			},
+			ageSeconds: 0,
+			want:       30 * time.Minute, // capped by FallbackInterval
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := s.calculateSleep(tt.ep, tt.ageSeconds)
+			if got != tt.want {
+				t.Errorf("calculateSleep() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScheduler_storeErrorDoesNotCrash(t *testing.T) {
+	var fetchCount int32
+
+	ep := EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "ninja",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       3,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			atomic.AddInt32(&fetchCount, 1)
+			return &FetchResult{GemData: []GemSnapshot{{Name: "Arc", Variant: "default", Chaos: 10}}}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, errors.New("disk full")
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	if atomic.LoadInt32(&fetchCount) == 0 {
+		t.Error("fetch should have been called even though store will fail")
 	}
 }
