@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,17 +16,23 @@ import (
 
 // mercureClient is a shared HTTP client for Mercure publish calls.
 // Reused across calls to benefit from connection pooling.
+// http.Client is safe for concurrent use by multiple goroutines.
 var mercureClient = &http.Client{Timeout: 5 * time.Second}
 
 // signMercureJWT creates an HS256-signed JWT with publish permissions for the
-// Mercure hub. The secret is used as the HMAC-SHA256 signing key.
+// Mercure hub. The secret is used as the HMAC-SHA256 signing key. A short-lived
+// expiry (60s) is included as defense-in-depth; a fresh token is generated per
+// publish call so the short TTL has no operational impact.
 func signMercureJWT(secret string) (string, error) {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 
+	now := time.Now()
 	claims := map[string]any{
 		"mercure": map[string]any{
 			"publish": []string{"*"},
 		},
+		"iat": now.Unix(),
+		"exp": now.Add(60 * time.Second).Unix(),
 	}
 	claimsJSON, err := json.Marshal(claims)
 	if err != nil {
@@ -77,7 +84,8 @@ func PublishMercureEvent(ctx context.Context, mercureURL, publisherSecret, topic
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("mercure: publish to %s: unexpected status %d", mercureURL, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("mercure: publish to %s: status %d: %s", mercureURL, resp.StatusCode, string(body))
 	}
 
 	return nil

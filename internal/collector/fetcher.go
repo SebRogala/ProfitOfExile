@@ -15,8 +15,9 @@ type Fetcher interface {
 }
 
 // GemSnapshot represents a single gem price observation matching the gem_snapshots
-// hypertable columns. The Time field is set by the repository at insert time to
-// ensure all rows in a batch share the same timestamp.
+// hypertable columns. The Time field is populated when reading from the database;
+// on insert, the repository uses a separate snapTime parameter to ensure all rows
+// in a batch share the same timestamp (Time is ignored on writes).
 type GemSnapshot struct {
 	Time           time.Time
 	Name           string
@@ -29,7 +30,9 @@ type GemSnapshot struct {
 
 // CurrencySnapshot represents a single currency price observation matching the
 // currency_snapshots hypertable columns. The currency_snapshots table also has a
-// volume column, which is not populated by this fetcher (defaults to NULL in the DB).
+// volume column; this struct omits it because poe.ninja does not provide volume
+// data. Future fetchers (e.g. TFT) may need to extend the struct if volume
+// becomes available.
 type CurrencySnapshot struct {
 	Time            time.Time
 	CurrencyID      string

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -73,10 +74,10 @@ type ninjaResponse[T any] struct {
 // FetchGems retrieves all SkillGem prices from poe.ninja, filters out corrupted
 // and Heist-exclusive gems, detects transfigured variants, and resolves gem colors.
 func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnapshot, error) {
-	url := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=SkillGem", f.baseURL, league)
+	endpoint := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=SkillGem", f.baseURL, url.QueryEscape(league))
 
 	var resp ninjaResponse[ninjaGemLine]
-	if err := f.get(ctx, url, &resp); err != nil {
+	if err := f.get(ctx, endpoint, &resp); err != nil {
 		return nil, fmt.Errorf("ninja: fetch gems: %w", err)
 	}
 
@@ -87,7 +88,7 @@ func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnaps
 			continue
 		}
 
-		// Skip Heist-only alternative quality gems (Trarthus variants) -- not obtainable in standard league play.
+		// Skip Heist-exclusive gems (identified by "Trarthus" in name) -- not obtainable in standard league play.
 		if strings.Contains(line.Name, "Trarthus") {
 			continue
 		}
@@ -129,10 +130,10 @@ func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnaps
 
 // FetchCurrency retrieves all Currency prices from poe.ninja.
 func (f *NinjaFetcher) FetchCurrency(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-	url := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=Currency", f.baseURL, league)
+	endpoint := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=Currency", f.baseURL, url.QueryEscape(league))
 
 	var resp ninjaResponse[ninjaCurrencyLine]
-	if err := f.get(ctx, url, &resp); err != nil {
+	if err := f.get(ctx, endpoint, &resp); err != nil {
 		return nil, fmt.Errorf("ninja: fetch currency: %w", err)
 	}
 

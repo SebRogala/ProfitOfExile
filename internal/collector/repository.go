@@ -10,7 +10,7 @@ import (
 )
 
 // SnapshotStore defines the interface that Repository implements.
-// Used by the Scheduler and other consumers to decouple from pgxpool.
+// Used by the Scheduler to decouple from the concrete pgxpool-backed Repository.
 type SnapshotStore interface {
 	LastGemSnapshotTime(ctx context.Context) (time.Time, error)
 	InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error)
