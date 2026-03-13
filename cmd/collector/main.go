@@ -64,9 +64,6 @@ func main() {
 		ninjaCfg.FallbackInterval = parsed
 	}
 
-	// Use FallbackInterval as the scheduler interval for the legacy scheduler.
-	ninjaInterval := ninjaCfg.FallbackInterval
-
 	mercureURL := os.Getenv("MERCURE_URL")
 	if mercureURL == "" {
 		mercureURL = "http://mercure/.well-known/mercure"
@@ -108,11 +105,36 @@ func main() {
 		slog.Warn("MERCURE_JWT_SECRET not set, Mercure publishing disabled")
 	}
 
+	// Build per-endpoint configs for the goroutine-per-endpoint scheduler.
+	gemEndpoint := ninjaCfg
+	gemEndpoint.Name = collector.EndpointNinjaGems
+	gemEndpoint.FetchFunc = fetcher.FetchGemsEndpoint
+	gemEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
+		if len(result.GemData) == 0 {
+			return 0, nil
+		}
+		return repo.InsertGemSnapshots(ctx, snapTime, result.GemData)
+	}
+	gemEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
+		return repo.LastGemSnapshotTime(ctx)
+	}
+
+	currencyEndpoint := ninjaCfg
+	currencyEndpoint.Name = collector.EndpointNinjaCurrency
+	currencyEndpoint.FetchFunc = fetcher.FetchCurrencyEndpoint
+	currencyEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
+		if len(result.CurrencyData) == 0 {
+			return 0, nil
+		}
+		return repo.InsertCurrencySnapshots(ctx, snapTime, result.CurrencyData)
+	}
+	currencyEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
+		return repo.LastCurrencySnapshotTime(ctx)
+	}
+
 	scheduler, err := collector.NewScheduler(
-		repo,
-		[]collector.Fetcher{fetcher},
+		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint},
 		resolver,
-		ninjaInterval,
 		league,
 		mercureURL,
 		mercureJWTSecret,
@@ -126,7 +148,7 @@ func main() {
 
 	slog.Info("collector starting",
 		"league", league,
-		"interval", ninjaInterval.String(),
+		"fallbackInterval", ninjaCfg.FallbackInterval.String(),
 		"port", port,
 	)
 

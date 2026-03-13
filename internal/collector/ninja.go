@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ const (
 	ninjaUserAgent      = "ProfitOfExile/1.0 (price-collector)"
 )
 
-// NinjaFetcher implements Fetcher for the poe.ninja API.
+// NinjaFetcher fetches price data from the poe.ninja API.
 type NinjaFetcher struct {
 	client   *http.Client
 	baseURL  string
@@ -71,19 +72,92 @@ type ninjaResponse[T any] struct {
 	Lines []T `json:"lines"`
 }
 
-// FetchGems retrieves all SkillGem prices from poe.ninja, filters out corrupted
-// and Heist-exclusive gems, detects transfigured variants, and resolves gem colors.
-func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnapshot, error) {
+// httpResult holds the HTTP response metadata and body from a cache-aware
+// request. Callers must close Body when non-nil.
+type httpResult struct {
+	StatusCode  int
+	ETag        string
+	Age         int // seconds since origin server generated the response
+	Body        io.ReadCloser
+	NotModified bool
+}
+
+// FetchGemsEndpoint is a FetchFunc-compatible method that fetches SkillGem data
+// with conditional request support. When etag is non-empty, it sends an
+// If-None-Match header; a 304 response returns FetchResult{NotModified: true}.
+func (f *NinjaFetcher) FetchGemsEndpoint(ctx context.Context, league string, etag string) (*FetchResult, error) {
 	endpoint := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=SkillGem", f.baseURL, url.QueryEscape(league))
 
-	var resp ninjaResponse[ninjaGemLine]
-	if err := f.get(ctx, endpoint, &resp); err != nil {
+	hr, err := f.getWithCache(ctx, endpoint, etag)
+	if err != nil {
 		return nil, fmt.Errorf("ninja: fetch gems: %w", err)
 	}
 
-	snapshots := make([]GemSnapshot, 0, len(resp.Lines))
-	for _, line := range resp.Lines {
-		// Skip corrupted gems — prices are unreliable.
+	if hr.NotModified {
+		slog.Info("ninja: gems not modified (304)", "etag", etag)
+		return &FetchResult{
+			NotModified: true,
+			ETag:        hr.ETag,
+			Age:         hr.Age,
+		}, nil
+	}
+	defer hr.Body.Close()
+
+	var resp ninjaResponse[ninjaGemLine]
+	if err := json.NewDecoder(hr.Body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("ninja: decode gems response: %w", err)
+	}
+
+	snapshots := f.convertGemLines(resp.Lines)
+
+	slog.Info("ninja: fetched gems", "total_api", len(resp.Lines), "after_filter", len(snapshots), "age", hr.Age, "etag", hr.ETag)
+	return &FetchResult{
+		GemData: snapshots,
+		ETag:    hr.ETag,
+		Age:     hr.Age,
+	}, nil
+}
+
+// FetchCurrencyEndpoint is a FetchFunc-compatible method that fetches Currency
+// data with conditional request support.
+func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string, etag string) (*FetchResult, error) {
+	endpoint := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=Currency", f.baseURL, url.QueryEscape(league))
+
+	hr, err := f.getWithCache(ctx, endpoint, etag)
+	if err != nil {
+		return nil, fmt.Errorf("ninja: fetch currency: %w", err)
+	}
+
+	if hr.NotModified {
+		slog.Info("ninja: currency not modified (304)", "etag", etag)
+		return &FetchResult{
+			NotModified: true,
+			ETag:        hr.ETag,
+			Age:         hr.Age,
+		}, nil
+	}
+	defer hr.Body.Close()
+
+	var resp ninjaResponse[ninjaCurrencyLine]
+	if err := json.NewDecoder(hr.Body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("ninja: decode currency response: %w", err)
+	}
+
+	snapshots := convertCurrencyLines(resp.Lines)
+
+	slog.Info("ninja: fetched currency", "count", len(snapshots), "age", hr.Age, "etag", hr.ETag)
+	return &FetchResult{
+		CurrencyData: snapshots,
+		ETag:         hr.ETag,
+		Age:          hr.Age,
+	}, nil
+}
+
+// convertGemLines filters and transforms raw API gem lines into GemSnapshots.
+func (f *NinjaFetcher) convertGemLines(lines []ninjaGemLine) []GemSnapshot {
+	snapshots := make([]GemSnapshot, 0, len(lines))
+	for _, line := range lines {
+		// Skip corrupted gems -- prices are unreliable.
 		if line.Corrupted {
 			continue
 		}
@@ -124,54 +198,92 @@ func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnaps
 		}
 	}
 
-	slog.Info("ninja: fetched gems", "total_api", len(resp.Lines), "after_filter", len(snapshots))
-	return snapshots, nil
+	return snapshots
 }
 
-// FetchCurrency retrieves all Currency prices from poe.ninja.
-func (f *NinjaFetcher) FetchCurrency(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-	endpoint := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=Currency", f.baseURL, url.QueryEscape(league))
-
-	var resp ninjaResponse[ninjaCurrencyLine]
-	if err := f.get(ctx, endpoint, &resp); err != nil {
-		return nil, fmt.Errorf("ninja: fetch currency: %w", err)
-	}
-
-	snapshots := make([]CurrencySnapshot, 0, len(resp.Lines))
-	for _, line := range resp.Lines {
+// convertCurrencyLines transforms raw API currency lines into CurrencySnapshots.
+func convertCurrencyLines(lines []ninjaCurrencyLine) []CurrencySnapshot {
+	snapshots := make([]CurrencySnapshot, 0, len(lines))
+	for _, line := range lines {
 		snapshots = append(snapshots, CurrencySnapshot{
 			CurrencyID:      line.CurrencyTypeName,
 			Chaos:           line.ChaosEquivalent,
 			SparklineChange: line.Sparkline.TotalChange,
 		})
 	}
-
-	slog.Info("ninja: fetched currency", "count", len(snapshots))
-	return snapshots, nil
+	return snapshots
 }
 
-// get performs an HTTP GET request and JSON-decodes the response body into dst.
-func (f *NinjaFetcher) get(ctx context.Context, url string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// getWithCache performs an HTTP GET request with conditional request support.
+// When etag is non-empty, it sends an If-None-Match header. On a 304 response,
+// it returns an httpResult with NotModified=true and a nil Body. On a 200
+// response, it returns the response body (caller must close) along with parsed
+// ETag and Age headers.
+func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag string) (*httpResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", ninjaUserAgent)
 
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("http get %s: %w", url, err)
+		return nil, fmt.Errorf("http get %s: %w", rawURL, err)
 	}
-	defer resp.Body.Close()
+
+	// Parse Age header (seconds since origin generated the response).
+	age := 0
+	if ageStr := resp.Header.Get("Age"); ageStr != "" {
+		if parsed, parseErr := strconv.Atoi(ageStr); parseErr == nil && parsed >= 0 {
+			age = parsed
+		}
+		// Invalid Age header is silently ignored (defaults to 0).
+	}
+
+	// Parse ETag from response.
+	respETag := resp.Header.Get("ETag")
+
+	// Handle 304 Not Modified.
+	if resp.StatusCode == http.StatusNotModified {
+		resp.Body.Close()
+		return &httpResult{
+			StatusCode:  resp.StatusCode,
+			ETag:        respETag,
+			Age:         age,
+			NotModified: true,
+		}, nil
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("http get %s: status %d: %s", url, resp.StatusCode, string(body))
+		resp.Body.Close()
+		return nil, fmt.Errorf("http get %s: status %d: %s", rawURL, resp.StatusCode, string(body))
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
-		return fmt.Errorf("decode response from %s: %w", url, err)
-	}
+	return &httpResult{
+		StatusCode: resp.StatusCode,
+		ETag:       respETag,
+		Age:        age,
+		Body:       resp.Body,
+	}, nil
+}
 
-	return nil
+// ClampAge checks if age exceeds maxAge and clamps it, logging a warning.
+// This handles the stale-while-revalidate edge case where poe.ninja's CDN
+// may serve responses with age > max-age. Returns the clamped age in seconds.
+func ClampAge(age int, maxAge time.Duration, endpoint string) int {
+	maxAgeSec := int(maxAge.Seconds())
+	if maxAgeSec > 0 && age > maxAgeSec {
+		slog.Warn("response age exceeds max-age, clamping",
+			"endpoint", endpoint,
+			"age", age,
+			"maxAge", maxAgeSec,
+		)
+		return maxAgeSec
+	}
+	return age
 }
