@@ -9,10 +9,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SnapshotStore defines the interface that Repository implements.
-// Used by the Scheduler to decouple from the concrete pgxpool-backed Repository.
+// SnapshotStore defines the persistence interface for snapshot data. Used for
+// compile-time conformance checks on Repository and for future integration
+// test mocks. Main.go wires endpoint closures directly via Repository methods.
 type SnapshotStore interface {
 	LastGemSnapshotTime(ctx context.Context) (time.Time, error)
+	LastCurrencySnapshotTime(ctx context.Context) (time.Time, error)
 	InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error)
 	InsertCurrencySnapshots(ctx context.Context, snapTime time.Time, snapshots []CurrencySnapshot) (int, error)
 	LatestSnapshot(ctx context.Context) (*SnapshotSummary, error)
@@ -35,6 +37,20 @@ func (r *Repository) LastGemSnapshotTime(ctx context.Context) (time.Time, error)
 	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM gem_snapshots").Scan(&t)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("repo: last gem snapshot time: %w", err)
+	}
+	if t == nil {
+		return time.Time{}, nil
+	}
+	return *t, nil
+}
+
+// LastCurrencySnapshotTime returns the most recent currency snapshot timestamp.
+// Returns the zero time if no snapshots exist.
+func (r *Repository) LastCurrencySnapshotTime(ctx context.Context) (time.Time, error) {
+	var t *time.Time
+	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM currency_snapshots").Scan(&t)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("repo: last currency snapshot time: %w", err)
 	}
 	if t == nil {
 		return time.Time{}, nil
