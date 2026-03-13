@@ -581,6 +581,11 @@ func TestScheduler_recentCurrencySnapshotSkipsFirstFetch(t *testing.T) {
 }
 
 func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
+	// MaxRetries=3: the scheduler retries 3 times (retryCount 1..3), then on the
+	// 4th 304 (retryCount > MaxRetries) it resets and sleeps FallbackInterval.
+	// With MinSleep=1ms the first retry cycle completes almost immediately, so
+	// we assert at least MaxRetries+1 fetches occurred (exhausting one full cycle).
+	const maxRetries = 3
 	var fetchCount int32
 
 	ep := EndpointConfig{
@@ -588,7 +593,7 @@ func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
 		Source:           "ninja",
 		MaxAge:           50 * time.Millisecond,
 		FallbackInterval: 50 * time.Millisecond,
-		MaxRetries:       3,
+		MaxRetries:       maxRetries,
 		MinSleep:         1 * time.Millisecond,
 		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
 			atomic.AddInt32(&fetchCount, 1)
@@ -607,15 +612,14 @@ func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	// The test uses MinSleep=1ms so the scheduler can iterate quickly.
-	// Verify at least one fetch happens and the scheduler does not crash on 304 responses.
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	<-done
 
+	// At minimum one full retry cycle (MaxRetries+1 fetches) must have completed.
 	count := atomic.LoadInt32(&fetchCount)
-	if count == 0 {
-		t.Error("expected at least one fetch call for 304 retry logic")
+	if count <= maxRetries {
+		t.Errorf("expected >%d fetch calls to exhaust one retry cycle, got %d", maxRetries, count)
 	}
 }
 
