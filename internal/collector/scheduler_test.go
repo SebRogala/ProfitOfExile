@@ -1169,16 +1169,29 @@ func TestScheduler_retryCountResetsOn200AfterMultiple304s(t *testing.T) {
 }
 
 func TestScheduler_mercurePublishFiresPerEndpoint(t *testing.T) {
+	type publishEvent struct {
+		Topic    string
+		Endpoint string
+		Inserted float64 // JSON numbers decode as float64
+	}
+
 	var mu sync.Mutex
-	var publishedEndpoints []string
+	var events []publishEvent
 
 	mercureServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err == nil {
+			topic := r.FormValue("topic")
 			data := r.FormValue("data")
-			var payload map[string]string
+			var payload map[string]any
 			if err := json.Unmarshal([]byte(data), &payload); err == nil {
+				ep, _ := payload["endpoint"].(string)
+				inserted, _ := payload["inserted"].(float64)
 				mu.Lock()
-				publishedEndpoints = append(publishedEndpoints, payload["endpoint"])
+				events = append(events, publishEvent{
+					Topic:    topic,
+					Endpoint: ep,
+					Inserted: inserted,
+				})
 				mu.Unlock()
 			}
 		}
@@ -1233,12 +1246,24 @@ func TestScheduler_mercurePublishFiresPerEndpoint(t *testing.T) {
 
 	hasGems := false
 	hasCurrency := false
-	for _, ep := range publishedEndpoints {
-		if ep == EndpointNinjaGems {
+	for _, ev := range events {
+		if ev.Endpoint == EndpointNinjaGems {
 			hasGems = true
+			if ev.Topic != "poe/collector/gems" {
+				t.Errorf("gems topic = %q, want %q", ev.Topic, "poe/collector/gems")
+			}
+			if ev.Inserted != 1 {
+				t.Errorf("gems inserted = %v, want 1", ev.Inserted)
+			}
 		}
-		if ep == EndpointNinjaCurrency {
+		if ev.Endpoint == EndpointNinjaCurrency {
 			hasCurrency = true
+			if ev.Topic != "poe/collector/currency" {
+				t.Errorf("currency topic = %q, want %q", ev.Topic, "poe/collector/currency")
+			}
+			if ev.Inserted != 1 {
+				t.Errorf("currency inserted = %v, want 1", ev.Inserted)
+			}
 		}
 	}
 	if !hasGems {
