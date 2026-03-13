@@ -78,7 +78,7 @@ func TestFetchGemsEndpoint_validResponse(t *testing.T) {
 	}
 }
 
-func TestFetchGemsEndpoint_corruptedFiltered(t *testing.T) {
+func TestFetchGemsEndpoint_corruptedIncluded(t *testing.T) {
 	payload := ninjaResponse[ninjaGemLine]{
 		Lines: []ninjaGemLine{
 			{Name: "Arc", ChaosValue: 10, ListingCount: 100},
@@ -98,11 +98,14 @@ func TestFetchGemsEndpoint_corruptedFiltered(t *testing.T) {
 	}
 
 	gems := result.GemData
-	if len(gems) != 1 {
-		t.Fatalf("got %d gems, want 1 (corrupted should be filtered)", len(gems))
+	if len(gems) != 2 {
+		t.Fatalf("got %d gems, want 2 (corrupted gems must be collected)", len(gems))
 	}
-	if gems[0].Chaos != 10 {
-		t.Errorf("kept gem Chaos = %v, want %v", gems[0].Chaos, 10.0)
+	if !gems[1].IsCorrupted {
+		t.Error("second gem IsCorrupted = false, want true")
+	}
+	if gems[0].IsCorrupted {
+		t.Error("first gem IsCorrupted = true, want false")
 	}
 }
 

@@ -162,11 +162,6 @@ func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string,
 func (f *NinjaFetcher) convertGemLines(lines []ninjaGemLine) []GemSnapshot {
 	snapshots := make([]GemSnapshot, 0, len(lines))
 	for _, line := range lines {
-		// Skip corrupted gems -- prices are unreliable.
-		if line.Corrupted {
-			continue
-		}
-
 		// Skip Heist-exclusive gems (identified by "Trarthus" in name) -- not obtainable in standard league play.
 		if strings.Contains(line.Name, "Trarthus") {
 			continue
@@ -192,6 +187,7 @@ func (f *NinjaFetcher) convertGemLines(lines []ninjaGemLine) []GemSnapshot {
 			Chaos:          line.ChaosValue,
 			Listings:       line.ListingCount,
 			IsTransfigured: isTransfigured,
+			IsCorrupted:    line.Corrupted,
 			GemColor:       color,
 		})
 	}

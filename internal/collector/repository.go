@@ -72,8 +72,8 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	const query = `INSERT INTO gem_snapshots (time, name, variant, chaos, listings, is_transfigured, gem_color)
-	               VALUES ($1, $2, $3, $4, $5, $6, $7)
+	const query = `INSERT INTO gem_snapshots (time, name, variant, chaos, listings, is_transfigured, is_corrupted, gem_color)
+	               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	               ON CONFLICT DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -82,7 +82,7 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 		if s.GemColor != "" {
 			gemColor = &s.GemColor
 		}
-		batch.Queue(query, snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, gemColor)
+		batch.Queue(query, snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, s.IsCorrupted, gemColor)
 	}
 
 	results := tx.SendBatch(ctx, batch)
@@ -183,7 +183,7 @@ func (r *Repository) LatestSnapshot(ctx context.Context) (*SnapshotSummary, erro
 func (r *Repository) QueryGemSnapshots(ctx context.Context, hours int) ([]GemSnapshot, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT time, name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
-		        is_transfigured, COALESCE(gem_color, '')
+		        is_transfigured, is_corrupted, COALESCE(gem_color, '')
 		 FROM gem_snapshots
 		 WHERE time > NOW() - make_interval(hours => $1)
 		 ORDER BY time DESC, name, variant`,
@@ -197,7 +197,7 @@ func (r *Repository) QueryGemSnapshots(ctx context.Context, hours int) ([]GemSna
 	var snapshots []GemSnapshot
 	for rows.Next() {
 		var s GemSnapshot
-		if err := rows.Scan(&s.Time, &s.Name, &s.Variant, &s.Chaos, &s.Listings, &s.IsTransfigured, &s.GemColor); err != nil {
+		if err := rows.Scan(&s.Time, &s.Name, &s.Variant, &s.Chaos, &s.Listings, &s.IsTransfigured, &s.IsCorrupted, &s.GemColor); err != nil {
 			return nil, fmt.Errorf("repo: scan gem snapshot: %w", err)
 		}
 		snapshots = append(snapshots, s)
