@@ -55,7 +55,7 @@ SELECT add_continuous_aggregate_policy('gem_snapshots_hourly',
     schedule_interval => INTERVAL '1 hour'
 );
 
--- Continuous aggregate: daily gem snapshot rollup (cascaded from hourly)
+-- Continuous aggregate: daily gem snapshot rollup (reads from hourly aggregate)
 CREATE MATERIALIZED VIEW gem_snapshots_daily
 WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
 SELECT

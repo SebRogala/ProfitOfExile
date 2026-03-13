@@ -6,31 +6,31 @@ import (
 )
 
 func TestResolveTransfigured(t *testing.T) {
-	colors := map[string]string{
-		"Rain of Arrows":  "GREEN",
-		"Cleave":          "RED",
-		"Arc":             "BLUE",
-		"Ball Lightning":  "BLUE",
-		"Raise Zombie":    "BLUE",
-		"Herald of Purity": "RED",
+	colors := map[string]Color{
+		"Rain of Arrows":   ColorGreen,
+		"Cleave":           ColorRed,
+		"Arc":              ColorBlue,
+		"Ball Lightning":   ColorBlue,
+		"Raise Zombie":     ColorBlue,
+		"Herald of Purity": ColorRed,
 	}
 
 	tests := []struct {
 		name      string
 		input     string
-		wantColor string
+		wantColor Color
 		wantFound bool
 	}{
 		{
 			name:      "single of suffix",
 			input:     "Arc of Surging",
-			wantColor: "BLUE",
+			wantColor: ColorBlue,
 			wantFound: true,
 		},
 		{
 			name:      "double of - strips rightmost first",
 			input:     "Rain of Arrows of Saturation",
-			wantColor: "GREEN",
+			wantColor: ColorGreen,
 			wantFound: true,
 		},
 		{
@@ -42,7 +42,7 @@ func TestResolveTransfigured(t *testing.T) {
 		{
 			name:      "of in base name - strips rightmost only",
 			input:     "Herald of Purity of Zeal",
-			wantColor: "RED",
+			wantColor: ColorRed,
 			wantFound: true,
 		},
 	}
@@ -64,27 +64,28 @@ func TestResolveTransfigured(t *testing.T) {
 func TestResolve_heuristics(t *testing.T) {
 	// Build a resolver with a pre-populated color map (no DB needed).
 	r := &Resolver{
-		colors: map[string]string{
-			"Cleave":              "RED",
-			"Arc":                 "BLUE",
-			"Rain of Arrows":     "GREEN",
-			"Multiple Projectiles Support": "GREEN",
+		colors: map[string]Color{
+			"Cleave":                        ColorRed,
+			"Arc":                           ColorBlue,
+			"Rain of Arrows":               ColorGreen,
+			"Multiple Projectiles Support":  ColorGreen,
 		},
-		discovered: make(map[string]string),
+		discovered: make(map[string]Color),
 		unresolved: make(map[string]struct{}),
 	}
 
 	tests := []struct {
 		name      string
 		gem       string
-		wantColor string
+		wantColor Color
 		wantFound bool
 	}{
-		{"direct lookup", "Cleave", "RED", true},
-		{"vaal prefix", "Vaal Cleave", "RED", true},
-		{"greater prefix", "Greater Multiple Projectiles Support", "GREEN", true},
-		{"transfigured suffix", "Arc of Surging", "BLUE", true},
-		{"vaal + transfigured", "Vaal Rain of Arrows of Saturation", "GREEN", true},
+		{"direct lookup", "Cleave", ColorRed, true},
+		{"vaal prefix", "Vaal Cleave", ColorRed, true},
+		{"greater prefix", "Greater Multiple Projectiles Support", ColorGreen, true},
+		{"transfigured suffix", "Arc of Surging", ColorBlue, true},
+		{"vaal + transfigured", "Vaal Rain of Arrows of Saturation", ColorGreen, true},
+		{"greater + transfigured", "Greater Multiple Projectiles Support of Spreading", ColorGreen, true},
 		{"unknown gem", "Sparkle Beam", "", false},
 	}
 
@@ -118,10 +119,10 @@ func TestResolve_heuristics(t *testing.T) {
 
 func TestResolve_caching(t *testing.T) {
 	r := &Resolver{
-		colors: map[string]string{
-			"Arc": "BLUE",
+		colors: map[string]Color{
+			"Arc": ColorBlue,
 		},
-		discovered: make(map[string]string),
+		discovered: make(map[string]Color),
 		unresolved: make(map[string]struct{}),
 	}
 
@@ -136,7 +137,35 @@ func TestResolve_caching(t *testing.T) {
 	if color1 != color2 {
 		t.Errorf("cached result differs: %q vs %q", color1, color2)
 	}
-	if color1 != "BLUE" {
+	if color1 != ColorBlue {
 		t.Errorf("color = %q, want BLUE", color1)
+	}
+}
+
+func TestParseColor(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    Color
+		wantErr bool
+	}{
+		{"RED", ColorRed, false},
+		{"GREEN", ColorGreen, false},
+		{"BLUE", ColorBlue, false},
+		{"WHITE", ColorWhite, false},
+		{"red", "", true},
+		{"YELLOW", "", true},
+		{"", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := ParseColor(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseColor(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("ParseColor(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

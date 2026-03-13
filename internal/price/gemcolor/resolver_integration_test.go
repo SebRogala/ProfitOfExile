@@ -55,15 +55,15 @@ func TestNewResolver_loadsFromDB(t *testing.T) {
 		t.Fatalf("NewResolver: %v", err)
 	}
 
-	// The seed migration inserts 766 gem colors.
+	// The seed migration inserts 750 gem colors.
 	// Verify a few known entries from different colors.
 	tests := []struct {
 		gem       string
-		wantColor string
+		wantColor Color
 	}{
-		{"Arc", "BLUE"},
-		{"Cleave", "RED"},
-		{"Rain of Arrows", "GREEN"},
+		{"Arc", ColorBlue},
+		{"Cleave", ColorRed},
+		{"Rain of Arrows", ColorGreen},
 	}
 
 	for _, tt := range tests {
@@ -202,7 +202,9 @@ func TestResolver_UpsertDiscoveries_integration(t *testing.T) {
 	// Clean up the inserted row so test is idempotent.
 	// Registered before assertions so it runs even if assertions fail.
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), "DELETE FROM gem_colors WHERE name = $1", "Arc of Surging")
+		if _, err := pool.Exec(context.Background(), "DELETE FROM gem_colors WHERE name = $1", "Arc of Surging"); err != nil {
+			t.Logf("cleanup warning: failed to delete test row: %v", err)
+		}
 	})
 
 	// Verify the discovery was written to the database.
