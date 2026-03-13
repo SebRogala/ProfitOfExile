@@ -9,20 +9,17 @@ import (
 	"time"
 )
 
-// Canonical endpoint name constants. Used by main.go to configure endpoints
-// and by postCollect to conditionally run endpoint-specific logic (e.g., gem
-// color upsert).
+// Canonical endpoint name constants. Used to configure endpoints and to
+// conditionally run endpoint-specific post-collect logic (e.g., gem color
+// upsert).
 const (
 	EndpointNinjaGems     = "ninja-gems"
 	EndpointNinjaCurrency = "ninja-currency"
 )
 
-// FetchResult holds the outcome of a single endpoint fetch. We use concrete
-// typed fields instead of generics because Go generics cannot be used with
-// function-typed struct fields in EndpointConfig.FetchFunc without making
-// EndpointConfig itself generic, which would prevent mixing different endpoint
-// types in a single []EndpointConfig slice. The StoreFunc closure on
-// EndpointConfig reads the appropriate field — no type assertions needed.
+// FetchResult holds the outcome of a single endpoint fetch. Concrete typed
+// fields (GemData, CurrencyData) avoid the need for type assertions; the
+// StoreFunc closure on EndpointConfig reads the appropriate field.
 type FetchResult struct {
 	GemData      []GemSnapshot
 	CurrencyData []CurrencySnapshot
@@ -80,8 +77,8 @@ type EndpointConfig struct {
 	// Nil means always fetch on startup.
 	StalenessFunc StalenessFunc
 
-	// MaxAge is the assumed cache duration of the source data. The default for
-	// poe.ninja endpoints is 1800s (30 minutes). Used with Age to calculate
+	// MaxAge is the assumed cache duration of the source data. See
+	// DefaultNinjaConfig for poe.ninja defaults. Used with Age to calculate
 	// optimal sleep time.
 	MaxAge time.Duration
 
@@ -89,8 +86,9 @@ type EndpointConfig struct {
 	// available. Also used as the maximum sleep cap.
 	FallbackInterval time.Duration
 
-	// MaxRetries is the maximum number of consecutive 304 Not Modified
-	// responses before falling back to FallbackInterval sleep.
+	// MaxRetries is the number of consecutive 304 Not Modified responses
+	// allowed before falling back to FallbackInterval sleep. The
+	// (MaxRetries+1)th consecutive 304 triggers the fallback.
 	MaxRetries int
 
 	// MinSleep is the minimum time between fetches, even when cache math
@@ -103,6 +101,30 @@ type EndpointConfig struct {
 
 	// JitterMax is the maximum random startup delay before the first fetch.
 	JitterMax time.Duration
+}
+
+// Validate checks EndpointConfig invariants: Name must be non-empty, FetchFunc
+// must be non-nil, FallbackInterval must be positive, and Source should be
+// non-empty (logged as warning if empty since rate limiting will be skipped).
+func (c EndpointConfig) Validate() error {
+	if c.Name == "" {
+		return fmt.Errorf("empty Name")
+	}
+	if c.FetchFunc == nil {
+		return fmt.Errorf("endpoint %q: nil FetchFunc", c.Name)
+	}
+	if c.FallbackInterval <= 0 {
+		return fmt.Errorf("endpoint %q: non-positive FallbackInterval", c.Name)
+	}
+	if c.Source == "" {
+		slog.Warn("endpoint has empty Source, rate limiting will be skipped",
+			"endpoint", c.Name,
+		)
+	}
+	if c.MinSleep > 0 && c.FallbackInterval > 0 && c.MinSleep > c.FallbackInterval {
+		return fmt.Errorf("endpoint %q: MinSleep (%s) exceeds FallbackInterval (%s)", c.Name, c.MinSleep, c.FallbackInterval)
+	}
+	return nil
 }
 
 // DefaultNinjaConfig returns an EndpointConfig with sensible defaults for
@@ -121,9 +143,11 @@ func DefaultNinjaConfig() EndpointConfig {
 }
 
 // ParseEndpointOverrides reads environment variables by prefix and returns an
-// EndpointConfig with any overrides applied. Fields that are not set or have
-// invalid values are left at their zero value (caller should merge with
-// defaults). Invalid values log a warning and are skipped.
+// EndpointConfig with any overrides applied. Fields that are not set, have
+// invalid values, or have zero/non-positive values are left at their zero
+// value — the caller should merge with defaults via MergeEndpointConfig.
+// Zero-valued fields in the returned config mean "not overridden", so it is
+// not possible to intentionally override a field to zero.
 //
 // Supported env vars (for prefix "NINJA"):
 //
