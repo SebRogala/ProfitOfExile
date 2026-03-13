@@ -57,13 +57,13 @@ type ninjaGemLine struct {
 }
 
 // ninjaCurrencyLine represents a single currency entry from the poe.ninja
-// economy/stash/current/item/overview endpoint.
+// economy/exchange/current/overview endpoint.
 type ninjaCurrencyLine struct {
-	CurrencyTypeName string  `json:"currencyTypeName"`
-	ChaosEquivalent  float64 `json:"chaosEquivalent"`
-	Sparkline        struct {
+	ID           string  `json:"id"`
+	PrimaryValue float64 `json:"primaryValue"`
+	Sparkline    struct {
 		TotalChange float64 `json:"totalChange"`
-	} `json:"receiveSparkLine"`
+	} `json:"sparkline"`
 }
 
 // ninjaResponse wraps the top-level poe.ninja API response shape.
@@ -123,7 +123,7 @@ func (f *NinjaFetcher) FetchGemsEndpoint(ctx context.Context, league string, eta
 // FetchCurrencyEndpoint is a FetchFunc-compatible method that fetches Currency
 // data with conditional request support.
 func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string, etag string) (*FetchResult, error) {
-	endpoint := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=Currency", f.baseURL, url.QueryEscape(league))
+	endpoint := fmt.Sprintf("%s/economy/exchange/current/overview?league=%s&type=Currency", f.baseURL, url.QueryEscape(league))
 
 	hr, err := f.getWithCache(ctx, endpoint, etag)
 	if err != nil {
@@ -207,8 +207,8 @@ func convertCurrencyLines(lines []ninjaCurrencyLine) []CurrencySnapshot {
 	snapshots := make([]CurrencySnapshot, 0, len(lines))
 	for _, line := range lines {
 		snapshots = append(snapshots, CurrencySnapshot{
-			CurrencyID:      line.CurrencyTypeName,
-			Chaos:           line.ChaosEquivalent,
+			CurrencyID:      line.ID,
+			Chaos:           line.PrimaryValue,
 			SparklineChange: line.Sparkline.TotalChange,
 		})
 	}
