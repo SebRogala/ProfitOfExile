@@ -1,0 +1,49 @@
+name: Test & Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+  deploy-server:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Coolify deploy (server)
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          COOLIFY_UUID: ${{ secrets.COOLIFY_SERVER_UUID }}
+          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+        run: |
+          curl -sf -X GET \
+            "${COOLIFY_WEBHOOK_URL}/api/v1/deploy?uuid=${COOLIFY_UUID}&force=false" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}"
+
+  deploy-collector:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Coolify deploy (collector)
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          COOLIFY_UUID: ${{ secrets.COOLIFY_COLLECTOR_UUID }}
+          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+        run: |
+          curl -sf -X GET \
+            "${COOLIFY_WEBHOOK_URL}/api/v1/deploy?uuid=${COOLIFY_UUID}&force=false" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}"
