@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -32,8 +33,8 @@ func (r *Repository) LastGemSnapshotTime(ctx context.Context) (time.Time, error)
 	return *t, nil
 }
 
-// InsertGemSnapshots batch-inserts gem snapshots in a single transaction.
-// All rows share the provided timestamp for snapshot coherence.
+// InsertGemSnapshots batch-inserts gem snapshots using a pipelined batch within a
+// single transaction. All rows share the provided timestamp for snapshot coherence.
 // Returns the number of rows actually inserted (excludes conflicts).
 func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error) {
 	if len(snapshots) == 0 {
@@ -46,23 +47,31 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	inserted := 0
+	const query = `INSERT INTO gem_snapshots (time, name, variant, chaos, listings, is_transfigured, gem_color)
+	               VALUES ($1, $2, $3, $4, $5, $6, $7)
+	               ON CONFLICT DO NOTHING`
+
+	batch := &pgx.Batch{}
 	for _, s := range snapshots {
 		var gemColor *string
 		if s.GemColor != "" {
 			gemColor = &s.GemColor
 		}
+		batch.Queue(query, snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, gemColor)
+	}
 
-		tag, err := tx.Exec(ctx,
-			`INSERT INTO gem_snapshots (time, name, variant, chaos, listings, is_transfigured, gem_color)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
-			 ON CONFLICT DO NOTHING`,
-			snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, gemColor,
-		)
+	results := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for i := range snapshots {
+		tag, err := results.Exec()
 		if err != nil {
-			return 0, fmt.Errorf("repo: insert gem snapshot %q/%q: %w", s.Name, s.Variant, err)
+			results.Close()
+			return 0, fmt.Errorf("repo: insert gem snapshot %q/%q: %w", snapshots[i].Name, snapshots[i].Variant, err)
 		}
 		inserted += int(tag.RowsAffected())
+	}
+	if err := results.Close(); err != nil {
+		return 0, fmt.Errorf("repo: insert gem snapshots: close batch: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -72,9 +81,9 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 	return inserted, nil
 }
 
-// InsertCurrencySnapshots batch-inserts currency snapshots in a single transaction.
-// All rows share the provided timestamp for snapshot coherence.
-// Returns the number of rows actually inserted (excludes conflicts).
+// InsertCurrencySnapshots batch-inserts currency snapshots using a pipelined batch
+// within a single transaction. All rows share the provided timestamp for snapshot
+// coherence. Returns the number of rows actually inserted (excludes conflicts).
 func (r *Repository) InsertCurrencySnapshots(ctx context.Context, snapTime time.Time, snapshots []CurrencySnapshot) (int, error) {
 	if len(snapshots) == 0 {
 		return 0, nil
@@ -86,18 +95,27 @@ func (r *Repository) InsertCurrencySnapshots(ctx context.Context, snapTime time.
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	inserted := 0
+	const query = `INSERT INTO currency_snapshots (time, currency_id, chaos, sparkline_change)
+	               VALUES ($1, $2, $3, $4)
+	               ON CONFLICT DO NOTHING`
+
+	batch := &pgx.Batch{}
 	for _, s := range snapshots {
-		tag, err := tx.Exec(ctx,
-			`INSERT INTO currency_snapshots (time, currency_id, chaos, volume, sparkline_change)
-			 VALUES ($1, $2, $3, $4, $5)
-			 ON CONFLICT DO NOTHING`,
-			snapTime, s.CurrencyID, s.Chaos, s.Volume, s.SparklineChange,
-		)
+		batch.Queue(query, snapTime, s.CurrencyID, s.Chaos, s.SparklineChange)
+	}
+
+	results := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for i := range snapshots {
+		tag, err := results.Exec()
 		if err != nil {
-			return 0, fmt.Errorf("repo: insert currency snapshot %q: %w", s.CurrencyID, err)
+			results.Close()
+			return 0, fmt.Errorf("repo: insert currency snapshot %q: %w", snapshots[i].CurrencyID, err)
 		}
 		inserted += int(tag.RowsAffected())
+	}
+	if err := results.Close(); err != nil {
+		return 0, fmt.Errorf("repo: insert currency snapshots: close batch: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

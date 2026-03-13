@@ -22,18 +22,16 @@ const (
 type NinjaFetcher struct {
 	client   *http.Client
 	baseURL  string
-	league   string
 	resolver *gemcolor.Resolver
 }
 
-// NewNinjaFetcher creates a fetcher configured for the given league.
+// NewNinjaFetcher creates a fetcher for the poe.ninja API.
 // The resolver is used to map gem names to colors; pass nil if color
 // resolution is not needed (colors will be empty strings).
-func NewNinjaFetcher(league string, resolver *gemcolor.Resolver) *NinjaFetcher {
+func NewNinjaFetcher(resolver *gemcolor.Resolver) *NinjaFetcher {
 	return &NinjaFetcher{
 		client:   &http.Client{Timeout: ninjaTimeout},
 		baseURL:  defaultNinjaBaseURL,
-		league:   league,
 		resolver: resolver,
 	}
 }
@@ -55,14 +53,14 @@ type ninjaGemLine struct {
 	} `json:"tradeFilter"`
 }
 
-// ninjaCurrencyLine represents a single currency entry in the poe.ninja Currency response.
+// ninjaCurrencyLine represents a single currency entry in the poe.ninja Currency
+// item overview response. Fields match the stash/current/item/overview endpoint.
 type ninjaCurrencyLine struct {
-	ID                  string  `json:"id"`
-	PrimaryValue        float64 `json:"primaryValue"`
-	VolumePrimaryValue  float64 `json:"volumePrimaryValue"`
-	Sparkline           struct {
+	CurrencyTypeName string  `json:"currencyTypeName"`
+	ChaosEquivalent  float64 `json:"chaosEquivalent"`
+	Sparkline        struct {
 		TotalChange float64 `json:"totalChange"`
-	} `json:"sparkline"`
+	} `json:"receiveSparkLine"`
 }
 
 // ninjaResponse wraps the top-level poe.ninja API response shape.
@@ -129,7 +127,7 @@ func (f *NinjaFetcher) FetchGems(ctx context.Context, league string) ([]GemSnaps
 
 // FetchCurrency retrieves all Currency prices from poe.ninja.
 func (f *NinjaFetcher) FetchCurrency(ctx context.Context, league string) ([]CurrencySnapshot, error) {
-	url := fmt.Sprintf("%s/economy/exchange/current/overview?league=%s&type=Currency", f.baseURL, league)
+	url := fmt.Sprintf("%s/economy/stash/current/item/overview?league=%s&type=Currency", f.baseURL, league)
 
 	var resp ninjaResponse[ninjaCurrencyLine]
 	if err := f.get(ctx, url, &resp); err != nil {
@@ -139,9 +137,8 @@ func (f *NinjaFetcher) FetchCurrency(ctx context.Context, league string) ([]Curr
 	snapshots := make([]CurrencySnapshot, 0, len(resp.Lines))
 	for _, line := range resp.Lines {
 		snapshots = append(snapshots, CurrencySnapshot{
-			CurrencyID:      line.ID,
-			Chaos:           line.PrimaryValue,
-			Volume:          line.VolumePrimaryValue,
+			CurrencyID:      line.CurrencyTypeName,
+			Chaos:           line.ChaosEquivalent,
 			SparklineChange: line.Sparkline.TotalChange,
 		})
 	}
