@@ -3,19 +3,8 @@
 package collector
 
 import (
-	"context"
 	"time"
 )
-
-// Fetcher abstracts an external price data source (poe.ninja, TFT, etc.).
-// Each implementation handles its own API format and returns normalised domain types.
-//
-// Deprecated: Superseded by EndpointConfig.FetchFunc. Will be removed when
-// the scheduler is rewritten to the goroutine-per-endpoint model.
-type Fetcher interface {
-	FetchGems(ctx context.Context, league string) ([]GemSnapshot, error)
-	FetchCurrency(ctx context.Context, league string) ([]CurrencySnapshot, error)
-}
 
 // GemSnapshot represents a single gem price observation matching the gem_snapshots
 // hypertable columns. The Time field is populated when reading from the database;
