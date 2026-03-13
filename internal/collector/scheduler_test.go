@@ -451,10 +451,10 @@ func TestScheduler_calculateSleep(t *testing.T) {
 		want       time.Duration
 	}{
 		{
-			name: "fresh response sleeps near MaxAge",
+			name: "fresh response sleeps near MaxAge, capped by FallbackInterval",
 			ep: EndpointConfig{
 				MaxAge:           30 * time.Minute,
-				FallbackInterval: 30 * time.Minute,
+				FallbackInterval: 35 * time.Minute, // enough room for MaxAge + 5s buffer
 				MinSleep:         30 * time.Second,
 			},
 			ageSeconds: 0,
