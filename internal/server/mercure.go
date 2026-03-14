@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -32,7 +34,13 @@ func NewMercureSubscriber(hubURL string, topics []string, handler func(MercureEv
 		topics:  topics,
 		handler: handler,
 		logger:  slog.Default(),
-		client:  &http.Client{},
+		client: &http.Client{
+			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+				TLSHandshakeTimeout:  10 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
+			},
+		},
 	}
 }
 
@@ -62,11 +70,11 @@ func (s *MercureSubscriber) Run(ctx context.Context) {
 }
 
 func (s *MercureSubscriber) connect(ctx context.Context) error {
-	u := s.hubURL + "?"
+	q := url.Values{}
 	for _, t := range s.topics {
-		u += "topic=" + t + "&"
+		q.Add("topic", t)
 	}
-	u = strings.TrimRight(u, "&")
+	u := s.hubURL + "?" + q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -103,8 +111,8 @@ func (s *MercureSubscriber) connect(ctx context.Context) error {
 
 		if strings.HasPrefix(line, "data: ") {
 			event.Data = strings.TrimPrefix(line, "data: ")
-		} else if strings.HasPrefix(line, "id: ") {
-			event.Topic = strings.TrimPrefix(line, "id: ")
+		} else if strings.HasPrefix(line, "event: ") {
+			event.Topic = strings.TrimPrefix(line, "event: ")
 		}
 	}
 
