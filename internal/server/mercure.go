@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,11 @@ import (
 	"strings"
 	"time"
 )
+
+// errStreamClosed is returned when the Mercure hub closes the SSE stream
+// gracefully (clean EOF). Distinguished from network errors so the reconnect
+// loop can log at Info level instead of Warn.
+var errStreamClosed = errors.New("stream closed by hub")
 
 // MercureEvent represents a parsed SSE event from the Mercure hub.
 type MercureEvent struct {
@@ -47,17 +53,34 @@ func NewMercureSubscriber(hubURL string, topics []string, handler func(MercureEv
 // Run connects to the Mercure hub and processes events until ctx is cancelled.
 // It reconnects automatically on connection loss with exponential backoff.
 func (s *MercureSubscriber) Run(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("mercure subscriber panicked", "panic", r)
+		}
+	}()
+
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
+	everConnected := false
 
 	for {
-		err := s.connect(ctx)
+		connected, err := s.connect(ctx)
 		if ctx.Err() != nil {
 			s.logger.Info("mercure subscriber stopped")
 			return
 		}
 
-		s.logger.Warn("mercure connection lost, reconnecting", "error", err, "backoff", backoff)
+		if connected {
+			everConnected = true
+		}
+
+		if errors.Is(err, errStreamClosed) {
+			s.logger.Info("mercure: stream closed by hub, reconnecting", "backoff", backoff)
+		} else if everConnected {
+			s.logger.Warn("mercure: connection lost, reconnecting", "error", err, "backoff", backoff)
+		} else {
+			s.logger.Warn("mercure: initial connection failed, retrying", "error", err, "backoff", backoff)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -65,11 +88,17 @@ func (s *MercureSubscriber) Run(ctx context.Context) {
 		case <-time.After(backoff):
 		}
 
-		backoff = min(backoff*2, maxBackoff)
+		if errors.Is(err, errStreamClosed) {
+			backoff = time.Second // reset on graceful close
+		} else {
+			backoff = min(backoff*2, maxBackoff)
+		}
 	}
 }
 
-func (s *MercureSubscriber) connect(ctx context.Context) error {
+// connect establishes an SSE connection and processes events. Returns whether
+// a connection was successfully established (for log messaging) and any error.
+func (s *MercureSubscriber) connect(ctx context.Context) (connected bool, err error) {
 	q := url.Values{}
 	for _, t := range s.topics {
 		q.Add("topic", t)
@@ -78,18 +107,18 @@ func (s *MercureSubscriber) connect(ctx context.Context) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return false, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("connect to hub: %w", err)
+		return false, fmt.Errorf("connect to hub: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("hub returned status %d", resp.StatusCode)
+		return false, fmt.Errorf("hub returned status %d", resp.StatusCode)
 	}
 
 	s.logger.Info("mercure subscriber connected", "topics", s.topics)
@@ -101,7 +130,6 @@ func (s *MercureSubscriber) connect(ctx context.Context) error {
 		line := scanner.Text()
 
 		if line == "" {
-			// Empty line = end of event
 			if event.Data != "" {
 				s.handler(event)
 			}
@@ -117,8 +145,8 @@ func (s *MercureSubscriber) connect(ctx context.Context) error {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read SSE stream: %w", err)
+		return true, fmt.Errorf("read SSE stream: %w", err)
 	}
 
-	return fmt.Errorf("stream ended")
+	return true, errStreamClosed
 }
