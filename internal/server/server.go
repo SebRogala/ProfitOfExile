@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/server/handlers"
 )
@@ -18,6 +19,8 @@ type RouterConfig struct {
 	MercureSecret string
 	// DevMode enables dev-only endpoints like /debug/trigger.
 	DevMode bool
+	// Pool is the database connection pool for data query endpoints.
+	Pool *pgxpool.Pool
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -31,6 +34,12 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	r.Use(handlers.SlogRecoverer)
 
 	r.Get("/api/health", handlers.Health(pinger))
+
+	if cfg.Pool != nil {
+		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool))
+		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool))
+		r.Get("/api/snapshots/stats", handlers.SnapshotStats(cfg.Pool))
+	}
 
 	if cfg.DevMode {
 		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret))
