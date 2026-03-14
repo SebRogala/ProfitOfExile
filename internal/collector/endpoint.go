@@ -19,10 +19,9 @@ const (
 )
 
 // FetchResult holds the outcome of a single endpoint fetch as a tagged union.
-// Exactly one of three states is valid: NotModified=true (no data), GemData
-// populated, or CurrencyData populated. Validate() enforces mutual exclusivity
-// at runtime and is called at every construction site. If the number of data
-// types grows beyond two, refactor to a discriminated interface pattern.
+// Exactly one of four states is valid: NotModified=true (no data), or exactly
+// one of GemData, CurrencyData, or FragmentData populated. Validate() enforces
+// mutual exclusivity at runtime and is called at every construction site.
 type FetchResult struct {
 	GemData      []GemSnapshot
 	CurrencyData []CurrencySnapshot

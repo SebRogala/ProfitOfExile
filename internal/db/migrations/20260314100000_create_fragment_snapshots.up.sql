@@ -2,7 +2,6 @@ CREATE TABLE fragment_snapshots (
     time              TIMESTAMPTZ    NOT NULL,
     fragment_id       TEXT           NOT NULL,
     chaos             NUMERIC(20,8),
-    volume            NUMERIC(20,4),
     sparkline_change  NUMERIC(10,2),
     PRIMARY KEY (time, fragment_id)
 );

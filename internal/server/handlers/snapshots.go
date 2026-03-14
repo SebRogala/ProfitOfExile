@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,14 +30,14 @@ func parseSnapshotQuery(r *http.Request) (*SnapshotQuery, error) {
 	if v := r.URL.Query().Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("invalid 'from': %w", err)
 		}
 		q.From = t
 	}
 	if v := r.URL.Query().Get("to"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("invalid 'to': %w", err)
 		}
 		q.To = t
 	}
@@ -44,8 +46,11 @@ func parseSnapshotQuery(r *http.Request) (*SnapshotQuery, error) {
 	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return nil, err
+		if err != nil {
+			return nil, fmt.Errorf("limit must be a positive integer, got %q", v)
+		}
+		if n < 1 {
+			return nil, fmt.Errorf("limit must be at least 1, got %d", n)
 		}
 		if n > 10000 {
 			n = 10000
@@ -54,8 +59,11 @@ func parseSnapshotQuery(r *http.Request) (*SnapshotQuery, error) {
 	}
 	if v := r.URL.Query().Get("offset"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return nil, err
+		if err != nil {
+			return nil, fmt.Errorf("offset must be a non-negative integer, got %q", v)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("offset must be non-negative, got %d", n)
 		}
 		q.Offset = n
 	}
@@ -63,12 +71,18 @@ func parseSnapshotQuery(r *http.Request) (*SnapshotQuery, error) {
 	return q, nil
 }
 
+func writeQueryError(w http.ResponseWriter, msg string, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg + ": " + err.Error()})
+}
+
 // GemSnapshots returns gem snapshot data filtered by time range, name, with pagination.
 func GemSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseSnapshotQuery(r)
 		if err != nil {
-			http.Error(w, `{"error":"invalid query parameters: `+err.Error()+`"}`, http.StatusBadRequest)
+			writeQueryError(w, "invalid query parameters", err)
 			return
 		}
 
@@ -90,6 +104,7 @@ func GemSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := pool.Query(r.Context(), query, args...)
 		if err != nil {
+			slog.Error("gem snapshots: query failed", "error", err, "from", q.From, "to", q.To, "name", q.Name)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -111,17 +126,25 @@ func GemSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 			var g gemRow
 			if err := rows.Scan(&g.Time, &g.Name, &g.Variant, &g.Chaos, &g.Listings,
 				&g.IsTransfigured, &g.IsCorrupted, &g.GemColor); err != nil {
+				slog.Error("gem snapshots: scan row", "error", err)
 				http.Error(w, `{"error":"scan failed"}`, http.StatusInternalServerError)
 				return
 			}
 			results = append(results, g)
 		}
+		if err := rows.Err(); err != nil {
+			slog.Error("gem snapshots: row iteration error", "error", err)
+			http.Error(w, `{"error":"row iteration failed"}`, http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"count": len(results),
 			"data":  results,
-		})
+		}); err != nil {
+			slog.Error("gem snapshots: encode response", "error", err)
+		}
 	}
 }
 
@@ -130,7 +153,7 @@ func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseSnapshotQuery(r)
 		if err != nil {
-			http.Error(w, `{"error":"invalid query parameters: `+err.Error()+`"}`, http.StatusBadRequest)
+			writeQueryError(w, "invalid query parameters", err)
 			return
 		}
 
@@ -151,6 +174,7 @@ func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := pool.Query(r.Context(), query, args...)
 		if err != nil {
+			slog.Error("currency snapshots: query failed", "error", err, "from", q.From, "to", q.To, "name", q.Name)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -167,17 +191,25 @@ func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var c currRow
 			if err := rows.Scan(&c.Time, &c.CurrencyID, &c.Chaos, &c.SparklineChange); err != nil {
+				slog.Error("currency snapshots: scan row", "error", err)
 				http.Error(w, `{"error":"scan failed"}`, http.StatusInternalServerError)
 				return
 			}
 			results = append(results, c)
 		}
+		if err := rows.Err(); err != nil {
+			slog.Error("currency snapshots: row iteration error", "error", err)
+			http.Error(w, `{"error":"row iteration failed"}`, http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"count": len(results),
 			"data":  results,
-		})
+		}); err != nil {
+			slog.Error("currency snapshots: encode response", "error", err)
+		}
 	}
 }
 
@@ -186,7 +218,7 @@ func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseSnapshotQuery(r)
 		if err != nil {
-			http.Error(w, `{"error":"invalid query parameters: `+err.Error()+`"}`, http.StatusBadRequest)
+			writeQueryError(w, "invalid query parameters", err)
 			return
 		}
 
@@ -207,6 +239,7 @@ func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := pool.Query(r.Context(), query, args...)
 		if err != nil {
+			slog.Error("fragment snapshots: query failed", "error", err, "from", q.From, "to", q.To, "name", q.Name)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -223,17 +256,25 @@ func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var f fragRow
 			if err := rows.Scan(&f.Time, &f.FragmentID, &f.Chaos, &f.SparklineChange); err != nil {
+				slog.Error("fragment snapshots: scan row", "error", err)
 				http.Error(w, `{"error":"scan failed"}`, http.StatusInternalServerError)
 				return
 			}
 			results = append(results, f)
 		}
+		if err := rows.Err(); err != nil {
+			slog.Error("fragment snapshots: row iteration error", "error", err)
+			http.Error(w, `{"error":"row iteration failed"}`, http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"count": len(results),
 			"data":  results,
-		})
+		}); err != nil {
+			slog.Error("fragment snapshots: encode response", "error", err)
+		}
 	}
 }
 
@@ -267,6 +308,7 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			FROM gem_snapshots`,
 		).Scan(&s.GemTotalRows, &s.GemSnapshotCount, &s.GemFirstSnapshot, &s.GemLastSnapshot, &s.GemUniqueItems)
 		if err != nil {
+			slog.Error("snapshot stats: gem query failed", "error", err)
 			http.Error(w, `{"error":"gem stats query failed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -279,6 +321,7 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			FROM currency_snapshots`,
 		).Scan(&s.CurrTotalRows, &s.CurrSnapshotCount, &s.CurrFirstSnapshot, &s.CurrLastSnapshot, &s.CurrUniqueItems)
 		if err != nil {
+			slog.Error("snapshot stats: currency query failed", "error", err)
 			http.Error(w, `{"error":"currency stats query failed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -291,11 +334,14 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			FROM fragment_snapshots`,
 		).Scan(&s.FragTotalRows, &s.FragSnapshotCount, &s.FragFirstSnapshot, &s.FragLastSnapshot, &s.FragUniqueItems)
 		if err != nil {
+			slog.Error("snapshot stats: fragment query failed", "error", err)
 			http.Error(w, `{"error":"fragment stats query failed"}`, http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(s)
+		if err := json.NewEncoder(w).Encode(s); err != nil {
+			slog.Error("snapshot stats: encode response", "error", err)
+		}
 	}
 }
