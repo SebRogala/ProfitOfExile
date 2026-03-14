@@ -24,8 +24,9 @@ const mercureTopicPrefix = "poe/collector/"
 // mercureTopicSuffix maps endpoint names to source-agnostic topic suffixes.
 // Falls back to the raw endpoint name if not present in the map.
 var mercureTopicSuffix = map[string]string{
-	EndpointNinjaGems:     "gems",
-	EndpointNinjaCurrency: "currency",
+	EndpointNinjaGems:      "gems",
+	EndpointNinjaCurrency:  "currency",
+	EndpointNinjaFragments: "fragments",
 }
 
 // Scheduler orchestrates price data collection with independent goroutines per

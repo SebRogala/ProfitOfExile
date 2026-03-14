@@ -181,6 +181,62 @@ func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+// FragmentSnapshots returns fragment snapshot data filtered by time range with pagination.
+func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q, err := parseSnapshotQuery(r)
+		if err != nil {
+			http.Error(w, `{"error":"invalid query parameters: `+err.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+
+		query := `SELECT time, fragment_id, COALESCE(chaos, 0), COALESCE(sparkline_change, 0)
+		          FROM fragment_snapshots
+		          WHERE time >= $1 AND time <= $2`
+		args := []any{q.From, q.To}
+
+		if q.Name != "" {
+			query += ` AND fragment_id = $3`
+			args = append(args, q.Name)
+			query += ` ORDER BY time DESC LIMIT $4 OFFSET $5`
+			args = append(args, q.Limit, q.Offset)
+		} else {
+			query += ` ORDER BY time DESC, fragment_id LIMIT $3 OFFSET $4`
+			args = append(args, q.Limit, q.Offset)
+		}
+
+		rows, err := pool.Query(r.Context(), query, args...)
+		if err != nil {
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type fragRow struct {
+			Time            time.Time `json:"time"`
+			FragmentID      string    `json:"fragmentId"`
+			Chaos           float64   `json:"chaos"`
+			SparklineChange float64   `json:"sparklineChange"`
+		}
+
+		var results []fragRow
+		for rows.Next() {
+			var f fragRow
+			if err := rows.Scan(&f.Time, &f.FragmentID, &f.Chaos, &f.SparklineChange); err != nil {
+				http.Error(w, `{"error":"scan failed"}`, http.StatusInternalServerError)
+				return
+			}
+			results = append(results, f)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"count": len(results),
+			"data":  results,
+		})
+	}
+}
+
 // SnapshotStats returns aggregate statistics about collected data.
 func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +251,11 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			CurrFirstSnapshot time.Time `json:"currFirstSnapshot"`
 			CurrLastSnapshot  time.Time `json:"currLastSnapshot"`
 			CurrUniqueItems   int       `json:"currUniqueItems"`
+			FragTotalRows     int       `json:"fragTotalRows"`
+			FragSnapshotCount int       `json:"fragSnapshotCount"`
+			FragFirstSnapshot time.Time `json:"fragFirstSnapshot"`
+			FragLastSnapshot  time.Time `json:"fragLastSnapshot"`
+			FragUniqueItems   int       `json:"fragUniqueItems"`
 		}
 
 		var s stats
@@ -219,6 +280,18 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 		).Scan(&s.CurrTotalRows, &s.CurrSnapshotCount, &s.CurrFirstSnapshot, &s.CurrLastSnapshot, &s.CurrUniqueItems)
 		if err != nil {
 			http.Error(w, `{"error":"currency stats query failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		err = pool.QueryRow(r.Context(), `
+			SELECT COUNT(*), COUNT(DISTINCT time),
+			       COALESCE(MIN(time), '1970-01-01'::timestamptz),
+			       COALESCE(MAX(time), '1970-01-01'::timestamptz),
+			       COUNT(DISTINCT fragment_id)
+			FROM fragment_snapshots`,
+		).Scan(&s.FragTotalRows, &s.FragSnapshotCount, &s.FragFirstSnapshot, &s.FragLastSnapshot, &s.FragUniqueItems)
+		if err != nil {
+			http.Error(w, `{"error":"fragment stats query failed"}`, http.StatusInternalServerError)
 			return
 		}
 

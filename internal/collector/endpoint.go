@@ -13,8 +13,9 @@ import (
 // conditionally run endpoint-specific post-collect logic (e.g., gem color
 // upsert).
 const (
-	EndpointNinjaGems     = "ninja-gems"
-	EndpointNinjaCurrency = "ninja-currency"
+	EndpointNinjaGems      = "ninja-gems"
+	EndpointNinjaCurrency  = "ninja-currency"
+	EndpointNinjaFragments = "ninja-fragments"
 )
 
 // FetchResult holds the outcome of a single endpoint fetch as a tagged union.
@@ -25,19 +26,30 @@ const (
 type FetchResult struct {
 	GemData      []GemSnapshot
 	CurrencyData []CurrencySnapshot
+	FragmentData []FragmentSnapshot
 	ETag         string
 	Age          int  // seconds since origin server generated the response
 	NotModified  bool // true when source returned 304 Not Modified
 }
 
 // Validate checks FetchResult invariants: a NotModified result must have no
-// data, and at most one of GemData/CurrencyData may be populated.
+// data, and at most one data slice may be populated.
 func (r *FetchResult) Validate() error {
-	if r.NotModified && (len(r.GemData) > 0 || len(r.CurrencyData) > 0) {
+	if r.NotModified && (len(r.GemData) > 0 || len(r.CurrencyData) > 0 || len(r.FragmentData) > 0) {
 		return fmt.Errorf("FetchResult: NotModified=true but data slices are populated")
 	}
-	if len(r.GemData) > 0 && len(r.CurrencyData) > 0 {
-		return fmt.Errorf("FetchResult: both GemData and CurrencyData are populated")
+	populated := 0
+	if len(r.GemData) > 0 {
+		populated++
+	}
+	if len(r.CurrencyData) > 0 {
+		populated++
+	}
+	if len(r.FragmentData) > 0 {
+		populated++
+	}
+	if populated > 1 {
+		return fmt.Errorf("FetchResult: multiple data slices are populated")
 	}
 	return nil
 }

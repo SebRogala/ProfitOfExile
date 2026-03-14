@@ -363,7 +363,7 @@ func TestFetchResult_Validate(t *testing.T) {
 				CurrencyData: []CurrencySnapshot{{CurrencyID: "divine", Chaos: 210}},
 			},
 			wantErr: true,
-			errMsg:  "both GemData and CurrencyData are populated",
+			errMsg:  "multiple data slices are populated",
 		},
 		{
 			name:    "NotModified with no data is valid",
