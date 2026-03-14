@@ -77,6 +77,70 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 - **poe.ninja**: REST API at `poe.ninja/poe1/api/economy/stash/current/item/overview`. Uses `chaosEquivalent` for currency/fragments, `chaosValue` for items. 60-min cache TTL.
 - **TFT**: Static JSON from GitHub `The-Forbidden-Trove/tft-data-prices`. League codes: `lsc`/`lhc`. Lifeforce entries have `ratio: 1000` — must divide chaos by ratio.
 
+## SECURITY: Public Repository
+
+This repo is **public on GitHub**. Never commit:
+- Passwords, API keys, tokens, secrets of any kind
+- Internal hostnames, IP addresses, or infrastructure details
+- Database connection strings or credentials
+- Coolify webhook URLs or UUIDs
+- Any `.env` file contents (`.env.example` with placeholders only)
+
+All secrets live in Coolify env vars and GitHub Secrets — never in code or config files.
+
+## Production Infrastructure
+
+- **Server**: `poe.softsolution.pro` — Go binary serving SvelteKit frontend + API
+- **Collector**: `poe-collector.softsolution.pro` — 24/7 price data collection from poe.ninja
+- **Database**: TimescaleDB (shared instance on VPS, managed via Coolify)
+- **Deployment**: Coolify with Docker Build Stage Targets (`server` / `collector`), auto-deploy via GitHub Actions on merge to main
+- **Mercure**: Event hub for collector → server SSE events (topics: `poe/collector/gems`, `poe/collector/currency`)
+
+## Data Architecture & Analysis Patterns
+
+### Time-Series Tables (TimescaleDB hypertables)
+
+**`gem_snapshots`** — PK: `(time, name, variant, is_corrupted)`
+- Columns: `time`, `name`, `variant`, `chaos`, `listings`, `is_transfigured`, `gem_color`, `is_corrupted`
+- ~7,000 rows per snapshot (all gems × variants), snapshots every ~30min
+- Indexed: `(time DESC)`, `(name, variant, is_corrupted, time DESC)`
+
+**`currency_snapshots`** — similar structure for currency/fragment prices
+
+### Querying Data for Analysis
+
+Always query by time range — never SELECT * from hypertables:
+
+```sql
+-- Last hour of gem data
+SELECT * FROM gem_snapshots WHERE time > NOW() - INTERVAL '1 hour';
+
+-- Aggregated prices (30-min buckets, last 24h)
+SELECT time_bucket('30 minutes', time) AS bucket, name, variant,
+       AVG(chaos) AS avg_price, AVG(listings) AS avg_listings
+FROM gem_snapshots
+WHERE time > NOW() - INTERVAL '24 hours'
+GROUP BY bucket, name, variant;
+
+-- Price trend for a specific gem
+SELECT time, chaos, listings FROM gem_snapshots
+WHERE name = 'Empower Support' AND variant = '1'
+  AND time > NOW() - INTERVAL '7 days'
+ORDER BY time;
+```
+
+### Data API (server, not collector)
+
+The **server** (`/api/snapshots`) is the data query API — supports time ranges, filtering, pagination. The **collector** only exposes simple status endpoints (`/health`, `/latest`). All analysis endpoints live on the server.
+
+### Analysis Reference Data (`/var/www/poe/data/`)
+
+- `price-history.jsonl` — 179 pre-computed analysis snapshots (Mar 11-14 2026) from Node.js prototype scripts. Contains transfigure ROI, font analysis, exchange prices, GCP data. Different schema from DB tables — use as reference for analysis algorithm design, not for DB import.
+
+### Event Pipeline
+
+Collector publishes Mercure events on each price update → Server subscribes via SSE → triggers analysis re-computation → pushes results to frontend. This is the pre-computed event-driven pipeline — analysis results are computed on data arrival, not on user request.
+
 ## Original Codebase Reference (git history only)
 
 The PHP/Symfony codebase is read-only reference material in git history. Use `git show 537e37e:<path>` to inspect files when porting logic. Key files:
