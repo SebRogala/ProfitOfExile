@@ -71,6 +71,10 @@ func main() {
 	mercureSecret := os.Getenv("MERCURE_JWT_SECRET")
 	devMode := os.Getenv("APP_ENV") == "dev"
 
+	if mercureURL != "" && mercureSecret == "" {
+		slog.Warn("MERCURE_URL is set but MERCURE_JWT_SECRET is empty — publish operations will be skipped")
+	}
+
 	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
 		MercureURL:    mercureURL,
 		MercureSecret: mercureSecret,

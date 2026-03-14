@@ -17,14 +17,23 @@ func DebugTrigger(mercureURL, mercureSecret string) http.HandlerFunc {
 			endpoint = "gems"
 		}
 
+		if mercureSecret == "" {
+			http.Error(w, "MERCURE_JWT_SECRET not configured", http.StatusServiceUnavailable)
+			return
+		}
+
 		topic := "poe/collector/" + endpoint
-		payload, _ := json.Marshal(map[string]any{
+		payload, err := json.Marshal(map[string]any{
 			"league":    "Mirage",
 			"endpoint":  "ninja_" + endpoint,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 			"inserted":  42,
 			"debug":     true,
 		})
+		if err != nil {
+			http.Error(w, "failed to build payload: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		if err := collector.PublishMercureEvent(r.Context(), mercureURL, mercureSecret, topic, string(payload)); err != nil {
 			http.Error(w, "publish failed: "+err.Error(), http.StatusInternalServerError)
@@ -32,6 +41,6 @@ func DebugTrigger(mercureURL, mercureSecret string) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"published","topic":"` + topic + `"}`))
+		json.NewEncoder(w).Encode(map[string]string{"status": "published", "topic": topic})
 	}
 }
