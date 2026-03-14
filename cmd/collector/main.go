@@ -203,30 +203,15 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /snapshots", func(w http.ResponseWriter, r *http.Request) {
-		hoursStr := r.URL.Query().Get("hours")
-		hours := 24
-		if hoursStr != "" {
-			h, err := strconv.Atoi(hoursStr)
-			if err != nil || h < 1 || h > 168 {
-				http.Error(w, `{"error":"hours must be an integer between 1 and 168"}`, http.StatusBadRequest)
-				return
-			}
-			hours = h
-		}
-
-		snapshots, err := repo.QueryGemSnapshots(r.Context(), hours)
+		stats, err := repo.GetCollectionStats(r.Context())
 		if err != nil {
 			slog.Error("snapshots endpoint failed", "error", err)
-			http.Error(w, `{"error":"failed to query snapshots"}`, http.StatusInternalServerError)
+			http.Error(w, `{"error":"failed to query stats"}`, http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"hours": hours,
-			"count": len(snapshots),
-			"data":  snapshots,
-		}); err != nil {
+		if err := json.NewEncoder(w).Encode(stats); err != nil {
 			slog.Error("snapshots endpoint: encode response", "error", err)
 		}
 	})

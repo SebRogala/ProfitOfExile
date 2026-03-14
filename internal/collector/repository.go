@@ -178,6 +178,51 @@ func (r *Repository) LatestSnapshot(ctx context.Context) (*SnapshotSummary, erro
 	return summary, nil
 }
 
+// CollectionStats holds aggregate statistics about collected data.
+type CollectionStats struct {
+	GemTotalRows       int       `json:"gemTotalRows"`
+	GemSnapshotCount   int       `json:"gemSnapshotCount"`
+	GemFirstSnapshot   time.Time `json:"gemFirstSnapshot"`
+	GemLastSnapshot    time.Time `json:"gemLastSnapshot"`
+	GemUniqueItems     int       `json:"gemUniqueItems"`
+	CurrTotalRows      int       `json:"currTotalRows"`
+	CurrSnapshotCount  int       `json:"currSnapshotCount"`
+	CurrFirstSnapshot  time.Time `json:"currFirstSnapshot"`
+	CurrLastSnapshot   time.Time `json:"currLastSnapshot"`
+	CurrUniqueItems    int       `json:"currUniqueItems"`
+}
+
+// GetCollectionStats returns aggregate statistics about the collected data.
+func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, error) {
+	stats := &CollectionStats{}
+
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(DISTINCT time),
+		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
+		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
+		       COUNT(DISTINCT (name, variant, is_corrupted))
+		FROM gem_snapshots`,
+	).Scan(&stats.GemTotalRows, &stats.GemSnapshotCount, &stats.GemFirstSnapshot, &stats.GemLastSnapshot, &stats.GemUniqueItems)
+	if err != nil {
+		return nil, fmt.Errorf("repo: gem collection stats: %w", err)
+	}
+
+	err = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(DISTINCT time),
+		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
+		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
+		       COUNT(DISTINCT name)
+		FROM currency_snapshots`,
+	).Scan(&stats.CurrTotalRows, &stats.CurrSnapshotCount, &stats.CurrFirstSnapshot, &stats.CurrLastSnapshot, &stats.CurrUniqueItems)
+	if err != nil {
+		return nil, fmt.Errorf("repo: currency collection stats: %w", err)
+	}
+
+	return stats, nil
+}
+
 // QueryGemSnapshots returns gem snapshots from the last N hours, ordered by time
 // descending. Used by debug endpoints.
 func (r *Repository) QueryGemSnapshots(ctx context.Context, hours int) ([]GemSnapshot, error) {
