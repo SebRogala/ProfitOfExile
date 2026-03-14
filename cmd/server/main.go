@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -66,7 +67,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := server.NewRouter(pool, frontendFS)
+	mercureURL := os.Getenv("MERCURE_URL")
+	mercureSecret := os.Getenv("MERCURE_JWT_SECRET")
+	devMode := os.Getenv("APP_ENV") == "dev"
+
+	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
+		MercureURL:    mercureURL,
+		MercureSecret: mercureSecret,
+		DevMode:       devMode,
+	})
+
+	// Start Mercure subscriber in background if configured.
+	if mercureURL != "" {
+		subCtx, subCancel := context.WithCancel(ctx)
+		defer subCancel()
+
+		topics := []string{"poe/collector/gems", "poe/collector/currency"}
+		sub := server.NewMercureSubscriber(mercureURL, topics, func(ev server.MercureEvent) {
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
+				slog.Warn("mercure: invalid event payload", "error", err)
+				return
+			}
+			slog.Info("mercure event received",
+				"topic", ev.Topic,
+				"endpoint", payload["endpoint"],
+				"inserted", payload["inserted"],
+			)
+		})
+		go sub.Run(subCtx)
+		slog.Info("mercure subscriber started", "topics", topics)
+	}
 
 	srv := &http.Server{
 		Addr:         ":" + port,

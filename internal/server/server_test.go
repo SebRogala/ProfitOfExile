@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewRouter_HealthRoute(t *testing.T) {
-	router := NewRouter(handlers.NopPinger{}, nil)
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	w := httptest.NewRecorder()
@@ -50,7 +50,7 @@ func TestNewRouter_HealthTakesPrecedenceOverStaticCatchAll(t *testing.T) {
 			Data: []byte("<html><body>SPA</body></html>"),
 		},
 	}
-	router := NewRouter(handlers.NopPinger{}, frontendFS)
+	router := NewRouter(handlers.NopPinger{}, frontendFS, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	w := httptest.NewRecorder()
@@ -83,7 +83,7 @@ func TestNewRouter_StaticCatchAllServesFiles(t *testing.T) {
 			Data: []byte("<html><body>ProfitOfExile</body></html>"),
 		},
 	}
-	router := NewRouter(handlers.NopPinger{}, frontendFS)
+	router := NewRouter(handlers.NopPinger{}, frontendFS, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestNewRouter_StaticCatchAllFallbackForUnknownPaths(t *testing.T) {
 			Data: []byte("<html><body>ProfitOfExile</body></html>"),
 		},
 	}
-	router := NewRouter(handlers.NopPinger{}, frontendFS)
+	router := NewRouter(handlers.NopPinger{}, frontendFS, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/strategies/lab", nil)
 	w := httptest.NewRecorder()
@@ -130,7 +130,7 @@ func TestNewRouter_StaticCatchAllFallbackForUnknownPaths(t *testing.T) {
 }
 
 func TestNewRouter_NilFrontendFSReturns404ForNonAPIPaths(t *testing.T) {
-	router := NewRouter(handlers.NopPinger{}, nil)
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
