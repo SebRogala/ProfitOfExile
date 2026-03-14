@@ -278,7 +278,7 @@ func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, 
 		       COUNT(DISTINCT time),
 		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
-		       COUNT(DISTINCT name)
+		       COUNT(DISTINCT currency_id)
 		FROM currency_snapshots`,
 	).Scan(&stats.CurrTotalRows, &stats.CurrSnapshotCount, &stats.CurrFirstSnapshot, &stats.CurrLastSnapshot, &stats.CurrUniqueItems)
 	if err != nil {
