@@ -15,8 +15,10 @@ import (
 type SnapshotStore interface {
 	LastGemSnapshotTime(ctx context.Context) (time.Time, error)
 	LastCurrencySnapshotTime(ctx context.Context) (time.Time, error)
+	LastFragmentSnapshotTime(ctx context.Context) (time.Time, error)
 	InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error)
 	InsertCurrencySnapshots(ctx context.Context, snapTime time.Time, snapshots []CurrencySnapshot) (int, error)
+	InsertFragmentSnapshots(ctx context.Context, snapTime time.Time, snapshots []FragmentSnapshot) (int, error)
 	LatestSnapshot(ctx context.Context) (*SnapshotSummary, error)
 }
 
@@ -105,7 +107,9 @@ func (r *Repository) InsertFragmentSnapshots(ctx context.Context, snapTime time.
 		}
 		inserted += int(ct.RowsAffected())
 	}
-	br.Close()
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("repo: insert fragment snapshots: close batch: %w", err)
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("repo: commit fragment snapshots: %w", err)
@@ -246,6 +250,11 @@ type CollectionStats struct {
 	CurrFirstSnapshot  time.Time `json:"currFirstSnapshot"`
 	CurrLastSnapshot   time.Time `json:"currLastSnapshot"`
 	CurrUniqueItems    int       `json:"currUniqueItems"`
+	FragTotalRows      int       `json:"fragTotalRows"`
+	FragSnapshotCount  int       `json:"fragSnapshotCount"`
+	FragFirstSnapshot  time.Time `json:"fragFirstSnapshot"`
+	FragLastSnapshot   time.Time `json:"fragLastSnapshot"`
+	FragUniqueItems    int       `json:"fragUniqueItems"`
 }
 
 // GetCollectionStats returns aggregate statistics about the collected data.
@@ -274,6 +283,18 @@ func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, 
 	).Scan(&stats.CurrTotalRows, &stats.CurrSnapshotCount, &stats.CurrFirstSnapshot, &stats.CurrLastSnapshot, &stats.CurrUniqueItems)
 	if err != nil {
 		return nil, fmt.Errorf("repo: currency collection stats: %w", err)
+	}
+
+	err = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(DISTINCT time),
+		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
+		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
+		       COUNT(DISTINCT fragment_id)
+		FROM fragment_snapshots`,
+	).Scan(&stats.FragTotalRows, &stats.FragSnapshotCount, &stats.FragFirstSnapshot, &stats.FragLastSnapshot, &stats.FragUniqueItems)
+	if err != nil {
+		return nil, fmt.Errorf("repo: fragment collection stats: %w", err)
 	}
 
 	return stats, nil
