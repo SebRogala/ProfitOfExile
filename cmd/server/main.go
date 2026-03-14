@@ -79,6 +79,7 @@ func main() {
 		MercureURL:    mercureURL,
 		MercureSecret: mercureSecret,
 		DevMode:       devMode,
+		Pool:          pool,
 	})
 
 	// Start Mercure subscriber in background if configured.
