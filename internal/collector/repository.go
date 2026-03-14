@@ -58,6 +58,62 @@ func (r *Repository) LastCurrencySnapshotTime(ctx context.Context) (time.Time, e
 	return *t, nil
 }
 
+// LastFragmentSnapshotTime returns the most recent fragment snapshot timestamp.
+// Returns the zero time if no snapshots exist.
+func (r *Repository) LastFragmentSnapshotTime(ctx context.Context) (time.Time, error) {
+	var t *time.Time
+	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM fragment_snapshots").Scan(&t)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("repo: last fragment snapshot time: %w", err)
+	}
+	if t == nil {
+		return time.Time{}, nil
+	}
+	return *t, nil
+}
+
+// InsertFragmentSnapshots batch-inserts fragment snapshots using a pipelined batch
+// within a single transaction. Returns the number of rows actually inserted.
+func (r *Repository) InsertFragmentSnapshots(ctx context.Context, snapTime time.Time, snapshots []FragmentSnapshot) (int, error) {
+	if len(snapshots) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, s := range snapshots {
+		batch.Queue(
+			`INSERT INTO fragment_snapshots (time, fragment_id, chaos, sparkline_change)
+			 VALUES ($1, $2, $3, $4)
+			 ON CONFLICT DO NOTHING`,
+			snapTime, s.FragmentID, s.Chaos, s.SparklineChange,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range snapshots {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("repo: insert fragment snapshot: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	br.Close()
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("repo: commit fragment snapshots: %w", err)
+	}
+
+	return inserted, nil
+}
+
 // InsertGemSnapshots batch-inserts gem snapshots using a pipelined batch within a
 // single transaction. All rows share the provided timestamp for snapshot coherence.
 // Returns the number of rows actually inserted (excludes conflicts).

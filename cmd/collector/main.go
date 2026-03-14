@@ -132,8 +132,21 @@ func main() {
 		return repo.LastCurrencySnapshotTime(ctx)
 	}
 
+	fragmentEndpoint := ninjaCfg
+	fragmentEndpoint.Name = collector.EndpointNinjaFragments
+	fragmentEndpoint.FetchFunc = fetcher.FetchFragmentEndpoint
+	fragmentEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
+		if len(result.FragmentData) == 0 {
+			return 0, fmt.Errorf("fragment endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
+		}
+		return repo.InsertFragmentSnapshots(ctx, snapTime, result.FragmentData)
+	}
+	fragmentEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
+		return repo.LastFragmentSnapshotTime(ctx)
+	}
+
 	scheduler, err := collector.NewScheduler(
-		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint},
+		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint, fragmentEndpoint},
 		resolver,
 		league,
 		mercureURL,

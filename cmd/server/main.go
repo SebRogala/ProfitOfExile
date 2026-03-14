@@ -87,7 +87,7 @@ func main() {
 		subCtx, subCancel := context.WithCancel(ctx)
 		defer subCancel()
 
-		topics := []string{"poe/collector/gems", "poe/collector/currency"}
+		topics := []string{"poe/collector/gems", "poe/collector/currency", "poe/collector/fragments"}
 		sub := server.NewMercureSubscriber(mercureURL, topics, func(ev server.MercureEvent) {
 			var payload map[string]any
 			if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {

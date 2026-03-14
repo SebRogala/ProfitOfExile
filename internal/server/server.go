@@ -38,6 +38,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	if cfg.Pool != nil {
 		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool))
 		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool))
+		r.Get("/api/snapshots/fragments", handlers.FragmentSnapshots(cfg.Pool))
 		r.Get("/api/snapshots/stats", handlers.SnapshotStats(cfg.Pool))
 	}
 

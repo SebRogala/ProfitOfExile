@@ -158,6 +158,58 @@ func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string,
 	return result, nil
 }
 
+// FetchFragmentEndpoint is a FetchFunc-compatible method that fetches Fragment
+// data with conditional request support. Same exchange endpoint as currency but
+// with type=Fragment.
+func (f *NinjaFetcher) FetchFragmentEndpoint(ctx context.Context, league string, etag string) (*FetchResult, error) {
+	endpoint := fmt.Sprintf("%s/economy/exchange/current/overview?league=%s&type=Fragment", f.baseURL, url.QueryEscape(league))
+
+	hr, err := f.getWithCache(ctx, endpoint, etag)
+	if err != nil {
+		return nil, fmt.Errorf("ninja: fetch fragments: %w", err)
+	}
+
+	if hr.NotModified {
+		return &FetchResult{
+			NotModified: true,
+			ETag:        hr.ETag,
+			Age:         hr.Age,
+		}, nil
+	}
+	defer hr.Body.Close()
+
+	var resp ninjaResponse[ninjaCurrencyLine]
+	if err := json.NewDecoder(hr.Body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("ninja: decode fragment response: %w", err)
+	}
+
+	snapshots := convertFragmentLines(resp.Lines)
+
+	slog.Info("ninja: fetched fragments", "count", len(snapshots), "age", hr.Age, "etag", hr.ETag)
+	result := &FetchResult{
+		FragmentData: snapshots,
+		ETag:         hr.ETag,
+		Age:          hr.Age,
+	}
+	if err := result.Validate(); err != nil {
+		return nil, fmt.Errorf("ninja: fragment result invalid: %w", err)
+	}
+	return result, nil
+}
+
+// convertFragmentLines transforms raw API fragment lines into FragmentSnapshots.
+func convertFragmentLines(lines []ninjaCurrencyLine) []FragmentSnapshot {
+	snapshots := make([]FragmentSnapshot, 0, len(lines))
+	for _, line := range lines {
+		snapshots = append(snapshots, FragmentSnapshot{
+			FragmentID:      line.ID,
+			Chaos:           line.PrimaryValue,
+			SparklineChange: line.Sparkline.TotalChange,
+		})
+	}
+	return snapshots
+}
+
 // convertGemLines filters and transforms raw API gem lines into GemSnapshots.
 func (f *NinjaFetcher) convertGemLines(lines []ninjaGemLine) []GemSnapshot {
 	snapshots := make([]GemSnapshot, 0, len(lines))

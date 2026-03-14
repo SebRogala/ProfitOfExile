@@ -33,6 +33,16 @@ type CurrencySnapshot struct {
 	SparklineChange float64
 }
 
+// FragmentSnapshot represents a single fragment price observation matching the
+// fragment_snapshots hypertable columns. Same exchange endpoint structure as
+// currency but stored separately for cleaner analysis queries.
+type FragmentSnapshot struct {
+	Time            time.Time
+	FragmentID      string
+	Chaos           float64
+	SparklineChange float64
+}
+
 // SnapshotSummary provides a quick overview of the latest stored snapshot,
 // used by debug endpoints.
 type SnapshotSummary struct {

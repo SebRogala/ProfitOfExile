@@ -137,6 +137,30 @@ The **server** (`/api/snapshots`) is the data query API — supports time ranges
 
 - `price-history.jsonl` — 179 pre-computed analysis snapshots (Mar 11-14 2026) from Node.js prototype scripts. Contains transfigure ROI, font analysis, exchange prices, GCP data. Different schema from DB tables — use as reference for analysis algorithm design, not for DB import.
 
+### Adding a New Data Source (Collector Endpoint Pattern)
+
+To add a new poe.ninja endpoint (e.g., DivinationCards, Uniques):
+
+1. **Migration**: Create `internal/db/migrations/{timestamp}_create_{type}_snapshots.up.sql` (and `.down.sql`). Copy the `currency_snapshots` pattern: hypertable, compression policy (7d), retention policy (90d), `(time, {id_col})` PK, `({id_col}, time DESC)` index.
+
+2. **Snapshot type**: Add struct in `internal/collector/fetcher.go` (e.g., `FragmentSnapshot`). Fields: `Time`, ID field, `Chaos`, plus any type-specific fields.
+
+3. **FetchResult field**: Add data slice to `FetchResult` in `endpoint.go`. Update `Validate()` to include the new slice in the mutual exclusivity check.
+
+4. **Endpoint constant**: Add `EndpointNinja{Type}` to `endpoint.go` constants.
+
+5. **Fetcher method**: Add `Fetch{Type}Endpoint` in `ninja.go`. If the poe.ninja response shape matches an existing type (e.g., Fragment uses same shape as Currency via `ninjaCurrencyLine`), reuse the response struct. Add a `convert{Type}Lines` function.
+
+6. **Repository methods**: Add `Insert{Type}Snapshots` and `Last{Type}SnapshotTime` in `repository.go`. Follow the batch insert + `ON CONFLICT DO NOTHING` pattern.
+
+7. **Mercure topic**: Add entry to `mercureTopicSuffix` map in `scheduler.go`.
+
+8. **Wire in `cmd/collector/main.go`**: Clone the currency endpoint block, set `Name`, `FetchFunc`, `StoreFunc`, `StalenessFunc`. Add to the scheduler's endpoint slice.
+
+9. **Server API**: Add query handler in `internal/server/handlers/snapshots.go`, route in `server.go`, and stats query in `SnapshotStats`.
+
+10. **Server subscriber**: Add topic to the Mercure subscriber topics in `cmd/server/main.go`.
+
 ### Event Pipeline
 
 Collector publishes Mercure events on each price update → Server subscribes via SSE → triggers analysis re-computation → pushes results to frontend. This is the pre-computed event-driven pipeline — analysis results are computed on data arrival, not on user request.
