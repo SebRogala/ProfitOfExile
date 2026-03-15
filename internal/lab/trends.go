@@ -137,7 +137,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		relLiq := computeRelativeLiquidity(baseLstForCalc, marketAvgBaseLst)
 		liqTier := liquidityTier(relLiq)
 		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
-		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel, listingVel)
+		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel)
 
 		results = append(results, TrendResult{
 			Time:              snapTime,
@@ -187,13 +187,14 @@ func liquidityTier(relativeLiquidity float64) string {
 }
 
 // computeWindowScore produces a 0-100 composite score for farming opportunity.
+// currentPrice is the transfigured gem's chaos price (used as a proxy for opportunity value).
 // All inputs are relative — the score auto-adjusts for league phase, time of day, etc.
-func computeWindowScore(roi, baseVelocity, transListings, relativeLiquidity float64) float64 {
+func computeWindowScore(currentPrice, baseVelocity, transListings, relativeLiquidity float64) float64 {
 	score := 0.0
 
-	// High ROI contributes (capped contribution).
-	if roi > 0 {
-		score += math.Min(roi/10, 30) // max 30 points from ROI
+	// High price contributes (capped contribution — expensive gems are more interesting targets).
+	if currentPrice > 0 {
+		score += math.Min(currentPrice/10, 30) // max 30 points from price
 	}
 
 	// Base draining (negative velocity = draining = good for window).
@@ -215,14 +216,15 @@ func computeWindowScore(roi, baseVelocity, transListings, relativeLiquidity floa
 }
 
 // classifyWindowSignal determines the window state from score, velocities, and base listings.
-func classifyWindowSignal(windowScore, baseVelocity, transListingVelocity float64, baseListings int, priceVelocity, listingVelocity float64) string {
+// transListingVel is the transfigured gem's listing velocity (used for both CLOSING and BREWING checks).
+func classifyWindowSignal(windowScore, baseVelocity, transListingVel float64, baseListings int, priceVelocity float64) string {
 	// Base gems exhausted — unfarmable, window is dead.
 	// baseListings < 0 means base gem not found (no data), skip exhaustion check.
 	if baseListings >= 0 && baseListings <= 2 {
 		return "EXHAUSTED"
 	}
 	// Herd output arriving — window closing
-	if windowScore >= 50 && transListingVelocity > 3 {
+	if windowScore >= 50 && transListingVel > 3 {
 		return "CLOSING"
 	}
 	// Active window — high score + base draining
@@ -233,9 +235,8 @@ func classifyWindowSignal(windowScore, baseVelocity, transListingVelocity float6
 	if windowScore >= 50 && baseVelocity < 0 {
 		return "OPENING"
 	}
-	// Pre-window: ROI rising + trans listings falling + bases still available
-	// "Start planning, this gem may hit WINDOW in 2-3h"
-	if priceVelocity > 0 && listingVelocity < 0 && baseListings > 10 {
+	// Pre-window: price rising + trans listings falling + bases still available
+	if priceVelocity > 0 && transListingVel < 0 && baseListings > 10 {
 		return "BREWING"
 	}
 	return "CLOSED"
