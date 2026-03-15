@@ -726,7 +726,7 @@ func TestDetectUndervalued(t *testing.T) {
 }
 
 func TestClassifyAdvancedSignal_Priority(t *testing.T) {
-	// A gem matching both MANIPULATION and UNDERVALUED criteria:
+	// A gem matching both MANIPULATION and POTENTIAL criteria:
 	// 2 listings, price 250 (>200 for manipulation, but also in undervalued range check fails at >200).
 	// Actually test with a gem that could match manipulation and rotation.
 	// Manipulation: listings<=3, price>200, |priceVel|<1, cv>80
@@ -748,7 +748,7 @@ func TestClassifyAdvancedSignal_Priority(t *testing.T) {
 }
 
 func TestClassifyAdvancedSignal_RotationOverUndervalued(t *testing.T) {
-	// Inputs that match both ROTATION_CANDIDATE and UNDERVALUED:
+	// Inputs that match both COMEBACK and POTENTIAL:
 	// Rotation: histPos<30, priceVel>0, listingVel<0
 	// Undervalued: price 30-200, listings<40, priceVel>2, histPos<50
 	// NOT manipulation: listings>3
@@ -760,8 +760,8 @@ func TestClassifyAdvancedSignal_RotationOverUndervalued(t *testing.T) {
 		30,   // cv: <=80 (not manipulation)
 		20,   // histPos: <30 (rotation), <50 (undervalued)
 	)
-	if got != "ROTATION_CANDIDATE" {
-		t.Errorf("classifyAdvancedSignal (rotation+undervalued) = %s, want ROTATION_CANDIDATE (higher priority)", got)
+	if got != "COMEBACK" {
+		t.Errorf("classifyAdvancedSignal (rotation+undervalued) = %s, want COMEBACK (higher priority)", got)
 	}
 }
 
@@ -775,8 +775,8 @@ func TestClassifyAdvancedSignal_Undervalued(t *testing.T) {
 		30,  // cv low
 		30,  // histPos < 50
 	)
-	if got != "UNDERVALUED" {
-		t.Errorf("classifyAdvancedSignal (undervalued only) = %s, want UNDERVALUED", got)
+	if got != "POTENTIAL" {
+		t.Errorf("classifyAdvancedSignal (undervalued only) = %s, want POTENTIAL", got)
 	}
 }
 
