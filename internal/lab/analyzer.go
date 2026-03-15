@@ -7,11 +7,13 @@ import (
 )
 
 // Analyzer orchestrates analysis runs triggered by Mercure events.
-// Only one RunTransfigure executes at a time; concurrent calls are dropped.
+// Each analysis type has its own mutex so independent analyses run in parallel.
 type Analyzer struct {
-	repo   *Repository
-	logger *slog.Logger
-	mu     sync.Mutex
+	repo           *Repository
+	logger         *slog.Logger
+	muTransfigure  sync.Mutex
+	muFont         sync.Mutex
+	muQuality      sync.Mutex
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
@@ -25,8 +27,8 @@ func NewAnalyzer(repo *Repository) *Analyzer {
 // RunTransfigure fetches the latest gem snapshot and computes transfigure ROI.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunTransfigure(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.muTransfigure.Lock()
+	defer a.muTransfigure.Unlock()
 
 	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
 	if err != nil {
@@ -57,8 +59,8 @@ func (a *Analyzer) RunTransfigure(ctx context.Context) error {
 // RunFont fetches the latest gem snapshot and computes Font of Divine Skill EV.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunFont(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.muFont.Lock()
+	defer a.muFont.Unlock()
 
 	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
 	if err != nil {
@@ -89,8 +91,8 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 // RunQuality fetches the latest gem snapshot and computes quality-roll ROI.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunQuality(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.muQuality.Lock()
+	defer a.muQuality.Unlock()
 
 	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
 	if err != nil {
@@ -104,8 +106,8 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 
 	gcpPrice, err := a.repo.LatestGCPPrice(ctx)
 	if err != nil {
-		a.logger.Warn("quality: failed to load GCP price, using default", "error", err)
 		gcpPrice = 4.0
+		a.logger.Warn("quality: using default GCP price", "default", gcpPrice, "error", err)
 	}
 
 	results := AnalyzeQuality(snapTime, gems, gcpPrice)

@@ -105,7 +105,7 @@ func (r *Repository) SaveTransfigureResults(ctx context.Context, results []Trans
 }
 
 // LatestGCPPrice returns the most recent GCP (Gemcutter's Prism) price from currency_snapshots.
-// Returns 4.0 as a fallback if no data is found.
+// Returns an error when no data is available; the caller decides the fallback.
 func (r *Repository) LatestGCPPrice(ctx context.Context) (float64, error) {
 	var chaos *float64
 	err := r.pool.QueryRow(ctx, `
@@ -113,10 +113,10 @@ func (r *Repository) LatestGCPPrice(ctx context.Context) (float64, error) {
 		WHERE currency_id = 'gemcutters-prism'
 		ORDER BY time DESC LIMIT 1`).Scan(&chaos)
 	if err != nil {
-		return 4.0, fmt.Errorf("lab repo: latest GCP price: %w", err)
+		return 0, fmt.Errorf("lab repo: latest GCP price: %w", err)
 	}
 	if chaos == nil {
-		return 4.0, nil
+		return 0, fmt.Errorf("lab repo: GCP price is NULL in latest snapshot")
 	}
 	return *chaos, nil
 }

@@ -57,6 +57,16 @@ func TestPWin3Picks_ZeroTotal(t *testing.T) {
 	}
 }
 
+func TestPWin3Picks_WinnersExceedTotal(t *testing.T) {
+	p := pWin3Picks(10, 5)
+	if p < 0 || p > 1 {
+		t.Errorf("pWin3Picks(10, 5) = %f, want value in [0, 1]", p)
+	}
+	if p != 1.0 {
+		t.Errorf("pWin3Picks(10, 5) = %f, want 1.0 (all winners)", p)
+	}
+}
+
 func TestAnalyzeFont_BasicEV(t *testing.T) {
 	now := time.Now()
 	gems := []GemPrice{
@@ -144,6 +154,32 @@ func TestAnalyzeFont_EmptyInput(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0", len(results))
 	}
+}
+
+func TestAnalyzeFont_PartialVariantCoverage(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		// 3 unique RED names contribute to pool
+		{Name: "Gem A", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Gem B", Variant: "20/20", Chaos: 50, Listings: 10, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Gem C", Variant: "1", Chaos: 5, Listings: 10, IsTransfigured: true, GemColor: "RED"},
+		// Gem C has no "20/20" variant
+	}
+	results := AnalyzeFont(now, gems)
+	for _, r := range results {
+		if r.Color == "RED" && r.Variant == "20/20" {
+			// Pool should be 3 (all unique names), even though only 2 have 20/20 entries
+			if r.Pool != 3 {
+				t.Errorf("Pool = %d, want 3 (unique names across all variants)", r.Pool)
+			}
+			// pWin uses pool=3, not number of variant-specific entries
+			if r.PWin < 0 || r.PWin > 1 {
+				t.Errorf("PWin = %f, want value in [0, 1]", r.PWin)
+			}
+			return
+		}
+	}
+	t.Error("expected RED/20/20 result")
 }
 
 func TestAnalyzeFont_LowListingsNotWinners(t *testing.T) {

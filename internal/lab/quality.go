@@ -91,7 +91,11 @@ func AnalyzeQuality(snapTime time.Time, gems []GemPrice, gcpPrice float64) []Qua
 				continue
 			}
 
-			avgROI := (rois[0] + rois[1] + rois[2] + rois[3]) / 4.0
+			var roiSum float64
+		for _, r := range rois {
+			roiSum += r
+		}
+		avgROI := roiSum / float64(len(qualityTiers))
 
 			confidence := "LOW"
 			if zeroQ.listings >= 5 && fullQ.listings >= 5 {

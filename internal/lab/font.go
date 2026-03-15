@@ -21,22 +21,30 @@ type FontResult struct {
 	Threshold float64
 }
 
-// DefaultInputCosts maps gem variant to estimated input cost in chaos.
-var DefaultInputCosts = map[string]float64{
-	"1":     0.5,
-	"1/20":  1.5,
-	"20":    2.0,
-	"20/20": 3.5,
+// InputCostForVariant returns the estimated input cost in chaos for a gem variant.
+func InputCostForVariant(variant string) float64 {
+	switch variant {
+	case "1":
+		return 0.5
+	case "1/20":
+		return 1.5
+	case "20":
+		return 2.0
+	case "20/20":
+		return 3.5
+	default:
+		return 0
+	}
 }
 
 // pWin3Picks computes the probability of getting at least one winner
 // when drawing 3 gems without replacement from a pool.
 func pWin3Picks(winners, total int) float64 {
-	if total < 3 {
-		if winners > 0 {
-			return 1.0
-		}
+	if winners <= 0 {
 		return 0.0
+	}
+	if total < 3 || winners >= total {
+		return 1.0
 	}
 	losers := total - winners
 	return 1.0 - (float64(losers)/float64(total))*
@@ -85,9 +93,6 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
 
 		poolNames[color][g.Name] = struct{}{}
 
-		if byColor[color][g.Variant] == nil {
-			byColor[color][g.Variant] = nil
-		}
 		byColor[color][g.Variant] = append(byColor[color][g.Variant], priceEntry{
 			chaos:    g.Chaos,
 			listings: g.Listings,
@@ -105,7 +110,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
 		}
 
 		for _, variant := range variants {
-			inputCost := DefaultInputCosts[variant]
+			inputCost := InputCostForVariant(variant)
 			threshold := math.Max(math.Ceil(inputCost*3), 5)
 
 			entries := byColor[color][variant]
