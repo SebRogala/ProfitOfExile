@@ -14,6 +14,7 @@ type Analyzer struct {
 	muTransfigure  sync.Mutex
 	muFont         sync.Mutex
 	muQuality      sync.Mutex
+	muTrends       sync.Mutex
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
@@ -81,6 +82,45 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 	}
 
 	a.logger.Info("font analysis complete",
+		"snapTime", snapTime,
+		"results", len(results),
+		"inserted", inserted,
+	)
+	return nil
+}
+
+// RunTrends fetches the latest gem snapshot plus historical data and computes trend signals.
+// It is safe to call from multiple goroutines; concurrent runs are serialized.
+func (a *Analyzer) RunTrends(ctx context.Context) error {
+	a.muTrends.Lock()
+	defer a.muTrends.Unlock()
+
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	if err != nil {
+		a.logger.Error("trends: failed to load gem prices", "error", err)
+		return err
+	}
+	if len(gems) == 0 {
+		a.logger.Info("trends: no gem snapshots available yet, skipping")
+		return nil
+	}
+
+	// Fetch 7 days of history (168 hours) for CV and historical position.
+	history, err := a.repo.GemPriceHistoryByVariant(ctx, "", 168)
+	if err != nil {
+		a.logger.Error("trends: failed to load gem price history", "error", err)
+		return err
+	}
+
+	results := AnalyzeTrends(snapTime, gems, history)
+
+	inserted, err := a.repo.SaveTrendResults(ctx, results)
+	if err != nil {
+		a.logger.Error("trends: failed to save results", "error", err)
+		return err
+	}
+
+	a.logger.Info("trend analysis complete",
 		"snapTime", snapTime,
 		"results", len(results),
 		"inserted", inserted,
