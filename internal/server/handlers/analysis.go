@@ -280,6 +280,10 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			AdvancedSignal    string  `json:"advancedSignal"`
 			PriceTier         string  `json:"priceTier"`
 			TierAction        string  `json:"tierAction"`
+			SellUrgency       string  `json:"sellUrgency"`
+			SellReason        string  `json:"sellReason"`
+			Sellability       int     `json:"sellability"`
+			SellabilityLabel  string  `json:"sellabilityLabel"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -307,6 +311,10 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				AdvancedSignal:    r.AdvancedSignal,
 				PriceTier:         r.PriceTier,
 				TierAction:        r.TierAction,
+				SellUrgency:       r.SellUrgency,
+				SellReason:        r.SellReason,
+				Sellability:       r.Sellability,
+				SellabilityLabel:  r.SellabilityLabel,
 			})
 		}
 
