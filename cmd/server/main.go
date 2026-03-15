@@ -139,7 +139,8 @@ func main() {
 		defer subCancel()
 
 		topics := []string{"poe/collector/gems", "poe/collector/currency", "poe/collector/fragments"}
-		sub := server.NewMercureSubscriber(mercureURL, topics, func(ev server.MercureEvent) {
+		mercureSubKey := os.Getenv("MERCURE_SUBSCRIBER_KEY")
+		sub := server.NewMercureSubscriber(mercureURL, topics, mercureSubKey, func(ev server.MercureEvent) {
 			var payload map[string]any
 			if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
 				slog.Warn("mercure: invalid event payload", "error", err)
