@@ -21,6 +21,10 @@ type Throttler struct {
 	timer         *time.Timer
 	logger        *slog.Logger
 
+	// lastNextFetch tracks the earliest nextFetch across all signaled endpoints.
+	// Reset on each publish so the next batch starts fresh.
+	lastNextFetch time.Time
+
 	// publishFn is the function used to publish Mercure events. Defaults to
 	// collector.PublishMercureEvent but can be overridden in tests.
 	publishFn func(ctx context.Context, mercureURL, secret, topic, payload string) error
@@ -42,7 +46,10 @@ func NewThrottler(mercureURL, mercureSecret string, debounce time.Duration) *Thr
 // Signal is called by analyzers when they complete. It resets the debounce
 // timer. After the debounce period with no new signals, it publishes a single
 // Mercure event on topic "poe/analysis/updated".
-func (t *Throttler) Signal() {
+// An optional nextFetch time can be provided (from the collector event payload);
+// the throttler tracks the earliest one and includes it as "nextAny" in the
+// published payload.
+func (t *Throttler) Signal(nextFetch ...time.Time) {
 	if t == nil {
 		return
 	}
@@ -52,6 +59,13 @@ func (t *Throttler) Signal() {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// Track the earliest nextFetch across all signals in this batch.
+	if len(nextFetch) > 0 && !nextFetch[0].IsZero() {
+		if t.lastNextFetch.IsZero() || nextFetch[0].Before(t.lastNextFetch) {
+			t.lastNextFetch = nextFetch[0]
+		}
+	}
 
 	if t.timer != nil {
 		t.timer.Stop()
@@ -71,10 +85,20 @@ func (t *Throttler) Signal() {
 // It accesses mercureURL, mercureSecret, logger, and publishFn without locking —
 // these fields MUST be set only during construction and never mutated afterward.
 func (t *Throttler) publish() {
-	payload, err := json.Marshal(map[string]string{
+	t.mu.Lock()
+	nextAny := t.lastNextFetch
+	t.lastNextFetch = time.Time{} // reset for next batch
+	t.mu.Unlock()
+
+	data := map[string]string{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"type":      "analysis-batch",
-	})
+	}
+	if !nextAny.IsZero() {
+		data["nextAny"] = nextAny.UTC().Format(time.RFC3339)
+	}
+
+	payload, err := json.Marshal(data)
 	if err != nil {
 		t.logger.Error("throttler: failed to marshal payload", "error", err)
 		return

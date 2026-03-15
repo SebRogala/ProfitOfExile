@@ -390,6 +390,7 @@ func QualityAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			ROI6       float64 `json:"roi6"`
 			ROI10      float64 `json:"roi10"`
 			ROI15      float64 `json:"roi15"`
+			ROI20      float64 `json:"roi20"`
 			AvgROI     float64 `json:"avgRoi"`
 			GCPPrice   float64 `json:"gcpPrice"`
 			Listings0  int     `json:"listings0"`
@@ -410,6 +411,7 @@ func QualityAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				ROI6:       r.ROI6,
 				ROI10:      r.ROI10,
 				ROI15:      r.ROI15,
+				ROI20:      r.ROI20,
 				AvgROI:     r.AvgROI,
 				GCPPrice:   r.GCPPrice,
 				Listings0:  r.Listings0,
