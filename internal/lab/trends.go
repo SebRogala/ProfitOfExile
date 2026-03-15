@@ -31,7 +31,7 @@ type TrendResult struct {
 	WindowSignal      string  // CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED
 
 	// Advanced signals (coexist with primary Signal)
-	AdvancedSignal string // PRICE_MANIPULATION, ROTATION_CANDIDATE, UNDERVALUED, or "" (none)
+	AdvancedSignal string // PRICE_MANIPULATION, COMEBACK, POTENTIAL, or "" (none)
 }
 
 // GemPriceHistory contains time-series data for a single gem.
@@ -365,16 +365,16 @@ func detectUndervalued(currentPrice float64, currentListings int, priceVelocity,
 }
 
 // classifyAdvancedSignal determines the advanced signal for a gem.
-// Priority: PRICE_MANIPULATION > ROTATION_CANDIDATE > UNDERVALUED.
+// Priority: PRICE_MANIPULATION > COMEBACK > POTENTIAL.
 func classifyAdvancedSignal(currentPrice float64, currentListings int, priceVelocity, listingVelocity, cv, histPosition float64) string {
 	if detectPriceManipulation(currentListings, currentPrice, priceVelocity, cv) {
 		return "PRICE_MANIPULATION"
 	}
 	if detectRotationCandidate(histPosition, priceVelocity, listingVelocity) {
-		return "ROTATION_CANDIDATE"
+		return "COMEBACK"
 	}
 	if detectUndervalued(currentPrice, currentListings, priceVelocity, histPosition) {
-		return "UNDERVALUED"
+		return "POTENTIAL"
 	}
 	return ""
 }
