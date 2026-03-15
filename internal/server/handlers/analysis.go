@@ -515,9 +515,16 @@ func SignalHistory(repo *lab.Repository) http.HandlerFunc {
 		limit := 4
 		if v := r.URL.Query().Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
-			if err == nil && n >= 1 && n <= 20 {
-				limit = n
+			if err != nil || n < 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer (max 20)"})
+				return
 			}
+			if n > 20 {
+				n = 20
+			}
+			limit = n
 		}
 
 		changes, err := repo.SignalHistory(r.Context(), name, variant, limit)
