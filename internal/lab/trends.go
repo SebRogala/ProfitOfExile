@@ -21,6 +21,14 @@ type TrendResult struct {
 	HistPosition    float64 // 0-100 percentile vs 7-day range
 	PriceHigh7d     float64
 	PriceLow7d      float64
+
+	// Base-side signals
+	BaseListings      int     // current base gem listings
+	BaseVelocity      float64 // base listing change per hour
+	RelativeLiquidity float64 // gem's base listings / market avg (0.0-N, where 1.0 = average)
+	LiquidityTier     string  // LOW, MED, HIGH (derived from RelativeLiquidity)
+	WindowScore       float64 // 0-100 composite score for farming opportunity
+	WindowSignal      string  // CLOSED, OPENING, OPEN, CLOSING
 }
 
 // GemPriceHistory contains time-series data for a single gem.
@@ -45,13 +53,29 @@ var analysisVariants = map[string]bool{
 
 // AnalyzeTrends computes trend signals for all transfigured gems.
 // current provides the latest snapshot; history provides time-series data per gem.
-func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHistory) []TrendResult {
+// baseHistory maps baseName → []PricePoint for non-transfigured gems.
+// marketAvgBaseLst is the market-wide average base listings (denominator for relative liquidity).
+func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHistory,
+	baseHistory map[string][]PricePoint, marketAvgBaseLst float64) []TrendResult {
+
 	// Index history by (name, variant) for fast lookup.
 	type histKey struct{ name, variant string }
 	histIndex := make(map[histKey]*GemPriceHistory, len(history))
 	for i := range history {
 		h := &history[i]
 		histIndex[histKey{h.Name, h.Variant}] = h
+	}
+
+	// Index current base gem listings by name for quick lookup.
+	baseCurrentListings := make(map[string]int)
+	for _, g := range current {
+		if g.IsCorrupted || g.IsTransfigured {
+			continue
+		}
+		// Keep the highest listing count per base name across variants.
+		if g.Listings > baseCurrentListings[g.Name] {
+			baseCurrentListings[g.Name] = g.Listings
+		}
 	}
 
 	var results []TrendResult
@@ -95,24 +119,106 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 
 		signal := classifySignal(priceVel, listingVel, cv)
 
+		// Base-side signals.
+		baseName := extractBaseName(g.Name)
+		baseLst := baseCurrentListings[baseName]
+		var baseVel float64
+		if bp, ok := baseHistory[baseName]; ok && len(bp) >= 2 {
+			baseVel = velocity(bp, func(p PricePoint) float64 { return float64(p.Listings) })
+		}
+
+		relLiq := computeRelativeLiquidity(float64(baseLst), marketAvgBaseLst)
+		liqTier := liquidityTier(relLiq)
+		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
+		winSignal := classifyWindowSignal(winScore, baseVel, listingVel)
+
 		results = append(results, TrendResult{
-			Time:            snapTime,
-			Name:            g.Name,
-			Variant:         g.Variant,
-			GemColor:        g.GemColor,
-			CurrentPrice:    g.Chaos,
-			CurrentListings: g.Listings,
-			PriceVelocity:   sanitizeFloat(priceVel),
-			ListingVelocity: sanitizeFloat(listingVel),
-			CV:              cv,
-			Signal:          signal,
-			HistPosition:    sanitizeFloat(histPos),
-			PriceHigh7d:     high7d,
-			PriceLow7d:      low7d,
+			Time:              snapTime,
+			Name:              g.Name,
+			Variant:           g.Variant,
+			GemColor:          g.GemColor,
+			CurrentPrice:      g.Chaos,
+			CurrentListings:   g.Listings,
+			PriceVelocity:     sanitizeFloat(priceVel),
+			ListingVelocity:   sanitizeFloat(listingVel),
+			CV:                cv,
+			Signal:            signal,
+			HistPosition:      sanitizeFloat(histPos),
+			PriceHigh7d:       high7d,
+			PriceLow7d:        low7d,
+			BaseListings:      baseLst,
+			BaseVelocity:      sanitizeFloat(baseVel),
+			RelativeLiquidity: sanitizeFloat(relLiq),
+			LiquidityTier:     liqTier,
+			WindowScore:       sanitizeFloat(winScore),
+			WindowSignal:      winSignal,
 		})
 	}
 
 	return results
+}
+
+// computeRelativeLiquidity returns the gem's base listings relative to the market average.
+// Returns 1.0 (average) when market data is unavailable.
+func computeRelativeLiquidity(gemBaseListings, marketAvgBaseListings float64) float64 {
+	if marketAvgBaseListings <= 0 {
+		return 1.0
+	}
+	return gemBaseListings / marketAvgBaseListings
+}
+
+// liquidityTier classifies relative liquidity into LOW, MED, or HIGH.
+// Thresholds are relative to the market average — no hardcoded listing counts.
+func liquidityTier(relativeLiquidity float64) string {
+	if relativeLiquidity < 0.3 {
+		return "LOW"
+	}
+	if relativeLiquidity < 0.8 {
+		return "MED"
+	}
+	return "HIGH"
+}
+
+// computeWindowScore produces a 0-100 composite score for farming opportunity.
+// All inputs are relative — the score auto-adjusts for league phase, time of day, etc.
+func computeWindowScore(roi, baseVelocity, transListings, relativeLiquidity float64) float64 {
+	score := 0.0
+
+	// High ROI contributes (capped contribution).
+	if roi > 0 {
+		score += math.Min(roi/10, 30) // max 30 points from ROI
+	}
+
+	// Base draining (negative velocity = draining = good for window).
+	if baseVelocity < 0 {
+		score += math.Min(math.Abs(baseVelocity)*5, 25) // max 25 points
+	}
+
+	// Low trans listings (less competition).
+	if transListings < 30 {
+		score += 30 - transListings // max 30 points
+	}
+
+	// Low relative liquidity = window closes faster (urgency bonus).
+	if relativeLiquidity < 0.5 {
+		score += 15
+	}
+
+	return math.Min(score, 100)
+}
+
+// classifyWindowSignal determines the window state from score and velocities.
+func classifyWindowSignal(windowScore, baseVelocity, transListingVelocity float64) string {
+	if windowScore >= 70 && baseVelocity < -2 {
+		return "OPEN"
+	}
+	if windowScore >= 50 && baseVelocity < 0 {
+		return "OPENING"
+	}
+	if windowScore >= 50 && transListingVelocity > 3 {
+		return "CLOSING"
+	}
+	return "CLOSED"
 }
 
 // coefficientOfVariation computes stdev/|mean| * 100 for a slice of prices.

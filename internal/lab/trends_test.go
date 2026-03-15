@@ -302,7 +302,7 @@ func TestAnalyzeTrends_BasicSignals(t *testing.T) {
 		},
 	}
 
-	results := AnalyzeTrends(now, current, history)
+	results := AnalyzeTrends(now, current, history, nil, 0)
 
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2 (filtered out corrupted, non-trans, Trarthus, cheap)", len(results))
@@ -346,7 +346,7 @@ func TestAnalyzeTrends_NoHistory(t *testing.T) {
 		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
-	results := AnalyzeTrends(now, current, nil)
+	results := AnalyzeTrends(now, current, nil, nil, 0)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -375,7 +375,7 @@ func TestAnalyzeTrends_ExcludesInvalidVariants(t *testing.T) {
 		{Name: "Spark of Nova", Variant: "5/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
-	results := AnalyzeTrends(now, current, nil)
+	results := AnalyzeTrends(now, current, nil, nil, 0)
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0 (invalid variant excluded)", len(results))
 	}
@@ -409,8 +409,235 @@ func TestCoefficientOfVariation_NegativeMean(t *testing.T) {
 }
 
 func TestAnalyzeTrends_EmptyInput(t *testing.T) {
-	results := AnalyzeTrends(time.Now(), nil, nil)
+	results := AnalyzeTrends(time.Now(), nil, nil, nil, 0)
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0", len(results))
+	}
+}
+
+func TestComputeRelativeLiquidity(t *testing.T) {
+	tests := []struct {
+		name     string
+		gem, avg float64
+		want     float64
+	}{
+		{"average gem", 100, 100, 1.0},
+		{"low gem", 30, 100, 0.3},
+		{"high gem", 200, 100, 2.0},
+		{"zero avg defaults to 1.0", 50, 0, 1.0},
+		{"negative avg defaults to 1.0", 50, -10, 1.0},
+		{"zero listings", 0, 100, 0.0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeRelativeLiquidity(tt.gem, tt.avg)
+			if math.Abs(got-tt.want) > 0.001 {
+				t.Errorf("computeRelativeLiquidity(%v, %v) = %f, want %f", tt.gem, tt.avg, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLiquidityTier(t *testing.T) {
+	tests := []struct {
+		relLiq float64
+		want   string
+	}{
+		{0.0, "LOW"},
+		{0.1, "LOW"},
+		{0.29, "LOW"},
+		{0.3, "MED"},
+		{0.5, "MED"},
+		{0.79, "MED"},
+		{0.8, "HIGH"},
+		{1.0, "HIGH"},
+		{2.5, "HIGH"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got := liquidityTier(tt.relLiq)
+			if got != tt.want {
+				t.Errorf("liquidityTier(%v) = %s, want %s", tt.relLiq, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestComputeWindowScore(t *testing.T) {
+	tests := []struct {
+		name                                  string
+		roi, baseVel, transLst, relLiq        float64
+		wantMin, wantMax                      float64
+	}{
+		// High ROI + draining base + low trans + low liquidity = high score
+		{"ideal window", 300, -5, 10, 0.2, 80, 100},
+		// Zero ROI, no drain, high listings, high liquidity
+		{"no opportunity", 0, 0, 50, 1.5, 0, 5},
+		// Only ROI contributes
+		{"roi only", 200, 0, 50, 1.0, 15, 25},
+		// Base draining only
+		{"drain only", 0, -3, 50, 1.0, 10, 20},
+		// Low trans listings only
+		{"low trans only", 0, 0, 10, 1.0, 15, 25},
+		// Low liquidity urgency only
+		{"urgency only", 0, 0, 50, 0.3, 10, 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := computeWindowScore(tt.roi, tt.baseVel, tt.transLst, tt.relLiq)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("computeWindowScore(%v, %v, %v, %v) = %f, want [%f, %f]",
+					tt.roi, tt.baseVel, tt.transLst, tt.relLiq, got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
+func TestComputeWindowScore_Capped(t *testing.T) {
+	// Even with extreme inputs, score should never exceed 100.
+	got := computeWindowScore(10000, -100, 0, 0)
+	if got > 100 {
+		t.Errorf("computeWindowScore with extreme inputs = %f, want <= 100", got)
+	}
+}
+
+func TestClassifyWindowSignal(t *testing.T) {
+	tests := []struct {
+		name                        string
+		score, baseVel, transListVel float64
+		want                        string
+	}{
+		{"OPEN: high score + draining", 75, -3, 0, "OPEN"},
+		{"OPENING: mid score + slight drain", 55, -1, 0, "OPENING"},
+		{"CLOSING: mid score + herd arriving", 55, 0, 5, "CLOSING"},
+		{"CLOSED: low score", 30, -5, 0, "CLOSED"},
+		{"CLOSED: score 50 but no drain and no herd", 50, 0, 0, "CLOSED"},
+		// Edge: score exactly 70, baseVel exactly -2 → not OPEN (needs < -2)
+		{"boundary: score=70 baseVel=-2 not OPEN", 70, -2, 0, "OPENING"},
+		{"boundary: score=70 baseVel=-2.01 is OPEN", 70, -2.01, 0, "OPEN"},
+		// CLOSING takes priority over OPENING when both match
+		{"CLOSING over OPENING", 55, -1, 5, "OPENING"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyWindowSignal(tt.score, tt.baseVel, tt.transListVel)
+			if got != tt.want {
+				t.Errorf("classifyWindowSignal(%v, %v, %v) = %s, want %s",
+					tt.score, tt.baseVel, tt.transListVel, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeTrends_BaseSignals(t *testing.T) {
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	t0 := now.Add(-90 * time.Minute)
+
+	current := []GemPrice{
+		// Transfigured gem
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 300, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		// Its base gem
+		{Name: "Spark", Variant: "20/20", Chaos: 50, Listings: 30, IsTransfigured: false, GemColor: "BLUE"},
+	}
+
+	history := []GemPriceHistory{
+		{
+			Name: "Spark of Nova", Variant: "20/20", GemColor: "BLUE",
+			Points: []PricePoint{
+				{Time: t0, Chaos: 280, Listings: 12},
+				{Time: t0.Add(30 * time.Minute), Chaos: 290, Listings: 11},
+				{Time: t0.Add(60 * time.Minute), Chaos: 295, Listings: 10},
+				{Time: t0.Add(90 * time.Minute), Chaos: 300, Listings: 10},
+			},
+		},
+	}
+
+	baseHistory := map[string][]PricePoint{
+		"Spark": {
+			{Time: t0, Chaos: 50, Listings: 60},
+			{Time: t0.Add(30 * time.Minute), Chaos: 55, Listings: 50},
+			{Time: t0.Add(60 * time.Minute), Chaos: 58, Listings: 40},
+			{Time: t0.Add(90 * time.Minute), Chaos: 60, Listings: 30},
+		},
+	}
+
+	// Market average = 100 listings. Spark at 30 = 0.3 relative → MED (just at boundary).
+	results := AnalyzeTrends(now, current, history, baseHistory, 100)
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if r.BaseListings != 30 {
+		t.Errorf("BaseListings = %d, want 30", r.BaseListings)
+	}
+	// Base velocity: (30-60)/1.5h = -20/h
+	if r.BaseVelocity > -15 {
+		t.Errorf("BaseVelocity = %f, want < -15 (draining)", r.BaseVelocity)
+	}
+	if math.Abs(r.RelativeLiquidity-0.3) > 0.01 {
+		t.Errorf("RelativeLiquidity = %f, want 0.3", r.RelativeLiquidity)
+	}
+	if r.LiquidityTier != "MED" {
+		t.Errorf("LiquidityTier = %s, want MED", r.LiquidityTier)
+	}
+	if r.WindowScore <= 0 {
+		t.Errorf("WindowScore = %f, want > 0", r.WindowScore)
+	}
+	if r.WindowSignal == "" {
+		t.Error("WindowSignal should not be empty")
+	}
+}
+
+func TestAnalyzeTrends_BaseNotFound(t *testing.T) {
+	now := time.Now()
+	current := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	// No base history provided.
+	results := AnalyzeTrends(now, current, nil, nil, 100)
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if r.BaseListings != 0 {
+		t.Errorf("BaseListings = %d, want 0 (no base found)", r.BaseListings)
+	}
+	if r.BaseVelocity != 0 {
+		t.Errorf("BaseVelocity = %f, want 0 (no base history)", r.BaseVelocity)
+	}
+	// With marketAvg=100 and gem at 0, relLiq = 0 → LOW.
+	if r.LiquidityTier != "LOW" {
+		t.Errorf("LiquidityTier = %s, want LOW (no base data)", r.LiquidityTier)
+	}
+	if r.WindowSignal != "CLOSED" && r.WindowSignal != "OPENING" && r.WindowSignal != "OPEN" && r.WindowSignal != "CLOSING" {
+		t.Errorf("WindowSignal = %s, want valid signal", r.WindowSignal)
+	}
+}
+
+func TestAnalyzeTrends_ZeroMarketAvg(t *testing.T) {
+	now := time.Now()
+	current := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Spark", Variant: "20/20", Chaos: 50, Listings: 30, IsTransfigured: false, GemColor: "BLUE"},
+	}
+
+	// marketAvg = 0 → relative liquidity defaults to 1.0 → HIGH.
+	results := AnalyzeTrends(now, current, nil, nil, 0)
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if math.Abs(r.RelativeLiquidity-1.0) > 0.001 {
+		t.Errorf("RelativeLiquidity = %f, want 1.0 (default when marketAvg=0)", r.RelativeLiquidity)
+	}
+	if r.LiquidityTier != "HIGH" {
+		t.Errorf("LiquidityTier = %s, want HIGH (default when marketAvg=0)", r.LiquidityTier)
 	}
 }

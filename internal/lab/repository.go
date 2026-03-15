@@ -297,6 +297,85 @@ func (r *Repository) LatestQualityResults(ctx context.Context, variant string, l
 	return results, nil
 }
 
+// BasePriceHistory returns time-series data for base (non-transfigured, non-corrupted) gems
+// within the given number of hours. Returns a map of baseName → []PricePoint.
+// Only includes analysis variants and excludes Trarthus.
+func (r *Repository) BasePriceHistory(ctx context.Context, variant string, hours int) (map[string][]PricePoint, error) {
+	query := `
+		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
+		FROM gem_snapshots
+		WHERE time > NOW() - make_interval(hours => $1)
+		  AND is_transfigured = false
+		  AND is_corrupted = false
+		  AND name NOT LIKE '%Trarthus%'
+		  AND variant = ANY($2)`
+	args := []any{hours, []string{"1", "1/20", "20", "20/20"}}
+
+	if variant != "" {
+		query += ` AND variant = $3`
+		args = append(args, variant)
+	}
+
+	query += ` ORDER BY name, time ASC LIMIT 500000`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query base price history: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]PricePoint)
+	for rows.Next() {
+		var name string
+		var t time.Time
+		var chaos float64
+		var listings int
+		if err := rows.Scan(&name, &t, &chaos, &listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan base price history: %w", err)
+		}
+		result[name] = append(result[name], PricePoint{Time: t, Chaos: chaos, Listings: listings})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: base price history rows: %w", err)
+	}
+
+	return result, nil
+}
+
+// MarketAvgBaseListings computes the average listings across all base gems at the latest snapshot.
+// This is the denominator for relative liquidity — it naturally adjusts for weekend/weekday,
+// league phase, and time of day.
+func (r *Repository) MarketAvgBaseListings(ctx context.Context, variant string) (float64, error) {
+	query := `
+		SELECT COALESCE(AVG(COALESCE(listings, 0)), 0)
+		FROM gem_snapshots
+		WHERE time = (SELECT MAX(time) FROM gem_snapshots)
+		  AND is_transfigured = false
+		  AND is_corrupted = false
+		  AND name NOT LIKE '%Trarthus%'
+		  AND variant = ANY($1)`
+	args := []any{[]string{"1", "1/20", "20", "20/20"}}
+
+	if variant != "" {
+		query = `
+		SELECT COALESCE(AVG(COALESCE(listings, 0)), 0)
+		FROM gem_snapshots
+		WHERE time = (SELECT MAX(time) FROM gem_snapshots)
+		  AND is_transfigured = false
+		  AND is_corrupted = false
+		  AND name NOT LIKE '%Trarthus%'
+		  AND variant = $1`
+		args = []any{variant}
+	}
+
+	var avg float64
+	err := r.pool.QueryRow(ctx, query, args...).Scan(&avg)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: market avg base listings: %w", err)
+	}
+	return avg, nil
+}
+
 // GemPriceHistoryByVariant returns time-series gem data for transfigured, non-corrupted gems
 // within the given number of hours, grouped by (name, variant).
 // Only includes variants "1", "1/20", "20", "20/20", chaos > 5, and excludes Trarthus.
@@ -376,12 +455,17 @@ func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult
 			`INSERT INTO trend_results
 			 (time, name, variant, gem_color, current_price, current_listings,
 			  price_velocity, listing_velocity, cv, signal, hist_position,
-			  price_high_7d, price_low_7d)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			  price_high_7d, price_low_7d,
+			  base_listings, base_velocity, relative_liquidity, liquidity_tier,
+			  window_score, window_signal)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+			         $14, $15, $16, $17, $18, $19)
 			 ON CONFLICT DO NOTHING`,
 			r.Time, r.Name, r.Variant, r.GemColor, r.CurrentPrice, r.CurrentListings,
 			r.PriceVelocity, r.ListingVelocity, r.CV, r.Signal, r.HistPosition,
 			r.PriceHigh7d, r.PriceLow7d,
+			r.BaseListings, r.BaseVelocity, r.RelativeLiquidity, r.LiquidityTier,
+			r.WindowScore, r.WindowSignal,
 		)
 	}
 
@@ -406,12 +490,14 @@ func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult
 	return inserted, nil
 }
 
-// LatestTrendResults returns the most recent trend results, optionally filtered by variant and/or signal.
-func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal string, limit int) ([]TrendResult, error) {
+// LatestTrendResults returns the most recent trend results, optionally filtered by variant, signal, and/or window.
+func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, window string, limit int) ([]TrendResult, error) {
 	query := `
 		SELECT time, name, variant, gem_color, current_price, current_listings,
 		       price_velocity, listing_velocity, cv, signal, hist_position,
-		       price_high_7d, price_low_7d
+		       price_high_7d, price_low_7d,
+		       base_listings, base_velocity, relative_liquidity, liquidity_tier,
+		       window_score, window_signal
 		FROM trend_results
 		WHERE time = (SELECT MAX(time) FROM trend_results)`
 	args := []any{}
@@ -425,6 +511,11 @@ func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal str
 	if signal != "" {
 		query += fmt.Sprintf(` AND signal = $%d`, argIdx)
 		args = append(args, signal)
+		argIdx++
+	}
+	if window != "" {
+		query += fmt.Sprintf(` AND window_signal = $%d`, argIdx)
+		args = append(args, window)
 		argIdx++
 	}
 
@@ -443,7 +534,9 @@ func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal str
 		if err := rows.Scan(&tr.Time, &tr.Name, &tr.Variant, &tr.GemColor,
 			&tr.CurrentPrice, &tr.CurrentListings,
 			&tr.PriceVelocity, &tr.ListingVelocity, &tr.CV, &tr.Signal, &tr.HistPosition,
-			&tr.PriceHigh7d, &tr.PriceLow7d); err != nil {
+			&tr.PriceHigh7d, &tr.PriceLow7d,
+			&tr.BaseListings, &tr.BaseVelocity, &tr.RelativeLiquidity, &tr.LiquidityTier,
+			&tr.WindowScore, &tr.WindowSignal); err != nil {
 			return nil, fmt.Errorf("lab repo: scan trend result: %w", err)
 		}
 		results = append(results, tr)

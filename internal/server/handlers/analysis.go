@@ -228,6 +228,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := r.URL.Query().Get("variant")
 		signal := r.URL.Query().Get("signal")
+		window := r.URL.Query().Get("window")
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -239,14 +240,14 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		// Fast path: serve from cache.
 		if cache != nil {
 			if cached := cache.Trends(); len(cached) > 0 {
-				results = filterTrends(cached, variant, signal, limit)
+				results = filterTrends(cached, variant, signal, window, limit)
 			}
 		}
 
 		// Slow path: fall back to DB query.
 		if results == nil {
 			var err error
-			results, err = repo.LatestTrendResults(r.Context(), variant, signal, limit)
+			results, err = repo.LatestTrendResults(r.Context(), variant, signal, window, limit)
 			if err != nil {
 				slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -255,37 +256,49 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		}
 
 		type row struct {
-			Time            string  `json:"time"`
-			Name            string  `json:"name"`
-			Variant         string  `json:"variant"`
-			GemColor        string  `json:"gemColor"`
-			CurrentPrice    float64 `json:"currentPrice"`
-			CurrentListings int     `json:"currentListings"`
-			PriceVelocity   float64 `json:"priceVelocity"`
-			ListingVelocity float64 `json:"listingVelocity"`
-			CV              float64 `json:"cv"`
-			Signal          string  `json:"signal"`
-			HistPosition    float64 `json:"histPosition"`
-			PriceHigh7d     float64 `json:"priceHigh7d"`
-			PriceLow7d      float64 `json:"priceLow7d"`
+			Time              string  `json:"time"`
+			Name              string  `json:"name"`
+			Variant           string  `json:"variant"`
+			GemColor          string  `json:"gemColor"`
+			CurrentPrice      float64 `json:"currentPrice"`
+			CurrentListings   int     `json:"currentListings"`
+			PriceVelocity     float64 `json:"priceVelocity"`
+			ListingVelocity   float64 `json:"listingVelocity"`
+			CV                float64 `json:"cv"`
+			Signal            string  `json:"signal"`
+			HistPosition      float64 `json:"histPosition"`
+			PriceHigh7d       float64 `json:"priceHigh7d"`
+			PriceLow7d        float64 `json:"priceLow7d"`
+			BaseListings      int     `json:"baseListings"`
+			BaseVelocity      float64 `json:"baseVelocity"`
+			RelativeLiquidity float64 `json:"relativeLiquidity"`
+			LiquidityTier     string  `json:"liquidityTier"`
+			WindowScore       float64 `json:"windowScore"`
+			WindowSignal      string  `json:"windowSignal"`
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, r := range results {
 			rows = append(rows, row{
-				Time:            r.Time.UTC().Format(time.RFC3339),
-				Name:            r.Name,
-				Variant:         r.Variant,
-				GemColor:        r.GemColor,
-				CurrentPrice:    r.CurrentPrice,
-				CurrentListings: r.CurrentListings,
-				PriceVelocity:   r.PriceVelocity,
-				ListingVelocity: r.ListingVelocity,
-				CV:              r.CV,
-				Signal:          r.Signal,
-				HistPosition:    r.HistPosition,
-				PriceHigh7d:     r.PriceHigh7d,
-				PriceLow7d:      r.PriceLow7d,
+				Time:              r.Time.UTC().Format(time.RFC3339),
+				Name:              r.Name,
+				Variant:           r.Variant,
+				GemColor:          r.GemColor,
+				CurrentPrice:      r.CurrentPrice,
+				CurrentListings:   r.CurrentListings,
+				PriceVelocity:     r.PriceVelocity,
+				ListingVelocity:   r.ListingVelocity,
+				CV:                r.CV,
+				Signal:            r.Signal,
+				HistPosition:      r.HistPosition,
+				PriceHigh7d:       r.PriceHigh7d,
+				PriceLow7d:        r.PriceLow7d,
+				BaseListings:      r.BaseListings,
+				BaseVelocity:      r.BaseVelocity,
+				RelativeLiquidity: r.RelativeLiquidity,
+				LiquidityTier:     r.LiquidityTier,
+				WindowScore:       r.WindowScore,
+				WindowSignal:      r.WindowSignal,
 			})
 		}
 
@@ -301,13 +314,16 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 // filterTrends filters and limits cached trend results.
 // Results are sorted by CV descending, then current price descending (matching the DB query order).
-func filterTrends(all []lab.TrendResult, variant, signal string, limit int) []lab.TrendResult {
+func filterTrends(all []lab.TrendResult, variant, signal, window string, limit int) []lab.TrendResult {
 	var filtered []lab.TrendResult
 	for _, r := range all {
 		if variant != "" && r.Variant != variant {
 			continue
 		}
 		if signal != "" && r.Signal != signal {
+			continue
+		}
+		if window != "" && r.WindowSignal != window {
 			continue
 		}
 		filtered = append(filtered, r)
