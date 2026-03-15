@@ -42,7 +42,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	defer ctxCancel()
 
 	pool, err := db.NewPool(ctx, databaseURL)
 	if err != nil {
