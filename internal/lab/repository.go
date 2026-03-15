@@ -493,3 +493,83 @@ func (r *Repository) LatestTransfigureResults(ctx context.Context, variant strin
 
 	return results, nil
 }
+
+// SparklineData returns raw price points for specific transfigured gems over the given hours.
+// Used for sparkline charts in the gem comparator.
+func (r *Repository) SparklineData(ctx context.Context, names []string, variant string, hours int) (map[string][]SparklinePoint, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
+		FROM gem_snapshots
+		WHERE name = ANY($1) AND is_corrupted = false
+		  AND time > NOW() - make_interval(hours => $2)`
+	args := []any{names, hours}
+
+	if variant != "" {
+		query += ` AND variant = $3`
+		args = append(args, variant)
+	}
+
+	query += ` ORDER BY name, time ASC`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query sparkline data: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]SparklinePoint)
+	for rows.Next() {
+		var name string
+		var t time.Time
+		var chaos float64
+		var listings int
+		if err := rows.Scan(&name, &t, &chaos, &listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan sparkline point: %w", err)
+		}
+		result[name] = append(result[name], SparklinePoint{
+			Time:     t.UTC().Format(time.RFC3339),
+			Price:    chaos,
+			Listings: listings,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: sparkline rows iteration: %w", err)
+	}
+
+	return result, nil
+}
+
+// GemNamesAutocomplete returns distinct transfigured gem names matching the query prefix.
+func (r *Repository) GemNamesAutocomplete(ctx context.Context, query string, limit int) ([]string, error) {
+	if query == "" {
+		return nil, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT name FROM gem_snapshots
+		WHERE is_transfigured = true AND name ILIKE $1
+		ORDER BY name LIMIT $2`,
+		query+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem names autocomplete: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem name: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem names rows iteration: %w", err)
+	}
+
+	return names, nil
+}
