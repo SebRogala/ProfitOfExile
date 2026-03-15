@@ -94,7 +94,9 @@ func main() {
 				slog.Error("transfigure analysis panicked on startup", "recover", r)
 			}
 		}()
-		analyzer.RunTransfigure(ctx)
+		if err := analyzer.RunTransfigure(ctx); err != nil {
+			slog.Warn("startup transfigure analysis failed (non-fatal)", "error", err)
+		}
 	}()
 	go func() {
 		defer func() {
@@ -102,7 +104,9 @@ func main() {
 				slog.Error("font analysis panicked on startup", "recover", r)
 			}
 		}()
-		analyzer.RunFont(ctx)
+		if err := analyzer.RunFont(ctx); err != nil {
+			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
+		}
 	}()
 	go func() {
 		defer func() {
@@ -110,7 +114,9 @@ func main() {
 				slog.Error("quality analysis panicked on startup", "recover", r)
 			}
 		}()
-		analyzer.RunQuality(ctx)
+		if err := analyzer.RunQuality(ctx); err != nil {
+			slog.Warn("startup quality analysis failed (non-fatal)", "error", err)
+		}
 	}()
 
 	// Start Mercure subscriber in background if configured.
@@ -144,7 +150,9 @@ func main() {
 							slog.Error("transfigure analysis panicked", "recover", r)
 						}
 					}()
-					analyzer.RunTransfigure(subCtx)
+					if err := analyzer.RunTransfigure(subCtx); err != nil {
+						slog.Warn("transfigure analysis failed", "error", err)
+					}
 				}()
 				go func() {
 					defer func() {
@@ -152,7 +160,9 @@ func main() {
 							slog.Error("font analysis panicked", "recover", r)
 						}
 					}()
-					analyzer.RunFont(subCtx)
+					if err := analyzer.RunFont(subCtx); err != nil {
+						slog.Warn("font analysis failed", "error", err)
+					}
 				}()
 				go func() {
 					defer func() {
@@ -160,7 +170,9 @@ func main() {
 							slog.Error("quality analysis panicked", "recover", r)
 						}
 					}()
-					analyzer.RunQuality(subCtx)
+					if err := analyzer.RunQuality(subCtx); err != nil {
+						slog.Warn("quality analysis failed", "error", err)
+					}
 				}()
 			}
 		})
