@@ -37,6 +37,10 @@ type TrendResult struct {
 	// Price tier signals
 	PriceTier  string // TOP, MID, LOW — dynamic based on current market
 	TierAction string // tier-specific recommended action, empty if no special guidance
+
+	// Sell urgency (for gems you already have or are farming)
+	SellUrgency string // SELL_NOW, UNDERCUT, HOLD, WAIT — actionable sell timing
+	SellReason  string // human-readable explanation
 }
 
 // GemPriceHistory contains time-series data for a single gem.
@@ -142,6 +146,55 @@ func classifyPriceTier(price, topThreshold, midThreshold float64) string {
 		return "MID"
 	}
 	return "LOW"
+}
+
+// sellUrgency computes actionable sell timing for gems you already have.
+// Uses price velocity, listing velocity, base drain, and historical position.
+func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListings, transListings int, signal, priceTier string) (urgency, reason string) {
+	// TRAP/DUMPING = sell immediately regardless
+	if signal == "TRAP" {
+		return "SELL_NOW", "Extreme volatility — sell at any price before crash"
+	}
+	if signal == "DUMPING" {
+		return "SELL_NOW", "Price dropping with rising supply — undercut hard"
+	}
+
+	// Bases evaporating on a TOP gem = herd output coming in ~30min
+	if priceTier == "TOP" && baseListings >= 0 && baseListings < 10 && baseVel < -2 {
+		return "UNDERCUT", "Bases nearly gone — herd output arrives in ~30min, undercut 10-15% to sell fast"
+	}
+
+	// HERD on MID/LOW = the move is over, sell into the herd
+	if signal == "HERD" && (priceTier == "MID" || priceTier == "LOW") {
+		return "SELL_NOW", "Herd arrived — sell into buying pressure before price drops"
+	}
+
+	// Price near 7-day high (>80th percentile) + listings rising = peak zone
+	if histPosition > 80 && listingVel > 3 {
+		return "UNDERCUT", "Near peak — listings rising, undercut 5-10% for fast sale"
+	}
+
+	// Price rising fast + trans listings very low = you're one of few sellers, hold for peak
+	if priceVel > 10 && transListings < 15 {
+		return "HOLD", "Price surging with thin supply — hold for peak, watch for listing spike"
+	}
+
+	// Price rising moderately + stable listings = healthy, no rush
+	if priceVel > 2 && math.Abs(listingVel) < 5 {
+		return "HOLD", "Price rising steadily — no rush to sell"
+	}
+
+	// Price stable, nothing special
+	if math.Abs(priceVel) < 2 {
+		return "WAIT", "Price stable — list at market price, will sell eventually"
+	}
+
+	// Price falling but not dumping
+	if priceVel < -2 {
+		return "UNDERCUT", "Price softening — list below current to sell before further drop"
+	}
+
+	return "", ""
 }
 
 // tierAction returns the recommended action based on signal + tier combination.
@@ -279,6 +332,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		advSignal := classifyAdvancedSignal(g.Chaos, g.Listings, priceVel, listingVel, cv, histPos)
 		priceTier := classifyPriceTier(g.Chaos, topThresh, midThresh)
 		tAction := tierAction(signal, winSignal, priceTier)
+		sUrgency, sReason := sellUrgency(priceVel, listingVel, baseVel, histPos, baseLst, g.Listings, signal, priceTier)
 
 		results = append(results, TrendResult{
 			Time:              snapTime,
@@ -303,6 +357,8 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			AdvancedSignal:    advSignal,
 			PriceTier:         priceTier,
 			TierAction:        tAction,
+			SellUrgency:       sUrgency,
+			SellReason:        sReason,
 		})
 	}
 
