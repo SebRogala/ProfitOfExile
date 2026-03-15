@@ -78,7 +78,8 @@ func main() {
 	}
 
 	labRepo := lab.NewRepository(pool)
-	analyzer := lab.NewAnalyzer(labRepo)
+	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second)
+	analyzer := lab.NewAnalyzer(labRepo, throttler)
 
 	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
 		MercureURL:    mercureURL,
