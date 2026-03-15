@@ -162,3 +162,98 @@ func TestAnalyzeTransfigure_VaalGem(t *testing.T) {
 		t.Errorf("BaseName = %q, want %q", results[0].BaseName, "Vaal Spark")
 	}
 }
+
+func TestAnalyzeTransfigure_ZeroPriceBase(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "1", Chaos: 0, Listings: 50, IsTransfigured: false},
+		{Name: "Spark of Nova", Variant: "1", Chaos: 100, Listings: 20, IsTransfigured: true},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].ROI != 100 {
+		t.Errorf("ROI = %f, want 100", results[0].ROI)
+	}
+	if results[0].ROIPct != 0 {
+		t.Errorf("ROIPct = %f, want 0 (zero base price)", results[0].ROIPct)
+	}
+}
+
+func TestAnalyzeTransfigure_NegativeROI(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "20/20", Chaos: 300, Listings: 50, IsTransfigured: false},
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 20, IsTransfigured: true},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].ROI != -200 {
+		t.Errorf("ROI = %f, want -200", results[0].ROI)
+	}
+	if results[0].ROIPct > 0 {
+		t.Errorf("ROIPct = %f, want negative", results[0].ROIPct)
+	}
+}
+
+func TestAnalyzeTransfigure_EmptyInput(t *testing.T) {
+	now := time.Now()
+
+	results := AnalyzeTransfigure(now, nil)
+	if len(results) != 0 {
+		t.Errorf("nil input: got %d results, want 0", len(results))
+	}
+
+	results = AnalyzeTransfigure(now, []GemPrice{})
+	if len(results) != 0 {
+		t.Errorf("empty input: got %d results, want 0", len(results))
+	}
+}
+
+func TestAnalyzeTransfigure_UnrecognizedVariantExcluded(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "21/23", Chaos: 50, Listings: 50, IsTransfigured: false},
+		{Name: "Spark of Nova", Variant: "21/23", Chaos: 200, Listings: 20, IsTransfigured: true},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+	if len(results) != 0 {
+		t.Errorf("got %d results, want 0 (unrecognized variant should be excluded)", len(results))
+	}
+}
+
+func TestAnalyzeTransfigure_GemColorFromTransfigured(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "20/20", Chaos: 50, Listings: 100, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 30, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].GemColor != "BLUE" {
+		t.Errorf("GemColor = %q, want %q (should use transfigured gem's color)", results[0].GemColor, "BLUE")
+	}
+}
+
+func TestAnalyzeTransfigure_MultipleTransfiguredPerBase(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "20/20", Chaos: 50, Listings: 100, IsTransfigured: false},
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 30, IsTransfigured: true},
+		{Name: "Spark of Unpredictability", Variant: "20/20", Chaos: 80, Listings: 25, IsTransfigured: true},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2 (two transfigured variants of one base)", len(results))
+	}
+}

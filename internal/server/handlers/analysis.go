@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"profitofexile/internal/lab"
 )
@@ -55,7 +56,7 @@ func TransfigureAnalysis(repo *lab.Repository) http.HandlerFunc {
 		rows := make([]row, 0, len(results))
 		for _, r := range results {
 			rows = append(rows, row{
-				Time:                 r.Time.Format("2006-01-02T15:04:05Z"),
+				Time:                 r.Time.UTC().Format(time.RFC3339),
 				BaseName:             r.BaseName,
 				TransfiguredName:     r.TransfiguredName,
 				Variant:              r.Variant,

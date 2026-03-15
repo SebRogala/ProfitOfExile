@@ -88,7 +88,14 @@ func main() {
 	})
 
 	// Run initial analysis on startup (uses existing data).
-	go analyzer.RunTransfigure(ctx)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("transfigure analysis panicked on startup", "recover", r)
+			}
+		}()
+		analyzer.RunTransfigure(ctx)
+	}()
 
 	// Start Mercure subscriber in background if configured.
 	if mercureURL != "" {
@@ -109,9 +116,20 @@ func main() {
 			)
 
 			// Trigger analysis on new gem data.
-			endpoint, _ := payload["endpoint"].(string)
+			endpoint, ok := payload["endpoint"].(string)
+			if !ok {
+				slog.Warn("mercure: missing or non-string 'endpoint' in payload", "payload", payload)
+				return
+			}
 			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {
-				go analyzer.RunTransfigure(context.Background())
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("transfigure analysis panicked", "recover", r)
+						}
+					}()
+					analyzer.RunTransfigure(subCtx)
+				}()
 			}
 		})
 		go sub.Run(subCtx)
