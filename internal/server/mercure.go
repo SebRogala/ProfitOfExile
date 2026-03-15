@@ -3,6 +3,10 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,19 +30,22 @@ type MercureEvent struct {
 
 // MercureSubscriber connects to a Mercure hub and dispatches events to a handler.
 type MercureSubscriber struct {
-	hubURL  string
-	topics  []string
-	handler func(MercureEvent)
-	logger  *slog.Logger
-	client  *http.Client
+	hubURL        string
+	topics        []string
+	subscriberKey string
+	handler       func(MercureEvent)
+	logger        *slog.Logger
+	client        *http.Client
 }
 
 // NewMercureSubscriber creates a subscriber that listens to the given topics.
-func NewMercureSubscriber(hubURL string, topics []string, handler func(MercureEvent)) *MercureSubscriber {
+// subscriberKey is the HMAC secret for signing subscriber JWTs. If empty, connects without auth.
+func NewMercureSubscriber(hubURL string, topics []string, subscriberKey string, handler func(MercureEvent)) *MercureSubscriber {
 	return &MercureSubscriber{
-		hubURL:  hubURL,
-		topics:  topics,
-		handler: handler,
+		hubURL:        hubURL,
+		topics:        topics,
+		subscriberKey: subscriberKey,
+		handler:       handler,
 		logger:  slog.Default(),
 		client: &http.Client{
 			Transport: &http.Transport{
@@ -111,6 +118,14 @@ func (s *MercureSubscriber) connect(ctx context.Context) (connected bool, err er
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
+	if s.subscriberKey != "" {
+		token, err := signSubscriberJWT(s.subscriberKey, s.topics)
+		if err != nil {
+			return false, fmt.Errorf("sign subscriber JWT: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("connect to hub: %w", err)
@@ -149,4 +164,31 @@ func (s *MercureSubscriber) connect(ctx context.Context) (connected bool, err er
 	}
 
 	return true, errStreamClosed
+}
+
+// signSubscriberJWT creates an HS256-signed JWT with subscribe permissions for
+// the Mercure hub. Short-lived (60s) since a fresh token is generated per connection.
+func signSubscriberJWT(secret string, topics []string) (string, error) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	now := time.Now()
+	claims := map[string]any{
+		"mercure": map[string]any{
+			"subscribe": topics,
+		},
+		"iat": now.Unix(),
+		"exp": now.Add(60 * time.Second).Unix(),
+	}
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("marshal JWT claims: %w", err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(claimsJSON)
+
+	unsigned := header + "." + payload
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(unsigned))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	return unsigned + "." + signature, nil
 }
