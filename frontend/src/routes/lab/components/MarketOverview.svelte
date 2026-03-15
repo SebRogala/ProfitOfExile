@@ -4,8 +4,8 @@
 	let { data }: { data: MarketOverviewData } = $props();
 
 	function deltaStr(v: number): string {
-		if (v > 0) return `(\u2191${v})`;
-		if (v < 0) return `(\u2193${Math.abs(v)})`;
+		if (v > 0) return `(↑${v})`;
+		if (v < 0) return `(↓${Math.abs(v)})`;
 		return '(0)';
 	}
 
@@ -59,14 +59,14 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 12px 20px;
-		margin-bottom: 16px;
+		padding: 24px;
+		margin-bottom: 32px;
 	}
 	.section-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 8px;
+		margin-bottom: 12px;
 	}
 	.section-title {
 		font-size: 0.9375rem;
@@ -81,13 +81,13 @@
 	.overview-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 4px 24px;
+		gap: 8px 24px;
 	}
 	.stat-item {
 		display: flex;
-		gap: 6px;
+		gap: 8px;
 		align-items: baseline;
-		padding: 2px 0;
+		padding: 4px 0;
 	}
 	.stat-label {
 		color: var(--color-lab-text-secondary);

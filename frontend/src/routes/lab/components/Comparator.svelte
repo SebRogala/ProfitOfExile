@@ -7,11 +7,13 @@
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 
 	let variant = $state('20/20');
-	let searchInputs = $state(['', '', '']);
-	let suggestions = $state<string[][]>([[], [], []]);
+	let searchQuery = $state('');
+	let suggestions = $state<string[]>([]);
 	let selectedGems = $state<string[]>(['Spark of Nova', 'Ball Lightning of Static', 'Arc of Surging']);
 	let results = $state<CompareGem[]>([]);
-	let showSuggestions = $state([false, false, false]);
+	let showDropdown = $state(false);
+	let highlightedIndex = $state(-1);
+	let inputRef = $state<HTMLInputElement | null>(null);
 
 	async function loadResults() {
 		const active = selectedGems.filter(Boolean);
@@ -22,27 +24,71 @@
 		results = await fetchCompare(active, variant);
 	}
 
-	async function handleSearch(index: number, query: string) {
-		searchInputs[index] = query;
+	async function handleInput(query: string) {
+		searchQuery = query;
+		highlightedIndex = -1;
 		if (query.length < 2) {
-			suggestions[index] = [];
+			suggestions = [];
+			showDropdown = false;
 			return;
 		}
-		suggestions[index] = await fetchGemNames(query);
-		showSuggestions[index] = true;
+		const allNames = await fetchGemNames(query);
+		suggestions = allNames.filter((n) => !selectedGems.includes(n));
+		showDropdown = suggestions.length > 0;
 	}
 
-	function selectGem(index: number, name: string) {
-		selectedGems[index] = name;
-		searchInputs[index] = name;
-		showSuggestions[index] = false;
+	function selectGem(name: string) {
+		if (selectedGems.length >= 3) return;
+		if (selectedGems.includes(name)) return;
+		selectedGems = [...selectedGems, name];
+		searchQuery = '';
+		suggestions = [];
+		showDropdown = false;
+		highlightedIndex = -1;
 		loadResults();
+		// Re-focus the input after selection
+		setTimeout(() => inputRef?.focus(), 0);
+	}
+
+	function removeGem(index: number) {
+		selectedGems = selectedGems.filter((_, i) => i !== index);
+		loadResults();
+		setTimeout(() => inputRef?.focus(), 0);
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			showDropdown = false;
+			highlightedIndex = -1;
+			return;
+		}
+		if (e.key === 'Backspace' && searchQuery === '' && selectedGems.length > 0) {
+			removeGem(selectedGems.length - 1);
+			return;
+		}
+		if (!showDropdown || suggestions.length === 0) return;
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			highlightedIndex = (highlightedIndex + 1) % suggestions.length;
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			highlightedIndex = highlightedIndex <= 0 ? suggestions.length - 1 : highlightedIndex - 1;
+		} else if ((e.key === 'Enter' || e.key === ' ') && highlightedIndex >= 0) {
+			e.preventDefault();
+			selectGem(suggestions[highlightedIndex]);
+		}
 	}
 
 	function recLabel(rec: string): string {
-		if (rec === 'BEST') return '\u2705 BEST';
-		if (rec === 'AVOID') return '\ud83d\udeab AVOID';
-		return '\ud83d\udc41 OK';
+		if (rec === 'BEST') return 'BEST';
+		if (rec === 'AVOID') return 'AVOID';
+		return 'OK';
+	}
+
+	function recIcon(rec: string): string {
+		if (rec === 'BEST') return '✓';
+		if (rec === 'AVOID') return '✗';
+		return '•';
 	}
 
 	function recClass(rec: string): string {
@@ -52,8 +98,8 @@
 	}
 
 	function velocityStr(v: number): string {
-		if (v > 0) return `\u2191${v}`;
-		if (v < 0) return `\u2193${Math.abs(v)}`;
+		if (v > 0) return `↑${v}`;
+		if (v < 0) return `↓${Math.abs(v)}`;
 		return '0';
 	}
 
@@ -74,29 +120,46 @@
 		</div>
 	</div>
 
-	<div class="search-row">
-		{#each [0, 1, 2] as i}
+	<div class="comparator-input">
+		<div class="tags-row">
+			{#each selectedGems as gem, i}
+				<span class="tag">
+					{gem}
+					<button class="tag-remove" onclick={() => removeGem(i)}>×</button>
+				</span>
+			{/each}
+		</div>
+
+		{#if selectedGems.length < 3}
 			<div class="search-wrapper">
 				<input
+					bind:this={inputRef}
 					type="text"
 					class="search-input"
-					placeholder="Search gem {i + 1}..."
-					value={searchInputs[i]}
-					oninput={(e) => handleSearch(i, (e.target as HTMLInputElement).value)}
-					onfocus={() => { if (suggestions[i].length) showSuggestions[i] = true; }}
-					onblur={() => setTimeout(() => { showSuggestions[i] = false; }, 200)}
+					placeholder={selectedGems.length === 0 ? "Type gem name..." : "Add another gem..."}
+					value={searchQuery}
+					oninput={(e) => handleInput((e.target as HTMLInputElement).value)}
+					onkeydown={handleKeydown}
+					onfocus={() => { if (suggestions.length) showDropdown = true; }}
+					onblur={() => setTimeout(() => { showDropdown = false; }, 200)}
 				/>
-				{#if showSuggestions[i] && suggestions[i].length > 0}
-					<div class="suggestions">
-						{#each suggestions[i] as name}
-							<button class="suggestion" onmousedown={() => selectGem(i, name)}>
-								{name}
+				{#if showDropdown && suggestions.length > 0}
+					<div class="dropdown">
+						{#each suggestions as gem, i}
+							<button
+								class="dropdown-item"
+								class:highlighted={i === highlightedIndex}
+								onmousedown={() => selectGem(gem)}
+							>
+								{gem}
 							</button>
 						{/each}
 					</div>
 				{/if}
 			</div>
-		{/each}
+		{:else}
+			<p class="max-reached">3 gems selected (max)</p>
+		{/if}
 	</div>
 
 	{#if results.length > 0}
@@ -129,10 +192,12 @@
 					</div>
 					<div class="history">
 						{#each gem.signalHistory as h}
-							<div class="history-line">{h.time} {h.from}\u2192{h.to} ({h.reason})</div>
+							<div class="history-line">{h.time} {h.from}→{h.to} ({h.reason})</div>
 						{/each}
 					</div>
-					<div class="card-rec {recClass(gem.recommendation)}">{recLabel(gem.recommendation)}</div>
+					<div class="card-rec {recClass(gem.recommendation)}">
+						<span class="rec-icon">{recIcon(gem.recommendation)}</span> {recLabel(gem.recommendation)}
+					</div>
 				</div>
 			{/each}
 		</div>
@@ -143,14 +208,14 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 16px 20px;
-		margin-bottom: 16px;
+		padding: 24px;
+		margin-bottom: 32px;
 	}
 	.section-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 12px;
+		margin-bottom: 16px;
 	}
 	.section-title {
 		font-size: 0.9375rem;
@@ -161,7 +226,7 @@
 	.variant-select {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 	}
 	.select-label {
 		color: var(--color-lab-text-secondary);
@@ -171,17 +236,46 @@
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
-		padding: 3px 8px;
+		padding: 4px 10px;
 		font-size: 0.8125rem;
 		font-family: inherit;
 	}
-	.search-row {
+
+	/* Tag-based multi-select */
+	.comparator-input {
+		margin-bottom: 16px;
+	}
+	.tags-row {
 		display: flex;
-		gap: 12px;
-		margin-bottom: 12px;
+		gap: 8px;
+		margin-bottom: 8px;
+		flex-wrap: wrap;
+	}
+	.tag {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: #2a2d37;
+		color: #e4e4e7;
+		padding: 4px 10px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		border-radius: 2px;
+	}
+	.tag-remove {
+		background: none;
+		border: none;
+		color: #e4e4e7;
+		font-size: 0.875rem;
+		cursor: pointer;
+		padding: 0 2px;
+		line-height: 1;
+		font-family: inherit;
+	}
+	.tag-remove:hover {
+		color: var(--color-lab-red);
 	}
 	.search-wrapper {
-		flex: 1;
 		position: relative;
 	}
 	.search-input {
@@ -189,7 +283,7 @@
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
-		padding: 6px 10px;
+		padding: 8px 12px;
 		font-size: 0.8125rem;
 		font-family: inherit;
 		box-sizing: border-box;
@@ -197,7 +291,7 @@
 	.search-input::placeholder {
 		color: var(--color-lab-text-secondary);
 	}
-	.suggestions {
+	.dropdown {
 		position: absolute;
 		top: 100%;
 		left: 0;
@@ -208,11 +302,11 @@
 		max-height: 200px;
 		overflow-y: auto;
 	}
-	.suggestion {
+	.dropdown-item {
 		display: block;
 		width: 100%;
 		text-align: left;
-		padding: 4px 10px;
+		padding: 6px 12px;
 		color: var(--color-lab-text);
 		background: none;
 		border: none;
@@ -220,30 +314,40 @@
 		cursor: pointer;
 		font-family: inherit;
 	}
-	.suggestion:hover {
+	.dropdown-item:hover {
 		background: rgba(59, 130, 246, 0.1);
 	}
+	.dropdown-item.highlighted {
+		background: #1e40af;
+		color: #fff;
+	}
+	.max-reached {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.8125rem;
+		margin: 0;
+	}
+
 	.cards-row {
 		display: flex;
-		gap: 12px;
+		gap: 16px;
 	}
 	.compare-card {
 		flex: 1;
 		border: 1px solid var(--color-lab-border);
-		padding: 12px;
+		padding: 24px;
 		background: var(--color-lab-bg);
 	}
 	.card-name {
 		font-weight: 700;
 		font-size: 0.875rem;
 		color: var(--color-lab-text);
-		margin-bottom: 6px;
+		margin-bottom: 8px;
 	}
 	.card-row {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		margin-bottom: 4px;
+		margin-bottom: 6px;
 	}
 	.card-row.small {
 		font-size: 0.75rem;
@@ -283,7 +387,7 @@
 		font-size: 0.75rem;
 	}
 	.history {
-		margin: 6px 0;
+		margin: 8px 0;
 	}
 	.history-line {
 		font-size: 0.6875rem;
@@ -293,8 +397,14 @@
 	.card-rec {
 		font-size: 0.8125rem;
 		font-weight: 700;
-		margin-top: 6px;
-		padding: 3px 0;
+		margin-top: 8px;
+		padding: 4px 0;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.rec-icon {
+		font-size: 0.875rem;
 	}
 	.rec-best { color: var(--color-lab-green); }
 	.rec-ok { color: var(--color-lab-yellow); }
