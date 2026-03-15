@@ -16,6 +16,7 @@ type QualityResult struct {
 	ROI6       float64
 	ROI10      float64
 	ROI15      float64
+	ROI20      float64 // full quality — no GCP needed (Uber/Gift labs)
 	AvgROI     float64
 	GCPPrice   float64
 	Listings0  int
@@ -86,6 +87,9 @@ func AnalyzeQuality(snapTime time.Time, gems []GemPrice, gcpPrice float64) []Qua
 				rois[i] = sellPrice - zeroQ.chaos
 			}
 
+			// ROI at full quality (20%): no GCP cost, just price difference.
+			roi20 := fullQ.chaos - zeroQ.chaos
+
 			// Filter: skip if roi15 <= 0
 			if rois[3] <= 0 {
 				continue
@@ -117,6 +121,7 @@ func AnalyzeQuality(snapTime time.Time, gems []GemPrice, gcpPrice float64) []Qua
 				ROI6:       rois[1],
 				ROI10:      rois[2],
 				ROI15:      rois[3],
+				ROI20:      roi20,
 				AvgROI:     avgROI,
 				GCPPrice:   gcpPrice,
 				Listings0:  zeroQ.listings,

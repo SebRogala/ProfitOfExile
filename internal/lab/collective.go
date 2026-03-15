@@ -24,6 +24,9 @@ type CollectiveResult struct {
 	ListingVelocity float64 `json:"listingVelocity"`
 	CV              float64 `json:"cv"`
 	HistPosition    float64 `json:"histPosition"`
+	WindowSignal    string  `json:"windowSignal"`
+	AdvancedSignal  string  `json:"advancedSignal"`
+	LiquidityTier   string  `json:"liquidityTier"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.
@@ -140,6 +143,9 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			cr.ListingVelocity = t.ListingVelocity
 			cr.CV = t.CV
 			cr.HistPosition = t.HistPosition
+			cr.WindowSignal = t.WindowSignal
+			cr.AdvancedSignal = t.AdvancedSignal
+			cr.LiquidityTier = t.LiquidityTier
 		}
 
 		// Exclude TRAP gems entirely.

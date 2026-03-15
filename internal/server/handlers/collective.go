@@ -105,6 +105,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			ListingVelocity      float64 `json:"listingVelocity"`
 			CV                   float64 `json:"cv"`
 			HistPosition         float64 `json:"histPosition"`
+			WindowSignal         string  `json:"windowSignal"`
+			AdvancedSignal       string  `json:"advancedSignal"`
+			LiquidityTier        string  `json:"liquidityTier"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -128,6 +131,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				ListingVelocity:      cr.ListingVelocity,
 				CV:                   cr.CV,
 				HistPosition:         cr.HistPosition,
+				WindowSignal:         cr.WindowSignal,
+				AdvancedSignal:       cr.AdvancedSignal,
+				LiquidityTier:        cr.LiquidityTier,
 			})
 		}
 

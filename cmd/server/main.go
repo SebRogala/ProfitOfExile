@@ -154,6 +154,21 @@ func main() {
 				"inserted", payload["inserted"],
 			)
 
+			// Parse nextFetch from collector payload so the throttler can
+			// include it as "nextAny" in the analysis-updated event.
+			var nextFetch time.Time
+			if nf, ok := payload["nextFetch"].(string); ok {
+				if parsed, err := time.Parse(time.RFC3339, nf); err == nil {
+					nextFetch = parsed
+				}
+			}
+
+			// Pre-signal the throttler with nextFetch so it is available
+			// even if individual analyzers call Signal() without it.
+			if !nextFetch.IsZero() {
+				throttler.Signal(nextFetch)
+			}
+
 			// Trigger analysis on new gem data.
 			endpoint, ok := payload["endpoint"].(string)
 			if !ok {
