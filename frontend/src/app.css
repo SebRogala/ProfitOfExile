@@ -5,4 +5,16 @@
 	--color-poe-gold: #c9aa71;
 	--color-poe-muted: #8a8a9a;
 	--color-poe-light: #e0e0e0;
+
+	/* Lab dashboard design tokens */
+	--color-lab-bg: #0f1117;
+	--color-lab-surface: #1a1d27;
+	--color-lab-border: #2a2d37;
+	--color-lab-text: #e4e4e7;
+	--color-lab-text-secondary: #9ca3af;
+	--color-lab-green: #22c55e;
+	--color-lab-red: #ef4444;
+	--color-lab-yellow: #eab308;
+	--color-lab-blue: #3b82f6;
+	--color-lab-purple: #a855f7;
 }
