@@ -249,11 +249,21 @@ func sellability(transListings int, listingVel, priceVel, cv float64, signal str
 		s -= 10
 	}
 
-	// Low CV = predictable market = buyers trust the price
+	// Recent stability bonus: currently calm regardless of historical CV
+	if math.Abs(priceVel) < 2 {
+		s += 20
+	}
+
+	// Turnover proxy: listings dropping while price holds = items ARE selling
+	if listingVel < -1 && math.Abs(priceVel) < 3 {
+		s += 25
+	}
+
+	// Low CV = predictable market = buyers trust the price (halved — recent velocity matters more)
 	if cv < 25 {
 		s += 10
 	} else if cv > 80 {
-		s -= 20
+		s -= 10
 	}
 
 	// HERD/DUMPING = price is moving, creates urgency for buyers
