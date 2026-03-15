@@ -59,49 +59,49 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 24px;
+		padding: 28px;
 		margin-bottom: 32px;
 	}
 	.section-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 12px;
+		margin-bottom: 16px;
 	}
 	.section-title {
-		font-size: 0.9375rem;
+		font-size: 1.125rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
 	}
 	.updated {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 	.overview-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 8px 24px;
+		gap: 10px 28px;
 	}
 	.stat-item {
 		display: flex;
-		gap: 8px;
+		gap: 10px;
 		align-items: baseline;
-		padding: 4px 0;
+		padding: 6px 0;
 	}
 	.stat-label {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.stat-value {
 		color: var(--color-lab-text);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 		font-weight: 600;
 	}
 	.delta {
 		color: var(--color-lab-text-secondary);
 		font-weight: 400;
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 	.trap {
 		color: var(--color-lab-red);

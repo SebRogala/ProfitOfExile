@@ -9,28 +9,29 @@
 		$props();
 
 	const SIGNAL_STYLES: Record<string, { prefix: string; cssClass: string }> = {
-		STABLE: { prefix: '▲', cssClass: 'badge-green' },
+		STABLE: { prefix: '━', cssClass: 'badge-green-muted' },
 		RISING: { prefix: '▲', cssClass: 'badge-green' },
 		FALLING: { prefix: '▼', cssClass: 'badge-red' },
-		HERD: { prefix: '⚠', cssClass: 'badge-yellow' },
-		DUMPING: { prefix: '⚠', cssClass: 'badge-red' },
-		RECOVERY: { prefix: '↻', cssClass: 'badge-purple' },
-		TRAP: { prefix: '⚠', cssClass: 'badge-red' },
+		HERD: { prefix: '⚡', cssClass: 'badge-yellow' },
+		DUMPING: { prefix: '⏬', cssClass: 'badge-red' },
+		RECOVERY: { prefix: '🔄', cssClass: 'badge-purple' },
+		TRAP: { prefix: '🚫', cssClass: 'badge-red' },
 	};
 
 	const WINDOW_STYLES: Record<string, { prefix: string; cssClass: string }> = {
-		CLOSED: { prefix: '○', cssClass: 'badge-muted' },
-		BREWING: { prefix: '◆', cssClass: 'badge-blue' },
-		OPENING: { prefix: '◆', cssClass: 'badge-blue' },
-		OPEN: { prefix: '●', cssClass: 'badge-green' },
-		CLOSING: { prefix: '●', cssClass: 'badge-yellow' },
-		EXHAUSTED: { prefix: '○', cssClass: 'badge-muted' },
+		CLOSED: { prefix: '⭘', cssClass: 'badge-muted' },
+		BREWING: { prefix: '🔹', cssClass: 'badge-blue' },
+		OPENING: { prefix: '🔷', cssClass: 'badge-blue' },
+		OPEN: { prefix: '🟢', cssClass: 'badge-green' },
+		CLOSING: { prefix: '🟡', cssClass: 'badge-yellow' },
+		EXHAUSTED: { prefix: '⭘', cssClass: 'badge-muted' },
 	};
 
 	const ADVANCED_STYLES: Record<string, { prefix: string; cssClass: string }> = {
-		COMEBACK: { prefix: '↻', cssClass: 'badge-purple' },
-		POTENTIAL: { prefix: '◇', cssClass: 'badge-cyan' },
-		PRICE_MANIPULATION: { prefix: '⚠', cssClass: 'badge-red' },
+		COMEBACK: { prefix: '🔄', cssClass: 'badge-purple' },
+		POTENTIAL: { prefix: '💎', cssClass: 'badge-cyan' },
+		PRICE_MANIPULATION: { prefix: '🚩', cssClass: 'badge-red' },
+		BREAKOUT: { prefix: '🚀', cssClass: 'badge-green' },
 	};
 
 	function getStyle() {
@@ -60,20 +61,28 @@
 	.signal-badge {
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		padding: 2px 8px;
-		font-size: 0.75rem;
+		gap: 5px;
+		padding: 3px 10px;
+		font-size: 0.8125rem;
 		font-weight: 600;
 		letter-spacing: 0.02em;
 		white-space: nowrap;
 		cursor: help;
+		min-width: fit-content;
 	}
 	.badge-icon {
-		font-size: 0.6875rem;
+		font-size: 0.8125rem;
+		width: 1em;
+		text-align: center;
+		display: inline-block;
 	}
 	.badge-green {
 		color: var(--color-lab-green);
 		background: rgba(34, 197, 94, 0.12);
+	}
+	.badge-green-muted {
+		color: var(--color-lab-green-muted);
+		background: rgba(107, 158, 122, 0.12);
 	}
 	.badge-red {
 		color: var(--color-lab-red);
