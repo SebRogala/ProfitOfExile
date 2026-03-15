@@ -78,8 +78,9 @@ func main() {
 	}
 
 	labRepo := lab.NewRepository(pool)
+	labCache := lab.NewCache()
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second)
-	analyzer := lab.NewAnalyzer(labRepo, throttler)
+	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache)
 
 	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
 		MercureURL:    mercureURL,
@@ -87,6 +88,7 @@ func main() {
 		DevMode:       devMode,
 		Pool:          pool,
 		LabRepo:       labRepo,
+		LabCache:      labCache,
 	})
 
 	// Run initial analyses on startup (uses existing data).
