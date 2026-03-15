@@ -20,18 +20,22 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // LatestGemPrices returns all gem prices from the most recent snapshot.
+// Returns (nil, zero-time, nil) when no snapshots exist yet.
 func (r *Repository) LatestGemPrices(ctx context.Context) ([]GemPrice, time.Time, error) {
-	var snapTime time.Time
+	var snapTime *time.Time
 	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM gem_snapshots").Scan(&snapTime)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("lab repo: latest snapshot time: %w", err)
+	}
+	if snapTime == nil {
+		return nil, time.Time{}, nil
 	}
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
 		       is_transfigured, is_corrupted, COALESCE(gem_color, '')
 		FROM gem_snapshots
-		WHERE time = $1`, snapTime)
+		WHERE time = $1`, *snapTime)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("lab repo: query latest gems: %w", err)
 	}
@@ -50,7 +54,7 @@ func (r *Repository) LatestGemPrices(ctx context.Context) ([]GemPrice, time.Time
 		return nil, time.Time{}, fmt.Errorf("lab repo: rows iteration: %w", err)
 	}
 
-	return gems, snapTime, nil
+	return gems, *snapTime, nil
 }
 
 // SaveTransfigureResults batch-inserts transfigure analysis results.

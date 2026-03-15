@@ -3,14 +3,14 @@ CREATE TABLE transfigure_results (
     base_name             TEXT           NOT NULL,
     transfigured_name     TEXT           NOT NULL,
     variant               TEXT           NOT NULL,
-    base_price            NUMERIC(10,2),
-    transfigured_price    NUMERIC(10,2),
-    roi                   NUMERIC(10,2),
-    roi_pct               NUMERIC(10,2),
-    base_listings         INTEGER,
-    transfigured_listings INTEGER,
-    gem_color             TEXT,
-    confidence            TEXT           NOT NULL DEFAULT 'LOW',
+    base_price            NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    transfigured_price    NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    roi                   NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    roi_pct               NUMERIC(10,2)  NOT NULL DEFAULT 0,
+    base_listings         INTEGER        NOT NULL DEFAULT 0,
+    transfigured_listings INTEGER        NOT NULL DEFAULT 0,
+    gem_color             TEXT           NOT NULL DEFAULT '',
+    confidence            TEXT           NOT NULL DEFAULT 'LOW' CHECK (confidence IN ('OK', 'LOW')),
     PRIMARY KEY (time, transfigured_name, variant)
 );
 
