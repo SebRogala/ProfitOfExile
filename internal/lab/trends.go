@@ -2,6 +2,7 @@ package lab
 
 import (
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -32,6 +33,10 @@ type TrendResult struct {
 
 	// Advanced signals (coexist with primary Signal)
 	AdvancedSignal string // PRICE_MANIPULATION, COMEBACK, POTENTIAL, or "" (none)
+
+	// Price tier signals
+	PriceTier  string // TOP, MID, LOW — dynamic based on current market
+	TierAction string // tier-specific recommended action, empty if no special guidance
 }
 
 // GemPriceHistory contains time-series data for a single gem.
@@ -54,12 +59,113 @@ var analysisVariants = map[string]bool{
 	"1": true, "1/20": true, "20": true, "20/20": true,
 }
 
+// computePriceTiers calculates dynamic TOP/MID/LOW boundaries using the
+// winsorized top-10 average (C_win formula). Outlier-proof via p99 cap.
+func computePriceTiers(gems []GemPrice) (topThreshold, midThreshold float64) {
+	// Collect all transfigured gem prices
+	var prices []float64
+	for _, g := range gems {
+		if g.IsTransfigured && !g.IsCorrupted && g.Chaos > 0 {
+			prices = append(prices, g.Chaos)
+		}
+	}
+	if len(prices) < 10 {
+		return 100, 30 // fallback for very early league
+	}
+
+	sort.Float64s(prices)
+
+	// p99 winsorization
+	p99idx := int(float64(len(prices)) * 0.99)
+	if p99idx >= len(prices) {
+		p99idx = len(prices) - 1
+	}
+	p99 := prices[p99idx]
+
+	// Top 10 of winsorized prices
+	winsorized := make([]float64, len(prices))
+	for i, p := range prices {
+		winsorized[i] = math.Min(p, p99)
+	}
+	sort.Float64s(winsorized)
+
+	top10sum := 0.0
+	top10start := len(winsorized) - 10
+	if top10start < 0 {
+		top10start = 0
+	}
+	count := 0
+	for i := top10start; i < len(winsorized); i++ {
+		top10sum += winsorized[i]
+		count++
+	}
+	wt10 := top10sum / float64(count)
+
+	return wt10 * 0.70, wt10 * 0.20
+}
+
+// classifyPriceTier assigns a price tier based on dynamic thresholds.
+func classifyPriceTier(price, topThreshold, midThreshold float64) string {
+	if price > topThreshold {
+		return "TOP"
+	}
+	if price > midThreshold {
+		return "MID"
+	}
+	return "LOW"
+}
+
+// tierAction returns the recommended action based on signal + tier combination.
+func tierAction(signal, windowSignal, priceTier string) string {
+	switch priceTier {
+	case "TOP":
+		switch signal {
+		case "HERD":
+			return "WATCH — early stage, monitor closely"
+		case "DUMPING":
+			return "SELL IMMEDIATELY"
+		}
+		switch windowSignal {
+		case "BREWING":
+			return "URGENT — window opens in ~45min"
+		case "OPEN":
+			return "HIGH RISK — act fast or skip"
+		}
+	case "MID":
+		switch signal {
+		case "HERD":
+			return "SELL — move is over, exit position"
+		case "RISING":
+			return "CAUTIOUS — may reverse"
+		}
+		switch windowSignal {
+		case "BREWING":
+			return "WATCH — may reverse before opening"
+		}
+	case "LOW":
+		switch signal {
+		case "HERD":
+			return "SELL — herd flooding, price will crash"
+		}
+		switch windowSignal {
+		case "OPEN":
+			return "UNRELIABLE — low-value windows are traps"
+		case "BREWING":
+			return "SKIP — not actionable at this price"
+		}
+	}
+	return ""
+}
+
 // AnalyzeTrends computes trend signals for all transfigured gems.
 // current provides the latest snapshot; history provides time-series data per gem.
 // baseHistory maps baseName → []PricePoint for non-transfigured gems.
 // marketAvgBaseLst is the market-wide average base listings (denominator for relative liquidity).
 func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHistory,
 	baseHistory map[string][]PricePoint, marketAvgBaseLst float64) []TrendResult {
+
+	// Compute dynamic price tier thresholds from current snapshot.
+	topThresh, midThresh := computePriceTiers(current)
 
 	// Index history by (name, variant) for fast lookup.
 	type histKey struct{ name, variant string }
@@ -142,6 +248,8 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
 		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel)
 		advSignal := classifyAdvancedSignal(g.Chaos, g.Listings, priceVel, listingVel, cv, histPos)
+		priceTier := classifyPriceTier(g.Chaos, topThresh, midThresh)
+		tAction := tierAction(signal, winSignal, priceTier)
 
 		results = append(results, TrendResult{
 			Time:              snapTime,
@@ -164,6 +272,8 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			WindowScore:       sanitizeFloat(winScore),
 			WindowSignal:      winSignal,
 			AdvancedSignal:    advSignal,
+			PriceTier:         priceTier,
+			TierAction:        tAction,
 		})
 	}
 

@@ -875,3 +875,200 @@ func TestAnalyzeTrends_AdvancedSignal(t *testing.T) {
 		t.Error("Signal should not be empty (primary signal independent of advanced)")
 	}
 }
+
+func TestComputePriceTiers_KnownPrices(t *testing.T) {
+	// 15 gems with known prices. Top-10 average of winsorized set drives thresholds.
+	gems := make([]GemPrice, 0, 15)
+	prices := []float64{10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150}
+	for _, p := range prices {
+		gems = append(gems, GemPrice{Name: "Gem", Chaos: p, IsTransfigured: true})
+	}
+
+	topThresh, midThresh := computePriceTiers(gems)
+
+	// p99 index = int(15*0.99) = 14 → p99 = 150 (no capping happens since all <= 150).
+	// Top 10 of sorted winsorized: 60,70,80,90,100,110,120,130,140,150 → avg = 105.
+	// topThresh = 105 * 0.70 = 73.5, midThresh = 105 * 0.20 = 21.0
+	if math.Abs(topThresh-73.5) > 0.1 {
+		t.Errorf("topThreshold = %f, want ~73.5", topThresh)
+	}
+	if math.Abs(midThresh-21.0) > 0.1 {
+		t.Errorf("midThreshold = %f, want ~21.0", midThresh)
+	}
+}
+
+func TestComputePriceTiers_OutlierProtection(t *testing.T) {
+	// 200 gems at reasonable prices + one outlier at 16000c.
+	// With enough data points, p99 winsorization caps the outlier.
+	gems := make([]GemPrice, 0, 201)
+	for i := 0; i < 200; i++ {
+		gems = append(gems, GemPrice{Name: "Gem", Chaos: float64(20 + i), IsTransfigured: true})
+	}
+	// Add the outlier.
+	gems = append(gems, GemPrice{Name: "Outlier", Chaos: 16000, IsTransfigured: true})
+
+	topThresh, midThresh := computePriceTiers(gems)
+
+	// p99 index = int(201*0.99) = 198 → p99 = 218 (the 199th sorted value).
+	// The 16000c outlier is capped to 218. Top-10 of winsorized: all around 210-218.
+	// wt10 ~ 214, topThresh ~ 150, midThresh ~ 43.
+	if topThresh > 200 {
+		t.Errorf("topThreshold = %f, want < 200 (outlier should be capped by p99)", topThresh)
+	}
+	if midThresh > 60 {
+		t.Errorf("midThreshold = %f, want < 60 (outlier should be capped by p99)", midThresh)
+	}
+
+	// Compare with no-outlier version to verify they're similar.
+	gemsNoOutlier := gems[:200]
+	topNoOutlier, _ := computePriceTiers(gemsNoOutlier)
+	// With the outlier capped, thresholds should be close to the no-outlier version.
+	diff := math.Abs(topThresh - topNoOutlier)
+	if diff > 5 {
+		t.Errorf("outlier shifted topThreshold by %f, want < 5 (winsorization should neutralize it)", diff)
+	}
+}
+
+func TestComputePriceTiers_TooFewPrices(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "A", Chaos: 100, IsTransfigured: true},
+		{Name: "B", Chaos: 200, IsTransfigured: true},
+	}
+	topThresh, midThresh := computePriceTiers(gems)
+	if topThresh != 100 || midThresh != 30 {
+		t.Errorf("fallback thresholds = (%f, %f), want (100, 30)", topThresh, midThresh)
+	}
+}
+
+func TestComputePriceTiers_ExcludesCorruptedAndNonTransfigured(t *testing.T) {
+	gems := make([]GemPrice, 0, 15)
+	for i := 0; i < 10; i++ {
+		gems = append(gems, GemPrice{Name: "Gem", Chaos: float64(50 + i*10), IsTransfigured: true})
+	}
+	// These should be excluded from tier computation.
+	gems = append(gems, GemPrice{Name: "Corrupted", Chaos: 5000, IsTransfigured: true, IsCorrupted: true})
+	gems = append(gems, GemPrice{Name: "Base", Chaos: 5000, IsTransfigured: false})
+	gems = append(gems, GemPrice{Name: "Zero", Chaos: 0, IsTransfigured: true})
+
+	topThresh, _ := computePriceTiers(gems)
+	// Without exclusion, 5000c gems would skew everything.
+	if topThresh > 200 {
+		t.Errorf("topThreshold = %f, want < 200 (corrupted/non-trans excluded)", topThresh)
+	}
+}
+
+func TestClassifyPriceTier(t *testing.T) {
+	tests := []struct {
+		price, top, mid float64
+		want            string
+	}{
+		{100, 70, 20, "TOP"},
+		{70, 70, 20, "MID"},   // boundary: exactly at top threshold is MID (uses >)
+		{70.01, 70, 20, "TOP"},
+		{50, 70, 20, "MID"},
+		{20, 70, 20, "LOW"},   // boundary: exactly at mid threshold is LOW
+		{20.01, 70, 20, "MID"},
+		{5, 70, 20, "LOW"},
+	}
+	for _, tt := range tests {
+		got := classifyPriceTier(tt.price, tt.top, tt.mid)
+		if got != tt.want {
+			t.Errorf("classifyPriceTier(%v, %v, %v) = %s, want %s",
+				tt.price, tt.top, tt.mid, got, tt.want)
+		}
+	}
+}
+
+func TestTierAction(t *testing.T) {
+	tests := []struct {
+		name                      string
+		signal, window, priceTier string
+		want                      string
+	}{
+		// TOP tier
+		{"TOP+HERD", "HERD", "", "TOP", "WATCH — early stage, monitor closely"},
+		{"TOP+DUMPING", "DUMPING", "", "TOP", "SELL IMMEDIATELY"},
+		{"TOP+BREWING", "STABLE", "BREWING", "TOP", "URGENT — window opens in ~45min"},
+		{"TOP+OPEN", "STABLE", "OPEN", "TOP", "HIGH RISK — act fast or skip"},
+		// MID tier
+		{"MID+HERD", "HERD", "", "MID", "SELL — move is over, exit position"},
+		{"MID+RISING", "RISING", "", "MID", "CAUTIOUS — may reverse"},
+		{"MID+BREWING", "STABLE", "BREWING", "MID", "WATCH — may reverse before opening"},
+		// LOW tier
+		{"LOW+HERD", "HERD", "", "LOW", "SELL — herd flooding, price will crash"},
+		{"LOW+OPEN", "STABLE", "OPEN", "LOW", "UNRELIABLE — low-value windows are traps"},
+		{"LOW+BREWING", "STABLE", "BREWING", "LOW", "SKIP — not actionable at this price"},
+		// No special guidance
+		{"TOP+STABLE", "STABLE", "CLOSED", "TOP", ""},
+		{"MID+FALLING", "FALLING", "CLOSED", "MID", ""},
+		{"LOW+STABLE", "STABLE", "CLOSED", "LOW", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tierAction(tt.signal, tt.window, tt.priceTier)
+			if got != tt.want {
+				t.Errorf("tierAction(%q, %q, %q) = %q, want %q",
+					tt.signal, tt.window, tt.priceTier, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTierAction_SignalOverridesWindow(t *testing.T) {
+	// When signal matches (e.g., HERD on TOP), signal action takes precedence over window action.
+	// TOP+HERD should return HERD action, even if window is BREWING.
+	got := tierAction("HERD", "BREWING", "TOP")
+	if got != "WATCH — early stage, monitor closely" {
+		t.Errorf("tierAction(HERD, BREWING, TOP) = %q, want HERD action (signal precedence)", got)
+	}
+}
+
+func TestAnalyzeTrends_TierAssignment(t *testing.T) {
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	// Build a market with enough gems for dynamic tier computation (need >= 10).
+	current := make([]GemPrice, 0, 15)
+	for i := 0; i < 12; i++ {
+		current = append(current, GemPrice{
+			Name: "Filler Gem " + string(rune('A'+i)), Variant: "20/20",
+			Chaos: float64(20 + i*10), Listings: 10, IsTransfigured: true, GemColor: "BLUE",
+		})
+	}
+	// Add a clearly high-value gem.
+	current = append(current, GemPrice{
+		Name: "Expensive Gem of Power", Variant: "20/20",
+		Chaos: 500, Listings: 10, IsTransfigured: true, GemColor: "RED",
+	})
+	// Add a clearly low-value gem.
+	current = append(current, GemPrice{
+		Name: "Cheap Gem of Nothing", Variant: "20/20",
+		Chaos: 6, Listings: 50, IsTransfigured: true, GemColor: "GREEN",
+	})
+
+	results := AnalyzeTrends(now, current, nil, nil, 0)
+
+	// Find the expensive and cheap gems.
+	var expensive, cheap *TrendResult
+	for i, r := range results {
+		if r.Name == "Expensive Gem of Power" {
+			expensive = &results[i]
+		}
+		if r.Name == "Cheap Gem of Nothing" {
+			cheap = &results[i]
+		}
+	}
+
+	if expensive == nil {
+		t.Fatal("missing Expensive Gem of Power result")
+	}
+	if expensive.PriceTier != "TOP" {
+		t.Errorf("Expensive gem tier = %s, want TOP", expensive.PriceTier)
+	}
+
+	if cheap == nil {
+		t.Fatal("missing Cheap Gem of Nothing result")
+	}
+	if cheap.PriceTier != "LOW" {
+		t.Errorf("Cheap gem tier = %s, want LOW", cheap.PriceTier)
+	}
+}

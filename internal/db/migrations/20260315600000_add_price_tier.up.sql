@@ -1,0 +1,2 @@
+ALTER TABLE trend_results ADD COLUMN price_tier TEXT NOT NULL DEFAULT 'LOW';
+ALTER TABLE trend_results ADD COLUMN tier_action TEXT NOT NULL DEFAULT '';

@@ -230,6 +230,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		signal := r.URL.Query().Get("signal")
 		window := r.URL.Query().Get("window")
 		advanced := r.URL.Query().Get("advanced")
+		tier := r.URL.Query().Get("tier")
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -241,14 +242,14 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		// Fast path: serve from cache.
 		if cache != nil {
 			if cached := cache.Trends(); len(cached) > 0 {
-				results = filterTrends(cached, variant, signal, window, advanced, limit)
+				results = filterTrends(cached, variant, signal, window, advanced, tier, limit)
 			}
 		}
 
 		// Slow path: fall back to DB query.
 		if results == nil {
 			var err error
-			results, err = repo.LatestTrendResults(r.Context(), variant, signal, window, advanced, limit)
+			results, err = repo.LatestTrendResults(r.Context(), variant, signal, window, advanced, tier, limit)
 			if err != nil {
 				slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -277,6 +278,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			WindowScore       float64 `json:"windowScore"`
 			WindowSignal      string  `json:"windowSignal"`
 			AdvancedSignal    string  `json:"advancedSignal"`
+			PriceTier         string  `json:"priceTier"`
+			TierAction        string  `json:"tierAction"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -302,6 +305,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				WindowScore:       r.WindowScore,
 				WindowSignal:      r.WindowSignal,
 				AdvancedSignal:    r.AdvancedSignal,
+				PriceTier:         r.PriceTier,
+				TierAction:        r.TierAction,
 			})
 		}
 
@@ -317,7 +322,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 // filterTrends filters and limits cached trend results.
 // Results are sorted by CV descending, then current price descending (matching the DB query order).
-func filterTrends(all []lab.TrendResult, variant, signal, window, advanced string, limit int) []lab.TrendResult {
+func filterTrends(all []lab.TrendResult, variant, signal, window, advanced, tier string, limit int) []lab.TrendResult {
 	var filtered []lab.TrendResult
 	for _, r := range all {
 		if variant != "" && r.Variant != variant {
@@ -330,6 +335,9 @@ func filterTrends(all []lab.TrendResult, variant, signal, window, advanced strin
 			continue
 		}
 		if advanced != "" && r.AdvancedSignal != advanced {
+			continue
+		}
+		if tier != "" && r.PriceTier != tier {
 			continue
 		}
 		filtered = append(filtered, r)
