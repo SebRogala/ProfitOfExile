@@ -232,12 +232,15 @@ func classifyWindowSignal(windowScore, baseVelocity, transListingVel float64, ba
 	if windowScore >= 50 && transListingVel > 3 {
 		return "CLOSING"
 	}
-	// Active window — high score + base draining
-	if windowScore >= 70 && baseVelocity < -2 {
+	// Dynamic drain threshold: 4% of base listings per hour, minimum -1
+	drainThreshold := math.Max(float64(baseListings)*-0.04, -1)
+
+	// OPEN: high score + base draining relative to size
+	if windowScore >= 70 && baseVelocity < drainThreshold {
 		return "OPEN"
 	}
-	// Window forming — moderate score + base starting to drain
-	if windowScore >= 50 && baseVelocity < 0 {
+	// OPENING: moderate drain
+	if windowScore >= 50 && baseVelocity < drainThreshold*0.5 {
 		return "OPENING"
 	}
 	// Pre-window: price rising + trans listings falling + bases still available
@@ -386,6 +389,10 @@ func classifySignal(priceVel, listingVel, cv float64) string {
 	}
 	if priceVel < -5 && listingVel > 5 {
 		return "DUMPING"
+	}
+	// High-velocity pre-HERD: extreme price movement with moderate listing growth
+	if priceVel > 30 && listingVel > 3 {
+		return "HERD"
 	}
 	if priceVel > 5 && listingVel > 10 {
 		return "HERD"
