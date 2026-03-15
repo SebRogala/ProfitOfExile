@@ -17,12 +17,13 @@ import (
 
 // Snapshot represents a single gem observation at a point in time.
 type Snapshot struct {
-	Time     time.Time
-	Name     string
-	Variant  string
-	Chaos    float64
-	Listings int
-	GemColor string
+	Time           time.Time
+	Name           string
+	Variant        string
+	Chaos          float64
+	Listings       int
+	IsTransfigured bool
+	GemColor       string
 }
 
 // SweepResult holds the accuracy metrics for one parameter combination.
@@ -105,7 +106,7 @@ func loadCSV(path string) []Snapshot {
 		colIdx[strings.TrimSpace(strings.ToLower(h))] = i
 	}
 
-	required := []string{"time", "name", "variant", "chaos", "listings", "gem_color"}
+	required := []string{"time", "name", "variant", "chaos", "listings", "is_transfigured", "gem_color"}
 	for _, col := range required {
 		if _, ok := colIdx[col]; !ok {
 			fmt.Fprintf(os.Stderr, "Missing required column: %s\n", col)
@@ -124,10 +125,16 @@ func loadCSV(path string) []Snapshot {
 			continue
 		}
 
-		t, err := time.Parse(time.RFC3339, strings.TrimSpace(record[colIdx["time"]]))
+		timeStr := strings.TrimSpace(record[colIdx["time"]])
+		t, err := time.Parse(time.RFC3339, timeStr)
 		if err != nil {
-			// Try alternate format.
-			t, err = time.Parse("2006-01-02 15:04:05", strings.TrimSpace(record[colIdx["time"]]))
+			t, err = time.Parse("2006-01-02 15:04:05.999999-07", timeStr)
+		}
+		if err != nil {
+			t, err = time.Parse("2006-01-02 15:04:05.999999+00", timeStr)
+		}
+		if err != nil {
+			t, err = time.Parse("2006-01-02 15:04:05", timeStr)
 			if err != nil {
 				continue
 			}
@@ -143,13 +150,17 @@ func loadCSV(path string) []Snapshot {
 			continue
 		}
 
+		isTransStr := strings.TrimSpace(strings.ToLower(record[colIdx["is_transfigured"]]))
+		isTrans := isTransStr == "t" || isTransStr == "true" || isTransStr == "1"
+
 		snapshots = append(snapshots, Snapshot{
-			Time:     t,
-			Name:     strings.TrimSpace(record[colIdx["name"]]),
-			Variant:  strings.TrimSpace(record[colIdx["variant"]]),
-			Chaos:    chaos,
-			Listings: listings,
-			GemColor: strings.TrimSpace(record[colIdx["gem_color"]]),
+			Time:           t,
+			Name:           strings.TrimSpace(record[colIdx["name"]]),
+			Variant:        strings.TrimSpace(record[colIdx["variant"]]),
+			Chaos:          chaos,
+			Listings:       listings,
+			IsTransfigured: isTrans,
+			GemColor:       strings.TrimSpace(record[colIdx["gem_color"]]),
 		})
 	}
 
@@ -451,7 +462,7 @@ func buildGemPrices(gems map[gemKey]Snapshot) []lab.GemPrice {
 			Variant:        s.Variant,
 			Chaos:          s.Chaos,
 			Listings:       s.Listings,
-			IsTransfigured: true,
+			IsTransfigured: s.IsTransfigured,
 			GemColor:       s.GemColor,
 		})
 	}
