@@ -458,16 +458,16 @@ func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult
 			  price_high_7d, price_low_7d,
 			  base_listings, base_velocity, relative_liquidity, liquidity_tier,
 			  window_score, window_signal, advanced_signal, price_tier, tier_action,
-			  sell_urgency, sell_reason)
+			  sell_urgency, sell_reason, sellability, sellability_label)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 			 ON CONFLICT DO NOTHING`,
 			r.Time, r.Name, r.Variant, r.GemColor, r.CurrentPrice, r.CurrentListings,
 			r.PriceVelocity, r.ListingVelocity, r.CV, r.Signal, r.HistPosition,
 			r.PriceHigh7d, r.PriceLow7d,
 			r.BaseListings, r.BaseVelocity, r.RelativeLiquidity, r.LiquidityTier,
 			r.WindowScore, r.WindowSignal, r.AdvancedSignal, r.PriceTier, r.TierAction,
-			r.SellUrgency, r.SellReason,
+			r.SellUrgency, r.SellReason, r.Sellability, r.SellabilityLabel,
 		)
 	}
 
@@ -501,7 +501,8 @@ func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, wi
 		       base_listings, base_velocity, relative_liquidity, liquidity_tier,
 		       window_score, window_signal, COALESCE(advanced_signal, ''),
 		       COALESCE(price_tier, 'LOW'), COALESCE(tier_action, ''),
-		       COALESCE(sell_urgency, ''), COALESCE(sell_reason, '')
+		       COALESCE(sell_urgency, ''), COALESCE(sell_reason, ''),
+		       COALESCE(sellability, 50), COALESCE(sellability_label, 'MODERATE')
 		FROM trend_results
 		WHERE time = (SELECT MAX(time) FROM trend_results)`
 	args := []any{}
@@ -552,7 +553,8 @@ func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, wi
 			&tr.BaseListings, &tr.BaseVelocity, &tr.RelativeLiquidity, &tr.LiquidityTier,
 			&tr.WindowScore, &tr.WindowSignal, &tr.AdvancedSignal,
 			&tr.PriceTier, &tr.TierAction,
-			&tr.SellUrgency, &tr.SellReason); err != nil {
+			&tr.SellUrgency, &tr.SellReason,
+			&tr.Sellability, &tr.SellabilityLabel); err != nil {
 			return nil, fmt.Errorf("lab repo: scan trend result: %w", err)
 		}
 		results = append(results, tr)

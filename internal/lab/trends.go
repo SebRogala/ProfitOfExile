@@ -41,6 +41,10 @@ type TrendResult struct {
 	// Sell urgency (for gems you already have or are farming)
 	SellUrgency string // SELL_NOW, UNDERCUT, HOLD, WAIT — actionable sell timing
 	SellReason  string // human-readable explanation
+
+	// Sellability (how easily will this gem sell right now, 0-100)
+	Sellability      int    // 0-100 score
+	SellabilityLabel string // FAST SELL, GOOD, MODERATE, SLOW, UNLIKELY
 }
 
 // GemPriceHistory contains time-series data for a single gem.
@@ -151,32 +155,50 @@ func classifyPriceTier(price, topThreshold, midThreshold float64) string {
 // sellUrgency computes actionable sell timing for gems you already have.
 // Uses price velocity, listing velocity, base drain, and historical position.
 func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListings, transListings int, signal, priceTier string) (urgency, reason string) {
-	// TRAP/DUMPING = sell immediately regardless
+	// LOW tier: suppress most sell signals — low gems bounce constantly
+	if priceTier == "LOW" {
+		if signal == "HERD" {
+			return "SELL_NOW", "Herd arrived on low-value gem — sell into momentum"
+		}
+		if math.Abs(priceVel) < 2 {
+			return "WAIT", "Low-tier gem — stable, list at market price"
+		}
+		return "", ""
+	}
+
+	// TRAP = sell immediately regardless
 	if signal == "TRAP" {
 		return "SELL_NOW", "Extreme volatility — sell at any price before crash"
 	}
+
+	// HERD at peak = override everything to UNDERCUT (catches Lacerate peak scenario)
+	if signal == "HERD" && histPosition > 90 {
+		return "UNDERCUT", "HERD at historical peak — undercut 10-15% NOW before crash"
+	}
+
+	// DUMPING = sell immediately
 	if signal == "DUMPING" {
 		return "SELL_NOW", "Price dropping with rising supply — undercut hard"
 	}
 
 	// Bases evaporating on a TOP gem = herd output coming in ~30min
 	if priceTier == "TOP" && baseListings >= 0 && baseListings < 10 && baseVel < -2 {
-		return "UNDERCUT", "Bases nearly gone — herd output arrives in ~30min, undercut 10-15% to sell fast"
+		return "UNDERCUT", "Bases nearly gone — herd output arrives in ~30min, undercut 10-15%"
 	}
 
-	// HERD on MID/LOW = the move is over, sell into the herd
-	if signal == "HERD" && (priceTier == "MID" || priceTier == "LOW") {
+	// HERD on MID = the move is over, sell into the herd
+	if signal == "HERD" && priceTier == "MID" {
 		return "SELL_NOW", "Herd arrived — sell into buying pressure before price drops"
 	}
 
-	// Price near 7-day high (>80th percentile) + listings rising = peak zone
+	// Near peak + listings rising = confirmed peak zone (backtested: -2.87% avg, works)
 	if histPosition > 80 && listingVel > 3 {
 		return "UNDERCUT", "Near peak — listings rising, undercut 5-10% for fast sale"
 	}
 
-	// Price rising fast + trans listings very low = you're one of few sellers, hold for peak
-	if priceVel > 10 && transListings < 15 {
-		return "HOLD", "Price surging with thin supply — hold for peak, watch for listing spike"
+	// Price rising fast + trans listings very thin = hold for peak
+	if priceVel > 10 && transListings < 10 {
+		return "HOLD", "Price surging with very thin supply — hold, but watch for listing spike"
 	}
 
 	// Price rising moderately + stable listings = healthy, no rush
@@ -184,17 +206,87 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 		return "HOLD", "Price rising steadily — no rush to sell"
 	}
 
-	// Price stable, nothing special
+	// Price stable
 	if math.Abs(priceVel) < 2 {
 		return "WAIT", "Price stable — list at market price, will sell eventually"
 	}
 
-	// Price falling but not dumping
-	if priceVel < -2 {
-		return "UNDERCUT", "Price softening — list below current to sell before further drop"
+	// Price falling from elevated position = undercut (gated by histPos > 60)
+	if priceVel < -2 && histPosition > 60 {
+		return "UNDERCUT", "Price softening from elevated level — list below current"
 	}
 
 	return "", ""
+}
+
+// sellability computes how easily a gem will sell (0-100).
+// Higher = faster sale expected. Combines listing dynamics + signal health.
+func sellability(transListings int, listingVel, priceVel, cv float64, signal string) (score int, label string) {
+	s := 50 // baseline
+
+	// Fewer trans listings = less competition = easier to sell
+	if transListings < 10 {
+		s += 30
+	} else if transListings < 30 {
+		s += 15
+	} else if transListings > 100 {
+		s -= 20
+	}
+
+	// Price rising = buyers active
+	if priceVel > 5 {
+		s += 15
+	} else if priceVel > 0 {
+		s += 5
+	} else if priceVel < -5 {
+		s -= 15
+	}
+
+	// Listings dropping = supply drying = your listing gets seen
+	if listingVel < -3 {
+		s += 10
+	} else if listingVel > 5 {
+		s -= 10
+	}
+
+	// Low CV = predictable market = buyers trust the price
+	if cv < 25 {
+		s += 10
+	} else if cv > 80 {
+		s -= 20
+	}
+
+	// HERD/DUMPING = price is moving, creates urgency for buyers
+	if signal == "HERD" {
+		s += 5 // momentum creates FOMO buyers
+	}
+	if signal == "DUMPING" || signal == "TRAP" {
+		s -= 20 // buyers avoid these
+	}
+
+	// Clamp
+	if s > 100 {
+		s = 100
+	}
+	if s < 0 {
+		s = 0
+	}
+
+	// Label
+	switch {
+	case s >= 80:
+		label = "FAST SELL"
+	case s >= 60:
+		label = "GOOD"
+	case s >= 40:
+		label = "MODERATE"
+	case s >= 20:
+		label = "SLOW"
+	default:
+		label = "UNLIKELY"
+	}
+
+	return s, label
 }
 
 // tierAction returns the recommended action based on signal + tier combination.
@@ -333,6 +425,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		priceTier := classifyPriceTier(g.Chaos, topThresh, midThresh)
 		tAction := tierAction(signal, winSignal, priceTier)
 		sUrgency, sReason := sellUrgency(priceVel, listingVel, baseVel, histPos, baseLst, g.Listings, signal, priceTier)
+		sellScore, sellLabel := sellability(g.Listings, listingVel, priceVel, cv, signal)
 
 		results = append(results, TrendResult{
 			Time:              snapTime,
@@ -359,6 +452,8 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			TierAction:        tAction,
 			SellUrgency:       sUrgency,
 			SellReason:        sReason,
+			Sellability:       sellScore,
+			SellabilityLabel:  sellLabel,
 		})
 	}
 
