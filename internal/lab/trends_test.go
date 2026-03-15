@@ -646,3 +646,154 @@ func TestAnalyzeTrends_ZeroMarketAvg(t *testing.T) {
 		t.Errorf("LiquidityTier = %s, want HIGH (default when marketAvg=0)", r.LiquidityTier)
 	}
 }
+
+func TestDetectPriceManipulation(t *testing.T) {
+	tests := []struct {
+		name     string
+		listings int
+		price    float64
+		priceVel float64
+		cv       float64
+		want     bool
+	}{
+		{"3 listings at 500c no movement high CV", 3, 500, 0, 90, true},
+		{"1 listing at 300c", 1, 300, 0.5, 85, true},
+		{"50 listings = false", 50, 500, 0, 90, false},
+		{"low price = false", 2, 100, 0, 90, false},
+		{"high velocity = false", 2, 500, 5, 90, false},
+		{"low CV = false", 2, 500, 0, 50, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectPriceManipulation(tt.listings, tt.price, tt.priceVel, tt.cv)
+			if got != tt.want {
+				t.Errorf("detectPriceManipulation(%d, %v, %v, %v) = %v, want %v",
+					tt.listings, tt.price, tt.priceVel, tt.cv, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectRotationCandidate(t *testing.T) {
+	tests := []struct {
+		name       string
+		histPos    float64
+		priceVel   float64
+		listingVel float64
+		want       bool
+	}{
+		{"histPos=20, priceVel=3, listVel=-2", 20, 3, -2, true},
+		{"histPos=80 = false", 80, 3, -2, false},
+		{"priceVel negative = false", 20, -1, -2, false},
+		{"listingVel positive = false", 20, 3, 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectRotationCandidate(tt.histPos, tt.priceVel, tt.listingVel)
+			if got != tt.want {
+				t.Errorf("detectRotationCandidate(%v, %v, %v) = %v, want %v",
+					tt.histPos, tt.priceVel, tt.listingVel, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectUndervalued(t *testing.T) {
+	tests := []struct {
+		name     string
+		price    float64
+		listings int
+		priceVel float64
+		histPos  float64
+		want     bool
+	}{
+		{"price=80, 20 listings, priceVel=5, histPos=30", 80, 20, 5, 30, true},
+		{"price=500 = false", 500, 20, 5, 30, false},
+		{"price=10 too low = false", 10, 20, 5, 30, false},
+		{"too many listings = false", 80, 50, 5, 30, false},
+		{"low velocity = false", 80, 20, 1, 30, false},
+		{"histPos=60 = false", 80, 20, 5, 60, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectUndervalued(tt.price, tt.listings, tt.priceVel, tt.histPos)
+			if got != tt.want {
+				t.Errorf("detectUndervalued(%v, %d, %v, %v) = %v, want %v",
+					tt.price, tt.listings, tt.priceVel, tt.histPos, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyAdvancedSignal_Priority(t *testing.T) {
+	// A gem matching both MANIPULATION and UNDERVALUED criteria:
+	// 2 listings, price 250 (>200 for manipulation, but also in undervalued range check fails at >200).
+	// Actually test with a gem that could match manipulation and rotation.
+	// Manipulation: listings<=3, price>200, |priceVel|<1, cv>80
+	// Rotation: histPos<30, priceVel>0, listingVel<0
+	// With priceVel=0.5 (satisfies manipulation |vel|<1, but not rotation priceVel>0... actually 0.5>0 is true)
+	// So: manipulation wants |priceVel|<1, rotation wants priceVel>0
+	// priceVel=0.5 satisfies both conditions.
+	got := classifyAdvancedSignal(
+		300,   // currentPrice >200
+		2,     // listings <=3
+		0.5,   // priceVel: |0.5|<1 for manipulation, >0 for rotation
+		-1,    // listingVel <0 for rotation
+		90,    // cv >80 for manipulation
+		20,    // histPos <30 for rotation
+	)
+	if got != "PRICE_MANIPULATION" {
+		t.Errorf("classifyAdvancedSignal (manipulation+rotation) = %s, want PRICE_MANIPULATION (higher priority)", got)
+	}
+}
+
+func TestClassifyAdvancedSignal_None(t *testing.T) {
+	// Normal gem — no advanced signal.
+	got := classifyAdvancedSignal(100, 50, 1, 0, 30, 60)
+	if got != "" {
+		t.Errorf("classifyAdvancedSignal (normal) = %q, want empty string", got)
+	}
+}
+
+func TestAnalyzeTrends_AdvancedSignal(t *testing.T) {
+	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	t0 := now.Add(-90 * time.Minute)
+
+	// Gem with manipulation characteristics: few listings, high price, no movement, high CV
+	current := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 500, Listings: 2, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	// History with high CV (from wild historical swings) but recent stable price (low velocity).
+	// Velocity uses last 4 points: 500→500→500→500 over 1.5h = 0 velocity.
+	// CV computed over all points — mix of very low and very high prices = CV > 80.
+	history := []GemPriceHistory{
+		{
+			Name: "Spark of Nova", Variant: "20/20", GemColor: "BLUE",
+			Points: []PricePoint{
+				{Time: t0.Add(-48 * time.Hour), Chaos: 20, Listings: 2},
+				{Time: t0.Add(-36 * time.Hour), Chaos: 30, Listings: 2},
+				{Time: t0.Add(-24 * time.Hour), Chaos: 25, Listings: 2},
+				{Time: t0.Add(-12 * time.Hour), Chaos: 15, Listings: 2},
+				{Time: t0, Chaos: 500, Listings: 2},
+				{Time: t0.Add(30 * time.Minute), Chaos: 500, Listings: 2},
+				{Time: t0.Add(60 * time.Minute), Chaos: 500, Listings: 2},
+				{Time: t0.Add(90 * time.Minute), Chaos: 500, Listings: 2},
+			},
+		},
+	}
+
+	results := AnalyzeTrends(now, current, history, nil, 0)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if r.AdvancedSignal != "PRICE_MANIPULATION" {
+		t.Errorf("AdvancedSignal = %q, want PRICE_MANIPULATION", r.AdvancedSignal)
+	}
+	// Primary signal should still be set independently.
+	if r.Signal == "" {
+		t.Error("Signal should not be empty (primary signal independent of advanced)")
+	}
+}

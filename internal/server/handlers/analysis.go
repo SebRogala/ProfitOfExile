@@ -229,6 +229,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		variant := r.URL.Query().Get("variant")
 		signal := r.URL.Query().Get("signal")
 		window := r.URL.Query().Get("window")
+		advanced := r.URL.Query().Get("advanced")
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -240,14 +241,14 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		// Fast path: serve from cache.
 		if cache != nil {
 			if cached := cache.Trends(); len(cached) > 0 {
-				results = filterTrends(cached, variant, signal, window, limit)
+				results = filterTrends(cached, variant, signal, window, advanced, limit)
 			}
 		}
 
 		// Slow path: fall back to DB query.
 		if results == nil {
 			var err error
-			results, err = repo.LatestTrendResults(r.Context(), variant, signal, window, limit)
+			results, err = repo.LatestTrendResults(r.Context(), variant, signal, window, advanced, limit)
 			if err != nil {
 				slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -275,6 +276,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			LiquidityTier     string  `json:"liquidityTier"`
 			WindowScore       float64 `json:"windowScore"`
 			WindowSignal      string  `json:"windowSignal"`
+			AdvancedSignal    string  `json:"advancedSignal"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -299,6 +301,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				LiquidityTier:     r.LiquidityTier,
 				WindowScore:       r.WindowScore,
 				WindowSignal:      r.WindowSignal,
+				AdvancedSignal:    r.AdvancedSignal,
 			})
 		}
 
@@ -314,7 +317,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 // filterTrends filters and limits cached trend results.
 // Results are sorted by CV descending, then current price descending (matching the DB query order).
-func filterTrends(all []lab.TrendResult, variant, signal, window string, limit int) []lab.TrendResult {
+func filterTrends(all []lab.TrendResult, variant, signal, window, advanced string, limit int) []lab.TrendResult {
 	var filtered []lab.TrendResult
 	for _, r := range all {
 		if variant != "" && r.Variant != variant {
@@ -324,6 +327,9 @@ func filterTrends(all []lab.TrendResult, variant, signal, window string, limit i
 			continue
 		}
 		if window != "" && r.WindowSignal != window {
+			continue
+		}
+		if advanced != "" && r.AdvancedSignal != advanced {
 			continue
 		}
 		filtered = append(filtered, r)
