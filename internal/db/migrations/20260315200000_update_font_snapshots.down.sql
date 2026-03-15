@@ -1,0 +1,9 @@
+ALTER TABLE font_snapshots
+    DROP COLUMN IF EXISTS winners,
+    DROP COLUMN IF EXISTS p_win,
+    DROP COLUMN IF EXISTS avg_win,
+    DROP COLUMN IF EXISTS input_cost,
+    DROP COLUMN IF EXISTS profit,
+    DROP COLUMN IF EXISTS threshold,
+    ADD COLUMN IF NOT EXISTS min_val NUMERIC(10,2),
+    ADD COLUMN IF NOT EXISTS max_val NUMERIC(10,2);

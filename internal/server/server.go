@@ -47,6 +47,8 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	if cfg.LabRepo != nil {
 		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo))
+		r.Get("/api/analysis/font", handlers.FontAnalysis(cfg.LabRepo))
+		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo))
 	}
 
 	if cfg.DevMode {

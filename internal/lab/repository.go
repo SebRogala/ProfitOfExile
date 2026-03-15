@@ -104,6 +104,198 @@ func (r *Repository) SaveTransfigureResults(ctx context.Context, results []Trans
 	return inserted, nil
 }
 
+// LatestGCPPrice returns the most recent GCP (Gemcutter's Prism) price from currency_snapshots.
+// Returns 4.0 as a fallback if no data is found.
+func (r *Repository) LatestGCPPrice(ctx context.Context) (float64, error) {
+	var chaos *float64
+	err := r.pool.QueryRow(ctx, `
+		SELECT chaos FROM currency_snapshots
+		WHERE currency_id = 'gemcutters-prism'
+		ORDER BY time DESC LIMIT 1`).Scan(&chaos)
+	if err != nil {
+		return 4.0, fmt.Errorf("lab repo: latest GCP price: %w", err)
+	}
+	if chaos == nil {
+		return 4.0, nil
+	}
+	return *chaos, nil
+}
+
+// SaveFontResults batch-inserts Font of Divine Skill analysis results.
+func (r *Repository) SaveFontResults(ctx context.Context, results []FontResult) (int, error) {
+	if len(results) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, r := range results {
+		batch.Queue(
+			`INSERT INTO font_snapshots
+			 (time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit, threshold)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			 ON CONFLICT DO NOTHING`,
+			r.Time, r.Color, r.Variant, r.Pool, r.Winners,
+			r.PWin, r.AvgWin, r.EV, r.InputCost, r.Profit, r.Threshold,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range results {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert font result: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit font results: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// SaveQualityResults batch-inserts quality-roll analysis results.
+func (r *Repository) SaveQualityResults(ctx context.Context, results []QualityResult) (int, error) {
+	if len(results) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, r := range results {
+		batch.Queue(
+			`INSERT INTO quality_results
+			 (time, name, level, buy_price, price_q20, roi_4, roi_6, roi_10, roi_15,
+			  avg_roi, gcp_price, listings_0, listings_20, gem_color, confidence)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			 ON CONFLICT DO NOTHING`,
+			r.Time, r.Name, r.Level, r.BuyPrice, r.PriceQ20,
+			r.ROI4, r.ROI6, r.ROI10, r.ROI15, r.AvgROI,
+			r.GCPPrice, r.Listings0, r.Listings20, r.GemColor, r.Confidence,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range results {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert quality result: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit quality results: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// LatestFontResults returns the most recent Font analysis results, optionally filtered by variant.
+func (r *Repository) LatestFontResults(ctx context.Context, variant string, limit int) ([]FontResult, error) {
+	query := `
+		SELECT time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit, threshold
+		FROM font_snapshots
+		WHERE time = (SELECT MAX(time) FROM font_snapshots)`
+	args := []any{}
+
+	if variant != "" {
+		query += ` AND variant = $1 ORDER BY profit DESC LIMIT $2`
+		args = append(args, variant, limit)
+	} else {
+		query += ` ORDER BY profit DESC LIMIT $1`
+		args = append(args, limit)
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query font results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FontResult
+	for rows.Next() {
+		var fr FontResult
+		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.Winners,
+			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit, &fr.Threshold); err != nil {
+			return nil, fmt.Errorf("lab repo: scan font result: %w", err)
+		}
+		results = append(results, fr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: font rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
+// LatestQualityResults returns the most recent quality-roll analysis results, optionally filtered by variant.
+func (r *Repository) LatestQualityResults(ctx context.Context, variant string, limit int) ([]QualityResult, error) {
+	query := `
+		SELECT time, name, level, buy_price, price_q20, roi_4, roi_6, roi_10, roi_15,
+		       avg_roi, gcp_price, listings_0, listings_20, COALESCE(gem_color, ''), confidence
+		FROM quality_results
+		WHERE time = (SELECT MAX(time) FROM quality_results)`
+	args := []any{}
+
+	if variant != "" {
+		// variant here maps to level: "1" or "1/20" → level 1, "20" or "20/20" → level 20
+		query += ` AND level = $1 ORDER BY avg_roi DESC LIMIT $2`
+		level := 20
+		if variant == "1" || variant == "1/20" {
+			level = 1
+		}
+		args = append(args, level, limit)
+	} else {
+		query += ` ORDER BY avg_roi DESC LIMIT $1`
+		args = append(args, limit)
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query quality results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []QualityResult
+	for rows.Next() {
+		var qr QualityResult
+		if err := rows.Scan(&qr.Time, &qr.Name, &qr.Level, &qr.BuyPrice, &qr.PriceQ20,
+			&qr.ROI4, &qr.ROI6, &qr.ROI10, &qr.ROI15, &qr.AvgROI,
+			&qr.GCPPrice, &qr.Listings0, &qr.Listings20, &qr.GemColor, &qr.Confidence); err != nil {
+			return nil, fmt.Errorf("lab repo: scan quality result: %w", err)
+		}
+		results = append(results, qr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: quality rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
 // LatestTransfigureResults returns the most recent analysis results, optionally filtered by variant.
 func (r *Repository) LatestTransfigureResults(ctx context.Context, variant string, limit int) ([]TransfigureResult, error) {
 	query := `
