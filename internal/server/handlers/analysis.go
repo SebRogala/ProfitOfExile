@@ -150,6 +150,80 @@ func FontAnalysis(repo *lab.Repository) http.HandlerFunc {
 	}
 }
 
+// TrendAnalysis returns the latest trend analysis results.
+// Query params: variant (optional, e.g. "20/20"), signal (optional, e.g. "TRAP"), limit (default 50, max 500).
+func TrendAnalysis(repo *lab.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		variant := r.URL.Query().Get("variant")
+		signal := r.URL.Query().Get("signal")
+
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
+				return
+			}
+			if n > 500 {
+				n = 500
+			}
+			limit = n
+		}
+
+		results, err := repo.LatestTrendResults(r.Context(), variant, signal, limit)
+		if err != nil {
+			slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		type row struct {
+			Time            string  `json:"time"`
+			Name            string  `json:"name"`
+			Variant         string  `json:"variant"`
+			GemColor        string  `json:"gemColor"`
+			CurrentPrice    float64 `json:"currentPrice"`
+			CurrentListings int     `json:"currentListings"`
+			PriceVelocity   float64 `json:"priceVelocity"`
+			ListingVelocity float64 `json:"listingVelocity"`
+			CV              float64 `json:"cv"`
+			Signal          string  `json:"signal"`
+			HistPosition    float64 `json:"histPosition"`
+			PriceHigh7d     float64 `json:"priceHigh7d"`
+			PriceLow7d      float64 `json:"priceLow7d"`
+		}
+
+		rows := make([]row, 0, len(results))
+		for _, r := range results {
+			rows = append(rows, row{
+				Time:            r.Time.UTC().Format(time.RFC3339),
+				Name:            r.Name,
+				Variant:         r.Variant,
+				GemColor:        r.GemColor,
+				CurrentPrice:    r.CurrentPrice,
+				CurrentListings: r.CurrentListings,
+				PriceVelocity:   r.PriceVelocity,
+				ListingVelocity: r.ListingVelocity,
+				CV:              r.CV,
+				Signal:          r.Signal,
+				HistPosition:    r.HistPosition,
+				PriceHigh7d:     r.PriceHigh7d,
+				PriceLow7d:      r.PriceLow7d,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"count": len(rows),
+			"data":  rows,
+		}); err != nil {
+			slog.Error("trend analysis: encode response", "error", err)
+		}
+	}
+}
+
 // QualityAnalysis returns the latest quality-roll ROI results.
 // Query params: variant (optional, maps to level: "1"/"1/20" → level 1, "20"/"20/20" → level 20), limit (default 50, max 500).
 func QualityAnalysis(repo *lab.Repository) http.HandlerFunc {

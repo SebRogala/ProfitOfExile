@@ -296,6 +296,164 @@ func (r *Repository) LatestQualityResults(ctx context.Context, variant string, l
 	return results, nil
 }
 
+// GemPriceHistoryByVariant returns time-series gem data for transfigured, non-corrupted gems
+// within the given number of hours, grouped by (name, variant).
+// Only includes variants "1", "1/20", "20", "20/20", chaos > 5, and excludes Trarthus.
+func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, variant string, hours int) ([]GemPriceHistory, error) {
+	query := `
+		SELECT name, variant, COALESCE(gem_color, ''), time, COALESCE(chaos, 0), COALESCE(listings, 0)
+		FROM gem_snapshots
+		WHERE time > NOW() - make_interval(hours => $1)
+		  AND is_transfigured = true
+		  AND is_corrupted = false
+		  AND name NOT LIKE '%Trarthus%'
+		  AND COALESCE(chaos, 0) > 5
+		  AND variant = ANY($2)`
+	args := []any{hours, []string{"1", "1/20", "20", "20/20"}}
+
+	if variant != "" {
+		query += ` AND variant = $3`
+		args = append(args, variant)
+	}
+
+	query += ` ORDER BY name, variant, time ASC`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem price history: %w", err)
+	}
+	defer rows.Close()
+
+	type histKey struct{ name, variant string }
+	index := make(map[histKey]*GemPriceHistory)
+	var order []histKey
+
+	for rows.Next() {
+		var name, v, color string
+		var t time.Time
+		var chaos float64
+		var listings int
+		if err := rows.Scan(&name, &v, &color, &t, &chaos, &listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem price history: %w", err)
+		}
+
+		k := histKey{name, v}
+		h, exists := index[k]
+		if !exists {
+			h = &GemPriceHistory{Name: name, Variant: v, GemColor: color}
+			index[k] = h
+			order = append(order, k)
+		}
+		h.Points = append(h.Points, PricePoint{Time: t, Chaos: chaos, Listings: listings})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem price history rows: %w", err)
+	}
+
+	result := make([]GemPriceHistory, 0, len(order))
+	for _, k := range order {
+		result = append(result, *index[k])
+	}
+	return result, nil
+}
+
+// SaveTrendResults batch-inserts trend analysis results.
+func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult) (int, error) {
+	if len(results) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, r := range results {
+		batch.Queue(
+			`INSERT INTO trend_results
+			 (time, name, variant, gem_color, current_price, current_listings,
+			  price_velocity, listing_velocity, cv, signal, hist_position,
+			  price_high_7d, price_low_7d)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			 ON CONFLICT DO NOTHING`,
+			r.Time, r.Name, r.Variant, r.GemColor, r.CurrentPrice, r.CurrentListings,
+			r.PriceVelocity, r.ListingVelocity, r.CV, r.Signal, r.HistPosition,
+			r.PriceHigh7d, r.PriceLow7d,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range results {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert trend result: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit trend results: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// LatestTrendResults returns the most recent trend results, optionally filtered by variant and/or signal.
+func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal string, limit int) ([]TrendResult, error) {
+	query := `
+		SELECT time, name, variant, gem_color, current_price, current_listings,
+		       price_velocity, listing_velocity, cv, signal, hist_position,
+		       price_high_7d, price_low_7d
+		FROM trend_results
+		WHERE time = (SELECT MAX(time) FROM trend_results)`
+	args := []any{}
+	argIdx := 1
+
+	if variant != "" {
+		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
+		args = append(args, variant)
+		argIdx++
+	}
+	if signal != "" {
+		query += fmt.Sprintf(` AND signal = $%d`, argIdx)
+		args = append(args, signal)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` ORDER BY cv DESC, current_price DESC LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query trend results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []TrendResult
+	for rows.Next() {
+		var tr TrendResult
+		if err := rows.Scan(&tr.Time, &tr.Name, &tr.Variant, &tr.GemColor,
+			&tr.CurrentPrice, &tr.CurrentListings,
+			&tr.PriceVelocity, &tr.ListingVelocity, &tr.CV, &tr.Signal, &tr.HistPosition,
+			&tr.PriceHigh7d, &tr.PriceLow7d); err != nil {
+			return nil, fmt.Errorf("lab repo: scan trend result: %w", err)
+		}
+		results = append(results, tr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: trend rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
 // LatestTransfigureResults returns the most recent analysis results, optionally filtered by variant.
 func (r *Repository) LatestTransfigureResults(ctx context.Context, variant string, limit int) ([]TransfigureResult, error) {
 	query := `

@@ -118,6 +118,16 @@ func main() {
 			slog.Warn("startup quality analysis failed (non-fatal)", "error", err)
 		}
 	}()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("trend analysis panicked on startup", "recover", r)
+			}
+		}()
+		if err := analyzer.RunTrends(ctx); err != nil {
+			slog.Warn("startup trend analysis failed (non-fatal)", "error", err)
+		}
+	}()
 
 	// Start Mercure subscriber in background if configured.
 	if mercureURL != "" {
@@ -172,6 +182,16 @@ func main() {
 					}()
 					if err := analyzer.RunQuality(subCtx); err != nil {
 						slog.Warn("quality analysis failed", "error", err)
+					}
+				}()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("trend analysis panicked", "recover", r)
+						}
+					}()
+					if err := analyzer.RunTrends(subCtx); err != nil {
+						slog.Warn("trend analysis failed", "error", err)
 					}
 				}()
 			}
