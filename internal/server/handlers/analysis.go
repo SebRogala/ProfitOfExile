@@ -461,13 +461,15 @@ func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if cache == nil {
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"cached":      false,
 				"transfigure": 0,
 				"font":        0,
 				"quality":     0,
 				"trends":      0,
-			})
+			}); err != nil {
+				slog.Error("analysis status: encode response", "error", err)
+			}
 			return
 		}
 
@@ -485,6 +487,8 @@ func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
 			resp["lastUpdated"] = lastUpdated.UTC().Format(time.RFC3339)
 		}
 
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("analysis status: encode response", "error", err)
+		}
 	}
 }

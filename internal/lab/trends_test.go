@@ -503,30 +503,32 @@ func TestComputeWindowScore_Capped(t *testing.T) {
 
 func TestClassifyWindowSignal(t *testing.T) {
 	tests := []struct {
-		name                                          string
-		score, baseVel, transListVel                  float64
-		baseLst                                       int
-		priceVel, listVel                             float64
-		want                                          string
+		name                              string
+		score, baseVel, transListVel      float64
+		baseLst                           int
+		priceVel                          float64
+		want                              string
 	}{
-		{"OPEN: high score + draining", 75, -3, 0, 30, 5, -2, "OPEN"},
-		{"OPENING: mid score + slight drain", 55, -1, 0, 30, 0, 0, "OPENING"},
-		{"CLOSING: mid score + herd arriving", 55, 0, 5, 30, 0, 0, "CLOSING"},
-		{"CLOSED: low score", 30, -5, 0, 30, 0, 0, "CLOSED"},
-		{"EXHAUSTED: base listings 0", 80, -5, 0, 0, 5, -2, "EXHAUSTED"},
-		{"EXHAUSTED: base listings 2", 80, -5, 0, 2, 5, -2, "EXHAUSTED"},
-		{"BREWING: price rising + listings falling + bases available", 20, 0, 0, 50, 3, -2, "BREWING"},
-		{"BREWING not if bases low", 20, 0, 0, 5, 3, -2, "CLOSED"},
+		{"OPEN: high score + draining", 75, -3, 0, 30, 5, "OPEN"},
+		{"OPENING: mid score + slight drain", 55, -1, 0, 30, 0, "OPENING"},
+		{"CLOSING: mid score + herd arriving", 55, 0, 5, 30, 0, "CLOSING"},
+		{"CLOSED: low score", 30, -5, 0, 30, 0, "CLOSED"},
+		{"EXHAUSTED: base listings 0", 80, -5, 0, 0, 5, "EXHAUSTED"},
+		{"EXHAUSTED: base listings 2", 80, -5, 0, 2, 5, "EXHAUSTED"},
+		{"BREWING: price rising + trans listings falling + bases available", 20, 0, -2, 50, 3, "BREWING"},
+		{"BREWING not if bases low", 20, 0, -2, 5, 3, "CLOSED"},
 		// Edge: score exactly 70, baseVel exactly -2 → not OPEN (needs < -2)
-		{"boundary: score=70 baseVel=-2 not OPEN", 70, -2, 0, 30, 0, 0, "OPENING"},
-		{"boundary: score=70 baseVel=-2.01 is OPEN", 70, -2.01, 0, 30, 0, 0, "OPEN"},
+		{"boundary: score=70 baseVel=-2 not OPEN", 70, -2, 0, 30, 0, "OPENING"},
+		{"boundary: score=70 baseVel=-2.01 is OPEN", 70, -2.01, 0, 30, 0, "OPEN"},
+		// Sentinel: baseListings = -1 skips EXHAUSTED
+		{"baseLst=-1 skips EXHAUSTED", 80, -5, 0, -1, 5, "OPEN"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyWindowSignal(tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel, tt.listVel)
+			got := classifyWindowSignal(tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel)
 			if got != tt.want {
-				t.Errorf("classifyWindowSignal(%v, %v, %v, %v, %v, %v) = %s, want %s",
-					tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel, tt.listVel, got, tt.want)
+				t.Errorf("classifyWindowSignal(%v, %v, %v, %v, %v) = %s, want %s",
+					tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel, got, tt.want)
 			}
 		})
 	}
