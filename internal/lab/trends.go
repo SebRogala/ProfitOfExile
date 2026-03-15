@@ -102,11 +102,11 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			GemColor:        g.GemColor,
 			CurrentPrice:    g.Chaos,
 			CurrentListings: g.Listings,
-			PriceVelocity:   priceVel,
-			ListingVelocity: listingVel,
+			PriceVelocity:   sanitizeFloat(priceVel),
+			ListingVelocity: sanitizeFloat(listingVel),
 			CV:              cv,
 			Signal:          signal,
-			HistPosition:    histPos,
+			HistPosition:    sanitizeFloat(histPos),
 			PriceHigh7d:     high7d,
 			PriceLow7d:      low7d,
 		})
@@ -115,7 +115,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 	return results
 }
 
-// coefficientOfVariation computes stdev/mean * 100 for a slice of prices.
+// coefficientOfVariation computes stdev/|mean| * 100 for a slice of prices.
 // Returns 0 for fewer than 2 values or zero mean.
 func coefficientOfVariation(prices []float64) float64 {
 	if len(prices) < 2 {
@@ -138,7 +138,16 @@ func coefficientOfVariation(prices []float64) float64 {
 	}
 	variance /= float64(len(prices))
 
-	return (math.Sqrt(variance) / mean) * 100
+	return sanitizeFloat((math.Sqrt(variance) / math.Abs(mean)) * 100)
+}
+
+// sanitizeFloat returns 0 for NaN or Inf values, preventing bad data
+// from poisoning batch INSERTs into PostgreSQL NUMERIC columns.
+func sanitizeFloat(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
 }
 
 // velocity computes the rate of change per hour using last 4 data points (or fewer).

@@ -316,7 +316,7 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, variant strin
 		args = append(args, variant)
 	}
 
-	query += ` ORDER BY name, variant, time ASC`
+	query += ` ORDER BY name, variant, time ASC LIMIT 500000`
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {

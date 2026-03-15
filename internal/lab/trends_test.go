@@ -156,6 +156,38 @@ func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 	}
 }
 
+func TestClassifySignal_Boundaries(t *testing.T) {
+	tests := []struct {
+		name                        string
+		priceVel, listingVel, cv    float64
+		want                        string
+	}{
+		// CV boundary: exactly 100 is NOT TRAP (uses > 100)
+		{"cv=100 not TRAP", 0, 0, 100, "STABLE"},
+		{"cv=100.01 is TRAP", 0, 0, 100.01, "TRAP"},
+		// DUMPING boundary: priceVel must be < -5 (not <=)
+		{"priceVel=-5 not DUMPING", -5, 10, 50, "FALLING"},
+		{"priceVel=-5.01 is DUMPING", -5.01, 10, 50, "DUMPING"},
+		// HERD boundary: listingVel must be > 10
+		{"listingVel=10 not HERD", 10, 10, 30, "RISING"},
+		{"listingVel=10.01 is HERD", 10, 10.01, 30, "HERD"},
+		// STABLE boundary: |priceVel| must be < 2 and |listingVel| < 3
+		{"priceVel=2 not STABLE", 2, 0, 30, "RISING"},
+		{"priceVel=1.99 is STABLE", 1.99, 0, 30, "STABLE"},
+		{"listingVel=3 not STABLE", 0, 3, 30, "FALLING"},
+		{"listingVel=2.99 is STABLE", 0, 2.99, 30, "STABLE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifySignal(tt.priceVel, tt.listingVel, tt.cv)
+			if got != tt.want {
+				t.Errorf("classifySignal(%v, %v, %v) = %s, want %s",
+					tt.priceVel, tt.listingVel, tt.cv, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHistoricalPosition(t *testing.T) {
 	// Prices range 50-150, current at 100 → midpoint = 50%
 	prices := []float64{50, 75, 100, 125, 150}
@@ -195,6 +227,30 @@ func TestHistoricalPosition_AboveHistoricalHigh(t *testing.T) {
 	}
 	if math.Abs(pos-100) > 0.01 {
 		t.Errorf("position = %f, want 100", pos)
+	}
+}
+
+func TestHistoricalPosition_BelowHistoricalLow(t *testing.T) {
+	prices := []float64{50, 75, 100}
+	_, low, pos := historicalPosition(10, prices)
+	if low != 10 {
+		t.Errorf("low = %f, want 10 (expanded range)", low)
+	}
+	if math.Abs(pos-0) > 0.01 {
+		t.Errorf("position = %f, want 0", pos)
+	}
+}
+
+func TestHistoricalPosition_EmptyPrices(t *testing.T) {
+	high, low, pos := historicalPosition(42, nil)
+	if high != 42 {
+		t.Errorf("high = %f, want 42", high)
+	}
+	if low != 42 {
+		t.Errorf("low = %f, want 42", low)
+	}
+	if pos != 50 {
+		t.Errorf("position = %f, want 50", pos)
 	}
 }
 
@@ -322,6 +378,33 @@ func TestAnalyzeTrends_ExcludesInvalidVariants(t *testing.T) {
 	results := AnalyzeTrends(now, current, nil)
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0 (invalid variant excluded)", len(results))
+	}
+}
+
+func TestSanitizeFloat(t *testing.T) {
+	if sanitizeFloat(math.NaN()) != 0 {
+		t.Error("NaN should be sanitized to 0")
+	}
+	if sanitizeFloat(math.Inf(1)) != 0 {
+		t.Error("+Inf should be sanitized to 0")
+	}
+	if sanitizeFloat(math.Inf(-1)) != 0 {
+		t.Error("-Inf should be sanitized to 0")
+	}
+	if sanitizeFloat(42.5) != 42.5 {
+		t.Error("normal float should pass through")
+	}
+}
+
+func TestCoefficientOfVariation_NegativeMean(t *testing.T) {
+	// Mean is negative but non-zero — should use |mean| and return valid CV
+	cv := coefficientOfVariation([]float64{-10, -20, -30})
+	if cv < 0 || math.IsNaN(cv) || math.IsInf(cv, 0) {
+		t.Errorf("CV with negative mean = %f, want valid non-negative value", cv)
+	}
+	// Same spread as [10,20,30] → CV should be ~40.82
+	if math.Abs(cv-40.82) > 0.1 {
+		t.Errorf("CV([-10,-20,-30]) = %f, want ~40.82", cv)
 	}
 }
 
