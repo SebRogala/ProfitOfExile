@@ -90,21 +90,21 @@
 		-webkit-font-smoothing: antialiased;
 	}
 	.dashboard {
-		max-width: 1200px;
+		max-width: 1600px;
 		margin: 0 auto;
-		padding: 24px 32px;
+		padding: 24px 40px;
 	}
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 24px;
+		padding: 28px;
 		margin-bottom: 32px;
 	}
 	.section-title {
-		font-size: 0.9375rem;
+		font-size: 1.125rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
-		margin: 0 0 12px 0;
+		margin: 0 0 14px 0;
 	}
 	.dedication {
 		text-align: center;

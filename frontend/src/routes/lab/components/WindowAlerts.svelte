@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { WindowAlert } from '$lib/api';
 	import SignalBadge from './SignalBadge.svelte';
+	import GemIcon from './GemIcon.svelte';
 
 	let { alerts }: { alerts: WindowAlert[] } = $props();
 
@@ -13,11 +14,12 @@
 
 {#if alerts.length > 0}
 	<section class="section">
-		<h2 class="section-title">⚠ Window Alerts</h2>
+		<h2 class="section-title">Window Alerts</h2>
 		{#each alerts as alert}
 			<div class="alert-row">
 				<div class="alert-main">
 					<SignalBadge signal={alert.windowSignal} type="window" />
+					<GemIcon name={alert.name} size={24} />
 					<span class="gem-name">{alert.name}</span>
 					<span class="variant">({alert.variant})</span>
 					<span class="roi">{alert.roi}c</span>
@@ -42,18 +44,18 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 24px;
+		padding: 28px;
 		margin-bottom: 32px;
 	}
 	.section-title {
-		font-size: 0.9375rem;
+		font-size: 1.125rem;
 		font-weight: 700;
 		color: var(--color-lab-yellow);
-		margin: 0 0 16px 0;
+		margin: 0 0 18px 0;
 	}
 	.alert-row {
 		border-bottom: 1px solid var(--color-lab-border);
-		padding: 12px 0;
+		padding: 14px 0;
 	}
 	.alert-row:last-child {
 		border-bottom: none;
@@ -67,39 +69,39 @@
 	.gem-name {
 		color: var(--color-lab-text);
 		font-weight: 700;
-		font-size: 0.875rem;
+		font-size: 1rem;
 	}
 	.variant {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.roi {
 		color: var(--color-lab-green);
 		font-weight: 700;
-		font-size: 0.875rem;
+		font-size: 1rem;
 	}
 	.meta {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 	.liq {
-		font-size: 0.6875rem;
+		font-size: 0.8125rem;
 		font-weight: 600;
 		color: var(--color-lab-yellow);
 	}
 	.alert-detail {
-		margin-top: 6px;
-		padding-left: 8px;
+		margin-top: 8px;
+		padding-left: 10px;
 		display: flex;
-		gap: 16px;
+		gap: 18px;
 		flex-wrap: wrap;
 	}
 	.action {
 		color: var(--color-lab-text);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.history {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 </style>

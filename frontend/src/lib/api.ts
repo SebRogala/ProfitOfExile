@@ -38,6 +38,7 @@ export interface SignalTransition {
 	from: string;
 	to: string;
 	reason: string;
+	listings: number;
 }
 
 export interface FontColor {
@@ -115,7 +116,7 @@ const MOCK_STATUS: StatusData = {
 };
 
 const MOCK_GEM_NAMES = [
-	'Spark of Nova',
+	'Spark of the Nova',
 	'Spark of Unpredictability',
 	'Lightning Strike of Arcing',
 	'Ball Lightning of Orbiting',
@@ -125,7 +126,7 @@ const MOCK_GEM_NAMES = [
 	'Ethereal Knives of the Massacre',
 	'Blade Vortex of the Scythe',
 	'Ice Nova of Frostbolts',
-	'Vaal Grace of Phasing',
+	'Vaal Grace',
 	'Molten Strike of the Zenith',
 	'Cyclone of Tumult',
 	'Tornado Shot of Cloudburst',
@@ -133,7 +134,7 @@ const MOCK_GEM_NAMES = [
 	'Lightning Arrow of Electrocution',
 	'Rain of Arrows of Artillery',
 	'Caustic Arrow of Poison',
-	'Spectral Helix of Volatility',
+	'Spectral Helix of Trarthus',
 	'Boneshatter of Complex Trauma',
 ];
 
@@ -143,10 +144,11 @@ function makeSparkline(): number[] {
 }
 
 function makeHistory(): SignalTransition[] {
+	const base = 30 + Math.floor(Math.random() * 80);
 	return [
-		{ time: '13:15', from: 'STABLE', to: 'RISING', reason: '+8c/h' },
-		{ time: '13:45', from: 'RISING', to: 'RISING', reason: '+6c/h' },
-		{ time: '14:15', from: 'RISING', to: 'STABLE', reason: 'velocity settled' },
+		{ time: '13:15', from: 'STABLE', to: 'RISING', reason: '+8c/h', listings: base + 12 },
+		{ time: '13:45', from: 'RISING', to: 'RISING', reason: '+6c/h', listings: base + 4 },
+		{ time: '14:15', from: 'RISING', to: 'STABLE', reason: 'velocity settled', listings: base },
 	];
 }
 
@@ -255,7 +257,7 @@ function getWindowAlerts(): WindowAlert[] {
 		_windowAlerts = [
 			{
 				windowSignal: 'OPEN',
-				name: 'Spark of Nova',
+				name: 'Spark of the Nova',
 				variant: '20/20',
 				roi: 940,
 				transListings: 12,
@@ -264,8 +266,8 @@ function getWindowAlerts(): WindowAlert[] {
 				liquidityTier: 'MED',
 				action: 'Farm NOW! Bases draining fast, transfigured supply is low.',
 				history: [
-					{ time: '13:15', from: 'BREWING', to: 'OPENING', reason: 'base velocity -4/h' },
-					{ time: '13:45', from: 'OPENING', to: 'OPEN', reason: 'window score 78' },
+					{ time: '13:15', from: 'BREWING', to: 'OPENING', reason: 'base velocity -4/h', listings: 18 },
+					{ time: '13:45', from: 'OPENING', to: 'OPEN', reason: 'window score 78', listings: 12 },
 				],
 			},
 			{
@@ -279,7 +281,7 @@ function getWindowAlerts(): WindowAlert[] {
 				liquidityTier: 'HIGH',
 				action: 'Opportunity forming. Start planning your lab run.',
 				history: [
-					{ time: '14:00', from: 'CLOSED', to: 'BREWING', reason: 'price +6c/h, listings -2/h' },
+					{ time: '14:00', from: 'CLOSED', to: 'BREWING', reason: 'price +6c/h, listings -2/h', listings: 28 },
 				],
 			},
 		];

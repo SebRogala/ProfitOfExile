@@ -3,13 +3,14 @@
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
+	import GemIcon from './GemIcon.svelte';
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 
 	let variant = $state('20/20');
 	let searchQuery = $state('');
 	let suggestions = $state<string[]>([]);
-	let selectedGems = $state<string[]>(['Spark of Nova', 'Ball Lightning of Static', 'Arc of Surging']);
+	let selectedGems = $state<string[]>(['Spark of the Nova', 'Ball Lightning of Static', 'Arc of Surging']);
 	let results = $state<CompareGem[]>([]);
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
@@ -46,13 +47,22 @@
 		showDropdown = false;
 		highlightedIndex = -1;
 		loadResults();
-		// Re-focus the input after selection
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
 	function removeGem(index: number) {
 		selectedGems = selectedGems.filter((_, i) => i !== index);
 		loadResults();
+		setTimeout(() => inputRef?.focus(), 0);
+	}
+
+	function clearAll() {
+		selectedGems = [];
+		results = [];
+		searchQuery = '';
+		suggestions = [];
+		showDropdown = false;
+		highlightedIndex = -1;
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
@@ -103,20 +113,24 @@
 		return '0';
 	}
 
-	// Load initial comparison
 	loadResults();
 </script>
 
 <section class="section">
 	<div class="section-header">
 		<h2 class="section-title">Lab Options Comparator</h2>
-		<div class="variant-select">
-			<span class="select-label">Variant:</span>
-			<select bind:value={variant} onchange={() => loadResults()} class="select-input">
-				{#each VARIANTS as v}
-					<option value={v}>{v}</option>
-				{/each}
-			</select>
+		<div class="header-controls">
+			{#if selectedGems.length > 0}
+				<button class="clear-btn" onclick={clearAll}>Clear All</button>
+			{/if}
+			<div class="variant-select">
+				<span class="select-label">Variant:</span>
+				<select bind:value={variant} onchange={() => loadResults()} class="select-input">
+					{#each VARIANTS as v}
+						<option value={v}>{v}</option>
+					{/each}
+				</select>
+			</div>
 		</div>
 	</div>
 
@@ -124,6 +138,7 @@
 		<div class="tags-row">
 			{#each selectedGems as gem, i}
 				<span class="tag">
+					<GemIcon name={gem} size={20} />
 					{gem}
 					<button class="tag-remove" onclick={() => removeGem(i)}>×</button>
 				</span>
@@ -151,6 +166,7 @@
 								class:highlighted={i === highlightedIndex}
 								onmousedown={() => selectGem(gem)}
 							>
+								<GemIcon name={gem} size={20} />
 								{gem}
 							</button>
 						{/each}
@@ -166,33 +182,33 @@
 		<div class="cards-row">
 			{#each results as gem}
 				<div class="compare-card">
-					<div class="card-name">{gem.name}</div>
-					<div class="card-row">
-						<span class="roi" title={METRIC_TOOLTIPS.ROI}>{gem.roi}c</span>
-						<span class="roi-pct" title={METRIC_TOOLTIPS['ROI%']}>({gem.roiPercent}%)</span>
-						<span class="color-badge color-{gem.color.toLowerCase()}">{gem.color}</span>
+					<div class="card-name-row">
+						<GemIcon name={gem.name} size={32} />
+						<span class="card-name">{gem.name}</span>
 					</div>
 					<div class="card-row">
+						<span class="roi" title={METRIC_TOOLTIPS.ROI}>{gem.roi}c</span>
 						<SignalBadge signal={gem.signal} />
 						<span class="cv" title={METRIC_TOOLTIPS.CV}>CV: {gem.cv}%</span>
 					</div>
 					<div class="card-row small">
-						<span>Trans: {gem.transListings} lst {velocityStr(gem.transVelocity)}/2h</span>
-					</div>
-					<div class="card-row small">
-						<span>Base: {gem.baseListings} lst {velocityStr(gem.baseVelocity)}/2h</span>
+						<span>{gem.transListings} listings</span>
+						<span class="velocity-inline" title="Listing change over last 2 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 2} last 2h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
 					</div>
-					<div class="card-row">
-						<span class="window-label">Window:</span>
-						<SignalBadge signal={gem.windowSignal} type="window" />
-					</div>
-					<div class="card-row">
-						<Sparkline data={gem.sparkline} />
+					<div class="sparkline-row">
+						<Sparkline data={gem.sparkline} width={280} height={32} />
 					</div>
 					<div class="history">
 						{#each gem.signalHistory as h}
-							<div class="history-line">{h.time} {h.from}→{h.to} ({h.reason})</div>
+							<div class="history-line">
+								<span class="hist-time">{h.time}</span>
+								<SignalBadge signal={h.from} />
+								<span class="hist-arrow">→</span>
+								<SignalBadge signal={h.to} />
+								<span class="hist-reason">{h.reason}</span>
+								<span class="hist-listings">{h.listings} lst</span>
+							</div>
 						{/each}
 					</div>
 					<div class="card-rec {recClass(gem.recommendation)}">
@@ -208,20 +224,38 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 24px;
+		padding: 28px;
 		margin-bottom: 32px;
 	}
 	.section-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 16px;
+		margin-bottom: 20px;
 	}
 	.section-title {
-		font-size: 0.9375rem;
+		font-size: 1.125rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
+	}
+	.header-controls {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.clear-btn {
+		background: rgba(239, 68, 68, 0.12);
+		border: 1px solid rgba(239, 68, 68, 0.3);
+		color: var(--color-lab-red);
+		padding: 6px 14px;
+		font-size: 0.875rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.clear-btn:hover {
+		background: rgba(239, 68, 68, 0.2);
 	}
 	.variant-select {
 		display: flex;
@@ -230,35 +264,34 @@
 	}
 	.select-label {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.select-input {
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
-		padding: 4px 10px;
-		font-size: 0.8125rem;
+		padding: 6px 12px;
+		font-size: 0.9375rem;
 		font-family: inherit;
 	}
 
-	/* Tag-based multi-select */
 	.comparator-input {
-		margin-bottom: 16px;
+		margin-bottom: 20px;
 	}
 	.tags-row {
 		display: flex;
-		gap: 8px;
-		margin-bottom: 8px;
+		gap: 10px;
+		margin-bottom: 10px;
 		flex-wrap: wrap;
 	}
 	.tag {
 		display: inline-flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 		background: #2a2d37;
 		color: #e4e4e7;
-		padding: 4px 10px;
-		font-size: 0.8125rem;
+		padding: 6px 14px;
+		font-size: 0.9375rem;
 		font-weight: 600;
 		border-radius: 2px;
 	}
@@ -266,7 +299,7 @@
 		background: none;
 		border: none;
 		color: #e4e4e7;
-		font-size: 0.875rem;
+		font-size: 1rem;
 		cursor: pointer;
 		padding: 0 2px;
 		line-height: 1;
@@ -283,8 +316,8 @@
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
-		padding: 8px 12px;
-		font-size: 0.8125rem;
+		padding: 10px 14px;
+		font-size: 0.9375rem;
 		font-family: inherit;
 		box-sizing: border-box;
 	}
@@ -299,18 +332,20 @@
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
 		z-index: 10;
-		max-height: 200px;
+		max-height: 240px;
 		overflow-y: auto;
 	}
 	.dropdown-item {
-		display: block;
+		display: flex;
+		align-items: center;
+		gap: 10px;
 		width: 100%;
 		text-align: left;
-		padding: 6px 12px;
+		padding: 8px 14px;
 		color: var(--color-lab-text);
 		background: none;
 		border: none;
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 		cursor: pointer;
 		font-family: inherit;
 	}
@@ -323,88 +358,126 @@
 	}
 	.max-reached {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 		margin: 0;
 	}
 
 	.cards-row {
-		display: flex;
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
 		gap: 16px;
 	}
 	.compare-card {
-		flex: 1;
 		border: 1px solid var(--color-lab-border);
 		padding: 24px;
 		background: var(--color-lab-bg);
+		min-width: 0;
+	}
+	.card-name-row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-bottom: 16px;
 	}
 	.card-name {
 		font-weight: 700;
-		font-size: 0.875rem;
+		font-size: 1.125rem;
 		color: var(--color-lab-text);
-		margin-bottom: 8px;
 	}
 	.card-row {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		margin-bottom: 6px;
+		gap: 12px;
+		margin-bottom: 10px;
+		flex-wrap: wrap;
 	}
 	.card-row.small {
-		font-size: 0.75rem;
+		font-size: 0.9375rem;
 		color: var(--color-lab-text-secondary);
 	}
 	.roi {
 		color: var(--color-lab-green);
 		font-weight: 700;
-		font-size: 0.875rem;
+		font-size: 1.25rem;
 		cursor: help;
 	}
 	.roi-pct {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 1rem;
 		cursor: help;
 	}
-	.color-badge {
-		font-size: 0.6875rem;
-		font-weight: 700;
-		padding: 1px 5px;
+	.velocity-inline {
+		color: var(--color-lab-text-secondary);
 	}
-	.color-red { color: var(--color-lab-red); background: rgba(239,68,68,0.1); }
-	.color-green { color: var(--color-lab-green); background: rgba(34,197,94,0.1); }
-	.color-blue { color: var(--color-lab-blue); background: rgba(59,130,246,0.1); }
 	.cv {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.75rem;
+		font-size: 0.9375rem;
 		cursor: help;
 	}
 	.liq {
-		font-size: 0.6875rem;
+		font-size: 0.875rem;
 		font-weight: 600;
 		color: var(--color-lab-yellow);
 	}
 	.window-label {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.75rem;
+		font-size: 0.9375rem;
 	}
 	.history {
-		margin: 8px 0;
+		margin: 12px 0;
 	}
 	.history-line {
-		font-size: 0.6875rem;
+		font-size: 0.875rem;
 		color: var(--color-lab-text-secondary);
-		line-height: 1.4;
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		padding: 6px 0;
+		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
+	}
+	.history-line:last-child {
+		border-bottom: none;
+	}
+	.hist-time {
+		color: var(--color-lab-text);
+		font-weight: 600;
+		min-width: 42px;
+		font-size: 0.8125rem;
+	}
+	.hist-arrow {
+		color: var(--color-lab-text-secondary);
+		font-size: 1.125rem;
+	}
+	.hist-reason {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.8125rem;
+	}
+	.hist-listings {
+		margin-left: auto;
+		color: var(--color-lab-text-secondary);
+		font-size: 0.8125rem;
+		white-space: nowrap;
 	}
 	.card-rec {
-		font-size: 0.8125rem;
+		font-size: 1rem;
 		font-weight: 700;
-		margin-top: 8px;
-		padding: 4px 0;
+		margin-top: 12px;
+		padding: 8px 0;
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
 	}
 	.rec-icon {
-		font-size: 0.875rem;
+		font-size: 1.0625rem;
+	}
+	.sparkline-row {
+		margin: 16px 0;
+		width: 100%;
+		padding: 8px 0;
+	}
+	.sparkline-row :global(svg) {
+		width: 100%;
+		height: 32px;
 	}
 	.rec-best { color: var(--color-lab-green); }
 	.rec-ok { color: var(--color-lab-yellow); }

@@ -71,14 +71,14 @@
 	.header {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 20px 24px;
+		padding: 24px 28px;
 		margin-bottom: 32px;
 	}
 	.header-top {
-		margin-bottom: 12px;
+		margin-bottom: 14px;
 	}
 	.title {
-		font-size: 1.125rem;
+		font-size: 1.375rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
@@ -86,28 +86,28 @@
 	.header-row {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 10px;
 		flex-wrap: wrap;
 	}
 	.meta-row {
-		margin-top: 10px;
+		margin-top: 12px;
 	}
 	.lab-selector {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 	}
 	.label {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.875rem;
+		font-size: 1rem;
 		margin-right: 4px;
 	}
 	.lab-btn {
 		background: transparent;
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text-secondary);
-		padding: 5px 14px;
-		font-size: 0.8125rem;
+		padding: 7px 18px;
+		font-size: 0.9375rem;
 		cursor: pointer;
 		font-family: inherit;
 	}
@@ -122,18 +122,18 @@
 	}
 	.dot {
 		color: var(--color-lab-blue);
-		margin-right: 2px;
+		margin-right: 3px;
 	}
 	.meta {
 		color: var(--color-lab-text-secondary);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.meta-sep {
 		color: var(--color-lab-border);
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.connection {
-		font-size: 0.8125rem;
+		font-size: 0.9375rem;
 	}
 	.connected {
 		color: var(--color-lab-green);
@@ -142,7 +142,7 @@
 		color: var(--color-lab-red);
 	}
 	.conn-dot {
-		font-size: 0.625rem;
-		margin-right: 3px;
+		font-size: 0.75rem;
+		margin-right: 4px;
 	}
 </style>
