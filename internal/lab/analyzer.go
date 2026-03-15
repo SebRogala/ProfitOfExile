@@ -10,6 +10,7 @@ import (
 // Each analysis type has its own mutex so independent analyses run in parallel.
 type Analyzer struct {
 	repo           *Repository
+	throttler      *Throttler
 	logger         *slog.Logger
 	muTransfigure  sync.Mutex
 	muFont         sync.Mutex
@@ -18,10 +19,12 @@ type Analyzer struct {
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
-func NewAnalyzer(repo *Repository) *Analyzer {
+// The throttler may be nil — in that case no Mercure signals are emitted.
+func NewAnalyzer(repo *Repository, throttler *Throttler) *Analyzer {
 	return &Analyzer{
-		repo:   repo,
-		logger: slog.Default(),
+		repo:      repo,
+		throttler: throttler,
+		logger:    slog.Default(),
 	}
 }
 
@@ -54,6 +57,7 @@ func (a *Analyzer) RunTransfigure(ctx context.Context) error {
 		"results", len(results),
 		"inserted", inserted,
 	)
+	a.throttler.Signal()
 	return nil
 }
 
@@ -86,6 +90,7 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 		"results", len(results),
 		"inserted", inserted,
 	)
+	a.throttler.Signal()
 	return nil
 }
 
@@ -125,6 +130,7 @@ func (a *Analyzer) RunTrends(ctx context.Context) error {
 		"results", len(results),
 		"inserted", inserted,
 	)
+	a.throttler.Signal()
 	return nil
 }
 
@@ -164,5 +170,6 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 		"results", len(results),
 		"inserted", inserted,
 	)
+	a.throttler.Signal()
 	return nil
 }
