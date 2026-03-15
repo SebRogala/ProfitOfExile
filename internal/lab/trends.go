@@ -62,6 +62,11 @@ var analysisVariants = map[string]bool{
 // computePriceTiers calculates dynamic TOP/MID/LOW boundaries using the
 // winsorized top-10 average (C_win formula). Outlier-proof via p99 cap.
 func computePriceTiers(gems []GemPrice) (topThreshold, midThreshold float64) {
+	return computePriceTiersWithConfig(gems, DefaultSignalConfig())
+}
+
+// computePriceTiersWithConfig uses custom tier multipliers (for optimizer).
+func computePriceTiersWithConfig(gems []GemPrice, cfg SignalConfig) (topThreshold, midThreshold float64) {
 	// Collect all transfigured gem prices
 	var prices []float64
 	for _, g := range gems {
@@ -125,7 +130,7 @@ func computePriceTiers(gems []GemPrice) (topThreshold, midThreshold float64) {
 		wt10 = midBand[len(midBand)/2]
 	}
 
-	return wt10 * 0.70, wt10 * 0.20
+	return wt10 * cfg.TierTopMult, wt10 * cfg.TierMidMult
 }
 
 // classifyPriceTier assigns a price tier based on dynamic thresholds.
@@ -357,6 +362,11 @@ func computeWindowScore(currentPrice, baseVelocity, transListings, relativeLiqui
 // classifyWindowSignal determines the window state from score, velocities, and base listings.
 // transListingVel is the transfigured gem's listing velocity (used for both CLOSING and BREWING checks).
 func classifyWindowSignal(windowScore, baseVelocity, transListingVel float64, baseListings int, priceVelocity float64) string {
+	return classifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel, baseListings, priceVelocity, DefaultSignalConfig())
+}
+
+// classifyWindowSignalWithConfig uses custom thresholds (for optimizer).
+func classifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel float64, baseListings int, priceVelocity float64, cfg SignalConfig) string {
 	// Base gems exhausted — unfarmable, window is dead.
 	// baseListings < 0 means base gem not found (no data), skip exhaustion check.
 	if baseListings >= 0 && baseListings <= 2 {
@@ -366,16 +376,16 @@ func classifyWindowSignal(windowScore, baseVelocity, transListingVel float64, ba
 	if windowScore >= 50 && transListingVel > 3 {
 		return "CLOSING"
 	}
-	// Dynamic drain threshold: 4% of base listings per hour.
-	// Floor at -1.5 for thin pools (base<20) to avoid boundary noise, -1 otherwise.
-	floor := -1.0
+	// Dynamic drain threshold: configured % of base listings per hour.
+	// Floor at ThinPoolFloor for thin pools (base<20), NormalFloor otherwise.
+	floor := cfg.NormalFloor
 	if baseListings > 0 && baseListings < 20 {
-		floor = -1.5
+		floor = cfg.ThinPoolFloor
 	}
-	drainThreshold := math.Max(float64(baseListings)*-0.04, floor)
+	drainThreshold := math.Max(float64(baseListings)*-cfg.DrainPct, floor)
 
 	// OPEN: high score + base draining relative to size + price momentum
-	if windowScore >= 70 && baseVelocity < drainThreshold && priceVelocity > 2 {
+	if windowScore >= 70 && baseVelocity < drainThreshold && priceVelocity > cfg.OpenMinPVel {
 		return "OPEN"
 	}
 	// OPENING: moderate drain + some price momentum
@@ -383,7 +393,7 @@ func classifyWindowSignal(windowScore, baseVelocity, transListingVel float64, ba
 		return "OPENING"
 	}
 	// Pre-window: price rising + trans listings falling + bases still available
-	if priceVelocity > 2 && transListingVel < 0 && baseListings > 10 {
+	if priceVelocity > cfg.BrewingMinPVel && transListingVel < 0 && baseListings > 10 {
 		return "BREWING"
 	}
 	return "CLOSED"
@@ -509,7 +519,12 @@ func detectUndervalued(currentPrice float64, currentListings int, priceVelocity,
 // detectBreakout identifies LOW-tier gems with collapsing supply and rising price.
 // These are the "surprise winners" that 3-10x — thin supply + any upward momentum.
 func detectBreakout(currentPrice float64, currentListings int, priceVelocity, listingVelocity float64) bool {
-	return currentPrice < 200 && currentListings < 30 && listingVelocity < -5 && priceVelocity > 0
+	return detectBreakoutWithConfig(currentPrice, currentListings, priceVelocity, listingVelocity, DefaultSignalConfig())
+}
+
+// detectBreakoutWithConfig uses custom thresholds (for optimizer).
+func detectBreakoutWithConfig(currentPrice float64, currentListings int, priceVelocity, listingVelocity float64, cfg SignalConfig) bool {
+	return currentPrice < cfg.BreakoutMaxPrice && currentListings < cfg.BreakoutMaxList && listingVelocity < cfg.BreakoutMinLVel && priceVelocity > 0
 }
 
 // classifyAdvancedSignal determines the advanced signal for a gem.
@@ -533,30 +548,55 @@ func classifyAdvancedSignal(currentPrice float64, currentListings int, priceVelo
 // classifySignal determines the market signal based on velocity, CV, and current listings.
 // currentListings is needed for RECOVERY detection (supply exhaustion at bottom).
 func classifySignal(priceVel, listingVel, cv float64, currentListings int) string {
-	if cv > 100 {
+	return classifySignalWithConfig(priceVel, listingVel, cv, currentListings, DefaultSignalConfig())
+}
+
+// classifySignalWithConfig uses custom thresholds (for optimizer).
+func classifySignalWithConfig(priceVel, listingVel, cv float64, currentListings int, cfg SignalConfig) string {
+	if cv > cfg.TrapCV {
 		return "TRAP"
 	}
-	if priceVel < -5 && listingVel > 5 {
+	if priceVel < cfg.DumpPriceVel && listingVel > cfg.DumpListingVel {
 		return "DUMPING"
 	}
 	// High-velocity pre-HERD: extreme price movement with moderate listing growth
-	if priceVel > 30 && listingVel > 3 {
+	if priceVel > cfg.PreHERDPriceVel && listingVel > cfg.PreHERDListingVel {
 		return "HERD"
 	}
-	if priceVel > 5 && listingVel > 10 {
+	if priceVel > cfg.HERDPriceVel && listingVel > cfg.HERDListingVel {
 		return "HERD"
 	}
 	// RECOVERY: price drifting down slowly, thin listings dropping = supply exhaustion (bottom forming).
 	// Old rule (priceVel < -5 && listingVel < -5) fired mid-crash — 22.6% accurate.
 	// New rule requires stabilization: price still negative but shallow, listings thin and draining.
-	if priceVel < 0 && priceVel > -5 && listingVel < -3 && currentListings < 20 {
+	if priceVel < 0 && priceVel > cfg.DumpPriceVel && listingVel < -3 && currentListings < cfg.RecoveryMaxList {
 		return "RECOVERY"
 	}
-	if math.Abs(priceVel) < 2 && math.Abs(listingVel) < 3 {
+	if math.Abs(priceVel) < cfg.StablePriceVel && math.Abs(listingVel) < cfg.StableListingVel {
 		return "STABLE"
 	}
 	if priceVel > 0 {
 		return "RISING"
 	}
 	return "FALLING"
+}
+
+// ClassifySignalWithConfig is the exported variant for use by the optimizer.
+func ClassifySignalWithConfig(priceVel, listingVel, cv float64, currentListings int, cfg SignalConfig) string {
+	return classifySignalWithConfig(priceVel, listingVel, cv, currentListings, cfg)
+}
+
+// ClassifyWindowSignalWithConfig is the exported variant for use by the optimizer.
+func ClassifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel float64, baseListings int, priceVelocity float64, cfg SignalConfig) string {
+	return classifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel, baseListings, priceVelocity, cfg)
+}
+
+// ComputePriceTiersWithConfig is the exported variant for use by the optimizer.
+func ComputePriceTiersWithConfig(gems []GemPrice, cfg SignalConfig) (topThreshold, midThreshold float64) {
+	return computePriceTiersWithConfig(gems, cfg)
+}
+
+// ClassifyPriceTier is the exported variant of classifyPriceTier.
+func ClassifyPriceTier(price, topThreshold, midThreshold float64) string {
+	return classifyPriceTier(price, topThreshold, midThreshold)
 }
