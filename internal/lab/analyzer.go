@@ -128,7 +128,21 @@ func (a *Analyzer) RunTrends(ctx context.Context) error {
 		return err
 	}
 
-	results := AnalyzeTrends(snapTime, gems, history)
+	// Fetch base gem history (shorter window — velocity needs recent data).
+	baseHistory, err := a.repo.BasePriceHistory(ctx, "", 24)
+	if err != nil {
+		a.logger.Error("trends: failed to load base price history", "error", err)
+		return err
+	}
+
+	// Compute market-wide average base listings for relative liquidity.
+	marketAvg, err := a.repo.MarketAvgBaseListings(ctx, "")
+	if err != nil {
+		a.logger.Warn("trends: failed to compute market avg base listings, using 0", "error", err)
+		marketAvg = 0
+	}
+
+	results := AnalyzeTrends(snapTime, gems, history, baseHistory, marketAvg)
 
 	inserted, err := a.repo.SaveTrendResults(ctx, results)
 	if err != nil {

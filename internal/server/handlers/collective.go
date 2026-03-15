@@ -54,7 +54,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			ctr := cache.Trends()
 			if len(ct) > 0 && len(ctr) > 0 {
 				transfigure = filterTransfigure(ct, variant, 1000)
-				trends = filterTrends(ctr, variant, "", 5000)
+				trends = filterTrends(ctr, variant, "", "", 5000)
 				usedCache = true
 			}
 		}
@@ -69,7 +69,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				return
 			}
 
-			trends, err = repo.LatestTrendResults(r.Context(), variant, "", 5000)
+			trends, err = repo.LatestTrendResults(r.Context(), variant, "", "", 5000)
 			if err != nil {
 				slog.Error("collective analysis: trends query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -179,7 +179,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			ctr := cache.Trends()
 			if len(ct) > 0 && len(ctr) > 0 {
 				transfigure = filterTransfigure(ct, variant, 1000)
-				trends = filterTrends(ctr, variant, "", 5000)
+				trends = filterTrends(ctr, variant, "", "", 5000)
 				usedCache = true
 			}
 		}
@@ -194,7 +194,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				return
 			}
 
-			trends, err = repo.LatestTrendResults(r.Context(), variant, "", 5000)
+			trends, err = repo.LatestTrendResults(r.Context(), variant, "", "", 5000)
 			if err != nil {
 				slog.Error("compare analysis: trends query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
