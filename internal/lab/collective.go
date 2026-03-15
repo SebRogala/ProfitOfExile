@@ -1,0 +1,246 @@
+package lab
+
+import "sort"
+
+// CollectiveResult is a cross-analyzer "what to farm now" entry combining
+// transfigure ROI with trend signals.
+type CollectiveResult struct {
+	TransfiguredName     string  `json:"transfiguredName"`
+	BaseName             string  `json:"baseName"`
+	Variant              string  `json:"variant"`
+	GemColor             string  `json:"gemColor"`
+	ROI                  float64 `json:"roi"`
+	WeightedROI          float64 `json:"weightedRoi"`
+	BasePrice            float64 `json:"basePrice"`
+	TransfiguredPrice    float64 `json:"transfiguredPrice"`
+	BaseListings         int     `json:"baseListings"`
+	TransfiguredListings int     `json:"transfiguredListings"`
+	Confidence           string  `json:"confidence"`
+	// From trends
+	Signal          string  `json:"signal"`
+	PriceVelocity   float64 `json:"priceVelocity"`
+	ListingVelocity float64 `json:"listingVelocity"`
+	CV              float64 `json:"cv"`
+	HistPosition    float64 `json:"histPosition"`
+}
+
+// CompareResult is a side-by-side gem comparison entry with sparkline data.
+type CompareResult struct {
+	TransfiguredName     string           `json:"transfiguredName"`
+	BaseName             string           `json:"baseName"`
+	Variant              string           `json:"variant"`
+	GemColor             string           `json:"gemColor"`
+	ROI                  float64          `json:"roi"`
+	BasePrice            float64          `json:"basePrice"`
+	TransfiguredPrice    float64          `json:"transfiguredPrice"`
+	Confidence           string           `json:"confidence"`
+	Signal               string           `json:"signal"`
+	CV                   float64          `json:"cv"`
+	PriceVelocity        float64          `json:"priceVelocity"`
+	ListingVelocity      float64          `json:"listingVelocity"`
+	HistPosition         float64          `json:"histPosition"`
+	Sparkline            []SparklinePoint `json:"sparkline"`
+	Recommendation       string           `json:"recommendation"`
+}
+
+// SparklinePoint is a single data point for sparkline charts.
+type SparklinePoint struct {
+	Time     string  `json:"time"`
+	Price    float64 `json:"price"`
+	Listings int     `json:"listings"`
+}
+
+// signalWeight returns the ROI multiplier for a given trend signal.
+func signalWeight(signal string) float64 {
+	switch signal {
+	case "TRAP":
+		return 0 // excluded
+	case "DUMPING":
+		return 0.3
+	case "FALLING":
+		return 0.6
+	case "HERD":
+		return 0.8
+	case "STABLE":
+		return 1.0
+	case "RISING":
+		return 1.1
+	case "RECOVERY":
+		return 1.2
+	default:
+		return 1.0
+	}
+}
+
+// RankCollective combines transfigure results with trend signals to produce
+// a ranked list of profitable farming targets. Results with TRAP signal are
+// excluded. Budget filters on basePrice. The returned slice is sorted by
+// weighted ROI descending and capped at limit entries.
+func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budget float64, limit int) []CollectiveResult {
+	// Index trends by (name, variant) for fast lookup.
+	type trendKey struct{ name, variant string }
+	trendIndex := make(map[trendKey]*TrendResult, len(trends))
+	for i := range trends {
+		t := &trends[i]
+		trendIndex[trendKey{t.Name, t.Variant}] = t
+	}
+
+	var results []CollectiveResult
+
+	for _, tr := range transfigure {
+		// Only include profitable, confident results.
+		if tr.ROI <= 0 || tr.Confidence != "OK" {
+			continue
+		}
+
+		// Budget filter on base price.
+		if budget > 0 && tr.BasePrice > budget {
+			continue
+		}
+
+		cr := CollectiveResult{
+			TransfiguredName:     tr.TransfiguredName,
+			BaseName:             tr.BaseName,
+			Variant:              tr.Variant,
+			GemColor:             tr.GemColor,
+			ROI:                  tr.ROI,
+			BasePrice:            tr.BasePrice,
+			TransfiguredPrice:    tr.TransfiguredPrice,
+			BaseListings:         tr.BaseListings,
+			TransfiguredListings: tr.TransfiguredListings,
+			Confidence:           tr.Confidence,
+			Signal:               "STABLE", // default when no trend data
+		}
+
+		// Join with trend data.
+		if t, ok := trendIndex[trendKey{tr.TransfiguredName, tr.Variant}]; ok {
+			cr.Signal = t.Signal
+			cr.PriceVelocity = t.PriceVelocity
+			cr.ListingVelocity = t.ListingVelocity
+			cr.CV = t.CV
+			cr.HistPosition = t.HistPosition
+		}
+
+		// Exclude TRAP gems entirely.
+		w := signalWeight(cr.Signal)
+		if w == 0 {
+			continue
+		}
+
+		cr.WeightedROI = cr.ROI * w
+		results = append(results, cr)
+	}
+
+	// Sort by weighted ROI descending.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].WeightedROI > results[j].WeightedROI
+	})
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results
+}
+
+// BuildCompareResults builds side-by-side comparison data for specific gems.
+// It assigns BEST/OK/AVOID recommendations based on weighted ROI ranking.
+func BuildCompareResults(
+	names []string,
+	transfigure []TransfigureResult,
+	trends []TrendResult,
+	sparklines map[string][]SparklinePoint,
+) []CompareResult {
+	// Index transfigure by transfigured name + variant.
+	type trKey struct{ name, variant string }
+	trIndex := make(map[trKey]*TransfigureResult, len(transfigure))
+	for i := range transfigure {
+		t := &transfigure[i]
+		trIndex[trKey{t.TransfiguredName, t.Variant}] = t
+	}
+
+	// Index trends by (name, variant).
+	trendIndex := make(map[trKey]*TrendResult, len(trends))
+	for i := range trends {
+		t := &trends[i]
+		trendIndex[trKey{t.Name, t.Variant}] = t
+	}
+
+	var results []CompareResult
+
+	for _, name := range names {
+		cr := CompareResult{
+			TransfiguredName: name,
+			Signal:           "STABLE",
+		}
+
+		// Find transfigure data — iterate to find best variant match.
+		found := false
+		for k, tr := range trIndex {
+			if k.name == name {
+				cr.BaseName = tr.BaseName
+				cr.Variant = tr.Variant
+				cr.GemColor = tr.GemColor
+				cr.ROI = tr.ROI
+				cr.BasePrice = tr.BasePrice
+				cr.TransfiguredPrice = tr.TransfiguredPrice
+				cr.Confidence = tr.Confidence
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			// Gem not found in transfigure results — include with zero values.
+			cr.Confidence = "LOW"
+		}
+
+		// Join trend data.
+		if t, ok := trendIndex[trKey{name, cr.Variant}]; ok {
+			cr.Signal = t.Signal
+			cr.CV = t.CV
+			cr.PriceVelocity = t.PriceVelocity
+			cr.ListingVelocity = t.ListingVelocity
+			cr.HistPosition = t.HistPosition
+		}
+
+		// Attach sparkline.
+		if pts, ok := sparklines[name]; ok {
+			cr.Sparkline = pts
+		}
+		if cr.Sparkline == nil {
+			cr.Sparkline = []SparklinePoint{}
+		}
+
+		results = append(results, cr)
+	}
+
+	// Assign recommendations: rank by weighted ROI.
+	if len(results) > 0 {
+		type ranked struct {
+			idx        int
+			weightedROI float64
+		}
+		ranks := make([]ranked, len(results))
+		for i, cr := range results {
+			w := signalWeight(cr.Signal)
+			ranks[i] = ranked{idx: i, weightedROI: cr.ROI * w}
+		}
+		sort.Slice(ranks, func(i, j int) bool {
+			return ranks[i].weightedROI > ranks[j].weightedROI
+		})
+
+		for pos, r := range ranks {
+			signal := results[r.idx].Signal
+			if signal == "TRAP" || signal == "DUMPING" {
+				results[r.idx].Recommendation = "AVOID"
+			} else if pos == 0 {
+				results[r.idx].Recommendation = "BEST"
+			} else {
+				results[r.idx].Recommendation = "OK"
+			}
+		}
+	}
+
+	return results
+}
