@@ -232,19 +232,24 @@ func classifyWindowSignal(windowScore, baseVelocity, transListingVel float64, ba
 	if windowScore >= 50 && transListingVel > 3 {
 		return "CLOSING"
 	}
-	// Dynamic drain threshold: 4% of base listings per hour, minimum -1
-	drainThreshold := math.Max(float64(baseListings)*-0.04, -1)
+	// Dynamic drain threshold: 4% of base listings per hour.
+	// Floor at -1.5 for thin pools (base<20) to avoid boundary noise, -1 otherwise.
+	floor := -1.0
+	if baseListings > 0 && baseListings < 20 {
+		floor = -1.5
+	}
+	drainThreshold := math.Max(float64(baseListings)*-0.04, floor)
 
-	// OPEN: high score + base draining relative to size
-	if windowScore >= 70 && baseVelocity < drainThreshold {
+	// OPEN: high score + base draining relative to size + price momentum
+	if windowScore >= 70 && baseVelocity < drainThreshold && priceVelocity > 2 {
 		return "OPEN"
 	}
-	// OPENING: moderate drain
-	if windowScore >= 50 && baseVelocity < drainThreshold*0.5 {
+	// OPENING: moderate drain + some price momentum
+	if windowScore >= 50 && baseVelocity < drainThreshold*0.5 && priceVelocity > 0 {
 		return "OPENING"
 	}
 	// Pre-window: price rising + trans listings falling + bases still available
-	if priceVelocity > 0 && transListingVel < 0 && baseListings > 10 {
+	if priceVelocity > 2 && transListingVel < 0 && baseListings > 10 {
 		return "BREWING"
 	}
 	return "CLOSED"

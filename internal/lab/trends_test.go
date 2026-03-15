@@ -522,17 +522,19 @@ func TestClassifyWindowSignal(t *testing.T) {
 		priceVel                          float64
 		want                              string
 	}{
-		{"OPEN: high score + draining", 75, -3, 0, 30, 5, "OPEN"},
-		{"OPENING: mid score + slight drain", 55, -1, 0, 30, 0, "OPENING"},
+		{"OPEN: high score + draining + momentum", 75, -3, 0, 30, 5, "OPEN"},
+		{"OPENING: mid score + slight drain + momentum", 55, -1, 0, 30, 1, "OPENING"},
 		{"CLOSING: mid score + herd arriving", 55, 0, 5, 30, 0, "CLOSING"},
 		{"CLOSED: low score", 30, -5, 0, 30, 0, "CLOSED"},
+		{"CLOSED: draining but no price momentum", 75, -3, 0, 30, 0, "CLOSED"},
 		{"EXHAUSTED: base listings 0", 80, -5, 0, 0, 5, "EXHAUSTED"},
 		{"EXHAUSTED: base listings 2", 80, -5, 0, 2, 5, "EXHAUSTED"},
 		{"BREWING: price rising + trans listings falling + bases available", 20, 0, -2, 50, 3, "BREWING"},
 		{"BREWING not if bases low", 20, 0, -2, 5, 3, "CLOSED"},
+		{"BREWING needs pVel>2", 20, 0, -2, 50, 1, "CLOSED"},
 		// Edge: relative drain threshold. baseLst=30 → threshold=max(-1.2,-1)=-1
-		{"boundary: score=70 baseVel=-1 not OPEN (at threshold)", 70, -1, 0, 30, 0, "OPENING"},
-		{"boundary: score=70 baseVel=-1.01 is OPEN", 70, -1.01, 0, 30, 0, "OPEN"},
+		{"boundary: score=70 baseVel=-1 with momentum", 70, -1, 0, 30, 5, "OPENING"},
+		{"boundary: score=70 baseVel=-1.01 is OPEN", 70, -1.01, 0, 30, 5, "OPEN"},
 		// Large base: baseLst=200 → threshold=max(-8,-1)=-1, so -5 is still OPEN
 		{"large base OPEN", 75, -5, 0, 200, 5, "OPEN"},
 		// Sentinel: baseListings = -1 skips EXHAUSTED
