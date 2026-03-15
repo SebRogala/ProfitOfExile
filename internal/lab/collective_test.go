@@ -205,9 +205,9 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 
 func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
 	transfigure := []TransfigureResult{
-		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1", ROI: 10, BasePrice: 1, TransfiguredPrice: 11, Confidence: "OK"},
-		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1/20", ROI: 30, BasePrice: 2, TransfiguredPrice: 32, Confidence: "OK"},
-		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20", ROI: 80, BasePrice: 50, TransfiguredPrice: 130, Confidence: "OK"},
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1", ROI: 10, ROIPct: 1000, BasePrice: 1, TransfiguredPrice: 11, Confidence: "OK"},
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1/20", ROI: 30, ROIPct: 1500, BasePrice: 2, TransfiguredPrice: 32, Confidence: "OK"},
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20", ROI: 80, ROIPct: 160, BasePrice: 50, TransfiguredPrice: 130, Confidence: "OK"},
 	}
 
 	names := []string{"Spark of Nova"}
@@ -222,6 +222,9 @@ func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
 		}
 		if results[0].ROI != 80 {
 			t.Errorf("run %d: ROI = %f, want 80", i, results[0].ROI)
+		}
+		if results[0].ROIPct != 160 {
+			t.Errorf("run %d: ROIPct = %f, want 160", i, results[0].ROIPct)
 		}
 	}
 }
@@ -284,6 +287,12 @@ func TestRankCollective_BudgetAwareDefaultSort(t *testing.T) {
 	results = RankCollective(transfigure, nil, 100, 50, "")
 	if results[0].TransfiguredName != "Big Absolute" {
 		t.Errorf("budget>50 default: first = %s, want Big Absolute", results[0].TransfiguredName)
+	}
+
+	// Budget = 0 (no budget filter), no explicit sort → defaults to chaos.
+	results = RankCollective(transfigure, nil, 0, 50, "")
+	if results[0].TransfiguredName != "Big Absolute" {
+		t.Errorf("budget=0 default: first = %s, want Big Absolute (chaos sort)", results[0].TransfiguredName)
 	}
 }
 
