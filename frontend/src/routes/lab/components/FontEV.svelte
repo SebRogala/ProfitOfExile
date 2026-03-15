@@ -4,10 +4,10 @@
 
 	let { data }: { data: FontEVData } = $props();
 
-	const COLOR_LABELS: Record<string, { emoji: string; cssClass: string }> = {
-		RED: { emoji: '\ud83d\udd34', cssClass: 'font-red' },
-		GREEN: { emoji: '\ud83d\udfe2', cssClass: 'font-green' },
-		BLUE: { emoji: '\ud83d\udd35', cssClass: 'font-blue' },
+	const COLOR_LABELS: Record<string, { icon: string; cssClass: string; colorClass: string }> = {
+		RED: { icon: '●', cssClass: 'font-red', colorClass: 'icon-red' },
+		GREEN: { icon: '●', cssClass: 'font-green', colorClass: 'icon-green' },
+		BLUE: { icon: '●', cssClass: 'font-blue', colorClass: 'icon-blue' },
 	};
 
 	function deltaStr(v: number): string {
@@ -24,7 +24,7 @@
 			{@const cl = COLOR_LABELS[fc.color]}
 			<div class="color-card {cl.cssClass}">
 				<div class="color-header">
-					<span class="color-emoji">{cl.emoji}</span>
+					<span class="color-icon {cl.colorClass}">{cl.icon}</span>
 					<span class="color-name">{fc.color}</span>
 				</div>
 				<div class="color-stats">
@@ -34,48 +34,51 @@
 					<span class="stat" title={METRIC_TOOLTIPS.pWin}>pWin: {fc.pWin}%</span>
 					<span class="stat">Profit: {fc.profit}c</span>
 					<span class="stat delta" title={METRIC_TOOLTIPS['\u03942h']}>
-						\u03942h: EV {deltaStr(fc.evDelta2h)}
+						Δ2h: EV {deltaStr(fc.evDelta2h)}
 					</span>
 				</div>
 			</div>
 		{/each}
 	</div>
 	<div class="quality-compare">
-		vs Quality avg ROI: {data.qualityAvgRoi}c \u2192 Font {data.bestColor} wins by {data.bestAdvantage}c
+		vs Quality avg ROI: {data.qualityAvgRoi}c → Font {data.bestColor} wins by {data.bestAdvantage}c
 	</div>
 </div>
 
 <style>
 	.font-ev {
-		margin-top: 12px;
+		margin-top: 16px;
 		border-top: 1px solid var(--color-lab-border);
-		padding-top: 10px;
+		padding-top: 14px;
 	}
 	.font-title {
 		font-size: 0.8125rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
-		margin: 0 0 8px 0;
+		margin: 0 0 10px 0;
 	}
 	.color-cards {
 		display: flex;
-		gap: 10px;
+		gap: 12px;
 	}
 	.color-card {
 		flex: 1;
 		border: 1px solid var(--color-lab-border);
-		padding: 8px 10px;
+		padding: 12px 14px;
 		background: var(--color-lab-bg);
 	}
 	.color-header {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		margin-bottom: 6px;
+		gap: 8px;
+		margin-bottom: 8px;
 	}
-	.color-emoji {
-		font-size: 0.875rem;
+	.color-icon {
+		font-size: 0.75rem;
 	}
+	.icon-red { color: var(--color-lab-red); }
+	.icon-green { color: var(--color-lab-green); }
+	.icon-blue { color: var(--color-lab-blue); }
 	.color-name {
 		font-weight: 700;
 		font-size: 0.8125rem;
@@ -86,7 +89,7 @@
 	.color-stats {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px 12px;
+		gap: 6px 14px;
 	}
 	.stat {
 		font-size: 0.75rem;
@@ -100,7 +103,7 @@
 		color: var(--color-lab-text-secondary);
 	}
 	.quality-compare {
-		margin-top: 8px;
+		margin-top: 10px;
 		font-size: 0.75rem;
 		color: var(--color-lab-text-secondary);
 	}

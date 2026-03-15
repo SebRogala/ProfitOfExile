@@ -31,8 +31,8 @@
 	});
 
 	function velocityStr(v: number): string {
-		if (v > 0) return `\u2191${v}`;
-		if (v < 0) return `\u2193${Math.abs(v)}`;
+		if (v > 0) return `↑${v}`;
+		if (v < 0) return `↓${Math.abs(v)}`;
 		return '0';
 	}
 
@@ -120,7 +120,7 @@
 							<div class="expanded-history">
 								History:
 								{#each gem.signalHistory as h}
-									<span class="hist-entry">{h.time} {h.from}\u2192{h.to} ({h.reason})</span>
+									<span class="hist-entry">{h.time} {h.from}→{h.to} ({h.reason})</span>
 								{/each}
 							</div>
 						</div>
@@ -136,7 +136,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 8px;
+		margin-bottom: 12px;
 	}
 	.plays-title {
 		font-size: 0.875rem;
@@ -161,7 +161,7 @@
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
-		padding: 2px 6px;
+		padding: 3px 8px;
 		font-size: 0.75rem;
 		font-family: inherit;
 	}
@@ -172,7 +172,7 @@
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
-		padding: 2px 6px;
+		padding: 3px 8px;
 		font-size: 0.75rem;
 		font-family: inherit;
 	}
@@ -188,12 +188,12 @@
 		font-size: 0.6875rem;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
-		padding: 6px 8px;
+		padding: 8px 8px;
 		border-bottom: 1px solid var(--color-lab-border);
 		cursor: help;
 	}
 	.plays-table td {
-		padding: 5px 8px;
+		padding: 12px 8px;
 		color: var(--color-lab-text);
 		border-bottom: 1px solid rgba(42, 45, 55, 0.5);
 	}
@@ -247,7 +247,7 @@
 		background: var(--color-lab-bg);
 	}
 	.expanded-cell {
-		padding: 8px 12px !important;
+		padding: 12px 16px !important;
 	}
 	.expanded-content {
 		font-size: 0.75rem;
@@ -256,7 +256,7 @@
 		color: var(--color-lab-text-secondary);
 	}
 	.expanded-history {
-		margin-top: 4px;
+		margin-top: 6px;
 		color: var(--color-lab-text-secondary);
 	}
 	.hist-entry {

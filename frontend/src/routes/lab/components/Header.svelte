@@ -61,8 +61,8 @@
 		</span>
 		<span class="meta-sep">|</span>
 		<span class="connection" class:connected={status.connected} class:disconnected={!status.connected}>
-			<span class="conn-dot">{status.connected ? '\u25cf' : '\u25cf'}</span>
-			{status.connected ? 'Live \u2014 connected to event stream' : 'Disconnected'}
+			<span class="conn-dot">●</span>
+			{status.connected ? 'Live — connected to event stream' : 'Disconnected'}
 		</span>
 	</div>
 </header>
@@ -71,11 +71,11 @@
 	.header {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 16px 20px;
-		margin-bottom: 16px;
+		padding: 20px 24px;
+		margin-bottom: 32px;
 	}
 	.header-top {
-		margin-bottom: 10px;
+		margin-bottom: 12px;
 	}
 	.title {
 		font-size: 1.125rem;
@@ -90,12 +90,12 @@
 		flex-wrap: wrap;
 	}
 	.meta-row {
-		margin-top: 8px;
+		margin-top: 10px;
 	}
 	.lab-selector {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
 	}
 	.label {
 		color: var(--color-lab-text-secondary);
@@ -106,7 +106,7 @@
 		background: transparent;
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text-secondary);
-		padding: 4px 12px;
+		padding: 5px 14px;
 		font-size: 0.8125rem;
 		cursor: pointer;
 		font-family: inherit;

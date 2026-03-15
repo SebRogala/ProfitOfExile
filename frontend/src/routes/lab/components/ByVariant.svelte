@@ -44,7 +44,7 @@
 					class:active={activeTab === tab}
 					onclick={() => { activeTab = tab; }}
 				>
-					{#if activeTab === tab}<span class="tab-dot">\u25cf</span>{/if}
+					{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
 					{tab}
 				</button>
 			{/each}
@@ -69,14 +69,14 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 16px 20px;
-		margin-bottom: 16px;
+		padding: 24px;
+		margin-bottom: 32px;
 	}
 	.section-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		margin-bottom: 12px;
+		margin-bottom: 16px;
 	}
 	.section-title {
 		font-size: 0.9375rem;
@@ -113,8 +113,8 @@
 	}
 	.variant-block {
 		border: 1px solid var(--color-lab-border);
-		padding: 12px 16px;
-		margin-bottom: 12px;
+		padding: 16px 20px;
+		margin-bottom: 16px;
 		background: var(--color-lab-bg);
 	}
 	.variant-block:last-child {

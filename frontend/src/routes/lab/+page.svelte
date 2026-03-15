@@ -92,13 +92,13 @@
 	.dashboard {
 		max-width: 1200px;
 		margin: 0 auto;
-		padding: 16px 20px;
+		padding: 24px 32px;
 	}
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 16px 20px;
-		margin-bottom: 16px;
+		padding: 24px;
+		margin-bottom: 32px;
 	}
 	.section-title {
 		font-size: 0.9375rem;
