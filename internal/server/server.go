@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"profitofexile/internal/lab"
 	"profitofexile/internal/server/handlers"
 )
 
@@ -21,6 +22,8 @@ type RouterConfig struct {
 	DevMode bool
 	// Pool is the database connection pool for data query endpoints.
 	Pool *pgxpool.Pool
+	// LabRepo is the analysis repository for lab endpoints.
+	LabRepo *lab.Repository
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -40,6 +43,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool))
 		r.Get("/api/snapshots/fragments", handlers.FragmentSnapshots(cfg.Pool))
 		r.Get("/api/snapshots/stats", handlers.SnapshotStats(cfg.Pool))
+	}
+
+	if cfg.LabRepo != nil {
+		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo))
 	}
 
 	if cfg.DevMode {
