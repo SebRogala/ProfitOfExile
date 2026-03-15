@@ -100,49 +100,59 @@ func TestVelocity_SameTimestamp(t *testing.T) {
 }
 
 func TestClassifySignal_TRAP(t *testing.T) {
-	s := classifySignal(0, 0, 150)
+	s := classifySignal(0, 0, 150, 50)
 	if s != "TRAP" {
 		t.Errorf("signal = %s, want TRAP", s)
 	}
 }
 
 func TestClassifySignal_DUMPING(t *testing.T) {
-	s := classifySignal(-10, 10, 50)
+	s := classifySignal(-10, 10, 50, 50)
 	if s != "DUMPING" {
 		t.Errorf("signal = %s, want DUMPING", s)
 	}
 }
 
 func TestClassifySignal_HERD(t *testing.T) {
-	s := classifySignal(10, 15, 30)
+	s := classifySignal(10, 15, 30, 50)
 	if s != "HERD" {
 		t.Errorf("signal = %s, want HERD", s)
 	}
 }
 
 func TestClassifySignal_RECOVERY(t *testing.T) {
-	s := classifySignal(-10, -10, 50)
+	// New RECOVERY: price drifting down slowly (0 to -5), listings thin (<20) and dropping (<-3)
+	s := classifySignal(-2, -4, 50, 15)
 	if s != "RECOVERY" {
 		t.Errorf("signal = %s, want RECOVERY", s)
 	}
 }
 
+func TestClassifySignal_OldRECOVERY_NowFALLING(t *testing.T) {
+	// Old RECOVERY conditions (priceVel < -5 && listingVel < -5) should no longer fire RECOVERY.
+	// priceVel=-10 is outside the new range (must be > -5), so this becomes FALLING.
+	s := classifySignal(-10, -10, 50, 50)
+	if s != "FALLING" {
+		t.Errorf("signal = %s, want FALLING (old RECOVERY conditions no longer match)", s)
+	}
+}
+
 func TestClassifySignal_STABLE(t *testing.T) {
-	s := classifySignal(0.5, 1.0, 15)
+	s := classifySignal(0.5, 1.0, 15, 50)
 	if s != "STABLE" {
 		t.Errorf("signal = %s, want STABLE", s)
 	}
 }
 
 func TestClassifySignal_RISING(t *testing.T) {
-	s := classifySignal(3, 0, 30)
+	s := classifySignal(3, 0, 30, 50)
 	if s != "RISING" {
 		t.Errorf("signal = %s, want RISING", s)
 	}
 }
 
 func TestClassifySignal_FALLING(t *testing.T) {
-	s := classifySignal(-3, 0, 30)
+	s := classifySignal(-3, 0, 30, 50)
 	if s != "FALLING" {
 		t.Errorf("signal = %s, want FALLING", s)
 	}
@@ -150,7 +160,7 @@ func TestClassifySignal_FALLING(t *testing.T) {
 
 func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 	// CV > 100 should override any velocity-based signal.
-	s := classifySignal(-10, 10, 200)
+	s := classifySignal(-10, 10, 200, 50)
 	if s != "TRAP" {
 		t.Errorf("signal = %s, want TRAP (CV overrides DUMPING)", s)
 	}
@@ -158,7 +168,7 @@ func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 
 func TestClassifySignal_PreHERD_HighVelocity(t *testing.T) {
 	// Extreme price movement with moderate listing growth → HERD (pre-signal)
-	s := classifySignal(50, 5, 30)
+	s := classifySignal(50, 5, 30, 50)
 	if s != "HERD" {
 		t.Errorf("signal = %s, want HERD (pre-HERD high velocity)", s)
 	}
@@ -168,34 +178,42 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 	tests := []struct {
 		name                        string
 		priceVel, listingVel, cv    float64
+		listings                    int
 		want                        string
 	}{
 		// CV boundary: exactly 100 is NOT TRAP (uses > 100)
-		{"cv=100 not TRAP", 0, 0, 100, "STABLE"},
-		{"cv=100.01 is TRAP", 0, 0, 100.01, "TRAP"},
+		{"cv=100 not TRAP", 0, 0, 100, 50, "STABLE"},
+		{"cv=100.01 is TRAP", 0, 0, 100.01, 50, "TRAP"},
 		// DUMPING boundary: priceVel must be < -5 (not <=)
-		{"priceVel=-5 not DUMPING", -5, 10, 50, "FALLING"},
-		{"priceVel=-5.01 is DUMPING", -5.01, 10, 50, "DUMPING"},
+		{"priceVel=-5 not DUMPING", -5, 10, 50, 50, "FALLING"},
+		{"priceVel=-5.01 is DUMPING", -5.01, 10, 50, 50, "DUMPING"},
 		// HERD boundary: listingVel must be > 10
-		{"listingVel=10 not HERD", 10, 10, 30, "RISING"},
-		{"listingVel=10.01 is HERD", 10, 10.01, 30, "HERD"},
+		{"listingVel=10 not HERD", 10, 10, 30, 50, "RISING"},
+		{"listingVel=10.01 is HERD", 10, 10.01, 30, 50, "HERD"},
 		// STABLE boundary: |priceVel| must be < 2 and |listingVel| < 3
-		{"priceVel=2 not STABLE", 2, 0, 30, "RISING"},
-		{"priceVel=1.99 is STABLE", 1.99, 0, 30, "STABLE"},
-		{"listingVel=3 not STABLE", 0, 3, 30, "FALLING"},
-		{"listingVel=2.99 is STABLE", 0, 2.99, 30, "STABLE"},
+		{"priceVel=2 not STABLE", 2, 0, 30, 50, "RISING"},
+		{"priceVel=1.99 is STABLE", 1.99, 0, 30, 50, "STABLE"},
+		{"listingVel=3 not STABLE", 0, 3, 30, 50, "FALLING"},
+		{"listingVel=2.99 is STABLE", 0, 2.99, 30, 50, "STABLE"},
 		// Pre-HERD boundary: priceVel must be > 30 and listingVel > 3
-		{"preHERD: priceVel=30 not HERD", 30, 5, 30, "RISING"},
-		{"preHERD: priceVel=30.01 listVel=3.01 is HERD", 30.01, 3.01, 30, "HERD"},
-		{"preHERD: priceVel=50 listVel=3 not HERD", 50, 3, 30, "RISING"},
-		{"preHERD: priceVel=50 listVel=3.01 is HERD", 50, 3.01, 30, "HERD"},
+		{"preHERD: priceVel=30 not HERD", 30, 5, 30, 50, "RISING"},
+		{"preHERD: priceVel=30.01 listVel=3.01 is HERD", 30.01, 3.01, 30, 50, "HERD"},
+		{"preHERD: priceVel=50 listVel=3 not HERD", 50, 3, 30, 50, "RISING"},
+		{"preHERD: priceVel=50 listVel=3.01 is HERD", 50, 3.01, 30, 50, "HERD"},
+		// RECOVERY boundaries: priceVel in (-5, 0), listingVel < -3, listings < 20
+		{"RECOVERY: priceVel=-1 listVel=-4 lst=10", -1, -4, 30, 10, "RECOVERY"},
+		{"RECOVERY: priceVel=0 not RECOVERY (must be <0)", 0, -4, 30, 10, "FALLING"},
+		{"RECOVERY: priceVel=-5 not RECOVERY (must be >-5)", -5, -4, 30, 10, "FALLING"},
+		{"RECOVERY: listVel=-3 not RECOVERY (must be <-3)", -1, -3, 30, 10, "FALLING"},
+		{"RECOVERY: lst=20 not RECOVERY (must be <20)", -1, -4, 30, 20, "FALLING"},
+		{"RECOVERY: lst=19 is RECOVERY", -1, -4, 30, 19, "RECOVERY"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifySignal(tt.priceVel, tt.listingVel, tt.cv)
+			got := classifySignal(tt.priceVel, tt.listingVel, tt.cv, tt.listings)
 			if got != tt.want {
-				t.Errorf("classifySignal(%v, %v, %v) = %s, want %s",
-					tt.priceVel, tt.listingVel, tt.cv, got, tt.want)
+				t.Errorf("classifySignal(%v, %v, %v, %d) = %s, want %s",
+					tt.priceVel, tt.listingVel, tt.cv, tt.listings, got, tt.want)
 			}
 		})
 	}
@@ -825,6 +843,67 @@ func TestClassifyAdvancedSignal_Undervalued(t *testing.T) {
 	}
 }
 
+func TestClassifyAdvancedSignal_Breakout(t *testing.T) {
+	// LOW-tier gem with collapsing supply + rising price = BREAKOUT.
+	got := classifyAdvancedSignal(
+		50,   // currentPrice < 200
+		20,   // listings < 30
+		1,    // priceVel > 0
+		-6,   // listingVel < -5
+		30,   // cv (normal)
+		40,   // histPos (irrelevant for breakout)
+	)
+	if got != "BREAKOUT" {
+		t.Errorf("classifyAdvancedSignal (breakout) = %s, want BREAKOUT", got)
+	}
+}
+
+func TestClassifyAdvancedSignal_BreakoutOverridesComeback(t *testing.T) {
+	// Inputs that match both BREAKOUT and COMEBACK.
+	// BREAKOUT: price<200, listings<30, listingVel<-5, priceVel>0
+	// COMEBACK: histPos<30, priceVel>0, listingVel<0
+	got := classifyAdvancedSignal(
+		80,   // price < 200 (breakout), in range for comeback
+		20,   // listings < 30 (breakout)
+		2,    // priceVel > 0 (both)
+		-7,   // listingVel < -5 (breakout), < 0 (comeback)
+		30,   // cv
+		20,   // histPos < 30 (comeback)
+	)
+	if got != "BREAKOUT" {
+		t.Errorf("classifyAdvancedSignal (breakout+comeback) = %s, want BREAKOUT (higher priority)", got)
+	}
+}
+
+func TestDetectBreakout(t *testing.T) {
+	tests := []struct {
+		name       string
+		price      float64
+		listings   int
+		priceVel   float64
+		listingVel float64
+		want       bool
+	}{
+		{"all conditions met", 50, 20, 1, -6, true},
+		{"price too high", 250, 20, 1, -6, false},
+		{"too many listings", 50, 35, 1, -6, false},
+		{"price not rising", 50, 20, 0, -6, false},
+		{"listings not collapsing", 50, 20, 1, -4, false},
+		{"boundary: price=200 not breakout", 200, 20, 1, -6, false},
+		{"boundary: listings=30 not breakout", 50, 30, 1, -6, false},
+		{"boundary: listingVel=-5 not breakout", 50, 20, 1, -5, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectBreakout(tt.price, tt.listings, tt.priceVel, tt.listingVel)
+			if got != tt.want {
+				t.Errorf("detectBreakout(%v, %d, %v, %v) = %v, want %v",
+					tt.price, tt.listings, tt.priceVel, tt.listingVel, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClassifyAdvancedSignal_None(t *testing.T) {
 	// Normal gem — no advanced signal.
 	got := classifyAdvancedSignal(100, 50, 1, 0, 30, 60)
@@ -877,7 +956,7 @@ func TestAnalyzeTrends_AdvancedSignal(t *testing.T) {
 }
 
 func TestComputePriceTiers_KnownPrices(t *testing.T) {
-	// 15 gems with known prices. Top-10 average of winsorized set drives thresholds.
+	// 15 gems with known prices. Uses median of mid-band (#6-#15) for stability.
 	gems := make([]GemPrice, 0, 15)
 	prices := []float64{10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150}
 	for _, p := range prices {
@@ -886,14 +965,17 @@ func TestComputePriceTiers_KnownPrices(t *testing.T) {
 
 	topThresh, midThresh := computePriceTiers(gems)
 
-	// p99 index = int(15*0.99) = 14 → p99 = 150 (no capping happens since all <= 150).
-	// Top 10 of sorted winsorized: 60,70,80,90,100,110,120,130,140,150 → avg = 105.
-	// topThresh = 105 * 0.70 = 73.5, midThresh = 105 * 0.20 = 21.0
-	if math.Abs(topThresh-73.5) > 0.1 {
-		t.Errorf("topThreshold = %f, want ~73.5", topThresh)
+	// p99 index = int(15*0.99) = 14 → p99 = 150. No capping.
+	// Sorted winsorized: [10,20,30,40,50,60,70,80,90,100,110,120,130,140,150]
+	// top15start = 15-15 = 0, top5start = 15-5 = 10
+	// Mid-band: indices 0..9 = [10,20,30,40,50,60,70,80,90,100]
+	// Median (index 5): 60
+	// wt10 = 60 → topThresh = 60*0.70 = 42.0, midThresh = 60*0.20 = 12.0
+	if math.Abs(topThresh-42.0) > 0.1 {
+		t.Errorf("topThreshold = %f, want ~42.0", topThresh)
 	}
-	if math.Abs(midThresh-21.0) > 0.1 {
-		t.Errorf("midThreshold = %f, want ~21.0", midThresh)
+	if math.Abs(midThresh-12.0) > 0.1 {
+		t.Errorf("midThreshold = %f, want ~12.0", midThresh)
 	}
 }
 
@@ -909,9 +991,9 @@ func TestComputePriceTiers_OutlierProtection(t *testing.T) {
 
 	topThresh, midThresh := computePriceTiers(gems)
 
-	// p99 index = int(201*0.99) = 198 → p99 = 218 (the 199th sorted value).
-	// The 16000c outlier is capped to 218. Top-10 of winsorized: all around 210-218.
-	// wt10 ~ 214, topThresh ~ 150, midThresh ~ 43.
+	// p99 index = int(201*0.99) = 198 → p99 = 218.
+	// Mid-band median (#6-#15 from top) should be around 205-213.
+	// Thresholds should be reasonable despite the 16000c outlier.
 	if topThresh > 200 {
 		t.Errorf("topThreshold = %f, want < 200 (outlier should be capped by p99)", topThresh)
 	}
@@ -995,7 +1077,7 @@ func TestTierAction(t *testing.T) {
 		{"MID+RISING", "RISING", "", "MID", "CAUTIOUS — may reverse"},
 		{"MID+BREWING", "STABLE", "BREWING", "MID", "WATCH — may reverse before opening"},
 		// LOW tier
-		{"LOW+HERD", "HERD", "", "LOW", "SELL — herd flooding, price will crash"},
+		{"LOW+HERD", "HERD", "", "LOW", "MOMENTUM — rising with crowd, watch for reversal"},
 		{"LOW+OPEN", "STABLE", "OPEN", "LOW", "UNRELIABLE — low-value windows are traps"},
 		{"LOW+BREWING", "STABLE", "BREWING", "LOW", "SKIP — not actionable at this price"},
 		// No special guidance

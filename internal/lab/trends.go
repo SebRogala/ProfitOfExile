@@ -32,7 +32,7 @@ type TrendResult struct {
 	WindowSignal      string  // CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED
 
 	// Advanced signals (coexist with primary Signal)
-	AdvancedSignal string // PRICE_MANIPULATION, COMEBACK, POTENTIAL, or "" (none)
+	AdvancedSignal string // PRICE_MANIPULATION, BREAKOUT, COMEBACK, POTENTIAL, or "" (none)
 
 	// Price tier signals
 	PriceTier  string // TOP, MID, LOW — dynamic based on current market
@@ -82,24 +82,48 @@ func computePriceTiers(gems []GemPrice) (topThreshold, midThreshold float64) {
 	}
 	p99 := prices[p99idx]
 
-	// Top 10 of winsorized prices
+	// Winsorize at p99 to cap outliers.
 	winsorized := make([]float64, len(prices))
 	for i, p := range prices {
 		winsorized[i] = math.Min(p, p99)
 	}
 	sort.Float64s(winsorized)
 
-	top10sum := 0.0
-	top10start := len(winsorized) - 10
-	if top10start < 0 {
-		top10start = 0
+	// Use MEDIAN of positions #6-#15 (the mid-band of the top 15).
+	// The top 5 are excluded as outliers; #6-#15 form a stable reference band.
+	// This resists single-snapshot spikes much better than mean of top 10.
+	top15start := len(winsorized) - 15
+	if top15start < 0 {
+		top15start = 0
 	}
-	count := 0
-	for i := top10start; i < len(winsorized); i++ {
-		top10sum += winsorized[i]
-		count++
+	top5start := len(winsorized) - 5
+	if top5start < 0 {
+		top5start = 0
 	}
-	wt10 := top10sum / float64(count)
+	// Fallback: if not enough gems for a mid-band, use the old top-10 average.
+	var wt10 float64
+	if top5start <= top15start {
+		// Too few gems — fall back to top-10 average.
+		top10start := len(winsorized) - 10
+		if top10start < 0 {
+			top10start = 0
+		}
+		sum := 0.0
+		count := 0
+		for i := top10start; i < len(winsorized); i++ {
+			sum += winsorized[i]
+			count++
+		}
+		wt10 = sum / float64(count)
+	} else {
+		// Mid-band: gems ranked #6-#15 by price. Take median.
+		var midBand []float64
+		for i := top15start; i < top5start; i++ {
+			midBand = append(midBand, winsorized[i])
+		}
+		sort.Float64s(midBand)
+		wt10 = midBand[len(midBand)/2]
+	}
 
 	return wt10 * 0.70, wt10 * 0.20
 }
@@ -145,7 +169,7 @@ func tierAction(signal, windowSignal, priceTier string) string {
 	case "LOW":
 		switch signal {
 		case "HERD":
-			return "SELL — herd flooding, price will crash"
+			return "MOMENTUM — rising with crowd, watch for reversal"
 		}
 		switch windowSignal {
 		case "OPEN":
@@ -226,7 +250,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			histPos = 50
 		}
 
-		signal := classifySignal(priceVel, listingVel, cv)
+		signal := classifySignal(priceVel, listingVel, cv, g.Listings)
 
 		// Base-side signals.
 		baseName := extractBaseName(g.Name)
@@ -482,11 +506,20 @@ func detectUndervalued(currentPrice float64, currentListings int, priceVelocity,
 		histPosition < 50
 }
 
+// detectBreakout identifies LOW-tier gems with collapsing supply and rising price.
+// These are the "surprise winners" that 3-10x — thin supply + any upward momentum.
+func detectBreakout(currentPrice float64, currentListings int, priceVelocity, listingVelocity float64) bool {
+	return currentPrice < 200 && currentListings < 30 && listingVelocity < -5 && priceVelocity > 0
+}
+
 // classifyAdvancedSignal determines the advanced signal for a gem.
-// Priority: PRICE_MANIPULATION > COMEBACK > POTENTIAL.
+// Priority: PRICE_MANIPULATION > BREAKOUT > COMEBACK > POTENTIAL.
 func classifyAdvancedSignal(currentPrice float64, currentListings int, priceVelocity, listingVelocity, cv, histPosition float64) string {
 	if detectPriceManipulation(currentListings, currentPrice, priceVelocity, cv) {
 		return "PRICE_MANIPULATION"
+	}
+	if detectBreakout(currentPrice, currentListings, priceVelocity, listingVelocity) {
+		return "BREAKOUT"
 	}
 	if detectRotationCandidate(histPosition, priceVelocity, listingVelocity) {
 		return "COMEBACK"
@@ -497,8 +530,9 @@ func classifyAdvancedSignal(currentPrice float64, currentListings int, priceVelo
 	return ""
 }
 
-// classifySignal determines the market signal based on velocity and CV.
-func classifySignal(priceVel, listingVel, cv float64) string {
+// classifySignal determines the market signal based on velocity, CV, and current listings.
+// currentListings is needed for RECOVERY detection (supply exhaustion at bottom).
+func classifySignal(priceVel, listingVel, cv float64, currentListings int) string {
 	if cv > 100 {
 		return "TRAP"
 	}
@@ -512,7 +546,10 @@ func classifySignal(priceVel, listingVel, cv float64) string {
 	if priceVel > 5 && listingVel > 10 {
 		return "HERD"
 	}
-	if priceVel < -5 && listingVel < -5 {
+	// RECOVERY: price drifting down slowly, thin listings dropping = supply exhaustion (bottom forming).
+	// Old rule (priceVel < -5 && listingVel < -5) fired mid-crash — 22.6% accurate.
+	// New rule requires stabilization: price still negative but shallow, listings thin and draining.
+	if priceVel < 0 && priceVel > -5 && listingVel < -3 && currentListings < 20 {
 		return "RECOVERY"
 	}
 	if math.Abs(priceVel) < 2 && math.Abs(listingVel) < 3 {
