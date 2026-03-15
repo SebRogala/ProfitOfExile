@@ -457,15 +457,15 @@ func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult
 			  price_velocity, listing_velocity, cv, signal, hist_position,
 			  price_high_7d, price_low_7d,
 			  base_listings, base_velocity, relative_liquidity, liquidity_tier,
-			  window_score, window_signal)
+			  window_score, window_signal, advanced_signal)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			         $14, $15, $16, $17, $18, $19)
+			         $14, $15, $16, $17, $18, $19, $20)
 			 ON CONFLICT DO NOTHING`,
 			r.Time, r.Name, r.Variant, r.GemColor, r.CurrentPrice, r.CurrentListings,
 			r.PriceVelocity, r.ListingVelocity, r.CV, r.Signal, r.HistPosition,
 			r.PriceHigh7d, r.PriceLow7d,
 			r.BaseListings, r.BaseVelocity, r.RelativeLiquidity, r.LiquidityTier,
-			r.WindowScore, r.WindowSignal,
+			r.WindowScore, r.WindowSignal, r.AdvancedSignal,
 		)
 	}
 
@@ -491,13 +491,13 @@ func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult
 }
 
 // LatestTrendResults returns the most recent trend results, optionally filtered by variant, signal, and/or window.
-func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, window string, limit int) ([]TrendResult, error) {
+func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, window, advanced string, limit int) ([]TrendResult, error) {
 	query := `
 		SELECT time, name, variant, gem_color, current_price, current_listings,
 		       price_velocity, listing_velocity, cv, signal, hist_position,
 		       price_high_7d, price_low_7d,
 		       base_listings, base_velocity, relative_liquidity, liquidity_tier,
-		       window_score, window_signal
+		       window_score, window_signal, COALESCE(advanced_signal, '')
 		FROM trend_results
 		WHERE time = (SELECT MAX(time) FROM trend_results)`
 	args := []any{}
@@ -518,6 +518,11 @@ func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, wi
 		args = append(args, window)
 		argIdx++
 	}
+	if advanced != "" {
+		query += fmt.Sprintf(` AND advanced_signal = $%d`, argIdx)
+		args = append(args, advanced)
+		argIdx++
+	}
 
 	query += fmt.Sprintf(` ORDER BY cv DESC, current_price DESC LIMIT $%d`, argIdx)
 	args = append(args, limit)
@@ -536,7 +541,7 @@ func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, wi
 			&tr.PriceVelocity, &tr.ListingVelocity, &tr.CV, &tr.Signal, &tr.HistPosition,
 			&tr.PriceHigh7d, &tr.PriceLow7d,
 			&tr.BaseListings, &tr.BaseVelocity, &tr.RelativeLiquidity, &tr.LiquidityTier,
-			&tr.WindowScore, &tr.WindowSignal); err != nil {
+			&tr.WindowScore, &tr.WindowSignal, &tr.AdvancedSignal); err != nil {
 			return nil, fmt.Errorf("lab repo: scan trend result: %w", err)
 		}
 		results = append(results, tr)

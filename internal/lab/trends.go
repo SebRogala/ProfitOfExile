@@ -29,6 +29,9 @@ type TrendResult struct {
 	LiquidityTier     string  // LOW, MED, HIGH (derived from RelativeLiquidity)
 	WindowScore       float64 // 0-100 composite score for farming opportunity
 	WindowSignal      string  // CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED
+
+	// Advanced signals (coexist with primary Signal)
+	AdvancedSignal string // PRICE_MANIPULATION, ROTATION_CANDIDATE, UNDERVALUED, or "" (none)
 }
 
 // GemPriceHistory contains time-series data for a single gem.
@@ -138,6 +141,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		liqTier := liquidityTier(relLiq)
 		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
 		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel)
+		advSignal := classifyAdvancedSignal(g.Chaos, g.Listings, priceVel, listingVel, cv, histPos)
 
 		results = append(results, TrendResult{
 			Time:              snapTime,
@@ -159,6 +163,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			LiquidityTier:     liqTier,
 			WindowScore:       sanitizeFloat(winScore),
 			WindowSignal:      winSignal,
+			AdvancedSignal:    advSignal,
 		})
 	}
 
@@ -335,6 +340,43 @@ func historicalPosition(current float64, prices []float64) (high, low, position 
 
 	position = ((current - low) / rang) * 100
 	return high, low, position
+}
+
+// detectPriceManipulation identifies fake price floor attempts: very few listings
+// at extreme price with no velocity and high historical volatility.
+func detectPriceManipulation(currentListings int, currentPrice, priceVelocity, cv float64) bool {
+	return currentListings <= 3 && currentPrice > 200 &&
+		math.Abs(priceVelocity) < 1 && cv > 80
+}
+
+// detectRotationCandidate identifies gems that were previously high-ROI but dropped,
+// now showing recovery signals: price in the bottom 30% of its 7-day range,
+// price rising, and listings dropping (supply drying up).
+func detectRotationCandidate(histPosition, priceVelocity, listingVelocity float64) bool {
+	return histPosition < 30 && priceVelocity > 0 && listingVelocity < 0
+}
+
+// detectUndervalued identifies hidden opportunities: mid-range price, low listings,
+// price rising, below historical midpoint — hasn't been discovered yet.
+func detectUndervalued(currentPrice float64, currentListings int, priceVelocity, histPosition float64) bool {
+	return currentPrice < 200 && currentPrice > 30 &&
+		currentListings < 40 && priceVelocity > 2 &&
+		histPosition < 50
+}
+
+// classifyAdvancedSignal determines the advanced signal for a gem.
+// Priority: PRICE_MANIPULATION > ROTATION_CANDIDATE > UNDERVALUED.
+func classifyAdvancedSignal(currentPrice float64, currentListings int, priceVelocity, listingVelocity, cv, histPosition float64) string {
+	if detectPriceManipulation(currentListings, currentPrice, priceVelocity, cv) {
+		return "PRICE_MANIPULATION"
+	}
+	if detectRotationCandidate(histPosition, priceVelocity, listingVelocity) {
+		return "ROTATION_CANDIDATE"
+	}
+	if detectUndervalued(currentPrice, currentListings, priceVelocity, histPosition) {
+		return "UNDERVALUED"
+	}
+	return ""
 }
 
 // classifySignal determines the market signal based on velocity and CV.
