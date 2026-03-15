@@ -10,7 +10,9 @@ type CollectiveResult struct {
 	Variant              string  `json:"variant"`
 	GemColor             string  `json:"gemColor"`
 	ROI                  float64 `json:"roi"`
+	ROIPct               float64 `json:"roiPct"`
 	WeightedROI          float64 `json:"weightedRoi"`
+	WeightedROIPct       float64 `json:"weightedRoiPct"`
 	BasePrice            float64 `json:"basePrice"`
 	TransfiguredPrice    float64 `json:"transfiguredPrice"`
 	BaseListings         int     `json:"baseListings"`
@@ -31,6 +33,7 @@ type CompareResult struct {
 	Variant              string           `json:"variant"`
 	GemColor             string           `json:"gemColor"`
 	ROI                  float64          `json:"roi"`
+	ROIPct               float64          `json:"roiPct"`
 	BasePrice            float64          `json:"basePrice"`
 	TransfiguredPrice    float64          `json:"transfiguredPrice"`
 	Confidence           string           `json:"confidence"`
@@ -72,11 +75,28 @@ func signalWeight(signal string) float64 {
 	}
 }
 
+// SortMode controls ranking order in the collective view.
+type SortMode string
+
+const (
+	SortChaos SortMode = "chaos" // sort by weighted absolute ROI (default)
+	SortPct   SortMode = "pct"   // sort by weighted ROI percentage
+)
+
 // RankCollective combines transfigure results with trend signals to produce
 // a ranked list of profitable farming targets. Results with TRAP signal are
 // excluded. Budget filters on basePrice. The returned slice is sorted by
-// weighted ROI descending and capped at limit entries.
-func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budget float64, limit int) []CollectiveResult {
+// the chosen metric descending and capped at limit entries.
+// When budget <= 50 and sortBy is empty, defaults to SortPct.
+func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budget float64, limit int, sortBy SortMode) []CollectiveResult {
+	// Budget-aware default: small budgets benefit from ROI% ranking.
+	if sortBy == "" {
+		if budget > 0 && budget <= 50 {
+			sortBy = SortPct
+		} else {
+			sortBy = SortChaos
+		}
+	}
 	// Index trends by (name, variant) for fast lookup.
 	type trendKey struct{ name, variant string }
 	trendIndex := make(map[trendKey]*TrendResult, len(trends))
@@ -104,6 +124,7 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			Variant:              tr.Variant,
 			GemColor:             tr.GemColor,
 			ROI:                  tr.ROI,
+			ROIPct:               tr.ROIPct,
 			BasePrice:            tr.BasePrice,
 			TransfiguredPrice:    tr.TransfiguredPrice,
 			BaseListings:         tr.BaseListings,
@@ -128,13 +149,20 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 		}
 
 		cr.WeightedROI = cr.ROI * w
+		cr.WeightedROIPct = cr.ROIPct * w
 		results = append(results, cr)
 	}
 
-	// Sort by weighted ROI descending.
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].WeightedROI > results[j].WeightedROI
-	})
+	// Sort by chosen metric descending.
+	if sortBy == SortPct {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].WeightedROIPct > results[j].WeightedROIPct
+		})
+	} else {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].WeightedROI > results[j].WeightedROI
+		})
+	}
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]
@@ -189,6 +217,7 @@ func BuildCompareResults(
 			cr.Variant = bestTr.Variant
 			cr.GemColor = bestTr.GemColor
 			cr.ROI = bestTr.ROI
+			cr.ROIPct = bestTr.ROIPct
 			cr.BasePrice = bestTr.BasePrice
 			cr.TransfiguredPrice = bestTr.TransfiguredPrice
 			cr.Confidence = bestTr.Confidence

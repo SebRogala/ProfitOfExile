@@ -77,7 +77,14 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			}
 		}
 
-		results := lab.RankCollective(transfigure, trends, budget, limit)
+		// Parse sort mode: "pct" for ROI%, "chaos" (default) for absolute ROI.
+		var sortBy lab.SortMode
+		if s := r.URL.Query().Get("sort"); s == "pct" {
+			sortBy = lab.SortPct
+		}
+		// Empty sortBy lets RankCollective apply budget-aware default.
+
+		results := lab.RankCollective(transfigure, trends, budget, limit, sortBy)
 
 		type row struct {
 			TransfiguredName     string  `json:"transfiguredName"`
@@ -85,7 +92,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			Variant              string  `json:"variant"`
 			GemColor             string  `json:"gemColor"`
 			ROI                  float64 `json:"roi"`
+			ROIPct               float64 `json:"roiPct"`
 			WeightedROI          float64 `json:"weightedRoi"`
+			WeightedROIPct       float64 `json:"weightedRoiPct"`
 			BasePrice            float64 `json:"basePrice"`
 			TransfiguredPrice    float64 `json:"transfiguredPrice"`
 			BaseListings         int     `json:"baseListings"`
@@ -106,7 +115,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				Variant:              cr.Variant,
 				GemColor:             cr.GemColor,
 				ROI:                  cr.ROI,
+				ROIPct:               cr.ROIPct,
 				WeightedROI:          cr.WeightedROI,
+				WeightedROIPct:       cr.WeightedROIPct,
 				BasePrice:            cr.BasePrice,
 				TransfiguredPrice:    cr.TransfiguredPrice,
 				BaseListings:         cr.BaseListings,
@@ -219,6 +230,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			Variant           string              `json:"variant"`
 			GemColor          string              `json:"gemColor"`
 			ROI               float64             `json:"roi"`
+			ROIPct            float64             `json:"roiPct"`
 			BasePrice         float64             `json:"basePrice"`
 			TransfiguredPrice float64             `json:"transfiguredPrice"`
 			Confidence        string              `json:"confidence"`
@@ -239,6 +251,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				Variant:           cr.Variant,
 				GemColor:          cr.GemColor,
 				ROI:               cr.ROI,
+				ROIPct:            cr.ROIPct,
 				BasePrice:         cr.BasePrice,
 				TransfiguredPrice: cr.TransfiguredPrice,
 				Confidence:        cr.Confidence,
