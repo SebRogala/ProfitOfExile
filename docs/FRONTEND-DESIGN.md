@@ -142,7 +142,11 @@ Only shown when active windows exist (BREWING, OPENING, OPEN, CLOSING, EXHAUSTED
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Section 6: Legend
+## Section 6: Legend (collapsible, collapsed by default)
+
+Users learn signals quickly — legend takes unnecessary space after first visit.
+Collapsed shows just: `📖 Legend ▶` — click to expand full reference.
+All signal badges have hover tooltips regardless of legend state.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
