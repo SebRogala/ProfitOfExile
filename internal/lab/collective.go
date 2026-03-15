@@ -174,20 +174,25 @@ func BuildCompareResults(
 			Signal:           "STABLE",
 		}
 
-		// Find transfigure data — iterate to find best variant match.
+		// Find transfigure data — select the variant with highest ROI.
 		found := false
+		var bestTr *TransfigureResult
 		for k, tr := range trIndex {
 			if k.name == name {
-				cr.BaseName = tr.BaseName
-				cr.Variant = tr.Variant
-				cr.GemColor = tr.GemColor
-				cr.ROI = tr.ROI
-				cr.BasePrice = tr.BasePrice
-				cr.TransfiguredPrice = tr.TransfiguredPrice
-				cr.Confidence = tr.Confidence
-				found = true
-				break
+				if bestTr == nil || tr.ROI > bestTr.ROI {
+					bestTr = tr
+				}
 			}
+		}
+		if bestTr != nil {
+			cr.BaseName = bestTr.BaseName
+			cr.Variant = bestTr.Variant
+			cr.GemColor = bestTr.GemColor
+			cr.ROI = bestTr.ROI
+			cr.BasePrice = bestTr.BasePrice
+			cr.TransfiguredPrice = bestTr.TransfiguredPrice
+			cr.Confidence = bestTr.Confidence
+			found = true
 		}
 
 		if !found {

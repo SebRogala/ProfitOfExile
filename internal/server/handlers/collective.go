@@ -133,9 +133,21 @@ func CompareAnalysis(repo *lab.Repository) http.HandlerFunc {
 			return
 		}
 
-		// Trim whitespace from names.
-		for i := range names {
-			names[i] = strings.TrimSpace(names[i])
+		// Trim whitespace and filter empty names.
+		filtered := names[:0]
+		for _, n := range names {
+			n = strings.TrimSpace(n)
+			if n != "" {
+				filtered = append(filtered, n)
+			}
+		}
+		names = filtered
+
+		if len(names) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "at least one gem name is required"})
+			return
 		}
 
 		variant := r.URL.Query().Get("variant")
@@ -157,11 +169,12 @@ func CompareAnalysis(repo *lab.Repository) http.HandlerFunc {
 		}
 
 		// Load sparkline data (last 2 hours).
+		var warnings []string
 		sparklines, err := repo.SparklineData(r.Context(), names, variant, 2)
 		if err != nil {
 			slog.Error("compare analysis: sparkline query failed", "error", err)
-			// Non-fatal: continue without sparklines.
 			sparklines = make(map[string][]lab.SparklinePoint)
+			warnings = append(warnings, "Sparkline data temporarily unavailable")
 		}
 
 		results := lab.BuildCompareResults(names, transfigure, trends, sparklines)
@@ -205,11 +218,16 @@ func CompareAnalysis(repo *lab.Repository) http.HandlerFunc {
 			})
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
+		resp := map[string]any{
 			"count": len(rows),
 			"data":  rows,
-		}); err != nil {
+		}
+		if len(warnings) > 0 {
+			resp["warnings"] = warnings
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("compare analysis: encode response", "error", err)
 		}
 	}

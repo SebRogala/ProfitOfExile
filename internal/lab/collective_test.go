@@ -203,6 +203,44 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 	}
 }
 
+func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1", ROI: 10, BasePrice: 1, TransfiguredPrice: 11, Confidence: "OK"},
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1/20", ROI: 30, BasePrice: 2, TransfiguredPrice: 32, Confidence: "OK"},
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20", ROI: 80, BasePrice: 50, TransfiguredPrice: 130, Confidence: "OK"},
+	}
+
+	names := []string{"Spark of Nova"}
+	// Run multiple times to confirm determinism.
+	for i := 0; i < 10; i++ {
+		results := BuildCompareResults(names, transfigure, nil, nil)
+		if len(results) != 1 {
+			t.Fatalf("got %d results, want 1", len(results))
+		}
+		if results[0].Variant != "20/20" {
+			t.Errorf("run %d: variant = %s, want 20/20 (highest ROI)", i, results[0].Variant)
+		}
+		if results[0].ROI != 80 {
+			t.Errorf("run %d: ROI = %f, want 80", i, results[0].ROI)
+		}
+	}
+}
+
+func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
+	names := []string{"Unknown Gem"}
+	results := BuildCompareResults(names, nil, nil, nil)
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Confidence != "LOW" {
+		t.Errorf("confidence = %s, want LOW", results[0].Confidence)
+	}
+	if results[0].ROI != 0 {
+		t.Errorf("ROI = %f, want 0", results[0].ROI)
+	}
+}
+
 func TestSignalWeight(t *testing.T) {
 	tests := []struct {
 		signal string
