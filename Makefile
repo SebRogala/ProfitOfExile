@@ -1,4 +1,4 @@
-.PHONY: build test qa up down migrate migrate-down migrate-force build-collector shell-collector logs-collector
+.PHONY: build test qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector
 
 build:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
@@ -27,6 +27,15 @@ migrate-down:
 migrate-force:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
 	docker compose exec app go run ./cmd/migrate force $(VERSION)
+
+migration:
+ifndef name
+	$(error Usage: make migration name=add_foo_column)
+endif
+	@ts=$$(date +%Y%m%d%H%M%S); \
+	touch internal/db/migrations/$${ts}_$(name).up.sql; \
+	touch internal/db/migrations/$${ts}_$(name).down.sql; \
+	echo "Created: internal/db/migrations/$${ts}_$(name).{up,down}.sql"
 
 build-collector:
 	@docker compose exec collector true 2>/dev/null || $(MAKE) up

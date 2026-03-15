@@ -56,6 +56,7 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 - `golang-migrate` uses `lib/pq` (not `pgx`) — requires explicit `sslmode=disable` for local Postgres. Handled in `internal/db/migrate.go` but watch for it in test helpers too.
 - `go:embed` requires `frontend/build/.gitkeep` so the embed directive works without running a Node build. Dev mode serves no frontend from Go — that's Vite's job via Traefik.
 - Frontend `node_modules` uses a named Docker volume to prevent host bind mount from overwriting installed deps.
+- **Migrations**: NEVER modify a deployed migration file — always create a new one. Use `date +%Y%m%d%H%M%S` for the timestamp (not manual `YYYYMMDD100000`). Run: `make migration name=add_foo_column` to generate both up/down files.
 
 ## Core Domain Concepts
 
