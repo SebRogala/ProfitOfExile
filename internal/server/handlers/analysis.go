@@ -498,3 +498,43 @@ func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
 		}
 	}
 }
+
+// SignalHistory returns the last N signal snapshots for a specific gem.
+// GET /api/analysis/history?name=Spark+of+Nova&variant=20/20&limit=4
+func SignalHistory(repo *lab.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		variant := r.URL.Query().Get("variant")
+		if name == "" || variant == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "name and variant are required"})
+			return
+		}
+
+		limit := 4
+		if v := r.URL.Query().Get("limit"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err == nil && n >= 1 && n <= 20 {
+				limit = n
+			}
+		}
+
+		changes, err := repo.SignalHistory(r.Context(), name, variant, limit)
+		if err != nil {
+			slog.Error("signal history: query failed", "error", err, "name", name, "variant", variant)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"name":    name,
+			"variant": variant,
+			"count":   len(changes),
+			"history": changes,
+		}); err != nil {
+			slog.Error("signal history: encode response", "error", err)
+		}
+	}
+}

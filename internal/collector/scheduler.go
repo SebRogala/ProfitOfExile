@@ -301,8 +301,13 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 			"inserted", inserted,
 		)
 
+		// Calculate sleep before postCollect so we can include nextFetch in the event.
+		nextSleep := s.calculateSleep(ep, result.Age)
+
 		// Post-collect: conditional gem color upsert (gems only) + Mercure publish.
-		s.postCollect(ctx, ep.Name, snapTime, inserted)
+		s.postCollect(ctx, ep.Name, snapTime, inserted, nextSleep)
+
+		return nextSleep
 	} else {
 		s.logger.Warn("no StoreFunc configured, fetch result discarded",
 			"endpoint", ep.Name,
@@ -343,7 +348,7 @@ func (s *Scheduler) calculateSleep(ep EndpointConfig, ageSeconds int) time.Durat
 // endpoints, gem color upsert for the gems endpoint only. The inserted count
 // is forwarded to downstream subscribers so they can short-circuit analysis
 // when no new data arrived.
-func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTime time.Time, inserted int) {
+func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTime time.Time, inserted int, nextSleep time.Duration) {
 	// Gem color resolver — only for the gems endpoint.
 	if endpointName == EndpointNinjaGems && s.resolver != nil {
 		if err := s.resolver.UpsertDiscoveries(ctx); err != nil {
@@ -362,11 +367,13 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 	topic := mercureTopicPrefix + suffix
 
 	// Mercure publish (non-fatal on failure).
+	nextFetch := time.Now().Add(nextSleep).UTC()
 	payload, err := json.Marshal(map[string]any{
 		"league":    s.league,
 		"endpoint":  endpointName,
 		"timestamp": snapTime.Format(time.RFC3339),
 		"inserted":  inserted,
+		"nextFetch": nextFetch.Format(time.RFC3339),
 	})
 	if err != nil {
 		s.logger.Error("marshal mercure payload",

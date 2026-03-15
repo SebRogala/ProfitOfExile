@@ -87,8 +87,10 @@ func main() {
 		MercureSecret: mercureSecret,
 		DevMode:       devMode,
 		Pool:          pool,
-		LabRepo:       labRepo,
-		LabCache:      labCache,
+		LabRepo:              labRepo,
+		LabCache:             labCache,
+		MercureSubscriberKey: os.Getenv("MERCURE_SUBSCRIBER_KEY"),
+		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),
 	})
 
 	// Run initial analyses on startup (uses existing data).

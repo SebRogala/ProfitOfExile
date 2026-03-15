@@ -672,3 +672,43 @@ func (r *Repository) GemNamesAutocomplete(ctx context.Context, query string, lim
 
 	return names, nil
 }
+
+// SignalChange represents a single signal transition for a gem.
+type SignalChange struct {
+	Time      time.Time `json:"time"`
+	Signal    string    `json:"signal"`
+	Window    string    `json:"window"`
+	Advanced  string    `json:"advanced"`
+	PriceVel  float64   `json:"priceVelocity"`
+	ListVel   float64   `json:"listingVelocity"`
+}
+
+// SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
+func (r *Repository) SignalHistory(ctx context.Context, name, variant string, limit int) ([]SignalChange, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (time) time, signal, window_signal, COALESCE(advanced_signal, ''),
+		       price_velocity, listing_velocity
+		FROM trend_results
+		WHERE name = $1 AND variant = $2
+		ORDER BY time DESC
+		LIMIT $3`, name, variant, limit)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: signal history: %w", err)
+	}
+	defer rows.Close()
+
+	var changes []SignalChange
+	for rows.Next() {
+		var c SignalChange
+		if err := rows.Scan(&c.Time, &c.Signal, &c.Window, &c.Advanced,
+			&c.PriceVel, &c.ListVel); err != nil {
+			return nil, fmt.Errorf("lab repo: scan signal history: %w", err)
+		}
+		changes = append(changes, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: signal history iteration: %w", err)
+	}
+
+	return changes, nil
+}
