@@ -1,2 +1,4 @@
 ALTER TABLE trend_results ADD COLUMN sell_urgency TEXT NOT NULL DEFAULT '';
 ALTER TABLE trend_results ADD COLUMN sell_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE trend_results ADD COLUMN sellability INTEGER NOT NULL DEFAULT 50;
+ALTER TABLE trend_results ADD COLUMN sellability_label TEXT NOT NULL DEFAULT 'MODERATE';
