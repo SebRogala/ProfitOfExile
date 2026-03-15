@@ -156,6 +156,14 @@ func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 	}
 }
 
+func TestClassifySignal_PreHERD_HighVelocity(t *testing.T) {
+	// Extreme price movement with moderate listing growth → HERD (pre-signal)
+	s := classifySignal(50, 5, 30)
+	if s != "HERD" {
+		t.Errorf("signal = %s, want HERD (pre-HERD high velocity)", s)
+	}
+}
+
 func TestClassifySignal_Boundaries(t *testing.T) {
 	tests := []struct {
 		name                        string
@@ -176,6 +184,11 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		{"priceVel=1.99 is STABLE", 1.99, 0, 30, "STABLE"},
 		{"listingVel=3 not STABLE", 0, 3, 30, "FALLING"},
 		{"listingVel=2.99 is STABLE", 0, 2.99, 30, "STABLE"},
+		// Pre-HERD boundary: priceVel must be > 30 and listingVel > 3
+		{"preHERD: priceVel=30 not HERD", 30, 5, 30, "RISING"},
+		{"preHERD: priceVel=30.01 listVel=3.01 is HERD", 30.01, 3.01, 30, "HERD"},
+		{"preHERD: priceVel=50 listVel=3 not HERD", 50, 3, 30, "RISING"},
+		{"preHERD: priceVel=50 listVel=3.01 is HERD", 50, 3.01, 30, "HERD"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -517,11 +530,41 @@ func TestClassifyWindowSignal(t *testing.T) {
 		{"EXHAUSTED: base listings 2", 80, -5, 0, 2, 5, "EXHAUSTED"},
 		{"BREWING: price rising + trans listings falling + bases available", 20, 0, -2, 50, 3, "BREWING"},
 		{"BREWING not if bases low", 20, 0, -2, 5, 3, "CLOSED"},
-		// Edge: score exactly 70, baseVel exactly -2 → not OPEN (needs < -2)
-		{"boundary: score=70 baseVel=-2 not OPEN", 70, -2, 0, 30, 0, "OPENING"},
-		{"boundary: score=70 baseVel=-2.01 is OPEN", 70, -2.01, 0, 30, 0, "OPEN"},
+		// Edge: relative drain threshold. baseLst=30 → threshold=max(-1.2,-1)=-1
+		{"boundary: score=70 baseVel=-1 not OPEN (at threshold)", 70, -1, 0, 30, 0, "OPENING"},
+		{"boundary: score=70 baseVel=-1.01 is OPEN", 70, -1.01, 0, 30, 0, "OPEN"},
+		// Large base: baseLst=200 → threshold=max(-8,-1)=-1, so -5 is still OPEN
+		{"large base OPEN", 75, -5, 0, 200, 5, "OPEN"},
 		// Sentinel: baseListings = -1 skips EXHAUSTED
 		{"baseLst=-1 skips EXHAUSTED", 80, -5, 0, -1, 5, "OPEN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := classifyWindowSignal(tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel)
+			if got != tt.want {
+				t.Errorf("classifyWindowSignal(%v, %v, %v, %v, %v) = %s, want %s",
+					tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyWindowSignal_RelativeDrain(t *testing.T) {
+	tests := []struct {
+		name                              string
+		score, baseVel, transListVel      float64
+		baseLst                           int
+		priceVel                          float64
+		want                              string
+	}{
+		// baseLst=200 → threshold=max(-8,-1)=-1. baseVel=-5 is only 2.5% drain, but exceeds -1 threshold
+		{"large base small drain still OPEN", 75, -5, 0, 200, 5, "OPEN"},
+		// baseLst=200 → threshold=-1. baseVel=-0.5 not below -1
+		{"large base tiny drain not OPEN", 75, -0.5, 0, 200, 5, "CLOSED"},
+		// baseLst=50 → threshold=max(-2,-1)=-1. baseVel=-3 (6% drain) below -1 → OPEN
+		{"small base heavy drain OPEN", 75, -3, 0, 50, 5, "OPEN"},
+		// baseLst=10 → threshold=max(-0.4,-1)=-0.4. baseVel=-0.1, threshold*0.5=-0.2, not below
+		{"tiny base not draining enough", 75, -0.1, 0, 10, 5, "CLOSED"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
