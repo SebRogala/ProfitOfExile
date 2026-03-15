@@ -226,9 +226,43 @@ Throttler aggregates and passes to frontend:
 
 ## Signal History
 
-Requires querying last 4 trend_results snapshots per gem and diffing signals.
-New endpoint or extend existing: GET /api/analysis/trends?history=3
-Returns last 3 signal changes with timestamps and reasons.
+Endpoint: `GET /api/analysis/history?name=Spark+of+Nova&variant=20/20&limit=4`
+Returns last N snapshots in DESC order with signal, window, advanced, priceVelocity, listingVelocity.
+
+**Frontend computes transitions client-side:**
+- Reverse array for chronological order
+- Diff consecutive entries: `history[i].signal !== history[i+1].signal` = transition
+- Derive "reason" text from velocity values using same threshold rules as legend
+- Example: if priceVelocity > 5 → "(+Xc/h)", if listingVelocity > 10 → "(lst spike)"
+
+## Audit Resolutions
+
+### Fixed (backend updated):
+- **Throttler nextAny** — throttler now includes `nextAny` from collector's `nextFetch`
+- **Collective signals** — CollectiveResult now includes windowSignal, advancedSignal, liquidityTier
+- **Quality roi20** — QualityResult now includes ROI20 for Uber/Gift 5th tier
+
+### Frontend handles:
+- **Signal history diffs** — client-side diff of consecutive snapshots, reasons derived from velocities
+- **Market Overview** — aggregated client-side from trends data already in memory, no new endpoint
+- **Δ2h display** — multiply velocity × 2 for 2-hour deltas
+- **Token refresh** — on SSE disconnect, re-fetch /api/mercure/token before reconnecting
+- **Signal names** — match backend strings exactly: DUMPING (not DUMP), PRICE_MANIPULATION, COMEBACK, POTENTIAL
+- **Budget=0** — treat as "unlimited" (no filter), same as empty
+
+### Deferred:
+- **Dedication lab** — gate with "Coming soon" in v1. Separate task for corrupted gem analyzer.
+- **Variant-filtered autocomplete** — nice-to-have, not blocking
+- **Collector uptime** — derive from gemFirstSnapshot in stats endpoint
+- **Font EV Δ2h** — client-side delta tracking between updates
+- **WindowScore progress bar** — data available (0-100), add as visual enhancement
+- **Twice Blessed tooltip** — show "with ~33% shrine chance: ×N+1 uses" on Font EV
+
+### Performance strategy:
+- Initial load: ~18 API calls + N signal history calls
+- Signal history: load lazily on row expand (not all at once)
+- Cache-first: all analysis endpoints serve from memory, no DB contention
+- On Mercure event: re-fetch only changed endpoints, not all
 
 ## Tooltips — Detailed Signal Descriptions
 
