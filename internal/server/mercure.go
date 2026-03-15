@@ -167,7 +167,7 @@ func (s *MercureSubscriber) connect(ctx context.Context) (connected bool, err er
 }
 
 // signSubscriberJWT creates an HS256-signed JWT with subscribe permissions for
-// the Mercure hub. Short-lived (60s) since a fresh token is generated per connection.
+// the Mercure hub. Long-lived (24h) to avoid reconnect churn on expiry.
 func signSubscriberJWT(secret string, topics []string) (string, error) {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 
@@ -177,7 +177,7 @@ func signSubscriberJWT(secret string, topics []string) (string, error) {
 			"subscribe": topics,
 		},
 		"iat": now.Unix(),
-		"exp": now.Add(60 * time.Second).Unix(),
+		"exp": now.Add(24 * time.Hour).Unix(),
 	}
 	claimsJSON, err := json.Marshal(claims)
 	if err != nil {
