@@ -27,6 +27,10 @@ type RouterConfig struct {
 	// LabCache is the in-memory cache for pre-computed analysis results.
 	// May be nil — handlers fall back to DB queries when cache is unavailable.
 	LabCache *lab.Cache
+	// MercureSubscriberKey is the JWT secret for generating frontend subscriber tokens.
+	MercureSubscriberKey string
+	// MercurePublicURL is the public Mercure hub URL for browser SSE connections.
+	MercurePublicURL string
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -57,7 +61,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo))
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache))
+		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
 	}
+
+	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))
 
 	if cfg.DevMode {
 		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret))
