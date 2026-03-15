@@ -747,6 +747,39 @@ func TestClassifyAdvancedSignal_Priority(t *testing.T) {
 	}
 }
 
+func TestClassifyAdvancedSignal_RotationOverUndervalued(t *testing.T) {
+	// Inputs that match both ROTATION_CANDIDATE and UNDERVALUED:
+	// Rotation: histPos<30, priceVel>0, listingVel<0
+	// Undervalued: price 30-200, listings<40, priceVel>2, histPos<50
+	// NOT manipulation: listings>3
+	got := classifyAdvancedSignal(
+		80,   // currentPrice: in undervalued range (30-200)
+		20,   // listings: >3 (not manipulation), <40 (undervalued)
+		3,    // priceVel: >2 (undervalued), >0 (rotation)
+		-1,   // listingVel: <0 (rotation)
+		30,   // cv: <=80 (not manipulation)
+		20,   // histPos: <30 (rotation), <50 (undervalued)
+	)
+	if got != "ROTATION_CANDIDATE" {
+		t.Errorf("classifyAdvancedSignal (rotation+undervalued) = %s, want ROTATION_CANDIDATE (higher priority)", got)
+	}
+}
+
+func TestClassifyAdvancedSignal_Undervalued(t *testing.T) {
+	// Inputs matching ONLY undervalued (not rotation: listingVel >= 0).
+	got := classifyAdvancedSignal(
+		80,  // price in range 30-200
+		20,  // listings < 40
+		5,   // priceVel > 2
+		0,   // listingVel = 0 (not rotation)
+		30,  // cv low
+		30,  // histPos < 50
+	)
+	if got != "UNDERVALUED" {
+		t.Errorf("classifyAdvancedSignal (undervalued only) = %s, want UNDERVALUED", got)
+	}
+}
+
 func TestClassifyAdvancedSignal_None(t *testing.T) {
 	// Normal gem — no advanced signal.
 	got := classifyAdvancedSignal(100, 50, 1, 0, 30, 60)
