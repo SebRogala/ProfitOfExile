@@ -87,7 +87,7 @@ func main() {
 		LabRepo:       labRepo,
 	})
 
-	// Run initial analysis on startup (uses existing data).
+	// Run initial analyses on startup (uses existing data).
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -95,6 +95,22 @@ func main() {
 			}
 		}()
 		analyzer.RunTransfigure(ctx)
+	}()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("font analysis panicked on startup", "recover", r)
+			}
+		}()
+		analyzer.RunFont(ctx)
+	}()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("quality analysis panicked on startup", "recover", r)
+			}
+		}()
+		analyzer.RunQuality(ctx)
 	}()
 
 	// Start Mercure subscriber in background if configured.
@@ -129,6 +145,22 @@ func main() {
 						}
 					}()
 					analyzer.RunTransfigure(subCtx)
+				}()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("font analysis panicked", "recover", r)
+						}
+					}()
+					analyzer.RunFont(subCtx)
+				}()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("quality analysis panicked", "recover", r)
+						}
+					}()
+					analyzer.RunQuality(subCtx)
 				}()
 			}
 		})
