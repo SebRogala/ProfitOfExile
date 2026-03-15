@@ -57,10 +57,19 @@ func (t *Throttler) Signal() {
 		t.timer.Stop()
 	}
 
-	t.timer = time.AfterFunc(t.debounce, t.publish)
+	t.timer = time.AfterFunc(t.debounce, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.logger.Error("throttler: publish panicked", "recover", r)
+			}
+		}()
+		t.publish()
+	})
 }
 
 // publish sends the analysis-updated event to the Mercure hub.
+// It accesses mercureURL, mercureSecret, logger, and publishFn without locking —
+// these fields MUST be set only during construction and never mutated afterward.
 func (t *Throttler) publish() {
 	payload, err := json.Marshal(map[string]string{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),

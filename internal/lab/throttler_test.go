@@ -2,6 +2,7 @@ package lab
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,5 +77,30 @@ func TestThrottler_SecondBurstAfterDebounce(t *testing.T) {
 
 	if got := publishCount.Load(); got != 2 {
 		t.Errorf("expected 2 publishes (one per burst), got %d", got)
+	}
+}
+
+func TestThrottler_PublishErrorDoesNotBreakSubsequentSignals(t *testing.T) {
+	var publishCount atomic.Int32
+
+	throttler := NewThrottler("http://mercure/.well-known/mercure", "secret", 50*time.Millisecond)
+	throttler.publishFn = func(_ context.Context, _, _, _, _ string) error {
+		n := publishCount.Add(1)
+		if n == 1 {
+			return fmt.Errorf("simulated mercure failure")
+		}
+		return nil
+	}
+
+	// First signal — publish will fail.
+	throttler.Signal()
+	time.Sleep(100 * time.Millisecond)
+
+	// Second signal — should still work.
+	throttler.Signal()
+	time.Sleep(100 * time.Millisecond)
+
+	if got := publishCount.Load(); got != 2 {
+		t.Errorf("expected 2 publish attempts (first fails, second succeeds), got %d", got)
 	}
 }
