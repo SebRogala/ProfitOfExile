@@ -3,6 +3,7 @@ package lab
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -513,7 +514,7 @@ func (r *Repository) SparklineData(ctx context.Context, names []string, variant 
 		args = append(args, variant)
 	}
 
-	query += ` ORDER BY name, time ASC`
+	query += ` ORDER BY name, time ASC LIMIT 10000`
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -553,7 +554,7 @@ func (r *Repository) GemNamesAutocomplete(ctx context.Context, query string, lim
 		SELECT DISTINCT name FROM gem_snapshots
 		WHERE is_transfigured = true AND name ILIKE $1
 		ORDER BY name LIMIT $2`,
-		query+"%", limit)
+		strings.NewReplacer(`%`, `\%`, `_`, `\_`).Replace(query)+"%", limit)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query gem names autocomplete: %w", err)
 	}
