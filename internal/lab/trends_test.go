@@ -503,27 +503,30 @@ func TestComputeWindowScore_Capped(t *testing.T) {
 
 func TestClassifyWindowSignal(t *testing.T) {
 	tests := []struct {
-		name                        string
-		score, baseVel, transListVel float64
-		want                        string
+		name                                          string
+		score, baseVel, transListVel                  float64
+		baseLst                                       int
+		priceVel, listVel                             float64
+		want                                          string
 	}{
-		{"OPEN: high score + draining", 75, -3, 0, "OPEN"},
-		{"OPENING: mid score + slight drain", 55, -1, 0, "OPENING"},
-		{"CLOSING: mid score + herd arriving", 55, 0, 5, "CLOSING"},
-		{"CLOSED: low score", 30, -5, 0, "CLOSED"},
-		{"CLOSED: score 50 but no drain and no herd", 50, 0, 0, "CLOSED"},
+		{"OPEN: high score + draining", 75, -3, 0, 30, 5, -2, "OPEN"},
+		{"OPENING: mid score + slight drain", 55, -1, 0, 30, 0, 0, "OPENING"},
+		{"CLOSING: mid score + herd arriving", 55, 0, 5, 30, 0, 0, "CLOSING"},
+		{"CLOSED: low score", 30, -5, 0, 30, 0, 0, "CLOSED"},
+		{"EXHAUSTED: base listings 0", 80, -5, 0, 0, 5, -2, "EXHAUSTED"},
+		{"EXHAUSTED: base listings 2", 80, -5, 0, 2, 5, -2, "EXHAUSTED"},
+		{"BREWING: price rising + listings falling + bases available", 20, 0, 0, 50, 3, -2, "BREWING"},
+		{"BREWING not if bases low", 20, 0, 0, 5, 3, -2, "CLOSED"},
 		// Edge: score exactly 70, baseVel exactly -2 → not OPEN (needs < -2)
-		{"boundary: score=70 baseVel=-2 not OPEN", 70, -2, 0, "OPENING"},
-		{"boundary: score=70 baseVel=-2.01 is OPEN", 70, -2.01, 0, "OPEN"},
-		// CLOSING takes priority over OPENING when both match
-		{"CLOSING over OPENING", 55, -1, 5, "OPENING"},
+		{"boundary: score=70 baseVel=-2 not OPEN", 70, -2, 0, 30, 0, 0, "OPENING"},
+		{"boundary: score=70 baseVel=-2.01 is OPEN", 70, -2.01, 0, 30, 0, 0, "OPEN"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyWindowSignal(tt.score, tt.baseVel, tt.transListVel)
+			got := classifyWindowSignal(tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel, tt.listVel)
 			if got != tt.want {
-				t.Errorf("classifyWindowSignal(%v, %v, %v) = %s, want %s",
-					tt.score, tt.baseVel, tt.transListVel, got, tt.want)
+				t.Errorf("classifyWindowSignal(%v, %v, %v, %v, %v, %v) = %s, want %s",
+					tt.score, tt.baseVel, tt.transListVel, tt.baseLst, tt.priceVel, tt.listVel, got, tt.want)
 			}
 		})
 	}
@@ -604,8 +607,8 @@ func TestAnalyzeTrends_BaseNotFound(t *testing.T) {
 	}
 
 	r := results[0]
-	if r.BaseListings != 0 {
-		t.Errorf("BaseListings = %d, want 0 (no base found)", r.BaseListings)
+	if r.BaseListings != -1 {
+		t.Errorf("BaseListings = %d, want -1 (base not found sentinel)", r.BaseListings)
 	}
 	if r.BaseVelocity != 0 {
 		t.Errorf("BaseVelocity = %f, want 0 (no base history)", r.BaseVelocity)
