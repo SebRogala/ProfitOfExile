@@ -24,6 +24,9 @@ type RouterConfig struct {
 	Pool *pgxpool.Pool
 	// LabRepo is the analysis repository for lab endpoints.
 	LabRepo *lab.Repository
+	// LabCache is the in-memory cache for pre-computed analysis results.
+	// May be nil — handlers fall back to DB queries when cache is unavailable.
+	LabCache *lab.Cache
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -46,13 +49,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.LabRepo != nil {
-		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo))
-		r.Get("/api/analysis/font", handlers.FontAnalysis(cfg.LabRepo))
-		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo))
-		r.Get("/api/analysis/trends", handlers.TrendAnalysis(cfg.LabRepo))
-		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo))
-		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo))
+		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/font", handlers.FontAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/trends", handlers.TrendAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo))
+		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache))
 	}
 
 	if cfg.DevMode {

@@ -13,7 +13,7 @@ import (
 // CollectiveAnalysis returns a ranked "what to farm now" list combining
 // transfigure ROI with trend signals.
 // Query params: variant (optional), budget (optional, max base price), limit (default 20, max 100).
-func CollectiveAnalysis(repo *lab.Repository) http.HandlerFunc {
+func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := r.URL.Query().Get("variant")
 
@@ -44,20 +44,37 @@ func CollectiveAnalysis(repo *lab.Repository) http.HandlerFunc {
 			limit = n
 		}
 
-		// Load transfigure results (large limit — we filter in Go).
-		transfigure, err := repo.LatestTransfigureResults(r.Context(), variant, 1000)
-		if err != nil {
-			slog.Error("collective analysis: transfigure query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Fast path: serve from cache.
+		var transfigure []lab.TransfigureResult
+		var trends []lab.TrendResult
+		usedCache := false
+
+		if cache != nil {
+			ct := cache.Transfigure()
+			ctr := cache.Trends()
+			if len(ct) > 0 && len(ctr) > 0 {
+				transfigure = filterTransfigure(ct, variant, 1000)
+				trends = filterTrends(ctr, variant, "", 5000)
+				usedCache = true
+			}
 		}
 
-		// Load trend results (all for this variant).
-		trends, err := repo.LatestTrendResults(r.Context(), variant, "", 5000)
-		if err != nil {
-			slog.Error("collective analysis: trends query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Slow path: fall back to DB query.
+		if !usedCache {
+			var err error
+			transfigure, err = repo.LatestTransfigureResults(r.Context(), variant, 1000)
+			if err != nil {
+				slog.Error("collective analysis: transfigure query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+
+			trends, err = repo.LatestTrendResults(r.Context(), variant, "", 5000)
+			if err != nil {
+				slog.Error("collective analysis: trends query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		results := lab.RankCollective(transfigure, trends, budget, limit)
@@ -115,7 +132,7 @@ func CollectiveAnalysis(repo *lab.Repository) http.HandlerFunc {
 
 // CompareAnalysis returns side-by-side comparison of 1-5 specific gems.
 // Query params: gems (comma-separated, required, max 5), variant (optional).
-func CompareAnalysis(repo *lab.Repository) http.HandlerFunc {
+func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		gemsParam := r.URL.Query().Get("gems")
 		if gemsParam == "" {
@@ -152,20 +169,37 @@ func CompareAnalysis(repo *lab.Repository) http.HandlerFunc {
 
 		variant := r.URL.Query().Get("variant")
 
-		// Load transfigure results.
-		transfigure, err := repo.LatestTransfigureResults(r.Context(), variant, 1000)
-		if err != nil {
-			slog.Error("compare analysis: transfigure query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Fast path: serve from cache.
+		var transfigure []lab.TransfigureResult
+		var trends []lab.TrendResult
+		usedCache := false
+
+		if cache != nil {
+			ct := cache.Transfigure()
+			ctr := cache.Trends()
+			if len(ct) > 0 && len(ctr) > 0 {
+				transfigure = filterTransfigure(ct, variant, 1000)
+				trends = filterTrends(ctr, variant, "", 5000)
+				usedCache = true
+			}
 		}
 
-		// Load trend results.
-		trends, err := repo.LatestTrendResults(r.Context(), variant, "", 5000)
-		if err != nil {
-			slog.Error("compare analysis: trends query failed", "error", err)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Slow path: fall back to DB query.
+		if !usedCache {
+			var err error
+			transfigure, err = repo.LatestTransfigureResults(r.Context(), variant, 1000)
+			if err != nil {
+				slog.Error("compare analysis: transfigure query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+
+			trends, err = repo.LatestTrendResults(r.Context(), variant, "", 5000)
+			if err != nil {
+				slog.Error("compare analysis: trends query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		// Load sparkline data (last 2 hours).

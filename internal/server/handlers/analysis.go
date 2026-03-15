@@ -4,38 +4,63 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
 	"profitofexile/internal/lab"
 )
 
+// parseLimit extracts and validates the limit query parameter.
+// Returns the parsed limit and true, or writes an error response and returns 0, false.
+func parseLimit(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit int) (int, bool) {
+	limit := defaultLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
+			return 0, false
+		}
+		if n > maxLimit {
+			n = maxLimit
+		}
+		limit = n
+	}
+	return limit, true
+}
+
 // TransfigureAnalysis returns the latest transfigure ROI results.
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
-func TransfigureAnalysis(repo *lab.Repository) http.HandlerFunc {
+// Uses in-memory cache when available, falls back to DB query.
+func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := r.URL.Query().Get("variant")
 
-		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
-				return
-			}
-			if n > 500 {
-				n = 500
-			}
-			limit = n
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
 		}
 
-		results, err := repo.LatestTransfigureResults(r.Context(), variant, limit)
-		if err != nil {
-			slog.Error("transfigure analysis: query failed", "error", err, "variant", variant)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		var results []lab.TransfigureResult
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			if cached := cache.Transfigure(); len(cached) > 0 {
+				results = filterTransfigure(cached, variant, limit)
+			}
+		}
+
+		// Slow path: fall back to DB query.
+		if results == nil {
+			var err error
+			results, err = repo.LatestTransfigureResults(r.Context(), variant, limit)
+			if err != nil {
+				slog.Error("transfigure analysis: query failed", "error", err, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		type row struct {
@@ -81,32 +106,57 @@ func TransfigureAnalysis(repo *lab.Repository) http.HandlerFunc {
 	}
 }
 
+// filterTransfigure filters and limits cached transfigure results.
+// Results are sorted by ROI descending (matching the DB query order).
+func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) []lab.TransfigureResult {
+	var filtered []lab.TransfigureResult
+	for _, r := range all {
+		if variant != "" && r.Variant != variant {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].ROI > filtered[j].ROI
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
+}
+
 // FontAnalysis returns the latest Font of Divine Skill EV results.
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
-func FontAnalysis(repo *lab.Repository) http.HandlerFunc {
+// Uses in-memory cache when available, falls back to DB query.
+func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := r.URL.Query().Get("variant")
 
-		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
-				return
-			}
-			if n > 500 {
-				n = 500
-			}
-			limit = n
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
 		}
 
-		results, err := repo.LatestFontResults(r.Context(), variant, limit)
-		if err != nil {
-			slog.Error("font analysis: query failed", "error", err, "variant", variant)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		var results []lab.FontResult
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			if cached := cache.Font(); len(cached) > 0 {
+				results = filterFont(cached, variant, limit)
+			}
+		}
+
+		// Slow path: fall back to DB query.
+		if results == nil {
+			var err error
+			results, err = repo.LatestFontResults(r.Context(), variant, limit)
+			if err != nil {
+				slog.Error("font analysis: query failed", "error", err, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		type row struct {
@@ -150,33 +200,58 @@ func FontAnalysis(repo *lab.Repository) http.HandlerFunc {
 	}
 }
 
+// filterFont filters and limits cached font results.
+// Results are sorted by Profit descending (matching the DB query order).
+func filterFont(all []lab.FontResult, variant string, limit int) []lab.FontResult {
+	var filtered []lab.FontResult
+	for _, r := range all {
+		if variant != "" && r.Variant != variant {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Profit > filtered[j].Profit
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
+}
+
 // TrendAnalysis returns the latest trend analysis results.
 // Query params: variant (optional, e.g. "20/20"), signal (optional, e.g. "TRAP"), limit (default 50, max 500).
-func TrendAnalysis(repo *lab.Repository) http.HandlerFunc {
+// Uses in-memory cache when available, falls back to DB query.
+func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := r.URL.Query().Get("variant")
 		signal := r.URL.Query().Get("signal")
 
-		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
-				return
-			}
-			if n > 500 {
-				n = 500
-			}
-			limit = n
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
 		}
 
-		results, err := repo.LatestTrendResults(r.Context(), variant, signal, limit)
-		if err != nil {
-			slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		var results []lab.TrendResult
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			if cached := cache.Trends(); len(cached) > 0 {
+				results = filterTrends(cached, variant, signal, limit)
+			}
+		}
+
+		// Slow path: fall back to DB query.
+		if results == nil {
+			var err error
+			results, err = repo.LatestTrendResults(r.Context(), variant, signal, limit)
+			if err != nil {
+				slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		type row struct {
@@ -224,32 +299,63 @@ func TrendAnalysis(repo *lab.Repository) http.HandlerFunc {
 	}
 }
 
+// filterTrends filters and limits cached trend results.
+// Results are sorted by CV descending, then current price descending (matching the DB query order).
+func filterTrends(all []lab.TrendResult, variant, signal string, limit int) []lab.TrendResult {
+	var filtered []lab.TrendResult
+	for _, r := range all {
+		if variant != "" && r.Variant != variant {
+			continue
+		}
+		if signal != "" && r.Signal != signal {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].CV != filtered[j].CV {
+			return filtered[i].CV > filtered[j].CV
+		}
+		return filtered[i].CurrentPrice > filtered[j].CurrentPrice
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
+}
+
 // QualityAnalysis returns the latest quality-roll ROI results.
-// Query params: variant (optional, maps to level: "1"/"1/20" → level 1, "20"/"20/20" → level 20), limit (default 50, max 500).
-func QualityAnalysis(repo *lab.Repository) http.HandlerFunc {
+// Query params: variant (optional, maps to level: "1"/"1/20" -> level 1, "20"/"20/20" -> level 20), limit (default 50, max 500).
+// Uses in-memory cache when available, falls back to DB query.
+func QualityAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := r.URL.Query().Get("variant")
 
-		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
-				return
-			}
-			if n > 500 {
-				n = 500
-			}
-			limit = n
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
 		}
 
-		results, err := repo.LatestQualityResults(r.Context(), variant, limit)
-		if err != nil {
-			slog.Error("quality analysis: query failed", "error", err, "variant", variant)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		var results []lab.QualityResult
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			if cached := cache.Quality(); len(cached) > 0 {
+				results = filterQuality(cached, variant, limit)
+			}
+		}
+
+		// Slow path: fall back to DB query.
+		if results == nil {
+			var err error
+			results, err = repo.LatestQualityResults(r.Context(), variant, limit)
+			if err != nil {
+				slog.Error("quality analysis: query failed", "error", err, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		type row struct {
@@ -298,5 +404,71 @@ func QualityAnalysis(repo *lab.Repository) http.HandlerFunc {
 		}); err != nil {
 			slog.Error("quality analysis: encode response", "error", err)
 		}
+	}
+}
+
+// filterQuality filters and limits cached quality results.
+// Results are sorted by AvgROI descending (matching the DB query order).
+// Variant maps to level: "1"/"1/20" -> level 1, "20"/"20/20" -> level 20.
+func filterQuality(all []lab.QualityResult, variant string, limit int) []lab.QualityResult {
+	var level int
+	filterByLevel := false
+	if variant != "" {
+		filterByLevel = true
+		level = 20
+		if variant == "1" || variant == "1/20" {
+			level = 1
+		}
+	}
+
+	var filtered []lab.QualityResult
+	for _, r := range all {
+		if filterByLevel && r.Level != level {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].AvgROI > filtered[j].AvgROI
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
+}
+
+// AnalysisStatus returns cache health information.
+func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if cache == nil {
+			json.NewEncoder(w).Encode(map[string]any{
+				"cached":      false,
+				"transfigure": 0,
+				"font":        0,
+				"quality":     0,
+				"trends":      0,
+			})
+			return
+		}
+
+		lastUpdated := cache.LastUpdated()
+		cached := !lastUpdated.IsZero()
+
+		resp := map[string]any{
+			"cached":      cached,
+			"transfigure": len(cache.Transfigure()),
+			"font":        len(cache.Font()),
+			"quality":     len(cache.Quality()),
+			"trends":      len(cache.Trends()),
+		}
+		if cached {
+			resp["lastUpdated"] = lastUpdated.UTC().Format(time.RFC3339)
+		}
+
+		json.NewEncoder(w).Encode(resp)
 	}
 }

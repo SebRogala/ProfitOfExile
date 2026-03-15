@@ -11,6 +11,7 @@ import (
 type Analyzer struct {
 	repo           *Repository
 	throttler      *Throttler
+	cache          *Cache
 	logger         *slog.Logger
 	muTransfigure  sync.Mutex
 	muFont         sync.Mutex
@@ -20,10 +21,12 @@ type Analyzer struct {
 
 // NewAnalyzer creates an analyzer wired to the given repository.
 // The throttler may be nil — in that case no Mercure signals are emitted.
-func NewAnalyzer(repo *Repository, throttler *Throttler) *Analyzer {
+// The cache may be nil — in that case results are only persisted to the DB.
+func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache) *Analyzer {
 	return &Analyzer{
 		repo:      repo,
 		throttler: throttler,
+		cache:     cache,
 		logger:    slog.Default(),
 	}
 }
@@ -50,6 +53,10 @@ func (a *Analyzer) RunTransfigure(ctx context.Context) error {
 	if err != nil {
 		a.logger.Error("transfigure: failed to save results", "error", err)
 		return err
+	}
+
+	if a.cache != nil {
+		a.cache.SetTransfigure(results)
 	}
 
 	a.logger.Info("transfigure analysis complete",
@@ -83,6 +90,10 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 	if err != nil {
 		a.logger.Error("font: failed to save results", "error", err)
 		return err
+	}
+
+	if a.cache != nil {
+		a.cache.SetFont(results)
 	}
 
 	a.logger.Info("font analysis complete",
@@ -125,6 +136,10 @@ func (a *Analyzer) RunTrends(ctx context.Context) error {
 		return err
 	}
 
+	if a.cache != nil {
+		a.cache.SetTrends(results)
+	}
+
 	a.logger.Info("trend analysis complete",
 		"snapTime", snapTime,
 		"results", len(results),
@@ -162,6 +177,10 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 	if err != nil {
 		a.logger.Error("quality: failed to save results", "error", err)
 		return err
+	}
+
+	if a.cache != nil {
+		a.cache.SetQuality(results)
 	}
 
 	a.logger.Info("quality analysis complete",
