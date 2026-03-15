@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"profitofexile/internal/db"
+	"profitofexile/internal/lab"
 	"profitofexile/internal/server"
 )
 
@@ -75,12 +76,19 @@ func main() {
 		slog.Warn("MERCURE_URL is set but MERCURE_JWT_SECRET is empty — publish operations will be skipped")
 	}
 
+	labRepo := lab.NewRepository(pool)
+	analyzer := lab.NewAnalyzer(labRepo)
+
 	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
 		MercureURL:    mercureURL,
 		MercureSecret: mercureSecret,
 		DevMode:       devMode,
 		Pool:          pool,
+		LabRepo:       labRepo,
 	})
+
+	// Run initial analysis on startup (uses existing data).
+	go analyzer.RunTransfigure(ctx)
 
 	// Start Mercure subscriber in background if configured.
 	if mercureURL != "" {
@@ -99,6 +107,12 @@ func main() {
 				"endpoint", payload["endpoint"],
 				"inserted", payload["inserted"],
 			)
+
+			// Trigger analysis on new gem data.
+			endpoint, _ := payload["endpoint"].(string)
+			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {
+				go analyzer.RunTransfigure(context.Background())
+			}
 		})
 		go sub.Run(subCtx)
 		slog.Info("mercure subscriber started", "topics", topics)
