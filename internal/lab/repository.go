@@ -686,7 +686,7 @@ type SignalChange struct {
 // SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
 func (r *Repository) SignalHistory(ctx context.Context, name, variant string, limit int) ([]SignalChange, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT DISTINCT ON (time) time, signal, window_signal, COALESCE(advanced_signal, ''),
+		SELECT time, signal, window_signal, COALESCE(advanced_signal, ''),
 		       price_velocity, listing_velocity
 		FROM trend_results
 		WHERE name = $1 AND variant = $2

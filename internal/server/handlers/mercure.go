@@ -27,10 +27,12 @@ func MercureToken(subscriberKey, publicURL string) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"token": token,
 			"url":   publicURL,
-		})
+		}); err != nil {
+			slog.Error("mercure token: encode response", "error", err)
+		}
 	}
 }
 
