@@ -16,7 +16,7 @@ func TestRankCollective_ExcludesTRAP(t *testing.T) {
 		{Name: "Cleave of Rage", Variant: "20/20", Signal: "TRAP", PriceVelocity: 0, ListingVelocity: 0, CV: 200, HistPosition: 50},
 	}
 
-	results := RankCollective(transfigure, trends, 0, 50)
+	results := RankCollective(transfigure, trends, 0, 50, "")
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1 (TRAP excluded)", len(results))
@@ -37,7 +37,7 @@ func TestRankCollective_DUMPINGPenalized(t *testing.T) {
 		{Name: "Cleave of Rage", Variant: "20/20", Signal: "DUMPING"},
 	}
 
-	results := RankCollective(transfigure, trends, 0, 50)
+	results := RankCollective(transfigure, trends, 0, 50, "")
 
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
@@ -58,7 +58,7 @@ func TestRankCollective_BudgetFilter(t *testing.T) {
 		{Time: now, TransfiguredName: "Expensive Gem", Variant: "20/20", ROI: 100, BasePrice: 60, Confidence: "OK"},
 	}
 
-	results := RankCollective(transfigure, nil, 50, 50)
+	results := RankCollective(transfigure, nil, 50, 50, "")
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1 (budget filter)", len(results))
@@ -76,7 +76,7 @@ func TestRankCollective_ExcludesNegativeROIAndLowConfidence(t *testing.T) {
 		{Time: now, TransfiguredName: "Low Confidence", Variant: "20/20", ROI: 80, Confidence: "LOW"},
 	}
 
-	results := RankCollective(transfigure, nil, 0, 50)
+	results := RankCollective(transfigure, nil, 0, 50, "")
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -102,7 +102,7 @@ func TestRankCollective_SignalWeighting(t *testing.T) {
 		{Name: "Herd Gem", Variant: "20/20", Signal: "HERD"},
 	}
 
-	results := RankCollective(transfigure, trends, 0, 50)
+	results := RankCollective(transfigure, trends, 0, 50, "")
 
 	if len(results) != 4 {
 		t.Fatalf("got %d results, want 4", len(results))
@@ -127,7 +127,7 @@ func TestRankCollective_Limit(t *testing.T) {
 		}
 	}
 
-	results := RankCollective(transfigure, nil, 0, 3)
+	results := RankCollective(transfigure, nil, 0, 3, "")
 	if len(results) != 3 {
 		t.Errorf("got %d results, want 3 (limit)", len(results))
 	}
@@ -139,7 +139,7 @@ func TestRankCollective_NoTrendDataDefaultsStable(t *testing.T) {
 		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 50, Confidence: "OK"},
 	}
 
-	results := RankCollective(transfigure, nil, 0, 50)
+	results := RankCollective(transfigure, nil, 0, 50, "")
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -238,6 +238,70 @@ func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	}
 	if results[0].ROI != 0 {
 		t.Errorf("ROI = %f, want 0", results[0].ROI)
+	}
+}
+
+func TestRankCollective_SortByPct(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Big Absolute", Variant: "20/20", ROI: 200, ROIPct: 40, BasePrice: 500, TransfiguredPrice: 700, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Big Percent", Variant: "20/20", ROI: 15, ROIPct: 1500, BasePrice: 1, TransfiguredPrice: 16, Confidence: "OK"},
+	}
+
+	// Explicit sort=pct: Big Percent first despite lower absolute ROI.
+	results := RankCollective(transfigure, nil, 0, 50, SortPct)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].TransfiguredName != "Big Percent" {
+		t.Errorf("sort=pct: first = %s, want Big Percent", results[0].TransfiguredName)
+	}
+
+	// Explicit sort=chaos: Big Absolute first.
+	results = RankCollective(transfigure, nil, 0, 50, SortChaos)
+	if results[0].TransfiguredName != "Big Absolute" {
+		t.Errorf("sort=chaos: first = %s, want Big Absolute", results[0].TransfiguredName)
+	}
+}
+
+func TestRankCollective_BudgetAwareDefaultSort(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Big Absolute", Variant: "20/20", ROI: 40, ROIPct: 100, BasePrice: 40, TransfiguredPrice: 80, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Big Percent", Variant: "20/20", ROI: 10, ROIPct: 1000, BasePrice: 1, TransfiguredPrice: 11, Confidence: "OK"},
+	}
+
+	// Budget <= 50, no explicit sort → defaults to pct.
+	results := RankCollective(transfigure, nil, 50, 50, "")
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].TransfiguredName != "Big Percent" {
+		t.Errorf("budget-aware default: first = %s, want Big Percent", results[0].TransfiguredName)
+	}
+
+	// Budget > 50, no explicit sort → defaults to chaos.
+	results = RankCollective(transfigure, nil, 100, 50, "")
+	if results[0].TransfiguredName != "Big Absolute" {
+		t.Errorf("budget>50 default: first = %s, want Big Absolute", results[0].TransfiguredName)
+	}
+}
+
+func TestRankCollective_ROIPctPopulated(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 50, ROIPct: 500, BasePrice: 10, TransfiguredPrice: 60, Confidence: "OK"},
+	}
+
+	results := RankCollective(transfigure, nil, 0, 50, "")
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].ROIPct != 500 {
+		t.Errorf("ROIPct = %f, want 500", results[0].ROIPct)
+	}
+	if results[0].WeightedROIPct != 500 {
+		t.Errorf("WeightedROIPct = %f, want 500 (STABLE weight 1.0)", results[0].WeightedROIPct)
 	}
 }
 
