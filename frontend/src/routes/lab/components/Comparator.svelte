@@ -410,7 +410,7 @@
 							<div class="history-line">
 								<span class="hist-time">{h.time}</span>
 								<SignalBadge signal={h.from} />
-								<span class="hist-arrow">\u2192</span>
+								<span class="hist-arrow">&#8594;</span>
 								<SignalBadge signal={h.to} />
 								<span class="hist-reason">{h.reason}</span>
 								<span class="hist-listings">{h.listings} listings</span>
