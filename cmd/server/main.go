@@ -130,7 +130,7 @@ func main() {
 			DefaultFetchRate:  1,
 			MaxQueueWait:      tradeMaxWait,
 			CacheMaxEntries:   tradeCacheMax,
-			UserAgent:         os.Getenv("TRADE_USER_AGENT"),
+			UserAgent:         getEnvDefault("TRADE_USER_AGENT", "profitofexile/0.1.0 (contact: profitofexile@softsolution.pro)"),
 			SyncWaitBudget:    tradeSyncTimeout,
 		}
 
@@ -325,4 +325,11 @@ func main() {
 	}
 
 	slog.Info("server stopped")
+}
+
+func getEnvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

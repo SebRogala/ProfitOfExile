@@ -34,7 +34,7 @@ func TestSearch_Success(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	resp, headers, err := c.Search(context.Background(), "Arc")
+	resp, headers, err := c.Search(context.Background(), "Arc", "20/20")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestSearch_RequestBody(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	_, _, err := c.Search(context.Background(), "Empower Support")
+	_, _, err := c.Search(context.Background(), "Empower Support", "20/20")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,11 +85,8 @@ func TestSearch_RequestBody(t *testing.T) {
 	if !ok {
 		t.Fatal("missing query in request body")
 	}
-	if query["type"] != "Skill Gem" {
-		t.Errorf("query.type = %v, want %q", query["type"], "Skill Gem")
-	}
-	if query["term"] != "Empower Support" {
-		t.Errorf("query.term = %v, want %q", query["term"], "Empower Support")
+	if query["type"] != "Empower Support" {
+		t.Errorf("query.type = %v, want %q", query["type"], "Empower Support")
 	}
 	if query["status"] == nil {
 		t.Fatal("missing query.status")
@@ -124,6 +121,40 @@ func TestSearch_RequestBody(t *testing.T) {
 	if collapse["option"] != "true" {
 		t.Errorf("collapse.option = %v, want %q", collapse["option"], "true")
 	}
+
+	// Verify gem category filter
+	typeFilters, ok := filters["type_filters"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing type_filters")
+	}
+	tfInner, ok := typeFilters["filters"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing type_filters.filters")
+	}
+	catFilter, ok := tfInner["category"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing category filter")
+	}
+	if catFilter["option"] != "gem" {
+		t.Errorf("category.option = %v, want %q", catFilter["option"], "gem")
+	}
+
+	// Verify misc_filters (corrupted=false)
+	miscFilters, ok := filters["misc_filters"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing misc_filters")
+	}
+	mfInner, ok := miscFilters["filters"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing misc_filters.filters")
+	}
+	corruptedFilter, ok := mfInner["corrupted"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing corrupted filter")
+	}
+	if corruptedFilter["option"] != "false" {
+		t.Errorf("corrupted.option = %v, want %q", corruptedFilter["option"], "false")
+	}
 }
 
 func TestSearch_UserAgent(t *testing.T) {
@@ -135,7 +166,7 @@ func TestSearch_UserAgent(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	_, _, err := c.Search(context.Background(), "Arc")
+	_, _, err := c.Search(context.Background(), "Arc", "20/20")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +183,7 @@ func TestSearch_RateLimited(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	_, _, err := c.Search(context.Background(), "Arc")
+	_, _, err := c.Search(context.Background(), "Arc", "20/20")
 	if err == nil {
 		t.Fatal("expected error for 429 response, got nil")
 	}
@@ -169,7 +200,7 @@ func TestSearch_ServerError(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	_, _, err := c.Search(context.Background(), "Arc")
+	_, _, err := c.Search(context.Background(), "Arc", "20/20")
 	if err == nil {
 		t.Fatal("expected error for 500 response, got nil")
 	}
@@ -342,7 +373,7 @@ func TestSearch_RequestURL(t *testing.T) {
 	defer server.Close()
 
 	c := testTradeClient(t, server)
-	_, _, err := c.Search(context.Background(), "Arc")
+	_, _, err := c.Search(context.Background(), "Arc", "20/20")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

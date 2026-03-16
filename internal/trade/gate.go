@@ -134,12 +134,15 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	}
 
 	// Phase 1: Search.
-	searchResp, searchHeaders, err := g.client.Search(ctx, req.Gem)
+	slog.Info("trade gate: searching", "gem", req.Gem, "requestId", req.RequestID)
+	searchResp, searchHeaders, err := g.client.Search(ctx, req.Gem, req.Variant)
 	if err != nil {
+		slog.Warn("trade gate: search failed", "gem", req.Gem, "error", err)
 		g.deliverError(key, fmt.Errorf("trade search: %w", err))
 		g.publishError(ctx, req, err.Error())
 		return
 	}
+	slog.Info("trade gate: search ok", "gem", req.Gem, "total", searchResp.Total, "ids", len(searchResp.IDs))
 	g.limiter.SyncFromHeaders("search", searchHeaders)
 	g.limiter.Record("search")
 
@@ -165,6 +168,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.cache.Set(key, result)
 	g.deliverResult(key, result)
 	g.publishReady(ctx, req, result)
+	slog.Info("trade gate: lookup complete", "gem", req.Gem, "total", result.Total, "priceFloor", result.PriceFloor, "listings", len(result.Listings))
 }
 
 // deliverResult sends the successful result to all in-flight waiters for the

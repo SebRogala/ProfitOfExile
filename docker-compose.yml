@@ -12,6 +12,8 @@ services:
       - PORT=8080
       - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
+      - LEAGUE=${LEAGUE:-Mirage}
+      - TRADE_ENABLED=${TRADE_ENABLED:-true}
     networks:
       - infra
     restart: unless-stopped

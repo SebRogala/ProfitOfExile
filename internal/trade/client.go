@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,11 +86,13 @@ type tradeFetchProperty struct {
 	Values [][]interface{} `json:"values"`
 }
 
-// Search performs a trade search for the given gem name.
+// Search performs a trade search for the given gem name and variant.
+// Variant format is "level/quality" (e.g., "20/20") or just "level" (e.g., "20").
 // It returns the parsed search response, the raw HTTP response headers
 // (for rate limit synchronisation), and any error.
-func (c *Client) Search(ctx context.Context, gem string) (*SearchResponse, http.Header, error) {
-	body := buildSearchQuery(gem)
+func (c *Client) Search(ctx context.Context, gem, variant string) (*SearchResponse, http.Header, error) {
+	gemLevel, gemQuality := parseVariant(variant)
+	body := buildSearchQuery(gem, gemLevel, gemQuality)
 
 	url := fmt.Sprintf("%s/api/trade/search/%s", c.baseURL, c.leagueName)
 
@@ -190,16 +193,47 @@ func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]Tra
 	return listings, resp.Header, nil
 }
 
+// parseVariant splits a variant string like "20/20" into level and quality.
+// Returns (level, quality). If quality is missing, returns (level, -1).
+func parseVariant(variant string) (int, int) {
+	parts := strings.SplitN(variant, "/", 2)
+	level, _ := strconv.Atoi(parts[0])
+	quality := -1
+	if len(parts) == 2 {
+		quality, _ = strconv.Atoi(parts[1])
+	}
+	return level, quality
+}
+
 // buildSearchQuery constructs the JSON body for a GGG trade search request.
-func buildSearchQuery(gem string) []byte {
+// Filters by gem category, exact level, exact quality, not corrupted, priced
+// listings only, collapsed by account.
+func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
+	miscFilters := map[string]interface{}{
+		"corrupted": map[string]interface{}{"option": "false"},
+	}
+	if gemLevel > 0 {
+		miscFilters["gem_level"] = map[string]interface{}{"min": gemLevel, "max": gemLevel}
+	}
+	if gemQuality >= 0 {
+		miscFilters["quality"] = map[string]interface{}{"min": gemQuality, "max": gemQuality}
+	}
+
 	query := map[string]interface{}{
 		"query": map[string]interface{}{
-			"type": "Skill Gem",
-			"term": gem,
+			"type": gem,
 			"stats": []map[string]interface{}{
 				{"type": "and", "filters": []interface{}{}},
 			},
 			"filters": map[string]interface{}{
+				"type_filters": map[string]interface{}{
+					"filters": map[string]interface{}{
+						"category": map[string]string{"option": "gem"},
+					},
+				},
+				"misc_filters": map[string]interface{}{
+					"filters": miscFilters,
+				},
 				"trade_filters": map[string]interface{}{
 					"filters": map[string]interface{}{
 						"sale_type": map[string]string{"option": "priced"},
