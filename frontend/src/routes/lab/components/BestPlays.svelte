@@ -125,7 +125,11 @@
 				</td>
 				<td class="col-num">
 					{gem.transListings}
-					<span class="velocity">{velocityStr(gem.transVelocity)}</span>
+					{#if gem.transVelocity > 0}
+						<span class="vel-up">↑{gem.transVelocity}</span>
+					{:else if gem.transVelocity < 0}
+						<span class="vel-down">↓{Math.abs(gem.transVelocity)}</span>
+					{/if}
 				</td>
 				<td class="col-spark"><Sparkline data={gem.sparkline} width={80} height={20} /></td>
 			</tr>
@@ -284,10 +288,17 @@
 	.cv-high {
 		color: var(--color-lab-yellow);
 	}
-	.velocity {
+	.vel-up {
 		font-size: 0.8125rem;
-		color: var(--color-lab-text-secondary);
-		margin-left: 3px;
+		color: var(--color-lab-green);
+		margin-left: 4px;
+		font-weight: 600;
+	}
+	.vel-down {
+		font-size: 0.8125rem;
+		color: var(--color-lab-red);
+		margin-left: 4px;
+		font-weight: 600;
 	}
 	.expanded-row {
 		background: var(--color-lab-bg);
