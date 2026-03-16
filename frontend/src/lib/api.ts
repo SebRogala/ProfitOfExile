@@ -13,6 +13,7 @@ export interface StatusData {
 	connected: boolean;
 	collectorUptime: string;
 	divinePrice: number;
+	league: string;
 }
 
 export type PriceTier = 'TOP' | 'MID' | 'LOW' | '';
@@ -233,6 +234,7 @@ export async function fetchStatus(): Promise<StatusData> {
 			connected: status.cached === true,
 			collectorUptime: '',
 			divinePrice: status.divinePrice || 0,
+			league: status.league || '',
 		};
 	} catch (err) {
 		console.warn('[Status] Failed to fetch status:', err);
@@ -242,6 +244,7 @@ export async function fetchStatus(): Promise<StatusData> {
 			connected: false,
 			collectorUptime: '',
 			divinePrice: 0,
+			league: '',
 		};
 	}
 }

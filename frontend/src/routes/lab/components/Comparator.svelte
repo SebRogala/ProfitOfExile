@@ -7,6 +7,8 @@
 	import GemIcon from './GemIcon.svelte';
 	import Select from '$lib/components/Select.svelte';
 
+	let { league = '' }: { league?: string } = $props();
+
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
 
@@ -234,7 +236,7 @@
 			},
 			sort: { price: 'asc' },
 		};
-		return `https://www.pathofexile.com/trade/search/Mirage?q=${encodeURIComponent(JSON.stringify(q))}`;
+		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
 	}
 
 	function refreshTradeData(gem: string) {

@@ -3,6 +3,8 @@
 	import BestPlays from './BestPlays.svelte';
 	import FontEV from './FontEV.svelte';
 
+	let { league = '' }: { league?: string } = $props();
+
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
 
@@ -56,7 +58,7 @@
 		<div class="variant-block">
 			<div class="variant-label">{variant}</div>
 			{#if vd}
-				<BestPlays plays={vd.plays} title="Best Plays ({variant})" showVariantColumn={false} />
+				<BestPlays plays={vd.plays} title="Best Plays ({variant})" showVariantColumn={false} {league} />
 				<FontEV data={vd.fontEV} />
 			{:else}
 				<div class="loading">Loading...</div>

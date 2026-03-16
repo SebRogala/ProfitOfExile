@@ -15,10 +15,12 @@
 		plays,
 		title = 'Best Plays Now (ALL variants)',
 		showVariantColumn = true,
+		league = '',
 	}: {
 		plays: GemPlay[];
 		title?: string;
 		showVariantColumn?: boolean;
+		league?: string;
 	} = $props();
 
 	let sortBy = $state<'roi' | 'roiPercent'>('roi');
@@ -52,7 +54,7 @@
 			},
 			sort: { price: 'asc' },
 		};
-		return `https://www.pathofexile.com/trade/search/Mirage?q=${encodeURIComponent(JSON.stringify(q))}`;
+		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
 	}
 	let expandedHistory = $state<SignalTransition[]>([]);
 	let historyLoading = $state(false);

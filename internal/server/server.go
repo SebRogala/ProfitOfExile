@@ -39,6 +39,8 @@ type RouterConfig struct {
 	TradeCache *trade.TradeCache
 	// TradeSyncTimeout is the max time the handler blocks waiting for a fast-path response.
 	TradeSyncTimeout time.Duration
+	// League is the current PoE league name (e.g. "Mirage").
+	League string
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -68,7 +70,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo))
-		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool))
+		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool, cfg.League))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
 	}
 
