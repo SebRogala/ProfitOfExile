@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"profitofexile/internal/collector"
+	"profitofexile/internal/mercure"
 )
 
 // Throttler debounces analysis-complete signals and publishes a single Mercure
@@ -27,7 +27,7 @@ type Throttler struct {
 	lastNextFetch time.Time
 
 	// publishFn is the function used to publish Mercure events. Defaults to
-	// collector.PublishMercureEvent but can be overridden in tests.
+	// mercure.PublishMercureEvent but can be overridden in tests.
 	publishFn func(ctx context.Context, mercureURL, secret, topic, payload string) error
 }
 
@@ -41,7 +41,7 @@ func NewThrottler(mercureURL, mercureSecret string, debounce time.Duration, cach
 		debounce:      debounce,
 		logger:        slog.Default(),
 		cache:         cache,
-		publishFn:     collector.PublishMercureEvent,
+		publishFn:     mercure.PublishMercureEvent,
 	}
 }
 
