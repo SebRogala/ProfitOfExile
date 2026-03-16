@@ -317,7 +317,7 @@ export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 			priceTrend: Array.isArray(r.priceTrend) ? r.priceTrend : [],
 			listingsTrend: Array.isArray(r.listingsTrend) ? r.listingsTrend : [],
 			baseListingsTrend: Array.isArray(r.baseListingsTrend) ? r.baseListingsTrend : [],
-			trendUnavailable: r.windowSignal && !r.priceTrend?.length,
+			trendUnavailable: ['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal) && !r.priceTrend?.length,
 			history: [],
 		}))
 		.sort((a: WindowAlert, b: WindowAlert) => {
@@ -409,11 +409,17 @@ export async function fetchCompare(gems: string[], variant: string): Promise<Com
 	const results = (resp.data || []).map(mapCompareRow);
 
 	// Enrich with signal history in parallel
-	await Promise.allSettled(
+	const settled = await Promise.allSettled(
 		results.map(async (gem) => {
 			gem.signalHistory = await fetchSignalHistory(gem.name, gem.variant);
 		})
 	);
+	settled.forEach((result, i) => {
+		if (result.status === 'rejected') {
+			console.warn(`[Comparator] Signal history failed for ${results[i].name}:`, result.reason);
+			results[i].signalHistory = [];
+		}
+	});
 
 	return results;
 }

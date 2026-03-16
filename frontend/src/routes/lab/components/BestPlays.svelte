@@ -60,7 +60,8 @@
 		const gem = sorted[i];
 		try {
 			expandedHistory = await fetchSignalHistory(gem.name, gem.variant);
-		} catch {
+		} catch (err) {
+			console.warn(`[BestPlays] Signal history failed for ${gem.name}:`, err);
 			historyError = true;
 		} finally {
 			historyLoading = false;

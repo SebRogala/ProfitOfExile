@@ -291,53 +291,93 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			BaseListingsTrend []int   `json:"baseListingsTrend,omitempty"`
 		}
 
-		// Collect window alert gems for trend enrichment.
+		// Collect window alert gems for trend enrichment (deduplicated).
 		windowSignals := map[string]bool{"BREWING": true, "OPENING": true, "OPEN": true, "CLOSING": true}
 		type gemKey struct{ name, variant string }
-		var windowGems []gemKey
+		seen := make(map[gemKey]bool)
+		var transNames, baseNames []string
+		// Map base name back to gemKey for result distribution.
+		baseToGem := make(map[string][]gemKey)
 		for _, r := range results {
-			if windowSignals[r.WindowSignal] {
-				windowGems = append(windowGems, gemKey{r.Name, r.Variant})
+			gk := gemKey{r.Name, r.Variant}
+			if windowSignals[r.WindowSignal] && !seen[gk] {
+				seen[gk] = true
+				transNames = append(transNames, r.Name)
+				baseName := r.Name
+				if idx := strings.LastIndex(r.Name, " of "); idx > 0 {
+					baseName = r.Name[:idx]
+				}
+				baseNames = append(baseNames, baseName)
+				baseToGem[baseName] = append(baseToGem[baseName], gk)
 			}
 		}
 
-		// Fetch last 4 snapshots for window gems (transfigured + base).
+		// Batch fetch sparkline data grouped by variant (2 queries per variant group).
 		type trendData struct {
 			prices, listings, baseListings []int
 		}
 		trends := make(map[gemKey]trendData)
-		if len(windowGems) > 0 {
-			for _, gk := range windowGems {
-				// Derive base name by stripping " of X" suffix.
-				baseName := gk.name
-				if idx := strings.LastIndex(gk.name, " of "); idx > 0 {
-					baseName = gk.name[:idx]
+		if len(transNames) > 0 {
+			// Group gems by variant for batching.
+			type variantGroup struct {
+				transNames []string
+				baseNames  []string
+				gems       []gemKey
+			}
+			groups := make(map[string]*variantGroup)
+			for i, name := range transNames {
+				gk := gemKey{name, ""}
+				// Find the variant for this gem from results.
+				for _, res := range results {
+					if res.Name == name && windowSignals[res.WindowSignal] {
+						gk.variant = res.Variant
+						break
+					}
+				}
+				g, ok := groups[gk.variant]
+				if !ok {
+					g = &variantGroup{}
+					groups[gk.variant] = g
+				}
+				g.transNames = append(g.transNames, name)
+				g.baseNames = append(g.baseNames, baseNames[i])
+				g.gems = append(g.gems, gk)
+			}
+
+			last4 := func(pts []lab.SparklinePoint) []lab.SparklinePoint {
+				if len(pts) > 4 {
+					return pts[len(pts)-4:]
+				}
+				return pts
+			}
+
+			for v, g := range groups {
+				transSparklines, err := repo.SparklineData(r.Context(), g.transNames, v, 24*7)
+				if err != nil {
+					slog.Warn("trend analysis: trans sparkline batch failed", "variant", v, "error", err)
+					transSparklines = make(map[string][]lab.SparklinePoint)
+				}
+				baseSparklines, err := repo.SparklineData(r.Context(), g.baseNames, v, 24*7)
+				if err != nil {
+					slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
+					baseSparklines = make(map[string][]lab.SparklinePoint)
 				}
 
-				transSparkline, _ := repo.SparklineData(r.Context(), []string{gk.name}, gk.variant, 24*7)
-				baseSparkline, _ := repo.SparklineData(r.Context(), []string{baseName}, gk.variant, 24*7)
-
-				td := trendData{}
-				if pts := transSparkline[gk.name]; len(pts) >= 2 {
-					last := pts
-					if len(last) > 4 {
-						last = last[len(last)-4:]
+				for i, gk := range g.gems {
+					td := trendData{}
+					if pts := last4(transSparklines[gk.name]); len(pts) >= 2 {
+						for _, p := range pts {
+							td.prices = append(td.prices, int(math.Round(p.Price)))
+							td.listings = append(td.listings, p.Listings)
+						}
 					}
-					for _, p := range last {
-						td.prices = append(td.prices, int(math.Round(p.Price)))
-						td.listings = append(td.listings, p.Listings)
+					if pts := last4(baseSparklines[g.baseNames[i]]); len(pts) >= 2 {
+						for _, p := range pts {
+							td.baseListings = append(td.baseListings, p.Listings)
+						}
 					}
+					trends[gk] = td
 				}
-				if pts := baseSparkline[baseName]; len(pts) >= 2 {
-					last := pts
-					if len(last) > 4 {
-						last = last[len(last)-4:]
-					}
-					for _, p := range last {
-						td.baseListings = append(td.baseListings, p.Listings)
-					}
-				}
-				trends[gk] = td
 			}
 		}
 
