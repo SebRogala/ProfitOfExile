@@ -89,7 +89,7 @@
 			suggestions = allNames.filter((n) => !selectedGems.includes(n));
 			showDropdown = suggestions.length > 0;
 			highlightedIndex = suggestions.length === 1 ? 0 : -1;
-		}, 200);
+		}, 100);
 	}
 
 	function selectGem(name: string) {
