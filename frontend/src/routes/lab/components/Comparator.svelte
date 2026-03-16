@@ -7,7 +7,27 @@
 	import GemIcon from './GemIcon.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { league = '', refreshKey = 0 }: { league?: string; refreshKey?: number } = $props();
+	let {
+		league = '',
+		refreshKey = 0,
+		onQueueGem,
+	}: {
+		league?: string;
+		refreshKey?: number;
+		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
+	} = $props();
+
+	let selectedForQueue = $state<string | null>(null);
+
+	$effect(() => {
+		// Auto-select the BEST gem when results change
+		if (results.length > 0) {
+			const best = results.find((g) => g.recommendation === 'BEST');
+			selectedForQueue = best?.name ?? null;
+		} else {
+			selectedForQueue = null;
+		}
+	});
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
@@ -263,6 +283,15 @@
 		tradeExpanded[gem] = !tradeExpanded[gem];
 	}
 
+	function handleNext() {
+		if (!selectedForQueue || !onQueueGem) return;
+		const selected = results.find((g) => g.name === selectedForQueue);
+		if (!selected) return;
+		const trade = tradeData[selectedForQueue] ?? null;
+		onQueueGem(selectedForQueue, variant, selected.roi, trade);
+		clearAll();
+	}
+
 </script>
 
 <section class="section">
@@ -271,6 +300,9 @@
 		<div class="header-controls">
 			{#if selectedGems.length > 0}
 				<button class="clear-btn" onclick={clearAll}>Clear All</button>
+			{/if}
+			{#if selectedForQueue && onQueueGem}
+				<button class="next-btn" onclick={handleNext}>Next &#8594;</button>
 			{/if}
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
@@ -326,7 +358,9 @@
 	{#if results.length > 0}
 		<div class="cards-row">
 			{#each results as gem}
-				<div class="compare-card">
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="compare-card" class:queue-selected={selectedForQueue === gem.name} onclick={() => { selectedForQueue = gem.name; }}>
 					<div class="card-name-row">
 						<GemIcon name={gem.name} size={40} />
 						<span class="card-name">{gem.name}</span>
@@ -506,6 +540,19 @@
 	.clear-btn:hover {
 		background: rgba(239, 68, 68, 0.2);
 	}
+	.next-btn {
+		background: rgba(34, 197, 94, 0.15);
+		border: 1px solid rgba(34, 197, 94, 0.4);
+		color: var(--color-lab-green);
+		padding: 6px 14px;
+		font-size: 0.875rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.next-btn:hover {
+		background: rgba(34, 197, 94, 0.25);
+	}
 	.variant-select {
 		display: flex;
 		align-items: center;
@@ -609,10 +656,15 @@
 		gap: 16px;
 	}
 	.compare-card {
-		border: 1px solid var(--color-lab-border);
+		border: 2px solid var(--color-lab-border);
 		padding: 24px;
 		background: var(--color-lab-bg);
 		min-width: 0;
+		cursor: pointer;
+		transition: border-color 0.15s ease;
+	}
+	.compare-card.queue-selected {
+		border-color: var(--color-lab-green);
 	}
 	.card-name-row {
 		display: flex;
