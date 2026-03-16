@@ -1,9 +1,15 @@
 <script lang="ts">
-	import type { WindowAlert } from '$lib/api';
+	import type { WindowAlert, GemPlay } from '$lib/api';
 	import SignalBadge from './SignalBadge.svelte';
+	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
 
-	let { alerts }: { alerts: WindowAlert[] } = $props();
+	let { alerts, plays = [] }: { alerts: WindowAlert[]; plays?: GemPlay[] } = $props();
+
+	function findPlay(alert: WindowAlert): GemPlay | undefined {
+		return plays.find((p) => p.name === alert.name && p.variant === alert.variant)
+			|| plays.find((p) => p.name === alert.name);
+	}
 </script>
 
 {#if alerts.length > 0}
@@ -11,14 +17,16 @@
 		<h2 class="section-title">Window Alerts</h2>
 		<div class="alerts-grid">
 		{#each alerts as alert}
+			{@const play = findPlay(alert)}
 			<div class="alert-row">
 				<div class="alert-top">
 					<SignalBadge signal={alert.windowSignal} type="window" />
 					<GemIcon name={alert.name} size={24} />
 					<span class="gem-name">{alert.name}</span>
 					<span class="variant">({alert.variant})</span>
-					{#if alert.roi > 0}<span class="price">{alert.roi}c</span>{/if}
+					{#if play}<span class="roi">{play.roi}c ROI</span>{/if}
 				</div>
+
 				<div class="alert-stats">
 					<span class="stat">{alert.transListings} listings</span>
 					{#if alert.priceVelocity !== 0}
@@ -36,6 +44,24 @@
 					{/if}
 					<span class="liq" title="Base gem liquidity">{alert.liquidityTier} liq</span>
 				</div>
+
+				{#if play}
+					<div class="alert-detail-row">
+						{#if play.sellability > 0}
+							<span class="detail">Sell: {play.sellability}</span>
+						{/if}
+						{#if play.priceTier}
+							<span class="detail">Tier: {play.priceTier}</span>
+						{/if}
+						{#if play.cv > 0}
+							<span class="detail">CV: {play.cv}%</span>
+						{/if}
+						{#if play.sparkline.length > 0}
+							<Sparkline data={play.sparkline} width={120} height={24} />
+						{/if}
+					</div>
+				{/if}
+
 				{#if alert.action}
 					<div class="alert-action">{alert.action}</div>
 				{/if}
@@ -84,7 +110,7 @@
 		color: var(--color-lab-text-secondary);
 		font-size: 0.9375rem;
 	}
-	.price {
+	.roi {
 		color: var(--color-lab-green);
 		font-weight: 700;
 		font-size: 1rem;
@@ -95,7 +121,7 @@
 		align-items: center;
 		gap: 12px;
 		flex-wrap: wrap;
-		margin-bottom: 8px;
+		margin-bottom: 10px;
 	}
 	.stat {
 		font-size: 0.875rem;
@@ -119,6 +145,17 @@
 		font-weight: 600;
 		color: var(--color-lab-yellow);
 		margin-left: auto;
+	}
+	.alert-detail-row {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		margin-bottom: 8px;
+		flex-wrap: wrap;
+	}
+	.detail {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
 	}
 	.alert-action {
 		font-size: 0.875rem;
