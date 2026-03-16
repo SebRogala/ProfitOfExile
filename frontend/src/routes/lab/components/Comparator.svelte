@@ -340,7 +340,12 @@
 							{@const td = tradeData[gem.name]}
 							<div class="trade-data">
 								<div class="trade-price-row">
-									<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(td.priceFloor)}c</span>
+									{#if td.listings[0]?.currency === 'divine'}
+										<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(td.listings[0].price)} div</span>
+										<span class="tl-original">({fmtPrice(td.priceFloor)}c)</span>
+									{:else}
+										<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(td.priceFloor)}c</span>
+									{/if}
 									<span class="trade-floor-label">trade floor</span>
 									<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
 										{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
@@ -371,9 +376,11 @@
 										{#each td.listings as listing}
 											<div class="trade-listing-row">
 												<span class="tl-col-price">
-													{fmtPrice(listing.chaosPrice)}c
 													{#if listing.currency === 'divine'}
-														<span class="tl-original">({fmtPrice(listing.price)} div)</span>
+														{fmtPrice(listing.price)} div
+														<span class="tl-original">({fmtPrice(listing.chaosPrice)}c)</span>
+													{:else}
+														{fmtPrice(listing.price)}c
 													{/if}
 												</span>
 												<span class="tl-col-detail">
