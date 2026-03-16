@@ -338,13 +338,19 @@
 							</div>
 						{:else if tradeData[gem.name]}
 							{@const td = tradeData[gem.name]}
+							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
+							{@const chaosFloor = td.listings.find(l => l.currency === 'chaos')}
 							<div class="trade-data">
 								<div class="trade-price-row">
-									{#if td.listings[0]?.currency === 'divine'}
-										<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(td.listings[0].price)} div</span>
-										<span class="tl-original">({fmtPrice(td.priceFloor)}c)</span>
-									{:else}
-										<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(td.priceFloor)}c</span>
+									{#if divFloor}
+										<span class="trade-floor-price" title="Cheapest divine listing">{fmtPrice(divFloor.price)} div</span>
+									{/if}
+									{#if chaosFloor}
+										{#if divFloor}<span class="trade-floor-sep">/</span>{/if}
+										<span class="trade-floor-price" title="Cheapest chaos listing">{fmtPrice(chaosFloor.chaosPrice)}c</span>
+									{/if}
+									{#if !divFloor && !chaosFloor}
+										<span class="trade-floor-price">{fmtPrice(td.priceFloor)}c</span>
 									{/if}
 									<span class="trade-floor-label">trade floor</span>
 									<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
@@ -805,6 +811,11 @@
 		align-items: baseline;
 		gap: 8px;
 		flex-wrap: wrap;
+	}
+	.trade-floor-sep {
+		font-size: 1.125rem;
+		color: var(--color-lab-text-secondary);
+		margin: 0 2px;
 	}
 	.trade-floor-price {
 		font-size: 1.125rem;
