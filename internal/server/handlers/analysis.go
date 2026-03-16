@@ -510,6 +510,9 @@ func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
 		if cached {
 			resp["lastUpdated"] = lastUpdated.UTC().Format(time.RFC3339)
 		}
+		if nf := cache.NextFetch(); !nf.IsZero() {
+			resp["nextFetch"] = nf.UTC().Format(time.RFC3339)
+		}
 
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("analysis status: encode response", "error", err)

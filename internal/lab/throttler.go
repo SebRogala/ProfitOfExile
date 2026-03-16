@@ -20,6 +20,7 @@ type Throttler struct {
 	mu            sync.Mutex
 	timer         *time.Timer
 	logger        *slog.Logger
+	cache         *Cache
 
 	// lastNextFetch tracks the earliest nextFetch across all signaled endpoints.
 	// Reset on each publish so the next batch starts fresh.
@@ -33,12 +34,13 @@ type Throttler struct {
 // NewThrottler creates a throttler that publishes to the Mercure hub after the
 // debounce period elapses with no new signals. If mercureURL or mercureSecret
 // is empty, Signal() becomes a no-op.
-func NewThrottler(mercureURL, mercureSecret string, debounce time.Duration) *Throttler {
+func NewThrottler(mercureURL, mercureSecret string, debounce time.Duration, cache *Cache) *Throttler {
 	return &Throttler{
 		mercureURL:    mercureURL,
 		mercureSecret: mercureSecret,
 		debounce:      debounce,
 		logger:        slog.Default(),
+		cache:         cache,
 		publishFn:     collector.PublishMercureEvent,
 	}
 }
@@ -96,6 +98,9 @@ func (t *Throttler) publish() {
 	}
 	if !nextAny.IsZero() {
 		data["nextAny"] = nextAny.UTC().Format(time.RFC3339)
+		if t.cache != nil {
+			t.cache.SetNextFetch(nextAny)
+		}
 	}
 
 	payload, err := json.Marshal(data)

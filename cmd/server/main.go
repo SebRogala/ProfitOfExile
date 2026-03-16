@@ -79,7 +79,7 @@ func main() {
 
 	labRepo := lab.NewRepository(pool)
 	labCache := lab.NewCache()
-	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second)
+	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
 	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache)
 
 	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
@@ -163,19 +163,19 @@ func main() {
 				}
 			}
 
-			// Pre-signal the throttler with nextFetch so it is available
-			// even if individual analyzers call Signal() without it.
-			if !nextFetch.IsZero() {
-				throttler.Signal(nextFetch)
-			}
-
-			// Trigger analysis on new gem data.
+			// Trigger analysis only on new gem data — currency/fragment updates
+			// are not relevant for the lab dashboard.
 			endpoint, ok := payload["endpoint"].(string)
 			if !ok {
 				slog.Warn("mercure: missing or non-string 'endpoint' in payload", "payload", payload)
 				return
 			}
 			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {
+				// Signal throttler with nextFetch so the frontend knows when
+				// the next gem snapshot is expected.
+				if !nextFetch.IsZero() {
+					throttler.Signal(nextFetch)
+				}
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {

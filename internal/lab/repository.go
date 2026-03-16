@@ -706,13 +706,15 @@ type SignalChange struct {
 	Advanced  string    `json:"advanced"`
 	PriceVel  float64   `json:"priceVelocity"`
 	ListVel   float64   `json:"listingVelocity"`
+	Price     float64   `json:"currentPrice"`
+	Listings  int       `json:"currentListings"`
 }
 
 // SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
 func (r *Repository) SignalHistory(ctx context.Context, name, variant string, limit int) ([]SignalChange, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT time, signal, window_signal, COALESCE(advanced_signal, ''),
-		       price_velocity, listing_velocity
+		       price_velocity, listing_velocity, current_price, current_listings
 		FROM trend_results
 		WHERE name = $1 AND variant = $2
 		ORDER BY time DESC
@@ -726,7 +728,7 @@ func (r *Repository) SignalHistory(ctx context.Context, name, variant string, li
 	for rows.Next() {
 		var c SignalChange
 		if err := rows.Scan(&c.Time, &c.Signal, &c.Window, &c.Advanced,
-			&c.PriceVel, &c.ListVel); err != nil {
+			&c.PriceVel, &c.ListVel, &c.Price, &c.Listings); err != nil {
 			return nil, fmt.Errorf("lab repo: scan signal history: %w", err)
 		}
 		changes = append(changes, c)

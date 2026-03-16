@@ -92,8 +92,7 @@
 			<th class="col-num" title={METRIC_TOOLTIPS.ROI}>ROI</th>
 			<th class="col-signal" title="Primary signal: STABLE, RISING, FALLING, DUMPING, HERD, RECOVERY, TRAP. Based on price velocity, listing changes, and historical position.">Signal</th>
 			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
-			<th class="col-signal" title="Window signal: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Tracks base gem supply windows for transfiguring.">Window</th>
-			<th class="col-adv" title="Advanced signal: BREAKOUT (genuine demand surge), COMEBACK (recovering crashed gem), POTENTIAL (rising under the radar), PRICE_MANIPULATION (fake price floor).">Adv</th>
+			<th class="col-signals" title="Window: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Advanced: BREAKOUT, COMEBACK, POTENTIAL, PRICE_MANIPULATION.">Signals</th>
 			<th class="col-num" title="Current transfigured gem listings on trade. Velocity arrow shows listing change direction.">Listings</th>
 			<th class="col-spark" title="Price sparkline over the last 12 hours. Shows recent price trend at a glance.">12h</th>
 		</tr>
@@ -118,8 +117,8 @@
 				<td class="col-sell">
 					<span class="sell-score sell-{gem.sellabilityLabel.toLowerCase().replace(' ', '-')}" title="{gem.sellabilityLabel} ({gem.sellability})">{gem.sellability}</span>
 				</td>
-				<td class="col-signal"><SignalBadge signal={gem.windowSignal} type="window" /></td>
-				<td class="col-adv">
+				<td class="col-signals">
+					<SignalBadge signal={gem.windowSignal} type="window" />
 					{#if gem.advancedSignal}
 						<SignalBadge signal={gem.advancedSignal} type="advanced" />
 					{/if}
@@ -136,7 +135,7 @@
 			</tr>
 			{#if expandedRow === i}
 				<tr class="expanded-row">
-					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
+					<td colspan={showVariantColumn ? 9 : 8} class="expanded-cell">
 						<div class="expanded-content">
 							<span class="expanded-meta">
 								Base: {gem.basePrice}c | Trans: {gem.transPrice}c |
@@ -296,9 +295,12 @@
 		width: 110px;
 		white-space: nowrap;
 	}
-	.col-adv {
-		width: 130px;
+	.col-signals {
+		width: 180px;
 		white-space: nowrap;
+	}
+	.col-signals :global(.signal-badge + .signal-badge) {
+		margin-left: 6px;
 	}
 	.col-spark {
 		width: 110px;

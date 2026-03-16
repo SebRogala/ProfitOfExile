@@ -13,27 +13,32 @@
 
 	const LABS = ['Merciless'];
 
-	function formatTimeAgo(isoStr: string): string {
-		if (!isoStr) return 'unknown';
-		const diff = Date.now() - new Date(isoStr).getTime();
+	// Tick every 10s to keep timers live
+	let now = $state(Date.now());
+	$effect(() => {
+		const interval = setInterval(() => { now = Date.now(); }, 1_000);
+		return () => clearInterval(interval);
+	});
+
+	function formatTimeAgo(isoStr: string, _now: number): string {
+		if (!isoStr) return 'pending...';
+		const diff = _now - new Date(isoStr).getTime();
 		const mins = Math.floor(diff / 60000);
-		if (isNaN(mins)) return 'unknown';
+		if (isNaN(mins) || mins < 0) return 'pending...';
 		if (mins < 1) return 'just now';
-		return `${mins} min ago`;
+		if (mins < 60) return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h ${mins % 60}m ago`;
+		return `${Math.floor(hrs / 24)}d ${hrs % 24}h ago`;
 	}
 
-	function formatTime(isoStr: string): string {
-		if (!isoStr) return '--:--';
-		return new Date(isoStr).toLocaleTimeString(undefined, {
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	}
-
-	function minutesUntil(isoStr: string): number {
-		if (!isoStr) return 0;
-		const result = Math.max(0, Math.round((new Date(isoStr).getTime() - Date.now()) / 60000));
-		return isNaN(result) ? 0 : result;
+	function minutesUntil(isoStr: string, _now: number): string {
+		if (!isoStr) return 'pending...';
+		const diff = new Date(isoStr).getTime() - _now;
+		const mins = Math.round(diff / 60000);
+		if (isNaN(mins)) return 'pending...';
+		if (mins <= 0) return 'any moment';
+		return `${mins}m`;
 	}
 </script>
 
@@ -53,11 +58,11 @@
 		</div>
 		<div class="meta-row">
 			<span class="meta">
-				{formatTimeAgo(status.lastUpdate)}
+				{formatTimeAgo(status.lastUpdate, now)}
 			</span>
 			<span class="meta-sep">|</span>
 			<span class="meta">
-				Next: {minutesUntil(status.nextFetch)} min
+				Next: {minutesUntil(status.nextFetch, now)}
 			</span>
 			<span class="meta-sep">|</span>
 			<span class="connection" class:connected={status.connected} class:disconnected={!status.connected}>

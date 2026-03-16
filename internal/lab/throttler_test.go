@@ -11,7 +11,7 @@ import (
 func TestThrottler_DebouncesMultipleSignals(t *testing.T) {
 	var publishCount atomic.Int32
 
-	throttler := NewThrottler("http://mercure/.well-known/mercure", "test-secret", 50*time.Millisecond)
+	throttler := NewThrottler("http://mercure/.well-known/mercure", "test-secret", 50*time.Millisecond, nil)
 	throttler.publishFn = func(_ context.Context, _, _, topic, _ string) error {
 		if topic != "poe/analysis/updated" {
 			t.Errorf("unexpected topic: %s", topic)
@@ -42,7 +42,7 @@ func TestThrottler_NilThrottlerSignalIsNoop(t *testing.T) {
 func TestThrottler_EmptyMercureURLIsNoop(t *testing.T) {
 	var publishCount atomic.Int32
 
-	throttler := NewThrottler("", "", 10*time.Millisecond)
+	throttler := NewThrottler("", "", 10*time.Millisecond, nil)
 	throttler.publishFn = func(_ context.Context, _, _, _, _ string) error {
 		publishCount.Add(1)
 		return nil
@@ -59,7 +59,7 @@ func TestThrottler_EmptyMercureURLIsNoop(t *testing.T) {
 func TestThrottler_SecondBurstAfterDebounce(t *testing.T) {
 	var publishCount atomic.Int32
 
-	throttler := NewThrottler("http://mercure/.well-known/mercure", "test-secret", 50*time.Millisecond)
+	throttler := NewThrottler("http://mercure/.well-known/mercure", "test-secret", 50*time.Millisecond, nil)
 	throttler.publishFn = func(_ context.Context, _, _, _, _ string) error {
 		publishCount.Add(1)
 		return nil
@@ -83,7 +83,7 @@ func TestThrottler_SecondBurstAfterDebounce(t *testing.T) {
 func TestThrottler_PublishErrorDoesNotBreakSubsequentSignals(t *testing.T) {
 	var publishCount atomic.Int32
 
-	throttler := NewThrottler("http://mercure/.well-known/mercure", "secret", 50*time.Millisecond)
+	throttler := NewThrottler("http://mercure/.well-known/mercure", "secret", 50*time.Millisecond, nil)
 	throttler.publishFn = func(_ context.Context, _, _, _, _ string) error {
 		n := publishCount.Add(1)
 		if n == 1 {
