@@ -15,7 +15,7 @@ import (
 // Query params: variant (optional), budget (optional, max base price), limit (default 20, max 100).
 func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
 		var budget float64
 		if v := r.URL.Query().Get("budget"); v != "" {
@@ -238,7 +238,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			return
 		}
 
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
 		// Fast path: serve from cache.
 		var transfigure []lab.TransfigureResult

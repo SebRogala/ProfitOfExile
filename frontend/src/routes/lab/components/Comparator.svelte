@@ -298,11 +298,11 @@
 	<div class="section-header">
 		<h2 class="section-title">Lab Options Comparator</h2>
 		<div class="header-controls">
+			{#if selectedForQueue && onQueueGem}
+				<button class="next-btn" onclick={handleNext}>&#10003; Next</button>
+			{/if}
 			{#if selectedGems.length > 0}
 				<button class="clear-btn" onclick={clearAll}>Clear All</button>
-			{/if}
-			{#if selectedForQueue && onQueueGem}
-				<button class="next-btn" onclick={handleNext}>Next &#8594;</button>
 			{/if}
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
