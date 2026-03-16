@@ -155,7 +155,8 @@ func main() {
 			return rate
 		}
 
-		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn)
+		tradeRepo := trade.NewRepository(pool)
+		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
 
 		go tradeGate.Run(ctx)
 		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
