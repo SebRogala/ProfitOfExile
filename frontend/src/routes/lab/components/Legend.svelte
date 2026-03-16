@@ -12,35 +12,62 @@
 			<div class="legend-grid">
 				<div class="legend-col">
 					<h4 class="legend-heading">Signals</h4>
-					<div class="legend-item"><span class="sig green">▲ STABLE</span> steady price+lst</div>
+					<div class="legend-item"><span class="sig green-muted">━ STABLE</span> steady price+listings</div>
 					<div class="legend-item"><span class="sig green">▲ RISING</span> price increasing</div>
 					<div class="legend-item"><span class="sig red">▼ FALLING</span> price decreasing</div>
-					<div class="legend-item"><span class="sig yellow">⚠ HERD</span> price+lst both up</div>
-					<div class="legend-item"><span class="sig red">⚠ DUMPING</span> price↓ listings↑</div>
-					<div class="legend-item"><span class="sig purple">↻ RECOVERY</span> price↓ listings↓</div>
-					<div class="legend-item"><span class="sig red">⚠ TRAP</span> CV>100% avoid</div>
+					<div class="legend-item"><span class="sig yellow">⚡ HERD</span> price+listings both up</div>
+					<div class="legend-item"><span class="sig red">⏬ DUMPING</span> price↓ listings↑</div>
+					<div class="legend-item"><span class="sig purple">🔄 RECOVERY</span> price↓ listings↓</div>
+					<div class="legend-item"><span class="sig red">🚫 TRAP</span> CV>100% avoid</div>
 				</div>
 
 				<div class="legend-col">
 					<h4 class="legend-heading">Window Lifecycle</h4>
-					<div class="legend-item"><span class="sig muted">○ CLOSED</span> no opportunity</div>
-					<div class="legend-item"><span class="sig blue">◆ BREWING</span> forming (~2h)</div>
-					<div class="legend-item"><span class="sig blue">◆ OPENING</span> base draining</div>
-					<div class="legend-item"><span class="sig green">● OPEN</span> farm now!</div>
-					<div class="legend-item"><span class="sig yellow">● CLOSING</span> herd arriving</div>
-					<div class="legend-item"><span class="sig muted">○ EXHAUSTED</span> no bases</div>
+					<div class="legend-item"><span class="sig muted">⭘ CLOSED</span> no opportunity</div>
+					<div class="legend-item"><span class="sig blue">🔹 BREWING</span> forming (~2h)</div>
+					<div class="legend-item"><span class="sig blue">🔷 OPENING</span> base draining</div>
+					<div class="legend-item"><span class="sig green">🟢 OPEN</span> farm now!</div>
+					<div class="legend-item"><span class="sig yellow">🟡 CLOSING</span> herd arriving</div>
+					<div class="legend-item"><span class="sig muted">⭘ EXHAUSTED</span> no bases</div>
 				</div>
 
 				<div class="legend-col">
 					<h4 class="legend-heading">Advanced Signals</h4>
-					<div class="legend-item"><span class="sig purple">↻ COMEBACK</span> crashed + recovering</div>
-					<div class="legend-item"><span class="sig cyan">◇ POTENTIAL</span> rising, unnoticed</div>
-					<div class="legend-item"><span class="sig red">⚠ MANIPULATION</span> fake price floor</div>
+					<div class="legend-item"><span class="sig purple">🔄 COMEBACK</span> crashed + recovering</div>
+					<div class="legend-item"><span class="sig cyan">💎 POTENTIAL</span> rising, unnoticed</div>
+					<div class="legend-item"><span class="sig red">🚩 MANIPULATION</span> fake price floor</div>
+					<div class="legend-item"><span class="sig green">🚀 BREAKOUT</span> breaking resistance</div>
 
 					<h4 class="legend-heading" style="margin-top: 16px;">Liquidity Tiers</h4>
 					<div class="legend-item"><span class="sig green">HIGH</span> safe farm</div>
 					<div class="legend-item"><span class="sig yellow">MED</span> oscillating</div>
 					<div class="legend-item"><span class="sig red">LOW</span> drain risk</div>
+				</div>
+			</div>
+
+			<div class="legend-grid" style="margin-top: 16px;">
+				<div class="legend-col">
+					<h4 class="legend-heading">Sell Urgency</h4>
+					<div class="legend-item"><span class="sig red">SELL_NOW</span> dump immediately</div>
+					<div class="legend-item"><span class="sig orange">UNDERCUT</span> undercut to sell fast</div>
+					<div class="legend-item"><span class="sig green">HOLD</span> price is stable/rising</div>
+					<div class="legend-item"><span class="sig muted">WAIT</span> no rush</div>
+				</div>
+
+				<div class="legend-col">
+					<h4 class="legend-heading">Sellability</h4>
+					<div class="legend-item"><span class="sig green">FAST SELL</span> 80+ listings</div>
+					<div class="legend-item"><span class="sig green-muted">GOOD</span> 60-79 listings</div>
+					<div class="legend-item"><span class="sig yellow">MODERATE</span> 40-59 listings</div>
+					<div class="legend-item"><span class="sig orange">SLOW</span> 20-39 listings</div>
+					<div class="legend-item"><span class="sig red">UNLIKELY</span> 0-19 listings</div>
+				</div>
+
+				<div class="legend-col">
+					<h4 class="legend-heading">Price Tiers</h4>
+					<div class="legend-item"><span class="sig gold">TOP</span> high-value gem</div>
+					<div class="legend-item"><span class="sig silver">MID</span> mid-range gem</div>
+					<div class="legend-item"><span class="sig muted">LOW</span> low-value gem</div>
 				</div>
 			</div>
 
@@ -96,13 +123,13 @@
 		min-width: 0;
 	}
 	.legend-heading {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0 0 8px 0;
 	}
 	.legend-item {
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		color: var(--color-lab-text-secondary);
 		line-height: 1.7;
 	}
@@ -111,11 +138,15 @@
 		margin-right: 4px;
 	}
 	.green { color: var(--color-lab-green); }
+	.green-muted { color: var(--color-lab-green-muted); }
 	.red { color: var(--color-lab-red); }
 	.yellow { color: var(--color-lab-yellow); }
 	.blue { color: var(--color-lab-blue); }
 	.purple { color: var(--color-lab-purple); }
 	.cyan { color: #22d3ee; }
+	.orange { color: #f97316; }
+	.gold { color: #fbbf24; }
+	.silver { color: #9ca3af; }
 	.muted { color: var(--color-lab-text-secondary); }
 	.legend-metrics {
 		margin-top: 16px;

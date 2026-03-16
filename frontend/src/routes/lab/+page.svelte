@@ -19,6 +19,7 @@
 	import ByVariant from './components/ByVariant.svelte';
 	import MarketOverview from './components/MarketOverview.svelte';
 	import Legend from './components/Legend.svelte';
+	import FontEVCompare from './components/FontEVCompare.svelte';
 
 	let selectedLab = $state('Merciless');
 	let status = $state<StatusData | null>(null);
@@ -108,6 +109,8 @@
 		<section class="section">
 			<BestPlays plays={bestPlays} />
 		</section>
+
+		<FontEVCompare />
 
 		<ByVariant />
 
