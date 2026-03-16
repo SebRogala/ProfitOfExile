@@ -253,10 +253,17 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 	}
 	// quality 0 or unspecified: no filter applied
 
+	// Base gems use "type" for exact match (prevents "Kinetic Blast" from also
+	// matching "Kinetic Blast of Clustering"). Transfigured gems (containing " of ")
+	// must use "term" because "type" returns "Unknown item base type" for them.
+	nameField := "type"
+	if strings.Contains(gem, " of ") {
+		nameField = "term"
+	}
+
 	query := map[string]interface{}{
 		"query": map[string]interface{}{
-			// "type" = exact gem name. Do NOT use "term" (fuzzy) or "name" (uniques only).
-			"type": gem,
+			nameField: gem,
 			"stats": []map[string]interface{}{
 				{"type": "and", "filters": []interface{}{}},
 			},
