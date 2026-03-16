@@ -1,0 +1,3438 @@
+<main>
+
+<div id="intro-banner">
+    <img src="https://web.poecdn.com/protected/image/layout/misc/Critter3.png?key=Ajv-DGw46GUILAIjkaQzqw">
+</div>
+
+<article id="endpoint2">
+<div style="border: 1px solid red; border-radius: 5px; padding: 15px; background-color: #4C1A1D"><strong>NOTE:</strong> There are currently limited APIs that return PoE2 game information.</div>
+</article>
+
+<article id="endpoint">
+<h2>Server Endpoint <a class="self-link" href="#endpoint"></a></h2>
+<code>https://api.pathofexile.com</code>
+</article>
+
+<article id="profile">
+<h2>Account Profile <a class="self-link" href="#profile"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">account:profile</a></div>
+<h3 id="profile-get">Get Profile <a class="self-link" href="#profile-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /profile</code></pre>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+                <th>Extra Information</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>uuid</td>
+                <td>string</td>
+                <td>UUIDv4 in canonical format</td>
+            </tr>
+            <tr>
+                <td>name</td>
+                <td>string</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>locale</td>
+                <td>?string</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>twitch</td>
+                <td>?object</td>
+                <td>present if the account is Twitch-linked</td>
+            </tr>
+            <tr>
+                <td>↳ name</td>
+                <td>string</td>
+                <td></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+
+<article id="itemfilters">
+<h2>Account Item Filters <a class="self-link" href="#itemfilters"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">account:item_filter</a></div>
+<h3 id="itemfilters-list">Get Item Filters <a class="self-link" href="#itemfilters-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /item-filter</code></pre>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>A list of online filters on the account.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>filters</td>
+                <td>array of <a href="#type-ItemFilter">ItemFilter</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="itemfilters-get">Get Item Filter <a class="self-link" href="#itemfilters-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /item-filter/<span class="pun">&lt;</span><span class="pln">id</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>id</code> is an item filter id (required)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>filter</td>
+                <td><a href="#type-ItemFilter">ItemFilter</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="itemfilters-post">Create Item Filter <a class="self-link" href="#itemfilters-post"></a></h3>
+<pre><code class="prettyprint prettyprinted">POST /item-filter</code></pre>
+<h4>Required Headers:</h4>
+<ul>
+    <li><code>Content-Type: application/json</code></li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">validate</span><span class="pun">=</span></code> set to true to validate the filter against the current game version</li>
+</ul>
+<h4>Request Body Parameters (JSON):</h4>
+<ul style="list-style: none">
+    <li>
+        <p>For an explanation of Item Filter syntax please refer to our <a href="/item-filter/about">online guide</a>.</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Type</th>
+                    <th>Extra Information</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>filter_name</td>
+                    <td>string</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>realm</td>
+                    <td>string</td>
+                    <td><code>pc</code>, <code>xbox</code>, <code>sony</code>, or <code>poe2</code></td>
+                </tr>
+                <tr>
+                    <td>description</td>
+                    <td>?string</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>version</td>
+                    <td>?string</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>type</td>
+                    <td>?string</td>
+                    <td>either <code>Normal</code> or <code>Ruthless</code></td>
+                </tr>
+                <tr>
+                    <td>public</td>
+                    <td>?bool</td>
+                    <td>defaults to <code>false</code></td>
+                </tr>
+                <tr>
+                    <td>filter</td>
+                    <td>string</td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+    </li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>filter</td>
+                <td><a href="#type-ItemFilter">ItemFilter</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="itemfilters-patch">Update Item Filter <a class="self-link" href="#itemfilters-patch"></a></h3>
+<pre><code class="prettyprint prettyprinted">POST /item-filter/<span class="pun">&lt;</span><span class="pln">id</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>id</code> is an item filter id (required)</li>
+</ul>
+<h4>Required Headers:</h4>
+<ul>
+    <li><code>Content-Type: application/json</code></li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">validate</span><span class="pun">=</span></code> set to true to validate the filter against the current game version</li>
+</ul>
+<h4>Request Body Parameters (JSON):</h4>
+<ul style="list-style: none">
+    <li>
+        <p>This endpoint allows partial updates. Properties that are not supplied will use the current filter's values.</p>
+        <p>Please note: A public filter cannot be made private again.</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Key</th>
+                    <th>Type</th>
+                    <th>Extra Information</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>filter_name</td>
+                    <td>?string</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>realm</td>
+                    <td>?string</td>
+                    <td><code>pc</code>, <code>xbox</code>, <code>sony</code>, or <code>poe2</code></td>
+                </tr>
+                <tr>
+                    <td>description</td>
+                    <td>?string</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>version</td>
+                    <td>?string</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>type</td>
+                    <td>?string</td>
+                    <td>either <code>Normal</code> or <code>Ruthless</code></td>
+                </tr>
+                <tr>
+                    <td>public</td>
+                    <td>?bool</td>
+                    <td>must be <code>true</code> if present</td>
+                </tr>
+                <tr>
+                    <td>filter</td>
+                    <td>?string</td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+    </li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <p>The updated filter.</p>
+    <p>If the HTTP response code is 202 (Accepted) then additional processing is required. In this case an error object with more information will be returned as well.</p>
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+                <th>Extra Information</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>filter</td>
+                <td><a href="#type-ItemFilter">ItemFilter</a></td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>error</td>
+                <td>?<a href="/developer/docs/index#errors">Error</a></td>
+                <td>an "Accepted" error object</td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+
+<article id="leagues">
+<h2>Leagues<a class="self-link" href="#leagues"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:leagues</a></div>
+<h3 id="leagues-list">List Leagues <a class="self-link" href="#leagues-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /league</code></pre>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, <code>sony</code>, or <code>poe2</code></li>
+    <li>
+        <code class="prettyprint prettyprinted"><span class="com">type</span><span class="pun">=</span></code> can be one of the following:
+        <ul>
+            <li><code>main</code> retrieves permanent and current challenge leagues (default)</li>
+            <li><code>event</code> retrieves current event leagues</li>
+            <li><code>season</code> (PoE1 only) retrieves leagues in a particular season. Use <code class="prettyprint prettyprinted"><span class="com">season</span><span class="pun">=</span></code> to set the season to query</li>
+        </ul>
+    </li>
+    <li><code class="prettyprint prettyprinted"><span class="com">limit</span><span class="pun">=</span></code> restricts the amount of results returned. Maximum is 50 (default)</li>
+    <li><code class="prettyprint prettyprinted"><span class="com">offset</span><span class="pun">=</span></code> can be used with <code>limit</code> above to scroll through the list</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>A list of all matching leagues up to <code>limit</code> (50 by default).</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>leagues</td>
+                <td>array of <a href="#type-League">League</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="leagues-get">Get League <a class="self-link" href="#leagues-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /league/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>league</code> must be the name of a league (required)</li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, <code>sony</code>, or <code>poe2</code></li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The league object requested or null if it cannot be found.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>league</td>
+                <td>?<a href="#type-League">League</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="leagues-ladder">Get League Ladder (PoE1 only) <a class="self-link" href="#leagues-ladder"></a></h3>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:leagues:ladder</a></div>
+<pre><code class="prettyprint prettyprinted">GET /league/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span>/ladder</code></pre>
+<ul>
+    <li><code>league</code> must be the name of a league (required)</li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, or <code>sony</code></li>
+    <li>
+        <code class="prettyprint prettyprinted"><span class="com">sort</span><span class="pun">=</span></code> can be one of the following:
+        <ul>
+            <li><code>xp</code> sorts the ladder by experience</li>
+            <li><code>depth</code> sorts the ladder by Delve depth</li>
+            <li><code>depthsolo</code> sorts the ladder by Delve (Solo) depth</li>
+            <li><code>ancestor</code> sorts the ladder by Ancestor rank</li>
+            <li><code>time</code> sorts the ladder by objective finish time</li>
+            <li><code>score</code> sorts the ladder by objective score</li>
+            <li>
+                <code>class</code> returns characters of a specific class sorted by experience. Use <code class="prettyprint prettyprinted"><span class="com">class</span><span class="pun">=</span></code> to set the class. Options are:
+                <ol start="0">
+                    <li><code>scion</code></li>
+                    <li><code>marauder</code></li>
+                    <li><code>ranger</code></li>
+                    <li><code>witch</code></li>
+                    <li><code>duelist</code></li>
+                    <li><code>templar</code></li>
+                    <li><code>shadow</code></li>
+                </ol>
+            </li>
+        </ul>
+        <p>The default sort type will either be <code>xp</code> or <code>time</code> depending on the league.</p>
+    </li>
+    <li><code class="prettyprint prettyprinted"><span class="com">limit</span><span class="pun">=</span></code> restricts the amount of results returned. Default is 20. Maximum is 500</li>
+    <li><code class="prettyprint prettyprinted"><span class="com">offset</span><span class="pun">=</span></code> can be used with <code>limit</code> above to scroll through the list</li>
+</ul>
+<p>
+    Each ladder only contains the top 15000 entries. Attempting to fetch entries beyond this will return an empty result.
+</p>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+                <th>Extra Information</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>league</td>
+                <td><a href="#type-League">League</a></td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>ladder</td>
+                <td>object</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ total</td>
+                <td>uint</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ cached_since</td>
+                <td>?string</td>
+                <td>date time (ISO8601)</td>
+            </tr>
+            <tr>
+                <td>↳ entries</td>
+                <td>array of <a href="#type-LadderEntry">LadderEntry</a></td>
+                <td></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="leagues-event-ladder">Get League Event Ladder (PoE1 only) <a class="self-link" href="#leagues-event-ladder"></a></h3>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:leagues:ladder</a></div>
+<pre><code class="prettyprint prettyprinted">GET /league/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span>/event-ladder</code></pre>
+<ul>
+    <li><code>league</code> must be the name of a league (required)</li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, or <code>sony</code></li>
+    <li><code class="prettyprint prettyprinted"><span class="com">limit</span><span class="pun">=</span></code> restricts the amount of results returned. Default is 20. Maximum is 500</li>
+    <li><code class="prettyprint prettyprinted"><span class="com">offset</span><span class="pun">=</span></code> can be used with <code>limit</code> above to scroll through the list</li>
+</ul>
+<p>
+    Each ladder only contains the top 15000 entries. Attempting to fetch entries beyond this will return an empty result.
+</p>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+            <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+                <th>Extra Information</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td>league</td>
+                <td><a href="#type-League">League</a></td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>ladder</td>
+                <td>object</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ total</td>
+                <td>uint</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ entries</td>
+                <td>array of <a href="#type-EventLadderEntry">EventLadderEntry</a></td>
+                <td></td>
+            </tr>
+            </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+<article id="matches">
+<h2>PvP Matches (PoE1 only) <a class="self-link" href="#matches"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:pvp_matches</a></div>
+<h3 id="matches-list">List PvP Matches <a class="self-link" href="#matches-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /pvp-match</code></pre>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, or <code>sony</code></li>
+    <li>
+        <code class="prettyprint prettyprinted"><span class="com">type</span><span class="pun">=</span></code> can be one of the following:
+        <ul>
+            <li><code>upcoming</code> retrieves upcoming matches (default)</li>
+            <li><code>season</code> retrieves matches in a particular season. Use <code class="prettyprint prettyprinted"><span class="com">season</span><span class="pun">=</span></code> to set the season to query</li>
+            <li><code>league</code> retrieves matches in a particular league. Use <code class="prettyprint prettyprinted"><span class="com">league</span><span class="pun">=</span></code> to set the league to query</li>
+        </ul>
+    </li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>matches</td>
+                <td>array of <a href="#type-PvPMatch">PvPMatch</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="matches-get">Get PvP Match <a class="self-link" href="#matches-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /pvp-match/<span class="pun">&lt;</span><span class="pln">match</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>match</code> must be the name of a match (required)</li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, or <code>sony</code></li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The PvP match object requested or null if it cannot be found.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>match</td>
+                <td>?<a href="#type-PvPMatch">PvPMatch</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="matches-ladder">Get PvP Match Ladder <a class="self-link" href="#matches-ladder"></a></h3>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:pvp_matches:ladder</a></div>
+<pre><code class="prettyprint prettyprinted">GET /pvp-match/<span class="pun">&lt;</span><span class="pln">match</span><span class="pun">&gt;</span>/ladder</code></pre>
+<ul>
+    <li><code>match</code> must be the name of a match (required)</li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">realm</span><span class="pun">=</span></code> can be <code>pc</code> (default), <code>xbox</code>, or <code>sony</code></li>
+    <li><code class="prettyprint prettyprinted"><span class="com">limit</span><span class="pun">=</span></code> restricts the amount of results returned. Default is 20. Maximum is 200</li>
+    <li><code class="prettyprint prettyprinted"><span class="com">offset</span><span class="pun">=</span></code> can be used with <code>limit</code> above to scroll through the list</li>
+</ul>
+<p>
+    Each ladder only contains the top 15000 entries. Attempting to fetch entries beyond this will return an empty result.
+</p>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>match</td>
+                <td><a href="#type-PvPMatch">PvPMatch</a></td>
+            </tr>
+            <tr>
+                <td>ladder</td>
+                <td>object</td>
+            </tr>
+            <tr>
+                <td>↳ total</td>
+                <td>uint</td>
+            </tr>
+            <tr>
+                <td>↳ entries</td>
+                <td>array of <a href="#type-PvPLadderTeamEntry">PvPLadderTeamEntry</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+<article id="accountleagues">
+<h2>Account Leagues (PoE1 only)<a class="self-link" href="#accountleagues"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">account:leagues</a></div>
+<h3 id="accountleagues-list">Get Leagues <a class="self-link" href="#accountleagues-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /account/leagues[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]</code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The current leagues available to the account, including private leagues.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>leagues</td>
+                <td>array of <a href="#type-League">League</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+<article id="characters">
+<h2>Account Characters <a class="self-link" href="#characters"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">account:characters</a></div>
+<h3 id="characters-list">List Characters <a class="self-link" href="#characters-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /character[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]</code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code>, <code>sony</code>, or <code>poe2</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>A list of all the account's characters.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>characters</td>
+                <td>array of <a href="#type-Character">Character</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="characters-get">Get Character <a class="self-link" href="#characters-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /character[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]/<span class="pun">&lt;</span><span class="pln">name</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code>, <code>sony</code>, or <code>poe2</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>name</code> is the name of one of the account's characters (required)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The character requested including their equipment, inventory, and passive skill information.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>character</td>
+                <td>?<a href="#type-Character">Character</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+<article id="stashes">
+<h2>Account Stashes (PoE1 only)<a class="self-link" href="#stashes"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">account:stashes</a></div>
+<h3 id="stashes-list">List Stashes <a class="self-link" href="#stashes-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /stash[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>league</code> is the name of a Path of Exile league (required)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>A list of all the account's stash tabs in the specified league. This includes sub-tabs and stash tabs in folders.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>stashes</td>
+                <td>array of <a href="#type-StashTab">StashTab</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="stashes-get">Get Stash <a class="self-link" href="#stashes-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /stash[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span>/<span class="pun">&lt;</span><span class="pln">stash_id</span><span class="pun">&gt;</span>[/<span class="pun">&lt;</span><span class="com">substash_id</span><span class="pun">&gt;</span>]</code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>league</code> is the name of a Path of Exile league (required)</li>
+    <li><code>stash_id</code> is the public identifier of a stash tab (required)</li>
+    <li><code>substash_id</code> is the public identifier of a sub-tab with <code>stash_id</code> as a parent (optional)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The stash object requested, including any contained items (when applicable). If a <code>substash_id</code> is provided then the inner tab will be wrapped by the parent allowing you to access information of both at the same time.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>stash</td>
+                <td>?<a href="#type-StashTab">StashTab</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+
+<article id="leagueaccounts">
+<h2>League Accounts (PoE1 only)<a class="self-link" href="#leagueaccounts"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">account:league_accounts</a></div>
+<h3 id="leagueaccounts-get">Get League Account <a class="self-link" href="#leagueaccounts-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /league-account[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>league</code> must be the name of a league (required)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The matching league-specific account information for the account.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>league_account</td>
+                <td><a href="#type-LeagueAccount">LeagueAccount</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+<article id="guildstashes">
+<h2>Guild Stashes (PoE1 only) <a class="self-link" href="#guildstashes"></a></h2>
+<div role="doc-subtitle">Required scope: <a>account:guild:stashes</a> (on special request)</div>
+<h3 id="guildstashes-list">List Guild Stashes <a class="self-link" href="#guildstashes-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /guild[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]/stash/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span></code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>league</code> is the name of a Path of Exile league (required)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>A list of all the guild's stash tabs that the account has access to in the specified league. This includes sub-tabs and stash tabs in folders.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>stashes</td>
+                <td>array of <a href="#type-StashTab">StashTab</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+<h3 id="guildstashes-get">Get Guild Stash <a class="self-link" href="#guildstashes-get"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /guild[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]/stash/<span class="pun">&lt;</span><span class="pln">league</span><span class="pun">&gt;</span>/<span class="pun">&lt;</span><span class="pln">stash_id</span><span class="pun">&gt;</span>[/<span class="pun">&lt;</span><span class="com">substash_id</span><span class="pun">&gt;</span>]</code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>league</code> is the name of a Path of Exile league (required)</li>
+    <li><code>stash_id</code> is the public identifier of a guild stash tab (required)</li>
+    <li><code>substash_id</code> is the public identifier of a guild sub-tab with <code>stash_id</code> as a parent (optional)</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>The stash object requested, including any contained items (when applicable). If a <code>substash_id</code> is provided then the inner tab will be wrapped by the parent allowing you to access information of both at the same time.</p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>stash</td>
+                <td>?<a href="#type-StashTab">StashTab</a></td>
+            </tr>
+        </tbody>
+        </table>
+    </li>
+</ul>
+</article>
+<article id="publicstashes">
+<h2>Public Stashes (PoE1 only)<a class="self-link" href="#publicstashes"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:psapi</a></div>
+<h3 id="publicstashes-list">Get Public Stashes <a class="self-link" href="#publicstashes-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /public-stash-tabs[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>]</code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code> or <code>sony</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+</ul>
+<h4>Optional Query Parameters:</h4>
+<ul>
+    <li><code class="prettyprint prettyprinted"><span class="com">id</span><span class="pun">=</span></code> is a pagination code received from this endpoint</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>
+            A stream containing all public stashes in all leagues for the given realm. Providing the <code>next_change_id</code> as the <code>id</code> query parameter serves as a way to paginate through current and newly listed stashes.<br>
+            You can track stashes as they re-appear in the stream by comparing their <a href="#type-PublicStashChange">PublicStashChange</a>'s <code>id</code> property. If a stash has been unlisted all details aside from the <code>id</code> and <code>public</code> parameters will be omitted.
+        </p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+                <th>Extra Information</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>next_change_id</td>
+                <td>string</td>
+                <td>pagination code</td>
+            </tr>
+            <tr>
+                <td>stashes</td>
+                <td>array of <a href="#type-PublicStashChange">PublicStashChange</a></td>
+                <td></td>
+            </tr>
+        </tbody>
+        </table>
+        <p>
+            If the <code>stashes</code> array is empty then you have reached the end of the stream. Polling this endpoint with the same <code>next_change_id</code> will then return new results once they become available.
+        </p>
+        <p>
+            Please note: There is currently a 5-minute delay on results using this API. You may see more details <a href="https://www.pathofexile.com/forum/view-thread/2036957">here</a>.
+        </p>
+    </li>
+</ul>
+</article>
+<article id="currencyexchange">
+<h2>Currency Exchange<a class="self-link" href="#currencyexchange"></a></h2>
+<div role="doc-subtitle">Required scope: <a href="/developer/docs/authorization#scopes">service:cxapi</a></div>
+<h3 id="currencyexchange-list">Get Exchange Markets <a class="self-link" href="#currencyexchange-list"></a></h3>
+<pre><code class="prettyprint prettyprinted">GET /currency-exchange[/<span class="pun">&lt;</span><span class="com">realm</span><span class="pun">&gt;</span>][/<span class="pun">&lt;</span><span class="com">id</span><span class="pun">&gt;</span>]</code></pre>
+<ul>
+    <li><code>realm</code> can either be <code>xbox</code>, <code>sony</code>, or <code>poe2</code>. If omitted then the PoE1 PC realm is assumed (optional)</li>
+    <li><code>id</code> is a unix timestamp code received from this endpoint. If none is provided then first hour of history is assumed</li>
+</ul>
+<h4>Returns:</h4>
+<ul style="list-style: none">
+    <li>
+        <p>
+            This endpoint allows you to view aggregate Currency Exchange trade history, grouped into hourly digests. Each market (pair of two currencies) that has seen activity in the requested hour will be returned.
+        </p>
+        <p>
+            Note that the responses from this endpoint are purely historical and that there isn't any way to get data from the current hour.
+        </p>
+        <p>
+            If the <code>next_change_id</code> is the same unix timestamp as the one you passed in, then you have reached the current end of the stream. You should wait until the next hourly boundary before calling this endpoint again.
+        </p>
+        <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Type</th>
+                <th>Extra Information</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>next_change_id</td>
+                <td>uint</td>
+                <td>unix timestamp truncated to the hour</td>
+            </tr>
+            <tr>
+                <td>markets</td>
+                <td>array of object</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ league</td>
+                <td>string</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ market_id</td>
+                <td>string</td>
+                <td>common currency code for each pair separated by a pipe. Example: <code>chaos|divine</code></td>
+            </tr>
+            <tr>
+                <td>↳ volume_traded</td>
+                <td>dictionary of uint</td>
+                <td>the keys are the market currencies. Example: <code>chaos</code></td>
+            </tr>
+            <tr>
+                <td>↳ lowest_stock</td>
+                <td>dictionary of uint</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ highest_stock</td>
+                <td>dictionary of uint</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ lowest_ratio</td>
+                <td>dictionary of uint</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>↳ highest_ratio</td>
+                <td>dictionary of uint</td>
+                <td></td>
+            </tr>
+        </tbody>
+        </table>
+        <p>
+            Be aware that we may, at a later date, remove old history entries.
+        </p>
+    </li>
+</ul>
+</article>
+
+<article id="types">
+<h2>Type Definitions <a class="self-link" href="#types"></a></h2>
+<p>The majority of our APIs return JSON content to be consumed by applications. This section details the kind of structures to expect.</p>
+<p>Types that begin with a question mark may be null or otherwise not be present.</p>
+<h3 id="type-League"><small>object</small> League <a class="self-link" href="#type-League"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>realm</td>
+        <td>?string</td>
+        <td><code>pc</code>, <code>xbox</code>, or <code>sony</code></td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>?string</td>
+        <td>the league's name</td>
+    </tr>
+    <tr>
+        <td>description</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>category</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ id</td>
+        <td>string</td>
+        <td>the league category, e.g. <code>Affliction</code></td>
+    </tr>
+    <tr>
+        <td>↳ current</td>
+        <td>?bool</td>
+        <td>set for the active challenge leagues; always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>rules</td>
+        <td>?array of <a href="#type-LeagueRule">LeagueRule</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>registerAt</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>event</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>goal</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>url</td>
+        <td>?string</td>
+        <td>a url link to a Path of Exile forum thread</td>
+    </tr>
+    <tr>
+        <td>startAt</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>endAt</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>timedEvent</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>scoreEvent</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>delveEvent</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>ancestorEvent</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>leagueEvent</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-LeagueRule"><small>object</small> LeagueRule <a class="self-link" href="#type-LeagueRule"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td>examples: <code>Hardcore</code>, <code>NoParties</code> (SSF)</td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>description</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-LadderEntry"><small>object</small> LadderEntry <a class="self-link" href="#type-LadderEntry"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>rank</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>dead</td>
+        <td>?bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>retired</td>
+        <td>?bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>ineligible</td>
+        <td>?bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>public</td>
+        <td>?bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>character</td>
+        <td>object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ id</td>
+        <td>string</td>
+        <td>a <i>unique</i> 64 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ level</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ class</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ time</td>
+        <td>?uint</td>
+        <td>time taken to complete the league objective in seconds</td>
+    </tr>
+    <tr>
+        <td>↳ score</td>
+        <td>?uint</td>
+        <td>count of league objective completions</td>
+    </tr>
+    <tr>
+        <td>↳ progress</td>
+        <td>?object</td>
+        <td>the values of this depend on the league objective</td>
+    </tr>
+    <tr>
+        <td>↳ experience</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ depth</td>
+        <td>?object</td>
+        <td>deepest Delve depth completed</td>
+    </tr>
+    <tr>
+        <td>  ↳ default</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>  ↳ solo</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>account</td>
+        <td>?<a href="#type-Account">Account</a></td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-EventLadderEntry"><small>object</small> EventLadderEntry <a class="self-link" href="#type-EventLadderEntry"></a></h3>
+<table>
+    <thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+        <td>rank</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>ineligible</td>
+        <td>?bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>time</td>
+        <td>?uint</td>
+        <td>time taken to complete the league objective in seconds</td>
+    </tr>
+    <tr>
+        <td>private_league</td>
+        <td>object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ url</td>
+        <td>string</td>
+        <td>a url link to a Path of Exile Private League</td>
+    </tr>
+
+    </tbody>
+</table>
+<h3 id="type-Account"><small>object</small> Account <a class="self-link" href="#type-Account"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>realm</td>
+        <td>?string</td>
+        <td><code>pc</code>, <code>xbox</code>, or <code>sony</code></td>
+    </tr>
+    <tr>
+        <td>guild</td>
+        <td>?<a href="#type-Guild">Guild</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>challenges</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ set</td>
+        <td>string</td>
+        <td>the challenge set</td>
+    </tr>
+    <tr>
+        <td>↳ completed</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ max</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>twitch</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ stream</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>  ↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>  ↳ image</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>  ↳ status</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-Guild"><small>object</small> Guild <a class="self-link" href="#type-Guild"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>tag</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-PvPMatch"><small>object</small> PvPMatch <a class="self-link" href="#type-PvPMatch"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td>the match's name</td>
+    </tr>
+    <tr>
+        <td>realm</td>
+        <td>?string</td>
+        <td><code>pc</code>, <code>xbox</code>, or <code>sony</code></td>
+    </tr>
+    <tr>
+        <td>startAt</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>endAt</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>url</td>
+        <td>?string</td>
+        <td>a url link to a Path of Exile forum thread</td>
+    </tr>
+    <tr>
+        <td>description</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>glickoRatings</td>
+        <td>bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>pvp</td>
+        <td>bool</td>
+        <td>always <code>true</code></td>
+    </tr>
+    <tr>
+        <td>style</td>
+        <td>string</td>
+        <td><code>Blitz</code>, <code>Swiss</code>, or <code>Arena</code></td>
+    </tr>
+    <tr>
+        <td>registerAt</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>complete</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>upcoming</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>inProgress</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-PvPLadderTeamEntry"><small>object</small> PvPLadderTeamEntry <a class="self-link" href="#type-PvPLadderTeamEntry"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>rank</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>rating</td>
+        <td>?uint</td>
+        <td>only present if the PvP Match uses Glicko ratings</td>
+    </tr>
+    <tr>
+        <td>points</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>games_played</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>cumulative_opponent_points</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>last_game_time</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+    <tr>
+        <td>members</td>
+        <td>array of <a href="#type-PvPLadderTeamMember">PvPLadderTeamMember</a></td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-PvPLadderTeamMember"><small>object</small> PvPLadderTeamMember <a class="self-link" href="#type-PvPLadderTeamMember"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>account</td>
+        <td><a href="#type-Account">Account</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>character</td>
+        <td>object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ id</td>
+        <td>string</td>
+        <td>a <i>unique</i> 64 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ level</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ class</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ league</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ score</td>
+        <td>?uint</td>
+        <td>count of league objective completions</td>
+    </tr>
+    <tr>
+        <td>public</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-PublicStashChange"><small>object</small> PublicStashChange <a class="self-link" href="#type-PublicStashChange"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td>a <i>unique</i> 64 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>public</td>
+        <td>bool</td>
+        <td>if <code>false</code> then optional properties will be null</td>
+    </tr>
+    <tr>
+        <td>accountName</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>stash</td>
+        <td>?string</td>
+        <td>the name of the stash</td>
+    </tr>
+    <tr>
+        <td>stashType</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>league</td>
+        <td>?string</td>
+        <td>the league's name</td>
+    </tr>
+    <tr>
+        <td>items</td>
+        <td>array of <a href="#type-Item">Item</a></td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-Item"><small>object</small> Item <a class="self-link" href="#type-Item"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>realm</td>
+        <td>?string</td>
+        <td>always <code>poe2</code> if present</td>
+    </tr>
+    <tr>
+        <td>verified</td>
+        <td>bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>w</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>h</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>icon</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>support</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>stackSize</td>
+        <td>?int</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>maxStackSize</td>
+        <td>?int</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>stackSizeText</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>iconTierText</td>
+        <td>?string</td>
+        <td>usually roman numerals</td>
+    </tr>
+    <tr>
+        <td>league</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>id</td>
+        <td>?string</td>
+        <td>a <i>unique</i> 64 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>gemSockets</td>
+        <td>?array of string</td>
+        <td>PoE2 only; string is always <code>W</code></td>
+    </tr>
+    <tr>
+        <td>influences</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>elder</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>shaper</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>searing</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>tangled</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>memoryItem</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>mutated</td>
+        <td>?bool</td>
+        <td>PoE1: <code>true</code> on Foulborn Uniques, PoE2: <code>true</code> on all Vaal Uniques</td>
+    </tr>
+    <tr class="preview">
+        <td>builtInSupport</td>
+        <td>?string</td>
+        <td>PoE1 only; Supported by level 1 x</td>
+    </tr>
+    <tr class="preview">
+        <td>monsterLevel</td>
+        <td>?int</td>
+        <td>PoE1 only; used for items that always display their monster level</td>
+    </tr>
+    <tr>
+        <td>abyssJewel</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>delve</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>fractured</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>synthesised</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>sockets</td>
+        <td>?array of <a href="#type-ItemSocket">ItemSocket</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>socketedItems</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>typeLine</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>baseType</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>rarity</td>
+        <td>?string</td>
+        <td><code>Normal</code>, <code>Magic</code>, <code>Rare</code>, or <code>Unique</code></td>
+    </tr>
+    <tr>
+        <td>identified</td>
+        <td>bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>itemLevel</td>
+        <td>?int</td>
+        <td>used for items that always display their item level</td>
+    </tr>
+    <tr>
+        <td>unidentifiedTier</td>
+        <td>?int</td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>ilvl</td>
+        <td>int</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>note</td>
+        <td>?string</td>
+        <td>user-generated text</td>
+    </tr>
+    <tr>
+        <td>forum_note</td>
+        <td>?string</td>
+        <td>user-generated text</td>
+    </tr>
+    <tr>
+        <td>lockedToCharacter</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>lockedToAccount</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>duplicated</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>split</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>corrupted</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr class="preview">
+        <td>doubleCorrupted</td>
+        <td>?bool</td>
+        <td>PoE2 only; always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>sanctified</td>
+        <td>?bool</td>
+        <td>PoE2 only; always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>unmodifiable</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>unmodifiableExceptChaos</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>cisRaceReward</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>seaRaceReward</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>thRaceReward</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>properties</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>notableProperties</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>requirements</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>weaponRequirements</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>supportGemRequirements</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>additionalProperties</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>nextLevelRequirements</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>grantedSkills</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>talismanTier</td>
+        <td>?int</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>rewards</td>
+        <td>?array of object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ label</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ rewards</td>
+        <td>dictionary of int</td>
+        <td>the key is a string representing the type of reward. The value is the amount</td>
+    </tr>
+    <tr>
+        <td>secDescrText</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>utilityMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>logbookMods</td>
+        <td>?array of object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td>area name</td>
+    </tr>
+    <tr>
+        <td>↳ faction</td>
+        <td>object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>  ↳ id</td>
+        <td>string</td>
+        <td><code>Faction1</code>, <code>Faction2</code>, <code>Faction3</code>, or <code>Faction4</code></td>
+    </tr>
+    <tr>
+        <td>  ↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ mods</td>
+        <td>array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>enchantMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>runeMods</td>
+        <td>?array of string</td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>scourgeMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>implicitMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>ultimatumMods</td>
+        <td>?array of object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ type</td>
+        <td>string</td>
+        <td>text used to display ultimatum icons</td>
+    </tr>
+    <tr>
+        <td>↳ tier</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>explicitMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr class="preview">
+        <td>bondedMods</td>
+        <td>?array of string</td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>craftedMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>fracturedMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>mutatedMods</td>
+        <td>?array of string</td>
+        <td>PoE1: Foulborn Unique mods, PoE2: Vaal Unique mods</td>
+    </tr>
+    <tr>
+        <td>crucibleMods</td>
+        <td>?array of string</td>
+        <td>only allocated mods are included</td>
+    </tr>
+    <tr>
+        <td>cosmeticMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>veiledMods</td>
+        <td>?array of string</td>
+        <td>random video identifier</td>
+    </tr>
+    <tr>
+        <td>veiled</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>desecratedMods</td>
+        <td>?array of string</td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>desecrated</td>
+        <td>?bool</td>
+        <td>PoE2 only; always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>gemTabs</td>
+        <td>?array of <a href="#type-GemTab">GemTab</a></td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>gemBackground</td>
+        <td>?string</td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>gemSkill</td>
+        <td>?string</td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>descrText</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>flavourText</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>flavourTextNote</td>
+        <td>?string</td>
+        <td>user-generated text</td>
+    </tr>
+    <tr>
+        <td>prophecyText</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>isRelic</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>foilVariation</td>
+        <td>?int</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>replica</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>foreseeing</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>incubatedItem</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ level</td>
+        <td>uint</td>
+        <td>monster level required to progress</td>
+    </tr>
+    <tr>
+        <td>↳ progress</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ total</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>scourged</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ tier</td>
+        <td>uint</td>
+        <td>1-3 for items, 1-10 for maps</td>
+    </tr>
+    <tr>
+        <td>↳ level</td>
+        <td>?uint</td>
+        <td>monster level required to progress</td>
+    </tr>
+    <tr>
+        <td>↳ progress</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ total</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>crucible</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ layout</td>
+        <td>string</td>
+        <td>URL to an image of the tree layout</td>
+    </tr>
+    <tr>
+        <td>↳ nodes</td>
+        <td>dictionary of <a href="#type-CrucibleNode">CrucibleNode</a></td>
+        <td>the key is the string value of the node index</td>
+    </tr>
+    <tr>
+        <td>ruthless</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>frameType</td>
+        <td>?uint as <a href="#type-FrameType">FrameType</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>artFilename</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>hybrid</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ isVaalGem</td>
+        <td>?bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ baseTypeName</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ properties</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ explicitMods</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ secDescrText</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>extended</td>
+        <td>?object</td>
+        <td>only present in the <a href="#publicstashes">Public Stash API</a></td>
+    </tr>
+    <tr>
+        <td>↳ prefixes</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ suffixes</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>x</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>y</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>inventoryId</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>socket</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>colour</td>
+        <td>?string</td>
+        <td><code>S</code>, <code>D</code>, <code>I</code>, or <code>G</code></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-FrameType"><small>enum</small> FrameType <a class="self-link" href="#type-FrameType"></a></h3>
+<div role="doc-subtitle">Referenced by <a href="#type-Item">Item→frameType</a>.</div>
+<br>
+<table>
+<thead>
+    <tr>
+        <th>Value</th>
+        <th>Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>0</td>
+        <td>Normal frame</td>
+    </tr>
+    <tr>
+        <td>1</td>
+        <td>Magic frame</td>
+    </tr>
+    <tr>
+        <td>2</td>
+        <td>Rare frame</td>
+    </tr>
+    <tr>
+        <td>3</td>
+        <td>Unique frame</td>
+    </tr>
+    <tr>
+        <td>4</td>
+        <td>Gem frame</td>
+    </tr>
+    <tr>
+        <td>5</td>
+        <td>Currency frame</td>
+    </tr>
+    <tr>
+        <td>6</td>
+        <td>Divination Card frame</td>
+    </tr>
+    <tr>
+        <td>7</td>
+        <td>Quest frame</td>
+    </tr>
+    <tr>
+        <td>8</td>
+        <td>Prophecy frame (legacy)</td>
+    </tr>
+    <tr>
+        <td>9</td>
+        <td>Foil frame</td>
+    </tr>
+    <tr>
+        <td>10</td>
+        <td>Supporter Foil frame</td>
+    </tr>
+    <tr>
+        <td>11</td>
+        <td>Necropolis frame</td>
+    </tr>
+    <tr>
+        <td>12</td>
+        <td>Gold frame</td>
+    </tr>
+    <tr>
+        <td>13</td>
+        <td>Breach Skill frame</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-ItemSocket"><small>object</small> ItemSocket <a class="self-link" href="#type-ItemSocket"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>group</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>attr</td>
+        <td>?string</td>
+        <td>PoE1 only; <code>S</code>, <code>D</code>, <code>I</code>, <code>G</code>, <code>A</code>, or <code>DV</code></td>
+    </tr>
+    <tr>
+        <td>sColour</td>
+        <td>?string</td>
+        <td>PoE1 only; <code>R</code>, <code>G</code>, <code>B</code>, <code>W</code>, <code>A</code>, or <code>DV</code></td>
+    </tr>
+    <tr>
+        <td>type</td>
+        <td>?string</td>
+        <td>PoE2 only; <code>gem</code>, <code>jewel</code>, or <code>rune</code></td>
+    </tr>
+    <tr>
+        <td>item</td>
+        <td>?string</td>
+        <td>PoE2 only; <code>emerald</code>, <code>sapphire</code>, <code>ruby</code>, <code>rune</code>, <code>soulcore</code>, <code>primaltalisman</code>, <code>vividtalisman</code>, <code>wildtalisman</code>, <code>sacredtalisman</code>, <code>activegem</code>, or <code>supportgem</code></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-ItemProperty"><small>object</small> ItemProperty <a class="self-link" href="#type-ItemProperty"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>values</td>
+        <td>array of array</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ 0</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ 1</td>
+        <td>uint</td>
+        <td>value type</td>
+    </tr>
+    <tr>
+        <td>displayMode</td>
+        <td>?uint as <a href="#type-DisplayMode">DisplayMode</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>progress</td>
+        <td>?double</td>
+        <td>rounded to 2 decimal places</td>
+    </tr>
+    <tr>
+        <td>type</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>suffix</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>icon</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-DisplayMode"><small>enum</small> DisplayMode <a class="self-link" href="#type-DisplayMode"></a></h3>
+<div role="doc-subtitle">Referenced by <a href="#type-ItemProperty">ItemProperty→displayMode</a>.</div>
+<br>
+<table>
+<thead>
+    <tr>
+        <th>Value</th>
+        <th>Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>0</td>
+        <td>Name should be followed by values</td>
+    </tr>
+    <tr>
+        <td>1</td>
+        <td>Values should be followed by name</td>
+    </tr>
+    <tr>
+        <td>2</td>
+        <td>Progress bar</td>
+    </tr>
+    <tr>
+        <td>3</td>
+        <td>Values should be inserted into the string by index</td>
+    </tr>
+    <tr>
+        <td>4</td>
+        <td>Separator</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-Character"><small>object</small> Character <a class="self-link" href="#type-Character"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td>a <i>unique</i> 64 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>realm</td>
+        <td>string</td>
+        <td><code>pc</code>, <code>xbox</code>, or <code>sony</code></td>
+    </tr>
+    <tr>
+        <td>class</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>league</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>level</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>experience</td>
+        <td>uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>ruthless</td>
+        <td>?bool</td>
+        <td>PoE1 only; always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>expired</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>deleted</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>current</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>equipment</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>skills</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td>PoE2 only</td>
+    </tr>
+    <tr>
+        <td>inventory</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td>PoE1 only</td>
+    </tr>
+    <tr>
+        <td>rucksack</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td>PoE1 only</td>
+    </tr>
+    <tr>
+        <td>jewels</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>passives</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ hashes</td>
+        <td>array of uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ hashes_ex</td>
+        <td>array of uint</td>
+        <td>PoE1 only</td>
+    </tr>
+    <tr>
+        <td>↳ mastery_effects</td>
+        <td>dictionary of int</td>
+        <td>PoE1 only; the key is the string value of the mastery node skill hash and the value is the selected effect hash</td>
+    </tr>
+    <tr>
+        <td>↳ specialisations</td>
+        <td>dictionary of array of int</td>
+        <td>PoE2 only; the keys are <code>set1</code>, <code>set2</code>, and <code>set3</code></td>
+    </tr>
+    <tr>
+        <td>↳ skill_overrides</td>
+        <td>dictionary of <a href="#type-PassiveNode">PassiveNode</a></td>
+        <td>the key is the string value of the node identifier being replaced</td>
+    </tr>
+    <tr>
+        <td>↳ bandit_choice</td>
+        <td>?string</td>
+        <td>PoE1 only; one of <code>Kraityn</code>, <code>Alira</code>, <code>Oak</code>, or <code>Eramir</code></td>
+    </tr>
+    <tr>
+        <td>↳ pantheon_major</td>
+        <td>?string</td>
+        <td>PoE1 only; one of <code>TheBrineKing</code>, <code>Arakaali</code>, <code>Solaris</code>, or <code>Lunaris</code></td>
+    </tr>
+    <tr>
+        <td>↳ pantheon_minor</td>
+        <td>?string</td>
+        <td>PoE1 only; one of <code>Abberath</code>, <code>Gruthkul</code>, <code>Yugul</code>, <code>Shakari</code>, <code>Tukohama</code>, <code>Ralakesh</code>, <code>Garukhan</code>, or <code>Ryslatha</code></td>
+    </tr>
+    <tr>
+        <td>↳ jewel_data</td>
+        <td>dictionary of <a href="#type-ItemJewelData">ItemJewelData</a></td>
+        <td>the key is the string value of the <code>x</code> property of an item from the <code>jewels</code> array in this request</td>
+    </tr>
+    <tr class="preview">
+        <td>↳ quest_stats</td>
+        <td>?array of string</td>
+        <td>PoE2 only; passives granted via quests</td>
+    </tr>
+    <tr>
+        <td>↳ alternate_ascendancy</td>
+        <td>?string</td>
+        <td>PoE1 only; Bloodline class name</td>
+    </tr>
+    <tr>
+        <td>metadata</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ version</td>
+        <td>?string</td>
+        <td>game version for the character's realm</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-ItemJewelData"><small>object</small> ItemJewelData <a class="self-link" href="#type-ItemJewelData"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>type</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>radius</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>radiusMin</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>radiusVisual</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>subgraph</td>
+        <td>?object</td>
+        <td>only present on cluster jewels</td>
+    </tr>
+    <tr>
+        <td>↳ groups</td>
+        <td>dictionary of <a href="#type-PassiveGroup">PassiveGroup</a></td>
+        <td>the key is the string value of the group id</td>
+    </tr>
+    <tr>
+        <td>↳ nodes</td>
+        <td>dictionary of <a href="#type-PassiveNode">PassiveNode</a></td>
+        <td>the key is the string value of the node identifier</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-StashTab"><small>object</small> StashTab <a class="self-link" href="#type-StashTab"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td>a 10 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>parent</td>
+        <td>?string</td>
+        <td>a 10 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>folder</td>
+        <td>?string</td>
+        <td>a 10 digit hexadecimal string</td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>type</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>index</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>metadata</td>
+        <td>object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ public</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>↳ folder</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>↳ colour</td>
+        <td>?string</td>
+        <td>6 digit hex colour</td>
+    </tr>
+    <tr>
+        <td>↳ map</td>
+        <td>?object</td>
+        <td>various game specific properties</td>
+    </tr>
+    <tr>
+        <td>children</td>
+        <td>?array of <a href="#type-StashTab">StashTab</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>items</td>
+        <td>?array of <a href="#type-Item">Item</a></td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-LeagueAccount"><small>object</small> LeagueAccount <a class="self-link" href="#type-LeagueAccount"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr class="deprecated">
+        <td>atlas_passives</td>
+        <td>?object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ hashes</td>
+        <td>array of uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>atlas_passive_trees</td>
+        <td>array of object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ hashes</td>
+        <td>array of uint</td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-ItemFilter"><small>object</small> ItemFilter <a class="self-link" href="#type-ItemFilter"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>id</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>filter_name</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>realm</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>description</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>version</td>
+        <td>string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>type</td>
+        <td>string</td>
+        <td>either <code>Normal</code> or <code>Ruthless</code></td>
+    </tr>
+    <tr>
+        <td>public</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>filter</td>
+        <td>?string</td>
+        <td>not present when listing all filters</td>
+    </tr>
+    <tr>
+        <td>validation</td>
+        <td>?object</td>
+        <td>not present when listing all filters</td>
+    </tr>
+    <tr>
+        <td>↳ valid</td>
+        <td>bool</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ version</td>
+        <td>?string</td>
+        <td>game version</td>
+    </tr>
+    <tr>
+        <td>↳ validated</td>
+        <td>?string</td>
+        <td>date time (ISO8601)</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-PassiveGroup"><small>object</small> PassiveGroup <a class="self-link" href="#type-PassiveGroup"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>x</td>
+        <td>float</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>y</td>
+        <td>float</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>orbits</td>
+        <td>array of uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>isProxy</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>proxy</td>
+        <td>?string</td>
+        <td>identifier of the placeholder node</td>
+    </tr>
+    <tr>
+        <td>nodes</td>
+        <td>array of string</td>
+        <td>the node identifiers associated with this group</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-PassiveNode"><small>object</small> PassiveNode <a class="self-link" href="#type-PassiveNode"></a></h3>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>skill</td>
+        <td>?uint</td>
+        <td>skill hash</td>
+    </tr>
+    <tr>
+        <td>name</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>icon</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>isKeystone</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isNotable</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isMastery</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>inactiveIcon</td>
+        <td>?string</td>
+        <td>inactive mastery image</td>
+    </tr>
+    <tr>
+        <td>activeIcon</td>
+        <td>?string</td>
+        <td>active mastery image</td>
+    </tr>
+    <tr>
+        <td>activeEffectImage</td>
+        <td>?string</td>
+        <td>active mastery or tattoo background image</td>
+    </tr>
+    <tr>
+        <td>masteryEffects</td>
+        <td>?array of object</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ effect</td>
+        <td>uint</td>
+        <td>effect hash</td>
+    </tr>
+    <tr>
+        <td>↳ stats</td>
+        <td>array of string</td>
+        <td>stat descriptions</td>
+    </tr>
+    <tr>
+        <td>↳ reminderText</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>isBlighted</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isTattoo</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isProxy</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isJewelSocket</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>expansionJewel</td>
+        <td>?object</td>
+        <td>cluster jewel information</td>
+    </tr>
+    <tr>
+        <td>↳ size</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ index</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>↳ proxy</td>
+        <td>?uint</td>
+        <td>the proxy node identifier</td>
+    </tr>
+    <tr>
+        <td>↳ parent</td>
+        <td>?uint</td>
+        <td>the parent node identifier</td>
+    </tr>
+    <tr>
+        <td>recipe</td>
+        <td>?array of string</td>
+        <td>
+            components required for Blight crafting this node.<br>
+            each string is one of <code>ClearOil</code>, <code>SepiaOil</code>, <code>AmberOil</code>, <code>VerdantOil</code>,<br>
+            <code>TealOil</code>, <code>AzureOil</code>, <code>IndigoOil</code>, <code>VioletOil</code>, <code>CrimsonOil</code>,<br>
+            <code>BlackOil</code>, <code>OpalescentOil</code>, <code>SilverOil</code>, <code>GoldenOil</code>, or <code>PrismaticOil</code>
+        </td>
+    </tr>
+    <tr>
+        <td>grantedStrength</td>
+        <td>?uint</td>
+        <td>sum of stats on this node that grant strength</td>
+    </tr>
+    <tr>
+        <td>grantedDexterity</td>
+        <td>?uint</td>
+        <td>sum of stats on this node that grant dexterity</td>
+    </tr>
+    <tr>
+        <td>grantedIntelligence</td>
+        <td>?uint</td>
+        <td>sum of stats on this node that grant intelligence</td>
+    </tr>
+    <tr>
+        <td>ascendancyName</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>isAscendancyStart</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isMultipleChoice</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isMultipleChoiceOption</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>grantedPassivePoints</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>stats</td>
+        <td>?array of string</td>
+        <td>stat descriptions</td>
+    </tr>
+    <tr>
+        <td>reminderText</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>flavourText</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>classStartIndex</td>
+        <td>?uint</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>group</td>
+        <td>?string</td>
+        <td>the key value to look up in the groups table</td>
+    </tr>
+    <tr>
+        <td>orbit</td>
+        <td>?uint</td>
+        <td>the orbit this node occupies within it's group</td>
+    </tr>
+    <tr>
+        <td>orbitIndex</td>
+        <td>?uint</td>
+        <td>the index of this node in the group's orbit</td>
+    </tr>
+    <tr>
+        <td>out</td>
+        <td>array of string</td>
+        <td>node identifiers of nodes this one connects to</td>
+    </tr>
+    <tr>
+        <td>in</td>
+        <td>array of string</td>
+        <td>node identifiers of nodes connected to this one</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-CrucibleNode"><small>object</small> CrucibleNode <a class="self-link" href="#type-CrucibleNode"></a></h3>
+<div role="doc-subtitle">Referenced by <a href="#type-Item">Item→crucible</a>.</div>
+<br>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>skill</td>
+        <td>?uint</td>
+        <td>mod hash</td>
+    </tr>
+    <tr>
+        <td>tier</td>
+        <td>?uint</td>
+        <td>mod tier</td>
+    </tr>
+    <tr>
+        <td>icon</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>allocated</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isNotable</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>isReward</td>
+        <td>?bool</td>
+        <td>always <code>true</code> if present</td>
+    </tr>
+    <tr>
+        <td>stats</td>
+        <td>?array of string</td>
+        <td>stat descriptions</td>
+    </tr>
+    <tr>
+        <td>reminderText</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>orbit</td>
+        <td>?uint</td>
+        <td>the column this node occupies</td>
+    </tr>
+    <tr>
+        <td>orbitIndex</td>
+        <td>?uint</td>
+        <td>the node's position within the column</td>
+    </tr>
+    <tr>
+        <td>out</td>
+        <td>array of string</td>
+        <td>node identifiers of nodes this one connects to</td>
+    </tr>
+    <tr>
+        <td>in</td>
+        <td>array of string</td>
+        <td>node identifiers of nodes connected to this one</td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-GemTab"><small>object</small> GemTab <a class="self-link" href="#type-GemTab"></a></h3>
+<div role="doc-subtitle">Referenced by <a href="#type-Item">Item→gemTabs</a>.</div>
+<br>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>name</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>pages</td>
+        <td>array of <a href="#type-GemPage">GemPage</a></td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+<h3 id="type-GemPage"><small>object</small> GemPage <a class="self-link" href="#type-GemPage"></a></h3>
+<div role="doc-subtitle">Referenced by <a href="#type-GemTab">GemTab→pages</a>.</div>
+<br>
+<table>
+<thead>
+    <tr>
+        <th>Key</th>
+        <th>Value Type</th>
+        <th>Extra Information</th>
+    </tr>
+</thead>
+<tbody>
+    <tr>
+        <td>skillName</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>description</td>
+        <td>?string</td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>properties</td>
+        <td>?array of <a href="#type-ItemProperty">ItemProperty</a></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>stats</td>
+        <td>?array of string</td>
+        <td></td>
+    </tr>
+</tbody>
+</table>
+</article>
+<article id="extra">
+<h2>Extra Definitions (PoE1 only) <a class="self-link" href="#extra"></a></h2>
+<p>Some data, such as PoE1 Passive Skill Tree URLs, are stored in a serialised form. This section will attempt to define such structures.</p>
+<h3 id="extra-PassiveSkillTreeUrl">Passive Skill Tree URLs <a class="self-link" href="#extra-PassiveSkillTreeUrl"></a></h3>
+<p>
+    Passive Tree URLs can be generated and loaded by the official Passive Skill Tree viewer.<br>
+    The data in the URL is a base64url-encoded (as described in <a href="https://datatracker.ietf.org/doc/html/rfc4648#section-5">section 5 of RFC4648</a>) binary stream in the formats described below.<br>
+    Example: <code class="prettyprint prettyprinted"><span class="kwd">https://www.pathofexile.com/passive-skill-tree/</span><span class="pun">3.15.0/</span><span class="lit">AAAABQMADAQHES0fAiycLR9Ms18qg_eOvpLB37Dr5AA=</span></code>
+</p>
+<h4>Atlas Skill Tree</h4>
+<p>
+    The Atlas Skill Tree introduced in Path of Exile: Siege of the Atlas (3.17.0) follows the same format as the regular passive tree and can also be loaded by the official Atlas Skill Tree viewer.<br>
+    The <code>class</code> and <code>ascendancy</code> bytes should be set to 0, and the extended and mastery hash lists should be empty.<br>
+    Example: <code class="prettyprint prettyprinted"><span class="kwd">https://www.pathofexile.com/atlas-skill-tree/</span><span class="pun">ruthless/</span><span class="lit">AAAABgAAAfdPAAA=</span></code>
+</p>
+<h4>Version 6.2</h4>
+<p>
+    For Path of Exile: Keepers of the Flame (3.27.0) we have once again repurposed the <code>ascendancy</code> field to also include the chosen Bloodline.<br>
+    The six left-most bits are now used for Bloodlines as well as (historical) Wildwood Ascendancies. For ease of understanding, here are some examples:
+    </p><pre><code class="prettyprint prettyprinted"><span class="pun">Bloodline</span> | <span class="lit">Ascendancy</span>
+<span class="pun">00 00 00</span>  | <span class="lit">00</span></code></pre>
+    <table style="float: left; margin-right: 20px">
+        <thead>
+            <tr>
+                <th>Value</th>
+                <th>Bits</th>
+                <th>Ascendancy</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>0</td>
+                <td>## ## ## 00</td>
+                <td></td>
+            </tr>
+            <tr>
+                <td>1</td>
+                <td>## ## ## 01</td>
+                <td>First Ascendancy</td>
+            </tr>
+            <tr>
+                <td>2</td>
+                <td>## ## ## 10</td>
+                <td>Second Ascendancy</td>
+            </tr>
+            <tr>
+                <td>3</td>
+                <td>## ## ## 11</td>
+                <td>Third Ascendancy</td>
+            </tr>
+        </tbody>
+    </table>
+    <table>
+        <thead>
+            <tr>
+                <th>Value (once shifted)</th>
+                <th>Bits</th>
+                <th>Bloodline</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>1</td>
+                <td>00 00 01 ##</td>
+                <td>Warden</td>
+            </tr>
+            <tr>
+                <td>2</td>
+                <td>00 00 10 ##</td>
+                <td>Warlock</td>
+            </tr>
+            <tr>
+                <td>3</td>
+                <td>00 00 11 ##</td>
+                <td>Primalist</td>
+            </tr>
+            <tr>
+                <td>4</td>
+                <td>00 01 00 ##</td>
+                <td>Chaos Bloodline</td>
+            </tr>
+            <tr>
+                <td>5</td>
+                <td>00 01 01 ##</td>
+                <td>Oshabi Bloodline</td>
+            </tr>
+            <tr>
+                <td>6</td>
+                <td>00 01 10 ##</td>
+                <td>Nameless Bloodline</td>
+            </tr>
+            <tr>
+                <td>7</td>
+                <td>00 01 11 ##</td>
+                <td>... Bloodline</td>
+            </tr>
+        </tbody>
+    </table>
+    <pre><code class="prettyprint prettyprinted"><span class="com">// (in JavaScript)</span>
+<span class="kwd">const</span> ascendancyData <span class="pun">=</span> <span class="lit">0x1B</span>; <span class="com">// (unsigned 8-bit) 27 or (binary) 00 01 10 11</span>
+<span class="kwd">const</span> ascendancy <span class="pun">=</span> ascendancyData <span class="pun">&amp;</span> <span class="lit">0x3</span>; <span class="com">// 3, the Third Ascendancy of the class</span>
+<span class="kwd">const</span> bloodline <span class="pun">=</span> ascendancyData <span class="pun">&gt;&gt;&gt;</span> <span class="lit">2</span>; <span class="com">// 6, Nameless Bloodline</span></code></pre>
+    <em>This is not a true version bump, as all existing links are backwards-compatible.</em>
+<p></p>
+<h4>Version 6.1</h4>
+<p>This version has been superceded by version 6.2.</p>
+<h4>Version 6</h4>
+<p>
+    This version was introduced with Path of Exile: Scourge (3.16.0) in order to handle the new mastery nodes.<br>
+    The mastery effect pairs uint32 is actually two uint16 numbers: the first is the node skill hash and the second is the chosen effect hash for this node.
+    </p><pre><code class="prettyprint prettyprinted"><span class="com">// (in JavaScript)</span>
+<span class="kwd">const</span> masteryEffectPair <span class="pun">=</span> <span class="lit">0x910ce685</span>; <span class="com">// (unsigned 32-bit) 2433541765 or (signed 32-bit) -1861425531</span>
+<span class="kwd">const</span> nodeHash <span class="pun">=</span> masteryEffectPair <span class="pun">&amp;</span> <span class="lit">0xffff</span>; <span class="com">// 59013 (unsigned 16-bit) or 0xe685</span>
+<span class="kwd">const</span> effectHash <span class="pun">=</span> masteryEffectPair <span class="pun">&gt;&gt;&gt;</span> <span class="lit">16</span>; <span class="com">// 37132 (unsigned 16-bit) or 0x910c</span></code></pre>
+<p></p>
+<table>
+<tbody>
+    <tr>
+        <td>uint32</td>
+        <td>version (always 6)</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>class</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>ascendancy</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>count of node skill hashes (n)</td>
+    </tr>
+    <tr>
+        <td>uint16[n]</td>
+        <td>hashes[n]</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>count of extended (cluster jewel) node skill hashes (m)</td>
+    </tr>
+    <tr>
+        <td>uint16[m]</td>
+        <td>extended hashes[m]</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>count of mastery effect pairs (o)</td>
+    </tr>
+    <tr>
+        <td>uint32[o]</td>
+        <td>mastery effect pairs[o]</td>
+    </tr>
+</tbody>
+</table>
+<h4>Version 5</h4>
+<p>
+    This version was introduced during Path of Exile: Ritual (3.13.0) in order to support cluster jewels.
+    We currently don't support rendering cluster jewels ourselves but, with this version, provide the character data required to do so.
+</p>
+<table>
+<tbody>
+    <tr>
+        <td>uint32</td>
+        <td>version (always 5)</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>class</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>ascendancy</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>count of hashes (n)</td>
+    </tr>
+    <tr>
+        <td>uint16[n]</td>
+        <td>hashes[n]</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>count of extended hashes (m)</td>
+    </tr>
+    <tr>
+        <td>uint16[m]</td>
+        <td>extended hashes[m]</td>
+    </tr>
+</tbody>
+</table>
+<h4>Version 4</h4>
+<table>
+<tbody>
+    <tr>
+        <td>uint32</td>
+        <td>version (always 4)</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>class</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>ascendancy</td>
+    </tr>
+    <tr>
+        <td>uint8</td>
+        <td>fullscreen (0 or 1)</td>
+    </tr>
+    <tr>
+        <td>uint16[]</td>
+        <td>hashes[]</td>
+    </tr>
+</tbody>
+</table>
+</article>    </main>

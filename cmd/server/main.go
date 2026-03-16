@@ -138,7 +138,22 @@ func main() {
 		tradeClient := trade.NewClient(tradeCfg)
 		tradeCache = trade.NewTradeCache(tradeCfg.CacheMaxEntries)
 		tradePub := &mercure.HubPublisher{URL: mercureURL, Secret: mercureSecret}
-		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache)
+
+		// Divine rate function: queries latest currency snapshot from DB.
+		// Cached in a goroutine-safe variable, refreshed on each call (query is fast).
+		divineRateFn := func() float64 {
+			var rate float64
+			err := pool.QueryRow(context.Background(),
+				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+			).Scan(&rate)
+			if err != nil {
+				slog.Warn("trade: failed to get divine rate, using 0", "error", err)
+				return 0
+			}
+			return rate
+		}
+
+		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn)
 
 		go tradeGate.Run(ctx)
 		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
