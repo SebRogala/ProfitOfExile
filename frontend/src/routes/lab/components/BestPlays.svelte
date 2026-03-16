@@ -45,6 +45,8 @@
 		return '0';
 	}
 
+	let historyError = $state(false);
+
 	async function toggleRow(i: number) {
 		if (expandedRow === i) {
 			expandedRow = null;
@@ -54,9 +56,12 @@
 		expandedRow = i;
 		expandedHistory = [];
 		historyLoading = true;
+		historyError = false;
 		const gem = sorted[i];
 		try {
 			expandedHistory = await fetchSignalHistory(gem.name, gem.variant);
+		} catch {
+			historyError = true;
 		} finally {
 			historyLoading = false;
 		}
@@ -166,6 +171,8 @@
 											<span class="hist-listings">{h.listings} listings</span>
 										</div>
 									{/each}
+								{:else if historyError}
+									<span class="hist-none">History unavailable</span>
 								{:else}
 									<span class="hist-none">No signal changes recorded</span>
 								{/if}
