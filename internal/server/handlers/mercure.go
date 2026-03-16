@@ -42,7 +42,7 @@ func signSubscriberToken(secret string) (string, error) {
 	now := time.Now()
 	claims := map[string]any{
 		"mercure": map[string]any{
-			"subscribe": []string{"poe/analysis/*"},
+			"subscribe": []string{"poe/analysis/*", "poe/trade/*"},
 		},
 		"iat": now.Unix(),
 		"exp": now.Add(30 * time.Minute).Unix(),
