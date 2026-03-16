@@ -56,6 +56,7 @@ type TradeLookupResult struct {
 	Listings     []TradeListingDetail `json:"listings"`
 	Signals      TradeSignals         `json:"signals"`
 	DivinePrice  float64              `json:"divinePrice"`  // divine→chaos rate used for normalization
+	TradeURL     string               `json:"tradeUrl"`     // link to trade site results page
 	FetchedAt    time.Time            `json:"fetchedAt"`
 }
 
@@ -154,7 +155,7 @@ func NormalizeToChaos(price float64, currency string, divineRate float64) float6
 	return price
 }
 
-func BuildResult(gem, variant string, sr SearchResponse, listings []TradeListingDetail, divineRate float64) *TradeLookupResult {
+func BuildResult(gem, variant, league string, sr SearchResponse, listings []TradeListingDetail, divineRate float64) *TradeLookupResult {
 	// Normalize all listing prices to chaos.
 	for i := range listings {
 		listings[i].ChaosPrice = NormalizeToChaos(listings[i].Price, listings[i].Currency, divineRate)
@@ -165,12 +166,18 @@ func BuildResult(gem, variant string, sr SearchResponse, listings []TradeListing
 		return listings[i].ChaosPrice < listings[j].ChaosPrice
 	})
 
+	tradeURL := ""
+	if sr.QueryID != "" && league != "" {
+		tradeURL = "https://www.pathofexile.com/trade/search/" + league + "/" + sr.QueryID
+	}
+
 	result := &TradeLookupResult{
 		Gem:         gem,
 		Variant:     variant,
 		Total:       sr.Total,
 		Listings:    listings,
 		DivinePrice: divineRate,
+		TradeURL:    tradeURL,
 		FetchedAt:   time.Now(),
 	}
 

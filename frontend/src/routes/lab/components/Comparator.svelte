@@ -199,6 +199,23 @@
 		return Number.isInteger(v) ? v.toString() : v.toFixed(1);
 	}
 
+	function baseGemName(name: string): string {
+		const idx = name.lastIndexOf(' of ');
+		return idx > 0 ? name.substring(0, idx) : name;
+	}
+
+	function baseGemTradeUrl(name: string): string {
+		// Links to the trade site search page — user will need to set filters manually
+		// but the gem name is pre-identified for quick lookup
+		const base = baseGemName(name);
+		return `https://www.pathofexile.com/trade/search/Mirage?q=${encodeURIComponent(JSON.stringify({ query: { type: base, status: { option: "securable" }, filters: { type_filters: { filters: { category: { option: "gem" } } } } }, sort: { price: "asc" } }))}`;
+	}
+
+	function refreshTradeData(gem: string) {
+		tradeData[gem] = null;
+		fetchTradeData(gem);
+	}
+
 	function concentrationClass(c: TradeSignals['sellerConcentration']): string {
 		if (c === 'MONOPOLY') return 'signal-red';
 		if (c === 'CONCENTRATED') return 'signal-yellow';
@@ -371,6 +388,12 @@
 									{#if td.signals.priceOutlier}
 										<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
 									{/if}
+									<span class="trade-actions">
+										<button class="trade-action-btn" title="Refresh trade data" onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
+										{#if gem.name.includes(' of ')}
+											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
+										{/if}
+									</span>
 								</div>
 								{#if td.listings.length > 0}
 									<div class="trade-listings-table">
@@ -811,6 +834,32 @@
 		align-items: baseline;
 		gap: 8px;
 		flex-wrap: wrap;
+	}
+	.trade-actions {
+		display: flex;
+		gap: 4px;
+		margin-left: auto;
+	}
+	.trade-action-btn {
+		background: rgba(42, 45, 55, 0.6);
+		border: 1px solid var(--color-lab-border);
+		color: var(--color-lab-text-secondary);
+		padding: 1px 6px;
+		font-size: 0.7rem;
+		cursor: pointer;
+		font-family: inherit;
+		text-decoration: none;
+		line-height: 1.4;
+	}
+	.trade-action-btn:hover {
+		color: var(--color-lab-text);
+		border-color: var(--color-lab-text-secondary);
+	}
+	.trade-base-link {
+		color: var(--color-lab-blue, #3b82f6);
+	}
+	.trade-base-link:hover {
+		color: var(--color-lab-text);
 	}
 	.trade-floor-sep {
 		font-size: 1.125rem;

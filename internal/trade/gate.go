@@ -170,7 +170,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.limiter.Record("fetch")
 
 	// Build result, cache it, deliver to all fan-out waiters.
-	result := BuildResult(req.Gem, req.Variant, *searchResp, listings, g.divineRate())
+	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, g.divineRate())
 	g.cache.Set(key, result)
 	g.deliverResult(key, result)
 	g.publishReady(ctx, req, result)
