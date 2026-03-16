@@ -11,9 +11,12 @@
 		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
+	import { lookupTrade, pollTradeResult, type TradeLookupResult } from '$lib/tradeApi';
 
 	import Header from './components/Header.svelte';
 	import Comparator from './components/Comparator.svelte';
+	import SessionQueue from './components/SessionQueue.svelte';
+	import type { QueueItem } from './components/SessionQueue.svelte';
 	import WindowAlerts from './components/WindowAlerts.svelte';
 	import BestPlays from './components/BestPlays.svelte';
 	import ByVariant from './components/ByVariant.svelte';
@@ -31,6 +34,114 @@
 	let mercure = $state<MercureConnection | null>(null);
 	let isDedication = $derived(selectedLab === 'Dedication');
 	let refreshKey = $state(0);
+
+	// --- Session Queue state ---
+	let sessionQueue = $state<QueueItem[]>([]);
+	let autoClearMinutes = $state(
+		typeof window !== 'undefined'
+			? parseInt(localStorage.getItem('poe-autoclear-min') || '2')
+			: 2
+	);
+	let autoClearSecondsLeft = $state(0);
+	let autoClearTimeout: ReturnType<typeof setTimeout> | null = null;
+	let autoClearInterval: ReturnType<typeof setInterval> | null = null;
+
+	function resetAutoClearTimer() {
+		if (autoClearTimeout) clearTimeout(autoClearTimeout);
+		if (autoClearInterval) clearInterval(autoClearInterval);
+		const totalSeconds = autoClearMinutes * 60;
+		autoClearSecondsLeft = totalSeconds;
+		autoClearInterval = setInterval(() => {
+			autoClearSecondsLeft = Math.max(0, autoClearSecondsLeft - 1);
+		}, 1000);
+		autoClearTimeout = setTimeout(() => {
+			sessionQueue = [];
+			if (autoClearInterval) clearInterval(autoClearInterval);
+			autoClearSecondsLeft = 0;
+		}, totalSeconds * 1000);
+	}
+
+	function handleQueueGem(gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) {
+		if (sessionQueue.some((q) => q.gem === gem && q.variant === variant)) return;
+
+		const item: QueueItem = {
+			gem,
+			variant,
+			pickedAt: new Date(),
+			snapshotROI: roi,
+			snapshotFloor: tradeData?.priceFloor ?? 0,
+			snapshotFloorOriginal: tradeData?.listings[0]?.price ?? tradeData?.priceFloor ?? 0,
+			snapshotCurrency: tradeData?.listings[0]?.currency ?? 'chaos',
+			snapshotDivineRate: tradeData?.divinePrice ?? 0,
+		};
+
+		sessionQueue = [...sessionQueue, item];
+		resetAutoClearTimer();
+	}
+
+	async function handleRefreshQueue() {
+		// Mark all items as refreshing
+		sessionQueue = sessionQueue.map((item) => ({ ...item, refreshing: true }));
+
+		await Promise.allSettled(
+			sessionQueue.map(async (item, idx) => {
+				try {
+					const { immediate, requestId } = await lookupTrade(item.gem, item.variant, true);
+					let result: TradeLookupResult | null = immediate;
+
+					if (!result && requestId) {
+						result = await pollTradeResult(item.gem, item.variant);
+					}
+
+					if (result) {
+						sessionQueue = sessionQueue.map((q, i) =>
+							i === idx
+								? {
+										...q,
+										currentFloor: result!.priceFloor,
+										currentFloorOriginal: result!.listings[0]?.price ?? result!.priceFloor,
+										currentCurrency: result!.listings[0]?.currency ?? 'chaos',
+										priceDelta: result!.priceFloor - q.snapshotFloor,
+										refreshing: false,
+									}
+								: q
+						);
+					} else {
+						sessionQueue = sessionQueue.map((q, i) =>
+							i === idx ? { ...q, refreshing: false } : q
+						);
+					}
+				} catch {
+					sessionQueue = sessionQueue.map((q, i) =>
+						i === idx ? { ...q, refreshing: false } : q
+					);
+				}
+			})
+		);
+
+		resetAutoClearTimer();
+	}
+
+	function handleRemoveFromQueue(index: number) {
+		sessionQueue = sessionQueue.filter((_, i) => i !== index);
+	}
+
+	function handleClearQueue() {
+		sessionQueue = [];
+		if (autoClearTimeout) clearTimeout(autoClearTimeout);
+		if (autoClearInterval) clearInterval(autoClearInterval);
+		autoClearTimeout = null;
+		autoClearInterval = null;
+		autoClearSecondsLeft = 0;
+	}
+
+	function handleAutoClearChange(mins: number) {
+		autoClearMinutes = mins;
+		if (typeof window !== 'undefined') {
+			localStorage.setItem('poe-autoclear-min', String(mins));
+		}
+		resetAutoClearTimer();
+	}
 
 	async function loadAll() {
 		try {
@@ -104,7 +215,16 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else if !loading}
-		<Comparator league={status?.league || ''} {refreshKey} />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} />
+
+		<SessionQueue
+			queue={sessionQueue}
+			autoClearSeconds={autoClearSecondsLeft}
+			onRemove={handleRemoveFromQueue}
+			onClear={handleClearQueue}
+			onRefresh={handleRefreshQueue}
+			onAutoClearChange={handleAutoClearChange}
+		/>
 
 		<WindowAlerts alerts={windowAlerts} />
 
