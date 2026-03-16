@@ -12,6 +12,10 @@ export interface StatusData {
 	collectorUptime: string;
 }
 
+export type PriceTier = 'TOP' | 'MID' | 'LOW';
+export type SellUrgency = 'SELL_NOW' | 'UNDERCUT' | 'HOLD' | 'WAIT' | '';
+export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNLIKELY';
+
 export interface GemPlay {
 	name: string;
 	variant: string;
@@ -31,6 +35,12 @@ export interface GemPlay {
 	transPrice: number;
 	sparkline: number[];
 	signalHistory: SignalTransition[];
+	priceTier: PriceTier;
+	tierAction: string;
+	sellUrgency: SellUrgency;
+	sellReason: string;
+	sellability: number;
+	sellabilityLabel: SellabilityLabel;
 }
 
 export interface SignalTransition {
@@ -104,6 +114,12 @@ export interface CompareGem {
 	sparkline: number[];
 	signalHistory: SignalTransition[];
 	recommendation: 'BEST' | 'OK' | 'AVOID';
+	priceTier: PriceTier;
+	tierAction: string;
+	sellUrgency: SellUrgency;
+	sellReason: string;
+	sellability: number;
+	sellabilityLabel: SellabilityLabel;
 }
 
 // --- Mock Data ---
@@ -154,10 +170,36 @@ function makeHistory(): SignalTransition[] {
 
 const SIGNALS = ['STABLE', 'RISING', 'FALLING', 'HERD', 'DUMPING', 'RECOVERY', 'TRAP'];
 const WINDOWS = ['CLOSED', 'BREWING', 'OPENING', 'OPEN', 'CLOSING', 'EXHAUSTED'];
-const ADVANCED = ['', '', '', 'COMEBACK', 'POTENTIAL', 'PRICE_MANIPULATION'];
+const ADVANCED = ['', '', '', 'COMEBACK', 'POTENTIAL', 'PRICE_MANIPULATION', 'BREAKOUT'];
 const COLORS: Array<'RED' | 'GREEN' | 'BLUE'> = ['RED', 'GREEN', 'BLUE'];
 const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 const LIQUIDITY = ['HIGH', 'MED', 'LOW'];
+const TIERS: PriceTier[] = ['TOP', 'MID', 'LOW'];
+const SELL_URGENCIES: SellUrgency[] = ['', '', '', 'HOLD', 'WAIT', 'UNDERCUT', 'SELL_NOW'];
+
+const TIER_ACTIONS: Record<PriceTier, string[]> = {
+	TOP: ['SELL — move is over', 'WATCH — early stage, monitor closely', 'RIDE — strong momentum'],
+	MID: ['CAUTIOUS — may reverse', 'SELL — exit position', 'HOLD — building momentum'],
+	LOW: ['UNRELIABLE — low-value windows are traps', 'SKIP — not worth the risk', 'WAIT — needs confirmation'],
+};
+
+const SELL_REASONS: Record<string, string> = {
+	SELL_NOW: 'Price crashing — sell at any price before further drop',
+	UNDERCUT: 'Market cooling — undercut 10-15% for fast sale',
+	HOLD: 'Price rising steadily — no rush to sell',
+	WAIT: 'No clear signal — wait for better conditions',
+};
+
+function makeSellability(): { sellability: number; sellabilityLabel: SellabilityLabel } {
+	const s = Math.floor(Math.random() * 100);
+	let label: SellabilityLabel;
+	if (s >= 80) label = 'FAST SELL';
+	else if (s >= 60) label = 'GOOD';
+	else if (s >= 40) label = 'MODERATE';
+	else if (s >= 20) label = 'SLOW';
+	else label = 'UNLIKELY';
+	return { sellability: s, sellabilityLabel: label };
+}
 
 function pickRandom<T>(arr: T[]): T {
 	return arr[Math.floor(Math.random() * arr.length)];
@@ -167,6 +209,9 @@ function generatePlay(name: string, variant?: string): GemPlay {
 	const basePrice = 5 + Math.floor(Math.random() * 80);
 	const transPrice = basePrice + 20 + Math.floor(Math.random() * 600);
 	const roi = transPrice - basePrice;
+	const priceTier = pickRandom(TIERS);
+	const sellUrgency = pickRandom(SELL_URGENCIES);
+	const { sellability, sellabilityLabel } = makeSellability();
 	return {
 		name,
 		variant: variant || pickRandom(VARIANTS),
@@ -186,6 +231,12 @@ function generatePlay(name: string, variant?: string): GemPlay {
 		transPrice,
 		sparkline: makeSparkline(),
 		signalHistory: makeHistory(),
+		priceTier,
+		tierAction: pickRandom(TIER_ACTIONS[priceTier]),
+		sellUrgency,
+		sellReason: sellUrgency ? SELL_REASONS[sellUrgency] || '' : '',
+		sellability,
+		sellabilityLabel,
 	};
 }
 
@@ -215,16 +266,33 @@ function getBestPlays(): GemPlay[] {
 		_bestPlays[0].signal = 'RISING';
 		_bestPlays[0].windowSignal = 'OPEN';
 		_bestPlays[0].advancedSignal = '';
+		_bestPlays[0].sellUrgency = 'HOLD';
+		_bestPlays[0].sellReason = SELL_REASONS.HOLD;
+		_bestPlays[0].priceTier = 'TOP';
+		_bestPlays[0].tierAction = 'RIDE — strong momentum';
+		_bestPlays[0].sellability = 92;
+		_bestPlays[0].sellabilityLabel = 'FAST SELL';
 		_bestPlays[1].signal = 'STABLE';
 		_bestPlays[1].windowSignal = 'BREWING';
 		_bestPlays[1].advancedSignal = 'POTENTIAL';
+		_bestPlays[1].priceTier = 'MID';
+		_bestPlays[1].tierAction = 'HOLD — building momentum';
 		_bestPlays[2].signal = 'RISING';
 		_bestPlays[2].advancedSignal = 'COMEBACK';
+		_bestPlays[2].sellUrgency = 'UNDERCUT';
+		_bestPlays[2].sellReason = SELL_REASONS.UNDERCUT;
 		_bestPlays[3].signal = 'FALLING';
 		_bestPlays[3].windowSignal = 'CLOSING';
+		_bestPlays[3].sellUrgency = 'SELL_NOW';
+		_bestPlays[3].sellReason = SELL_REASONS.SELL_NOW;
+		_bestPlays[3].sellability = 12;
+		_bestPlays[3].sellabilityLabel = 'UNLIKELY';
 		_bestPlays[4].signal = 'HERD';
 		_bestPlays[5].signal = 'DUMPING';
+		_bestPlays[5].sellUrgency = 'SELL_NOW';
+		_bestPlays[5].sellReason = SELL_REASONS.SELL_NOW;
 		_bestPlays[6].signal = 'RECOVERY';
+		_bestPlays[6].advancedSignal = 'BREAKOUT';
 	}
 	return _bestPlays;
 }
@@ -348,22 +416,34 @@ export async function fetchGemNames(query: string): Promise<string[]> {
 
 export async function fetchCompare(gems: string[], variant: string): Promise<CompareGem[]> {
 	const recommendations: Array<'BEST' | 'OK' | 'AVOID'> = ['BEST', 'OK', 'AVOID'];
-	return gems.map((name, i) => ({
-		name,
-		variant,
-		color: COLORS[i % 3],
-		roi: 200 + Math.floor(Math.random() * 800),
-		roiPercent: 100 + Math.floor(Math.random() * 900),
-		signal: pickRandom(['STABLE', 'RISING']),
-		cv: 10 + Math.floor(Math.random() * 40),
-		transListings: 15 + Math.floor(Math.random() * 100),
-		transVelocity: Math.round((Math.random() - 0.5) * 10),
-		baseListings: 30 + Math.floor(Math.random() * 200),
-		baseVelocity: Math.round((Math.random() - 0.5) * 15),
-		liquidityTier: pickRandom(LIQUIDITY),
-		windowSignal: pickRandom(['CLOSED', 'BREWING']),
-		sparkline: makeSparkline(),
-		signalHistory: makeHistory(),
-		recommendation: recommendations[i] || 'OK',
-	}));
+	const urgencies: SellUrgency[] = ['HOLD', '', 'SELL_NOW'];
+	return gems.map((name, i) => {
+		const priceTier = TIERS[i % 3];
+		const sellUrgency = urgencies[i] || '';
+		const { sellability, sellabilityLabel } = makeSellability();
+		return {
+			name,
+			variant,
+			color: COLORS[i % 3],
+			roi: 200 + Math.floor(Math.random() * 800),
+			roiPercent: 100 + Math.floor(Math.random() * 900),
+			signal: pickRandom(['STABLE', 'RISING']),
+			cv: 10 + Math.floor(Math.random() * 40),
+			transListings: 15 + Math.floor(Math.random() * 100),
+			transVelocity: Math.round((Math.random() - 0.5) * 10),
+			baseListings: 30 + Math.floor(Math.random() * 200),
+			baseVelocity: Math.round((Math.random() - 0.5) * 15),
+			liquidityTier: pickRandom(LIQUIDITY),
+			windowSignal: pickRandom(['CLOSED', 'BREWING']),
+			sparkline: makeSparkline(),
+			signalHistory: makeHistory(),
+			recommendation: recommendations[i] || 'OK',
+			priceTier,
+			tierAction: pickRandom(TIER_ACTIONS[priceTier]),
+			sellUrgency,
+			sellReason: sellUrgency ? SELL_REASONS[sellUrgency] || '' : '',
+			sellability,
+			sellabilityLabel,
+		};
+	});
 }
