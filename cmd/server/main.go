@@ -17,7 +17,9 @@ import (
 
 	"profitofexile/internal/db"
 	"profitofexile/internal/lab"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
+	"profitofexile/internal/trade"
 )
 
 //go:embed all:frontend_build
@@ -82,16 +84,81 @@ func main() {
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
 	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache)
 
-	router := server.NewRouter(pool, frontendFS, server.RouterConfig{
-		MercureURL:    mercureURL,
-		MercureSecret: mercureSecret,
-		DevMode:       devMode,
-		Pool:          pool,
+	// Trade API subsystem (optional — requires TRADE_ENABLED=true).
+	var tradeGate *trade.Gate
+	var tradeCache *trade.TradeCache
+	var tradeSyncTimeout time.Duration
+
+	if os.Getenv("TRADE_ENABLED") == "true" {
+		tradeCeiling := 0.65
+		if v := os.Getenv("TRADE_CEILING"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 && f <= 1 {
+				tradeCeiling = f
+			}
+		}
+		tradeLatencyPad := 1 * time.Second
+		if v := os.Getenv("TRADE_LATENCY_PAD"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				tradeLatencyPad = d
+			}
+		}
+		tradeMaxWait := 30 * time.Second
+		if v := os.Getenv("TRADE_MAX_WAIT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				tradeMaxWait = d
+			}
+		}
+		tradeCacheMax := 200
+		if v := os.Getenv("TRADE_CACHE_MAX"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				tradeCacheMax = n
+			}
+		}
+		tradeSyncTimeout = 500 * time.Millisecond
+		if v := os.Getenv("TRADE_SYNC_WAIT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				tradeSyncTimeout = d
+			}
+		}
+
+		tradeCfg := trade.TradeConfig{
+			Enabled:           true,
+			LeagueName:        os.Getenv("LEAGUE"),
+			CeilingFactor:     tradeCeiling,
+			LatencyPadding:    tradeLatencyPad,
+			DefaultSearchRate: 1,
+			DefaultFetchRate:  1,
+			MaxQueueWait:      tradeMaxWait,
+			CacheMaxEntries:   tradeCacheMax,
+			UserAgent:         os.Getenv("TRADE_USER_AGENT"),
+			SyncWaitBudget:    tradeSyncTimeout,
+		}
+
+		tradeLimiter := trade.NewRateLimiter(tradeCfg)
+		tradeClient := trade.NewClient(tradeCfg)
+		tradeCache = trade.NewTradeCache(tradeCfg.CacheMaxEntries)
+		tradePub := &mercure.HubPublisher{URL: mercureURL, Secret: mercureSecret}
+		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache)
+
+		go tradeGate.Run(ctx)
+		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
+	}
+
+	routerCfg := server.RouterConfig{
+		MercureURL:           mercureURL,
+		MercureSecret:        mercureSecret,
+		DevMode:              devMode,
+		Pool:                 pool,
 		LabRepo:              labRepo,
 		LabCache:             labCache,
 		MercureSubscriberKey: os.Getenv("MERCURE_SUBSCRIBER_KEY"),
 		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),
-	})
+		TradeGate:            tradeGate,
+		TradeCache:           tradeCache,
+		TradeSyncTimeout:     tradeSyncTimeout,
+	}
+
+	router := server.NewRouter(pool, frontendFS, routerCfg)
 
 	// Run initial analyses on startup (uses existing data).
 	go func() {

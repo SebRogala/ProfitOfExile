@@ -3,6 +3,7 @@ package server
 import (
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -10,6 +11,7 @@ import (
 
 	"profitofexile/internal/lab"
 	"profitofexile/internal/server/handlers"
+	"profitofexile/internal/trade"
 )
 
 // RouterConfig holds optional configuration for the server router.
@@ -31,6 +33,12 @@ type RouterConfig struct {
 	MercureSubscriberKey string
 	// MercurePublicURL is the public Mercure hub URL for browser SSE connections.
 	MercurePublicURL string
+	// TradeGate is the priority gate for trade API lookups. May be nil if trade is disabled.
+	TradeGate *trade.Gate
+	// TradeCache is the LRU cache for trade lookup results. May be nil if trade is disabled.
+	TradeCache *trade.TradeCache
+	// TradeSyncTimeout is the max time the handler blocks waiting for a fast-path response.
+	TradeSyncTimeout time.Duration
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -62,6 +70,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo))
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
+	}
+
+	if cfg.TradeGate != nil {
+		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.TradeSyncTimeout))
 	}
 
 	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))
