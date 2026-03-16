@@ -16,6 +16,7 @@ export interface TradeLookupResult {
 	listings: TradeListingDetail[];
 	signals: TradeSignals;
 	divinePrice: number;
+	tradeUrl: string;
 	fetchedAt: string;
 }
 
