@@ -115,6 +115,7 @@ func loadCSV(path string) []Snapshot {
 	}
 
 	var snapshots []Snapshot
+	var skipped int
 	for {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -122,6 +123,7 @@ func loadCSV(path string) []Snapshot {
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "CSV read error: %v\n", err)
+			skipped++
 			continue
 		}
 
@@ -136,17 +138,20 @@ func loadCSV(path string) []Snapshot {
 		if err != nil {
 			t, err = time.Parse("2006-01-02 15:04:05", timeStr)
 			if err != nil {
+				skipped++
 				continue
 			}
 		}
 
 		chaos, err := strconv.ParseFloat(strings.TrimSpace(record[colIdx["chaos"]]), 64)
 		if err != nil {
+			skipped++
 			continue
 		}
 
 		listings, err := strconv.Atoi(strings.TrimSpace(record[colIdx["listings"]]))
 		if err != nil {
+			skipped++
 			continue
 		}
 
@@ -162,6 +167,10 @@ func loadCSV(path string) []Snapshot {
 			IsTransfigured: isTrans,
 			GemColor:       strings.TrimSpace(record[colIdx["gem_color"]]),
 		})
+	}
+
+	if skipped > 0 {
+		fmt.Fprintf(os.Stderr, "Skipped %d rows due to parse errors\n", skipped)
 	}
 
 	return snapshots
@@ -212,13 +221,6 @@ func sweep(snapshots []Snapshot, grid []lab.SignalConfig) []SweepResult {
 type gemKey struct {
 	Name    string
 	Variant string
-}
-
-// timeSlice groups all gem observations at a single timestamp.
-type timeSlice struct {
-	Time  time.Time
-	Gems  map[gemKey]Snapshot
-	Order []time.Time // not used per-slice, but kept for clarity
 }
 
 // backtest evaluates a single SignalConfig against the snapshot data.

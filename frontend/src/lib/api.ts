@@ -227,10 +227,11 @@ export async function fetchStatus(): Promise<StatusData> {
 			connected: status.cached === true,
 			collectorUptime: '',
 		};
-	} catch {
+	} catch (err) {
+		console.warn('[Status] Failed to fetch status:', err);
 		return {
-			lastUpdate: new Date().toISOString(),
-			nextFetch: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+			lastUpdate: '',
+			nextFetch: '',
 			connected: false,
 			collectorUptime: '',
 		};
@@ -245,7 +246,7 @@ export async function fetchBestPlays(
 	const params: Record<string, string> = {};
 	if (variant) params.variant = variant;
 	if (budget) params.budget = String(budget);
-	if (sort === 'roiPercent') params.sort = 'roiPct';
+	if (sort === 'roiPercent') params.sort = 'pct';
 
 	const resp = await get<{ count: number; data: any[] }>('/analysis/collective', params);
 	return (resp.data || []).map(mapCollectiveRow);
@@ -357,7 +358,7 @@ export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 
 				const basePoints = filterLast4(baseSnap.data, alert.variant);
 				alert.baseListingsTrend = basePoints.map((p: any) => p.listings);
-			} catch { /* snapshot fetch is best-effort */ }
+			} catch (err) { console.warn(`[WindowAlerts] Failed to fetch trends for ${alert.name}:`, err); }
 		}));
 	}
 
@@ -491,7 +492,8 @@ export async function fetchSignalHistory(
 			});
 		}
 		return transitions;
-	} catch {
+	} catch (err) {
+		console.warn(`[SignalHistory] Failed to fetch history for ${name} ${variant}:`, err);
 		return [];
 	}
 }
@@ -559,7 +561,8 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 			// Token TTL is 30min — refresh before expiry
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, 25 * 60 * 1000);
-		} catch {
+		} catch (err) {
+			console.warn('[Mercure] Connection failed:', err);
 			state.connected = false;
 			retries++;
 			if (retries < MAX_RETRIES) {

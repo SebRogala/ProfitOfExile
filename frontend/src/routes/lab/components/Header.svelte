@@ -14,13 +14,16 @@
 	const LABS = ['Merciless'];
 
 	function formatTimeAgo(isoStr: string): string {
+		if (!isoStr) return 'unknown';
 		const diff = Date.now() - new Date(isoStr).getTime();
 		const mins = Math.floor(diff / 60000);
+		if (isNaN(mins)) return 'unknown';
 		if (mins < 1) return 'just now';
 		return `${mins} min ago`;
 	}
 
 	function formatTime(isoStr: string): string {
+		if (!isoStr) return '--:--';
 		return new Date(isoStr).toLocaleTimeString(undefined, {
 			hour: '2-digit',
 			minute: '2-digit',
@@ -28,7 +31,9 @@
 	}
 
 	function minutesUntil(isoStr: string): number {
-		return Math.max(0, Math.round((new Date(isoStr).getTime() - Date.now()) / 60000));
+		if (!isoStr) return 0;
+		const result = Math.max(0, Math.round((new Date(isoStr).getTime() - Date.now()) / 60000));
+		return isNaN(result) ? 0 : result;
 	}
 </script>
 
