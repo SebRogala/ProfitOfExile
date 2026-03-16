@@ -69,19 +69,27 @@
 		results = await fetchCompare(active, variant);
 	}
 
-	async function handleInput(query: string) {
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+	function handleInput(query: string) {
 		searchQuery = query;
-		highlightedIndex = -1;
+		if (searchDebounce) clearTimeout(searchDebounce);
 		if (query.length < 2) {
 			suggestions = [];
 			showDropdown = false;
+			highlightedIndex = -1;
 			return;
 		}
-		const allNames = await fetchGemNames(query);
-		suggestions = allNames.filter((n) => !selectedGems.includes(n));
-		showDropdown = suggestions.length > 0;
-		// Auto-highlight when single result — Enter confirms without arrow key
-		highlightedIndex = suggestions.length === 1 ? 0 : -1;
+		searchDebounce = setTimeout(async () => {
+			// Guard: if query changed while waiting, skip stale fetch
+			if (searchQuery !== query) return;
+			const allNames = await fetchGemNames(query);
+			// Guard: if query changed during fetch, skip stale results
+			if (searchQuery !== query) return;
+			suggestions = allNames.filter((n) => !selectedGems.includes(n));
+			showDropdown = suggestions.length > 0;
+			highlightedIndex = suggestions.length === 1 ? 0 : -1;
+		}, 200);
 	}
 
 	function selectGem(name: string) {
