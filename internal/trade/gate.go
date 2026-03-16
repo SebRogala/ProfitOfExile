@@ -169,6 +169,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	// Phase 2: Fetch listing details.
 	listings, fetchHeaders, err := g.client.Fetch(ctx, searchResp.QueryID, searchResp.IDs)
 	if err != nil {
+		slog.Warn("trade gate: fetch failed", "gem", req.Gem, "error", err)
 		g.deliverError(key, fmt.Errorf("trade fetch: %w", err))
 		g.publishError(ctx, req, err.Error())
 		return
@@ -197,7 +198,7 @@ func (g *Gate) deliverResult(key string, result *TradeLookupResult) {
 		select {
 		case w.Result <- resp:
 		default:
-			// Channel full or nobody listening — skip.
+			slog.Warn("trade gate: result delivery skipped (channel full/closed)", "key", key, "requestId", w.RequestID)
 		}
 	}
 }
@@ -215,6 +216,7 @@ func (g *Gate) deliverError(key string, err error) {
 		select {
 		case w.Result <- resp:
 		default:
+			slog.Warn("trade gate: error delivery skipped (channel full/closed)", "key", key, "requestId", w.RequestID)
 		}
 	}
 }
@@ -237,35 +239,47 @@ func (g *Gate) sleepWithContext(ctx context.Context, d time.Duration) bool {
 // All events are published to the single topic "poe/trade/results".
 
 func (g *Gate) publishWait(ctx context.Context, req *GateRequest, wait time.Duration) {
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"type":        "waiting",
 		"requestId":   req.RequestID,
 		"gem":         req.Gem,
-		"waitSeconds": int(wait.Seconds() + 0.5), // round to nearest second
+		"waitSeconds": int(wait.Seconds() + 0.5),
 	})
+	if err != nil {
+		slog.Error("trade gate: marshal wait event", "error", err, "gem", req.Gem)
+		return
+	}
 	if err := g.mercure.Publish(ctx, mercureTradeTopic, string(payload)); err != nil {
 		slog.Warn("trade gate: publish wait event", "error", err)
 	}
 }
 
 func (g *Gate) publishReady(ctx context.Context, req *GateRequest, result *TradeLookupResult) {
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"type":      "ready",
 		"requestId": req.RequestID,
 		"data":      result,
 	})
+	if err != nil {
+		slog.Error("trade gate: marshal ready event", "error", err, "gem", req.Gem)
+		return
+	}
 	if err := g.mercure.Publish(ctx, mercureTradeTopic, string(payload)); err != nil {
 		slog.Warn("trade gate: publish ready event", "error", err)
 	}
 }
 
 func (g *Gate) publishError(ctx context.Context, req *GateRequest, message string) {
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"type":      "error",
 		"requestId": req.RequestID,
 		"gem":       req.Gem,
 		"message":   message,
 	})
+	if err != nil {
+		slog.Error("trade gate: marshal error event", "error", err, "gem", req.Gem)
+		return
+	}
 	if err := g.mercure.Publish(ctx, mercureTradeTopic, string(payload)); err != nil {
 		slog.Warn("trade gate: publish error event", "error", err)
 	}

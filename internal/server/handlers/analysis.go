@@ -623,7 +623,9 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 			var divRate float64
 			if err := pool.QueryRow(r.Context(),
 				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
-			).Scan(&divRate); err == nil {
+			).Scan(&divRate); err != nil {
+				slog.Warn("analysis status: divine rate query failed", "error", err)
+			} else {
 				resp["divinePrice"] = divRate
 			}
 		}

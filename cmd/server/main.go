@@ -142,8 +142,10 @@ func main() {
 		// Divine rate function: queries latest currency snapshot from DB.
 		// Cached in a goroutine-safe variable, refreshed on each call (query is fast).
 		divineRateFn := func() float64 {
+			qCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
 			var rate float64
-			err := pool.QueryRow(context.Background(),
+			err := pool.QueryRow(qCtx,
 				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
 			).Scan(&rate)
 			if err != nil {
