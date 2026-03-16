@@ -80,6 +80,8 @@
 		const allNames = await fetchGemNames(query);
 		suggestions = allNames.filter((n) => !selectedGems.includes(n));
 		showDropdown = suggestions.length > 0;
+		// Auto-highlight when single result — Enter confirms without arrow key
+		highlightedIndex = suggestions.length === 1 ? 0 : -1;
 	}
 
 	function selectGem(name: string) {
@@ -244,7 +246,7 @@
 				<span class="tag">
 					<GemIcon name={gem} size={20} />
 					{gem}
-					<button class="tag-remove" onclick={() => removeGem(i)}>\u00d7</button>
+					<button class="tag-remove" onclick={() => removeGem(i)}>&#215;</button>
 				</span>
 			{/each}
 		</div>
@@ -363,7 +365,6 @@
 									<div class="trade-listings-table">
 										<div class="trade-listings-header">
 											<span class="tl-col-price">Price</span>
-											<span class="tl-col-account">Seller</span>
 											<span class="tl-col-detail">Lvl/Qual</span>
 											<span class="tl-col-time">Listed</span>
 										</div>
@@ -375,7 +376,6 @@
 														<span class="tl-original">({fmtPrice(listing.price)} div)</span>
 													{/if}
 												</span>
-												<span class="tl-col-account" title={listing.account}>{listing.account}</span>
 												<span class="tl-col-detail">
 													{listing.gemLevel}/{listing.gemQuality}
 													{#if listing.corrupted}<span class="tl-corrupted">C</span>{/if}
@@ -791,7 +791,7 @@
 	.trade-data {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: 4px;
 	}
 	.trade-price-row {
 		display: flex;
@@ -892,7 +892,7 @@
 	}
 	.trade-listings-header {
 		display: grid;
-		grid-template-columns: 1fr 1fr 0.7fr 0.6fr;
+		grid-template-columns: 1.4fr 0.7fr 0.6fr;
 		gap: 4px;
 		padding: 6px 8px;
 		background: rgba(42, 45, 55, 0.6);
@@ -904,7 +904,7 @@
 	}
 	.trade-listing-row {
 		display: grid;
-		grid-template-columns: 1fr 1fr 0.7fr 0.6fr;
+		grid-template-columns: 1.4fr 0.7fr 0.6fr;
 		gap: 4px;
 		padding: 5px 8px;
 		border-top: 1px solid rgba(42, 45, 55, 0.4);
@@ -912,11 +912,6 @@
 	}
 	.trade-listing-row:hover {
 		background: rgba(59, 130, 246, 0.05);
-	}
-	.tl-col-account {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.tl-col-time {
 		color: var(--color-lab-text-secondary);
