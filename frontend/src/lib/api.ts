@@ -1,6 +1,6 @@
 /**
- * Lab Dashboard API service — mock data for v1.
- * Each function matches a real endpoint shape so swapping to fetch() is trivial.
+ * Lab Dashboard API service.
+ * Fetches real data from the Go backend at /api/*.
  */
 
 // --- Types ---
@@ -12,9 +12,9 @@ export interface StatusData {
 	collectorUptime: string;
 }
 
-export type PriceTier = 'TOP' | 'MID' | 'LOW';
+export type PriceTier = 'TOP' | 'MID' | 'LOW' | '';
 export type SellUrgency = 'SELL_NOW' | 'UNDERCUT' | 'HOLD' | 'WAIT' | '';
-export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNLIKELY';
+export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNLIKELY' | '';
 
 export interface GemPlay {
 	name: string;
@@ -122,328 +122,393 @@ export interface CompareGem {
 	sellabilityLabel: SellabilityLabel;
 }
 
-// --- Mock Data ---
+// --- API helpers ---
 
-const MOCK_STATUS: StatusData = {
-	lastUpdate: '2026-03-15T14:15:00Z',
-	nextFetch: '2026-03-15T14:45:00Z',
-	connected: true,
-	collectorUptime: '18h 32m',
-};
+const API_BASE = '/api';
 
-const MOCK_GEM_NAMES = [
-	'Spark of the Nova',
-	'Spark of Unpredictability',
-	'Lightning Strike of Arcing',
-	'Ball Lightning of Orbiting',
-	'Ball Lightning of Static',
-	'Arc of Surging',
-	'Arc of Oscillating',
-	'Ethereal Knives of the Massacre',
-	'Blade Vortex of the Scythe',
-	'Ice Nova of Frostbolts',
-	'Vaal Grace',
-	'Molten Strike of the Zenith',
-	'Cyclone of Tumult',
-	'Tornado Shot of Cloudburst',
-	'Ice Shot of Penetration',
-	'Lightning Arrow of Electrocution',
-	'Rain of Arrows of Artillery',
-	'Caustic Arrow of Poison',
-	'Spectral Helix of Trarthus',
-	'Boneshatter of Complex Trauma',
-];
-
-function makeSparkline(): number[] {
-	const base = 40 + Math.random() * 60;
-	return Array.from({ length: 8 }, () => Math.max(5, base + (Math.random() - 0.5) * 40));
+async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
+	const url = new URL(`${API_BASE}${path}`, window.location.origin);
+	if (params) {
+		for (const [k, v] of Object.entries(params)) {
+			if (v) url.searchParams.set(k, v);
+		}
+	}
+	const resp = await fetch(url.toString());
+	if (!resp.ok) {
+		throw new Error(`API ${path}: ${resp.status} ${resp.statusText}`);
+	}
+	return resp.json();
 }
 
-function makeHistory(): SignalTransition[] {
-	const base = 30 + Math.floor(Math.random() * 80);
-	return [
-		{ time: '13:15', from: 'STABLE', to: 'RISING', reason: '+8c/h', listings: base + 12 },
-		{ time: '13:45', from: 'RISING', to: 'RISING', reason: '+6c/h', listings: base + 4 },
-		{ time: '14:15', from: 'RISING', to: 'STABLE', reason: 'velocity settled', listings: base },
-	];
-}
+// --- Mapping helpers ---
 
-const SIGNALS = ['STABLE', 'RISING', 'FALLING', 'HERD', 'DUMPING', 'RECOVERY', 'TRAP'];
-const WINDOWS = ['CLOSED', 'BREWING', 'OPENING', 'OPEN', 'CLOSING', 'EXHAUSTED'];
-const ADVANCED = ['', '', '', 'COMEBACK', 'POTENTIAL', 'PRICE_MANIPULATION', 'BREAKOUT'];
-const COLORS: Array<'RED' | 'GREEN' | 'BLUE'> = ['RED', 'GREEN', 'BLUE'];
-const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-const LIQUIDITY = ['HIGH', 'MED', 'LOW'];
-const TIERS: PriceTier[] = ['TOP', 'MID', 'LOW'];
-const SELL_URGENCIES: SellUrgency[] = ['', '', '', 'HOLD', 'WAIT', 'UNDERCUT', 'SELL_NOW'];
-
-const TIER_ACTIONS: Record<PriceTier, string[]> = {
-	TOP: ['SELL — move is over', 'WATCH — early stage, monitor closely', 'RIDE — strong momentum'],
-	MID: ['CAUTIOUS — may reverse', 'SELL — exit position', 'HOLD — building momentum'],
-	LOW: ['UNRELIABLE — low-value windows are traps', 'SKIP — not worth the risk', 'WAIT — needs confirmation'],
-};
-
-const SELL_REASONS: Record<string, string> = {
-	SELL_NOW: 'Price crashing — sell at any price before further drop',
-	UNDERCUT: 'Market cooling — undercut 10-15% for fast sale',
-	HOLD: 'Price rising steadily — no rush to sell',
-	WAIT: 'No clear signal — wait for better conditions',
-};
-
-function makeSellability(): { sellability: number; sellabilityLabel: SellabilityLabel } {
-	const s = Math.floor(Math.random() * 100);
-	let label: SellabilityLabel;
-	if (s >= 80) label = 'FAST SELL';
-	else if (s >= 60) label = 'GOOD';
-	else if (s >= 40) label = 'MODERATE';
-	else if (s >= 20) label = 'SLOW';
-	else label = 'UNLIKELY';
-	return { sellability: s, sellabilityLabel: label };
-}
-
-function pickRandom<T>(arr: T[]): T {
-	return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function generatePlay(name: string, variant?: string): GemPlay {
-	const basePrice = 5 + Math.floor(Math.random() * 80);
-	const transPrice = basePrice + 20 + Math.floor(Math.random() * 600);
-	const roi = transPrice - basePrice;
-	const priceTier = pickRandom(TIERS);
-	const sellUrgency = pickRandom(SELL_URGENCIES);
-	const { sellability, sellabilityLabel } = makeSellability();
+/** Map a backend collective/trends row to frontend GemPlay. */
+function mapCollectiveRow(r: any): GemPlay {
 	return {
-		name,
-		variant: variant || pickRandom(VARIANTS),
-		color: pickRandom(COLORS),
-		roi,
-		roiPercent: Math.round((roi / basePrice) * 100),
-		signal: pickRandom(SIGNALS.slice(0, 3)),
-		cv: 5 + Math.floor(Math.random() * 60),
-		windowSignal: pickRandom(WINDOWS.slice(0, 3)),
-		advancedSignal: pickRandom(ADVANCED),
-		liquidityTier: pickRandom(LIQUIDITY),
-		transListings: 10 + Math.floor(Math.random() * 200),
-		transVelocity: Math.round((Math.random() - 0.5) * 20),
-		baseListings: 20 + Math.floor(Math.random() * 300),
-		baseVelocity: Math.round((Math.random() - 0.5) * 30),
-		basePrice,
-		transPrice,
-		sparkline: makeSparkline(),
-		signalHistory: makeHistory(),
-		priceTier,
-		tierAction: pickRandom(TIER_ACTIONS[priceTier]),
-		sellUrgency,
-		sellReason: sellUrgency ? SELL_REASONS[sellUrgency] || '' : '',
-		sellability,
-		sellabilityLabel,
+		name: r.transfiguredName || r.name || '',
+		variant: r.variant || '',
+		color: r.gemColor || '',
+		roi: Math.round(r.roi || 0),
+		roiPercent: Math.round(r.roiPct || 0),
+		signal: r.signal || '',
+		cv: Math.round(r.cv || 0),
+		windowSignal: r.windowSignal || '',
+		advancedSignal: r.advancedSignal || '',
+		liquidityTier: r.liquidityTier || '',
+		transListings: r.transfiguredListings || r.currentListings || 0,
+		transVelocity: Math.round(r.priceVelocity || 0),
+		baseListings: r.baseListings || 0,
+		baseVelocity: Math.round(r.listingVelocity || 0),
+		basePrice: Math.round(r.basePrice || 0),
+		transPrice: Math.round(r.transfiguredPrice || r.currentPrice || 0),
+		sparkline: [],
+		signalHistory: [],
+		priceTier: (r.priceTier || '') as PriceTier,
+		tierAction: r.tierAction || '',
+		sellUrgency: (r.sellUrgency || '') as SellUrgency,
+		sellReason: r.sellReason || '',
+		sellability: r.sellability || 0,
+		sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
 	};
 }
 
-function generatePlays(count: number, variant?: string): GemPlay[] {
-	const plays: GemPlay[] = [];
-	const used = new Set<string>();
-	for (let i = 0; i < count; i++) {
-		let name = pickRandom(MOCK_GEM_NAMES);
-		while (used.has(name)) name = pickRandom(MOCK_GEM_NAMES);
-		used.add(name);
-		plays.push(generatePlay(name, variant));
-	}
-	return plays.sort((a, b) => b.roi - a.roi);
-}
-
-// Stable mock data (generated once)
-let _bestPlays: GemPlay[] | null = null;
-let _variantPlays: Record<string, GemPlay[]> = {};
-let _fontEV: Record<string, FontEVData> = {};
-let _windowAlerts: WindowAlert[] | null = null;
-let _marketOverview: MarketOverviewData | null = null;
-
-function getBestPlays(): GemPlay[] {
-	if (!_bestPlays) {
-		_bestPlays = generatePlays(15);
-		// Ensure variety of signals for demo
-		_bestPlays[0].signal = 'RISING';
-		_bestPlays[0].windowSignal = 'OPEN';
-		_bestPlays[0].advancedSignal = '';
-		_bestPlays[0].sellUrgency = 'HOLD';
-		_bestPlays[0].sellReason = SELL_REASONS.HOLD;
-		_bestPlays[0].priceTier = 'TOP';
-		_bestPlays[0].tierAction = 'RIDE — strong momentum';
-		_bestPlays[0].sellability = 92;
-		_bestPlays[0].sellabilityLabel = 'FAST SELL';
-		_bestPlays[1].signal = 'STABLE';
-		_bestPlays[1].windowSignal = 'BREWING';
-		_bestPlays[1].advancedSignal = 'POTENTIAL';
-		_bestPlays[1].priceTier = 'MID';
-		_bestPlays[1].tierAction = 'HOLD — building momentum';
-		_bestPlays[2].signal = 'RISING';
-		_bestPlays[2].advancedSignal = 'COMEBACK';
-		_bestPlays[2].sellUrgency = 'UNDERCUT';
-		_bestPlays[2].sellReason = SELL_REASONS.UNDERCUT;
-		_bestPlays[3].signal = 'FALLING';
-		_bestPlays[3].windowSignal = 'CLOSING';
-		_bestPlays[3].sellUrgency = 'SELL_NOW';
-		_bestPlays[3].sellReason = SELL_REASONS.SELL_NOW;
-		_bestPlays[3].sellability = 12;
-		_bestPlays[3].sellabilityLabel = 'UNLIKELY';
-		_bestPlays[4].signal = 'HERD';
-		_bestPlays[5].signal = 'DUMPING';
-		_bestPlays[5].sellUrgency = 'SELL_NOW';
-		_bestPlays[5].sellReason = SELL_REASONS.SELL_NOW;
-		_bestPlays[6].signal = 'RECOVERY';
-		_bestPlays[6].advancedSignal = 'BREAKOUT';
-	}
-	return _bestPlays;
-}
-
-function getVariantPlays(variant: string): GemPlay[] {
-	if (!_variantPlays[variant]) {
-		_variantPlays[variant] = generatePlays(8, variant);
-	}
-	return _variantPlays[variant];
-}
-
-function getFontEV(variant: string): FontEVData {
-	if (!_fontEV[variant]) {
-		_fontEV[variant] = {
-			colors: [
-				{ color: 'RED', ev: 280 + Math.floor(Math.random() * 200), pool: 28 + Math.floor(Math.random() * 10), winners: 3 + Math.floor(Math.random() * 5), pWin: 15 + Math.floor(Math.random() * 25), profit: 200 + Math.floor(Math.random() * 300), evDelta2h: Math.round((Math.random() - 0.5) * 30) },
-				{ color: 'GREEN', ev: 180 + Math.floor(Math.random() * 150), pool: 38 + Math.floor(Math.random() * 15), winners: 4 + Math.floor(Math.random() * 6), pWin: 12 + Math.floor(Math.random() * 20), profit: 100 + Math.floor(Math.random() * 250), evDelta2h: Math.round((Math.random() - 0.5) * 20) },
-				{ color: 'BLUE', ev: 150 + Math.floor(Math.random() * 120), pool: 45 + Math.floor(Math.random() * 15), winners: 5 + Math.floor(Math.random() * 7), pWin: 10 + Math.floor(Math.random() * 18), profit: 80 + Math.floor(Math.random() * 200), evDelta2h: Math.round((Math.random() - 0.5) * 15) },
-			],
-			qualityAvgRoi: 40 + Math.floor(Math.random() * 80),
-			bestColor: 'RED',
-			bestAdvantage: 80 + Math.floor(Math.random() * 200),
-		};
-	}
-	return _fontEV[variant];
-}
-
-function getWindowAlerts(): WindowAlert[] {
-	if (!_windowAlerts) {
-		_windowAlerts = [
-			{
-				windowSignal: 'OPEN',
-				name: 'Spark of the Nova',
-				variant: '20/20',
-				roi: 940,
-				transListings: 12,
-				baseListings: 45,
-				baseVelocity: -8,
-				liquidityTier: 'MED',
-				action: 'Farm NOW! Bases draining fast, transfigured supply is low.',
-				history: [
-					{ time: '13:15', from: 'BREWING', to: 'OPENING', reason: 'base velocity -4/h', listings: 18 },
-					{ time: '13:45', from: 'OPENING', to: 'OPEN', reason: 'window score 78', listings: 12 },
-				],
-			},
-			{
-				windowSignal: 'BREWING',
-				name: 'Ball Lightning of Static',
-				variant: '20/0',
-				roi: 620,
-				transListings: 28,
-				baseListings: 89,
-				baseVelocity: -3,
-				liquidityTier: 'HIGH',
-				action: 'Opportunity forming. Start planning your lab run.',
-				history: [
-					{ time: '14:00', from: 'CLOSED', to: 'BREWING', reason: 'price +6c/h, listings -2/h', listings: 28 },
-				],
-			},
-		];
-	}
-	return _windowAlerts;
-}
-
-function getMarketOverview(): MarketOverviewData {
-	if (!_marketOverview) {
-		_marketOverview = {
-			avgTransPrice: 82,
-			avgTransPriceDelta: 3,
-			avgBaseListings: 127,
-			avgBaseListingsDelta: -8,
-			activeGems: 170,
-			weekendPremium: 30,
-			windowGems: 2,
-			windowBreakdown: { OPEN: 1, BREWING: 1 },
-			trapGems: 8,
-			mostVolatileColor: 'BLUE',
-			mostVolatileCV: 45,
-			mostStableColor: 'RED',
-			mostStableCV: 28,
-		};
-	}
-	return _marketOverview;
+/** Map a backend compare row to frontend CompareGem. */
+function mapCompareRow(r: any): CompareGem {
+	const sparkline = Array.isArray(r.sparkline)
+		? r.sparkline.map((p: any) => p.price ?? p)
+		: [];
+	return {
+		name: r.transfiguredName || '',
+		variant: r.variant || '',
+		color: r.gemColor || '',
+		roi: Math.round(r.roi || 0),
+		roiPercent: Math.round(r.roiPct || 0),
+		signal: r.signal || '',
+		cv: Math.round(r.cv || 0),
+		transListings: r.transListings || r.transfiguredListings || 0,
+		transVelocity: Math.round(r.priceVelocity || 0),
+		baseListings: r.baseListings || 0,
+		baseVelocity: Math.round(r.listingVelocity || 0),
+		liquidityTier: r.liquidityTier || '',
+		windowSignal: r.windowSignal || '',
+		sparkline,
+		signalHistory: [],
+		recommendation: (r.recommendation || 'OK') as 'BEST' | 'OK' | 'AVOID',
+		priceTier: (r.priceTier || '') as PriceTier,
+		tierAction: r.tierAction || '',
+		sellUrgency: (r.sellUrgency || '') as SellUrgency,
+		sellReason: r.sellReason || '',
+		sellability: r.sellability || 0,
+		sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
+	};
 }
 
 // --- Public API functions ---
 
 export async function fetchStatus(): Promise<StatusData> {
-	return MOCK_STATUS;
+	try {
+		const status = await get<any>('/analysis/status');
+		return {
+			lastUpdate: status.lastUpdated || new Date().toISOString(),
+			nextFetch: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+			connected: status.cached === true,
+			collectorUptime: '',
+		};
+	} catch {
+		return {
+			lastUpdate: new Date().toISOString(),
+			nextFetch: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+			connected: false,
+			collectorUptime: '',
+		};
+	}
 }
 
 export async function fetchBestPlays(
-	_variant?: string,
-	_budget?: number,
-	_sort?: 'roi' | 'roiPercent'
+	variant?: string,
+	budget?: number,
+	sort?: 'roi' | 'roiPercent'
 ): Promise<GemPlay[]> {
-	const plays = getBestPlays().filter((p) => p.signal !== 'TRAP');
-	return plays;
+	const params: Record<string, string> = {};
+	if (variant) params.variant = variant;
+	if (budget) params.budget = String(budget);
+	if (sort === 'roiPercent') params.sort = 'roiPct';
+
+	const resp = await get<{ count: number; data: any[] }>('/analysis/collective', params);
+	return (resp.data || []).map(mapCollectiveRow);
 }
 
 export async function fetchVariantPlays(variant: string): Promise<GemPlay[]> {
-	return getVariantPlays(variant);
+	return fetchBestPlays(variant);
 }
 
 export async function fetchFontEV(variant: string): Promise<FontEVData> {
-	return getFontEV(variant);
+	const params: Record<string, string> = {};
+	if (variant) params.variant = variant;
+
+	const resp = await get<{ count: number; data: any[] }>('/analysis/font', params);
+	const rows = resp.data || [];
+
+	const colors: FontColor[] = rows.map((r: any) => ({
+		color: r.color || '',
+		ev: Math.round(r.ev || 0),
+		pool: r.pool || 0,
+		winners: r.winners || 0,
+		pWin: Math.round((r.pWin || 0) * 100) / 100,
+		profit: Math.round(r.profit || 0),
+		evDelta2h: 0, // not in backend yet
+	}));
+
+	// Compute best color
+	const sorted = [...colors].sort((a, b) => b.ev - a.ev);
+	const best = sorted[0];
+	const second = sorted[1];
+
+	return {
+		colors,
+		qualityAvgRoi: 0, // needs quality data cross-reference
+		bestColor: best?.color || '',
+		bestAdvantage: best && second ? Math.round(best.ev - second.ev) : 0,
+	};
 }
 
 export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
-	return getWindowAlerts();
+	// Window alerts are derived from trends data — gems with active window signals
+	const params: Record<string, string> = { limit: '20' };
+
+	const resp = await get<{ count: number; data: any[] }>('/analysis/trends', params);
+	const rows = resp.data || [];
+
+	return rows
+		.filter((r: any) => ['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal))
+		.map((r: any) => ({
+			windowSignal: r.windowSignal || '',
+			name: r.name || '',
+			variant: r.variant || '',
+			roi: Math.round(r.currentPrice || 0),
+			transListings: r.currentListings || 0,
+			baseListings: r.baseListings || 0,
+			baseVelocity: Math.round(r.baseVelocity || 0),
+			liquidityTier: r.liquidityTier || '',
+			action: r.tierAction || r.sellReason || '',
+			history: [],
+		}))
+		.sort((a: WindowAlert, b: WindowAlert) => {
+			const order = ['OPEN', 'OPENING', 'BREWING', 'CLOSING'];
+			return order.indexOf(a.windowSignal) - order.indexOf(b.windowSignal);
+		});
 }
 
 export async function fetchMarketOverview(): Promise<MarketOverviewData> {
-	return getMarketOverview();
+	// Aggregated from trends data client-side
+	const resp = await get<{ count: number; data: any[] }>('/analysis/trends', { limit: '500' });
+	const rows = resp.data || [];
+
+	if (rows.length === 0) {
+		return {
+			avgTransPrice: 0, avgTransPriceDelta: 0,
+			avgBaseListings: 0, avgBaseListingsDelta: 0,
+			activeGems: 0, weekendPremium: 0,
+			windowGems: 0, windowBreakdown: {},
+			trapGems: 0,
+			mostVolatileColor: '', mostVolatileCV: 0,
+			mostStableColor: '', mostStableCV: 0,
+		};
+	}
+
+	const avgPrice = rows.reduce((s: number, r: any) => s + (r.currentPrice || 0), 0) / rows.length;
+	const avgListings = rows.reduce((s: number, r: any) => s + (r.baseListings || 0), 0) / rows.length;
+
+	const windowBreakdown: Record<string, number> = {};
+	let windowGems = 0;
+	let trapGems = 0;
+	for (const r of rows) {
+		if (['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal)) {
+			windowGems++;
+			windowBreakdown[r.windowSignal] = (windowBreakdown[r.windowSignal] || 0) + 1;
+		}
+		if (r.signal === 'TRAP') trapGems++;
+	}
+
+	// CV by color
+	const colorCV: Record<string, number[]> = {};
+	for (const r of rows) {
+		if (r.gemColor && r.cv != null) {
+			if (!colorCV[r.gemColor]) colorCV[r.gemColor] = [];
+			colorCV[r.gemColor].push(r.cv);
+		}
+	}
+	const colorAvgCV = Object.entries(colorCV).map(([color, cvs]) => ({
+		color,
+		avgCV: Math.round(cvs.reduce((s, v) => s + v, 0) / cvs.length),
+	}));
+	colorAvgCV.sort((a, b) => b.avgCV - a.avgCV);
+	const mostVolatile = colorAvgCV[0];
+	const mostStable = colorAvgCV[colorAvgCV.length - 1];
+
+	return {
+		avgTransPrice: Math.round(avgPrice),
+		avgTransPriceDelta: 0, // would need historical comparison
+		avgBaseListings: Math.round(avgListings),
+		avgBaseListingsDelta: 0,
+		activeGems: rows.length,
+		weekendPremium: 0,
+		windowGems,
+		windowBreakdown,
+		trapGems,
+		mostVolatileColor: mostVolatile?.color || '',
+		mostVolatileCV: mostVolatile?.avgCV || 0,
+		mostStableColor: mostStable?.color || '',
+		mostStableCV: mostStable?.avgCV || 0,
+	};
 }
 
 export async function fetchGemNames(query: string): Promise<string[]> {
-	const q = query.toLowerCase();
-	return MOCK_GEM_NAMES.filter((n) => n.toLowerCase().includes(q));
+	if (query.length < 2) return [];
+	const resp = await get<{ names: string[] }>('/analysis/gems/names', {
+		q: query,
+		limit: '15',
+	});
+	return resp.names || [];
 }
 
 export async function fetchCompare(gems: string[], variant: string): Promise<CompareGem[]> {
-	const recommendations: Array<'BEST' | 'OK' | 'AVOID'> = ['BEST', 'OK', 'AVOID'];
-	const urgencies: SellUrgency[] = ['HOLD', '', 'SELL_NOW'];
-	return gems.map((name, i) => {
-		const priceTier = TIERS[i % 3];
-		const sellUrgency = urgencies[i] || '';
-		const { sellability, sellabilityLabel } = makeSellability();
-		return {
-			name,
-			variant,
-			color: COLORS[i % 3],
-			roi: 200 + Math.floor(Math.random() * 800),
-			roiPercent: 100 + Math.floor(Math.random() * 900),
-			signal: pickRandom(['STABLE', 'RISING']),
-			cv: 10 + Math.floor(Math.random() * 40),
-			transListings: 15 + Math.floor(Math.random() * 100),
-			transVelocity: Math.round((Math.random() - 0.5) * 10),
-			baseListings: 30 + Math.floor(Math.random() * 200),
-			baseVelocity: Math.round((Math.random() - 0.5) * 15),
-			liquidityTier: pickRandom(LIQUIDITY),
-			windowSignal: pickRandom(['CLOSED', 'BREWING']),
-			sparkline: makeSparkline(),
-			signalHistory: makeHistory(),
-			recommendation: recommendations[i] || 'OK',
-			priceTier,
-			tierAction: pickRandom(TIER_ACTIONS[priceTier]),
-			sellUrgency,
-			sellReason: sellUrgency ? SELL_REASONS[sellUrgency] || '' : '',
-			sellability,
-			sellabilityLabel,
-		};
+	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', {
+		gems: gems.join(','),
+		variant,
 	});
+	const results = (resp.data || []).map(mapCompareRow);
+
+	// Enrich with signal history in parallel
+	await Promise.allSettled(
+		results.map(async (gem) => {
+			gem.signalHistory = await fetchSignalHistory(gem.name, gem.variant);
+		})
+	);
+
+	return results;
+}
+
+// --- Signal History ---
+
+export async function fetchSignalHistory(
+	name: string,
+	variant: string,
+	limit = 4
+): Promise<SignalTransition[]> {
+	try {
+		const resp = await get<{ name: string; variant: string; count: number; history: any[] }>(
+			'/analysis/history',
+			{ name, variant, limit: String(limit) }
+		);
+		const snapshots = resp.history || [];
+		if (snapshots.length < 2) return [];
+
+		// History comes in DESC order — reverse for chronological
+		snapshots.reverse();
+
+		// Diff consecutive entries to find signal changes
+		const transitions: SignalTransition[] = [];
+		for (let i = 1; i < snapshots.length; i++) {
+			const prev = snapshots[i - 1];
+			const curr = snapshots[i];
+			const time = new Date(curr.time || '').toLocaleTimeString(undefined, {
+				hour: '2-digit',
+				minute: '2-digit',
+			});
+			const reason = deriveReason(prev, curr);
+			transitions.push({
+				time,
+				from: prev.signal || 'STABLE',
+				to: curr.signal || 'STABLE',
+				reason,
+				listings: curr.currentListings || curr.listings || 0,
+			});
+		}
+		return transitions;
+	} catch {
+		return [];
+	}
+}
+
+function deriveReason(prev: any, curr: any): string {
+	const priceDiff = (curr.currentPrice || 0) - (prev.currentPrice || 0);
+	if (Math.abs(priceDiff) > 1) {
+		return `${priceDiff > 0 ? '+' : ''}${Math.round(priceDiff)}c`;
+	}
+	const vel = curr.priceVelocity || 0;
+	if (Math.abs(vel) > 1) {
+		return `${vel > 0 ? '+' : ''}${Math.round(vel)}c/h`;
+	}
+	return 'velocity settled';
+}
+
+// --- Mercure SSE ---
+
+export interface MercureConnection {
+	close: () => void;
+	connected: boolean;
+}
+
+export function connectMercure(onUpdate: () => void): MercureConnection {
+	const state: MercureConnection = { close: () => {}, connected: false };
+	let eventSource: EventSource | null = null;
+	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
+	let retries = 0;
+	const MAX_RETRIES = 3;
+
+	async function connect() {
+		if (retries >= MAX_RETRIES) return; // Stop trying if Mercure isn't available
+
+		try {
+			const tokenResp = await get<{ token: string; url: string }>('/mercure/token');
+			const { token, url } = tokenResp;
+			retries = 0; // Reset on success
+
+			if (eventSource) eventSource.close();
+
+			const authedUrl = new URL(url);
+			authedUrl.searchParams.set('topic', 'poe/analysis/*');
+			authedUrl.searchParams.set('authorization', token);
+
+			eventSource = new EventSource(authedUrl.toString());
+
+			eventSource.onopen = () => {
+				state.connected = true;
+			};
+
+			eventSource.onmessage = () => {
+				onUpdate();
+			};
+
+			eventSource.onerror = () => {
+				state.connected = false;
+				if (tokenTimeout) clearTimeout(tokenTimeout);
+				retries++;
+				if (retries < MAX_RETRIES) {
+					tokenTimeout = setTimeout(connect, 5000 * retries);
+				}
+			};
+
+			// Token TTL is 30min — refresh before expiry
+			if (tokenTimeout) clearTimeout(tokenTimeout);
+			tokenTimeout = setTimeout(connect, 25 * 60 * 1000);
+		} catch {
+			state.connected = false;
+			retries++;
+			if (retries < MAX_RETRIES) {
+				if (tokenTimeout) clearTimeout(tokenTimeout);
+				tokenTimeout = setTimeout(connect, 10000);
+			}
+		}
+	}
+
+	state.close = () => {
+		if (eventSource) eventSource.close();
+		if (tokenTimeout) clearTimeout(tokenTimeout);
+		state.connected = false;
+	};
+
+	connect();
+	return state;
 }

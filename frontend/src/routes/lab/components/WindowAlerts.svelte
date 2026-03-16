@@ -22,9 +22,8 @@
 					<GemIcon name={alert.name} size={24} />
 					<span class="gem-name">{alert.name}</span>
 					<span class="variant">({alert.variant})</span>
-					<span class="roi">{alert.roi}c</span>
-					<span class="meta">Trans: {alert.transListings} lst</span>
-					<span class="meta">Base: {alert.baseListings} lst {velocityStr(alert.baseVelocity)}/2h</span>
+					{#if alert.roi > 0}<span class="roi">{alert.roi}c</span>{/if}
+					<span class="meta">{alert.transListings} listings</span>
 					<span class="liq">{alert.liquidityTier}</span>
 				</div>
 				<div class="alert-detail">

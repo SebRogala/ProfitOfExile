@@ -10,7 +10,7 @@
 	let variant = $state('20/20');
 	let searchQuery = $state('');
 	let suggestions = $state<string[]>([]);
-	let selectedGems = $state<string[]>(['Spark of the Nova', 'Ball Lightning of Static', 'Arc of Surging']);
+	let selectedGems = $state<string[]>([]);
 	let results = $state<CompareGem[]>([]);
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
@@ -134,7 +134,6 @@
 		return '0';
 	}
 
-	loadResults();
 </script>
 
 <section class="section">
@@ -251,7 +250,7 @@
 								<span class="hist-arrow">→</span>
 								<SignalBadge signal={h.to} />
 								<span class="hist-reason">{h.reason}</span>
-								<span class="hist-listings">{h.listings} lst</span>
+								<span class="hist-listings">{h.listings} listings</span>
 							</div>
 						{/each}
 					</div>
