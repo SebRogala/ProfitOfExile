@@ -71,7 +71,7 @@ Working Node.js scripts and strategy notes live in a separate workspace at `/var
 ## Key Design Documents
 
 - `BACKBONE.md` — Authoritative design reference. Full architecture, data source specs, domain model, API contracts, and feature roadmap. **When in doubt, refer to BACKBONE.**
-- **YouTrack (project POE)** — Epics and task breakdown. All implementation tracking lives in the tracker, not in files.
+- **YouTrack (project POE)** — Epics, tasks, and feature specs. **All design specs and task descriptions live in the tracker, not in files.** Do NOT create `docs/specs/`, `docs/designs/`, or similar spec files in the repo. When brainstorming a feature, write the spec directly into the YouTrack task description. Implementation plans live in MCP — use the `pf-local` MCP server's `savePlan` tool to persist them.
 
 ## Data Sources
 
