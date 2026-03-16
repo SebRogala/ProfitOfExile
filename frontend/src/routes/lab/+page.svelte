@@ -127,6 +127,7 @@
 		background: var(--color-lab-bg);
 		color: var(--color-lab-text);
 		font-family: system-ui, -apple-system, sans-serif;
+		font-size: 18px;
 		margin: 0;
 		padding: 0;
 		-webkit-font-smoothing: antialiased;
