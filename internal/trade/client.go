@@ -88,8 +88,14 @@ type tradeFetchProperty struct {
 
 // Search performs a trade search for the given gem name and variant.
 // Variant format is "level/quality" (e.g., "20/20") or just "level" (e.g., "20").
-// It returns the parsed search response, the raw HTTP response headers
-// (for rate limit synchronisation), and any error.
+//
+// Uses the website-internal API at pathofexile.com/api/trade/search (not the
+// official developer API). Returns up to 10,000 result IDs sorted by price asc.
+// The response headers contain X-Rate-Limit-* fields for rate limit sync.
+//
+// Two-step process: Search returns IDs, then Fetch retrieves listing details.
+// Both must be called to get usable data. The queryID from Search is required
+// for Fetch.
 func (c *Client) Search(ctx context.Context, gem, variant string) (*SearchResponse, http.Header, error) {
 	gemLevel, gemQuality := parseVariant(variant)
 	body := buildSearchQuery(gem, gemLevel, gemQuality)
@@ -194,11 +200,12 @@ func (c *Client) Fetch(ctx context.Context, queryID string, ids []string) ([]Tra
 }
 
 // parseVariant splits a variant string like "20/20" into level and quality.
-// Returns (level, quality). If quality is missing, returns (level, -1).
+// Returns (level, quality). If quality part is missing (e.g., "20"), quality
+// defaults to 0 (meaning 0-19% range in the search query).
 func parseVariant(variant string) (int, int) {
 	parts := strings.SplitN(variant, "/", 2)
 	level, _ := strconv.Atoi(parts[0])
-	quality := -1
+	quality := 0
 	if len(parts) == 2 {
 		quality, _ = strconv.Atoi(parts[1])
 	}
@@ -206,8 +213,29 @@ func parseVariant(variant string) (int, int) {
 }
 
 // buildSearchQuery constructs the JSON body for a GGG trade search request.
-// Filters by gem category, exact level, exact quality, not corrupted, priced
-// listings only, collapsed by account.
+//
+// GGG Trade API query field reference (discovered via testing, not documented):
+//
+//   query.type     — exact gem name match (NOT query.name which is for uniques,
+//                    NOT query.term which is fuzzy and pulls in transfigured variants)
+//
+//   status.option  — "securable" = instant buyout only (matches trade site "Buyout" toggle).
+//                    NOT "priced" which includes ~price (negotiable) listings.
+//                    Other values: "any" (all including offline), "online" (currently online only)
+//
+//   sale_type      — "priced" = has any price tag. Includes both ~b/o AND ~price listings.
+//                    "unpriced" = no price tag at all. NOT the same as "instant buyout".
+//
+//   collapse       — "true" = one listing per seller account (dedup spam/manipulation)
+//
+//   misc_filters:
+//     gem_level    — {min, max} for exact level match
+//     quality      — {min, max} for quality range. Our variant "0" quality means "any
+//                    quality below 20" (0-19), while "20" means exact 20.
+//     corrupted    — "false" = exclude corrupted gems
+//
+//   type_filters:
+//     category     — "gem" restricts to skill/support gems only
 func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 	miscFilters := map[string]interface{}{
 		"corrupted": map[string]interface{}{"option": "false"},
@@ -215,12 +243,18 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 	if gemLevel > 0 {
 		miscFilters["gem_level"] = map[string]interface{}{"min": gemLevel, "max": gemLevel}
 	}
-	if gemQuality >= 0 {
-		miscFilters["quality"] = map[string]interface{}{"min": gemQuality, "max": gemQuality}
+	// Quality 20 = exact 20%. Quality 0 = range 0-19% (our "0" variant means
+	// "not quality-gemmed", which in practice is anything below 20).
+	// Quality < 0 means unspecified (no filter applied).
+	if gemQuality == 20 {
+		miscFilters["quality"] = map[string]interface{}{"min": 20, "max": 20}
+	} else if gemQuality >= 0 {
+		miscFilters["quality"] = map[string]interface{}{"min": 0, "max": 19}
 	}
 
 	query := map[string]interface{}{
 		"query": map[string]interface{}{
+			// "type" = exact gem name. Do NOT use "term" (fuzzy) or "name" (uniques only).
 			"type": gem,
 			"stats": []map[string]interface{}{
 				{"type": "and", "filters": []interface{}{}},
@@ -236,11 +270,15 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 				},
 				"trade_filters": map[string]interface{}{
 					"filters": map[string]interface{}{
+						// "priced" = has a price tag (buyout or negotiable).
+						// Actual instant-buyout filtering is via status "securable".
 						"sale_type": map[string]string{"option": "priced"},
 						"collapse":  map[string]string{"option": "true"},
 					},
 				},
 			},
+			// "securable" = instant buyout only. This is the trade site's "Buyout" toggle.
+			// Excludes ~price (negotiable) listings — only ~b/o listings returned.
 			"status": map[string]string{"option": "securable"},
 		},
 		"sort": map[string]string{"price": "asc"},
