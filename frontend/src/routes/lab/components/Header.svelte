@@ -13,7 +13,7 @@
 
 	const LABS = ['Merciless'];
 
-	// Tick every 10s to keep timers live
+	// Tick every 1s to keep timers live
 	let now = $state(Date.now());
 	$effect(() => {
 		const interval = setInterval(() => { now = Date.now(); }, 1_000);
