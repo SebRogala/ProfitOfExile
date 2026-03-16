@@ -108,6 +108,12 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			WindowSignal         string  `json:"windowSignal"`
 			AdvancedSignal       string  `json:"advancedSignal"`
 			LiquidityTier        string  `json:"liquidityTier"`
+			PriceTier            string  `json:"priceTier"`
+			TierAction           string  `json:"tierAction"`
+			SellUrgency          string  `json:"sellUrgency"`
+			SellReason           string  `json:"sellReason"`
+			Sellability          int     `json:"sellability"`
+			SellabilityLabel     string  `json:"sellabilityLabel"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -134,6 +140,12 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				WindowSignal:         cr.WindowSignal,
 				AdvancedSignal:       cr.AdvancedSignal,
 				LiquidityTier:        cr.LiquidityTier,
+				PriceTier:            cr.PriceTier,
+				TierAction:           cr.TierAction,
+				SellUrgency:          cr.SellUrgency,
+				SellReason:           cr.SellReason,
+				Sellability:          cr.Sellability,
+				SellabilityLabel:     cr.SellabilityLabel,
 			})
 		}
 
