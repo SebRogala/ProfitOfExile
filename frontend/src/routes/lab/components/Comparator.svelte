@@ -184,7 +184,7 @@
 								class:highlighted={i === highlightedIndex}
 								onmousedown={() => selectGem(gem)}
 							>
-								<GemIcon name={gem} size={20} />
+								<GemIcon name={gem} size={36} />
 								{gem}
 							</button>
 						{/each}
@@ -365,20 +365,20 @@
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
 		z-index: 10;
-		max-height: 240px;
+		max-height: 360px;
 		overflow-y: auto;
 	}
 	.dropdown-item {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 12px;
 		width: 100%;
 		text-align: left;
-		padding: 8px 14px;
+		padding: 12px 16px;
 		color: var(--color-lab-text);
 		background: none;
 		border: none;
-		font-size: 0.9375rem;
+		font-size: 1.0625rem;
 		cursor: pointer;
 		font-family: inherit;
 	}

@@ -82,19 +82,20 @@
 	</div>
 </div>
 
+<div class="table-scroll">
 <table class="plays-table">
 	<thead>
 		<tr>
-			<th class="col-name" title="Gem name">Gem</th>
-			{#if showVariantColumn}<th class="col-var">Var</th>{/if}
-			<th class="col-tier">Tier</th>
+			<th class="col-name" title="Transfigured gem name">Gem</th>
+			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
+			<th class="col-tier" title="Price tier — TOP (high value), MID (moderate), LOW (budget). Auto-scales with league economy.">Tier</th>
 			<th class="col-num" title={METRIC_TOOLTIPS.ROI}>ROI</th>
-			<th class="col-signal">Signal</th>
-			<th class="col-sell" title="Sellability score 0-100">Sell</th>
-			<th class="col-signal">Window</th>
-			<th class="col-adv">Adv</th>
-			<th class="col-num">Listings</th>
-			<th class="col-spark">12h</th>
+			<th class="col-signal" title="Primary signal: STABLE, RISING, FALLING, DUMPING, HERD, RECOVERY, TRAP. Based on price velocity, listing changes, and historical position.">Signal</th>
+			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
+			<th class="col-signal" title="Window signal: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Tracks base gem supply windows for transfiguring.">Window</th>
+			<th class="col-adv" title="Advanced signal: BREAKOUT (genuine demand surge), COMEBACK (recovering crashed gem), POTENTIAL (rising under the radar), PRICE_MANIPULATION (fake price floor).">Adv</th>
+			<th class="col-num" title="Current transfigured gem listings on trade. Velocity arrow shows listing change direction.">Listings</th>
+			<th class="col-spark" title="Price sparkline over the last 12 hours. Shows recent price trend at a glance.">12h</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -177,6 +178,7 @@
 		{/each}
 	</tbody>
 </table>
+</div>
 
 <style>
 	.plays-header {
@@ -215,6 +217,25 @@
 	.budget-input::placeholder {
 		color: var(--color-lab-text-secondary);
 	}
+	.table-scroll {
+		max-height: 590px;
+		overflow-y: auto;
+		scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+		scrollbar-width: thin;
+	}
+	.table-scroll::-webkit-scrollbar {
+		width: 6px;
+	}
+	.table-scroll::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.table-scroll::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.15);
+		border-radius: 3px;
+	}
+	.table-scroll::-webkit-scrollbar-thumb:hover {
+		background: rgba(255, 255, 255, 0.25);
+	}
 	.plays-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -231,6 +252,10 @@
 		padding: 10px 12px;
 		border-bottom: 1px solid var(--color-lab-border);
 		cursor: help;
+		position: sticky;
+		top: 0;
+		background: var(--color-lab-surface);
+		z-index: 1;
 	}
 	.plays-table td {
 		padding: 14px 12px;
