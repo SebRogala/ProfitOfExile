@@ -104,7 +104,7 @@
 	{:else if !loading}
 		<Comparator />
 
-		<WindowAlerts alerts={windowAlerts} />
+		<WindowAlerts alerts={windowAlerts} plays={bestPlays} />
 
 		<section class="section">
 			<BestPlays plays={bestPlays} />

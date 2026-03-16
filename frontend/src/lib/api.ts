@@ -451,6 +451,37 @@ function deriveReason(prev: any, curr: any): string {
 	return 'velocity settled';
 }
 
+// --- Snapshot history for window alerts ---
+
+export interface SnapshotPoint {
+	time: string;
+	chaos: number;
+	listings: number;
+}
+
+export async function fetchGemSnapshots(name: string, variant: string, limit = 4): Promise<SnapshotPoint[]> {
+	try {
+		const now = new Date();
+		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+		const resp = await get<{ count: number; data: any[] }>('/snapshots/gems', {
+			name,
+			from: weekAgo.toISOString(),
+			to: now.toISOString(),
+			limit: String(limit * 10), // overfetch to filter by variant
+		});
+		const rows = (resp.data || [])
+			.filter((r: any) => r.variant === variant)
+			.slice(0, limit);
+		return rows.map((r: any) => ({
+			time: new Date(r.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+			chaos: Math.round((r.chaos || 0) * 10) / 10,
+			listings: r.listings || 0,
+		}));
+	} catch {
+		return [];
+	}
+}
+
 // --- Mercure SSE ---
 
 export interface MercureConnection {
