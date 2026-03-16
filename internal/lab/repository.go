@@ -655,17 +655,29 @@ func (r *Repository) SparklineData(ctx context.Context, names []string, variant 
 	return result, nil
 }
 
-// GemNamesAutocomplete returns distinct transfigured gem names matching the query prefix.
+// GemNamesAutocomplete returns distinct transfigured gem names matching all query words (in any order).
 func (r *Repository) GemNamesAutocomplete(ctx context.Context, query string, limit int) ([]string, error) {
 	if query == "" {
 		return nil, nil
 	}
 
-	rows, err := r.pool.Query(ctx, `
+	escaper := strings.NewReplacer(`%`, `\%`, `_`, `\_`)
+	words := strings.Fields(query)
+	conditions := make([]string, len(words))
+	args := make([]any, len(words))
+	for i, w := range words {
+		args[i] = "%" + escaper.Replace(w) + "%"
+		conditions[i] = fmt.Sprintf("name ILIKE $%d", i+1)
+	}
+	args = append(args, limit)
+
+	sql := fmt.Sprintf(`
 		SELECT DISTINCT name FROM gem_snapshots
-		WHERE is_transfigured = true AND name ILIKE $1
-		ORDER BY name LIMIT $2`,
-		strings.NewReplacer(`%`, `\%`, `_`, `\_`).Replace(query)+"%", limit)
+		WHERE is_transfigured = true AND %s
+		ORDER BY name LIMIT $%d`,
+		strings.Join(conditions, " AND "), len(args))
+
+	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query gem names autocomplete: %w", err)
 	}

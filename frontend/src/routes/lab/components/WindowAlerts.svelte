@@ -34,6 +34,7 @@
 				</div>
 
 				{#if alert.priceTrend.length > 1}
+					<div class="trend-divider"></div>
 					<table class="trend-table"><tbody>
 						<tr>
 							<td class="trend-label">ROI</td>
@@ -175,6 +176,10 @@
 		font-weight: 600;
 	}
 
+	.trend-divider {
+		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
+		padding-bottom: 4px;
+	}
 	.alert-action {
 		font-size: 1rem;
 		color: var(--color-lab-text-secondary);

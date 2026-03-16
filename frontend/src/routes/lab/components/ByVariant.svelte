@@ -6,7 +6,7 @@
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
 
-	let activeTab = $state('ALL');
+	let activeTab = $state('20/20');
 
 	interface VariantData {
 		plays: GemPlay[];
@@ -115,7 +115,7 @@
 		border: 1px solid var(--color-lab-border);
 		padding: 24px 28px;
 		margin-bottom: 20px;
-		background: var(--color-lab-bg);
+		background: var(--color-lab-surface);
 	}
 	.variant-block:last-child {
 		margin-bottom: 0;
