@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { fetchFontEV, type FontEVData, type FontColor } from '$lib/api';
 
+	let { refreshKey = 0 }: { refreshKey?: number } = $props();
+
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
 
@@ -40,7 +42,7 @@
 		return best;
 	}
 
-	$effect(() => { loadAll(); });
+	$effect(() => { refreshKey; loadAll(); });
 </script>
 
 <section class="section">

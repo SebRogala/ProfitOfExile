@@ -7,7 +7,7 @@
 	import GemIcon from './GemIcon.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { league = '' }: { league?: string } = $props();
+	let { league = '', refreshKey = 0 }: { league?: string; refreshKey?: number } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
