@@ -3,6 +3,8 @@
  * Fetches real data from the Go backend at /api/*.
  */
 
+import { dispatchTradeEvent } from './tradeApi';
+
 // --- Types ---
 
 export interface StatusData {
@@ -501,6 +503,7 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 
 			const authedUrl = new URL(url);
 			authedUrl.searchParams.set('topic', 'poe/analysis/*');
+			authedUrl.searchParams.append('topic', 'poe/trade/*');
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());
@@ -509,7 +512,16 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 				state.connected = true;
 			};
 
-			eventSource.onmessage = () => {
+			eventSource.onmessage = (msg) => {
+				try {
+					const parsed = JSON.parse(msg.data);
+					if (parsed.type === 'waiting' || parsed.type === 'ready' || parsed.type === 'error') {
+						dispatchTradeEvent(parsed);
+						return;
+					}
+				} catch {
+					// Not JSON or no type field — fall through to analysis update
+				}
 				onUpdate();
 			};
 
