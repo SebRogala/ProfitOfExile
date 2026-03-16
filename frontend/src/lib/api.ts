@@ -161,7 +161,7 @@ function mapCollectiveRow(r: any): GemPlay {
 		baseVelocity: Math.round(r.listingVelocity || 0),
 		basePrice: Math.round(r.basePrice || 0),
 		transPrice: Math.round(r.transfiguredPrice || r.currentPrice || 0),
-		sparkline: [],
+		sparkline: Array.isArray(r.sparkline) ? r.sparkline.map((p: any) => p.price ?? p) : [],
 		signalHistory: [],
 		priceTier: (r.priceTier || '') as PriceTier,
 		tierAction: r.tierAction || '',

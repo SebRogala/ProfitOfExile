@@ -86,6 +86,18 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 
 		results := lab.RankCollective(transfigure, trends, budget, limit, sortBy)
 
+		// Fetch sparkline data for the result gems.
+		sparkNames := make([]string, 0, len(results))
+		for _, cr := range results {
+			sparkNames = append(sparkNames, cr.TransfiguredName)
+		}
+		sparkVariant := r.URL.Query().Get("variant")
+		sparklines, err := repo.SparklineData(r.Context(), sparkNames, sparkVariant, 2)
+		if err != nil {
+			slog.Error("collective analysis: sparkline query failed", "error", err)
+			sparklines = make(map[string][]lab.SparklinePoint)
+		}
+
 		type row struct {
 			TransfiguredName     string  `json:"transfiguredName"`
 			BaseName             string  `json:"baseName"`
@@ -113,7 +125,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			SellUrgency          string  `json:"sellUrgency"`
 			SellReason           string  `json:"sellReason"`
 			Sellability          int     `json:"sellability"`
-			SellabilityLabel     string  `json:"sellabilityLabel"`
+			SellabilityLabel     string              `json:"sellabilityLabel"`
+			Sparkline            []lab.SparklinePoint `json:"sparkline"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -146,7 +159,11 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				SellReason:           cr.SellReason,
 				Sellability:          cr.Sellability,
 				SellabilityLabel:     cr.SellabilityLabel,
+				Sparkline:           sparklines[cr.TransfiguredName],
 			})
+			if rows[len(rows)-1].Sparkline == nil {
+				rows[len(rows)-1].Sparkline = []lab.SparklinePoint{}
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
