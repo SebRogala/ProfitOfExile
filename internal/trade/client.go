@@ -241,7 +241,7 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 					},
 				},
 			},
-			"status": map[string]string{"option": "any"},
+			"status": map[string]string{"option": "securable"},
 		},
 		"sort": map[string]string{"price": "asc"},
 	}
