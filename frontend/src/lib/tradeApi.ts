@@ -93,7 +93,12 @@ const API_BASE = '/api';
 /**
  * Fire a trade lookup for a gem+variant.
  * - 200 → immediate result (cache hit or fast gate response)
- * - 202 → queued; use registerTradeListener to receive the result via Mercure
+ * - 202 → queued; registers Mercure listener AND starts polling as fallback
+ *
+ * The polling fallback handles cases where Mercure SSE is not connected
+ * (e.g., missing MERCURE_SUBSCRIBER_KEY in dev). It retries the same
+ * request every 3s (max 10 attempts) — once the gate completes, the
+ * result is cached and the retry returns 200 immediately.
  */
 export async function lookupTrade(gem: string, variant: string, force = false): Promise<LookupResponse> {
 	const resp = await fetch(`${API_BASE}/trade/lookup`, {
@@ -114,4 +119,26 @@ export async function lookupTrade(gem: string, variant: string, force = false): 
 
 	const text = await resp.text().catch(() => '');
 	throw new Error(`Trade lookup failed: ${resp.status} ${resp.statusText} ${text}`);
+}
+
+/**
+ * Poll for a trade lookup result by retrying the same request until cache is hit.
+ * Used as fallback when Mercure SSE is not available.
+ */
+export async function pollTradeResult(
+	gem: string,
+	variant: string,
+	maxAttempts = 10,
+	intervalMs = 3000,
+): Promise<TradeLookupResult | null> {
+	for (let i = 0; i < maxAttempts; i++) {
+		await new Promise((r) => setTimeout(r, intervalMs));
+		try {
+			const { immediate } = await lookupTrade(gem, variant);
+			if (immediate) return immediate;
+		} catch {
+			// ignore errors during polling
+		}
+	}
+	return null;
 }

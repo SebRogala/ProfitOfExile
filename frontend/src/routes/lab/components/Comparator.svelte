@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
-	import { lookupTrade, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
+	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -31,10 +31,20 @@
 				tradeData[gem] = immediate;
 				tradeLoading[gem] = { loading: false };
 			} else if (requestId) {
+				let resolved = false;
 				const unsub = registerTradeListener(requestId, {
 					onWait: (s) => { tradeLoading[gem] = { loading: true, waitSeconds: s }; },
-					onReady: (data) => { tradeData[gem] = data; tradeLoading[gem] = { loading: false }; unsub(); },
-					onError: () => { tradeLoading[gem] = { loading: false }; unsub(); },
+					onReady: (data) => { resolved = true; tradeData[gem] = data; tradeLoading[gem] = { loading: false }; unsub(); },
+					onError: () => { resolved = true; tradeLoading[gem] = { loading: false }; unsub(); },
+				});
+				// Polling fallback when Mercure SSE isn't connected
+				pollTradeResult(gem, variant).then((data) => {
+					if (!resolved && data) {
+						resolved = true;
+						tradeData[gem] = data;
+						tradeLoading[gem] = { loading: false };
+						unsub();
+					}
 				});
 			} else {
 				tradeLoading[gem] = { loading: false };
@@ -183,6 +193,10 @@
 		return '0';
 	}
 
+	function fmtPrice(v: number): string {
+		return Number.isInteger(v) ? v.toString() : v.toFixed(1);
+	}
+
 	function concentrationClass(c: TradeSignals['sellerConcentration']): string {
 		if (c === 'MONOPOLY') return 'signal-red';
 		if (c === 'CONCENTRATED') return 'signal-yellow';
@@ -323,15 +337,15 @@
 						{:else if tradeData[gem.name]}
 							<div class="trade-data">
 								<div class="trade-price-row">
-									<span class="trade-floor-price" title="Cheapest listing on trade site">{tradeData[gem.name].priceFloor.toFixed(1)}c</span>
+									<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(tradeData[gem.name].priceFloor)}c</span>
 									<span class="trade-floor-label">trade floor</span>
 									<span class="trade-delta" class:trade-delta-positive={tradeData[gem.name].priceFloor - gem.roi > 0} class:trade-delta-negative={tradeData[gem.name].priceFloor - gem.roi < 0}>
-										{tradeData[gem.name].priceFloor - gem.roi > 0 ? '+' : ''}{(tradeData[gem.name].priceFloor - gem.roi).toFixed(1)}c vs ninja
+										{tradeData[gem.name].priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(tradeData[gem.name].priceFloor - gem.roi)}c vs ninja
 									</span>
 								</div>
 								<div class="trade-meta-row">
 									<span class="trade-listings-badge">{tradeData[gem.name].total} total listings</span>
-									<span class="trade-median" title="Median price of top 10 listings">med: {tradeData[gem.name].medianTop10.toFixed(1)}c</span>
+									<span class="trade-median" title="Median price of top 10 listings">med: {fmtPrice(tradeData[gem.name].medianTop10)}c</span>
 								</div>
 								<div class="trade-signals-row">
 									<span class="trade-signal-badge {concentrationClass(tradeData[gem.name].signals.sellerConcentration)}"
@@ -361,7 +375,7 @@
 											</div>
 											{#each tradeData[gem.name].listings as listing}
 												<div class="trade-listing-row">
-													<span class="tl-col-price">{listing.price.toFixed(1)} {listing.currency}</span>
+													<span class="tl-col-price">{fmtPrice(listing.price)} {listing.currency}</span>
 													<span class="tl-col-account" title={listing.account}>{listing.account}</span>
 													<span class="tl-col-detail">
 														{listing.gemLevel}/{listing.gemQuality}
