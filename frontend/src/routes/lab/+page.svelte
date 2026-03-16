@@ -63,6 +63,16 @@
 	$effect(() => {
 		loadAll();
 
+		// Poll every 10s for status updates (divine rate, sync times)
+		const statusInterval = setInterval(async () => {
+			try {
+				status = await fetchStatus();
+				if (mercure) {
+					status = { ...status, connected: mercure.connected };
+				}
+			} catch { /* ignore */ }
+		}, 10_000);
+
 		// Connect to Mercure SSE for live updates
 		mercure = connectMercure(() => {
 			// On any Mercure event, reload all data
@@ -70,6 +80,7 @@
 		});
 
 		return () => {
+			clearInterval(statusInterval);
 			mercure?.close();
 		};
 	});
