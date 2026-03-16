@@ -22,7 +22,7 @@
 	<div class="overview-grid">
 		<div class="stat-item">
 			<span class="stat-label">Market avg price (transfigured):</span>
-			<span class="stat-value">{data.avgTransPrice}c <span class="delta">{deltaStr(data.avgTransPriceDelta)}/2h</span></span>
+			<span class="stat-value">{data.avgTransPrice}c{#if data.avgTransPriceDelta !== 0} <span class="delta">{deltaStr(data.avgTransPriceDelta)}/2h</span>{/if}</span>
 		</div>
 		<div class="stat-item">
 			<span class="stat-label">Active gems:</span>
@@ -30,12 +30,14 @@
 		</div>
 		<div class="stat-item">
 			<span class="stat-label">Market avg base listings:</span>
-			<span class="stat-value">{data.avgBaseListings} <span class="delta">{deltaStr(data.avgBaseListingsDelta)}/2h</span></span>
+			<span class="stat-value">{data.avgBaseListings}{#if data.avgBaseListingsDelta !== 0} <span class="delta">{deltaStr(data.avgBaseListingsDelta)}/2h</span>{/if}</span>
 		</div>
+		{#if data.weekendPremium > 0}
 		<div class="stat-item">
 			<span class="stat-label">Weekend premium:</span>
 			<span class="stat-value">~{data.weekendPremium}%</span>
 		</div>
+		{/if}
 		<div class="stat-item">
 			<span class="stat-label">Gems with WINDOW signals:</span>
 			<span class="stat-value">{data.windowGems} ({breakdownStr(data.windowBreakdown)})</span>

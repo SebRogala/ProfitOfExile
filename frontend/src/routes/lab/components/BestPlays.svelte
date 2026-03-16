@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { GemPlay } from '$lib/api';
+	import { fetchSignalHistory, type GemPlay, type SignalTransition } from '$lib/api';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -18,6 +18,8 @@
 	let sortBy = $state<'roi' | 'roiPercent'>('roi');
 	let budget = $state('');
 	let expandedRow = $state<number | null>(null);
+	let expandedHistory = $state<SignalTransition[]>([]);
+	let historyLoading = $state(false);
 
 	let sorted = $derived.by(() => {
 		let filtered = [...plays];
@@ -37,8 +39,21 @@
 		return '0';
 	}
 
-	function toggleRow(i: number) {
-		expandedRow = expandedRow === i ? null : i;
+	async function toggleRow(i: number) {
+		if (expandedRow === i) {
+			expandedRow = null;
+			expandedHistory = [];
+			return;
+		}
+		expandedRow = i;
+		expandedHistory = [];
+		historyLoading = true;
+		const gem = sorted[i];
+		try {
+			expandedHistory = await fetchSignalHistory(gem.name, gem.variant);
+		} finally {
+			historyLoading = false;
+		}
 	}
 </script>
 
@@ -131,9 +146,22 @@
 							{/if}
 							<div class="expanded-history">
 								History:
-								{#each gem.signalHistory as h}
-									<span class="hist-entry">{h.time} {h.from}→{h.to} ({h.reason})</span>
-								{/each}
+								{#if historyLoading}
+									<span class="hist-loading">Loading history...</span>
+								{:else if expandedHistory.length > 0}
+									{#each expandedHistory as h}
+										<div class="hist-line">
+											<span class="hist-time">{h.time}</span>
+											<SignalBadge signal={h.from} />
+											<span class="hist-arrow">&rarr;</span>
+											<SignalBadge signal={h.to} />
+											<span class="hist-reason">{h.reason}</span>
+											<span class="hist-listings">{h.listings} listings</span>
+										</div>
+									{/each}
+								{:else}
+									<span class="hist-none">No signal changes recorded</span>
+								{/if}
 							</div>
 						</div>
 					</td>
@@ -282,9 +310,12 @@
 		margin-top: 8px;
 		color: var(--color-lab-text-secondary);
 	}
-	.hist-entry {
-		margin-right: 14px;
-	}
+	.hist-line { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+	.hist-time { color: var(--color-lab-text); font-weight: 600; min-width: 42px; font-size: 0.8125rem; }
+	.hist-arrow { color: var(--color-lab-text-secondary); font-size: 1.125rem; }
+	.hist-reason { color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
+	.hist-listings { margin-left: auto; color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
+	.hist-loading, .hist-none { color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
 	/* Tier badge */
 	.col-tier { width: 55px; }
 	.tier-badge {
