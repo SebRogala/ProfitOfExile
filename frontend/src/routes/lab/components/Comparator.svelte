@@ -201,7 +201,7 @@
 			{#each results as gem}
 				<div class="compare-card">
 					<div class="card-name-row">
-						<GemIcon name={gem.name} size={32} />
+						<GemIcon name={gem.name} size={40} />
 						<span class="card-name">{gem.name}</span>
 						<span class="tier-badge {tierClass(gem.priceTier)}">{gem.priceTier}</span>
 					</div>
@@ -212,7 +212,7 @@
 					</div>
 					<div class="card-row small">
 						<span>{gem.transListings} listings</span>
-						<span class="velocity-inline" title="Listing change over last 2 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 2} last 2h)</span>
+						<span class="velocity-inline" title="Listing change over last 12 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12} last 12h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
 					</div>
 

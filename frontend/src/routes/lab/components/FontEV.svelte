@@ -33,8 +33,8 @@
 					<span class="stat">Winners: {fc.winners}</span>
 					<span class="stat" title={METRIC_TOOLTIPS.pWin}>pWin: {fc.pWin}%</span>
 					<span class="stat">Profit: {fc.profit}c</span>
-					<span class="stat delta" title={METRIC_TOOLTIPS['\u03942h']}>
-						Δ2h: EV {deltaStr(fc.evDelta2h)}
+					<span class="stat delta" title={METRIC_TOOLTIPS['\u039412h']}>
+						Δ12h: EV {deltaStr(fc.evDelta2h)}
 					</span>
 				</div>
 			</div>

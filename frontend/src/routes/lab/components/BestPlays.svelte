@@ -94,7 +94,7 @@
 			<th class="col-signal">Window</th>
 			<th class="col-adv">Adv</th>
 			<th class="col-num">Listings</th>
-			<th class="col-spark">2h</th>
+			<th class="col-spark">12h</th>
 		</tr>
 	</thead>
 	<tbody>
@@ -105,7 +105,7 @@
 				onclick={() => toggleRow(i)}
 			>
 				<td class="col-name gem-name">
-					<GemIcon name={gem.name} size={24} />
+					<GemIcon name={gem.name} size={40} />
 					<span>{gem.name}</span>
 				</td>
 				{#if showVariantColumn}<td class="col-var">{gem.variant}</td>{/if}

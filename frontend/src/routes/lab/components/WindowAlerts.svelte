@@ -1,14 +1,12 @@
 <script lang="ts">
-	import type { WindowAlert, GemPlay } from '$lib/api';
+	import type { WindowAlert } from '$lib/api';
 	import SignalBadge from './SignalBadge.svelte';
-	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
 
-	let { alerts, plays = [] }: { alerts: WindowAlert[]; plays?: GemPlay[] } = $props();
+	let { alerts }: { alerts: WindowAlert[] } = $props();
 
-	function findPlay(alert: WindowAlert): GemPlay | undefined {
-		return plays.find((p) => p.name === alert.name && p.variant === alert.variant)
-			|| plays.find((p) => p.name === alert.name);
+	function tierClass(tier: string): string {
+		return { TOP: 'tier-top', MID: 'tier-mid', LOW: 'tier-low' }[tier] || '';
 	}
 </script>
 
@@ -17,49 +15,52 @@
 		<h2 class="section-title">Window Alerts</h2>
 		<div class="alerts-grid">
 		{#each alerts as alert}
-			{@const play = findPlay(alert)}
-			<div class="alert-row">
-				<div class="alert-top">
-					<SignalBadge signal={alert.windowSignal} type="window" />
-					<GemIcon name={alert.name} size={24} />
+			<div class="alert-card">
+				<div class="alert-name">
+					<GemIcon name={alert.name} size={40} />
 					<span class="gem-name">{alert.name}</span>
-					<span class="variant">({alert.variant})</span>
-					{#if play}<span class="roi">{play.roi}c ROI</span>{/if}
+					{#if alert.priceTier}
+						<span class="tier-badge {tierClass(alert.priceTier)}">{alert.priceTier}</span>
+					{/if}
 				</div>
 
-				<div class="alert-stats">
-					<span class="stat">{alert.transListings} listings</span>
-					{#if alert.priceVelocity !== 0}
-						<span class="vel-badge" class:stat-up={alert.priceVelocity > 0} class:stat-down={alert.priceVelocity < 0}>
-							Price {alert.priceVelocity > 0 ? '+' : ''}{Math.round(alert.priceVelocity)}c
-						</span>
-					{/if}
-					{#if alert.baseVelocity !== 0}
-						<span class="vel-badge" class:stat-up={alert.baseVelocity < 0} class:stat-down={alert.baseVelocity > 0}>
-							Base {alert.baseVelocity > 0 ? '+' : ''}{alert.baseVelocity}
-						</span>
-					{/if}
-					{#if alert.signal}
+				<div class="alert-metrics">
+					<SignalBadge signal={alert.windowSignal} type="window" />
+					<span class="variant">{alert.variant.includes('/') ? alert.variant : alert.variant + '/0'}</span>
+					<span class="right-group">
+						<span class="roi">{alert.roi}c</span>
 						<SignalBadge signal={alert.signal} />
-					{/if}
-					<span class="liq" title="Base gem liquidity">{alert.liquidityTier} liq</span>
+					</span>
 				</div>
 
-				{#if play}
-					<div class="alert-detail-row">
-						{#if play.sellability > 0}
-							<span class="detail">Sell: {play.sellability}</span>
+				{#if alert.priceTrend.length > 1}
+					<table class="trend-table"><tbody>
+						<tr>
+							<td class="trend-label">ROI</td>
+							{#each alert.priceTrend as p, i}
+								{#if i > 0}<td class="trend-arrow">→</td>{/if}
+								<td class="trend-val price">{p}c</td>
+							{/each}
+						</tr>
+						{#if alert.listingsTrend.length > 1}
+							<tr>
+								<td class="trend-label">listings</td>
+								{#each alert.listingsTrend as l, i}
+									{#if i > 0}<td class="trend-arrow">→</td>{/if}
+									<td class="trend-val listing">{l}</td>
+								{/each}
+							</tr>
 						{/if}
-						{#if play.priceTier}
-							<span class="detail">Tier: {play.priceTier}</span>
+						{#if alert.baseListingsTrend.length > 1}
+							<tr>
+								<td class="trend-label">base listings</td>
+								{#each alert.baseListingsTrend as l, i}
+									{#if i > 0}<td class="trend-arrow">→</td>{/if}
+									<td class="trend-val base">{l}</td>
+								{/each}
+							</tr>
 						{/if}
-						{#if play.cv > 0}
-							<span class="detail">CV: {play.cv}%</span>
-						{/if}
-						{#if play.sparkline.length > 0}
-							<Sparkline data={play.sparkline} width={120} height={24} />
-						{/if}
-					</div>
+					</tbody></table>
 				{/if}
 
 				{#if alert.action}
@@ -86,81 +87,97 @@
 	}
 	.alerts-grid {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: 1fr 1fr 1fr;
 		gap: 14px;
 	}
-	.alert-row {
+	.alert-card {
 		border: 1px solid var(--color-lab-border);
-		padding: 16px 18px;
+		padding: 14px 16px;
 		background: var(--color-lab-bg);
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
 	}
-	.alert-top {
+
+	.alert-name {
 		display: flex;
 		align-items: center;
-		gap: 10px;
-		flex-wrap: wrap;
-		margin-bottom: 10px;
+		gap: 8px;
 	}
 	.gem-name {
 		color: var(--color-lab-text);
 		font-weight: 700;
-		font-size: 1rem;
 	}
-	.variant {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.9375rem;
+	.tier-badge {
+		font-size: 0.6875rem;
+		font-weight: 700;
+		padding: 1px 6px;
+		border-radius: 3px;
+		margin-left: auto;
+	}
+	.tier-top { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+	.tier-mid { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+	.tier-low { background: rgba(100, 116, 139, 0.15); color: #64748b; }
+
+	.alert-metrics {
+		display: flex;
+		align-items: center;
+		gap: 10px;
 	}
 	.roi {
 		color: var(--color-lab-green);
 		font-weight: 700;
-		font-size: 1rem;
-		margin-left: auto;
+		font-size: 1.125rem;
 	}
-	.alert-stats {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		flex-wrap: wrap;
-		margin-bottom: 10px;
-	}
-	.stat {
-		font-size: 0.875rem;
-		color: var(--color-lab-text-secondary);
-	}
-	.vel-badge {
-		font-size: 0.75rem;
-		font-weight: 700;
-		padding: 2px 6px;
-	}
-	.stat-up {
-		color: var(--color-lab-green);
-		background: rgba(34, 197, 94, 0.1);
-	}
-	.stat-down {
-		color: var(--color-lab-red);
-		background: rgba(239, 68, 68, 0.1);
-	}
-	.liq {
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: var(--color-lab-yellow);
-		margin-left: auto;
-	}
-	.alert-detail-row {
+	.right-group {
 		display: flex;
 		align-items: center;
 		gap: 14px;
-		margin-bottom: 8px;
-		flex-wrap: wrap;
+		margin-left: auto;
 	}
-	.detail {
-		font-size: 0.8125rem;
+	.variant {
 		color: var(--color-lab-text-secondary);
 	}
+
+	.trend-table {
+		border-collapse: collapse;
+		font-size: 1rem;
+		width: auto;
+	}
+	.trend-table td {
+		padding: 2px 0;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+	.trend-label {
+		text-align: left !important;
+		color: var(--color-lab-text-secondary);
+		font-weight: 600;
+		padding-right: 6px !important;
+		white-space: nowrap;
+	}
+	.trend-arrow {
+		text-align: center !important;
+		color: var(--color-lab-text-secondary);
+		opacity: 0.4;
+		padding: 2px 3px !important;
+	}
+	.trend-val.price {
+		color: var(--color-lab-green);
+		font-weight: 600;
+	}
+	.trend-val.listing {
+		color: var(--color-lab-blue);
+		font-weight: 600;
+	}
+	.trend-val.base {
+		color: var(--color-lab-text-secondary);
+		font-weight: 600;
+	}
+
 	.alert-action {
-		font-size: 0.875rem;
+		font-size: 1rem;
 		color: var(--color-lab-text-secondary);
-		font-style: italic;
 		padding-top: 6px;
 		border-top: 1px solid rgba(42, 45, 55, 0.4);
 	}

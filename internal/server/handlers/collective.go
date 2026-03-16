@@ -92,7 +92,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			sparkNames = append(sparkNames, cr.TransfiguredName)
 		}
 		sparkVariant := r.URL.Query().Get("variant")
-		sparklines, err := repo.SparklineData(r.Context(), sparkNames, sparkVariant, 24*7)
+		sparklines, err := repo.SparklineData(r.Context(), sparkNames, sparkVariant, 12)
 		if err != nil {
 			slog.Error("collective analysis: sparkline query failed", "error", err)
 			sparklines = make(map[string][]lab.SparklinePoint)
@@ -250,7 +250,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 		// Load sparkline data (last 2 hours).
 		var warnings []string
-		sparklines, err := repo.SparklineData(r.Context(), names, variant, 2)
+		sparklines, err := repo.SparklineData(r.Context(), names, variant, 12)
 		if err != nil {
 			slog.Error("compare analysis: sparkline query failed", "error", err)
 			sparklines = make(map[string][]lab.SparklinePoint)
