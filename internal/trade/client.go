@@ -243,14 +243,13 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 	if gemLevel > 0 {
 		miscFilters["gem_level"] = map[string]interface{}{"min": gemLevel, "max": gemLevel}
 	}
-	// Quality 20 = exact 20%. Quality 0 = range 0-19% (our "0" variant means
-	// "not quality-gemmed", which in practice is anything below 20).
-	// Quality < 0 means unspecified (no filter applied).
+	// Quality 20 = exact 20% filter. Quality 0 = no quality filter (the gem
+	// competes in the full market for that level, regardless of quality — a
+	// buyer searching for level 20 Kinetic Blast doesn't filter by quality).
 	if gemQuality == 20 {
 		miscFilters["quality"] = map[string]interface{}{"min": 20, "max": 20}
-	} else if gemQuality >= 0 {
-		miscFilters["quality"] = map[string]interface{}{"min": 0, "max": 19}
 	}
+	// quality 0 or unspecified: no filter applied
 
 	query := map[string]interface{}{
 		"query": map[string]interface{}{
