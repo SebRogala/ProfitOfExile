@@ -17,6 +17,7 @@ type Cache struct {
 	trends      []TrendResult
 	lastUpdated time.Time
 	nextFetch   time.Time
+	divineRate  float64
 }
 
 // NewCache creates an empty analysis cache.
@@ -103,4 +104,18 @@ func (c *Cache) NextFetch() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.nextFetch
+}
+
+// SetDivineRate stores the latest divine→chaos exchange rate.
+func (c *Cache) SetDivineRate(rate float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.divineRate = rate
+}
+
+// DivineRate returns the cached divine→chaos exchange rate.
+func (c *Cache) DivineRate() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.divineRate
 }

@@ -256,6 +256,23 @@ func main() {
 				slog.Warn("mercure: missing or non-string 'endpoint' in payload", "payload", payload)
 				return
 			}
+			if endpoint == "ninja_currency" || endpoint == "ninja-currency" {
+				// Update divine rate on cache from latest DB data.
+				go func() {
+					qCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					var rate float64
+					if err := pool.QueryRow(qCtx,
+						`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+					).Scan(&rate); err != nil {
+						slog.Warn("currency event: divine rate query failed", "error", err)
+						return
+					}
+					labCache.SetDivineRate(rate)
+					slog.Info("currency event: divine rate updated", "rate", rate)
+				}()
+			}
+
 			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {
 				// Always signal throttler on gem events; nextFetch is optional enrichment.
 				throttler.Signal(nextFetch)
