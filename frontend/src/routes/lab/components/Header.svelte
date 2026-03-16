@@ -57,6 +57,10 @@
 			{/each}
 		</div>
 		<div class="meta-row">
+			{#if status.divinePrice > 0}
+				<span class="meta divine-rate" title="Current Divine Orb price">1 div = {Math.round(status.divinePrice)}c</span>
+				<span class="meta-sep">|</span>
+			{/if}
 			<span class="meta">
 				{formatTimeAgo(status.lastUpdate, now)}
 			</span>
@@ -122,6 +126,10 @@
 	.meta {
 		color: var(--color-lab-text-secondary);
 		font-size: 0.9375rem;
+	}
+	.divine-rate {
+		color: var(--color-lab-yellow, #eab308);
+		font-weight: 600;
 	}
 	.meta-sep {
 		color: var(--color-lab-border);

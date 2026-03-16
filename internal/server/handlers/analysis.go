@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"profitofexile/internal/lab"
 )
 
@@ -581,7 +583,7 @@ func filterQuality(all []lab.QualityResult, variant string, limit int) []lab.Qua
 }
 
 // AnalysisStatus returns cache health information.
-func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
+func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -613,6 +615,16 @@ func AnalysisStatus(cache *lab.Cache) http.HandlerFunc {
 		}
 		if nf := cache.NextFetch(); !nf.IsZero() {
 			resp["nextFetch"] = nf.UTC().Format(time.RFC3339)
+		}
+
+		// Divine→chaos rate for display in the header.
+		if pool != nil {
+			var divRate float64
+			if err := pool.QueryRow(r.Context(),
+				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+			).Scan(&divRate); err == nil {
+				resp["divinePrice"] = divRate
+			}
 		}
 
 		if err := json.NewEncoder(w).Encode(resp); err != nil {

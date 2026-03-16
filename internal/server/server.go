@@ -68,7 +68,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo))
-		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache))
+		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
 	}
 
