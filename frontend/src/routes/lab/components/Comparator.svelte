@@ -205,10 +205,28 @@
 	}
 
 	function baseGemTradeUrl(name: string): string {
-		// Links to the trade site search page — user will need to set filters manually
-		// but the gem name is pre-identified for quick lookup
 		const base = baseGemName(name);
-		return `https://www.pathofexile.com/trade/search/Mirage?q=${encodeURIComponent(JSON.stringify({ query: { type: base, status: { option: "securable" }, filters: { type_filters: { filters: { category: { option: "gem" } } } } }, sort: { price: "asc" } }))}`;
+		const parts = variant.split('/');
+		const level = parseInt(parts[0]) || 0;
+		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
+
+		const miscFilters: Record<string, any> = { corrupted: { option: 'false' } };
+		if (level >= 20) miscFilters.gem_level = { min: level, max: level };
+		if (quality === 20) miscFilters.quality = { min: 20, max: 20 };
+
+		const q = {
+			query: {
+				type: base,
+				status: { option: 'securable' },
+				filters: {
+					type_filters: { filters: { category: { option: 'gem' } } },
+					misc_filters: { filters: miscFilters },
+					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
+				},
+			},
+			sort: { price: 'asc' },
+		};
+		return `https://www.pathofexile.com/trade/search/Mirage?q=${encodeURIComponent(JSON.stringify(q))}`;
 	}
 
 	function refreshTradeData(gem: string) {
@@ -373,10 +391,6 @@
 									<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
 										{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
 									</span>
-								</div>
-								<div class="trade-meta-row">
-									<span class="trade-listings-badge">{td.total} listings</span>
-									<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
 									<span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}"
 										title="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10">
 										{td.signals.sellerConcentration}
@@ -388,10 +402,14 @@
 									{#if td.signals.priceOutlier}
 										<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
 									{/if}
+								</div>
+								<div class="trade-meta-row">
+									<span class="trade-listings-badge">{td.total} listings</span>
+									<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
 									<span class="trade-actions">
 										<button class="trade-action-btn" title="Refresh trade data" onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
 										{#if gem.name.includes(' of ')}
-											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
+											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
 										{/if}
 									</span>
 								</div>
@@ -426,7 +444,9 @@
 					</div>
 
 					<div class="sparkline-row">
+						<span title="poe.ninja price trend — last 12 hours (30-min snapshots)">
 						<Sparkline data={gem.sparkline} width={280} height={32} />
+					</span>
 					</div>
 					<div class="history">
 						{#each gem.signalHistory as h}
@@ -844,8 +864,8 @@
 		background: rgba(42, 45, 55, 0.6);
 		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text-secondary);
-		padding: 1px 6px;
-		font-size: 0.7rem;
+		padding: 4px 10px;
+		font-size: 0.8rem;
 		cursor: pointer;
 		font-family: inherit;
 		text-decoration: none;
