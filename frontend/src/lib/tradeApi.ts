@@ -15,12 +15,14 @@ export interface TradeLookupResult {
 	medianTop10: number;
 	listings: TradeListingDetail[];
 	signals: TradeSignals;
+	divinePrice: number;
 	fetchedAt: string;
 }
 
 export interface TradeListingDetail {
 	price: number;
 	currency: string;
+	chaosPrice: number;
 	account: string;
 	indexedAt: string;
 	gemLevel: number;

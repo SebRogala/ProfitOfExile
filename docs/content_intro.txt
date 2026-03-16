@@ -1,0 +1,247 @@
+<main>
+
+<div id="intro-banner">
+    <img src="https://web.poecdn.com/protected/image/layout/misc/Critter1.png?key=fIwPGUlixdn13kvfW18LYQ">
+</div>
+
+<article id="intro">
+<h2>Introduction <a class="self-link" href="#intro"></a></h2>
+<p>
+    Our website provides a basic set of API endpoints that allow access to various components of Path of Exile. This access is almost always a read-only snapshot of data stored on the game servers.
+</p>
+<p>
+    Although we are excited to provide these resources to you, the stability of the website and game servers are of upmost importance to us. To this end the details in this document may change without notice as we adjust to protect our backend from being overloaded.
+    We make no guarantee of website uptime, or that API endpoints will remain available indefinitely.
+</p>
+<p>
+    We implement the OAuth 2.1 standard in order to secure access to our APIs. This allows registered applications to view private account data in a manner where the user has complete control over what they share. You can read more about this in the <a href="/developer/docs/authorization#oauth">Authorization</a> section of these docs.
+</p>
+</article>
+<article id="policy">
+<h2>API Policies and Third-Party Requirements <a class="self-link" href="#policy"></a></h2>
+<p>This documentation includes requirements that form our API Policies. Applications that interface with our APIs must adhere to these, as well any requirements in our <a href="/legal/terms-of-use-and-privacy-policy">Terms of Service and Privacy Policy</a>. Depending on your use case, you must also respect the privacy of players who grant you access to their personal data.</p>
+<p>You should follow the guidelines within this documentation as closely as you can. We reserve the right to remove access to any or all of our APIs and services without notice at our discretion.</p>
+<p>Our general policy is to only allow the creation of applications that run completely separate from the game. We don't encourage players to download or run "tools" on their machine as these are never guaranteed to be free from malware or nefarious practices. Even if an application performs only actions approved by us, there is nothing stopping that from changing without the user's, or our, notice.</p>
+<p>For these reasons and more, the safest kind of application for our players is a website that interacts with our API. The following is a breakdown of application types and what we think of them.</p>
+<h3>Websites and web apps</h3>
+<ul>
+    <li>Little to no risk for end users.</li>
+    <li>Allows you to keep your OAuth client credentials secure.</li>
+    <li>You can cache content on a broader basis, reducing API calls associated with your application.</li>
+</ul>
+<h3>Executable apps that run independently from the game</h3>
+<ul>
+    <li>While not encouraged, these are permitted. They must use a <a href="/developer/docs/authorization#clients">public OAuth client</a> if interacting with our APIs.</li>
+    <li>Reading the game's log files is okay as long as the user is aware of what you are doing with that data.</li>
+    <li>
+        Automation of key-strokes (or other inputs) that affect the game in any way <strong>must</strong> follow our macro rules:
+        <ul>
+            <li>Macros must be invoked manually by the user (automated invocations such as but not limited to: timers, reacting to file changes, or from reading the screen are not allowed).</li>
+            <li>Each macro invocation must have one set function (it cannot cycle between actions).</li>
+            <li>The resulting function must only perform one action that interacts with the game (sending a single chat message or command counts as one action).</li>
+        </ul>
+    </li>
+    <li>Introducing features against these guidelines or our <a href="/legal/terms-of-use-and-privacy-policy">Terms of Use</a> can result in account termination for you <em>as well as</em> your users.</li>
+</ul>
+<h3>Executable apps that interact with the game or game files</h3>
+<ul>
+    <li>This behaviour is strictly against our <a href="/legal/terms-of-use-and-privacy-policy">Terms of Use</a> (sections 7b, 7c, 7i).</li>
+    <li>Creation or use of these type of applications will result in immediate account termination.</li>
+</ul>
+</article>
+<article id="gettingstarted">
+<h2>Getting Started <a class="self-link" href="#gettingstarted"></a></h2>
+<p>Remember to read the next section (<a href="#guidelines">Developer Guidelines</a>) to make sure you understand what an application can or cannot do.</p>
+<h4>In order to register you must have:</h4>
+<ul style="list-style-type:none">
+    <li><label><input type="checkbox">A basic understanding of <a href="/developer/docs/authorization">what OAuth is and what it lets you do</a>.</label></li>
+    <li><label><input type="checkbox">Read and understand the different types of <a href="/developer/docs/authorization#clients">OAuth clients</a>, as well as the difference in <a href="/developer/docs/authorization#grants">grant types</a> available.</label></li>
+    <li><label><input type="checkbox">Read the list of <a href="/developer/docs/authorization#scopes">scopes</a> and confirm that they provide access to the <a href="#resources">resources</a> you are interested in.</label></li>
+</ul>
+<h3>Registering your Application</h3>
+<p>Registration is currently handled by us directly at our discretion. You can make a request by emailing <a href="mailto:oauth@grindinggear.com?subject=OAuth%20Application">oauth@grindinggear.com</a> with your details and requirements. Please be aware that these requests are considered a low priority and we may not be able to respond in a timely manner (especially around league launches).</p>
+<div style="border: 1px solid red; border-radius: 5px; padding: 15px; background-color: #4C1A1D"><strong>NOTE:</strong> Due to the large volume of recent requests, we will immediately reject any low-effort or LLM-generated requests. We expect you to read and understand these docs, and to have a clear vision for what you want to do before requesting OAuth access.</div>
+<h4>Things to include:</h4>
+<ol>
+    <li>Your PoE account name (including the four digit discriminator).</li>
+    <li>Your application's name.</li>
+    <li>The <a href="/developer/docs/authorization#clients">type of client</a> you want to register.</li>
+    <li>The <a href="/developer/docs/authorization#grants">grant types</a> you require.</li>
+    <li>The <a href="/developer/docs/authorization#scopes">scopes</a> you are interested in, and why you specifically need each one.</li>
+    <li>
+        A <a href="/developer/docs/authorization#clients-confidential">secure redirect URI</a> if you plan to use a confidential client using the <a href="/developer/docs/authorization#authorization_code">authorization_code</a> grant type OR<br>
+        a <a href="/developer/docs/authorization#clients-public">local redirect URI</a> if you plan to use a public client.
+    </li>
+</ol>
+<p><em>You can manage applications owned by your account by visiting the <a href="/my-account/applications">Manage applications</a> link in your profile.</em></p>
+</article>
+<article id="resources">
+<h2>Available Resources <a class="self-link" href="#resources"></a></h2>
+<p>We can only support resources defined in our <a href="/developer/docs/reference">API Reference</a> or listed in our <a href="/developer/docs/data">Data Exports</a>.</p>
+<p>Requests for access to any other internal website APIs or in-game resources will be denied. It is against our <a href="/legal/terms-of-use-and-privacy-policy">Terms of Use</a> (section 7i) to reverse-engineer endpoints outside of this documentation.</p>
+</article>
+<article id="guidelines">
+<h2>Developer Guidelines <a class="self-link" href="#guidelines"></a></h2>
+<p><em>Failing to meet any guidelines listed here may result in your application's access being revoked.</em></p>
+<h3>OAuth Credentials</h3>
+<ul>
+    <li>
+        <strong>Keep your credentials safe.</strong>
+        <ul>
+            <li>Don't share your account or application's credentials with anyone else.</li>
+            <li>Don't include any application keys or credentials in your code.</li>
+            <li>Don't embed keys or credentials in a distributed binary.</li>
+        </ul>
+    </li>
+    <li>One product per registered application</li>
+</ul>
+<h3>User Agent</h3>
+<p>Any application that interacts with our API must set an identifiable User Agent header prefixed using the following format:</p>
+<pre><code>User-Agent: OAuth {$clientId}/{$version} (contact: {$contact}) ...</code></pre>
+<p>Example:</p>
+<pre><code>User-Agent: OAuth mypoeapp/1.0.0 (contact: mypoeapp@gmail.com) SomeOptionalThingHere</code></pre>
+<h3>Third-Party Notice</h3>
+<p>
+    Every public or widely available application should include some form of the following statement in a visible location:
+</p>
+<code>This product isn't affiliated with or endorsed by Grinding Gear Games in any way.</code>
+<h3>Error Handling</h3>
+<p>The following sections in this document describe why API errors occur and what you should do when you encounter them. Please read on!</p>
+</article>
+<article id="errors">
+<h2>Errors <a class="self-link" href="#errors"></a></h2>
+<h3>HTTP Status Codes</h3>
+<p>The Path of Exile API returns different HTTP status codes depending on whether or not the request was successful or resulted in some other error.</p>
+<p>Examples:</p>
+<table>
+<thead>
+<tr>
+    <th>Code</th>
+    <th>Text</th>
+    <th>Description</th>
+</tr>
+</thead>
+<tbody>
+    <tr><td>200</td><td>OK</td><td>The request succeeded.</td></tr>
+    <tr><td>202</td><td>Accepted</td><td>The request was accepted but may not be processed yet.</td></tr>
+    <tr><td>400</td><td>Bad Request</td><td>The request was invalid. Check that all arguments are in the correct format.</td></tr>
+    <tr><td>404</td><td>Not Found</td><td>The requested resource was not found.</td></tr>
+    <tr><td>429</td><td>Too many requests</td><td>You are making too many API requests and have been rate limited.</td></tr>
+    <tr><td>500</td><td>Internal Server Error</td><td>We had a problem processing your request. Please try again later or post a bug report.</td></tr>
+</tbody>
+</table>
+<h3>Error Messages</h3>
+<p>Error responses will usually contain a JSON object such as the one below. If your application makes decisions based on the error response make sure you use the code rather than the message as the message is subject to change.</p>
+<p>Note: Endpoints that implement the <a href="/developer/docs/authorization#oauth">OAuth specification</a> will return errors according to the relevant RFC.</p>
+<pre><code class="prettyprint lang-json prettyprinted" style=""><span class="pun">{</span><span class="pln">
+    </span><span class="str">"error"</span><span class="pun">:</span><span class="pln"> </span><span class="pun">{</span><span class="pln">
+        </span><span class="str">"code"</span><span class="pun">:</span><span class="pln"> </span><span class="lit">2</span><span class="pun">,</span><span class="pln">
+        </span><span class="str">"message"</span><span class="pun">:</span><span class="pln"> </span><span class="str">"Invalid query"</span><span class="pln">
+    </span><span class="pun">}</span><span class="pln">
+</span><span class="pun">}</span></code></pre>
+<p>Examples:</p>
+<table>
+<thead>
+<tr>
+    <th>Code</th>
+    <th>Message</th>
+</tr>
+</thead>
+<tbody>
+    <tr><td>0</td><td>Accepted</td></tr>
+    <tr><td>1</td><td>Resource not found</td></tr>
+    <tr><td>2</td><td>Invalid query</td></tr>
+    <tr><td>3</td><td>Rate limit exceeded</td></tr>
+    <tr><td>4</td><td>Internal error</td></tr>
+    <tr><td>5</td><td>Unexpected content type</td></tr>
+    <tr><td>6</td><td>Forbidden</td></tr>
+    <tr><td>7</td><td>Temporarily Unavailable</td></tr>
+    <tr><td>8</td><td>Unauthorized</td></tr>
+    <tr><td>9</td><td>Method not allowed</td></tr>
+    <tr><td>10</td><td>Unprocessable Entity</td></tr>
+</tbody>
+</table>
+<h3>Invalid Requests Threshold</h3>
+<p>Applications (and users) that make too many invalid requests in a short period of time will be restricted from further access to our service.</p>
+<p>
+    Invalid requests include any response codes in the HTTP 4xx range. This includes common codes such as 401 (Unauthorized), 403 (Forbidden), and 429 (Too Many Requests).<br>
+    Reasonable attempts <strong>must</strong> be made in order to avoid passing the threshold.
+</p>
+</article>
+<article id="ratelimits">
+<h2>Rate Limits <a class="self-link" href="#ratelimits"></a></h2>
+<p>In order to protect our services we employ the use of rate limits on the majority of our endpoints. These limits are dynamic and can change at any time depending on our requirements.<br>For this reason we include headers in response headers that should be parsed and followed by your application.</p>
+<p>Example:</p>
+<pre><code>HTTP/1.1 200 OK
+...
+X-Rate-Limit-Policy: ladder-view
+X-Rate-Limit-Rules: client
+X-Rate-Limit-Client: 10:5:10
+X-Rate-Limit-Client-State: 1:5:0
+</code></pre>
+<p>Example that has exceeded the limit:</p>
+<pre><code>HTTP/1.1 429 Too Many Requests
+...
+X-Rate-Limit-Policy: ladder-view
+X-Rate-Limit-Rules: client
+X-Rate-Limit-Client: 10:5:10
+X-Rate-Limit-Client-State: 11:5:10
+Retry-After: 10
+</code></pre>
+<p>
+    Breakdown:
+    </p><ul>
+    <li>
+        <code>X-Rate-Limit-Policy</code>
+        <dl>
+            <dd>The policy that applies to this request.</dd>
+            <dd>Policies may be the same across different API endpoints but are treated the same for rate limiting purposes.</dd>
+        </dl>
+    </li>
+    <li>
+        <code>X-Rate-Limit-Rules</code>
+        <dl>
+            <dd>A comma-delimited list of applicable rules.</dd>
+            <dd>This can be used to determine the header key for the next two headers.</dd>
+            <dd>Common rules are: ip, account, and client.</dd>
+        </dl>
+    </li>
+    <li>
+        <code>X-Rate-Limit-{$rule}</code>
+        <dl>
+            <dd>A comma-delimited list of text representing the rule.</dd>
+            <dd>
+                These are made up of three numbers separated by a colon with each representing:
+                <ol>
+                    <li>the maximum hits</li>
+                    <li>the period (in seconds) tested</li>
+                    <li>the time restricted (in seconds) if the rule is broken</li>
+                </ol>
+            </dd>
+        </dl>
+    </li>
+    <li>
+        <code>X-Rate-Limit-{$rule}-State</code>
+        <dl>
+            <dd>A comma-delimited list of text representing the request's current state.</dd>
+            <dd>
+                Similarly to the header above, these are made up of three numbers separated by a colon with each representing:
+                <ol>
+                    <li>the current hit count</li>
+                    <li>the period (in seconds) tested</li>
+                    <li>the active time restricted in seconds (this will be 0 if the request is not rate limited)</li>
+                </ol>
+            </dd>
+        </dl>
+    </li>
+    <li>
+        <code>Retry-After</code>
+        <dl>
+            <dd>Time to wait (in seconds) until the rate limit expires.</dd>
+        </dl>
+    </li>
+    </ul>
+<p></p>
+<p><em>Exceeding these limits frequently will result in your application access being revoked.</em></p>
+</article>
+    </main>

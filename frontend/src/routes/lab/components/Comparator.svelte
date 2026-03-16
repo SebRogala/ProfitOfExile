@@ -335,57 +335,55 @@
 								{/if}
 							</div>
 						{:else if tradeData[gem.name]}
+							{@const td = tradeData[gem.name]}
 							<div class="trade-data">
 								<div class="trade-price-row">
-									<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(tradeData[gem.name].priceFloor)}c</span>
+									<span class="trade-floor-price" title="Cheapest listing on trade site">{fmtPrice(td.priceFloor)}c</span>
 									<span class="trade-floor-label">trade floor</span>
-									<span class="trade-delta" class:trade-delta-positive={tradeData[gem.name].priceFloor - gem.roi > 0} class:trade-delta-negative={tradeData[gem.name].priceFloor - gem.roi < 0}>
-										{tradeData[gem.name].priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(tradeData[gem.name].priceFloor - gem.roi)}c vs ninja
+									<span class="trade-delta" class:trade-delta-positive={td.priceFloor - gem.roi > 0} class:trade-delta-negative={td.priceFloor - gem.roi < 0}>
+										{td.priceFloor - gem.roi > 0 ? '+' : ''}{fmtPrice(td.priceFloor - gem.roi)}c vs ninja
 									</span>
 								</div>
 								<div class="trade-meta-row">
-									<span class="trade-listings-badge">{tradeData[gem.name].total} total listings</span>
-									<span class="trade-median" title="Median price of top 10 listings">med: {fmtPrice(tradeData[gem.name].medianTop10)}c</span>
-								</div>
-								<div class="trade-signals-row">
-									<span class="trade-signal-badge {concentrationClass(tradeData[gem.name].signals.sellerConcentration)}"
-										title="Seller concentration: {tradeData[gem.name].signals.uniqueAccounts} unique accounts in top 10">
-										{tradeData[gem.name].signals.sellerConcentration}
+									<span class="trade-listings-badge">{td.total} listings</span>
+									<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
+									<span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}"
+										title="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10">
+										{td.signals.sellerConcentration}
 									</span>
-									<span class="trade-signal-badge {stalenessClass(tradeData[gem.name].signals.cheapestStaleness)}"
+									<span class="trade-signal-badge {stalenessClass(td.signals.cheapestStaleness)}"
 										title="Age of cheapest listing">
-										{tradeData[gem.name].signals.cheapestStaleness}
+										{td.signals.cheapestStaleness}
 									</span>
-									{#if tradeData[gem.name].signals.priceOutlier}
+									{#if td.signals.priceOutlier}
 										<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
 									{/if}
 								</div>
-								{#if tradeData[gem.name].listings.length > 0}
-									<button class="trade-expand-btn" onclick={() => toggleExpanded(gem.name)}>
-										{tradeExpanded[gem.name] ? 'Hide' : 'Show'} top {tradeData[gem.name].listings.length} listings
-										<span class="trade-expand-arrow">{tradeExpanded[gem.name] ? '\u25b2' : '\u25bc'}</span>
-									</button>
-									{#if tradeExpanded[gem.name]}
-										<div class="trade-listings-table">
-											<div class="trade-listings-header">
-												<span class="tl-col-price">Price</span>
-												<span class="tl-col-account">Seller</span>
-												<span class="tl-col-detail">Lvl/Qual</span>
-												<span class="tl-col-time">Listed</span>
-											</div>
-											{#each tradeData[gem.name].listings as listing}
-												<div class="trade-listing-row">
-													<span class="tl-col-price">{fmtPrice(listing.price)} {listing.currency}</span>
-													<span class="tl-col-account" title={listing.account}>{listing.account}</span>
-													<span class="tl-col-detail">
-														{listing.gemLevel}/{listing.gemQuality}
-														{#if listing.corrupted}<span class="tl-corrupted">C</span>{/if}
-													</span>
-													<span class="tl-col-time">{formatTimeAgo(listing.indexedAt)}</span>
-												</div>
-											{/each}
+								{#if td.listings.length > 0}
+									<div class="trade-listings-table">
+										<div class="trade-listings-header">
+											<span class="tl-col-price">Price</span>
+											<span class="tl-col-account">Seller</span>
+											<span class="tl-col-detail">Lvl/Qual</span>
+											<span class="tl-col-time">Listed</span>
 										</div>
-									{/if}
+										{#each td.listings as listing}
+											<div class="trade-listing-row">
+												<span class="tl-col-price">
+													{fmtPrice(listing.chaosPrice)}c
+													{#if listing.currency === 'divine'}
+														<span class="tl-original">({fmtPrice(listing.price)} div)</span>
+													{/if}
+												</span>
+												<span class="tl-col-account" title={listing.account}>{listing.account}</span>
+												<span class="tl-col-detail">
+													{listing.gemLevel}/{listing.gemQuality}
+													{#if listing.corrupted}<span class="tl-corrupted">C</span>{/if}
+												</span>
+												<span class="tl-col-time">{formatTimeAgo(listing.indexedAt)}</span>
+											</div>
+										{/each}
+									</div>
 								{/if}
 							</div>
 						{/if}
@@ -927,5 +925,11 @@
 		color: var(--color-lab-red);
 		font-weight: 700;
 		margin-left: 2px;
+	}
+
+	.tl-original {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.7rem;
+		margin-left: 4px;
 	}
 </style>

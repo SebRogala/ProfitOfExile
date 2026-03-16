@@ -109,7 +109,7 @@ func newTestGate(t *testing.T, server *httptest.Server, pub *mockPublisher, maxW
 	client.SetBaseURL(server.URL)
 	cache := NewTradeCache(cfg.CacheMaxEntries)
 
-	return NewGate(cfg, limiter, client, pub, cache)
+	return NewGate(cfg, limiter, client, pub, cache, func() float64 { return 212.0 })
 }
 
 func TestGate_FastPath(t *testing.T) {
@@ -432,7 +432,7 @@ func TestGate_WaitEvent(t *testing.T) {
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
 	cache := NewTradeCache(100)
-	gate := NewGate(cfg, limiter, client, pub, cache)
+	gate := NewGate(cfg, limiter, client, pub, cache, func() float64 { return 212.0 })
 
 	// Pre-fill the search pool to force a wait.
 	limiter.Record("search")
@@ -596,7 +596,7 @@ func TestGate_RateLimitSync(t *testing.T) {
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
 	cache := NewTradeCache(100)
-	gate := NewGate(cfg, limiter, client, pub, cache)
+	gate := NewGate(cfg, limiter, client, pub, cache, func() float64 { return 212.0 })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -654,7 +654,7 @@ func TestGate_CacheOnResult(t *testing.T) {
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
 	cache := NewTradeCache(100)
-	gate := NewGate(cfg, limiter, client, pub, cache)
+	gate := NewGate(cfg, limiter, client, pub, cache, func() float64 { return 212.0 })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -55,6 +55,7 @@ type TradeLookupResult struct {
 	MedianTop10  float64              `json:"medianTop10"`
 	Listings     []TradeListingDetail `json:"listings"`
 	Signals      TradeSignals         `json:"signals"`
+	DivinePrice  float64              `json:"divinePrice"`  // divine→chaos rate used for normalization
 	FetchedAt    time.Time            `json:"fetchedAt"`
 }
 
@@ -62,6 +63,7 @@ type TradeLookupResult struct {
 type TradeListingDetail struct {
 	Price      float64   `json:"price"`
 	Currency   string    `json:"currency"`
+	ChaosPrice float64   `json:"chaosPrice"` // normalized to chaos using divine rate
 	Account    string    `json:"account"`
 	IndexedAt  time.Time `json:"indexedAt"`
 	GemLevel   int       `json:"gemLevel"`
@@ -130,9 +132,9 @@ func ComputeSignals(listings []TradeListingDetail) TradeSignals {
 		staleness = "STALE"
 	}
 
-	// Price outlier: cheapest < 50% of median of top 10.
-	median := medianPrice(listings)
-	outlier := listings[0].Price < median*0.5
+	// Price outlier: cheapest < 50% of median of top 10 (using normalized chaos prices).
+	median := medianChaosPrice(listings)
+	outlier := listings[0].ChaosPrice < median*0.5
 
 	return TradeSignals{
 		SellerConcentration: concentration,
@@ -143,28 +145,47 @@ func ComputeSignals(listings []TradeListingDetail) TradeSignals {
 }
 
 // BuildResult assembles a TradeLookupResult from raw search + fetch data.
-func BuildResult(gem, variant string, sr SearchResponse, listings []TradeListingDetail) *TradeLookupResult {
+// NormalizeToChaos converts a listing price to chaos using the divine rate.
+// Handles "divine" currency; everything else assumed to be chaos-equivalent.
+func NormalizeToChaos(price float64, currency string, divineRate float64) float64 {
+	if currency == "divine" && divineRate > 0 {
+		return math.Round(price*divineRate*10) / 10 // round to 1 decimal
+	}
+	return price
+}
+
+func BuildResult(gem, variant string, sr SearchResponse, listings []TradeListingDetail, divineRate float64) *TradeLookupResult {
+	// Normalize all listing prices to chaos.
+	for i := range listings {
+		listings[i].ChaosPrice = NormalizeToChaos(listings[i].Price, listings[i].Currency, divineRate)
+	}
+
+	// Re-sort by chaos price (divine listings may have shifted position).
+	sort.Slice(listings, func(i, j int) bool {
+		return listings[i].ChaosPrice < listings[j].ChaosPrice
+	})
+
 	result := &TradeLookupResult{
-		Gem:       gem,
-		Variant:   variant,
-		Total:     sr.Total,
-		Listings:  listings,
-		FetchedAt: time.Now(),
+		Gem:         gem,
+		Variant:     variant,
+		Total:       sr.Total,
+		Listings:    listings,
+		DivinePrice: divineRate,
+		FetchedAt:   time.Now(),
 	}
 
 	if len(listings) > 0 {
-		result.PriceFloor = listings[0].Price
+		result.PriceFloor = listings[0].ChaosPrice
 
-		// Ceiling is the max price among the fetched listings (up to 10).
-		ceiling := listings[0].Price
+		ceiling := listings[0].ChaosPrice
 		for _, l := range listings {
-			if l.Price > ceiling {
-				ceiling = l.Price
+			if l.ChaosPrice > ceiling {
+				ceiling = l.ChaosPrice
 			}
 		}
 		result.PriceCeiling = ceiling
-		result.PriceSpread = ceiling - listings[0].Price
-		result.MedianTop10 = medianPrice(listings)
+		result.PriceSpread = ceiling - listings[0].ChaosPrice
+		result.MedianTop10 = medianChaosPrice(listings)
 	}
 
 	result.Signals = ComputeSignals(listings)
@@ -173,14 +194,14 @@ func BuildResult(gem, variant string, sr SearchResponse, listings []TradeListing
 }
 
 // medianPrice returns the median price from a slice of listings.
-func medianPrice(listings []TradeListingDetail) float64 {
+func medianChaosPrice(listings []TradeListingDetail) float64 {
 	if len(listings) == 0 {
 		return 0
 	}
 
 	prices := make([]float64, len(listings))
 	for i, l := range listings {
-		prices[i] = l.Price
+		prices[i] = l.ChaosPrice
 	}
 	sort.Float64s(prices)
 

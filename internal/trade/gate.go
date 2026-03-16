@@ -17,29 +17,35 @@ const mercureTradeTopic = "poe/trade/results"
 // GateRequests on two priority channels (high for interactive, low for
 // background), deduplicates in-flight lookups for the same gem+variant, enforces
 // rate limits, and publishes Mercure events for wait/ready/error state changes.
+// DivineRateFunc returns the current divine→chaos exchange rate.
+// Injected at construction so the gate doesn't need direct DB access.
+type DivineRateFunc func() float64
+
 type Gate struct {
-	high     chan *GateRequest // buffered: 10 — interactive lookups
-	low      chan *GateRequest // buffered: 50 — background scans
-	limiter  *RateLimiter
-	client   *Client
-	mercure  mercure.Publisher
-	cache    *TradeCache
-	inflight map[string][]*GateRequest
-	mu       sync.Mutex
-	maxWait  time.Duration
+	high        chan *GateRequest // buffered: 10 — interactive lookups
+	low         chan *GateRequest // buffered: 50 — background scans
+	limiter     *RateLimiter
+	client      *Client
+	mercure     mercure.Publisher
+	cache       *TradeCache
+	inflight    map[string][]*GateRequest
+	mu          sync.Mutex
+	maxWait     time.Duration
+	divineRate  DivineRateFunc
 }
 
 // NewGate creates a Gate wired to the given dependencies.
-func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.Publisher, cache *TradeCache) *Gate {
+func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.Publisher, cache *TradeCache, divRate DivineRateFunc) *Gate {
 	return &Gate{
-		high:     make(chan *GateRequest, 10),
-		low:      make(chan *GateRequest, 50),
-		limiter:  limiter,
-		client:   client,
-		mercure:  pub,
-		cache:    cache,
-		inflight: make(map[string][]*GateRequest),
-		maxWait:  cfg.MaxQueueWait,
+		high:       make(chan *GateRequest, 10),
+		low:        make(chan *GateRequest, 50),
+		limiter:    limiter,
+		client:     client,
+		mercure:    pub,
+		cache:      cache,
+		inflight:   make(map[string][]*GateRequest),
+		maxWait:    cfg.MaxQueueWait,
+		divineRate: divRate,
 	}
 }
 
@@ -164,7 +170,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.limiter.Record("fetch")
 
 	// Build result, cache it, deliver to all fan-out waiters.
-	result := BuildResult(req.Gem, req.Variant, *searchResp, listings)
+	result := BuildResult(req.Gem, req.Variant, *searchResp, listings, g.divineRate())
 	g.cache.Set(key, result)
 	g.deliverResult(key, result)
 	g.publishReady(ctx, req, result)
