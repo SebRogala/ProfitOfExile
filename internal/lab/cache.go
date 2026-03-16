@@ -16,6 +16,7 @@ type Cache struct {
 	quality     []QualityResult
 	trends      []TrendResult
 	lastUpdated time.Time
+	nextFetch   time.Time
 }
 
 // NewCache creates an empty analysis cache.
@@ -88,4 +89,18 @@ func (c *Cache) LastUpdated() time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.lastUpdated
+}
+
+// SetNextFetch stores the next expected data fetch time.
+func (c *Cache) SetNextFetch(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.nextFetch = t
+}
+
+// NextFetch returns the next expected data fetch time.
+func (c *Cache) NextFetch() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.nextFetch
 }

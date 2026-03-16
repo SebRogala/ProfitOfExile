@@ -221,9 +221,11 @@ function mapCompareRow(r: any): CompareGem {
 export async function fetchStatus(): Promise<StatusData> {
 	try {
 		const status = await get<any>('/analysis/status');
+		const lastUpdated = status.lastUpdated || '';
+		const nextFetch = status.nextFetch || '';
 		return {
-			lastUpdate: status.lastUpdated || new Date().toISOString(),
-			nextFetch: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+			lastUpdate: lastUpdated,
+			nextFetch,
 			connected: status.cached === true,
 			collectorUptime: '',
 		};
