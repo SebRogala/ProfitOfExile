@@ -619,7 +619,10 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 		}
 
 		// Divine→chaos rate for display in the header.
-		if pool != nil {
+		if dr := cache.DivineRate(); dr > 0 {
+			resp["divinePrice"] = dr
+		} else if pool != nil {
+			// Fallback to DB query if cache not yet populated.
 			var divRate float64
 			if err := pool.QueryRow(r.Context(),
 				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
@@ -627,6 +630,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 				slog.Warn("analysis status: divine rate query failed", "error", err)
 			} else {
 				resp["divinePrice"] = divRate
+				cache.SetDivineRate(divRate)
 			}
 		}
 
