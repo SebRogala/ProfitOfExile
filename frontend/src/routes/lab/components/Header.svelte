@@ -20,6 +20,11 @@
 		return () => clearInterval(interval);
 	});
 
+	function formatTime(isoStr: string): string {
+		if (!isoStr) return '--:--';
+		return new Date(isoStr).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	}
+
 	function formatTimeAgo(isoStr: string, _now: number): string {
 		if (!isoStr) return 'pending...';
 		const diff = _now - new Date(isoStr).getTime();
@@ -32,13 +37,16 @@
 		return `${Math.floor(hrs / 24)}d ${hrs % 24}h ago`;
 	}
 
-	function minutesUntil(isoStr: string, _now: number): string {
-		if (!isoStr) return 'pending...';
-		const diff = new Date(isoStr).getTime() - _now;
+	function nextFetchDisplay(nextFetch: string, lastUpdate: string, _now: number): string {
+		// Use server-provided nextFetch, or estimate from lastUpdate + 30min.
+		const nf = nextFetch || (lastUpdate ? new Date(new Date(lastUpdate).getTime() + 30 * 60 * 1000).toISOString() : '');
+		if (!nf) return 'pending...';
+		const target = new Date(nf).getTime();
+		if (isNaN(target)) return 'pending...';
+		const diff = target - _now;
 		const mins = Math.round(diff / 60000);
-		if (isNaN(mins)) return 'pending...';
-		if (mins <= 0) return 'any moment';
-		return `${mins}m`;
+		if (mins <= 0) return `~${formatTime(nf)} (any moment)`;
+		return `~${formatTime(nf)} (${mins}m)`;
 	}
 </script>
 
@@ -61,12 +69,12 @@
 				<span class="meta divine-rate" title="Current Divine Orb price">1 div = {Math.round(status.divinePrice)}c</span>
 				<span class="meta-sep">|</span>
 			{/if}
-			<span class="meta">
+			<span class="meta" title={status.lastUpdate ? formatTime(status.lastUpdate) : ''}>
 				{formatTimeAgo(status.lastUpdate, now)}
 			</span>
 			<span class="meta-sep">|</span>
 			<span class="meta">
-				Next: {minutesUntil(status.nextFetch, now)}
+				Next: {nextFetchDisplay(status.nextFetch, status.lastUpdate, now)}
 			</span>
 			<span class="meta-sep">|</span>
 			<span class="connection" class:connected={status.connected} class:disconnected={!status.connected}>
