@@ -90,6 +90,7 @@ export interface WindowAlert {
 	priceTrend: number[];
 	listingsTrend: number[];
 	baseListingsTrend: number[];
+	trendUnavailable: boolean;
 	history: SignalTransition[];
 }
 
@@ -313,59 +314,16 @@ export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 			sellReason: r.sellReason || '',
 			sellability: r.sellability || 0,
 			sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
-			priceTrend: [] as number[],
-			listingsTrend: [] as number[],
-			baseListingsTrend: [] as number[],
+			priceTrend: Array.isArray(r.priceTrend) ? r.priceTrend : [],
+			listingsTrend: Array.isArray(r.listingsTrend) ? r.listingsTrend : [],
+			baseListingsTrend: Array.isArray(r.baseListingsTrend) ? r.baseListingsTrend : [],
+			trendUnavailable: r.windowSignal && !r.priceTrend?.length,
 			history: [],
 		}))
 		.sort((a: WindowAlert, b: WindowAlert) => {
 			const order = ['OPEN', 'OPENING', 'BREWING', 'CLOSING'];
 			return order.indexOf(a.windowSignal) - order.indexOf(b.windowSignal);
 		});
-
-	// Fetch last 4 snapshots per gem for trend display
-	if (alerts.length > 0) {
-		const now = new Date();
-		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-		await Promise.all(alerts.map(async (alert) => {
-			try {
-				// Derive base gem name by stripping " of X" suffix
-				const idx = alert.name.lastIndexOf(' of ');
-				const baseName = idx > 0 ? alert.name.substring(0, idx) : alert.name;
-
-				// Fetch transfigured + base snapshots in parallel
-				const [transSnap, baseSnap] = await Promise.all([
-					get<{ data: any[] }>('/snapshots/gems', {
-						name: alert.name, from: weekAgo.toISOString(),
-						to: now.toISOString(), limit: '200',
-					}),
-					get<{ data: any[] }>('/snapshots/gems', {
-						name: baseName, from: weekAgo.toISOString(),
-						to: now.toISOString(), limit: '200',
-					}),
-				]);
-
-				const filterLast4 = (data: any[], variant: string) => {
-					const points = (data || []).filter(
-						(s: any) => s.variant === variant && !s.isCorrupted
-					);
-					const byTime = new Map<string, any>();
-					for (const p of points) byTime.set(p.time, p);
-					return [...byTime.values()]
-						.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-						.slice(0, 4)
-						.reverse();
-				};
-
-				const transPoints = filterLast4(transSnap.data, alert.variant);
-				alert.priceTrend = transPoints.map((p: any) => Math.round(p.chaos));
-				alert.listingsTrend = transPoints.map((p: any) => p.listings);
-
-				const basePoints = filterLast4(baseSnap.data, alert.variant);
-				alert.baseListingsTrend = basePoints.map((p: any) => p.listings);
-			} catch (err) { console.warn(`[WindowAlerts] Failed to fetch trends for ${alert.name}:`, err); }
-		}));
-	}
 
 	return alerts;
 }
@@ -467,40 +425,35 @@ export async function fetchSignalHistory(
 	variant: string,
 	limit = 4
 ): Promise<SignalTransition[]> {
-	try {
-		const resp = await get<{ name: string; variant: string; count: number; history: any[] }>(
-			'/analysis/history',
-			{ name, variant, limit: String(limit) }
-		);
-		const snapshots = resp.history || [];
-		if (snapshots.length < 2) return [];
+	const resp = await get<{ name: string; variant: string; count: number; history: any[] }>(
+		'/analysis/history',
+		{ name, variant, limit: String(limit) }
+	);
+	const snapshots = resp.history || [];
+	if (snapshots.length < 2) return [];
 
-		// History comes in DESC order — reverse for chronological
-		snapshots.reverse();
+	// History comes in DESC order — reverse for chronological
+	snapshots.reverse();
 
-		// Diff consecutive entries to find signal changes
-		const transitions: SignalTransition[] = [];
-		for (let i = 1; i < snapshots.length; i++) {
-			const prev = snapshots[i - 1];
-			const curr = snapshots[i];
-			const time = new Date(curr.time || '').toLocaleTimeString(undefined, {
-				hour: '2-digit',
-				minute: '2-digit',
-			});
-			const reason = deriveReason(prev, curr);
-			transitions.push({
-				time,
-				from: prev.signal || 'STABLE',
-				to: curr.signal || 'STABLE',
-				reason,
-				listings: curr.currentListings || curr.listings || 0,
-			});
-		}
-		return transitions;
-	} catch (err) {
-		console.warn(`[SignalHistory] Failed to fetch history for ${name} ${variant}:`, err);
-		return [];
+	// Diff consecutive entries to find signal changes
+	const transitions: SignalTransition[] = [];
+	for (let i = 1; i < snapshots.length; i++) {
+		const prev = snapshots[i - 1];
+		const curr = snapshots[i];
+		const time = new Date(curr.time || '').toLocaleTimeString(undefined, {
+			hour: '2-digit',
+			minute: '2-digit',
+		});
+		const reason = deriveReason(prev, curr);
+		transitions.push({
+			time,
+			from: prev.signal || 'STABLE',
+			to: curr.signal || 'STABLE',
+			reason,
+			listings: curr.currentListings || curr.listings || 0,
+		});
 	}
+	return transitions;
 }
 
 function deriveReason(prev: any, curr: any): string {

@@ -3,9 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"profitofexile/internal/lab"
@@ -284,11 +286,64 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			SellReason        string  `json:"sellReason"`
 			Sellability       int     `json:"sellability"`
 			SellabilityLabel  string  `json:"sellabilityLabel"`
+			PriceTrend        []int   `json:"priceTrend,omitempty"`
+			ListingsTrend     []int   `json:"listingsTrend,omitempty"`
+			BaseListingsTrend []int   `json:"baseListingsTrend,omitempty"`
+		}
+
+		// Collect window alert gems for trend enrichment.
+		windowSignals := map[string]bool{"BREWING": true, "OPENING": true, "OPEN": true, "CLOSING": true}
+		type gemKey struct{ name, variant string }
+		var windowGems []gemKey
+		for _, r := range results {
+			if windowSignals[r.WindowSignal] {
+				windowGems = append(windowGems, gemKey{r.Name, r.Variant})
+			}
+		}
+
+		// Fetch last 4 snapshots for window gems (transfigured + base).
+		type trendData struct {
+			prices, listings, baseListings []int
+		}
+		trends := make(map[gemKey]trendData)
+		if len(windowGems) > 0 {
+			for _, gk := range windowGems {
+				// Derive base name by stripping " of X" suffix.
+				baseName := gk.name
+				if idx := strings.LastIndex(gk.name, " of "); idx > 0 {
+					baseName = gk.name[:idx]
+				}
+
+				transSparkline, _ := repo.SparklineData(r.Context(), []string{gk.name}, gk.variant, 24*7)
+				baseSparkline, _ := repo.SparklineData(r.Context(), []string{baseName}, gk.variant, 24*7)
+
+				td := trendData{}
+				if pts := transSparkline[gk.name]; len(pts) >= 2 {
+					last := pts
+					if len(last) > 4 {
+						last = last[len(last)-4:]
+					}
+					for _, p := range last {
+						td.prices = append(td.prices, int(math.Round(p.Price)))
+						td.listings = append(td.listings, p.Listings)
+					}
+				}
+				if pts := baseSparkline[baseName]; len(pts) >= 2 {
+					last := pts
+					if len(last) > 4 {
+						last = last[len(last)-4:]
+					}
+					for _, p := range last {
+						td.baseListings = append(td.baseListings, p.Listings)
+					}
+				}
+				trends[gk] = td
+			}
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, r := range results {
-			rows = append(rows, row{
+			rr := row{
 				Time:              r.Time.UTC().Format(time.RFC3339),
 				Name:              r.Name,
 				Variant:           r.Variant,
@@ -315,7 +370,13 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				SellReason:        r.SellReason,
 				Sellability:       r.Sellability,
 				SellabilityLabel:  r.SellabilityLabel,
-			})
+			}
+			if td, ok := trends[gemKey{r.Name, r.Variant}]; ok {
+				rr.PriceTrend = td.prices
+				rr.ListingsTrend = td.listings
+				rr.BaseListingsTrend = td.baseListings
+			}
+			rows = append(rows, rr)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

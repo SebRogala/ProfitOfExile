@@ -33,7 +33,10 @@
 					</span>
 				</div>
 
-				{#if alert.priceTrend.length > 1}
+				{#if alert.trendUnavailable}
+					<div class="trend-divider"></div>
+					<span class="trend-unavailable">trend data unavailable</span>
+				{:else if alert.priceTrend.length > 1}
 					<div class="trend-divider"></div>
 					<table class="trend-table"><tbody>
 						<tr>
@@ -176,6 +179,11 @@
 		font-weight: 600;
 	}
 
+	.trend-unavailable {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.875rem;
+		opacity: 0.6;
+	}
 	.trend-divider {
 		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
 		padding-bottom: 4px;
