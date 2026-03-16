@@ -4,6 +4,12 @@
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
+	import Select from '$lib/components/Select.svelte';
+
+	const SORT_OPTIONS = [
+		{ value: 'roi', label: 'ROI' },
+		{ value: 'roiPercent', label: 'ROI%' },
+	];
 
 	let {
 		plays,
@@ -71,10 +77,7 @@
 		</label>
 		<label class="control-label">
 			Sort:
-			<select bind:value={sortBy} class="sort-select">
-				<option value="roi">ROI</option>
-				<option value="roiPercent">ROI%</option>
-			</select>
+			<Select bind:value={sortBy} options={SORT_OPTIONS} />
 		</label>
 	</div>
 </div>
@@ -207,14 +210,6 @@
 	}
 	.budget-input::placeholder {
 		color: var(--color-lab-text-secondary);
-	}
-	.sort-select {
-		background: var(--color-lab-bg);
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text);
-		padding: 5px 10px;
-		font-size: 0.875rem;
-		font-family: inherit;
 	}
 	.plays-table {
 		width: 100%;

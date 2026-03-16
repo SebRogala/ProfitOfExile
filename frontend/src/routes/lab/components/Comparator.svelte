@@ -4,8 +4,10 @@
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
+	import Select from '$lib/components/Select.svelte';
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
+	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
 
 	let variant = $state('20/20');
 	let searchQuery = $state('');
@@ -145,11 +147,7 @@
 			{/if}
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
-				<select bind:value={variant} onchange={() => loadResults()} class="select-input">
-					{#each VARIANTS as v}
-						<option value={v}>{v}</option>
-					{/each}
-				</select>
+				<Select bind:value={variant} options={VARIANT_OPTIONS} onchange={() => loadResults()} />
 			</div>
 		</div>
 	</div>
@@ -308,14 +306,6 @@
 	.select-label {
 		color: var(--color-lab-text-secondary);
 		font-size: 0.9375rem;
-	}
-	.select-input {
-		background: var(--color-lab-bg);
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text);
-		padding: 6px 12px;
-		font-size: 0.9375rem;
-		font-family: inherit;
 	}
 
 	.comparator-input {
