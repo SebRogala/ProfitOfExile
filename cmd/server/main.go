@@ -171,6 +171,7 @@ func main() {
 		TradeGate:            tradeGate,
 		TradeCache:           tradeCache,
 		TradeSyncTimeout:     tradeSyncTimeout,
+		League:               os.Getenv("LEAGUE"),
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)

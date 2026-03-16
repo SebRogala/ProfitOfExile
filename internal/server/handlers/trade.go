@@ -38,6 +38,12 @@ func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, syncTimeout time.Dur
 			json.NewEncoder(w).Encode(map[string]string{"error": "gem and variant are required"})
 			return
 		}
+		if len(body.Gem) > 200 || len(body.Variant) > 20 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "gem or variant too long"})
+			return
+		}
 
 		// Cache-first path (skip when force-refreshing).
 		if !body.Force && cache != nil {
@@ -70,7 +76,7 @@ func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, syncTimeout time.Dur
 				slog.Warn("trade lookup: gate error", "error", res.Error, "gem", body.Gem, "variant", body.Variant)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadGateway)
-				json.NewEncoder(w).Encode(map[string]string{"error": res.Error.Error()})
+				json.NewEncoder(w).Encode(map[string]string{"error": "trade lookup failed"})
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")

@@ -583,7 +583,7 @@ func filterQuality(all []lab.QualityResult, variant string, limit int) []lab.Qua
 }
 
 // AnalysisStatus returns cache health information.
-func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
+func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -605,6 +605,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 
 		resp := map[string]any{
 			"cached":      cached,
+			"league":      league,
 			"transfigure": len(cache.Transfigure()),
 			"font":        len(cache.Font()),
 			"quality":     len(cache.Quality()),

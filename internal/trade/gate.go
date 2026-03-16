@@ -66,11 +66,18 @@ func (g *Gate) Submit(req *GateRequest) {
 	g.inflight[key] = []*GateRequest{req}
 	g.mu.Unlock()
 
-	switch req.Priority {
-	case PriorityHigh:
-		g.high <- req
+	ch := g.low
+	if req.Priority == PriorityHigh {
+		ch = g.high
+	}
+	select {
+	case ch <- req:
 	default:
-		g.low <- req
+		// Queue full — reject immediately.
+		g.mu.Lock()
+		delete(g.inflight, key)
+		g.mu.Unlock()
+		req.Result <- &GateResponse{Error: fmt.Errorf("trade: queue full, try again later")}
 	}
 }
 

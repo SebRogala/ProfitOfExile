@@ -113,17 +113,17 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else if !loading}
-		<Comparator />
+		<Comparator league={status?.league || ''} />
 
 		<WindowAlerts alerts={windowAlerts} />
 
 		<section class="section">
-			<BestPlays plays={bestPlays} />
+			<BestPlays plays={bestPlays} league={status?.league || ''} />
 		</section>
 
 		<FontEVCompare />
 
-		<ByVariant />
+		<ByVariant league={status?.league || ''} />
 
 		{#if marketOverview}
 			<MarketOverview data={marketOverview} />
