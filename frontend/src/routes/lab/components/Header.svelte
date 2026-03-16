@@ -11,7 +11,7 @@
 		onLabChange: (lab: string) => void;
 	} = $props();
 
-	const LABS = ['Merciless', 'Uber', 'Gift', 'Dedication', 'Tribute'];
+	const LABS = ['Merciless'];
 
 	function formatTimeAgo(isoStr: string): string {
 		const diff = Date.now() - new Date(isoStr).getTime();

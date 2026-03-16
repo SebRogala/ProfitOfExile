@@ -107,6 +107,27 @@
 		return 'rec-ok';
 	}
 
+	function tierClass(tier: string): string {
+		if (tier === 'TOP') return 'tier-top';
+		if (tier === 'MID') return 'tier-mid';
+		return 'tier-low';
+	}
+
+	function urgencyClass(u: string): string {
+		if (u === 'SELL_NOW') return 'urgency-sell-now';
+		if (u === 'UNDERCUT') return 'urgency-undercut';
+		if (u === 'HOLD') return 'urgency-hold';
+		return 'urgency-wait';
+	}
+
+	function sellabilityClass(label: string): string {
+		if (label === 'FAST SELL') return 'slab-fast';
+		if (label === 'GOOD') return 'slab-good';
+		if (label === 'MODERATE') return 'slab-moderate';
+		if (label === 'SLOW') return 'slab-slow';
+		return 'slab-unlikely';
+	}
+
 	function velocityStr(v: number): string {
 		if (v > 0) return `↑${v}`;
 		if (v < 0) return `↓${Math.abs(v)}`;
@@ -185,6 +206,7 @@
 					<div class="card-name-row">
 						<GemIcon name={gem.name} size={32} />
 						<span class="card-name">{gem.name}</span>
+						<span class="tier-badge {tierClass(gem.priceTier)}">{gem.priceTier}</span>
 					</div>
 					<div class="card-row">
 						<span class="roi" title={METRIC_TOOLTIPS.ROI}>{gem.roi}c</span>
@@ -196,6 +218,28 @@
 						<span class="velocity-inline" title="Listing change over last 2 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 2} last 2h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
 					</div>
+
+					<div class="urgency-slot">
+						{#if gem.sellUrgency}
+							<div class="urgency-banner {urgencyClass(gem.sellUrgency)}">
+								<span class="urgency-label">{gem.sellUrgency.replace('_', ' ')}</span>
+								{#if gem.sellReason}<span class="urgency-reason">{gem.sellReason}</span>{/if}
+							</div>
+						{/if}
+					</div>
+
+					<div class="sellability-row">
+						<div class="sellability-bar">
+							<div class="sellability-fill {sellabilityClass(gem.sellabilityLabel)}" style="width: {gem.sellability}%"></div>
+						</div>
+						<span class="sellability-label {sellabilityClass(gem.sellabilityLabel)}">{gem.sellabilityLabel}</span>
+						<span class="sellability-score">{gem.sellability}</span>
+					</div>
+
+					{#if gem.tierAction}
+						<div class="tier-action">{gem.tierAction}</div>
+					{/if}
+
 					<div class="sparkline-row">
 						<Sparkline data={gem.sparkline} width={280} height={32} />
 					</div>
@@ -479,6 +523,97 @@
 		width: 100%;
 		height: 32px;
 	}
+	/* Tier badge */
+	.tier-badge {
+		font-size: 0.75rem;
+		font-weight: 700;
+		padding: 2px 8px;
+		margin-left: auto;
+		letter-spacing: 0.03em;
+	}
+	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
+	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
+
+	/* Sell urgency slot — always takes space for alignment */
+	.urgency-slot {
+		min-height: 68px;
+		margin: 10px 0;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	}
+	.urgency-banner {
+		padding: 8px 12px;
+		font-size: 0.875rem;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.urgency-label {
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+	.urgency-reason {
+		font-size: 0.8125rem;
+		font-weight: 400;
+		opacity: 0.85;
+	}
+	.urgency-sell-now { color: #fca5a5; background: rgba(239, 68, 68, 0.15); border-left: 3px solid var(--color-lab-red); }
+	.urgency-undercut { color: #fdba74; background: rgba(251, 146, 60, 0.12); border-left: 3px solid #fb923c; }
+	.urgency-hold { color: #86efac; background: rgba(34, 197, 94, 0.1); border-left: 3px solid var(--color-lab-green); }
+	.urgency-wait { color: var(--color-lab-text-secondary); background: rgba(156, 163, 175, 0.08); border-left: 3px solid var(--color-lab-border); }
+
+	/* Sellability bar */
+	.sellability-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin: 10px 0;
+	}
+	.sellability-bar {
+		flex: 1;
+		height: 6px;
+		background: rgba(42, 45, 55, 0.8);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+	.sellability-fill {
+		height: 100%;
+		border-radius: 3px;
+		transition: width 0.3s ease;
+	}
+	.sellability-label {
+		font-size: 0.75rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+	.sellability-score {
+		font-size: 0.75rem;
+		color: var(--color-lab-text-secondary);
+		min-width: 20px;
+		text-align: right;
+	}
+	.slab-fast { color: var(--color-lab-green); }
+	.slab-fast.sellability-fill { background: var(--color-lab-green); }
+	.slab-good { color: #86efac; }
+	.slab-good.sellability-fill { background: #86efac; }
+	.slab-moderate { color: var(--color-lab-yellow); }
+	.slab-moderate.sellability-fill { background: var(--color-lab-yellow); }
+	.slab-slow { color: #fb923c; }
+	.slab-slow.sellability-fill { background: #fb923c; }
+	.slab-unlikely { color: var(--color-lab-red); }
+	.slab-unlikely.sellability-fill { background: var(--color-lab-red); }
+
+	/* Tier action */
+	.tier-action {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		font-style: italic;
+		margin-bottom: 6px;
+	}
+
 	.rec-best { color: var(--color-lab-green); }
 	.rec-ok { color: var(--color-lab-yellow); }
 	.rec-avoid { color: var(--color-lab-red); }

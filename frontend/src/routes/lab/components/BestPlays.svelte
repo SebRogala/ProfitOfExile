@@ -69,14 +69,13 @@
 		<tr>
 			<th class="col-name" title="Gem name">Gem</th>
 			{#if showVariantColumn}<th class="col-var">Var</th>{/if}
+			<th class="col-tier">Tier</th>
 			<th class="col-num" title={METRIC_TOOLTIPS.ROI}>ROI</th>
-			<th class="col-num" title={METRIC_TOOLTIPS['ROI%']}>ROI%</th>
 			<th class="col-signal">Signal</th>
-			<th class="col-num" title={METRIC_TOOLTIPS.CV}>CV</th>
+			<th class="col-sell" title="Sellability score 0-100">Sell</th>
 			<th class="col-signal">Window</th>
 			<th class="col-adv">Adv</th>
-			<th class="col-num">Trans</th>
-			<th class="col-num">Base</th>
+			<th class="col-num">Listings</th>
 			<th class="col-spark">2h</th>
 		</tr>
 	</thead>
@@ -92,10 +91,14 @@
 					<span>{gem.name}</span>
 				</td>
 				{#if showVariantColumn}<td class="col-var">{gem.variant}</td>{/if}
+				<td class="col-tier">
+					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}">{gem.priceTier}</span>
+				</td>
 				<td class="col-num roi-val">{gem.roi}c</td>
-				<td class="col-num">{gem.roiPercent}%</td>
 				<td class="col-signal"><SignalBadge signal={gem.signal} /></td>
-				<td class="col-num cv-val" class:cv-high={gem.cv > 50}>{gem.cv}%</td>
+				<td class="col-sell">
+					<span class="sell-score sell-{gem.sellabilityLabel.toLowerCase().replace(' ', '-')}" title="{gem.sellabilityLabel} ({gem.sellability})">{gem.sellability}</span>
+				</td>
 				<td class="col-signal"><SignalBadge signal={gem.windowSignal} type="window" /></td>
 				<td class="col-adv">
 					{#if gem.advancedSignal}
@@ -106,21 +109,26 @@
 					{gem.transListings}
 					<span class="velocity">{velocityStr(gem.transVelocity)}</span>
 				</td>
-				<td class="col-num">
-					{gem.baseListings}
-					<span class="velocity">{velocityStr(gem.baseVelocity)}</span>
-				</td>
 				<td class="col-spark"><Sparkline data={gem.sparkline} width={80} height={20} /></td>
 			</tr>
 			{#if expandedRow === i}
 				<tr class="expanded-row">
-					<td colspan={showVariantColumn ? 11 : 10} class="expanded-cell">
+					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
 						<div class="expanded-content">
 							<span class="expanded-meta">
 								Base: {gem.basePrice}c | Trans: {gem.transPrice}c |
 								Liq: {gem.liquidityTier} |
-								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span>
+								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
+								Sellability: {gem.sellabilityLabel} ({gem.sellability})
 							</span>
+							{#if gem.sellUrgency}
+								<div class="expanded-urgency urgency-{gem.sellUrgency.toLowerCase().replace('_', '-')}">
+									{gem.sellUrgency.replace('_', ' ')}: {gem.sellReason}
+								</div>
+							{/if}
+							{#if gem.tierAction}
+								<div class="expanded-tier">{gem.priceTier}: {gem.tierAction}</div>
+							{/if}
 							<div class="expanded-history">
 								History:
 								{#each gem.signalHistory as h}
@@ -277,6 +285,47 @@
 	.hist-entry {
 		margin-right: 14px;
 	}
+	/* Tier badge */
+	.col-tier { width: 55px; }
+	.tier-badge {
+		font-size: 0.75rem;
+		font-weight: 700;
+		padding: 2px 8px;
+		letter-spacing: 0.03em;
+	}
+	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
+	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
+
+	/* Sellability */
+	.col-sell { width: 55px; }
+	.sell-score {
+		font-weight: 700;
+		font-size: 0.875rem;
+	}
+	.sell-fast-sell { color: var(--color-lab-green); }
+	.sell-good { color: #86efac; }
+	.sell-moderate { color: var(--color-lab-yellow); }
+	.sell-slow { color: #fb923c; }
+	.sell-unlikely { color: var(--color-lab-red); }
+
+	/* Expanded urgency */
+	.expanded-urgency {
+		margin-top: 6px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+	.urgency-sell-now { color: var(--color-lab-red); }
+	.urgency-undercut { color: #fb923c; }
+	.urgency-hold { color: var(--color-lab-green); }
+	.urgency-wait { color: var(--color-lab-text-secondary); }
+	.expanded-tier {
+		margin-top: 4px;
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		font-style: italic;
+	}
+
 	.color-red { color: var(--color-lab-red); }
 	.color-green { color: var(--color-lab-green); }
 	.color-blue { color: var(--color-lab-blue); }
