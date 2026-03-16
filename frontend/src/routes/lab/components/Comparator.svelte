@@ -240,12 +240,6 @@
 		return 'signal-green';
 	}
 
-	function stalenessClass(s: TradeSignals['cheapestStaleness']): string {
-		if (s === 'STALE') return 'signal-red';
-		if (s === 'AGING') return 'signal-yellow';
-		return 'signal-green';
-	}
-
 	function formatTimeAgo(isoString: string): string {
 		const diff = Date.now() - new Date(isoString).getTime();
 		const mins = Math.floor(diff / 60000);
@@ -394,10 +388,6 @@
 									<span class="trade-signal-badge {concentrationClass(td.signals.sellerConcentration)}"
 										title="Seller concentration: {td.signals.uniqueAccounts} unique accounts in top 10">
 										{td.signals.sellerConcentration}
-									</span>
-									<span class="trade-signal-badge {stalenessClass(td.signals.cheapestStaleness)}"
-										title="Age of cheapest listing">
-										{td.signals.cheapestStaleness}
 									</span>
 									{#if td.signals.priceOutlier}
 										<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
