@@ -15,6 +15,7 @@
 {#if alerts.length > 0}
 	<section class="section">
 		<h2 class="section-title">Window Alerts</h2>
+		<div class="alerts-grid">
 		{#each alerts as alert}
 			<div class="alert-row">
 				<div class="alert-main">
@@ -24,7 +25,7 @@
 					<span class="variant">({alert.variant})</span>
 					{#if alert.roi > 0}<span class="roi">{alert.roi}c</span>{/if}
 					<span class="meta">{alert.transListings} listings</span>
-					<span class="liq">{alert.liquidityTier}</span>
+					<span class="liq" title="Base gem liquidity">{alert.liquidityTier} liq</span>
 				</div>
 				<div class="alert-detail">
 					<span class="action">{alert.action}</span>
@@ -36,6 +37,7 @@
 				</div>
 			</div>
 		{/each}
+	</div>
 	</section>
 {/if}
 
@@ -52,12 +54,15 @@
 		color: var(--color-lab-yellow);
 		margin: 0 0 18px 0;
 	}
-	.alert-row {
-		border-bottom: 1px solid var(--color-lab-border);
-		padding: 14px 0;
+	.alerts-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 14px;
 	}
-	.alert-row:last-child {
-		border-bottom: none;
+	.alert-row {
+		border: 1px solid var(--color-lab-border);
+		padding: 16px 18px;
+		background: var(--color-lab-bg);
 	}
 	.alert-main {
 		display: flex;

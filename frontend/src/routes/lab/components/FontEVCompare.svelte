@@ -100,38 +100,37 @@
 	.ft { width: 100%; border-collapse: collapse; }
 	.ft th {
 		text-align: center;
-		padding: 6px 8px;
-		font-size: 0.875rem;
+		padding: 10px 12px;
+		font-size: 1.0625rem;
 		font-weight: 700;
 		border-bottom: 1px solid var(--color-lab-border);
 	}
 	.ft td {
 		text-align: center;
-		padding: 10px 8px;
-		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
+		padding: 14px 12px;
 	}
 	.var {
 		text-align: left !important;
 		font-weight: 700;
-		font-size: 0.9375rem;
+		font-size: 1.0625rem;
 		color: var(--color-lab-text);
-		width: 70px;
+		width: 80px;
 	}
 	.ev {
 		font-weight: 700;
-		font-size: 1.0625rem;
+		font-size: 1.25rem;
 		color: var(--color-lab-text);
-		margin-right: 8px;
+		margin-right: 10px;
 	}
 	.ev.best {
 		color: var(--color-lab-green);
-		font-size: 1.1875rem;
+		font-size: 1.5rem;
 	}
 	.det {
-		font-size: 0.75rem;
+		font-size: 0.9375rem;
 		color: var(--color-lab-text-secondary);
 	}
-	.nil { color: var(--color-lab-text-secondary); }
+	.nil { color: var(--color-lab-text-secondary); font-size: 1.125rem; }
 
 	.w-red { border: 2px solid var(--color-lab-red); background: rgba(239, 68, 68, 0.05); }
 	.w-green { border: 2px solid var(--color-lab-green); background: rgba(34, 197, 94, 0.05); }
