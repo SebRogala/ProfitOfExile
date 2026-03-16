@@ -268,7 +268,7 @@
 		white-space: nowrap;
 	}
 	.col-adv {
-		width: 170px;
+		width: 130px;
 		white-space: nowrap;
 	}
 	.col-spark {
