@@ -37,16 +37,14 @@
 		return `${Math.floor(hrs / 24)}d ${hrs % 24}h ago`;
 	}
 
-	function nextFetchDisplay(nextFetch: string, lastUpdate: string, _now: number): string {
-		// Use server-provided nextFetch, or estimate from lastUpdate + 30min.
-		const nf = nextFetch || (lastUpdate ? new Date(new Date(lastUpdate).getTime() + 30 * 60 * 1000).toISOString() : '');
-		if (!nf) return 'pending...';
-		const target = new Date(nf).getTime();
+	function nextFetchDisplay(nextFetch: string, _now: number): string {
+		if (!nextFetch) return 'pending...';
+		const target = new Date(nextFetch).getTime();
 		if (isNaN(target)) return 'pending...';
 		const diff = target - _now;
 		const mins = Math.round(diff / 60000);
-		if (mins <= 0) return `~${formatTime(nf)} (any moment)`;
-		return `~${formatTime(nf)} (${mins}m)`;
+		if (mins <= 0) return `~${formatTime(nextFetch)} (any moment)`;
+		return `~${formatTime(nextFetch)} (${mins}m)`;
 	}
 </script>
 
@@ -74,7 +72,7 @@
 			</span>
 			<span class="meta-sep">|</span>
 			<span class="meta">
-				Next: {nextFetchDisplay(status.nextFetch, status.lastUpdate, now)}
+				Next: {nextFetchDisplay(status.nextFetch, now)}
 			</span>
 			<span class="meta-sep">|</span>
 			<span class="connection" class:connected={status.connected} class:disconnected={!status.connected}>

@@ -179,6 +179,28 @@ func main() {
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
 
+	// Seed cache with next expected fetch time from latest gem snapshot.
+	go func() {
+		qCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		var lastSnap time.Time
+		if err := pool.QueryRow(qCtx,
+			`SELECT MAX(time) FROM gem_snapshots`,
+		).Scan(&lastSnap); err == nil && !lastSnap.IsZero() {
+			nextFetch := lastSnap.Add(30 * time.Minute)
+			labCache.SetNextFetch(nextFetch)
+			slog.Info("startup: seeded nextFetch from last gem snapshot", "lastSnap", lastSnap, "nextFetch", nextFetch)
+		}
+		// Also seed divine rate.
+		var divRate float64
+		if err := pool.QueryRow(qCtx,
+			`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+		).Scan(&divRate); err == nil && divRate > 0 {
+			labCache.SetDivineRate(divRate)
+			slog.Info("startup: seeded divine rate", "rate", divRate)
+		}
+	}()
+
 	// Run initial analyses on startup (uses existing data).
 	go func() {
 		defer func() {
