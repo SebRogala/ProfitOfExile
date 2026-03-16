@@ -87,15 +87,40 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		results := lab.RankCollective(transfigure, trends, budget, limit, sortBy)
 
 		// Fetch sparkline data for the result gems.
-		sparkNames := make([]string, 0, len(results))
-		for _, cr := range results {
-			sparkNames = append(sparkNames, cr.TransfiguredName)
-		}
+		// When a specific variant is selected, one query suffices. When "ALL
+		// variants", group gems by their own variant and query per group so
+		// sparklines don't mix different variant prices.
 		sparkVariant := r.URL.Query().Get("variant")
-		sparklines, err := repo.SparklineData(r.Context(), sparkNames, sparkVariant, 12)
-		if err != nil {
-			slog.Error("collective analysis: sparkline query failed", "error", err)
-			sparklines = make(map[string][]lab.SparklinePoint)
+		sparklines := make(map[string][]lab.SparklinePoint)
+
+		if sparkVariant != "" {
+			// Single variant — one query for all gems.
+			sparkNames := make([]string, 0, len(results))
+			for _, cr := range results {
+				sparkNames = append(sparkNames, cr.TransfiguredName)
+			}
+			sp, err := repo.SparklineData(r.Context(), sparkNames, sparkVariant, 12)
+			if err != nil {
+				slog.Error("collective analysis: sparkline query failed", "error", err)
+			} else {
+				sparklines = sp
+			}
+		} else {
+			// ALL variants — group by each gem's own variant.
+			byVariant := make(map[string][]string) // variant -> []name
+			for _, cr := range results {
+				byVariant[cr.Variant] = append(byVariant[cr.Variant], cr.TransfiguredName)
+			}
+			for v, names := range byVariant {
+				sp, err := repo.SparklineData(r.Context(), names, v, 12)
+				if err != nil {
+					slog.Error("collective analysis: sparkline query failed", "variant", v, "error", err)
+					continue
+				}
+				for k, pts := range sp {
+					sparklines[k] = pts
+				}
+			}
 		}
 
 		type row struct {
