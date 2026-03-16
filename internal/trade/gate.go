@@ -68,6 +68,11 @@ func (g *Gate) Submit(req *GateRequest) {
 	}
 }
 
+// HighChan returns the high-priority request channel. Intended for testing
+// only — allows test code to intercept submitted requests before Run processes
+// them.
+func (g *Gate) HighChan() <-chan *GateRequest { return g.high }
+
 // Run is the main processing loop. It blocks until ctx is cancelled. High
 // priority requests are always drained before low priority ones via nested
 // select with a default fallback.
