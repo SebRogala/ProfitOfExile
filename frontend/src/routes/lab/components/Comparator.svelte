@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
+	import { lookupTrade, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -17,6 +18,37 @@
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
 	let inputRef = $state<HTMLInputElement | null>(null);
+
+	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
+	let tradeLoading = $state<Record<string, { loading: boolean; waitSeconds?: number }>>({});
+	let tradeExpanded = $state<Record<string, boolean>>({});
+
+	async function fetchTradeData(gem: string) {
+		tradeLoading[gem] = { loading: true };
+		try {
+			const { immediate, requestId } = await lookupTrade(gem, variant);
+			if (immediate) {
+				tradeData[gem] = immediate;
+				tradeLoading[gem] = { loading: false };
+			} else if (requestId) {
+				const unsub = registerTradeListener(requestId, {
+					onWait: (s) => { tradeLoading[gem] = { loading: true, waitSeconds: s }; },
+					onReady: (data) => { tradeData[gem] = data; tradeLoading[gem] = { loading: false }; unsub(); },
+					onError: () => { tradeLoading[gem] = { loading: false }; unsub(); },
+				});
+			} else {
+				tradeLoading[gem] = { loading: false };
+			}
+		} catch {
+			tradeLoading[gem] = { loading: false };
+		}
+	}
+
+	function fetchTradeDataForAll() {
+		for (const gem of selectedGems) {
+			fetchTradeData(gem);
+		}
+	}
 
 	async function loadResults() {
 		const active = selectedGems.filter(Boolean);
@@ -49,11 +81,18 @@
 		showDropdown = false;
 		highlightedIndex = -1;
 		loadResults();
+		fetchTradeData(name);
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
 	function removeGem(index: number) {
+		const removed = selectedGems[index];
 		selectedGems = selectedGems.filter((_, i) => i !== index);
+		if (removed) {
+			delete tradeData[removed];
+			delete tradeLoading[removed];
+			delete tradeExpanded[removed];
+		}
 		loadResults();
 		setTimeout(() => inputRef?.focus(), 0);
 	}
@@ -61,11 +100,19 @@
 	function clearAll() {
 		selectedGems = [];
 		results = [];
+		tradeData = {};
+		tradeLoading = {};
+		tradeExpanded = {};
 		searchQuery = '';
 		suggestions = [];
 		showDropdown = false;
 		highlightedIndex = -1;
 		setTimeout(() => inputRef?.focus(), 0);
+	}
+
+	function handleVariantChange() {
+		loadResults();
+		fetchTradeDataForAll();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -98,9 +145,9 @@
 	}
 
 	function recIcon(rec: string): string {
-		if (rec === 'BEST') return '✓';
-		if (rec === 'AVOID') return '✗';
-		return '•';
+		if (rec === 'BEST') return '\u2713';
+		if (rec === 'AVOID') return '\u2717';
+		return '\u2022';
 	}
 
 	function recClass(rec: string): string {
@@ -131,9 +178,34 @@
 	}
 
 	function velocityStr(v: number): string {
-		if (v > 0) return `↑${v}`;
-		if (v < 0) return `↓${Math.abs(v)}`;
+		if (v > 0) return `\u2191${v}`;
+		if (v < 0) return `\u2193${Math.abs(v)}`;
 		return '0';
+	}
+
+	function concentrationClass(c: TradeSignals['sellerConcentration']): string {
+		if (c === 'MONOPOLY') return 'signal-red';
+		if (c === 'CONCENTRATED') return 'signal-yellow';
+		return 'signal-green';
+	}
+
+	function stalenessClass(s: TradeSignals['cheapestStaleness']): string {
+		if (s === 'STALE') return 'signal-red';
+		if (s === 'AGING') return 'signal-yellow';
+		return 'signal-green';
+	}
+
+	function formatTimeAgo(isoString: string): string {
+		const diff = Date.now() - new Date(isoString).getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		return `${Math.floor(hours / 24)}d ago`;
+	}
+
+	function toggleExpanded(gem: string) {
+		tradeExpanded[gem] = !tradeExpanded[gem];
 	}
 
 </script>
@@ -147,7 +219,7 @@
 			{/if}
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
-				<Select bind:value={variant} options={VARIANT_OPTIONS} onchange={() => loadResults()} />
+				<Select bind:value={variant} options={VARIANT_OPTIONS} onchange={() => handleVariantChange()} />
 			</div>
 		</div>
 	</div>
@@ -158,7 +230,7 @@
 				<span class="tag">
 					<GemIcon name={gem} size={20} />
 					{gem}
-					<button class="tag-remove" onclick={() => removeGem(i)}>×</button>
+					<button class="tag-remove" onclick={() => removeGem(i)}>\u00d7</button>
 				</span>
 			{/each}
 		</div>
@@ -237,6 +309,74 @@
 						<div class="tier-action">{gem.tierAction}</div>
 					{/if}
 
+					<!-- Trade Data Section -->
+					<div class="trade-section">
+						{#if tradeLoading[gem.name]?.loading}
+							<div class="trade-loading">
+								<span class="trade-spinner"></span>
+								{#if tradeLoading[gem.name].waitSeconds != null && tradeLoading[gem.name].waitSeconds > 0}
+									<span class="trade-loading-text">Waiting {tradeLoading[gem.name].waitSeconds}s...</span>
+								{:else}
+									<span class="trade-loading-text">Fetching trade data...</span>
+								{/if}
+							</div>
+						{:else if tradeData[gem.name]}
+							<div class="trade-data">
+								<div class="trade-price-row">
+									<span class="trade-floor-price" title="Cheapest listing on trade site">{tradeData[gem.name].priceFloor.toFixed(1)}c</span>
+									<span class="trade-floor-label">trade floor</span>
+									<span class="trade-delta" class:trade-delta-positive={tradeData[gem.name].priceFloor - gem.roi > 0} class:trade-delta-negative={tradeData[gem.name].priceFloor - gem.roi < 0}>
+										{tradeData[gem.name].priceFloor - gem.roi > 0 ? '+' : ''}{(tradeData[gem.name].priceFloor - gem.roi).toFixed(1)}c vs ninja
+									</span>
+								</div>
+								<div class="trade-meta-row">
+									<span class="trade-listings-badge">{tradeData[gem.name].total} total listings</span>
+									<span class="trade-median" title="Median price of top 10 listings">med: {tradeData[gem.name].medianTop10.toFixed(1)}c</span>
+								</div>
+								<div class="trade-signals-row">
+									<span class="trade-signal-badge {concentrationClass(tradeData[gem.name].signals.sellerConcentration)}"
+										title="Seller concentration: {tradeData[gem.name].signals.uniqueAccounts} unique accounts in top 10">
+										{tradeData[gem.name].signals.sellerConcentration}
+									</span>
+									<span class="trade-signal-badge {stalenessClass(tradeData[gem.name].signals.cheapestStaleness)}"
+										title="Age of cheapest listing">
+										{tradeData[gem.name].signals.cheapestStaleness}
+									</span>
+									{#if tradeData[gem.name].signals.priceOutlier}
+										<span class="trade-signal-badge signal-red" title="Cheapest listing is significantly below median">OUTLIER</span>
+									{/if}
+								</div>
+								{#if tradeData[gem.name].listings.length > 0}
+									<button class="trade-expand-btn" onclick={() => toggleExpanded(gem.name)}>
+										{tradeExpanded[gem.name] ? 'Hide' : 'Show'} top {tradeData[gem.name].listings.length} listings
+										<span class="trade-expand-arrow">{tradeExpanded[gem.name] ? '\u25b2' : '\u25bc'}</span>
+									</button>
+									{#if tradeExpanded[gem.name]}
+										<div class="trade-listings-table">
+											<div class="trade-listings-header">
+												<span class="tl-col-price">Price</span>
+												<span class="tl-col-account">Seller</span>
+												<span class="tl-col-detail">Lvl/Qual</span>
+												<span class="tl-col-time">Listed</span>
+											</div>
+											{#each tradeData[gem.name].listings as listing}
+												<div class="trade-listing-row">
+													<span class="tl-col-price">{listing.price.toFixed(1)} {listing.currency}</span>
+													<span class="tl-col-account" title={listing.account}>{listing.account}</span>
+													<span class="tl-col-detail">
+														{listing.gemLevel}/{listing.gemQuality}
+														{#if listing.corrupted}<span class="tl-corrupted">C</span>{/if}
+													</span>
+													<span class="tl-col-time">{formatTimeAgo(listing.indexedAt)}</span>
+												</div>
+											{/each}
+										</div>
+									{/if}
+								{/if}
+							</div>
+						{/if}
+					</div>
+
 					<div class="sparkline-row">
 						<Sparkline data={gem.sparkline} width={280} height={32} />
 					</div>
@@ -245,7 +385,7 @@
 							<div class="history-line">
 								<span class="hist-time">{h.time}</span>
 								<SignalBadge signal={h.from} />
-								<span class="hist-arrow">→</span>
+								<span class="hist-arrow">\u2192</span>
 								<SignalBadge signal={h.to} />
 								<span class="hist-reason">{h.reason}</span>
 								<span class="hist-listings">{h.listings} listings</span>
@@ -606,4 +746,172 @@
 	.rec-best { color: var(--color-lab-green); }
 	.rec-ok { color: var(--color-lab-yellow); }
 	.rec-avoid { color: var(--color-lab-red); }
+
+	/* Trade data section */
+	.trade-section {
+		margin: 12px 0;
+		border-top: 1px solid var(--color-lab-border);
+		padding-top: 12px;
+	}
+
+	.trade-loading {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 8px 0;
+	}
+	.trade-spinner {
+		width: 16px;
+		height: 16px;
+		border: 2px solid var(--color-lab-border);
+		border-top-color: var(--color-lab-text);
+		border-radius: 50%;
+		animation: trade-spin 0.8s linear infinite;
+	}
+	@keyframes trade-spin {
+		to { transform: rotate(360deg); }
+	}
+	.trade-loading-text {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.trade-data {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.trade-price-row {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.trade-floor-price {
+		font-size: 1.125rem;
+		font-weight: 700;
+		color: var(--color-lab-text);
+	}
+	.trade-floor-label {
+		font-size: 0.75rem;
+		color: var(--color-lab-text-secondary);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+	.trade-delta {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		margin-left: auto;
+	}
+	.trade-delta-positive {
+		color: var(--color-lab-green);
+	}
+	.trade-delta-negative {
+		color: var(--color-lab-red);
+	}
+
+	.trade-meta-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 0.8125rem;
+	}
+	.trade-listings-badge {
+		background: rgba(59, 130, 246, 0.12);
+		color: #93c5fd;
+		padding: 2px 8px;
+		font-weight: 600;
+		font-size: 0.75rem;
+	}
+	.trade-median {
+		color: var(--color-lab-text-secondary);
+	}
+
+	.trade-signals-row {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.trade-signal-badge {
+		font-size: 0.6875rem;
+		font-weight: 700;
+		padding: 2px 8px;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+	.signal-green {
+		color: var(--color-lab-green);
+		background: rgba(34, 197, 94, 0.1);
+	}
+	.signal-yellow {
+		color: var(--color-lab-yellow);
+		background: rgba(250, 204, 21, 0.1);
+	}
+	.signal-red {
+		color: var(--color-lab-red);
+		background: rgba(239, 68, 68, 0.12);
+	}
+
+	.trade-expand-btn {
+		background: none;
+		border: none;
+		color: #93c5fd;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		cursor: pointer;
+		padding: 4px 0;
+		font-family: inherit;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.trade-expand-btn:hover {
+		color: #bfdbfe;
+	}
+	.trade-expand-arrow {
+		font-size: 0.625rem;
+	}
+
+	.trade-listings-table {
+		margin-top: 6px;
+		font-size: 0.75rem;
+		border: 1px solid var(--color-lab-border);
+		overflow: hidden;
+	}
+	.trade-listings-header {
+		display: grid;
+		grid-template-columns: 1fr 1fr 0.7fr 0.6fr;
+		gap: 4px;
+		padding: 6px 8px;
+		background: rgba(42, 45, 55, 0.6);
+		color: var(--color-lab-text-secondary);
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		font-size: 0.625rem;
+	}
+	.trade-listing-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr 0.7fr 0.6fr;
+		gap: 4px;
+		padding: 5px 8px;
+		border-top: 1px solid rgba(42, 45, 55, 0.4);
+		color: var(--color-lab-text);
+	}
+	.trade-listing-row:hover {
+		background: rgba(59, 130, 246, 0.05);
+	}
+	.tl-col-account {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.tl-col-time {
+		color: var(--color-lab-text-secondary);
+	}
+	.tl-corrupted {
+		color: var(--color-lab-red);
+		font-weight: 700;
+		margin-left: 2px;
+	}
 </style>
