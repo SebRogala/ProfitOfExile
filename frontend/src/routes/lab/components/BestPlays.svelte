@@ -123,15 +123,15 @@
 						<SignalBadge signal={gem.advancedSignal} type="advanced" />
 					{/if}
 				</td>
-				<td class="col-num">
-					{gem.transListings}
+				<td class="col-listings">
+					<span class="lst-count">{gem.transListings}</span>
 					{#if gem.transVelocity > 0}
-						<span class="vel-up">↑{gem.transVelocity}</span>
+						<span class="vel-up">+{gem.transVelocity}</span>
 					{:else if gem.transVelocity < 0}
-						<span class="vel-down">↓{Math.abs(gem.transVelocity)}</span>
+						<span class="vel-down">{gem.transVelocity}</span>
 					{/if}
 				</td>
-				<td class="col-spark"><Sparkline data={gem.sparkline} width={80} height={20} /></td>
+				<td class="col-spark"><Sparkline data={gem.sparkline} width={100} height={24} /></td>
 			</tr>
 			{#if expandedRow === i}
 				<tr class="expanded-row">
@@ -276,7 +276,7 @@
 		white-space: nowrap;
 	}
 	.col-spark {
-		width: 90px;
+		width: 110px;
 	}
 	.roi-val {
 		color: var(--color-lab-green);
@@ -288,17 +288,26 @@
 	.cv-high {
 		color: var(--color-lab-yellow);
 	}
-	.vel-up {
-		font-size: 0.8125rem;
-		color: var(--color-lab-green);
-		margin-left: 4px;
+	.col-listings {
+		white-space: nowrap;
+	}
+	.lst-count {
 		font-weight: 600;
+		margin-right: 6px;
+	}
+	.vel-up {
+		font-size: 0.75rem;
+		color: var(--color-lab-green);
+		font-weight: 700;
+		padding: 1px 5px;
+		background: rgba(34, 197, 94, 0.1);
 	}
 	.vel-down {
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		color: var(--color-lab-red);
-		margin-left: 4px;
-		font-weight: 600;
+		font-weight: 700;
+		padding: 1px 5px;
+		background: rgba(239, 68, 68, 0.1);
 	}
 	.expanded-row {
 		background: var(--color-lab-bg);

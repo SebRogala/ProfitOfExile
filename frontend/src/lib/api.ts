@@ -76,8 +76,12 @@ export interface WindowAlert {
 	transListings: number;
 	baseListings: number;
 	baseVelocity: number;
+	priceVelocity: number;
+	listingVelocity: number;
 	liquidityTier: string;
 	action: string;
+	signal: string;
+	priceTier: PriceTier;
 	history: SignalTransition[];
 }
 
@@ -289,8 +293,12 @@ export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 			transListings: r.currentListings || 0,
 			baseListings: r.baseListings || 0,
 			baseVelocity: Math.round(r.baseVelocity || 0),
+			priceVelocity: Math.round((r.priceVelocity || 0) * 10) / 10,
+			listingVelocity: Math.round(r.listingVelocity || 0),
 			liquidityTier: r.liquidityTier || '',
 			action: r.tierAction || r.sellReason || '',
+			signal: r.signal || '',
+			priceTier: (r.priceTier || '') as PriceTier,
 			history: [],
 		}))
 		.sort((a: WindowAlert, b: WindowAlert) => {
