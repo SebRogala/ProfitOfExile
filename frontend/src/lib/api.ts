@@ -34,6 +34,7 @@ export interface GemPlay {
 	basePrice: number;
 	transPrice: number;
 	sparkline: number[];
+	sparklineListings: number[];
 	signalHistory: SignalTransition[];
 	priceTier: PriceTier;
 	tierAction: string;
@@ -82,6 +83,13 @@ export interface WindowAlert {
 	action: string;
 	signal: string;
 	priceTier: PriceTier;
+	sellUrgency: SellUrgency;
+	sellReason: string;
+	sellability: number;
+	sellabilityLabel: SellabilityLabel;
+	priceTrend: number[];
+	listingsTrend: number[];
+	baseListingsTrend: number[];
 	history: SignalTransition[];
 }
 
@@ -166,6 +174,7 @@ function mapCollectiveRow(r: any): GemPlay {
 		basePrice: Math.round(r.basePrice || 0),
 		transPrice: Math.round(r.transfiguredPrice || r.currentPrice || 0),
 		sparkline: Array.isArray(r.sparkline) ? r.sparkline.map((p: any) => p.price ?? p) : [],
+		sparklineListings: Array.isArray(r.sparkline) ? r.sparkline.map((p: any) => p.listings ?? 0) : [],
 		signalHistory: [],
 		priceTier: (r.priceTier || '') as PriceTier,
 		tierAction: r.tierAction || '',
@@ -278,12 +287,10 @@ export async function fetchFontEV(variant: string): Promise<FontEVData> {
 
 export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 	// Window alerts are derived from trends data — gems with active window signals
-	const params: Record<string, string> = { limit: '20' };
-
-	const resp = await get<{ count: number; data: any[] }>('/analysis/trends', params);
+	const resp = await get<{ count: number; data: any[] }>('/analysis/trends', { limit: '20' });
 	const rows = resp.data || [];
 
-	return rows
+	const alerts = rows
 		.filter((r: any) => ['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal))
 		.map((r: any) => ({
 			windowSignal: r.windowSignal || '',
@@ -299,12 +306,62 @@ export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 			action: r.tierAction || r.sellReason || '',
 			signal: r.signal || '',
 			priceTier: (r.priceTier || '') as PriceTier,
+			sellUrgency: (r.sellUrgency || '') as SellUrgency,
+			sellReason: r.sellReason || '',
+			sellability: r.sellability || 0,
+			sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
+			priceTrend: [] as number[],
+			listingsTrend: [] as number[],
+			baseListingsTrend: [] as number[],
 			history: [],
 		}))
 		.sort((a: WindowAlert, b: WindowAlert) => {
 			const order = ['OPEN', 'OPENING', 'BREWING', 'CLOSING'];
 			return order.indexOf(a.windowSignal) - order.indexOf(b.windowSignal);
 		});
+
+	// Fetch last 4 snapshots per gem for trend display
+	if (alerts.length > 0) {
+		const now = new Date();
+		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+		await Promise.all(alerts.map(async (alert) => {
+			try {
+				// Derive base gem name by stripping " of X" suffix
+				const idx = alert.name.lastIndexOf(' of ');
+				const baseName = idx > 0 ? alert.name.substring(0, idx) : alert.name;
+
+				// Fetch transfigured + base snapshots in parallel
+				const [transSnap, baseSnap] = await Promise.all([
+					get<{ data: any[] }>('/snapshots/gems', {
+						name: alert.name, from: weekAgo.toISOString(),
+						to: now.toISOString(), limit: '200',
+					}),
+					get<{ data: any[] }>('/snapshots/gems', {
+						name: baseName, from: weekAgo.toISOString(),
+						to: now.toISOString(), limit: '200',
+					}),
+				]);
+
+				const filterLast4 = (data: any[], variant: string) => {
+					const points = (data || []).filter(
+						(s: any) => s.variant === variant && !s.isCorrupted
+					);
+					const byTime = new Map<string, any>();
+					for (const p of points) byTime.set(p.time, p);
+					return [...byTime.values()].slice(0, 4).reverse();
+				};
+
+				const transPoints = filterLast4(transSnap.data, alert.variant);
+				alert.priceTrend = transPoints.map((p: any) => Math.round(p.chaos));
+				alert.listingsTrend = transPoints.map((p: any) => p.listings);
+
+				const basePoints = filterLast4(baseSnap.data, alert.variant);
+				alert.baseListingsTrend = basePoints.map((p: any) => p.listings);
+			} catch { /* snapshot fetch is best-effort */ }
+		}));
+	}
+
+	return alerts;
 }
 
 export async function fetchMarketOverview(): Promise<MarketOverviewData> {
@@ -451,36 +508,6 @@ function deriveReason(prev: any, curr: any): string {
 	return 'velocity settled';
 }
 
-// --- Snapshot history for window alerts ---
-
-export interface SnapshotPoint {
-	time: string;
-	chaos: number;
-	listings: number;
-}
-
-export async function fetchGemSnapshots(name: string, variant: string, limit = 4): Promise<SnapshotPoint[]> {
-	try {
-		const now = new Date();
-		const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-		const resp = await get<{ count: number; data: any[] }>('/snapshots/gems', {
-			name,
-			from: weekAgo.toISOString(),
-			to: now.toISOString(),
-			limit: String(limit * 10), // overfetch to filter by variant
-		});
-		const rows = (resp.data || [])
-			.filter((r: any) => r.variant === variant)
-			.slice(0, limit);
-		return rows.map((r: any) => ({
-			time: new Date(r.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
-			chaos: Math.round((r.chaos || 0) * 10) / 10,
-			listings: r.listings || 0,
-		}));
-	} catch {
-		return [];
-	}
-}
 
 // --- Mercure SSE ---
 

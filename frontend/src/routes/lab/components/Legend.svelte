@@ -80,7 +80,7 @@
 					<span><strong>EV</strong> — expected value from Font. pWin × avg winner price</span>
 					<span><strong>pWin</strong> — probability of winner from font pool (3 picks, hypergeometric)</span>
 					<span><strong>Liq</strong> — base gem liquidity vs market average. Predicts drain speed</span>
-					<span><strong>Δ2h</strong> — change over last 2 hours (4 snapshots)</span>
+					<span><strong>Δ12h</strong> — change over last 12 hours</span>
 				</div>
 			</div>
 

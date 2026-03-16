@@ -39,6 +39,8 @@ export const ADVANCED_TOOLTIPS: Record<string, string> = {
 		'Rising ROI that hasn\'t been widely noticed yet. Low competition, moderate price, rising trend. Best opportunity for experienced players who want low-herd-risk plays. Triggered: price 30-200c, < 40 listings, price rising, below historical midpoint',
 	PRICE_MANIPULATION:
 		'Suspicious pricing. Very few listings at high price with no movement. Likely someone trying to set a fake price floor. Avoid. Triggered: \u2264 3 listings, price > 200c, no velocity, high CV',
+	BREAKOUT:
+		'Price breaking above historical range with rising listings. Genuine demand increase, not manipulation. Strong buy/farm signal. Triggered: price > 90th percentile, listings rising, positive velocity',
 };
 
 export const METRIC_TOOLTIPS: Record<string, string> = {
@@ -50,7 +52,7 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
 	pWin: 'Probability of getting at least one winner when the font picks 3 random gems from the color pool. Uses hypergeometric distribution. Higher = better odds.',
 	Pool: 'Number of unique transfigured gems of this color. Smaller pool = better odds of hitting a specific winner. RED typically has smallest pool.',
 	Liq: 'Base gem liquidity relative to market average. HIGH (\u226580% of avg) = herd gets absorbed, safe. MED (30-80%) = windows open and close. LOW (<30%) = bases drain instantly, short windows. Auto-adjusts for weekend/weekday and league phase.',
-	'\u03942h': 'Change over the last 2 hours (4 data snapshots at ~30min intervals). Shows recent momentum. \u2191 = increasing, \u2193 = decreasing.',
+	'\u039412h': 'Change over the last 12 hours. Shows recent momentum. \u2191 = increasing, \u2193 = decreasing.',
 };
 
 export const LIQUIDITY_TOOLTIPS: Record<string, string> = {

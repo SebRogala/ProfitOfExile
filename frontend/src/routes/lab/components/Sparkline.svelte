@@ -6,7 +6,9 @@
 		if (!values.length) return '';
 		const max = Math.max(...values);
 		const min = Math.min(...values);
-		const range = max - min || 1;
+		// Ensure range is at least 20% of the midpoint so small variations don't look extreme
+		const mid = (max + min) / 2 || 1;
+		const range = Math.max(max - min, mid * 0.2) || 1;
 		const step = w / (values.length - 1 || 1);
 		return values
 			.map((v, i) => {
