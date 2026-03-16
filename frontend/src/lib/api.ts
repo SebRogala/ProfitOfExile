@@ -254,7 +254,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVData> {
 		ev: Math.round(r.ev || 0),
 		pool: r.pool || 0,
 		winners: r.winners || 0,
-		pWin: Math.round((r.pWin || 0) * 100) / 100,
+		pWin: Math.round((r.pWin || 0) * 10000) / 100,
 		profit: Math.round(r.profit || 0),
 		evDelta2h: 0, // not in backend yet
 	}));
