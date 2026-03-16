@@ -30,6 +30,7 @@
 	let error = $state('');
 	let mercure = $state<MercureConnection | null>(null);
 	let isDedication = $derived(selectedLab === 'Dedication');
+	let refreshKey = $state(0);
 
 	async function loadAll() {
 		try {
@@ -63,24 +64,14 @@
 	$effect(() => {
 		loadAll();
 
-		// Poll every 10s for status updates (divine rate, sync times)
-		const statusInterval = setInterval(async () => {
-			try {
-				status = await fetchStatus();
-				if (mercure) {
-					status = { ...status, connected: mercure.connected };
-				}
-			} catch { /* ignore */ }
-		}, 10_000);
-
-		// Connect to Mercure SSE for live updates
+		// Connect to Mercure SSE for live updates — reloads all data on event.
 		mercure = connectMercure(() => {
-			// On any Mercure event, reload all data
+			console.log('[Dashboard] Mercure event — reloading data');
+			refreshKey++;
 			loadAll();
 		});
 
 		return () => {
-			clearInterval(statusInterval);
 			mercure?.close();
 		};
 	});
@@ -113,7 +104,7 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else if !loading}
-		<Comparator league={status?.league || ''} />
+		<Comparator league={status?.league || ''} {refreshKey} />
 
 		<WindowAlerts alerts={windowAlerts} />
 
@@ -121,9 +112,9 @@
 			<BestPlays plays={bestPlays} league={status?.league || ''} />
 		</section>
 
-		<FontEVCompare />
+		<FontEVCompare {refreshKey} />
 
-		<ByVariant league={status?.league || ''} />
+		<ByVariant league={status?.league || ''} {refreshKey} />
 
 		{#if marketOverview}
 			<MarketOverview data={marketOverview} />

@@ -3,7 +3,7 @@
 	import BestPlays from './BestPlays.svelte';
 	import FontEV from './FontEV.svelte';
 
-	let { league = '' }: { league?: string } = $props();
+	let { league = '', refreshKey = 0 }: { league?: string; refreshKey?: number } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
@@ -18,7 +18,6 @@
 	let variantData = $state<Record<string, VariantData>>({});
 
 	async function loadVariant(variant: string) {
-		if (variantData[variant]) return;
 		const [plays, fontEV] = await Promise.all([
 			fetchVariantPlays(variant),
 			fetchFontEV(variant),
@@ -26,8 +25,10 @@
 		variantData[variant] = { plays, fontEV };
 	}
 
-	// Load all variants on mount
+	// Load all variants on mount and on refresh
 	$effect(() => {
+		refreshKey; // track for reactivity
+		variantData = {};
 		VARIANTS.forEach((v) => loadVariant(v));
 	});
 
