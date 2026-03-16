@@ -15,6 +15,17 @@ import (
 	"profitofexile/internal/lab"
 )
 
+// normalizeVariant converts frontend variant format ("1/0", "20/0") to DB format
+// ("1", "20"). The DB stores variants without the "/0" suffix for zero-quality gems.
+// Variants with quality ("1/20", "20/20") pass through unchanged.
+// TODO: Remove this once POE-52 normalizes DB storage to full "level/quality" format.
+func normalizeVariant(v string) string {
+	if strings.HasSuffix(v, "/0") {
+		return strings.TrimSuffix(v, "/0")
+	}
+	return v
+}
+
 // parseLimit extracts and validates the limit query parameter.
 // Returns the parsed limit and true, or writes an error response and returns 0, false.
 func parseLimit(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit int) (int, bool) {
@@ -40,7 +51,7 @@ func parseLimit(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit i
 // Uses in-memory cache when available, falls back to DB query.
 func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -136,7 +147,7 @@ func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) [
 // Uses in-memory cache when available, falls back to DB query.
 func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -230,7 +241,7 @@ func filterFont(all []lab.FontResult, variant string, limit int) []lab.FontResul
 // Uses in-memory cache when available, falls back to DB query.
 func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		signal := r.URL.Query().Get("signal")
 		window := r.URL.Query().Get("window")
 		advanced := r.URL.Query().Get("advanced")
@@ -472,7 +483,7 @@ func filterTrends(all []lab.TrendResult, variant, signal, window, advanced, tier
 // Uses in-memory cache when available, falls back to DB query.
 func QualityAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -645,7 +656,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 func SignalHistory(repo *lab.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
-		variant := r.URL.Query().Get("variant")
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		if name == "" || variant == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
