@@ -16,8 +16,7 @@ type SignalConfig struct {
 	// DUMPING/RECOVERY thresholds
 	DumpPriceVel    float64 // price velocity for DUMPING (default: -5)
 	DumpListingVel  float64 // listing velocity for DUMPING (default: 5)
-	RecoveryMaxList int     // max listings for RECOVERY (default: 20)
-	RecoveryMaxPVel float64 // max |priceVel| for RECOVERY stabilization (default: 5)
+	RecoveryMaxList int // max listings for RECOVERY (default: 20)
 
 	// BREWING/WINDOW thresholds
 	BrewingMinPVel float64 // min price velocity for BREWING (default: 2)
@@ -51,7 +50,6 @@ func DefaultSignalConfig() SignalConfig {
 		DumpPriceVel:      -5,
 		DumpListingVel:    5,
 		RecoveryMaxList:   20,
-		RecoveryMaxPVel:   5,
 		BrewingMinPVel:    2,
 		OpenMinPVel:       2,
 		DrainPct:          0.04,

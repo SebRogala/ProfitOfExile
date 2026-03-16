@@ -248,7 +248,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			}
 		}
 
-		// Load sparkline data (last 2 hours).
+		// Load sparkline data (last 12 hours).
 		var warnings []string
 		sparklines, err := repo.SparklineData(r.Context(), names, variant, 12)
 		if err != nil {
@@ -276,6 +276,16 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			HistPosition      float64             `json:"histPosition"`
 			Sparkline         []lab.SparklinePoint `json:"sparkline"`
 			Recommendation    string              `json:"recommendation"`
+			SellUrgency       string              `json:"sellUrgency"`
+			SellReason        string              `json:"sellReason"`
+			Sellability       int                 `json:"sellability"`
+			SellabilityLabel  string              `json:"sellabilityLabel"`
+			PriceTier         string              `json:"priceTier"`
+			TierAction        string              `json:"tierAction"`
+			WindowSignal      string              `json:"windowSignal"`
+			BaseListings      int                 `json:"baseListings"`
+			LiquidityTier     string              `json:"liquidityTier"`
+			TransListings     int                 `json:"transListings"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -297,6 +307,16 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				HistPosition:      cr.HistPosition,
 				Sparkline:         cr.Sparkline,
 				Recommendation:    cr.Recommendation,
+				SellUrgency:      cr.SellUrgency,
+				SellReason:       cr.SellReason,
+				Sellability:      cr.Sellability,
+				SellabilityLabel: cr.SellabilityLabel,
+				PriceTier:        cr.PriceTier,
+				TierAction:       cr.TierAction,
+				WindowSignal:     cr.WindowSignal,
+				BaseListings:     cr.BaseListings,
+				LiquidityTier:    cr.LiquidityTier,
+				TransListings:    cr.TransListings,
 			})
 		}
 
@@ -315,8 +335,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	}
 }
 
-// GemNamesAutocomplete returns distinct transfigured gem names matching a prefix.
-// Query params: q (required, search prefix), limit (default 10, max 50).
+// GemNamesAutocomplete returns distinct transfigured gem names matching a query.
+// Query params: q (required, matches all words in any order), limit (default 10, max 50).
 func GemNamesAutocomplete(repo *lab.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")

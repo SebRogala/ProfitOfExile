@@ -15,10 +15,10 @@ type TrendResult struct {
 	GemColor        string
 	CurrentPrice    float64
 	CurrentListings int
-	PriceVelocity   float64 // chaos/hour, rolling 2h
-	ListingVelocity float64 // listings/hour, rolling 2h
+	PriceVelocity   float64 // chaos/hour, computed from last 4 data points
+	ListingVelocity float64 // listings/hour, computed from last 4 data points
 	CV              float64 // coefficient of variation (%)
-	Signal          string  // STABLE, RISING, FALLING, DUMPING, HERD, RECOVERY, TRAP
+	Signal          string  // TRAP, DUMPING, HERD, RECOVERY, STABLE, RISING, FALLING (priority order)
 	HistPosition    float64 // 0-100 percentile vs 7-day range
 	PriceHigh7d     float64
 	PriceLow7d      float64
@@ -68,7 +68,8 @@ var analysisVariants = map[string]bool{
 }
 
 // computePriceTiers calculates dynamic TOP/MID/LOW boundaries using the
-// winsorized top-10 average (C_win formula). Outlier-proof via p99 cap.
+// median of positions #6-#15 (outlier-resistant via p99 winsorization).
+// Falls back to top-10 average when fewer than 15 transfigured gems exist.
 func computePriceTiers(gems []GemPrice) (topThreshold, midThreshold float64) {
 	return computePriceTiersWithConfig(gems, DefaultSignalConfig())
 }
@@ -163,7 +164,7 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 		if math.Abs(priceVel) < 2 {
 			return "WAIT", "Low-tier gem — stable, list at market price"
 		}
-		return "", ""
+		return "HOLD", "Low-tier gem — volatile, wait for direction"
 	}
 
 	// TRAP = sell immediately regardless
@@ -216,7 +217,7 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 		return "UNDERCUT", "Price softening from elevated level — list below current"
 	}
 
-	return "", ""
+	return "HOLD", "No strong sell signal — hold and monitor"
 }
 
 // sellability computes how easily a gem will sell (0-100).
