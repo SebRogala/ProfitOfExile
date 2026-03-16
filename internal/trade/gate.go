@@ -28,6 +28,7 @@ type Gate struct {
 	client      *Client
 	mercure     mercure.Publisher
 	cache       *TradeCache
+	repo        *Repository
 	inflight    map[string][]*GateRequest
 	mu          sync.Mutex
 	maxWait     time.Duration
@@ -35,7 +36,7 @@ type Gate struct {
 }
 
 // NewGate creates a Gate wired to the given dependencies.
-func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.Publisher, cache *TradeCache, divRate DivineRateFunc) *Gate {
+func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.Publisher, cache *TradeCache, divRate DivineRateFunc, repo *Repository) *Gate {
 	return &Gate{
 		high:       make(chan *GateRequest, 10),
 		low:        make(chan *GateRequest, 50),
@@ -43,6 +44,7 @@ func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.
 		client:     client,
 		mercure:    pub,
 		cache:      cache,
+		repo:       repo,
 		inflight:   make(map[string][]*GateRequest),
 		maxWait:    cfg.MaxQueueWait,
 		divineRate: divRate,
@@ -177,9 +179,16 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.limiter.SyncFromHeaders("fetch", fetchHeaders)
 	g.limiter.Record("fetch")
 
-	// Build result, cache it, deliver to all fan-out waiters.
+	// Build result, cache it, persist to DB, deliver to all fan-out waiters.
 	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, g.divineRate())
 	g.cache.Set(key, result)
+	if g.repo != nil {
+		go func() {
+			if err := g.repo.InsertTradeLookup(context.Background(), result, "user"); err != nil {
+				slog.Warn("trade gate: persist lookup failed", "gem", req.Gem, "error", err)
+			}
+		}()
+	}
 	g.deliverResult(key, result)
 	g.publishReady(ctx, req, result)
 	slog.Info("trade gate: lookup complete", "gem", req.Gem, "total", result.Total, "priceFloor", result.PriceFloor, "listings", len(result.Listings))
