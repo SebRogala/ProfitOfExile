@@ -139,9 +139,10 @@ export async function pollTradeResult(
 		try {
 			const { immediate } = await lookupTrade(gem, variant);
 			if (immediate) return immediate;
-		} catch {
-			// ignore errors during polling
+		} catch (err) {
+			console.warn(`[Trade] Poll attempt ${i + 1}/${maxAttempts} failed for ${gem}/${variant}:`, err);
 		}
 	}
+	console.warn(`[Trade] Polling exhausted ${maxAttempts} attempts for ${gem}/${variant}`);
 	return null;
 }

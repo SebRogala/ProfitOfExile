@@ -519,14 +519,17 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 			};
 
 			eventSource.onmessage = (msg) => {
+				let parsed: any;
 				try {
-					const parsed = JSON.parse(msg.data);
-					if (parsed.type === 'waiting' || parsed.type === 'ready' || parsed.type === 'error') {
-						dispatchTradeEvent(parsed);
-						return;
-					}
+					parsed = JSON.parse(msg.data);
 				} catch {
-					// Not JSON or no type field — fall through to analysis update
+					// Non-JSON message — treat as analysis update
+					onUpdate();
+					return;
+				}
+				if (parsed.type === 'waiting' || parsed.type === 'ready' || parsed.type === 'error') {
+					dispatchTradeEvent(parsed);
+					return;
 				}
 				onUpdate();
 			};

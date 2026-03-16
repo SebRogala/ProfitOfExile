@@ -98,7 +98,10 @@ type tradeFetchProperty struct {
 // for Fetch.
 func (c *Client) Search(ctx context.Context, gem, variant string) (*SearchResponse, http.Header, error) {
 	gemLevel, gemQuality := parseVariant(variant)
-	body := buildSearchQuery(gem, gemLevel, gemQuality)
+	body, err := buildSearchQuery(gem, gemLevel, gemQuality)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build search query: %w", err)
+	}
 
 	url := fmt.Sprintf("%s/api/trade/search/%s", c.baseURL, c.leagueName)
 
@@ -236,7 +239,7 @@ func parseVariant(variant string) (int, int) {
 //
 //   type_filters:
 //     category     — "gem" restricts to skill/support gems only
-func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
+func buildSearchQuery(gem string, gemLevel, gemQuality int) ([]byte, error) {
 	miscFilters := map[string]interface{}{
 		"corrupted": map[string]interface{}{"option": "false"},
 	}
@@ -292,8 +295,7 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 		"sort": map[string]string{"price": "asc"},
 	}
 
-	data, _ := json.Marshal(query)
-	return data
+	return json.Marshal(query)
 }
 
 // extractPropertyValue parses a numeric value from a GGG item property.

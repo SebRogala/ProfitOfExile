@@ -229,9 +229,16 @@ func TestGate_HighPriorityFirst(t *testing.T) {
 			var parsed map[string]interface{}
 			if err := json.Unmarshal([]byte(bodyStr), &parsed); err == nil {
 				if q, ok := parsed["query"].(map[string]interface{}); ok {
-					if term, ok := q["term"].(string); ok {
+					// buildSearchQuery uses "type" for base gems, "term" for transfigured.
+					name := ""
+					if v, ok := q["type"].(string); ok {
+						name = v
+					} else if v, ok := q["term"].(string); ok {
+						name = v
+					}
+					if name != "" {
 						mu.Lock()
-						searchOrder = append(searchOrder, term)
+						searchOrder = append(searchOrder, name)
 						mu.Unlock()
 					}
 				}
