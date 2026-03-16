@@ -240,7 +240,9 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) []byte {
 	miscFilters := map[string]interface{}{
 		"corrupted": map[string]interface{}{"option": "false"},
 	}
-	if gemLevel > 0 {
+	// Level 20 = exact filter (meaningful breakpoint — 20/20 gems are a distinct market).
+	// Level 1 = no filter (a buyer looking for a cheap gem doesn't care if it's lvl 1 or 19).
+	if gemLevel >= 20 {
 		miscFilters["gem_level"] = map[string]interface{}{"min": gemLevel, "max": gemLevel}
 	}
 	// Quality 20 = exact 20% filter. Quality 0 = no quality filter (the gem
