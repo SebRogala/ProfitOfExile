@@ -22,13 +22,13 @@
 				<div class="alert-stats">
 					<span class="stat">{alert.transListings} listings</span>
 					{#if alert.priceVelocity !== 0}
-						<span class="stat" class:stat-up={alert.priceVelocity > 0} class:stat-down={alert.priceVelocity < 0}>
-							Price: {alert.priceVelocity > 0 ? '+' : ''}{alert.priceVelocity}c/h
+						<span class="vel-badge" class:stat-up={alert.priceVelocity > 0} class:stat-down={alert.priceVelocity < 0}>
+							Price {alert.priceVelocity > 0 ? '+' : ''}{Math.round(alert.priceVelocity)}c
 						</span>
 					{/if}
 					{#if alert.baseVelocity !== 0}
-						<span class="stat" class:stat-up={alert.baseVelocity < 0} class:stat-down={alert.baseVelocity > 0}>
-							Base: {alert.baseVelocity > 0 ? '+' : ''}{alert.baseVelocity}/h
+						<span class="vel-badge" class:stat-up={alert.baseVelocity < 0} class:stat-down={alert.baseVelocity > 0}>
+							Base {alert.baseVelocity > 0 ? '+' : ''}{alert.baseVelocity}
 						</span>
 					{/if}
 					{#if alert.signal}
@@ -101,13 +101,18 @@
 		font-size: 0.875rem;
 		color: var(--color-lab-text-secondary);
 	}
+	.vel-badge {
+		font-size: 0.75rem;
+		font-weight: 700;
+		padding: 2px 6px;
+	}
 	.stat-up {
 		color: var(--color-lab-green);
-		font-weight: 600;
+		background: rgba(34, 197, 94, 0.1);
 	}
 	.stat-down {
 		color: var(--color-lab-red);
-		font-weight: 600;
+		background: rgba(239, 68, 68, 0.1);
 	}
 	.liq {
 		font-size: 0.8125rem;
