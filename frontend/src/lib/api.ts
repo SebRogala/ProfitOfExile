@@ -351,7 +351,10 @@ export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
 					);
 					const byTime = new Map<string, any>();
 					for (const p of points) byTime.set(p.time, p);
-					return [...byTime.values()].slice(0, 4).reverse();
+					return [...byTime.values()]
+						.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+						.slice(0, 4)
+						.reverse();
 				};
 
 				const transPoints = filterLast4(transSnap.data, alert.variant);

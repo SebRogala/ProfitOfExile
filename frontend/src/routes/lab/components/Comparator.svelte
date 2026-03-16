@@ -212,7 +212,7 @@
 					</div>
 					<div class="card-row small">
 						<span>{gem.transListings} listings</span>
-						<span class="velocity-inline" title="Listing change over last 12 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12} last 12h)</span>
+						<span class="velocity-inline" title="Price change over last 12 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12}c /12h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
 					</div>
 

@@ -171,11 +171,8 @@ func main() {
 				return
 			}
 			if endpoint == "ninja_gems" || endpoint == "ninja-gems" {
-				// Signal throttler with nextFetch so the frontend knows when
-				// the next gem snapshot is expected.
-				if !nextFetch.IsZero() {
-					throttler.Signal(nextFetch)
-				}
+				// Always signal throttler on gem events; nextFetch is optional enrichment.
+				throttler.Signal(nextFetch)
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
