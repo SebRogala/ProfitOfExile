@@ -490,7 +490,7 @@ export interface MercureConnection {
 	connected: boolean;
 }
 
-export function connectMercure(onUpdate: () => void): MercureConnection {
+export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -518,6 +518,7 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 
 			eventSource.onopen = () => {
 				state.connected = true;
+				onConnectionChange?.(true);
 				retries = 0;
 			};
 
@@ -538,6 +539,7 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 
 			eventSource.onerror = () => {
 				state.connected = false;
+				onConnectionChange?.(false);
 				if (tokenTimeout) clearTimeout(tokenTimeout);
 				retries++;
 				tokenTimeout = setTimeout(connect, retryDelay());
@@ -549,6 +551,7 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 		} catch (err) {
 			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
 			state.connected = false;
+				onConnectionChange?.(false);
 			retries++;
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, retryDelay());
@@ -559,6 +562,7 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 		if (eventSource) eventSource.close();
 		if (tokenTimeout) clearTimeout(tokenTimeout);
 		state.connected = false;
+				onConnectionChange?.(false);
 	};
 
 	connect();
