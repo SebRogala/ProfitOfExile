@@ -510,8 +510,8 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 			if (eventSource) eventSource.close();
 
 			const authedUrl = new URL(url);
-			authedUrl.searchParams.set('topic', 'poe/analysis/*');
-			authedUrl.searchParams.append('topic', 'poe/trade/*');
+			authedUrl.searchParams.set('topic', 'poe/analysis/updated');
+			authedUrl.searchParams.append('topic', 'poe/trade/results');
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());
