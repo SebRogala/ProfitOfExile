@@ -283,8 +283,8 @@ func TestMercureToken_IncludesTradeTopics(t *testing.T) {
 		t.Fatalf("unmarshal JWT claims: %v", err)
 	}
 
-	// Verify both analysis and trade topics are present.
-	wantTopics := []string{"poe/analysis/*", "poe/trade/*"}
+	// Verify wildcard subscribe claim (allows all topics).
+	wantTopics := []string{"*"}
 	for _, want := range wantTopics {
 		found := false
 		for _, got := range claims.Mercure.Subscribe {
