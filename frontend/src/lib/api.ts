@@ -495,15 +495,17 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
 	let retries = 0;
-	const MAX_RETRIES = 3;
+
+	function retryDelay(): number {
+		// Exponential backoff: 2s, 4s, 8s, 16s, 32s, capped at 60s
+		return Math.min(2000 * Math.pow(2, retries), 60000);
+	}
 
 	async function connect() {
-		if (retries >= MAX_RETRIES) return; // Stop trying if Mercure isn't available
-
 		try {
 			const tokenResp = await get<{ token: string; url: string }>('/mercure/token');
 			const { token, url } = tokenResp;
-			retries = 0; // Reset on success
+			retries = 0;
 
 			if (eventSource) eventSource.close();
 
@@ -516,6 +518,7 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 
 			eventSource.onopen = () => {
 				state.connected = true;
+				retries = 0;
 			};
 
 			eventSource.onmessage = (msg) => {
@@ -523,7 +526,6 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 				try {
 					parsed = JSON.parse(msg.data);
 				} catch {
-					// Non-JSON message — treat as analysis update
 					onUpdate();
 					return;
 				}
@@ -538,22 +540,18 @@ export function connectMercure(onUpdate: () => void): MercureConnection {
 				state.connected = false;
 				if (tokenTimeout) clearTimeout(tokenTimeout);
 				retries++;
-				if (retries < MAX_RETRIES) {
-					tokenTimeout = setTimeout(connect, 5000 * retries);
-				}
+				tokenTimeout = setTimeout(connect, retryDelay());
 			};
 
 			// Token TTL is 30min — refresh before expiry
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, 25 * 60 * 1000);
 		} catch (err) {
-			console.warn('[Mercure] Connection failed:', err);
+			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
 			state.connected = false;
 			retries++;
-			if (retries < MAX_RETRIES) {
-				if (tokenTimeout) clearTimeout(tokenTimeout);
-				tokenTimeout = setTimeout(connect, 10000);
-			}
+			if (tokenTimeout) clearTimeout(tokenTimeout);
+			tokenTimeout = setTimeout(connect, retryDelay());
 		}
 	}
 
