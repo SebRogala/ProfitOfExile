@@ -43,8 +43,8 @@
 		if (isNaN(target)) return 'pending...';
 		const diff = target - _now;
 		const mins = Math.round(diff / 60000);
-		if (mins <= 0) return `~${formatTime(nextFetch)} (any moment)`;
-		return `~${formatTime(nextFetch)} (${mins}m)`;
+		if (mins <= 0) return `any moment (${formatTime(nextFetch)})`;
+		return `~${mins}m (${formatTime(nextFetch)})`;
 	}
 </script>
 
