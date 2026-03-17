@@ -1,6 +1,8 @@
 package lab
 
 import (
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,6 +17,7 @@ type Cache struct {
 	font        []FontResult
 	quality     []QualityResult
 	trends      []TrendResult
+	gemNames    []string // unique transfigured gem names, sorted
 	lastUpdated time.Time
 	nextFetch   time.Time
 	divineRate  float64
@@ -27,9 +30,21 @@ func NewCache() *Cache {
 
 // SetTransfigure replaces the cached transfigure results.
 func (c *Cache) SetTransfigure(results []TransfigureResult) {
+	// Extract unique gem names for autocomplete.
+	seen := make(map[string]struct{}, len(results))
+	for _, r := range results {
+		seen[r.TransfiguredName] = struct{}{}
+	}
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.transfigure = results
+	c.gemNames = names
 	c.lastUpdated = time.Now()
 }
 
@@ -83,6 +98,38 @@ func (c *Cache) Trends() []TrendResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.trends
+}
+
+// GemNamesSearch returns transfigured gem names matching all query words (case-insensitive).
+// Runs entirely in memory — no DB query. Returns up to limit results.
+func (c *Cache) GemNamesSearch(query string, limit int) []string {
+	c.mu.RLock()
+	names := c.gemNames
+	c.mu.RUnlock()
+
+	if len(names) == 0 || query == "" {
+		return nil
+	}
+
+	words := strings.Fields(strings.ToLower(query))
+	var results []string
+	for _, name := range names {
+		lower := strings.ToLower(name)
+		match := true
+		for _, w := range words {
+			if !strings.Contains(lower, w) {
+				match = false
+				break
+			}
+		}
+		if match {
+			results = append(results, name)
+			if len(results) >= limit {
+				break
+			}
+		}
+	}
+	return results
 }
 
 // LastUpdated returns the time the cache was last updated.
