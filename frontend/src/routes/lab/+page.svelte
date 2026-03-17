@@ -180,6 +180,10 @@
 			console.log('[Dashboard] Mercure event — reloading data');
 			refreshKey++;
 			loadAll();
+		}, (connected) => {
+			if (status) {
+				status = { ...status, connected };
+			}
 		});
 
 		return () => {
