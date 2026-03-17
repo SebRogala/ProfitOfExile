@@ -362,7 +362,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 // GemNamesAutocomplete returns distinct transfigured gem names matching a query.
 // Query params: q (required, matches all words in any order), limit (default 10, max 50).
-func GemNamesAutocomplete(repo *lab.Repository) http.HandlerFunc {
+func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		if q == "" {
@@ -386,11 +386,20 @@ func GemNamesAutocomplete(repo *lab.Repository) http.HandlerFunc {
 			limit = n
 		}
 
-		names, err := repo.GemNamesAutocomplete(r.Context(), q, limit)
-		if err != nil {
-			slog.Error("gem names autocomplete: query failed", "error", err, "q", q)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Fast path: in-memory search over cached gem names (~200 entries).
+		// Falls back to DB query only if cache is empty (cold start).
+		var names []string
+		if cache != nil {
+			names = cache.GemNamesSearch(q, limit)
+		}
+		if names == nil {
+			var err error
+			names, err = repo.GemNamesAutocomplete(r.Context(), q, limit)
+			if err != nil {
+				slog.Error("gem names autocomplete: query failed", "error", err, "q", q)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		if names == nil {
