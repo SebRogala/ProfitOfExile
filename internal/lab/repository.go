@@ -2,6 +2,7 @@ package lab
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -738,4 +739,299 @@ func (r *Repository) SignalHistory(ctx context.Context, name, variant string, li
 	}
 
 	return changes, nil
+}
+
+// ---------------------------------------------------------------------------
+// V2 Pre-computed Storage Layer
+// ---------------------------------------------------------------------------
+
+// SaveMarketContext persists a single market context snapshot.
+// Uses ON CONFLICT DO NOTHING so re-runs for the same time are idempotent.
+func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) error {
+	pricePerc, err := json.Marshal(mc.PricePercentiles)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal price percentiles: %w", err)
+	}
+	listPerc, err := json.Marshal(mc.ListingPercentiles)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal listing percentiles: %w", err)
+	}
+	tierBounds, err := json.Marshal(mc.TierBoundaries)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal tier boundaries: %w", err)
+	}
+	hourly, err := json.Marshal(mc.HourlyBias)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal hourly bias: %w", err)
+	}
+	weekday, err := json.Marshal(mc.WeekdayBias)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal weekday bias: %w", err)
+	}
+
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO market_context
+		 (time, price_percentiles, listing_percentiles,
+		  velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
+		  total_gems, total_listings, tier_boundaries, hourly_bias, weekday_bias)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT DO NOTHING`,
+		mc.Time, pricePerc, listPerc,
+		mc.VelocityMean, mc.VelocitySigma, mc.ListingVelMean, mc.ListingVelSigma,
+		mc.TotalGems, mc.TotalListings, tierBounds, hourly, weekday,
+	)
+	if err != nil {
+		return fmt.Errorf("lab repo: insert market context: %w", err)
+	}
+	return nil
+}
+
+// LatestMarketContext returns the most recent market context snapshot.
+// Returns (nil, nil) when no rows exist.
+func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, error) {
+	var mc MarketContext
+	var pricePerc, listPerc, tierBounds, hourly, weekday []byte
+
+	err := r.pool.QueryRow(ctx, `
+		SELECT time, price_percentiles, listing_percentiles,
+		       velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
+		       total_gems, total_listings, tier_boundaries, hourly_bias, weekday_bias
+		FROM market_context
+		WHERE time = (SELECT MAX(time) FROM market_context)`).
+		Scan(&mc.Time, &pricePerc, &listPerc,
+			&mc.VelocityMean, &mc.VelocitySigma, &mc.ListingVelMean, &mc.ListingVelSigma,
+			&mc.TotalGems, &mc.TotalListings, &tierBounds, &hourly, &weekday)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lab repo: query latest market context: %w", err)
+	}
+
+	if err := json.Unmarshal(pricePerc, &mc.PricePercentiles); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal price percentiles: %w", err)
+	}
+	if err := json.Unmarshal(listPerc, &mc.ListingPercentiles); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal listing percentiles: %w", err)
+	}
+	if err := json.Unmarshal(tierBounds, &mc.TierBoundaries); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal tier boundaries: %w", err)
+	}
+	if err := json.Unmarshal(hourly, &mc.HourlyBias); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal hourly bias: %w", err)
+	}
+	if err := json.Unmarshal(weekday, &mc.WeekdayBias); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal weekday bias: %w", err)
+	}
+
+	return &mc, nil
+}
+
+// SaveGemFeatures batch-inserts pre-computed gem feature rows.
+func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature) (int, error) {
+	if len(features) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, f := range features {
+		batch.Queue(
+			`INSERT INTO gem_features
+			 (time, name, variant, chaos, listings, tier,
+			  vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
+			  vel_long_price, vel_long_listing,
+			  cv, hist_position, high_7d, low_7d,
+			  flood_count, crash_count, listing_elasticity,
+			  relative_price, relative_listings)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+			         $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			 ON CONFLICT DO NOTHING`,
+			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier,
+			f.VelShortPrice, f.VelShortListing, f.VelMedPrice, f.VelMedListing,
+			f.VelLongPrice, f.VelLongListing,
+			f.CV, f.HistPosition, f.High7d, f.Low7d,
+			f.FloodCount, f.CrashCount, f.ListingElasticity,
+			f.RelativePrice, f.RelativeListings,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range features {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert gem feature: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit gem features: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// LatestGemFeatures returns the most recent gem feature rows, optionally filtered by variant and/or tier.
+func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string, limit int) ([]GemFeature, error) {
+	query := `
+		SELECT time, name, variant, chaos, listings, tier,
+		       vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
+		       vel_long_price, vel_long_listing,
+		       cv, hist_position, high_7d, low_7d,
+		       flood_count, crash_count, listing_elasticity,
+		       relative_price, relative_listings
+		FROM gem_features
+		WHERE time = (SELECT MAX(time) FROM gem_features)`
+	args := []any{}
+	argIdx := 1
+
+	if variant != "" {
+		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
+		args = append(args, variant)
+		argIdx++
+	}
+	if tier != "" {
+		query += fmt.Sprintf(` AND tier = $%d`, argIdx)
+		args = append(args, tier)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` ORDER BY chaos DESC LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem features: %w", err)
+	}
+	defer rows.Close()
+
+	var results []GemFeature
+	for rows.Next() {
+		var f GemFeature
+		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier,
+			&f.VelShortPrice, &f.VelShortListing, &f.VelMedPrice, &f.VelMedListing,
+			&f.VelLongPrice, &f.VelLongListing,
+			&f.CV, &f.HistPosition, &f.High7d, &f.Low7d,
+			&f.FloodCount, &f.CrashCount, &f.ListingElasticity,
+			&f.RelativePrice, &f.RelativeListings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem feature: %w", err)
+		}
+		results = append(results, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem features rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
+// SaveGemSignals batch-inserts pre-computed gem signal rows.
+func (r *Repository) SaveGemSignals(ctx context.Context, signals []GemSignal) (int, error) {
+	if len(signals) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, s := range signals {
+		batch.Queue(
+			`INSERT INTO gem_signals
+			 (time, name, variant, signal, confidence,
+			  sell_urgency, sell_reason, sellability, sellability_label,
+			  window_signal, advanced_signal, phase_modifier,
+			  recommendation, tier)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			 ON CONFLICT DO NOTHING`,
+			s.Time, s.Name, s.Variant, s.Signal, s.Confidence,
+			s.SellUrgency, s.SellReason, s.Sellability, s.SellabilityLabel,
+			s.WindowSignal, s.AdvancedSignal, s.PhaseModifier,
+			s.Recommendation, s.Tier,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range signals {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert gem signal: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit gem signals: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// LatestGemSignals returns the most recent gem signal rows, optionally filtered by variant and/or tier.
+func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string, limit int) ([]GemSignal, error) {
+	query := `
+		SELECT time, name, variant, signal, confidence,
+		       sell_urgency, sell_reason, sellability, sellability_label,
+		       window_signal, advanced_signal, phase_modifier,
+		       recommendation, tier
+		FROM gem_signals
+		WHERE time = (SELECT MAX(time) FROM gem_signals)`
+	args := []any{}
+	argIdx := 1
+
+	if variant != "" {
+		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
+		args = append(args, variant)
+		argIdx++
+	}
+	if tier != "" {
+		query += fmt.Sprintf(` AND tier = $%d`, argIdx)
+		args = append(args, tier)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` ORDER BY confidence DESC, sellability DESC LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem signals: %w", err)
+	}
+	defer rows.Close()
+
+	var results []GemSignal
+	for rows.Next() {
+		var s GemSignal
+		if err := rows.Scan(&s.Time, &s.Name, &s.Variant, &s.Signal, &s.Confidence,
+			&s.SellUrgency, &s.SellReason, &s.Sellability, &s.SellabilityLabel,
+			&s.WindowSignal, &s.AdvancedSignal, &s.PhaseModifier,
+			&s.Recommendation, &s.Tier); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem signal: %w", err)
+		}
+		results = append(results, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem signals rows iteration: %w", err)
+	}
+
+	return results, nil
 }
