@@ -81,8 +81,11 @@ func main() {
 
 	fmt.Fprintln(os.Stderr, "Pre-computing features (velocities, CVs, future outcomes)...")
 	t1 := time.Now()
-	features, lastGems := precomputeFeatures(snapshots)
+	features, lastGems, marketCtx := precomputeFeatures(snapshots)
 	fmt.Fprintf(os.Stderr, "Pre-computed %d evaluation points in %s\n", len(features), time.Since(t1).Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "Market context: %d gems, vel_mean=%.2f vel_sigma=%.2f\n",
+		marketCtx.TotalGems, marketCtx.VelocityMean, marketCtx.VelocitySigma)
+	_ = marketCtx // available for future relative-threshold sweep
 
 	grid := generateGrid()
 	fmt.Fprintf(os.Stderr, "Sweeping %d parameter combos...\n", len(grid))
@@ -152,8 +155,9 @@ func loadFromDB(ctx context.Context, pool *pgxpool.Pool) []Snapshot {
 }
 
 // precomputeFeatures builds all config-independent evaluation points in one pass.
-// Returns the feature slice and the last snapshot's gem prices (for tier computation).
-func precomputeFeatures(snapshots []Snapshot) ([]precomputed, []lab.GemPrice) {
+// Returns the feature slice, the last snapshot's gem prices (for tier computation),
+// and a MarketContext computed from the last snapshot.
+func precomputeFeatures(snapshots []Snapshot) ([]precomputed, []lab.GemPrice, *lab.MarketContext) {
 	// Group snapshots by time.
 	timeMap := make(map[time.Time]map[gemKey]Snapshot)
 	var times []time.Time
@@ -254,7 +258,27 @@ func precomputeFeatures(snapshots []Snapshot) ([]precomputed, []lab.GemPrice) {
 		}
 	}
 
-	return features, lastGems
+	// Build GemPriceHistory from rolling history for MarketContext computation.
+	var histSlice []lab.GemPriceHistory
+	for gk, h := range gemHist {
+		if len(h.points) < 2 {
+			continue
+		}
+		histSlice = append(histSlice, lab.GemPriceHistory{
+			Name:    gk.Name,
+			Variant: gk.Variant,
+			Points:  h.points,
+		})
+	}
+
+	// Compute market context from the last snapshot's gems and accumulated history.
+	var snapTime time.Time
+	if len(times) > 0 {
+		snapTime = times[len(times)-1]
+	}
+	mc := lab.ComputeMarketContext(snapTime, lastGems, histSlice)
+
+	return features, lastGems, &mc
 }
 
 // sweep evaluates every config against pre-computed features.
