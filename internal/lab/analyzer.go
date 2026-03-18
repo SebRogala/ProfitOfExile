@@ -226,9 +226,14 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		return nil
 	}
 
-	// TODO(POE-56): compute market context from gems
-	mc := MarketContext{Time: snapTime}
-	a.logger.Warn("v2: saving stub market context (no computation yet)", "snapTime", snapTime)
+	// Fetch history for velocity computation (same call RunTrends uses).
+	history, err := a.repo.GemPriceHistoryByVariant(ctx, "", 168)
+	if err != nil {
+		a.logger.Error("v2: failed to load gem price history", "error", err)
+		return err
+	}
+
+	mc := ComputeMarketContext(snapTime, gems, history)
 	if err := a.repo.SaveMarketContext(ctx, mc); err != nil {
 		a.logger.Error("v2: failed to save market context", "error", err)
 		return err
