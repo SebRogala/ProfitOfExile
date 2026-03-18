@@ -21,6 +21,11 @@ type Cache struct {
 	lastUpdated time.Time
 	nextFetch   time.Time
 	divineRate  float64
+
+	// V2 pre-computed results
+	marketContext *MarketContext
+	gemFeatures   []GemFeature
+	gemSignals    []GemSignal
 }
 
 // NewCache creates an empty analysis cache.
@@ -165,4 +170,49 @@ func (c *Cache) DivineRate() float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.divineRate
+}
+
+// SetMarketContext replaces the cached market context.
+func (c *Cache) SetMarketContext(mc *MarketContext) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.marketContext = mc
+	c.lastUpdated = time.Now()
+}
+
+// MarketContext returns the cached market context (nil if empty).
+func (c *Cache) MarketContext() *MarketContext {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.marketContext
+}
+
+// SetGemFeatures replaces the cached gem features.
+func (c *Cache) SetGemFeatures(features []GemFeature) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gemFeatures = features
+	c.lastUpdated = time.Now()
+}
+
+// GemFeatures returns the cached gem features (nil if empty).
+func (c *Cache) GemFeatures() []GemFeature {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.gemFeatures
+}
+
+// SetGemSignals replaces the cached gem signals.
+func (c *Cache) SetGemSignals(signals []GemSignal) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gemSignals = signals
+	c.lastUpdated = time.Now()
+}
+
+// GemSignals returns the cached gem signals (nil if empty).
+func (c *Cache) GemSignals() []GemSignal {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.gemSignals
 }
