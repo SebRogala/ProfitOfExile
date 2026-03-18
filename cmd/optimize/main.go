@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -85,7 +86,6 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Pre-computed %d evaluation points in %s\n", len(features), time.Since(t1).Round(time.Millisecond))
 	fmt.Fprintf(os.Stderr, "Market context: %d gems, vel_mean=%.2f vel_sigma=%.2f\n",
 		marketCtx.TotalGems, marketCtx.VelocityMean, marketCtx.VelocitySigma)
-	_ = marketCtx // available for future relative-threshold sweep
 
 	grid := generateGrid()
 	fmt.Fprintf(os.Stderr, "Sweeping %d parameter combos...\n", len(grid))
@@ -258,10 +258,25 @@ func precomputeFeatures(snapshots []Snapshot) ([]precomputed, []lab.GemPrice, *l
 		}
 	}
 
-	// Build GemPriceHistory from rolling history for MarketContext computation.
+	// Build a set of transfigured gem keys from the last snapshot so that
+	// histSlice only includes history for the active population (matching the
+	// analyzer's GemPriceHistoryByVariant which filters to transfigured,
+	// non-corrupted, non-Trarthus gems with chaos > 5).
+	transfiguredKeys := make(map[gemKey]bool)
+	if len(times) > 0 {
+		for _, s := range timeMap[times[len(times)-1]] {
+			if s.IsTransfigured && !strings.Contains(s.Name, "Trarthus") {
+				transfiguredKeys[gemKey{s.Name, s.Variant}] = true
+			}
+		}
+	}
+
 	var histSlice []lab.GemPriceHistory
 	for gk, h := range gemHist {
 		if len(h.points) < 2 {
+			continue
+		}
+		if !transfiguredKeys[gk] {
 			continue
 		}
 		histSlice = append(histSlice, lab.GemPriceHistory{

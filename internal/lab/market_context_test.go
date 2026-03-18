@@ -222,7 +222,7 @@ func TestComputeMarketContext_SingleGem(t *testing.T) {
 		t.Errorf("TotalListings = %d, want 7", mc.TotalListings)
 	}
 	// Single gem: all percentiles equal that gem's price.
-	for _, key := range []string{"P5", "P10", "P25", "P50", "P75", "P90", "P99"} {
+	for _, key := range PercentileKeys {
 		if got := mc.PricePercentiles[key]; !approxEqual(got, 42, 0.01) {
 			t.Errorf("PricePercentiles[%q] = %.2f, want 42", key, got)
 		}
@@ -247,7 +247,7 @@ func TestComputeMarketContext_AllSamePrice(t *testing.T) {
 
 	mc := ComputeMarketContext(snapTime, gems, nil)
 
-	for _, key := range []string{"P5", "P10", "P25", "P50", "P75", "P90", "P99"} {
+	for _, key := range PercentileKeys {
 		if got := mc.PricePercentiles[key]; !approxEqual(got, 100, 0.01) {
 			t.Errorf("PricePercentiles[%q] = %.2f, want 100", key, got)
 		}

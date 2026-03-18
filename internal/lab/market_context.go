@@ -1,11 +1,17 @@
 package lab
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"time"
 )
+
+// PercentileKeys is the canonical list of percentile keys used for market context
+// price and listing distributions. All call sites should iterate this slice
+// rather than hardcoding key strings.
+var PercentileKeys = []string{"P5", "P10", "P25", "P50", "P75", "P90", "P99"}
 
 // ComputeMarketContext produces market-wide statistics from raw gem data and history.
 // It is a pure function with no side effects — called from RunV2 and the optimizer.
@@ -55,7 +61,7 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 		sort.Float64s(prices)
 		sort.Float64s(listings)
 
-		for _, key := range []string{"P5", "P10", "P25", "P50", "P75", "P90", "P99"} {
+		for _, key := range PercentileKeys {
 			p := percentileKeyToFraction(key)
 			mc.PricePercentiles[key] = percentile(prices, p)
 			mc.ListingPercentiles[key] = percentile(listings, p)
@@ -63,10 +69,16 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 	}
 
 	// Compute velocity distribution from history.
+	// Only include gems where velocity is computable (positive time span).
+	// Entries with hours <= 0 (identical/very close timestamps) produce
+	// false-zero velocities that would bias market-wide statistics.
 	if len(history) > 0 {
 		var velPrices, velListings []float64
 		for _, h := range history {
 			if len(h.Points) < 2 {
+				continue
+			}
+			if !velocityComputable(h.Points) {
 				continue
 			}
 			pv := velocity(h.Points, func(p PricePoint) float64 { return p.Chaos })
@@ -114,6 +126,9 @@ func percentile(sorted []float64, p float64) float64 {
 }
 
 // percentileKeyToFraction converts "P5", "P10", etc. to 0.05, 0.10, etc.
+// Panics on unknown keys — the key list is hardcoded in PercentileKeys, so any
+// mismatch is a programmer error that must be caught immediately rather than
+// silently returning a wrong value.
 func percentileKeyToFraction(key string) float64 {
 	switch key {
 	case "P5":
@@ -131,12 +146,29 @@ func percentileKeyToFraction(key string) float64 {
 	case "P99":
 		return 0.99
 	default:
-		return 0.50
+		panic(fmt.Sprintf("percentileKeyToFraction: unknown key %q — update PercentileKeys and this switch together", key))
 	}
 }
 
+// velocityComputable checks whether a price point series has a positive time span
+// between first and last relevant points (matching the velocity() function's windowing).
+// Returns false when timestamps are identical or reversed, which would cause velocity()
+// to return a degenerate zero that does not represent genuine zero price change.
+func velocityComputable(points []PricePoint) bool {
+	n := len(points)
+	if n < 2 {
+		return false
+	}
+	start := 0
+	if n > 4 {
+		start = n - 4
+	}
+	return points[n-1].Time.Sub(points[start].Time).Hours() > 0
+}
+
 // meanStddev computes the mean and population standard deviation of a float slice.
-// Returns (0, 0) for empty input.
+// Returns (0, 0) for empty input. Output is sanitized to prevent NaN/Inf
+// propagation from floating point overflow on extreme input magnitudes.
 func meanStddev(vals []float64) (float64, float64) {
 	n := len(vals)
 	if n == 0 {
@@ -150,7 +182,7 @@ func meanStddev(vals []float64) (float64, float64) {
 	mean := sum / float64(n)
 
 	if n == 1 {
-		return mean, 0
+		return sanitizeFloat(mean), 0
 	}
 
 	var variance float64
@@ -160,5 +192,5 @@ func meanStddev(vals []float64) (float64, float64) {
 	}
 	variance /= float64(n)
 
-	return mean, math.Sqrt(variance)
+	return sanitizeFloat(mean), sanitizeFloat(math.Sqrt(variance))
 }
