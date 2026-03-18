@@ -16,7 +16,7 @@ services:
       - TRADE_ENABLED=${TRADE_ENABLED:-true}
       - TRADE_SYNC_WAIT=${TRADE_SYNC_WAIT:-15s}
       - MERCURE_SUBSCRIBER_KEY=${MERCURE_SUBSCRIBER_KEY:-!ChangeThisMercureHubJWTSecretKey!}
-      - MERCURE_PUBLIC_URL=${MERCURE_PUBLIC_URL:-https://profitofexile.localhost/.well-known/mercure}
+      - MERCURE_PUBLIC_URL=${MERCURE_PUBLIC_URL:-https://mercure.localhost/.well-known/mercure}
     networks:
       - infra
     restart: unless-stopped
