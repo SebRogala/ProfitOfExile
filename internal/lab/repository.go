@@ -3,6 +3,7 @@ package lab
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -802,7 +803,7 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 			&mc.VelocityMean, &mc.VelocitySigma, &mc.ListingVelMean, &mc.ListingVelSigma,
 			&mc.TotalGems, &mc.TotalListings, &tierBounds, &hourly, &weekday)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("lab repo: query latest market context: %w", err)
