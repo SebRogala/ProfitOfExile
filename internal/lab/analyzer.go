@@ -17,6 +17,7 @@ type Analyzer struct {
 	muFont         sync.Mutex
 	muQuality      sync.Mutex
 	muTrends       sync.Mutex
+	muV2           sync.Mutex
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
@@ -203,6 +204,42 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 		"results", len(results),
 		"inserted", inserted,
 	)
+	a.throttler.Signal()
+	return nil
+}
+
+// RunV2 is the entry point for the v2 pre-computed analysis pipeline.
+// It computes MarketContext, GemFeatures, and GemSignals in sequence.
+// Currently a stub — actual computation logic will be filled by POE-56 through POE-61.
+// It is safe to call from multiple goroutines; concurrent runs are serialized.
+func (a *Analyzer) RunV2(ctx context.Context) error {
+	a.muV2.Lock()
+	defer a.muV2.Unlock()
+
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	if err != nil {
+		a.logger.Error("v2: failed to load gem prices", "error", err)
+		return err
+	}
+	if len(gems) == 0 {
+		a.logger.Info("v2: no gem snapshots available yet, skipping")
+		return nil
+	}
+
+	// TODO(POE-56): compute market context from gems
+	mc := MarketContext{Time: snapTime}
+	if err := a.repo.SaveMarketContext(ctx, mc); err != nil {
+		a.logger.Error("v2: failed to save market context", "error", err)
+		return err
+	}
+	if a.cache != nil {
+		a.cache.SetMarketContext(&mc)
+	}
+
+	// TODO(POE-58): compute gem features using market context
+	// TODO(POE-61): compute gem signals using features
+
+	a.logger.Info("v2 analysis stub complete", "snapTime", snapTime, "gems", len(gems))
 	a.throttler.Signal()
 	return nil
 }
