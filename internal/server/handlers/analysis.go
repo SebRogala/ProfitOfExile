@@ -46,6 +46,28 @@ func parseLimit(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit i
 	return limit, true
 }
 
+// validTiers lists the allowed tier filter values for v2 gem endpoints.
+var validTiers = map[string]bool{
+	"TOP": true, "HIGH": true, "MID": true, "LOW": true,
+}
+
+// validateTier checks whether the tier parameter is valid.
+// Returns true if valid (or empty). Writes a 400 response and returns false if invalid.
+func validateTier(w http.ResponseWriter, tier string) bool {
+	if tier == "" {
+		return true
+	}
+	if !validTiers[tier] {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "invalid tier: must be one of TOP, HIGH, MID, LOW",
+		})
+		return false
+	}
+	return true
+}
+
 // TransfigureAnalysis returns the latest transfigure ROI results.
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
@@ -699,7 +721,7 @@ func SignalHistory(repo *lab.Repository) http.HandlerFunc {
 }
 
 // ---------------------------------------------------------------------------
-// V2 Analysis Endpoints
+// V2 Analysis Endpoints (POE-62: scaffolding; data populated by POE-56 through POE-61)
 // ---------------------------------------------------------------------------
 
 // MarketContextAnalysis returns the latest market context snapshot.
@@ -776,6 +798,9 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		tier := r.URL.Query().Get("tier")
+		if !validateTier(w, tier) {
+			return
+		}
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -783,16 +808,18 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 		}
 
 		var results []lab.GemFeature
+		cacheHit := false
 
 		// Fast path: serve from cache.
 		if cache != nil {
 			if cached := cache.GemFeatures(); len(cached) > 0 {
 				results = filterGemFeatures(cached, variant, tier, limit)
+				cacheHit = true
 			}
 		}
 
-		// Slow path: fall back to DB query.
-		if results == nil {
+		// Slow path: fall back to DB query when cache was not consulted.
+		if !cacheHit {
 			var err error
 			results, err = repo.LatestGemFeatures(r.Context(), variant, tier, limit)
 			if err != nil {
@@ -894,6 +921,9 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		tier := r.URL.Query().Get("tier")
+		if !validateTier(w, tier) {
+			return
+		}
 
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -901,16 +931,18 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		}
 
 		var results []lab.GemSignal
+		cacheHit := false
 
 		// Fast path: serve from cache.
 		if cache != nil {
 			if cached := cache.GemSignals(); len(cached) > 0 {
 				results = filterGemSignals(cached, variant, tier, limit)
+				cacheHit = true
 			}
 		}
 
-		// Slow path: fall back to DB query.
-		if results == nil {
+		// Slow path: fall back to DB query when cache was not consulted.
+		if !cacheHit {
 			var err error
 			results, err = repo.LatestGemSignals(r.Context(), variant, tier, limit)
 			if err != nil {

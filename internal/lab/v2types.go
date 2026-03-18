@@ -6,7 +6,7 @@ import "time"
 type MarketContext struct {
 	Time               time.Time
 	PricePercentiles   map[string]float64 // P10, P25, P50, P75, P90, P99
-	ListingPercentiles map[string]float64
+	ListingPercentiles map[string]float64 // P10, P25, P50, P75, P90, P99
 	VelocityMean       float64
 	VelocitySigma      float64
 	ListingVelMean     float64
@@ -15,10 +15,11 @@ type MarketContext struct {
 	TotalListings      int
 	TierBoundaries     TierBoundaries
 	HourlyBias         []float64 // 24 entries, one per UTC hour
-	WeekdayBias        []float64 // 7 entries, Mon=0..Sun=6
+	WeekdayBias        []float64 // 7 entries, Sun=0..Sat=6 (matches time.Weekday)
 }
 
-// TierBoundaries holds the price cutoffs between TOP/HIGH/MID/LOW tiers.
+// TierBoundaries holds minimum chaos price thresholds for each tier.
+// A gem is TOP if chaos >= Top, HIGH if chaos >= High, MID if chaos >= Mid, otherwise LOW.
 type TierBoundaries struct {
 	Top  float64 `json:"top"`
 	High float64 `json:"high"`

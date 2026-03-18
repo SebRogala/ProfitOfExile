@@ -22,7 +22,9 @@ type Cache struct {
 	nextFetch   time.Time
 	divineRate  float64
 
-	// V2 pre-computed results
+	// V2 pre-computed results. These three fields are populated together by
+	// Analyzer.RunV2 from the same snapshot time, but may be nil independently
+	// during startup or if a pipeline stage fails.
 	marketContext *MarketContext
 	gemFeatures   []GemFeature
 	gemSignals    []GemSignal
