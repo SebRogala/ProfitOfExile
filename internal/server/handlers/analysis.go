@@ -697,3 +697,299 @@ func SignalHistory(repo *lab.Repository) http.HandlerFunc {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// V2 Analysis Endpoints
+// ---------------------------------------------------------------------------
+
+// MarketContextAnalysis returns the latest market context snapshot.
+// No query params — returns a single object.
+// Uses in-memory cache when available, falls back to DB query.
+func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var mc *lab.MarketContext
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			mc = cache.MarketContext()
+		}
+
+		// Slow path: fall back to DB query.
+		if mc == nil {
+			var err error
+			mc, err = repo.LatestMarketContext(r.Context())
+			if err != nil {
+				slog.Error("market context: query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if mc == nil {
+			if err := json.NewEncoder(w).Encode(map[string]any{"data": nil}); err != nil {
+				slog.Error("market context: encode response", "error", err)
+			}
+			return
+		}
+
+		type resp struct {
+			Time               string             `json:"time"`
+			PricePercentiles   map[string]float64 `json:"pricePercentiles"`
+			ListingPercentiles map[string]float64 `json:"listingPercentiles"`
+			VelocityMean       float64            `json:"velocityMean"`
+			VelocitySigma      float64            `json:"velocitySigma"`
+			ListingVelMean     float64            `json:"listingVelMean"`
+			ListingVelSigma    float64            `json:"listingVelSigma"`
+			TotalGems          int                `json:"totalGems"`
+			TotalListings      int                `json:"totalListings"`
+			TierBoundaries     lab.TierBoundaries `json:"tierBoundaries"`
+			HourlyBias         []float64          `json:"hourlyBias"`
+			WeekdayBias        []float64          `json:"weekdayBias"`
+		}
+
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"data": resp{
+				Time:               mc.Time.UTC().Format(time.RFC3339),
+				PricePercentiles:   mc.PricePercentiles,
+				ListingPercentiles: mc.ListingPercentiles,
+				VelocityMean:       mc.VelocityMean,
+				VelocitySigma:      mc.VelocitySigma,
+				ListingVelMean:     mc.ListingVelMean,
+				ListingVelSigma:    mc.ListingVelSigma,
+				TotalGems:          mc.TotalGems,
+				TotalListings:      mc.TotalListings,
+				TierBoundaries:     mc.TierBoundaries,
+				HourlyBias:         mc.HourlyBias,
+				WeekdayBias:        mc.WeekdayBias,
+			},
+		}); err != nil {
+			slog.Error("market context: encode response", "error", err)
+		}
+	}
+}
+
+// GemFeaturesAnalysis returns the latest pre-computed gem feature metrics.
+// Query params: variant (optional), tier (optional), limit (default 50, max 500).
+// Uses in-memory cache when available, falls back to DB query.
+func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		tier := r.URL.Query().Get("tier")
+
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
+		}
+
+		var results []lab.GemFeature
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			if cached := cache.GemFeatures(); len(cached) > 0 {
+				results = filterGemFeatures(cached, variant, tier, limit)
+			}
+		}
+
+		// Slow path: fall back to DB query.
+		if results == nil {
+			var err error
+			results, err = repo.LatestGemFeatures(r.Context(), variant, tier, limit)
+			if err != nil {
+				slog.Error("gem features: query failed", "error", err, "variant", variant, "tier", tier)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+
+		type row struct {
+			Time              string  `json:"time"`
+			Name              string  `json:"name"`
+			Variant           string  `json:"variant"`
+			Chaos             float64 `json:"chaos"`
+			Listings          int     `json:"listings"`
+			Tier              string  `json:"tier"`
+			VelShortPrice     float64 `json:"velShortPrice"`
+			VelShortListing   float64 `json:"velShortListing"`
+			VelMedPrice       float64 `json:"velMedPrice"`
+			VelMedListing     float64 `json:"velMedListing"`
+			VelLongPrice      float64 `json:"velLongPrice"`
+			VelLongListing    float64 `json:"velLongListing"`
+			CV                float64 `json:"cv"`
+			HistPosition      float64 `json:"histPosition"`
+			High7d            float64 `json:"high7d"`
+			Low7d             float64 `json:"low7d"`
+			FloodCount        int     `json:"floodCount"`
+			CrashCount        int     `json:"crashCount"`
+			ListingElasticity float64 `json:"listingElasticity"`
+			RelativePrice     float64 `json:"relativePrice"`
+			RelativeListings  float64 `json:"relativeListings"`
+		}
+
+		rows := make([]row, 0, len(results))
+		for _, f := range results {
+			rows = append(rows, row{
+				Time:              f.Time.UTC().Format(time.RFC3339),
+				Name:              f.Name,
+				Variant:           f.Variant,
+				Chaos:             f.Chaos,
+				Listings:          f.Listings,
+				Tier:              f.Tier,
+				VelShortPrice:     f.VelShortPrice,
+				VelShortListing:   f.VelShortListing,
+				VelMedPrice:       f.VelMedPrice,
+				VelMedListing:     f.VelMedListing,
+				VelLongPrice:      f.VelLongPrice,
+				VelLongListing:    f.VelLongListing,
+				CV:                f.CV,
+				HistPosition:      f.HistPosition,
+				High7d:            f.High7d,
+				Low7d:             f.Low7d,
+				FloodCount:        f.FloodCount,
+				CrashCount:        f.CrashCount,
+				ListingElasticity: f.ListingElasticity,
+				RelativePrice:     f.RelativePrice,
+				RelativeListings:  f.RelativeListings,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"count": len(rows),
+			"data":  rows,
+		}); err != nil {
+			slog.Error("gem features: encode response", "error", err)
+		}
+	}
+}
+
+// filterGemFeatures filters and limits cached gem features.
+// Results are sorted by Chaos descending (matching the DB query order).
+func filterGemFeatures(all []lab.GemFeature, variant, tier string, limit int) []lab.GemFeature {
+	var filtered []lab.GemFeature
+	for _, f := range all {
+		if variant != "" && f.Variant != variant {
+			continue
+		}
+		if tier != "" && f.Tier != tier {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Chaos > filtered[j].Chaos
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
+}
+
+// GemSignalsAnalysis returns the latest pre-computed gem signals.
+// Query params: variant (optional), tier (optional), limit (default 50, max 500).
+// Uses in-memory cache when available, falls back to DB query.
+func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		tier := r.URL.Query().Get("tier")
+
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
+		}
+
+		var results []lab.GemSignal
+
+		// Fast path: serve from cache.
+		if cache != nil {
+			if cached := cache.GemSignals(); len(cached) > 0 {
+				results = filterGemSignals(cached, variant, tier, limit)
+			}
+		}
+
+		// Slow path: fall back to DB query.
+		if results == nil {
+			var err error
+			results, err = repo.LatestGemSignals(r.Context(), variant, tier, limit)
+			if err != nil {
+				slog.Error("gem signals: query failed", "error", err, "variant", variant, "tier", tier)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+
+		type row struct {
+			Time             string  `json:"time"`
+			Name             string  `json:"name"`
+			Variant          string  `json:"variant"`
+			Signal           string  `json:"signal"`
+			Confidence       int     `json:"confidence"`
+			SellUrgency      string  `json:"sellUrgency"`
+			SellReason       string  `json:"sellReason"`
+			Sellability      int     `json:"sellability"`
+			SellabilityLabel string  `json:"sellabilityLabel"`
+			WindowSignal     string  `json:"windowSignal"`
+			AdvancedSignal   string  `json:"advancedSignal"`
+			PhaseModifier    float64 `json:"phaseModifier"`
+			Recommendation   string  `json:"recommendation"`
+			Tier             string  `json:"tier"`
+		}
+
+		rows := make([]row, 0, len(results))
+		for _, s := range results {
+			rows = append(rows, row{
+				Time:             s.Time.UTC().Format(time.RFC3339),
+				Name:             s.Name,
+				Variant:          s.Variant,
+				Signal:           s.Signal,
+				Confidence:       s.Confidence,
+				SellUrgency:      s.SellUrgency,
+				SellReason:       s.SellReason,
+				Sellability:      s.Sellability,
+				SellabilityLabel: s.SellabilityLabel,
+				WindowSignal:     s.WindowSignal,
+				AdvancedSignal:   s.AdvancedSignal,
+				PhaseModifier:    s.PhaseModifier,
+				Recommendation:   s.Recommendation,
+				Tier:             s.Tier,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"count": len(rows),
+			"data":  rows,
+		}); err != nil {
+			slog.Error("gem signals: encode response", "error", err)
+		}
+	}
+}
+
+// filterGemSignals filters and limits cached gem signals.
+// Results are sorted by Confidence descending, then Sellability descending (matching the DB query order).
+func filterGemSignals(all []lab.GemSignal, variant, tier string, limit int) []lab.GemSignal {
+	var filtered []lab.GemSignal
+	for _, s := range all {
+		if variant != "" && s.Variant != variant {
+			continue
+		}
+		if tier != "" && s.Tier != tier {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].Confidence != filtered[j].Confidence {
+			return filtered[i].Confidence > filtered[j].Confidence
+		}
+		return filtered[i].Sellability > filtered[j].Sellability
+	})
+
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered
+}
