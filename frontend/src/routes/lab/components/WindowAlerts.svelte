@@ -6,7 +6,7 @@
 	let { alerts }: { alerts: WindowAlert[] } = $props();
 
 	function tierClass(tier: string): string {
-		return { TOP: 'tier-top', MID: 'tier-mid', LOW: 'tier-low' }[tier] || '';
+		return { TOP: 'tier-top', HIGH: 'tier-high', MID: 'tier-mid', LOW: 'tier-low' }[tier] || '';
 	}
 </script>
 
@@ -120,6 +120,7 @@
 		margin-left: auto;
 	}
 	.tier-top { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+	.tier-high { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
 	.tier-mid { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
 	.tier-low { background: rgba(100, 116, 139, 0.15); color: #64748b; }
 
