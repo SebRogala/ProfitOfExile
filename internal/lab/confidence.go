@@ -36,22 +36,6 @@ func clampInt(v, min, max int) int {
 	return v
 }
 
-// signalStrength returns a base multiplier for a given market signal.
-// Strong directional signals (HERD, DUMPING) score highest; TRAP scores lowest.
-func signalStrength(signal string) float64 {
-	switch signal {
-	case "HERD", "DUMPING":
-		return 1.3
-	case "RISING", "FALLING", "RECOVERY":
-		return 0.9
-	case "TRAP":
-		return 0.4
-	default:
-		// STABLE and unknowns default to moderate confidence.
-		return 0.6
-	}
-}
-
 // signalBaseConfidence returns the base confidence percentage for a signal type.
 // This maps signal types to their inherent trustworthiness as a prediction basis.
 // TRAP signals are inherently untrustworthy (low base) while HERD/DUMPING patterns
@@ -72,13 +56,13 @@ func signalBaseConfidence(signal string) float64 {
 }
 
 // windowAgreement measures consistency across short-, medium-, and long-term velocity
-// windows. Weights short+medium agreement more heavily than long-term divergence,
-// reflecting that recent convergence is the most actionable signal.
+// windows. Weights short+medium agreement most heavily, since recent convergence
+// is the most actionable signal.
 //
 // Returns:
 //   - 1.4 when all three non-zero windows agree on direction
-//   - 1.0 when short and medium agree, or fewer than 2 windows have data
-//   - 0.6 when short disagrees with medium (conflicting near-term data)
+//   - 1.0 when short and medium agree, or short is absent but med+long agree, or fewer than 2 windows have data
+//   - 0.6 when short is present and disagrees with medium (conflicting near-term data)
 func windowAgreement(short, med, long float64) float64 {
 	signOf := func(v float64) int {
 		if v > 0 {
@@ -121,7 +105,13 @@ func windowAgreement(short, med, long float64) float64 {
 		return 1.0
 	}
 
-	// Conflicting: short disagrees with medium.
+	// Short is absent (zero) but medium and long agree: consistent medium-term signal.
+	// Short-term velocity not yet observed — treat as neutral, not conflicting.
+	if ss == 0 && ms != 0 && ls != 0 && ms == ls {
+		return 1.0
+	}
+
+	// Conflicting: short is present and disagrees with medium direction.
 	return 0.6
 }
 
