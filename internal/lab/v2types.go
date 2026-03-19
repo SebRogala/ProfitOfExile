@@ -1,6 +1,9 @@
 package lab
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // MarketContext holds pre-computed market-wide statistics for a single snapshot.
 type MarketContext struct {
@@ -15,7 +18,36 @@ type MarketContext struct {
 	TotalListings      int
 	TierBoundaries     TierBoundaries
 	HourlyBias         []float64 // 24 entries, one per UTC hour
+	HourlyVolatility   []float64 // 24 entries — σ of price changes per hour
+	HourlyActivity     []float64 // 24 entries — ratio of moving gems per hour (0.0-1.0)
 	WeekdayBias        []float64 // 7 entries, Sun=0..Sat=6 (matches time.Weekday)
+	WeekdayVolatility  []float64 // 7 entries — σ of price changes per weekday
+	WeekdayActivity    []float64 // 7 entries — ratio of moving gems per weekday (0.0-1.0)
+}
+
+// ValidateTemporalSlices checks that all temporal slices have the expected lengths:
+// 24 for hourly fields and 7 for weekday fields. Returns an error describing the
+// first violation found, or nil when all lengths are correct.
+func (mc MarketContext) ValidateTemporalSlices() error {
+	if len(mc.HourlyBias) != 24 {
+		return fmt.Errorf("MarketContext: HourlyBias has %d elements, want 24", len(mc.HourlyBias))
+	}
+	if len(mc.HourlyVolatility) != 24 {
+		return fmt.Errorf("MarketContext: HourlyVolatility has %d elements, want 24", len(mc.HourlyVolatility))
+	}
+	if len(mc.HourlyActivity) != 24 {
+		return fmt.Errorf("MarketContext: HourlyActivity has %d elements, want 24", len(mc.HourlyActivity))
+	}
+	if len(mc.WeekdayBias) != 7 {
+		return fmt.Errorf("MarketContext: WeekdayBias has %d elements, want 7", len(mc.WeekdayBias))
+	}
+	if len(mc.WeekdayVolatility) != 7 {
+		return fmt.Errorf("MarketContext: WeekdayVolatility has %d elements, want 7", len(mc.WeekdayVolatility))
+	}
+	if len(mc.WeekdayActivity) != 7 {
+		return fmt.Errorf("MarketContext: WeekdayActivity has %d elements, want 7", len(mc.WeekdayActivity))
+	}
+	return nil
 }
 
 // PriceP50 returns the P50 price percentile, or 0 if not available.

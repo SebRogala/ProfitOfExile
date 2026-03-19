@@ -193,17 +193,50 @@ func TestComputeMarketContext_EmptyGems(t *testing.T) {
 	if mc.ListingPercentiles == nil {
 		t.Error("ListingPercentiles is nil, must be initialized map")
 	}
-	if mc.HourlyBias == nil {
-		t.Error("HourlyBias is nil, must be initialized slice")
+	// All temporal slices must be initialized (not nil) for JSON marshaling.
+	temporalSlices := map[string][]float64{
+		"HourlyBias":        mc.HourlyBias,
+		"HourlyVolatility":  mc.HourlyVolatility,
+		"HourlyActivity":    mc.HourlyActivity,
+		"WeekdayBias":       mc.WeekdayBias,
+		"WeekdayVolatility": mc.WeekdayVolatility,
+		"WeekdayActivity":   mc.WeekdayActivity,
 	}
-	if len(mc.HourlyBias) != 24 {
-		t.Errorf("HourlyBias length = %d, want 24", len(mc.HourlyBias))
+	for name, s := range temporalSlices {
+		if s == nil {
+			t.Errorf("%s is nil, must be initialized slice", name)
+			continue
+		}
+		wantLen := 24
+		if name[:7] == "Weekday" {
+			wantLen = 7
+		}
+		if len(s) != wantLen {
+			t.Errorf("%s length = %d, want %d", name, len(s), wantLen)
+		}
 	}
-	if mc.WeekdayBias == nil {
-		t.Error("WeekdayBias is nil, must be initialized slice")
+
+	// With no history, hourly/weekday biases should be neutral 1.0.
+	for i, v := range mc.HourlyBias {
+		if v != 1.0 {
+			t.Errorf("HourlyBias[%d] = %f, want 1.0 (neutral)", i, v)
+		}
 	}
-	if len(mc.WeekdayBias) != 7 {
-		t.Errorf("WeekdayBias length = %d, want 7", len(mc.WeekdayBias))
+	for i, v := range mc.WeekdayBias {
+		if v != 1.0 {
+			t.Errorf("WeekdayBias[%d] = %f, want 1.0 (neutral)", i, v)
+		}
+	}
+	// Volatility and activity should be zero with no history.
+	for i, v := range mc.HourlyVolatility {
+		if v != 0 {
+			t.Errorf("HourlyVolatility[%d] = %f, want 0", i, v)
+		}
+	}
+	for i, v := range mc.WeekdayActivity {
+		if v != 0 {
+			t.Errorf("WeekdayActivity[%d] = %f, want 0", i, v)
+		}
 	}
 }
 
@@ -259,30 +292,89 @@ func TestComputeMarketContext_AllSamePrice(t *testing.T) {
 	}
 }
 
-func TestComputeMarketContext_BiasStubs(t *testing.T) {
-	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+func TestComputeMarketContext_TemporalBiases(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 12, 0, 0, 0, time.UTC) // Monday
 	gems := []GemPrice{
 		{Name: "Gem A of X", Variant: "20/20", Chaos: 50, Listings: 10, IsTransfigured: true},
+		{Name: "Gem B of X", Variant: "20/20", Chaos: 100, Listings: 20, IsTransfigured: true},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, nil)
+	// Hour 8 (Monday): bearish -5%. Hour 20 (Monday): bullish +3%.
+	monday8am := time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC)
+	monday20pm := time.Date(2026, 3, 16, 20, 0, 0, 0, time.UTC)
 
+	history := []GemPriceHistory{
+		{
+			Name: "Gem A of X", Variant: "20/20", GemColor: "RED",
+			Points: []PricePoint{
+				{Time: monday8am, Chaos: 100, Listings: 10},
+				{Time: monday8am.Add(30 * time.Minute), Chaos: 95, Listings: 10},
+			},
+		},
+		{
+			Name: "Gem B of X", Variant: "20/20", GemColor: "BLUE",
+			Points: []PricePoint{
+				{Time: monday20pm, Chaos: 100, Listings: 20},
+				{Time: monday20pm.Add(30 * time.Minute), Chaos: 103, Listings: 20},
+			},
+		},
+	}
+
+	mc := ComputeMarketContext(snapTime, gems, history)
+
+	// Verify slice lengths.
 	if len(mc.HourlyBias) != 24 {
 		t.Fatalf("HourlyBias length = %d, want 24", len(mc.HourlyBias))
 	}
-	for i, v := range mc.HourlyBias {
-		if v != 1.0 {
-			t.Errorf("HourlyBias[%d] = %f, want 1.0", i, v)
-		}
+	if len(mc.HourlyVolatility) != 24 {
+		t.Fatalf("HourlyVolatility length = %d, want 24", len(mc.HourlyVolatility))
 	}
-
+	if len(mc.HourlyActivity) != 24 {
+		t.Fatalf("HourlyActivity length = %d, want 24", len(mc.HourlyActivity))
+	}
 	if len(mc.WeekdayBias) != 7 {
 		t.Fatalf("WeekdayBias length = %d, want 7", len(mc.WeekdayBias))
 	}
-	for i, v := range mc.WeekdayBias {
-		if v != 1.0 {
-			t.Errorf("WeekdayBias[%d] = %f, want 1.0", i, v)
+	if len(mc.WeekdayVolatility) != 7 {
+		t.Fatalf("WeekdayVolatility length = %d, want 7", len(mc.WeekdayVolatility))
+	}
+	if len(mc.WeekdayActivity) != 7 {
+		t.Fatalf("WeekdayActivity length = %d, want 7", len(mc.WeekdayActivity))
+	}
+
+	// Bearish hour should have bias < 1.0.
+	if mc.HourlyBias[8] >= 1.0 {
+		t.Errorf("HourlyBias[8] = %.4f, want < 1.0 (bearish)", mc.HourlyBias[8])
+	}
+
+	// Bullish hour should have bias > 1.0.
+	if mc.HourlyBias[20] <= 1.0 {
+		t.Errorf("HourlyBias[20] = %.4f, want > 1.0 (bullish)", mc.HourlyBias[20])
+	}
+
+	// Empty hours should be neutral.
+	if mc.HourlyBias[0] != 1.0 {
+		t.Errorf("HourlyBias[0] = %f, want 1.0 (neutral/empty)", mc.HourlyBias[0])
+	}
+
+	// Monday (1) should have a non-neutral weekday bias (both data points are Monday).
+	if mc.WeekdayBias[1] == 1.0 {
+		t.Error("WeekdayBias[1] (Monday) = 1.0, expected non-neutral with data")
+	}
+
+	// Other weekdays should be neutral.
+	for _, d := range []int{0, 2, 3, 4, 5, 6} {
+		if mc.WeekdayBias[d] != 1.0 {
+			t.Errorf("WeekdayBias[%d] = %f, want 1.0 (neutral)", d, mc.WeekdayBias[d])
 		}
+	}
+
+	// Activity for populated hours should be > 0 (both changes are > 2%).
+	if mc.HourlyActivity[8] <= 0 {
+		t.Errorf("HourlyActivity[8] = %f, want > 0", mc.HourlyActivity[8])
+	}
+	if mc.HourlyActivity[20] <= 0 {
+		t.Errorf("HourlyActivity[20] = %f, want > 0", mc.HourlyActivity[20])
 	}
 }
 
