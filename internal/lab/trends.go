@@ -2,7 +2,6 @@ package lab
 
 import (
 	"math"
-	"sort"
 	"strings"
 	"time"
 )
@@ -35,7 +34,7 @@ type TrendResult struct {
 	AdvancedSignal string // PRICE_MANIPULATION, BREAKOUT, COMEBACK, POTENTIAL, or "" (none)
 
 	// Price tier signals
-	PriceTier  string // TOP, MID, LOW — dynamic based on current market
+	PriceTier  string // TOP, HIGH, MID, LOW — dynamic based on current market
 	TierAction string // tier-specific recommended action, empty if no special guidance
 
 	// Sell urgency (for gems you already have or are farming)
@@ -67,91 +66,6 @@ var analysisVariants = map[string]bool{
 	"1": true, "1/20": true, "20": true, "20/20": true,
 }
 
-// computePriceTiers calculates dynamic TOP/MID/LOW boundaries using the
-// median of positions #6-#15 (outlier-resistant via p99 winsorization).
-// Falls back to top-10 average when fewer than 15 transfigured gems exist.
-func computePriceTiers(gems []GemPrice) (topThreshold, midThreshold float64) {
-	return computePriceTiersWithConfig(gems, DefaultSignalConfig())
-}
-
-// computePriceTiersWithConfig uses custom tier multipliers (for optimizer).
-func computePriceTiersWithConfig(gems []GemPrice, cfg SignalConfig) (topThreshold, midThreshold float64) {
-	// Collect all transfigured gem prices
-	var prices []float64
-	for _, g := range gems {
-		if g.IsTransfigured && !g.IsCorrupted && g.Chaos > 0 {
-			prices = append(prices, g.Chaos)
-		}
-	}
-	if len(prices) < 10 {
-		return 100, 30 // fallback for very early league
-	}
-
-	sort.Float64s(prices)
-
-	// p99 winsorization
-	p99idx := int(float64(len(prices)) * 0.99)
-	if p99idx >= len(prices) {
-		p99idx = len(prices) - 1
-	}
-	p99 := prices[p99idx]
-
-	// Winsorize at p99 to cap outliers.
-	winsorized := make([]float64, len(prices))
-	for i, p := range prices {
-		winsorized[i] = math.Min(p, p99)
-	}
-	sort.Float64s(winsorized)
-
-	// Use MEDIAN of positions #6-#15 (the mid-band of the top 15).
-	// The top 5 are excluded as outliers; #6-#15 form a stable reference band.
-	// This resists single-snapshot spikes much better than mean of top 10.
-	top15start := len(winsorized) - 15
-	if top15start < 0 {
-		top15start = 0
-	}
-	top5start := len(winsorized) - 5
-	if top5start < 0 {
-		top5start = 0
-	}
-	// Fallback: if not enough gems for a mid-band, use the old top-10 average.
-	var wt10 float64
-	if top5start <= top15start {
-		// Too few gems — fall back to top-10 average.
-		top10start := len(winsorized) - 10
-		if top10start < 0 {
-			top10start = 0
-		}
-		sum := 0.0
-		count := 0
-		for i := top10start; i < len(winsorized); i++ {
-			sum += winsorized[i]
-			count++
-		}
-		wt10 = sum / float64(count)
-	} else {
-		// Mid-band: gems ranked #6-#15 by price. Take median.
-		var midBand []float64
-		for i := top15start; i < top5start; i++ {
-			midBand = append(midBand, winsorized[i])
-		}
-		sort.Float64s(midBand)
-		wt10 = midBand[len(midBand)/2]
-	}
-
-	return wt10 * cfg.TierTopMult, wt10 * cfg.TierMidMult
-}
-
-// classifyPriceTier assigns a price tier based on dynamic thresholds.
-func classifyPriceTier(price, topThreshold, midThreshold float64) string {
-	if price > topThreshold {
-		return "TOP"
-	}
-	if price > midThreshold {
-		return "MID"
-	}
-	return "LOW"
-}
 
 // sellUrgency computes actionable sell timing for gems you already have.
 // Uses price velocity, listing velocity, base drain, and historical position.
@@ -350,7 +264,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 	baseHistory map[string][]PricePoint, marketAvgBaseLst float64) []TrendResult {
 
 	// Compute dynamic price tier thresholds from current snapshot.
-	topThresh, midThresh := computePriceTiers(current)
+	tb := DetectTierBoundaries(current)
 
 	// Index history by (name, variant) for fast lookup.
 	type histKey struct{ name, variant string }
@@ -433,7 +347,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
 		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel)
 		advSignal := classifyAdvancedSignal(g.Chaos, g.Listings, priceVel, listingVel, cv, histPos)
-		priceTier := classifyPriceTier(g.Chaos, topThresh, midThresh)
+		priceTier := classifyTier(g.Chaos, tb)
 		tAction := tierAction(signal, winSignal, priceTier)
 		sUrgency, sReason := sellUrgency(priceVel, listingVel, baseVel, histPos, baseLst, g.Listings, signal, priceTier)
 		sellScore, sellLabel := sellability(g.Listings, listingVel, priceVel, cv, signal)
@@ -753,12 +667,3 @@ func ClassifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel f
 	return classifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel, baseListings, priceVelocity, cfg)
 }
 
-// ComputePriceTiersWithConfig is the exported variant for use by the optimizer.
-func ComputePriceTiersWithConfig(gems []GemPrice, cfg SignalConfig) (topThreshold, midThreshold float64) {
-	return computePriceTiersWithConfig(gems, cfg)
-}
-
-// ClassifyPriceTier is the exported variant of classifyPriceTier.
-func ClassifyPriceTier(price, topThreshold, midThreshold float64) string {
-	return classifyPriceTier(price, topThreshold, midThreshold)
-}
