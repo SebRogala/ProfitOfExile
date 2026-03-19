@@ -826,3 +826,264 @@ func TestSweepV2_EmptyTierDefaultsToLOW(t *testing.T) {
 	}
 }
 
+// --- ValidateDefaults tests ---
+
+func TestValidateDefaults_PerSignalAccuracy(t *testing.T) {
+	// Wednesday 16:00 UTC = weekday-peak
+	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	// Use DefaultSignalConfig to compute STABLE threshold:
+	// StablePriceVel=2, StableListingVel=3
+	// STABLE fires when |priceVel|<2 and |listingVel|<3.
+
+	evals := []EvalPoint{
+		// STABLE signal (low vel), FLAT actual -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.5, VelMedListing: 0.5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		// STABLE signal, FLAT actual -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: -0.3, VelMedListing: 0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -1.0, SnapTime: t0},
+		// STABLE signal, UP actual -> wrong
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.2, VelMedListing: -0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: t0},
+	}
+
+	report := ValidateDefaults(evals, mc)
+
+	if report.TotalEvals != 3 {
+		t.Errorf("TotalEvals: got %d, want 3", report.TotalEvals)
+	}
+
+	// All should classify as STABLE.
+	sa, ok := report.PerSignal["STABLE"]
+	if !ok {
+		t.Fatal("expected STABLE signal in PerSignal")
+	}
+	if sa.Count != 3 {
+		t.Errorf("STABLE count: got %d, want 3", sa.Count)
+	}
+	if sa.Correct != 2 {
+		t.Errorf("STABLE correct: got %d, want 2", sa.Correct)
+	}
+	if !approxEqual(sa.Accuracy, 66.67, 0.1) {
+		t.Errorf("STABLE accuracy: got %.2f, want ~66.67", sa.Accuracy)
+	}
+	if sa.Predicted != "FLAT" {
+		t.Errorf("STABLE predicted: got %q, want FLAT", sa.Predicted)
+	}
+	if sa.AvgConfidence <= 0 {
+		t.Error("STABLE AvgConfidence should be > 0")
+	}
+}
+
+func TestValidateDefaults_ConfusionMatrix(t *testing.T) {
+	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	// STABLE predicts FLAT. Create outcomes: 3 FLAT, 1 UP, 1 DOWN.
+	evals := []EvalPoint{
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},   // FLAT
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.2, VelMedListing: 0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},   // FLAT
+		{Feature: GemFeature{Time: t0, VelMedPrice: -0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -0.5, SnapTime: t0}, // FLAT
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.3, VelMedListing: -0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: t0},  // UP
+		{Feature: GemFeature{Time: t0, VelMedPrice: -0.4, VelMedListing: 0.3, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -5.0, SnapTime: t0}, // DOWN
+	}
+
+	report := ValidateDefaults(evals, mc)
+
+	// All signals are STABLE => predicted FLAT.
+	flatRow, ok := report.ConfusionMatrix["FLAT"]
+	if !ok {
+		t.Fatal("expected FLAT row in confusion matrix")
+	}
+	if flatRow["FLAT"] != 3 {
+		t.Errorf("ConfusionMatrix[FLAT][FLAT]: got %d, want 3", flatRow["FLAT"])
+	}
+	if flatRow["UP"] != 1 {
+		t.Errorf("ConfusionMatrix[FLAT][UP]: got %d, want 1", flatRow["UP"])
+	}
+	if flatRow["DOWN"] != 1 {
+		t.Errorf("ConfusionMatrix[FLAT][DOWN]: got %d, want 1", flatRow["DOWN"])
+	}
+}
+
+func TestValidateDefaults_SweetSpot(t *testing.T) {
+	t0 := time.Date(2026, 3, 17, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	// 10 STABLE points with high agreement: 9 correct, 1 wrong -> 90% accuracy.
+	// All land in the same confidence band, so sweet spot should be found.
+	var evals []EvalPoint
+	for i := 0; i < 9; i++ {
+		evals = append(evals, EvalPoint{
+			Feature: GemFeature{
+				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.05,
+				Listings: 15, Tier: "HIGH",
+				VelShortPrice: 0.1, VelLongPrice: 0.1,
+			},
+			FuturePct: 0.5,
+			SnapTime:  t0,
+		})
+	}
+	evals = append(evals, EvalPoint{
+		Feature: GemFeature{
+			Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.05,
+			Listings: 15, Tier: "HIGH",
+			VelShortPrice: 0.1, VelLongPrice: 0.1,
+		},
+		FuturePct: 5.0, // UP = wrong for STABLE
+		SnapTime:  t0,
+	})
+
+	report := ValidateDefaults(evals, mc)
+
+	if report.SweetSpot == -1 {
+		t.Error("expected SweetSpot to be found (90% accuracy), got -1")
+	}
+}
+
+func TestValidateDefaults_EmptyEvals(t *testing.T) {
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	report := ValidateDefaults(nil, mc)
+
+	if report.TotalEvals != 0 {
+		t.Errorf("TotalEvals: got %d, want 0", report.TotalEvals)
+	}
+	if report.OverallAcc != 0 {
+		t.Errorf("OverallAcc: got %.2f, want 0", report.OverallAcc)
+	}
+	if report.SweetSpot != -1 {
+		t.Errorf("SweetSpot: got %d, want -1", report.SweetSpot)
+	}
+	if len(report.PerSignal) != 0 {
+		t.Errorf("PerSignal: expected empty, got %d entries", len(report.PerSignal))
+	}
+	if len(report.ConfBands) != 0 {
+		t.Errorf("ConfBands: expected empty, got %d entries", len(report.ConfBands))
+	}
+}
+
+func TestValidateDefaults_PerTier(t *testing.T) {
+	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	evals := []EvalPoint{
+		// TOP: STABLE -> FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "TOP"}, FuturePct: 0.5, SnapTime: t0},
+		// HIGH: STABLE -> FLAT, actual UP -> wrong
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "HIGH"}, FuturePct: 5.0, SnapTime: t0},
+		// MID: STABLE -> FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: -0.1, VelMedListing: 0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
+		// LOW: STABLE -> FLAT, actual DOWN -> wrong
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.3, VelMedListing: -0.1, CV: 0.1, Listings: 10, Tier: "LOW"}, FuturePct: -5.0, SnapTime: t0},
+	}
+
+	report := ValidateDefaults(evals, mc)
+
+	if !approxEqual(report.PerTier["TOP"], 100.0, 0.1) {
+		t.Errorf("PerTier[TOP]: got %.2f, want 100.0", report.PerTier["TOP"])
+	}
+	if !approxEqual(report.PerTier["HIGH"], 0.0, 0.1) {
+		t.Errorf("PerTier[HIGH]: got %.2f, want 0.0", report.PerTier["HIGH"])
+	}
+	if !approxEqual(report.PerTier["MID"], 100.0, 0.1) {
+		t.Errorf("PerTier[MID]: got %.2f, want 100.0", report.PerTier["MID"])
+	}
+	if !approxEqual(report.PerTier["LOW"], 0.0, 0.1) {
+		t.Errorf("PerTier[LOW]: got %.2f, want 0.0", report.PerTier["LOW"])
+	}
+}
+
+func TestValidateDefaults_PerPhase(t *testing.T) {
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	// Saturday = weekend, Wednesday 16:00 = weekday-peak, Monday 08:00 = weekday-offpeak
+	weekend := time.Date(2026, 3, 14, 16, 0, 0, 0, time.UTC)   // Saturday
+	peak := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)      // Wednesday
+	offpeak := time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC)    // Monday
+
+	evals := []EvalPoint{
+		// Weekend: correct
+		{Feature: GemFeature{Time: weekend, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: weekend},
+		// Weekday-peak: wrong
+		{Feature: GemFeature{Time: peak, VelMedPrice: 0.2, VelMedListing: 0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: peak},
+		// Weekday-offpeak: correct
+		{Feature: GemFeature{Time: offpeak, VelMedPrice: -0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: offpeak},
+	}
+
+	report := ValidateDefaults(evals, mc)
+
+	if !approxEqual(report.PerPhase["weekend"], 100.0, 0.1) {
+		t.Errorf("PerPhase[weekend]: got %.2f, want 100.0", report.PerPhase["weekend"])
+	}
+	if !approxEqual(report.PerPhase["weekday-peak"], 0.0, 0.1) {
+		t.Errorf("PerPhase[weekday-peak]: got %.2f, want 0.0", report.PerPhase["weekday-peak"])
+	}
+	if !approxEqual(report.PerPhase["weekday-offpeak"], 100.0, 0.1) {
+		t.Errorf("PerPhase[weekday-offpeak]: got %.2f, want 100.0", report.PerPhase["weekday-offpeak"])
+	}
+}
+
+func TestValidateDefaults_OverallAccuracy(t *testing.T) {
+	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	// 5 eval points, 3 correct (STABLE->FLAT), 2 wrong
+	evals := []EvalPoint{
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.2, VelMedListing: 0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -1.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: -0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.3, VelMedListing: -0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 8.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: -0.2, VelMedListing: 0.3, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
+	}
+
+	report := ValidateDefaults(evals, mc)
+
+	if !approxEqual(report.OverallAcc, 60.0, 0.1) {
+		t.Errorf("OverallAcc: got %.2f, want 60.0", report.OverallAcc)
+	}
+}
+
+func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
+	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	// DefaultSignalConfig: DumpPriceVel=-5, DumpListingVel=5
+	// DUMPING: priceVel < -5 && listingVel > 5
+	// RISING: priceVel > 0 (after other checks fail)
+	// STABLE: |priceVel| < 2 && |listingVel| < 3
+
+	evals := []EvalPoint{
+		// STABLE: predicts FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		// DUMPING: priceVel=-10 < -5, listingVel=10 > 5 -> predicts DOWN, actual DOWN -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: -10, VelMedListing: 10, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
+		// RISING: priceVel=3 > 0 (not STABLE: |3|>2), predicts UP, actual UP -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: 3, VelMedListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: t0},
+	}
+
+	report := ValidateDefaults(evals, mc)
+
+	if len(report.PerSignal) < 2 {
+		t.Errorf("expected at least 2 signal types, got %d", len(report.PerSignal))
+	}
+
+	// Check STABLE exists.
+	if _, ok := report.PerSignal["STABLE"]; !ok {
+		t.Error("expected STABLE signal in PerSignal")
+	}
+
+	// Check DUMPING exists.
+	if sa, ok := report.PerSignal["DUMPING"]; ok {
+		if sa.Predicted != "DOWN" {
+			t.Errorf("DUMPING predicted: got %q, want DOWN", sa.Predicted)
+		}
+	} else {
+		t.Error("expected DUMPING signal in PerSignal")
+	}
+
+	// Overall: all 3 correct = 100%.
+	if !approxEqual(report.OverallAcc, 100.0, 0.1) {
+		t.Errorf("OverallAcc: got %.2f, want 100.0", report.OverallAcc)
+	}
+}
+

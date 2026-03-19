@@ -457,3 +457,222 @@ func GenerateSigmaGrid() []SigmaConfig {
 
 	return grid
 }
+
+// SignalAccuracy holds per-signal accuracy metrics for validation reporting.
+type SignalAccuracy struct {
+	Signal        string  // signal name (e.g. HERD, DUMPING, STABLE)
+	Predicted     string  // predicted direction (UP, DOWN, FLAT)
+	Count         int     // total times this signal fired
+	Correct       int     // how many times the prediction was correct
+	Accuracy      float64 // Correct/Count * 100
+	AvgConfidence float64 // average confidence score when this signal fires
+}
+
+// ValidationReport holds the full output of ValidateDefaults.
+type ValidationReport struct {
+	PerSignal       map[string]SignalAccuracy   // keyed by signal name
+	ConfusionMatrix map[string]map[string]int   // [predicted_direction][actual_direction] = count
+	ConfBands       []ConfidenceBand
+	PerTier         map[string]float64
+	PerPhase        map[string]float64
+	SweetSpot       int
+	TotalEvals      int
+	OverallAcc      float64
+}
+
+// ValidateDefaults evaluates the current default signal configuration against
+// the provided eval points, producing a detailed accuracy breakdown by signal,
+// confusion matrix, confidence bands, tier, and temporal phase.
+func ValidateDefaults(evals []EvalPoint, mc MarketContext) ValidationReport {
+	report := ValidationReport{
+		PerSignal:       make(map[string]SignalAccuracy),
+		ConfusionMatrix: make(map[string]map[string]int),
+		PerTier:         make(map[string]float64),
+		PerPhase:        make(map[string]float64),
+		SweetSpot:       -1,
+	}
+
+	if len(evals) == 0 {
+		return report
+	}
+
+	cfg := DefaultSignalConfig()
+
+	// Per-tier accumulators.
+	tiers := map[string]*sweepAcc{
+		"TOP":  {},
+		"HIGH": {},
+		"MID":  {},
+		"LOW":  {},
+	}
+
+	// Confidence band accumulators (0-9, 10-19, ..., 90-100).
+	bands := make([]sweepAcc, 10)
+
+	// Temporal phase accumulators.
+	phases := map[string]*sweepAcc{
+		"weekend":         {},
+		"weekday-peak":    {},
+		"weekday-offpeak": {},
+	}
+
+	// Per-signal accumulators.
+	type signalAcc struct {
+		count      int
+		correct    int
+		confSum    float64
+		predicted  string
+	}
+	signalAccs := make(map[string]*signalAcc)
+
+	// Initialize confusion matrix directions.
+	for _, dir := range []string{"UP", "DOWN", "FLAT"} {
+		report.ConfusionMatrix[dir] = make(map[string]int)
+	}
+
+	var overallCorrect int
+
+	for _, ep := range evals {
+		signal := classifySignalWithConfig(
+			ep.Feature.VelMedPrice,
+			ep.Feature.VelMedListing,
+			ep.Feature.CV,
+			ep.Feature.Listings,
+			cfg,
+		)
+
+		confidence, _ := computeConfidence(signal, ep.Feature, mc, ep.SnapTime)
+
+		predicted := predictedDirection(signal)
+		actual := directionFromChange(ep.FuturePct)
+		correct := predicted == actual
+
+		if correct {
+			overallCorrect++
+		}
+
+		// Per-signal accumulation.
+		sa, ok := signalAccs[signal]
+		if !ok {
+			sa = &signalAcc{predicted: predicted}
+			signalAccs[signal] = sa
+		}
+		sa.count++
+		if correct {
+			sa.correct++
+		}
+		sa.confSum += float64(confidence)
+
+		// Confusion matrix.
+		if _, ok := report.ConfusionMatrix[predicted]; !ok {
+			report.ConfusionMatrix[predicted] = make(map[string]int)
+		}
+		report.ConfusionMatrix[predicted][actual]++
+
+		// Per-tier accuracy.
+		tier := ep.Feature.Tier
+		if tier == "" {
+			tier = "LOW"
+		}
+		ta, ok := tiers[tier]
+		if !ok {
+			ta = &sweepAcc{}
+			tiers[tier] = ta
+		}
+		ta.total++
+		if correct {
+			ta.correct++
+		}
+
+		// Confidence band accumulation.
+		bandIdx := confidence / 10
+		if bandIdx > 9 {
+			bandIdx = 9
+		}
+		bands[bandIdx].total++
+		if correct {
+			bands[bandIdx].correct++
+		}
+
+		// Temporal phase.
+		phase := classifyTemporalPhase(ep.SnapTime)
+		pa := phases[phase]
+		pa.total++
+		if correct {
+			pa.correct++
+		}
+	}
+
+	// Build per-signal map.
+	for sig, sa := range signalAccs {
+		var acc float64
+		if sa.count > 0 {
+			acc = float64(sa.correct) / float64(sa.count) * 100
+		}
+		var avgConf float64
+		if sa.count > 0 {
+			avgConf = sa.confSum / float64(sa.count)
+		}
+		report.PerSignal[sig] = SignalAccuracy{
+			Signal:        sig,
+			Predicted:     sa.predicted,
+			Count:         sa.count,
+			Correct:       sa.correct,
+			Accuracy:      acc,
+			AvgConfidence: avgConf,
+		}
+	}
+
+	// Build confidence bands.
+	confBands := make([]ConfidenceBand, 0, 10)
+	for i, b := range bands {
+		if b.total == 0 {
+			continue
+		}
+		confBands = append(confBands, ConfidenceBand{
+			MinConf:  i * 10,
+			MaxConf:  i*10 + 9,
+			Accuracy: float64(b.correct) / float64(b.total) * 100,
+			Count:    b.total,
+		})
+	}
+	if len(confBands) > 0 && confBands[len(confBands)-1].MinConf == 90 {
+		confBands[len(confBands)-1].MaxConf = 100
+	}
+	report.ConfBands = confBands
+
+	// Compute sweet spot.
+	cumCorrect := 0
+	cumTotal := 0
+	for i := len(bands) - 1; i >= 0; i-- {
+		cumCorrect += bands[i].correct
+		cumTotal += bands[i].total
+		if cumTotal > 0 {
+			cumAcc := float64(cumCorrect) / float64(cumTotal) * 100
+			if cumAcc >= 80 {
+				report.SweetSpot = i * 10
+			} else {
+				break
+			}
+		}
+	}
+
+	// Build per-tier map.
+	for tier, ta := range tiers {
+		if ta.total > 0 {
+			report.PerTier[tier] = float64(ta.correct) / float64(ta.total) * 100
+		}
+	}
+
+	// Build per-phase map.
+	for phase, pa := range phases {
+		if pa.total > 0 {
+			report.PerPhase[phase] = float64(pa.correct) / float64(pa.total) * 100
+		}
+	}
+
+	report.TotalEvals = len(evals)
+	report.OverallAcc = float64(overallCorrect) / float64(len(evals)) * 100
+
+	return report
+}
