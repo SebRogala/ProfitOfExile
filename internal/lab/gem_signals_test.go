@@ -359,12 +359,19 @@ func TestComputeGemSignals_RecommendationOK_HighConfidencePositive(t *testing.T)
 	}
 
 	sig := signals[0]
-	// HERD + high confidence + not SELL_NOW => should be "OK" or ""
-	// (depends on confidence >= 65 check).
-	if sig.Confidence >= 65 && sig.Signal == "HERD" && sig.SellUrgency != "SELL_NOW" {
-		if sig.Recommendation != "OK" {
-			t.Errorf("Recommendation = %q, want OK for high-confidence positive HERD", sig.Recommendation)
-		}
+	// Preconditions must hold for this test to be meaningful.
+	if sig.Signal != "HERD" {
+		t.Fatalf("Signal = %q, want HERD — test setup is wrong", sig.Signal)
+	}
+	if sig.SellUrgency == "SELL_NOW" {
+		t.Fatalf("SellUrgency = SELL_NOW — unexpected for histPos=50 HERD signal; test setup is wrong")
+	}
+	// HERD + high confidence + not SELL_NOW => Recommendation should be OK.
+	if sig.Confidence < 65 {
+		t.Errorf("Confidence = %d, want >= 65 for all-agreeing HERD at bullish hour", sig.Confidence)
+	}
+	if sig.Recommendation != "OK" {
+		t.Errorf("Recommendation = %q, want OK for high-confidence HERD without SELL_NOW urgency", sig.Recommendation)
 	}
 }
 
@@ -697,8 +704,9 @@ func TestComputeGemSignals_STABLESignalModerateConfidence(t *testing.T) {
 	if sig.Signal != "STABLE" {
 		t.Errorf("Signal = %q, want STABLE", sig.Signal)
 	}
-	// STABLE base confidence is 55, with power dampening => moderate range.
-	if sig.Confidence < 40 || sig.Confidence > 70 {
-		t.Errorf("STABLE confidence = %d, want 40-70", sig.Confidence)
+	// STABLE base confidence is 55, with power dampening + predictable profile
+	// (low CV + negative elasticity = 1.2 modifier) => moderate-to-high range.
+	if sig.Confidence < 40 || sig.Confidence > 75 {
+		t.Errorf("STABLE confidence = %d, want 40-75", sig.Confidence)
 	}
 }
