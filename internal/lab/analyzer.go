@@ -209,8 +209,7 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 }
 
 // RunV2 is the entry point for the v2 pre-computed analysis pipeline.
-// Computes and persists MarketContext and GemFeatures per snapshot.
-// GemSignals (POE-61) computation will be added later.
+// Computes and persists MarketContext, GemFeatures, and GemSignals per snapshot.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunV2(ctx context.Context) error {
 	a.muV2.Lock()
@@ -257,7 +256,32 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		"inserted", inserted,
 	)
 
-	// TODO(POE-61): compute gem signals using features
+	// Load base-side data needed for sellUrgency and windowSignal classifiers.
+	baseHistory, err := a.repo.BasePriceHistory(ctx, "", 24)
+	if err != nil {
+		a.logger.Error("v2: failed to load base price history", "error", err)
+		return err
+	}
+	marketAvgBaseLst, err := a.repo.MarketAvgBaseListings(ctx, "")
+	if err != nil {
+		a.logger.Warn("v2: failed to compute market avg base listings, using 0", "error", err)
+		marketAvgBaseLst = 0
+	}
+
+	signals := ComputeGemSignals(snapTime, features, mc, gems, baseHistory, marketAvgBaseLst)
+	insertedSig, err := a.repo.SaveGemSignals(ctx, signals)
+	if err != nil {
+		a.logger.Error("v2: failed to save gem signals", "error", err)
+		return err
+	}
+	if a.cache != nil {
+		a.cache.SetGemSignals(signals)
+	}
+	a.logger.Info("v2 gem signals computed",
+		"snapTime", snapTime,
+		"signals", len(signals),
+		"inserted", insertedSig,
+	)
 
 	a.logger.Info("v2 analysis complete", "snapTime", snapTime, "gems", len(gems))
 	a.throttler.Signal()
