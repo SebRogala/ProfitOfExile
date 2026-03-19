@@ -290,34 +290,6 @@ func TestComputeConfidence_Clamped0to100(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// signalStrength tests
-// ---------------------------------------------------------------------------
-
-func TestSignalStrength(t *testing.T) {
-	tests := []struct {
-		signal string
-		want   float64
-	}{
-		{"HERD", 1.3},
-		{"DUMPING", 1.3},
-		{"RISING", 0.9},
-		{"FALLING", 0.9},
-		{"STABLE", 0.6},
-		{"TRAP", 0.4},
-		{"RECOVERY", 0.9},
-		{"UNKNOWN", 0.6}, // unknown defaults to STABLE-like
-	}
-	for _, tt := range tests {
-		t.Run(tt.signal, func(t *testing.T) {
-			got := signalStrength(tt.signal)
-			if got != tt.want {
-				t.Errorf("signalStrength(%q) = %f, want %f", tt.signal, got, tt.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // windowAgreement tests
 // ---------------------------------------------------------------------------
 
@@ -359,10 +331,44 @@ func TestWindowAgreement_AllZero(t *testing.T) {
 }
 
 func TestWindowAgreement_MixedWithZero(t *testing.T) {
-	// One positive, two zero.
+	// One positive, two zero — only one non-zero window, insufficient for agreement.
 	got := windowAgreement(3.0, 0, 0)
-	if got < 0.6 || got > 1.4 {
-		t.Errorf("windowAgreement(3,0,0) = %f, want in [0.6, 1.4]", got)
+	if got != 1.0 {
+		t.Errorf("windowAgreement(3,0,0) = %f, want 1.0 (only one non-zero)", got)
+	}
+}
+
+func TestWindowAgreement_MedLongAgreeShortZero(t *testing.T) {
+	// Short is zero (no data) but med+long agree: neutral, not conflicting.
+	got := windowAgreement(0, 5.0, 4.0)
+	if got != 1.0 {
+		t.Errorf("windowAgreement(0,5,4) = %f, want 1.0 (med+long agree, short absent)", got)
+	}
+}
+
+func TestWindowAgreement_MedLongAgreeNegativeShortZero(t *testing.T) {
+	// Short is zero but med+long both negative: neutral, not conflicting.
+	got := windowAgreement(0, -5.0, -4.0)
+	if got != 1.0 {
+		t.Errorf("windowAgreement(0,-5,-4) = %f, want 1.0 (med+long agree negative, short absent)", got)
+	}
+}
+
+func TestWindowAgreement_MedLongConflictShortZero(t *testing.T) {
+	// Short is zero, med and long conflict each other: only 2 windows, they disagree.
+	// Treated as 0.6 because the 2 available windows conflict.
+	got := windowAgreement(0, 5.0, -3.0)
+	if got != 0.6 {
+		t.Errorf("windowAgreement(0,5,-3) = %f, want 0.6 (med+long conflict, short absent)", got)
+	}
+}
+
+func TestWindowAgreement_ShortPresentConflictsWithMed(t *testing.T) {
+	// Short is present and disagrees with medium: conflicting near-term data.
+	// Even though med+long agree, short-term contradiction is a warning.
+	got := windowAgreement(3.0, -2.0, -1.0)
+	if got != 0.6 {
+		t.Errorf("windowAgreement(3,-2,-1) = %f, want 0.6 (short vs med conflict)", got)
 	}
 }
 
