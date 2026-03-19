@@ -73,9 +73,13 @@ var productionFixtures = []backtestFixture{
 		},
 	},
 	{
-		// Elemental Hit of the Spectrum (GREEN) — HERD→FALLING transition.
+		// Elemental Hit of the Spectrum (GREEN) — sustained HERD with listing flood.
 		// Sustained large listing flood (283→350) at gradually rising price.
-		// HERD fires when both price and listing velocity exceed thresholds.
+		// Time-based velocity (2h window) captures the full price trend, showing
+		// consistent price+listing growth that correctly fires HERD throughout.
+		// snap[4]: 2h window includes points 0-4, price 554.8→581.6 = RISING (lVel < 10/h)
+		// snap[5]: 2h window sees listing surge to 348, HERD fires
+		// snap[6-7]: sustained HERD as both velocities stay above thresholds
 		gemName: "Elemental Hit of the Spectrum",
 		variant: "20/20",
 		gemColor: "GREEN",
@@ -91,16 +95,20 @@ var productionFixtures = []backtestFixture{
 			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 609.0, Listings: 350},
 		},
 		expectations: []backtestExpectation{
-			{snapIdx: 4, signal: "HERD"},    // price rising >5/h + listings rising >10/h
-			{snapIdx: 5, signal: "FALLING"}, // price velocity drops to 0 but listings still flood
-			{snapIdx: 6, signal: "HERD"},    // price velocity rebounds >5/h
-			{snapIdx: 7, signal: "HERD"},    // herd continues
+			{snapIdx: 4, signal: "RISING"}, // 2h window: pVel=13.4 but lVel=8.5 (<10/h threshold)
+			{snapIdx: 5, signal: "HERD"},   // 2h window: listing surge drives lVel >10/h
+			{snapIdx: 6, signal: "HERD"},   // sustained herd: price+listings both above thresholds
+			{snapIdx: 7, signal: "HERD"},   // herd continues
 		},
 	},
 	{
 		// Shock Nova of Procession (BLUE) — RISING→HERD transition.
 		// Steady price climb from 832c to 914c with growing listing pressure.
-		// Demonstrates threshold crossing: RISING when listings moderate, HERD when they surge.
+		// Time-based velocity (2h window) captures broader price trend, showing
+		// consistent upward movement that was missed by the old 4-point window.
+		// snap[4]: 2h window shows price+listing growth → RISING (lVel still < 10/h)
+		// snap[5-6]: 2h window captures sustained listing surge → HERD
+		// snap[7]: continued HERD with both velocities above thresholds
 		gemName: "Shock Nova of Procession",
 		variant: "20/20",
 		gemColor: "BLUE",
@@ -116,10 +124,10 @@ var productionFixtures = []backtestFixture{
 			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 913.5, Listings: 208},
 		},
 		expectations: []backtestExpectation{
-			{snapIdx: 4, signal: "RISING"},  // price up >5/h but listing velocity < 10/h
-			{snapIdx: 5, signal: "FALLING"}, // price velocity 0 (flat snap), listings still rising
-			{snapIdx: 6, signal: "RISING"},  // price resumes climb
-			{snapIdx: 7, signal: "HERD"},    // listing velocity crosses >10/h threshold
+			{snapIdx: 4, signal: "RISING"}, // 2h window: pVel=20.1 but lVel=6.0 (<10/h threshold)
+			{snapIdx: 5, signal: "HERD"},   // 2h window: listing surge drives lVel >10/h
+			{snapIdx: 6, signal: "HERD"},   // sustained herd
+			{snapIdx: 7, signal: "HERD"},   // herd continues with strong listing velocity
 		},
 	},
 	{
@@ -274,12 +282,12 @@ func TestAnalyzeTrends_Backtest_STABLE_CV_zero(t *testing.T) {
 }
 
 // TestAnalyzeTrends_Backtest_RISING_before_HERD validates that Shock Nova of Procession
-// correctly emits RISING (not HERD) while price velocity is high but listing velocity
-// is still below the HERD threshold of 10/h, then transitions to HERD once listings surge.
+// correctly emits RISING at snap[4] (listing velocity still below HERD threshold)
+// then transitions to HERD at snap[5] once the 2h window captures enough listing growth.
 func TestAnalyzeTrends_Backtest_RISING_before_HERD(t *testing.T) {
 	fix := productionFixtures[2] // Shock Nova of Procession
 
-	// snap[4]: RISING — price velocity >5/h but listing velocity <10/h
+	// snap[4]: RISING — 2h window: price velocity >5/h but listing velocity <10/h
 	{
 		snapIdx := 4
 		currentPt := fix.points[snapIdx]
@@ -305,9 +313,9 @@ func TestAnalyzeTrends_Backtest_RISING_before_HERD(t *testing.T) {
 		}
 	}
 
-	// snap[7]: HERD — listing velocity crosses >10/h
+	// snap[5]: HERD — 2h window captures listing surge >10/h
 	{
-		snapIdx := 7
+		snapIdx := 5
 		currentPt := fix.points[snapIdx]
 		current := []GemPrice{{
 			Name: fix.gemName, Variant: fix.variant,
@@ -320,17 +328,17 @@ func TestAnalyzeTrends_Backtest_RISING_before_HERD(t *testing.T) {
 		}}
 		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0)
 		if len(results) != 1 {
-			t.Fatal("snap[7]: no result")
+			t.Fatal("snap[5]: no result")
 		}
 		r := results[0]
 		if r.Signal != "HERD" {
-			t.Errorf("snap[7] HERD threshold crossed: signal=%s, want HERD", r.Signal)
+			t.Errorf("snap[5] HERD threshold crossed: signal=%s, want HERD", r.Signal)
 		}
 		if r.PriceVelocity <= 5 {
-			t.Errorf("snap[7]: price velocity %.2f should be >5/h for HERD", r.PriceVelocity)
+			t.Errorf("snap[5]: price velocity %.2f should be >5/h for HERD", r.PriceVelocity)
 		}
 		if r.ListingVelocity <= 10 {
-			t.Errorf("snap[7]: listing velocity %.2f should be >10/h for HERD", r.ListingVelocity)
+			t.Errorf("snap[5]: listing velocity %.2f should be >10/h for HERD", r.ListingVelocity)
 		}
 	}
 }
