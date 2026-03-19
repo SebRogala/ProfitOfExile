@@ -96,6 +96,19 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 		return "SELL_NOW", "Price dropping with rising supply — undercut hard"
 	}
 
+	// HIGH tier — competitive cluster, sell timing critical but less extreme than TOP
+	if priceTier == "HIGH" {
+		if signal == "TRAP" {
+			return "SELL_NOW", "Extreme volatility on high-value gem — sell immediately"
+		}
+		if signal == "HERD" && histPosition > 80 {
+			return "UNDERCUT", "Herd at elevated price — undercut 5-10% for fast sale"
+		}
+		if signal == "HERD" {
+			return "UNDERCUT", "Herd on competitive gem — undercut to sell into pressure"
+		}
+	}
+
 	// Bases evaporating on a TOP gem = herd output coming in ~30min
 	if priceTier == "TOP" && baseListings >= 0 && baseListings < 10 && baseVel < -2 {
 		return "UNDERCUT", "Bases nearly gone — herd output arrives in ~30min, undercut 10-15%"
@@ -229,6 +242,21 @@ func tierAction(signal, windowSignal, priceTier string) string {
 			return "URGENT — window opens in ~45min"
 		case "OPEN":
 			return "HIGH RISK — act fast or skip"
+		}
+	case "HIGH":
+		switch signal {
+		case "HERD":
+			return "UNDERCUT — herd arrived, sell into pressure"
+		case "DUMPING":
+			return "SELL IMMEDIATELY"
+		case "RISING":
+			return "HOLD — competitive cluster, may reach TOP"
+		}
+		switch windowSignal {
+		case "BREWING":
+			return "WATCH — window forming on competitive gem"
+		case "OPEN":
+			return "ACT — window open, time-sensitive"
 		}
 	case "MID":
 		switch signal {
