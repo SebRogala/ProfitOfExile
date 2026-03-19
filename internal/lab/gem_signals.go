@@ -28,7 +28,7 @@ func ComputeGemSignals(
 	}
 
 	// Build baseCurrentListings from gems slice: non-transfigured, non-corrupted,
-	// keeping highest listings per base name. Follows trends.go:363-373 pattern.
+	// keeping highest listings per base name (follows trends.go base listing pattern).
 	baseCurrentListings := make(map[string]int)
 	for _, g := range gems {
 		if g.IsCorrupted || g.IsTransfigured {
