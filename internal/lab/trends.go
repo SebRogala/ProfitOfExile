@@ -2,7 +2,6 @@ package lab
 
 import (
 	"math"
-	"strings"
 	"time"
 )
 
@@ -314,19 +313,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 	var results []TrendResult
 
 	for _, g := range current {
-		if g.IsCorrupted {
-			continue
-		}
-		if !g.IsTransfigured {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
-			continue
-		}
-		if g.Chaos <= 5 {
-			continue
-		}
-		if !analysisVariants[g.Variant] {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 || !analysisVariants[g.Variant] {
 			continue
 		}
 

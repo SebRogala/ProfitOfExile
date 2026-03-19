@@ -1,7 +1,6 @@
 package lab
 
 import (
-	"strings"
 	"time"
 )
 
@@ -23,21 +22,12 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		avgListings = float64(mc.TotalListings) / float64(mc.TotalGems)
 	}
 
-	var p50 float64
-	if mc.PricePercentiles != nil {
-		p50 = mc.PricePercentiles["P50"]
-	}
+	p50 := mc.PriceP50()
 
 	var features []GemFeature
 
 	for _, g := range gems {
-		if g.IsCorrupted || !g.IsTransfigured {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
-			continue
-		}
-		if g.Chaos <= 5 {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 {
 			continue
 		}
 
@@ -89,13 +79,9 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		f.CrashCount = 0
 		f.ListingElasticity = 0
 
-		// Sanitize all float fields.
-		f.VelShortPrice = sanitizeFloat(f.VelShortPrice)
-		f.VelShortListing = sanitizeFloat(f.VelShortListing)
-		f.VelMedPrice = sanitizeFloat(f.VelMedPrice)
-		f.VelMedListing = sanitizeFloat(f.VelMedListing)
-		f.VelLongPrice = sanitizeFloat(f.VelLongPrice)
-		f.VelLongListing = sanitizeFloat(f.VelLongListing)
+		// Sanitize non-velocity float fields.
+		// Velocity fields are already sanitized by velocityWindow; CV, hist, and
+		// relative fields are sanitized here because their producers do not guarantee it.
 		f.CV = sanitizeFloat(f.CV)
 		f.HistPosition = sanitizeFloat(f.HistPosition)
 		f.High7d = sanitizeFloat(f.High7d)

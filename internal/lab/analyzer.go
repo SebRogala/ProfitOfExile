@@ -209,7 +209,7 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 }
 
 // RunV2 is the entry point for the v2 pre-computed analysis pipeline.
-// Currently only persists a stub MarketContext — GemFeatures (POE-58) and
+// Computes and persists MarketContext and GemFeatures per snapshot.
 // GemSignals (POE-61) computation will be added later.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunV2(ctx context.Context) error {
