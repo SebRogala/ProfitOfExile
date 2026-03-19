@@ -774,6 +774,33 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerF
 			WeekdayActivity    []float64          `json:"weekdayActivity"`
 		}
 
+		// Nil-coalesce temporal slices so JSON encodes [] instead of null,
+		// preventing frontend TypeError when iterating these fields.
+		hourlyBias := mc.HourlyBias
+		if hourlyBias == nil {
+			hourlyBias = make([]float64, 24)
+		}
+		hourlyVol := mc.HourlyVolatility
+		if hourlyVol == nil {
+			hourlyVol = make([]float64, 24)
+		}
+		hourlyAct := mc.HourlyActivity
+		if hourlyAct == nil {
+			hourlyAct = make([]float64, 24)
+		}
+		weekdayBias := mc.WeekdayBias
+		if weekdayBias == nil {
+			weekdayBias = make([]float64, 7)
+		}
+		weekdayVol := mc.WeekdayVolatility
+		if weekdayVol == nil {
+			weekdayVol = make([]float64, 7)
+		}
+		weekdayAct := mc.WeekdayActivity
+		if weekdayAct == nil {
+			weekdayAct = make([]float64, 7)
+		}
+
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"data": resp{
 				Time:               mc.Time.UTC().Format(time.RFC3339),
@@ -786,12 +813,12 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerF
 				TotalGems:          mc.TotalGems,
 				TotalListings:      mc.TotalListings,
 				TierBoundaries:     mc.TierBoundaries,
-				HourlyBias:         mc.HourlyBias,
-				HourlyVolatility:   mc.HourlyVolatility,
-				HourlyActivity:     mc.HourlyActivity,
-				WeekdayBias:        mc.WeekdayBias,
-				WeekdayVolatility:  mc.WeekdayVolatility,
-				WeekdayActivity:    mc.WeekdayActivity,
+				HourlyBias:         hourlyBias,
+				HourlyVolatility:   hourlyVol,
+				HourlyActivity:     hourlyAct,
+				WeekdayBias:        weekdayBias,
+				WeekdayVolatility:  weekdayVol,
+				WeekdayActivity:    weekdayAct,
 			},
 		}); err != nil {
 			slog.Error("market context: encode response", "error", err)
