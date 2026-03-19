@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"strings"
 	"time"
@@ -250,6 +249,7 @@ func printJSON(results []lab.SweepResultV2, mc *lab.MarketContext, evalCount, dr
 			Hours:           hours,
 			Horizon:         horizon,
 		},
+		Results: make([]JSONResult, 0, len(results)),
 	}
 
 	for i, r := range results {
@@ -294,21 +294,16 @@ func printJSON(results []lab.SweepResultV2, mc *lab.MarketContext, evalCount, dr
 
 // approxSigmaEquivalents computes approximate sigma multipliers for the current
 // default absolute thresholds by dividing by the market context's sigma values.
+// Returns 0 for any field where the corresponding sigma is zero (avoids NaN in JSON output).
 // This is a simple division for reference, not an exact inversion.
 func approxSigmaEquivalents(def lab.SignalConfig, mc *lab.MarketContext) (herdP, herdL, stableP, brewP float64) {
 	if mc.VelocitySigma > 0 {
 		herdP = (def.PreHERDPriceVel - mc.VelocityMean) / mc.VelocitySigma
 		stableP = def.StablePriceVel / mc.VelocitySigma
 		brewP = def.BrewingMinPVel / mc.VelocitySigma
-	} else {
-		herdP = math.NaN()
-		stableP = math.NaN()
-		brewP = math.NaN()
 	}
 	if mc.ListingVelSigma > 0 {
 		herdL = (def.PreHERDListingVel - mc.ListingVelMean) / mc.ListingVelSigma
-	} else {
-		herdL = math.NaN()
 	}
 	return
 }
