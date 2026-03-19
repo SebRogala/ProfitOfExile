@@ -25,10 +25,6 @@ type SignalConfig struct {
 	ThinPoolFloor  float64 // drain floor for baseLst<20 (default: -1.5)
 	NormalFloor    float64 // drain floor for baseLst>=20 (default: -1.0)
 
-	// Tier thresholds
-	TierTopMult float64 // TOP = > wt10 * this (default: 0.70)
-	TierMidMult float64 // MID = > wt10 * this (default: 0.20)
-
 	// BREAKOUT thresholds
 	BreakoutMaxPrice float64 // max price for BREAKOUT (default: 200)
 	BreakoutMaxList  int     // max listings for BREAKOUT (default: 30)
@@ -55,8 +51,6 @@ func DefaultSignalConfig() SignalConfig {
 		DrainPct:          0.04,
 		ThinPoolFloor:     -1.5,
 		NormalFloor:       -1.0,
-		TierTopMult:       0.70,
-		TierMidMult:       0.20,
 		BreakoutMaxPrice:  200,
 		BreakoutMaxList:   30,
 		BreakoutMinLVel:   -5,

@@ -92,13 +92,8 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 		mc.ListingVelMean, mc.ListingVelSigma = meanStddev(velListings)
 	}
 
-	// Compute tier boundaries using existing computePriceTiers.
-	// Pass all gems (including non-transfigured) since computePriceTiers filters internally.
-	top, mid := computePriceTiers(gems)
-	mc.TierBoundaries.Top = top
-	mc.TierBoundaries.Mid = mid
-	// High = midpoint between Top and Mid (placeholder — POE-57 adds gap detection).
-	mc.TierBoundaries.High = (top + mid) / 2
+	// Compute tier boundaries using natural gap detection.
+	mc.TierBoundaries = DetectTierBoundaries(gems)
 
 	return mc
 }

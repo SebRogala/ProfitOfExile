@@ -289,8 +289,8 @@ func TestComputeMarketContext_BiasStubs(t *testing.T) {
 func TestComputeMarketContext_TierBoundaries(t *testing.T) {
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
-	// Create enough gems for computePriceTiers to produce real thresholds.
-	// We need at least 15 transfigured gems with Chaos > 0.
+	// Create enough gems for DetectTierBoundaries to produce real thresholds.
+	// We need at least 4 unique transfigured gems with Chaos > 0.
 	var gems []GemPrice
 	prices := []float64{5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200, 300, 500, 800, 1000}
 	for i, p := range prices {
