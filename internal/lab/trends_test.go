@@ -71,19 +71,21 @@ func TestVelocity_TwoPoints(t *testing.T) {
 	}
 }
 
-func TestVelocity_UsesLast4Points(t *testing.T) {
+func TestVelocity_UsesTimeWindow(t *testing.T) {
+	// velocity() uses a 2h time window. 5 points spanning 2h: all points are
+	// within the window (cutoff = t0+120min - 2h = t0).
 	t0 := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
 	points := []PricePoint{
-		{Time: t0, Chaos: 50, Listings: 5},                           // skipped (>4 points)
-		{Time: t0.Add(30 * time.Minute), Chaos: 60, Listings: 8},     // first used
-		{Time: t0.Add(60 * time.Minute), Chaos: 70, Listings: 10},    //
-		{Time: t0.Add(90 * time.Minute), Chaos: 75, Listings: 12},    //
-		{Time: t0.Add(120 * time.Minute), Chaos: 80, Listings: 14},   // last used
+		{Time: t0, Chaos: 50, Listings: 5},                           // first in 2h window
+		{Time: t0.Add(30 * time.Minute), Chaos: 60, Listings: 8},
+		{Time: t0.Add(60 * time.Minute), Chaos: 70, Listings: 10},
+		{Time: t0.Add(90 * time.Minute), Chaos: 75, Listings: 12},
+		{Time: t0.Add(120 * time.Minute), Chaos: 80, Listings: 14},   // last point
 	}
-	// Last 4 points: 30min to 120min. Delta = 80-60 = 20 over 1.5h = 13.33/h
+	// Delta = (80-50) / 2h = 15
 	v := velocity(points, func(p PricePoint) float64 { return p.Chaos })
-	if math.Abs(v-13.33) > 0.1 {
-		t.Errorf("price velocity = %f, want ~13.33", v)
+	if math.Abs(v-15) > 0.01 {
+		t.Errorf("price velocity = %f, want 15", v)
 	}
 }
 

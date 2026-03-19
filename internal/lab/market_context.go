@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -36,10 +35,7 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 	// Filter to active transfigured gems (not corrupted, exclude Trarthus).
 	var active []GemPrice
 	for _, g := range gems {
-		if !g.IsTransfigured || g.IsCorrupted {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
+		if !isAnalyzableGem(g) {
 			continue
 		}
 		active = append(active, g)
@@ -154,11 +150,18 @@ func velocityComputable(points []PricePoint) bool {
 	if n < 2 {
 		return false
 	}
-	start := 0
-	if n > 4 {
-		start = n - 4
+	// Match velocity()'s 2h window: find first point within 2h of the last.
+	cutoff := points[n-1].Time.Add(-2 * time.Hour)
+	for i := 0; i < n; i++ {
+		if !points[i].Time.Before(cutoff) {
+			// Need at least 2 points in window with a positive time span.
+			if n-i < 2 {
+				return false
+			}
+			return points[n-1].Time.Sub(points[i].Time).Hours() > 0
+		}
 	}
-	return points[n-1].Time.Sub(points[start].Time).Hours() > 0
+	return false
 }
 
 // meanStddev computes the mean and population standard deviation of a float slice.
