@@ -767,7 +767,11 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerF
 			TotalListings      int                `json:"totalListings"`
 			TierBoundaries     lab.TierBoundaries `json:"tierBoundaries"`
 			HourlyBias         []float64          `json:"hourlyBias"`
+			HourlyVolatility   []float64          `json:"hourlyVolatility"`
+			HourlyActivity     []float64          `json:"hourlyActivity"`
 			WeekdayBias        []float64          `json:"weekdayBias"`
+			WeekdayVolatility  []float64          `json:"weekdayVolatility"`
+			WeekdayActivity    []float64          `json:"weekdayActivity"`
 		}
 
 		if err := json.NewEncoder(w).Encode(map[string]any{
@@ -783,7 +787,11 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerF
 				TotalListings:      mc.TotalListings,
 				TierBoundaries:     mc.TierBoundaries,
 				HourlyBias:         mc.HourlyBias,
+				HourlyVolatility:   mc.HourlyVolatility,
+				HourlyActivity:     mc.HourlyActivity,
 				WeekdayBias:        mc.WeekdayBias,
+				WeekdayVolatility:  mc.WeekdayVolatility,
+				WeekdayActivity:    mc.WeekdayActivity,
 			},
 		}); err != nil {
 			slog.Error("market context: encode response", "error", err)
