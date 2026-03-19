@@ -16,7 +16,7 @@ export interface StatusData {
 	league: string;
 }
 
-export type PriceTier = 'TOP' | 'MID' | 'LOW' | '';
+export type PriceTier = 'TOP' | 'HIGH' | 'MID' | 'LOW' | '';
 export type SellUrgency = 'SELL_NOW' | 'UNDERCUT' | 'HOLD' | 'WAIT' | '';
 export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNLIKELY' | '';
 
