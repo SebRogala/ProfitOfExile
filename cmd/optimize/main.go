@@ -236,8 +236,8 @@ func precomputeFeatures(snapshots []Snapshot) ([]precomputed, []lab.GemPrice, *l
 				continue
 			}
 
-			priceVel := velocityFromPoints(h.points, func(p lab.PricePoint) float64 { return p.Chaos })
-			listingVel := velocityFromPoints(h.points, func(p lab.PricePoint) float64 { return float64(p.Listings) })
+			priceVel := lab.VelocityWindow(h.points, 2*time.Hour, func(p lab.PricePoint) float64 { return p.Chaos })
+			listingVel := lab.VelocityWindow(h.points, 2*time.Hour, func(p lab.PricePoint) float64 { return float64(p.Listings) })
 			cv := cvFromPoints(h.points)
 
 			var futurePct float64
@@ -424,24 +424,7 @@ func generateGrid() []lab.SignalConfig {
 	return grid // 5x4x4x4 = 320 combos
 }
 
-// velocityFromPoints computes rate of change per hour using last 4 points.
-func velocityFromPoints(points []lab.PricePoint, extract func(lab.PricePoint) float64) float64 {
-	n := len(points)
-	if n < 2 {
-		return 0
-	}
-	start := 0
-	if n > 4 {
-		start = n - 4
-	}
-	first := points[start]
-	last := points[n-1]
-	hours := last.Time.Sub(first.Time).Hours()
-	if hours <= 0 {
-		return 0
-	}
-	return (extract(last) - extract(first)) / hours
-}
+// velocityFromPoints removed — now uses lab.VelocityWindow directly.
 
 // cvFromPoints computes coefficient of variation from price history.
 func cvFromPoints(points []lab.PricePoint) float64 {
