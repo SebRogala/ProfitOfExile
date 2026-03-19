@@ -272,3 +272,124 @@ func TestBuildEvalPoints_DroppedCountDiagnostics(t *testing.T) {
 	}
 }
 
+func TestToSignalConfig(t *testing.T) {
+	mc := MarketContext{
+		VelocityMean:    5,
+		VelocitySigma:   10,
+		ListingVelMean:  2,
+		ListingVelSigma: 4,
+	}
+
+	sc := SigmaConfig{
+		HERDPriceMult:    2.0,
+		HERDListingMult:  1.5,
+		StablePriceMult:  0.5,
+		BrewingPriceMult: 1.0,
+		DumpPriceMult:    2.0,
+	}
+
+	cfg := sc.ToSignalConfig(mc)
+
+	// PreHERDPriceVel = VelocityMean + HERDPriceMult * VelocitySigma = 5 + 2.0 * 10 = 25
+	if got := cfg.PreHERDPriceVel; !approxEqual(got, 25.0, 0.01) {
+		t.Errorf("PreHERDPriceVel: got %.2f, want 25.0", got)
+	}
+
+	// PreHERDListingVel = ListingVelMean + HERDListingMult * ListingVelSigma = 2 + 1.5 * 4 = 8
+	if got := cfg.PreHERDListingVel; !approxEqual(got, 8.0, 0.01) {
+		t.Errorf("PreHERDListingVel: got %.2f, want 8.0", got)
+	}
+
+	// StablePriceVel = StablePriceMult * VelocitySigma = 0.5 * 10 = 5
+	if got := cfg.StablePriceVel; !approxEqual(got, 5.0, 0.01) {
+		t.Errorf("StablePriceVel: got %.2f, want 5.0", got)
+	}
+
+	// BrewingMinPVel = BrewingPriceMult * VelocitySigma = 1.0 * 10 = 10
+	if got := cfg.BrewingMinPVel; !approxEqual(got, 10.0, 0.01) {
+		t.Errorf("BrewingMinPVel: got %.2f, want 10.0", got)
+	}
+
+	// DumpPriceVel = -(DumpPriceMult * VelocitySigma) = -(2.0 * 10) = -20
+	if got := cfg.DumpPriceVel; !approxEqual(got, -20.0, 0.01) {
+		t.Errorf("DumpPriceVel: got %.2f, want -20.0", got)
+	}
+}
+
+func TestToSignalConfig_PreservesDefaults(t *testing.T) {
+	mc := MarketContext{
+		VelocityMean:    5,
+		VelocitySigma:   10,
+		ListingVelMean:  2,
+		ListingVelSigma: 4,
+	}
+
+	sc := SigmaConfig{
+		HERDPriceMult:    2.0,
+		HERDListingMult:  1.5,
+		StablePriceMult:  0.5,
+		BrewingPriceMult: 1.0,
+		DumpPriceMult:    2.0,
+	}
+
+	cfg := sc.ToSignalConfig(mc)
+	defaults := DefaultSignalConfig()
+
+	// Non-swept fields must retain default values.
+	if cfg.HERDPriceVel != defaults.HERDPriceVel {
+		t.Errorf("HERDPriceVel: got %.2f, want default %.2f", cfg.HERDPriceVel, defaults.HERDPriceVel)
+	}
+	if cfg.HERDListingVel != defaults.HERDListingVel {
+		t.Errorf("HERDListingVel: got %.2f, want default %.2f", cfg.HERDListingVel, defaults.HERDListingVel)
+	}
+	if cfg.StableListingVel != defaults.StableListingVel {
+		t.Errorf("StableListingVel: got %.2f, want default %.2f", cfg.StableListingVel, defaults.StableListingVel)
+	}
+	if cfg.RecoveryMaxList != defaults.RecoveryMaxList {
+		t.Errorf("RecoveryMaxList: got %d, want default %d", cfg.RecoveryMaxList, defaults.RecoveryMaxList)
+	}
+	if cfg.TrapCV != defaults.TrapCV {
+		t.Errorf("TrapCV: got %.2f, want default %.2f", cfg.TrapCV, defaults.TrapCV)
+	}
+}
+
+func TestGenerateSigmaGrid(t *testing.T) {
+	grid := GenerateSigmaGrid()
+
+	// Expected size: 5 * 4 * 4 * 4 = 320 combos.
+	if got := len(grid); got != 320 {
+		t.Fatalf("grid size: got %d, want 320", got)
+	}
+
+	// Verify all values are within expected ranges.
+	for i, sc := range grid {
+		if sc.HERDPriceMult < 1.5 || sc.HERDPriceMult > 3.5 {
+			t.Errorf("grid[%d].HERDPriceMult=%.1f out of range [1.5, 3.5]", i, sc.HERDPriceMult)
+		}
+		if sc.HERDListingMult < 1.0 || sc.HERDListingMult > 2.5 {
+			t.Errorf("grid[%d].HERDListingMult=%.1f out of range [1.0, 2.5]", i, sc.HERDListingMult)
+		}
+		if sc.StablePriceMult < 0.3 || sc.StablePriceMult > 1.0 {
+			t.Errorf("grid[%d].StablePriceMult=%.1f out of range [0.3, 1.0]", i, sc.StablePriceMult)
+		}
+		if sc.BrewingPriceMult < 0.5 || sc.BrewingPriceMult > 2.0 {
+			t.Errorf("grid[%d].BrewingPriceMult=%.1f out of range [0.5, 2.0]", i, sc.BrewingPriceMult)
+		}
+		if sc.DumpPriceMult != 2.0 {
+			t.Errorf("grid[%d].DumpPriceMult=%.1f, want fixed 2.0", i, sc.DumpPriceMult)
+		}
+	}
+}
+
+func TestGenerateSigmaGrid_NoDuplicates(t *testing.T) {
+	grid := GenerateSigmaGrid()
+
+	seen := make(map[SigmaConfig]bool, len(grid))
+	for _, sc := range grid {
+		if seen[sc] {
+			t.Errorf("duplicate SigmaConfig: %+v", sc)
+		}
+		seen[sc] = true
+	}
+}
+

@@ -124,3 +124,55 @@ func BuildEvalPoints(features []GemFeature, prices []SnapshotPrice, horizon time
 
 	return result, dropped
 }
+
+// SigmaConfig holds σ-multiplier parameters for optimizer grid sweeping.
+// Each field is a multiplier of the corresponding market-wide sigma value.
+// ToSignalConfig converts these relative multipliers into absolute thresholds
+// using observed market statistics from MarketContext.
+type SigmaConfig struct {
+	HERDPriceMult    float64 // priceVel threshold = VelocityMean + N * VelocitySigma
+	HERDListingMult  float64 // listingVel threshold = ListingVelMean + N * ListingVelSigma
+	StablePriceMult  float64 // max |priceVel| for STABLE = M * VelocitySigma
+	BrewingPriceMult float64 // min priceVel for BREWING = M * VelocitySigma
+	DumpPriceMult    float64 // dump priceVel = -(M * VelocitySigma)
+}
+
+// ToSignalConfig converts σ-multipliers to absolute thresholds using market context.
+// Starts from DefaultSignalConfig and overrides the swept fields. Fields not swept
+// (HERDPriceVel, HERDListingVel, StableListingVel, RecoveryMaxList, TrapCV) keep defaults.
+func (sc SigmaConfig) ToSignalConfig(mc MarketContext) SignalConfig {
+	cfg := DefaultSignalConfig()
+
+	cfg.PreHERDPriceVel = mc.VelocityMean + sc.HERDPriceMult*mc.VelocitySigma
+	cfg.PreHERDListingVel = mc.ListingVelMean + sc.HERDListingMult*mc.ListingVelSigma
+	cfg.StablePriceVel = sc.StablePriceMult * mc.VelocitySigma
+	cfg.BrewingMinPVel = sc.BrewingPriceMult * mc.VelocitySigma
+	cfg.DumpPriceVel = -(sc.DumpPriceMult * mc.VelocitySigma)
+
+	return cfg
+}
+
+// GenerateSigmaGrid produces a focused σ-multiplier grid for sweeping.
+// Grid: 5×4×4×4 = 320 combos (same size as v1 absolute grid).
+// DumpPriceMult is fixed at 2.0 (not swept).
+func GenerateSigmaGrid() []SigmaConfig {
+	var grid []SigmaConfig
+
+	for _, herdP := range []float64{1.5, 2.0, 2.5, 3.0, 3.5} {
+		for _, herdL := range []float64{1.0, 1.5, 2.0, 2.5} {
+			for _, stableP := range []float64{0.3, 0.5, 0.7, 1.0} {
+				for _, brewP := range []float64{0.5, 1.0, 1.5, 2.0} {
+					grid = append(grid, SigmaConfig{
+						HERDPriceMult:    herdP,
+						HERDListingMult:  herdL,
+						StablePriceMult:  stableP,
+						BrewingPriceMult: brewP,
+						DumpPriceMult:    2.0,
+					})
+				}
+			}
+		}
+	}
+
+	return grid
+}
