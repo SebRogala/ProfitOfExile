@@ -34,6 +34,13 @@ type GemPrice struct {
 	GemColor       string
 }
 
+// isAnalyzableGem returns true if the gem passes the shared baseline filter:
+// transfigured, not corrupted, and not the Trarthus outlier. Call sites may
+// layer additional filters (e.g., minimum chaos, variant set) on top.
+func isAnalyzableGem(g GemPrice) bool {
+	return g.IsTransfigured && !g.IsCorrupted && !strings.Contains(g.Name, "Trarthus")
+}
+
 // AnalyzeTransfigure computes transfigure ROI for all base→transfigured pairs.
 // Input: the latest snapshot of gem prices (non-corrupted only).
 // Variants analyzed: "1", "1/20", "20", "20/20".

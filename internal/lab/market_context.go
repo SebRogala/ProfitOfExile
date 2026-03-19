@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -36,10 +35,7 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 	// Filter to active transfigured gems (not corrupted, exclude Trarthus).
 	var active []GemPrice
 	for _, g := range gems {
-		if !g.IsTransfigured || g.IsCorrupted {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
+		if !isAnalyzableGem(g) {
 			continue
 		}
 		active = append(active, g)
