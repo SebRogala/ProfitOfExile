@@ -25,8 +25,12 @@ func testMarketContext() MarketContext {
 			High: 100,
 			Mid:  30,
 		},
-		HourlyBias:  make([]float64, 24),
-		WeekdayBias: make([]float64, 7),
+		HourlyBias:        make([]float64, 24),
+		HourlyVolatility:  make([]float64, 24),
+		HourlyActivity:    make([]float64, 24),
+		WeekdayBias:       make([]float64, 7),
+		WeekdayVolatility: make([]float64, 7),
+		WeekdayActivity:   make([]float64, 7),
 	}
 }
 
@@ -438,7 +442,11 @@ func TestComputeGemFeatures_ZeroMarketContext(t *testing.T) {
 		PricePercentiles:   make(map[string]float64),
 		ListingPercentiles: make(map[string]float64),
 		HourlyBias:         make([]float64, 24),
+		HourlyVolatility:   make([]float64, 24),
+		HourlyActivity:     make([]float64, 24),
 		WeekdayBias:        make([]float64, 7),
+		WeekdayVolatility:  make([]float64, 7),
+		WeekdayActivity:    make([]float64, 7),
 	}
 
 	features := ComputeGemFeatures(snapTime, gems, nil, mc)

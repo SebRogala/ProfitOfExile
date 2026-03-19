@@ -749,6 +749,10 @@ func (r *Repository) SignalHistory(ctx context.Context, name, variant string, li
 // SaveMarketContext persists a single market context snapshot.
 // Uses ON CONFLICT DO NOTHING so re-runs for the same time are idempotent.
 func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) error {
+	if err := mc.ValidateTemporalSlices(); err != nil {
+		return fmt.Errorf("lab repo: save market context: %w", err)
+	}
+
 	pricePerc, err := json.Marshal(mc.PricePercentiles)
 	if err != nil {
 		return fmt.Errorf("lab repo: marshal price percentiles: %w", err)
@@ -844,29 +848,27 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 	if err := json.Unmarshal(tierBounds, &mc.TierBoundaries); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal tier boundaries: %w", err)
 	}
-	mc.HourlyBias = make([]float64, 24)
 	if err := json.Unmarshal(hourly, &mc.HourlyBias); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal hourly bias: %w", err)
 	}
-	mc.HourlyVolatility = make([]float64, 24)
 	if err := json.Unmarshal(hourlyVol, &mc.HourlyVolatility); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal hourly volatility: %w", err)
 	}
-	mc.HourlyActivity = make([]float64, 24)
 	if err := json.Unmarshal(hourlyAct, &mc.HourlyActivity); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal hourly activity: %w", err)
 	}
-	mc.WeekdayBias = make([]float64, 7)
 	if err := json.Unmarshal(weekday, &mc.WeekdayBias); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal weekday bias: %w", err)
 	}
-	mc.WeekdayVolatility = make([]float64, 7)
 	if err := json.Unmarshal(weekdayVol, &mc.WeekdayVolatility); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal weekday volatility: %w", err)
 	}
-	mc.WeekdayActivity = make([]float64, 7)
 	if err := json.Unmarshal(weekdayAct, &mc.WeekdayActivity); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal weekday activity: %w", err)
+	}
+
+	if err := mc.ValidateTemporalSlices(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest market context: %w", err)
 	}
 
 	return &mc, nil

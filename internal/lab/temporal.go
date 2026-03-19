@@ -21,6 +21,9 @@ const movingThreshold = 0.02
 // computeTemporalBiases computes direction bias, volatility, and activity ratio
 // for each hour of day (0-23 UTC) and day of week (Sun=0..Sat=6).
 //
+// Precondition: each GemPriceHistory.Points slice must be sorted by Time ASC.
+// This invariant is enforced at the data-loading boundary (see trends.go).
+//
 // For each gem's price history, consecutive point pairs produce a percent change.
 // These are bucketed by the earlier point's timestamp (the "cause" time).
 //
