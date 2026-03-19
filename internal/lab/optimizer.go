@@ -88,6 +88,13 @@ func classifyTemporalPhase(t time.Time) string {
 	return "weekday-offpeak"
 }
 
+// sweepAcc is a simple correct/total accumulator used for per-tier, per-band,
+// and per-temporal-phase accuracy tracking within SweepV2.
+type sweepAcc struct {
+	correct int
+	total   int
+}
+
 // SweepV2 evaluates each σ-multiplier configuration against the eval points,
 // computing confidence-weighted directional accuracy. Results are sorted by
 // WeightedScore descending (best first).
@@ -103,11 +110,7 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 		cfg := sigma.ToSignalConfig(mc)
 
 		// Per-tier accumulators.
-		type tierAcc struct {
-			correct int
-			total   int
-		}
-		tiers := map[string]*tierAcc{
+		tiers := map[string]*sweepAcc{
 			"TOP":  {},
 			"HIGH": {},
 			"MID":  {},
@@ -115,14 +118,10 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 		}
 
 		// Confidence band accumulators (0-9, 10-19, ..., 90-100).
-		type bandAcc struct {
-			correct int
-			total   int
-		}
-		bands := make([]bandAcc, 10) // index 0 = [0,9], ..., 9 = [90,100]
+		bands := make([]sweepAcc, 10) // index 0 = [0,9], ..., 9 = [90,100]
 
 		// Temporal phase accumulators.
-		phases := map[string]*tierAcc{
+		phases := map[string]*sweepAcc{
 			"weekend":         {},
 			"weekday-peak":    {},
 			"weekday-offpeak": {},
@@ -131,7 +130,7 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 		var weightedCorrect float64
 		var weightedTotal float64
 		var overallCorrect int
-		highConfEvals := 0
+		var highConfEvals int
 
 		for _, ep := range evals {
 			signal := classifySignalWithConfig(
@@ -165,7 +164,7 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 			}
 			ta, ok := tiers[tier]
 			if !ok {
-				ta = &tierAcc{}
+				ta = &sweepAcc{}
 				tiers[tier] = ta
 			}
 			ta.total++
@@ -225,20 +224,18 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 		// accumulating correct/total. Find the minimum confidence threshold
 		// where cumulative accuracy >= 80%.
 		sweetSpot := -1
-		{
-			cumCorrect := 0
-			cumTotal := 0
-			for i := len(bands) - 1; i >= 0; i-- {
-				cumCorrect += bands[i].correct
-				cumTotal += bands[i].total
-				if cumTotal > 0 {
-					cumAcc := float64(cumCorrect) / float64(cumTotal) * 100
-					if cumAcc >= 80 {
-						sweetSpot = i * 10
-					} else {
-						// Once accuracy drops below 80%, stop scanning down.
-						break
-					}
+		cumCorrect := 0
+		cumTotal := 0
+		for i := len(bands) - 1; i >= 0; i-- {
+			cumCorrect += bands[i].correct
+			cumTotal += bands[i].total
+			if cumTotal > 0 {
+				cumAcc := float64(cumCorrect) / float64(cumTotal) * 100
+				if cumAcc >= 80 {
+					sweetSpot = i * 10
+				} else {
+					// Once accuracy drops below 80%, stop scanning down.
+					break
 				}
 			}
 		}
