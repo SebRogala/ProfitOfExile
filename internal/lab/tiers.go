@@ -47,15 +47,13 @@ func DetectTierBoundaries(gems []GemPrice) TierBoundaries {
 	}
 
 	// Step 3: compute relative gaps between consecutive prices.
+	// All prices are > 0 by construction (Chaos > 0 filter applied above).
 	type gap struct {
 		index  int
 		relGap float64
 	}
 	gaps := make([]gap, 0, len(prices)-1)
 	for i := 0; i < len(prices)-1; i++ {
-		if prices[i] <= 0 {
-			continue
-		}
 		rel := (prices[i] - prices[i+1]) / prices[i]
 		gaps = append(gaps, gap{index: i, relGap: rel})
 	}

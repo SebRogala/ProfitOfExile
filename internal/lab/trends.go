@@ -98,9 +98,6 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 
 	// HIGH tier — competitive cluster, sell timing critical but less extreme than TOP
 	if priceTier == "HIGH" {
-		if signal == "TRAP" {
-			return "SELL_NOW", "Extreme volatility on high-value gem — sell immediately"
-		}
 		if signal == "HERD" && histPosition > 80 {
 			return "UNDERCUT", "Herd at elevated price — undercut 5-10% for fast sale"
 		}

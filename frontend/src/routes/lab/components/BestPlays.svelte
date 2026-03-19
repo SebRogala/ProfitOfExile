@@ -410,6 +410,7 @@
 		letter-spacing: 0.03em;
 	}
 	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+	.tier-high { color: #fb923c; background: rgba(251, 146, 60, 0.12); }
 	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
 
