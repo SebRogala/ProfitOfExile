@@ -955,112 +955,6 @@ func TestAnalyzeTrends_AdvancedSignal(t *testing.T) {
 	}
 }
 
-func TestComputePriceTiers_KnownPrices(t *testing.T) {
-	// 15 gems with known prices. Uses median of mid-band (#6-#15) for stability.
-	gems := make([]GemPrice, 0, 15)
-	prices := []float64{10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150}
-	for _, p := range prices {
-		gems = append(gems, GemPrice{Name: "Gem", Chaos: p, IsTransfigured: true})
-	}
-
-	topThresh, midThresh := computePriceTiers(gems)
-
-	// p99 index = int(15*0.99) = 14 → p99 = 150. No capping.
-	// Sorted winsorized: [10,20,30,40,50,60,70,80,90,100,110,120,130,140,150]
-	// top15start = 15-15 = 0, top5start = 15-5 = 10
-	// Mid-band: indices 0..9 = [10,20,30,40,50,60,70,80,90,100]
-	// Median (index 5): 60
-	// wt10 = 60 → topThresh = 60*0.70 = 42.0, midThresh = 60*0.20 = 12.0
-	if math.Abs(topThresh-42.0) > 0.1 {
-		t.Errorf("topThreshold = %f, want ~42.0", topThresh)
-	}
-	if math.Abs(midThresh-12.0) > 0.1 {
-		t.Errorf("midThreshold = %f, want ~12.0", midThresh)
-	}
-}
-
-func TestComputePriceTiers_OutlierProtection(t *testing.T) {
-	// 200 gems at reasonable prices + one outlier at 16000c.
-	// With enough data points, p99 winsorization caps the outlier.
-	gems := make([]GemPrice, 0, 201)
-	for i := 0; i < 200; i++ {
-		gems = append(gems, GemPrice{Name: "Gem", Chaos: float64(20 + i), IsTransfigured: true})
-	}
-	// Add the outlier.
-	gems = append(gems, GemPrice{Name: "Outlier", Chaos: 16000, IsTransfigured: true})
-
-	topThresh, midThresh := computePriceTiers(gems)
-
-	// p99 index = int(201*0.99) = 198 → p99 = 218.
-	// Mid-band median (#6-#15 from top) should be around 205-213.
-	// Thresholds should be reasonable despite the 16000c outlier.
-	if topThresh > 200 {
-		t.Errorf("topThreshold = %f, want < 200 (outlier should be capped by p99)", topThresh)
-	}
-	if midThresh > 60 {
-		t.Errorf("midThreshold = %f, want < 60 (outlier should be capped by p99)", midThresh)
-	}
-
-	// Compare with no-outlier version to verify they're similar.
-	gemsNoOutlier := gems[:200]
-	topNoOutlier, _ := computePriceTiers(gemsNoOutlier)
-	// With the outlier capped, thresholds should be close to the no-outlier version.
-	diff := math.Abs(topThresh - topNoOutlier)
-	if diff > 5 {
-		t.Errorf("outlier shifted topThreshold by %f, want < 5 (winsorization should neutralize it)", diff)
-	}
-}
-
-func TestComputePriceTiers_TooFewPrices(t *testing.T) {
-	gems := []GemPrice{
-		{Name: "A", Chaos: 100, IsTransfigured: true},
-		{Name: "B", Chaos: 200, IsTransfigured: true},
-	}
-	topThresh, midThresh := computePriceTiers(gems)
-	if topThresh != 100 || midThresh != 30 {
-		t.Errorf("fallback thresholds = (%f, %f), want (100, 30)", topThresh, midThresh)
-	}
-}
-
-func TestComputePriceTiers_ExcludesCorruptedAndNonTransfigured(t *testing.T) {
-	gems := make([]GemPrice, 0, 15)
-	for i := 0; i < 10; i++ {
-		gems = append(gems, GemPrice{Name: "Gem", Chaos: float64(50 + i*10), IsTransfigured: true})
-	}
-	// These should be excluded from tier computation.
-	gems = append(gems, GemPrice{Name: "Corrupted", Chaos: 5000, IsTransfigured: true, IsCorrupted: true})
-	gems = append(gems, GemPrice{Name: "Base", Chaos: 5000, IsTransfigured: false})
-	gems = append(gems, GemPrice{Name: "Zero", Chaos: 0, IsTransfigured: true})
-
-	topThresh, _ := computePriceTiers(gems)
-	// Without exclusion, 5000c gems would skew everything.
-	if topThresh > 200 {
-		t.Errorf("topThreshold = %f, want < 200 (corrupted/non-trans excluded)", topThresh)
-	}
-}
-
-func TestClassifyPriceTier(t *testing.T) {
-	tests := []struct {
-		price, top, mid float64
-		want            string
-	}{
-		{100, 70, 20, "TOP"},
-		{70, 70, 20, "MID"},   // boundary: exactly at top threshold is MID (uses >)
-		{70.01, 70, 20, "TOP"},
-		{50, 70, 20, "MID"},
-		{20, 70, 20, "LOW"},   // boundary: exactly at mid threshold is LOW
-		{20.01, 70, 20, "MID"},
-		{5, 70, 20, "LOW"},
-	}
-	for _, tt := range tests {
-		got := classifyPriceTier(tt.price, tt.top, tt.mid)
-		if got != tt.want {
-			t.Errorf("classifyPriceTier(%v, %v, %v) = %s, want %s",
-				tt.price, tt.top, tt.mid, got, tt.want)
-		}
-	}
-}
-
 func TestTierAction(t *testing.T) {
 	tests := []struct {
 		name                      string
@@ -1072,6 +966,13 @@ func TestTierAction(t *testing.T) {
 		{"TOP+DUMPING", "DUMPING", "", "TOP", "SELL IMMEDIATELY"},
 		{"TOP+BREWING", "STABLE", "BREWING", "TOP", "URGENT — window opens in ~45min"},
 		{"TOP+OPEN", "STABLE", "OPEN", "TOP", "HIGH RISK — act fast or skip"},
+		// HIGH tier
+		{"HIGH+HERD", "HERD", "", "HIGH", "UNDERCUT — herd arrived, sell into pressure"},
+		{"HIGH+DUMPING", "DUMPING", "", "HIGH", "SELL IMMEDIATELY"},
+		{"HIGH+RISING", "RISING", "", "HIGH", "HOLD — competitive cluster, may reach TOP"},
+		{"HIGH+BREWING", "STABLE", "BREWING", "HIGH", "WATCH — window forming on competitive gem"},
+		{"HIGH+OPEN", "STABLE", "OPEN", "HIGH", "ACT — window open, time-sensitive"},
+		{"HIGH+STABLE", "STABLE", "CLOSED", "HIGH", ""},
 		// MID tier
 		{"MID+HERD", "HERD", "", "MID", "SELL — move is over, exit position"},
 		{"MID+RISING", "RISING", "", "MID", "CAUTIOUS — may reverse"},
@@ -1200,24 +1101,23 @@ func TestSellability_Labels(t *testing.T) {
 func TestAnalyzeTrends_TierAssignment(t *testing.T) {
 	now := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
-	// Build a market with enough gems for dynamic tier computation (need >= 10).
-	current := make([]GemPrice, 0, 15)
-	for i := 0; i < 12; i++ {
-		current = append(current, GemPrice{
-			Name: "Filler Gem " + string(rune('A'+i)), Variant: "20/20",
-			Chaos: float64(20 + i*10), Listings: 10, IsTransfigured: true, GemColor: "BLUE",
-		})
+	// Build a market with 4-tier structure via natural gaps:
+	// TOP cluster: 500 (gap to 130)
+	// HIGH cluster: 130, 120, 110 (gap to 50)
+	// MID cluster: 50, 40, 30 (gap to 8)
+	// LOW: 8, 7, 6
+	current := []GemPrice{
+		{Name: "Expensive Gem of Power", Variant: "20/20", Chaos: 500, Listings: 10, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Filler A of X", Variant: "20/20", Chaos: 130, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Filler B of X", Variant: "20/20", Chaos: 120, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Filler C of X", Variant: "20/20", Chaos: 110, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Filler D of X", Variant: "20/20", Chaos: 50, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Filler E of X", Variant: "20/20", Chaos: 40, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Filler F of X", Variant: "20/20", Chaos: 30, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Filler G of X", Variant: "20/20", Chaos: 8, Listings: 10, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Filler H of X", Variant: "20/20", Chaos: 7, Listings: 10, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Cheap Gem of Nothing", Variant: "20/20", Chaos: 6, Listings: 50, IsTransfigured: true, GemColor: "GREEN"},
 	}
-	// Add a clearly high-value gem.
-	current = append(current, GemPrice{
-		Name: "Expensive Gem of Power", Variant: "20/20",
-		Chaos: 500, Listings: 10, IsTransfigured: true, GemColor: "RED",
-	})
-	// Add a clearly low-value gem.
-	current = append(current, GemPrice{
-		Name: "Cheap Gem of Nothing", Variant: "20/20",
-		Chaos: 6, Listings: 50, IsTransfigured: true, GemColor: "GREEN",
-	})
 
 	results := AnalyzeTrends(now, current, nil, nil, 0)
 
