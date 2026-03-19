@@ -305,10 +305,10 @@ func TestComputeGemSignals_RecommendationAVOID_SELL_NOW(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	// HERD at historical peak => SellUrgency = UNDERCUT (histPos > 90),
-	// but for SELL_NOW we need TRAP signal which always produces SELL_NOW.
+	// TRAP signal on a HIGH tier gem always produces SellUrgency=SELL_NOW.
+	// See trends.go: sellUrgency checks TRAP before any other condition for non-LOW tiers.
 	f := testFeature("Trap of Danger", "20/20", 100, 10)
-	f.CV = 110 // TRAP
+	f.CV = 110 // CV > 100 => TRAP
 	f.Tier = "HIGH"
 
 	gems := testBaseGems("Trap", 30)
@@ -332,7 +332,8 @@ func TestComputeGemSignals_RecommendationOK_HighConfidencePositive(t *testing.T)
 	mc := testSignalMarketContext()
 
 	f := testFeature("Spark of Nova", "20/20", 200, 15)
-	// Set up for HERD signal with high confidence.
+	// Set up for HERD signal with high confidence: all velocity windows positive +
+	// agreeing, bullish hour (14:00 Monday), predictable profile (CV=20, neg elasticity).
 	f.VelShortPrice = 10
 	f.VelMedPrice = 8
 	f.VelLongPrice = 6
@@ -375,12 +376,13 @@ func TestComputeGemSignals_RecommendationOK_HighConfidencePositive(t *testing.T)
 	}
 }
 
-func TestComputeGemSignals_HERDAtHistoricalPeakAVOID(t *testing.T) {
+func TestComputeGemSignals_HERDAtHistoricalPeakUNDERCUT(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
 	f := testFeature("Lacerate of Haemophilia", "20/20", 350, 5)
-	// HERD signal at historical peak => SellUrgency = UNDERCUT, reason mentions peak.
+	// HERD signal at historical peak (histPos > 90) => sellUrgency overrides to UNDERCUT.
+	// See trends.go: sellUrgency checks HERD && histPosition > 90 before other rules.
 	f.VelShortPrice = 10
 	f.VelMedPrice = 8
 	f.VelLongPrice = 6
@@ -406,15 +408,13 @@ func TestComputeGemSignals_HERDAtHistoricalPeakAVOID(t *testing.T) {
 	}
 
 	sig := signals[0]
+	if sig.Signal != "HERD" {
+		t.Errorf("Signal = %q, want HERD", sig.Signal)
+	}
 	// HERD at peak (histPosition > 90) => SellUrgency should be UNDERCUT.
 	if sig.SellUrgency != "UNDERCUT" {
 		t.Errorf("SellUrgency = %q, want UNDERCUT for HERD at historical peak", sig.SellUrgency)
 	}
-	// Even though HERD is normally positive, SELL_NOW or UNDERCUT at peak => AVOID
-	// is defined by the recommendation logic. Since SellUrgency is not SELL_NOW,
-	// we verify that the signal still gets appropriate recommendation handling.
-	// The collective.go pattern: TRAP/DUMPING/SELL_NOW => AVOID.
-	// UNDERCUT at peak is not SELL_NOW, so recommendation depends on confidence/signal.
 }
 
 func TestComputeGemSignals_TierFromFeature(t *testing.T) {
