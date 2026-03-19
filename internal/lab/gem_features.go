@@ -74,10 +74,13 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			f.RelativeListings = float64(g.Listings) / avgListings
 		}
 
-		// Stubs for POE-59.
-		f.FloodCount = 0
-		f.CrashCount = 0
-		f.ListingElasticity = 0
+		// Behavioral profiles: flood/crash detection and listing elasticity.
+		if h != nil && len(h.Points) >= 5 {
+			f.FloodCount = countFloods(h.Points)
+			f.CrashCount = countCrashes(h.Points)
+			f.ListingElasticity = sanitizeFloat(computeListingElasticity(h.Points))
+		}
+		// else: stay at zero defaults (insufficient history)
 
 		// Sanitize non-velocity float fields.
 		// Velocity fields are already sanitized by velocityWindow; CV, hist, and
