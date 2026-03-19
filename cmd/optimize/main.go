@@ -48,6 +48,7 @@ type SweepResult struct {
 	Config     lab.SignalConfig
 	OverallAcc float64
 	TopAcc     float64
+	HighAcc    float64
 	MidAcc     float64
 	LowAcc     float64
 	Top15Acc   float64
@@ -104,23 +105,21 @@ func main() {
 		n = len(results)
 	}
 
-	fmt.Printf("\n%-6s %-8s %-8s %-8s %-8s %-6s %-6s %-6s %-6s %-6s %-6s\n",
-		"Rank", "Top15%", "TOP%", "MID%", "Overall%", "H_pv", "H_lv", "S_pv", "B_pv", "T_top", "T_mid")
-	fmt.Println("------ -------- -------- -------- -------- ------ ------ ------ ------ ------ ------")
+	fmt.Printf("\n%-6s %-8s %-8s %-8s %-8s %-8s %-6s %-6s %-6s %-6s\n",
+		"Rank", "Top15%", "TOP%", "High%", "MID%", "Overall%", "H_pv", "H_lv", "S_pv", "B_pv")
+	fmt.Println("------ -------- -------- -------- -------- -------- ------ ------ ------ ------")
 	for i, r := range results[:n] {
-		fmt.Printf("%-6d %-8.1f %-8.1f %-8.1f %-8.1f %-6.1f %-6.1f %-6.1f %-6.1f %-6.2f %-6.2f\n",
-			i+1, r.Top15Acc, r.TopAcc, r.MidAcc, r.OverallAcc,
+		fmt.Printf("%-6d %-8.1f %-8.1f %-8.1f %-8.1f %-8.1f %-6.1f %-6.1f %-6.1f %-6.1f\n",
+			i+1, r.Top15Acc, r.TopAcc, r.HighAcc, r.MidAcc, r.OverallAcc,
 			r.Config.PreHERDPriceVel, r.Config.PreHERDListingVel,
-			r.Config.StablePriceVel, r.Config.BrewingMinPVel,
-			r.Config.TierTopMult, r.Config.TierMidMult)
+			r.Config.StablePriceVel, r.Config.BrewingMinPVel)
 	}
 
 	// Print current defaults for comparison.
 	def := lab.DefaultSignalConfig()
-	fmt.Printf("\nCurrent defaults: H_pv=%.0f H_lv=%.0f S_pv=%.1f B_pv=%.1f T_top=%.2f T_mid=%.2f\n",
+	fmt.Printf("\nCurrent defaults: H_pv=%.0f H_lv=%.0f S_pv=%.1f B_pv=%.1f\n",
 		def.PreHERDPriceVel, def.PreHERDListingVel,
-		def.StablePriceVel, def.BrewingMinPVel,
-		def.TierTopMult, def.TierMidMult)
+		def.StablePriceVel, def.BrewingMinPVel)
 }
 
 // loadFromDB fetches all gem snapshots ordered by time.
@@ -326,17 +325,19 @@ func sweep(features []precomputed, lastGems []lab.GemPrice, grid []lab.SignalCon
 		top15Set[g.key] = true
 	}
 
+	// Tier boundaries are data-derived (not config parameters), compute once.
+	tb := lab.DetectTierBoundaries(lastGems)
+
 	results := make([]SweepResult, len(grid))
 
 	for i, cfg := range grid {
-		if i%1000 == 0 {
+		if i%100 == 0 {
 			fmt.Fprintf(os.Stderr, "  Progress: %d/%d\n", i, len(grid))
 		}
 
-		topThresh, midThresh := lab.ComputePriceTiersWithConfig(lastGems, cfg)
-
 		var totalCorrect, totalCount int
 		var topCorrect, topCount int
+		var highCorrect, highCount int
 		var midCorrect, midCount int
 		var lowCorrect, lowCount int
 		var top15Correct, top15Total int
@@ -347,7 +348,7 @@ func sweep(features []precomputed, lastGems []lab.GemPrice, grid []lab.SignalCon
 			actual := directionFromChange(f.futurePct)
 			correct := predicted == actual
 
-			tier := lab.ClassifyPriceTier(f.chaos, topThresh, midThresh)
+			tier := lab.ClassifyTier(f.chaos, tb)
 
 			totalCount++
 			if correct {
@@ -359,6 +360,11 @@ func sweep(features []precomputed, lastGems []lab.GemPrice, grid []lab.SignalCon
 				topCount++
 				if correct {
 					topCorrect++
+				}
+			case "HIGH":
+				highCount++
+				if correct {
+					highCorrect++
 				}
 			case "MID":
 				midCount++
@@ -384,6 +390,7 @@ func sweep(features []precomputed, lastGems []lab.GemPrice, grid []lab.SignalCon
 			Config:     cfg,
 			OverallAcc: pct(totalCorrect, totalCount),
 			TopAcc:     pct(topCorrect, topCount),
+			HighAcc:    pct(highCorrect, highCount),
 			MidAcc:     pct(midCorrect, midCount),
 			LowAcc:     pct(lowCorrect, lowCount),
 			Top15Acc:   pct(top15Correct, top15Total),
@@ -394,6 +401,8 @@ func sweep(features []precomputed, lastGems []lab.GemPrice, grid []lab.SignalCon
 }
 
 // generateGrid produces a focused parameter grid for sweeping.
+// Tier boundaries are now data-derived (not parameters), so the grid
+// sweeps only signal thresholds: 5x4x4x4 = 320 combos.
 func generateGrid() []lab.SignalConfig {
 	base := lab.DefaultSignalConfig()
 	var grid []lab.SignalConfig
@@ -402,23 +411,17 @@ func generateGrid() []lab.SignalConfig {
 		for _, herdLV := range []float64{2, 3, 5, 7} {
 			for _, stablePV := range []float64{1.0, 1.5, 2.0, 2.5} {
 				for _, brewPV := range []float64{1, 2, 3, 5} {
-					for _, tierTop := range []float64{0.5, 0.6, 0.7, 0.8} {
-						for _, tierMid := range []float64{0.10, 0.15, 0.20, 0.25} {
-							cfg := base
-							cfg.PreHERDPriceVel = herdPV
-							cfg.PreHERDListingVel = herdLV
-							cfg.StablePriceVel = stablePV
-							cfg.BrewingMinPVel = brewPV
-							cfg.TierTopMult = tierTop
-							cfg.TierMidMult = tierMid
-							grid = append(grid, cfg)
-						}
-					}
+					cfg := base
+					cfg.PreHERDPriceVel = herdPV
+					cfg.PreHERDListingVel = herdLV
+					cfg.StablePriceVel = stablePV
+					cfg.BrewingMinPVel = brewPV
+					grid = append(grid, cfg)
 				}
 			}
 		}
 	}
-	return grid // 5x4x4x4x4x4 = 5,120 combos
+	return grid // 5x4x4x4 = 320 combos
 }
 
 // velocityFromPoints computes rate of change per hour using last 4 points.
