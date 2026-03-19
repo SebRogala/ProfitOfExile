@@ -20,17 +20,16 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 		Time:               snapTime,
 		PricePercentiles:   make(map[string]float64),
 		ListingPercentiles: make(map[string]float64),
-		HourlyBias:         make([]float64, 24),
-		WeekdayBias:        make([]float64, 7),
 	}
 
-	// Stub bias values: 1.0 (neutral). POE-60 fills in real temporal patterns.
-	for i := range mc.HourlyBias {
-		mc.HourlyBias[i] = 1.0
-	}
-	for i := range mc.WeekdayBias {
-		mc.WeekdayBias[i] = 1.0
-	}
+	// Compute temporal biases from historical data.
+	tb := computeTemporalBiases(history)
+	mc.HourlyBias = tb.HourlyBias[:]
+	mc.HourlyVolatility = tb.HourlyVolatility[:]
+	mc.HourlyActivity = tb.HourlyActivity[:]
+	mc.WeekdayBias = tb.WeekdayBias[:]
+	mc.WeekdayVolatility = tb.WeekdayVolatility[:]
+	mc.WeekdayActivity = tb.WeekdayActivity[:]
 
 	// Filter to active transfigured gems (not corrupted, exclude Trarthus).
 	var active []GemPrice

@@ -749,6 +749,10 @@ func (r *Repository) SignalHistory(ctx context.Context, name, variant string, li
 // SaveMarketContext persists a single market context snapshot.
 // Uses ON CONFLICT DO NOTHING so re-runs for the same time are idempotent.
 func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) error {
+	if err := mc.ValidateTemporalSlices(); err != nil {
+		return fmt.Errorf("lab repo: save market context: %w", err)
+	}
+
 	pricePerc, err := json.Marshal(mc.PricePercentiles)
 	if err != nil {
 		return fmt.Errorf("lab repo: marshal price percentiles: %w", err)
@@ -765,21 +769,41 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 	if err != nil {
 		return fmt.Errorf("lab repo: marshal hourly bias: %w", err)
 	}
+	hourlyVol, err := json.Marshal(mc.HourlyVolatility)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal hourly volatility: %w", err)
+	}
+	hourlyAct, err := json.Marshal(mc.HourlyActivity)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal hourly activity: %w", err)
+	}
 	weekday, err := json.Marshal(mc.WeekdayBias)
 	if err != nil {
 		return fmt.Errorf("lab repo: marshal weekday bias: %w", err)
+	}
+	weekdayVol, err := json.Marshal(mc.WeekdayVolatility)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal weekday volatility: %w", err)
+	}
+	weekdayAct, err := json.Marshal(mc.WeekdayActivity)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal weekday activity: %w", err)
 	}
 
 	_, err = r.pool.Exec(ctx, `
 		INSERT INTO market_context
 		 (time, price_percentiles, listing_percentiles,
 		  velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
-		  total_gems, total_listings, tier_boundaries, hourly_bias, weekday_bias)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		  total_gems, total_listings, tier_boundaries,
+		  hourly_bias, hourly_volatility, hourly_activity,
+		  weekday_bias, weekday_volatility, weekday_activity)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT DO NOTHING`,
 		mc.Time, pricePerc, listPerc,
 		mc.VelocityMean, mc.VelocitySigma, mc.ListingVelMean, mc.ListingVelSigma,
-		mc.TotalGems, mc.TotalListings, tierBounds, hourly, weekday,
+		mc.TotalGems, mc.TotalListings, tierBounds,
+		hourly, hourlyVol, hourlyAct,
+		weekday, weekdayVol, weekdayAct,
 	)
 	if err != nil {
 		return fmt.Errorf("lab repo: insert market context: %w", err)
@@ -791,17 +815,23 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 // Returns (nil, nil) when no rows exist.
 func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, error) {
 	var mc MarketContext
-	var pricePerc, listPerc, tierBounds, hourly, weekday []byte
+	var pricePerc, listPerc, tierBounds []byte
+	var hourly, hourlyVol, hourlyAct []byte
+	var weekday, weekdayVol, weekdayAct []byte
 
 	err := r.pool.QueryRow(ctx, `
 		SELECT time, price_percentiles, listing_percentiles,
 		       velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
-		       total_gems, total_listings, tier_boundaries, hourly_bias, weekday_bias
+		       total_gems, total_listings, tier_boundaries,
+		       hourly_bias, hourly_volatility, hourly_activity,
+		       weekday_bias, weekday_volatility, weekday_activity
 		FROM market_context
 		WHERE time = (SELECT MAX(time) FROM market_context)`).
 		Scan(&mc.Time, &pricePerc, &listPerc,
 			&mc.VelocityMean, &mc.VelocitySigma, &mc.ListingVelMean, &mc.ListingVelSigma,
-			&mc.TotalGems, &mc.TotalListings, &tierBounds, &hourly, &weekday)
+			&mc.TotalGems, &mc.TotalListings, &tierBounds,
+			&hourly, &hourlyVol, &hourlyAct,
+			&weekday, &weekdayVol, &weekdayAct)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -821,8 +851,24 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 	if err := json.Unmarshal(hourly, &mc.HourlyBias); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal hourly bias: %w", err)
 	}
+	if err := json.Unmarshal(hourlyVol, &mc.HourlyVolatility); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal hourly volatility: %w", err)
+	}
+	if err := json.Unmarshal(hourlyAct, &mc.HourlyActivity); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal hourly activity: %w", err)
+	}
 	if err := json.Unmarshal(weekday, &mc.WeekdayBias); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal weekday bias: %w", err)
+	}
+	if err := json.Unmarshal(weekdayVol, &mc.WeekdayVolatility); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal weekday volatility: %w", err)
+	}
+	if err := json.Unmarshal(weekdayAct, &mc.WeekdayActivity); err != nil {
+		return nil, fmt.Errorf("lab repo: unmarshal weekday activity: %w", err)
+	}
+
+	if err := mc.ValidateTemporalSlices(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest market context: %w", err)
 	}
 
 	return &mc, nil
