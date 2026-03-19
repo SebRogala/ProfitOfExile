@@ -33,11 +33,11 @@ func TestBuildEvalPoints_ExactMatch(t *testing.T) {
 	}
 
 	// Spark: (110-100)/100 * 100 = 10%
-	if got := points[0].FuturePct; !approxEqual(got, 10.0) {
+	if got := points[0].FuturePct; !approxEqual(got, 10.0, 0.01) {
 		t.Errorf("Spark futurePct: got %.2f, want 10.0", got)
 	}
 	// Ice Nova: (180-200)/200 * 100 = -10%
-	if got := points[1].FuturePct; !approxEqual(got, -10.0) {
+	if got := points[1].FuturePct; !approxEqual(got, -10.0, 0.01) {
 		t.Errorf("Ice Nova futurePct: got %.2f, want -10.0", got)
 	}
 }
@@ -112,7 +112,7 @@ func TestBuildEvalPoints_WithinTolerance(t *testing.T) {
 		t.Fatalf("expected 1 eval point, got %d", len(points))
 	}
 	// (115-100)/100 * 100 = 15%
-	if got := points[0].FuturePct; !approxEqual(got, 15.0) {
+	if got := points[0].FuturePct; !approxEqual(got, 15.0, 0.01) {
 		t.Errorf("futurePct: got %.2f, want 15.0", got)
 	}
 }
@@ -142,7 +142,7 @@ func TestBuildEvalPoints_PicksClosestWithinWindow(t *testing.T) {
 	}
 	// Should use the 130 chaos (5min late, closer to target)
 	// (130-100)/100 * 100 = 30%
-	if got := points[0].FuturePct; !approxEqual(got, 30.0) {
+	if got := points[0].FuturePct; !approxEqual(got, 30.0, 0.01) {
 		t.Errorf("futurePct: got %.2f, want 30.0", got)
 	}
 }
@@ -201,7 +201,7 @@ func TestBuildEvalPoints_UsesSnapshotBaseline(t *testing.T) {
 		t.Fatalf("expected 1 eval point, got %d", len(points))
 	}
 	// (120-100)/100 * 100 = 20% (based on snapshot price, not feature Chaos)
-	if got := points[0].FuturePct; !approxEqual(got, 20.0) {
+	if got := points[0].FuturePct; !approxEqual(got, 20.0, 0.01) {
 		t.Errorf("futurePct: got %.2f, want 20.0 (should use snapshot baseline)", got)
 	}
 }
@@ -272,12 +272,3 @@ func TestBuildEvalPoints_DroppedCountDiagnostics(t *testing.T) {
 	}
 }
 
-// approxEqual compares two floats within a small tolerance.
-func approxEqual(a, b float64) bool {
-	const epsilon = 0.01
-	diff := a - b
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff < epsilon
-}
