@@ -345,8 +345,32 @@ func TestToSignalConfig_PreservesDefaults(t *testing.T) {
 	if cfg.StableListingVel != defaults.StableListingVel {
 		t.Errorf("StableListingVel: got %.2f, want default %.2f", cfg.StableListingVel, defaults.StableListingVel)
 	}
+	if cfg.DumpListingVel != defaults.DumpListingVel {
+		t.Errorf("DumpListingVel: got %.2f, want default %.2f", cfg.DumpListingVel, defaults.DumpListingVel)
+	}
 	if cfg.RecoveryMaxList != defaults.RecoveryMaxList {
 		t.Errorf("RecoveryMaxList: got %d, want default %d", cfg.RecoveryMaxList, defaults.RecoveryMaxList)
+	}
+	if cfg.OpenMinPVel != defaults.OpenMinPVel {
+		t.Errorf("OpenMinPVel: got %.2f, want default %.2f", cfg.OpenMinPVel, defaults.OpenMinPVel)
+	}
+	if cfg.DrainPct != defaults.DrainPct {
+		t.Errorf("DrainPct: got %.4f, want default %.4f", cfg.DrainPct, defaults.DrainPct)
+	}
+	if cfg.ThinPoolFloor != defaults.ThinPoolFloor {
+		t.Errorf("ThinPoolFloor: got %.2f, want default %.2f", cfg.ThinPoolFloor, defaults.ThinPoolFloor)
+	}
+	if cfg.NormalFloor != defaults.NormalFloor {
+		t.Errorf("NormalFloor: got %.2f, want default %.2f", cfg.NormalFloor, defaults.NormalFloor)
+	}
+	if cfg.BreakoutMaxPrice != defaults.BreakoutMaxPrice {
+		t.Errorf("BreakoutMaxPrice: got %.2f, want default %.2f", cfg.BreakoutMaxPrice, defaults.BreakoutMaxPrice)
+	}
+	if cfg.BreakoutMaxList != defaults.BreakoutMaxList {
+		t.Errorf("BreakoutMaxList: got %d, want default %d", cfg.BreakoutMaxList, defaults.BreakoutMaxList)
+	}
+	if cfg.BreakoutMinLVel != defaults.BreakoutMinLVel {
+		t.Errorf("BreakoutMinLVel: got %.2f, want default %.2f", cfg.BreakoutMinLVel, defaults.BreakoutMinLVel)
 	}
 	if cfg.TrapCV != defaults.TrapCV {
 		t.Errorf("TrapCV: got %.2f, want default %.2f", cfg.TrapCV, defaults.TrapCV)

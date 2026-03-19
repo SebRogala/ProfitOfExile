@@ -156,7 +156,7 @@ func (sc SigmaConfig) ToSignalConfig(mc MarketContext) SignalConfig {
 // Grid: 5×4×4×4 = 320 combos (same size as v1 absolute grid).
 // DumpPriceMult is fixed at 2.0 (not swept).
 func GenerateSigmaGrid() []SigmaConfig {
-	var grid []SigmaConfig
+	grid := make([]SigmaConfig, 0, 320)
 
 	for _, herdP := range []float64{1.5, 2.0, 2.5, 3.0, 3.5} {
 		for _, herdL := range []float64{1.0, 1.5, 2.0, 2.5} {
