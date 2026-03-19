@@ -2,7 +2,6 @@ package lab
 
 import (
 	"math"
-	"strings"
 	"time"
 )
 
@@ -314,19 +313,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 	var results []TrendResult
 
 	for _, g := range current {
-		if g.IsCorrupted {
-			continue
-		}
-		if !g.IsTransfigured {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
-			continue
-		}
-		if g.Chaos <= 5 {
-			continue
-		}
-		if !analysisVariants[g.Variant] {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 || !analysisVariants[g.Variant] {
 			continue
 		}
 
@@ -535,30 +522,7 @@ func sanitizeFloat(v float64) float64 {
 	return v
 }
 
-// velocity computes the rate of change per hour using last 4 data points (or fewer).
-// Uses simple (last - first) / hours between first and last point.
-func velocity(points []PricePoint, extract func(PricePoint) float64) float64 {
-	n := len(points)
-	if n < 2 {
-		return 0
-	}
-
-	// Use at most the last 4 points for rolling 2h window.
-	start := 0
-	if n > 4 {
-		start = n - 4
-	}
-
-	first := points[start]
-	last := points[n-1]
-
-	hours := last.Time.Sub(first.Time).Hours()
-	if hours <= 0 {
-		return 0
-	}
-
-	return (extract(last) - extract(first)) / hours
-}
+// velocity and velocityWindow are defined in velocity.go.
 
 // historicalPosition returns the 7-day high, low, and the current price as a
 // percentile (0-100) within that range.

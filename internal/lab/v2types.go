@@ -18,6 +18,15 @@ type MarketContext struct {
 	WeekdayBias        []float64 // 7 entries, Sun=0..Sat=6 (matches time.Weekday)
 }
 
+// PriceP50 returns the P50 price percentile, or 0 if not available.
+// Centralizes the key string to avoid typos at access sites.
+func (mc MarketContext) PriceP50() float64 {
+	if mc.PricePercentiles == nil {
+		return 0
+	}
+	return mc.PricePercentiles["P50"]
+}
+
 // TierBoundaries holds minimum chaos price thresholds for each tier.
 // A gem is TOP if chaos >= Top, HIGH if chaos >= High, MID if chaos >= Mid, otherwise LOW.
 type TierBoundaries struct {

@@ -209,7 +209,7 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 }
 
 // RunV2 is the entry point for the v2 pre-computed analysis pipeline.
-// Currently only persists a stub MarketContext — GemFeatures (POE-58) and
+// Computes and persists MarketContext and GemFeatures per snapshot.
 // GemSignals (POE-61) computation will be added later.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunV2(ctx context.Context) error {
@@ -242,10 +242,24 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		a.cache.SetMarketContext(&mc)
 	}
 
-	// TODO(POE-58): compute gem features using market context
+	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	inserted, err := a.repo.SaveGemFeatures(ctx, features)
+	if err != nil {
+		a.logger.Error("v2: failed to save gem features", "error", err)
+		return err
+	}
+	if a.cache != nil {
+		a.cache.SetGemFeatures(features)
+	}
+	a.logger.Info("v2 gem features computed",
+		"snapTime", snapTime,
+		"features", len(features),
+		"inserted", inserted,
+	)
+
 	// TODO(POE-61): compute gem signals using features
 
-	a.logger.Info("v2 analysis stub complete", "snapTime", snapTime, "gems", len(gems))
+	a.logger.Info("v2 analysis complete", "snapTime", snapTime, "gems", len(gems))
 	a.throttler.Signal()
 	return nil
 }
