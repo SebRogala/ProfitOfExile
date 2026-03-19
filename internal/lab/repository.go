@@ -1082,3 +1082,76 @@ func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string,
 
 	return results, nil
 }
+
+// AllGemFeaturesInRange returns all gem feature rows within the given time range (hours ago to now).
+// No variant/tier filters, no limit. Ordered by time, name, variant.
+func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]GemFeature, error) {
+	query := `
+		SELECT time, name, variant, chaos, listings, tier,
+		       vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
+		       vel_long_price, vel_long_listing,
+		       cv, hist_position, high_7d, low_7d,
+		       flood_count, crash_count, listing_elasticity,
+		       relative_price, relative_listings
+		FROM gem_features
+		WHERE time > NOW() - make_interval(hours => $1)
+		ORDER BY time, name, variant`
+
+	rows, err := r.pool.Query(ctx, query, hours)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query all gem features in range: %w", err)
+	}
+	defer rows.Close()
+
+	var results []GemFeature
+	for rows.Next() {
+		var f GemFeature
+		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier,
+			&f.VelShortPrice, &f.VelShortListing, &f.VelMedPrice, &f.VelMedListing,
+			&f.VelLongPrice, &f.VelLongListing,
+			&f.CV, &f.HistPosition, &f.High7d, &f.Low7d,
+			&f.FloodCount, &f.CrashCount, &f.ListingElasticity,
+			&f.RelativePrice, &f.RelativeListings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem feature in range: %w", err)
+		}
+		results = append(results, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem features in range rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
+// SnapshotPricesInRange returns lightweight price observations for transfigured,
+// non-corrupted gems with chaos > 5, within the given time range (hours ago to now).
+func (r *Repository) SnapshotPricesInRange(ctx context.Context, hours int) ([]SnapshotPrice, error) {
+	query := `
+		SELECT time, name, variant, COALESCE(chaos, 0)
+		FROM gem_snapshots
+		WHERE time > NOW() - make_interval(hours => $1)
+		  AND is_transfigured = true
+		  AND is_corrupted = false
+		  AND chaos > 5
+		ORDER BY time, name, variant`
+
+	rows, err := r.pool.Query(ctx, query, hours)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query snapshot prices in range: %w", err)
+	}
+	defer rows.Close()
+
+	var results []SnapshotPrice
+	for rows.Next() {
+		var p SnapshotPrice
+		if err := rows.Scan(&p.Time, &p.Name, &p.Variant, &p.Chaos); err != nil {
+			return nil, fmt.Errorf("lab repo: scan snapshot price: %w", err)
+		}
+		results = append(results, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: snapshot prices rows iteration: %w", err)
+	}
+
+	return results, nil
+}

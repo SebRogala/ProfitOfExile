@@ -2,61 +2,80 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/db"
 	"profitofexile/internal/lab"
 )
 
-// Snapshot represents a single gem observation at a point in time.
-type Snapshot struct {
-	Time           time.Time
-	Name           string
-	Variant        string
-	Chaos          float64
-	Listings       int
-	IsTransfigured bool
-	GemColor       string
+// JSONOutput is the structured output for --json mode.
+type JSONOutput struct {
+	Context    JSONContext        `json:"context"`
+	Results    []JSONResult       `json:"results"`
+	BestDetail *JSONBestDetail   `json:"best_detail,omitempty"`
+	Defaults   *JSONDefaults      `json:"defaults,omitempty"`
 }
 
-// gemKey uniquely identifies a gem across snapshots.
-type gemKey struct {
-	Name    string
-	Variant string
+// JSONContext holds metadata about the optimization run.
+type JSONContext struct {
+	MarketTime      time.Time `json:"market_time"`
+	TotalGems       int       `json:"total_gems"`
+	VelocityMean    float64   `json:"velocity_mean"`
+	VelocitySigma   float64   `json:"velocity_sigma"`
+	ListingVelMean  float64   `json:"listing_vel_mean"`
+	ListingVelSigma float64   `json:"listing_vel_sigma"`
+	EvalPoints      int       `json:"eval_points"`
+	DroppedPoints   int       `json:"dropped_points"`
+	GridSize        int       `json:"grid_size"`
+	Hours           int       `json:"hours"`
+	Horizon         string    `json:"horizon"`
 }
 
-// precomputed holds config-independent features for one (gem, time) evaluation point.
-type precomputed struct {
-	gem        gemKey
-	chaos      float64
-	listings   int
-	priceVel   float64
-	listingVel float64
-	cv         float64
-	futurePct  float64 // actual price change % (4 snapshots ahead)
+// JSONResult holds one sweep result row.
+type JSONResult struct {
+	Rank          int                `json:"rank"`
+	WeightedScore float64           `json:"weighted_score"`
+	TopAcc        float64           `json:"top_acc"`
+	HighAcc       float64           `json:"high_acc"`
+	MidAcc        float64           `json:"mid_acc"`
+	LowAcc        float64           `json:"low_acc"`
+	OverallAcc    float64           `json:"overall_acc"`
+	SweetSpot     int               `json:"sweet_spot"`
+	Sigma         lab.SigmaConfig   `json:"sigma"`
+	TemporalAcc   map[string]float64 `json:"temporal_acc,omitempty"`
 }
 
-// SweepResult holds the accuracy metrics for one parameter combination.
-type SweepResult struct {
-	Config     lab.SignalConfig
-	OverallAcc float64
-	TopAcc     float64
-	HighAcc    float64
-	MidAcc     float64
-	LowAcc     float64
-	Top15Acc   float64
+// JSONBestDetail holds extended info about the best result.
+type JSONBestDetail struct {
+	ConfBands   []lab.ConfidenceBand `json:"confidence_bands"`
+	TemporalAcc map[string]float64   `json:"temporal_acc"`
+}
+
+// JSONDefaults holds the approximate sigma equivalents of current defaults.
+type JSONDefaults struct {
+	ApproxHERDPriceMult    float64 `json:"approx_herd_price_mult"`
+	ApproxHERDListingMult  float64 `json:"approx_herd_listing_mult"`
+	ApproxStablePriceMult  float64 `json:"approx_stable_price_mult"`
+	ApproxBrewingPriceMult float64 `json:"approx_brewing_price_mult"`
 }
 
 func main() {
-	topN := flag.Int("top", 15, "Show top N parameter combos")
+	topN := flag.Int("top", 15, "Show top N results")
+	hours := flag.Int("hours", 168, "Backtest time range in hours")
+	horizon := flag.String("horizon", "2h", "Ground truth forward horizon (e.g. 2h, 90m)")
+	jsonMode := flag.Bool("json", false, "Output JSON instead of console table")
 	flag.Parse()
+
+	horizonDur, err := time.ParseDuration(*horizon)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid horizon %q: %v\n", *horizon, err)
+		os.Exit(1)
+	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -71,420 +90,220 @@ func main() {
 	}
 	defer pool.Close()
 
-	fmt.Fprintln(os.Stderr, "Loading snapshots from database...")
-	t0 := time.Now()
-	snapshots := loadFromDB(ctx, pool)
-	fmt.Fprintf(os.Stderr, "Loaded %d snapshots in %s\n", len(snapshots), time.Since(t0).Round(time.Millisecond))
+	repo := lab.NewRepository(pool)
 
-	if len(snapshots) == 0 {
-		fmt.Fprintln(os.Stderr, "No snapshots found")
+	// Load market context.
+	fmt.Fprintln(os.Stderr, "Loading market context...")
+	mc, err := repo.LatestMarketContext(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load market context: %v\n", err)
+		os.Exit(1)
+	}
+	if mc == nil {
+		fmt.Fprintln(os.Stderr, "No market context found — run the analyzer pipeline first")
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stderr, "Pre-computing features (velocities, CVs, future outcomes)...")
+	// Load gem features.
+	fmt.Fprintf(os.Stderr, "Loading gem features (%dh range)...\n", *hours)
+	t0 := time.Now()
+	features, err := repo.AllGemFeaturesInRange(ctx, *hours)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load gem features: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Loaded %d features in %s\n", len(features), time.Since(t0).Round(time.Millisecond))
+
+	// Load snapshot prices for ground truth.
+	fmt.Fprintf(os.Stderr, "Loading snapshot prices (%dh range)...\n", *hours)
 	t1 := time.Now()
-	features, lastGems, marketCtx := precomputeFeatures(snapshots)
-	fmt.Fprintf(os.Stderr, "Pre-computed %d evaluation points in %s\n", len(features), time.Since(t1).Round(time.Millisecond))
-	fmt.Fprintf(os.Stderr, "Market context: %d gems, vel_mean=%.2f vel_sigma=%.2f\n",
-		marketCtx.TotalGems, marketCtx.VelocityMean, marketCtx.VelocitySigma)
+	prices, err := repo.SnapshotPricesInRange(ctx, *hours)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load snapshot prices: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Loaded %d prices in %s\n", len(prices), time.Since(t1).Round(time.Millisecond))
 
-	grid := generateGrid()
-	fmt.Fprintf(os.Stderr, "Sweeping %d parameter combos...\n", len(grid))
+	// Build evaluation points.
+	fmt.Fprintf(os.Stderr, "Building eval points (horizon=%s)...\n", horizonDur)
+	evals, dropped := lab.BuildEvalPoints(features, prices, horizonDur)
+	fmt.Fprintf(os.Stderr, "Built %d eval points, dropped %d (no valid future price)\n", len(evals), dropped)
 
+	if len(evals) < 1000 {
+		fmt.Fprintf(os.Stderr, "WARNING: Only %d eval points — results may be unreliable (recommend >= 1000)\n", len(evals))
+	}
+
+	if len(evals) == 0 {
+		fmt.Fprintln(os.Stderr, "No eval points — cannot sweep. Check time range and data freshness.")
+		os.Exit(1)
+	}
+
+	// Generate grid and sweep.
+	grid := lab.GenerateSigmaGrid()
+	fmt.Fprintf(os.Stderr, "Sweeping %d sigma combos over %d eval points...\n", len(grid), len(evals))
 	t2 := time.Now()
-	results := sweep(features, lastGems, grid)
+	results := lab.SweepV2(evals, *mc, grid)
 	fmt.Fprintf(os.Stderr, "Sweep complete in %s\n", time.Since(t2).Round(time.Millisecond))
-
-	// Sort by top-15 accuracy descending.
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Top15Acc > results[j].Top15Acc
-	})
 
 	n := *topN
 	if n > len(results) {
 		n = len(results)
 	}
 
-	fmt.Printf("\n%-6s %-8s %-8s %-8s %-8s %-8s %-6s %-6s %-6s %-6s\n",
-		"Rank", "Top15%", "TOP%", "High%", "MID%", "Overall%", "H_pv", "H_lv", "S_pv", "B_pv")
-	fmt.Println("------ -------- -------- -------- -------- -------- ------ ------ ------ ------")
-	for i, r := range results[:n] {
-		fmt.Printf("%-6d %-8.1f %-8.1f %-8.1f %-8.1f %-8.1f %-6.1f %-6.1f %-6.1f %-6.1f\n",
-			i+1, r.Top15Acc, r.TopAcc, r.HighAcc, r.MidAcc, r.OverallAcc,
-			r.Config.PreHERDPriceVel, r.Config.PreHERDListingVel,
-			r.Config.StablePriceVel, r.Config.BrewingMinPVel)
+	if *jsonMode {
+		printJSON(results[:n], mc, len(evals), dropped, len(grid), *hours, *horizon)
+	} else {
+		printConsole(results[:n], mc, len(evals), dropped, len(grid), *hours, *horizon)
+	}
+}
+
+// printConsole outputs the multi-section human-readable report.
+func printConsole(results []lab.SweepResultV2, mc *lab.MarketContext, evalCount, droppedCount, gridSize, hours int, horizon string) {
+	// Section 1: Context
+	fmt.Println()
+	fmt.Println("=== OPTIMIZER v2 CONTEXT ===")
+	fmt.Printf("  Market time:       %s\n", mc.Time.Format(time.RFC3339))
+	fmt.Printf("  Total gems:        %d\n", mc.TotalGems)
+	fmt.Printf("  Velocity:          mean=%.2f sigma=%.2f\n", mc.VelocityMean, mc.VelocitySigma)
+	fmt.Printf("  Listing velocity:  mean=%.2f sigma=%.2f\n", mc.ListingVelMean, mc.ListingVelSigma)
+	fmt.Printf("  Eval points:       %d (dropped %d)\n", evalCount, droppedCount)
+	fmt.Printf("  Grid size:         %d combos\n", gridSize)
+	fmt.Printf("  Time range:        %dh, horizon=%s\n", hours, horizon)
+	fmt.Println()
+
+	// Section 2: Top N table
+	fmt.Println("=== TOP RESULTS (sorted by weighted score) ===")
+	fmt.Println()
+	fmt.Printf("%-5s %-9s %-7s %-7s %-7s %-7s %-9s %-6s  %-7s %-7s %-7s %-7s %-7s\n",
+		"Rank", "WtScore", "TOP%", "HIGH%", "MID%", "LOW%", "Overall%", "Sweet",
+		"HP_m", "HL_m", "SP_m", "BP_m", "DP_m")
+	fmt.Println(strings.Repeat("-", 105))
+
+	for i, r := range results {
+		sweetStr := fmt.Sprintf("%d", r.SweetSpot)
+		if r.SweetSpot < 0 {
+			sweetStr = "  -"
+		}
+		fmt.Printf("%-5d %-9.1f %-7.1f %-7.1f %-7.1f %-7.1f %-9.1f %-6s  %-7.2f %-7.2f %-7.2f %-7.2f %-7.2f\n",
+			i+1, r.WeightedScore, r.TopAcc, r.HighAcc, r.MidAcc, r.LowAcc, r.OverallAcc, sweetStr,
+			r.Sigma.HERDPriceMult, r.Sigma.HERDListingMult,
+			r.Sigma.StablePriceMult, r.Sigma.BrewingPriceMult, r.Sigma.DumpPriceMult)
 	}
 
-	// Print current defaults for comparison.
+	// Section 3: Best result confidence breakdown
+	if len(results) > 0 {
+		best := results[0]
+		fmt.Println()
+		fmt.Println("=== BEST RESULT — CONFIDENCE BANDS ===")
+		fmt.Printf("  Config: HP_m=%.2f  HL_m=%.2f  SP_m=%.2f  BP_m=%.2f  DP_m=%.2f\n",
+			best.Sigma.HERDPriceMult, best.Sigma.HERDListingMult,
+			best.Sigma.StablePriceMult, best.Sigma.BrewingPriceMult, best.Sigma.DumpPriceMult)
+		fmt.Printf("  Total evals: %d  High-conf evals (>=70): %d\n", best.TotalEvals, best.HighConfEvals)
+		fmt.Println()
+		fmt.Printf("  %-12s %-10s %-8s\n", "Conf Range", "Accuracy", "Count")
+		fmt.Printf("  %s\n", strings.Repeat("-", 32))
+		for _, b := range best.ConfBands {
+			fmt.Printf("  %-12s %-10.1f %-8d\n",
+				fmt.Sprintf("%d-%d", b.MinConf, b.MaxConf), b.Accuracy, b.Count)
+		}
+
+		// Section 4: Best result temporal accuracy
+		fmt.Println()
+		fmt.Println("=== BEST RESULT — TEMPORAL ACCURACY ===")
+		phases := []string{"weekday-peak", "weekday-offpeak", "weekend"}
+		for _, phase := range phases {
+			acc, ok := best.TemporalAcc[phase]
+			if ok {
+				fmt.Printf("  %-20s %.1f%%\n", phase, acc)
+			} else {
+				fmt.Printf("  %-20s (no data)\n", phase)
+			}
+		}
+	}
+
+	// Section 5: Current defaults comparison
+	fmt.Println()
+	fmt.Println("=== CURRENT DEFAULTS (approximate sigma equivalents) ===")
 	def := lab.DefaultSignalConfig()
-	fmt.Printf("\nCurrent defaults: H_pv=%.0f H_lv=%.0f S_pv=%.1f B_pv=%.1f\n",
-		def.PreHERDPriceVel, def.PreHERDListingVel,
-		def.StablePriceVel, def.BrewingMinPVel)
+	approxHP, approxHL, approxSP, approxBP := approxSigmaEquivalents(def, mc)
+	fmt.Printf("  PreHERDPriceVel=%.0f   -> approx HP_m=%.2f\n", def.PreHERDPriceVel, approxHP)
+	fmt.Printf("  PreHERDListingVel=%.0f  -> approx HL_m=%.2f\n", def.PreHERDListingVel, approxHL)
+	fmt.Printf("  StablePriceVel=%.1f     -> approx SP_m=%.2f\n", def.StablePriceVel, approxSP)
+	fmt.Printf("  BrewingMinPVel=%.1f     -> approx BP_m=%.2f\n", def.BrewingMinPVel, approxBP)
+	fmt.Println()
 }
 
-// loadFromDB fetches all gem snapshots ordered by time.
-func loadFromDB(ctx context.Context, pool *pgxpool.Pool) []Snapshot {
-	q := `SELECT time, name, variant, chaos, listings, is_transfigured, gem_color
-	      FROM gem_snapshots ORDER BY time`
-
-	rows, err := pool.Query(ctx, q)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Query failed: %v\n", err)
-		return nil
-	}
-	defer rows.Close()
-
-	var out []Snapshot
-	for rows.Next() {
-		var s Snapshot
-		var gemColor *string
-		if err := rows.Scan(&s.Time, &s.Name, &s.Variant, &s.Chaos, &s.Listings, &s.IsTransfigured, &gemColor); err != nil {
-			fmt.Fprintf(os.Stderr, "Scan error: %v\n", err)
-			continue
-		}
-		if gemColor != nil {
-			s.GemColor = *gemColor
-		}
-		out = append(out, s)
-	}
-	if err := rows.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "Rows error: %v\n", err)
-	}
-	return out
-}
-
-// precomputeFeatures builds all config-independent evaluation points in one pass.
-// Returns the feature slice, the last snapshot's gem prices (for tier computation),
-// and a MarketContext computed from the last snapshot.
-func precomputeFeatures(snapshots []Snapshot) ([]precomputed, []lab.GemPrice, *lab.MarketContext) {
-	// Group snapshots by time.
-	timeMap := make(map[time.Time]map[gemKey]Snapshot)
-	var times []time.Time
-
-	for _, s := range snapshots {
-		t := s.Time.Truncate(time.Minute)
-		if _, ok := timeMap[t]; !ok {
-			timeMap[t] = make(map[gemKey]Snapshot)
-			times = append(times, t)
-		}
-		timeMap[t][gemKey{s.Name, s.Variant}] = s
-	}
-	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
-
-	// Build last snapshot gem prices for tier computation.
-	var lastGems []lab.GemPrice
-	if len(times) > 0 {
-		for _, s := range timeMap[times[len(times)-1]] {
-			lastGems = append(lastGems, lab.GemPrice{
-				Name:           s.Name,
-				Variant:        s.Variant,
-				Chaos:          s.Chaos,
-				Listings:       s.Listings,
-				IsTransfigured: s.IsTransfigured,
-				GemColor:       s.GemColor,
-			})
-		}
+// printJSON outputs the structured JSON report.
+func printJSON(results []lab.SweepResultV2, mc *lab.MarketContext, evalCount, droppedCount, gridSize, hours int, horizon string) {
+	out := JSONOutput{
+		Context: JSONContext{
+			MarketTime:      mc.Time,
+			TotalGems:       mc.TotalGems,
+			VelocityMean:    mc.VelocityMean,
+			VelocitySigma:   mc.VelocitySigma,
+			ListingVelMean:  mc.ListingVelMean,
+			ListingVelSigma: mc.ListingVelSigma,
+			EvalPoints:      evalCount,
+			DroppedPoints:   droppedCount,
+			GridSize:        gridSize,
+			Hours:           hours,
+			Horizon:         horizon,
+		},
+		Results: make([]JSONResult, 0, len(results)),
 	}
 
-	// Rolling history per gem.
-	type histEntry struct {
-		points []lab.PricePoint
-	}
-	gemHist := make(map[gemKey]*histEntry)
-
-	var features []precomputed
-
-	for ti, t := range times {
-		gems := timeMap[t]
-
-		// Update history.
-		for gk, s := range gems {
-			h, ok := gemHist[gk]
-			if !ok {
-				h = &histEntry{}
-				gemHist[gk] = h
-			}
-			h.points = append(h.points, lab.PricePoint{
-				Time:     s.Time,
-				Chaos:    s.Chaos,
-				Listings: s.Listings,
-			})
-			if len(h.points) > 8 {
-				h.points = h.points[len(h.points)-8:]
-			}
-		}
-
-		// Need history and future.
-		if ti < 1 || ti+4 >= len(times) {
-			continue
-		}
-
-		futureGems := timeMap[times[ti+4]]
-
-		for gk, s := range gems {
-			if !s.IsTransfigured || s.Chaos <= 5 {
-				continue
-			}
-
-			h := gemHist[gk]
-			if h == nil || len(h.points) < 2 {
-				continue
-			}
-
-			futureSnap, ok := futureGems[gk]
-			if !ok {
-				continue
-			}
-
-			priceVel := lab.VelocityWindow(h.points, 2*time.Hour, func(p lab.PricePoint) float64 { return p.Chaos })
-			listingVel := lab.VelocityWindow(h.points, 2*time.Hour, func(p lab.PricePoint) float64 { return float64(p.Listings) })
-			cv := cvFromPoints(h.points)
-
-			var futurePct float64
-			if s.Chaos > 0 {
-				futurePct = (futureSnap.Chaos - s.Chaos) / s.Chaos * 100
-			}
-
-			features = append(features, precomputed{
-				gem:        gk,
-				chaos:      s.Chaos,
-				listings:   s.Listings,
-				priceVel:   priceVel,
-				listingVel: listingVel,
-				cv:         cv,
-				futurePct:  futurePct,
-			})
-		}
-	}
-
-	// Build a set of transfigured gem keys from the last snapshot so that
-	// histSlice only includes history for the active population (matching the
-	// analyzer's GemPriceHistoryByVariant which filters to transfigured,
-	// non-corrupted, non-Trarthus gems with chaos > 5).
-	transfiguredKeys := make(map[gemKey]bool)
-	if len(times) > 0 {
-		for _, s := range timeMap[times[len(times)-1]] {
-			if s.IsTransfigured && !strings.Contains(s.Name, "Trarthus") {
-				transfiguredKeys[gemKey{s.Name, s.Variant}] = true
-			}
-		}
-	}
-
-	var histSlice []lab.GemPriceHistory
-	for gk, h := range gemHist {
-		if len(h.points) < 2 {
-			continue
-		}
-		if !transfiguredKeys[gk] {
-			continue
-		}
-		histSlice = append(histSlice, lab.GemPriceHistory{
-			Name:    gk.Name,
-			Variant: gk.Variant,
-			Points:  h.points,
+	for i, r := range results {
+		out.Results = append(out.Results, JSONResult{
+			Rank:          i + 1,
+			WeightedScore: r.WeightedScore,
+			TopAcc:        r.TopAcc,
+			HighAcc:       r.HighAcc,
+			MidAcc:        r.MidAcc,
+			LowAcc:        r.LowAcc,
+			OverallAcc:    r.OverallAcc,
+			SweetSpot:     r.SweetSpot,
+			Sigma:         r.Sigma,
+			TemporalAcc:   r.TemporalAcc,
 		})
 	}
 
-	// Compute market context from the last snapshot's gems and accumulated history.
-	var snapTime time.Time
-	if len(times) > 0 {
-		snapTime = times[len(times)-1]
-	}
-	mc := lab.ComputeMarketContext(snapTime, lastGems, histSlice)
-
-	return features, lastGems, &mc
-}
-
-// sweep evaluates every config against pre-computed features.
-func sweep(features []precomputed, lastGems []lab.GemPrice, grid []lab.SignalConfig) []SweepResult {
-	// Pre-compute gem average ROIs for top-15 set (config-independent).
-	gemROIs := make(map[gemKey]struct{ sum float64; count int })
-	for _, f := range features {
-		entry := gemROIs[f.gem]
-		entry.sum += f.futurePct
-		entry.count++
-		gemROIs[f.gem] = entry
-	}
-
-	type gemAvgROI struct {
-		key gemKey
-		avg float64
-	}
-	var sorted []gemAvgROI
-	for gk, entry := range gemROIs {
-		sorted = append(sorted, gemAvgROI{gk, entry.sum / float64(entry.count)})
-	}
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].avg > sorted[j].avg })
-
-	top15Count := 15
-	if top15Count > len(sorted) {
-		top15Count = len(sorted)
-	}
-	top15Set := make(map[gemKey]bool, top15Count)
-	for _, g := range sorted[:top15Count] {
-		top15Set[g.key] = true
-	}
-
-	// Tier boundaries are data-derived (not config parameters), compute once.
-	tb := lab.DetectTierBoundaries(lastGems)
-
-	results := make([]SweepResult, len(grid))
-
-	for i, cfg := range grid {
-		if i%100 == 0 {
-			fmt.Fprintf(os.Stderr, "  Progress: %d/%d\n", i, len(grid))
-		}
-
-		var totalCorrect, totalCount int
-		var topCorrect, topCount int
-		var highCorrect, highCount int
-		var midCorrect, midCount int
-		var lowCorrect, lowCount int
-		var top15Correct, top15Total int
-
-		for _, f := range features {
-			signal := lab.ClassifySignalWithConfig(f.priceVel, f.listingVel, f.cv, f.listings, cfg)
-			predicted := predictedDirection(signal)
-			actual := directionFromChange(f.futurePct)
-			correct := predicted == actual
-
-			tier := lab.ClassifyTier(f.chaos, tb)
-
-			totalCount++
-			if correct {
-				totalCorrect++
-			}
-
-			switch tier {
-			case "TOP":
-				topCount++
-				if correct {
-					topCorrect++
-				}
-			case "HIGH":
-				highCount++
-				if correct {
-					highCorrect++
-				}
-			case "MID":
-				midCount++
-				if correct {
-					midCorrect++
-				}
-			case "LOW":
-				lowCount++
-				if correct {
-					lowCorrect++
-				}
-			}
-
-			if top15Set[f.gem] {
-				top15Total++
-				if correct {
-					top15Correct++
-				}
-			}
-		}
-
-		results[i] = SweepResult{
-			Config:     cfg,
-			OverallAcc: pct(totalCorrect, totalCount),
-			TopAcc:     pct(topCorrect, topCount),
-			HighAcc:    pct(highCorrect, highCount),
-			MidAcc:     pct(midCorrect, midCount),
-			LowAcc:     pct(lowCorrect, lowCount),
-			Top15Acc:   pct(top15Correct, top15Total),
+	if len(results) > 0 {
+		best := results[0]
+		out.BestDetail = &JSONBestDetail{
+			ConfBands:   best.ConfBands,
+			TemporalAcc: best.TemporalAcc,
 		}
 	}
 
-	return results
-}
+	def := lab.DefaultSignalConfig()
+	approxHP, approxHL, approxSP, approxBP := approxSigmaEquivalents(def, mc)
+	out.Defaults = &JSONDefaults{
+		ApproxHERDPriceMult:    approxHP,
+		ApproxHERDListingMult:  approxHL,
+		ApproxStablePriceMult:  approxSP,
+		ApproxBrewingPriceMult: approxBP,
+	}
 
-// generateGrid produces a focused parameter grid for sweeping.
-// Tier boundaries are now data-derived (not parameters), so the grid
-// sweeps only signal thresholds: 5x4x4x4 = 320 combos.
-func generateGrid() []lab.SignalConfig {
-	base := lab.DefaultSignalConfig()
-	var grid []lab.SignalConfig
-
-	for _, herdPV := range []float64{20, 25, 30, 35, 40} {
-		for _, herdLV := range []float64{2, 3, 5, 7} {
-			for _, stablePV := range []float64{1.0, 1.5, 2.0, 2.5} {
-				for _, brewPV := range []float64{1, 2, 3, 5} {
-					cfg := base
-					cfg.PreHERDPriceVel = herdPV
-					cfg.PreHERDListingVel = herdLV
-					cfg.StablePriceVel = stablePV
-					cfg.BrewingMinPVel = brewPV
-					grid = append(grid, cfg)
-				}
-			}
-		}
-	}
-	return grid // 5x4x4x4 = 320 combos
-}
-
-// velocityFromPoints removed — now uses lab.VelocityWindow directly.
-
-// cvFromPoints computes coefficient of variation from price history.
-func cvFromPoints(points []lab.PricePoint) float64 {
-	if len(points) < 2 {
-		return 0
-	}
-	prices := make([]float64, len(points))
-	for i, p := range points {
-		prices[i] = p.Chaos
-	}
-	var sum float64
-	for _, p := range prices {
-		sum += p
-	}
-	mean := sum / float64(len(prices))
-	if mean == 0 {
-		return 0
-	}
-	var variance float64
-	for _, p := range prices {
-		d := p - mean
-		variance += d * d
-	}
-	variance /= float64(len(prices))
-	cv := (math.Sqrt(variance) / math.Abs(mean)) * 100
-	if math.IsNaN(cv) || math.IsInf(cv, 0) {
-		return 0
-	}
-	return cv
-}
-
-// directionFromChange maps a price change % into UP, DOWN, or FLAT.
-func directionFromChange(pctChange float64) string {
-	if pctChange > 2 {
-		return "UP"
-	}
-	if pctChange < -2 {
-		return "DOWN"
-	}
-	return "FLAT"
-}
-
-// predictedDirection maps a signal to an expected price direction.
-func predictedDirection(signal string) string {
-	switch signal {
-	case "HERD", "RISING", "RECOVERY":
-		return "UP"
-	case "DUMPING", "FALLING", "TRAP":
-		return "DOWN"
-	case "STABLE":
-		return "FLAT"
-	default:
-		return "FLAT"
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "JSON encode error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
-// pct returns a percentage, handling division by zero.
-func pct(correct, total int) float64 {
-	if total == 0 {
-		return 0
+// approxSigmaEquivalents computes approximate sigma multipliers for the current
+// default absolute thresholds by dividing by the market context's sigma values.
+// Returns 0 for any field where the corresponding sigma is zero (avoids NaN in JSON output).
+// This is a simple division for reference, not an exact inversion.
+func approxSigmaEquivalents(def lab.SignalConfig, mc *lab.MarketContext) (herdP, herdL, stableP, brewP float64) {
+	if mc.VelocitySigma > 0 {
+		herdP = (def.PreHERDPriceVel - mc.VelocityMean) / mc.VelocitySigma
+		stableP = def.StablePriceVel / mc.VelocitySigma
+		brewP = def.BrewingMinPVel / mc.VelocitySigma
 	}
-	return float64(correct) / float64(total) * 100
+	if mc.ListingVelSigma > 0 {
+		herdL = (def.PreHERDListingVel - mc.ListingVelMean) / mc.ListingVelSigma
+	}
+	return
 }
