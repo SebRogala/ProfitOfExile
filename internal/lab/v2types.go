@@ -15,7 +15,11 @@ type MarketContext struct {
 	TotalListings      int
 	TierBoundaries     TierBoundaries
 	HourlyBias         []float64 // 24 entries, one per UTC hour
+	HourlyVolatility   []float64 // 24 entries — σ of price changes per hour
+	HourlyActivity     []float64 // 24 entries — ratio of moving gems per hour (0.0-1.0)
 	WeekdayBias        []float64 // 7 entries, Sun=0..Sat=6 (matches time.Weekday)
+	WeekdayVolatility  []float64 // 7 entries — σ of price changes per weekday
+	WeekdayActivity    []float64 // 7 entries — ratio of moving gems per weekday (0.0-1.0)
 }
 
 // PriceP50 returns the P50 price percentile, or 0 if not available.
