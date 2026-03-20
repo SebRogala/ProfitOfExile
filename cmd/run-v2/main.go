@@ -95,8 +95,11 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 			continue // skip on conflict
 		}
 
+		// Normalize history using temporal coefficients before computing features.
+		normalizedHistory := lab.NormalizeHistoryFromMC(history, mc)
+
 		// Compute gem features.
-		features := lab.ComputeGemFeatures(snapTime, gems, history, mc)
+		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
 		repo.SaveGemFeatures(ctx, features)
 
 		// Compute gem signals (need base history).

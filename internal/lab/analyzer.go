@@ -241,7 +241,10 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		a.cache.SetMarketContext(&mc)
 	}
 
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	// Normalize history using temporal coefficients before computing features.
+	normalizedHistory := NormalizeHistoryFromMC(history, mc)
+
+	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
 	inserted, err := a.repo.SaveGemFeatures(ctx, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)

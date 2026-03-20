@@ -90,6 +90,9 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 	// Compute tier boundaries using natural gap detection.
 	mc.TierBoundaries = DetectTierBoundaries(gems)
 
+	// Compute temporal normalization coefficients from history.
+	mc.TemporalCoefficient, mc.TemporalMode, mc.TemporalBuckets = computeTemporalCoefficients(snapTime, history)
+
 	return mc
 }
 
