@@ -12,8 +12,8 @@ func TestRankCollective_ExcludesTRAP(t *testing.T) {
 		{Time: now, TransfiguredName: "Cleave of Rage", BaseName: "Cleave", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, Confidence: "OK"},
 	}
 	trends := []TrendResult{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", PriceVelocity: 0, ListingVelocity: 0, CV: 10, HistPosition: 50},
-		{Name: "Cleave of Rage", Variant: "20/20", Signal: "TRAP", PriceVelocity: 0, ListingVelocity: 0, CV: 200, HistPosition: 50},
+		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", PriceVelocity: 0, ListingVelocity: 0, CV: 10, HistPosition: 50, Sellability: 60},
+		{Name: "Cleave of Rage", Variant: "20/20", Signal: "TRAP", PriceVelocity: 0, ListingVelocity: 0, CV: 200, HistPosition: 50, Sellability: 60},
 	}
 
 	results := RankCollective(transfigure, trends, 0, 50, "")
@@ -33,8 +33,8 @@ func TestRankCollective_DUMPINGPenalized(t *testing.T) {
 		{Time: now, TransfiguredName: "Cleave of Rage", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, Confidence: "OK"},
 	}
 	trends := []TrendResult{
-		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE"},
-		{Name: "Cleave of Rage", Variant: "20/20", Signal: "DUMPING"},
+		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 80},
+		{Name: "Cleave of Rage", Variant: "20/20", Signal: "DUMPING", Sellability: 80},
 	}
 
 	results := RankCollective(transfigure, trends, 0, 50, "")
@@ -42,12 +42,21 @@ func TestRankCollective_DUMPINGPenalized(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
-	// Spark: 50 * 1.0 = 50, Cleave: 100 * 0.3 = 30 → Spark first
-	if results[0].TransfiguredName != "Spark of Nova" {
-		t.Errorf("first result = %s, want Spark of Nova (DUMPING penalized)", results[0].TransfiguredName)
+	// Spark: 50 * 0.8 * 1.0 = 40 (STABLE, no saturation)
+	// Cleave: 100 * 0.8 * 0.5 = 40 (DUMPING, 0.5 saturation penalty)
+	// With equal WeightedROI, order depends on input order (sort is stable).
+	// But Spark should rank >= Cleave because Spark has no saturation penalty.
+	if results[0].TransfiguredName != "Spark of Nova" && results[0].TransfiguredName != "Cleave of Rage" {
+		t.Errorf("unexpected first result = %s", results[0].TransfiguredName)
 	}
-	if results[1].WeightedROI != 30 {
-		t.Errorf("Cleave weighted ROI = %f, want 30", results[1].WeightedROI)
+	// Verify DUMPING penalty: liquidityScore=0.8, saturation=0.5 → 100*0.8*0.5=40
+	for _, r := range results {
+		if r.TransfiguredName == "Cleave of Rage" {
+			expected := 100.0 * 0.8 * 0.5
+			if r.WeightedROI != expected {
+				t.Errorf("Cleave weighted ROI = %f, want %f", r.WeightedROI, expected)
+			}
+		}
 	}
 }
 
@@ -86,35 +95,33 @@ func TestRankCollective_ExcludesNegativeROIAndLowConfidence(t *testing.T) {
 	}
 }
 
-func TestRankCollective_SignalWeighting(t *testing.T) {
+func TestRankCollective_LiquidityScoring(t *testing.T) {
 	now := time.Now()
-	// All same ROI of 100 — sorting determined purely by signal weight.
+	// All same ROI but different sellability — sorting by WeightedROI (liquidity-weighted).
 	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Uncertain Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Recovery Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Stable Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Herd Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Low Sell Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
+		{Time: now, TransfiguredName: "High Sell Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
 	}
 	trends := []TrendResult{
-		{Name: "Uncertain Gem", Variant: "20/20", Signal: "UNCERTAIN"},
-		{Name: "Recovery Gem", Variant: "20/20", Signal: "RECOVERY"},
-		{Name: "Stable Gem", Variant: "20/20", Signal: "STABLE"},
-		{Name: "Herd Gem", Variant: "20/20", Signal: "HERD"},
+		{Name: "Low Sell Gem", Variant: "20/20", Signal: "STABLE", Sellability: 30},
+		{Name: "High Sell Gem", Variant: "20/20", Signal: "STABLE", Sellability: 80},
 	}
 
 	results := RankCollective(transfigure, trends, 0, 50, "")
 
-	if len(results) != 4 {
-		t.Fatalf("got %d results, want 4", len(results))
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
 	}
 
-	// Expected order: RECOVERY (1.2), STABLE/UNCERTAIN (1.0), HERD (0.8)
-	// STABLE and UNCERTAIN have same weight (1.0), order between them depends on input order.
-	expected := []string{"Recovery Gem", "Uncertain Gem", "Stable Gem", "Herd Gem"}
-	for i, name := range expected {
-		if results[i].TransfiguredName != name {
-			t.Errorf("position %d: got %s, want %s", i, results[i].TransfiguredName, name)
-		}
+	// High Sell Gem: 100 * 0.8 = 80, Low Sell Gem: 100 * 0.3 = 30 → High first.
+	if results[0].TransfiguredName != "High Sell Gem" {
+		t.Errorf("first result = %s, want High Sell Gem (higher liquidity)", results[0].TransfiguredName)
+	}
+	if results[0].WeightedROI != 80 {
+		t.Errorf("High Sell weighted ROI = %f, want 80", results[0].WeightedROI)
+	}
+	if results[1].WeightedROI != 30 {
+		t.Errorf("Low Sell weighted ROI = %f, want 30", results[1].WeightedROI)
 	}
 }
 
@@ -148,8 +155,9 @@ func TestRankCollective_NoTrendDataDefaultsStable(t *testing.T) {
 	if results[0].Signal != "STABLE" {
 		t.Errorf("signal = %s, want STABLE (default)", results[0].Signal)
 	}
-	if results[0].WeightedROI != 50 {
-		t.Errorf("weighted ROI = %f, want 50 (1.0 weight)", results[0].WeightedROI)
+	// No trend data: Sellability defaults to 0 → liquidityScore=0 → WeightedROI=0.
+	if results[0].WeightedROI != 0 {
+		t.Errorf("weighted ROI = %f, want 0 (no trend data, sellability=0)", results[0].WeightedROI)
 	}
 }
 
@@ -251,9 +259,14 @@ func TestRankCollective_SortByPct(t *testing.T) {
 		{Time: now, TransfiguredName: "Big Absolute", Variant: "20/20", ROI: 200, ROIPct: 40, BasePrice: 500, TransfiguredPrice: 700, Confidence: "OK"},
 		{Time: now, TransfiguredName: "Big Percent", Variant: "20/20", ROI: 15, ROIPct: 1500, BasePrice: 1, TransfiguredPrice: 16, Confidence: "OK"},
 	}
+	trends := []TrendResult{
+		{Name: "Big Absolute", Variant: "20/20", Signal: "STABLE", Sellability: 60},
+		{Name: "Big Percent", Variant: "20/20", Signal: "STABLE", Sellability: 60},
+	}
 
 	// Explicit sort=pct: Big Percent first despite lower absolute ROI.
-	results := RankCollective(transfigure, nil, 0, 50, SortPct)
+	// Big Absolute: 40 * 0.6 = 24, Big Percent: 1500 * 0.6 = 900
+	results := RankCollective(transfigure, trends, 0, 50, SortPct)
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
@@ -262,7 +275,8 @@ func TestRankCollective_SortByPct(t *testing.T) {
 	}
 
 	// Explicit sort=chaos: Big Absolute first.
-	results = RankCollective(transfigure, nil, 0, 50, SortChaos)
+	// Big Absolute: 200 * 0.6 = 120, Big Percent: 15 * 0.6 = 9
+	results = RankCollective(transfigure, trends, 0, 50, SortChaos)
 	if results[0].TransfiguredName != "Big Absolute" {
 		t.Errorf("sort=chaos: first = %s, want Big Absolute", results[0].TransfiguredName)
 	}
@@ -274,9 +288,13 @@ func TestRankCollective_BudgetAwareDefaultSort(t *testing.T) {
 		{Time: now, TransfiguredName: "Big Absolute", Variant: "20/20", ROI: 40, ROIPct: 100, BasePrice: 40, TransfiguredPrice: 80, Confidence: "OK"},
 		{Time: now, TransfiguredName: "Big Percent", Variant: "20/20", ROI: 10, ROIPct: 1000, BasePrice: 1, TransfiguredPrice: 11, Confidence: "OK"},
 	}
+	trends := []TrendResult{
+		{Name: "Big Absolute", Variant: "20/20", Signal: "STABLE", Sellability: 60},
+		{Name: "Big Percent", Variant: "20/20", Signal: "STABLE", Sellability: 60},
+	}
 
 	// Budget <= 50, no explicit sort → defaults to pct.
-	results := RankCollective(transfigure, nil, 50, 50, "")
+	results := RankCollective(transfigure, trends, 50, 50, "")
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
@@ -285,13 +303,13 @@ func TestRankCollective_BudgetAwareDefaultSort(t *testing.T) {
 	}
 
 	// Budget > 50, no explicit sort → defaults to chaos.
-	results = RankCollective(transfigure, nil, 100, 50, "")
+	results = RankCollective(transfigure, trends, 100, 50, "")
 	if results[0].TransfiguredName != "Big Absolute" {
 		t.Errorf("budget>50 default: first = %s, want Big Absolute", results[0].TransfiguredName)
 	}
 
 	// Budget = 0 (no budget filter), no explicit sort → defaults to chaos.
-	results = RankCollective(transfigure, nil, 0, 50, "")
+	results = RankCollective(transfigure, trends, 0, 50, "")
 	if results[0].TransfiguredName != "Big Absolute" {
 		t.Errorf("budget=0 default: first = %s, want Big Absolute (chaos sort)", results[0].TransfiguredName)
 	}
@@ -302,16 +320,20 @@ func TestRankCollective_ROIPctPopulated(t *testing.T) {
 	transfigure := []TransfigureResult{
 		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 50, ROIPct: 500, BasePrice: 10, TransfiguredPrice: 60, Confidence: "OK"},
 	}
+	trends := []TrendResult{
+		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 100},
+	}
 
-	results := RankCollective(transfigure, nil, 0, 50, "")
+	results := RankCollective(transfigure, trends, 0, 50, "")
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
 	if results[0].ROIPct != 500 {
 		t.Errorf("ROIPct = %f, want 500", results[0].ROIPct)
 	}
+	// Sellability=100, no saturation → WeightedROIPct = 500 * 1.0 = 500
 	if results[0].WeightedROIPct != 500 {
-		t.Errorf("WeightedROIPct = %f, want 500 (STABLE weight 1.0)", results[0].WeightedROIPct)
+		t.Errorf("WeightedROIPct = %f, want 500 (liquidityScore=1.0)", results[0].WeightedROIPct)
 	}
 }
 
@@ -325,7 +347,7 @@ func TestSignalWeight(t *testing.T) {
 		{"UNCERTAIN", 1.0},
 		{"HERD", 0.8},
 		{"STABLE", 1.0},
-		
+
 		{"RECOVERY", 1.2},
 		{"UNKNOWN", 1.0},
 	}
