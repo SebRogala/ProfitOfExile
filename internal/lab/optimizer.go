@@ -702,6 +702,15 @@ type SellabilityReport struct {
 	FloorHoldRate         map[string]FloorHoldResult     `json:"floor_hold_rate"`
 	ConfidenceCalibration map[string]ConfidenceCalResult `json:"confidence_calibration"`
 	PerTierCapture        map[string]ValueCapture        `json:"per_tier_capture"`
+	PerVariant            map[string]VariantReport       `json:"per_variant"`
+}
+
+// VariantReport holds per-variant breakdown of sellability validation metrics.
+type VariantReport struct {
+	TotalEvals            int                            `json:"total_evals"`
+	PerSignalCapture      map[string]ValueCapture        `json:"per_signal_capture"`
+	FloorHoldRate         map[string]FloorHoldResult     `json:"floor_hold_rate"`
+	ConfidenceCalibration map[string]ConfidenceCalResult `json:"confidence_calibration"`
 }
 
 // FloorHoldResult holds floor hold statistics for a tier.
@@ -720,6 +729,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		FloorHoldRate:         make(map[string]FloorHoldResult),
 		ConfidenceCalibration: make(map[string]ConfidenceCalResult),
 		PerTierCapture:        make(map[string]ValueCapture),
+		PerVariant:            make(map[string]VariantReport),
 	}
 
 	if len(evals) == 0 {
@@ -749,6 +759,15 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		changeSum float64
 	}
 	confCalAccs := make(map[string]*confCalAcc)
+
+	// Per-variant accumulators.
+	type variantAcc struct {
+		totalEvals     int
+		signalCaptures map[string]*captureAcc
+		floorAccs      map[string]*floorAcc
+		confCalAccs    map[string]*confCalAcc
+	}
+	variantAccs := make(map[string]*variantAcc)
 
 	skipped := 0
 
@@ -827,6 +846,43 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 			ca.priceHeld++
 		}
 		ca.changeSum += ep.FuturePct
+
+		// Per-variant accumulation.
+		variant := ep.Feature.Variant
+		va, ok := variantAccs[variant]
+		if !ok {
+			va = &variantAcc{
+				signalCaptures: make(map[string]*captureAcc),
+				floorAccs:      make(map[string]*floorAcc),
+				confCalAccs:    make(map[string]*confCalAcc),
+			}
+			variantAccs[variant] = va
+		}
+		va.totalEvals++
+
+		if _, ok := va.signalCaptures[signal]; !ok {
+			va.signalCaptures[signal] = &captureAcc{}
+		}
+		va.signalCaptures[signal].ratios = append(va.signalCaptures[signal].ratios, actualCapture)
+
+		if _, ok := va.floorAccs[tier]; !ok {
+			va.floorAccs[tier] = &floorAcc{}
+		}
+		vfa := va.floorAccs[tier]
+		vfa.total++
+		if futurePrice >= ep.Feature.Low7d {
+			vfa.held++
+		}
+
+		if _, ok := va.confCalAccs[sellConf]; !ok {
+			va.confCalAccs[sellConf] = &confCalAcc{}
+		}
+		vca := va.confCalAccs[sellConf]
+		vca.total++
+		if futurePrice >= 0.9*ep.Feature.Chaos {
+			vca.priceHeld++
+		}
+		vca.changeSum += ep.FuturePct
 	}
 
 	// Build per-signal capture map.
@@ -868,6 +924,49 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 			HeldRate:  heldRate,
 			AvgChange: avgChange,
 		}
+	}
+
+	// Build per-variant reports.
+	for variant, va := range variantAccs {
+		vr := VariantReport{
+			TotalEvals:            va.totalEvals,
+			PerSignalCapture:      make(map[string]ValueCapture, len(va.signalCaptures)),
+			FloorHoldRate:         make(map[string]FloorHoldResult, len(va.floorAccs)),
+			ConfidenceCalibration: make(map[string]ConfidenceCalResult, len(va.confCalAccs)),
+		}
+
+		for sig, acc := range va.signalCaptures {
+			vr.PerSignalCapture[sig] = computeValueCapture(acc.ratios)
+		}
+		for tier, fa := range va.floorAccs {
+			var rate float64
+			if fa.total > 0 {
+				rate = float64(fa.held) / float64(fa.total) * 100
+			}
+			vr.FloorHoldRate[tier] = FloorHoldResult{
+				Count:    fa.total,
+				Held:     fa.held,
+				HeldRate: rate,
+			}
+		}
+		for conf, ca := range va.confCalAccs {
+			var heldRate float64
+			if ca.total > 0 {
+				heldRate = float64(ca.priceHeld) / float64(ca.total) * 100
+			}
+			var avgChange float64
+			if ca.total > 0 {
+				avgChange = ca.changeSum / float64(ca.total)
+			}
+			vr.ConfidenceCalibration[conf] = ConfidenceCalResult{
+				Count:     ca.total,
+				PriceHeld: ca.priceHeld,
+				HeldRate:  heldRate,
+				AvgChange: avgChange,
+			}
+		}
+
+		report.PerVariant[variant] = vr
 	}
 
 	report.TotalEvals = len(evals) - skipped

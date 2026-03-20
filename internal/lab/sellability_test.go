@@ -29,6 +29,9 @@ func TestValidateSellability_EmptyEvals(t *testing.T) {
 	if len(report.PerTierCapture) != 0 {
 		t.Errorf("PerTierCapture: expected empty, got %d entries", len(report.PerTierCapture))
 	}
+	if len(report.PerVariant) != 0 {
+		t.Errorf("PerVariant: expected empty, got %d entries", len(report.PerVariant))
+	}
 }
 
 func TestValidateSellability_ValueCapture(t *testing.T) {
@@ -482,6 +485,121 @@ func TestComputeValueCapture_KnownDistribution(t *testing.T) {
 	}
 	if !approxEqual(vc.P75Capture, 1.2, 0.01) {
 		t.Errorf("P75Capture: got %.2f, want 1.2", vc.P75Capture)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Per-variant breakdown tests
+// ---------------------------------------------------------------------------
+
+func TestValidateSellability_PerVariantBreakdown(t *testing.T) {
+	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
+	mc := sweepMarketContext(0, 10, 0, 5)
+
+	evals := []EvalPoint{
+		// Variant "20/20" — 2 evals
+		{
+			Feature: GemFeature{
+				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
+				Tier: "MID", Chaos: 100, Variant: "20/20",
+				Low7d: 80, High7d: 120,
+			},
+			FuturePct: -5.0, // future 95, held (>= 90)
+			SnapTime:  t0,
+		},
+		{
+			Feature: GemFeature{
+				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
+				Tier: "MID", Chaos: 100, Variant: "20/20",
+				Low7d: 80, High7d: 120,
+			},
+			FuturePct: -15.0, // future 85, NOT held (< 90)
+			SnapTime:  t0,
+		},
+		// Variant "1/20" — 1 eval
+		{
+			Feature: GemFeature{
+				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
+				Tier: "MID", Chaos: 100, Variant: "1/20",
+				Low7d: 80, High7d: 120,
+			},
+			FuturePct: 5.0, // future 105, held (>= 90)
+			SnapTime:  t0,
+		},
+	}
+
+	report := ValidateSellability(evals, mc)
+
+	// Should have 2 variants.
+	if len(report.PerVariant) != 2 {
+		t.Fatalf("expected 2 variants, got %d", len(report.PerVariant))
+	}
+
+	// Check "20/20" variant.
+	vr2020, ok := report.PerVariant["20/20"]
+	if !ok {
+		t.Fatal("expected variant 20/20 in PerVariant")
+	}
+	if vr2020.TotalEvals != 2 {
+		t.Errorf("20/20 TotalEvals: got %d, want 2", vr2020.TotalEvals)
+	}
+
+	// "20/20" confidence calibration: both should classify as FAIR (same as global test).
+	// First held (95 >= 90), second not held (85 < 90).
+	if len(vr2020.ConfidenceCalibration) == 0 {
+		t.Fatal("expected non-empty ConfidenceCalibration for 20/20")
+	}
+	// Find the confidence level for 20/20 — should be FAIR with 2 entries, 1 held.
+	totalConf := 0
+	totalHeld := 0
+	for _, cal := range vr2020.ConfidenceCalibration {
+		totalConf += cal.Count
+		totalHeld += cal.PriceHeld
+	}
+	if totalConf != 2 {
+		t.Errorf("20/20 total conf calibration count: got %d, want 2", totalConf)
+	}
+	if totalHeld != 1 {
+		t.Errorf("20/20 total conf calibration held: got %d, want 1", totalHeld)
+	}
+
+	// Check "1/20" variant.
+	vr120, ok := report.PerVariant["1/20"]
+	if !ok {
+		t.Fatal("expected variant 1/20 in PerVariant")
+	}
+	if vr120.TotalEvals != 1 {
+		t.Errorf("1/20 TotalEvals: got %d, want 1", vr120.TotalEvals)
+	}
+
+	// "1/20" should have 1 entry, held.
+	totalConf = 0
+	totalHeld = 0
+	for _, cal := range vr120.ConfidenceCalibration {
+		totalConf += cal.Count
+		totalHeld += cal.PriceHeld
+	}
+	if totalConf != 1 {
+		t.Errorf("1/20 total conf calibration count: got %d, want 1", totalConf)
+	}
+	if totalHeld != 1 {
+		t.Errorf("1/20 total conf calibration held: got %d, want 1", totalHeld)
+	}
+
+	// Per-variant signal capture should exist.
+	if len(vr2020.PerSignalCapture) == 0 {
+		t.Error("expected non-empty PerSignalCapture for 20/20")
+	}
+	if len(vr120.PerSignalCapture) == 0 {
+		t.Error("expected non-empty PerSignalCapture for 1/20")
+	}
+
+	// Per-variant floor hold should exist.
+	if len(vr2020.FloorHoldRate) == 0 {
+		t.Error("expected non-empty FloorHoldRate for 20/20")
+	}
+	if len(vr120.FloorHoldRate) == 0 {
+		t.Error("expected non-empty FloorHoldRate for 1/20")
 	}
 }
 
