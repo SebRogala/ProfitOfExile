@@ -242,7 +242,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	}
 
 	// Normalize history using temporal coefficients before computing features.
-	normalizedHistory := NormalizeHistory(history, mc.CoefficientAt)
+	normalizedHistory := NormalizeHistoryFromMC(history, mc)
 
 	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
 	inserted, err := a.repo.SaveGemFeatures(ctx, features)
