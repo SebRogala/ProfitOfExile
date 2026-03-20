@@ -21,9 +21,7 @@ func testMarketContext() MarketContext {
 		TotalGems:     100,
 		TotalListings: 2000,
 		TierBoundaries: TierBoundaries{
-			Top:  300,
-			High: 100,
-			Mid:  30,
+			Boundaries: []float64{300, 100, 30},
 		},
 		HourlyBias:        make([]float64, 24),
 		HourlyVolatility:  make([]float64, 24),
@@ -131,11 +129,13 @@ func TestComputeGemFeatures_Tier(t *testing.T) {
 	if tierMap["Expensive of Power"] != "TOP" {
 		t.Errorf("Expensive tier = %s, want TOP", tierMap["Expensive of Power"])
 	}
-	if tierMap["Mid of Range"] != "MID" {
-		t.Errorf("Mid tier = %s, want MID", tierMap["Mid of Range"])
+	// With boundaries [300, 100, 30]: 50 >= 30 -> TierNames[2] = "MID-HIGH"
+	if tierMap["Mid of Range"] != "MID-HIGH" {
+		t.Errorf("Mid tier = %s, want MID-HIGH", tierMap["Mid of Range"])
 	}
-	if tierMap["Cheap of Nothing"] != "LOW" {
-		t.Errorf("Cheap tier = %s, want LOW", tierMap["Cheap of Nothing"])
+	// 10 < 30 -> TierNames[3] = "MID"
+	if tierMap["Cheap of Nothing"] != "MID" {
+		t.Errorf("Cheap tier = %s, want MID", tierMap["Cheap of Nothing"])
 	}
 }
 

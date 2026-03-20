@@ -13,9 +13,7 @@ func testSignalMarketContext() MarketContext {
 	mc := testConfidenceMarketContext()
 	// Ensure tier boundaries are set for tier classification.
 	mc.TierBoundaries = TierBoundaries{
-		Top:  300,
-		High: 100,
-		Mid:  30,
+		Boundaries: []float64{300, 100, 30},
 	}
 	return mc
 }
@@ -429,8 +427,8 @@ func TestComputeGemSignals_TierFromFeature(t *testing.T) {
 		testFeature("Cheap of Nothing", "20/20", 10, 100),
 	}
 	features[0].Tier = "TOP"
-	features[1].Tier = "MID"
-	features[2].Tier = "LOW"
+	features[1].Tier = "MID-HIGH"
+	features[2].Tier = "MID"
 
 	gems := []GemPrice{
 		{Name: "Expensive", Variant: "20/20", Chaos: 5, Listings: 50, IsTransfigured: false, GemColor: "RED"},
@@ -451,11 +449,11 @@ func TestComputeGemSignals_TierFromFeature(t *testing.T) {
 	if tierMap["Expensive of Power"] != "TOP" {
 		t.Errorf("Expensive tier = %q, want TOP", tierMap["Expensive of Power"])
 	}
-	if tierMap["Mid of Range"] != "MID" {
-		t.Errorf("Mid tier = %q, want MID", tierMap["Mid of Range"])
+	if tierMap["Mid of Range"] != "MID-HIGH" {
+		t.Errorf("Mid tier = %q, want MID-HIGH", tierMap["Mid of Range"])
 	}
-	if tierMap["Cheap of Nothing"] != "LOW" {
-		t.Errorf("Cheap tier = %q, want LOW", tierMap["Cheap of Nothing"])
+	if tierMap["Cheap of Nothing"] != "MID" {
+		t.Errorf("Cheap tier = %q, want MID", tierMap["Cheap of Nothing"])
 	}
 }
 

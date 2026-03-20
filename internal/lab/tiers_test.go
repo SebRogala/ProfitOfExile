@@ -4,10 +4,8 @@ import (
 	"testing"
 )
 
-func TestDetectTierBoundaries_RealisticDistribution(t *testing.T) {
+func TestDetectTierBoundariesRecursive_RealisticDistribution(t *testing.T) {
 	// Real-ish price distribution with clear natural gaps.
-	// Prices: 785, 600, 580, 570, 510, 500, 470, 460, 390, 350, 300, 200, 150, 80, 40, 30, 20, 15, 10, 8
-	// Major gaps: 785→600 (23.6%), 460→390 (15.2%), 40→30 (25%)
 	prices := []float64{785, 600, 580, 570, 510, 500, 470, 460, 390, 350, 300, 200, 150, 80, 40, 30, 20, 15, 10, 8}
 	gems := make([]GemPrice, len(prices))
 	for i, p := range prices {
@@ -19,27 +17,27 @@ func TestDetectTierBoundaries_RealisticDistribution(t *testing.T) {
 		}
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
-	// Verify ordering invariant: Top > High > Mid > 0
-	if tb.Top <= 0 {
-		t.Errorf("Top = %f, want > 0", tb.Top)
+	// Must produce at least 1 boundary.
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary, got 0")
 	}
-	if tb.High <= 0 {
-		t.Errorf("High = %f, want > 0", tb.High)
+	// Boundaries must be sorted descending.
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f (descending)", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
 	}
-	if tb.Mid <= 0 {
-		t.Errorf("Mid = %f, want > 0", tb.Mid)
-	}
-	if tb.Top <= tb.High {
-		t.Errorf("Top (%f) should be > High (%f)", tb.Top, tb.High)
-	}
-	if tb.High <= tb.Mid {
-		t.Errorf("High (%f) should be > Mid (%f)", tb.High, tb.Mid)
+	// All boundaries must be > 0.
+	for i, b := range tb.Boundaries {
+		if b <= 0 {
+			t.Errorf("Boundaries[%d] = %f, want > 0", i, b)
+		}
 	}
 }
 
-func TestDetectTierBoundaries_SingleOutlier(t *testing.T) {
+func TestDetectTierBoundariesRecursive_SingleOutlier(t *testing.T) {
 	// One outlier at 1000c, then a tight cluster 92-100c.
 	prices := []float64{1000, 100, 99, 98, 97, 96, 95, 94, 93, 92}
 	gems := make([]GemPrice, len(prices))
@@ -52,24 +50,26 @@ func TestDetectTierBoundaries_SingleOutlier(t *testing.T) {
 		}
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
-	// The 1000→100 gap (90%) should be the largest, so TOP boundary = 100.
-	if tb.Top > 200 {
-		t.Errorf("Top = %f, want <= 200 (1000c is the only TOP gem)", tb.Top)
+	// The 1000->100 gap is the largest absolute gap, so TOP boundary = 1000.
+	// Only gems >= 1000 are TOP (just the outlier).
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary")
 	}
-	// Invariant
-	if tb.Top <= tb.High {
-		t.Errorf("Top (%f) should be > High (%f)", tb.Top, tb.High)
+	if tb.Boundaries[0] != 1000 {
+		t.Errorf("Boundaries[0] = %f, want 1000 (TOP = gems above the gap)", tb.Boundaries[0])
 	}
-	if tb.High <= tb.Mid {
-		t.Errorf("High (%f) should be > Mid (%f)", tb.High, tb.Mid)
+	// Boundaries must be sorted descending.
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
 	}
 }
 
-func TestDetectTierBoundaries_SmallPool(t *testing.T) {
-	// Exactly 10 gems — should still produce valid 3 boundaries.
-	// All prices > 5 (the analysis pipeline floor).
+func TestDetectTierBoundariesRecursive_SmallPool(t *testing.T) {
+	// Exactly 10 gems -- should still produce valid boundaries.
 	prices := []float64{500, 400, 300, 200, 150, 100, 80, 50, 20, 6}
 	gems := make([]GemPrice, len(prices))
 	for i, p := range prices {
@@ -81,62 +81,70 @@ func TestDetectTierBoundaries_SmallPool(t *testing.T) {
 		}
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
-	if tb.Top <= tb.High {
-		t.Errorf("Top (%f) should be > High (%f)", tb.Top, tb.High)
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary")
 	}
-	if tb.High <= tb.Mid {
-		t.Errorf("High (%f) should be > Mid (%f)", tb.High, tb.Mid)
+	// Boundaries must be sorted descending.
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
 	}
 }
 
-func TestDetectTierBoundaries_MinimumPool(t *testing.T) {
-	// <4 gems → fallback to P75/P50/P25.
+func TestDetectTierBoundariesRecursive_MinimumPool(t *testing.T) {
+	// <4 gems -> fallback to P75/P50/P25.
 	gems := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
 		{Name: "B of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
 		{Name: "C of X", Variant: "20/20", Chaos: 10, IsTransfigured: true},
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
 	// Fallback: P75/P50/P25 of [10, 50, 100]
-	// P75: 0.75 * 2 = 1.5 → lerp(50, 100, 0.5) = 75
-	// P50: 0.50 * 2 = 1.0 → 50
-	// P25: 0.25 * 2 = 0.5 → lerp(10, 50, 0.5) = 30
-	if !approxEqual(tb.Top, 75, 0.01) {
-		t.Errorf("Top = %f, want 75 (P75 fallback)", tb.Top)
+	// P75: 0.75 * 2 = 1.5 -> lerp(50, 100, 0.5) = 75
+	// P50: 0.50 * 2 = 1.0 -> 50
+	// P25: 0.25 * 2 = 0.5 -> lerp(10, 50, 0.5) = 30
+	if len(tb.Boundaries) != 3 {
+		t.Fatalf("expected 3 boundaries for fallback, got %d", len(tb.Boundaries))
 	}
-	if !approxEqual(tb.High, 50, 0.01) {
-		t.Errorf("High = %f, want 50 (P50 fallback)", tb.High)
+	if !approxEqual(tb.Boundaries[0], 75, 0.01) {
+		t.Errorf("Boundaries[0] = %f, want 75 (P75 fallback)", tb.Boundaries[0])
 	}
-	if !approxEqual(tb.Mid, 30, 0.01) {
-		t.Errorf("Mid = %f, want 30 (P25 fallback)", tb.Mid)
+	if !approxEqual(tb.Boundaries[1], 50, 0.01) {
+		t.Errorf("Boundaries[1] = %f, want 50 (P50 fallback)", tb.Boundaries[1])
+	}
+	if !approxEqual(tb.Boundaries[2], 30, 0.01) {
+		t.Errorf("Boundaries[2] = %f, want 30 (P25 fallback)", tb.Boundaries[2])
 	}
 }
 
-func TestDetectTierBoundaries_ExactlyThreeDistinctPrices(t *testing.T) {
-	// Only 3 distinct prices → only 2 gaps → fallback needed.
+func TestDetectTierBoundariesRecursive_ExactlyThreeDistinctPrices(t *testing.T) {
+	// Only 3 distinct prices -> fallback needed.
 	gems := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
 		{Name: "B of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
 		{Name: "C of X", Variant: "20/20", Chaos: 10, IsTransfigured: true},
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
-	// Fallback triggers (< 4 distinct prices).
-	if tb.Top <= tb.High {
-		t.Errorf("Top (%f) should be > High (%f)", tb.Top, tb.High)
+	// Fallback produces 3 boundaries -- they should be descending.
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary")
 	}
-	if tb.High <= tb.Mid {
-		t.Errorf("High (%f) should be > Mid (%f)", tb.High, tb.Mid)
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
 	}
 }
 
-func TestDetectTierBoundaries_MultiVariantDedup(t *testing.T) {
-	// Same gem name at different variants — should use max price per name.
+func TestDetectTierBoundariesRecursive_MultiVariantDedup(t *testing.T) {
+	// Same gem name at different variants -- should use max price per name.
 	gems := []GemPrice{
 		{Name: "Kinetic Blast of Clustering", Variant: "20/20", Chaos: 785, IsTransfigured: true},
 		{Name: "Kinetic Blast of Clustering", Variant: "20", Chaos: 600, IsTransfigured: true},
@@ -146,19 +154,21 @@ func TestDetectTierBoundaries_MultiVariantDedup(t *testing.T) {
 		{Name: "Gem E of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
 	// Kinetic Blast should contribute only 785c, not both 785 and 600.
 	// 5 unique gems: 785, 400, 200, 100, 50
-	if tb.Top <= tb.High {
-		t.Errorf("Top (%f) should be > High (%f)", tb.Top, tb.High)
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary")
 	}
-	if tb.High <= tb.Mid {
-		t.Errorf("High (%f) should be > Mid (%f)", tb.High, tb.Mid)
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
 	}
 }
 
-func TestDetectTierBoundaries_FiltersCorrectly(t *testing.T) {
+func TestDetectTierBoundariesRecursive_FiltersCorrectly(t *testing.T) {
 	// Verify corrupted, non-transfigured, Trarthus, zero-price, and sub-5c gems are excluded.
 	gems := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
@@ -176,27 +186,30 @@ func TestDetectTierBoundaries_FiltersCorrectly(t *testing.T) {
 		{Name: "AtFloor of X", Variant: "20/20", Chaos: 5, IsTransfigured: true},
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
 	// Only 4 qualifying gems: 500, 300, 100, 50.
-	// If the excluded gems were included, boundaries would be way off.
-	if tb.Top > 500 {
-		t.Errorf("Top = %f, should not exceed 500 (filtered correctly)", tb.Top)
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary")
 	}
-	if tb.Top <= 0 {
-		t.Errorf("Top = %f, want > 0", tb.Top)
+	// TOP boundary should not exceed 500.
+	if tb.Boundaries[0] > 500 {
+		t.Errorf("Boundaries[0] = %f, should not exceed 500 (filtered correctly)", tb.Boundaries[0])
 	}
-}
-
-func TestDetectTierBoundaries_EmptyInput(t *testing.T) {
-	tb := DetectTierBoundaries(nil)
-	if tb.Top != 0 || tb.High != 0 || tb.Mid != 0 {
-		t.Errorf("empty input should return zero boundaries, got Top=%f High=%f Mid=%f", tb.Top, tb.High, tb.Mid)
+	if tb.Boundaries[0] <= 0 {
+		t.Errorf("Boundaries[0] = %f, want > 0", tb.Boundaries[0])
 	}
 }
 
-func TestDetectTierBoundaries_AllSamePrice(t *testing.T) {
-	// All gems at the same price → 1 unique price → fallback.
+func TestDetectTierBoundariesRecursive_EmptyInput(t *testing.T) {
+	tb := DetectTierBoundariesRecursive(nil)
+	if len(tb.Boundaries) != 0 {
+		t.Errorf("empty input should return zero boundaries, got %v", tb.Boundaries)
+	}
+}
+
+func TestDetectTierBoundariesRecursive_AllSamePrice(t *testing.T) {
+	// All gems at the same price -> 1 unique price -> fallback.
 	gems := make([]GemPrice, 10)
 	for i := range gems {
 		gems[i] = GemPrice{
@@ -207,29 +220,33 @@ func TestDetectTierBoundaries_AllSamePrice(t *testing.T) {
 		}
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
 	// All percentiles of a single value = 100.
-	if !approxEqual(tb.Top, 100, 0.01) {
-		t.Errorf("Top = %f, want 100", tb.Top)
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary from fallback")
+	}
+	if !approxEqual(tb.Boundaries[0], 100, 0.01) {
+		t.Errorf("Boundaries[0] = %f, want 100", tb.Boundaries[0])
 	}
 }
 
-func TestClassifyTier_FourTiers(t *testing.T) {
-	tb := TierBoundaries{Top: 500, High: 200, Mid: 50}
+func TestClassifyTier_DynamicBoundaries(t *testing.T) {
+	// 3 boundaries: TOP >= 500, HIGH >= 200, MID-HIGH >= 50
+	tb := TierBoundaries{Boundaries: []float64{500, 200, 50}}
 
 	tests := []struct {
 		price float64
 		want  string
 	}{
 		{600, "TOP"},
-		{500, "TOP"},   // exactly at Top → TOP (>= semantics)
-		{499.99, "HIGH"},
-		{200, "HIGH"},  // exactly at High → HIGH
-		{199.99, "MID"},
-		{50, "MID"},    // exactly at Mid → MID
-		{49.99, "LOW"},
-		{0, "LOW"},
+		{500, "TOP"},     // exactly at boundary[0] -> TOP (>= semantics)
+		{499.99, "HIGH"}, // below boundary[0], above boundary[1]
+		{200, "HIGH"},    // exactly at boundary[1] -> HIGH
+		{199.99, "MID-HIGH"},
+		{50, "MID-HIGH"}, // exactly at boundary[2] -> MID-HIGH
+		{49.99, "MID"},   // below all boundaries, index 3 -> MID
+		{0, "MID"},
 	}
 
 	for _, tt := range tests {
@@ -240,16 +257,73 @@ func TestClassifyTier_FourTiers(t *testing.T) {
 	}
 }
 
+func TestClassifyTier_TwoBoundaries(t *testing.T) {
+	// 2 boundaries: TOP >= 500, HIGH >= 100
+	tb := TierBoundaries{Boundaries: []float64{500, 100}}
+
+	tests := []struct {
+		price float64
+		want  string
+	}{
+		{600, "TOP"},
+		{500, "TOP"},
+		{499, "HIGH"},
+		{100, "HIGH"},
+		{99, "MID-HIGH"}, // below all 2 boundaries -> TierNames[2] = "MID-HIGH"
+		{0, "MID-HIGH"},
+	}
+
+	for _, tt := range tests {
+		got := classifyTier(tt.price, tb)
+		if got != tt.want {
+			t.Errorf("classifyTier(%v, {500, 100}) = %s, want %s", tt.price, got, tt.want)
+		}
+	}
+}
+
+func TestClassifyTier_FourBoundaries(t *testing.T) {
+	// 4 boundaries: TOP >= 500, HIGH >= 200, MID-HIGH >= 100, MID >= 30
+	tb := TierBoundaries{Boundaries: []float64{500, 200, 100, 30}}
+
+	tests := []struct {
+		price float64
+		want  string
+	}{
+		{600, "TOP"},
+		{300, "HIGH"},
+		{150, "MID-HIGH"},
+		{50, "MID"},
+		{29, "LOW"}, // below all 4 boundaries -> TierNames[4] = "LOW"
+		{0, "LOW"},
+	}
+
+	for _, tt := range tests {
+		got := classifyTier(tt.price, tb)
+		if got != tt.want {
+			t.Errorf("classifyTier(%v, ...) = %s, want %s", tt.price, got, tt.want)
+		}
+	}
+}
+
+func TestClassifyTier_NoBoundaries(t *testing.T) {
+	// No boundaries -> everything is the first tier name.
+	tb := TierBoundaries{}
+	got := classifyTier(100, tb)
+	if got != "TOP" {
+		t.Errorf("classifyTier(100, empty) = %s, want TOP", got)
+	}
+}
+
 func TestClassifyTier_Exported(t *testing.T) {
-	tb := TierBoundaries{Top: 100, High: 50, Mid: 20}
+	tb := TierBoundaries{Boundaries: []float64{100, 50, 20}}
 	got := ClassifyTier(150, tb)
 	if got != "TOP" {
 		t.Errorf("ClassifyTier(150, ...) = %s, want TOP", got)
 	}
 }
 
-func TestDetectTierBoundaries_FourExactGems(t *testing.T) {
-	// Exactly 4 gems — minimum for gap detection (3 gaps).
+func TestDetectTierBoundariesRecursive_FourExactGems(t *testing.T) {
+	// Exactly 4 gems -- minimum for recursive detection.
 	gems := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 1000, IsTransfigured: true},
 		{Name: "B of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
@@ -257,27 +331,27 @@ func TestDetectTierBoundaries_FourExactGems(t *testing.T) {
 		{Name: "D of X", Variant: "20/20", Chaos: 10, IsTransfigured: true},
 	}
 
-	tb := DetectTierBoundaries(gems)
+	tb := DetectTierBoundariesRecursive(gems)
 
-	// 3 gaps: 1000→500 (50%), 500→100 (80%), 100→10 (90%)
-	// Largest gaps sorted by relGap desc: 100→10 (90%), 500→100 (80%), 1000→500 (50%)
-	// Sorted by index asc: index 0 (1000→500), index 1 (500→100), index 2 (100→10)
-	// Top = prices[1] = 500, High = prices[2] = 100, Mid = prices[3] = 10
-	if !approxEqual(tb.Top, 500, 0.01) {
-		t.Errorf("Top = %f, want 500", tb.Top)
+	// Should produce at least 1 boundary with descending order.
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected at least 1 boundary for 4 gems")
 	}
-	if !approxEqual(tb.High, 100, 0.01) {
-		t.Errorf("High = %f, want 100", tb.High)
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
 	}
-	if !approxEqual(tb.Mid, 10, 0.01) {
-		t.Errorf("Mid = %f, want 10", tb.Mid)
+	// The largest absolute gap is 1000->500 (500c). But avg gap = (500+400+90)/3 = 330.
+	// 500 >= 330*3 = 990? No, 500 < 990. So TOP gap is NOT significant enough (< 3x avg).
+	// All gems go through recursive average instead. First boundary should be the highest.
+	if tb.Boundaries[0] < 100 || tb.Boundaries[0] > 1000 {
+		t.Errorf("Boundaries[0] = %f, want in reasonable range", tb.Boundaries[0])
 	}
 }
 
-func TestDetectTierBoundaries_CheapGemsExcluded(t *testing.T) {
-	// Verify that sub-5c gems (which the analysis pipeline skips) don't affect
-	// tier boundaries. Previously Chaos > 0 was used, causing dozens of 1-5c
-	// transfigured gems to create a large artificial gap that skewed boundaries.
+func TestDetectTierBoundariesRecursive_CheapGemsExcluded(t *testing.T) {
+	// Verify that sub-5c gems don't affect tier boundaries.
 	gemsWithCheap := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
 		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
@@ -299,17 +373,68 @@ func TestDetectTierBoundaries_CheapGemsExcluded(t *testing.T) {
 		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true},
 	}
 
-	tbWith := DetectTierBoundaries(gemsWithCheap)
-	tbWithout := DetectTierBoundaries(gemsWithout)
+	tbWith := DetectTierBoundariesRecursive(gemsWithCheap)
+	tbWithout := DetectTierBoundariesRecursive(gemsWithout)
 
-	// Boundaries should be identical — cheap gems are excluded.
-	if !approxEqual(tbWith.Top, tbWithout.Top, 0.01) {
-		t.Errorf("Top with cheap gems = %f, without = %f — cheap gems should not affect boundaries", tbWith.Top, tbWithout.Top)
+	// Boundaries should be identical -- cheap gems are excluded.
+	if len(tbWith.Boundaries) != len(tbWithout.Boundaries) {
+		t.Fatalf("boundary count with cheap=%d, without=%d -- should be equal",
+			len(tbWith.Boundaries), len(tbWithout.Boundaries))
 	}
-	if !approxEqual(tbWith.High, tbWithout.High, 0.01) {
-		t.Errorf("High with cheap gems = %f, without = %f — cheap gems should not affect boundaries", tbWith.High, tbWithout.High)
+	for i := range tbWith.Boundaries {
+		if !approxEqual(tbWith.Boundaries[i], tbWithout.Boundaries[i], 0.01) {
+			t.Errorf("Boundaries[%d] with cheap=%f, without=%f -- should be equal",
+				i, tbWith.Boundaries[i], tbWithout.Boundaries[i])
+		}
 	}
-	if !approxEqual(tbWith.Mid, tbWithout.Mid, 0.01) {
-		t.Errorf("Mid with cheap gems = %f, without = %f — cheap gems should not affect boundaries", tbWith.Mid, tbWithout.Mid)
+}
+
+func TestDetectTierBoundariesRecursive_RecursiveSplitting(t *testing.T) {
+	// Verify recursive splitting actually produces multiple boundaries.
+	// 20 gems with a clear structure:
+	// TOP: 1000 (1 gem above largest gap)
+	// Pool: 400, 350, 300, 250, 200, 150, 100, 80, 60, 50, 40, 30, 25, 20, 15, 10, 8, 7, 6
+	prices := []float64{1000, 400, 350, 300, 250, 200, 150, 100, 80, 60, 50, 40, 30, 25, 20, 15, 10, 8, 7, 6}
+	gems := make([]GemPrice, len(prices))
+	for i, p := range prices {
+		gems[i] = GemPrice{
+			Name:           "Gem " + string(rune('A'+i)) + " of X",
+			Variant:        "20/20",
+			Chaos:          p,
+			IsTransfigured: true,
+		}
+	}
+
+	tb := DetectTierBoundariesRecursive(gems)
+
+	// Should produce multiple boundaries (at least 2: TOP gap + at least 1 recursive split).
+	if len(tb.Boundaries) < 2 {
+		t.Errorf("expected at least 2 boundaries for 20 varied gems, got %d: %v", len(tb.Boundaries), tb.Boundaries)
+	}
+	// All boundaries must be strictly descending.
+	for i := 1; i < len(tb.Boundaries); i++ {
+		if tb.Boundaries[i] >= tb.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d]=%f should be < Boundaries[%d]=%f", i, tb.Boundaries[i], i-1, tb.Boundaries[i-1])
+		}
+	}
+	// TOP boundary = 1000 (the price at the top side of the gap).
+	// Only gems >= 1000 are TOP.
+	if !approxEqual(tb.Boundaries[0], 1000, 0.01) {
+		t.Errorf("Boundaries[0] = %f, want 1000", tb.Boundaries[0])
+	}
+}
+
+// TestDetectTierBoundaries_Alias verifies the backward-compat alias works.
+func TestDetectTierBoundaries_Alias(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
+	}
+
+	tb := DetectTierBoundaries(gems)
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("alias DetectTierBoundaries should produce boundaries")
 	}
 }
