@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchVariantPlays, fetchFontEV, type GemPlay, type FontEVData } from '$lib/api';
+	import { fetchVariantPlays, fetchFontEV, type GemPlay, type FontEVResponse } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 	import FontEV from './FontEV.svelte';
 
@@ -12,7 +12,7 @@
 
 	interface VariantData {
 		plays: GemPlay[];
-		fontEV: FontEVData;
+		fontEV: FontEVResponse;
 	}
 
 	let variantData = $state<Record<string, VariantData>>({});
