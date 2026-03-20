@@ -10,9 +10,9 @@ import (
 // TemporalBucket holds the computed statistics for a single hourly bucket
 // in the temporal normalization system.
 type TemporalBucket struct {
-	Hour int     `json:"hour"`
-	Avg  float64 `json:"avg"` // median detrended price for this bucket
-	N    int     `json:"n"`   // number of data points in this bucket
+	Hour  int     `json:"hour"`
+	Coeff float64 `json:"coeff"` // coefficient = bucket_median / baseline (1.0 = neutral)
+	N     int     `json:"n"`     // number of data points in this bucket
 }
 
 // minBucketSamples is the minimum number of samples required in every bucket
@@ -41,7 +41,7 @@ type bucketEntry struct {
 //  3. Detrend: compute linear trend (price vs time) over the 7-day window.
 //     Subtract the trend from each price point before computing bucket medians.
 //  4. For each bucket: compute median price of all detrended data points.
-//  5. Global baseline = median of ALL detrended prices (across all buckets).
+//  5. Global baseline = mean of per-hour bucket medians (robust to unbalanced sample counts).
 //  6. Coefficient for bucket = bucket_median / global_baseline.
 //  7. Current coefficient = lookup the bucket matching snapTime's (weekday, hour).
 //
@@ -96,17 +96,6 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 		// Detrend: compute linear regression (price vs time).
 		detrended := detrendPrices(obs)
 
-		// Compute global baseline = median of all detrended values for this variant.
-		allVals := make([]float64, len(detrended))
-		for i, d := range detrended {
-			allVals[i] = d.chaos
-		}
-		baseline := medianFloat64(allVals)
-		if baseline <= 0 {
-			continue
-		}
-		allVariantBaselines[variant] = baseline
-
 		// Bucket by weekday*24+hour.
 		whBuckets := make(map[int]*bucketEntry)
 		hBuckets := make(map[int]*bucketEntry)
@@ -127,6 +116,21 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 
 		allWeekdayHourBuckets[variant] = whBuckets
 		allHourlyBuckets[variant] = hBuckets
+
+		// Compute baseline = mean of hourly bucket medians.
+		// Using mean of bucket medians (not global median) is robust to unbalanced
+		// sample counts across hours — each hour contributes equally to the baseline.
+		var bucketMedianSum float64
+		var bucketCount int
+		for _, be := range hBuckets {
+			if len(be.values) > 0 {
+				bucketMedianSum += medianFloat64(be.values)
+				bucketCount++
+			}
+		}
+		if bucketCount > 0 {
+			allVariantBaselines[variant] = bucketMedianSum / float64(bucketCount)
+		}
 	}
 
 	if len(allVariantBaselines) == 0 {
@@ -152,7 +156,7 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 				med := medianFloat64(be.values)
 				buckets = append(buckets, TemporalBucket{
 					Hour: key,
-					Avg:  sanitizeFloat(med / baseline),
+					Coeff:  sanitizeCoeff(med / baseline),
 					N:    len(be.values),
 				})
 			}
@@ -162,7 +166,7 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 				med := medianFloat64(be.values)
 				buckets = append(buckets, TemporalBucket{
 					Hour: hour,
-					Avg:  sanitizeFloat(med / baseline),
+					Coeff:  sanitizeCoeff(med / baseline),
 					N:    len(be.values),
 				})
 			}
@@ -180,17 +184,19 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 
 	// Compute the current coefficient for the snapTime.
 	// Use an average across all variants at the current time bucket.
+	// Fallback chain: weekday×hour → hour-only → 1.0
 	if mode != "none" {
 		var coeffSum float64
 		var coeffCount int
 		for variant, baseline := range allVariantBaselines {
 			var bucketMedian float64
-			switch mode {
-			case "weekday_hour":
+			if mode == "weekday_hour" {
 				if be, ok := allWeekdayHourBuckets[variant][snapWeekdayHour]; ok && len(be.values) > 0 {
 					bucketMedian = medianFloat64(be.values)
 				}
-			case "hourly":
+			}
+			// Fallback to hour-only if weekday×hour bucket has no data for current time.
+			if bucketMedian == 0 {
 				if be, ok := allHourlyBuckets[variant][snapHour]; ok && len(be.values) > 0 {
 					bucketMedian = medianFloat64(be.values)
 				}
@@ -201,7 +207,7 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 			}
 		}
 		if coeffCount > 0 {
-			currentCoeff = sanitizeFloat(coeffSum / float64(coeffCount))
+			currentCoeff = sanitizeCoeff(coeffSum / float64(coeffCount))
 		}
 	}
 
@@ -310,6 +316,16 @@ func detrendPrices(obs []observation) []observation {
 	return result
 }
 
+// sanitizeCoeff returns v if finite and positive, otherwise 1.0 (neutral coefficient).
+// Unlike sanitizeFloat (which returns 0 for NaN/Inf), coefficients must never be 0
+// as they are used as divisors in NormalizeHistory.
+func sanitizeCoeff(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+		return 1.0
+	}
+	return v
+}
+
 // medianFloat64 computes the median of a float64 slice. Returns 0 for empty input.
 // Does NOT modify the input slice.
 func medianFloat64(vals []float64) float64 {
@@ -327,39 +343,54 @@ func medianFloat64(vals []float64) float64 {
 }
 
 // CoefficientAt returns the temporal coefficient for the given timestamp and variant.
-// It looks up the per-variant coefficient from TemporalBuckets, falling back to 1.0
-// when data is unavailable or mode is "none".
+// It looks up the per-variant coefficient from TemporalBuckets with a fallback chain:
+// weekday×hour → hour-only → 1.0. Falls back to 1.0 when data is unavailable or mode is "none".
 func (mc MarketContext) CoefficientAt(t time.Time, variant string) float64 {
 	if mc.TemporalMode == "none" || mc.TemporalMode == "" || len(mc.TemporalBuckets) == 0 {
 		return 1.0
 	}
 
+	// Parse bucket data. In hot paths (NormalizeHistory), callers should use
+	// ParsedCoefficientAt instead to avoid repeated deserialization.
 	var bucketData map[string][]TemporalBucket
 	if err := json.Unmarshal(mc.TemporalBuckets, &bucketData); err != nil {
 		return 1.0
 	}
 
+	return lookupCoefficient(bucketData, mc.TemporalMode, t, variant)
+}
+
+// lookupCoefficient performs the actual coefficient lookup with fallback chain.
+func lookupCoefficient(bucketData map[string][]TemporalBucket, mode string, t time.Time, variant string) float64 {
 	buckets, ok := bucketData[variant]
 	if !ok || len(buckets) == 0 {
 		return 1.0
 	}
 
-	var targetKey int
-	switch mc.TemporalMode {
-	case "weekday_hour":
-		targetKey = int(t.UTC().Weekday())*24 + t.UTC().Hour()
-	case "hourly":
-		targetKey = t.UTC().Hour()
-	default:
+	hour := t.UTC().Hour()
+
+	if mode == "weekday_hour" {
+		// Try weekday×hour first.
+		whKey := int(t.UTC().Weekday())*24 + hour
+		for _, b := range buckets {
+			if b.Hour == whKey && b.Coeff > 0 {
+				return b.Coeff
+			}
+		}
+		// Fallback: try any bucket matching this hour (collapse weekdays).
+		for _, b := range buckets {
+			if b.Hour%24 == hour && b.Coeff > 0 {
+				return b.Coeff
+			}
+		}
 		return 1.0
 	}
 
-	for _, b := range buckets {
-		if b.Hour == targetKey {
-			if b.Avg > 0 {
-				return b.Avg
+	if mode == "hourly" {
+		for _, b := range buckets {
+			if b.Hour == hour && b.Coeff > 0 {
+				return b.Coeff
 			}
-			return 1.0
 		}
 	}
 
@@ -369,6 +400,8 @@ func (mc MarketContext) CoefficientAt(t time.Time, variant string) float64 {
 // NormalizeHistory creates a copy of the history with prices adjusted by temporal
 // coefficients. Listings are preserved raw. The coefficientAt function looks up
 // the per-variant coefficient for each point's timestamp.
+//
+// For the hot path, use NormalizeHistoryFromMC which parses bucket data once.
 func NormalizeHistory(history []GemPriceHistory, coefficientAt func(time.Time, string) float64) []GemPriceHistory {
 	if len(history) == 0 {
 		return nil
@@ -397,4 +430,21 @@ func NormalizeHistory(history []GemPriceHistory, coefficientAt func(time.Time, s
 	}
 
 	return normalized
+}
+
+// NormalizeHistoryFromMC is the optimized version that parses bucket data once.
+// Use this in the hot path (RunV2, backfill) instead of NormalizeHistory + mc.CoefficientAt.
+func NormalizeHistoryFromMC(history []GemPriceHistory, mc MarketContext) []GemPriceHistory {
+	if mc.TemporalMode == "none" || mc.TemporalMode == "" || len(mc.TemporalBuckets) == 0 {
+		return history // no normalization needed, return original (no copy)
+	}
+
+	var bucketData map[string][]TemporalBucket
+	if err := json.Unmarshal(mc.TemporalBuckets, &bucketData); err != nil {
+		return history
+	}
+
+	return NormalizeHistory(history, func(t time.Time, variant string) float64 {
+		return lookupCoefficient(bucketData, mc.TemporalMode, t, variant)
+	})
 }

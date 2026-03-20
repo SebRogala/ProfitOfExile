@@ -100,14 +100,13 @@ func TestComputeTemporalCoefficients_HourlyMode(t *testing.T) {
 
 func TestComputeTemporalCoefficients_2xPriceAtCertainHours(t *testing.T) {
 	// Known data: prices are 2x at hour 10 and 1x at hour 14.
-	// After detrending (no trend since flat), bucket median at hour 10 = 200,
-	// bucket median at hour 14 = 100, global median = 150.
+	// Baseline = mean of bucket medians = (200 + 100) / 2 = 150.
 	// Coefficient at hour 10 = 200/150 ≈ 1.33
 	// Coefficient at hour 14 = 100/150 ≈ 0.67
 	snapTime := time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC)
 
 	var points []PricePoint
-	for day := 10; day <= 16; day++ {
+	for day := 10; day <= 15; day++ {
 		points = append(points,
 			makePoint(time.Date(2026, 3, day, 10, 0, 0, 0, time.UTC), 200),
 			makePoint(time.Date(2026, 3, day, 14, 0, 0, 0, time.UTC), 100),
@@ -160,12 +159,12 @@ func TestCoefficientAt_EmptyMode(t *testing.T) {
 func TestCoefficientAt_HourlyMode(t *testing.T) {
 	buckets := map[string][]TemporalBucket{
 		"20/20": {
-			{Hour: 10, Avg: 1.5, N: 10},
-			{Hour: 14, Avg: 0.8, N: 10},
+			{Hour: 10, Coeff: 1.5, N: 10},
+			{Hour: 14, Coeff: 0.8, N: 10},
 		},
 		"1": {
-			{Hour: 10, Avg: 1.2, N: 8},
-			{Hour: 14, Avg: 0.9, N: 8},
+			{Hour: 10, Coeff: 1.2, N: 8},
+			{Hour: 14, Coeff: 0.9, N: 8},
 		},
 	}
 	bucketsJSON, _ := json.Marshal(buckets)
@@ -205,8 +204,8 @@ func TestCoefficientAt_WeekdayHourMode(t *testing.T) {
 	// Monday (1) hour 10 = 1*24+10 = 34
 	buckets := map[string][]TemporalBucket{
 		"20/20": {
-			{Hour: 34, Avg: 1.3, N: 5}, // Monday 10:00
-			{Hour: 38, Avg: 0.7, N: 5}, // Monday 14:00
+			{Hour: 34, Coeff: 1.3, N: 5}, // Monday 10:00
+			{Hour: 38, Coeff: 0.7, N: 5}, // Monday 14:00
 		},
 	}
 	bucketsJSON, _ := json.Marshal(buckets)
@@ -228,10 +227,17 @@ func TestCoefficientAt_WeekdayHourMode(t *testing.T) {
 		t.Errorf("CoefficientAt(Monday 14:00) = %f, want 0.7", coeff)
 	}
 
-	// Tuesday 10:00 — not in bucket data, should return 1.0.
+	// Tuesday 10:00 — no weekday_hour bucket for Tuesday, but hour 10 exists
+	// in Monday data. Fallback to hour-only: should return Monday's hour 10 coefficient.
 	coeff = mc.CoefficientAt(time.Date(2026, 3, 17, 10, 0, 0, 0, time.UTC), "20/20")
+	if !approxEqual(coeff, 1.3, 0.001) {
+		t.Errorf("CoefficientAt(Tuesday 10:00, hour-only fallback) = %f, want 1.3", coeff)
+	}
+
+	// Tuesday 3:00 — no weekday_hour bucket and no hour-only match, should return 1.0.
+	coeff = mc.CoefficientAt(time.Date(2026, 3, 17, 3, 0, 0, 0, time.UTC), "20/20")
 	if coeff != 1.0 {
-		t.Errorf("CoefficientAt(Tuesday 10:00) = %f, want 1.0", coeff)
+		t.Errorf("CoefficientAt(Tuesday 3:00, no data) = %f, want 1.0", coeff)
 	}
 }
 
