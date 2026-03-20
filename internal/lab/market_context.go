@@ -87,6 +87,9 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 		mc.ListingVelMean, mc.ListingVelSigma = meanStddev(velListings)
 	}
 
+	// Compute per-variant baselines from active gems.
+	mc.VariantStats = computeVariantBaselines(active)
+
 	// Compute tier boundaries using natural gap detection.
 	mc.TierBoundaries = DetectTierBoundaries(gems)
 
@@ -193,4 +196,40 @@ func meanStddev(vals []float64) (float64, float64) {
 	variance /= float64(n)
 
 	return sanitizeFloat(mean), sanitizeFloat(math.Sqrt(variance))
+}
+
+// computeVariantBaselines groups active (transfigured, non-corrupted) gems by
+// variant and computes median listings, median CV, and median price for each.
+// CV requires history (computed per-gem elsewhere), but here we use listings
+// as the primary calibration metric. CV is set to 0 since we don't have
+// per-gem CV at this stage; the calling code uses stabilityDiscount(cv)
+// which operates on the individual gem's CV rather than the variant median.
+func computeVariantBaselines(active []GemPrice) map[string]VariantBaseline {
+	// Group gems by variant.
+	type variantData struct {
+		listings []float64
+		prices   []float64
+	}
+	byVariant := make(map[string]*variantData)
+	for _, g := range active {
+		vd, ok := byVariant[g.Variant]
+		if !ok {
+			vd = &variantData{}
+			byVariant[g.Variant] = vd
+		}
+		vd.listings = append(vd.listings, float64(g.Listings))
+		vd.prices = append(vd.prices, g.Chaos)
+	}
+
+	result := make(map[string]VariantBaseline, len(byVariant))
+	for variant, vd := range byVariant {
+		sort.Float64s(vd.listings)
+		sort.Float64s(vd.prices)
+		result[variant] = VariantBaseline{
+			MedianListings: percentile(vd.listings, 0.50),
+			MedianPrice:    percentile(vd.prices, 0.50),
+			GemCount:       len(vd.listings),
+		}
+	}
+	return result
 }

@@ -801,6 +801,11 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 		return fmt.Errorf("lab repo: marshal weekday activity: %w", err)
 	}
 
+	variantStats, err := json.Marshal(mc.VariantStats)
+	if err != nil {
+		return fmt.Errorf("lab repo: marshal variant stats: %w", err)
+	}
+
 	_, err = r.pool.Exec(ctx, `
 		INSERT INTO market_context
 		 (time, price_percentiles, listing_percentiles,
@@ -808,8 +813,9 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 		  total_gems, total_listings, tier_boundaries,
 		  hourly_bias, hourly_volatility, hourly_activity,
 		  weekday_bias, weekday_volatility, weekday_activity,
-		  temporal_coefficient, temporal_mode, temporal_buckets)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		  temporal_coefficient, temporal_mode, temporal_buckets,
+		  variant_stats)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		ON CONFLICT DO NOTHING`,
 		mc.Time, pricePerc, listPerc,
 		mc.VelocityMean, mc.VelocitySigma, mc.ListingVelMean, mc.ListingVelSigma,
@@ -817,6 +823,7 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 		hourly, hourlyVol, hourlyAct,
 		weekday, weekdayVol, weekdayAct,
 		mc.TemporalCoefficient, mc.TemporalMode, mc.TemporalBuckets,
+		variantStats,
 	)
 	if err != nil {
 		return fmt.Errorf("lab repo: insert market context: %w", err)
@@ -831,6 +838,7 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 	var pricePerc, listPerc, tierBounds []byte
 	var hourly, hourlyVol, hourlyAct []byte
 	var weekday, weekdayVol, weekdayAct []byte
+	var variantStatsJSON []byte
 
 	err := r.pool.QueryRow(ctx, `
 		SELECT time, price_percentiles, listing_percentiles,
@@ -838,7 +846,8 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 		       total_gems, total_listings, tier_boundaries,
 		       hourly_bias, hourly_volatility, hourly_activity,
 		       weekday_bias, weekday_volatility, weekday_activity,
-		       temporal_coefficient, temporal_mode, temporal_buckets
+		       temporal_coefficient, temporal_mode, temporal_buckets,
+		       variant_stats
 		FROM market_context
 		WHERE time = (SELECT MAX(time) FROM market_context)`).
 		Scan(&mc.Time, &pricePerc, &listPerc,
@@ -846,7 +855,8 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 			&mc.TotalGems, &mc.TotalListings, &tierBounds,
 			&hourly, &hourlyVol, &hourlyAct,
 			&weekday, &weekdayVol, &weekdayAct,
-			&mc.TemporalCoefficient, &mc.TemporalMode, &mc.TemporalBuckets)
+			&mc.TemporalCoefficient, &mc.TemporalMode, &mc.TemporalBuckets,
+			&variantStatsJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -880,6 +890,11 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 	}
 	if err := json.Unmarshal(weekdayAct, &mc.WeekdayActivity); err != nil {
 		return nil, fmt.Errorf("lab repo: unmarshal weekday activity: %w", err)
+	}
+	if len(variantStatsJSON) > 0 {
+		if err := json.Unmarshal(variantStatsJSON, &mc.VariantStats); err != nil {
+			return nil, fmt.Errorf("lab repo: unmarshal variant stats: %w", err)
+		}
 	}
 
 	if err := mc.ValidateTemporalSlices(); err != nil {

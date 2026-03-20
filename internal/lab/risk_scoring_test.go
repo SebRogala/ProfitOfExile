@@ -11,10 +11,11 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSellProbabilityFactor_SigmoidCurve(t *testing.T) {
-	// Test pure sigmoid at key listing counts.
+	// Test pure sigmoid at key listing counts with medianListings=20.
 	// Use low7d=60 with currentPrice=100 to avoid thin-market adjustments:
 	// low7d=60 is between 0.5*100=50 and 0.7*100=70, so no boost or penalty.
 	// For listings >= 10, thin-market adjustments don't apply regardless.
+	medianListings := 20.0
 	tests := []struct {
 		listings int
 		wantMin  float64
@@ -28,10 +29,10 @@ func TestSellProbabilityFactor_SigmoidCurve(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := sellProbabilityFactor(tt.listings, 60, 100)
+		got := sellProbabilityFactor(tt.listings, 60, 100, medianListings)
 		if got < tt.wantMin || got > tt.wantMax {
-			t.Errorf("sellProbabilityFactor(listings=%d) = %f, want [%f, %f]",
-				tt.listings, got, tt.wantMin, tt.wantMax)
+			t.Errorf("sellProbabilityFactor(listings=%d, median=%v) = %f, want [%f, %f]",
+				tt.listings, medianListings, got, tt.wantMin, tt.wantMax)
 		}
 	}
 }
@@ -41,9 +42,10 @@ func TestSellProbabilityFactor_ThinMarketStablePrice(t *testing.T) {
 	// should boost the factor (genuine rarity).
 	currentPrice := 100.0
 	stableLow7d := 80.0 // 80 > 0.7 * 100 = 70
+	median := 30.0
 
-	boosted := sellProbabilityFactor(5, stableLow7d, currentPrice)
-	normal := sellProbabilityFactor(5, 50, currentPrice) // low7d=50, between 50 and 70
+	boosted := sellProbabilityFactor(5, stableLow7d, currentPrice, median)
+	normal := sellProbabilityFactor(5, 50, currentPrice, median) // low7d=50, between 50 and 70
 
 	if boosted <= normal {
 		t.Errorf("stable thin market should boost: boosted=%f, normal=%f", boosted, normal)
@@ -59,9 +61,10 @@ func TestSellProbabilityFactor_ThinMarketSpikePrice(t *testing.T) {
 	// should penalize the factor (manipulation risk).
 	currentPrice := 200.0
 	spikeLow7d := 80.0 // 80 < 0.5 * 200 = 100
+	median := 30.0
 
-	penalized := sellProbabilityFactor(5, spikeLow7d, currentPrice)
-	normal := sellProbabilityFactor(5, 120, currentPrice) // low7d=120, in the middle
+	penalized := sellProbabilityFactor(5, spikeLow7d, currentPrice, median)
+	normal := sellProbabilityFactor(5, 120, currentPrice, median) // low7d=120, in the middle
 
 	if penalized >= normal {
 		t.Errorf("spike thin market should penalize: penalized=%f, normal=%f", penalized, normal)
@@ -72,9 +75,10 @@ func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 	// With >= 10 listings, thin-market adjustments should not apply.
 	currentPrice := 100.0
 	stableLow7d := 90.0 // stable, but listings >= 10
+	median := 30.0
 
-	val10 := sellProbabilityFactor(10, stableLow7d, currentPrice)
-	val15 := sellProbabilityFactor(15, stableLow7d, currentPrice)
+	val10 := sellProbabilityFactor(10, stableLow7d, currentPrice, median)
+	val15 := sellProbabilityFactor(15, stableLow7d, currentPrice, median)
 
 	// These should be pure sigmoid values, no rarity boost.
 	if val10 < 0.3 || val10 > 1.0 {
@@ -87,19 +91,19 @@ func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 
 func TestSellProbabilityFactor_ZeroPrice(t *testing.T) {
 	// Zero price should not trigger thin-market adjustment (guarded by currentPrice > 0).
-	got := sellProbabilityFactor(5, 0, 0)
+	got := sellProbabilityFactor(5, 0, 0, 30)
 	if got < 0.3 || got > 1.0 {
 		t.Errorf("sellProbabilityFactor with zero price = %f, want [0.3, 1.0]", got)
 	}
 }
 
 func TestSellProbabilityFactor_FloorEnforced(t *testing.T) {
-	// With 1 listing (base ~0.307) and spike penalty (*0.5), the result
-	// would be ~0.154 without the floor. The floor should enforce 0.3 minimum.
+	// With 1 listing and spike penalty (*0.5), the result
+	// should be at least 0.3 (floor enforced).
 	currentPrice := 200.0
 	spikeLow7d := 50.0 // 50 < 0.5 * 200 = 100 → penalty
 
-	got := sellProbabilityFactor(1, spikeLow7d, currentPrice)
+	got := sellProbabilityFactor(1, spikeLow7d, currentPrice, 30)
 	if got < 0.3 {
 		t.Errorf("sellProbabilityFactor(1 listing, spike) = %f, want >= 0.3 (floor)", got)
 	}
@@ -199,49 +203,51 @@ func TestQuickSellUndercutFactor_TierModifier(t *testing.T) {
 // classifySellConfidence tests
 // ---------------------------------------------------------------------------
 
-func TestClassifySellConfidence_GREEN(t *testing.T) {
-	// GREEN requires sellProb >= 0.7 AND stabilityDisc >= 0.8.
-	got := classifySellConfidence(0.7, 0.8)
-	if got != "GREEN" {
-		t.Errorf("classifySellConfidence(0.7, 0.8) = %q, want GREEN", got)
+func TestClassifySellConfidence_SAFE(t *testing.T) {
+	// SAFE requires sellProb >= 0.8 AND stabilityDisc >= 0.85.
+	got := classifySellConfidence(0.8, 0.85)
+	if got != "SAFE" {
+		t.Errorf("classifySellConfidence(0.8, 0.85) = %q, want SAFE", got)
 	}
 
 	got = classifySellConfidence(0.9, 0.95)
-	if got != "GREEN" {
-		t.Errorf("classifySellConfidence(0.9, 0.95) = %q, want GREEN", got)
+	if got != "SAFE" {
+		t.Errorf("classifySellConfidence(0.9, 0.95) = %q, want SAFE", got)
 	}
 }
 
-func TestClassifySellConfidence_YELLOW(t *testing.T) {
-	// YELLOW: sellProb >= 0.5 OR stabilityDisc >= 0.7.
+func TestClassifySellConfidence_FAIR(t *testing.T) {
+	// FAIR: not SAFE and not RISKY.
 	tests := []struct {
 		sellProb     float64
 		stabilityDsc float64
 	}{
-		{0.5, 0.6},  // sellProb >= 0.5, stabilityDisc < 0.7
-		{0.4, 0.7},  // sellProb < 0.5, stabilityDisc >= 0.7
-		{0.6, 0.75}, // sellProb >= 0.5, stabilityDisc >= 0.7 but sellProb < 0.7 => not GREEN
+		{0.5, 0.8},  // sellProb >= 0.5 but < 0.8, stabilityDisc < 0.85
+		{0.8, 0.7},  // sellProb >= 0.8 but stabilityDisc < 0.85
+		{0.6, 0.75}, // both moderate
+		{0.4, 0.8},  // sellProb < 0.5 but stabilityDisc >= 0.7 → not RISKY
+		{0.5, 0.6},  // sellProb >= 0.5, so not RISKY
 	}
 
 	for _, tt := range tests {
 		got := classifySellConfidence(tt.sellProb, tt.stabilityDsc)
-		if got != "YELLOW" {
-			t.Errorf("classifySellConfidence(%f, %f) = %q, want YELLOW",
+		if got != "FAIR" {
+			t.Errorf("classifySellConfidence(%f, %f) = %q, want FAIR",
 				tt.sellProb, tt.stabilityDsc, got)
 		}
 	}
 }
 
-func TestClassifySellConfidence_RED(t *testing.T) {
-	// RED: sellProb < 0.5 AND stabilityDisc < 0.7.
+func TestClassifySellConfidence_RISKY(t *testing.T) {
+	// RISKY: sellProb < 0.5 AND stabilityDisc < 0.7.
 	got := classifySellConfidence(0.4, 0.6)
-	if got != "RED" {
-		t.Errorf("classifySellConfidence(0.4, 0.6) = %q, want RED", got)
+	if got != "RISKY" {
+		t.Errorf("classifySellConfidence(0.4, 0.6) = %q, want RISKY", got)
 	}
 
 	got = classifySellConfidence(0.3, 0.5)
-	if got != "RED" {
-		t.Errorf("classifySellConfidence(0.3, 0.5) = %q, want RED", got)
+	if got != "RISKY" {
+		t.Errorf("classifySellConfidence(0.3, 0.5) = %q, want RISKY", got)
 	}
 }
 
@@ -323,9 +329,9 @@ func TestIntegration_RiskAdjustedValueNonZero(t *testing.T) {
 	}
 
 	// SellConfidence should be one of the valid values.
-	validConf := map[string]bool{"GREEN": true, "YELLOW": true, "RED": true}
+	validConf := map[string]bool{"SAFE": true, "FAIR": true, "RISKY": true}
 	if !validConf[sig.SellConfidence] {
-		t.Errorf("SellConfidence = %q, want GREEN/YELLOW/RED", sig.SellConfidence)
+		t.Errorf("SellConfidence = %q, want SAFE/FAIR/RISKY", sig.SellConfidence)
 	}
 }
 
@@ -367,8 +373,8 @@ func TestIntegration_NoHistoryProducesValidRiskFields(t *testing.T) {
 	if sig.QuickSellPrice <= 0 {
 		t.Errorf("QuickSellPrice = %f, want > 0", sig.QuickSellPrice)
 	}
-	validConf := map[string]bool{"GREEN": true, "YELLOW": true, "RED": true}
+	validConf := map[string]bool{"SAFE": true, "FAIR": true, "RISKY": true}
 	if !validConf[sig.SellConfidence] {
-		t.Errorf("SellConfidence = %q, want GREEN/YELLOW/RED", sig.SellConfidence)
+		t.Errorf("SellConfidence = %q, want SAFE/FAIR/RISKY", sig.SellConfidence)
 	}
 }
