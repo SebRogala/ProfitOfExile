@@ -92,9 +92,11 @@ type GemFeature struct {
 	Low7d             float64
 	FloodCount        int
 	CrashCount        int
-	ListingElasticity float64
-	RelativePrice     float64
-	RelativeListings  float64
+	ListingElasticity     float64
+	RelativePrice         float64
+	RelativeListings      float64
+	SellProbabilityFactor float64 // 0.3-1.0, calibrated from listing count
+	StabilityDiscount     float64 // 0.5-1.0, from CV
 }
 
 // GemSignal holds the computed signal and confidence for a single gem at a snapshot.
@@ -111,6 +113,9 @@ type GemSignal struct {
 	WindowSignal     string
 	AdvancedSignal   string
 	PhaseModifier    float64
-	Recommendation   string
-	Tier             string
+	Recommendation    string
+	Tier              string
+	RiskAdjustedValue float64 // price * sell_probability * stability_discount
+	QuickSellPrice    float64 // aggressive undercut estimate
+	SellConfidence    string  // "GREEN", "YELLOW", "RED"
 }

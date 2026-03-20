@@ -173,8 +173,17 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			continue
 		}
 
-		cr.WeightedROI = cr.ROI * w
-		cr.WeightedROIPct = cr.ROIPct * w
+		// Weighted ROI: incorporate signal weight, liquidity, and saturation.
+		liquidityScore := float64(cr.Sellability) / 100.0
+		var saturationPenalty float64
+		switch cr.Signal {
+		case "DUMPING":
+			saturationPenalty = 0.5
+		case "TRAP":
+			saturationPenalty = 0.3
+		}
+		cr.WeightedROI = cr.ROI * liquidityScore * (1.0 - saturationPenalty)
+		cr.WeightedROIPct = cr.ROIPct * liquidityScore * (1.0 - saturationPenalty)
 		results = append(results, cr)
 	}
 

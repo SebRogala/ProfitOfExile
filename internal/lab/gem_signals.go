@@ -82,21 +82,30 @@ func ComputeGemSignals(
 		// 6. Recommendation (follows collective.go:311 pattern).
 		recommendation := computeRecommendation(signal, sUrgency, confidence)
 
+		// 7. Risk-adjusted scoring (POE-69).
+		riskAdjValue := f.Chaos * f.SellProbabilityFactor * f.StabilityDiscount
+		undercutFactor := quickSellUndercutFactor(f.Listings, f.Tier)
+		quickSell := f.Chaos * (1.0 - undercutFactor)
+		sellConf := classifySellConfidence(f.SellProbabilityFactor, f.StabilityDiscount)
+
 		signals = append(signals, GemSignal{
-			Time:             snapTime,
-			Name:             f.Name,
-			Variant:          f.Variant,
-			Signal:           signal,
-			Confidence:       confidence,
-			SellUrgency:      sUrgency,
-			SellReason:       sReason,
-			Sellability:      sellScore,
-			SellabilityLabel: sellLabel,
-			WindowSignal:     winSignal,
-			AdvancedSignal:   advSignal,
-			PhaseModifier:    phaseMod,
-			Recommendation:   recommendation,
-			Tier:             f.Tier,
+			Time:              snapTime,
+			Name:              f.Name,
+			Variant:           f.Variant,
+			Signal:            signal,
+			Confidence:        confidence,
+			SellUrgency:       sUrgency,
+			SellReason:        sReason,
+			Sellability:       sellScore,
+			SellabilityLabel:  sellLabel,
+			WindowSignal:      winSignal,
+			AdvancedSignal:    advSignal,
+			PhaseModifier:     phaseMod,
+			Recommendation:    recommendation,
+			Tier:              f.Tier,
+			RiskAdjustedValue: riskAdjValue,
+			QuickSellPrice:    quickSell,
+			SellConfidence:    sellConf,
 		})
 	}
 
@@ -117,4 +126,41 @@ func computeRecommendation(signal, sellUrgency string, confidence int) string {
 	}
 
 	return ""
+}
+
+// quickSellUndercutFactor returns the undercut percentage for quick-sell pricing.
+// Thinner markets require deeper undercuts; higher tiers get a premium penalty
+// because competition is fiercer at the top.
+func quickSellUndercutFactor(listings int, tier string) float64 {
+	var base float64
+	switch {
+	case listings >= 30:
+		base = 0.05
+	case listings >= 10:
+		base = 0.10
+	case listings >= 5:
+		base = 0.15
+	default:
+		base = 0.25
+	}
+	// Tier modifier: premium gems face stiffer competition.
+	switch tier {
+	case "TOP":
+		base += 0.05
+	case "HIGH":
+		base += 0.02
+	}
+	return base
+}
+
+// classifySellConfidence returns GREEN, YELLOW, or RED based on the
+// sell probability factor and stability discount.
+func classifySellConfidence(sellProb, stabilityDisc float64) string {
+	if sellProb >= 0.7 && stabilityDisc >= 0.8 {
+		return "GREEN"
+	}
+	if sellProb >= 0.5 || stabilityDisc >= 0.7 {
+		return "YELLOW"
+	}
+	return "RED"
 }

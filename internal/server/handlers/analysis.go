@@ -865,53 +865,57 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 		}
 
 		type row struct {
-			Time              string  `json:"time"`
-			Name              string  `json:"name"`
-			Variant           string  `json:"variant"`
-			Chaos             float64 `json:"chaos"`
-			Listings          int     `json:"listings"`
-			Tier              string  `json:"tier"`
-			VelShortPrice     float64 `json:"velShortPrice"`
-			VelShortListing   float64 `json:"velShortListing"`
-			VelMedPrice       float64 `json:"velMedPrice"`
-			VelMedListing     float64 `json:"velMedListing"`
-			VelLongPrice      float64 `json:"velLongPrice"`
-			VelLongListing    float64 `json:"velLongListing"`
-			CV                float64 `json:"cv"`
-			HistPosition      float64 `json:"histPosition"`
-			High7d            float64 `json:"high7d"`
-			Low7d             float64 `json:"low7d"`
-			FloodCount        int     `json:"floodCount"`
-			CrashCount        int     `json:"crashCount"`
-			ListingElasticity float64 `json:"listingElasticity"`
-			RelativePrice     float64 `json:"relativePrice"`
-			RelativeListings  float64 `json:"relativeListings"`
+			Time                  string  `json:"time"`
+			Name                  string  `json:"name"`
+			Variant               string  `json:"variant"`
+			Chaos                 float64 `json:"chaos"`
+			Listings              int     `json:"listings"`
+			Tier                  string  `json:"tier"`
+			VelShortPrice         float64 `json:"velShortPrice"`
+			VelShortListing       float64 `json:"velShortListing"`
+			VelMedPrice           float64 `json:"velMedPrice"`
+			VelMedListing         float64 `json:"velMedListing"`
+			VelLongPrice          float64 `json:"velLongPrice"`
+			VelLongListing        float64 `json:"velLongListing"`
+			CV                    float64 `json:"cv"`
+			HistPosition          float64 `json:"histPosition"`
+			High7d                float64 `json:"high7d"`
+			Low7d                 float64 `json:"low7d"`
+			FloodCount            int     `json:"floodCount"`
+			CrashCount            int     `json:"crashCount"`
+			ListingElasticity     float64 `json:"listingElasticity"`
+			RelativePrice         float64 `json:"relativePrice"`
+			RelativeListings      float64 `json:"relativeListings"`
+			SellProbabilityFactor float64 `json:"sellProbabilityFactor"`
+			StabilityDiscount     float64 `json:"stabilityDiscount"`
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, f := range results {
 			rows = append(rows, row{
-				Time:              f.Time.UTC().Format(time.RFC3339),
-				Name:              f.Name,
-				Variant:           f.Variant,
-				Chaos:             f.Chaos,
-				Listings:          f.Listings,
-				Tier:              f.Tier,
-				VelShortPrice:     f.VelShortPrice,
-				VelShortListing:   f.VelShortListing,
-				VelMedPrice:       f.VelMedPrice,
-				VelMedListing:     f.VelMedListing,
-				VelLongPrice:      f.VelLongPrice,
-				VelLongListing:    f.VelLongListing,
-				CV:                f.CV,
-				HistPosition:      f.HistPosition,
-				High7d:            f.High7d,
-				Low7d:             f.Low7d,
-				FloodCount:        f.FloodCount,
-				CrashCount:        f.CrashCount,
-				ListingElasticity: f.ListingElasticity,
-				RelativePrice:     f.RelativePrice,
-				RelativeListings:  f.RelativeListings,
+				Time:                  f.Time.UTC().Format(time.RFC3339),
+				Name:                  f.Name,
+				Variant:               f.Variant,
+				Chaos:                 f.Chaos,
+				Listings:              f.Listings,
+				Tier:                  f.Tier,
+				VelShortPrice:         f.VelShortPrice,
+				VelShortListing:       f.VelShortListing,
+				VelMedPrice:           f.VelMedPrice,
+				VelMedListing:         f.VelMedListing,
+				VelLongPrice:          f.VelLongPrice,
+				VelLongListing:        f.VelLongListing,
+				CV:                    f.CV,
+				HistPosition:          f.HistPosition,
+				High7d:                f.High7d,
+				Low7d:                 f.Low7d,
+				FloodCount:            f.FloodCount,
+				CrashCount:            f.CrashCount,
+				ListingElasticity:     f.ListingElasticity,
+				RelativePrice:         f.RelativePrice,
+				RelativeListings:      f.RelativeListings,
+				SellProbabilityFactor: f.SellProbabilityFactor,
+				StabilityDiscount:     f.StabilityDiscount,
 			})
 		}
 
@@ -988,39 +992,45 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		}
 
 		type row struct {
-			Time             string  `json:"time"`
-			Name             string  `json:"name"`
-			Variant          string  `json:"variant"`
-			Signal           string  `json:"signal"`
-			Confidence       int     `json:"confidence"`
-			SellUrgency      string  `json:"sellUrgency"`
-			SellReason       string  `json:"sellReason"`
-			Sellability      int     `json:"sellability"`
-			SellabilityLabel string  `json:"sellabilityLabel"`
-			WindowSignal     string  `json:"windowSignal"`
-			AdvancedSignal   string  `json:"advancedSignal"`
-			PhaseModifier    float64 `json:"phaseModifier"`
-			Recommendation   string  `json:"recommendation"`
-			Tier             string  `json:"tier"`
+			Time              string  `json:"time"`
+			Name              string  `json:"name"`
+			Variant           string  `json:"variant"`
+			Signal            string  `json:"signal"`
+			Confidence        int     `json:"confidence"`
+			SellUrgency       string  `json:"sellUrgency"`
+			SellReason        string  `json:"sellReason"`
+			Sellability       int     `json:"sellability"`
+			SellabilityLabel  string  `json:"sellabilityLabel"`
+			WindowSignal      string  `json:"windowSignal"`
+			AdvancedSignal    string  `json:"advancedSignal"`
+			PhaseModifier     float64 `json:"phaseModifier"`
+			Recommendation    string  `json:"recommendation"`
+			Tier              string  `json:"tier"`
+			RiskAdjustedValue float64 `json:"riskAdjustedValue"`
+			QuickSellPrice    float64 `json:"quickSellPrice"`
+			SellConfidence    string  `json:"sellConfidence"`
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, s := range results {
 			rows = append(rows, row{
-				Time:             s.Time.UTC().Format(time.RFC3339),
-				Name:             s.Name,
-				Variant:          s.Variant,
-				Signal:           s.Signal,
-				Confidence:       s.Confidence,
-				SellUrgency:      s.SellUrgency,
-				SellReason:       s.SellReason,
-				Sellability:      s.Sellability,
-				SellabilityLabel: s.SellabilityLabel,
-				WindowSignal:     s.WindowSignal,
-				AdvancedSignal:   s.AdvancedSignal,
-				PhaseModifier:    s.PhaseModifier,
-				Recommendation:   s.Recommendation,
-				Tier:             s.Tier,
+				Time:              s.Time.UTC().Format(time.RFC3339),
+				Name:              s.Name,
+				Variant:           s.Variant,
+				Signal:            s.Signal,
+				Confidence:        s.Confidence,
+				SellUrgency:       s.SellUrgency,
+				SellReason:        s.SellReason,
+				Sellability:       s.Sellability,
+				SellabilityLabel:  s.SellabilityLabel,
+				WindowSignal:      s.WindowSignal,
+				AdvancedSignal:    s.AdvancedSignal,
+				PhaseModifier:     s.PhaseModifier,
+				Recommendation:    s.Recommendation,
+				Tier:              s.Tier,
+				RiskAdjustedValue: s.RiskAdjustedValue,
+				QuickSellPrice:    s.QuickSellPrice,
+				SellConfidence:    s.SellConfidence,
 			})
 		}
 
