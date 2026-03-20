@@ -69,7 +69,8 @@ func TestDetectTierBoundaries_SingleOutlier(t *testing.T) {
 
 func TestDetectTierBoundaries_SmallPool(t *testing.T) {
 	// Exactly 10 gems — should still produce valid 3 boundaries.
-	prices := []float64{500, 400, 300, 200, 150, 100, 80, 50, 20, 5}
+	// All prices > 5 (the analysis pipeline floor).
+	prices := []float64{500, 400, 300, 200, 150, 100, 80, 50, 20, 6}
 	gems := make([]GemPrice, len(prices))
 	for i, p := range prices {
 		gems[i] = GemPrice{
@@ -158,7 +159,7 @@ func TestDetectTierBoundaries_MultiVariantDedup(t *testing.T) {
 }
 
 func TestDetectTierBoundaries_FiltersCorrectly(t *testing.T) {
-	// Verify corrupted, non-transfigured, Trarthus, and zero-price gems are excluded.
+	// Verify corrupted, non-transfigured, Trarthus, zero-price, and sub-5c gems are excluded.
 	gems := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
 		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
@@ -170,6 +171,9 @@ func TestDetectTierBoundaries_FiltersCorrectly(t *testing.T) {
 		{Name: "Wave of Trarthus", Variant: "20/20", Chaos: 9999, IsTransfigured: true},
 		{Name: "Zero of X", Variant: "20/20", Chaos: 0, IsTransfigured: true},
 		{Name: "Negative of X", Variant: "20/20", Chaos: -10, IsTransfigured: true},
+		// Sub-5c gems excluded to match analysis pipeline floor (Chaos > 5):
+		{Name: "Cheap of X", Variant: "20/20", Chaos: 3, IsTransfigured: true},
+		{Name: "AtFloor of X", Variant: "20/20", Chaos: 5, IsTransfigured: true},
 	}
 
 	tb := DetectTierBoundaries(gems)
@@ -267,5 +271,45 @@ func TestDetectTierBoundaries_FourExactGems(t *testing.T) {
 	}
 	if !approxEqual(tb.Mid, 10, 0.01) {
 		t.Errorf("Mid = %f, want 10", tb.Mid)
+	}
+}
+
+func TestDetectTierBoundaries_CheapGemsExcluded(t *testing.T) {
+	// Verify that sub-5c gems (which the analysis pipeline skips) don't affect
+	// tier boundaries. Previously Chaos > 0 was used, causing dozens of 1-5c
+	// transfigured gems to create a large artificial gap that skewed boundaries.
+	gemsWithCheap := []GemPrice{
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
+		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true},
+		// Cheap transfigured gems that should be excluded:
+		{Name: "F of X", Variant: "20/20", Chaos: 4, IsTransfigured: true},
+		{Name: "G of X", Variant: "20/20", Chaos: 3, IsTransfigured: true},
+		{Name: "H of X", Variant: "20/20", Chaos: 2, IsTransfigured: true},
+		{Name: "I of X", Variant: "20/20", Chaos: 1, IsTransfigured: true},
+	}
+
+	gemsWithout := []GemPrice{
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
+		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true},
+	}
+
+	tbWith := DetectTierBoundaries(gemsWithCheap)
+	tbWithout := DetectTierBoundaries(gemsWithout)
+
+	// Boundaries should be identical — cheap gems are excluded.
+	if !approxEqual(tbWith.Top, tbWithout.Top, 0.01) {
+		t.Errorf("Top with cheap gems = %f, without = %f — cheap gems should not affect boundaries", tbWith.Top, tbWithout.Top)
+	}
+	if !approxEqual(tbWith.High, tbWithout.High, 0.01) {
+		t.Errorf("High with cheap gems = %f, without = %f — cheap gems should not affect boundaries", tbWith.High, tbWithout.High)
+	}
+	if !approxEqual(tbWith.Mid, tbWithout.Mid, 0.01) {
+		t.Errorf("Mid with cheap gems = %f, without = %f — cheap gems should not affect boundaries", tbWith.Mid, tbWithout.Mid)
 	}
 }
