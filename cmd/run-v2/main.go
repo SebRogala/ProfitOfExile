@@ -44,6 +44,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "RunV2 failed: %v\n", err)
 			os.Exit(1)
 		}
+		// Font analysis needs features from RunV2.
+		if err := analyzer.RunFont(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "RunFont failed: %v\n", err)
+		}
 		fmt.Println("Done!")
 	}
 }
