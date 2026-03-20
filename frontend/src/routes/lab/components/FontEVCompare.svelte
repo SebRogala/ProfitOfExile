@@ -1,13 +1,14 @@
 <script lang="ts">
-	import { fetchFontEV, type FontEVData, type FontColor } from '$lib/api';
+	import { fetchFontEV, type FontEVResponse, type FontColor } from '$lib/api';
 
 	let { refreshKey = 0 }: { refreshKey?: number } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
 
-	let data = $state<Record<string, FontEVData>>({});
+	let data = $state<Record<string, FontEVResponse>>({});
 	let loading = $state(true);
+	let mode = $state<'safe' | 'jackpot'>('safe');
 
 	async function loadAll() {
 		loading = true;
@@ -26,7 +27,8 @@
 	function getEV(variant: string, color: string): FontColor | null {
 		const vd = data[variant];
 		if (!vd) return null;
-		return vd.colors.find((c) => c.color === color) || null;
+		const colors = mode === 'safe' ? vd.safe : vd.jackpot;
+		return colors.find((c) => c.color === color) || null;
 	}
 
 	function winner(): { variant: string; color: string; ev: number } {
@@ -42,11 +44,30 @@
 		return best;
 	}
 
+	function liquidityNote(fc: FontColor): string | null {
+		if (!fc.liquidityRisk || fc.liquidityRisk === 'LOW') return null;
+		return `${fc.thinPoolGems || 0} thin`;
+	}
+
 	$effect(() => { refreshKey; loadAll(); });
 </script>
 
 <section class="section">
-	<h2 class="section-title">Font EV</h2>
+	<div class="section-header">
+		<h2 class="section-title">Font EV</h2>
+		<div class="mode-toggle">
+			<button
+				class="toggle-btn"
+				class:active={mode === 'safe'}
+				onclick={() => mode = 'safe'}
+			>Safe</button>
+			<button
+				class="toggle-btn"
+				class:active={mode === 'jackpot'}
+				onclick={() => mode = 'jackpot'}
+			>Jackpot</button>
+		</div>
+	</div>
 
 	{#if loading}
 		<span class="loading">Loading...</span>
@@ -72,6 +93,10 @@
 								{#if cd && cd.ev > 0}
 									<span class="ev" class:best={isW}>{cd.ev}c</span>
 									<span class="det">pool {cd.pool} · {cd.pWin}%</span>
+									{#if cd.liquidityRisk && cd.liquidityRisk !== 'LOW'}
+										{@const note = liquidityNote(cd)}
+										<span class="liq-warn liq-{cd.liquidityRisk.toLowerCase()}">{note}</span>
+									{/if}
 								{:else}
 									<span class="nil">—</span>
 								{/if}
@@ -91,11 +116,44 @@
 		padding: 20px 28px;
 		margin-bottom: 32px;
 	}
+	.section-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 14px;
+	}
 	.section-title {
 		font-size: 1.0625rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
-		margin: 0 0 14px 0;
+		margin: 0;
+	}
+	.mode-toggle {
+		display: flex;
+		gap: 0;
+	}
+	.toggle-btn {
+		background: transparent;
+		border: 1px solid var(--color-lab-border);
+		color: var(--color-lab-text-secondary);
+		padding: 5px 16px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+		transition: all 0.15s ease;
+	}
+	.toggle-btn:first-child {
+		border-right: none;
+	}
+	.toggle-btn:hover {
+		color: var(--color-lab-text);
+		border-color: var(--color-lab-text-secondary);
+	}
+	.toggle-btn.active {
+		color: var(--color-lab-text);
+		border-color: var(--color-lab-blue);
+		background: rgba(59, 130, 246, 0.15);
 	}
 	.loading { color: var(--color-lab-text-secondary); font-size: 0.875rem; }
 
@@ -141,4 +199,16 @@
 	.c-red { color: var(--color-lab-red); }
 	.c-green { color: var(--color-lab-green); }
 	.c-blue { color: var(--color-lab-blue); }
+
+	.liq-warn {
+		display: block;
+		font-size: 0.75rem;
+		margin-top: 4px;
+	}
+	.liq-medium {
+		color: var(--color-lab-yellow, #eab308);
+	}
+	.liq-high {
+		color: var(--color-lab-red);
+	}
 </style>
