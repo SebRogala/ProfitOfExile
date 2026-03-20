@@ -246,7 +246,7 @@ func tierAction(signal, windowSignal, priceTier string) string {
 		case "DUMPING":
 			return "SELL IMMEDIATELY"
 		case "UNCERTAIN":
-			return "HOLD — competitive cluster, may reach TOP"
+			return "MONITOR — direction unclear, watch velocity"
 		}
 		switch windowSignal {
 		case "BREWING":
@@ -259,7 +259,7 @@ func tierAction(signal, windowSignal, priceTier string) string {
 		case "HERD":
 			return "SELL — move is over, exit position"
 		case "UNCERTAIN":
-			return "CAUTIOUS — may reverse"
+			return "MONITOR — direction unclear, check listings"
 		}
 		switch windowSignal {
 		case "BREWING":

@@ -8,8 +8,8 @@ package lab
 //
 // Covered scenarios:
 //   - HERD→DUMPING lifecycle  (Kinetic Blast of Clustering — peak herd then price collapse)
-//   - HERD→FALLING lifecycle  (Elemental Hit of the Spectrum — sustained herd)
-//   - RISING→HERD transition  (Shock Nova of Procession — gradual climb reaching herd threshold)
+//   - HERD→UNCERTAIN lifecycle (Elemental Hit of the Spectrum — sustained herd)
+//   - UNCERTAIN→HERD transition (Shock Nova of Procession — gradual climb reaching herd threshold)
 //   - STABLE flatline         (Artillery Ballista of Cross Strafe — price/listing inert)
 
 import (
@@ -77,7 +77,7 @@ var productionFixtures = []backtestFixture{
 		// Sustained large listing flood (283→350) at gradually rising price.
 		// Time-based velocity (2h window) captures the full price trend, showing
 		// consistent price+listing growth that correctly fires HERD throughout.
-		// snap[4]: 2h window includes points 0-4, price 554.8→581.6 = RISING (lVel < 10/h)
+		// snap[4]: 2h window includes points 0-4, price 554.8→581.6 = UNCERTAIN (lVel < 10/h)
 		// snap[5]: 2h window sees listing surge to 348, HERD fires
 		// snap[6-7]: sustained HERD as both velocities stay above thresholds
 		gemName: "Elemental Hit of the Spectrum",
@@ -102,11 +102,11 @@ var productionFixtures = []backtestFixture{
 		},
 	},
 	{
-		// Shock Nova of Procession (BLUE) — RISING→HERD transition.
+		// Shock Nova of Procession (BLUE) — UNCERTAIN→HERD transition.
 		// Steady price climb from 832c to 914c with growing listing pressure.
 		// Time-based velocity (2h window) captures broader price trend, showing
 		// consistent upward movement that was missed by the old 4-point window.
-		// snap[4]: 2h window shows price+listing growth → RISING (lVel still < 10/h)
+		// snap[4]: 2h window shows price+listing growth → UNCERTAIN (lVel still < 10/h)
 		// snap[5-6]: 2h window captures sustained listing surge → HERD
 		// snap[7]: continued HERD with both velocities above thresholds
 		gemName: "Shock Nova of Procession",
@@ -281,8 +281,8 @@ func TestAnalyzeTrends_Backtest_STABLE_CV_zero(t *testing.T) {
 	}
 }
 
-// TestAnalyzeTrends_Backtest_RISING_before_HERD validates that Shock Nova of Procession
-// correctly emits RISING at snap[4] (listing velocity still below HERD threshold)
+// TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD validates that Shock Nova of Procession
+// correctly emits UNCERTAIN at snap[4] (listing velocity still below HERD threshold)
 // then transitions to HERD at snap[5] once the 2h window captures enough listing growth.
 func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 	fix := productionFixtures[2] // Shock Nova of Procession
