@@ -1,8 +1,10 @@
 <script lang="ts">
-	import type { FontEVData } from '$lib/api';
+	import type { FontEVResponse, FontColor } from '$lib/api';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 
-	let { data }: { data: FontEVData } = $props();
+	let { data }: { data: FontEVResponse } = $props();
+
+	let mode = $state<'safe' | 'jackpot'>('safe');
 
 	const COLOR_LABELS: Record<string, { icon: string; cssClass: string; colorClass: string }> = {
 		RED: { icon: '●', cssClass: 'font-red', colorClass: 'icon-red' },
@@ -10,38 +12,68 @@
 		BLUE: { icon: '●', cssClass: 'font-blue', colorClass: 'icon-blue' },
 	};
 
+	let activeColors = $derived(mode === 'safe' ? data.safe : data.jackpot);
+	let bestColor = $derived(mode === 'safe' ? data.bestColorSafe : data.bestColorJackpot);
+
 	function deltaStr(v: number): string {
 		if (v > 0) return `+${v}c`;
 		if (v < 0) return `${v}c`;
 		return '0c';
 	}
+
+	function liquidityBadge(fc: FontColor): string | null {
+		if (!fc.liquidityRisk || fc.liquidityRisk === 'LOW') return null;
+		return `${fc.liquidityRisk} -- ${fc.thinPoolGems || 0} of ${fc.winners} winners have <5 listings`;
+	}
 </script>
 
 <div class="font-ev">
-	<h4 class="font-title">Font EV</h4>
-	<div class="color-cards">
-		{#each data.colors as fc}
-			{@const cl = COLOR_LABELS[fc.color]}
-			<div class="color-card {cl.cssClass}">
-				<div class="color-header">
-					<span class="color-icon {cl.colorClass}">{cl.icon}</span>
-					<span class="color-name">{fc.color}</span>
-				</div>
-				<div class="color-stats">
-					<span class="stat" title={METRIC_TOOLTIPS.EV}>EV: <strong>{fc.ev}c</strong></span>
-					<span class="stat" title={METRIC_TOOLTIPS.Pool}>Pool: {fc.pool}</span>
-					<span class="stat">Winners: {fc.winners}</span>
-					<span class="stat" title={METRIC_TOOLTIPS.pWin}>pWin: {fc.pWin}%</span>
-					<span class="stat">Profit: {fc.profit}c</span>
-					<span class="stat delta" title={METRIC_TOOLTIPS['\u039412h']}>
-						Δ12h: EV {deltaStr(fc.evDelta2h)}
-					</span>
-				</div>
-			</div>
-		{/each}
+	<div class="font-header">
+		<h4 class="font-title">Font EV</h4>
+		<div class="mode-toggle">
+			<button
+				class="toggle-btn"
+				class:active={mode === 'safe'}
+				onclick={() => mode = 'safe'}
+			>Safe</button>
+			<button
+				class="toggle-btn"
+				class:active={mode === 'jackpot'}
+				onclick={() => mode = 'jackpot'}
+			>Jackpot</button>
+		</div>
 	</div>
-	<div class="quality-compare">
-		vs Quality avg ROI: {data.qualityAvgRoi}c → Font {data.bestColor} wins by {data.bestAdvantage}c
+	<div class="color-cards">
+		{#each activeColors as fc}
+			{@const cl = COLOR_LABELS[fc.color]}
+			{@const badge = liquidityBadge(fc)}
+			{#if cl}
+				<div class="color-card {cl.cssClass}" class:best-card={fc.color === bestColor}>
+					<div class="color-header">
+						<span class="color-icon {cl.colorClass}">{cl.icon}</span>
+						<span class="color-name">{fc.color}</span>
+						{#if fc.color === bestColor}
+							<span class="best-badge">BEST</span>
+						{/if}
+					</div>
+					<div class="color-stats">
+						<span class="stat" title={METRIC_TOOLTIPS.EV}>EV: <strong>{fc.ev}c</strong></span>
+						<span class="stat" title={METRIC_TOOLTIPS.Pool}>Pool: {fc.pool}</span>
+						<span class="stat">Winners: {fc.winners}</span>
+						<span class="stat" title={METRIC_TOOLTIPS.pWin}>pWin: {fc.pWin}%</span>
+						<span class="stat">Profit: {fc.profit}c</span>
+						<span class="stat delta" title={METRIC_TOOLTIPS['\u039412h']}>
+							Δ12h: EV {deltaStr(fc.evDelta2h)}
+						</span>
+					</div>
+					{#if badge}
+						<div class="liquidity-badge risk-{fc.liquidityRisk?.toLowerCase()}">
+							{badge}
+						</div>
+					{/if}
+				</div>
+			{/if}
+		{/each}
 	</div>
 </div>
 
@@ -51,11 +83,44 @@
 		border-top: 1px solid var(--color-lab-border);
 		padding-top: 18px;
 	}
+	.font-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 12px;
+	}
 	.font-title {
 		font-size: 1rem;
 		font-weight: 700;
 		color: var(--color-lab-text);
-		margin: 0 0 12px 0;
+		margin: 0;
+	}
+	.mode-toggle {
+		display: flex;
+		gap: 0;
+	}
+	.toggle-btn {
+		background: transparent;
+		border: 1px solid var(--color-lab-border);
+		color: var(--color-lab-text-secondary);
+		padding: 4px 14px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+		transition: all 0.15s ease;
+	}
+	.toggle-btn:first-child {
+		border-right: none;
+	}
+	.toggle-btn:hover {
+		color: var(--color-lab-text);
+		border-color: var(--color-lab-text-secondary);
+	}
+	.toggle-btn.active {
+		color: var(--color-lab-text);
+		border-color: var(--color-lab-blue);
+		background: rgba(59, 130, 246, 0.15);
 	}
 	.color-cards {
 		display: flex;
@@ -66,6 +131,10 @@
 		border: 1px solid var(--color-lab-border);
 		padding: 16px 18px;
 		background: var(--color-lab-bg);
+	}
+	.color-card.best-card {
+		border-color: var(--color-lab-green);
+		background: rgba(34, 197, 94, 0.04);
 	}
 	.color-header {
 		display: flex;
@@ -86,6 +155,14 @@
 	.font-red .color-name { color: var(--color-lab-red); }
 	.font-green .color-name { color: var(--color-lab-green); }
 	.font-blue .color-name { color: var(--color-lab-blue); }
+	.best-badge {
+		font-size: 0.625rem;
+		font-weight: 700;
+		color: var(--color-lab-green);
+		border: 1px solid var(--color-lab-green);
+		padding: 1px 6px;
+		letter-spacing: 0.05em;
+	}
 	.color-stats {
 		display: flex;
 		flex-wrap: wrap;
@@ -102,9 +179,20 @@
 	.delta {
 		color: var(--color-lab-text-secondary);
 	}
-	.quality-compare {
-		margin-top: 12px;
-		font-size: 0.875rem;
-		color: var(--color-lab-text-secondary);
+	.liquidity-badge {
+		margin-top: 10px;
+		font-size: 0.8125rem;
+		padding: 4px 10px;
+		border: 1px solid;
+	}
+	.risk-medium {
+		color: var(--color-lab-yellow, #eab308);
+		border-color: rgba(234, 179, 8, 0.3);
+		background: rgba(234, 179, 8, 0.06);
+	}
+	.risk-high {
+		color: var(--color-lab-red);
+		border-color: rgba(239, 68, 68, 0.3);
+		background: rgba(239, 68, 68, 0.06);
 	}
 </style>

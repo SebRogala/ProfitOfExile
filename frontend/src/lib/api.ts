@@ -69,6 +69,9 @@ export interface FontColor {
 	pWin: number;
 	profit: number;
 	evDelta2h: number;
+	thinPoolGems?: number;
+	liquidityRisk?: string;
+	mode?: string;
 }
 
 export interface FontEVData {
@@ -76,6 +79,13 @@ export interface FontEVData {
 	qualityAvgRoi: number;
 	bestColor: string;
 	bestAdvantage: number;
+}
+
+export interface FontEVResponse {
+	safe: FontColor[];
+	jackpot: FontColor[];
+	bestColorSafe: string;
+	bestColorJackpot: string;
 }
 
 export interface WindowAlert {
@@ -295,33 +305,37 @@ export async function fetchVariantPlays(variant: string): Promise<GemPlay[]> {
 	return fetchBestPlays(variant);
 }
 
-export async function fetchFontEV(variant: string): Promise<FontEVData> {
-	const params: Record<string, string> = {};
-	if (variant) params.variant = variant;
-
-	const resp = await get<{ count: number; data: any[] }>('/analysis/font', params);
-	const rows = resp.data || [];
-
-	const colors: FontColor[] = rows.map((r: any) => ({
+function mapFontRows(rows: any[]): FontColor[] {
+	return rows.map((r: any) => ({
 		color: r.color || '',
 		ev: Math.round(r.ev || 0),
 		pool: r.pool || 0,
 		winners: r.winners || 0,
 		pWin: Math.round((r.pWin || 0) * 10000) / 100,
 		profit: Math.round(r.profit || 0),
-		evDelta2h: 0, // not in backend yet
+		evDelta2h: 0,
+		thinPoolGems: r.thinPoolGems || 0,
+		liquidityRisk: r.liquidityRisk || 'LOW',
+		mode: r.mode || '',
 	}));
+}
 
-	// Compute best color
-	const sorted = [...colors].sort((a, b) => b.ev - a.ev);
-	const best = sorted[0];
-	const second = sorted[1];
+export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
+	const params: Record<string, string> = {};
+	if (variant) params.variant = variant;
+
+	const resp = await get<{
+		safe: any[];
+		jackpot: any[];
+		bestColorSafe: string;
+		bestColorJackpot: string;
+	}>('/analysis/font', params);
 
 	return {
-		colors,
-		qualityAvgRoi: 0, // needs quality data cross-reference
-		bestColor: best?.color || '',
-		bestAdvantage: best && second ? Math.round(best.ev - second.ev) : 0,
+		safe: mapFontRows(resp.safe || []),
+		jackpot: mapFontRows(resp.jackpot || []),
+		bestColorSafe: resp.bestColorSafe || '',
+		bestColorJackpot: resp.bestColorJackpot || '',
 	};
 }
 
