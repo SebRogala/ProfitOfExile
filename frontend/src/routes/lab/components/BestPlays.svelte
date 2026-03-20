@@ -152,7 +152,8 @@
 				</td>
 				{#if showVariantColumn}<td class="col-var">{gem.variant}</td>{/if}
 				<td class="col-tier">
-					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}">{gem.priceTier}</span>
+					{@const displayTier = showVariantColumn && gem.globalTier ? gem.globalTier : gem.priceTier}
+					<span class="tier-badge tier-{displayTier.toLowerCase()}">{displayTier}</span>
 				</td>
 				<td class="col-num roi-val">{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c</td>
 				<td class="col-signal">

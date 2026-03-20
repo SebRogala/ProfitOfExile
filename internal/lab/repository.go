@@ -920,17 +920,17 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 	for _, f := range features {
 		batch.Queue(
 			`INSERT INTO gem_features
-			 (time, name, variant, chaos, listings, tier,
+			 (time, name, variant, chaos, listings, tier, global_tier,
 			  vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
 			  vel_long_price, vel_long_listing,
 			  cv, hist_position, high_7d, low_7d,
 			  flood_count, crash_count, listing_elasticity,
 			  relative_price, relative_listings,
 			  sell_probability_factor, stability_discount)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-			         $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 			 ON CONFLICT DO NOTHING`,
-			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier,
+			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.GlobalTier,
 			f.VelShortPrice, f.VelShortListing, f.VelMedPrice, f.VelMedListing,
 			f.VelLongPrice, f.VelLongListing,
 			f.CV, f.HistPosition, f.High7d, f.Low7d,
@@ -964,7 +964,7 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 // LatestGemFeatures returns the most recent gem feature rows, optionally filtered by variant and/or tier.
 func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string, limit int) ([]GemFeature, error) {
 	query := `
-		SELECT time, name, variant, chaos, listings, tier,
+		SELECT time, name, variant, chaos, listings, tier, COALESCE(global_tier, ''),
 		       vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
 		       vel_long_price, vel_long_listing,
 		       cv, hist_position, high_7d, low_7d,
@@ -999,7 +999,7 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 	var results []GemFeature
 	for rows.Next() {
 		var f GemFeature
-		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier,
+		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier, &f.GlobalTier,
 			&f.VelShortPrice, &f.VelShortListing, &f.VelMedPrice, &f.VelMedListing,
 			&f.VelLongPrice, &f.VelLongListing,
 			&f.CV, &f.HistPosition, &f.High7d, &f.Low7d,
@@ -1126,7 +1126,7 @@ func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string,
 // No variant/tier filters, no limit. Ordered by time, name, variant.
 func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]GemFeature, error) {
 	query := `
-		SELECT time, name, variant, chaos, listings, tier,
+		SELECT time, name, variant, chaos, listings, tier, COALESCE(global_tier, ''),
 		       vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
 		       vel_long_price, vel_long_listing,
 		       cv, hist_position, high_7d, low_7d,
@@ -1146,7 +1146,7 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 	var results []GemFeature
 	for rows.Next() {
 		var f GemFeature
-		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier,
+		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier, &f.GlobalTier,
 			&f.VelShortPrice, &f.VelShortListing, &f.VelMedPrice, &f.VelMedListing,
 			&f.VelLongPrice, &f.VelLongListing,
 			&f.CV, &f.HistPosition, &f.High7d, &f.Low7d,

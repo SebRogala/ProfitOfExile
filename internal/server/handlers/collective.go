@@ -86,6 +86,22 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 
 		results := lab.RankCollective(transfigure, trends, budget, limit, sortBy)
 
+		// Enrich results with GlobalTier from cached gem features.
+		if cache != nil {
+			if features := cache.GemFeatures(); len(features) > 0 {
+				type fKey struct{ name, variant string }
+				featureIndex := make(map[fKey]string, len(features))
+				for _, f := range features {
+					featureIndex[fKey{f.Name, f.Variant}] = f.GlobalTier
+				}
+				for i := range results {
+					if gt, ok := featureIndex[fKey{results[i].TransfiguredName, results[i].Variant}]; ok {
+						results[i].GlobalTier = gt
+					}
+				}
+			}
+		}
+
 		// Fetch sparkline data for the result gems.
 		// When a specific variant is selected, one query suffices. When "ALL
 		// variants", group gems by their own variant and query per group so
@@ -146,6 +162,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			AdvancedSignal       string  `json:"advancedSignal"`
 			LiquidityTier        string  `json:"liquidityTier"`
 			PriceTier            string  `json:"priceTier"`
+			GlobalTier           string  `json:"globalTier"`
 			TierAction           string  `json:"tierAction"`
 			SellUrgency          string  `json:"sellUrgency"`
 			SellReason           string  `json:"sellReason"`
@@ -182,6 +199,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				AdvancedSignal:       cr.AdvancedSignal,
 				LiquidityTier:        cr.LiquidityTier,
 				PriceTier:            cr.PriceTier,
+				GlobalTier:           cr.GlobalTier,
 				TierAction:           cr.TierAction,
 				SellUrgency:          cr.SellUrgency,
 				SellReason:           cr.SellReason,
