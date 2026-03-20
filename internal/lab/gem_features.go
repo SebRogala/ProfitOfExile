@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"math"
 	"time"
 )
 
@@ -82,6 +83,10 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		}
 		// else: stay at zero defaults (insufficient history)
 
+		// Risk-adjusted scoring fields.
+		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos)
+		f.StabilityDiscount = stabilityDiscount(f.CV)
+
 		// Sanitize non-velocity float fields.
 		// Velocity fields are already sanitized by velocityWindow; CV, hist, and
 		// relative fields are sanitized here because their producers do not guarantee it.
@@ -91,6 +96,8 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		f.Low7d = sanitizeFloat(f.Low7d)
 		f.RelativePrice = sanitizeFloat(f.RelativePrice)
 		f.RelativeListings = sanitizeFloat(f.RelativeListings)
+		f.SellProbabilityFactor = sanitizeFloat(f.SellProbabilityFactor)
+		f.StabilityDiscount = sanitizeFloat(f.StabilityDiscount)
 
 		features = append(features, f)
 	}
@@ -103,3 +110,39 @@ func extractChaos(p PricePoint) float64 { return p.Chaos }
 
 // extractListings extracts the listing count from a PricePoint as float64.
 func extractListings(p PricePoint) float64 { return float64(p.Listings) }
+
+// sellProbabilityFactor returns a 0.3-1.0 factor representing how likely this gem
+// is to sell within an hour, calibrated from listing count with context-aware
+// thin-market adjustments.
+func sellProbabilityFactor(listings int, low7d, currentPrice float64) float64 {
+	// Base: sigmoid on listing count.
+	base := 0.3 + 0.7*(1.0/(1.0+math.Exp(-0.1*float64(listings-20))))
+
+	// Context-aware thin-market adjustment.
+	if listings < 10 && currentPrice > 0 {
+		if low7d > 0.7*currentPrice {
+			// Historically stable price with thin listings = genuine rarity.
+			base = math.Min(base*1.5, 1.0)
+		} else if low7d < 0.5*currentPrice {
+			// Recent price spike with thin listings = manipulation risk.
+			base *= 0.5
+		}
+	}
+
+	// Enforce floor — thin-market penalty can push below 0.3 but
+	// even manipulated gems have some non-zero sell chance.
+	return math.Max(base, 0.3)
+}
+
+// stabilityDiscount returns a 0.5-1.0 discount factor based on the coefficient
+// of variation. Higher CV means less stable prices, lower discount.
+func stabilityDiscount(cv float64) float64 {
+	d := 1.0 - (cv / 200.0)
+	if d < 0.5 {
+		return 0.5
+	}
+	if d > 1.0 {
+		return 1.0
+	}
+	return d
+}
