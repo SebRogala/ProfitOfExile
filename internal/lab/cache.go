@@ -13,9 +13,10 @@ import (
 // immutable once stored.
 type Cache struct {
 	mu          sync.RWMutex
-	transfigure []TransfigureResult
-	font        []FontResult
-	quality     []QualityResult
+	transfigure  []TransfigureResult
+	fontSafe     []FontResult
+	fontJackpot  []FontResult
+	quality      []QualityResult
 	trends      []TrendResult
 	gemNames    []string // unique transfigured gem names, sorted
 	lastUpdated time.Time
@@ -55,11 +56,12 @@ func (c *Cache) SetTransfigure(results []TransfigureResult) {
 	c.lastUpdated = time.Now()
 }
 
-// SetFont replaces the cached font results.
-func (c *Cache) SetFont(results []FontResult) {
+// SetFont replaces the cached font results for both modes.
+func (c *Cache) SetFont(analysis FontAnalysis) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.font = results
+	c.fontSafe = analysis.Safe
+	c.fontJackpot = analysis.Jackpot
 	c.lastUpdated = time.Now()
 }
 
@@ -86,11 +88,25 @@ func (c *Cache) Transfigure() []TransfigureResult {
 	return c.transfigure
 }
 
-// Font returns the cached font results (nil if empty).
-func (c *Cache) Font() []FontResult {
+// Font returns the cached font analysis with both modes (nil slices if empty).
+func (c *Cache) Font() FontAnalysis {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.font
+	return FontAnalysis{Safe: c.fontSafe, Jackpot: c.fontJackpot}
+}
+
+// FontSafe returns the cached safe mode font results (nil if empty).
+func (c *Cache) FontSafe() []FontResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fontSafe
+}
+
+// FontJackpot returns the cached jackpot mode font results (nil if empty).
+func (c *Cache) FontJackpot() []FontResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fontJackpot
 }
 
 // Quality returns the cached quality results (nil if empty).

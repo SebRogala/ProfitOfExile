@@ -164,7 +164,8 @@ func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) [
 	return filtered
 }
 
-// FontAnalysis returns the latest Font of Divine Skill EV results.
+// FontAnalysis returns the latest Font of Divine Skill EV results in two modes:
+// Safe (MID+ tier winners) and Jackpot (HIGH+ tier winners).
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
 func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
@@ -176,65 +177,102 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			return
 		}
 
-		var results []lab.FontResult
+		var safeResults, jackpotResults []lab.FontResult
+		cacheHit := false
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			if cached := cache.Font(); len(cached) > 0 {
-				results = filterFont(cached, variant, limit)
+			analysis := cache.Font()
+			if len(analysis.Safe) > 0 || len(analysis.Jackpot) > 0 {
+				safeResults = filterFont(analysis.Safe, variant, limit)
+				jackpotResults = filterFont(analysis.Jackpot, variant, limit)
+				cacheHit = true
 			}
 		}
 
 		// Slow path: fall back to DB query.
-		if results == nil {
+		if !cacheHit {
 			var err error
-			results, err = repo.LatestFontResults(r.Context(), variant, limit)
+			safeResults, err = repo.LatestFontResults(r.Context(), variant, "safe", limit)
 			if err != nil {
-				slog.Error("font analysis: query failed", "error", err, "variant", variant)
+				slog.Error("font analysis: query safe failed", "error", err, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+			jackpotResults, err = repo.LatestFontResults(r.Context(), variant, "jackpot", limit)
+			if err != nil {
+				slog.Error("font analysis: query jackpot failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
 		}
 
 		type row struct {
-			Time      string  `json:"time"`
-			Color     string  `json:"color"`
-			Variant   string  `json:"variant"`
-			Pool      int     `json:"pool"`
-			Winners   int     `json:"winners"`
-			PWin      float64 `json:"pWin"`
-			AvgWin    float64 `json:"avgWin"`
-			EV        float64 `json:"ev"`
-			InputCost float64 `json:"inputCost"`
-			Profit    float64 `json:"profit"`
-			Threshold float64 `json:"threshold"`
+			Time          string  `json:"time"`
+			Color         string  `json:"color"`
+			Variant       string  `json:"variant"`
+			Pool          int     `json:"pool"`
+			Winners       int     `json:"winners"`
+			PWin          float64 `json:"pWin"`
+			AvgWin        float64 `json:"avgWin"`
+			EV            float64 `json:"ev"`
+			InputCost     float64 `json:"inputCost"`
+			Profit        float64 `json:"profit"`
+			ThinPoolGems  int     `json:"thinPoolGems"`
+			LiquidityRisk string  `json:"liquidityRisk"`
 		}
 
-		rows := make([]row, 0, len(results))
-		for _, r := range results {
-			rows = append(rows, row{
-				Time:      r.Time.UTC().Format(time.RFC3339),
-				Color:     r.Color,
-				Variant:   r.Variant,
-				Pool:      r.Pool,
-				Winners:   r.Winners,
-				PWin:      r.PWin,
-				AvgWin:    r.AvgWin,
-				EV:        r.EV,
-				InputCost: r.InputCost,
-				Profit:    r.Profit,
-				Threshold: r.Threshold,
-			})
+		toRows := func(results []lab.FontResult) []row {
+			rows := make([]row, 0, len(results))
+			for _, r := range results {
+				rows = append(rows, row{
+					Time:          r.Time.UTC().Format(time.RFC3339),
+					Color:         r.Color,
+					Variant:       r.Variant,
+					Pool:          r.Pool,
+					Winners:       r.Winners,
+					PWin:          r.PWin,
+					AvgWin:        r.AvgWin,
+					EV:            r.EV,
+					InputCost:     r.InputCost,
+					Profit:        r.Profit,
+					ThinPoolGems:  r.ThinPoolGems,
+					LiquidityRisk: r.LiquidityRisk,
+				})
+			}
+			return rows
 		}
+
+		safeRows := toRows(safeResults)
+		jackpotRows := toRows(jackpotResults)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"count": len(rows),
-			"data":  rows,
+			"safe":             safeRows,
+			"jackpot":          jackpotRows,
+			"bestColorSafe":    bestColor(safeResults),
+			"bestColorJackpot": bestColor(jackpotResults),
 		}); err != nil {
 			slog.Error("font analysis: encode response", "error", err)
 		}
 	}
+}
+
+// bestColor returns the color with the highest EV among the given font results.
+func bestColor(results []lab.FontResult) string {
+	evByColor := make(map[string]float64)
+	for _, r := range results {
+		evByColor[r.Color] += r.EV
+	}
+	var best string
+	var bestEV float64
+	for color, ev := range evByColor {
+		if best == "" || ev > bestEV {
+			best = color
+			bestEV = ev
+		}
+	}
+	return best
 }
 
 // filterFont filters and limits cached font results.
@@ -624,7 +662,8 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 			if err := json.NewEncoder(w).Encode(map[string]any{
 				"cached":      false,
 				"transfigure": 0,
-				"font":        0,
+				"fontSafe":    0,
+				"fontJackpot": 0,
 				"quality":     0,
 				"trends":      0,
 			}); err != nil {
@@ -636,11 +675,13 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 		lastUpdated := cache.LastUpdated()
 		cached := !lastUpdated.IsZero()
 
+		fontAnalysis := cache.Font()
 		resp := map[string]any{
 			"cached":      cached,
 			"league":      league,
 			"transfigure": len(cache.Transfigure()),
-			"font":        len(cache.Font()),
+			"fontSafe":    len(fontAnalysis.Safe),
+			"fontJackpot": len(fontAnalysis.Jackpot),
 			"quality":     len(cache.Quality()),
 			"trends":      len(cache.Trends()),
 		}

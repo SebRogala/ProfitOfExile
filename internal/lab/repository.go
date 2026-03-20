@@ -140,11 +140,13 @@ func (r *Repository) SaveFontResults(ctx context.Context, results []FontResult) 
 	for _, r := range results {
 		batch.Queue(
 			`INSERT INTO font_snapshots
-			 (time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit, threshold)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			 (time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
+			  mode, thin_pool_gems, liquidity_risk)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			 ON CONFLICT DO NOTHING`,
 			r.Time, r.Color, r.Variant, r.Pool, r.Winners,
-			r.PWin, r.AvgWin, r.EV, r.InputCost, r.Profit, r.Threshold,
+			r.PWin, r.AvgWin, r.EV, r.InputCost, r.Profit,
+			r.Mode, r.ThinPoolGems, r.LiquidityRisk,
 		)
 	}
 
@@ -216,21 +218,29 @@ func (r *Repository) SaveQualityResults(ctx context.Context, results []QualityRe
 	return inserted, nil
 }
 
-// LatestFontResults returns the most recent Font analysis results, optionally filtered by variant.
-func (r *Repository) LatestFontResults(ctx context.Context, variant string, limit int) ([]FontResult, error) {
+// LatestFontResults returns the most recent Font analysis results, optionally filtered by variant and/or mode.
+func (r *Repository) LatestFontResults(ctx context.Context, variant, mode string, limit int) ([]FontResult, error) {
 	query := `
-		SELECT time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit, threshold
+		SELECT time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
+		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW')
 		FROM font_snapshots
 		WHERE time = (SELECT MAX(time) FROM font_snapshots)`
 	args := []any{}
+	argIdx := 1
 
 	if variant != "" {
-		query += ` AND variant = $1 ORDER BY profit DESC LIMIT $2`
-		args = append(args, variant, limit)
-	} else {
-		query += ` ORDER BY profit DESC LIMIT $1`
-		args = append(args, limit)
+		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
+		args = append(args, variant)
+		argIdx++
 	}
+	if mode != "" {
+		query += fmt.Sprintf(` AND mode = $%d`, argIdx)
+		args = append(args, mode)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` ORDER BY profit DESC LIMIT $%d`, argIdx)
+	args = append(args, limit)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -242,7 +252,8 @@ func (r *Repository) LatestFontResults(ctx context.Context, variant string, limi
 	for rows.Next() {
 		var fr FontResult
 		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.Winners,
-			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit, &fr.Threshold); err != nil {
+			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit,
+			&fr.Mode, &fr.ThinPoolGems, &fr.LiquidityRisk); err != nil {
 			return nil, fmt.Errorf("lab repo: scan font result: %w", err)
 		}
 		results = append(results, fr)
