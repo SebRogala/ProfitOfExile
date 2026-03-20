@@ -70,6 +70,8 @@ func (a *Analyzer) RunTransfigure(ctx context.Context) error {
 }
 
 // RunFont fetches the latest gem snapshot and computes Font of Divine Skill EV.
+// It requires GemFeature data for tier-based winner classification.
+// Features are loaded from cache first, then DB fallback.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunFont(ctx context.Context) error {
 	a.muFont.Lock()
@@ -85,21 +87,44 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 		return nil
 	}
 
-	results := AnalyzeFont(snapTime, gems)
+	// Load gem features: try cache first, fall back to DB.
+	var features []GemFeature
+	if a.cache != nil {
+		features = a.cache.GemFeatures()
+	}
+	if len(features) == 0 {
+		features, err = a.repo.LatestGemFeatures(ctx, "", "", 50000)
+		if err != nil {
+			a.logger.Error("font: failed to load gem features", "error", err)
+			return err
+		}
+	}
+	if len(features) == 0 {
+		a.logger.Info("font: no gem features available yet, skipping (run v2 pipeline first)")
+		return nil
+	}
 
-	inserted, err := a.repo.SaveFontResults(ctx, results)
+	analysis := AnalyzeFont(snapTime, gems, features)
+
+	// Combine both modes for DB persistence.
+	allResults := make([]FontResult, 0, len(analysis.Safe)+len(analysis.Jackpot))
+	allResults = append(allResults, analysis.Safe...)
+	allResults = append(allResults, analysis.Jackpot...)
+
+	inserted, err := a.repo.SaveFontResults(ctx, allResults)
 	if err != nil {
 		a.logger.Error("font: failed to save results", "error", err)
 		return err
 	}
 
 	if a.cache != nil {
-		a.cache.SetFont(results)
+		a.cache.SetFont(analysis)
 	}
 
 	a.logger.Info("font analysis complete",
 		"snapTime", snapTime,
-		"results", len(results),
+		"safe", len(analysis.Safe),
+		"jackpot", len(analysis.Jackpot),
 		"inserted", inserted,
 	)
 	a.throttler.Signal()
