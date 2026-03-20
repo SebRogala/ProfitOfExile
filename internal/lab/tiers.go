@@ -2,27 +2,30 @@ package lab
 
 import (
 	"sort"
-	"strings"
 )
 
 // DetectTierBoundaries finds natural price gaps in the transfigured gem market
 // to produce adaptive 4-tier boundaries (TOP/HIGH/MID/LOW).
 //
 // Algorithm:
-//  1. Filter to transfigured, non-corrupted, non-Trarthus gems with Chaos > 0
+//  1. Filter to analysable transfigured gems (non-corrupted, non-Trarthus, Chaos > 5)
 //  2. Deduplicate by gem name (keep max price per name to avoid multi-variant inflation)
 //  3. Sort unique prices descending
 //  4. Compute relative gaps: gap_pct = (prices[i] - prices[i+1]) / prices[i]
 //  5. Find the 3 largest relative gaps → tier boundaries
 //  6. Fallback for <4 distinct prices: use P75/P50/P25
+//
+// The Chaos > 5 threshold matches the analysis pipeline filter in ComputeGemFeatures
+// and AnalyzeTrends. Including sub-5c gems would create artificial gaps between the
+// cheap tail and the analysable pool, skewing boundaries downward and making nearly
+// every displayed gem classify as TOP.
 func DetectTierBoundaries(gems []GemPrice) TierBoundaries {
 	// Step 1: collect max price per gem name (deduplicate variants).
+	// Uses isAnalyzableGem (transfigured, non-corrupted, non-Trarthus) plus
+	// the Chaos > 5 floor that the analysis pipeline applies.
 	nameMax := make(map[string]float64)
 	for _, g := range gems {
-		if !g.IsTransfigured || g.IsCorrupted || g.Chaos <= 0 {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 {
 			continue
 		}
 		if g.Chaos > nameMax[g.Name] {
@@ -47,7 +50,7 @@ func DetectTierBoundaries(gems []GemPrice) TierBoundaries {
 	}
 
 	// Step 3: compute relative gaps between consecutive prices.
-	// All prices are > 0 by construction (Chaos > 0 filter applied above).
+	// All prices are > 5 by construction (Chaos > 5 filter applied above).
 	type gap struct {
 		index  int
 		relGap float64
