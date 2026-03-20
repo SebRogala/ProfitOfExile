@@ -31,6 +31,7 @@ type CollectiveResult struct {
 	AdvancedSignal   string `json:"advancedSignal"`
 	LiquidityTier    string `json:"liquidityTier"`
 	PriceTier        string `json:"priceTier"`
+	GlobalTier       string `json:"globalTier"`
 	TierAction       string `json:"tierAction"`
 	SellUrgency      string `json:"sellUrgency"`
 	SellReason       string `json:"sellReason"`

@@ -912,6 +912,7 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 			Chaos                 float64 `json:"chaos"`
 			Listings              int     `json:"listings"`
 			Tier                  string  `json:"tier"`
+			GlobalTier            string  `json:"globalTier"`
 			VelShortPrice         float64 `json:"velShortPrice"`
 			VelShortListing       float64 `json:"velShortListing"`
 			VelMedPrice           float64 `json:"velMedPrice"`
@@ -940,6 +941,7 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 				Chaos:                 f.Chaos,
 				Listings:              f.Listings,
 				Tier:                  f.Tier,
+				GlobalTier:            f.GlobalTier,
 				VelShortPrice:         f.VelShortPrice,
 				VelShortListing:       f.VelShortListing,
 				VelMedPrice:           f.VelMedPrice,
