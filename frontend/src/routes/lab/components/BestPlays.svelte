@@ -128,7 +128,7 @@
 			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
 			<th class="col-tier" title="Price tier — TOP (high value), MID (moderate), LOW (budget). Auto-scales with league economy.">Tier</th>
 			<th class="col-num" title={METRIC_TOOLTIPS.ROI}>ROI</th>
-			<th class="col-signal" title="Primary signal: STABLE, RISING, FALLING, DUMPING, HERD, RECOVERY, TRAP. Based on price velocity, listing changes, and historical position.">Signal</th>
+			<th class="col-signal" title="Primary signal: STABLE, UNCERTAIN, DUMPING, HERD, RECOVERY, TRAP. Based on price velocity, listing changes, and historical position.">Signal</th>
 			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
 			<th class="col-signals" title="Window: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Advanced: BREAKOUT, COMEBACK, POTENTIAL, PRICE_MANIPULATION.">Signals</th>
 			<th class="col-num" title="Current transfigured gem listings on trade. Velocity arrow shows listing change direction.">Listings</th>

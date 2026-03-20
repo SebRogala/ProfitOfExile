@@ -90,15 +90,15 @@ func TestRankCollective_SignalWeighting(t *testing.T) {
 	now := time.Now()
 	// All same ROI of 100 — sorting determined purely by signal weight.
 	transfigure := []TransfigureResult{
-		{Time: now, TransfiguredName: "Falling Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Uncertain Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
 		{Time: now, TransfiguredName: "Recovery Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Rising Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Stable Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
 		{Time: now, TransfiguredName: "Herd Gem", Variant: "20/20", ROI: 100, Confidence: "OK"},
 	}
 	trends := []TrendResult{
-		{Name: "Falling Gem", Variant: "20/20", Signal: "FALLING"},
+		{Name: "Uncertain Gem", Variant: "20/20", Signal: "UNCERTAIN"},
 		{Name: "Recovery Gem", Variant: "20/20", Signal: "RECOVERY"},
-		{Name: "Rising Gem", Variant: "20/20", Signal: "RISING"},
+		{Name: "Stable Gem", Variant: "20/20", Signal: "STABLE"},
 		{Name: "Herd Gem", Variant: "20/20", Signal: "HERD"},
 	}
 
@@ -108,8 +108,9 @@ func TestRankCollective_SignalWeighting(t *testing.T) {
 		t.Fatalf("got %d results, want 4", len(results))
 	}
 
-	// Expected order: RECOVERY (1.2), RISING (1.1), HERD (0.8), FALLING (0.6)
-	expected := []string{"Recovery Gem", "Rising Gem", "Herd Gem", "Falling Gem"}
+	// Expected order: RECOVERY (1.2), STABLE/UNCERTAIN (1.0), HERD (0.8)
+	// STABLE and UNCERTAIN have same weight (1.0), order between them depends on input order.
+	expected := []string{"Recovery Gem", "Uncertain Gem", "Stable Gem", "Herd Gem"}
 	for i, name := range expected {
 		if results[i].TransfiguredName != name {
 			t.Errorf("position %d: got %s, want %s", i, results[i].TransfiguredName, name)
@@ -159,7 +160,7 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 		{TransfiguredName: "Dump Gem", BaseName: "Dump", Variant: "20/20", ROI: 200, Confidence: "OK"},
 	}
 	trends := []TrendResult{
-		{Name: "Best Gem", Variant: "20/20", Signal: "RISING"},
+		{Name: "Best Gem", Variant: "20/20", Signal: "UNCERTAIN"},
 		{Name: "OK Gem", Variant: "20/20", Signal: "STABLE"},
 		{Name: "Dump Gem", Variant: "20/20", Signal: "DUMPING"},
 	}
@@ -180,7 +181,7 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 		byName[r.TransfiguredName] = r
 	}
 
-	// Best Gem: ROI 100 * 1.1 (RISING) = 110 → BEST
+	// Best Gem: ROI 100 * 1.0 (UNCERTAIN) = 100 → BEST
 	if byName["Best Gem"].Recommendation != "BEST" {
 		t.Errorf("Best Gem recommendation = %s, want BEST", byName["Best Gem"].Recommendation)
 	}
@@ -321,10 +322,10 @@ func TestSignalWeight(t *testing.T) {
 	}{
 		{"TRAP", 0},
 		{"DUMPING", 0.3},
-		{"FALLING", 0.6},
+		{"UNCERTAIN", 1.0},
 		{"HERD", 0.8},
 		{"STABLE", 1.0},
-		{"RISING", 1.1},
+		
 		{"RECOVERY", 1.2},
 		{"UNKNOWN", 1.0},
 	}

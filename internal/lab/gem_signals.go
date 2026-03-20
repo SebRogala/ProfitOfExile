@@ -112,7 +112,7 @@ func computeRecommendation(signal, sellUrgency string, confidence int) string {
 	}
 
 	// High-confidence positive signals produce OK.
-	if confidence >= 65 && (signal == "HERD" || signal == "RISING" || signal == "RECOVERY") {
+	if confidence >= 65 && (signal == "HERD" || signal == "RECOVERY") {
 		return "OK"
 	}
 

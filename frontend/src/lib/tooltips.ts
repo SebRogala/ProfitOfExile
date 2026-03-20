@@ -6,10 +6,8 @@
 export const SIGNAL_TOOLTIPS: Record<string, string> = {
 	STABLE:
 		'Price and listings are steady. Safe to farm — predictable returns. Triggered: price velocity < \u00b12c/h, listing velocity < \u00b13/h',
-	RISING:
-		'Price is increasing. Good entry point if CV is low. Triggered: price velocity > 5c/h',
-	FALLING:
-		'Price is decreasing. Wait for stabilization before farming. Triggered: price velocity < -5c/h',
+	UNCERTAIN:
+		'Directional prediction accuracy is below 50% (coin flip) — showing raw market data instead. Price velocity and listing trends are available for your own assessment.',
 	HERD: "Both price AND listings are rising. Multiple farmers flooding the market. Sell now if you have stock. Don't start farming \u2014 you're late. Triggered: price velocity > 5, listing velocity > 10",
 	DUMPING:
 		'Price dropping while listings rise. Sellers undercutting each other. Avoid \u2014 will keep falling. Triggered: price velocity < -5, listing velocity > 5',

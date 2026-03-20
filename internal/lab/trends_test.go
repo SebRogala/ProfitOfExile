@@ -130,12 +130,12 @@ func TestClassifySignal_RECOVERY(t *testing.T) {
 	}
 }
 
-func TestClassifySignal_OldRECOVERY_NowFALLING(t *testing.T) {
+func TestClassifySignal_OldRECOVERY_NowUNCERTAIN(t *testing.T) {
 	// Old RECOVERY conditions (priceVel < -5 && listingVel < -5) should no longer fire RECOVERY.
-	// priceVel=-10 is outside the new range (must be > -5), so this becomes FALLING.
+	// priceVel=-10 is outside the new range (must be > -5), so this becomes UNCERTAIN.
 	s := classifySignal(-10, -10, 50, 50)
-	if s != "FALLING" {
-		t.Errorf("signal = %s, want FALLING (old RECOVERY conditions no longer match)", s)
+	if s != "UNCERTAIN" {
+		t.Errorf("signal = %s, want UNCERTAIN (old RECOVERY conditions no longer match)", s)
 	}
 }
 
@@ -146,17 +146,19 @@ func TestClassifySignal_STABLE(t *testing.T) {
 	}
 }
 
-func TestClassifySignal_RISING(t *testing.T) {
+func TestClassifySignal_UNCERTAIN_Positive(t *testing.T) {
+	// Previously RISING, now UNCERTAIN (directional accuracy below coin flip).
 	s := classifySignal(3, 0, 30, 50)
-	if s != "RISING" {
-		t.Errorf("signal = %s, want RISING", s)
+	if s != "UNCERTAIN" {
+		t.Errorf("signal = %s, want UNCERTAIN", s)
 	}
 }
 
-func TestClassifySignal_FALLING(t *testing.T) {
+func TestClassifySignal_UNCERTAIN_Negative(t *testing.T) {
+	// Previously FALLING, now UNCERTAIN (directional accuracy below coin flip).
 	s := classifySignal(-3, 0, 30, 50)
-	if s != "FALLING" {
-		t.Errorf("signal = %s, want FALLING", s)
+	if s != "UNCERTAIN" {
+		t.Errorf("signal = %s, want UNCERTAIN", s)
 	}
 }
 
@@ -187,27 +189,27 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		{"cv=100 not TRAP", 0, 0, 100, 50, "STABLE"},
 		{"cv=100.01 is TRAP", 0, 0, 100.01, 50, "TRAP"},
 		// DUMPING boundary: priceVel must be < -5 (not <=)
-		{"priceVel=-5 not DUMPING", -5, 10, 50, 50, "FALLING"},
+		{"priceVel=-5 not DUMPING", -5, 10, 50, 50, "UNCERTAIN"},
 		{"priceVel=-5.01 is DUMPING", -5.01, 10, 50, 50, "DUMPING"},
 		// HERD boundary: listingVel must be > 10
-		{"listingVel=10 not HERD", 10, 10, 30, 50, "RISING"},
+		{"listingVel=10 not HERD", 10, 10, 30, 50, "UNCERTAIN"},
 		{"listingVel=10.01 is HERD", 10, 10.01, 30, 50, "HERD"},
 		// STABLE boundary: |priceVel| must be < 2 and |listingVel| < 3
-		{"priceVel=2 not STABLE", 2, 0, 30, 50, "RISING"},
+		{"priceVel=2 not STABLE", 2, 0, 30, 50, "UNCERTAIN"},
 		{"priceVel=1.99 is STABLE", 1.99, 0, 30, 50, "STABLE"},
-		{"listingVel=3 not STABLE", 0, 3, 30, 50, "FALLING"},
+		{"listingVel=3 not STABLE", 0, 3, 30, 50, "UNCERTAIN"},
 		{"listingVel=2.99 is STABLE", 0, 2.99, 30, 50, "STABLE"},
 		// Pre-HERD boundary: priceVel must be > 30 and listingVel > 3
-		{"preHERD: priceVel=30 not HERD", 30, 5, 30, 50, "RISING"},
+		{"preHERD: priceVel=30 not HERD", 30, 5, 30, 50, "UNCERTAIN"},
 		{"preHERD: priceVel=30.01 listVel=3.01 is HERD", 30.01, 3.01, 30, 50, "HERD"},
-		{"preHERD: priceVel=50 listVel=3 not HERD", 50, 3, 30, 50, "RISING"},
+		{"preHERD: priceVel=50 listVel=3 not HERD", 50, 3, 30, 50, "UNCERTAIN"},
 		{"preHERD: priceVel=50 listVel=3.01 is HERD", 50, 3.01, 30, 50, "HERD"},
 		// RECOVERY boundaries: priceVel in (-5, 0), listingVel < -3, listings < 20
 		{"RECOVERY: priceVel=-1 listVel=-4 lst=10", -1, -4, 30, 10, "RECOVERY"},
-		{"RECOVERY: priceVel=0 not RECOVERY (must be <0)", 0, -4, 30, 10, "FALLING"},
-		{"RECOVERY: priceVel=-5 not RECOVERY (must be >-5)", -5, -4, 30, 10, "FALLING"},
-		{"RECOVERY: listVel=-3 not RECOVERY (must be <-3)", -1, -3, 30, 10, "FALLING"},
-		{"RECOVERY: lst=20 not RECOVERY (must be <20)", -1, -4, 30, 20, "FALLING"},
+		{"RECOVERY: priceVel=0 not RECOVERY (must be <0)", 0, -4, 30, 10, "UNCERTAIN"},
+		{"RECOVERY: priceVel=-5 not RECOVERY (must be >-5)", -5, -4, 30, 10, "UNCERTAIN"},
+		{"RECOVERY: listVel=-3 not RECOVERY (must be <-3)", -1, -3, 30, 10, "UNCERTAIN"},
+		{"RECOVERY: lst=20 not RECOVERY (must be <20)", -1, -4, 30, 20, "UNCERTAIN"},
 		{"RECOVERY: lst=19 is RECOVERY", -1, -4, 30, 19, "RECOVERY"},
 	}
 	for _, tt := range tests {
@@ -971,13 +973,13 @@ func TestTierAction(t *testing.T) {
 		// HIGH tier
 		{"HIGH+HERD", "HERD", "", "HIGH", "UNDERCUT — herd arrived, sell into pressure"},
 		{"HIGH+DUMPING", "DUMPING", "", "HIGH", "SELL IMMEDIATELY"},
-		{"HIGH+RISING", "RISING", "", "HIGH", "HOLD — competitive cluster, may reach TOP"},
+		{"HIGH+UNCERTAIN", "UNCERTAIN", "", "HIGH", "HOLD — competitive cluster, may reach TOP"},
 		{"HIGH+BREWING", "STABLE", "BREWING", "HIGH", "WATCH — window forming on competitive gem"},
 		{"HIGH+OPEN", "STABLE", "OPEN", "HIGH", "ACT — window open, time-sensitive"},
 		{"HIGH+STABLE", "STABLE", "CLOSED", "HIGH", ""},
 		// MID tier
 		{"MID+HERD", "HERD", "", "MID", "SELL — move is over, exit position"},
-		{"MID+RISING", "RISING", "", "MID", "CAUTIOUS — may reverse"},
+		{"MID+UNCERTAIN", "UNCERTAIN", "", "MID", "CAUTIOUS — may reverse"},
 		{"MID+BREWING", "STABLE", "BREWING", "MID", "WATCH — may reverse before opening"},
 		// LOW tier
 		{"LOW+HERD", "HERD", "", "LOW", "MOMENTUM — rising with crowd, watch for reversal"},
@@ -985,7 +987,7 @@ func TestTierAction(t *testing.T) {
 		{"LOW+BREWING", "STABLE", "BREWING", "LOW", "SKIP — not actionable at this price"},
 		// No special guidance
 		{"TOP+STABLE", "STABLE", "CLOSED", "TOP", ""},
-		{"MID+FALLING", "FALLING", "CLOSED", "MID", ""},
+		// MID+UNCERTAIN already tested above with CAUTIOUS — no empty-action case for UNCERTAIN
 		{"LOW+STABLE", "STABLE", "CLOSED", "LOW", ""},
 	}
 	for _, tt := range tests {
