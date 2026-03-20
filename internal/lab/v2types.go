@@ -23,6 +23,11 @@ type MarketContext struct {
 	WeekdayBias        []float64 // 7 entries, Sun=0..Sat=6 (matches time.Weekday)
 	WeekdayVolatility  []float64 // 7 entries — σ of price changes per weekday
 	WeekdayActivity    []float64 // 7 entries — ratio of moving gems per weekday (0.0-1.0)
+
+	// Temporal normalization fields (POE-68).
+	TemporalCoefficient float64 // coefficient for this snapshot's time; 1.0 = no adjustment
+	TemporalMode        string  // "none", "hourly", "weekday_hour"
+	TemporalBuckets     []byte  // raw JSONB, keyed by variant
 }
 
 // ValidateTemporalSlices checks that all temporal slices have the expected lengths:

@@ -796,14 +796,16 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 		  velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
 		  total_gems, total_listings, tier_boundaries,
 		  hourly_bias, hourly_volatility, hourly_activity,
-		  weekday_bias, weekday_volatility, weekday_activity)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		  weekday_bias, weekday_volatility, weekday_activity,
+		  temporal_coefficient, temporal_mode, temporal_buckets)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT DO NOTHING`,
 		mc.Time, pricePerc, listPerc,
 		mc.VelocityMean, mc.VelocitySigma, mc.ListingVelMean, mc.ListingVelSigma,
 		mc.TotalGems, mc.TotalListings, tierBounds,
 		hourly, hourlyVol, hourlyAct,
 		weekday, weekdayVol, weekdayAct,
+		mc.TemporalCoefficient, mc.TemporalMode, mc.TemporalBuckets,
 	)
 	if err != nil {
 		return fmt.Errorf("lab repo: insert market context: %w", err)
@@ -824,14 +826,16 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 		       velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
 		       total_gems, total_listings, tier_boundaries,
 		       hourly_bias, hourly_volatility, hourly_activity,
-		       weekday_bias, weekday_volatility, weekday_activity
+		       weekday_bias, weekday_volatility, weekday_activity,
+		       temporal_coefficient, temporal_mode, temporal_buckets
 		FROM market_context
 		WHERE time = (SELECT MAX(time) FROM market_context)`).
 		Scan(&mc.Time, &pricePerc, &listPerc,
 			&mc.VelocityMean, &mc.VelocitySigma, &mc.ListingVelMean, &mc.ListingVelSigma,
 			&mc.TotalGems, &mc.TotalListings, &tierBounds,
 			&hourly, &hourlyVol, &hourlyAct,
-			&weekday, &weekdayVol, &weekdayAct)
+			&weekday, &weekdayVol, &weekdayAct,
+			&mc.TemporalCoefficient, &mc.TemporalMode, &mc.TemporalBuckets)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
