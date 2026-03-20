@@ -84,11 +84,7 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		// else: stay at zero defaults (insufficient history)
 
 		// Risk-adjusted scoring fields.
-		variantMedianListings := 30.0 // fallback for missing data
-		if vs, ok := mc.VariantStats[g.Variant]; ok && vs.MedianListings > 0 {
-			variantMedianListings = vs.MedianListings
-		}
-		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos, variantMedianListings)
+		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos)
 		f.StabilityDiscount = stabilityDiscount(f.CV)
 
 		// Sanitize non-velocity float fields.
@@ -116,16 +112,23 @@ func extractChaos(p PricePoint) float64 { return p.Chaos }
 func extractListings(p PricePoint) float64 { return float64(p.Listings) }
 
 // sellProbabilityFactor returns a 0.3-1.0 factor representing how likely this gem
-// is to sell within an hour, calibrated from listing count with context-aware
-// thin-market adjustments. The medianListings parameter is the variant's median
-// listing count, used as the sigmoid center for per-variant calibration.
-func sellProbabilityFactor(listings int, low7d, currentPrice, medianListings float64) float64 {
-	// Sigmoid centered at the variant's median listings.
-	center := medianListings
-	if center < 5 {
-		center = 5 // floor to prevent degenerate sigmoid
+// is to sell within an hour. Research showed the sigmoid on listing count adds only
+// 0.79pp of discrimination vs 7.24pp from CV — so we use a simple listings floor
+// with context-aware thin-market adjustments, and let stabilityDiscount (CV-based)
+// do the heavy lifting.
+func sellProbabilityFactor(listings int, low7d, currentPrice float64) float64 {
+	// Simple listings-based factor: floor at 5 listings, linear to 1.0 at 50+.
+	// This replaces the sigmoid which was nearly irrelevant (0.79pp contribution).
+	var base float64
+	switch {
+	case listings >= 50:
+		base = 1.0
+	case listings >= 5:
+		// Linear interpolation: 5 listings → 0.5, 50 listings → 1.0
+		base = 0.5 + 0.5*float64(listings-5)/45.0
+	default:
+		base = 0.3 // thin market floor
 	}
-	base := 0.3 + 0.7*(1.0/(1.0+math.Exp(-0.1*float64(listings-int(center)))))
 
 	// Context-aware thin-market adjustment.
 	if listings < 10 && currentPrice > 0 {

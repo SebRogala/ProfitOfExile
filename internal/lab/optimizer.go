@@ -773,12 +773,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 
 	for _, ep := range evals {
 		// Always compute sell probability and stability on-the-fly from feature data.
-		// DB-stored values may be zero for pre-POE-69 data that hasn't been backfilled.
-		medianListings := 30.0 // default
-		if vs, ok := mc.VariantStats[ep.Feature.Variant]; ok && vs.MedianListings > 0 {
-			medianListings = vs.MedianListings
-		}
-		sellProb := sellProbabilityFactor(ep.Feature.Listings, ep.Feature.Low7d, ep.Feature.Chaos, medianListings)
+		sellProb := sellProbabilityFactor(ep.Feature.Listings, ep.Feature.Low7d, ep.Feature.Chaos)
 		stabDisc := stabilityDiscount(ep.Feature.CV)
 
 		// Compute risk-adjusted value.

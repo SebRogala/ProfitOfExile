@@ -41,14 +41,14 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 	// Create eval points with known SellProbabilityFactor and StabilityDiscount.
 	// STABLE signal: low velocity.
 	// RiskAdjustedValue is computed on-the-fly from feature data:
-	//   sellProb = sellProbabilityFactor(listings=30, low7d=80, chaos=100, median=30)
+	//   sellProb = sellProbabilityFactor(listings=30, low7d=80, chaos=100)
 	//   stabDisc = stabilityDiscount(cv=10)
 	//   RAV = chaos * sellProb * stabDisc
 	chaos := 100.0
 	listings := 30
 	low7d := 80.0
 	cv := 10.0
-	expectedSellProb := sellProbabilityFactor(listings, low7d, chaos, 30)
+	expectedSellProb := sellProbabilityFactor(listings, low7d, chaos)
 	expectedStabDisc := stabilityDiscount(cv)
 	expectedRAV := chaos * expectedSellProb * expectedStabDisc
 
@@ -158,7 +158,7 @@ func TestValidateSellability_ConfidenceCalibration(t *testing.T) {
 	mc := sweepMarketContext(0, 10, 0, 5)
 
 	// With 30 listings and CV=10, on-the-fly computation:
-	// sellProb = sellProbabilityFactor(30, 80, 100, 30) ≈ 0.65 (sigmoid centered at 30)
+	// sellProb = sellProbabilityFactor(30, 80, 100) — linear: ~0.78
 	// stabDisc = stabilityDiscount(10) = 0.95
 	// With new thresholds: SAFE requires sellProb >= 0.8 AND stabDisc >= 0.85.
 	// sellProb ~0.65 < 0.8, so these will be FAIR (not SAFE).
@@ -269,7 +269,7 @@ func TestValidateSellability_PerTierCapture(t *testing.T) {
 	}
 
 	// TOP: RAV computed on-the-fly from feature data.
-	topSellProb := sellProbabilityFactor(30, 180, 200, 30)
+	topSellProb := sellProbabilityFactor(30, 180, 200)
 	topStabDisc := stabilityDiscount(10)
 	expectedTopRAV := 200.0 * topSellProb * topStabDisc
 	expectedTopCapture := 200.0 / expectedTopRAV
