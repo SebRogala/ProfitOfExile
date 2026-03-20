@@ -26,6 +26,7 @@ export interface GemPlay {
 	color: 'RED' | 'GREEN' | 'BLUE';
 	roi: number;
 	roiPercent: number;
+	weightedRoi: number;
 	signal: string;
 	cv: number;
 	windowSignal: string;
@@ -46,6 +47,10 @@ export interface GemPlay {
 	sellReason: string;
 	sellability: number;
 	sellabilityLabel: SellabilityLabel;
+	low7d: number;
+	high7d: number;
+	histPosition: number;
+	sellConfidence: string;
 }
 
 export interface SignalTransition {
@@ -120,12 +125,15 @@ export interface CompareGem {
 	color: 'RED' | 'GREEN' | 'BLUE';
 	roi: number;
 	roiPercent: number;
+	weightedRoi: number;
 	signal: string;
 	cv: number;
 	transListings: number;
 	transVelocity: number;
 	baseListings: number;
 	baseVelocity: number;
+	basePrice: number;
+	transPrice: number;
 	liquidityTier: string;
 	windowSignal: string;
 	sparkline: number[];
@@ -137,6 +145,12 @@ export interface CompareGem {
 	sellReason: string;
 	sellability: number;
 	sellabilityLabel: SellabilityLabel;
+	low7d: number;
+	high7d: number;
+	histPosition: number;
+	sellConfidence: string;
+	sellConfidenceReason: string;
+	quickSellPrice: number;
 }
 
 // --- API helpers ---
@@ -167,6 +181,7 @@ function mapCollectiveRow(r: any): GemPlay {
 		color: r.gemColor || '',
 		roi: Math.round(r.roi || 0),
 		roiPercent: Math.round(r.roiPct || 0),
+		weightedRoi: Math.round(r.weightedRoi || 0),
 		signal: r.signal || '',
 		cv: Math.round(r.cv || 0),
 		windowSignal: r.windowSignal || '',
@@ -187,6 +202,10 @@ function mapCollectiveRow(r: any): GemPlay {
 		sellReason: r.sellReason || '',
 		sellability: r.sellability || 0,
 		sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
+		low7d: Math.round(r.low7d || 0),
+		high7d: Math.round(r.high7d || 0),
+		histPosition: Math.round(r.histPosition || 0),
+		sellConfidence: r.sellConfidence || '',
 	};
 }
 
@@ -201,12 +220,15 @@ function mapCompareRow(r: any): CompareGem {
 		color: r.gemColor || '',
 		roi: Math.round(r.roi || 0),
 		roiPercent: Math.round(r.roiPct || 0),
+		weightedRoi: Math.round(r.weightedRoi || 0),
 		signal: r.signal || '',
 		cv: Math.round(r.cv || 0),
 		transListings: r.transListings || r.transfiguredListings || 0,
 		transVelocity: Math.round(r.priceVelocity || 0),
 		baseListings: r.baseListings || 0,
 		baseVelocity: Math.round(r.listingVelocity || 0),
+		basePrice: Math.round(r.basePrice || 0),
+		transPrice: Math.round(r.transfiguredPrice || 0),
 		liquidityTier: r.liquidityTier || '',
 		windowSignal: r.windowSignal || '',
 		sparkline,
@@ -218,6 +240,12 @@ function mapCompareRow(r: any): CompareGem {
 		sellReason: r.sellReason || '',
 		sellability: r.sellability || 0,
 		sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
+		low7d: Math.round(r.low7d || 0),
+		high7d: Math.round(r.high7d || 0),
+		histPosition: Math.round(r.histPosition || 0),
+		sellConfidence: r.sellConfidence || '',
+		sellConfidenceReason: r.sellConfidenceReason || '',
+		quickSellPrice: Math.round(r.quickSellPrice || 0),
 	};
 }
 
