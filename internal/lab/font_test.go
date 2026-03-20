@@ -68,9 +68,9 @@ func TestPWin3Picks_WinnersExceedTotal(t *testing.T) {
 }
 
 // makeTierBoundaries creates tier boundaries where:
-// TOP >= 200, HIGH >= 100, MID >= 30
+// TOP >= 200, HIGH >= 100, MID-HIGH >= 30
 func makeTierBoundaries() TierBoundaries {
-	return TierBoundaries{Top: 200, High: 100, Mid: 30}
+	return TierBoundaries{Boundaries: []float64{200, 100, 30}}
 }
 
 // makeFeature creates a GemFeature with the given parameters for testing.

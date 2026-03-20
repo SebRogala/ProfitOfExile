@@ -61,7 +61,7 @@ func pWin3Picks(winners, total int) float64 {
 
 // isSafeTierWinner returns true if the tier qualifies as a winner in Safe mode (MID+).
 func isSafeTierWinner(tier string) bool {
-	return tier == "MID" || tier == "HIGH" || tier == "TOP"
+	return tier == "MID" || tier == "MID-HIGH" || tier == "HIGH" || tier == "TOP"
 }
 
 // isJackpotTierWinner returns true if the tier qualifies as a winner in Jackpot mode (HIGH+).

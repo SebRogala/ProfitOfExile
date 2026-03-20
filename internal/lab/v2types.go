@@ -77,12 +77,11 @@ func (mc MarketContext) PriceP50() float64 {
 	return mc.PricePercentiles["P50"]
 }
 
-// TierBoundaries holds minimum chaos price thresholds for each tier.
-// A gem is TOP if chaos >= Top, HIGH if chaos >= High, MID if chaos >= Mid, otherwise LOW.
+// TierBoundaries holds dynamic tier boundary thresholds produced by recursive
+// average splitting. Boundaries are sorted descending: boundaries[0] = TOP
+// threshold, boundaries[1] = HIGH threshold, etc.
 type TierBoundaries struct {
-	Top  float64 `json:"top"`
-	High float64 `json:"high"`
-	Mid  float64 `json:"mid"`
+	Boundaries []float64 `json:"boundaries"`
 }
 
 // GemFeature holds pre-computed per-gem metrics for a single snapshot.

@@ -397,21 +397,20 @@ func TestComputeMarketContext_TierBoundaries(t *testing.T) {
 
 	mc := ComputeMarketContext(snapTime, gems, nil)
 
-	// Tier boundaries should be non-zero and Top > High > Mid.
-	if mc.TierBoundaries.Top <= 0 {
-		t.Errorf("TierBoundaries.Top = %f, want > 0", mc.TierBoundaries.Top)
+	// Tier boundaries should be non-empty and strictly descending.
+	if len(mc.TierBoundaries.Boundaries) == 0 {
+		t.Fatal("TierBoundaries.Boundaries is empty, want at least 1 boundary")
 	}
-	if mc.TierBoundaries.Mid <= 0 {
-		t.Errorf("TierBoundaries.Mid = %f, want > 0", mc.TierBoundaries.Mid)
+	for i, b := range mc.TierBoundaries.Boundaries {
+		if b <= 0 {
+			t.Errorf("TierBoundaries.Boundaries[%d] = %f, want > 0", i, b)
+		}
 	}
-	if mc.TierBoundaries.High <= 0 {
-		t.Errorf("TierBoundaries.High = %f, want > 0", mc.TierBoundaries.High)
-	}
-	if mc.TierBoundaries.Top <= mc.TierBoundaries.High {
-		t.Errorf("Top (%.2f) should be > High (%.2f)", mc.TierBoundaries.Top, mc.TierBoundaries.High)
-	}
-	if mc.TierBoundaries.High <= mc.TierBoundaries.Mid {
-		t.Errorf("High (%.2f) should be > Mid (%.2f)", mc.TierBoundaries.High, mc.TierBoundaries.Mid)
+	for i := 1; i < len(mc.TierBoundaries.Boundaries); i++ {
+		if mc.TierBoundaries.Boundaries[i] >= mc.TierBoundaries.Boundaries[i-1] {
+			t.Errorf("Boundaries[%d] (%.2f) should be < Boundaries[%d] (%.2f)",
+				i, mc.TierBoundaries.Boundaries[i], i-1, mc.TierBoundaries.Boundaries[i-1])
+		}
 	}
 }
 
