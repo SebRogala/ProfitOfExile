@@ -4,6 +4,7 @@
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
+	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
 	const SORT_OPTIONS = [
@@ -106,7 +107,7 @@
 </script>
 
 <div class="plays-header">
-	<h3 class="plays-title">{title}</h3>
+	<h3 class="plays-title">{title}<InfoTooltip text="Gems ranked by <b>Risk-Adjusted ROI</b> — raw profit weighted by sell probability and price stability. Higher = more profitable AND more likely to sell.<br><br><b>Tier</b>: Price classification within this variant's market. TOP = rare outliers, HIGH = premium, MID = competitive, LOW = decent, FLOOR = bulk.<br><br><b>SAFE/FAIR/RISKY</b>: Sell confidence. SAFE = liquid, will sell near listed price. FAIR = may need patience. RISKY = thin market, crash risk.<br><br><b>Sort modes</b>: Risk-Adj ROI (default), Raw ROI, ROI%." /></h3>
 	<div class="plays-controls">
 		<label class="control-label">
 			Budget:
@@ -130,9 +131,9 @@
 		<tr>
 			<th class="col-name" title="Transfigured gem name">Gem</th>
 			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
-			<th class="col-tier" title="Price tier — TOP (high value), MID (moderate), LOW (budget). Auto-scales with league economy.">Tier</th>
+			<th class="col-tier">Tier <InfoTooltip text="Price tier within this variant. Computed from natural price gaps using recursive averaging. Each variant has its own boundaries.<br><br><b>TOP</b> = rare outliers, <b>HIGH</b> = premium, <b>MID-HIGH</b> = above average, <b>MID</b> = competitive, <b>LOW</b> = decent, <b>FLOOR</b> = bulk." /></th>
 			<th class="col-num" title={sortBy === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sortBy === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</th>
-			<th class="col-signal" title="Primary signal: STABLE, UNCERTAIN, DUMPING, HERD, RECOVERY, TRAP. Based on price velocity, listing changes, and historical position.">Signal</th>
+			<th class="col-signal">Signal <InfoTooltip text="Market signal + sell confidence.<br><br><b>STABLE</b> = steady, safe. <b>UNCERTAIN</b> = no clear direction. <b>HERD</b> = farmers flooding in. <b>DUMPING</b> = price crashing. <b>RECOVERY</b> = supply drying up. <b>TRAP</b> = volatile, avoid.<br><br><b>SAFE/FAIR/RISKY</b> = how likely you'll sell near listed price." /></th>
 			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
 			<th class="col-signals" title="Window: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Advanced: BREAKOUT, COMEBACK, POTENTIAL, PRICE_MANIPULATION.">Signals</th>
 			<th class="col-num" title="Current transfigured gem listings on trade. Velocity arrow shows listing change direction.">Listings</th>
