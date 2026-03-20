@@ -167,20 +167,22 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			cr.SellabilityLabel = t.SellabilityLabel
 		}
 
-		// Exclude TRAP gems entirely.
-		w := signalWeight(cr.Signal)
-		if w == 0 {
+		// Exclude TRAP gems entirely — no actionable signal.
+		if cr.Signal == "TRAP" {
 			continue
 		}
 
-		// Weighted ROI: incorporate signal weight, liquidity, and saturation.
-		liquidityScore := float64(cr.Sellability) / 100.0
+		// Weighted ROI: liquidity-based scoring with saturation penalty.
+		// Default sellability to 50 (neutral) when no trend data exists,
+		// so gems without signals still appear in rankings.
+		sellability := cr.Sellability
+		if sellability == 0 && cr.Signal == "" {
+			sellability = 50
+		}
+		liquidityScore := float64(sellability) / 100.0
 		var saturationPenalty float64
-		switch cr.Signal {
-		case "DUMPING":
+		if cr.Signal == "DUMPING" {
 			saturationPenalty = 0.5
-		case "TRAP":
-			saturationPenalty = 0.3
 		}
 		cr.WeightedROI = cr.ROI * liquidityScore * (1.0 - saturationPenalty)
 		cr.WeightedROIPct = cr.ROIPct * liquidityScore * (1.0 - saturationPenalty)
