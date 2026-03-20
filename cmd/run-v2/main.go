@@ -107,6 +107,13 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		marketAvgBaseLst := computeMarketAvgBase(gems)
 		signals := lab.ComputeGemSignals(snapTime, features, mc, gems, baseHistory, marketAvgBaseLst)
 		repo.SaveGemSignals(ctx, signals)
+
+		// Compute font analysis (needs features for tier-based modes).
+		fontAnalysis := lab.AnalyzeFont(snapTime, gems, features)
+		allFontResults := append(fontAnalysis.Safe, fontAnalysis.Jackpot...)
+		if len(allFontResults) > 0 {
+			repo.SaveFontResults(ctx, allFontResults)
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Backfill complete: %d snapshots processed\n", len(times))
