@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"math"
 	"sort"
 	"time"
 )
@@ -675,4 +676,221 @@ func ValidateDefaults(evals []EvalPoint, mc MarketContext) ValidationReport {
 	report.OverallAcc = float64(overallCorrect) / float64(len(evals)) * 100
 
 	return report
+}
+
+// ValueCapture holds percentile statistics for actual-vs-predicted value ratios.
+type ValueCapture struct {
+	Count         int     `json:"count"`
+	AvgCapture    float64 `json:"avg_capture"`    // mean(actualPrice / predictedRiskAdjValue)
+	MedianCapture float64 `json:"median_capture"`
+	P25Capture    float64 `json:"p25_capture"`    // 25th percentile
+	P75Capture    float64 `json:"p75_capture"`    // 75th percentile
+}
+
+// ConfidenceCalResult holds calibration metrics for a sell confidence level.
+type ConfidenceCalResult struct {
+	Count     int     `json:"count"`
+	PriceHeld int     `json:"price_held"` // count where future_price >= 0.9 * current_price
+	HeldRate  float64 `json:"held_rate"`  // PriceHeld / Count
+	AvgChange float64 `json:"avg_change"` // mean price change %
+}
+
+// SellabilityReport holds the full output of ValidateSellability.
+type SellabilityReport struct {
+	TotalEvals            int                            `json:"total_evals"`
+	PerSignalCapture      map[string]ValueCapture        `json:"per_signal_capture"`
+	FloorHoldRate         map[string]FloorHoldResult     `json:"floor_hold_rate"`
+	ConfidenceCalibration map[string]ConfidenceCalResult `json:"confidence_calibration"`
+	PerTierCapture        map[string]ValueCapture        `json:"per_tier_capture"`
+}
+
+// FloorHoldResult holds floor hold statistics for a tier.
+type FloorHoldResult struct {
+	Count    int     `json:"count"`
+	Held     int     `json:"held"`
+	HeldRate float64 `json:"held_rate"`
+}
+
+// ValidateSellability evaluates how well the risk-adjusted scoring predicts
+// actual value capture. For each EvalPoint, it computes the risk-adjusted value
+// and compares it against the realized future price.
+func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport {
+	report := SellabilityReport{
+		PerSignalCapture:      make(map[string]ValueCapture),
+		FloorHoldRate:         make(map[string]FloorHoldResult),
+		ConfidenceCalibration: make(map[string]ConfidenceCalResult),
+		PerTierCapture:        make(map[string]ValueCapture),
+	}
+
+	if len(evals) == 0 {
+		return report
+	}
+
+	cfg := DefaultSignalConfig()
+
+	// Accumulators: capture ratios grouped by signal, tier, and sell confidence.
+	type captureAcc struct {
+		ratios []float64
+	}
+	signalCaptures := make(map[string]*captureAcc)
+	tierCaptures := make(map[string]*captureAcc)
+
+	// Floor hold accumulators by tier.
+	type floorAcc struct {
+		total int
+		held  int
+	}
+	floorAccs := make(map[string]*floorAcc)
+
+	// Confidence calibration accumulators.
+	type confCalAcc struct {
+		total     int
+		priceHeld int
+		changeSum float64
+	}
+	confCalAccs := make(map[string]*confCalAcc)
+
+	skipped := 0
+
+	for _, ep := range evals {
+		// Compute risk-adjusted value from feature data.
+		riskAdjValue := ep.Feature.Chaos * ep.Feature.SellProbabilityFactor * ep.Feature.StabilityDiscount
+
+		// Skip if risk-adjusted value is too small (avoids division by zero / noise).
+		if riskAdjValue < 0.01 {
+			skipped++
+			continue
+		}
+
+		// Derive future price from the percentage change.
+		// FuturePct = (futurePrice - baseline) / baseline * 100
+		// We use feature.Chaos as the baseline for consistency with risk-adjusted value.
+		futurePrice := ep.Feature.Chaos * (1.0 + ep.FuturePct/100.0)
+
+		// Actual value capture ratio.
+		actualCapture := futurePrice / riskAdjValue
+
+		// Classify the signal for grouping.
+		signal := classifySignalWithConfig(
+			ep.Feature.VelMedPrice,
+			ep.Feature.VelMedListing,
+			ep.Feature.CV,
+			ep.Feature.Listings,
+			cfg,
+		)
+
+		// Classify sell confidence.
+		sellConf := classifySellConfidence(ep.Feature.SellProbabilityFactor, ep.Feature.StabilityDiscount)
+
+		// Determine tier.
+		tier := ep.Feature.Tier
+		if tier == "" {
+			tier = "LOW"
+		}
+
+		// Accumulate per-signal capture.
+		if _, ok := signalCaptures[signal]; !ok {
+			signalCaptures[signal] = &captureAcc{}
+		}
+		signalCaptures[signal].ratios = append(signalCaptures[signal].ratios, actualCapture)
+
+		// Accumulate per-tier capture.
+		if _, ok := tierCaptures[tier]; !ok {
+			tierCaptures[tier] = &captureAcc{}
+		}
+		tierCaptures[tier].ratios = append(tierCaptures[tier].ratios, actualCapture)
+
+		// Floor hold: did price stay above Low7d?
+		if _, ok := floorAccs[tier]; !ok {
+			floorAccs[tier] = &floorAcc{}
+		}
+		fa := floorAccs[tier]
+		fa.total++
+		if futurePrice >= ep.Feature.Low7d {
+			fa.held++
+		}
+
+		// Confidence calibration: did price hold within 10% of current?
+		if _, ok := confCalAccs[sellConf]; !ok {
+			confCalAccs[sellConf] = &confCalAcc{}
+		}
+		ca := confCalAccs[sellConf]
+		ca.total++
+		if futurePrice >= 0.9*ep.Feature.Chaos {
+			ca.priceHeld++
+		}
+		ca.changeSum += ep.FuturePct
+	}
+
+	// Build per-signal capture map.
+	for sig, acc := range signalCaptures {
+		report.PerSignalCapture[sig] = computeValueCapture(acc.ratios)
+	}
+
+	// Build per-tier capture map.
+	for tier, acc := range tierCaptures {
+		report.PerTierCapture[tier] = computeValueCapture(acc.ratios)
+	}
+
+	// Build floor hold rate map.
+	for tier, fa := range floorAccs {
+		var rate float64
+		if fa.total > 0 {
+			rate = float64(fa.held) / float64(fa.total) * 100
+		}
+		report.FloorHoldRate[tier] = FloorHoldResult{
+			Count:    fa.total,
+			Held:     fa.held,
+			HeldRate: rate,
+		}
+	}
+
+	// Build confidence calibration map.
+	for conf, ca := range confCalAccs {
+		var heldRate float64
+		if ca.total > 0 {
+			heldRate = float64(ca.priceHeld) / float64(ca.total) * 100
+		}
+		var avgChange float64
+		if ca.total > 0 {
+			avgChange = ca.changeSum / float64(ca.total)
+		}
+		report.ConfidenceCalibration[conf] = ConfidenceCalResult{
+			Count:     ca.total,
+			PriceHeld: ca.priceHeld,
+			HeldRate:  heldRate,
+			AvgChange: avgChange,
+		}
+	}
+
+	report.TotalEvals = len(evals) - skipped
+
+	return report
+}
+
+// computeValueCapture computes ValueCapture statistics from a slice of capture ratios.
+func computeValueCapture(ratios []float64) ValueCapture {
+	if len(ratios) == 0 {
+		return ValueCapture{}
+	}
+
+	// Compute mean.
+	var sum float64
+	for _, r := range ratios {
+		sum += r
+	}
+	avg := sum / float64(len(ratios))
+
+	// Sort for percentiles.
+	sorted := make([]float64, len(ratios))
+	copy(sorted, ratios)
+	sort.Float64s(sorted)
+
+	return ValueCapture{
+		Count:         len(ratios),
+		AvgCapture:    math.Round(avg*100) / 100,
+		MedianCapture: math.Round(percentile(sorted, 0.50)*100) / 100,
+		P25Capture:    math.Round(percentile(sorted, 0.25)*100) / 100,
+		P75Capture:    math.Round(percentile(sorted, 0.75)*100) / 100,
+	}
 }

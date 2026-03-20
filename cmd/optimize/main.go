@@ -34,6 +34,16 @@ type JSONValidateOutput struct {
 	OverallAcc      float64                            `json:"overall_acc"`
 }
 
+// JSONSellabilityOutput is the structured output for --validate-sellability --json mode.
+type JSONSellabilityOutput struct {
+	Context               JSONContext                           `json:"context"`
+	PerSignalCapture      map[string]lab.ValueCapture           `json:"per_signal_capture"`
+	FloorHoldRate         map[string]lab.FloorHoldResult        `json:"floor_hold_rate"`
+	ConfidenceCalibration map[string]lab.ConfidenceCalResult    `json:"confidence_calibration"`
+	PerTierCapture        map[string]lab.ValueCapture           `json:"per_tier_capture"`
+	TotalEvals            int                                   `json:"total_evals"`
+}
+
 // JSONContext holds metadata about the optimization run.
 type JSONContext struct {
 	MarketTime      time.Time `json:"market_time"`
@@ -83,6 +93,7 @@ func main() {
 	horizon := flag.String("horizon", "2h", "Ground truth forward horizon (e.g. 2h, 90m)")
 	jsonMode := flag.Bool("json", false, "Output JSON instead of console table")
 	validate := flag.Bool("validate", false, "Validate current defaults (skip grid sweep)")
+	validateSellability := flag.Bool("validate-sellability", false, "Validate risk-adjusted value scoring")
 	flag.Parse()
 
 	horizonDur, err := time.ParseDuration(*horizon)
@@ -163,6 +174,21 @@ func main() {
 			printValidateJSON(report, mc, len(evals), dropped, *hours, *horizon)
 		} else {
 			printValidateConsole(report, mc, len(evals), dropped, *hours, *horizon)
+		}
+		return
+	}
+
+	if *validateSellability {
+		// Validate risk-adjusted value scoring — skip grid sweep.
+		fmt.Fprintf(os.Stderr, "Validating sellability over %d eval points...\n", len(evals))
+		t2 := time.Now()
+		report := lab.ValidateSellability(evals, *mc)
+		fmt.Fprintf(os.Stderr, "Sellability validation complete in %s\n", time.Since(t2).Round(time.Millisecond))
+
+		if *jsonMode {
+			printSellabilityJSON(report, mc, len(evals), dropped, *hours, *horizon)
+		} else {
+			printSellabilityConsole(report, mc, len(evals), dropped, *hours, *horizon)
 		}
 		return
 	}
@@ -460,6 +486,111 @@ func printValidateJSON(report lab.ValidationReport, mc *lab.MarketContext, evalC
 		SweetSpot:       report.SweetSpot,
 		TotalEvals:      report.TotalEvals,
 		OverallAcc:      report.OverallAcc,
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "JSON encode error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// printSellabilityConsole outputs the human-readable sellability validation report.
+func printSellabilityConsole(report lab.SellabilityReport, mc *lab.MarketContext, evalCount, droppedCount, hours int, horizon string) {
+	// Section 1: Context
+	fmt.Println()
+	fmt.Println("=== Sellability Validation ===")
+	fmt.Printf("  Market time:       %s\n", mc.Time.Format(time.RFC3339))
+	fmt.Printf("  Total gems:        %d\n", mc.TotalGems)
+	fmt.Printf("  Velocity:          mean=%.2f sigma=%.2f\n", mc.VelocityMean, mc.VelocitySigma)
+	fmt.Printf("  Listing velocity:  mean=%.2f sigma=%.2f\n", mc.ListingVelMean, mc.ListingVelSigma)
+	fmt.Printf("  Eval points:       %d (dropped %d)\n", evalCount, droppedCount)
+	fmt.Printf("  Time range:        %dh, horizon=%s\n", hours, horizon)
+	fmt.Printf("  Scored evals:      %d\n", report.TotalEvals)
+	fmt.Println()
+
+	// Section 2: Per-signal value capture
+	fmt.Println("Per-Signal Value Capture (actual / risk-adjusted):")
+	signalOrder := []string{"HERD", "STABLE", "DUMPING", "UNCERTAIN", "RECOVERY", "TRAP"}
+	printedSignals := make(map[string]bool)
+	for _, sig := range signalOrder {
+		vc, ok := report.PerSignalCapture[sig]
+		if !ok {
+			continue
+		}
+		printedSignals[sig] = true
+		fmt.Printf("  %-12s avg %.2f  median %.2f  [p25: %.2f  p75: %.2f]  (n=%d)\n",
+			sig+":", vc.AvgCapture, vc.MedianCapture, vc.P25Capture, vc.P75Capture, vc.Count)
+	}
+	// Print any signals not in the standard order.
+	for sig, vc := range report.PerSignalCapture {
+		if printedSignals[sig] {
+			continue
+		}
+		fmt.Printf("  %-12s avg %.2f  median %.2f  [p25: %.2f  p75: %.2f]  (n=%d)\n",
+			sig+":", vc.AvgCapture, vc.MedianCapture, vc.P25Capture, vc.P75Capture, vc.Count)
+	}
+	fmt.Println()
+
+	// Section 3: Floor hold rate
+	fmt.Println("Floor Hold Rate (price stayed above 7d floor):")
+	tierOrder := []string{"TOP", "HIGH", "MID", "LOW"}
+	for _, tier := range tierOrder {
+		fh, ok := report.FloorHoldRate[tier]
+		if !ok {
+			continue
+		}
+		fmt.Printf("  %-6s %.1f%%  (n=%d)\n", tier+":", fh.HeldRate, fh.Count)
+	}
+	fmt.Println()
+
+	// Section 4: Sell confidence calibration
+	fmt.Println("Sell Confidence Calibration:")
+	confOrder := []string{"GREEN", "YELLOW", "RED"}
+	for _, conf := range confOrder {
+		cal, ok := report.ConfidenceCalibration[conf]
+		if !ok {
+			continue
+		}
+		fmt.Printf("  %-8s price held %.1f%% of time  avg change %.1f%%  (n=%d)\n",
+			conf+":", cal.HeldRate, cal.AvgChange, cal.Count)
+	}
+	fmt.Println()
+
+	// Section 5: Per-tier value capture
+	fmt.Println("Per-Tier Value Capture:")
+	for _, tier := range tierOrder {
+		vc, ok := report.PerTierCapture[tier]
+		if !ok {
+			continue
+		}
+		fmt.Printf("  %-6s avg %.2f  median %.2f  [p25: %.2f  p75: %.2f]  (n=%d)\n",
+			tier+":", vc.AvgCapture, vc.MedianCapture, vc.P25Capture, vc.P75Capture, vc.Count)
+	}
+	fmt.Println()
+}
+
+// printSellabilityJSON outputs the structured JSON sellability validation report.
+func printSellabilityJSON(report lab.SellabilityReport, mc *lab.MarketContext, evalCount, droppedCount, hours int, horizon string) {
+	out := JSONSellabilityOutput{
+		Context: JSONContext{
+			MarketTime:      mc.Time,
+			TotalGems:       mc.TotalGems,
+			VelocityMean:    mc.VelocityMean,
+			VelocitySigma:   mc.VelocitySigma,
+			ListingVelMean:  mc.ListingVelMean,
+			ListingVelSigma: mc.ListingVelSigma,
+			EvalPoints:      evalCount,
+			DroppedPoints:   droppedCount,
+			Hours:           hours,
+			Horizon:         horizon,
+		},
+		PerSignalCapture:      report.PerSignalCapture,
+		FloorHoldRate:         report.FloorHoldRate,
+		ConfidenceCalibration: report.ConfidenceCalibration,
+		PerTierCapture:        report.PerTierCapture,
+		TotalEvals:            report.TotalEvals,
 	}
 
 	enc := json.NewEncoder(os.Stdout)
