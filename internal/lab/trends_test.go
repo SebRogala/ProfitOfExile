@@ -973,13 +973,13 @@ func TestTierAction(t *testing.T) {
 		// HIGH tier
 		{"HIGH+HERD", "HERD", "", "HIGH", "UNDERCUT — herd arrived, sell into pressure"},
 		{"HIGH+DUMPING", "DUMPING", "", "HIGH", "SELL IMMEDIATELY"},
-		{"HIGH+UNCERTAIN", "UNCERTAIN", "", "HIGH", "HOLD — competitive cluster, may reach TOP"},
+		{"HIGH+UNCERTAIN", "UNCERTAIN", "", "HIGH", "MONITOR — direction unclear, watch velocity"},
 		{"HIGH+BREWING", "STABLE", "BREWING", "HIGH", "WATCH — window forming on competitive gem"},
 		{"HIGH+OPEN", "STABLE", "OPEN", "HIGH", "ACT — window open, time-sensitive"},
 		{"HIGH+STABLE", "STABLE", "CLOSED", "HIGH", ""},
 		// MID tier
 		{"MID+HERD", "HERD", "", "MID", "SELL — move is over, exit position"},
-		{"MID+UNCERTAIN", "UNCERTAIN", "", "MID", "CAUTIOUS — may reverse"},
+		{"MID+UNCERTAIN", "UNCERTAIN", "", "MID", "MONITOR — direction unclear, check listings"},
 		{"MID+BREWING", "STABLE", "BREWING", "MID", "WATCH — may reverse before opening"},
 		// LOW tier
 		{"LOW+HERD", "HERD", "", "LOW", "MOMENTUM — rising with crowd, watch for reversal"},
