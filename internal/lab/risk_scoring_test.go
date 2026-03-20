@@ -28,7 +28,7 @@ func TestSellProbabilityFactor_SigmoidCurve(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := sellProbabilityFactor(tt.listings, 50, 60, 100)
+		got := sellProbabilityFactor(tt.listings, 60, 100)
 		if got < tt.wantMin || got > tt.wantMax {
 			t.Errorf("sellProbabilityFactor(listings=%d) = %f, want [%f, %f]",
 				tt.listings, got, tt.wantMin, tt.wantMax)
@@ -42,8 +42,8 @@ func TestSellProbabilityFactor_ThinMarketStablePrice(t *testing.T) {
 	currentPrice := 100.0
 	stableLow7d := 80.0 // 80 > 0.7 * 100 = 70
 
-	boosted := sellProbabilityFactor(5, 50, stableLow7d, currentPrice)
-	normal := sellProbabilityFactor(5, 50, 50, currentPrice) // low7d=50, between 50 and 70
+	boosted := sellProbabilityFactor(5, stableLow7d, currentPrice)
+	normal := sellProbabilityFactor(5, 50, currentPrice) // low7d=50, between 50 and 70
 
 	if boosted <= normal {
 		t.Errorf("stable thin market should boost: boosted=%f, normal=%f", boosted, normal)
@@ -60,8 +60,8 @@ func TestSellProbabilityFactor_ThinMarketSpikePrice(t *testing.T) {
 	currentPrice := 200.0
 	spikeLow7d := 80.0 // 80 < 0.5 * 200 = 100
 
-	penalized := sellProbabilityFactor(5, 50, spikeLow7d, currentPrice)
-	normal := sellProbabilityFactor(5, 50, 120, currentPrice) // low7d=120, in the middle
+	penalized := sellProbabilityFactor(5, spikeLow7d, currentPrice)
+	normal := sellProbabilityFactor(5, 120, currentPrice) // low7d=120, in the middle
 
 	if penalized >= normal {
 		t.Errorf("spike thin market should penalize: penalized=%f, normal=%f", penalized, normal)
@@ -73,8 +73,8 @@ func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 	currentPrice := 100.0
 	stableLow7d := 90.0 // stable, but listings >= 10
 
-	val10 := sellProbabilityFactor(10, 50, stableLow7d, currentPrice)
-	val15 := sellProbabilityFactor(15, 50, stableLow7d, currentPrice)
+	val10 := sellProbabilityFactor(10, stableLow7d, currentPrice)
+	val15 := sellProbabilityFactor(15, stableLow7d, currentPrice)
 
 	// These should be pure sigmoid values, no rarity boost.
 	if val10 < 0.3 || val10 > 1.0 {
@@ -87,9 +87,21 @@ func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 
 func TestSellProbabilityFactor_ZeroPrice(t *testing.T) {
 	// Zero price should not trigger thin-market adjustment (guarded by currentPrice > 0).
-	got := sellProbabilityFactor(5, 50, 0, 0)
+	got := sellProbabilityFactor(5, 0, 0)
 	if got < 0.3 || got > 1.0 {
 		t.Errorf("sellProbabilityFactor with zero price = %f, want [0.3, 1.0]", got)
+	}
+}
+
+func TestSellProbabilityFactor_FloorEnforced(t *testing.T) {
+	// With 1 listing (base ~0.307) and spike penalty (*0.5), the result
+	// would be ~0.154 without the floor. The floor should enforce 0.3 minimum.
+	currentPrice := 200.0
+	spikeLow7d := 50.0 // 50 < 0.5 * 200 = 100 → penalty
+
+	got := sellProbabilityFactor(1, spikeLow7d, currentPrice)
+	if got < 0.3 {
+		t.Errorf("sellProbabilityFactor(1 listing, spike) = %f, want >= 0.3 (floor)", got)
 	}
 }
 
