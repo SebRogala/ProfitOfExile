@@ -35,9 +35,9 @@
 	};
 
 	const CONFIDENCE_STYLES: Record<string, { prefix: string; cssClass: string }> = {
-		GREEN:  { prefix: '\u2713', cssClass: 'badge-green' },
-		YELLOW: { prefix: '\u26A0', cssClass: 'badge-yellow' },
-		RED:    { prefix: '\u2717', cssClass: 'badge-red' },
+		SAFE:  { prefix: '\u2713', cssClass: 'badge-green' },
+		FAIR:  { prefix: '\u26A0', cssClass: 'badge-yellow' },
+		RISKY: { prefix: '\u2717', cssClass: 'badge-red' },
 	};
 
 	function getStyle() {

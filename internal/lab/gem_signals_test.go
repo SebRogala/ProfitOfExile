@@ -186,10 +186,10 @@ func TestComputeGemSignals_TRAPLowConfidence(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	f := testFeature("Volatile of Storm", "20/20", 100, 10)
-	// Very high CV => TRAP signal.
+	// Very high CV + active velocity => TRAP signal.
 	f.CV = 110
-	f.VelShortPrice = 5
-	f.VelMedPrice = -3
+	f.VelShortPrice = 8
+	f.VelMedPrice = -7
 	f.VelLongPrice = 2
 	f.Tier = "MID"
 
@@ -257,7 +257,8 @@ func TestComputeGemSignals_RecommendationAVOID_TRAP(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	f := testFeature("Volatile of Storm", "20/20", 100, 10)
-	f.CV = 110 // TRAP
+	f.CV = 110 // TRAP requires high CV + active velocity
+	f.VelMedPrice = -8
 	f.Tier = "MID"
 
 	gems := testBaseGems("Volatile", 30)
@@ -308,7 +309,8 @@ func TestComputeGemSignals_RecommendationAVOID_SELL_NOW(t *testing.T) {
 	// TRAP signal on a HIGH tier gem always produces SellUrgency=SELL_NOW.
 	// See trends.go: sellUrgency checks TRAP before any other condition for non-LOW tiers.
 	f := testFeature("Trap of Danger", "20/20", 100, 10)
-	f.CV = 110 // CV > 100 => TRAP
+	f.CV = 110 // TRAP requires high CV + active velocity
+	f.VelMedPrice = 10
 	f.Tier = "HIGH"
 
 	gems := testBaseGems("Trap", 30)
