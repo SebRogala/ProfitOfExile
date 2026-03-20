@@ -30,14 +30,14 @@ type ConfidenceBand struct {
 }
 
 // predictedDirection maps a signal to an expected price direction.
-// HERD/RISING/RECOVERY → UP, DUMPING/FALLING/TRAP → DOWN, STABLE → FLAT.
+// HERD/RECOVERY → UP, DUMPING/TRAP → DOWN, STABLE/UNCERTAIN → FLAT.
 func predictedDirection(signal string) string {
 	switch signal {
-	case "HERD", "RISING", "RECOVERY":
+	case "HERD", "RECOVERY":
 		return "UP"
-	case "DUMPING", "FALLING", "TRAP":
+	case "DUMPING", "TRAP":
 		return "DOWN"
-	case "STABLE":
+	case "STABLE", "UNCERTAIN":
 		return "FLAT"
 	default:
 		return "FLAT"

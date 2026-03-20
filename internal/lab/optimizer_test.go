@@ -441,12 +441,11 @@ func TestPredictedDirection(t *testing.T) {
 		want   string
 	}{
 		{"HERD", "UP"},
-		{"RISING", "UP"},
 		{"RECOVERY", "UP"},
 		{"DUMPING", "DOWN"},
-		{"FALLING", "DOWN"},
 		{"TRAP", "DOWN"},
 		{"STABLE", "FLAT"},
+		{"UNCERTAIN", "FLAT"},
 		{"UNKNOWN", "FLAT"},
 		{"", "FLAT"},
 	}
@@ -1049,7 +1048,7 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 
 	// DefaultSignalConfig: DumpPriceVel=-5, DumpListingVel=5
 	// DUMPING: priceVel < -5 && listingVel > 5
-	// RISING: priceVel > 0 (after other checks fail)
+	// UNCERTAIN: priceVel > 0 (after other checks fail) — replaces RISING/FALLING
 	// STABLE: |priceVel| < 2 && |listingVel| < 3
 
 	evals := []EvalPoint{
@@ -1057,8 +1056,8 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
 		// DUMPING: priceVel=-10 < -5, listingVel=10 > 5 -> predicts DOWN, actual DOWN -> correct
 		{Feature: GemFeature{Time: t0, VelMedPrice: -10, VelMedListing: 10, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
-		// RISING: priceVel=3 > 0 (not STABLE: |3|>2), predicts UP, actual UP -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: 3, VelMedListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: t0},
+		// UNCERTAIN: priceVel=3 > 0 (not STABLE: |3|>2), predicts FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, VelMedPrice: 3, VelMedListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
 	}
 
 	report := ValidateDefaults(evals, mc)
@@ -1079,6 +1078,15 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 		}
 	} else {
 		t.Error("expected DUMPING signal in PerSignal")
+	}
+
+	// Check UNCERTAIN exists and predicts FLAT.
+	if sa, ok := report.PerSignal["UNCERTAIN"]; ok {
+		if sa.Predicted != "FLAT" {
+			t.Errorf("UNCERTAIN predicted: got %q, want FLAT", sa.Predicted)
+		}
+	} else {
+		t.Error("expected UNCERTAIN signal in PerSignal")
 	}
 
 	// Overall: all 3 correct = 100%.
