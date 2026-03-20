@@ -421,10 +421,13 @@
 		padding: 2px 8px;
 		letter-spacing: 0.03em;
 	}
+	.col-tier { width: 65px; }
 	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
 	.tier-high { color: #fb923c; background: rgba(251, 146, 60, 0.12); }
+	.tier-mid-high { color: #c084fc; background: rgba(192, 132, 252, 0.12); }
 	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
+	.tier-floor { color: #475569; background: rgba(71, 85, 105, 0.08); }
 
 	/* Sellability */
 	.col-sell { width: 55px; }
