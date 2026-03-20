@@ -38,14 +38,14 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 	// Create eval points with known SellProbabilityFactor and StabilityDiscount.
 	// STABLE signal: low velocity.
 	// RiskAdjustedValue is computed on-the-fly from feature data:
-	//   sellProb = sellProbabilityFactor(listings=30, low7d=80, chaos=100)
+	//   sellProb = sellProbabilityFactor(listings=30, low7d=80, chaos=100, median=30)
 	//   stabDisc = stabilityDiscount(cv=10)
 	//   RAV = chaos * sellProb * stabDisc
 	chaos := 100.0
 	listings := 30
 	low7d := 80.0
 	cv := 10.0
-	expectedSellProb := sellProbabilityFactor(listings, low7d, chaos)
+	expectedSellProb := sellProbabilityFactor(listings, low7d, chaos, 30)
 	expectedStabDisc := stabilityDiscount(cv)
 	expectedRAV := chaos * expectedSellProb * expectedStabDisc
 
@@ -154,7 +154,11 @@ func TestValidateSellability_ConfidenceCalibration(t *testing.T) {
 	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
 	mc := sweepMarketContext(0, 10, 0, 5)
 
-	// GREEN: sellProb >= 0.7 AND stabilityDisc >= 0.8
+	// With 30 listings and CV=10, on-the-fly computation:
+	// sellProb = sellProbabilityFactor(30, 80, 100, 30) ≈ 0.65 (sigmoid centered at 30)
+	// stabDisc = stabilityDiscount(10) = 0.95
+	// With new thresholds: SAFE requires sellProb >= 0.8 AND stabDisc >= 0.85.
+	// sellProb ~0.65 < 0.8, so these will be FAIR (not SAFE).
 	evals := []EvalPoint{
 		{
 			Feature: GemFeature{
@@ -190,27 +194,27 @@ func TestValidateSellability_ConfidenceCalibration(t *testing.T) {
 
 	report := ValidateSellability(evals, mc)
 
-	// All three should be GREEN (sellProb=0.8 >= 0.7, stabDisc=0.9 >= 0.8).
-	cal, ok := report.ConfidenceCalibration["GREEN"]
+	// On-the-fly computation with default median=30 produces FAIR for all three.
+	cal, ok := report.ConfidenceCalibration["FAIR"]
 	if !ok {
 		for conf := range report.ConfidenceCalibration {
 			t.Logf("Confidence found: %s", conf)
 		}
-		t.Fatal("expected GREEN in ConfidenceCalibration")
+		t.Fatal("expected FAIR in ConfidenceCalibration")
 	}
 	if cal.Count != 3 {
-		t.Errorf("GREEN count: got %d, want 3", cal.Count)
+		t.Errorf("FAIR count: got %d, want 3", cal.Count)
 	}
 	if cal.PriceHeld != 2 {
-		t.Errorf("GREEN PriceHeld: got %d, want 2", cal.PriceHeld)
+		t.Errorf("FAIR PriceHeld: got %d, want 2", cal.PriceHeld)
 	}
 	// 2/3 = 66.67%
 	if !approxEqual(cal.HeldRate, 66.67, 0.1) {
-		t.Errorf("GREEN HeldRate: got %.2f, want ~66.67", cal.HeldRate)
+		t.Errorf("FAIR HeldRate: got %.2f, want ~66.67", cal.HeldRate)
 	}
 	// avg change: (-5 + -15 + 5) / 3 = -5
 	if !approxEqual(cal.AvgChange, -5.0, 0.1) {
-		t.Errorf("GREEN AvgChange: got %.2f, want -5.0", cal.AvgChange)
+		t.Errorf("FAIR AvgChange: got %.2f, want -5.0", cal.AvgChange)
 	}
 }
 
@@ -262,7 +266,7 @@ func TestValidateSellability_PerTierCapture(t *testing.T) {
 	}
 
 	// TOP: RAV computed on-the-fly from feature data.
-	topSellProb := sellProbabilityFactor(30, 180, 200)
+	topSellProb := sellProbabilityFactor(30, 180, 200, 30)
 	topStabDisc := stabilityDiscount(10)
 	expectedTopRAV := 200.0 * topSellProb * topStabDisc
 	expectedTopCapture := 200.0 / expectedTopRAV
@@ -380,12 +384,13 @@ func TestValidateSellability_MultipleSignalTypes(t *testing.T) {
 	}
 }
 
-func TestValidateSellability_ConfCalibrationMultipleColors(t *testing.T) {
+func TestValidateSellability_ConfCalibrationMultipleLevels(t *testing.T) {
 	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
 	mc := sweepMarketContext(0, 10, 0, 5)
 
 	evals := []EvalPoint{
-		// GREEN: sellProb=0.8 >= 0.7, stabDisc=0.9 >= 0.8
+		// FAIR: on-the-fly sellProb ~0.65 (30 listings, median=30), stabDisc=0.95
+		// sellProb < 0.8 → not SAFE, but sellProb >= 0.5 → not RISKY
 		{
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
@@ -396,7 +401,7 @@ func TestValidateSellability_ConfCalibrationMultipleColors(t *testing.T) {
 			FuturePct: 0.0,
 			SnapTime:  t0,
 		},
-		// RED: very few listings (2) + high CV (120) + price spike → low sellProb, low stabDisc
+		// RISKY: very few listings (2) + high CV (120) + price spike → low sellProb, low stabDisc
 		{
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 120, Listings: 2,
@@ -410,11 +415,11 @@ func TestValidateSellability_ConfCalibrationMultipleColors(t *testing.T) {
 
 	report := ValidateSellability(evals, mc)
 
-	if _, ok := report.ConfidenceCalibration["GREEN"]; !ok {
-		t.Error("expected GREEN in ConfidenceCalibration")
+	if _, ok := report.ConfidenceCalibration["FAIR"]; !ok {
+		t.Error("expected FAIR in ConfidenceCalibration")
 	}
-	if _, ok := report.ConfidenceCalibration["RED"]; !ok {
-		t.Error("expected RED in ConfidenceCalibration")
+	if _, ok := report.ConfidenceCalibration["RISKY"]; !ok {
+		t.Error("expected RISKY in ConfidenceCalibration")
 	}
 }
 

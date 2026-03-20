@@ -28,6 +28,18 @@ type MarketContext struct {
 	TemporalCoefficient float64 // coefficient for this snapshot's time; 1.0 = no adjustment
 	TemporalMode        string  // "none", "hourly", "weekday_hour"
 	TemporalBuckets     []byte  // raw JSONB, keyed by variant
+
+	// Per-variant baselines for scoring calibration.
+	VariantStats map[string]VariantBaseline `json:"variant_stats,omitempty"`
+}
+
+// VariantBaseline holds per-variant market statistics used to calibrate
+// scoring functions (e.g., sigmoid center for sell probability).
+type VariantBaseline struct {
+	MedianListings float64 `json:"median_listings"`
+	MedianCV       float64 `json:"median_cv"`
+	MedianPrice    float64 `json:"median_price"`
+	GemCount       int     `json:"gem_count"`
 }
 
 // ValidateTemporalSlices checks that all temporal slices have the expected lengths:
@@ -117,5 +129,5 @@ type GemSignal struct {
 	Tier              string
 	RiskAdjustedValue float64 // price * sell_probability * stability_discount
 	QuickSellPrice    float64 // aggressive undercut estimate
-	SellConfidence    string  // "GREEN", "YELLOW", "RED"
+	SellConfidence    string  // "SAFE", "FAIR", "RISKY"
 }

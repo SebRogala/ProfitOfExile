@@ -153,14 +153,17 @@ func quickSellUndercutFactor(listings int, tier string) float64 {
 	return base
 }
 
-// classifySellConfidence returns GREEN, YELLOW, or RED based on the
+// classifySellConfidence returns SAFE, FAIR, or RISKY based on the
 // sell probability factor and stability discount.
+// SAFE: both factors well above typical (top quartile).
+// RISKY: at least one factor is poor.
+// FAIR: everything in between.
 func classifySellConfidence(sellProb, stabilityDisc float64) string {
-	if sellProb >= 0.7 && stabilityDisc >= 0.8 {
-		return "GREEN"
+	if sellProb >= 0.8 && stabilityDisc >= 0.85 {
+		return "SAFE"
 	}
-	if sellProb >= 0.5 || stabilityDisc >= 0.7 {
-		return "YELLOW"
+	if sellProb < 0.5 && stabilityDisc < 0.7 {
+		return "RISKY"
 	}
-	return "RED"
+	return "FAIR"
 }

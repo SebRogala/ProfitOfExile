@@ -618,7 +618,10 @@ func classifySignal(priceVel, listingVel, cv float64, currentListings int) strin
 
 // classifySignalWithConfig uses custom thresholds (for optimizer).
 func classifySignalWithConfig(priceVel, listingVel, cv float64, currentListings int, cfg SignalConfig) string {
-	if cv > cfg.TrapCV {
+	// TRAP requires BOTH high historical volatility AND current instability.
+	// A gem with high 7-day CV but stable recent prices is not a trap —
+	// it had a volatile episode earlier but has since settled.
+	if cv > cfg.TrapCV && (math.Abs(priceVel) > 5 || math.Abs(listingVel) > 5) {
 		return "TRAP"
 	}
 	if priceVel < cfg.DumpPriceVel && listingVel > cfg.DumpListingVel {
