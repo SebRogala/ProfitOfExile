@@ -37,10 +37,10 @@
 					<div class="legend-item"><span class="sig red">🚩 MANIPULATION</span> fake price floor</div>
 					<div class="legend-item"><span class="sig green">🚀 BREAKOUT</span> breaking resistance</div>
 
-					<h4 class="legend-heading" style="margin-top: 16px;">Liquidity Tiers</h4>
-					<div class="legend-item"><span class="sig green">HIGH</span> safe farm</div>
-					<div class="legend-item"><span class="sig yellow">MED</span> oscillating</div>
-					<div class="legend-item"><span class="sig red">LOW</span> drain risk</div>
+					<h4 class="legend-heading" style="margin-top: 16px;">Sell Confidence</h4>
+					<div class="legend-item"><span class="sig green">✓ SAFE</span> liquid, sells near listed price</div>
+					<div class="legend-item"><span class="sig yellow">• FAIR</span> may need patience or undercut</div>
+					<div class="legend-item"><span class="sig red">✗ RISKY</span> thin market, crash risk</div>
 				</div>
 			</div>
 
@@ -64,9 +64,17 @@
 
 				<div class="legend-col">
 					<h4 class="legend-heading">Price Tiers</h4>
-					<div class="legend-item"><span class="sig gold">TOP</span> high-value gem</div>
-					<div class="legend-item"><span class="sig silver">MID</span> mid-range gem</div>
-					<div class="legend-item"><span class="sig muted">LOW</span> low-value gem</div>
+					<div class="legend-item"><span class="sig gold">TOP</span> rare outliers, highest value</div>
+					<div class="legend-item"><span class="sig orange">HIGH</span> premium gems</div>
+					<div class="legend-item"><span class="sig purple">MID-HIGH</span> above average</div>
+					<div class="legend-item"><span class="sig silver">MID</span> competitive, mid-range</div>
+					<div class="legend-item"><span class="sig muted">LOW</span> decent but modest</div>
+					<div class="legend-item"><span class="sig dim">FLOOR</span> bulk, lowest tier</div>
+
+					<h4 class="legend-heading" style="margin-top: 16px;">Liquidity Tiers</h4>
+					<div class="legend-item"><span class="sig green">HIGH</span> safe farm</div>
+					<div class="legend-item"><span class="sig yellow">MED</span> oscillating</div>
+					<div class="legend-item"><span class="sig red">LOW</span> drain risk</div>
 				</div>
 			</div>
 
@@ -147,6 +155,7 @@
 	.gold { color: #fbbf24; }
 	.silver { color: #9ca3af; }
 	.muted { color: var(--color-lab-text-secondary); }
+	.dim { color: #475569; }
 	.legend-metrics {
 		margin-top: 16px;
 		border-top: 1px solid var(--color-lab-border);

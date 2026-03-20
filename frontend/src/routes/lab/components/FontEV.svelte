@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { FontEVResponse, FontColor } from '$lib/api';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
+	import InfoTooltip from './InfoTooltip.svelte';
 
 	let { data }: { data: FontEVResponse } = $props();
 
@@ -34,7 +35,7 @@
 
 <div class="font-ev">
 	<div class="font-header">
-		<h4 class="font-title">Font EV</h4>
+		<h4 class="font-title">Font EV<InfoTooltip text="Expected income per Font of Divine Skill usage.<br><br><b>EV</b>: Average income picking the best gem from 3 random draws. Includes ALL possible outcomes (hits + misses).<br><br><b>Safe mode (LOW+)</b>: Hit rate for decent+ gems. Reliable income per font.<br><b>Jackpot mode (HIGH+)</b>: Hit rate for premium gems only. Lower chance, bigger payout.<br><br><b>Pool</b>: Total transfigured gems of this color.<br><b>pWin</b>: Chance of seeing at least 1 qualifying gem in 3 picks.<br><b>Winners</b>: How many gems in the pool qualify." /></h4>
 		<div class="mode-toggle">
 			<button
 				class="toggle-btn"

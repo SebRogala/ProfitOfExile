@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fetchFontEV, type FontEVResponse, type FontColor } from '$lib/api';
+	import InfoTooltip from './InfoTooltip.svelte';
 
 	let { refreshKey = 0 }: { refreshKey?: number } = $props();
 
@@ -54,7 +55,7 @@
 
 <section class="section">
 	<div class="section-header">
-		<h2 class="section-title">Font EV</h2>
+		<h2 class="section-title">Font EV<InfoTooltip text="4x3 matrix showing EV per variant and color. Highlighted cell = best combination for current mode.<br><br><b>Safe</b>: Pick the highlighted color for reliable income.<br><b>Jackpot</b>: Pick the highlighted color for jackpot hunting." /></h2>
 		<div class="mode-toggle">
 			<button
 				class="toggle-btn"
