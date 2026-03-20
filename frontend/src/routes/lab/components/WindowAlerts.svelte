@@ -121,8 +121,10 @@
 	}
 	.tier-top { background: rgba(234, 179, 8, 0.2); color: #eab308; }
 	.tier-high { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
+	.tier-mid-high { background: rgba(192, 132, 252, 0.2); color: #c084fc; }
 	.tier-mid { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
 	.tier-low { background: rgba(100, 116, 139, 0.15); color: #64748b; }
+	.tier-floor { background: rgba(71, 85, 105, 0.1); color: #475569; }
 
 	.alert-metrics {
 		display: flex;

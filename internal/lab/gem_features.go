@@ -38,7 +38,8 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			Variant:  g.Variant,
 			Chaos:    g.Chaos,
 			Listings: g.Listings,
-			Tier:     classifyTierForVariant(g.Chaos, g.Variant, mc),
+			Tier:       classifyTierForVariant(g.Chaos, g.Variant, mc),
+			GlobalTier: classifyTierGlobal(g.Chaos, mc),
 		}
 
 		h := histIndex[histKey{g.Name, g.Variant}]
@@ -111,6 +112,14 @@ func classifyTierForVariant(chaos float64, variant string, mc MarketContext) str
 	if vs, ok := mc.VariantStats[variant]; ok && len(vs.Tiers.Boundaries) > 0 {
 		return classifyTier(chaos, vs.Tiers)
 	}
+	if vs, ok := mc.VariantStats["all"]; ok && len(vs.Tiers.Boundaries) > 0 {
+		return classifyTier(chaos, vs.Tiers)
+	}
+	return classifyTier(chaos, mc.TierBoundaries)
+}
+
+// classifyTierGlobal uses the "all" combined tier boundaries.
+func classifyTierGlobal(chaos float64, mc MarketContext) string {
 	if vs, ok := mc.VariantStats["all"]; ok && len(vs.Tiers.Boundaries) > 0 {
 		return classifyTier(chaos, vs.Tiers)
 	}

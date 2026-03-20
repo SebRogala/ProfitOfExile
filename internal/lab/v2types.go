@@ -91,7 +91,8 @@ type GemFeature struct {
 	Variant           string
 	Chaos             float64
 	Listings          int
-	Tier              string
+	Tier              string // per-variant tier (for Font Comparator)
+	GlobalTier        string // cross-variant tier (for BestPlays "all" view)
 	VelShortPrice     float64
 	VelShortListing   float64
 	VelMedPrice       float64

@@ -217,6 +217,22 @@ func main() {
 	}()
 
 	// Run initial analyses on startup (uses existing data).
+	// RunV2 must complete before RunFont because Font needs GemFeatures.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("startup v2+font analysis panicked", "recover", r)
+			}
+		}()
+		// V2 pipeline first — produces MarketContext, GemFeatures, GemSignals.
+		if err := analyzer.RunV2(ctx); err != nil {
+			slog.Warn("startup v2 analysis failed (non-fatal)", "error", err)
+		}
+		// Font analysis second — needs GemFeatures from V2.
+		if err := analyzer.RunFont(ctx); err != nil {
+			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
+		}
+	}()
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -225,16 +241,6 @@ func main() {
 		}()
 		if err := analyzer.RunTransfigure(ctx); err != nil {
 			slog.Warn("startup transfigure analysis failed (non-fatal)", "error", err)
-		}
-	}()
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("font analysis panicked on startup", "recover", r)
-			}
-		}()
-		if err := analyzer.RunFont(ctx); err != nil {
-			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
 		}
 	}()
 	go func() {
