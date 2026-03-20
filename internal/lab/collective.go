@@ -1,6 +1,9 @@
 package lab
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 // CollectiveResult is a cross-analyzer "what to farm now" entry combining
 // transfigure ROI with trend signals.
@@ -33,6 +36,10 @@ type CollectiveResult struct {
 	SellReason       string `json:"sellReason"`
 	Sellability      int    `json:"sellability"`
 	SellabilityLabel string `json:"sellabilityLabel"`
+	// From features/signals (risk-adjusted display)
+	Low7d          float64 `json:"low7d"`
+	High7d         float64 `json:"high7d"`
+	SellConfidence string  `json:"sellConfidence"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.
@@ -63,6 +70,13 @@ type CompareResult struct {
 	BaseListings         int              `json:"baseListings"`
 	LiquidityTier        string           `json:"liquidityTier"`
 	TransListings        int              `json:"transListings"`
+	// Risk-adjusted display fields (from features/signals)
+	WeightedROI        float64 `json:"weightedRoi"`
+	Low7d              float64 `json:"low7d"`
+	High7d             float64 `json:"high7d"`
+	SellConfidence     string  `json:"sellConfidence"`
+	SellConfidenceReason string `json:"sellConfidenceReason"`
+	QuickSellPrice     float64 `json:"quickSellPrice"`
 }
 
 // SparklinePoint is a single data point for sparkline charts.
@@ -165,6 +179,9 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			cr.SellReason = t.SellReason
 			cr.Sellability = t.Sellability
 			cr.SellabilityLabel = t.SellabilityLabel
+			cr.Low7d = t.PriceLow7d
+			cr.High7d = t.PriceHigh7d
+			cr.SellConfidence = deriveSellConfidence(t.CurrentListings, t.CV, t.Signal)
 		}
 
 		// Exclude TRAP gems entirely — no actionable signal.
@@ -282,6 +299,11 @@ func BuildCompareResults(
 			cr.BaseListings = t.BaseListings
 			cr.LiquidityTier = t.LiquidityTier
 			cr.TransListings = t.CurrentListings
+			cr.Low7d = t.PriceLow7d
+			cr.High7d = t.PriceHigh7d
+			cr.SellConfidence = deriveSellConfidence(t.CurrentListings, t.CV, t.Signal)
+			cr.SellConfidenceReason = deriveSellConfidenceReason(t.CurrentListings, t.CV, t.Signal)
+			cr.QuickSellPrice = deriveQuickSellPrice(t.CurrentPrice, t.CurrentListings, t.CV)
 		}
 
 		// Attach sparkline.
@@ -308,7 +330,9 @@ func BuildCompareResults(
 			if sell == 0 {
 				sell = 50 // default if no trend data
 			}
-			ranks[i] = ranked{idx: i, score: cr.ROI * w * (sell / 100)}
+			score := cr.ROI * w * (sell / 100)
+			ranks[i] = ranked{idx: i, score: score}
+			results[i].WeightedROI = score
 		}
 		sort.Slice(ranks, func(i, j int) bool {
 			return ranks[i].score > ranks[j].score
@@ -329,4 +353,56 @@ func BuildCompareResults(
 	}
 
 	return results
+}
+
+// deriveSellConfidence returns GREEN/YELLOW/RED based on market conditions.
+// GREEN = liquid + stable, YELLOW = moderate risk, RED = thin/volatile.
+func deriveSellConfidence(listings int, cv float64, signal string) string {
+	if signal == "TRAP" || signal == "DUMPING" {
+		return "RED"
+	}
+	if listings >= 15 && cv < 30 {
+		return "GREEN"
+	}
+	if listings >= 5 && cv < 60 {
+		return "YELLOW"
+	}
+	return "RED"
+}
+
+// deriveSellConfidenceReason returns a human-readable explanation of sell confidence.
+func deriveSellConfidenceReason(listings int, cv float64, signal string) string {
+	if signal == "TRAP" {
+		return "extreme volatility — price unpredictable"
+	}
+	if signal == "DUMPING" {
+		return "price dropping — sellers undercutting"
+	}
+	conf := deriveSellConfidence(listings, cv, signal)
+	switch conf {
+	case "GREEN":
+		return fmt.Sprintf("%d listings — liquid, stable", listings)
+	case "YELLOW":
+		return fmt.Sprintf("%d listings — moderate liquidity", listings)
+	default:
+		if listings < 5 {
+			return fmt.Sprintf("%d listings — thin market", listings)
+		}
+		return fmt.Sprintf("CV %.0f%% — volatile pricing", cv)
+	}
+}
+
+// deriveQuickSellPrice estimates an aggressive undercut price.
+// Thin markets need larger undercuts; stable markets need minimal.
+func deriveQuickSellPrice(currentPrice float64, listings int, cv float64) float64 {
+	discount := 0.05 // 5% default undercut
+	if listings < 5 {
+		discount = 0.15
+	} else if listings < 15 {
+		discount = 0.10
+	}
+	if cv > 50 {
+		discount += 0.05
+	}
+	return currentPrice * (1.0 - discount)
 }

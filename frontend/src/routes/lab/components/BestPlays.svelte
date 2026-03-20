@@ -7,7 +7,8 @@
 	import Select from '$lib/components/Select.svelte';
 
 	const SORT_OPTIONS = [
-		{ value: 'roi', label: 'ROI' },
+		{ value: 'riskAdjusted', label: 'Risk-Adj ROI' },
+		{ value: 'roi', label: 'Raw ROI' },
 		{ value: 'roiPercent', label: 'ROI%' },
 	];
 
@@ -23,7 +24,7 @@
 		league?: string;
 	} = $props();
 
-	let sortBy = $state<'roi' | 'roiPercent'>('roi');
+	let sortBy = $state<'riskAdjusted' | 'roi' | 'roiPercent'>('riskAdjusted');
 	let budget = $state('');
 	let expandedRow = $state<number | null>(null);
 
@@ -65,6 +66,9 @@
 		if (b > 0) {
 			filtered = filtered.filter((p) => p.basePrice <= b);
 			if (b <= 50) sortBy = 'roiPercent';
+		}
+		if (sortBy === 'riskAdjusted') {
+			return filtered.sort((a, b) => b.weightedRoi - a.weightedRoi);
 		}
 		return filtered.sort((a, b) =>
 			sortBy === 'roi' ? b.roi - a.roi : b.roiPercent - a.roiPercent
@@ -127,7 +131,7 @@
 			<th class="col-name" title="Transfigured gem name">Gem</th>
 			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
 			<th class="col-tier" title="Price tier — TOP (high value), MID (moderate), LOW (budget). Auto-scales with league economy.">Tier</th>
-			<th class="col-num" title={METRIC_TOOLTIPS.ROI}>ROI</th>
+			<th class="col-num" title={sortBy === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sortBy === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</th>
 			<th class="col-signal" title="Primary signal: STABLE, UNCERTAIN, DUMPING, HERD, RECOVERY, TRAP. Based on price velocity, listing changes, and historical position.">Signal</th>
 			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
 			<th class="col-signals" title="Window: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Advanced: BREAKOUT, COMEBACK, POTENTIAL, PRICE_MANIPULATION.">Signals</th>
@@ -150,8 +154,13 @@
 				<td class="col-tier">
 					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}">{gem.priceTier}</span>
 				</td>
-				<td class="col-num roi-val">{gem.roi}c</td>
-				<td class="col-signal"><SignalBadge signal={gem.signal} /></td>
+				<td class="col-num roi-val">{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c</td>
+				<td class="col-signal">
+					<SignalBadge signal={gem.signal} />
+					{#if gem.sellConfidence}
+						<SignalBadge signal={gem.sellConfidence} type="confidence" />
+					{/if}
+				</td>
 				<td class="col-sell">
 					<span class="sell-score sell-{gem.sellabilityLabel.toLowerCase().replace(' ', '-')}" title="{gem.sellabilityLabel} ({gem.sellability})">{gem.sellability}</span>
 				</td>
@@ -335,8 +344,11 @@
 		white-space: nowrap;
 	}
 	.col-signal {
-		width: 110px;
+		width: 180px;
 		white-space: nowrap;
+	}
+	.col-signal :global(.signal-badge + .signal-badge) {
+		margin-left: 4px;
 	}
 	.col-signals {
 		width: 180px;
