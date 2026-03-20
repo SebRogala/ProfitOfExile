@@ -53,6 +53,12 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
 	'\u039412h': 'Change over the last 12 hours. Shows recent momentum. \u2191 = increasing, \u2193 = decreasing.',
 };
 
+export const SELL_CONFIDENCE_TOOLTIPS: Record<string, string> = {
+	GREEN: 'Liquid market, stable price \u2014 will sell near listed price',
+	YELLOW: 'Moderate risk \u2014 may need patience or small undercut',
+	RED: 'Thin market or volatile \u2014 significant gap between listed and realizable price',
+};
+
 export const LIQUIDITY_TOOLTIPS: Record<string, string> = {
 	HIGH: 'High liquidity \u2014 herd gets absorbed, safe to farm. Base listings \u226580% of market average.',
 	MED: 'Medium liquidity \u2014 windows open and close. Base listings 30-80% of market average.',

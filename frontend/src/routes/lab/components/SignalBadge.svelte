@@ -3,9 +3,10 @@
 		SIGNAL_TOOLTIPS,
 		WINDOW_TOOLTIPS,
 		ADVANCED_TOOLTIPS,
+		SELL_CONFIDENCE_TOOLTIPS,
 	} from '$lib/tooltips';
 
-	let { signal, type = 'signal' }: { signal: string; type?: 'signal' | 'window' | 'advanced' } =
+	let { signal, type = 'signal' }: { signal: string; type?: 'signal' | 'window' | 'advanced' | 'confidence' } =
 		$props();
 
 	const SIGNAL_STYLES: Record<string, { prefix: string; cssClass: string }> = {
@@ -33,16 +34,25 @@
 		BREAKOUT: { prefix: '🚀', cssClass: 'badge-green' },
 	};
 
+	const CONFIDENCE_STYLES: Record<string, { prefix: string; cssClass: string }> = {
+		GREEN:  { prefix: '\u2713', cssClass: 'badge-green' },
+		YELLOW: { prefix: '\u26A0', cssClass: 'badge-yellow' },
+		RED:    { prefix: '\u2717', cssClass: 'badge-red' },
+	};
+
 	function getStyle() {
 		if (type === 'window') return WINDOW_STYLES[signal] || { prefix: '', cssClass: 'badge-muted' };
 		if (type === 'advanced')
 			return ADVANCED_STYLES[signal] || { prefix: '', cssClass: 'badge-muted' };
+		if (type === 'confidence')
+			return CONFIDENCE_STYLES[signal] || { prefix: '', cssClass: 'badge-muted' };
 		return SIGNAL_STYLES[signal] || { prefix: '', cssClass: 'badge-muted' };
 	}
 
 	function getTooltip() {
 		if (type === 'window') return WINDOW_TOOLTIPS[signal] || '';
 		if (type === 'advanced') return ADVANCED_TOOLTIPS[signal] || '';
+		if (type === 'confidence') return SELL_CONFIDENCE_TOOLTIPS[signal] || '';
 		return SIGNAL_TOOLTIPS[signal] || '';
 	}
 

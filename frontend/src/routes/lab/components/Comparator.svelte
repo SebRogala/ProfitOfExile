@@ -370,6 +370,11 @@
 					<div class="card-row">
 						<span class="roi" title={METRIC_TOOLTIPS.ROI}>{gem.roi}c</span>
 						<SignalBadge signal={gem.signal} />
+						{#if gem.sellConfidence}
+							<span title={gem.sellConfidenceReason || ''}>
+								<SignalBadge signal={gem.sellConfidence} type="confidence" />
+							</span>
+						{/if}
 						<span class="cv" title={METRIC_TOOLTIPS.CV}>CV: {gem.cv}%</span>
 					</div>
 					<div class="card-row small">
@@ -377,6 +382,29 @@
 						<span class="velocity-inline" title="Price change over last 12 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12}c /12h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
 					</div>
+					<div class="price-context">
+						<div class="price-row">
+							<span>Listed: {gem.transPrice}c</span>
+							{#if gem.quickSellPrice > 0}
+								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
+							{/if}
+						</div>
+						{#if gem.low7d > 0 || gem.high7d > 0}
+							<div class="range-context">
+								<span class="range-label">7d floor: {gem.low7d}c</span>
+								<span class="range-sep">&middot;</span>
+								<span class="range-label">7d high: {gem.high7d}c</span>
+								<div class="range-bar">
+									<div class="range-fill" style="width: {gem.histPosition}%"></div>
+								</div>
+							</div>
+						{/if}
+					</div>
+					{#if gem.signal === 'DUMPING' || gem.signal === 'TRAP'}
+						<div class="listing-warning">
+							{gem.signal === 'DUMPING' ? 'Listings rising — price may drop' : 'Price trap — avoid'}
+						</div>
+					{/if}
 
 					<div class="urgency-slot">
 						{#if gem.sellUrgency}
@@ -1067,5 +1095,56 @@
 		color: var(--color-lab-text-secondary);
 		font-size: 0.7rem;
 		margin-left: 4px;
+	}
+
+	/* Price context section */
+	.price-context {
+		margin: 8px 0;
+		font-size: 0.875rem;
+	}
+	.price-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		color: var(--color-lab-text-secondary);
+	}
+	.quick-sell {
+		color: var(--color-lab-text-secondary);
+		opacity: 0.7;
+	}
+	.range-context {
+		margin-top: 6px;
+		color: var(--color-lab-text-secondary);
+		font-size: 0.8125rem;
+	}
+	.range-label {
+		color: var(--color-lab-text-secondary);
+	}
+	.range-sep {
+		margin: 0 4px;
+		opacity: 0.5;
+	}
+	.range-bar {
+		width: 100%;
+		height: 4px;
+		background: rgba(42, 45, 55, 0.8);
+		border-radius: 2px;
+		margin-top: 4px;
+		overflow: hidden;
+	}
+	.range-fill {
+		height: 100%;
+		background: #60a5fa;
+		border-radius: 2px;
+		transition: width 0.3s ease;
+	}
+	.listing-warning {
+		color: var(--color-lab-red);
+		font-size: 0.875rem;
+		font-weight: 600;
+		margin-top: 8px;
+		padding: 6px 10px;
+		background: rgba(239, 68, 68, 0.08);
+		border-left: 3px solid var(--color-lab-red);
 	}
 </style>
