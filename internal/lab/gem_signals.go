@@ -84,7 +84,7 @@ func ComputeGemSignals(
 
 		// 7. Risk-adjusted scoring (POE-69).
 		riskAdjValue := f.Chaos * f.SellProbabilityFactor * f.StabilityDiscount
-		undercutFactor := quickSellUndercutFactor(f.Listings, f.Tier)
+		undercutFactor := quickSellUndercutFactor(f.Listings, f.Tier, signal)
 		quickSell := f.Chaos * (1.0 - undercutFactor)
 		sellConf := classifySellConfidence(f.SellProbabilityFactor, f.StabilityDiscount)
 
@@ -129,19 +129,20 @@ func computeRecommendation(signal, sellUrgency string, confidence int) string {
 }
 
 // quickSellUndercutFactor returns the undercut percentage for quick-sell pricing.
-// Thinner markets require deeper undercuts; higher tiers get a premium penalty
-// because competition is fiercer at the top.
-func quickSellUndercutFactor(listings int, tier string) float64 {
+// Data-driven: 30+ listings need MORE undercut (competitive pressure), <5 need LESS
+// (prices rarely move). Signal modifier adjusts for active market conditions.
+func quickSellUndercutFactor(listings int, tier, signal string) float64 {
+	// Listing-based undercut (flipped from original — backed by 63K observation backtest).
 	var base float64
 	switch {
 	case listings >= 30:
-		base = 0.05
+		base = 0.09 // competitive market — 5% was too little (71.6% achievable → ~86% at 9%)
 	case listings >= 10:
-		base = 0.10
+		base = 0.10 // well-calibrated (88.5% achievable)
 	case listings >= 5:
-		base = 0.15
+		base = 0.11 // was 15%, too aggressive for thin-but-stable markets
 	default:
-		base = 0.25
+		base = 0.15 // was 25%, overkill — prices rarely move with <5 listings
 	}
 	// Tier modifier: premium gems face stiffer competition.
 	switch tier {
@@ -149,6 +150,18 @@ func quickSellUndercutFactor(listings int, tier string) float64 {
 		base += 0.05
 	case "HIGH":
 		base += 0.02
+	}
+	// Signal modifier: DUMPING needs deeper undercut, STABLE can be gentler.
+	switch signal {
+	case "DUMPING":
+		base += 0.05 // 65% achievable without this — needs aggressive pricing
+	case "TRAP":
+		base += 0.03
+	case "STABLE":
+		base -= 0.03 // 93% achievable — can afford to be less aggressive
+	}
+	if base < 0.02 {
+		base = 0.02 // minimum 2% undercut
 	}
 	return base
 }

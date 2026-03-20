@@ -10,29 +10,27 @@ import (
 // sellProbabilityFactor tests
 // ---------------------------------------------------------------------------
 
-func TestSellProbabilityFactor_SigmoidCurve(t *testing.T) {
-	// Test pure sigmoid at key listing counts with medianListings=20.
-	// Use low7d=60 with currentPrice=100 to avoid thin-market adjustments:
-	// low7d=60 is between 0.5*100=50 and 0.7*100=70, so no boost or penalty.
-	// For listings >= 10, thin-market adjustments don't apply regardless.
-	medianListings := 20.0
+func TestSellProbabilityFactor_ListingCurve(t *testing.T) {
+	// Test the linear listings-based factor.
+	// Use low7d=60 with currentPrice=100 to avoid thin-market adjustments.
 	tests := []struct {
 		listings int
 		wantMin  float64
 		wantMax  float64
 	}{
-		{2, 0.30, 0.45},   // very few listings: near floor (no thin-market adj with low7d=60)
-		{10, 0.40, 0.60},  // below midpoint
-		{20, 0.60, 0.70},  // at sigmoid midpoint
-		{50, 0.85, 0.98},  // well above midpoint
-		{100, 0.95, 1.01}, // near ceiling
+		{2, 0.30, 0.30},   // below 5: floor at 0.3
+		{5, 0.49, 0.51},   // exactly 5: ~0.5
+		{10, 0.54, 0.57},  // linear range
+		{27, 0.73, 0.76},  // mid-range
+		{50, 0.99, 1.01},  // at 50: ~1.0
+		{100, 0.99, 1.01}, // above 50: capped at 1.0
 	}
 
 	for _, tt := range tests {
-		got := sellProbabilityFactor(tt.listings, 60, 100, medianListings)
+		got := sellProbabilityFactor(tt.listings, 60, 100)
 		if got < tt.wantMin || got > tt.wantMax {
-			t.Errorf("sellProbabilityFactor(listings=%d, median=%v) = %f, want [%f, %f]",
-				tt.listings, medianListings, got, tt.wantMin, tt.wantMax)
+			t.Errorf("sellProbabilityFactor(listings=%d) = %f, want [%f, %f]",
+				tt.listings, got, tt.wantMin, tt.wantMax)
 		}
 	}
 }
@@ -42,10 +40,9 @@ func TestSellProbabilityFactor_ThinMarketStablePrice(t *testing.T) {
 	// should boost the factor (genuine rarity).
 	currentPrice := 100.0
 	stableLow7d := 80.0 // 80 > 0.7 * 100 = 70
-	median := 30.0
 
-	boosted := sellProbabilityFactor(5, stableLow7d, currentPrice, median)
-	normal := sellProbabilityFactor(5, 50, currentPrice, median) // low7d=50, between 50 and 70
+	boosted := sellProbabilityFactor(5, stableLow7d, currentPrice)
+	normal := sellProbabilityFactor(5, 50, currentPrice) // low7d=50, between 50 and 70
 
 	if boosted <= normal {
 		t.Errorf("stable thin market should boost: boosted=%f, normal=%f", boosted, normal)
@@ -61,10 +58,9 @@ func TestSellProbabilityFactor_ThinMarketSpikePrice(t *testing.T) {
 	// should penalize the factor (manipulation risk).
 	currentPrice := 200.0
 	spikeLow7d := 80.0 // 80 < 0.5 * 200 = 100
-	median := 30.0
 
-	penalized := sellProbabilityFactor(5, spikeLow7d, currentPrice, median)
-	normal := sellProbabilityFactor(5, 120, currentPrice, median) // low7d=120, in the middle
+	penalized := sellProbabilityFactor(5, spikeLow7d, currentPrice)
+	normal := sellProbabilityFactor(5, 120, currentPrice) // low7d=120, in the middle
 
 	if penalized >= normal {
 		t.Errorf("spike thin market should penalize: penalized=%f, normal=%f", penalized, normal)
@@ -75,10 +71,9 @@ func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 	// With >= 10 listings, thin-market adjustments should not apply.
 	currentPrice := 100.0
 	stableLow7d := 90.0 // stable, but listings >= 10
-	median := 30.0
 
-	val10 := sellProbabilityFactor(10, stableLow7d, currentPrice, median)
-	val15 := sellProbabilityFactor(15, stableLow7d, currentPrice, median)
+	val10 := sellProbabilityFactor(10, stableLow7d, currentPrice)
+	val15 := sellProbabilityFactor(15, stableLow7d, currentPrice)
 
 	// These should be pure sigmoid values, no rarity boost.
 	if val10 < 0.3 || val10 > 1.0 {
@@ -91,7 +86,7 @@ func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 
 func TestSellProbabilityFactor_ZeroPrice(t *testing.T) {
 	// Zero price should not trigger thin-market adjustment (guarded by currentPrice > 0).
-	got := sellProbabilityFactor(5, 0, 0, 30)
+	got := sellProbabilityFactor(5, 0, 0)
 	if got < 0.3 || got > 1.0 {
 		t.Errorf("sellProbabilityFactor with zero price = %f, want [0.3, 1.0]", got)
 	}
@@ -103,7 +98,7 @@ func TestSellProbabilityFactor_FloorEnforced(t *testing.T) {
 	currentPrice := 200.0
 	spikeLow7d := 50.0 // 50 < 0.5 * 200 = 100 → penalty
 
-	got := sellProbabilityFactor(1, spikeLow7d, currentPrice, 30)
+	got := sellProbabilityFactor(1, spikeLow7d, currentPrice)
 	if got < 0.3 {
 		t.Errorf("sellProbabilityFactor(1 listing, spike) = %f, want >= 0.3 (floor)", got)
 	}
@@ -157,36 +152,38 @@ func TestStabilityDiscount_Clamping(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestQuickSellUndercutFactor_ListingBrackets(t *testing.T) {
+	// Data-driven brackets (flipped from original — backed by 63K backtest).
 	tests := []struct {
 		listings int
 		tier     string
+		signal   string
 		wantBase float64
 	}{
-		{50, "MID", 0.05},  // >= 30: 5%
-		{30, "MID", 0.05},  // exactly 30: 5%
-		{20, "MID", 0.10},  // >= 10: 10%
-		{10, "MID", 0.10},  // exactly 10: 10%
-		{7, "MID", 0.15},   // >= 5: 15%
-		{5, "MID", 0.15},   // exactly 5: 15%
-		{3, "MID", 0.25},   // < 5: 25%
-		{0, "MID", 0.25},   // zero: 25%
+		{50, "MID", "STABLE", 0.06},  // >= 30: 9% base - 3% STABLE = 6%
+		{30, "MID", "STABLE", 0.06},  // exactly 30: same
+		{20, "MID", "STABLE", 0.07},  // >= 10: 10% - 3% STABLE = 7%
+		{10, "MID", "STABLE", 0.07},  // exactly 10: same
+		{7, "MID", "STABLE", 0.08},   // >= 5: 11% - 3% STABLE = 8%
+		{3, "MID", "STABLE", 0.12},   // < 5: 15% - 3% STABLE = 12%
+		{50, "MID", "", 0.09},        // no signal: base only
+		{3, "MID", "DUMPING", 0.20},  // < 5 DUMPING: 15% + 5% = 20%
 	}
 
 	for _, tt := range tests {
-		got := quickSellUndercutFactor(tt.listings, tt.tier)
+		got := quickSellUndercutFactor(tt.listings, tt.tier, tt.signal)
 		if math.Abs(got-tt.wantBase) > 0.001 {
-			t.Errorf("quickSellUndercutFactor(listings=%d, tier=%s) = %f, want %f",
-				tt.listings, tt.tier, got, tt.wantBase)
+			t.Errorf("quickSellUndercutFactor(listings=%d, tier=%s, signal=%s) = %f, want %f",
+				tt.listings, tt.tier, tt.signal, got, tt.wantBase)
 		}
 	}
 }
 
 func TestQuickSellUndercutFactor_TierModifier(t *testing.T) {
 	// TOP tier adds 0.05, HIGH adds 0.02, MID/LOW add 0.
-	midBase := quickSellUndercutFactor(20, "MID")
-	highBase := quickSellUndercutFactor(20, "HIGH")
-	topBase := quickSellUndercutFactor(20, "TOP")
-	lowBase := quickSellUndercutFactor(20, "LOW")
+	midBase := quickSellUndercutFactor(20, "MID", "")
+	highBase := quickSellUndercutFactor(20, "HIGH", "")
+	topBase := quickSellUndercutFactor(20, "TOP", "")
+	lowBase := quickSellUndercutFactor(20, "LOW", "")
 
 	if math.Abs(highBase-midBase-0.02) > 0.001 {
 		t.Errorf("HIGH should add 0.02: HIGH=%f, MID=%f", highBase, midBase)
