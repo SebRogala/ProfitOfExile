@@ -899,9 +899,10 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 			  vel_long_price, vel_long_listing,
 			  cv, hist_position, high_7d, low_7d,
 			  flood_count, crash_count, listing_elasticity,
-			  relative_price, relative_listings)
+			  relative_price, relative_listings,
+			  sell_probability_factor, stability_discount)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-			         $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			         $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 			 ON CONFLICT DO NOTHING`,
 			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier,
 			f.VelShortPrice, f.VelShortListing, f.VelMedPrice, f.VelMedListing,
@@ -909,6 +910,7 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 			f.CV, f.HistPosition, f.High7d, f.Low7d,
 			f.FloodCount, f.CrashCount, f.ListingElasticity,
 			f.RelativePrice, f.RelativeListings,
+			f.SellProbabilityFactor, f.StabilityDiscount,
 		)
 	}
 
@@ -941,7 +943,8 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 		       vel_long_price, vel_long_listing,
 		       cv, hist_position, high_7d, low_7d,
 		       flood_count, crash_count, listing_elasticity,
-		       relative_price, relative_listings
+		       relative_price, relative_listings,
+		       sell_probability_factor, stability_discount
 		FROM gem_features
 		WHERE time = (SELECT MAX(time) FROM gem_features)`
 	args := []any{}
@@ -975,7 +978,8 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 			&f.VelLongPrice, &f.VelLongListing,
 			&f.CV, &f.HistPosition, &f.High7d, &f.Low7d,
 			&f.FloodCount, &f.CrashCount, &f.ListingElasticity,
-			&f.RelativePrice, &f.RelativeListings); err != nil {
+			&f.RelativePrice, &f.RelativeListings,
+			&f.SellProbabilityFactor, &f.StabilityDiscount); err != nil {
 			return nil, fmt.Errorf("lab repo: scan gem feature: %w", err)
 		}
 		results = append(results, f)
@@ -1006,13 +1010,16 @@ func (r *Repository) SaveGemSignals(ctx context.Context, signals []GemSignal) (i
 			 (time, name, variant, signal, confidence,
 			  sell_urgency, sell_reason, sellability, sellability_label,
 			  window_signal, advanced_signal, phase_modifier,
-			  recommendation, tier)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			  recommendation, tier,
+			  risk_adjusted_value, quick_sell_price, sell_confidence)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+			         $15, $16, $17)
 			 ON CONFLICT DO NOTHING`,
 			s.Time, s.Name, s.Variant, s.Signal, s.Confidence,
 			s.SellUrgency, s.SellReason, s.Sellability, s.SellabilityLabel,
 			s.WindowSignal, s.AdvancedSignal, s.PhaseModifier,
 			s.Recommendation, s.Tier,
+			s.RiskAdjustedValue, s.QuickSellPrice, s.SellConfidence,
 		)
 	}
 
@@ -1043,7 +1050,8 @@ func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string,
 		SELECT time, name, variant, signal, confidence,
 		       sell_urgency, sell_reason, sellability, sellability_label,
 		       window_signal, advanced_signal, phase_modifier,
-		       recommendation, tier
+		       recommendation, tier,
+		       risk_adjusted_value, quick_sell_price, sell_confidence
 		FROM gem_signals
 		WHERE time = (SELECT MAX(time) FROM gem_signals)`
 	args := []any{}
@@ -1075,7 +1083,8 @@ func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string,
 		if err := rows.Scan(&s.Time, &s.Name, &s.Variant, &s.Signal, &s.Confidence,
 			&s.SellUrgency, &s.SellReason, &s.Sellability, &s.SellabilityLabel,
 			&s.WindowSignal, &s.AdvancedSignal, &s.PhaseModifier,
-			&s.Recommendation, &s.Tier); err != nil {
+			&s.Recommendation, &s.Tier,
+			&s.RiskAdjustedValue, &s.QuickSellPrice, &s.SellConfidence); err != nil {
 			return nil, fmt.Errorf("lab repo: scan gem signal: %w", err)
 		}
 		results = append(results, s)
@@ -1096,7 +1105,8 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 		       vel_long_price, vel_long_listing,
 		       cv, hist_position, high_7d, low_7d,
 		       flood_count, crash_count, listing_elasticity,
-		       relative_price, relative_listings
+		       relative_price, relative_listings,
+		       sell_probability_factor, stability_discount
 		FROM gem_features
 		WHERE time > NOW() - make_interval(hours => $1)
 		ORDER BY time, name, variant`
@@ -1115,7 +1125,8 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 			&f.VelLongPrice, &f.VelLongListing,
 			&f.CV, &f.HistPosition, &f.High7d, &f.Low7d,
 			&f.FloodCount, &f.CrashCount, &f.ListingElasticity,
-			&f.RelativePrice, &f.RelativeListings); err != nil {
+			&f.RelativePrice, &f.RelativeListings,
+			&f.SellProbabilityFactor, &f.StabilityDiscount); err != nil {
 			return nil, fmt.Errorf("lab repo: scan gem feature in range: %w", err)
 		}
 		results = append(results, f)
