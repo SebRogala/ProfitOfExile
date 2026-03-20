@@ -10,8 +10,7 @@
 
 	const SIGNAL_STYLES: Record<string, { prefix: string; cssClass: string }> = {
 		STABLE: { prefix: '━', cssClass: 'badge-green-muted' },
-		RISING: { prefix: '▲', cssClass: 'badge-green' },
-		FALLING: { prefix: '▼', cssClass: 'badge-red' },
+		UNCERTAIN: { prefix: '?', cssClass: 'badge-muted' },
 		HERD: { prefix: '⚡', cssClass: 'badge-yellow' },
 		DUMPING: { prefix: '⏬', cssClass: 'badge-red' },
 		RECOVERY: { prefix: '🔄', cssClass: 'badge-purple' },

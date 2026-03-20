@@ -95,7 +95,7 @@ var productionFixtures = []backtestFixture{
 			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 609.0, Listings: 350},
 		},
 		expectations: []backtestExpectation{
-			{snapIdx: 4, signal: "RISING"}, // 2h window: pVel=13.4 but lVel=8.5 (<10/h threshold)
+			{snapIdx: 4, signal: "UNCERTAIN"}, // 2h window: pVel=13.4 but lVel=8.5 (<10/h threshold)
 			{snapIdx: 5, signal: "HERD"},   // 2h window: listing surge drives lVel >10/h
 			{snapIdx: 6, signal: "HERD"},   // sustained herd: price+listings both above thresholds
 			{snapIdx: 7, signal: "HERD"},   // herd continues
@@ -124,7 +124,7 @@ var productionFixtures = []backtestFixture{
 			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 913.5, Listings: 208},
 		},
 		expectations: []backtestExpectation{
-			{snapIdx: 4, signal: "RISING"}, // 2h window: pVel=20.1 but lVel=6.0 (<10/h threshold)
+			{snapIdx: 4, signal: "UNCERTAIN"}, // 2h window: pVel=20.1 but lVel=6.0 (<10/h threshold)
 			{snapIdx: 5, signal: "HERD"},   // 2h window: listing surge drives lVel >10/h
 			{snapIdx: 6, signal: "HERD"},   // sustained herd
 			{snapIdx: 7, signal: "HERD"},   // herd continues with strong listing velocity
@@ -284,10 +284,10 @@ func TestAnalyzeTrends_Backtest_STABLE_CV_zero(t *testing.T) {
 // TestAnalyzeTrends_Backtest_RISING_before_HERD validates that Shock Nova of Procession
 // correctly emits RISING at snap[4] (listing velocity still below HERD threshold)
 // then transitions to HERD at snap[5] once the 2h window captures enough listing growth.
-func TestAnalyzeTrends_Backtest_RISING_before_HERD(t *testing.T) {
+func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 	fix := productionFixtures[2] // Shock Nova of Procession
 
-	// snap[4]: RISING — 2h window: price velocity >5/h but listing velocity <10/h
+	// snap[4]: UNCERTAIN — 2h window: price velocity >5/h but listing velocity <10/h
 	{
 		snapIdx := 4
 		currentPt := fix.points[snapIdx]
@@ -305,8 +305,8 @@ func TestAnalyzeTrends_Backtest_RISING_before_HERD(t *testing.T) {
 			t.Fatal("snap[4]: no result")
 		}
 		r := results[0]
-		if r.Signal != "RISING" {
-			t.Errorf("snap[4] pre-HERD: signal=%s, want RISING (listing vel not yet >10/h)", r.Signal)
+		if r.Signal != "UNCERTAIN" {
+			t.Errorf("snap[4] pre-HERD: signal=%s, want UNCERTAIN (listing vel not yet >10/h)", r.Signal)
 		}
 		if r.ListingVelocity >= 10 {
 			t.Errorf("snap[4]: listing velocity %.2f should be <10/h (not yet HERD)", r.ListingVelocity)

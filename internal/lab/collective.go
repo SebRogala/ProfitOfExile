@@ -73,20 +73,17 @@ type SparklinePoint struct {
 }
 
 // signalWeight returns the ROI multiplier for a given trend signal.
+// UNCERTAIN maps to 1.0 (neutral) — no directional prediction, no weight adjustment.
 func signalWeight(signal string) float64 {
 	switch signal {
 	case "TRAP":
 		return 0 // excluded
 	case "DUMPING":
 		return 0.3
-	case "FALLING":
-		return 0.6
 	case "HERD":
 		return 0.8
-	case "STABLE":
+	case "STABLE", "UNCERTAIN":
 		return 1.0
-	case "RISING":
-		return 1.1
 	case "RECOVERY":
 		return 1.2
 	default:

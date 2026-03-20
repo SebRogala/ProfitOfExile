@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// UncertainTooltip explains why UNCERTAIN replaces directional predictions
+// (RISING/FALLING) — the Baca's dog rule: below 50% accuracy is no better
+// than random. Raw market data (velocity, CV, listings) is still available
+// for the user's own assessment.
+const UncertainTooltip = "Directional prediction accuracy is below 50% (coin flip) — showing raw market data instead. Price velocity and listing trends are available for your own assessment."
+
 // safeIndex retrieves element at index i from s, returning defaultVal when i is
 // out of bounds or s is nil. Used for temporal bias slice lookups.
 func safeIndex(s []float64, i int, defaultVal float64) float64 {
@@ -40,11 +46,13 @@ func clampInt(v, min, max int) int {
 // This maps signal types to their inherent trustworthiness as a prediction basis.
 // TRAP signals are inherently untrustworthy (low base) while HERD/DUMPING patterns
 // are strong directional signals (high base).
+// UNCERTAIN signals get a low base because directional prediction accuracy is
+// below coin flip (50%).
 func signalBaseConfidence(signal string) float64 {
 	switch signal {
 	case "HERD", "DUMPING":
 		return 65
-	case "RISING", "FALLING", "RECOVERY":
+	case "UNCERTAIN", "RECOVERY":
 		return 40
 	case "STABLE":
 		return 55
@@ -59,11 +67,16 @@ func signalBaseConfidence(signal string) float64 {
 // windows. Weights short+medium agreement most heavily, since recent convergence
 // is the most actionable signal.
 //
+// The signal parameter adjusts behavior for STABLE signals: when all windows agree
+// on a tiny drift direction, this is noise (noisy-stable), not a strong confidence
+// signal. STABLE gets a penalty (0.8) instead of the usual boost (1.4).
+//
 // Returns:
-//   - 1.4 when all three non-zero windows agree on direction
+//   - 1.4 when all three non-zero windows agree on direction (non-STABLE signals)
+//   - 0.8 when all three non-zero windows agree on direction (STABLE signal — noisy-stable penalty)
 //   - 1.0 when short and medium agree, or short is absent but med+long agree, or fewer than 2 windows have data
 //   - 0.6 when short is present and disagrees with medium (conflicting near-term data)
-func windowAgreement(short, med, long float64) float64 {
+func windowAgreement(short, med, long float64, signal string) float64 {
 	signOf := func(v float64) int {
 		if v > 0 {
 			return 1
@@ -97,6 +110,11 @@ func windowAgreement(short, med, long float64) float64 {
 
 	// All three non-zero and same sign: full agreement.
 	if nonZero == 3 && ss == ms && ms == ls {
+		// For STABLE signals, consistent near-zero velocity across all windows
+		// is noise, not a confidence signal. Penalize instead of boosting.
+		if signal == "STABLE" {
+			return 0.8
+		}
 		return 1.4
 	}
 
@@ -117,9 +135,19 @@ func windowAgreement(short, med, long float64) float64 {
 
 // profileModifier returns a multiplier based on the gem's behavioral history.
 // Priority order: unstable (flood/crash) > volatile (high CV) > predictable (low CV + elastic).
-func profileModifier(f GemFeature) float64 {
-	// Flood or crash history overrides everything -- gem is structurally unstable.
+//
+// The signal parameter adjusts behavior for DUMPING signals: crash/flood history
+// is corroborating evidence for DUMPING (a gem that has crashed before is more
+// likely to keep dumping), so it returns an amplifier (1.2) instead of a reducer (0.7).
+func profileModifier(f GemFeature, signal string) float64 {
+	// Flood or crash history.
 	if f.FloodCount > 2 || f.CrashCount > 2 {
+		// For DUMPING signals, crash/flood history is corroborating evidence —
+		// a gem that has crashed before is MORE likely to keep dumping.
+		if signal == "DUMPING" {
+			return 1.2
+		}
+		// For other signals, instability reduces confidence in predictions.
 		return 0.7
 	}
 
@@ -177,11 +205,11 @@ func computeConfidence(signal string, f GemFeature, mc MarketContext, snapTime t
 	}
 	phaseModifier := temporal
 
-	// 3. Cross-window agreement.
-	crossWindow := windowAgreement(f.VelShortPrice, f.VelMedPrice, f.VelLongPrice)
+	// 3. Cross-window agreement (signal-aware: STABLE penalized for agreement).
+	crossWindow := windowAgreement(f.VelShortPrice, f.VelMedPrice, f.VelLongPrice, signal)
 
-	// 4. Gem profile modifier.
-	profile := profileModifier(f)
+	// 4. Gem profile modifier (signal-aware: DUMPING amplified by crash history).
+	profile := profileModifier(f, signal)
 
 	// 5. Market context modifier.
 	market := marketModifier(f)
