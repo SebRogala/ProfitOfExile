@@ -395,7 +395,7 @@
 								<span class="range-sep">&middot;</span>
 								<span class="range-label">7d high: {gem.high7d}c</span>
 								<div class="range-bar">
-									<div class="range-fill" style="width: {gem.histPosition}%"></div>
+									<div class="range-fill" style="width: {Math.min(100, Math.max(0, gem.histPosition))}%"></div>
 								</div>
 							</div>
 						{/if}
