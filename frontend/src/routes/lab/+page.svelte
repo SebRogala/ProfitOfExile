@@ -2,12 +2,10 @@
 	import {
 		fetchStatus,
 		fetchBestPlays,
-		fetchWindowAlerts,
 		fetchMarketOverview,
 		connectMercure,
 		type StatusData,
 		type GemPlay,
-		type WindowAlert,
 		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
@@ -17,7 +15,6 @@
 	import Comparator from './components/Comparator.svelte';
 	import SessionQueue from './components/SessionQueue.svelte';
 	import type { QueueItem } from './components/SessionQueue.svelte';
-	import WindowAlerts from './components/WindowAlerts.svelte';
 	import BestPlays from './components/BestPlays.svelte';
 	import ByVariant from './components/ByVariant.svelte';
 	import MarketOverview from './components/MarketOverview.svelte';
@@ -27,7 +24,6 @@
 	let selectedLab = $state('Merciless');
 	let status = $state<StatusData | null>(null);
 	let bestPlays = $state<GemPlay[]>([]);
-	let windowAlerts = $state<WindowAlert[]>([]);
 	let marketOverview = $state<MarketOverviewData | null>(null);
 	let loading = $state(true);
 	let error = $state('');
@@ -146,15 +142,13 @@
 	async function loadAll() {
 		try {
 			error = '';
-			const [s, bp, wa, mo] = await Promise.all([
+			const [s, bp, mo] = await Promise.all([
 				fetchStatus(),
 				fetchBestPlays(),
-				fetchWindowAlerts(),
 				fetchMarketOverview(),
 			]);
 			status = s;
 			bestPlays = bp;
-			windowAlerts = wa;
 			marketOverview = mo;
 
 			// Update connection status from Mercure
@@ -229,8 +223,6 @@
 			onRefresh={handleRefreshQueue}
 			onAutoClearChange={handleAutoClearChange}
 		/>
-
-		<WindowAlerts alerts={windowAlerts} />
 
 		<section class="section">
 			<BestPlays plays={bestPlays} league={status?.league || ''} />
