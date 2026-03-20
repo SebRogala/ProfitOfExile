@@ -12,15 +12,16 @@ type FontResult struct {
 	Color         string  // RED, GREEN, BLUE
 	Variant       string  // "1", "1/20", "20", "20/20"
 	Pool          int     // total unique transfigured gem names of that color
-	Winners       int
-	PWin          float64
-	AvgWin        float64
-	EV            float64
+	Winners       int     // count of tier-qualifying gems (MID+ for safe, HIGH+ for jackpot)
+	PWin          float64 // probability of seeing at least 1 winner in 3 picks
+	AvgWin        float64 // average value when you DO hit a winner
+	EV            float64 // expected income per font (best-of-3 from full pool, all gems valued)
 	InputCost     float64
-	Profit        float64
-	Mode          string // "safe" or "jackpot"
-	ThinPoolGems  int    // count of winners with < 5 listings
-	LiquidityRisk string // "LOW", "MEDIUM", "HIGH"
+	Profit        float64 // EV - InputCost
+	FontsToHit    float64 // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
+	Mode          string  // "safe" or "jackpot"
+	ThinPoolGems  int     // count of winners with < 5 listings
+	LiquidityRisk string  // "LOW", "MEDIUM", "HIGH"
 }
 
 // FontAnalysis holds the results of both Safe and Jackpot font analysis modes.
@@ -110,9 +111,11 @@ func expectedBestOf3(values []float64) float64 {
 	return ev
 }
 
-// isSafeTierWinner returns true if the tier qualifies as a winner in Safe mode (MID+).
+// isSafeTierWinner returns true if the tier qualifies as a winner in Safe mode (LOW+).
+// LOW+ = upper half of the pool (everything above FLOOR). This matches the farmer's
+// experience of "almost guaranteed to hit a decent gem" in small pools like RED.
 func isSafeTierWinner(tier string) bool {
-	return tier == "MID" || tier == "MID-HIGH" || tier == "HIGH" || tier == "TOP"
+	return tier == "LOW" || tier == "MID" || tier == "MID-HIGH" || tier == "HIGH" || tier == "TOP"
 }
 
 // isJackpotTierWinner returns true if the tier qualifies as a winner in Jackpot mode (HIGH+).
@@ -244,20 +247,12 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			}
 
 			// Build the full pool value arrays — one value per pool gem name.
-			// Gems not in this variant's entries get 0 (non-winner).
+			// EVERY gem gets its risk-adjusted price (the farmer always picks the best
+			// of 3 regardless of tier). Winner tracking is for hit-rate display only.
 			for name := range poolNames[color] {
-				adjPrice := gemAdjustedPrice[name] // 0 if not found
-				feat := featureLookup[featureKey{name, variant}]
-
-				var safeVal, jackpotVal float64
-				if feat != nil && isSafeTierWinner(feat.Tier) {
-					safeVal = adjPrice
-				}
-				if feat != nil && isJackpotTierWinner(feat.Tier) {
-					jackpotVal = adjPrice
-				}
-				safeValues = append(safeValues, safeVal)
-				jackpotValues = append(jackpotValues, jackpotVal)
+				adjPrice := gemAdjustedPrice[name] // 0 if not in this variant
+				safeValues = append(safeValues, adjPrice)
+				jackpotValues = append(jackpotValues, adjPrice)
 			}
 
 			// Sort descending for expectedBestOf3.
@@ -286,6 +281,10 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				safeAvgWin = sum / float64(safeWinnerCount)
 			}
 
+			var safeFontsToHit float64
+			if safePWin > 0 {
+				safeFontsToHit = 1.0 / safePWin
+			}
 			analysis.Safe = append(analysis.Safe, FontResult{
 				Time:          snapTime,
 				Color:         color,
@@ -297,6 +296,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				EV:            safeEV,
 				InputCost:     inputCost,
 				Profit:        safeProfit,
+				FontsToHit:    safeFontsToHit,
 				Mode:          "safe",
 				ThinPoolGems:  safeThinCount,
 				LiquidityRisk: computeLiquidityRisk(safeThinCount, safeWinnerCount),
@@ -317,6 +317,10 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				jackpotAvgWin = sum / float64(jackpotWinnerCount)
 			}
 
+			var jackpotFontsToHit float64
+			if jackpotPWin > 0 {
+				jackpotFontsToHit = 1.0 / jackpotPWin
+			}
 			analysis.Jackpot = append(analysis.Jackpot, FontResult{
 				Time:          snapTime,
 				Color:         color,
@@ -328,6 +332,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				EV:            jackpotEV,
 				InputCost:     inputCost,
 				Profit:        jackpotProfit,
+				FontsToHit:    jackpotFontsToHit,
 				Mode:          "jackpot",
 				ThinPoolGems:  jackpotThinCount,
 				LiquidityRisk: computeLiquidityRisk(jackpotThinCount, jackpotWinnerCount),

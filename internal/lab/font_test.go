@@ -116,11 +116,11 @@ func TestAnalyzeFont_SafeMode_MIDPlusWinners(t *testing.T) {
 		t.Fatal("expected RED/20/20 safe result")
 	}
 
-	// Safe mode: MID, HIGH, TOP are winners = 3
-	if found.Winners != 3 {
-		t.Errorf("Safe Winners = %d, want 3 (MID+HIGH+TOP)", found.Winners)
+	// Safe mode: LOW+ are winners = 4 (LOW, MID, HIGH, TOP)
+	if found.Winners != 4 {
+		t.Errorf("Safe Winners = %d, want 4 (LOW+)", found.Winners)
 	}
-	// LOW gem (Bash of Nothing) should NOT be a winner
+	// FLOOR gems should NOT be winners
 	if found.Pool != 4 {
 		t.Errorf("Pool = %d, want 4", found.Pool)
 	}
@@ -277,11 +277,12 @@ func TestAnalyzeFont_BothModesProduceIndependentResults(t *testing.T) {
 			}
 		}
 	}
-	if redSafeWinners != 3 {
-		t.Errorf("RED safe winners = %d, want 3", redSafeWinners)
+	// Safe mode: LOW+ winners (includes LOW tier now)
+	if redSafeWinners != 4 {
+		t.Errorf("RED safe winners = %d, want 4 (LOW+)", redSafeWinners)
 	}
-	if blueSafeWinners != 1 {
-		t.Errorf("BLUE safe winners = %d, want 1", blueSafeWinners)
+	if blueSafeWinners != 3 {
+		t.Errorf("BLUE safe winners = %d, want 3 (LOW+)", blueSafeWinners)
 	}
 
 	// Verify jackpot mode: RED has 0 HIGH+ winners, BLUE has 1 HIGH winner
@@ -461,7 +462,7 @@ func TestAnalyzeFont_GemsWithoutFeaturesSkipped(t *testing.T) {
 
 func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 	now := time.Now()
-	// Create pool of 10 gems, 3 are MID+ winners
+	// Create pool of 10 gems, 3 are HIGH (LOW+ winners), 7 are FLOOR (not winners)
 	gems := make([]GemPrice, 10)
 	features := make([]GemFeature, 10)
 	for i := 0; i < 10; i++ {
@@ -473,7 +474,7 @@ func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 			tier = "HIGH"
 		} else {
 			chaos = 5
-			tier = "LOW"
+			tier = "FLOOR"
 		}
 		gems[i] = GemPrice{Name: name, Variant: "20/20", Chaos: chaos, Listings: 10, IsTransfigured: true, GemColor: "RED"}
 		features[i] = makeFeature(name, "20/20", chaos, 10, tier, 0.8, 0.9)
@@ -485,8 +486,9 @@ func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 			if r.Pool != 10 {
 				t.Errorf("Pool = %d, want 10", r.Pool)
 			}
+			// Safe = LOW+ winners = 3 HIGH gems (FLOOR gems are not winners)
 			if r.Winners != 3 {
-				t.Errorf("Winners = %d, want 3", r.Winners)
+				t.Errorf("Winners = %d, want 3 (LOW+)", r.Winners)
 			}
 			// pWin(3, 10) should match direct calculation
 			expected := pWin3Picks(3, 10)
