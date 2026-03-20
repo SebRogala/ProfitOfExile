@@ -12,7 +12,12 @@
 		BLUE: { icon: '●', cssClass: 'font-blue', colorClass: 'icon-blue' },
 	};
 
-	let activeColors = $derived(mode === 'safe' ? data.safe : data.jackpot);
+	const FIXED_ORDER = ['RED', 'GREEN', 'BLUE'];
+	let rawColors = $derived(mode === 'safe' ? data.safe : data.jackpot);
+	// Always display in fixed RED, GREEN, BLUE order regardless of API response order.
+	let activeColors = $derived(
+		FIXED_ORDER.map(c => rawColors.find(fc => fc.color === c)).filter(Boolean) as FontColor[]
+	);
 	let bestColor = $derived(mode === 'safe' ? data.bestColorSafe : data.bestColorJackpot);
 
 	function deltaStr(v: number): string {
@@ -48,12 +53,12 @@
 			{@const cl = COLOR_LABELS[fc.color]}
 			{@const badge = liquidityBadge(fc)}
 			{#if cl}
-				<div class="color-card {cl.cssClass}" class:best-card={fc.color === bestColor}>
+				<div class="color-card {cl.cssClass}" class:best-red={fc.color === bestColor && fc.color === 'RED'} class:best-green={fc.color === bestColor && fc.color === 'GREEN'} class:best-blue={fc.color === bestColor && fc.color === 'BLUE'}>
 					<div class="color-header">
 						<span class="color-icon {cl.colorClass}">{cl.icon}</span>
 						<span class="color-name">{fc.color}</span>
 						{#if fc.color === bestColor}
-							<span class="best-badge">BEST</span>
+							<span class="best-badge best-badge-{fc.color.toLowerCase()}">BEST</span>
 						{/if}
 					</div>
 					<div class="color-stats">
@@ -132,9 +137,17 @@
 		padding: 16px 18px;
 		background: var(--color-lab-bg);
 	}
-	.color-card.best-card {
+	.color-card.best-red {
+		border-color: var(--color-lab-red);
+		background: rgba(239, 68, 68, 0.04);
+	}
+	.color-card.best-green {
 		border-color: var(--color-lab-green);
 		background: rgba(34, 197, 94, 0.04);
+	}
+	.color-card.best-blue {
+		border-color: var(--color-lab-blue);
+		background: rgba(59, 130, 246, 0.04);
 	}
 	.color-header {
 		display: flex;
@@ -158,11 +171,13 @@
 	.best-badge {
 		font-size: 0.625rem;
 		font-weight: 700;
-		color: var(--color-lab-green);
-		border: 1px solid var(--color-lab-green);
 		padding: 1px 6px;
 		letter-spacing: 0.05em;
+		border: 1px solid;
 	}
+	.best-badge-red { color: var(--color-lab-red); border-color: var(--color-lab-red); }
+	.best-badge-green { color: var(--color-lab-green); border-color: var(--color-lab-green); }
+	.best-badge-blue { color: var(--color-lab-blue); border-color: var(--color-lab-blue); }
 	.color-stats {
 		display: flex;
 		flex-wrap: wrap;
