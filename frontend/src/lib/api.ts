@@ -89,31 +89,6 @@ export interface FontEVResponse {
 	bestColorJackpot: string;
 }
 
-export interface WindowAlert {
-	windowSignal: string;
-	name: string;
-	variant: string;
-	roi: number;
-	transListings: number;
-	baseListings: number;
-	baseVelocity: number;
-	priceVelocity: number;
-	listingVelocity: number;
-	liquidityTier: string;
-	action: string;
-	signal: string;
-	priceTier: PriceTier;
-	sellUrgency: SellUrgency;
-	sellReason: string;
-	sellability: number;
-	sellabilityLabel: SellabilityLabel;
-	priceTrend: number[];
-	listingsTrend: number[];
-	baseListingsTrend: number[];
-	trendUnavailable: boolean;
-	history: SignalTransition[];
-}
-
 export interface MarketOverviewData {
 	avgTransPrice: number;
 	avgTransPriceDelta: number;
@@ -339,45 +314,6 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 		bestColorSafe: resp.bestColorSafe || '',
 		bestColorJackpot: resp.bestColorJackpot || '',
 	};
-}
-
-export async function fetchWindowAlerts(): Promise<WindowAlert[]> {
-	// Window alerts are derived from trends data — gems with active window signals
-	const resp = await get<{ count: number; data: any[] }>('/analysis/trends', { limit: '20' });
-	const rows = resp.data || [];
-
-	const alerts = rows
-		.filter((r: any) => ['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal))
-		.map((r: any) => ({
-			windowSignal: r.windowSignal || '',
-			name: r.name || '',
-			variant: r.variant || '',
-			roi: Math.round(r.currentPrice || 0),
-			transListings: r.currentListings || 0,
-			baseListings: r.baseListings || 0,
-			baseVelocity: Math.round(r.baseVelocity || 0),
-			priceVelocity: Math.round((r.priceVelocity || 0) * 10) / 10,
-			listingVelocity: Math.round(r.listingVelocity || 0),
-			liquidityTier: r.liquidityTier || '',
-			action: r.tierAction || r.sellReason || '',
-			signal: r.signal || '',
-			priceTier: (r.priceTier || '') as PriceTier,
-			sellUrgency: (r.sellUrgency || '') as SellUrgency,
-			sellReason: r.sellReason || '',
-			sellability: r.sellability || 0,
-			sellabilityLabel: (r.sellabilityLabel || '') as SellabilityLabel,
-			priceTrend: Array.isArray(r.priceTrend) ? r.priceTrend : [],
-			listingsTrend: Array.isArray(r.listingsTrend) ? r.listingsTrend : [],
-			baseListingsTrend: Array.isArray(r.baseListingsTrend) ? r.baseListingsTrend : [],
-			trendUnavailable: ['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal) && !r.priceTrend?.length,
-			history: [],
-		}))
-		.sort((a: WindowAlert, b: WindowAlert) => {
-			const order = ['OPEN', 'OPENING', 'BREWING', 'CLOSING'];
-			return order.indexOf(a.windowSignal) - order.indexOf(b.windowSignal);
-		});
-
-	return alerts;
 }
 
 export async function fetchMarketOverview(): Promise<MarketOverviewData> {
