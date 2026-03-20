@@ -1,24 +1,31 @@
 package lab
 
 import (
-	"math"
 	"strings"
 	"time"
 )
 
 // FontResult holds the computed EV for a single (color, variant) Font of Divine Skill analysis.
 type FontResult struct {
-	Time      time.Time
-	Color     string  // RED, GREEN, BLUE
-	Variant   string  // "1", "1/20", "20", "20/20"
-	Pool      int     // total unique transfigured gem names of that color
-	Winners   int
-	PWin      float64
-	AvgWin    float64
-	EV        float64
-	InputCost float64
-	Profit    float64
-	Threshold float64
+	Time          time.Time
+	Color         string  // RED, GREEN, BLUE
+	Variant       string  // "1", "1/20", "20", "20/20"
+	Pool          int     // total unique transfigured gem names of that color
+	Winners       int
+	PWin          float64
+	AvgWin        float64
+	EV            float64
+	InputCost     float64
+	Profit        float64
+	Mode          string // "safe" or "jackpot"
+	ThinPoolGems  int    // count of winners with < 5 listings
+	LiquidityRisk string // "LOW", "MEDIUM", "HIGH"
+}
+
+// FontAnalysis holds the results of both Safe and Jackpot font analysis modes.
+type FontAnalysis struct {
+	Safe    []FontResult
+	Jackpot []FontResult
 }
 
 // InputCostForVariant returns the estimated input cost in chaos for a gem variant.
@@ -52,10 +59,44 @@ func pWin3Picks(winners, total int) float64 {
 		(float64(losers-2)/float64(total-2))
 }
 
-// AnalyzeFont computes Font of Divine Skill EV per (color, variant).
+// isSafeTierWinner returns true if the tier qualifies as a winner in Safe mode (MID+).
+func isSafeTierWinner(tier string) bool {
+	return tier == "MID" || tier == "HIGH" || tier == "TOP"
+}
+
+// isJackpotTierWinner returns true if the tier qualifies as a winner in Jackpot mode (HIGH+).
+func isJackpotTierWinner(tier string) bool {
+	return tier == "HIGH" || tier == "TOP"
+}
+
+// computeLiquidityRisk classifies liquidity risk based on the ratio of thin-market winners.
+func computeLiquidityRisk(thinCount, winnerCount int) string {
+	if winnerCount == 0 {
+		return "LOW"
+	}
+	ratio := float64(thinCount) / float64(winnerCount)
+	if ratio > 0.5 {
+		return "HIGH"
+	}
+	if ratio > 0.2 {
+		return "MEDIUM"
+	}
+	return "LOW"
+}
+
+// AnalyzeFont computes Font of Divine Skill EV per (color, variant) in two modes:
+// Safe (MID+ tier winners) and Jackpot (HIGH+ tier winners).
+// Winner contributions are risk-adjusted using SellProbabilityFactor and StabilityDiscount.
 // Pool size = count of distinct transfigured gem NAMES per color (across all variants).
-// Winners and EV use variant-specific prices.
-func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
+func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) FontAnalysis {
+	// Build feature lookup: "name|variant" -> *GemFeature
+	type featureKey struct{ name, variant string }
+	featureLookup := make(map[featureKey]*GemFeature, len(features))
+	for i := range features {
+		f := &features[i]
+		featureLookup[featureKey{f.Name, f.Variant}] = f
+	}
+
 	// Step 1: Build pool sizes — unique transfigured gem names per color (all variants).
 	poolNames := map[string]map[string]struct{}{
 		"RED":   {},
@@ -63,13 +104,14 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
 		"BLUE":  {},
 	}
 
-	// Also index variant-specific prices for winner calculation.
-	type priceEntry struct {
+	// Also index variant-specific gem entries for winner evaluation.
+	type gemEntry struct {
+		name     string
 		chaos    float64
 		listings int
 	}
-	// variantGems[color][variant] = []priceEntry
-	type colorVariantGems map[string][]priceEntry
+	// byColor[color][variant] = []gemEntry
+	type colorVariantGems map[string][]gemEntry
 	byColor := map[string]colorVariantGems{
 		"RED":   {},
 		"GREEN": {},
@@ -93,7 +135,8 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
 
 		poolNames[color][g.Name] = struct{}{}
 
-		byColor[color][g.Variant] = append(byColor[color][g.Variant], priceEntry{
+		byColor[color][g.Variant] = append(byColor[color][g.Variant], gemEntry{
+			name:     g.Name,
 			chaos:    g.Chaos,
 			listings: g.Listings,
 		})
@@ -101,7 +144,8 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
 
 	variants := []string{"1", "1/20", "20", "20/20"}
 	colors := []string{"RED", "GREEN", "BLUE"}
-	var results []FontResult
+
+	var analysis FontAnalysis
 
 	for _, color := range colors {
 		pool := len(poolNames[color])
@@ -111,42 +155,103 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice) []FontResult {
 
 		for _, variant := range variants {
 			inputCost := InputCostForVariant(variant)
-			threshold := math.Max(math.Ceil(inputCost*3), 5)
-
 			entries := byColor[color][variant]
-			var winnerCount int
-			var winnerSum float64
+
+			// Accumulators for Safe mode (MID+)
+			var safeWinnerCount int
+			var safeWinnerSum float64
+			var safeThinCount int
+
+			// Accumulators for Jackpot mode (HIGH+)
+			var jackpotWinnerCount int
+			var jackpotWinnerSum float64
+			var jackpotThinCount int
+
 			for _, e := range entries {
-				if e.chaos >= threshold && e.listings >= 5 {
-					winnerCount++
-					winnerSum += e.chaos
+				feat := featureLookup[featureKey{e.name, variant}]
+
+				// Determine tier: use feature tier if available, skip otherwise.
+				var tier string
+				var sellProb, stabDisc float64
+				if feat != nil {
+					tier = feat.Tier
+					sellProb = feat.SellProbabilityFactor
+					stabDisc = feat.StabilityDiscount
+				} else {
+					// No feature data for this gem — skip for tier-based classification.
+					continue
+				}
+
+				adjustedPrice := e.chaos * sellProb * stabDisc
+				isThin := e.listings < 5
+
+				if isSafeTierWinner(tier) {
+					safeWinnerCount++
+					safeWinnerSum += adjustedPrice
+					if isThin {
+						safeThinCount++
+					}
+				}
+				if isJackpotTierWinner(tier) {
+					jackpotWinnerCount++
+					jackpotWinnerSum += adjustedPrice
+					if isThin {
+						jackpotThinCount++
+					}
 				}
 			}
 
-			var avgWin float64
-			if winnerCount > 0 {
-				avgWin = winnerSum / float64(winnerCount)
+			// Safe mode result
+			var safeAvgWin float64
+			if safeWinnerCount > 0 {
+				safeAvgWin = safeWinnerSum / float64(safeWinnerCount)
 			}
+			safePWin := pWin3Picks(safeWinnerCount, pool)
+			safeEV := safePWin * safeAvgWin
+			safeProfit := safeEV - inputCost
 
-			pWin := pWin3Picks(winnerCount, pool)
-			ev := pWin * avgWin
-			profit := ev - inputCost
+			analysis.Safe = append(analysis.Safe, FontResult{
+				Time:          snapTime,
+				Color:         color,
+				Variant:       variant,
+				Pool:          pool,
+				Winners:       safeWinnerCount,
+				PWin:          safePWin,
+				AvgWin:        safeAvgWin,
+				EV:            safeEV,
+				InputCost:     inputCost,
+				Profit:        safeProfit,
+				Mode:          "safe",
+				ThinPoolGems:  safeThinCount,
+				LiquidityRisk: computeLiquidityRisk(safeThinCount, safeWinnerCount),
+			})
 
-			results = append(results, FontResult{
-				Time:      snapTime,
-				Color:     color,
-				Variant:   variant,
-				Pool:      pool,
-				Winners:   winnerCount,
-				PWin:      pWin,
-				AvgWin:    avgWin,
-				EV:        ev,
-				InputCost: inputCost,
-				Profit:    profit,
-				Threshold: threshold,
+			// Jackpot mode result
+			var jackpotAvgWin float64
+			if jackpotWinnerCount > 0 {
+				jackpotAvgWin = jackpotWinnerSum / float64(jackpotWinnerCount)
+			}
+			jackpotPWin := pWin3Picks(jackpotWinnerCount, pool)
+			jackpotEV := jackpotPWin * jackpotAvgWin
+			jackpotProfit := jackpotEV - inputCost
+
+			analysis.Jackpot = append(analysis.Jackpot, FontResult{
+				Time:          snapTime,
+				Color:         color,
+				Variant:       variant,
+				Pool:          pool,
+				Winners:       jackpotWinnerCount,
+				PWin:          jackpotPWin,
+				AvgWin:        jackpotAvgWin,
+				EV:            jackpotEV,
+				InputCost:     inputCost,
+				Profit:        jackpotProfit,
+				Mode:          "jackpot",
+				ThinPoolGems:  jackpotThinCount,
+				LiquidityRisk: computeLiquidityRisk(jackpotThinCount, jackpotWinnerCount),
 			})
 		}
 	}
 
-	return results
+	return analysis
 }
