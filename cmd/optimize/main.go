@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,6 +42,7 @@ type JSONSellabilityOutput struct {
 	FloorHoldRate         map[string]lab.FloorHoldResult        `json:"floor_hold_rate"`
 	ConfidenceCalibration map[string]lab.ConfidenceCalResult    `json:"confidence_calibration"`
 	PerTierCapture        map[string]lab.ValueCapture           `json:"per_tier_capture"`
+	PerVariant            map[string]lab.VariantReport          `json:"per_variant"`
 	TotalEvals            int                                   `json:"total_evals"`
 }
 
@@ -569,6 +571,35 @@ func printSellabilityConsole(report lab.SellabilityReport, mc *lab.MarketContext
 			tier+":", vc.AvgCapture, vc.MedianCapture, vc.P25Capture, vc.P75Capture, vc.Count)
 	}
 	fmt.Println()
+
+	// Section 6: Per-variant breakdown (confidence calibration only — most actionable).
+	if len(report.PerVariant) > 0 {
+		fmt.Println("=== Per-Variant Breakdown ===")
+		fmt.Println()
+
+		// Sort variants for deterministic output.
+		variants := make([]string, 0, len(report.PerVariant))
+		for v := range report.PerVariant {
+			variants = append(variants, v)
+		}
+		sort.Strings(variants)
+
+		confOrder := []string{"SAFE", "FAIR", "RISKY"}
+		for _, variant := range variants {
+			vr := report.PerVariant[variant]
+			fmt.Printf("--- Variant: %s (n=%d) ---\n", variant, vr.TotalEvals)
+			fmt.Println("Confidence Calibration:")
+			for _, conf := range confOrder {
+				cal, ok := vr.ConfidenceCalibration[conf]
+				if !ok {
+					continue
+				}
+				fmt.Printf("  %-8s held %.1f%%  avg change %+.1f%%  (n=%d)\n",
+					conf+":", cal.HeldRate, cal.AvgChange, cal.Count)
+			}
+			fmt.Println()
+		}
+	}
 }
 
 // printSellabilityJSON outputs the structured JSON sellability validation report.
@@ -590,6 +621,7 @@ func printSellabilityJSON(report lab.SellabilityReport, mc *lab.MarketContext, e
 		FloorHoldRate:         report.FloorHoldRate,
 		ConfidenceCalibration: report.ConfidenceCalibration,
 		PerTierCapture:        report.PerTierCapture,
+		PerVariant:            report.PerVariant,
 		TotalEvals:            report.TotalEvals,
 	}
 
