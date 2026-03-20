@@ -221,15 +221,34 @@ func computeVariantBaselines(active []GemPrice) map[string]VariantBaseline {
 		vd.prices = append(vd.prices, g.Chaos)
 	}
 
-	result := make(map[string]VariantBaseline, len(byVariant))
+	result := make(map[string]VariantBaseline, len(byVariant)+1)
+
+	// Per-variant baselines with per-variant tier boundaries.
 	for variant, vd := range byVariant {
 		sort.Float64s(vd.listings)
 		sort.Float64s(vd.prices)
+
+		// Filter active gems to this variant for tier detection.
+		var variantGems []GemPrice
+		for _, g := range active {
+			if g.Variant == variant {
+				variantGems = append(variantGems, g)
+			}
+		}
+
 		result[variant] = VariantBaseline{
 			MedianListings: percentile(vd.listings, 0.50),
 			MedianPrice:    percentile(vd.prices, 0.50),
 			GemCount:       len(vd.listings),
+			Tiers:          DetectTierBoundaries(variantGems),
 		}
 	}
+
+	// "all" entry: combined tier boundaries across all variants.
+	result["all"] = VariantBaseline{
+		GemCount: len(active),
+		Tiers:    DetectTierBoundaries(active),
+	}
+
 	return result
 }

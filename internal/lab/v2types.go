@@ -36,10 +36,11 @@ type MarketContext struct {
 // VariantBaseline holds per-variant market statistics used to calibrate
 // scoring functions (e.g., sigmoid center for sell probability).
 type VariantBaseline struct {
-	MedianListings float64 `json:"median_listings"`
-	MedianCV       float64 `json:"median_cv"`
-	MedianPrice    float64 `json:"median_price"`
-	GemCount       int     `json:"gem_count"`
+	MedianListings float64        `json:"median_listings"`
+	MedianCV       float64        `json:"median_cv"`
+	MedianPrice    float64        `json:"median_price"`
+	GemCount       int            `json:"gem_count"`
+	Tiers          TierBoundaries `json:"tiers"`
 }
 
 // ValidateTemporalSlices checks that all temporal slices have the expected lengths:
