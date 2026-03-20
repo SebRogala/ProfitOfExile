@@ -152,6 +152,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			Sellability          int     `json:"sellability"`
 			SellabilityLabel     string              `json:"sellabilityLabel"`
 			Sparkline            []lab.SparklinePoint `json:"sparkline"`
+			Low7d                float64 `json:"low7d"`
+			High7d               float64 `json:"high7d"`
+			SellConfidence       string  `json:"sellConfidence"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -185,6 +188,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				Sellability:          cr.Sellability,
 				SellabilityLabel:     cr.SellabilityLabel,
 				Sparkline:           sparklines[cr.TransfiguredName],
+				Low7d:               cr.Low7d,
+				High7d:              cr.High7d,
+				SellConfidence:      cr.SellConfidence,
 			})
 			if rows[len(rows)-1].Sparkline == nil {
 				rows[len(rows)-1].Sparkline = []lab.SparklinePoint{}
@@ -285,63 +291,77 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		results := lab.BuildCompareResults(names, transfigure, trends, sparklines)
 
 		type row struct {
-			TransfiguredName  string              `json:"transfiguredName"`
-			BaseName          string              `json:"baseName"`
-			Variant           string              `json:"variant"`
-			GemColor          string              `json:"gemColor"`
-			ROI               float64             `json:"roi"`
-			ROIPct            float64             `json:"roiPct"`
-			BasePrice         float64             `json:"basePrice"`
-			TransfiguredPrice float64             `json:"transfiguredPrice"`
-			Confidence        string              `json:"confidence"`
-			Signal            string              `json:"signal"`
-			CV                float64             `json:"cv"`
-			PriceVelocity     float64             `json:"priceVelocity"`
-			ListingVelocity   float64             `json:"listingVelocity"`
-			HistPosition      float64             `json:"histPosition"`
-			Sparkline         []lab.SparklinePoint `json:"sparkline"`
-			Recommendation    string              `json:"recommendation"`
-			SellUrgency       string              `json:"sellUrgency"`
-			SellReason        string              `json:"sellReason"`
-			Sellability       int                 `json:"sellability"`
-			SellabilityLabel  string              `json:"sellabilityLabel"`
-			PriceTier         string              `json:"priceTier"`
-			TierAction        string              `json:"tierAction"`
-			WindowSignal      string              `json:"windowSignal"`
-			BaseListings      int                 `json:"baseListings"`
-			LiquidityTier     string              `json:"liquidityTier"`
-			TransListings     int                 `json:"transListings"`
+			TransfiguredName     string              `json:"transfiguredName"`
+			BaseName             string              `json:"baseName"`
+			Variant              string              `json:"variant"`
+			GemColor             string              `json:"gemColor"`
+			ROI                  float64             `json:"roi"`
+			ROIPct               float64             `json:"roiPct"`
+			BasePrice            float64             `json:"basePrice"`
+			TransfiguredPrice    float64             `json:"transfiguredPrice"`
+			Confidence           string              `json:"confidence"`
+			Signal               string              `json:"signal"`
+			CV                   float64             `json:"cv"`
+			PriceVelocity        float64             `json:"priceVelocity"`
+			ListingVelocity      float64             `json:"listingVelocity"`
+			HistPosition         float64             `json:"histPosition"`
+			Sparkline            []lab.SparklinePoint `json:"sparkline"`
+			Recommendation       string              `json:"recommendation"`
+			SellUrgency          string              `json:"sellUrgency"`
+			SellReason           string              `json:"sellReason"`
+			Sellability          int                 `json:"sellability"`
+			SellabilityLabel     string              `json:"sellabilityLabel"`
+			PriceTier            string              `json:"priceTier"`
+			TierAction           string              `json:"tierAction"`
+			WindowSignal         string              `json:"windowSignal"`
+			BaseListings         int                 `json:"baseListings"`
+			LiquidityTier        string              `json:"liquidityTier"`
+			TransListings        int                 `json:"transListings"`
+			TransfiguredListings int                 `json:"transfiguredListings"`
+			WeightedROI          float64             `json:"weightedRoi"`
+			Low7d                float64             `json:"low7d"`
+			High7d               float64             `json:"high7d"`
+			SellConfidence       string              `json:"sellConfidence"`
+			SellConfidenceReason string              `json:"sellConfidenceReason"`
+			QuickSellPrice       float64             `json:"quickSellPrice"`
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, cr := range results {
 			rows = append(rows, row{
-				TransfiguredName:  cr.TransfiguredName,
-				BaseName:          cr.BaseName,
-				Variant:           cr.Variant,
-				GemColor:          cr.GemColor,
-				ROI:               cr.ROI,
-				ROIPct:            cr.ROIPct,
-				BasePrice:         cr.BasePrice,
-				TransfiguredPrice: cr.TransfiguredPrice,
-				Confidence:        cr.Confidence,
-				Signal:            cr.Signal,
-				CV:                cr.CV,
-				PriceVelocity:     cr.PriceVelocity,
-				ListingVelocity:   cr.ListingVelocity,
-				HistPosition:      cr.HistPosition,
-				Sparkline:         cr.Sparkline,
-				Recommendation:    cr.Recommendation,
-				SellUrgency:      cr.SellUrgency,
-				SellReason:       cr.SellReason,
-				Sellability:      cr.Sellability,
-				SellabilityLabel: cr.SellabilityLabel,
-				PriceTier:        cr.PriceTier,
-				TierAction:       cr.TierAction,
-				WindowSignal:     cr.WindowSignal,
-				BaseListings:     cr.BaseListings,
-				LiquidityTier:    cr.LiquidityTier,
-				TransListings:    cr.TransListings,
+				TransfiguredName:     cr.TransfiguredName,
+				BaseName:             cr.BaseName,
+				Variant:              cr.Variant,
+				GemColor:             cr.GemColor,
+				ROI:                  cr.ROI,
+				ROIPct:               cr.ROIPct,
+				BasePrice:            cr.BasePrice,
+				TransfiguredPrice:    cr.TransfiguredPrice,
+				Confidence:           cr.Confidence,
+				Signal:               cr.Signal,
+				CV:                   cr.CV,
+				PriceVelocity:        cr.PriceVelocity,
+				ListingVelocity:      cr.ListingVelocity,
+				HistPosition:         cr.HistPosition,
+				Sparkline:            cr.Sparkline,
+				Recommendation:       cr.Recommendation,
+				SellUrgency:          cr.SellUrgency,
+				SellReason:           cr.SellReason,
+				Sellability:          cr.Sellability,
+				SellabilityLabel:     cr.SellabilityLabel,
+				PriceTier:            cr.PriceTier,
+				TierAction:           cr.TierAction,
+				WindowSignal:         cr.WindowSignal,
+				BaseListings:         cr.BaseListings,
+				LiquidityTier:        cr.LiquidityTier,
+				TransListings:        cr.TransListings,
+				TransfiguredListings: cr.TransListings,
+				WeightedROI:          cr.WeightedROI,
+				Low7d:                cr.Low7d,
+				High7d:               cr.High7d,
+				SellConfidence:       cr.SellConfidence,
+				SellConfidenceReason: cr.SellConfidenceReason,
+				QuickSellPrice:       cr.QuickSellPrice,
 			})
 		}
 
