@@ -753,8 +753,13 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 	skipped := 0
 
 	for _, ep := range evals {
-		// Compute risk-adjusted value from feature data.
-		riskAdjValue := ep.Feature.Chaos * ep.Feature.SellProbabilityFactor * ep.Feature.StabilityDiscount
+		// Always compute sell probability and stability on-the-fly from feature data.
+		// DB-stored values may be zero for pre-POE-69 data that hasn't been backfilled.
+		sellProb := sellProbabilityFactor(ep.Feature.Listings, ep.Feature.Low7d, ep.Feature.Chaos)
+		stabDisc := stabilityDiscount(ep.Feature.CV)
+
+		// Compute risk-adjusted value.
+		riskAdjValue := ep.Feature.Chaos * sellProb * stabDisc
 
 		// Skip if risk-adjusted value is too small (avoids division by zero / noise).
 		if riskAdjValue < 0.01 {
@@ -763,8 +768,6 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		}
 
 		// Derive future price from the percentage change.
-		// FuturePct = (futurePrice - baseline) / baseline * 100
-		// We use feature.Chaos as the baseline for consistency with risk-adjusted value.
 		futurePrice := ep.Feature.Chaos * (1.0 + ep.FuturePct/100.0)
 
 		// Actual value capture ratio.
@@ -780,7 +783,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		)
 
 		// Classify sell confidence.
-		sellConf := classifySellConfidence(ep.Feature.SellProbabilityFactor, ep.Feature.StabilityDiscount)
+		sellConf := classifySellConfidence(sellProb, stabDisc)
 
 		// Determine tier.
 		tier := ep.Feature.Tier

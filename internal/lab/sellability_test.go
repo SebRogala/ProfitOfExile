@@ -1,7 +1,6 @@
 package lab
 
 import (
-	"math"
 	"testing"
 	"time"
 )
@@ -38,29 +37,33 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 
 	// Create eval points with known SellProbabilityFactor and StabilityDiscount.
 	// STABLE signal: low velocity.
-	// RiskAdjustedValue = Chaos * SellProbabilityFactor * StabilityDiscount
-	//
-	// For feature with Chaos=100, SellProb=0.8, StabDisc=0.9:
-	//   RAV = 100 * 0.8 * 0.9 = 72
-	// If future price = 100 (0% change): capture = 100/72 = 1.389
-	// If future price = 80 (-20% change): capture = 80/72 = 1.111
+	// RiskAdjustedValue is computed on-the-fly from feature data:
+	//   sellProb = sellProbabilityFactor(listings=30, low7d=80, chaos=100)
+	//   stabDisc = stabilityDiscount(cv=10)
+	//   RAV = chaos * sellProb * stabDisc
+	chaos := 100.0
+	listings := 30
+	low7d := 80.0
+	cv := 10.0
+	expectedSellProb := sellProbabilityFactor(listings, low7d, chaos)
+	expectedStabDisc := stabilityDiscount(cv)
+	expectedRAV := chaos * expectedSellProb * expectedStabDisc
+
 	evals := []EvalPoint{
 		{
 			Feature: GemFeature{
-				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
-				Tier: "MID", Chaos: 100,
-				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120, HistPosition: 50,
+				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: cv, Listings: listings,
+				Tier: "MID", Chaos: chaos,
+				Low7d: low7d, High7d: 120, HistPosition: 50,
 			},
-			FuturePct: 0.0, // future price = 100
+			FuturePct: 0.0, // future price = chaos
 			SnapTime:  t0,
 		},
 		{
 			Feature: GemFeature{
-				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
-				Tier: "MID", Chaos: 100,
-				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120, HistPosition: 50,
+				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: cv, Listings: listings,
+				Tier: "MID", Chaos: chaos,
+				Low7d: low7d, High7d: 120, HistPosition: 50,
 			},
 			FuturePct: -20.0, // future price = 80
 			SnapTime:  t0,
@@ -76,7 +79,6 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 	// Both should be STABLE signal with these low velocities.
 	vc, ok := report.PerSignalCapture["STABLE"]
 	if !ok {
-		// Check what signals were actually generated.
 		for sig := range report.PerSignalCapture {
 			t.Logf("Signal found: %s", sig)
 		}
@@ -86,9 +88,9 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 		t.Errorf("STABLE count: got %d, want 2", vc.Count)
 	}
 
-	// RAV = 72. Captures: 100/72 = 1.39, 80/72 = 1.11. Avg = 1.25.
-	expectedAvg := (100.0/72.0 + 80.0/72.0) / 2.0
-	if !approxEqual(vc.AvgCapture, math.Round(expectedAvg*100)/100, 0.01) {
+	// Captures: chaos/RAV and 80/RAV. Avg = (chaos + 80) / (2 * RAV).
+	expectedAvg := (chaos/expectedRAV + 80.0/expectedRAV) / 2.0
+	if !approxEqual(vc.AvgCapture, expectedAvg, 0.02) {
 		t.Errorf("STABLE AvgCapture: got %.2f, want %.2f", vc.AvgCapture, expectedAvg)
 	}
 }
@@ -259,9 +261,12 @@ func TestValidateSellability_PerTierCapture(t *testing.T) {
 		t.Errorf("LOW count: got %d, want 1", lowVC.Count)
 	}
 
-	// TOP: RAV = 200*0.9*0.95 = 171, future=200, capture=200/171 = 1.17
-	expectedTopCapture := 200.0 / (200.0 * 0.9 * 0.95)
-	if !approxEqual(topVC.AvgCapture, math.Round(expectedTopCapture*100)/100, 0.01) {
+	// TOP: RAV computed on-the-fly from feature data.
+	topSellProb := sellProbabilityFactor(30, 180, 200)
+	topStabDisc := stabilityDiscount(10)
+	expectedTopRAV := 200.0 * topSellProb * topStabDisc
+	expectedTopCapture := 200.0 / expectedTopRAV
+	if !approxEqual(topVC.AvgCapture, expectedTopCapture, 0.02) {
 		t.Errorf("TOP AvgCapture: got %.2f, want %.2f", topVC.AvgCapture, expectedTopCapture)
 	}
 }
@@ -391,13 +396,12 @@ func TestValidateSellability_ConfCalibrationMultipleColors(t *testing.T) {
 			FuturePct: 0.0,
 			SnapTime:  t0,
 		},
-		// RED: sellProb=0.35 < 0.5, stabDisc=0.55 < 0.7
+		// RED: very few listings (2) + high CV (120) + price spike → low sellProb, low stabDisc
 		{
 			Feature: GemFeature{
-				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
+				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 120, Listings: 2,
 				Tier: "MID", Chaos: 100,
-				SellProbabilityFactor: 0.35, StabilityDiscount: 0.55,
-				Low7d: 80, High7d: 120,
+				Low7d: 30, High7d: 120,
 			},
 			FuturePct: -20.0,
 			SnapTime:  t0,
