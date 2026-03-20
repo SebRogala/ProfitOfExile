@@ -102,9 +102,15 @@ func TestVelocity_SameTimestamp(t *testing.T) {
 }
 
 func TestClassifySignal_TRAP(t *testing.T) {
-	s := classifySignal(0, 0, 150, 50)
+	// TRAP requires BOTH high CV AND current instability (velocity > 5).
+	s := classifySignal(8, 0, 150, 50)
 	if s != "TRAP" {
 		t.Errorf("signal = %s, want TRAP", s)
+	}
+	// High CV but stable velocity → NOT trap (settled down).
+	s = classifySignal(0, 0, 150, 50)
+	if s == "TRAP" {
+		t.Errorf("signal = %s, want NOT TRAP (stable velocity despite high CV)", s)
 	}
 }
 
@@ -163,10 +169,10 @@ func TestClassifySignal_UNCERTAIN_Negative(t *testing.T) {
 }
 
 func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
-	// CV > 100 should override any velocity-based signal.
+	// CV > 100 + active velocity should override DUMPING.
 	s := classifySignal(-10, 10, 200, 50)
 	if s != "TRAP" {
-		t.Errorf("signal = %s, want TRAP (CV overrides DUMPING)", s)
+		t.Errorf("signal = %s, want TRAP (CV + velocity overrides DUMPING)", s)
 	}
 }
 
@@ -187,7 +193,8 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 	}{
 		// CV boundary: exactly 100 is NOT TRAP (uses > 100)
 		{"cv=100 not TRAP", 0, 0, 100, 50, "STABLE"},
-		{"cv=100.01 is TRAP", 0, 0, 100.01, 50, "TRAP"},
+		{"cv=100.01 no vel not TRAP", 0, 0, 100.01, 50, "STABLE"},
+		{"cv=100.01 with vel is TRAP", 8, 0, 100.01, 50, "TRAP"},
 		// DUMPING boundary: priceVel must be < -5 (not <=)
 		{"priceVel=-5 not DUMPING", -5, 10, 50, 50, "UNCERTAIN"},
 		{"priceVel=-5.01 is DUMPING", -5.01, 10, 50, 50, "DUMPING"},

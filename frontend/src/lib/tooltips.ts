@@ -54,9 +54,9 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
 };
 
 export const SELL_CONFIDENCE_TOOLTIPS: Record<string, string> = {
-	GREEN: 'Liquid market, stable price \u2014 will sell near listed price',
-	YELLOW: 'Moderate risk \u2014 may need patience or small undercut',
-	RED: 'Thin market or volatile \u2014 significant gap between listed and realizable price',
+	SAFE: 'Liquid market, stable price \u2014 will sell near listed price',
+	FAIR: 'Moderate risk \u2014 may need patience or small undercut',
+	RISKY: 'Thin market or volatile \u2014 significant gap between listed and realizable price',
 };
 
 export const LIQUIDITY_TOOLTIPS: Record<string, string> = {

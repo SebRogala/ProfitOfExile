@@ -84,7 +84,11 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		// else: stay at zero defaults (insufficient history)
 
 		// Risk-adjusted scoring fields.
-		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos)
+		variantMedianListings := 30.0 // fallback for missing data
+		if vs, ok := mc.VariantStats[g.Variant]; ok && vs.MedianListings > 0 {
+			variantMedianListings = vs.MedianListings
+		}
+		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos, variantMedianListings)
 		f.StabilityDiscount = stabilityDiscount(f.CV)
 
 		// Sanitize non-velocity float fields.
@@ -113,10 +117,15 @@ func extractListings(p PricePoint) float64 { return float64(p.Listings) }
 
 // sellProbabilityFactor returns a 0.3-1.0 factor representing how likely this gem
 // is to sell within an hour, calibrated from listing count with context-aware
-// thin-market adjustments.
-func sellProbabilityFactor(listings int, low7d, currentPrice float64) float64 {
-	// Base: sigmoid on listing count.
-	base := 0.3 + 0.7*(1.0/(1.0+math.Exp(-0.1*float64(listings-20))))
+// thin-market adjustments. The medianListings parameter is the variant's median
+// listing count, used as the sigmoid center for per-variant calibration.
+func sellProbabilityFactor(listings int, low7d, currentPrice, medianListings float64) float64 {
+	// Sigmoid centered at the variant's median listings.
+	center := medianListings
+	if center < 5 {
+		center = 5 // floor to prevent degenerate sigmoid
+	}
+	base := 0.3 + 0.7*(1.0/(1.0+math.Exp(-0.1*float64(listings-int(center)))))
 
 	// Context-aware thin-market adjustment.
 	if listings < 10 && currentPrice > 0 {

@@ -355,19 +355,19 @@ func BuildCompareResults(
 	return results
 }
 
-// deriveSellConfidence returns GREEN/YELLOW/RED based on market conditions.
-// GREEN = liquid + stable, YELLOW = moderate risk, RED = thin/volatile.
+// deriveSellConfidence returns SAFE/FAIR/RISKY based on market conditions.
+// SAFE = liquid + stable, FAIR = moderate risk, RISKY = thin/volatile.
 func deriveSellConfidence(listings int, cv float64, signal string) string {
 	if signal == "TRAP" || signal == "DUMPING" {
-		return "RED"
+		return "RISKY"
 	}
 	if listings >= 15 && cv < 30 {
-		return "GREEN"
+		return "SAFE"
 	}
 	if listings >= 5 && cv < 60 {
-		return "YELLOW"
+		return "FAIR"
 	}
-	return "RED"
+	return "RISKY"
 }
 
 // deriveSellConfidenceReason returns a human-readable explanation of sell confidence.
@@ -380,9 +380,9 @@ func deriveSellConfidenceReason(listings int, cv float64, signal string) string 
 	}
 	conf := deriveSellConfidence(listings, cv, signal)
 	switch conf {
-	case "GREEN":
+	case "SAFE":
 		return fmt.Sprintf("%d listings — liquid, stable", listings)
-	case "YELLOW":
+	case "FAIR":
 		return fmt.Sprintf("%d listings — moderate liquidity", listings)
 	default:
 		if listings < 5 {
