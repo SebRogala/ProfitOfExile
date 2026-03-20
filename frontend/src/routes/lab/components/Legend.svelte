@@ -13,8 +13,7 @@
 				<div class="legend-col">
 					<h4 class="legend-heading">Signals</h4>
 					<div class="legend-item"><span class="sig green-muted">━ STABLE</span> steady price+listings</div>
-					<div class="legend-item"><span class="sig green">▲ RISING</span> price increasing</div>
-					<div class="legend-item"><span class="sig red">▼ FALLING</span> price decreasing</div>
+					<div class="legend-item"><span class="sig muted">? UNCERTAIN</span> direction unpredictable</div>
 					<div class="legend-item"><span class="sig yellow">⚡ HERD</span> price+listings both up</div>
 					<div class="legend-item"><span class="sig red">⏬ DUMPING</span> price↓ listings↑</div>
 					<div class="legend-item"><span class="sig purple">🔄 RECOVERY</span> price↓ listings↓</div>

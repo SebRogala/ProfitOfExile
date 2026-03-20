@@ -16,7 +16,7 @@ type TrendResult struct {
 	PriceVelocity   float64 // chaos/hour, computed from last 4 data points
 	ListingVelocity float64 // listings/hour, computed from last 4 data points
 	CV              float64 // coefficient of variation (%)
-	Signal          string  // TRAP, DUMPING, HERD, RECOVERY, STABLE, RISING, FALLING (priority order)
+	Signal          string  // TRAP, DUMPING, HERD, RECOVERY, STABLE, UNCERTAIN (priority order)
 	HistPosition    float64 // 0-100 percentile vs 7-day range
 	PriceHigh7d     float64
 	PriceLow7d      float64
@@ -245,8 +245,8 @@ func tierAction(signal, windowSignal, priceTier string) string {
 			return "UNDERCUT — herd arrived, sell into pressure"
 		case "DUMPING":
 			return "SELL IMMEDIATELY"
-		case "RISING":
-			return "HOLD — competitive cluster, may reach TOP"
+		case "UNCERTAIN":
+			return "MONITOR — direction unclear, watch velocity"
 		}
 		switch windowSignal {
 		case "BREWING":
@@ -258,8 +258,8 @@ func tierAction(signal, windowSignal, priceTier string) string {
 		switch signal {
 		case "HERD":
 			return "SELL — move is over, exit position"
-		case "RISING":
-			return "CAUTIOUS — may reverse"
+		case "UNCERTAIN":
+			return "MONITOR — direction unclear, check listings"
 		}
 		switch windowSignal {
 		case "BREWING":
@@ -641,9 +641,9 @@ func classifySignalWithConfig(priceVel, listingVel, cv float64, currentListings 
 		return "STABLE"
 	}
 	if priceVel > 0 {
-		return "RISING"
+		return "UNCERTAIN"
 	}
-	return "FALLING"
+	return "UNCERTAIN"
 }
 
 // ClassifySignalWithConfig is the exported variant for use by the optimizer.
