@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { fetchVariantPlays, fetchFontEV, type GemPlay, type FontEVResponse } from '$lib/api';
+	import { fetchVariantPlays, type GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
-	import FontEV from './FontEV.svelte';
 
 	let { league = '', refreshKey = 0 }: { league?: string; refreshKey?: number } = $props();
 
@@ -10,19 +9,10 @@
 
 	let activeTab = $state('20/20');
 
-	interface VariantData {
-		plays: GemPlay[];
-		fontEV: FontEVResponse;
-	}
-
-	let variantData = $state<Record<string, VariantData>>({});
+	let variantData = $state<Record<string, GemPlay[]>>({});
 
 	async function loadVariant(variant: string) {
-		const [plays, fontEV] = await Promise.all([
-			fetchVariantPlays(variant),
-			fetchFontEV(variant),
-		]);
-		variantData[variant] = { plays, fontEV };
+		variantData[variant] = await fetchVariantPlays(variant);
 	}
 
 	// Load all variants on mount and on refresh
@@ -59,8 +49,7 @@
 		<div class="variant-block">
 			<div class="variant-label">{variant}</div>
 			{#if vd}
-				<BestPlays plays={vd.plays} title="Best Plays ({variant})" showVariantColumn={false} {league} />
-				<FontEV data={vd.fontEV} />
+				<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} />
 			{:else}
 				<div class="loading">Loading...</div>
 			{/if}

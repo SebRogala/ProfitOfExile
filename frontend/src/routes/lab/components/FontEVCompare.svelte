@@ -59,10 +59,6 @@
 </script>
 
 <section class="section">
-	<div class="section-header">
-		<h2 class="section-title">Font EV<InfoTooltip text="4x3 matrix showing EV per variant and color. Highlighted cell = best combination.<br><br>Each cell shows EV and tier hit rates:<br><b>Safe (LOW+)</b>: Reliable income.<br><b>Premium (MID-HIGH+)</b>: Valuable gems.<br><b>Jackpot (TOP)</b>: Top-tier gems only." /></h2>
-	</div>
-
 	{#if loading}
 		<span class="loading">Loading...</span>
 	{:else}
@@ -70,7 +66,7 @@
 		<table class="ft">
 			<thead>
 				<tr>
-					<th></th>
+					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>EV (Nc/font)</b>: Your average income each time you use the Font. Computed as the expected value of the best gem from 3 random draws. You always pick the most valuable gem — this is already factored in.<br><br><b>Highlighted cell</b>: Best color for the highest average income.<br><br><b>Three hit tiers:</b><br>• <span style='color:#5eead4'>Safe (LOW+)</span>: Chance of seeing a decent+ gem. '1 in N' = hit once every N font usages. 'avg Nc' = average value when you hit.<br>• <span style='color:#c084fc'>Premium (MID-HIGH+)</span>: Chance of seeing a premium gem worth significantly more.<br>• <span style='color:#fbbf24'>Jackpot (TOP)</span>: Chance of hitting a monopoly-priced outlier. Rare but massive payout. '— none' means no TOP gems exist in this color.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -119,43 +115,38 @@
 	.section {
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 20px 28px;
+		padding: 20px 12px;
 		margin-bottom: 32px;
-	}
-	.section-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 14px;
-	}
-	.section-title {
-		font-size: 1.0625rem;
-		font-weight: 700;
-		color: var(--color-lab-text);
-		margin: 0;
 	}
 	.loading { color: var(--color-lab-text-secondary); font-size: 0.875rem; }
 
-	.ft { width: 100%; border-collapse: collapse; }
+	.ft { width: 100%; border-collapse: separate; border-spacing: 4px; }
 	.ft th {
 		text-align: center;
-		padding: 10px 12px;
+		padding: 14px 12px;
 		font-size: 1.0625rem;
 		font-weight: 700;
 		border-bottom: 1px solid var(--color-lab-border);
 	}
+	.var-header {
+		width: 170px;
+		border-right: 1px solid var(--color-lab-border);
+		font-size: 1.0625rem;
+		color: var(--color-lab-text);
+		text-align: left;
+		padding-left: 16px;
+	}
 	.ft td {
 		text-align: center;
-		padding: 14px 12px;
+		padding: 10px 12px 14px;
 		vertical-align: middle;
 	}
 	.var {
-		text-align: left !important;
+		text-align: center;
 		font-weight: 700;
 		font-size: 1.25rem;
 		color: var(--color-lab-text);
 		width: 170px;
-		text-align: center !important;
 		vertical-align: middle;
 		border-right: 1px solid var(--color-lab-border);
 	}
