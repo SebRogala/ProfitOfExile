@@ -52,7 +52,8 @@
 
 	function tierLine(fc: FontColor | null): string {
 		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
-		return `1 in ${Math.round(fc.fontsToHit)} \u00B7 avg ${fc.avgWin}c`;
+		const raw = fc.avgWinRaw || fc.avgWin || 0;
+		return `1 in ${Math.round(fc.fontsToHit)} \u00B7 ~${raw}c`;
 	}
 
 	$effect(() => { refreshKey; loadAll(); });

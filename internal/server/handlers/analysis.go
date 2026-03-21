@@ -222,6 +222,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			Winners       int     `json:"winners"`
 			PWin          float64 `json:"pWin"`
 			AvgWin        float64 `json:"avgWin"`
+			AvgWinRaw     float64 `json:"avgWinRaw"`
 			EV            float64 `json:"ev"`
 			InputCost     float64 `json:"inputCost"`
 			Profit        float64 `json:"profit"`
@@ -241,6 +242,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					Winners:       r.Winners,
 					PWin:          r.PWin,
 					AvgWin:        r.AvgWin,
+					AvgWinRaw:     r.AvgWinRaw,
 					EV:            r.EV,
 					InputCost:     r.InputCost,
 					Profit:        r.Profit,
