@@ -231,7 +231,11 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 					continue
 				}
 
-				adjustedPrice := e.chaos * feat.SellProbabilityFactor * feat.StabilityDiscount
+				// Compute sell probability and stability from CURRENT gem data,
+				// not from cached features which may be from a previous snapshot.
+				sellProb := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
+				stabDisc := stabilityDiscount(feat.CV)
+				adjustedPrice := e.chaos * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
 				isThin := e.listings < 5
 
@@ -284,7 +288,9 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				if feat == nil {
 					continue
 				}
-				adjPrice := e.chaos * feat.SellProbabilityFactor * feat.StabilityDiscount
+				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
+				stabDisc2 := stabilityDiscount(feat.CV)
+				adjPrice := e.chaos * sellProb2 * stabDisc2
 				if isSafeTierWinner(feat.Tier) {
 					safeWinnerSum += adjPrice
 					safeWinnerRawSum += e.chaos
