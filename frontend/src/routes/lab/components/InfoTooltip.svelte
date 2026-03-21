@@ -1,19 +1,50 @@
 <script lang="ts">
 	let { text }: { text: string } = $props();
 	let visible = $state(false);
+	let pinned = $state(false);
+
+	function handleClick(e: MouseEvent) {
+		e.stopPropagation();
+		if (pinned) {
+			pinned = false;
+			visible = false;
+		} else {
+			pinned = true;
+			visible = true;
+		}
+	}
+
+	function handleClickOutside() {
+		if (pinned) {
+			pinned = false;
+			visible = false;
+		}
+	}
+
+	$effect(() => {
+		if (pinned) {
+			const handler = () => handleClickOutside();
+			document.addEventListener('click', handler);
+			return () => document.removeEventListener('click', handler);
+		}
+	});
 </script>
 
 <span
 	class="info-icon"
 	role="button"
 	tabindex="0"
-	onmouseenter={() => visible = true}
-	onmouseleave={() => visible = false}
-	onclick={() => visible = !visible}
+	onmouseenter={() => { if (!pinned) visible = true; }}
+	onmouseleave={() => { if (!pinned) visible = false; }}
+	onclick={handleClick}
 >
 	<span class="icon-circle">i</span>
 	{#if visible}
-		<div class="info-panel">{@html text}</div>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="info-panel" onclick={(e) => e.stopPropagation()}>
+			{@html text}
+		</div>
 	{/if}
 </span>
 
