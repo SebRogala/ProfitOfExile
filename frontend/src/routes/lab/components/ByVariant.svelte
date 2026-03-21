@@ -1,32 +1,22 @@
 <script lang="ts">
-	import { fetchVariantPlays, type GemPlay } from '$lib/api';
+	import type { GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 
-	let { league = '', refreshKey = 0 }: { league?: string; refreshKey?: number } = $props();
+	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
 
 	let activeTab = $state('20/20');
 
-	let variantData = $state<Record<string, GemPlay[]>>({});
-
-	async function loadVariant(variant: string) {
-		variantData[variant] = await fetchVariantPlays(variant);
-	}
-
-	// Load only the visible variant(s) — not all 4 at once.
-	$effect(() => {
-		refreshKey; // track for reactivity
-		const toLoad = activeTab === 'ALL' ? VARIANTS : [activeTab];
-		toLoad.forEach((v) => {
-			if (!variantData[v]) loadVariant(v);
-		});
-	});
-
 	let visibleVariants = $derived(
 		activeTab === 'ALL' ? VARIANTS : [activeTab]
 	);
+
+	// Filter from already-loaded data — zero API calls.
+	function playsForVariant(variant: string): GemPlay[] {
+		return allPlays.filter(g => g.variant === variant);
+	}
 </script>
 
 <section class="section">
@@ -47,13 +37,13 @@
 	</div>
 
 	{#each visibleVariants as variant}
-		{@const vd = variantData[variant]}
+		{@const vd = playsForVariant(variant)}
 		<div class="variant-block">
 			<div class="variant-label">{variant}</div>
-			{#if vd}
+			{#if vd.length > 0}
 				<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} />
 			{:else}
-				<div class="loading">Loading...</div>
+				<div class="loading">No data for this variant</div>
 			{/if}
 		</div>
 	{/each}

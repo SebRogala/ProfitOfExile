@@ -230,7 +230,7 @@
 
 		<FontEVCompare {refreshKey} />
 
-		<ByVariant league={status?.league || ''} {refreshKey} />
+		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 
 		{#if marketOverview}
 			<MarketOverview data={marketOverview} />
