@@ -15,11 +15,13 @@
 		variantData[variant] = await fetchVariantPlays(variant);
 	}
 
-	// Load all variants on mount and on refresh
+	// Load only the visible variant(s) — not all 4 at once.
 	$effect(() => {
 		refreshKey; // track for reactivity
-		variantData = {};
-		VARIANTS.forEach((v) => loadVariant(v));
+		const toLoad = activeTab === 'ALL' ? VARIANTS : [activeTab];
+		toLoad.forEach((v) => {
+			if (!variantData[v]) loadVariant(v);
+		});
 	});
 
 	let visibleVariants = $derived(
