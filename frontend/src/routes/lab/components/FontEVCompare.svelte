@@ -34,7 +34,7 @@
 	// EV is the same across all modes, just use safe.
 	function getEV(variant: string, color: string): number {
 		const fc = getColorData(variant, color, 'safe');
-		return fc?.ev ?? 0;
+		return fc?.evRaw ?? fc?.ev ?? 0;
 	}
 
 	function winner(): { variant: string; color: string; ev: number } {
@@ -82,7 +82,7 @@
 		<table class="ft">
 			<thead>
 				<tr>
-					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>EV (Nc/font)</b>: Your average income each time you use the Font. Computed as the expected value of the best gem from 3 random draws. You always pick the most valuable gem — this is already factored in.<br><br><b>Highlighted cell</b>: Best color for the highest average income.<br><br><b>Three hit tiers:</b><br>• <span style='color:#5eead4'>Safe (LOW+)</span>: Chance of seeing a decent+ gem. '1 in N' = hit once every N font usages. 'avg Nc' = average value when you hit.<br>• <span style='color:#c084fc'>Premium (MID-HIGH+)</span>: Chance of seeing a premium gem worth significantly more.<br>• <span style='color:#fbbf24'>Jackpot (TOP)</span>: Chance of hitting a monopoly-priced outlier. Rare but massive payout. '— none' means no TOP gems exist in this color.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
+					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income (listed market price) each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>Highlighted cell</b>: Best color for highest average income.<br><br><b>Hit tiers</b> (per color pool, using listed prices):<br>• <span style='color:#5eead4'>Safe</span>: Above-average gems in this color. 'X in Y' = how often you see one. '~Nc' = average listed price when you hit.<br>• <span style='color:#c084fc'>Premium</span>: High-value gems within this color pool. Less frequent, bigger payout.<br>• <span style='color:#fbbf24'>Jackpot</span>: Variant-wide TOP outliers (same threshold across all colors). Only shown when TOP gems exist in this color.<br><br>Safe and Premium tiers are computed per color pool (RED/GREEN/BLUE have different price distributions). Jackpot uses variant-wide boundaries so '~1046c Jackpot' means the same value whether it's in GREEN or BLUE.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -110,10 +110,12 @@
 											<span class="tier-label t-premium">Premium</span>
 											<span class="tier-val t-premium">{tierLine(premium)}</span>
 										</div>
+										{#if jackpot && jackpot.winners > 0}
 										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>
 											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
 										</div>
+										{/if}
 									</div>
 								{:else}
 									<span class="nil">{'\u2014'}</span>

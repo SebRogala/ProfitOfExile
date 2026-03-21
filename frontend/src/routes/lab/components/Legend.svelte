@@ -71,6 +71,12 @@
 					<div class="legend-item"><span class="sig muted">LOW</span> decent but modest</div>
 					<div class="legend-item"><span class="sig dim">FLOOR</span> bulk, lowest tier</div>
 
+					<h4 class="legend-heading" style="margin-top: 16px;">Font EV Hit Tiers</h4>
+					<div class="legend-item"><span class="sig teal">Safe</span> above-average gems in this color pool</div>
+					<div class="legend-item"><span class="sig purple">Premium</span> high-value gems within the color pool</div>
+					<div class="legend-item"><span class="sig gold">Jackpot</span> variant-wide TOP outliers (same across colors)</div>
+					<div class="legend-note">Safe/Premium use per-color tiers. Jackpot uses variant-wide tiers for cross-color comparison. EV uses raw listed prices.</div>
+
 					<h4 class="legend-heading" style="margin-top: 16px;">Liquidity Tiers</h4>
 					<div class="legend-item"><span class="sig green">HIGH</span> safe farm</div>
 					<div class="legend-item"><span class="sig yellow">MED</span> oscillating</div>
@@ -84,7 +90,7 @@
 					<span><strong>ROI</strong> — profit in chaos (transfigured - base price)</span>
 					<span><strong>ROI%</strong> — return on investment % (ROI / base × 100)</span>
 					<span><strong>CV</strong> — coefficient of variation. &lt;25% safe, &gt;100% trap</span>
-					<span><strong>EV</strong> — expected value from Font. pWin × avg winner price</span>
+					<span><strong>EV</strong> — expected income per Font (listed price of best gem from 3 draws)</span>
 					<span><strong>pWin</strong> — probability of winner from font pool (3 picks, hypergeometric)</span>
 					<span><strong>Liq</strong> — base gem liquidity vs market average. Predicts drain speed</span>
 					<span><strong>Δ12h</strong> — change over last 12 hours</span>

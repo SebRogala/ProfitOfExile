@@ -16,9 +16,10 @@ type FontResult struct {
 	PWin          float64 // probability of seeing at least 1 winner in 3 picks
 	AvgWin        float64 // average risk-adjusted value when you hit (secondary info)
 	AvgWinRaw     float64 // average RAW listed price when you hit (primary display)
-	EV            float64 // expected income per font (best-of-3 from full pool, all gems valued)
+	EV            float64 // expected income per font (risk-adjusted, internal use)
+	EVRaw         float64 // expected income per font using raw listed prices (primary display)
 	InputCost     float64
-	Profit        float64 // EV - InputCost
+	Profit        float64 // EVRaw - InputCost
 	FontsToHit    float64 // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
 	Mode          string  // "safe", "premium", or "jackpot"
 	ThinPoolGems  int     // count of winners with < 5 listings
@@ -235,6 +236,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			var safeThinCount, premiumThinCount, jackpotThinCount int
 
 			gemAdjustedPrice := make(map[string]float64)
+			gemRawPrice := make(map[string]float64)
 			for _, e := range entries {
 				feat := featureLookup[featureKey{e.name, variant}]
 				if feat == nil {
@@ -246,6 +248,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				stabDisc := stabilityDiscount(feat.CV)
 				adjustedPrice := e.chaos * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
+				gemRawPrice[e.name] = e.chaos
 				isThin := e.listings < 5
 
 				// Safe/Premium: use color-specific tiers (per-color pool).
@@ -277,9 +280,10 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			// of 3 regardless of tier). Winner tracking is for hit-rate display only.
 			// The same values array is used for all three modes since EV is identical.
 			poolValues := make([]float64, 0, pool)
+			poolValuesRaw := make([]float64, 0, pool)
 			for name := range poolNames[color] {
-				adjPrice := gemAdjustedPrice[name] // 0 if not in this variant
-				poolValues = append(poolValues, adjPrice)
+				poolValues = append(poolValues, gemAdjustedPrice[name])
+				poolValuesRaw = append(poolValuesRaw, gemRawPrice[name])
 			}
 
 			// Sort descending for expectedBestOf3.
@@ -288,9 +292,16 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				poolValues[i], poolValues[j] = poolValues[j], poolValues[i]
 			}
 
+			// Sort raw pool descending too.
+			sort.Float64s(poolValuesRaw)
+			for i, j := 0, len(poolValuesRaw)-1; i < j; i, j = i+1, j-1 {
+				poolValuesRaw[i], poolValuesRaw[j] = poolValuesRaw[j], poolValuesRaw[i]
+			}
+
 			// EV is identical for all three modes — same pool, same best-of-3 formula.
 			ev := expectedBestOf3(poolValues)
-			profit := ev - inputCost
+			evRaw := expectedBestOf3(poolValuesRaw)
+			profit := evRaw - inputCost
 
 			// Compute per-mode average winner value from the tier-specific gems.
 			// Both raw (listed price) and risk-adjusted sums.
@@ -340,6 +351,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				AvgWin:        safeAvgWin,
 				AvgWinRaw:     safeAvgWinRaw,
 				EV:            ev,
+				EVRaw:         evRaw,
 				InputCost:     inputCost,
 				Profit:        profit,
 				FontsToHit:    safeFontsToHit,
@@ -369,6 +381,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				AvgWin:        premiumAvgWin,
 				AvgWinRaw:     premiumAvgWinRaw,
 				EV:            ev,
+				EVRaw:         evRaw,
 				InputCost:     inputCost,
 				Profit:        profit,
 				FontsToHit:    premiumFontsToHit,
@@ -398,6 +411,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				AvgWin:        jackpotAvgWin,
 				AvgWinRaw:     jackpotAvgWinRaw,
 				EV:            ev,
+				EVRaw:         evRaw,
 				InputCost:     inputCost,
 				Profit:        profit,
 				FontsToHit:    jackpotFontsToHit,
