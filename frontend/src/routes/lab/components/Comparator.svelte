@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
+	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
@@ -230,35 +231,6 @@
 		return Number.isInteger(v) ? v.toString() : v.toFixed(1);
 	}
 
-	function baseGemName(name: string): string {
-		const idx = name.lastIndexOf(' of ');
-		return idx > 0 ? name.substring(0, idx) : name;
-	}
-
-	function baseGemTradeUrl(name: string): string {
-		const base = baseGemName(name);
-		const parts = variant.split('/');
-		const level = parseInt(parts[0]) || 0;
-		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
-
-		const miscFilters: Record<string, any> = { corrupted: { option: 'false' } };
-		if (level >= 20) miscFilters.gem_level = { min: level, max: level };
-		if (quality === 20) miscFilters.quality = { min: 20, max: 20 };
-
-		const q = {
-			query: {
-				type: base,
-				status: { option: 'securable' },
-				filters: {
-					type_filters: { filters: { category: { option: 'gem' } } },
-					misc_filters: { filters: miscFilters },
-					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
-				},
-			},
-			sort: { price: 'asc' },
-		};
-		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
-	}
 
 	function refreshTradeData(gem: string) {
 		tradeData[gem] = null;
@@ -472,7 +444,7 @@
 									<span class="trade-actions">
 										<button class="trade-action-btn" title="Refresh trade data" onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
 										{#if gem.name.includes(' of ')}
-											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
+											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
 										{/if}
 									</span>
 								</div>

@@ -80,6 +80,7 @@
 		opacity: 1;
 	}
 	.info-panel {
+		cursor: default;
 		position: absolute;
 		top: calc(100% + 6px);
 		left: 0;

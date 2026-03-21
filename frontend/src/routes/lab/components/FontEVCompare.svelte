@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { fetchFontEV, type FontEVResponse, type FontColor } from '$lib/api';
+	import { baseGemTradeUrl } from '$lib/trade-utils';
 	import InfoTooltip from './InfoTooltip.svelte';
 
-	let { refreshKey = 0 }: { refreshKey?: number } = $props();
+	let { refreshKey = 0, league = '' }: { refreshKey?: number; league?: string } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
@@ -112,7 +113,7 @@
 										</div>
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g =>
-											`<b>${g.name}</b>: ${Math.round(g.chaos)}c`
+											`<b>${g.name}</b>: ${Math.round(g.chaos)}c — <a href="${baseGemTradeUrl(g.name, variant, league)}" target="_blank" style="color:#5eead4">trade</a>`
 										).join('<br>')}
 										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>

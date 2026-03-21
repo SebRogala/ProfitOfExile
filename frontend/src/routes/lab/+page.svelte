@@ -228,7 +228,7 @@
 			<BestPlays plays={bestPlays} league={status?.league || ''} />
 		</section>
 
-		<FontEVCompare {refreshKey} />
+		<FontEVCompare {refreshKey} league={status?.league || ''} />
 
 		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 
