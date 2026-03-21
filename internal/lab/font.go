@@ -27,10 +27,11 @@ type FontResult struct {
 	LiquidityRisk string  // "LOW", "MEDIUM", "HIGH"
 }
 
-// JackpotGemInfo holds name and price for a TOP-tier gem shown in Jackpot tooltip.
+// JackpotGemInfo holds name, price and trade URL for a TOP-tier gem shown in Jackpot tooltip.
 type JackpotGemInfo struct {
-	Name  string  `json:"name"`
-	Chaos float64 `json:"chaos"`
+	Name     string  `json:"name"`
+	Chaos    float64 `json:"chaos"`
+	TradeURL string  `json:"tradeUrl"`
 }
 
 // FontAnalysis holds the results of Safe, Premium and Jackpot font analysis modes.

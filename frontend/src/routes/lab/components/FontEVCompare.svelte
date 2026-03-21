@@ -111,9 +111,13 @@
 											<span class="tier-val t-premium">{tierLine(premium)}</span>
 										</div>
 										{#if jackpot && jackpot.winners > 0}
-										<div class="tier-row" title={jackpot.jackpotGems?.map(g => `${g.name}: ${Math.round(g.chaos)}c`).join('\n') || ''}>
+										{@const gemList = (jackpot.jackpotGems || []).map(g =>
+											`<b>${g.name}</b>: ${Math.round(g.chaos)}c — <a href="https://www.pathofexile.com/trade/search/Mirage?q=%7B%22query%22%3A%7B%22term%22%3A%22${encodeURIComponent(g.name)}%22%2C%22type%22%3A%22Skill%20Gem%22%7D%7D" target="_blank" style="color:#5eead4">trade</a>`
+										).join('<br>')}
+										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>
 											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
+											<InfoTooltip text={gemList} />
 										</div>
 										{/if}
 									</div>
