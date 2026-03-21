@@ -4,14 +4,30 @@
 	let { data }: { data: MarketOverviewData } = $props();
 
 	function deltaStr(v: number): string {
-		if (v > 0) return `(↑${v})`;
-		if (v < 0) return `(↓${Math.abs(v)})`;
-		return '(0)';
+		if (v > 0) return `(+${v})`;
+		if (v < 0) return `(${v})`;
+		return '';
 	}
 
-	function breakdownStr(bd: Record<string, number>): string {
-		return Object.entries(bd).map(([k, v]) => `${k}:${v}`).join(', ');
-	}
+	const temporalLabels: Record<string, string> = {
+		none: 'None',
+		hourly: 'Hourly',
+		weekday_hour: 'Weekday x Hour',
+	};
+
+	const confidenceColors: Record<string, string> = {
+		SAFE: 'var(--color-lab-green)',
+		FAIR: 'var(--color-lab-yellow)',
+		RISKY: 'var(--color-lab-red)',
+	};
+
+	const signalColors: Record<string, string> = {
+		STABLE: 'var(--color-lab-green)',
+		UNCERTAIN: 'var(--color-lab-yellow)',
+		HERD: 'var(--color-lab-purple)',
+		DUMPING: 'var(--color-lab-red)',
+		TRAP: 'var(--color-lab-red)',
+	};
 </script>
 
 <section class="section">
@@ -32,19 +48,15 @@
 			<span class="stat-label">Market avg base listings:</span>
 			<span class="stat-value">{data.avgBaseListings}{#if data.avgBaseListingsDelta !== 0} <span class="delta">{deltaStr(data.avgBaseListingsDelta)}/12h</span>{/if}</span>
 		</div>
-		{#if data.weekendPremium > 0}
+		{#if data.divineRate > 0}
 		<div class="stat-item">
-			<span class="stat-label">Weekend premium:</span>
-			<span class="stat-value">~{data.weekendPremium}%</span>
+			<span class="stat-label">Divine rate:</span>
+			<span class="stat-value">{data.divineRate}c</span>
 		</div>
 		{/if}
 		<div class="stat-item">
-			<span class="stat-label">Gems with WINDOW signals:</span>
-			<span class="stat-value">{data.windowGems} ({breakdownStr(data.windowBreakdown)})</span>
-		</div>
-		<div class="stat-item">
-			<span class="stat-label">Gems with TRAP:</span>
-			<span class="stat-value trap">{data.trapGems}</span>
+			<span class="stat-label">Temporal normalization:</span>
+			<span class="stat-value">{temporalLabels[data.temporalMode] || data.temporalMode}</span>
 		</div>
 		<div class="stat-item">
 			<span class="stat-label">Most volatile:</span>
@@ -53,6 +65,22 @@
 		<div class="stat-item">
 			<span class="stat-label">Most stable:</span>
 			<span class="stat-value color-{data.mostStableColor.toLowerCase()}">{data.mostStableColor} {data.mostStableCV}%</span>
+		</div>
+		<div class="stat-item spread-row">
+			<span class="stat-label">Sell confidence:</span>
+			<span class="stat-value spread">
+				{#each Object.entries(data.sellConfidenceSpread) as [label, count]}
+					<span class="tag" style="color: {confidenceColors[label] || 'var(--color-lab-text)'}">{label}: {count}</span>
+				{/each}
+			</span>
+		</div>
+		<div class="stat-item spread-row">
+			<span class="stat-label">Signal distribution:</span>
+			<span class="stat-value spread">
+				{#each Object.entries(data.signalDistribution).filter(([, c]) => c > 0) as [label, count]}
+					<span class="tag" style="color: {signalColors[label] || 'var(--color-lab-text)'}">{label}: {count}</span>
+				{/each}
+			</span>
 		</div>
 	</div>
 </section>
@@ -91,9 +119,13 @@
 		align-items: baseline;
 		padding: 6px 0;
 	}
+	.spread-row {
+		grid-column: 1 / -1;
+	}
 	.stat-label {
 		color: var(--color-lab-text-secondary);
 		font-size: 0.9375rem;
+		white-space: nowrap;
 	}
 	.stat-value {
 		color: var(--color-lab-text);
@@ -105,8 +137,14 @@
 		font-weight: 400;
 		font-size: 0.875rem;
 	}
-	.trap {
-		color: var(--color-lab-red);
+	.spread {
+		display: flex;
+		gap: 14px;
+		flex-wrap: wrap;
+	}
+	.tag {
+		font-weight: 600;
+		font-size: 0.875rem;
 	}
 	.color-red { color: var(--color-lab-red); }
 	.color-green { color: var(--color-lab-green); }
