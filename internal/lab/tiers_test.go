@@ -13,7 +13,7 @@ func TestDetectTierBoundariesRecursive_RealisticDistribution(t *testing.T) {
 			Name:           "Gem " + string(rune('A'+i)) + " of X",
 			Variant:        "20/20",
 			Chaos:          p,
-			IsTransfigured: true,
+			IsTransfigured: true, Listings: 10,
 		}
 	}
 
@@ -46,7 +46,7 @@ func TestDetectTierBoundariesRecursive_SingleOutlier(t *testing.T) {
 			Name:           "Gem " + string(rune('A'+i)) + " of X",
 			Variant:        "20/20",
 			Chaos:          p,
-			IsTransfigured: true,
+			IsTransfigured: true, Listings: 10,
 		}
 	}
 
@@ -77,7 +77,7 @@ func TestDetectTierBoundariesRecursive_SmallPool(t *testing.T) {
 			Name:           "Gem " + string(rune('A'+i)) + " of X",
 			Variant:        "20/20",
 			Chaos:          p,
-			IsTransfigured: true,
+			IsTransfigured: true, Listings: 10,
 		}
 	}
 
@@ -97,9 +97,9 @@ func TestDetectTierBoundariesRecursive_SmallPool(t *testing.T) {
 func TestDetectTierBoundariesRecursive_MinimumPool(t *testing.T) {
 	// <4 gems -> fallback to P75/P50/P25.
 	gems := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 10, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 10, IsTransfigured: true, Listings: 10},
 	}
 
 	tb := DetectTierBoundariesRecursive(gems)
@@ -125,9 +125,9 @@ func TestDetectTierBoundariesRecursive_MinimumPool(t *testing.T) {
 func TestDetectTierBoundariesRecursive_ExactlyThreeDistinctPrices(t *testing.T) {
 	// Only 3 distinct prices -> fallback needed.
 	gems := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 10, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 10, IsTransfigured: true, Listings: 10},
 	}
 
 	tb := DetectTierBoundariesRecursive(gems)
@@ -146,12 +146,12 @@ func TestDetectTierBoundariesRecursive_ExactlyThreeDistinctPrices(t *testing.T) 
 func TestDetectTierBoundariesRecursive_MultiVariantDedup(t *testing.T) {
 	// Same gem name at different variants -- should use max price per name.
 	gems := []GemPrice{
-		{Name: "Kinetic Blast of Clustering", Variant: "20/20", Chaos: 785, IsTransfigured: true},
-		{Name: "Kinetic Blast of Clustering", Variant: "20", Chaos: 600, IsTransfigured: true},
-		{Name: "Gem B of X", Variant: "20/20", Chaos: 400, IsTransfigured: true},
-		{Name: "Gem C of X", Variant: "20/20", Chaos: 200, IsTransfigured: true},
-		{Name: "Gem D of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "Gem E of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
+		{Name: "Kinetic Blast of Clustering", Variant: "20/20", Chaos: 785, IsTransfigured: true, Listings: 10},
+		{Name: "Kinetic Blast of Clustering", Variant: "20", Chaos: 600, IsTransfigured: true, Listings: 10},
+		{Name: "Gem B of X", Variant: "20/20", Chaos: 400, IsTransfigured: true, Listings: 10},
+		{Name: "Gem C of X", Variant: "20/20", Chaos: 200, IsTransfigured: true, Listings: 10},
+		{Name: "Gem D of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "Gem E of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
 	}
 
 	tb := DetectTierBoundariesRecursive(gems)
@@ -171,19 +171,19 @@ func TestDetectTierBoundariesRecursive_MultiVariantDedup(t *testing.T) {
 func TestDetectTierBoundariesRecursive_FiltersCorrectly(t *testing.T) {
 	// Verify corrupted, non-transfigured, Trarthus, zero-price, and sub-5c gems are excluded.
 	gems := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
 		// These should all be excluded:
-		{Name: "Corrupted of X", Variant: "20/20", Chaos: 9999, IsTransfigured: true, IsCorrupted: true},
+		{Name: "Corrupted of X", Variant: "20/20", Chaos: 9999, IsTransfigured: true, Listings: 10, IsCorrupted: true},
 		{Name: "BaseGem", Variant: "20/20", Chaos: 9999, IsTransfigured: false},
-		{Name: "Wave of Trarthus", Variant: "20/20", Chaos: 9999, IsTransfigured: true},
-		{Name: "Zero of X", Variant: "20/20", Chaos: 0, IsTransfigured: true},
-		{Name: "Negative of X", Variant: "20/20", Chaos: -10, IsTransfigured: true},
+		{Name: "Wave of Trarthus", Variant: "20/20", Chaos: 9999, IsTransfigured: true, Listings: 10},
+		{Name: "Zero of X", Variant: "20/20", Chaos: 0, IsTransfigured: true, Listings: 10},
+		{Name: "Negative of X", Variant: "20/20", Chaos: -10, IsTransfigured: true, Listings: 10},
 		// Sub-5c gems excluded to match analysis pipeline floor (Chaos > 5):
-		{Name: "Cheap of X", Variant: "20/20", Chaos: 3, IsTransfigured: true},
-		{Name: "AtFloor of X", Variant: "20/20", Chaos: 5, IsTransfigured: true},
+		{Name: "Cheap of X", Variant: "20/20", Chaos: 3, IsTransfigured: true, Listings: 10},
+		{Name: "AtFloor of X", Variant: "20/20", Chaos: 5, IsTransfigured: true, Listings: 10},
 	}
 
 	tb := DetectTierBoundariesRecursive(gems)
@@ -216,7 +216,7 @@ func TestDetectTierBoundariesRecursive_AllSamePrice(t *testing.T) {
 			Name:           "Gem " + string(rune('A'+i)) + " of X",
 			Variant:        "20/20",
 			Chaos:          100,
-			IsTransfigured: true,
+			IsTransfigured: true, Listings: 10,
 		}
 	}
 
@@ -325,10 +325,10 @@ func TestClassifyTier_Exported(t *testing.T) {
 func TestDetectTierBoundariesRecursive_FourExactGems(t *testing.T) {
 	// Exactly 4 gems -- minimum for recursive detection.
 	gems := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 1000, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "D of X", Variant: "20/20", Chaos: 10, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 1000, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "D of X", Variant: "20/20", Chaos: 10, IsTransfigured: true, Listings: 10},
 	}
 
 	tb := DetectTierBoundariesRecursive(gems)
@@ -353,24 +353,24 @@ func TestDetectTierBoundariesRecursive_FourExactGems(t *testing.T) {
 func TestDetectTierBoundariesRecursive_CheapGemsExcluded(t *testing.T) {
 	// Verify that sub-5c gems don't affect tier boundaries.
 	gemsWithCheap := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
-		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
+		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true, Listings: 10},
 		// Cheap transfigured gems that should be excluded:
-		{Name: "F of X", Variant: "20/20", Chaos: 4, IsTransfigured: true},
-		{Name: "G of X", Variant: "20/20", Chaos: 3, IsTransfigured: true},
-		{Name: "H of X", Variant: "20/20", Chaos: 2, IsTransfigured: true},
-		{Name: "I of X", Variant: "20/20", Chaos: 1, IsTransfigured: true},
+		{Name: "F of X", Variant: "20/20", Chaos: 4, IsTransfigured: true, Listings: 10},
+		{Name: "G of X", Variant: "20/20", Chaos: 3, IsTransfigured: true, Listings: 10},
+		{Name: "H of X", Variant: "20/20", Chaos: 2, IsTransfigured: true, Listings: 10},
+		{Name: "I of X", Variant: "20/20", Chaos: 1, IsTransfigured: true, Listings: 10},
 	}
 
 	gemsWithout := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
-		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
+		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true, Listings: 10},
 	}
 
 	tbWith := DetectTierBoundariesRecursive(gemsWithCheap)
@@ -401,7 +401,7 @@ func TestDetectTierBoundariesRecursive_RecursiveSplitting(t *testing.T) {
 			Name:           "Gem " + string(rune('A'+i)) + " of X",
 			Variant:        "20/20",
 			Chaos:          p,
-			IsTransfigured: true,
+			IsTransfigured: true, Listings: 10,
 		}
 	}
 
@@ -427,10 +427,10 @@ func TestDetectTierBoundariesRecursive_RecursiveSplitting(t *testing.T) {
 // TestDetectTierBoundaries_Alias verifies the backward-compat alias works.
 func TestDetectTierBoundaries_Alias(t *testing.T) {
 	gems := []GemPrice{
-		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true},
-		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true},
-		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true},
-		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true},
+		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
+		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true, Listings: 10},
+		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
+		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
 	}
 
 	tb := DetectTierBoundaries(gems)

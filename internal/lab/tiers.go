@@ -87,13 +87,33 @@ func DetectTierBoundaries(gems []GemPrice) TierBoundaries {
 	return DetectTierBoundariesRecursive(gems)
 }
 
-// collectAndSortPrices extracts max price per gem name from analysable gems
-// (transfigured, non-corrupted, non-Trarthus, Chaos > 5) and returns them
-// sorted descending.
+// collectAndSortPrices extracts max price per gem name from analysable gems.
+// Uses a dynamic listing floor: computes median listings across the pool,
+// then excludes gems below 25% of median (minimum 2). This prevents
+// low-confidence prices from distorting tier boundaries while adapting to
+// league phase (early league has fewer listings overall).
 func collectAndSortPrices(gems []GemPrice) []float64 {
+	// First pass: collect all listings to compute median.
+	var allListings []float64
+	for _, g := range gems {
+		if isAnalyzableGem(g) && g.Chaos > 5 {
+			allListings = append(allListings, float64(g.Listings))
+		}
+	}
+	minListings := 2
+	if len(allListings) > 0 {
+		sort.Float64s(allListings)
+		median := allListings[len(allListings)/2]
+		dynamic := int(median * 0.25)
+		if dynamic > minListings {
+			minListings = dynamic
+		}
+	}
+
+	// Second pass: collect prices, filtering by dynamic listing floor.
 	nameMax := make(map[string]float64)
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 || g.Listings < minListings {
 			continue
 		}
 		if g.Chaos > nameMax[g.Name] {
