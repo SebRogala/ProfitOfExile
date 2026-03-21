@@ -14,7 +14,8 @@ type FontResult struct {
 	Pool          int     // total unique transfigured gem names of that color
 	Winners       int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
 	PWin          float64 // probability of seeing at least 1 winner in 3 picks
-	AvgWin        float64 // average value when you DO hit a winner
+	AvgWin        float64 // average risk-adjusted value when you hit (secondary info)
+	AvgWinRaw     float64 // average RAW listed price when you hit (primary display)
 	EV            float64 // expected income per font (best-of-3 from full pool, all gems valued)
 	InputCost     float64
 	Profit        float64 // EV - InputCost
@@ -275,7 +276,9 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			profit := ev - inputCost
 
 			// Compute per-mode average winner value from the tier-specific gems.
+			// Both raw (listed price) and risk-adjusted sums.
 			var safeWinnerSum, premiumWinnerSum, jackpotWinnerSum float64
+			var safeWinnerRawSum, premiumWinnerRawSum, jackpotWinnerRawSum float64
 			for _, e := range entries {
 				feat := featureLookup[featureKey{e.name, variant}]
 				if feat == nil {
@@ -284,20 +287,24 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				adjPrice := e.chaos * feat.SellProbabilityFactor * feat.StabilityDiscount
 				if isSafeTierWinner(feat.Tier) {
 					safeWinnerSum += adjPrice
+					safeWinnerRawSum += e.chaos
 				}
 				if isPremiumTierWinner(feat.Tier) {
 					premiumWinnerSum += adjPrice
+					premiumWinnerRawSum += e.chaos
 				}
 				if isJackpotTierWinner(feat.Tier) {
 					jackpotWinnerSum += adjPrice
+					jackpotWinnerRawSum += e.chaos
 				}
 			}
 
 			// Safe mode result.
 			safePWin := pWin3Picks(safeWinnerCount, pool)
-			var safeAvgWin float64
+			var safeAvgWin, safeAvgWinRaw float64
 			if safeWinnerCount > 0 {
 				safeAvgWin = safeWinnerSum / float64(safeWinnerCount)
+				safeAvgWinRaw = safeWinnerRawSum / float64(safeWinnerCount)
 			}
 			var safeFontsToHit float64
 			if safePWin > 0 {
@@ -311,6 +318,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Winners:       safeWinnerCount,
 				PWin:          safePWin,
 				AvgWin:        safeAvgWin,
+				AvgWinRaw:     safeAvgWinRaw,
 				EV:            ev,
 				InputCost:     inputCost,
 				Profit:        profit,
@@ -322,9 +330,10 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 
 			// Premium mode result.
 			premiumPWin := pWin3Picks(premiumWinnerCount, pool)
-			var premiumAvgWin float64
+			var premiumAvgWin, premiumAvgWinRaw float64
 			if premiumWinnerCount > 0 {
 				premiumAvgWin = premiumWinnerSum / float64(premiumWinnerCount)
+				premiumAvgWinRaw = premiumWinnerRawSum / float64(premiumWinnerCount)
 			}
 			var premiumFontsToHit float64
 			if premiumPWin > 0 {
@@ -338,6 +347,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Winners:       premiumWinnerCount,
 				PWin:          premiumPWin,
 				AvgWin:        premiumAvgWin,
+				AvgWinRaw:     premiumAvgWinRaw,
 				EV:            ev,
 				InputCost:     inputCost,
 				Profit:        profit,
@@ -349,9 +359,10 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 
 			// Jackpot mode result.
 			jackpotPWin := pWin3Picks(jackpotWinnerCount, pool)
-			var jackpotAvgWin float64
+			var jackpotAvgWin, jackpotAvgWinRaw float64
 			if jackpotWinnerCount > 0 {
 				jackpotAvgWin = jackpotWinnerSum / float64(jackpotWinnerCount)
+				jackpotAvgWinRaw = jackpotWinnerRawSum / float64(jackpotWinnerCount)
 			}
 			var jackpotFontsToHit float64
 			if jackpotPWin > 0 {
@@ -365,6 +376,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Winners:       jackpotWinnerCount,
 				PWin:          jackpotPWin,
 				AvgWin:        jackpotAvgWin,
+				AvgWinRaw:     jackpotAvgWinRaw,
 				EV:            ev,
 				InputCost:     inputCost,
 				Profit:        profit,
