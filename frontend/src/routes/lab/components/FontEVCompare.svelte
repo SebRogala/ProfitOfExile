@@ -147,15 +147,17 @@
 	.ft td {
 		text-align: center;
 		padding: 14px 12px;
-		vertical-align: top;
+		vertical-align: middle;
 	}
 	.var {
 		text-align: left !important;
 		font-weight: 700;
 		font-size: 1.25rem;
 		color: var(--color-lab-text);
-		width: 80px;
+		width: 170px;
+		text-align: center !important;
 		vertical-align: middle;
+		border-right: 1px solid var(--color-lab-border);
 	}
 	.ev {
 		display: block;
@@ -181,22 +183,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		align-items: center;
 	}
 	.tier-row {
-		display: flex;
-		justify-content: center;
+		display: inline-flex;
 		align-items: baseline;
 		gap: 6px;
 		font-size: 0.875rem;
 	}
 	.tier-label {
 		font-weight: 600;
-		min-width: 48px;
-		text-align: right;
 	}
 	.tier-val {
-		min-width: 90px;
-		text-align: left;
 	}
 	.t-safe { color: #5eead4; }
 	.t-premium { color: #c084fc; }
