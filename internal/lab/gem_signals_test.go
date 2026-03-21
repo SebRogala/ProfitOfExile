@@ -20,6 +20,7 @@ func testSignalMarketContext() MarketContext {
 
 // testFeature returns a GemFeature with sensible defaults for signal tests.
 // Caller can override fields after construction.
+// Signal classification uses VelLongPrice/VelLongListing (6h velocity).
 func testFeature(name, variant string, chaos float64, listings int) GemFeature {
 	return GemFeature{
 		Time:              time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC),
@@ -32,7 +33,7 @@ func testFeature(name, variant string, chaos float64, listings int) GemFeature {
 		VelShortListing:   1,
 		VelMedPrice:       3,
 		VelMedListing:     1,
-		VelLongPrice:      2,
+		VelLongPrice:      3,
 		VelLongListing:    1,
 		CV:                25,
 		HistPosition:      50,
@@ -149,7 +150,7 @@ func TestComputeGemSignals_HighVelocityAgreementHighConfidence(t *testing.T) {
 	f.VelLongPrice = 6
 	f.VelShortListing = 12
 	f.VelMedListing = 11
-	f.VelLongListing = 10
+	f.VelLongListing = 11
 	f.CV = 20
 	f.Tier = "HIGH"
 	f.ListingElasticity = -0.5 // predictable
@@ -173,7 +174,7 @@ func TestComputeGemSignals_HighVelocityAgreementHighConfidence(t *testing.T) {
 	if sig.Confidence < 55 {
 		t.Errorf("high velocity + agreement confidence = %d, want >= 55", sig.Confidence)
 	}
-	// Signal should be HERD (high priceVel + high listingVel).
+	// Signal should be HERD (high priceVel + high listingVel via VelLong).
 	if sig.Signal != "HERD" {
 		t.Errorf("Signal = %q, want HERD", sig.Signal)
 	}
@@ -188,7 +189,7 @@ func TestComputeGemSignals_TRAPLowConfidence(t *testing.T) {
 	f.CV = 110
 	f.VelShortPrice = 8
 	f.VelMedPrice = -7
-	f.VelLongPrice = 2
+	f.VelLongPrice = -7 // 6h velocity used for signal classification
 	f.Tier = "MID"
 
 	gems := testBaseGems("Volatile", 30)
@@ -257,6 +258,7 @@ func TestComputeGemSignals_RecommendationAVOID_TRAP(t *testing.T) {
 	f := testFeature("Volatile of Storm", "20/20", 100, 10)
 	f.CV = 110 // TRAP requires high CV + active velocity
 	f.VelMedPrice = -8
+	f.VelLongPrice = -8 // 6h velocity used for signal classification
 	f.Tier = "MID"
 
 	gems := testBaseGems("Volatile", 30)
@@ -278,10 +280,10 @@ func TestComputeGemSignals_RecommendationAVOID_DUMPING(t *testing.T) {
 	f := testFeature("Dump of Doom", "20/20", 100, 20)
 	f.VelShortPrice = -8
 	f.VelMedPrice = -7
-	f.VelLongPrice = -6
+	f.VelLongPrice = -6 // 6h velocity: < -5 triggers DUMPING
 	f.VelShortListing = 8
 	f.VelMedListing = 7
-	f.VelLongListing = 6
+	f.VelLongListing = 6 // 6h velocity: > 5 confirms DUMPING
 	f.CV = 30
 	f.Tier = "MID"
 
@@ -309,6 +311,7 @@ func TestComputeGemSignals_RecommendationAVOID_SELL_NOW(t *testing.T) {
 	f := testFeature("Trap of Danger", "20/20", 100, 10)
 	f.CV = 110 // TRAP requires high CV + active velocity
 	f.VelMedPrice = 10
+	f.VelLongPrice = 10 // 6h velocity used for signal classification
 	f.Tier = "HIGH"
 
 	gems := testBaseGems("Trap", 30)
@@ -334,12 +337,13 @@ func TestComputeGemSignals_RecommendationOK_HighConfidencePositive(t *testing.T)
 	f := testFeature("Spark of Nova", "20/20", 200, 15)
 	// Set up for HERD signal with high confidence: all velocity windows positive +
 	// agreeing, bullish hour (14:00 Monday), predictable profile (CV=20, neg elasticity).
+	// Signal classification uses VelLong (6h). VelLongPrice=6 > 5 and VelLongListing=11 > 10 => HERD.
 	f.VelShortPrice = 10
 	f.VelMedPrice = 8
 	f.VelLongPrice = 6
 	f.VelShortListing = 12
 	f.VelMedListing = 11
-	f.VelLongListing = 10
+	f.VelLongListing = 11
 	f.CV = 20
 	f.HistPosition = 50 // not at peak, so not SELL_NOW
 	f.Tier = "HIGH"
@@ -383,12 +387,13 @@ func TestComputeGemSignals_HERDAtHistoricalPeakUNDERCUT(t *testing.T) {
 	f := testFeature("Lacerate of Haemophilia", "20/20", 350, 5)
 	// HERD signal at historical peak (histPos > 90) => sellUrgency overrides to UNDERCUT.
 	// See trends.go: sellUrgency checks HERD && histPosition > 90 before other rules.
+	// Signal classification uses VelLong (6h). VelLongPrice=6 > 5 and VelLongListing=11 > 10 => HERD.
 	f.VelShortPrice = 10
 	f.VelMedPrice = 8
 	f.VelLongPrice = 6
 	f.VelShortListing = 12
 	f.VelMedListing = 11
-	f.VelLongListing = 10
+	f.VelLongListing = 11
 	f.CV = 30
 	f.HistPosition = 95 // at historical peak
 	f.Tier = "TOP"
@@ -505,13 +510,14 @@ func TestComputeGemSignals_SellabilityPopulated(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	// Few listings + price rising + listings dropping => high sellability ("FAST SELL").
+	// Signal classification + sellability now use VelLong (6h velocity).
 	f := testFeature("Rare of Gem", "20/20", 200, 5)
 	f.VelShortPrice = 8
 	f.VelMedPrice = 7
-	f.VelLongPrice = 5
+	f.VelLongPrice = 7
 	f.VelShortListing = -5
 	f.VelMedListing = -4
-	f.VelLongListing = -3
+	f.VelLongListing = -4
 	f.CV = 15
 	f.Tier = "HIGH"
 
@@ -573,10 +579,11 @@ func TestComputeGemSignals_AdvancedSignalDetection(t *testing.T) {
 
 	// Set up a gem with PRICE_MANIPULATION characteristics:
 	// very few listings, extreme price, no velocity, high CV.
+	// Signal classification + advanced signal use VelLong (6h velocity).
 	f := testFeature("Manipulated of Scam", "20/20", 500, 2)
 	f.VelShortPrice = 0.5
 	f.VelMedPrice = 0.3
-	f.VelLongPrice = 0.1
+	f.VelLongPrice = 0.3
 	f.CV = 90
 	f.Tier = "TOP"
 	f.Listings = 2
@@ -623,10 +630,10 @@ func TestComputeGemSignals_SellReasonPopulated(t *testing.T) {
 	f := testFeature("Dump of Doom", "20/20", 100, 20)
 	f.VelShortPrice = -8
 	f.VelMedPrice = -7
-	f.VelLongPrice = -6
+	f.VelLongPrice = -6 // 6h velocity: < -5 triggers DUMPING
 	f.VelShortListing = 8
 	f.VelMedListing = 7
-	f.VelLongListing = 6
+	f.VelLongListing = 6 // 6h velocity: > 5 confirms DUMPING
 	f.CV = 30
 	f.Tier = "MID"
 
@@ -684,6 +691,7 @@ func TestComputeGemSignals_STABLESignalModerateConfidence(t *testing.T) {
 
 	f := testFeature("Steady of Stone", "20/20", 80, 25)
 	// Low velocity, low CV => STABLE signal.
+	// Signal classification uses VelLong (6h velocity). |0.2| < 2 and |0.1| < 3 => STABLE.
 	f.VelShortPrice = 0.5
 	f.VelMedPrice = 0.3
 	f.VelLongPrice = 0.2

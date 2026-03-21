@@ -346,13 +346,15 @@ func TestValidateSellability_MultipleSignalTypes(t *testing.T) {
 	mc := sweepMarketContext(0, 10, 0, 5)
 
 	// DefaultSignalConfig: DumpPriceVel=-5, DumpListingVel=5
-	// DUMPING: priceVel < -5 && listingVel > 5
+	// DUMPING: priceVel < -5 && listingVel > 5 (uses VelLong for classification)
 	// STABLE: |priceVel| < 2 && |listingVel| < 3
 	evals := []EvalPoint{
 		// STABLE
 		{
 			Feature: GemFeature{
-				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
+				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1,
+				VelLongPrice: 0.1, VelLongListing: 0.1,
+				CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
 				Low7d: 80, High7d: 120,
@@ -363,7 +365,9 @@ func TestValidateSellability_MultipleSignalTypes(t *testing.T) {
 		// DUMPING: priceVel=-10 < -5, listingVel=10 > 5
 		{
 			Feature: GemFeature{
-				Time: t0, VelMedPrice: -10, VelMedListing: 10, CV: 10, Listings: 30,
+				Time: t0, VelMedPrice: -10, VelMedListing: 10,
+				VelLongPrice: -10, VelLongListing: 10,
+				CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
 				Low7d: 80, High7d: 120,

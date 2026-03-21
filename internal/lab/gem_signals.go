@@ -43,13 +43,14 @@ func ComputeGemSignals(
 
 	for _, f := range features {
 		// 1. Primary signal from v1 classifier.
-		signal := classifySignal(f.VelMedPrice, f.VelMedListing, f.CV, f.Listings)
+		// Uses 6h velocity (VelLong) — 2h was too sensitive to temporal normalization noise.
+		signal := classifySignal(f.VelLongPrice, f.VelLongListing, f.CV, f.Listings)
 
 		// 2. Advanced signal from v1 classifier.
-		advSignal := classifyAdvancedSignal(f.Chaos, f.Listings, f.VelMedPrice, f.VelMedListing, f.CV, f.HistPosition)
+		advSignal := classifyAdvancedSignal(f.Chaos, f.Listings, f.VelLongPrice, f.VelLongListing, f.CV, f.HistPosition)
 
 		// 3. Sellability from v1 classifier.
-		sellScore, sellLabel := sellability(f.Listings, f.VelMedListing, f.VelMedPrice, f.CV, signal)
+		sellScore, sellLabel := sellability(f.Listings, f.VelLongListing, f.VelLongPrice, f.CV, signal)
 
 		// 4. Base-dependent signals.
 		baseName := extractBaseName(f.Name)
@@ -64,17 +65,17 @@ func ComputeGemSignals(
 			baseVel = velocity(bp, func(p PricePoint) float64 { return float64(p.Listings) })
 		}
 
-		// Sell urgency using base-side data.
-		sUrgency, sReason := sellUrgency(f.VelMedPrice, f.VelMedListing, baseVel, f.HistPosition, baseLst, f.Listings, signal, f.Tier)
+		// Sell urgency using base-side data (6h velocity for consistency).
+		sUrgency, sReason := sellUrgency(f.VelLongPrice, f.VelLongListing, baseVel, f.HistPosition, baseLst, f.Listings, signal, f.Tier)
 
-		// Window signal using base-side data.
+		// Window signal using base-side data (6h velocity for consistency).
 		baseLstForCalc := float64(baseLst)
 		if baseLst < 0 {
 			baseLstForCalc = 0
 		}
 		relLiq := computeRelativeLiquidity(baseLstForCalc, marketAvgBaseLst)
 		winScore := computeWindowScore(f.Chaos, baseVel, float64(f.Listings), relLiq)
-		winSignal := classifyWindowSignal(winScore, baseVel, f.VelMedListing, baseLst, f.VelMedPrice)
+		winSignal := classifyWindowSignal(winScore, baseVel, f.VelLongListing, baseLst, f.VelLongPrice)
 
 		// 5. Confidence scoring.
 		confidence, phaseMod := computeConfidence(signal, f, mc, snapTime)
