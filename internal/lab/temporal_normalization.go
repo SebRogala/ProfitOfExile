@@ -357,11 +357,12 @@ func (mc MarketContext) CoefficientAt(t time.Time, variant string) float64 {
 		return 1.0
 	}
 
-	return lookupCoefficient(bucketData, mc.TemporalMode, t, variant)
+	return LookupCoefficient(bucketData, mc.TemporalMode, t, variant)
 }
 
-// lookupCoefficient performs the actual coefficient lookup with fallback chain.
-func lookupCoefficient(bucketData map[string][]TemporalBucket, mode string, t time.Time, variant string) float64 {
+// LookupCoefficient performs the actual coefficient lookup with fallback chain.
+// Exported for use by handlers that pre-parse bucket data for performance.
+func LookupCoefficient(bucketData map[string][]TemporalBucket, mode string, t time.Time, variant string) float64 {
 	buckets, ok := bucketData[variant]
 	if !ok || len(buckets) == 0 {
 		return 1.0
@@ -445,6 +446,6 @@ func NormalizeHistoryFromMC(history []GemPriceHistory, mc MarketContext) []GemPr
 	}
 
 	return NormalizeHistory(history, func(t time.Time, variant string) float64 {
-		return lookupCoefficient(bucketData, mc.TemporalMode, t, variant)
+		return LookupCoefficient(bucketData, mc.TemporalMode, t, variant)
 	})
 }

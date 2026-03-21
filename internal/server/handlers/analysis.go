@@ -1125,6 +1125,13 @@ func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.Mar
 		return sparklines
 	}
 
+	// Parse bucket data ONCE — CoefficientAt parses JSON on every call which is
+	// too expensive when iterating thousands of sparkline points.
+	var bucketData map[string][]lab.TemporalBucket
+	if err := json.Unmarshal(mc.TemporalBuckets, &bucketData); err != nil {
+		return sparklines
+	}
+
 	result := make(map[string][]lab.SparklinePoint, len(sparklines))
 	for name, pts := range sparklines {
 		normalized := make([]lab.SparklinePoint, len(pts))
@@ -1134,7 +1141,7 @@ func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.Mar
 			if err != nil {
 				continue // keep raw price on parse error
 			}
-			coeff := mc.CoefficientAt(t, variant)
+			coeff := lab.LookupCoefficient(bucketData, mc.TemporalMode, t, variant)
 			if coeff > 0 {
 				normalized[i].Price = p.Price / coeff
 			}
