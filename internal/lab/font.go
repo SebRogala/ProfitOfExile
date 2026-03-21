@@ -274,11 +274,22 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			ev := expectedBestOf3(poolValues)
 			profit := ev - inputCost
 
-			// Compute average winner value (sum of all non-zero adjusted prices).
-			var totalWinnerValue float64
-			for _, v := range poolValues {
-				if v > 0 {
-					totalWinnerValue += v
+			// Compute per-mode average winner value from the tier-specific gems.
+			var safeWinnerSum, premiumWinnerSum, jackpotWinnerSum float64
+			for _, e := range entries {
+				feat := featureLookup[featureKey{e.name, variant}]
+				if feat == nil {
+					continue
+				}
+				adjPrice := e.chaos * feat.SellProbabilityFactor * feat.StabilityDiscount
+				if isSafeTierWinner(feat.Tier) {
+					safeWinnerSum += adjPrice
+				}
+				if isPremiumTierWinner(feat.Tier) {
+					premiumWinnerSum += adjPrice
+				}
+				if isJackpotTierWinner(feat.Tier) {
+					jackpotWinnerSum += adjPrice
 				}
 			}
 
@@ -286,7 +297,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			safePWin := pWin3Picks(safeWinnerCount, pool)
 			var safeAvgWin float64
 			if safeWinnerCount > 0 {
-				safeAvgWin = totalWinnerValue / float64(safeWinnerCount)
+				safeAvgWin = safeWinnerSum / float64(safeWinnerCount)
 			}
 			var safeFontsToHit float64
 			if safePWin > 0 {
@@ -313,7 +324,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			premiumPWin := pWin3Picks(premiumWinnerCount, pool)
 			var premiumAvgWin float64
 			if premiumWinnerCount > 0 {
-				premiumAvgWin = totalWinnerValue / float64(premiumWinnerCount)
+				premiumAvgWin = premiumWinnerSum / float64(premiumWinnerCount)
 			}
 			var premiumFontsToHit float64
 			if premiumPWin > 0 {
@@ -340,7 +351,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			jackpotPWin := pWin3Picks(jackpotWinnerCount, pool)
 			var jackpotAvgWin float64
 			if jackpotWinnerCount > 0 {
-				jackpotAvgWin = totalWinnerValue / float64(jackpotWinnerCount)
+				jackpotAvgWin = jackpotWinnerSum / float64(jackpotWinnerCount)
 			}
 			var jackpotFontsToHit float64
 			if jackpotPWin > 0 {
