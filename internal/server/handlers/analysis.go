@@ -397,6 +397,15 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			}
 		}
 
+		// Load MarketContext for sparkline normalization.
+		var trendMC *lab.MarketContext
+		if cache != nil {
+			trendMC = cache.MarketContext()
+		}
+		if trendMC == nil {
+			trendMC, _ = repo.LatestMarketContext(r.Context())
+		}
+
 		// Batch fetch sparkline data grouped by variant (2 queries per variant group).
 		type trendData struct {
 			prices, listings, baseListings []int
@@ -442,11 +451,16 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					slog.Warn("trend analysis: trans sparkline batch failed", "variant", v, "error", err)
 					transSparklines = make(map[string][]lab.SparklinePoint)
 				}
+				// Normalize trans sparkline prices with temporal coefficients.
+				transSparklines = normalizeSparklines(transSparklines, trendMC, v)
+
 				baseSparklines, err := repo.SparklineData(r.Context(), g.baseNames, v, 24*7)
 				if err != nil {
 					slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
 					baseSparklines = make(map[string][]lab.SparklinePoint)
 				}
+				// Note: base sparklines are not normalized — base gem prices are used
+				// for listing counts only, not for price display.
 
 				for i, gk := range g.gems {
 					td := trendData{}
@@ -1099,6 +1113,35 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			slog.Error("gem signals: encode response", "error", err)
 		}
 	}
+}
+
+// normalizeSparklines applies temporal normalization to sparkline price data
+// so the sparkline visually matches what the signal classifier sees.
+// The repository returns raw prices; this function divides each price by
+// the temporal coefficient for that point's timestamp and variant.
+// mc may be nil — in that case the data is returned unchanged.
+func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.MarketContext, variant string) map[string][]lab.SparklinePoint {
+	if mc == nil || mc.TemporalMode == "none" || mc.TemporalMode == "" || len(mc.TemporalBuckets) == 0 {
+		return sparklines
+	}
+
+	result := make(map[string][]lab.SparklinePoint, len(sparklines))
+	for name, pts := range sparklines {
+		normalized := make([]lab.SparklinePoint, len(pts))
+		for i, p := range pts {
+			normalized[i] = p
+			t, err := time.Parse(time.RFC3339, p.Time)
+			if err != nil {
+				continue // keep raw price on parse error
+			}
+			coeff := mc.CoefficientAt(t, variant)
+			if coeff > 0 {
+				normalized[i].Price = p.Price / coeff
+			}
+		}
+		result[name] = normalized
+	}
+	return result
 }
 
 // filterGemSignals filters and limits cached gem signals.

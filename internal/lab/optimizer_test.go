@@ -1053,11 +1053,11 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 
 	evals := []EvalPoint{
 		// STABLE: predicts FLAT, actual FLAT -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, VelLongPrice: 0.1, VelLongListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
 		// DUMPING: priceVel=-10 < -5, listingVel=10 > 5 -> predicts DOWN, actual DOWN -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: -10, VelMedListing: 10, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: -10, VelMedListing: 10, VelLongPrice: -10, VelLongListing: 10, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
 		// UNCERTAIN: priceVel=3 > 0 (not STABLE: |3|>2), predicts FLAT, actual FLAT -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: 3, VelMedListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, VelMedPrice: 3, VelMedListing: 5, VelLongPrice: 3, VelLongListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
 	}
 
 	report := ValidateDefaults(evals, mc)

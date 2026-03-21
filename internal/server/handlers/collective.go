@@ -109,6 +109,15 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		sparkVariant := r.URL.Query().Get("variant")
 		sparklines := make(map[string][]lab.SparklinePoint)
 
+		// Load MarketContext for sparkline normalization.
+		var mc *lab.MarketContext
+		if cache != nil {
+			mc = cache.MarketContext()
+		}
+		if mc == nil {
+			mc, _ = repo.LatestMarketContext(r.Context())
+		}
+
 		if sparkVariant != "" {
 			// Single variant — one query for all gems.
 			sparkNames := make([]string, 0, len(results))
@@ -119,7 +128,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			if err != nil {
 				slog.Error("collective analysis: sparkline query failed", "error", err)
 			} else {
-				sparklines = sp
+				sparklines = normalizeSparklines(sp, mc, sparkVariant)
 			}
 		} else {
 			// ALL variants — group by each gem's own variant.
@@ -133,7 +142,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 					slog.Error("collective analysis: sparkline query failed", "variant", v, "error", err)
 					continue
 				}
-				for k, pts := range sp {
+				normalized := normalizeSparklines(sp, mc, v)
+				for k, pts := range normalized {
 					sparklines[k] = pts
 				}
 			}
@@ -297,7 +307,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			}
 		}
 
-		// Load sparkline data (last 12 hours).
+		// Load sparkline data (last 12 hours) and normalize with temporal coefficients.
 		var warnings []string
 		sparklines, err := repo.SparklineData(r.Context(), names, variant, 12)
 		if err != nil {
@@ -305,6 +315,16 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			sparklines = make(map[string][]lab.SparklinePoint)
 			warnings = append(warnings, "Sparkline data temporarily unavailable")
 		}
+
+		// Load MarketContext for sparkline normalization.
+		var compareMC *lab.MarketContext
+		if cache != nil {
+			compareMC = cache.MarketContext()
+		}
+		if compareMC == nil {
+			compareMC, _ = repo.LatestMarketContext(r.Context())
+		}
+		sparklines = normalizeSparklines(sparklines, compareMC, variant)
 
 		results := lab.BuildCompareResults(names, transfigure, trends, sparklines)
 

@@ -135,8 +135,8 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 
 		for _, ep := range evals {
 			signal := classifySignalWithConfig(
-				ep.Feature.VelMedPrice,
-				ep.Feature.VelMedListing,
+				ep.Feature.VelLongPrice,
+				ep.Feature.VelLongListing,
 				ep.Feature.CV,
 				ep.Feature.Listings,
 				cfg,
@@ -535,8 +535,8 @@ func ValidateDefaults(evals []EvalPoint, mc MarketContext) ValidationReport {
 
 	for _, ep := range evals {
 		signal := classifySignalWithConfig(
-			ep.Feature.VelMedPrice,
-			ep.Feature.VelMedListing,
+			ep.Feature.VelLongPrice,
+			ep.Feature.VelLongListing,
 			ep.Feature.CV,
 			ep.Feature.Listings,
 			cfg,
@@ -791,10 +791,10 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		// Actual value capture ratio.
 		actualCapture := futurePrice / riskAdjValue
 
-		// Classify the signal for grouping.
+		// Classify the signal for grouping (6h velocity for consistency).
 		signal := classifySignalWithConfig(
-			ep.Feature.VelMedPrice,
-			ep.Feature.VelMedListing,
+			ep.Feature.VelLongPrice,
+			ep.Feature.VelLongListing,
 			ep.Feature.CV,
 			ep.Feature.Listings,
 			cfg,
