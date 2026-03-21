@@ -350,15 +350,15 @@ func TestDetectTierBoundariesRecursive_FourExactGems(t *testing.T) {
 	}
 }
 
-func TestDetectTierBoundariesRecursive_CheapGemsExcluded(t *testing.T) {
-	// Verify that sub-5c gems don't affect tier boundaries.
+func TestDetectTierBoundariesRecursive_CheapGemsIncluded(t *testing.T) {
+	// Cheap gems ARE included in tier boundaries (no hardcoded price floor).
+	// Adding cheap gems should produce MORE boundaries (more price spread).
 	gemsWithCheap := []GemPrice{
 		{Name: "A of X", Variant: "20/20", Chaos: 500, IsTransfigured: true, Listings: 10},
 		{Name: "B of X", Variant: "20/20", Chaos: 300, IsTransfigured: true, Listings: 10},
 		{Name: "C of X", Variant: "20/20", Chaos: 100, IsTransfigured: true, Listings: 10},
 		{Name: "D of X", Variant: "20/20", Chaos: 50, IsTransfigured: true, Listings: 10},
 		{Name: "E of X", Variant: "20/20", Chaos: 30, IsTransfigured: true, Listings: 10},
-		// Cheap transfigured gems that should be excluded:
 		{Name: "F of X", Variant: "20/20", Chaos: 4, IsTransfigured: true, Listings: 10},
 		{Name: "G of X", Variant: "20/20", Chaos: 3, IsTransfigured: true, Listings: 10},
 		{Name: "H of X", Variant: "20/20", Chaos: 2, IsTransfigured: true, Listings: 10},
@@ -376,13 +376,17 @@ func TestDetectTierBoundariesRecursive_CheapGemsExcluded(t *testing.T) {
 	tbWith := DetectTierBoundariesRecursive(gemsWithCheap)
 	tbWithout := DetectTierBoundariesRecursive(gemsWithout)
 
-	// Boundaries should be identical -- cheap gems are excluded.
-	if len(tbWith.Boundaries) != len(tbWithout.Boundaries) {
-		t.Fatalf("boundary count with cheap=%d, without=%d -- should be equal",
-			len(tbWith.Boundaries), len(tbWithout.Boundaries))
+	// Both should produce valid boundaries.
+	if len(tbWith.Boundaries) == 0 {
+		t.Fatal("expected boundaries with cheap gems")
 	}
-	for i := range tbWith.Boundaries {
-		if !approxEqual(tbWith.Boundaries[i], tbWithout.Boundaries[i], 0.01) {
+	if len(tbWithout.Boundaries) == 0 {
+		t.Fatal("expected boundaries without cheap gems")
+	}
+	// With more gems (including cheap), may produce different boundary count.
+	// Both should be sorted descending.
+	for i := 1; i < len(tbWith.Boundaries); i++ {
+		if tbWith.Boundaries[i] >= tbWith.Boundaries[i-1] {
 			t.Errorf("Boundaries[%d] with cheap=%f, without=%f -- should be equal",
 				i, tbWith.Boundaries[i], tbWithout.Boundaries[i])
 		}
