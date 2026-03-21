@@ -296,7 +296,7 @@ function mapFontRows(rows: any[]): FontColor[] {
 		pWin: Math.round((r.pWin || 0) * 10000) / 100,
 		profit: Math.round(r.profit || 0),
 		evDelta2h: 0,
-		fontsToHit: r.fontsToHit ? Math.round(r.fontsToHit) : 0,
+		fontsToHit: r.fontsToHit || 0,
 		avgWin: r.avgWin ? Math.round(r.avgWin) : 0,
 		avgWinRaw: r.avgWinRaw ? Math.round(r.avgWinRaw) : 0,
 		thinPoolGems: r.thinPoolGems || 0,

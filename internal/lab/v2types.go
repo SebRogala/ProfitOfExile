@@ -82,6 +82,7 @@ func (mc MarketContext) PriceP50() float64 {
 // threshold, boundaries[1] = HIGH threshold, etc.
 type TierBoundaries struct {
 	Boundaries []float64 `json:"boundaries"`
+	Names      []string  `json:"names,omitempty"` // if nil, use global TierNames
 }
 
 // GemFeature holds pre-computed per-gem metrics for a single snapshot.
