@@ -69,7 +69,7 @@
 			ratio = `1 in ${Math.round(fth)}`;
 		}
 		const pct = Math.round(fc.pWin);
-		return `${ratio} (${pct}%) \u00B7 ~${raw}c`;
+		return `${ratio} (${pct}%)  ~${raw}c`;
 	}
 
 	$effect(() => { refreshKey; loadAll(); });
@@ -113,8 +113,8 @@
 										</div>
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g =>
-											`<b>${g.name}</b>: ${Math.round(g.chaos)}c — <a href="${baseGemTradeUrl(g.name, variant, league)}" target="_blank" style="color:#5eead4">trade</a>`
-										).join('<br>')}
+											`<div style="padding:2px 0"><b>${g.name}</b>: ${Math.round(g.chaos)}c &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, league || '')}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a></div>`
+										).join('')}
 										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>
 											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>

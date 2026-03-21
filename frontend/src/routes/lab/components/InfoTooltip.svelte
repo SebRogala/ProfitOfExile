@@ -83,7 +83,7 @@
 		cursor: default;
 		position: absolute;
 		top: calc(100% + 6px);
-		left: 0;
+		right: 0;
 		z-index: 100;
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);

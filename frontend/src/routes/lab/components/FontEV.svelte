@@ -43,7 +43,7 @@
 			ratio = `1 in ${Math.round(fth)}`;
 		}
 		const pct = Math.round(fc.pWin);
-		return `${ratio} (${pct}%) \u00B7 ~${raw}c`;
+		return `${ratio} (${pct}%)  ~${raw}c`;
 	}
 </script>
 
