@@ -28,13 +28,13 @@
 
 	function tierLine(fc: FontColor | undefined): string {
 		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
-		return `~${fc.fontsToHit}/hit \u00B7 ${fc.avgWin}c`;
+		return `1 in ${Math.round(fc.fontsToHit)} \u00B7 avg ${fc.avgWin}c`;
 	}
 </script>
 
 <div class="font-ev">
 	<div class="font-header">
-		<h4 class="font-title">Font EV<InfoTooltip text="Expected income per Font of Divine Skill usage.<br><br><b>EV</b>: Average income picking the best gem from 3 random draws.<br><br><b>Safe (LOW+)</b>: Hit rate for decent+ gems.<br><b>Premium (MID-HIGH+)</b>: Hit rate for valuable gems.<br><b>Jackpot (TOP)</b>: Hit rate for top-tier gems only.<br><br><b>~N/hit</b>: Expected fonts per qualifying hit.<br><b>Nc</b>: Average value when you hit." /></h4>
+		<h4 class="font-title">Font EV<InfoTooltip text="Expected income per Font of Divine Skill usage.<br><br><b>EV</b>: Average income picking the best gem from 3 random draws.<br><br><b>Safe (LOW+)</b>: Hit rate for decent+ gems.<br><b>Premium (MID-HIGH+)</b>: Hit rate for valuable gems.<br><b>Jackpot (TOP)</b>: Hit rate for top-tier gems only.<br><br><b>1 in N</b>: Hit a qualifying gem once every N font usages.<br><b>avg Nc</b>: Average value when you hit." /></h4>
 	</div>
 	<div class="color-cards">
 		{#each FIXED_ORDER as color}

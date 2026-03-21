@@ -52,7 +52,7 @@
 
 	function tierLine(fc: FontColor | null): string {
 		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
-		return `~${fc.fontsToHit}/hit \u00B7 ${fc.avgWin}c`;
+		return `1 in ${Math.round(fc.fontsToHit)} \u00B7 avg ${fc.avgWin}c`;
 	}
 
 	$effect(() => { refreshKey; loadAll(); });
@@ -88,7 +88,7 @@
 							{@const isW = best.variant === variant && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
 								{#if ev > 0}
-									<span class="ev" class:best={isW}>{ev}c/font</span>
+									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{ev}c/font</span>
 									<div class="tier-lines">
 										<div class="tier-row">
 											<span class="tier-label t-safe">Safe</span>
@@ -159,14 +159,13 @@
 	.ev {
 		display: block;
 		font-weight: 700;
-		font-size: 1.125rem;
+		font-size: 1.25rem;
 		color: var(--color-lab-text);
 		margin-bottom: 6px;
 	}
-	.ev.best {
-		color: var(--color-lab-green);
-		font-size: 1.3125rem;
-	}
+	.ev.best-red { color: var(--color-lab-red); font-size: 1.4375rem; }
+	.ev.best-green { color: var(--color-lab-green); font-size: 1.4375rem; }
+	.ev.best-blue { color: var(--color-lab-blue); font-size: 1.4375rem; }
 	.nil { color: var(--color-lab-text-secondary); font-size: 1.125rem; }
 
 	.w-red { border: 2px solid var(--color-lab-red); background: rgba(239, 68, 68, 0.05); }
@@ -187,7 +186,7 @@
 		justify-content: center;
 		align-items: baseline;
 		gap: 6px;
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 	}
 	.tier-label {
 		font-weight: 600;
