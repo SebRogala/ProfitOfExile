@@ -53,7 +53,22 @@
 	function tierLine(fc: FontColor | null): string {
 		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
 		const raw = fc.avgWinRaw || fc.avgWin || 0;
-		return `1 in ${Math.round(fc.fontsToHit)} \u00B7 ~${raw}c`;
+		const fth = fc.fontsToHit;
+		let ratio: string;
+		if (fth <= 1.1) {
+			ratio = 'every font';
+		} else if (fth < 2) {
+			// > 50% hit rate — show as "X in Y" reduced fraction
+			const pctFrac = fc.pWin / 100; // pWin is 0-100
+			const hits = Math.round(pctFrac * 10);
+			const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
+			const d = hits > 0 ? gcd(hits, 10) : 1;
+			ratio = `${hits / d} in ${10 / d}`;
+		} else {
+			ratio = `1 in ${Math.round(fth)}`;
+		}
+		const pct = Math.round(fc.pWin);
+		return `${ratio} (${pct}%) \u00B7 ~${raw}c`;
 	}
 
 	$effect(() => { refreshKey; loadAll(); });
