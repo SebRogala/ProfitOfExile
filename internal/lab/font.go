@@ -12,21 +12,22 @@ type FontResult struct {
 	Color         string  // RED, GREEN, BLUE
 	Variant       string  // "1", "1/20", "20", "20/20"
 	Pool          int     // total unique transfigured gem names of that color
-	Winners       int     // count of tier-qualifying gems (MID+ for safe, HIGH+ for jackpot)
+	Winners       int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
 	PWin          float64 // probability of seeing at least 1 winner in 3 picks
 	AvgWin        float64 // average value when you DO hit a winner
 	EV            float64 // expected income per font (best-of-3 from full pool, all gems valued)
 	InputCost     float64
 	Profit        float64 // EV - InputCost
 	FontsToHit    float64 // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
-	Mode          string  // "safe" or "jackpot"
+	Mode          string  // "safe", "premium", or "jackpot"
 	ThinPoolGems  int     // count of winners with < 5 listings
 	LiquidityRisk string  // "LOW", "MEDIUM", "HIGH"
 }
 
-// FontAnalysis holds the results of both Safe and Jackpot font analysis modes.
+// FontAnalysis holds the results of Safe, Premium and Jackpot font analysis modes.
 type FontAnalysis struct {
 	Safe    []FontResult
+	Premium []FontResult
 	Jackpot []FontResult
 }
 
@@ -118,9 +119,14 @@ func isSafeTierWinner(tier string) bool {
 	return tier == "LOW" || tier == "MID" || tier == "MID-HIGH" || tier == "HIGH" || tier == "TOP"
 }
 
-// isJackpotTierWinner returns true if the tier qualifies as a winner in Jackpot mode (HIGH+).
+// isPremiumTierWinner returns true if the tier qualifies as a winner in Premium mode (MID-HIGH+).
+func isPremiumTierWinner(tier string) bool {
+	return tier == "MID-HIGH" || tier == "HIGH" || tier == "TOP"
+}
+
+// isJackpotTierWinner returns true if the tier qualifies as a winner in Jackpot mode (TOP only).
 func isJackpotTierWinner(tier string) bool {
-	return tier == "HIGH" || tier == "TOP"
+	return tier == "TOP"
 }
 
 // computeLiquidityRisk classifies liquidity risk based on the ratio of thin-market winners.
@@ -138,8 +144,8 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 	return "LOW"
 }
 
-// AnalyzeFont computes Font of Divine Skill EV per (color, variant) in two modes:
-// Safe (MID+ tier winners) and Jackpot (HIGH+ tier winners).
+// AnalyzeFont computes Font of Divine Skill EV per (color, variant) in three modes:
+// Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Winner contributions are risk-adjusted using SellProbabilityFactor and StabilityDiscount.
 // Pool size = count of distinct transfigured gem NAMES per color (across all variants).
 func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) FontAnalysis {
@@ -211,13 +217,9 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
-			// Build per-gem value arrays for best-of-3 calculation.
-			// Each gem contributes its risk-adjusted price to the pool.
-			// Non-winners contribute 0 (you'd never pick them).
-			safeValues := make([]float64, 0, pool)   // one entry per pool gem
-			jackpotValues := make([]float64, 0, pool)
-			var safeThinCount, jackpotThinCount int
-			var safeWinnerCount, jackpotWinnerCount int
+			// Count winners and thin-market gems for each mode.
+			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int
+			var safeThinCount, premiumThinCount, jackpotThinCount int
 
 			// Track which gems we've seen (entries are variant-specific).
 			// Fill values for gems that have entries in this variant.
@@ -238,6 +240,12 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 						safeThinCount++
 					}
 				}
+				if isPremiumTierWinner(feat.Tier) {
+					premiumWinnerCount++
+					if isThin {
+						premiumThinCount++
+					}
+				}
 				if isJackpotTierWinner(feat.Tier) {
 					jackpotWinnerCount++
 					if isThin {
@@ -246,41 +254,40 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				}
 			}
 
-			// Build the full pool value arrays — one value per pool gem name.
+			// Build the full pool value array — one value per pool gem name.
 			// EVERY gem gets its risk-adjusted price (the farmer always picks the best
 			// of 3 regardless of tier). Winner tracking is for hit-rate display only.
+			// The same values array is used for all three modes since EV is identical.
+			poolValues := make([]float64, 0, pool)
 			for name := range poolNames[color] {
 				adjPrice := gemAdjustedPrice[name] // 0 if not in this variant
-				safeValues = append(safeValues, adjPrice)
-				jackpotValues = append(jackpotValues, adjPrice)
+				poolValues = append(poolValues, adjPrice)
 			}
 
 			// Sort descending for expectedBestOf3.
-			sort.Float64s(safeValues)
-			for i, j := 0, len(safeValues)-1; i < j; i, j = i+1, j-1 {
-				safeValues[i], safeValues[j] = safeValues[j], safeValues[i]
-			}
-			sort.Float64s(jackpotValues)
-			for i, j := 0, len(jackpotValues)-1; i < j; i, j = i+1, j-1 {
-				jackpotValues[i], jackpotValues[j] = jackpotValues[j], jackpotValues[i]
+			sort.Float64s(poolValues)
+			for i, j := 0, len(poolValues)-1; i < j; i, j = i+1, j-1 {
+				poolValues[i], poolValues[j] = poolValues[j], poolValues[i]
 			}
 
-			// Safe mode result — expected value of the best gem from 3 random draws.
+			// EV is identical for all three modes — same pool, same best-of-3 formula.
+			ev := expectedBestOf3(poolValues)
+			profit := ev - inputCost
+
+			// Compute average winner value (sum of all non-zero adjusted prices).
+			var totalWinnerValue float64
+			for _, v := range poolValues {
+				if v > 0 {
+					totalWinnerValue += v
+				}
+			}
+
+			// Safe mode result.
 			safePWin := pWin3Picks(safeWinnerCount, pool)
-			safeEV := expectedBestOf3(safeValues)
-			safeProfit := safeEV - inputCost
 			var safeAvgWin float64
 			if safeWinnerCount > 0 {
-				// Average winner value — still useful as context.
-				var sum float64
-				for _, v := range safeValues {
-					if v > 0 {
-						sum += v
-					}
-				}
-				safeAvgWin = sum / float64(safeWinnerCount)
+				safeAvgWin = totalWinnerValue / float64(safeWinnerCount)
 			}
-
 			var safeFontsToHit float64
 			if safePWin > 0 {
 				safeFontsToHit = 1.0 / safePWin
@@ -293,30 +300,48 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Winners:       safeWinnerCount,
 				PWin:          safePWin,
 				AvgWin:        safeAvgWin,
-				EV:            safeEV,
+				EV:            ev,
 				InputCost:     inputCost,
-				Profit:        safeProfit,
+				Profit:        profit,
 				FontsToHit:    safeFontsToHit,
 				Mode:          "safe",
 				ThinPoolGems:  safeThinCount,
 				LiquidityRisk: computeLiquidityRisk(safeThinCount, safeWinnerCount),
 			})
 
-			// Jackpot mode result — expected value of the best gem from 3 random draws.
+			// Premium mode result.
+			premiumPWin := pWin3Picks(premiumWinnerCount, pool)
+			var premiumAvgWin float64
+			if premiumWinnerCount > 0 {
+				premiumAvgWin = totalWinnerValue / float64(premiumWinnerCount)
+			}
+			var premiumFontsToHit float64
+			if premiumPWin > 0 {
+				premiumFontsToHit = 1.0 / premiumPWin
+			}
+			analysis.Premium = append(analysis.Premium, FontResult{
+				Time:          snapTime,
+				Color:         color,
+				Variant:       variant,
+				Pool:          pool,
+				Winners:       premiumWinnerCount,
+				PWin:          premiumPWin,
+				AvgWin:        premiumAvgWin,
+				EV:            ev,
+				InputCost:     inputCost,
+				Profit:        profit,
+				FontsToHit:    premiumFontsToHit,
+				Mode:          "premium",
+				ThinPoolGems:  premiumThinCount,
+				LiquidityRisk: computeLiquidityRisk(premiumThinCount, premiumWinnerCount),
+			})
+
+			// Jackpot mode result.
 			jackpotPWin := pWin3Picks(jackpotWinnerCount, pool)
-			jackpotEV := expectedBestOf3(jackpotValues)
-			jackpotProfit := jackpotEV - inputCost
 			var jackpotAvgWin float64
 			if jackpotWinnerCount > 0 {
-				var sum float64
-				for _, v := range jackpotValues {
-					if v > 0 {
-						sum += v
-					}
-				}
-				jackpotAvgWin = sum / float64(jackpotWinnerCount)
+				jackpotAvgWin = totalWinnerValue / float64(jackpotWinnerCount)
 			}
-
 			var jackpotFontsToHit float64
 			if jackpotPWin > 0 {
 				jackpotFontsToHit = 1.0 / jackpotPWin
@@ -329,9 +354,9 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Winners:       jackpotWinnerCount,
 				PWin:          jackpotPWin,
 				AvgWin:        jackpotAvgWin,
-				EV:            jackpotEV,
+				EV:            ev,
 				InputCost:     inputCost,
-				Profit:        jackpotProfit,
+				Profit:        profit,
 				FontsToHit:    jackpotFontsToHit,
 				Mode:          "jackpot",
 				ThinPoolGems:  jackpotThinCount,

@@ -129,7 +129,45 @@ func TestAnalyzeFont_SafeMode_MIDPlusWinners(t *testing.T) {
 	}
 }
 
-func TestAnalyzeFont_JackpotMode_HIGHPlusWinners(t *testing.T) {
+func TestAnalyzeFont_PremiumMode_MIDHIGHPlusWinners(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		{Name: "Cleave of Rage", Variant: "20/20", Chaos: 250, Listings: 15, IsTransfigured: true, GemColor: "RED"},  // TOP
+		{Name: "Slam of Force", Variant: "20/20", Chaos: 120, Listings: 10, IsTransfigured: true, GemColor: "RED"},   // HIGH
+		{Name: "Strike of Fear", Variant: "20/20", Chaos: 50, Listings: 8, IsTransfigured: true, GemColor: "RED"},    // MID
+		{Name: "Bash of Nothing", Variant: "20/20", Chaos: 10, Listings: 20, IsTransfigured: true, GemColor: "RED"},  // LOW
+	}
+
+	features := []GemFeature{
+		makeFeature("Cleave of Rage", "20/20", 250, 15, "TOP", 0.9, 0.95),
+		makeFeature("Slam of Force", "20/20", 120, 10, "HIGH", 0.8, 0.9),
+		makeFeature("Strike of Fear", "20/20", 50, 8, "MID-HIGH", 0.7, 0.85),
+		makeFeature("Bash of Nothing", "20/20", 10, 20, "LOW", 0.6, 0.8),
+	}
+
+	analysis := AnalyzeFont(now, gems, features)
+
+	var found *FontResult
+	for i := range analysis.Premium {
+		if analysis.Premium[i].Color == "RED" && analysis.Premium[i].Variant == "20/20" {
+			found = &analysis.Premium[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected RED/20/20 premium result")
+	}
+
+	// Premium mode: MID-HIGH, HIGH and TOP are winners = 3
+	if found.Winners != 3 {
+		t.Errorf("Premium Winners = %d, want 3 (MID-HIGH+)", found.Winners)
+	}
+	if found.Mode != "premium" {
+		t.Errorf("Mode = %q, want %q", found.Mode, "premium")
+	}
+}
+
+func TestAnalyzeFont_JackpotMode_TOPOnly(t *testing.T) {
 	now := time.Now()
 	gems := []GemPrice{
 		{Name: "Cleave of Rage", Variant: "20/20", Chaos: 250, Listings: 15, IsTransfigured: true, GemColor: "RED"},  // TOP
@@ -158,9 +196,9 @@ func TestAnalyzeFont_JackpotMode_HIGHPlusWinners(t *testing.T) {
 		t.Fatal("expected RED/20/20 jackpot result")
 	}
 
-	// Jackpot mode: only HIGH and TOP are winners = 2
-	if found.Winners != 2 {
-		t.Errorf("Jackpot Winners = %d, want 2 (HIGH+TOP)", found.Winners)
+	// Jackpot mode: only TOP is a winner = 1
+	if found.Winners != 1 {
+		t.Errorf("Jackpot Winners = %d, want 1 (TOP only)", found.Winners)
 	}
 	if found.Mode != "jackpot" {
 		t.Errorf("Mode = %q, want %q", found.Mode, "jackpot")
@@ -236,37 +274,39 @@ func TestAnalyzeFont_LiquidityRiskClassification(t *testing.T) {
 	}
 }
 
-func TestAnalyzeFont_BothModesProduceIndependentResults(t *testing.T) {
+func TestAnalyzeFont_AllModesProduceIndependentResults(t *testing.T) {
 	now := time.Now()
-	// RED: 3 MID gems, 0 HIGH gems
-	// BLUE: 0 MID gems, 1 HIGH gem
-	// Safe mode (MID+): RED has 3 winners, BLUE has 1 winner
-	// Jackpot mode (HIGH+): RED has 0 winners, BLUE has 1 winner
+	// RED: 1 MID-HIGH + 2 MID + 1 LOW = 4 gems
+	// BLUE: 1 TOP + 1 HIGH + 1 LOW = 3 gems
+	//
+	// Safe (LOW+):      RED=4, BLUE=3
+	// Premium (MID-HIGH+): RED=1, BLUE=2
+	// Jackpot (TOP):    RED=0, BLUE=1
 	gems := []GemPrice{
-		// RED: 3 MID gems + 1 LOW
-		{Name: "Red Gem 1", Variant: "20/20", Chaos: 50, Listings: 10, IsTransfigured: true, GemColor: "RED"},
+		// RED: 1 MID-HIGH + 2 MID + 1 LOW
+		{Name: "Red Gem 1", Variant: "20/20", Chaos: 80, Listings: 10, IsTransfigured: true, GemColor: "RED"},
 		{Name: "Red Gem 2", Variant: "20/20", Chaos: 40, Listings: 10, IsTransfigured: true, GemColor: "RED"},
 		{Name: "Red Gem 3", Variant: "20/20", Chaos: 45, Listings: 10, IsTransfigured: true, GemColor: "RED"},
 		{Name: "Red Low", Variant: "20/20", Chaos: 5, Listings: 10, IsTransfigured: true, GemColor: "RED"},
-		// BLUE: 1 HIGH gem + 2 LOW
-		{Name: "Blue Gem 1", Variant: "20/20", Chaos: 150, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "Blue Low 1", Variant: "20/20", Chaos: 5, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
-		{Name: "Blue Low 2", Variant: "20/20", Chaos: 5, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		// BLUE: 1 TOP + 1 HIGH + 1 LOW
+		{Name: "Blue Top", Variant: "20/20", Chaos: 300, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue High", Variant: "20/20", Chaos: 150, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Blue Low", Variant: "20/20", Chaos: 5, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
 	features := []GemFeature{
-		makeFeature("Red Gem 1", "20/20", 50, 10, "MID", 0.8, 0.9),
+		makeFeature("Red Gem 1", "20/20", 80, 10, "MID-HIGH", 0.8, 0.9),
 		makeFeature("Red Gem 2", "20/20", 40, 10, "MID", 0.8, 0.9),
 		makeFeature("Red Gem 3", "20/20", 45, 10, "MID", 0.8, 0.9),
 		makeFeature("Red Low", "20/20", 5, 10, "LOW", 0.6, 0.8),
-		makeFeature("Blue Gem 1", "20/20", 150, 10, "HIGH", 0.85, 0.95),
-		makeFeature("Blue Low 1", "20/20", 5, 10, "LOW", 0.6, 0.8),
-		makeFeature("Blue Low 2", "20/20", 5, 10, "LOW", 0.6, 0.8),
+		makeFeature("Blue Top", "20/20", 300, 10, "TOP", 0.9, 0.95),
+		makeFeature("Blue High", "20/20", 150, 10, "HIGH", 0.85, 0.95),
+		makeFeature("Blue Low", "20/20", 5, 10, "LOW", 0.6, 0.8),
 	}
 
 	analysis := AnalyzeFont(now, gems, features)
 
-	// Verify safe mode: RED has 3 MID winners, BLUE has 1 HIGH winner
+	// Verify safe mode: LOW+ winners
 	var redSafeWinners, blueSafeWinners int
 	for _, r := range analysis.Safe {
 		if r.Variant == "20/20" {
@@ -277,7 +317,6 @@ func TestAnalyzeFont_BothModesProduceIndependentResults(t *testing.T) {
 			}
 		}
 	}
-	// Safe mode: LOW+ winners (includes LOW tier now)
 	if redSafeWinners != 4 {
 		t.Errorf("RED safe winners = %d, want 4 (LOW+)", redSafeWinners)
 	}
@@ -285,7 +324,25 @@ func TestAnalyzeFont_BothModesProduceIndependentResults(t *testing.T) {
 		t.Errorf("BLUE safe winners = %d, want 3 (LOW+)", blueSafeWinners)
 	}
 
-	// Verify jackpot mode: RED has 0 HIGH+ winners, BLUE has 1 HIGH winner
+	// Verify premium mode: MID-HIGH+ winners
+	var redPremiumWinners, bluePremiumWinners int
+	for _, r := range analysis.Premium {
+		if r.Variant == "20/20" {
+			if r.Color == "RED" {
+				redPremiumWinners = r.Winners
+			} else if r.Color == "BLUE" {
+				bluePremiumWinners = r.Winners
+			}
+		}
+	}
+	if redPremiumWinners != 1 {
+		t.Errorf("RED premium winners = %d, want 1 (MID-HIGH+)", redPremiumWinners)
+	}
+	if bluePremiumWinners != 2 {
+		t.Errorf("BLUE premium winners = %d, want 2 (TOP+HIGH)", bluePremiumWinners)
+	}
+
+	// Verify jackpot mode: TOP only
 	var redJackpotWinners, blueJackpotWinners int
 	for _, r := range analysis.Jackpot {
 		if r.Variant == "20/20" {
@@ -297,10 +354,10 @@ func TestAnalyzeFont_BothModesProduceIndependentResults(t *testing.T) {
 		}
 	}
 	if redJackpotWinners != 0 {
-		t.Errorf("RED jackpot winners = %d, want 0", redJackpotWinners)
+		t.Errorf("RED jackpot winners = %d, want 0 (no TOP gems)", redJackpotWinners)
 	}
 	if blueJackpotWinners != 1 {
-		t.Errorf("BLUE jackpot winners = %d, want 1", blueJackpotWinners)
+		t.Errorf("BLUE jackpot winners = %d, want 1 (TOP only)", blueJackpotWinners)
 	}
 }
 
@@ -359,6 +416,9 @@ func TestAnalyzeFont_EmptyInput(t *testing.T) {
 	if len(analysis.Safe) != 0 {
 		t.Errorf("got %d safe results, want 0", len(analysis.Safe))
 	}
+	if len(analysis.Premium) != 0 {
+		t.Errorf("got %d premium results, want 0", len(analysis.Premium))
+	}
 	if len(analysis.Jackpot) != 0 {
 		t.Errorf("got %d jackpot results, want 0", len(analysis.Jackpot))
 	}
@@ -366,6 +426,9 @@ func TestAnalyzeFont_EmptyInput(t *testing.T) {
 	analysis = AnalyzeFont(time.Now(), []GemPrice{}, []GemFeature{})
 	if len(analysis.Safe) != 0 {
 		t.Errorf("got %d safe results, want 0", len(analysis.Safe))
+	}
+	if len(analysis.Premium) != 0 {
+		t.Errorf("got %d premium results, want 0", len(analysis.Premium))
 	}
 	if len(analysis.Jackpot) != 0 {
 		t.Errorf("got %d jackpot results, want 0", len(analysis.Jackpot))
@@ -444,13 +507,13 @@ func TestAnalyzeFont_GemsWithoutFeaturesSkipped(t *testing.T) {
 
 	// Only provide feature for Gem A, not Gem B
 	features := []GemFeature{
-		makeFeature("Gem A", "20/20", 100, 10, "HIGH", 0.8, 0.9),
+		makeFeature("Gem A", "20/20", 100, 10, "TOP", 0.8, 0.9),
 	}
 
 	analysis := AnalyzeFont(now, gems, features)
 	for _, r := range analysis.Jackpot {
 		if r.Color == "RED" && r.Variant == "20/20" {
-			// Only Gem A has features and is HIGH, so 1 winner
+			// Only Gem A has features and is TOP, so 1 jackpot winner
 			if r.Winners != 1 {
 				t.Errorf("Winners = %d, want 1 (Gem B has no features)", r.Winners)
 			}

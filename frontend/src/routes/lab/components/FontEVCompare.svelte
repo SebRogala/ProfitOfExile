@@ -9,7 +9,6 @@
 
 	let data = $state<Record<string, FontEVResponse>>({});
 	let loading = $state(true);
-	let mode = $state<'safe' | 'jackpot'>('safe');
 
 	async function loadAll() {
 		loading = true;
@@ -25,29 +24,35 @@
 		loading = false;
 	}
 
-	function getEV(variant: string, color: string): FontColor | null {
+	function getColorData(variant: string, color: string, mode: 'safe' | 'premium' | 'jackpot'): FontColor | null {
 		const vd = data[variant];
 		if (!vd) return null;
-		const colors = mode === 'safe' ? vd.safe : vd.jackpot;
-		return colors.find((c) => c.color === color) || null;
+		const colors = vd[mode];
+		return colors?.find((c) => c.color === color) || null;
+	}
+
+	// EV is the same across all modes, just use safe.
+	function getEV(variant: string, color: string): number {
+		const fc = getColorData(variant, color, 'safe');
+		return fc?.ev ?? 0;
 	}
 
 	function winner(): { variant: string; color: string; ev: number } {
 		let best = { variant: '', color: '', ev: -Infinity };
 		for (const v of VARIANTS) {
 			for (const color of COLORS) {
-				const cd = getEV(v, color);
-				if (cd && cd.ev > best.ev) {
-					best = { variant: v, color, ev: cd.ev };
+				const ev = getEV(v, color);
+				if (ev > best.ev) {
+					best = { variant: v, color, ev };
 				}
 			}
 		}
 		return best;
 	}
 
-	function liquidityNote(fc: FontColor): string | null {
-		if (!fc.liquidityRisk || fc.liquidityRisk === 'LOW') return null;
-		return `${fc.thinPoolGems || 0} thin`;
+	function tierLine(fc: FontColor | null): string {
+		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
+		return `~${fc.fontsToHit}/hit \u00B7 ${fc.avgWin}c`;
 	}
 
 	$effect(() => { refreshKey; loadAll(); });
@@ -55,19 +60,7 @@
 
 <section class="section">
 	<div class="section-header">
-		<h2 class="section-title">Font EV<InfoTooltip text="4x3 matrix showing EV per variant and color. Highlighted cell = best combination for current mode.<br><br><b>Safe</b>: Pick the highlighted color for reliable income.<br><b>Jackpot</b>: Pick the highlighted color for jackpot hunting." /></h2>
-		<div class="mode-toggle">
-			<button
-				class="toggle-btn"
-				class:active={mode === 'safe'}
-				onclick={() => mode = 'safe'}
-			>Safe</button>
-			<button
-				class="toggle-btn"
-				class:active={mode === 'jackpot'}
-				onclick={() => mode = 'jackpot'}
-			>Jackpot</button>
-		</div>
+		<h2 class="section-title">Font EV<InfoTooltip text="4x3 matrix showing EV per variant and color. Highlighted cell = best combination.<br><br>Each cell shows EV and tier hit rates:<br><b>Safe (LOW+)</b>: Reliable income.<br><b>Premium (MID-HIGH+)</b>: Valuable gems.<br><b>Jackpot (TOP)</b>: Top-tier gems only." /></h2>
 	</div>
 
 	{#if loading}
@@ -79,7 +72,7 @@
 				<tr>
 					<th></th>
 					{#each COLORS as color}
-						<th><span class="c-{color.toLowerCase()}">● {color}</span></th>
+						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
 				</tr>
 			</thead>
@@ -88,18 +81,30 @@
 					<tr>
 						<td class="var">{variant}</td>
 						{#each COLORS as color}
-							{@const cd = getEV(variant, color)}
+							{@const ev = getEV(variant, color)}
+							{@const safe = getColorData(variant, color, 'safe')}
+							{@const premium = getColorData(variant, color, 'premium')}
+							{@const jackpot = getColorData(variant, color, 'jackpot')}
 							{@const isW = best.variant === variant && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
-								{#if cd && cd.ev > 0}
-									<span class="ev" class:best={isW}>{cd.ev}c</span>
-									<span class="det">pool {cd.pool} · {cd.pWin}%</span>
-									{#if cd.liquidityRisk && cd.liquidityRisk !== 'LOW'}
-										{@const note = liquidityNote(cd)}
-										<span class="liq-warn liq-{cd.liquidityRisk.toLowerCase()}">{note}</span>
-									{/if}
+								{#if ev > 0}
+									<span class="ev" class:best={isW}>{ev}c/font</span>
+									<div class="tier-lines">
+										<div class="tier-row">
+											<span class="tier-label t-safe">Safe</span>
+											<span class="tier-val t-safe">{tierLine(safe)}</span>
+										</div>
+										<div class="tier-row">
+											<span class="tier-label t-premium">Premium</span>
+											<span class="tier-val t-premium">{tierLine(premium)}</span>
+										</div>
+										<div class="tier-row">
+											<span class="tier-label t-jackpot">Jackpot</span>
+											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
+										</div>
+									</div>
 								{:else}
-									<span class="nil">—</span>
+									<span class="nil">{'\u2014'}</span>
 								{/if}
 							</td>
 						{/each}
@@ -129,33 +134,6 @@
 		color: var(--color-lab-text);
 		margin: 0;
 	}
-	.mode-toggle {
-		display: flex;
-		gap: 0;
-	}
-	.toggle-btn {
-		background: transparent;
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text-secondary);
-		padding: 5px 16px;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		cursor: pointer;
-		font-family: inherit;
-		transition: all 0.15s ease;
-	}
-	.toggle-btn:first-child {
-		border-right: none;
-	}
-	.toggle-btn:hover {
-		color: var(--color-lab-text);
-		border-color: var(--color-lab-text-secondary);
-	}
-	.toggle-btn.active {
-		color: var(--color-lab-text);
-		border-color: var(--color-lab-blue);
-		background: rgba(59, 130, 246, 0.15);
-	}
 	.loading { color: var(--color-lab-text-secondary); font-size: 0.875rem; }
 
 	.ft { width: 100%; border-collapse: collapse; }
@@ -169,6 +147,7 @@
 	.ft td {
 		text-align: center;
 		padding: 14px 12px;
+		vertical-align: top;
 	}
 	.var {
 		text-align: left !important;
@@ -178,18 +157,15 @@
 		width: 80px;
 	}
 	.ev {
+		display: block;
 		font-weight: 700;
-		font-size: 1.25rem;
+		font-size: 1.125rem;
 		color: var(--color-lab-text);
-		margin-right: 10px;
+		margin-bottom: 6px;
 	}
 	.ev.best {
 		color: var(--color-lab-green);
-		font-size: 1.5rem;
-	}
-	.det {
-		font-size: 0.9375rem;
-		color: var(--color-lab-text-secondary);
+		font-size: 1.3125rem;
 	}
 	.nil { color: var(--color-lab-text-secondary); font-size: 1.125rem; }
 
@@ -201,15 +177,28 @@
 	.c-green { color: var(--color-lab-green); }
 	.c-blue { color: var(--color-lab-blue); }
 
-	.liq-warn {
-		display: block;
+	.tier-lines {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.tier-row {
+		display: flex;
+		justify-content: center;
+		align-items: baseline;
+		gap: 6px;
 		font-size: 0.75rem;
-		margin-top: 4px;
 	}
-	.liq-medium {
-		color: var(--color-lab-yellow, #eab308);
+	.tier-label {
+		font-weight: 600;
+		min-width: 48px;
+		text-align: right;
 	}
-	.liq-high {
-		color: var(--color-lab-red);
+	.tier-val {
+		min-width: 90px;
+		text-align: left;
 	}
+	.t-safe { color: #5eead4; }
+	.t-premium { color: #c084fc; }
+	.t-jackpot { color: #fbbf24; }
 </style>

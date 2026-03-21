@@ -256,6 +256,10 @@ func (r *Repository) LatestFontResults(ctx context.Context, variant, mode string
 			&fr.Mode, &fr.ThinPoolGems, &fr.LiquidityRisk); err != nil {
 			return nil, fmt.Errorf("lab repo: scan font result: %w", err)
 		}
+		// Derive FontsToHit from PWin (not stored in DB).
+		if fr.PWin > 0 {
+			fr.FontsToHit = 1.0 / fr.PWin
+		}
 		results = append(results, fr)
 	}
 	if err := rows.Err(); err != nil {

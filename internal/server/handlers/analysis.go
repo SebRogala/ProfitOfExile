@@ -164,8 +164,8 @@ func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) [
 	return filtered
 }
 
-// FontAnalysis returns the latest Font of Divine Skill EV results in two modes:
-// Safe (MID+ tier winners) and Jackpot (HIGH+ tier winners).
+// FontAnalysis returns the latest Font of Divine Skill EV results in three modes:
+// Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
 func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
@@ -177,14 +177,15 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			return
 		}
 
-		var safeResults, jackpotResults []lab.FontResult
+		var safeResults, premiumResults, jackpotResults []lab.FontResult
 		cacheHit := false
 
 		// Fast path: serve from cache.
 		if cache != nil {
 			analysis := cache.Font()
-			if len(analysis.Safe) > 0 || len(analysis.Jackpot) > 0 {
+			if len(analysis.Safe) > 0 || len(analysis.Premium) > 0 || len(analysis.Jackpot) > 0 {
 				safeResults = filterFont(analysis.Safe, variant, limit)
+				premiumResults = filterFont(analysis.Premium, variant, limit)
 				jackpotResults = filterFont(analysis.Jackpot, variant, limit)
 				cacheHit = true
 			}
@@ -196,6 +197,12 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			safeResults, err = repo.LatestFontResults(r.Context(), variant, "safe", limit)
 			if err != nil {
 				slog.Error("font analysis: query safe failed", "error", err, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+			premiumResults, err = repo.LatestFontResults(r.Context(), variant, "premium", limit)
+			if err != nil {
+				slog.Error("font analysis: query premium failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
@@ -218,6 +225,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			EV            float64 `json:"ev"`
 			InputCost     float64 `json:"inputCost"`
 			Profit        float64 `json:"profit"`
+			FontsToHit    float64 `json:"fontsToHit"`
 			ThinPoolGems  int     `json:"thinPoolGems"`
 			LiquidityRisk string  `json:"liquidityRisk"`
 		}
@@ -236,6 +244,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					EV:            r.EV,
 					InputCost:     r.InputCost,
 					Profit:        r.Profit,
+					FontsToHit:    r.FontsToHit,
 					ThinPoolGems:  r.ThinPoolGems,
 					LiquidityRisk: r.LiquidityRisk,
 				})
@@ -244,14 +253,17 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		}
 
 		safeRows := toRows(safeResults)
+		premiumRows := toRows(premiumResults)
 		jackpotRows := toRows(jackpotResults)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"safe":             safeRows,
-			"jackpot":          jackpotRows,
-			"bestColorSafe":    bestColor(safeResults),
-			"bestColorJackpot": bestColor(jackpotResults),
+			"safe":              safeRows,
+			"premium":           premiumRows,
+			"jackpot":           jackpotRows,
+			"bestColorSafe":     bestColor(safeResults),
+			"bestColorPremium":  bestColor(premiumResults),
+			"bestColorJackpot":  bestColor(jackpotResults),
 		}); err != nil {
 			slog.Error("font analysis: encode response", "error", err)
 		}
@@ -663,6 +675,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 				"cached":      false,
 				"transfigure": 0,
 				"fontSafe":    0,
+				"fontPremium": 0,
 				"fontJackpot": 0,
 				"quality":     0,
 				"trends":      0,
@@ -681,6 +694,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 			"league":      league,
 			"transfigure": len(cache.Transfigure()),
 			"fontSafe":    len(fontAnalysis.Safe),
+			"fontPremium": len(fontAnalysis.Premium),
 			"fontJackpot": len(fontAnalysis.Jackpot),
 			"quality":     len(cache.Quality()),
 			"trends":      len(cache.Trends()),

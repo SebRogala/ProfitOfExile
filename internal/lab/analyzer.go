@@ -106,9 +106,10 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 
 	analysis := AnalyzeFont(snapTime, gems, features)
 
-	// Combine both modes for DB persistence.
-	allResults := make([]FontResult, 0, len(analysis.Safe)+len(analysis.Jackpot))
+	// Combine all three modes for DB persistence.
+	allResults := make([]FontResult, 0, len(analysis.Safe)+len(analysis.Premium)+len(analysis.Jackpot))
 	allResults = append(allResults, analysis.Safe...)
+	allResults = append(allResults, analysis.Premium...)
 	allResults = append(allResults, analysis.Jackpot...)
 
 	inserted, err := a.repo.SaveFontResults(ctx, allResults)
@@ -124,6 +125,7 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 	a.logger.Info("font analysis complete",
 		"snapTime", snapTime,
 		"safe", len(analysis.Safe),
+		"premium", len(analysis.Premium),
 		"jackpot", len(analysis.Jackpot),
 		"inserted", inserted,
 	)
