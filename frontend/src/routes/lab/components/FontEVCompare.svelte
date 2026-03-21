@@ -55,7 +55,7 @@
 		const raw = fc.avgWinRaw || fc.avgWin || 0;
 		const fth = fc.fontsToHit;
 		let ratio: string;
-		if (fth <= 1.1) {
+		if (fth <= 1.05) {
 			ratio = 'every font';
 		} else if (fth < 2) {
 			// > 50% hit rate — show as "X in Y" reduced fraction
