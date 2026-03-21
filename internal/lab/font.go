@@ -218,40 +218,51 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
+			// Compute tier boundaries from THIS color+variant pool specifically.
+			// NOT from variant-wide GemFeature tiers which use a different pool.
+			colorVariantGems := make([]GemPrice, 0, len(entries))
+			for _, e := range entries {
+				colorVariantGems = append(colorVariantGems, GemPrice{
+					Name: e.name, Variant: variant, Chaos: e.chaos,
+					Listings: e.listings, IsTransfigured: true,
+				})
+			}
+			colorTiers := DetectTierBoundariesRecursive(colorVariantGems)
+
 			// Count winners and thin-market gems for each mode.
 			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int
 			var safeThinCount, premiumThinCount, jackpotThinCount int
 
-			// Track which gems we've seen (entries are variant-specific).
-			// Fill values for gems that have entries in this variant.
-			gemAdjustedPrice := make(map[string]float64) // name -> adjusted price
+			gemAdjustedPrice := make(map[string]float64)
 			for _, e := range entries {
 				feat := featureLookup[featureKey{e.name, variant}]
 				if feat == nil {
 					continue
 				}
 
-				// Compute sell probability and stability from CURRENT gem data,
-				// not from cached features which may be from a previous snapshot.
+				// Compute sell probability and stability from CURRENT gem data.
 				sellProb := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
 				stabDisc := stabilityDiscount(feat.CV)
 				adjustedPrice := e.chaos * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
 				isThin := e.listings < 5
 
-				if isSafeTierWinner(feat.Tier) {
+				// Use color-specific tier, not variant-wide feat.Tier.
+				tier := classifyTier(e.chaos, colorTiers)
+
+				if isSafeTierWinner(tier) {
 					safeWinnerCount++
 					if isThin {
 						safeThinCount++
 					}
 				}
-				if isPremiumTierWinner(feat.Tier) {
+				if isPremiumTierWinner(tier) {
 					premiumWinnerCount++
 					if isThin {
 						premiumThinCount++
 					}
 				}
-				if isJackpotTierWinner(feat.Tier) {
+				if isJackpotTierWinner(tier) {
 					jackpotWinnerCount++
 					if isThin {
 						jackpotThinCount++
@@ -291,15 +302,16 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
 				stabDisc2 := stabilityDiscount(feat.CV)
 				adjPrice := e.chaos * sellProb2 * stabDisc2
-				if isSafeTierWinner(feat.Tier) {
+				tier := classifyTier(e.chaos, colorTiers)
+				if isSafeTierWinner(tier) {
 					safeWinnerSum += adjPrice
 					safeWinnerRawSum += e.chaos
 				}
-				if isPremiumTierWinner(feat.Tier) {
+				if isPremiumTierWinner(tier) {
 					premiumWinnerSum += adjPrice
 					premiumWinnerRawSum += e.chaos
 				}
-				if isJackpotTierWinner(feat.Tier) {
+				if isJackpotTierWinner(tier) {
 					jackpotWinnerSum += adjPrice
 					jackpotWinnerRawSum += e.chaos
 				}
