@@ -74,6 +74,7 @@ export interface FontColor {
 	avgWin?: number;
 	avgWinRaw?: number;
 	evRaw?: number;
+	jackpotGems?: { name: string; chaos: number }[];
 	thinPoolGems?: number;
 	liquidityRisk?: string;
 	mode?: string;
@@ -301,6 +302,7 @@ function mapFontRows(rows: any[]): FontColor[] {
 		avgWin: r.avgWin ? Math.round(r.avgWin) : 0,
 		avgWinRaw: r.avgWinRaw ? Math.round(r.avgWinRaw) : 0,
 		evRaw: r.evRaw ? Math.round(r.evRaw) : 0,
+		jackpotGems: r.jackpotGems || [],
 		thinPoolGems: r.thinPoolGems || 0,
 		liquidityRisk: r.liquidityRisk || 'LOW',
 		mode: r.mode || '',

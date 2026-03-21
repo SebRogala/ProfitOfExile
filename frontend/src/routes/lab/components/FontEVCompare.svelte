@@ -111,7 +111,7 @@
 											<span class="tier-val t-premium">{tierLine(premium)}</span>
 										</div>
 										{#if jackpot && jackpot.winners > 0}
-										<div class="tier-row">
+										<div class="tier-row" title={jackpot.jackpotGems?.map(g => `${g.name}: ${Math.round(g.chaos)}c`).join('\n') || ''}>
 											<span class="tier-label t-jackpot">Jackpot</span>
 											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
 										</div>
