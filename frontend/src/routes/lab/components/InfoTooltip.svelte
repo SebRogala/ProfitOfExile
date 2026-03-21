@@ -25,7 +25,8 @@
 		position: relative;
 		margin-left: 6px;
 		display: inline-flex;
-		align-items: center;
+		align-items: baseline;
+		vertical-align: baseline;
 	}
 	.icon-circle {
 		display: inline-flex;
@@ -41,6 +42,7 @@
 		line-height: 1;
 		opacity: 0.6;
 		transition: opacity 0.15s ease;
+		transform: translateY(-2px);
 	}
 	.info-icon:hover .icon-circle {
 		color: var(--color-lab-text);
@@ -54,14 +56,14 @@
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
 		padding: 12px 16px;
-		min-width: 300px;
-		max-width: 400px;
+		min-width: 380px;
+		max-width: 520px;
 		font-size: 0.8125rem;
 		font-weight: 400;
 		font-style: normal;
 		line-height: 1.5;
 		color: var(--color-lab-text);
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
 		white-space: normal;
 		text-transform: none;
 		letter-spacing: normal;
