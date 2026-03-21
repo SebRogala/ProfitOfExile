@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { fetchSignalHistory, type GemPlay, type SignalTransition } from '$lib/api';
+	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -29,35 +30,6 @@
 	let budget = $state('');
 	let expandedRow = $state<number | null>(null);
 
-	function baseGemName(name: string): string {
-		const idx = name.lastIndexOf(' of ');
-		return idx > 0 ? name.substring(0, idx) : name;
-	}
-
-	function baseGemTradeUrl(gem: GemPlay): string {
-		const base = baseGemName(gem.name);
-		const parts = gem.variant.split('/');
-		const level = parseInt(parts[0]) || 0;
-		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
-
-		const miscFilters: Record<string, any> = { corrupted: { option: 'false' } };
-		if (level >= 20) miscFilters.gem_level = { min: level, max: level };
-		if (quality === 20) miscFilters.quality = { min: 20, max: 20 };
-
-		const q = {
-			query: {
-				type: base,
-				status: { option: 'securable' },
-				filters: {
-					type_filters: { filters: { category: { option: 'gem' } } },
-					misc_filters: { filters: miscFilters },
-					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
-				},
-			},
-			sort: { price: 'asc' },
-		};
-		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
-	}
 	let expandedHistory = $state<SignalTransition[]>([]);
 	let historyLoading = $state(false);
 
@@ -195,7 +167,7 @@
 								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
 								Sellability: {gem.sellabilityLabel} ({gem.sellability})
 								{#if gem.name.includes(' of ')}
-									| <a class="buy-base-link" href={baseGemTradeUrl(gem)} target="_blank" title="Buy {baseGemName(gem.name)} ({gem.variant})">Buy Base</a>
+									| <a class="buy-base-link" href={baseGemTradeUrl(gem.name, gem.variant, league)} target="_blank" title="Buy {baseGemName(gem.name)} ({gem.variant})">Buy Base</a>
 								{/if}
 							</span>
 							{#if gem.sellUrgency}
