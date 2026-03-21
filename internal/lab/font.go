@@ -20,10 +20,17 @@ type FontResult struct {
 	EVRaw         float64 // expected income per font using raw listed prices (primary display)
 	InputCost     float64
 	Profit        float64 // EVRaw - InputCost
-	FontsToHit    float64 // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
+	FontsToHit    float64          // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
+	JackpotGems   []JackpotGemInfo // TOP gem names+prices (only for jackpot mode, 1-3 gems)
 	Mode          string  // "safe", "premium", or "jackpot"
 	ThinPoolGems  int     // count of winners with < 5 listings
 	LiquidityRisk string  // "LOW", "MEDIUM", "HIGH"
+}
+
+// JackpotGemInfo holds name and price for a TOP-tier gem shown in Jackpot tooltip.
+type JackpotGemInfo struct {
+	Name  string  `json:"name"`
+	Chaos float64 `json:"chaos"`
 }
 
 // FontAnalysis holds the results of Safe, Premium and Jackpot font analysis modes.
@@ -234,6 +241,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			// Count winners and thin-market gems for each mode.
 			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int
 			var safeThinCount, premiumThinCount, jackpotThinCount int
+			var jackpotGems []JackpotGemInfo
 
 			gemAdjustedPrice := make(map[string]float64)
 			gemRawPrice := make(map[string]float64)
@@ -269,6 +277,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				// value level across all colors. Comparable.
 				if isJackpotTierWinner(feat.Tier) {
 					jackpotWinnerCount++
+					jackpotGems = append(jackpotGems, JackpotGemInfo{Name: e.name, Chaos: e.chaos})
 					if isThin {
 						jackpotThinCount++
 					}
@@ -415,6 +424,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				InputCost:     inputCost,
 				Profit:        profit,
 				FontsToHit:    jackpotFontsToHit,
+				JackpotGems:   jackpotGems,
 				Mode:          "jackpot",
 				ThinPoolGems:  jackpotThinCount,
 				LiquidityRisk: computeLiquidityRisk(jackpotThinCount, jackpotWinnerCount),

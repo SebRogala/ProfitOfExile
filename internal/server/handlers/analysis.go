@@ -227,8 +227,9 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			EVRaw         float64 `json:"evRaw"`
 			InputCost     float64 `json:"inputCost"`
 			Profit        float64 `json:"profit"`
-			FontsToHit    float64 `json:"fontsToHit"`
-			ThinPoolGems  int     `json:"thinPoolGems"`
+			FontsToHit    float64              `json:"fontsToHit"`
+			JackpotGems   []lab.JackpotGemInfo `json:"jackpotGems,omitempty"`
+			ThinPoolGems  int                  `json:"thinPoolGems"`
 			LiquidityRisk string  `json:"liquidityRisk"`
 		}
 
@@ -249,6 +250,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					InputCost:     r.InputCost,
 					Profit:        r.Profit,
 					FontsToHit:    r.FontsToHit,
+					JackpotGems:   r.JackpotGems,
 					ThinPoolGems:  r.ThinPoolGems,
 					LiquidityRisk: r.LiquidityRisk,
 				})
