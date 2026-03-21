@@ -152,9 +152,10 @@
 	.var {
 		text-align: left !important;
 		font-weight: 700;
-		font-size: 1.0625rem;
+		font-size: 1.25rem;
 		color: var(--color-lab-text);
 		width: 80px;
+		vertical-align: middle;
 	}
 	.ev {
 		display: block;
@@ -186,7 +187,7 @@
 		justify-content: center;
 		align-items: baseline;
 		gap: 6px;
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 	}
 	.tier-label {
 		font-weight: 600;
