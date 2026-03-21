@@ -70,6 +70,8 @@ export interface FontColor {
 	pWin: number;
 	profit: number;
 	evDelta2h: number;
+	fontsToHit?: number;
+	avgWin?: number;
 	thinPoolGems?: number;
 	liquidityRisk?: string;
 	mode?: string;
@@ -84,8 +86,10 @@ export interface FontEVData {
 
 export interface FontEVResponse {
 	safe: FontColor[];
+	premium: FontColor[];
 	jackpot: FontColor[];
 	bestColorSafe: string;
+	bestColorPremium: string;
 	bestColorJackpot: string;
 }
 
@@ -291,6 +295,8 @@ function mapFontRows(rows: any[]): FontColor[] {
 		pWin: Math.round((r.pWin || 0) * 10000) / 100,
 		profit: Math.round(r.profit || 0),
 		evDelta2h: 0,
+		fontsToHit: r.fontsToHit ? Math.round(r.fontsToHit) : 0,
+		avgWin: r.avgWin ? Math.round(r.avgWin) : 0,
 		thinPoolGems: r.thinPoolGems || 0,
 		liquidityRisk: r.liquidityRisk || 'LOW',
 		mode: r.mode || '',
@@ -303,15 +309,19 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 
 	const resp = await get<{
 		safe: any[];
+		premium: any[];
 		jackpot: any[];
 		bestColorSafe: string;
+		bestColorPremium: string;
 		bestColorJackpot: string;
 	}>('/analysis/font', params);
 
 	return {
 		safe: mapFontRows(resp.safe || []),
+		premium: mapFontRows(resp.premium || []),
 		jackpot: mapFontRows(resp.jackpot || []),
 		bestColorSafe: resp.bestColorSafe || '',
+		bestColorPremium: resp.bestColorPremium || '',
 		bestColorJackpot: resp.bestColorJackpot || '',
 	};
 }
