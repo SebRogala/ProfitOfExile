@@ -73,6 +73,8 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool, cfg.League))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
 
+		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache))
+
 		// V2 pre-computed analysis endpoints
 		r.Get("/api/analysis/market-context", handlers.MarketContextAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gem-features", handlers.GemFeaturesAnalysis(cfg.LabRepo, cfg.LabCache))

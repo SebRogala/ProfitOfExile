@@ -1151,6 +1151,108 @@ func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.Mar
 	return result
 }
 
+// MarketOverview returns an aggregated market overview built from cached data.
+// No query params — returns a single object with market stats, sell confidence
+// spread, signal distribution, temporal mode, and divine rate.
+func MarketOverview(cache *lab.Cache) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		type overview struct {
+			AvgTransPrice        float64        `json:"avgTransPrice"`
+			AvgTransPriceDelta   float64        `json:"avgTransPriceDelta"`
+			AvgBaseListings      float64        `json:"avgBaseListings"`
+			AvgBaseListingsDelta float64        `json:"avgBaseListingsDelta"`
+			ActiveGems           int            `json:"activeGems"`
+			MostVolatileColor    string         `json:"mostVolatileColor"`
+			MostVolatileCV       float64        `json:"mostVolatileCV"`
+			MostStableColor      string         `json:"mostStableColor"`
+			MostStableCV         float64        `json:"mostStableCV"`
+			TemporalMode         string         `json:"temporalMode"`
+			DivineRate           float64        `json:"divineRate"`
+			SellConfidenceSpread map[string]int `json:"sellConfidenceSpread"`
+			SignalDistribution   map[string]int `json:"signalDistribution"`
+		}
+
+		resp := overview{
+			SellConfidenceSpread: map[string]int{"SAFE": 0, "FAIR": 0, "RISKY": 0},
+			SignalDistribution:   map[string]int{"STABLE": 0, "UNCERTAIN": 0, "HERD": 0, "DUMPING": 0, "TRAP": 0},
+			TemporalMode:         "none",
+		}
+
+		if cache == nil {
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+
+		// Divine rate.
+		resp.DivineRate = math.Round(cache.DivineRate())
+
+		// Temporal mode from MarketContext.
+		if mc := cache.MarketContext(); mc != nil {
+			resp.TemporalMode = mc.TemporalMode
+			if resp.TemporalMode == "" {
+				resp.TemporalMode = "none"
+			}
+		}
+
+		// Aggregate from trends for price/listings/volatile/stable.
+		if trends := cache.Trends(); len(trends) > 0 {
+			var totalPrice, totalListings float64
+			colorCV := make(map[string][]float64)
+
+			for _, t := range trends {
+				totalPrice += t.CurrentPrice
+				totalListings += float64(t.BaseListings)
+				if t.GemColor != "" {
+					colorCV[t.GemColor] = append(colorCV[t.GemColor], t.CV)
+				}
+			}
+
+			resp.ActiveGems = len(trends)
+			resp.AvgTransPrice = math.Round(totalPrice / float64(len(trends)))
+			resp.AvgBaseListings = math.Round(totalListings / float64(len(trends)))
+
+			// Most volatile / most stable by avg CV per color.
+			type colorStat struct {
+				color string
+				avgCV float64
+			}
+			var stats []colorStat
+			for color, cvs := range colorCV {
+				sum := 0.0
+				for _, v := range cvs {
+					sum += v
+				}
+				stats = append(stats, colorStat{color, math.Round(sum / float64(len(cvs)))})
+			}
+			sort.Slice(stats, func(i, j int) bool { return stats[i].avgCV > stats[j].avgCV })
+			if len(stats) > 0 {
+				resp.MostVolatileColor = stats[0].color
+				resp.MostVolatileCV = stats[0].avgCV
+				resp.MostStableColor = stats[len(stats)-1].color
+				resp.MostStableCV = stats[len(stats)-1].avgCV
+			}
+		}
+
+		// Sell confidence spread and signal distribution from GemSignals.
+		if signals := cache.GemSignals(); len(signals) > 0 {
+			for _, s := range signals {
+				if s.SellConfidence != "" {
+					resp.SellConfidenceSpread[s.SellConfidence]++
+				}
+				if s.Signal != "" {
+					resp.SignalDistribution[s.Signal]++
+				}
+			}
+		}
+
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("market overview: encode response", "error", err)
+		}
+	}
+}
+
 // filterGemSignals filters and limits cached gem signals.
 // Results are sorted by Confidence descending, then Sellability descending (matching the DB query order).
 func filterGemSignals(all []lab.GemSignal, variant, tier string, limit int) []lab.GemSignal {

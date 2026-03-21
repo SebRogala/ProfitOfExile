@@ -99,14 +99,14 @@ export interface MarketOverviewData {
 	avgBaseListings: number;
 	avgBaseListingsDelta: number;
 	activeGems: number;
-	weekendPremium: number;
-	windowGems: number;
-	windowBreakdown: Record<string, number>;
-	trapGems: number;
 	mostVolatileColor: string;
 	mostVolatileCV: number;
 	mostStableColor: string;
 	mostStableCV: number;
+	temporalMode: string;
+	divineRate: number;
+	sellConfidenceSpread: Record<string, number>;
+	signalDistribution: Record<string, number>;
 }
 
 export interface CompareGem {
@@ -327,66 +327,21 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 }
 
 export async function fetchMarketOverview(): Promise<MarketOverviewData> {
-	// Aggregated from trends data client-side
-	const resp = await get<{ count: number; data: any[] }>('/analysis/trends', { limit: '500' });
-	const rows = resp.data || [];
-
-	if (rows.length === 0) {
-		return {
-			avgTransPrice: 0, avgTransPriceDelta: 0,
-			avgBaseListings: 0, avgBaseListingsDelta: 0,
-			activeGems: 0, weekendPremium: 0,
-			windowGems: 0, windowBreakdown: {},
-			trapGems: 0,
-			mostVolatileColor: '', mostVolatileCV: 0,
-			mostStableColor: '', mostStableCV: 0,
-		};
-	}
-
-	const avgPrice = rows.reduce((s: number, r: any) => s + (r.currentPrice || 0), 0) / rows.length;
-	const avgListings = rows.reduce((s: number, r: any) => s + (r.baseListings || 0), 0) / rows.length;
-
-	const windowBreakdown: Record<string, number> = {};
-	let windowGems = 0;
-	let trapGems = 0;
-	for (const r of rows) {
-		if (['BREWING', 'OPENING', 'OPEN', 'CLOSING'].includes(r.windowSignal)) {
-			windowGems++;
-			windowBreakdown[r.windowSignal] = (windowBreakdown[r.windowSignal] || 0) + 1;
-		}
-		if (r.signal === 'TRAP') trapGems++;
-	}
-
-	// CV by color
-	const colorCV: Record<string, number[]> = {};
-	for (const r of rows) {
-		if (r.gemColor && r.cv != null) {
-			if (!colorCV[r.gemColor]) colorCV[r.gemColor] = [];
-			colorCV[r.gemColor].push(r.cv);
-		}
-	}
-	const colorAvgCV = Object.entries(colorCV).map(([color, cvs]) => ({
-		color,
-		avgCV: Math.round(cvs.reduce((s, v) => s + v, 0) / cvs.length),
-	}));
-	colorAvgCV.sort((a, b) => b.avgCV - a.avgCV);
-	const mostVolatile = colorAvgCV[0];
-	const mostStable = colorAvgCV[colorAvgCV.length - 1];
-
+	const resp = await get<MarketOverviewData>('/analysis/market-overview');
 	return {
-		avgTransPrice: Math.round(avgPrice),
-		avgTransPriceDelta: 0, // would need historical comparison
-		avgBaseListings: Math.round(avgListings),
-		avgBaseListingsDelta: 0,
-		activeGems: rows.length,
-		weekendPremium: 0,
-		windowGems,
-		windowBreakdown,
-		trapGems,
-		mostVolatileColor: mostVolatile?.color || '',
-		mostVolatileCV: mostVolatile?.avgCV || 0,
-		mostStableColor: mostStable?.color || '',
-		mostStableCV: mostStable?.avgCV || 0,
+		avgTransPrice: resp.avgTransPrice || 0,
+		avgTransPriceDelta: resp.avgTransPriceDelta || 0,
+		avgBaseListings: resp.avgBaseListings || 0,
+		avgBaseListingsDelta: resp.avgBaseListingsDelta || 0,
+		activeGems: resp.activeGems || 0,
+		mostVolatileColor: resp.mostVolatileColor || '',
+		mostVolatileCV: resp.mostVolatileCV || 0,
+		mostStableColor: resp.mostStableColor || '',
+		mostStableCV: resp.mostStableCV || 0,
+		temporalMode: resp.temporalMode || 'none',
+		divineRate: resp.divineRate || 0,
+		sellConfidenceSpread: resp.sellConfidenceSpread || {},
+		signalDistribution: resp.signalDistribution || {},
 	};
 }
 
