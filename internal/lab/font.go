@@ -254,7 +254,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 
 				// Compute sell probability and stability from CURRENT gem data.
 				sellProb := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
-				stabDisc := stabilityDiscount(feat.CV)
+				stabDisc := stabilityDiscount(feat.CVShort)
 				adjustedPrice := e.chaos * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
 				gemRawPrice[e.name] = e.chaos
@@ -323,7 +323,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 					continue
 				}
 				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
-				stabDisc2 := stabilityDiscount(feat.CV)
+				stabDisc2 := stabilityDiscount(feat.CVShort)
 				adjPrice := e.chaos * sellProb2 * stabDisc2
 				colorTier2 := classifyTier(e.chaos, colorTiers)
 				if isSafeTierWinner(colorTier2) {

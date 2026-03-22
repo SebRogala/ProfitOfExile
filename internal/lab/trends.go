@@ -513,6 +513,19 @@ func coefficientOfVariation(prices []float64) float64 {
 	return sanitizeFloat((math.Sqrt(variance) / math.Abs(mean)) * 100)
 }
 
+// extractRecentPrices returns the chaos prices from points within the given
+// duration before refTime. Used to compute short-window CV for stability discount.
+func extractRecentPrices(points []PricePoint, refTime time.Time, window time.Duration) []float64 {
+	cutoff := refTime.Add(-window)
+	var prices []float64
+	for _, p := range points {
+		if !p.Time.Before(cutoff) {
+			prices = append(prices, p.Chaos)
+		}
+	}
+	return prices
+}
+
 // sanitizeFloat returns 0 for NaN or Inf values, preventing bad data
 // from poisoning batch INSERTs into PostgreSQL NUMERIC columns.
 func sanitizeFloat(v float64) float64 {

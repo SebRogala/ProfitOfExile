@@ -1160,3 +1160,57 @@ func TestAnalyzeTrends_TierAssignment(t *testing.T) {
 		t.Errorf("Cheap gem tier = %s, want a low-tier name (not TOP/HIGH)", cheap.PriceTier)
 	}
 }
+
+func TestExtractRecentPrices_WithinWindow(t *testing.T) {
+	refTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	points := []PricePoint{
+		{Time: refTime.Add(-24 * time.Hour), Chaos: 50},
+		{Time: refTime.Add(-12 * time.Hour), Chaos: 60},
+		{Time: refTime.Add(-5 * time.Hour), Chaos: 100},
+		{Time: refTime.Add(-3 * time.Hour), Chaos: 105},
+		{Time: refTime.Add(-1 * time.Hour), Chaos: 110},
+	}
+
+	// 6h window: should only include the last 3 points.
+	prices := extractRecentPrices(points, refTime, 6*time.Hour)
+	if len(prices) != 3 {
+		t.Fatalf("got %d prices, want 3", len(prices))
+	}
+	if prices[0] != 100 || prices[1] != 105 || prices[2] != 110 {
+		t.Errorf("prices = %v, want [100 105 110]", prices)
+	}
+}
+
+func TestExtractRecentPrices_AllWithinWindow(t *testing.T) {
+	refTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	points := []PricePoint{
+		{Time: refTime.Add(-2 * time.Hour), Chaos: 100},
+		{Time: refTime.Add(-1 * time.Hour), Chaos: 110},
+	}
+
+	prices := extractRecentPrices(points, refTime, 6*time.Hour)
+	if len(prices) != 2 {
+		t.Fatalf("got %d prices, want 2", len(prices))
+	}
+}
+
+func TestExtractRecentPrices_NoneWithinWindow(t *testing.T) {
+	refTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	points := []PricePoint{
+		{Time: refTime.Add(-24 * time.Hour), Chaos: 50},
+		{Time: refTime.Add(-12 * time.Hour), Chaos: 60},
+	}
+
+	prices := extractRecentPrices(points, refTime, 6*time.Hour)
+	if len(prices) != 0 {
+		t.Errorf("got %d prices, want 0", len(prices))
+	}
+}
+
+func TestExtractRecentPrices_Empty(t *testing.T) {
+	refTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	prices := extractRecentPrices(nil, refTime, 6*time.Hour)
+	if len(prices) != 0 {
+		t.Errorf("got %d prices, want 0", len(prices))
+	}
+}

@@ -113,13 +113,13 @@ func TestStabilityDiscount_KeyPoints(t *testing.T) {
 		cv   float64
 		want float64
 	}{
-		{0, 1.0},     // zero CV: full discount (no discount)
+		{0, 1.0},     // zero CV: no penalty
 		{10, 0.95},   // low CV
 		{30, 0.85},   // moderate CV
 		{50, 0.75},   // medium CV
-		{100, 0.5},   // high CV: floor
-		{200, 0.5},   // very high CV: clamped at floor
-		{300, 0.5},   // extreme CV: clamped at floor
+		{60, 0.7},    // at floor
+		{100, 0.7},   // high CV: clamped at floor
+		{200, 0.7},   // very high CV: clamped at floor
 	}
 
 	for _, tt := range tests {
@@ -136,14 +136,14 @@ func TestStabilityDiscount_Clamping(t *testing.T) {
 	if got > 1.0 {
 		t.Errorf("stabilityDiscount(-10) = %f, want <= 1.0", got)
 	}
-	if got < 0.5 {
-		t.Errorf("stabilityDiscount(-10) = %f, want >= 0.5", got)
+	if got < 0.7 {
+		t.Errorf("stabilityDiscount(-10) = %f, want >= 0.7", got)
 	}
 
-	// Very high CV should be clamped at 0.5.
+	// Very high CV should be clamped at 0.7.
 	got = stabilityDiscount(500)
-	if got != 0.5 {
-		t.Errorf("stabilityDiscount(500) = %f, want 0.5", got)
+	if got != 0.7 {
+		t.Errorf("stabilityDiscount(500) = %f, want 0.7", got)
 	}
 }
 
@@ -222,7 +222,7 @@ func TestClassifySellConfidence_FAIR(t *testing.T) {
 		{0.5, 0.8},  // sellProb >= 0.5 but < 0.8, stabilityDisc < 0.85
 		{0.8, 0.7},  // sellProb >= 0.8 but stabilityDisc < 0.85
 		{0.6, 0.75}, // both moderate
-		{0.4, 0.8},  // sellProb < 0.5 but stabilityDisc >= 0.7 → not RISKY
+		{0.4, 0.8},  // sellProb < 0.5 but stabilityDisc >= 0.8 → not RISKY
 		{0.5, 0.6},  // sellProb >= 0.5, so not RISKY
 	}
 
@@ -236,7 +236,7 @@ func TestClassifySellConfidence_FAIR(t *testing.T) {
 }
 
 func TestClassifySellConfidence_RISKY(t *testing.T) {
-	// RISKY: sellProb < 0.5 AND stabilityDisc < 0.7.
+	// RISKY: sellProb < 0.5 AND stabilityDisc < 0.8.
 	got := classifySellConfidence(0.4, 0.6)
 	if got != "RISKY" {
 		t.Errorf("classifySellConfidence(0.4, 0.6) = %q, want RISKY", got)
@@ -286,8 +286,8 @@ func TestIntegration_RiskAdjustedValueNonZero(t *testing.T) {
 		t.Errorf("SellProbabilityFactor = %f, want (0, 1.0]", f.SellProbabilityFactor)
 	}
 	// Verify StabilityDiscount is computed.
-	if f.StabilityDiscount < 0.5 || f.StabilityDiscount > 1.0 {
-		t.Errorf("StabilityDiscount = %f, want [0.5, 1.0]", f.StabilityDiscount)
+	if f.StabilityDiscount < 0.7 || f.StabilityDiscount > 1.0 {
+		t.Errorf("StabilityDiscount = %f, want [0.7, 1.0]", f.StabilityDiscount)
 	}
 
 	// Now compute signals.
