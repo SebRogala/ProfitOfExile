@@ -35,6 +35,7 @@
 					<div class="legend-item"><span class="sig purple">🔄 COMEBACK</span> crashed + recovering</div>
 					<div class="legend-item"><span class="sig cyan">💎 POTENTIAL</span> rising, unnoticed</div>
 					<div class="legend-item"><span class="sig red">🚩 MANIPULATION</span> fake price floor</div>
+					<div class="legend-item"><span class="sig yellow">🌊 CASCADE</span> buyout→undercut cycle</div>
 					<div class="legend-item"><span class="sig green">🚀 BREAKOUT</span> breaking resistance</div>
 
 					<h4 class="legend-heading" style="margin-top: 16px;">Sell Confidence</h4>
@@ -55,11 +56,11 @@
 
 				<div class="legend-col">
 					<h4 class="legend-heading">Sellability</h4>
-					<div class="legend-item"><span class="sig green">FAST SELL</span> 80+ listings</div>
-					<div class="legend-item"><span class="sig green-muted">GOOD</span> 60-79 listings</div>
-					<div class="legend-item"><span class="sig yellow">MODERATE</span> 40-59 listings</div>
-					<div class="legend-item"><span class="sig orange">SLOW</span> 20-39 listings</div>
-					<div class="legend-item"><span class="sig red">UNLIKELY</span> 0-19 listings</div>
+					<div class="legend-item"><span class="sig green">FAST SELL</span> 80+ score</div>
+					<div class="legend-item"><span class="sig green-muted">GOOD</span> 60-79 score</div>
+					<div class="legend-item"><span class="sig yellow">MODERATE</span> 40-59 score</div>
+					<div class="legend-item"><span class="sig orange">SLOW</span> 20-39 score</div>
+					<div class="legend-item"><span class="sig red">UNLIKELY</span> 0-19 score</div>
 				</div>
 
 				<div class="legend-col">

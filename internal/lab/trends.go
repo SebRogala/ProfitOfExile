@@ -145,45 +145,56 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 
 // sellability computes how easily a gem will sell (0-100).
 // Higher = faster sale expected. Combines listing dynamics + signal health.
-func sellability(transListings int, listingVel, priceVel, cv float64, signal string) (score int, label string) {
+// All thresholds are relative (percentage-based) so they work across price tiers.
+func sellability(transListings int, listingVel, priceVel, cv float64, signal string, marketDepth, chaos float64) (score int, label string) {
 	s := 50 // baseline
 
-	// Fewer trans listings = less competition = easier to sell
-	if transListings < 10 {
-		s += 30
-	} else if transListings < 30 {
-		s += 15
-	} else if transListings > 100 {
-		s -= 20
+	// Percentage-based velocities for tier-agnostic comparison.
+	// A 46c/hr move on a 1099c gem (4.2%) is very different from 46c/hr on a 50c gem (92%).
+	var pctPriceVel, pctListingVel float64
+	if chaos > 0 {
+		pctPriceVel = priceVel / chaos * 100
+	}
+	if transListings > 0 {
+		pctListingVel = listingVel / float64(transListings) * 100
 	}
 
-	// Price rising = buyers active
-	if priceVel > 5 {
+	// Market depth relative to per-variant median (league-invariant).
+	// Deep markets (>2x) are proven markets with active buyers — bonus, not penalty.
+	// Thin markets have less competition but uncertain demand.
+	if marketDepth < 0.5 {
+		s += 15 // thin: less competition but uncertain demand
+	} else if marketDepth > 2.0 {
+		s += 15 // deep: proven market, active buyers, your gem WILL sell
+	}
+
+	// Price rising = buyers active (percentage-based)
+	if pctPriceVel > 3 {
 		s += 15
-	} else if priceVel > 0 {
+	} else if pctPriceVel > 0 {
 		s += 5
-	} else if priceVel < -5 {
+	} else if pctPriceVel < -3 {
 		s -= 15
 	}
 
-	// Listings dropping = supply drying = your listing gets seen
-	if listingVel < -3 {
-		s += 10
-	} else if listingVel > 5 {
-		s -= 10
+	// Listings changing relative to current count
+	if pctListingVel < -5 {
+		s += 10 // supply drying = your listing gets seen
+	} else if pctListingVel > 10 {
+		s -= 10 // supply flooding
 	}
 
-	// Recent stability bonus: currently calm regardless of historical CV
-	if math.Abs(priceVel) < 2 {
+	// Recent stability bonus: currently calm (percentage-based)
+	if math.Abs(pctPriceVel) < 2 {
 		s += 20
 	}
 
 	// Turnover proxy: listings dropping while price holds = items ARE selling
-	if listingVel < -1 && math.Abs(priceVel) < 3 {
+	if pctListingVel < -2 && math.Abs(pctPriceVel) < 3 {
 		s += 25
 	}
 
-	// Low CV = predictable market = buyers trust the price (halved — recent velocity matters more)
+	// Low CV = predictable market = buyers trust the price
 	if cv < 25 {
 		s += 10
 	} else if cv > 80 {
@@ -362,7 +373,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		priceTier := classifyTier(g.Chaos, tb)
 		tAction := tierAction(signal, winSignal, priceTier)
 		sUrgency, sReason := sellUrgency(priceVel, listingVel, baseVel, histPos, baseLst, g.Listings, signal, priceTier)
-		sellScore, sellLabel := sellability(g.Listings, listingVel, priceVel, cv, signal)
+		sellScore, sellLabel := sellability(g.Listings, listingVel, priceVel, cv, signal, 1.0, g.Chaos)
 
 		results = append(results, TrendResult{
 			Time:              snapTime,

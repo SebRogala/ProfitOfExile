@@ -49,8 +49,15 @@ func ComputeGemSignals(
 		// 2. Advanced signal from v1 classifier.
 		advSignal := classifyAdvancedSignal(f.Chaos, f.Listings, f.VelLongPrice, f.VelLongListing, f.CV, f.HistPosition)
 
+		// CASCADE: thin-market buyout lifecycle. PRICE_MANIPULATION keeps priority.
+		if advSignal != "PRICE_MANIPULATION" {
+			if f.MarketRegime == "CASCADE" && f.Low7d > 0 && f.Chaos > f.Low7d*1.5 {
+				advSignal = "CASCADE"
+			}
+		}
+
 		// 3. Sellability from v1 classifier.
-		sellScore, sellLabel := sellability(f.Listings, f.VelLongListing, f.VelLongPrice, f.CV, signal)
+		sellScore, sellLabel := sellability(f.Listings, f.VelLongListing, f.VelLongPrice, f.CV, signal, f.MarketDepth, f.Chaos)
 
 		// 4. Base-dependent signals.
 		baseName := extractBaseName(f.Name)

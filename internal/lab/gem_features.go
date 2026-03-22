@@ -80,6 +80,14 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			f.RelativeListings = float64(g.Listings) / avgListings
 		}
 
+		// Per-variant market depth (league-invariant).
+		f.MarketDepth = computeMarketDepthForGem(g.Listings, g.Variant, mc, avgListings)
+		if f.MarketDepth < 0.4 {
+			f.MarketRegime = "CASCADE"
+		} else {
+			f.MarketRegime = "TEMPORAL"
+		}
+
 		// Behavioral profiles: flood/crash detection and listing elasticity.
 		if h != nil && len(h.Points) >= 5 {
 			f.FloodCount = countFloods(h.Points)
@@ -102,6 +110,7 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		f.Low7d = sanitizeFloat(f.Low7d)
 		f.RelativePrice = sanitizeFloat(f.RelativePrice)
 		f.RelativeListings = sanitizeFloat(f.RelativeListings)
+		f.MarketDepth = sanitizeFloat(f.MarketDepth)
 		f.SellProbabilityFactor = sanitizeFloat(f.SellProbabilityFactor)
 		f.StabilityDiscount = sanitizeFloat(f.StabilityDiscount)
 
@@ -137,6 +146,18 @@ func extractChaos(p PricePoint) float64 { return p.Chaos }
 
 // extractListings extracts the listing count from a PricePoint as float64.
 func extractListings(p PricePoint) float64 { return float64(p.Listings) }
+
+// computeMarketDepthForGem returns listings / per-variant median listings.
+// Falls back to market-wide average if VariantStats unavailable.
+func computeMarketDepthForGem(listings int, variant string, mc MarketContext, fallbackAvg float64) float64 {
+	if vs, ok := mc.VariantStats[variant]; ok && vs.MedianListings > 0 {
+		return float64(listings) / vs.MedianListings
+	}
+	if fallbackAvg > 0 {
+		return float64(listings) / fallbackAvg
+	}
+	return 0
+}
 
 // sellProbabilityFactor returns a 0.3-1.0 factor representing how likely this gem
 // is to sell within an hour. Research showed the sigmoid on listing count adds only

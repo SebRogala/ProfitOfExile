@@ -562,3 +562,236 @@ func TestEndToEnd_TemporalNormalization(t *testing.T) {
 		}
 	}
 }
+
+func TestPrecomputeMarketDepth(t *testing.T) {
+	mc := MarketContext{
+		TotalGems:     100,
+		TotalListings: 2000,
+		VariantStats: map[string]VariantBaseline{
+			"20/20": {MedianListings: 50},
+			"1":     {MedianListings: 30},
+		},
+		PricePercentiles:   make(map[string]float64),
+		ListingPercentiles: make(map[string]float64),
+		HourlyBias:         make([]float64, 24),
+		HourlyVolatility:   make([]float64, 24),
+		HourlyActivity:     make([]float64, 24),
+		WeekdayBias:        make([]float64, 7),
+		WeekdayVolatility:  make([]float64, 7),
+		WeekdayActivity:    make([]float64, 7),
+	}
+
+	gems := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 25, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Cleave of Rage", Variant: "1", Chaos: 50, Listings: 15, IsTransfigured: true, GemColor: "RED"},
+		// Corrupted gem — should be excluded.
+		{Name: "Bad of Gem", Variant: "20/20", Chaos: 300, Listings: 10, IsTransfigured: true, IsCorrupted: true, GemColor: "RED"},
+		// Non-transfigured — should be excluded.
+		{Name: "Spark", Variant: "20/20", Chaos: 5, Listings: 100, IsTransfigured: false, GemColor: "BLUE"},
+	}
+
+	depthMap := PrecomputeMarketDepth(gems, mc)
+
+	// Spark of Nova: 25/50 = 0.5
+	sparkKey := "Spark of Nova|20/20"
+	if d, ok := depthMap[sparkKey]; !ok {
+		t.Errorf("depthMap missing key %q", sparkKey)
+	} else if math.Abs(d-0.5) > 0.001 {
+		t.Errorf("depthMap[%q] = %f, want 0.5", sparkKey, d)
+	}
+
+	// Cleave of Rage: 15/30 = 0.5
+	cleaveKey := "Cleave of Rage|1"
+	if d, ok := depthMap[cleaveKey]; !ok {
+		t.Errorf("depthMap missing key %q", cleaveKey)
+	} else if math.Abs(d-0.5) > 0.001 {
+		t.Errorf("depthMap[%q] = %f, want 0.5", cleaveKey, d)
+	}
+
+	// Corrupted and non-transfigured gems should be excluded.
+	if _, ok := depthMap["Bad of Gem|20/20"]; ok {
+		t.Error("depthMap should not contain corrupted gem")
+	}
+	if _, ok := depthMap["Spark|20/20"]; ok {
+		t.Error("depthMap should not contain non-transfigured gem")
+	}
+}
+
+func TestNormalizeHistoryDepthGated_SkipsCascade(t *testing.T) {
+	// Build a MarketContext with temporal normalization data.
+	buckets := map[string][]TemporalBucket{
+		"20/20": {
+			{Hour: 10, Coeff: 2.0, N: 10},
+			{Hour: 14, Coeff: 0.5, N: 10},
+		},
+	}
+	bucketsJSON, _ := json.Marshal(buckets)
+
+	mc := MarketContext{
+		TemporalMode:    "hourly",
+		TemporalBuckets: bucketsJSON,
+	}
+
+	// Two gems: one CASCADE (depth=0.1) and one TEMPORAL (depth=2.0).
+	depthMap := map[string]float64{
+		"Cascade of Gem|20/20":  0.1, // CASCADE: depth < 0.4
+		"Temporal of Gem|20/20": 2.0, // TEMPORAL: depth >= 0.4
+	}
+
+	history := []GemPriceHistory{
+		{
+			Name: "Cascade of Gem", Variant: "20/20", GemColor: "RED",
+			Points: []PricePoint{
+				{Time: time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC), Chaos: 200, Listings: 5},
+				{Time: time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC), Chaos: 100, Listings: 5},
+			},
+		},
+		{
+			Name: "Temporal of Gem", Variant: "20/20", GemColor: "BLUE",
+			Points: []PricePoint{
+				{Time: time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC), Chaos: 200, Listings: 20},
+				{Time: time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC), Chaos: 100, Listings: 20},
+			},
+		},
+	}
+
+	normalized := NormalizeHistoryDepthGated(history, mc, depthMap)
+	if len(normalized) != 2 {
+		t.Fatalf("got %d histories, want 2", len(normalized))
+	}
+
+	// CASCADE gem: prices should be UNCHANGED (raw).
+	cascade := normalized[0]
+	if cascade.Points[0].Chaos != 200 {
+		t.Errorf("CASCADE gem point[0].Chaos = %f, want 200 (unchanged)", cascade.Points[0].Chaos)
+	}
+	if cascade.Points[1].Chaos != 100 {
+		t.Errorf("CASCADE gem point[1].Chaos = %f, want 100 (unchanged)", cascade.Points[1].Chaos)
+	}
+
+	// TEMPORAL gem: prices should be DIVIDED by coefficient.
+	// At hour 10, coeff=2.0 → 200/2.0 = 100
+	// At hour 14, coeff=0.5 → 100/0.5 = 200
+	temporal := normalized[1]
+	if !approxEqual(temporal.Points[0].Chaos, 100, 0.01) {
+		t.Errorf("TEMPORAL gem point[0].Chaos = %f, want 100 (200/2.0)", temporal.Points[0].Chaos)
+	}
+	if !approxEqual(temporal.Points[1].Chaos, 200, 0.01) {
+		t.Errorf("TEMPORAL gem point[1].Chaos = %f, want 200 (100/0.5)", temporal.Points[1].Chaos)
+	}
+
+	// Listings should be preserved for both.
+	if cascade.Points[0].Listings != 5 {
+		t.Errorf("CASCADE listings changed: %d, want 5", cascade.Points[0].Listings)
+	}
+	if temporal.Points[0].Listings != 20 {
+		t.Errorf("TEMPORAL listings changed: %d, want 20", temporal.Points[0].Listings)
+	}
+}
+
+func TestNormalizeHistoryDepthGated_NoneMode(t *testing.T) {
+	mc := MarketContext{
+		TemporalMode:    "none",
+		TemporalBuckets: []byte("{}"),
+	}
+	depthMap := map[string]float64{
+		"Gem of Test|20/20": 2.0,
+	}
+
+	history := []GemPriceHistory{
+		{
+			Name: "Gem of Test", Variant: "20/20", GemColor: "RED",
+			Points: []PricePoint{
+				{Time: time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC), Chaos: 200, Listings: 5},
+			},
+		},
+	}
+
+	result := NormalizeHistoryDepthGated(history, mc, depthMap)
+
+	// With mode="none", function should return original history unchanged.
+	if len(result) != 1 {
+		t.Fatalf("got %d histories, want 1", len(result))
+	}
+	if result[0].Points[0].Chaos != 200 {
+		t.Errorf("mode=none: Chaos = %f, want 200 (unchanged)", result[0].Points[0].Chaos)
+	}
+}
+
+func TestPrecomputeMarketDepth_ConsistencyWithFeatures(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	mc := testMarketContext()
+	mc.VariantStats = map[string]VariantBaseline{
+		"20/20": {MedianListings: 50},
+	}
+
+	gems := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 25, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Cleave of Rage", Variant: "20/20", Chaos: 200, Listings: 10, IsTransfigured: true, GemColor: "RED"},
+	}
+
+	// Compute features.
+	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	// Compute depth map.
+	depthMap := PrecomputeMarketDepth(gems, mc)
+
+	if len(features) != 2 {
+		t.Fatalf("got %d features, want 2", len(features))
+	}
+
+	for _, f := range features {
+		key := f.Name + "|" + f.Variant
+		depth, ok := depthMap[key]
+		if !ok {
+			t.Errorf("depthMap missing key %q", key)
+			continue
+		}
+		if math.Abs(depth-f.MarketDepth) > 0.001 {
+			t.Errorf("depthMap[%q] = %f, feature.MarketDepth = %f — should match", key, depth, f.MarketDepth)
+		}
+	}
+}
+
+func TestNormalizeHistoryDepthGated_MissingKeyDefaultsCascade(t *testing.T) {
+	// A gem in history but NOT in depthMap should default to depth=0 (CASCADE),
+	// meaning its prices are NOT normalized (raw history preserved).
+	buckets := map[string][]TemporalBucket{
+		"20/20": {{Hour: 12, Coeff: 2.0, N: 10}},
+	}
+	bucketsJSON, _ := json.Marshal(buckets)
+	mc := MarketContext{
+		TemporalMode:    "hourly",
+		TemporalBuckets: bucketsJSON,
+	}
+
+	snapTime := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+	history := []GemPriceHistory{{
+		Name: "Unknown Gem", Variant: "20/20",
+		Points: []PricePoint{{Time: snapTime, Chaos: 100, Listings: 5}},
+	}}
+
+	// Empty depthMap — gem not found, defaults to 0 < 0.4 → CASCADE → skip normalization.
+	depthMap := map[string]float64{}
+
+	result := NormalizeHistoryDepthGated(history, mc, depthMap)
+	if result[0].Points[0].Chaos != 100 {
+		t.Errorf("missing depthMap entry should skip normalization: got Chaos=%f, want 100", result[0].Points[0].Chaos)
+	}
+}
+
+func TestComputeMarketDepthForGem_AllSourcesZero(t *testing.T) {
+	// When VariantStats is empty AND fallbackAvg is 0, depth should be 0 → CASCADE regime.
+	mc := MarketContext{
+		TotalGems:    0,
+		TotalListings: 0,
+		VariantStats: map[string]VariantBaseline{},
+	}
+	depth := computeMarketDepthForGem(50, "20/20", mc, 0)
+	if depth != 0 {
+		t.Errorf("all sources zero: depth = %f, want 0", depth)
+	}
+
+	// This 0 depth → CASCADE regime in ComputeGemFeatures.
+	// Intentional: empty market = no reliable normalization baseline.
+}

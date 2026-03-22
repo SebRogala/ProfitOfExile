@@ -718,3 +718,87 @@ func TestComputeGemSignals_STABLESignalModerateConfidence(t *testing.T) {
 		t.Errorf("STABLE confidence = %d, want 40-75", sig.Confidence)
 	}
 }
+
+func TestComputeGemSignals_CASCADEAdvancedSignal(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	// CASCADE requires: MarketRegime="CASCADE", Low7d > 0, Chaos > Low7d*1.5
+	f := testFeature("Rare of Cascade", "20/20", 300, 5)
+	f.MarketRegime = "CASCADE"
+	f.MarketDepth = 0.1
+	f.Low7d = 100       // price is 3x the 7d low
+	f.High7d = 300
+	f.HistPosition = 95
+	f.Tier = "TOP"
+
+	gems := testBaseGems("Rare", 30)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	if signals[0].AdvancedSignal != "CASCADE" {
+		t.Errorf("AdvancedSignal = %q, want CASCADE (MarketRegime=CASCADE, price > 1.5x low)", signals[0].AdvancedSignal)
+	}
+}
+
+func TestComputeGemSignals_CASCADEDoesNotOverridePRICE_MANIPULATION(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	// Set up PRICE_MANIPULATION: listings <= 3, price > 200, |velocity| < 1, CV > 80
+	// Also set CASCADE conditions: MarketRegime=CASCADE, price > 1.5x low.
+	f := testFeature("Manipulated of Cascade", "20/20", 500, 2)
+	f.VelShortPrice = 0.5
+	f.VelMedPrice = 0.3
+	f.VelLongPrice = 0.3
+	f.VelShortListing = 0.1
+	f.VelMedListing = 0.1
+	f.VelLongListing = 0.1
+	f.CV = 90
+	f.Listings = 2
+	f.Tier = "TOP"
+	// CASCADE conditions met:
+	f.MarketRegime = "CASCADE"
+	f.MarketDepth = 0.05
+	f.Low7d = 100       // 500 > 100*1.5 = 150
+	f.High7d = 500
+
+	gems := testBaseGems("Manipulated", 30)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	// PRICE_MANIPULATION has priority over CASCADE.
+	if signals[0].AdvancedSignal != "PRICE_MANIPULATION" {
+		t.Errorf("AdvancedSignal = %q, want PRICE_MANIPULATION (keeps priority over CASCADE)", signals[0].AdvancedSignal)
+	}
+}
+
+func TestComputeGemSignals_CASCADENotFiredWhenTemporal(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	// High price spike (chaos > 1.5x low) but TEMPORAL regime — CASCADE should NOT fire.
+	f := testFeature("Spike of Normal", "20/20", 300, 50)
+	f.MarketRegime = "TEMPORAL" // not CASCADE
+	f.MarketDepth = 2.0
+	f.Low7d = 100
+	f.High7d = 300
+	f.Tier = "TOP"
+
+	gems := testBaseGems("Spike", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	if signals[0].AdvancedSignal == "CASCADE" {
+		t.Errorf("AdvancedSignal = CASCADE, should NOT fire when MarketRegime=TEMPORAL")
+	}
+}

@@ -1018,34 +1018,35 @@ func TestTierAction_SignalOverridesWindow(t *testing.T) {
 }
 
 func TestSellability_Baseline(t *testing.T) {
-	// Neutral inputs: moderate everything → 50 baseline + turnover proxy + stability bonus
-	score, label := sellability(50, 0, 0, 50, "STABLE")
-	// s=50 baseline +20 (stability |0|<2) = 70, listingVel=0 not < -1 → no turnover proxy
+	// Neutral inputs: moderate everything → 50 baseline + stability bonus
+	// pctPriceVel=0%, pctListingVel=0%
+	// s=50 + 0(depth) + 0(pctPV) + 0(pctLV) + 20(stability |0%|<2%) = 70
+	score, label := sellability(50, 0, 0, 50, "STABLE", 1.0, 100)
 	if score != 70 {
-		t.Errorf("sellability(50, 0, 0, 50, STABLE) score = %d, want 70", score)
+		t.Errorf("sellability baseline score = %d, want 70", score)
 	}
 	if label != "GOOD" {
-		t.Errorf("sellability(50, 0, 0, 50, STABLE) label = %s, want GOOD", label)
+		t.Errorf("sellability baseline label = %s, want GOOD", label)
 	}
 }
 
 func TestSellability_TRAPGemHighCVButStable(t *testing.T) {
-	// TRAP gem (high CV=150) but currently stable (|priceVel|<2):
-	// Old score: 50 + 15 (listings<10) + 0 (vel=0) + 0 (listingVel=0) - 20 (cv>80) - 20 (TRAP signal) = 25 → SLOW
-	// New score: 50 + 30 (listings<10) + 20 (stability, |0|<2) + 0 (no turnover) - 10 (cv>80, halved) - 20 (TRAP) = 70 → GOOD
-	score, label := sellability(5, 0, 0, 150, "TRAP")
-	if score != 70 {
-		t.Errorf("TRAP gem stable score = %d, want 70", score)
+	// TRAP gem (high CV=150) but currently stable (pctPriceVel=0%):
+	// s=50 + 0(depth) + 0(pctPV) + 0(pctLV) + 20(stability) - 10(cv>80) - 20(TRAP) = 40
+	score, label := sellability(5, 0, 0, 150, "TRAP", 1.0, 100)
+	if score != 40 {
+		t.Errorf("TRAP gem stable score = %d, want 40", score)
 	}
-	if label != "GOOD" {
-		t.Errorf("TRAP gem stable label = %s, want GOOD", label)
+	if label != "MODERATE" {
+		t.Errorf("TRAP gem stable label = %s, want MODERATE", label)
 	}
 }
 
 func TestSellability_TurnoverProxy(t *testing.T) {
-	// Listings dropping (listingVel=-3 < -1) while price holds (|priceVel|=1 < 3) → +25 turnover bonus
-	// s=50 + 15 (listings<30) + 5 (priceVel>0) + 10 (listingVel<-3) + 20 (stability |1|<2) + 25 (turnover) = 125 → clamped 100
-	score, label := sellability(20, -3, 1, 30, "STABLE")
+	// listingVel=-3 on 20 listings → pctLV=-15%, priceVel=1 on 100c → pctPV=1%
+	// s=50 + 0(depth) + 5(pctPV 1%>0) + 10(pctLV -15%<-5%) + 20(stability |1%|<2%)
+	// + 25(turnover: -15%<-2% && |1%|<3%) = 110 → clamped 100
+	score, label := sellability(20, -3, 1, 30, "STABLE", 1.0, 100)
 	if score != 100 {
 		t.Errorf("turnover proxy score = %d, want 100", score)
 	}
@@ -1055,55 +1056,88 @@ func TestSellability_TurnoverProxy(t *testing.T) {
 }
 
 func TestSellability_TurnoverProxyNotFiredOnHighPriceVel(t *testing.T) {
-	// listingVel=-2 (< -1) but priceVel=5 (not < 3) → turnover proxy does NOT fire
-	// s=50 + 15 (listings<30) + 5 (priceVel=5 hits >0 branch, not >5) + 0 (listVel=-2: not < -3, not > 5)
-	// + 0 (stability: |5| not < 2) + 0 (no turnover: |5| not < 3) = 70
-	score, _ := sellability(20, -2, 5, 30, "STABLE")
-	if score != 70 {
-		t.Errorf("no turnover proxy when priceVel high: score = %d, want 70", score)
+	// priceVel=5 on 100c → pctPV=5%, listingVel=-2 on 20 → pctLV=-10%
+	// s=50 + 0(depth) + 15(pctPV 5%>3%) + 10(pctLV -10%<-5%)
+	// + 0(stability: |5%| not <2%) + 0(turnover: |5%| not <3%) = 75
+	score, _ := sellability(20, -2, 5, 30, "STABLE", 1.0, 100)
+	if score != 75 {
+		t.Errorf("no turnover proxy when priceVel high: score = %d, want 75", score)
 	}
 }
 
 func TestSellability_CVPenaltyHalved(t *testing.T) {
-	// High CV (>80) should now apply only -10, not -20
-	// s=50 + 15 (listings<30) + 20 (stability |0|<2) + 0 (listVel=0: no turnover, not < -1) - 10 (cv>80) = 75
-	score, _ := sellability(20, 0, 0, 90, "STABLE")
-	if score != 75 {
-		t.Errorf("high CV penalty score = %d, want 75 (halved penalty)", score)
+	// High CV (>80) applies -10
+	// s=50 + 0(depth) + 0 + 0 + 20(stability) - 10(cv>80) = 60
+	score, _ := sellability(20, 0, 0, 90, "STABLE", 1.0, 100)
+	if score != 60 {
+		t.Errorf("high CV penalty score = %d, want 60", score)
 	}
 }
 
 func TestSellability_StabilityBonusNotFiredWhenVolatile(t *testing.T) {
-	// priceVel=5 → |5| not < 2, no stability bonus
-	// s=50 + 15 (listings<30) + 5 (priceVel=5 hits >0 branch) + 10 (listVel<-3) + 0 (stability: |5| not <2)
-	// turnover: listVel=-4 < -1 but |priceVel|=5 not < 3 → no turnover bonus
-	// = 80
-	score, _ := sellability(20, -4, 5, 30, "STABLE")
-	if score != 80 {
-		t.Errorf("volatile gem score = %d, want 80 (no stability bonus)", score)
+	// priceVel=5 on 100c → pctPV=5%, listingVel=-4 on 20 → pctLV=-20%
+	// s=50 + 0(depth) + 15(pctPV 5%>3%) + 10(pctLV -20%<-5%)
+	// + 0(stability: |5%| not <2%) + 0(turnover: |5%| not <3%) = 75
+	score, _ := sellability(20, -4, 5, 30, "STABLE", 1.0, 100)
+	if score != 75 {
+		t.Errorf("volatile gem score = %d, want 75 (no stability bonus)", score)
 	}
 }
 
 func TestSellability_Labels(t *testing.T) {
 	tests := []struct {
-		name      string
-		transLst  int
-		listVel   float64
-		priceVel  float64
-		cv        float64
-		signal    string
-		wantLabel string
+		name        string
+		transLst    int
+		listVel     float64
+		priceVel    float64
+		cv          float64
+		signal      string
+		marketDepth float64
+		chaos       float64
+		wantLabel   string
 	}{
-		// FAST SELL: >= 80
-		{"thin listings + stable", 5, 0, 0, 30, "STABLE", "FAST SELL"},
-		// UNLIKELY: < 20 — heavy supply, high CV, TRAP, falling price
-		{"dumping+lots", 150, 10, -10, 100, "DUMPING", "UNLIKELY"},
+		// GOOD: s=50 + 0(depth) + 20(stability) = 70 → GOOD
+		{"stable gem", 5, 0, 0, 30, "STABLE", 1.0, 100, "GOOD"},
+		// UNLIKELY: pctPV=-10%<-3%, pctLV=6.7%<10%, cv>80, DUMPING
+		// s=50 + 0(depth) - 15(pctPV) + 0(pctLV) - 10(cv>80) - 20(DUMPING) = 5
+		{"dumping+lots", 150, 10, -10, 100, "DUMPING", 1.0, 100, "UNLIKELY"},
+		// FAST SELL: depth=0.3 → +15(thin). s=50 + 15 + 20(stability) = 85
+		{"thin depth + stable", 5, 0, 0, 30, "STABLE", 0.3, 100, "FAST SELL"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, label := sellability(tt.transLst, tt.listVel, tt.priceVel, tt.cv, tt.signal)
+			_, label := sellability(tt.transLst, tt.listVel, tt.priceVel, tt.cv, tt.signal, tt.marketDepth, tt.chaos)
 			if label != tt.wantLabel {
 				t.Errorf("sellability label = %s, want %s", label, tt.wantLabel)
+			}
+		})
+	}
+}
+
+func TestSellability_RelativeDepth(t *testing.T) {
+	// Test marketDepth effect. Neutral: pctPV=0, pctLV=0, stability bonus +20.
+	// Thin (<0.5): +15, Deep (>2.0): +15, Normal: no bonus.
+
+	tests := []struct {
+		name        string
+		marketDepth float64
+		wantScore   int
+		wantLabel   string
+	}{
+		{"thin market", 0.3, 85, "FAST SELL"},  // 50 + 15(thin) + 20(stability) = 85
+		{"normal depth", 1.0, 70, "GOOD"},       // 50 + 20(stability) = 70
+		{"deep market", 3.0, 85, "FAST SELL"},   // 50 + 15(deep) + 20(stability) = 85
+		{"very deep", 13.5, 85, "FAST SELL"},    // 50 + 15(deep) + 20(stability) = 85
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score, label := sellability(20, 0, 0, 30, "STABLE", tt.marketDepth, 100)
+			if score != tt.wantScore {
+				t.Errorf("depth=%.1f: score = %d, want %d", tt.marketDepth, score, tt.wantScore)
+			}
+			if label != tt.wantLabel {
+				t.Errorf("depth=%.1f: label = %s, want %s", tt.marketDepth, label, tt.wantLabel)
 			}
 		})
 	}

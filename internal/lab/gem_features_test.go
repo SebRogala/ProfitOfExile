@@ -558,3 +558,106 @@ func TestComputeGemFeatures_ZeroMarketContext(t *testing.T) {
 		t.Error("RelativeListings is NaN/Inf")
 	}
 }
+
+func TestComputeGemFeatures_MarketDepth(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	mc := testMarketContext()
+	mc.VariantStats = map[string]VariantBaseline{
+		"20/20": {MedianListings: 50},
+	}
+
+	tests := []struct {
+		name          string
+		listings      int
+		wantDepth     float64
+		wantRegime    string
+		depthTol      float64
+	}{
+		{"half median", 25, 0.5, "TEMPORAL", 0.001},
+		{"low depth", 10, 0.2, "CASCADE", 0.001},
+		{"high depth", 200, 4.0, "TEMPORAL", 0.001},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gems := []GemPrice{
+				{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: tt.listings, IsTransfigured: true, GemColor: "BLUE"},
+			}
+			features := ComputeGemFeatures(snapTime, gems, nil, mc)
+			if len(features) != 1 {
+				t.Fatalf("got %d features, want 1", len(features))
+			}
+			f := features[0]
+			if math.Abs(f.MarketDepth-tt.wantDepth) > tt.depthTol {
+				t.Errorf("MarketDepth = %f, want %f", f.MarketDepth, tt.wantDepth)
+			}
+			if f.MarketRegime != tt.wantRegime {
+				t.Errorf("MarketRegime = %q, want %q", f.MarketRegime, tt.wantRegime)
+			}
+		})
+	}
+}
+
+func TestComputeGemFeatures_MarketDepth_Fallback(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	// MarketContext WITHOUT VariantStats for 20/20 — should fall back to avgListings.
+	mc := testMarketContext()
+	// mc has TotalGems=100, TotalListings=2000, so avgListings = 20.
+
+	gems := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	f := features[0]
+
+	// avgListings = 2000/100 = 20, listings=10 => depth = 10/20 = 0.5
+	expectedDepth := 10.0 / 20.0
+	if math.Abs(f.MarketDepth-expectedDepth) > 0.001 {
+		t.Errorf("MarketDepth fallback = %f, want %f (listings/avgListings)", f.MarketDepth, expectedDepth)
+	}
+}
+
+func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	mc := testMarketContext()
+	mc.VariantStats = map[string]VariantBaseline{
+		"20/20": {MedianListings: 50},
+	}
+
+	// Listings=20, depth=20/50=0.4 => TEMPORAL (>= 0.4)
+	gems := []GemPrice{
+		{Name: "Border of Light", Variant: "20/20", Chaos: 100, Listings: 20, IsTransfigured: true, GemColor: "BLUE"},
+	}
+	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	if features[0].MarketRegime != "TEMPORAL" {
+		t.Errorf("depth=0.4: MarketRegime = %q, want TEMPORAL (boundary)", features[0].MarketRegime)
+	}
+	if math.Abs(features[0].MarketDepth-0.4) > 0.001 {
+		t.Errorf("depth=0.4: MarketDepth = %f, want 0.4", features[0].MarketDepth)
+	}
+
+	// Listings=19, depth=19/50=0.38 => CASCADE (< 0.4)
+	gems2 := []GemPrice{
+		{Name: "Border of Shadow", Variant: "20/20", Chaos: 100, Listings: 19, IsTransfigured: true, GemColor: "BLUE"},
+	}
+	features2 := ComputeGemFeatures(snapTime, gems2, nil, mc)
+	if len(features2) != 1 {
+		t.Fatalf("got %d features, want 1", len(features2))
+	}
+	if features2[0].MarketRegime != "CASCADE" {
+		t.Errorf("depth=0.38: MarketRegime = %q, want CASCADE (below boundary)", features2[0].MarketRegime)
+	}
+	if features2[0].MarketDepth >= 0.4 {
+		t.Errorf("depth=0.38: MarketDepth = %f, want < 0.4", features2[0].MarketDepth)
+	}
+}
