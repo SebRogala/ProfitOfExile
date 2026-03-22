@@ -171,6 +171,92 @@ func TestComputeGemFeatures_CV(t *testing.T) {
 	}
 }
 
+func TestComputeGemFeatures_CVShort(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	gems := []GemPrice{
+		{Name: "Mixed of History", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	// Old volatile data (> 6h ago) + recent stable data (within 6h).
+	// CVShort should be much lower than CV since recent prices are stable.
+	history := []GemPriceHistory{
+		{
+			Name: "Mixed of History", Variant: "20/20", GemColor: "BLUE",
+			Points: []PricePoint{
+				// Old volatile data: > 6h before snapTime.
+				{Time: snapTime.Add(-48 * time.Hour), Chaos: 20, Listings: 10},
+				{Time: snapTime.Add(-24 * time.Hour), Chaos: 200, Listings: 10},
+				{Time: snapTime.Add(-12 * time.Hour), Chaos: 50, Listings: 10},
+				{Time: snapTime.Add(-8 * time.Hour), Chaos: 180, Listings: 10},
+				// Recent stable data: within 6h of snapTime.
+				{Time: snapTime.Add(-5 * time.Hour), Chaos: 98, Listings: 10},
+				{Time: snapTime.Add(-3 * time.Hour), Chaos: 100, Listings: 10},
+				{Time: snapTime.Add(-1 * time.Hour), Chaos: 101, Listings: 10},
+				{Time: snapTime.Add(-30 * time.Minute), Chaos: 100, Listings: 10},
+			},
+		},
+	}
+
+	mc := testMarketContext()
+	features := ComputeGemFeatures(snapTime, gems, history, mc)
+
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	f := features[0]
+
+	// 7-day CV should be high (old volatile data included).
+	if f.CV <= 20 {
+		t.Errorf("CV = %f, want > 20 (volatile 7-day history)", f.CV)
+	}
+
+	// 6h CVShort should be low (recent stable data only).
+	if f.CVShort >= 5 {
+		t.Errorf("CVShort = %f, want < 5 (stable recent prices)", f.CVShort)
+	}
+
+	// CVShort should be much less than CV.
+	if f.CVShort >= f.CV {
+		t.Errorf("CVShort (%f) should be < CV (%f)", f.CVShort, f.CV)
+	}
+
+	// StabilityDiscount should be computed from CVShort (near 1.0 for stable recent prices).
+	expectedDiscount := stabilityDiscount(f.CVShort)
+	if math.Abs(f.StabilityDiscount-expectedDiscount) > 0.001 {
+		t.Errorf("StabilityDiscount = %f, want %f (from CVShort)", f.StabilityDiscount, expectedDiscount)
+	}
+	// With low CVShort, discount should be near 1.0 (minimal penalty).
+	if f.StabilityDiscount < 0.95 {
+		t.Errorf("StabilityDiscount = %f, want >= 0.95 (low CVShort)", f.StabilityDiscount)
+	}
+}
+
+func TestComputeGemFeatures_CVShort_NoHistory(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	gems := []GemPrice{
+		{Name: "New of Gem", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "GREEN"},
+	}
+
+	mc := testMarketContext()
+	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	f := features[0]
+
+	// No history: CVShort should be 0.
+	if f.CVShort != 0 {
+		t.Errorf("CVShort = %f, want 0 (no history)", f.CVShort)
+	}
+	// StabilityDiscount from CVShort=0 should be 1.0.
+	if f.StabilityDiscount != 1.0 {
+		t.Errorf("StabilityDiscount = %f, want 1.0 (CVShort=0)", f.StabilityDiscount)
+	}
+}
+
 func TestComputeGemFeatures_HistPosition(t *testing.T) {
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 	t0 := snapTime.Add(-90 * time.Minute)

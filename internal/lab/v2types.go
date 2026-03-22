@@ -101,6 +101,7 @@ type GemFeature struct {
 	VelLongPrice      float64
 	VelLongListing    float64
 	CV                float64
+	CVShort           float64 // 6h coefficient of variation (for stability discount)
 	HistPosition      float64
 	High7d            float64
 	Low7d             float64
@@ -110,7 +111,7 @@ type GemFeature struct {
 	RelativePrice         float64
 	RelativeListings      float64
 	SellProbabilityFactor float64 // 0.3-1.0, calibrated from listing count
-	StabilityDiscount     float64 // 0.5-1.0, from CV
+	StabilityDiscount     float64 // 0.7-1.0, from CVShort (6h)
 }
 
 // GemSignal holds the computed signal and confidence for a single gem at a snapshot.

@@ -52,12 +52,16 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			f.VelLongPrice = velocityWindow(h.Points, 6*time.Hour, extractChaos)
 			f.VelLongListing = velocityWindow(h.Points, 6*time.Hour, extractListings)
 
-			// CV from all history prices.
+			// CV from all history prices (7-day, used for TRAP detection).
 			prices := make([]float64, len(h.Points))
 			for i, p := range h.Points {
 				prices[i] = p.Chaos
 			}
 			f.CV = coefficientOfVariation(prices)
+
+			// Short-window CV (6h) for stability discount.
+			recentPrices := extractRecentPrices(h.Points, snapTime, 6*time.Hour)
+			f.CVShort = coefficientOfVariation(recentPrices)
 
 			// Historical position.
 			f.High7d, f.Low7d, f.HistPosition = historicalPosition(g.Chaos, prices)
@@ -86,12 +90,13 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 
 		// Risk-adjusted scoring fields.
 		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos)
-		f.StabilityDiscount = stabilityDiscount(f.CV)
+		f.StabilityDiscount = stabilityDiscount(f.CVShort)
 
 		// Sanitize non-velocity float fields.
 		// Velocity fields are already sanitized by velocityWindow; CV, hist, and
 		// relative fields are sanitized here because their producers do not guarantee it.
 		f.CV = sanitizeFloat(f.CV)
+		f.CVShort = sanitizeFloat(f.CVShort)
 		f.HistPosition = sanitizeFloat(f.HistPosition)
 		f.High7d = sanitizeFloat(f.High7d)
 		f.Low7d = sanitizeFloat(f.Low7d)
@@ -168,12 +173,13 @@ func sellProbabilityFactor(listings int, low7d, currentPrice float64) float64 {
 	return math.Max(base, 0.3)
 }
 
-// stabilityDiscount returns a 0.5-1.0 discount factor based on the coefficient
-// of variation. Higher CV means less stable prices, lower discount.
-func stabilityDiscount(cv float64) float64 {
-	d := 1.0 - (cv / 200.0)
-	if d < 0.5 {
-		return 0.5
+// stabilityDiscount returns a 0.7-1.0 discount factor based on the short-window
+// coefficient of variation. Calibrated from 54K observations: P90 of 2h price
+// change is 20%, P95 is 33%. Scale: 0% CV -> 1.0, 60% CV -> 0.7 (max 30% penalty).
+func stabilityDiscount(cvShort float64) float64 {
+	d := 1.0 - (cvShort / 200.0)
+	if d < 0.7 {
+		return 0.7
 	}
 	if d > 1.0 {
 		return 1.0

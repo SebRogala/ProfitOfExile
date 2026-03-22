@@ -176,7 +176,7 @@ func classifySellConfidence(sellProb, stabilityDisc float64) string {
 	if sellProb >= 0.8 && stabilityDisc >= 0.85 {
 		return "SAFE"
 	}
-	if sellProb < 0.5 && stabilityDisc < 0.7 {
+	if sellProb < 0.5 && stabilityDisc < 0.8 {
 		return "RISKY"
 	}
 	return "FAIR"
