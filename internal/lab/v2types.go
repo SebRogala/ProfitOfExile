@@ -110,6 +110,8 @@ type GemFeature struct {
 	ListingElasticity     float64
 	RelativePrice         float64
 	RelativeListings      float64
+	MarketDepth           float64 // listings / VariantBaseline.MedianListings (per-variant, league-invariant)
+	MarketRegime          string  // "TEMPORAL" (depth >= 0.4) or "CASCADE" (depth < 0.4)
 	SellProbabilityFactor float64 // 0.3-1.0, calibrated from listing count
 	StabilityDiscount     float64 // 0.7-1.0, from CVShort (6h)
 }

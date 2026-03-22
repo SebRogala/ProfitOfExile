@@ -2,6 +2,7 @@ package lab
 
 import (
 	"encoding/json"
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -430,6 +431,73 @@ func NormalizeHistory(history []GemPriceHistory, coefficientAt func(time.Time, s
 		normalized[i] = nh
 	}
 
+	return normalized
+}
+
+// PrecomputeMarketDepth computes MarketDepth for each (name, variant) pair
+// from raw listings and VariantBaseline.MedianListings. Used to gate temporal
+// normalization before features are computed (listings are never normalized).
+func PrecomputeMarketDepth(gems []GemPrice, mc MarketContext) map[string]float64 {
+	avgListings := float64(mc.TotalListings) / float64(max(mc.TotalGems, 1))
+	if mc.TotalGems == 0 || len(mc.VariantStats) == 0 {
+		log.Printf("WARNING: PrecomputeMarketDepth: empty market context (TotalGems=%d, VariantStats=%d) — all gems default to depth=0 (CASCADE)", mc.TotalGems, len(mc.VariantStats))
+	}
+	result := make(map[string]float64, len(gems))
+	for _, g := range gems {
+		if !isAnalyzableGem(g) {
+			continue
+		}
+		key := g.Name + "|" + g.Variant
+		result[key] = computeMarketDepthForGem(g.Listings, g.Variant, mc, avgListings)
+	}
+	return result
+}
+
+// NormalizeHistoryDepthGated normalizes like NormalizeHistoryFromMC but skips
+// normalization for CASCADE-regime gems (depthMap[key] < 0.4). These gems have
+// event-driven price movements (buyout cascades), not cyclical temporal patterns.
+func NormalizeHistoryDepthGated(history []GemPriceHistory, mc MarketContext, depthMap map[string]float64) []GemPriceHistory {
+	if mc.TemporalMode == "none" || mc.TemporalMode == "" || len(mc.TemporalBuckets) == 0 {
+		return history
+	}
+
+	var bucketData map[string][]TemporalBucket
+	if err := json.Unmarshal(mc.TemporalBuckets, &bucketData); err != nil {
+		log.Printf("ERROR: NormalizeHistoryDepthGated: failed to parse TemporalBuckets (mode=%s): %v", mc.TemporalMode, err)
+		return history
+	}
+
+	normalized := make([]GemPriceHistory, len(history))
+	for i, h := range history {
+		key := h.Name + "|" + h.Variant
+		depth := depthMap[key] // 0 if not found (treated as CASCADE)
+
+		// CASCADE regime: skip normalization, preserve raw history.
+		if depth < 0.4 {
+			normalized[i] = h
+			continue
+		}
+
+		// TEMPORAL regime: normalize prices.
+		nh := GemPriceHistory{
+			Name:     h.Name,
+			Variant:  h.Variant,
+			GemColor: h.GemColor,
+			Points:   make([]PricePoint, len(h.Points)),
+		}
+		for j, p := range h.Points {
+			coeff := LookupCoefficient(bucketData, mc.TemporalMode, p.Time, h.Variant)
+			if coeff <= 0 {
+				coeff = 1.0
+			}
+			nh.Points[j] = PricePoint{
+				Time:     p.Time,
+				Chaos:    p.Chaos / coeff,
+				Listings: p.Listings,
+			}
+		}
+		normalized[i] = nh
+	}
 	return normalized
 }
 

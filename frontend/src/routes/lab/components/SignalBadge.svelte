@@ -31,6 +31,7 @@
 		COMEBACK: { prefix: '🔄', cssClass: 'badge-purple' },
 		POTENTIAL: { prefix: '💎', cssClass: 'badge-cyan' },
 		PRICE_MANIPULATION: { prefix: '🚩', cssClass: 'badge-red' },
+		CASCADE: { prefix: '🌊', cssClass: 'badge-yellow' },
 		BREAKOUT: { prefix: '🚀', cssClass: 'badge-green' },
 	};
 

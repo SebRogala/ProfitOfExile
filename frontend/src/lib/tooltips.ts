@@ -37,6 +37,8 @@ export const ADVANCED_TOOLTIPS: Record<string, string> = {
 		'Rising ROI that hasn\'t been widely noticed yet. Low competition, moderate price, rising trend. Best opportunity for experienced players who want low-herd-risk plays. Triggered: price 30-200c, < 40 listings, price rising, below historical midpoint',
 	PRICE_MANIPULATION:
 		'Suspicious pricing. Very few listings at high price with no movement. Likely someone trying to set a fake price floor. Avoid. Triggered: \u2264 3 listings, price > 200c, no velocity, high CV',
+	CASCADE:
+		'Thin-market cascade lifecycle. Someone bought out all listings, relisted high, and undercutters are driving the price down. Price will keep falling until it stabilizes. Avoid buying/farming until the cascade completes. Triggered: market depth < 0.4x median, price > 1.5x 7-day low',
 	BREAKOUT:
 		'Price breaking above historical range with rising listings. Genuine demand increase, not manipulation. Strong buy/farm signal. Triggered: price > 90th percentile, listings rising, positive velocity',
 };

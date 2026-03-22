@@ -100,7 +100,8 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		}
 
 		// Normalize history using temporal coefficients before computing features.
-		normalizedHistory := lab.NormalizeHistoryFromMC(history, mc)
+		depthMap := lab.PrecomputeMarketDepth(gems, mc)
+		normalizedHistory := lab.NormalizeHistoryDepthGated(history, mc, depthMap)
 
 		// Compute gem features.
 		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
