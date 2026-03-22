@@ -30,10 +30,15 @@ func DetectTierBoundariesRecursive(gems []GemPrice) TierBoundaries {
 		return tierFallback(prices)
 	}
 
-	// Step 2: Find TOP via largest ABSOLUTE gap — only if it's significantly
-	// larger than the average gap (at least 3x). Otherwise there's no real
-	// outlier cluster and everything starts from HIGH.
-	topIdx := findLargestAbsoluteGap(prices)
+	// Step 2: Find TOP via largest ABSOLUTE gap in the top portion of the
+	// distribution. TOP gems are rare outliers — the gap must be in the top 10%
+	// (minimum 3 positions) to prevent a mid-distribution gap from absorbing
+	// too many gems into TOP.
+	topCap := len(prices) / 10
+	if topCap < 3 {
+		topCap = 3
+	}
+	topIdx := findLargestGapInRange(prices, topCap)
 	topGap := prices[topIdx] - prices[topIdx+1]
 
 	// Compute average gap for comparison.
@@ -46,7 +51,7 @@ func DetectTierBoundariesRecursive(gems []GemPrice) TierBoundaries {
 	var boundaries []float64
 	var pool []float64
 
-	if topGap >= avgGap*3 && topIdx < len(prices)-1 {
+	if topGap >= avgGap*3 && topIdx < topCap {
 		// Significant outlier gap — create TOP tier.
 		topBoundary := prices[topIdx]
 		boundaries = append(boundaries, topBoundary)
@@ -131,6 +136,27 @@ func collectAndSortPrices(gems []GemPrice) []float64 {
 		prices[i], prices[j] = prices[j], prices[i]
 	}
 	return prices
+}
+
+// findLargestGapInRange returns the index of the price just ABOVE the largest
+// absolute gap within the first maxIdx positions of a descending price slice.
+// Used by DetectTierBoundariesRecursive to constrain TOP detection to the top
+// portion of the distribution.
+func findLargestGapInRange(prices []float64, maxIdx int) int {
+	bestIdx := 0
+	bestGap := 0.0
+	limit := maxIdx
+	if limit > len(prices)-1 {
+		limit = len(prices) - 1
+	}
+	for i := 0; i < limit; i++ {
+		gap := prices[i] - prices[i+1]
+		if gap > bestGap {
+			bestGap = gap
+			bestIdx = i
+		}
+	}
+	return bestIdx
 }
 
 // findLargestAbsoluteGap returns the index of the price just ABOVE the largest

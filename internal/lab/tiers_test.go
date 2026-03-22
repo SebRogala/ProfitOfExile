@@ -442,3 +442,71 @@ func TestDetectTierBoundaries_Alias(t *testing.T) {
 		t.Fatal("alias DetectTierBoundaries should produce boundaries")
 	}
 }
+
+// TestDetectTierBoundariesRecursive_ProdRegression_TopTooWide tests with real
+// production data from March 22, 2026. The algorithm was placing TOP boundary
+// at 629.7c (10 gems in TOP) because the 630→430 gap (200c) was larger than
+// the 1097→937 gap (160c). TOP should contain at most 2 gems (KB and Molten Strike)
+// because the 937→802 gap (135c) is the natural boundary.
+func TestDetectTierBoundariesRecursive_ProdRegression_TopTooWide(t *testing.T) {
+	// Real prices from prod 2026-03-22T16:12 snapshot (20/20 variant, top 30 gems).
+	// The listing values are real too — the dynamic listing floor matters.
+	gems := []GemPrice{
+		{Name: "KB of Clustering", Chaos: 1097, Listings: 229, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Molten Strike Zenith", Chaos: 937, Listings: 104, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Lacerate Butchering", Chaos: 802, Listings: 32, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Viper Strike Mamba", Chaos: 784, Listings: 58, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Cyclone Tumult", Chaos: 765, Listings: 56, IsTransfigured: true, Variant: "20/20"},
+		{Name: "EK Massacre", Chaos: 762, Listings: 43, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Shock Nova Procession", Chaos: 639, Listings: 9, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Icicle Mine Sabotage", Chaos: 638, Listings: 4, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Spark Nova", Chaos: 638, Listings: 94, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Animate Guardian Smiting", Chaos: 630, Listings: 6, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Animate Weapon Ranged", Chaos: 430, Listings: 86, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Spark Unpredictability", Chaos: 429, Listings: 27, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Kinetic Bolt Frag", Chaos: 386, Listings: 3, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Hexblast Contradiction", Chaos: 375, Listings: 57, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Dual Strike Ambidex", Chaos: 373, Listings: 7, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Elemental Hit Spectrum", Chaos: 340, Listings: 105, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Holy Relic Conviction", Chaos: 328, Listings: 63, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Detonate Dead Scavenge", Chaos: 310, Listings: 64, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Ground Slam Earthshake", Chaos: 300, Listings: 83, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Forbidden Rite Soul", Chaos: 300, Listings: 46, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Arc Oscillating", Chaos: 298, Listings: 23, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Double Strike Momentum", Chaos: 288, Listings: 22, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Firestorm Meteors", Chaos: 266, Listings: 75, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Cleave Rage", Chaos: 266, Listings: 14, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Vortex Projection", Chaos: 236, Listings: 11, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Smite Divine", Chaos: 200, Listings: 99, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Frostblink Wintry", Chaos: 200, Listings: 120, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Shield Crush Chief", Chaos: 196, Listings: 22, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Cold Snap Power", Chaos: 188, Listings: 7, IsTransfigured: true, Variant: "20/20"},
+		{Name: "Static Strike Gather", Chaos: 186, Listings: 83, IsTransfigured: true, Variant: "20/20"},
+	}
+
+	tb := DetectTierBoundariesRecursive(gems)
+	if len(tb.Boundaries) == 0 {
+		t.Fatal("expected boundaries")
+	}
+
+	topBoundary := tb.Boundaries[0]
+	t.Logf("Boundaries: %v (TOP=%.0fc, topCount below)", tb.Boundaries, topBoundary)
+
+	// TOP must contain at most KB (1097c) and Molten Strike (937c).
+	// The 937→802 gap (135c) is the natural TOP boundary.
+	// The algorithm must NOT set TOP at 630c just because the 630→430 gap is larger.
+	topCount := 0
+	for _, g := range gems {
+		if g.Chaos >= topBoundary {
+			topCount++
+		}
+	}
+
+	if topCount > 3 {
+		t.Errorf("TOP tier has %d gems (boundary=%.0fc) — too many. TOP should isolate 1-3 outliers, not %d. Boundary should be >= 802c", topCount, topBoundary, topCount)
+	}
+
+	if topBoundary < 800 {
+		t.Errorf("TOP boundary = %.0fc, want >= 800c. The 1097→937 or 937→802 gap should define TOP, not the 630→430 gap lower in the distribution", topBoundary)
+	}
+}
