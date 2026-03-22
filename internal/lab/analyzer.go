@@ -2,6 +2,7 @@ package lab
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -317,4 +318,22 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	a.logger.Info("v2 analysis complete", "snapTime", snapTime, "gems", len(gems))
 	a.throttler.Signal()
 	return nil
+}
+
+// RecomputeLatestV2 deletes the latest snapshot's computed v2 data and re-runs
+// the full pipeline. Use on startup to force recomputation after a deploy with
+// new scoring logic — otherwise ON CONFLICT DO NOTHING would keep stale data.
+func (a *Analyzer) RecomputeLatestV2(ctx context.Context) error {
+	_, snapTime, err := a.repo.LatestGemPrices(ctx)
+	if err != nil {
+		return err
+	}
+	if snapTime.IsZero() {
+		return nil
+	}
+	a.logger.Info("recomputing latest v2 snapshot", "snapTime", snapTime)
+	if err := a.repo.DeleteV2ForSnapshot(ctx, snapTime); err != nil {
+		return fmt.Errorf("recompute: delete old data: %w", err)
+	}
+	return a.RunV2(ctx)
 }
