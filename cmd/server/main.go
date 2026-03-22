@@ -216,17 +216,18 @@ func main() {
 		}
 	}()
 
-	// Run initial analyses on startup (uses existing data).
-	// RunV2 must complete before RunFont because Font needs GemFeatures.
+	// Recompute latest v2 snapshot on startup — ensures fresh computed data
+	// after a deploy with new scoring logic (ON CONFLICT DO NOTHING would
+	// otherwise keep stale data). Only deletes computed tables, not raw snapshots.
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("startup v2+font analysis panicked", "recover", r)
 			}
 		}()
-		// V2 pipeline first — produces MarketContext, GemFeatures, GemSignals.
-		if err := analyzer.RunV2(ctx); err != nil {
-			slog.Warn("startup v2 analysis failed (non-fatal)", "error", err)
+		// Recompute V2: deletes latest computed data, then re-runs full pipeline.
+		if err := analyzer.RecomputeLatestV2(ctx); err != nil {
+			slog.Warn("startup v2 recompute failed (non-fatal)", "error", err)
 		}
 		// Font analysis second — needs GemFeatures from V2.
 		if err := analyzer.RunFont(ctx); err != nil {

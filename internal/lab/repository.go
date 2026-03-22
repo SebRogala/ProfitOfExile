@@ -1026,6 +1026,20 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 	return results, nil
 }
 
+// DeleteV2ForSnapshot removes computed v2 data (market_context, gem_features,
+// gem_signals, font_snapshots) for a specific snapshot time. Raw collector data
+// (gem_snapshots, currency_snapshots, fragment_snapshots) is NOT touched.
+// Used on startup to force recomputation with the latest code after a deploy.
+func (r *Repository) DeleteV2ForSnapshot(ctx context.Context, snapTime time.Time) error {
+	tables := []string{"gem_features", "gem_signals", "market_context", "font_snapshots"}
+	for _, table := range tables {
+		if _, err := r.pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE time = $1", table), snapTime); err != nil {
+			return fmt.Errorf("lab repo: delete %s at %v: %w", table, snapTime, err)
+		}
+	}
+	return nil
+}
+
 // SaveGemSignals batch-inserts pre-computed gem signal rows.
 func (r *Repository) SaveGemSignals(ctx context.Context, signals []GemSignal) (int, error) {
 	if len(signals) == 0 {
