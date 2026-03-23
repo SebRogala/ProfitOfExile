@@ -328,6 +328,22 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 		results := lab.BuildCompareResults(names, transfigure, trends, sparklines)
 
+		// Enrich with risk-adjusted price from cached v2 GemSignals.
+		if cache != nil {
+			if signals := cache.GemSignals(); len(signals) > 0 {
+				type sKey struct{ name, variant string }
+				sigIndex := make(map[sKey]float64, len(signals))
+				for _, s := range signals {
+					sigIndex[sKey{s.Name, s.Variant}] = s.RiskAdjustedValue
+				}
+				for i := range results {
+					if raVal, ok := sigIndex[sKey{results[i].TransfiguredName, results[i].Variant}]; ok {
+						results[i].RiskAdjustedPrice = raVal
+					}
+				}
+			}
+		}
+
 		type row struct {
 			TransfiguredName     string              `json:"transfiguredName"`
 			BaseName             string              `json:"baseName"`
@@ -362,6 +378,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			SellConfidence       string              `json:"sellConfidence"`
 			SellConfidenceReason string              `json:"sellConfidenceReason"`
 			QuickSellPrice       float64             `json:"quickSellPrice"`
+			RiskAdjustedPrice    float64             `json:"riskAdjustedPrice"`
 		}
 
 		rows := make([]row, 0, len(results))
@@ -400,6 +417,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				SellConfidence:       cr.SellConfidence,
 				SellConfidenceReason: cr.SellConfidenceReason,
 				QuickSellPrice:       cr.QuickSellPrice,
+				RiskAdjustedPrice:    cr.RiskAdjustedPrice,
 			})
 		}
 

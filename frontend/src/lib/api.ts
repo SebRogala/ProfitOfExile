@@ -144,6 +144,7 @@ export interface CompareGem {
 	sellConfidence: string;
 	sellConfidenceReason: string;
 	quickSellPrice: number;
+	riskAdjustedPrice: number;
 }
 
 // --- API helpers ---
@@ -240,6 +241,7 @@ function mapCompareRow(r: any): CompareGem {
 		sellConfidence: r.sellConfidence || '',
 		sellConfidenceReason: r.sellConfidenceReason || '',
 		quickSellPrice: Math.round(r.quickSellPrice || 0),
+		riskAdjustedPrice: Math.round(r.riskAdjustedPrice || 0),
 	};
 }
 

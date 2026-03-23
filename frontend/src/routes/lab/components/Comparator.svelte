@@ -339,20 +339,27 @@
 						<span class="card-name">{gem.name}</span>
 						<span class="tier-badge {tierClass(gem.priceTier)}">{gem.priceTier}</span>
 					</div>
-					<div class="card-row">
-						<span class="roi" title={METRIC_TOOLTIPS.ROI}>{gem.roi}c</span>
-						<SignalBadge signal={gem.signal} />
-						{#if gem.sellConfidence}
-							<span title={gem.sellConfidenceReason || ''}>
-								<SignalBadge signal={gem.sellConfidence} type="confidence" />
-							</span>
-						{/if}
+					<div class="card-row price-line">
+						<span class="price-display" title="Ninja price vs risk-adjusted (sell probability × stability)">
+							<span class="price-raw">{gem.transPrice}c</span>
+							{#if gem.riskAdjustedPrice > 0}
+								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c)</span>
+							{/if}
+						</span>
 						<span class="cv" title={METRIC_TOOLTIPS.CV}>CV: {gem.cv}%</span>
 					</div>
-					<div class="card-row small">
+					<div class="card-row small listings-line">
 						<span>{gem.transListings} listings</span>
 						<span class="velocity-inline" title="Price change over last 12 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12}c /12h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
+						<span class="signals-right">
+							<SignalBadge signal={gem.signal} />
+							{#if gem.sellConfidence}
+								<span title={gem.sellConfidenceReason || ''}>
+									<SignalBadge signal={gem.sellConfidence} type="confidence" />
+								</span>
+							{/if}
+						</span>
 					</div>
 					<div class="price-context">
 						<div class="price-row">
@@ -694,6 +701,38 @@
 		font-weight: 700;
 		font-size: 1.25rem;
 		cursor: help;
+	}
+	.price-line {
+		white-space: nowrap;
+	}
+	.price-display {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.35rem;
+		cursor: help;
+	}
+	.price-raw {
+		color: var(--color-lab-green);
+		font-weight: 700;
+		font-size: 1.25rem;
+	}
+	.price-risk-adj {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+	.price-risk-label {
+		color: var(--color-lab-text-muted, #888);
+		font-weight: 400;
+	}
+	.listings-line {
+		justify-content: flex-start;
+	}
+	.signals-right {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
 	}
 	.roi-pct {
 		color: var(--color-lab-text-secondary);

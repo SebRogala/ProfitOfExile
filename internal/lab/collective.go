@@ -72,12 +72,13 @@ type CompareResult struct {
 	LiquidityTier        string           `json:"liquidityTier"`
 	TransListings        int              `json:"transListings"`
 	// Risk-adjusted display fields (from features/signals)
-	WeightedROI        float64 `json:"weightedRoi"`
-	Low7d              float64 `json:"low7d"`
-	High7d             float64 `json:"high7d"`
-	SellConfidence     string  `json:"sellConfidence"`
-	SellConfidenceReason string `json:"sellConfidenceReason"`
-	QuickSellPrice     float64 `json:"quickSellPrice"`
+	WeightedROI          float64 `json:"weightedRoi"`
+	Low7d                float64 `json:"low7d"`
+	High7d               float64 `json:"high7d"`
+	SellConfidence       string  `json:"sellConfidence"`
+	SellConfidenceReason string  `json:"sellConfidenceReason"`
+	QuickSellPrice       float64 `json:"quickSellPrice"`
+	RiskAdjustedPrice    float64 `json:"riskAdjustedPrice"`
 }
 
 // SparklinePoint is a single data point for sparkline charts.
@@ -200,7 +201,11 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 		liquidityScore := float64(sellability) / 100.0
 		var saturationPenalty float64
 		if cr.Signal == "DUMPING" {
-			saturationPenalty = 0.5
+			if cr.TransfiguredListings < 15 {
+				saturationPenalty = 0.5 // thin market DUMPING = real danger
+			} else {
+				saturationPenalty = 0.15 // liquid market DUMPING = likely noise
+			}
 		}
 		cr.WeightedROI = cr.ROI * liquidityScore * (1.0 - saturationPenalty)
 		cr.WeightedROIPct = cr.ROIPct * liquidityScore * (1.0 - saturationPenalty)
@@ -227,6 +232,8 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 
 // BuildCompareResults builds side-by-side comparison data for specific gems.
 // It assigns BEST/OK/AVOID recommendations based on weighted ROI ranking.
+// ROI is computed using the cheapest base gem of the same color/variant (lab scenario:
+// you transform a random gem of that color, not a specific base).
 func BuildCompareResults(
 	names []string,
 	transfigure []TransfigureResult,
@@ -239,6 +246,18 @@ func BuildCompareResults(
 	for i := range transfigure {
 		t := &transfigure[i]
 		trIndex[trKey{t.TransfiguredName, t.Variant}] = t
+	}
+
+	// Compute cheapest base price per (color, variant) for lab ROI.
+	// In the lab, any gem of that color can be transformed — the cost basis
+	// is the cheapest available base, not the specific matched base.
+	type colorVariantKey struct{ color, variant string }
+	cheapestBase := make(map[colorVariantKey]float64)
+	for _, t := range transfigure {
+		key := colorVariantKey{t.GemColor, t.Variant}
+		if existing, ok := cheapestBase[key]; !ok || (t.BasePrice > 0 && t.BasePrice < existing) {
+			cheapestBase[key] = t.BasePrice
+		}
 	}
 
 	// Index trends by (name, variant).
@@ -270,11 +289,22 @@ func BuildCompareResults(
 			cr.BaseName = bestTr.BaseName
 			cr.Variant = bestTr.Variant
 			cr.GemColor = bestTr.GemColor
-			cr.ROI = bestTr.ROI
-			cr.ROIPct = bestTr.ROIPct
-			cr.BasePrice = bestTr.BasePrice
 			cr.TransfiguredPrice = bestTr.TransfiguredPrice
 			cr.Confidence = bestTr.Confidence
+
+			// Use cheapest base of this color/variant as cost basis (lab scenario).
+			colorBase, hasColorBase := cheapestBase[colorVariantKey{bestTr.GemColor, bestTr.Variant}]
+			if hasColorBase && colorBase > 0 {
+				cr.BasePrice = colorBase
+				cr.ROI = bestTr.TransfiguredPrice - colorBase
+				if colorBase > 0 {
+					cr.ROIPct = (cr.ROI / colorBase) * 100
+				}
+			} else {
+				cr.BasePrice = bestTr.BasePrice
+				cr.ROI = bestTr.ROI
+				cr.ROIPct = bestTr.ROIPct
+			}
 			found = true
 		}
 
@@ -341,7 +371,10 @@ func BuildCompareResults(
 
 		for pos, r := range ranks {
 			cr := results[r.idx]
-			if cr.Signal == "TRAP" || cr.Signal == "DUMPING" || cr.SellUrgency == "SELL_NOW" {
+			if cr.Signal == "TRAP" || cr.SellUrgency == "SELL_NOW" {
+				results[r.idx].Recommendation = "AVOID"
+			} else if cr.Signal == "DUMPING" && cr.TransListings < 15 {
+				// DUMPING on thin market = real danger, avoid.
 				results[r.idx].Recommendation = "AVOID"
 			} else if cr.Sellability > 0 && cr.Sellability < 20 {
 				results[r.idx].Recommendation = "AVOID"
@@ -358,8 +391,17 @@ func BuildCompareResults(
 
 // deriveSellConfidence returns SAFE/FAIR/RISKY based on market conditions.
 // SAFE = liquid + stable, FAIR = moderate risk, RISKY = thin/volatile.
+// Market health gates prevent false RISKY on liquid markets with noisy signals.
 func deriveSellConfidence(listings int, cv float64, signal string) string {
-	if signal == "TRAP" || signal == "DUMPING" {
+	if signal == "TRAP" {
+		return "RISKY"
+	}
+	// DUMPING on a liquid, stable market is often 2h velocity noise —
+	// don't override to RISKY when fundamentals are healthy.
+	if signal == "DUMPING" {
+		if listings >= 15 && cv < 30 {
+			return "FAIR"
+		}
 		return "RISKY"
 	}
 	if listings >= 15 && cv < 30 {
@@ -377,6 +419,9 @@ func deriveSellConfidenceReason(listings int, cv float64, signal string) string 
 		return "extreme volatility — price unpredictable"
 	}
 	if signal == "DUMPING" {
+		if listings >= 15 && cv < 30 {
+			return fmt.Sprintf("price softening but %d listings — liquid market", listings)
+		}
 		return "price dropping — sellers undercutting"
 	}
 	conf := deriveSellConfidence(listings, cv, signal)
