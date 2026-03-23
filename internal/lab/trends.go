@@ -90,8 +90,11 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 		return "UNDERCUT", "HERD at historical peak — undercut 10-15% NOW before crash"
 	}
 
-	// DUMPING = sell immediately
+	// DUMPING: thin market = sell immediately, liquid market = undercut (likely noise).
 	if signal == "DUMPING" {
+		if transListings >= 20 {
+			return "UNDERCUT", "Price softening — undercut 5-10% for fast sale"
+		}
 		return "SELL_NOW", "Price dropping with rising supply — undercut hard"
 	}
 

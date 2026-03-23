@@ -122,9 +122,16 @@ func ComputeGemSignals(
 
 // computeRecommendation determines the actionable recommendation for a gem signal.
 // Priority: AVOID for dangerous signals, OK for high-confidence positive signals.
+// DUMPING is gated on confidence — low-confidence DUMPING on liquid markets is noise.
 func computeRecommendation(signal, sellUrgency string, confidence int) string {
-	// Dangerous signals always produce AVOID.
-	if signal == "TRAP" || signal == "DUMPING" || sellUrgency == "SELL_NOW" {
+	// TRAP always avoided. SELL_NOW already gated on market thinness.
+	if signal == "TRAP" || sellUrgency == "SELL_NOW" {
+		return "AVOID"
+	}
+
+	// DUMPING only AVOID when confidence backs it up.
+	// Low confidence = 2h noise on liquid market, don't override.
+	if signal == "DUMPING" && confidence >= 50 {
 		return "AVOID"
 	}
 

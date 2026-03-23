@@ -1248,3 +1248,17 @@ func TestExtractRecentPrices_Empty(t *testing.T) {
 		t.Errorf("got %d prices, want 0", len(prices))
 	}
 }
+
+func TestSellUrgency_DUMPINGLiquidMarket(t *testing.T) {
+	// DUMPING on liquid market (20+ listings) should produce UNDERCUT, not SELL_NOW.
+	urgency, _ := sellUrgency(-10, 10, 0, 50, 0, 30, "DUMPING", "HIGH")
+	if urgency != "UNDERCUT" {
+		t.Errorf("sellUrgency DUMPING with 30 listings: got %s, want UNDERCUT", urgency)
+	}
+
+	// DUMPING on thin market (<20 listings) should produce SELL_NOW.
+	urgency, _ = sellUrgency(-10, 10, 0, 50, 0, 5, "DUMPING", "HIGH")
+	if urgency != "SELL_NOW" {
+		t.Errorf("sellUrgency DUMPING with 5 listings: got %s, want SELL_NOW", urgency)
+	}
+}

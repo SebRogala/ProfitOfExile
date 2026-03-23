@@ -337,6 +337,116 @@ func TestRankCollective_ROIPctPopulated(t *testing.T) {
 	}
 }
 
+func TestDeriveSellConfidence_DUMPINGLiquidMarket(t *testing.T) {
+	// DUMPING on a liquid, stable market should be FAIR (not RISKY).
+	got := deriveSellConfidence(35, 20, "DUMPING")
+	if got != "FAIR" {
+		t.Errorf("deriveSellConfidence(35 listings, 20%% CV, DUMPING) = %s, want FAIR", got)
+	}
+
+	// DUMPING on a thin market is still RISKY.
+	got = deriveSellConfidence(5, 20, "DUMPING")
+	if got != "RISKY" {
+		t.Errorf("deriveSellConfidence(5 listings, 20%% CV, DUMPING) = %s, want RISKY", got)
+	}
+
+	// DUMPING on a liquid but volatile market is still RISKY.
+	got = deriveSellConfidence(35, 50, "DUMPING")
+	if got != "RISKY" {
+		t.Errorf("deriveSellConfidence(35 listings, 50%% CV, DUMPING) = %s, want RISKY", got)
+	}
+
+	// TRAP is always RISKY regardless of market health.
+	got = deriveSellConfidence(100, 5, "TRAP")
+	if got != "RISKY" {
+		t.Errorf("deriveSellConfidence(100 listings, 5%% CV, TRAP) = %s, want RISKY", got)
+	}
+}
+
+func TestRankCollective_DUMPINGLiquidMarketReducedPenalty(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Liquid Dump Gem", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, TransfiguredListings: 30, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Thin Dump Gem", Variant: "20/20", ROI: 100, BasePrice: 5, TransfiguredPrice: 105, TransfiguredListings: 5, Confidence: "OK"},
+	}
+	trends := []TrendResult{
+		{Name: "Liquid Dump Gem", Variant: "20/20", Signal: "DUMPING", Sellability: 80},
+		{Name: "Thin Dump Gem", Variant: "20/20", Signal: "DUMPING", Sellability: 80},
+	}
+
+	results := RankCollective(transfigure, trends, 0, 50, "")
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+
+	byName := make(map[string]CollectiveResult)
+	for _, r := range results {
+		byName[r.TransfiguredName] = r
+	}
+
+	// Liquid market: 100 * 0.8 * (1 - 0.15) = 68
+	liquidExpected := 100.0 * 0.8 * 0.85
+	if byName["Liquid Dump Gem"].WeightedROI != liquidExpected {
+		t.Errorf("Liquid Dump Gem WeightedROI = %f, want %f", byName["Liquid Dump Gem"].WeightedROI, liquidExpected)
+	}
+
+	// Thin market: 100 * 0.8 * (1 - 0.5) = 40
+	thinExpected := 100.0 * 0.8 * 0.5
+	if byName["Thin Dump Gem"].WeightedROI != thinExpected {
+		t.Errorf("Thin Dump Gem WeightedROI = %f, want %f", byName["Thin Dump Gem"].WeightedROI, thinExpected)
+	}
+
+	// Liquid market should rank higher.
+	if results[0].TransfiguredName != "Liquid Dump Gem" {
+		t.Errorf("first result = %s, want Liquid Dump Gem", results[0].TransfiguredName)
+	}
+}
+
+func TestBuildCompareResults_DUMPINGLiquidNotAvoided(t *testing.T) {
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Liquid Gem", BaseName: "Liquid", Variant: "20/20", ROI: 200, Confidence: "OK"},
+	}
+	trends := []TrendResult{
+		{Name: "Liquid Gem", Variant: "20/20", Signal: "DUMPING", CurrentListings: 30},
+	}
+
+	results := BuildCompareResults([]string{"Liquid Gem"}, transfigure, trends, nil)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	// DUMPING with 30 listings should be BEST (not AVOID) when it's the only gem.
+	if results[0].Recommendation == "AVOID" {
+		t.Errorf("Liquid DUMPING gem recommendation = AVOID, should not be AVOID with 30 listings")
+	}
+}
+
+func TestBuildCompareResults_ColorBaseROI(t *testing.T) {
+	// Two gems of the same color: cheapest base should be used for ROI.
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Expensive Trans", BaseName: "Expensive Base", Variant: "20/20",
+			GemColor: "RED", BasePrice: 100, TransfiguredPrice: 500, ROI: 400, ROIPct: 400, Confidence: "OK"},
+		{TransfiguredName: "Cheap Trans", BaseName: "Cheap Base", Variant: "20/20",
+			GemColor: "RED", BasePrice: 5, TransfiguredPrice: 200, ROI: 195, ROIPct: 3900, Confidence: "OK"},
+	}
+
+	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	// ROI should use cheapest RED 20/20 base (5c), not specific base (100c).
+	expectedROI := 500.0 - 5.0 // 495
+	if results[0].ROI != expectedROI {
+		t.Errorf("ROI = %f, want %f (cheapest color base)", results[0].ROI, expectedROI)
+	}
+	if results[0].BasePrice != 5 {
+		t.Errorf("BasePrice = %f, want 5 (cheapest color base)", results[0].BasePrice)
+	}
+	expectedROIPct := (expectedROI / 5.0) * 100 // 9900
+	if results[0].ROIPct != expectedROIPct {
+		t.Errorf("ROIPct = %f, want %f", results[0].ROIPct, expectedROIPct)
+	}
+}
+
 func TestSignalWeight(t *testing.T) {
 	tests := []struct {
 		signal string
