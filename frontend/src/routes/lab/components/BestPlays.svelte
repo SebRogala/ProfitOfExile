@@ -391,7 +391,7 @@
 	.hist-listings { margin-left: auto; color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
 	.hist-loading, .hist-none { color: var(--color-lab-text-secondary); font-size: 0.8125rem; }
 	/* Tier badge */
-	.col-tier { width: 55px; }
+	.col-tier { width: 80px; }
 	.tier-badge {
 		font-size: 0.75rem;
 		font-weight: 700;
@@ -400,7 +400,6 @@
 		white-space: nowrap;
 		text-align: center;
 	}
-	.col-tier { width: 65px; }
 	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
 	.tier-high { color: #fb923c; background: rgba(251, 146, 60, 0.12); }
 	.tier-mid-high { color: #c084fc; background: rgba(192, 132, 252, 0.12); }
