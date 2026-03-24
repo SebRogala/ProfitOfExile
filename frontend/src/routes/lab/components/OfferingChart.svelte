@@ -127,8 +127,10 @@
 			const currMedian = medianByHour.get(h);
 			const prevMedian = medianByHour.get(prevHour);
 			if (currMedian != null && prevMedian != null && prevMedian > 0) {
-				// Apply the historical relative change between these hours.
-				const change = currMedian / prevMedian;
+				// Apply the historical relative change, clamped to ±10% per hour
+				// to prevent noise amplification on cheap items.
+				const rawChange = currMedian / prevMedian;
+				const change = Math.max(0.90, Math.min(1.10, rawChange));
 				predicted = predicted * change;
 			}
 			points.push(`L${xFromMs(t).toFixed(1)},${yFromPrice(predicted).toFixed(1)}`);
