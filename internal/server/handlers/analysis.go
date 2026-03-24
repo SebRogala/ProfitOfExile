@@ -292,11 +292,9 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 						continue
 					}
 					recipeCost := base20 + 20*gcpPrice
-					if recipeCost < base2020 {
-						g.GCPRecipeCost = recipeCost
-						g.GCPRecipeBase = base20
-						g.GCPRecipeSaves = base2020 - recipeCost
-					}
+					g.GCPRecipeCost = recipeCost
+					g.GCPRecipeBase = base20
+					g.GCPRecipeSaves = base2020 - recipeCost
 				}
 			}
 		}
