@@ -113,7 +113,7 @@ func (r *Repository) LatestGCPPrice(ctx context.Context) (float64, error) {
 	var chaos *float64
 	err := r.pool.QueryRow(ctx, `
 		SELECT chaos FROM currency_snapshots
-		WHERE currency_id = 'gemcutters-prism'
+		WHERE currency_id = 'gcp'
 		ORDER BY time DESC LIMIT 1`).Scan(&chaos)
 	if err != nil {
 		return 0, fmt.Errorf("lab repo: latest GCP price: %w", err)
