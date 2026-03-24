@@ -892,6 +892,7 @@
 		padding: 2px 8px;
 		margin-left: auto;
 		letter-spacing: 0.03em;
+		white-space: nowrap;
 	}
 	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
 	.tier-high { color: #fb923c; background: rgba(251, 146, 60, 0.12); }
