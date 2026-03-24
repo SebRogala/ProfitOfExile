@@ -23,6 +23,7 @@ type Cache struct {
 	lastUpdated time.Time
 	nextFetch   time.Time
 	divineRate  float64
+	gcpPrice    float64
 
 	// V2 pre-computed results. These three fields are populated together by
 	// Analyzer.RunV2 from the same snapshot time, but may be nil independently
@@ -197,6 +198,20 @@ func (c *Cache) DivineRate() float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.divineRate
+}
+
+// SetGCPPrice stores the latest GCP price.
+func (c *Cache) SetGCPPrice(price float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gcpPrice = price
+}
+
+// GCPPrice returns the cached GCP price.
+func (c *Cache) GCPPrice() float64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.gcpPrice
 }
 
 // SetMarketContext replaces the cached market context.

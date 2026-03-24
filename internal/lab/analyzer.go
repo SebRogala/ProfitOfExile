@@ -224,6 +224,7 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 
 	if a.cache != nil {
 		a.cache.SetQuality(results)
+		a.cache.SetGCPPrice(gcpPrice)
 	}
 
 	a.logger.Info("quality analysis complete",

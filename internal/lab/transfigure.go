@@ -129,6 +129,11 @@ func AnalyzeTransfigure(snapTime time.Time, gems []GemPrice) []TransfigureResult
 // "Rain of Arrows of Saturation" → "Rain of Arrows"
 // "Spark of Nova" → "Spark"
 // "Vaal Spark of Nova" → "Vaal Spark"
+// ExtractBaseName is the exported variant of extractBaseName.
+func ExtractBaseName(transfiguredName string) string {
+	return extractBaseName(transfiguredName)
+}
+
 func extractBaseName(transfiguredName string) string {
 	idx := strings.LastIndex(transfiguredName, " of ")
 	if idx < 0 {
