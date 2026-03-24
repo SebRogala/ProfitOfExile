@@ -26,7 +26,7 @@
 		league?: string;
 	} = $props();
 
-	let sortBy = $state<'riskAdjusted' | 'roi' | 'roiPercent'>('riskAdjusted');
+	let sortBy = $state<'riskAdjusted' | 'roi' | 'roiPercent'>('roi');
 	let budget = $state('');
 	let expandedRow = $state<number | null>(null);
 
