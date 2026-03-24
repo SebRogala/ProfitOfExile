@@ -227,13 +227,19 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
-			// Compute color-specific tiers using the simplified algorithm.
-			// Different from BestPlays variant-wide tiers — Font EV evaluates
-			// per color pool which has different price distribution.
+			// Compute CASCADE-adjusted prices for tier boundaries.
+			// Without this, a single buyout spike (e.g., 19000c on a ~800c gem)
+			// distorts the entire color's tier distribution.
 			colorGems := make([]GemPrice, 0, len(entries))
 			for _, e := range entries {
+				price := e.chaos
+				if feat, ok := featureLookup[featureKey{e.name, variant}]; ok {
+					if feat.MarketRegime == "CASCADE" && feat.High7d > 0 && e.chaos > feat.High7d*1.5 {
+						price = feat.High7d
+					}
+				}
 				colorGems = append(colorGems, GemPrice{
-					Name: e.name, Variant: variant, Chaos: e.chaos,
+					Name: e.name, Variant: variant, Chaos: price,
 					Listings: e.listings, IsTransfigured: true,
 				})
 			}
@@ -252,16 +258,25 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 					continue
 				}
 
+				// CASCADE guard: when a thin-market buyout spikes the ninja price
+				// far above its 7d range, use the historical high instead.
+				// Without this, a single 3-listing gem at 19000c (real value ~800c)
+				// inflates the entire color's Font EV by 3-6x.
+				effectivePrice := e.chaos
+				if feat.MarketRegime == "CASCADE" && feat.High7d > 0 && e.chaos > feat.High7d*1.5 {
+					effectivePrice = feat.High7d
+				}
+
 				// Compute sell probability and stability from CURRENT gem data.
-				sellProb := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
+				sellProb := sellProbabilityFactor(e.listings, feat.Low7d, effectivePrice)
 				stabDisc := stabilityDiscount(feat.CVShort)
-				adjustedPrice := e.chaos * sellProb * stabDisc
+				adjustedPrice := effectivePrice * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
-				gemRawPrice[e.name] = e.chaos
+				gemRawPrice[e.name] = effectivePrice
 				isThin := e.listings < 5
 
 				// Safe/Premium: use color-specific tiers (per-color pool).
-				colorTier := classifyTier(e.chaos, colorTiers)
+				colorTier := classifyTier(effectivePrice, colorTiers)
 				if isSafeTierWinner(colorTier) {
 					safeWinnerCount++
 					if isThin {
@@ -322,21 +337,26 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				if feat == nil {
 					continue
 				}
-				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7d, e.chaos)
+				// Re-apply CASCADE guard (same as first pass).
+				ep := e.chaos
+				if feat.MarketRegime == "CASCADE" && feat.High7d > 0 && e.chaos > feat.High7d*1.5 {
+					ep = feat.High7d
+				}
+				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7d, ep)
 				stabDisc2 := stabilityDiscount(feat.CVShort)
-				adjPrice := e.chaos * sellProb2 * stabDisc2
-				colorTier2 := classifyTier(e.chaos, colorTiers)
+				adjPrice := ep * sellProb2 * stabDisc2
+				colorTier2 := classifyTier(ep, colorTiers)
 				if isSafeTierWinner(colorTier2) {
 					safeWinnerSum += adjPrice
-					safeWinnerRawSum += e.chaos
+					safeWinnerRawSum += ep
 				}
 				if isPremiumTierWinner(colorTier2) {
 					premiumWinnerSum += adjPrice
-					premiumWinnerRawSum += e.chaos
+					premiumWinnerRawSum += ep
 				}
 				if isJackpotTierWinner(feat.Tier) {
 					jackpotWinnerSum += adjPrice
-					jackpotWinnerRawSum += e.chaos
+					jackpotWinnerRawSum += ep
 				}
 			}
 
