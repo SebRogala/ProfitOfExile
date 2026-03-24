@@ -99,7 +99,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			gcpPrice = cache.GCPPrice()
 		}
 		if gcpPrice <= 0 {
-			gcpPrice = 4.0 // fallback
+			gcpPrice = 4.0
+			slog.Warn("collective: GCP price not cached, using fallback", "fallback", gcpPrice)
 		}
 
 		// Enrich results with GlobalTier from cached gem features.

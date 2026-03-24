@@ -1228,7 +1228,9 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		if cache == nil {
-			json.NewEncoder(w).Encode(resp)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				slog.Error("market overview: encode response", "error", err)
+			}
 			return
 		}
 
@@ -1363,10 +1365,13 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 
 	// Current price.
 	var currentPrice *float64
-	_ = pool.QueryRow(ctx, `
+	if err := pool.QueryRow(ctx, `
 		SELECT chaos FROM fragment_snapshots
 		WHERE fragment_id = $1
-		ORDER BY time DESC LIMIT 1`, fragmentID).Scan(&currentPrice)
+		ORDER BY time DESC LIMIT 1`, fragmentID).Scan(&currentPrice); err != nil {
+		slog.Warn("offering timing: current price query failed", "fragment", fragmentID, "error", err)
+		return nil
+	}
 	if currentPrice == nil {
 		return nil
 	}
@@ -1380,14 +1385,21 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
 		GROUP BY 1 HAVING COUNT(*) >= 3
 		ORDER BY median`, fragmentID)
-	if err == nil {
-		defer hourRows.Close()
+	if err != nil {
+		slog.Warn("offering timing: hourly query failed", "fragment", fragmentID, "error", err)
+	} else {
 		var hours []giftHourMedian
 		for hourRows.Next() {
 			var hm giftHourMedian
-			if err := hourRows.Scan(&hm.Hour, &hm.Median); err == nil {
-				hours = append(hours, hm)
+			if err := hourRows.Scan(&hm.Hour, &hm.Median); err != nil {
+				slog.Warn("offering timing: hourly scan failed", "fragment", fragmentID, "error", err)
+				continue
 			}
+			hours = append(hours, hm)
+		}
+		hourRows.Close()
+		if err := hourRows.Err(); err != nil {
+			slog.Warn("offering timing: hourly iteration error", "fragment", fragmentID, "error", err)
 		}
 		// Store all hourly medians for prediction chart line.
 		for _, h := range hours {
@@ -1420,14 +1432,21 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
 		GROUP BY 1 HAVING COUNT(*) >= 5
 		ORDER BY median`, fragmentID)
-	if err == nil {
-		defer dayRows.Close()
+	if err != nil {
+		slog.Warn("offering timing: weekday query failed", "fragment", fragmentID, "error", err)
+	} else {
 		var days []dayMedian
 		for dayRows.Next() {
 			var dm dayMedian
-			if err := dayRows.Scan(&dm.Day, &dm.Median); err == nil {
-				days = append(days, dm)
+			if err := dayRows.Scan(&dm.Day, &dm.Median); err != nil {
+				slog.Warn("offering timing: weekday scan failed", "fragment", fragmentID, "error", err)
+				continue
 			}
+			days = append(days, dm)
+		}
+		dayRows.Close()
+		if err := dayRows.Err(); err != nil {
+			slog.Warn("offering timing: weekday iteration error", "fragment", fragmentID, "error", err)
 		}
 		if len(days) >= 4 {
 			type dayWithIdx struct {
@@ -1455,17 +1474,24 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 		FROM fragment_snapshots
 		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '3 days'
 		GROUP BY 1 ORDER BY 1`, fragmentID)
-	if err == nil {
-		defer sparkRows.Close()
+	if err != nil {
+		slog.Warn("offering timing: sparkline query failed", "fragment", fragmentID, "error", err)
+	} else {
 		for sparkRows.Next() {
 			var t time.Time
 			var p float64
-			if err := sparkRows.Scan(&t, &p); err == nil {
-				ot.Sparkline = append(ot.Sparkline, offeringSparkPt{
-					Time:  t.UTC().Format(time.RFC3339),
-					Price: math.Round(p),
-				})
+			if err := sparkRows.Scan(&t, &p); err != nil {
+				slog.Warn("offering timing: sparkline scan failed", "fragment", fragmentID, "error", err)
+				continue
 			}
+			ot.Sparkline = append(ot.Sparkline, offeringSparkPt{
+				Time:  t.UTC().Format(time.RFC3339),
+				Price: math.Round(p),
+			})
+		}
+		sparkRows.Close()
+		if err := sparkRows.Err(); err != nil {
+			slog.Warn("offering timing: sparkline iteration error", "fragment", fragmentID, "error", err)
 		}
 	}
 

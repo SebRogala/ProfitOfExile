@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,7 +17,7 @@ func AdminRecalculate(analyzer *lab.Analyzer) http.HandlerFunc {
 		slog.Info("admin: recalculate triggered")
 
 		go func() {
-			ctx := r.Context()
+			ctx := context.Background()
 
 			if err := analyzer.RunTransfigure(ctx); err != nil {
 				slog.Error("admin recalculate: transfigure failed", "error", err)
