@@ -1049,7 +1049,8 @@
 	}
 	.trade-actions {
 		display: flex;
-		gap: 4px;
+		align-items: center;
+		gap: 6px;
 		margin-left: auto;
 	}
 	.trade-empty {
