@@ -1,8 +1,8 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -1216,12 +1216,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 			DivineRate           float64        `json:"divineRate"`
 			SellConfidenceSpread map[string]int `json:"sellConfidenceSpread"`
 			SignalDistribution   map[string]int `json:"signalDistribution"`
-			// Gift to the Goddess trading timing.
-			GiftCurrentPrice float64  `json:"giftCurrentPrice,omitempty"`
-			GiftCheapHours   string   `json:"giftCheapHours,omitempty"`
-			GiftExpHours     string   `json:"giftExpensiveHours,omitempty"`
-			GiftCheapDays    string   `json:"giftCheapDays,omitempty"`
-			GiftExpDays      string   `json:"giftExpensiveDays,omitempty"`
+			Offerings            []offeringTiming `json:"offerings,omitempty"`
 		}
 
 		resp := overview{
@@ -1297,75 +1292,21 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		// Gift to the Goddess price timing analysis from fragment_snapshots.
+		// Lab offering price timing analysis from fragment_snapshots.
 		if pool != nil {
-			type dayMedian struct {
-				Day    int
-				Median float64
+			offerings := []struct {
+				name       string
+				fragmentID string
+			}{
+				{"Gift to the Goddess", "offer-gift"},
+				{"Dedication to the Goddess", "offer-dedication"},
 			}
-
-			// Current price.
-			var currentPrice *float64
-			_ = pool.QueryRow(r.Context(), `
-				SELECT chaos FROM fragment_snapshots
-				WHERE fragment_id = 'offer-gift'
-				ORDER BY time DESC LIMIT 1`).Scan(&currentPrice)
-			if currentPrice != nil {
-				resp.GiftCurrentPrice = math.Round(*currentPrice)
-			}
-
-			// Hourly medians (14-day window).
-			hourRows, err := pool.Query(r.Context(), `
-				SELECT EXTRACT(HOUR FROM time)::int AS h,
-				       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
-				FROM fragment_snapshots
-				WHERE fragment_id = 'offer-gift' AND time > NOW() - INTERVAL '14 days'
-				GROUP BY 1 HAVING COUNT(*) >= 3
-				ORDER BY median`)
-			if err == nil {
-				defer hourRows.Close()
-				var hours []giftHourMedian
-				for hourRows.Next() {
-					var hm giftHourMedian
-					if err := hourRows.Scan(&hm.Hour, &hm.Median); err == nil {
-						hours = append(hours, hm)
-					}
-				}
-				if len(hours) >= 4 {
-					resp.GiftCheapHours = formatHourRanges(hours[:3])
-					resp.GiftExpHours = formatHourRanges(hours[len(hours)-3:])
-				}
-			}
-
-			// Weekday medians (14-day window).
 			dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-			dayRows, err := pool.Query(r.Context(), `
-				SELECT EXTRACT(DOW FROM time)::int AS d,
-				       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
-				FROM fragment_snapshots
-				WHERE fragment_id = 'offer-gift' AND time > NOW() - INTERVAL '14 days'
-				GROUP BY 1 HAVING COUNT(*) >= 5
-				ORDER BY median`)
-			if err == nil {
-				defer dayRows.Close()
-				var days []dayMedian
-				for dayRows.Next() {
-					var dm dayMedian
-					if err := dayRows.Scan(&dm.Day, &dm.Median); err == nil {
-						days = append(days, dm)
-					}
-				}
-				if len(days) >= 4 {
-					cheapDays := make([]string, 0, 2)
-					expDays := make([]string, 0, 2)
-					for i := 0; i < 2 && i < len(days); i++ {
-						cheapDays = append(cheapDays, fmt.Sprintf("%s (~%dc)", dayNames[days[i].Day], int(math.Round(days[i].Median))))
-					}
-					for i := len(days) - 1; i >= len(days)-2 && i >= 0; i-- {
-						expDays = append(expDays, fmt.Sprintf("%s (~%dc)", dayNames[days[i].Day], int(math.Round(days[i].Median))))
-					}
-					resp.GiftCheapDays = strings.Join(cheapDays, ", ")
-					resp.GiftExpDays = strings.Join(expDays, ", ")
+
+			for _, off := range offerings {
+				ot := computeOfferingTiming(r.Context(), pool, off.name, off.fragmentID, dayNames)
+				if ot != nil {
+					resp.Offerings = append(resp.Offerings, *ot)
 				}
 			}
 		}
@@ -1376,19 +1317,157 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-// giftHourMedian holds hourly median price for formatHourRanges.
+// offeringTiming holds price timing analysis for a lab offering (Gift, Dedication, etc.).
+type offeringTiming struct {
+	Name           string            `json:"name"`
+	FragmentID     string            `json:"fragmentId"`
+	CurrentPrice   float64           `json:"currentPrice"`
+	CheapHours     []giftTimingEntry `json:"cheapHours,omitempty"`
+	ExpensiveHours []giftTimingEntry `json:"expensiveHours,omitempty"`
+	CheapDays      []giftDayEntry    `json:"cheapDays,omitempty"`
+	ExpensiveDays  []giftDayEntry    `json:"expensiveDays,omitempty"`
+	HourlyMedians  []giftTimingEntry `json:"hourlyMedians,omitempty"`
+	Sparkline      []offeringSparkPt `json:"sparkline,omitempty"`
+}
+
+// offeringSparkPt is a single sparkline data point for offering price history.
+type offeringSparkPt struct {
+	Time  string  `json:"time"`
+	Price float64 `json:"price"`
+}
+
+// giftHourMedian holds hourly median price (internal).
 type giftHourMedian struct {
 	Hour   int
 	Median float64
 }
 
-// formatHourRanges formats a slice of hour medians into a readable UTC hour list.
-func formatHourRanges(hours []giftHourMedian) string {
-	parts := make([]string, 0, len(hours))
-	for _, h := range hours {
-		parts = append(parts, fmt.Sprintf("%02d:00 (~%dc)", h.Hour, int(math.Round(h.Median))))
+// giftTimingEntry is the JSON-serialized hour timing.
+type giftTimingEntry struct {
+	Hour   int     `json:"hour"`
+	Median float64 `json:"median"`
+}
+
+// giftDayEntry is the JSON-serialized weekday timing.
+type giftDayEntry struct {
+	Day    string  `json:"day"`
+	Median float64 `json:"median"`
+}
+
+// computeOfferingTiming queries fragment_snapshots for a single offering's
+// price patterns and returns structured timing data. Returns nil if no data.
+func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragmentID string, dayNames []string) *offeringTiming {
+	ot := offeringTiming{Name: name, FragmentID: fragmentID}
+
+	// Current price.
+	var currentPrice *float64
+	_ = pool.QueryRow(ctx, `
+		SELECT chaos FROM fragment_snapshots
+		WHERE fragment_id = $1
+		ORDER BY time DESC LIMIT 1`, fragmentID).Scan(&currentPrice)
+	if currentPrice == nil {
+		return nil
 	}
-	return strings.Join(parts, ", ")
+	ot.CurrentPrice = math.Round(*currentPrice)
+
+	// Hourly medians (14-day window).
+	hourRows, err := pool.Query(ctx, `
+		SELECT EXTRACT(HOUR FROM time)::int AS h,
+		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
+		FROM fragment_snapshots
+		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
+		GROUP BY 1 HAVING COUNT(*) >= 3
+		ORDER BY median`, fragmentID)
+	if err == nil {
+		defer hourRows.Close()
+		var hours []giftHourMedian
+		for hourRows.Next() {
+			var hm giftHourMedian
+			if err := hourRows.Scan(&hm.Hour, &hm.Median); err == nil {
+				hours = append(hours, hm)
+			}
+		}
+		// Store all hourly medians for prediction chart line.
+		for _, h := range hours {
+			ot.HourlyMedians = append(ot.HourlyMedians, giftTimingEntry{Hour: h.Hour, Median: math.Round(h.Median)})
+		}
+		sort.Slice(ot.HourlyMedians, func(i, j int) bool { return ot.HourlyMedians[i].Hour < ot.HourlyMedians[j].Hour })
+
+		if len(hours) >= 4 {
+			for _, h := range hours[:3] {
+				ot.CheapHours = append(ot.CheapHours, giftTimingEntry{Hour: h.Hour, Median: math.Round(h.Median)})
+			}
+			for i := len(hours) - 1; i >= len(hours)-3 && i >= 0; i-- {
+				ot.ExpensiveHours = append(ot.ExpensiveHours, giftTimingEntry{Hour: hours[i].Hour, Median: math.Round(hours[i].Median)})
+			}
+			// Sort by hour, not by price.
+			sort.Slice(ot.CheapHours, func(i, j int) bool { return ot.CheapHours[i].Hour < ot.CheapHours[j].Hour })
+			sort.Slice(ot.ExpensiveHours, func(i, j int) bool { return ot.ExpensiveHours[i].Hour < ot.ExpensiveHours[j].Hour })
+		}
+	}
+
+	// Weekday medians (14-day window).
+	type dayMedian struct {
+		Day    int
+		Median float64
+	}
+	dayRows, err := pool.Query(ctx, `
+		SELECT EXTRACT(DOW FROM time)::int AS d,
+		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
+		FROM fragment_snapshots
+		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
+		GROUP BY 1 HAVING COUNT(*) >= 5
+		ORDER BY median`, fragmentID)
+	if err == nil {
+		defer dayRows.Close()
+		var days []dayMedian
+		for dayRows.Next() {
+			var dm dayMedian
+			if err := dayRows.Scan(&dm.Day, &dm.Median); err == nil {
+				days = append(days, dm)
+			}
+		}
+		if len(days) >= 4 {
+			type dayWithIdx struct {
+				idx int
+				entry giftDayEntry
+			}
+			var cheapD, expD []dayWithIdx
+			for i := 0; i < 2 && i < len(days); i++ {
+				cheapD = append(cheapD, dayWithIdx{days[i].Day, giftDayEntry{Day: dayNames[days[i].Day], Median: math.Round(days[i].Median)}})
+			}
+			for i := len(days) - 1; i >= len(days)-2 && i >= 0; i-- {
+				expD = append(expD, dayWithIdx{days[i].Day, giftDayEntry{Day: dayNames[days[i].Day], Median: math.Round(days[i].Median)}})
+			}
+			// Sort by weekday order (Sun=0 .. Sat=6).
+			sort.Slice(cheapD, func(i, j int) bool { return cheapD[i].idx < cheapD[j].idx })
+			sort.Slice(expD, func(i, j int) bool { return expD[i].idx < expD[j].idx })
+			for _, d := range cheapD { ot.CheapDays = append(ot.CheapDays, d.entry) }
+			for _, d := range expD { ot.ExpensiveDays = append(ot.ExpensiveDays, d.entry) }
+		}
+	}
+
+	// Sparkline: 3-day price history, 1 point per hour.
+	sparkRows, err := pool.Query(ctx, `
+		SELECT time_bucket('1 hour', time) AS bucket, AVG(chaos) AS avg_price
+		FROM fragment_snapshots
+		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '3 days'
+		GROUP BY 1 ORDER BY 1`, fragmentID)
+	if err == nil {
+		defer sparkRows.Close()
+		for sparkRows.Next() {
+			var t time.Time
+			var p float64
+			if err := sparkRows.Scan(&t, &p); err == nil {
+				ot.Sparkline = append(ot.Sparkline, offeringSparkPt{
+					Time:  t.UTC().Format(time.RFC3339),
+					Price: math.Round(p),
+				})
+			}
+		}
+	}
+
+	return &ot
 }
 
 // filterGemSignals filters and limits cached gem signals.
