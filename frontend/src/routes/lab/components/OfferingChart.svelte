@@ -97,8 +97,9 @@
 		return nx;
 	});
 
-	// Prediction line: blend from current price toward hourly medians.
-	// Starts at actual price, gradually converges to the median pattern over ~8 hours.
+	// Prediction line: apply historical hour-to-hour relative changes to current price.
+	// Uses the median at each hour to compute % change between consecutive hours,
+	// then chains those changes from the current actual price.
 	let predictionPath = $derived.by(() => {
 		if (!hourlyMedians?.length || data.length < 2) return '';
 		const medianByHour = new Map(hourlyMedians.map(h => [h.hour, h.median]));
@@ -106,23 +107,24 @@
 		const lastPt = data[data.length - 1];
 		const lastTime = new Date(lastPt.time).getTime();
 		const endTime = firstMs + totalRangeMs;
-		const blendHours = 8; // hours to fully converge to median
 
 		const points: string[] = [];
 		points.push(`M${xFromMs(lastTime).toFixed(1)},${yFromPrice(lastPt.price).toFixed(1)}`);
 
-		let hoursOut = 0;
+		let predicted = lastPt.price;
+		let prevHour = new Date(lastPt.time).getUTCHours();
 		let t = lastTime + 3600000;
 		while (t <= endTime) {
-			hoursOut++;
 			const h = new Date(t).getUTCHours();
-			const median = medianByHour.get(h);
-			if (median != null) {
-				// Blend: 0 = fully current price, 1 = fully median.
-				const blend = Math.min(hoursOut / blendHours, 1);
-				const predicted = lastPt.price * (1 - blend) + median * blend;
-				points.push(`L${xFromMs(t).toFixed(1)},${yFromPrice(predicted).toFixed(1)}`);
+			const currMedian = medianByHour.get(h);
+			const prevMedian = medianByHour.get(prevHour);
+			if (currMedian != null && prevMedian != null && prevMedian > 0) {
+				// Apply the historical relative change between these hours.
+				const change = currMedian / prevMedian;
+				predicted = predicted * change;
 			}
+			points.push(`L${xFromMs(t).toFixed(1)},${yFromPrice(predicted).toFixed(1)}`);
+			prevHour = h;
 			t += 3600000;
 		}
 		return points.length > 1 ? points.join(' ') : '';
