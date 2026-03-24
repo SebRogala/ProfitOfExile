@@ -402,8 +402,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			CV                float64 `json:"cv"`
 			Signal            string  `json:"signal"`
 			HistPosition      float64 `json:"histPosition"`
-			PriceHigh7Days       float64 `json:"priceHigh7Days"`
-			PriceLow7Days        float64 `json:"priceLow7Days"`
+			PriceHigh7Days       float64 `json:"priceHigh7d"`
+			PriceLow7Days        float64 `json:"priceLow7d"`
 			BaseListings      int     `json:"baseListings"`
 			BaseVelocity      float64 `json:"baseVelocity"`
 			RelativeLiquidity float64 `json:"relativeLiquidity"`

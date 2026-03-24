@@ -83,7 +83,8 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/gem-signals", handlers.GemSignalsAnalysis(cfg.LabRepo, cfg.LabCache))
 
 		// Admin: trigger full recalculation (clear stale v2 data + recompute all).
-		if cfg.Analyzer != nil {
+		// Only available in dev mode — production recalculation happens via event pipeline.
+		if cfg.Analyzer != nil && cfg.DevMode {
 			r.Post("/api/admin/recalculate", handlers.AdminRecalculate(cfg.Analyzer))
 		}
 	}
