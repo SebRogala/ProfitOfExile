@@ -1,13 +1,20 @@
 <script lang="ts">
 	import type { GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
+	import Select from '$lib/components/Select.svelte';
 
 	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
+	const LIMIT_OPTIONS = [
+		{ value: '10', label: '10' },
+		{ value: '20', label: '20' },
+		{ value: '50', label: '50' },
+	];
 
 	let activeTab = $state('20/20');
+	let itemLimit = $state('20');
 
 	let visibleVariants = $derived(
 		activeTab === 'ALL' ? VARIANTS : [activeTab]
@@ -15,13 +22,17 @@
 
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
-		return allPlays.filter(g => g.variant === variant);
+		return allPlays.filter(g => g.variant === variant).slice(0, parseInt(itemLimit));
 	}
 </script>
 
 <section class="section">
 	<div class="section-header">
 		<h2 class="section-title">By Variant</h2>
+		<div class="limit-select">
+			<span class="select-label">Show:</span>
+			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
+		</div>
 		<div class="tabs">
 			{#each TABS as tab}
 				<button
@@ -67,6 +78,16 @@
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
+	}
+	.limit-select {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.select-label {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		white-space: nowrap;
 	}
 	.tabs {
 		display: flex;
