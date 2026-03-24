@@ -51,7 +51,7 @@ func ComputeGemSignals(
 
 		// CASCADE: thin-market buyout lifecycle. PRICE_MANIPULATION keeps priority.
 		if advSignal != "PRICE_MANIPULATION" {
-			if f.MarketRegime == "CASCADE" && f.Low7d > 0 && f.Chaos > f.Low7d*1.5 {
+			if f.MarketRegime == "CASCADE" && f.Low7Days > 0 && f.Chaos > f.Low7Days*1.5 {
 				advSignal = "CASCADE"
 			}
 		}

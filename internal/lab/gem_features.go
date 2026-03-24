@@ -64,11 +64,11 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			f.CVShort = coefficientOfVariation(recentPrices)
 
 			// Historical position.
-			f.High7d, f.Low7d, f.HistPosition = historicalPosition(g.Chaos, prices)
+			f.High7Days, f.Low7Days, f.HistPosition = historicalPosition(g.Chaos, prices)
 		} else {
 			// No history: defaults.
-			f.High7d = g.Chaos
-			f.Low7d = g.Chaos
+			f.High7Days = g.Chaos
+			f.Low7Days = g.Chaos
 			f.HistPosition = 50
 		}
 
@@ -97,7 +97,7 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		// else: stay at zero defaults (insufficient history)
 
 		// Risk-adjusted scoring fields.
-		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7d, g.Chaos)
+		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7Days, g.Chaos)
 		f.StabilityDiscount = stabilityDiscount(f.CVShort)
 
 		// Sanitize non-velocity float fields.
@@ -106,8 +106,8 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		f.CV = sanitizeFloat(f.CV)
 		f.CVShort = sanitizeFloat(f.CVShort)
 		f.HistPosition = sanitizeFloat(f.HistPosition)
-		f.High7d = sanitizeFloat(f.High7d)
-		f.Low7d = sanitizeFloat(f.Low7d)
+		f.High7Days = sanitizeFloat(f.High7Days)
+		f.Low7Days = sanitizeFloat(f.Low7Days)
 		f.RelativePrice = sanitizeFloat(f.RelativePrice)
 		f.RelativeListings = sanitizeFloat(f.RelativeListings)
 		f.MarketDepth = sanitizeFloat(f.MarketDepth)

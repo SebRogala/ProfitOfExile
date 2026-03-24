@@ -38,8 +38,8 @@ type CollectiveResult struct {
 	Sellability      int    `json:"sellability"`
 	SellabilityLabel string `json:"sellabilityLabel"`
 	// From features/signals (risk-adjusted display)
-	Low7d          float64 `json:"low7d"`
-	High7d         float64 `json:"high7d"`
+	Low7Days          float64 `json:"low7d"`
+	High7Days         float64 `json:"high7d"`
 	SellConfidence string  `json:"sellConfidence"`
 }
 
@@ -73,8 +73,8 @@ type CompareResult struct {
 	TransListings        int              `json:"transListings"`
 	// Risk-adjusted display fields (from features/signals)
 	WeightedROI          float64 `json:"weightedRoi"`
-	Low7d                float64 `json:"low7d"`
-	High7d               float64 `json:"high7d"`
+	Low7Days                float64 `json:"low7d"`
+	High7Days               float64 `json:"high7d"`
 	SellConfidence       string  `json:"sellConfidence"`
 	SellConfidenceReason string  `json:"sellConfidenceReason"`
 	QuickSellPrice       float64 `json:"quickSellPrice"`
@@ -181,8 +181,8 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			cr.SellReason = t.SellReason
 			cr.Sellability = t.Sellability
 			cr.SellabilityLabel = t.SellabilityLabel
-			cr.Low7d = t.PriceLow7d
-			cr.High7d = t.PriceHigh7d
+			cr.Low7Days = t.PriceLow7Days
+			cr.High7Days = t.PriceHigh7Days
 			cr.SellConfidence = deriveSellConfidence(t.CurrentListings, t.CV, t.Signal)
 		}
 
@@ -330,8 +330,8 @@ func BuildCompareResults(
 			cr.BaseListings = t.BaseListings
 			cr.LiquidityTier = t.LiquidityTier
 			cr.TransListings = t.CurrentListings
-			cr.Low7d = t.PriceLow7d
-			cr.High7d = t.PriceHigh7d
+			cr.Low7Days = t.PriceLow7Days
+			cr.High7Days = t.PriceHigh7Days
 			cr.SellConfidence = deriveSellConfidence(t.CurrentListings, t.CV, t.Signal)
 			cr.SellConfidenceReason = deriveSellConfidenceReason(t.CurrentListings, t.CV, t.Signal)
 			cr.QuickSellPrice = deriveQuickSellPrice(t.CurrentPrice, t.CurrentListings, t.CV)

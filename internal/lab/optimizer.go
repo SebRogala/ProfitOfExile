@@ -773,7 +773,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 
 	for _, ep := range evals {
 		// Always compute sell probability and stability on-the-fly from feature data.
-		sellProb := sellProbabilityFactor(ep.Feature.Listings, ep.Feature.Low7d, ep.Feature.Chaos)
+		sellProb := sellProbabilityFactor(ep.Feature.Listings, ep.Feature.Low7Days, ep.Feature.Chaos)
 		stabDisc := stabilityDiscount(ep.Feature.CV)
 
 		// Compute risk-adjusted value.
@@ -821,13 +821,13 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		}
 		tierCaptures[tier].ratios = append(tierCaptures[tier].ratios, actualCapture)
 
-		// Floor hold: did price stay above Low7d?
+		// Floor hold: did price stay above Low7Days?
 		if _, ok := floorAccs[tier]; !ok {
 			floorAccs[tier] = &floorAcc{}
 		}
 		fa := floorAccs[tier]
 		fa.total++
-		if futurePrice >= ep.Feature.Low7d {
+		if futurePrice >= ep.Feature.Low7Days {
 			fa.held++
 		}
 
@@ -865,7 +865,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		}
 		vfa := va.floorAccs[tier]
 		vfa.total++
-		if futurePrice >= ep.Feature.Low7d {
+		if futurePrice >= ep.Feature.Low7Days {
 			vfa.held++
 		}
 

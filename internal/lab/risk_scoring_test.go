@@ -39,9 +39,9 @@ func TestSellProbabilityFactor_ThinMarketStablePrice(t *testing.T) {
 	// Thin listings (< 10) with stable historical price (low7d > 0.7 * current)
 	// should boost the factor (genuine rarity).
 	currentPrice := 100.0
-	stableLow7d := 80.0 // 80 > 0.7 * 100 = 70
+	stableLow7Days := 80.0 // 80 > 0.7 * 100 = 70
 
-	boosted := sellProbabilityFactor(5, stableLow7d, currentPrice)
+	boosted := sellProbabilityFactor(5, stableLow7Days, currentPrice)
 	normal := sellProbabilityFactor(5, 50, currentPrice) // low7d=50, between 50 and 70
 
 	if boosted <= normal {
@@ -57,9 +57,9 @@ func TestSellProbabilityFactor_ThinMarketSpikePrice(t *testing.T) {
 	// Thin listings (< 10) with recent spike (low7d < 0.5 * current)
 	// should penalize the factor (manipulation risk).
 	currentPrice := 200.0
-	spikeLow7d := 80.0 // 80 < 0.5 * 200 = 100
+	spikeLow7Days := 80.0 // 80 < 0.5 * 200 = 100
 
-	penalized := sellProbabilityFactor(5, spikeLow7d, currentPrice)
+	penalized := sellProbabilityFactor(5, spikeLow7Days, currentPrice)
 	normal := sellProbabilityFactor(5, 120, currentPrice) // low7d=120, in the middle
 
 	if penalized >= normal {
@@ -70,10 +70,10 @@ func TestSellProbabilityFactor_ThinMarketSpikePrice(t *testing.T) {
 func TestSellProbabilityFactor_NotThinMarketNoAdjustment(t *testing.T) {
 	// With >= 10 listings, thin-market adjustments should not apply.
 	currentPrice := 100.0
-	stableLow7d := 90.0 // stable, but listings >= 10
+	stableLow7Days := 90.0 // stable, but listings >= 10
 
-	val10 := sellProbabilityFactor(10, stableLow7d, currentPrice)
-	val15 := sellProbabilityFactor(15, stableLow7d, currentPrice)
+	val10 := sellProbabilityFactor(10, stableLow7Days, currentPrice)
+	val15 := sellProbabilityFactor(15, stableLow7Days, currentPrice)
 
 	// These should be pure sigmoid values, no rarity boost.
 	if val10 < 0.3 || val10 > 1.0 {
@@ -96,9 +96,9 @@ func TestSellProbabilityFactor_FloorEnforced(t *testing.T) {
 	// With 1 listing and spike penalty (*0.5), the result
 	// should be at least 0.3 (floor enforced).
 	currentPrice := 200.0
-	spikeLow7d := 50.0 // 50 < 0.5 * 200 = 100 → penalty
+	spikeLow7Days := 50.0 // 50 < 0.5 * 200 = 100 → penalty
 
-	got := sellProbabilityFactor(1, spikeLow7d, currentPrice)
+	got := sellProbabilityFactor(1, spikeLow7Days, currentPrice)
 	if got < 0.3 {
 		t.Errorf("sellProbabilityFactor(1 listing, spike) = %f, want >= 0.3 (floor)", got)
 	}

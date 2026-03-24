@@ -362,8 +362,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			CV                float64 `json:"cv"`
 			Signal            string  `json:"signal"`
 			HistPosition      float64 `json:"histPosition"`
-			PriceHigh7d       float64 `json:"priceHigh7d"`
-			PriceLow7d        float64 `json:"priceLow7d"`
+			PriceHigh7Days       float64 `json:"priceHigh7Days"`
+			PriceLow7Days        float64 `json:"priceLow7Days"`
 			BaseListings      int     `json:"baseListings"`
 			BaseVelocity      float64 `json:"baseVelocity"`
 			RelativeLiquidity float64 `json:"relativeLiquidity"`
@@ -500,8 +500,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				CV:                r.CV,
 				Signal:            r.Signal,
 				HistPosition:      r.HistPosition,
-				PriceHigh7d:       r.PriceHigh7d,
-				PriceLow7d:        r.PriceLow7d,
+				PriceHigh7Days:       r.PriceHigh7Days,
+				PriceLow7Days:        r.PriceLow7Days,
 				BaseListings:      r.BaseListings,
 				BaseVelocity:      r.BaseVelocity,
 				RelativeLiquidity: r.RelativeLiquidity,
@@ -955,8 +955,8 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 			VelLongListing        float64 `json:"velLongListing"`
 			CV                    float64 `json:"cv"`
 			HistPosition          float64 `json:"histPosition"`
-			High7d                float64 `json:"high7d"`
-			Low7d                 float64 `json:"low7d"`
+			High7Days                float64 `json:"high7d"`
+			Low7Days                 float64 `json:"low7d"`
 			FloodCount            int     `json:"floodCount"`
 			CrashCount            int     `json:"crashCount"`
 			ListingElasticity     float64 `json:"listingElasticity"`
@@ -984,8 +984,8 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 				VelLongListing:        f.VelLongListing,
 				CV:                    f.CV,
 				HistPosition:          f.HistPosition,
-				High7d:                f.High7d,
-				Low7d:                 f.Low7d,
+				High7Days:                f.High7Days,
+				Low7Days:                 f.Low7Days,
 				FloodCount:            f.FloodCount,
 				CrashCount:            f.CrashCount,
 				ListingElasticity:     f.ListingElasticity,
