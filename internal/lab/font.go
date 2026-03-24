@@ -29,9 +29,12 @@ type FontResult struct {
 
 // JackpotGemInfo holds name, price and trade URL for a TOP-tier gem shown in Jackpot tooltip.
 type JackpotGemInfo struct {
-	Name     string  `json:"name"`
-	Chaos    float64 `json:"chaos"`
-	TradeURL string  `json:"tradeUrl"`
+	Name           string  `json:"name"`
+	Chaos          float64 `json:"chaos"`
+	TradeURL       string  `json:"tradeUrl"`
+	GCPRecipeCost  float64 `json:"gcpRecipeCost,omitempty"`  // 20/0 base + 20×GCP
+	GCPRecipeBase  float64 `json:"gcpRecipeBase,omitempty"`  // 20/0 base price alone
+	GCPRecipeSaves float64 `json:"gcpRecipeSaves,omitempty"` // savings vs 20/20 base
 }
 
 // FontAnalysis holds the results of Safe, Premium and Jackpot font analysis modes.

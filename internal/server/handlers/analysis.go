@@ -262,6 +262,45 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		premiumRows := toRows(premiumResults)
 		jackpotRows := toRows(jackpotResults)
 
+		// Enrich jackpot gems with GCP recipe (20/0 base + 20×GCP vs 20/20 base).
+		if cache != nil {
+			gcpPrice := cache.GCPPrice()
+			if gcpPrice <= 0 {
+				gcpPrice = 4.0
+			}
+			// Build base price index from transfigure cache: baseName → variant → price.
+			type bKey struct{ name, variant string }
+			basePrices := make(map[bKey]float64)
+			if ct := cache.Transfigure(); len(ct) > 0 {
+				for _, tr := range ct {
+					basePrices[bKey{tr.BaseName, tr.Variant}] = tr.BasePrice
+				}
+			}
+			for i := range jackpotRows {
+				if jackpotRows[i].Variant != "20/20" && jackpotRows[i].Variant != "20" {
+					continue
+				}
+				for j := range jackpotRows[i].JackpotGems {
+					g := &jackpotRows[i].JackpotGems[j]
+					baseName := lab.ExtractBaseName(g.Name)
+					base20, ok := basePrices[bKey{baseName, "20"}]
+					if !ok || base20 <= 0 {
+						continue
+					}
+					base2020, ok := basePrices[bKey{baseName, "20/20"}]
+					if !ok || base2020 <= 0 {
+						continue
+					}
+					recipeCost := base20 + 20*gcpPrice
+					if recipeCost < base2020 {
+						g.GCPRecipeCost = recipeCost
+						g.GCPRecipeBase = base20
+						g.GCPRecipeSaves = base2020 - recipeCost
+					}
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"safe":              safeRows,

@@ -86,6 +86,22 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 
 		results := lab.RankCollective(transfigure, trends, budget, limit, sortBy)
 
+		// Build base price index: baseName → variant → basePrice (for GCP recipe).
+		type bKey struct{ name, variant string }
+		basePriceIndex := make(map[bKey]float64, len(transfigure))
+		for _, tr := range transfigure {
+			basePriceIndex[bKey{tr.BaseName, tr.Variant}] = tr.BasePrice
+		}
+
+		// GCP recipe: for 20/20 gems, compare buying 20/20 base vs 20/0 base + 20×GCP.
+		var gcpPrice float64
+		if cache != nil {
+			gcpPrice = cache.GCPPrice()
+		}
+		if gcpPrice <= 0 {
+			gcpPrice = 4.0 // fallback
+		}
+
 		// Enrich results with GlobalTier from cached gem features.
 		if cache != nil {
 			if features := cache.GemFeatures(); len(features) > 0 {
@@ -182,11 +198,15 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			Low7Days                float64 `json:"low7d"`
 			High7Days               float64 `json:"high7d"`
 			SellConfidence       string  `json:"sellConfidence"`
+			// GCP recipe: buy 20/0 base + 20 GCPs instead of 20/20 base.
+			GCPRecipeCost  float64 `json:"gcpRecipeCost,omitempty"`  // 20/0 base + 20×GCP
+			GCPRecipeBase  float64 `json:"gcpRecipeBase,omitempty"`  // 20/0 base price alone
+			GCPRecipeSaves float64 `json:"gcpRecipeSaves,omitempty"` // 20/20 base - recipe cost
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, cr := range results {
-			rows = append(rows, row{
+			r := row{
 				TransfiguredName:     cr.TransfiguredName,
 				BaseName:             cr.BaseName,
 				Variant:              cr.Variant,
@@ -219,7 +239,21 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				Low7Days:               cr.Low7Days,
 				High7Days:              cr.High7Days,
 				SellConfidence:      cr.SellConfidence,
-			})
+			}
+
+			// GCP recipe for 20/20 variants: buy 20/0 base + 20×GCP.
+			if cr.Variant == "20/20" {
+				if base20, ok := basePriceIndex[bKey{cr.BaseName, "20"}]; ok && base20 > 0 {
+					recipeCost := base20 + 20*gcpPrice
+					if recipeCost < cr.BasePrice {
+						r.GCPRecipeCost = recipeCost
+						r.GCPRecipeBase = base20
+						r.GCPRecipeSaves = cr.BasePrice - recipeCost
+					}
+				}
+			}
+
+			rows = append(rows, r)
 			if rows[len(rows)-1].Sparkline == nil {
 				rows[len(rows)-1].Sparkline = []lab.SparklinePoint{}
 			}

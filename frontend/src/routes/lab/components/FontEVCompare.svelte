@@ -117,6 +117,23 @@
 		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
 	}
 
+	function baseGemNoQualityUrl(gemName: string): string {
+		const base = gemName.lastIndexOf(' of ') > 0 ? gemName.substring(0, gemName.lastIndexOf(' of ')) : gemName;
+		const q = {
+			query: {
+				type: base,
+				status: { option: 'securable' },
+				filters: {
+					type_filters: { filters: { category: { option: 'gem' } } },
+					misc_filters: { filters: { gem_level: { min: 20 }, corrupted: { option: 'false' } } },
+					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
+				},
+			},
+			sort: { price: 'asc' },
+		};
+		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
+	}
+
 	$effect(() => { refreshKey; loadAll(); });
 </script>
 
@@ -158,9 +175,14 @@
 											<span class="tier-val t-premium">{tierLine(premium)}</span>
 										</div>
 										{#if jackpot && jackpot.winners > 0}
-										{@const gemList = (jackpot.jackpotGems || []).map(g =>
-											`<div style="padding:2px 0"><b>${g.name}</b>: ${Math.round(g.chaos)}c &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, league || '')}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a></div>`
-										).join('')}
+										{@const gemList = (jackpot.jackpotGems || []).map(g => {
+											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${Math.round(g.chaos)}c &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, league || '')}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`;
+											if (g.gcpRecipeCost > 0) {
+												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${Math.round(g.gcpRecipeBase)}c</b> base + ${Math.round(g.gcpRecipeCost - g.gcpRecipeBase)}c GCPs = <b>${Math.round(g.gcpRecipeCost)}c</b> <span style="color:#22c55e">(saves ${Math.round(g.gcpRecipeSaves)}c)</span> &nbsp;<a href="${baseGemNoQualityUrl(g.name)}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a></div>`;
+											}
+											html += `</div>`;
+											return html;
+										}).join('')}
 										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>
 											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>

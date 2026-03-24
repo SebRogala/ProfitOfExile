@@ -170,6 +170,16 @@
 									| <a class="buy-base-link" href={baseGemTradeUrl(gem.name, gem.variant, league)} target="_blank" title="Buy {baseGemName(gem.name)} ({gem.variant})">Buy Base</a>
 								{/if}
 							</span>
+							{#if gem.gcpRecipeCost > 0}
+								<div class="gcp-recipe">
+									<span class="gcp-label">GCP recipe:</span>
+									<span class="gcp-detail">{gem.gcpRecipeBase}c base + {gem.gcpRecipeCost - gem.gcpRecipeBase}c GCPs = <b>{gem.gcpRecipeCost}c</b></span>
+									<span class="gcp-saves">(saves {gem.gcpRecipeSaves}c)</span>
+									{#if gem.name.includes(' of ')}
+										<a class="buy-base-link gcp-buy" href={baseGemTradeUrl(gem.name, '20/0', league)} target="_blank">Buy 20/0</a>
+									{/if}
+								</div>
+							{/if}
 							{#if gem.sellUrgency}
 								<div class="expanded-urgency urgency-{gem.sellUrgency.toLowerCase().replace('_', '-')}">
 									{gem.sellUrgency.replace('_', ' ')}: {gem.sellReason}
@@ -448,5 +458,27 @@
 	.buy-base-link:hover {
 		color: var(--color-lab-text);
 		text-decoration: underline;
+	}
+	.gcp-recipe {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.8125rem;
+		margin-top: 4px;
+		color: var(--color-lab-text-secondary);
+	}
+	.gcp-label {
+		color: #fbbf24;
+		font-weight: 600;
+	}
+	.gcp-saves {
+		color: var(--color-lab-green);
+		font-weight: 600;
+	}
+	.gcp-buy {
+		color: #fbbf24 !important;
+		font-size: 0.75rem;
+		padding: 1px 8px;
+		border: 1px solid rgba(251, 191, 36, 0.4);
 	}
 </style>
