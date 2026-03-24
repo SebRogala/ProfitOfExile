@@ -113,6 +113,11 @@ export interface MarketOverviewData {
 	divineRate: number;
 	sellConfidenceSpread: Record<string, number>;
 	signalDistribution: Record<string, number>;
+	giftCurrentPrice: number;
+	giftCheapHours: string;
+	giftExpensiveHours: string;
+	giftCheapDays: string;
+	giftExpensiveDays: string;
 }
 
 export interface CompareGem {
@@ -358,6 +363,11 @@ export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 		divineRate: resp.divineRate || 0,
 		sellConfidenceSpread: resp.sellConfidenceSpread || {},
 		signalDistribution: resp.signalDistribution || {},
+		giftCurrentPrice: resp.giftCurrentPrice || 0,
+		giftCheapHours: resp.giftCheapHours || '',
+		giftExpensiveHours: resp.giftExpensiveHours || '',
+		giftCheapDays: resp.giftCheapDays || '',
+		giftExpensiveDays: resp.giftExpensiveDays || '',
 	};
 }
 
