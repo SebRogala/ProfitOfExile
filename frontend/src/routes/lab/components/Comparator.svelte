@@ -85,6 +85,7 @@
 		return `${remaining}m`;
 	}
 
+	/** Fetch trade data — full lookup with async wait for GGG response. */
 	async function fetchTradeData(gem: string, force = false) {
 		tradeLoading[gem] = { loading: true };
 		try {
@@ -116,10 +117,26 @@
 		}
 	}
 
+	/** Cache-only lookup — returns backend LRU data without triggering a GGG request.
+	 *  If cache miss (202), silently ignores — no async wait, no GGG hit. */
+	async function fetchTradeCacheOnly(gem: string) {
+		try {
+			const { immediate } = await lookupTrade(gem, variant);
+			if (immediate) {
+				tradeData[gem] = immediate;
+			}
+		} catch {
+			// silent — cache miss is expected
+		}
+	}
+
 	function fetchTradeDataForAll() {
-		if (autoTradeDisabled) return;
 		for (const gem of selectedGems) {
-			fetchTradeData(gem);
+			if (autoTradeDisabled) {
+				fetchTradeCacheOnly(gem);
+			} else {
+				fetchTradeData(gem);
+			}
 		}
 	}
 
@@ -164,7 +181,9 @@
 		showDropdown = false;
 		highlightedIndex = -1;
 		loadResults();
-		if (!autoTradeDisabled) {
+		if (autoTradeDisabled) {
+			fetchTradeCacheOnly(name);
+		} else {
 			fetchTradeData(name);
 		}
 		setTimeout(() => inputRef?.focus(), 0);
