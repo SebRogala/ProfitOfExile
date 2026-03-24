@@ -327,7 +327,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				// value level across all colors. Comparable.
 				if isJackpotTierWinner(feat.Tier) {
 					jackpotWinnerCount++
-					jackpotGems = append(jackpotGems, JackpotGemInfo{Name: e.name, Chaos: e.chaos})
+					jackpotGems = append(jackpotGems, JackpotGemInfo{Name: e.name, Chaos: effectivePrice})
 					if isThin {
 						jackpotThinCount++
 					}
