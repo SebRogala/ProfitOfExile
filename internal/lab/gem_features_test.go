@@ -289,11 +289,11 @@ func TestComputeGemFeatures_HistPosition(t *testing.T) {
 	if math.Abs(f.HistPosition-100) > 0.01 {
 		t.Errorf("HistPosition = %f, want 100 (at historical high)", f.HistPosition)
 	}
-	if f.High7d != 200 {
-		t.Errorf("High7d = %f, want 200", f.High7d)
+	if f.High7Days != 200 {
+		t.Errorf("High7Days = %f, want 200", f.High7Days)
 	}
-	if f.Low7d != 100 {
-		t.Errorf("Low7d = %f, want 100", f.Low7d)
+	if f.Low7Days != 100 {
+		t.Errorf("Low7Days = %f, want 100", f.Low7Days)
 	}
 }
 
@@ -355,11 +355,11 @@ func TestComputeGemFeatures_NoHistory(t *testing.T) {
 	if f.HistPosition != 50 {
 		t.Errorf("HistPosition = %f, want 50", f.HistPosition)
 	}
-	if f.High7d != 100 {
-		t.Errorf("High7d = %f, want 100", f.High7d)
+	if f.High7Days != 100 {
+		t.Errorf("High7Days = %f, want 100", f.High7Days)
 	}
-	if f.Low7d != 100 {
-		t.Errorf("Low7d = %f, want 100", f.Low7d)
+	if f.Low7Days != 100 {
+		t.Errorf("Low7Days = %f, want 100", f.Low7Days)
 	}
 }
 

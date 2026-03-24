@@ -103,8 +103,8 @@ type GemFeature struct {
 	CV                float64
 	CVShort           float64 // 6h coefficient of variation (for stability discount)
 	HistPosition      float64
-	High7d            float64
-	Low7d             float64
+	High7Days            float64
+	Low7Days             float64
 	FloodCount        int
 	CrashCount        int
 	ListingElasticity     float64

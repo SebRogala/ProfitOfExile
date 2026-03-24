@@ -18,8 +18,8 @@ type TrendResult struct {
 	CV              float64 // coefficient of variation (%)
 	Signal          string  // TRAP, DUMPING, HERD, RECOVERY, STABLE, UNCERTAIN (priority order)
 	HistPosition    float64 // 0-100 percentile vs 7-day range
-	PriceHigh7d     float64
-	PriceLow7d      float64
+	PriceHigh7Days     float64
+	PriceLow7Days      float64
 
 	// Base-side signals
 	BaseListings      int     // current base gem listings
@@ -390,8 +390,8 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			CV:                cv,
 			Signal:            signal,
 			HistPosition:      sanitizeFloat(histPos),
-			PriceHigh7d:       high7d,
-			PriceLow7d:        low7d,
+			PriceHigh7Days:       high7d,
+			PriceLow7Days:        low7d,
 			BaseListings:      baseLst,
 			BaseVelocity:      sanitizeFloat(baseVel),
 			RelativeLiquidity: sanitizeFloat(relLiq),

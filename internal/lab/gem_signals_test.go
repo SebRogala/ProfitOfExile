@@ -37,8 +37,8 @@ func testFeature(name, variant string, chaos float64, listings int) GemFeature {
 		VelLongListing:    1,
 		CV:                25,
 		HistPosition:      50,
-		High7d:            chaos * 1.2,
-		Low7d:             chaos * 0.8,
+		High7Days:            chaos * 1.2,
+		Low7Days:             chaos * 0.8,
 		FloodCount:        0,
 		CrashCount:        0,
 		ListingElasticity: -0.3,
@@ -723,12 +723,12 @@ func TestComputeGemSignals_CASCADEAdvancedSignal(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	// CASCADE requires: MarketRegime="CASCADE", Low7d > 0, Chaos > Low7d*1.5
+	// CASCADE requires: MarketRegime="CASCADE", Low7Days > 0, Chaos > Low7Days*1.5
 	f := testFeature("Rare of Cascade", "20/20", 300, 5)
 	f.MarketRegime = "CASCADE"
 	f.MarketDepth = 0.1
-	f.Low7d = 100       // price is 3x the 7d low
-	f.High7d = 300
+	f.Low7Days = 100       // price is 3x the 7d low
+	f.High7Days = 300
 	f.HistPosition = 95
 	f.Tier = "TOP"
 
@@ -763,8 +763,8 @@ func TestComputeGemSignals_CASCADEDoesNotOverridePRICE_MANIPULATION(t *testing.T
 	// CASCADE conditions met:
 	f.MarketRegime = "CASCADE"
 	f.MarketDepth = 0.05
-	f.Low7d = 100       // 500 > 100*1.5 = 150
-	f.High7d = 500
+	f.Low7Days = 100       // 500 > 100*1.5 = 150
+	f.High7Days = 500
 
 	gems := testBaseGems("Manipulated", 30)
 
@@ -787,8 +787,8 @@ func TestComputeGemSignals_CASCADENotFiredWhenTemporal(t *testing.T) {
 	f := testFeature("Spike of Normal", "20/20", 300, 50)
 	f.MarketRegime = "TEMPORAL" // not CASCADE
 	f.MarketDepth = 2.0
-	f.Low7d = 100
-	f.High7d = 300
+	f.Low7Days = 100
+	f.High7Days = 300
 	f.Tier = "TOP"
 
 	gems := testBaseGems("Spike", 50)

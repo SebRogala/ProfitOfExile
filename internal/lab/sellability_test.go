@@ -57,7 +57,7 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: cv, Listings: listings,
 				Tier: "MID", Chaos: chaos,
-				Low7d: low7d, High7d: 120, HistPosition: 50,
+				Low7Days: low7d, High7Days: 120, HistPosition: 50,
 			},
 			FuturePct: 0.0, // future price = chaos
 			SnapTime:  t0,
@@ -66,7 +66,7 @@ func TestValidateSellability_ValueCapture(t *testing.T) {
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: cv, Listings: listings,
 				Tier: "MID", Chaos: chaos,
-				Low7d: low7d, High7d: 120, HistPosition: 50,
+				Low7Days: low7d, High7Days: 120, HistPosition: 50,
 			},
 			FuturePct: -20.0, // future price = 80
 			SnapTime:  t0,
@@ -108,9 +108,9 @@ func TestValidateSellability_FloorHoldRate(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "HIGH", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
-			FuturePct: 0.0, // future price = 100, above Low7d=80
+			FuturePct: 0.0, // future price = 100, above Low7Days=80
 			SnapTime:  t0,
 		},
 		{
@@ -118,9 +118,9 @@ func TestValidateSellability_FloorHoldRate(t *testing.T) {
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "HIGH", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
-			FuturePct: -25.0, // future price = 75, below Low7d=80
+			FuturePct: -25.0, // future price = 75, below Low7Days=80
 			SnapTime:  t0,
 		},
 		{
@@ -128,9 +128,9 @@ func TestValidateSellability_FloorHoldRate(t *testing.T) {
 				Time: t0, VelMedPrice: -0.1, VelMedListing: 0.2, CV: 10, Listings: 30,
 				Tier: "HIGH", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
-			FuturePct: -10.0, // future price = 90, above Low7d=80
+			FuturePct: -10.0, // future price = 90, above Low7Days=80
 			SnapTime:  t0,
 		},
 	}
@@ -168,7 +168,7 @@ func TestValidateSellability_ConfidenceCalibration(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: -5.0, // future price = 95, >= 0.9*100=90: held
 			SnapTime:  t0,
@@ -178,7 +178,7 @@ func TestValidateSellability_ConfidenceCalibration(t *testing.T) {
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: -15.0, // future price = 85, < 0.9*100=90: NOT held
 			SnapTime:  t0,
@@ -188,7 +188,7 @@ func TestValidateSellability_ConfidenceCalibration(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: 5.0, // future price = 105, >= 90: held
 			SnapTime:  t0,
@@ -231,7 +231,7 @@ func TestValidateSellability_PerTierCapture(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "TOP", Chaos: 200,
 				SellProbabilityFactor: 0.9, StabilityDiscount: 0.95,
-				Low7d: 180, High7d: 220,
+				Low7Days: 180, High7Days: 220,
 			},
 			FuturePct: 0.0,
 			SnapTime:  t0,
@@ -241,7 +241,7 @@ func TestValidateSellability_PerTierCapture(t *testing.T) {
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "LOW", Chaos: 10,
 				SellProbabilityFactor: 0.5, StabilityDiscount: 0.8,
-				Low7d: 8, High7d: 12,
+				Low7Days: 8, High7Days: 12,
 			},
 			FuturePct: 0.0,
 			SnapTime:  t0,
@@ -288,7 +288,7 @@ func TestValidateSellability_SkipsZeroRAV(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 0, // zero chaos => RAV = 0
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 0, High7d: 0,
+				Low7Days: 0, High7Days: 0,
 			},
 			FuturePct: 10.0,
 			SnapTime:  t0,
@@ -298,7 +298,7 @@ func TestValidateSellability_SkipsZeroRAV(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: 0.0,
 			SnapTime:  t0,
@@ -323,7 +323,7 @@ func TestValidateSellability_EmptyTierDefaultsToLOW(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "", Chaos: 100, // empty tier
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: 0.0,
 			SnapTime:  t0,
@@ -357,7 +357,7 @@ func TestValidateSellability_MultipleSignalTypes(t *testing.T) {
 				CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: 0.0,
 			SnapTime:  t0,
@@ -370,7 +370,7 @@ func TestValidateSellability_MultipleSignalTypes(t *testing.T) {
 				CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: -15.0,
 			SnapTime:  t0,
@@ -403,7 +403,7 @@ func TestValidateSellability_ConfCalibrationMultipleLevels(t *testing.T) {
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100,
 				SellProbabilityFactor: 0.8, StabilityDiscount: 0.9,
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: 0.0,
 			SnapTime:  t0,
@@ -413,7 +413,7 @@ func TestValidateSellability_ConfCalibrationMultipleLevels(t *testing.T) {
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 120, Listings: 2,
 				Tier: "MID", Chaos: 100,
-				Low7d: 30, High7d: 120,
+				Low7Days: 30, High7Days: 120,
 			},
 			FuturePct: -20.0,
 			SnapTime:  t0,
@@ -506,7 +506,7 @@ func TestValidateSellability_PerVariantBreakdown(t *testing.T) {
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100, Variant: "20/20",
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: -5.0, // future 95, held (>= 90)
 			SnapTime:  t0,
@@ -515,7 +515,7 @@ func TestValidateSellability_PerVariantBreakdown(t *testing.T) {
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.2, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100, Variant: "20/20",
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: -15.0, // future 85, NOT held (< 90)
 			SnapTime:  t0,
@@ -525,7 +525,7 @@ func TestValidateSellability_PerVariantBreakdown(t *testing.T) {
 			Feature: GemFeature{
 				Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, CV: 10, Listings: 30,
 				Tier: "MID", Chaos: 100, Variant: "1/20",
-				Low7d: 80, High7d: 120,
+				Low7Days: 80, High7Days: 120,
 			},
 			FuturePct: 5.0, // future 105, held (>= 90)
 			SnapTime:  t0,

@@ -179,8 +179,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			Sellability          int     `json:"sellability"`
 			SellabilityLabel     string              `json:"sellabilityLabel"`
 			Sparkline            []lab.SparklinePoint `json:"sparkline"`
-			Low7d                float64 `json:"low7d"`
-			High7d               float64 `json:"high7d"`
+			Low7Days                float64 `json:"low7d"`
+			High7Days               float64 `json:"high7d"`
 			SellConfidence       string  `json:"sellConfidence"`
 		}
 
@@ -216,8 +216,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				Sellability:          cr.Sellability,
 				SellabilityLabel:     cr.SellabilityLabel,
 				Sparkline:           sparklines[cr.TransfiguredName],
-				Low7d:               cr.Low7d,
-				High7d:              cr.High7d,
+				Low7Days:               cr.Low7Days,
+				High7Days:              cr.High7Days,
 				SellConfidence:      cr.SellConfidence,
 			})
 			if rows[len(rows)-1].Sparkline == nil {
@@ -373,8 +373,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			TransListings        int                 `json:"transListings"`
 			TransfiguredListings int                 `json:"transfiguredListings"`
 			WeightedROI          float64             `json:"weightedRoi"`
-			Low7d                float64             `json:"low7d"`
-			High7d               float64             `json:"high7d"`
+			Low7Days                float64             `json:"low7d"`
+			High7Days               float64             `json:"high7d"`
 			SellConfidence       string              `json:"sellConfidence"`
 			SellConfidenceReason string              `json:"sellConfidenceReason"`
 			QuickSellPrice       float64             `json:"quickSellPrice"`
@@ -412,8 +412,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				TransListings:        cr.TransListings,
 				TransfiguredListings: cr.TransListings,
 				WeightedROI:          cr.WeightedROI,
-				Low7d:                cr.Low7d,
-				High7d:               cr.High7d,
+				Low7Days:                cr.Low7Days,
+				High7Days:               cr.High7Days,
 				SellConfidence:       cr.SellConfidence,
 				SellConfidenceReason: cr.SellConfidenceReason,
 				QuickSellPrice:       cr.QuickSellPrice,

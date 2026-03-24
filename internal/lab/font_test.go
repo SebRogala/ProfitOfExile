@@ -595,10 +595,10 @@ func TestAnalyzeFont_CASCADEPriceCapped(t *testing.T) {
 		{Name: "Normal Gem C", Variant: "20", Chaos: 100, Listings: 40, IsTransfigured: true, GemColor: "GREEN"},
 	}
 
-	// Viper Strike feature: CASCADE regime, High7d = 850 (real value ~800c).
+	// Viper Strike feature: CASCADE regime, High7Days = 850 (real value ~800c).
 	viperFeat := makeFeature("Viper Strike of the Mamba", "20", 19000, 3, "TOP", 0.3, 0.7)
 	viperFeat.MarketRegime = "CASCADE"
-	viperFeat.High7d = 850
+	viperFeat.High7Days = 850
 
 	features := []GemFeature{
 		viperFeat,
@@ -621,9 +621,9 @@ func TestAnalyzeFont_CASCADEPriceCapped(t *testing.T) {
 	}
 
 	// Without CASCADE guard: AvgWinRaw would be ~4975 (dominated by 19000c gem).
-	// With guard: Viper Strike capped at High7d (850c), so AvgWinRaw must be < 850.
+	// With guard: Viper Strike capped at High7Days (850c), so AvgWinRaw must be < 850.
 	if found.AvgWinRaw > 900 {
-		t.Errorf("AvgWinRaw = %f, want < 900 (CASCADE price should be capped at High7d)", found.AvgWinRaw)
+		t.Errorf("AvgWinRaw = %f, want < 900 (CASCADE price should be capped at High7Days)", found.AvgWinRaw)
 	}
 	// EVRaw with guard: pool is [850, 500, 300, 100], best-of-3 from 4 gems.
 	// Without guard it would be ~15000+ (19000c dominates). With guard, < 1000.

@@ -162,7 +162,7 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 // the price is capped at the historical high (the highest real-market price
 // observed in the available window).
 func cascadeCappedPrice(chaos float64, feat *GemFeature) float64 {
-	if feat.MarketRegime != "CASCADE" || feat.High7d <= 0 {
+	if feat.MarketRegime != "CASCADE" || feat.High7Days <= 0 {
 		return chaos
 	}
 
@@ -171,15 +171,15 @@ func cascadeCappedPrice(chaos float64, feat *GemFeature) float64 {
 	// At CV=0 (perfectly stable), ceiling = high + range (2× range above low).
 	// At CV=50 (volatile), ceiling = high + 1.5× range (more tolerant).
 	// This adapts to each gem's actual price behavior.
-	priceRange := feat.High7d - feat.Low7d
+	priceRange := feat.High7Days - feat.Low7Days
 	if priceRange <= 0 {
-		priceRange = feat.High7d * 0.1 // flat history: allow 10% above high
+		priceRange = feat.High7Days * 0.1 // flat history: allow 10% above high
 	}
 	cvFactor := 1.0 + feat.CV/100.0
-	ceiling := feat.High7d + priceRange*cvFactor
+	ceiling := feat.High7Days + priceRange*cvFactor
 
 	if chaos > ceiling {
-		return feat.High7d
+		return feat.High7Days
 	}
 	return chaos
 }
@@ -291,7 +291,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				effectivePrice := cascadeCappedPrice(e.chaos, feat)
 
 				// Compute sell probability and stability from CURRENT gem data.
-				sellProb := sellProbabilityFactor(e.listings, feat.Low7d, effectivePrice)
+				sellProb := sellProbabilityFactor(e.listings, feat.Low7Days, effectivePrice)
 				stabDisc := stabilityDiscount(feat.CVShort)
 				adjustedPrice := effectivePrice * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
@@ -362,7 +362,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				}
 				// Re-apply CASCADE guard (same as first pass).
 				ep := cascadeCappedPrice(e.chaos, feat)
-				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7d, ep)
+				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7Days, ep)
 				stabDisc2 := stabilityDiscount(feat.CVShort)
 				adjPrice := ep * sellProb2 * stabDisc2
 				colorTier2 := classifyTier(ep, colorTiers)
