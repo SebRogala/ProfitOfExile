@@ -2,6 +2,7 @@
 	import { fetchFontEV, type FontEVResponse, type FontColor } from '$lib/api';
 	import { baseGemTradeUrl } from '$lib/trade-utils';
 	import InfoTooltip from './InfoTooltip.svelte';
+	import Select from '$lib/components/Select.svelte';
 
 	let { refreshKey = 0, league = '' }: { refreshKey?: number; league?: string } = $props();
 
@@ -134,6 +135,27 @@
 		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
 	}
 
+	// Probability of getting at least 1 winner in 3 picks without replacement.
+	function pWin3(winners: number, total: number): number {
+		if (winners <= 0 || total < 3) return 0;
+		if (winners >= total) return 1;
+		const losers = total - winners;
+		return 1 - (losers / total) * ((losers - 1) / (total - 1)) * ((losers - 2) / (total - 2));
+	}
+
+	let showPool = $state(false);
+	let poolVariant = $state('20/20');
+
+	function getPoolBreakdown(variant: string, color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
+		const safe = getColorData(variant, color, 'safe');
+		return safe?.poolBreakdown || [];
+	}
+
+	const TIER_COLORS: Record<string, string> = {
+		TOP: '#fbbf24', HIGH: '#fb923c', 'MID-HIGH': '#c084fc',
+		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
+	};
+
 	$effect(() => { refreshKey; loadAll(); });
 </script>
 
@@ -219,6 +241,50 @@
 				{/each}
 			</tbody>
 		</table>
+
+		<button class="pool-toggle" onclick={() => { showPool = !showPool; }}>
+			{showPool ? '\u25BC' : '\u25B6'} Pool Overview
+		</button>
+
+		{#if showPool}
+			<div class="pool-section">
+				<div class="pool-variant-select">
+					<span class="pool-select-label">Variant:</span>
+					<Select bind:value={poolVariant} options={VARIANTS.map(v => ({ value: v, label: v }))} />
+				</div>
+				<div class="pool-grid">
+					{#each COLORS as color}
+						{@const breakdown = getPoolBreakdown(poolVariant, color)}
+						{@const totalGems = breakdown.reduce((s, t) => s + t.count, 0)}
+						<div class="pool-color-card">
+							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
+							{#if breakdown.length > 0}
+								{#each breakdown as tier}
+									{@const tierPWin = Math.round(pWin3(tier.count, totalGems) * 100)}
+									<div class="pool-tier-row">
+										<span class="pool-tier-name" style="color: {TIER_COLORS[tier.tier] || '#94a3b8'}">{tier.tier}</span>
+										<span class="pool-tier-count">{tier.count}</span>
+										<span class="pool-tier-range">
+											{#if tier.minPrice === tier.maxPrice}
+												{tier.minPrice}c
+											{:else}
+												{tier.minPrice}c — {tier.maxPrice}c
+											{/if}
+										</span>
+										<span class="pool-tier-bar">
+											<span class="pool-tier-bar-fill" style="width: {tierPWin}%; background: {TIER_COLORS[tier.tier] || '#94a3b8'}"></span>
+										</span>
+										<span class="pool-tier-pwin">{tierPWin}%</span>
+									</div>
+								{/each}
+							{:else}
+								<span class="pool-empty">No data</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
 	{/if}
 </section>
 
@@ -352,5 +418,102 @@
 		color: var(--color-lab-text-secondary);
 		font-size: 0.75rem;
 		opacity: 0.5;
+	}
+
+	.pool-toggle {
+		background: none;
+		border: none;
+		color: var(--color-lab-text-secondary);
+		font-size: 0.875rem;
+		font-family: inherit;
+		cursor: pointer;
+		padding: 8px 0;
+		margin-top: 8px;
+	}
+	.pool-toggle:hover { color: var(--color-lab-text); }
+	.pool-section { margin-top: 4px; }
+	.pool-variant-select {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 6px;
+	}
+	.pool-select-label {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+	}
+	.pool-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
+	}
+	.pool-color-card {
+		border: 1px solid var(--color-lab-border);
+		padding: 6px 12px 8px;
+		background: rgba(42, 45, 55, 0.3);
+	}
+	.pool-color-header {
+		font-size: 0.875rem;
+		font-weight: 700;
+		margin-bottom: 4px;
+		padding-bottom: 4px;
+		border-bottom: 1px solid var(--color-lab-border);
+	}
+	.pool-count {
+		font-weight: 400;
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		margin-left: 6px;
+	}
+	.pool-tier-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 1px 0;
+		font-size: 0.8125rem;
+		line-height: 1.3;
+	}
+	.pool-tier-name {
+		font-weight: 700;
+		width: 60px;
+		flex-shrink: 0;
+	}
+	.pool-tier-count {
+		color: var(--color-lab-text);
+		font-weight: 600;
+		width: 24px;
+		text-align: left;
+		flex-shrink: 0;
+	}
+	.pool-tier-range {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.75rem;
+		width: 100px;
+		flex-shrink: 0;
+	}
+	.pool-tier-bar {
+		flex: 1;
+		height: 6px;
+		background: rgba(255, 255, 255, 0.04);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+	.pool-tier-bar-fill {
+		display: block;
+		height: 100%;
+		border-radius: 3px;
+		opacity: 0.6;
+	}
+	.pool-tier-pwin {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.75rem;
+		font-weight: 600;
+		width: 32px;
+		text-align: right;
+		flex-shrink: 0;
+	}
+	.pool-empty {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.8125rem;
 	}
 </style>
