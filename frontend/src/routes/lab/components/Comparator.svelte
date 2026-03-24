@@ -45,7 +45,7 @@
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, { loading: boolean; waitSeconds?: number }>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
-	let autoTradeDisabled = $state(false);
+	let autoTradeDisabled = $state(true);
 
 	const TRADE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
 
