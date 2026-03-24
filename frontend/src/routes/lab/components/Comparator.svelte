@@ -481,6 +481,7 @@
 								{:else}
 									<span class="trade-loading-text">Fetching trade data...</span>
 								{/if}
+								<button class="trade-cancel-btn" onclick={() => { tradeLoading[gem.name] = { loading: false }; }} title="Cancel trade request">&#215;</button>
 							</div>
 						{:else if !tradeData[gem.name]}
 							<div class="trade-empty">
@@ -522,6 +523,7 @@
 										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
 										{#if tradeLoading[gem.name]?.loading}
 											<span class="trade-spinner-inline"></span>
+											<button class="trade-cancel-btn-inline" onclick={() => { tradeLoading[gem.name] = { loading: false }; }} title="Cancel">&#215;</button>
 										{:else}
 											<button
 												class="trade-action-btn"
@@ -1052,6 +1054,32 @@
 		align-items: center;
 		gap: 6px;
 		margin-left: auto;
+	}
+	.trade-cancel-btn {
+		background: none;
+		border: 1px solid rgba(239, 68, 68, 0.3);
+		color: var(--color-lab-red);
+		padding: 2px 8px;
+		font-size: 0.875rem;
+		cursor: pointer;
+		font-family: inherit;
+		margin-left: 8px;
+	}
+	.trade-cancel-btn:hover {
+		background: rgba(239, 68, 68, 0.12);
+	}
+	.trade-cancel-btn-inline {
+		background: none;
+		border: none;
+		color: var(--color-lab-red);
+		font-size: 0.875rem;
+		cursor: pointer;
+		padding: 0 4px;
+		font-family: inherit;
+		line-height: 1;
+	}
+	.trade-cancel-btn-inline:hover {
+		color: var(--color-lab-text);
 	}
 	.trade-empty {
 		padding: 6px 0;
