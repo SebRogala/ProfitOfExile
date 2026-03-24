@@ -584,3 +584,50 @@ func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 	}
 	t.Error("expected RED/20/20 safe result")
 }
+
+func TestAnalyzeFont_CASCADEPriceCapped(t *testing.T) {
+	now := time.Now()
+	// Simulate a CASCADE buyout: Viper Strike spiked to 19000c (normal ~800c).
+	gems := []GemPrice{
+		{Name: "Viper Strike of the Mamba", Variant: "20", Chaos: 19000, Listings: 3, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Normal Gem A", Variant: "20", Chaos: 500, Listings: 20, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Normal Gem B", Variant: "20", Chaos: 300, Listings: 30, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Normal Gem C", Variant: "20", Chaos: 100, Listings: 40, IsTransfigured: true, GemColor: "GREEN"},
+	}
+
+	// Viper Strike feature: CASCADE regime, High7d = 850 (real value ~800c).
+	viperFeat := makeFeature("Viper Strike of the Mamba", "20", 19000, 3, "TOP", 0.3, 0.7)
+	viperFeat.MarketRegime = "CASCADE"
+	viperFeat.High7d = 850
+
+	features := []GemFeature{
+		viperFeat,
+		makeFeature("Normal Gem A", "20", 500, 20, "HIGH", 0.8, 0.9),
+		makeFeature("Normal Gem B", "20", 300, 30, "MID", 0.8, 0.9),
+		makeFeature("Normal Gem C", "20", 100, 40, "LOW", 0.8, 0.9),
+	}
+
+	analysis := AnalyzeFont(now, gems, features)
+
+	var found *FontResult
+	for i := range analysis.Safe {
+		if analysis.Safe[i].Color == "GREEN" && analysis.Safe[i].Variant == "20" {
+			found = &analysis.Safe[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected GREEN/20 safe result")
+	}
+
+	// Without CASCADE guard: AvgWinRaw would be ~4975 (dominated by 19000c gem).
+	// With guard: Viper Strike capped at High7d (850c), so AvgWinRaw must be < 850.
+	if found.AvgWinRaw > 900 {
+		t.Errorf("AvgWinRaw = %f, want < 900 (CASCADE price should be capped at High7d)", found.AvgWinRaw)
+	}
+	// EVRaw with guard: pool is [850, 500, 300, 100], best-of-3 from 4 gems.
+	// Without guard it would be ~15000+ (19000c dominates). With guard, < 1000.
+	if found.EVRaw > 1000 {
+		t.Errorf("EVRaw = %f, want < 1000 (CASCADE guard should prevent EV inflation)", found.EVRaw)
+	}
+}
