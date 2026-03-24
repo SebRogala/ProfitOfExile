@@ -41,6 +41,8 @@ type RouterConfig struct {
 	TradeSyncTimeout time.Duration
 	// League is the current PoE league name (e.g. "Mirage").
 	League string
+	// Analyzer is the lab analysis engine for admin recalculation endpoint.
+	Analyzer *lab.Analyzer
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -79,6 +81,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/market-context", handlers.MarketContextAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gem-features", handlers.GemFeaturesAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gem-signals", handlers.GemSignalsAnalysis(cfg.LabRepo, cfg.LabCache))
+
+		// Admin: trigger full recalculation (clear stale v2 data + recompute all).
+		if cfg.Analyzer != nil {
+			r.Post("/api/admin/recalculate", handlers.AdminRecalculate(cfg.Analyzer))
+		}
 	}
 
 	if cfg.TradeGate != nil {

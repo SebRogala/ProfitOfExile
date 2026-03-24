@@ -242,14 +242,13 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			}
 
 			// GCP recipe for 20/20 variants: buy 20/0 base + 20×GCP.
+			// Always show — even when more expensive, it's useful context.
 			if cr.Variant == "20/20" {
 				if base20, ok := basePriceIndex[bKey{cr.BaseName, "20"}]; ok && base20 > 0 {
 					recipeCost := base20 + 20*gcpPrice
-					if recipeCost < cr.BasePrice {
-						r.GCPRecipeCost = recipeCost
-						r.GCPRecipeBase = base20
-						r.GCPRecipeSaves = cr.BasePrice - recipeCost
-					}
+					r.GCPRecipeCost = recipeCost
+					r.GCPRecipeBase = base20
+					r.GCPRecipeSaves = cr.BasePrice - recipeCost // negative = recipe is more expensive
 				}
 			}
 

@@ -173,8 +173,12 @@
 							{#if gem.gcpRecipeCost > 0}
 								<div class="gcp-recipe">
 									<span class="gcp-label">GCP recipe:</span>
-									<span class="gcp-detail">{gem.gcpRecipeBase}c base + {gem.gcpRecipeCost - gem.gcpRecipeBase}c GCPs = <b>{gem.gcpRecipeCost}c</b></span>
-									<span class="gcp-saves">(saves {gem.gcpRecipeSaves}c)</span>
+									<span class="gcp-detail">{gem.gcpRecipeBase}c base + {Math.round(gem.gcpRecipeCost - gem.gcpRecipeBase)}c GCPs = <b>{gem.gcpRecipeCost}c</b></span>
+									{#if gem.gcpRecipeSaves >= 0}
+										<span class="gcp-saves">(saves {gem.gcpRecipeSaves}c)</span>
+									{:else}
+										<span class="gcp-more-expensive">(costs {Math.abs(gem.gcpRecipeSaves)}c more)</span>
+									{/if}
 									{#if gem.name.includes(' of ')}
 										<a class="buy-base-link gcp-buy" href={baseGemTradeUrl(gem.name, '20/0', league)} target="_blank">Buy 20/0</a>
 									{/if}
@@ -473,6 +477,10 @@
 	}
 	.gcp-saves {
 		color: var(--color-lab-green);
+		font-weight: 600;
+	}
+	.gcp-more-expensive {
+		color: var(--color-lab-red);
 		font-weight: 600;
 	}
 	.gcp-buy {
