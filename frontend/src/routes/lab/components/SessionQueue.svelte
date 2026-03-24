@@ -20,31 +20,17 @@
 
 	let {
 		queue,
-		autoClearSeconds,
 		onRemove,
 		onClear,
 		onRefresh,
-		onAutoClearChange,
 	}: {
 		queue: QueueItem[];
-		autoClearSeconds: number;
 		onRemove: (index: number) => void;
 		onClear: () => void;
 		onRefresh: () => void;
-		onAutoClearChange?: (mins: number) => void;
 	} = $props();
 
-	const TIMER_OPTIONS = [1, 2, 3, 5];
-
-	let timerMinutes = $derived(Math.ceil(autoClearSeconds / 60) || 2);
-
 	let anyRefreshing = $derived(queue.some((item) => item.refreshing));
-
-	function formatTimer(seconds: number): string {
-		const m = Math.floor(seconds / 60);
-		const s = seconds % 60;
-		return `${m}:${s.toString().padStart(2, '0')}`;
-	}
 
 	function fmtPrice(v: number): string {
 		return Number.isInteger(v) ? v.toString() : v.toFixed(1);
@@ -92,20 +78,6 @@
 	<section class="section">
 		<div class="section-header">
 			<h2 class="section-title">Session Queue</h2>
-			<div class="timer-display">
-				<span class="timer-text">Auto-clear in {formatTimer(autoClearSeconds)}</span>
-				{#if onAutoClearChange}
-					<select
-						class="timer-select"
-						value={timerMinutes}
-						onchange={(e) => onAutoClearChange?.(parseInt((e.target as HTMLSelectElement).value))}
-					>
-						{#each TIMER_OPTIONS as opt}
-							<option value={opt}>{opt} min</option>
-						{/each}
-					</select>
-				{/if}
-			</div>
 			<div class="header-actions">
 				<button class="refresh-btn" onclick={onRefresh} disabled={anyRefreshing}>
 					{#if anyRefreshing}
@@ -153,7 +125,7 @@
 								{#if item.recommendation}
 									<span class="rec-badge {recClass(item.recommendation)}">{item.recommendation}</span>
 								{:else}
-									<span class="no-action">\u2014</span>
+									<span class="no-action" title="Awaiting price refresh">&#9202;</span>
 								{/if}
 							</td>
 							<td class="col-remove">
@@ -186,27 +158,6 @@
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
-	}
-
-	.timer-display {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-left: auto;
-	}
-	.timer-text {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.875rem;
-		font-variant-numeric: tabular-nums;
-	}
-	.timer-select {
-		background: var(--color-lab-bg);
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text);
-		padding: 3px 6px;
-		font-size: 0.8125rem;
-		font-family: inherit;
-		cursor: pointer;
 	}
 
 	.header-actions {
