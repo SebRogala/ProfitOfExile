@@ -72,6 +72,51 @@
 		return `${ratio} (${pct}%)  ~${raw}c`;
 	}
 
+	/**
+	 * Build trade URL for cheapest base gem of a color + variant.
+	 * Color filtering uses attribute requirement caps (max 97) to exclude hybrids (98+).
+	 * RED = STR gems: cap dex+int. GREEN = DEX: cap str+int. BLUE = INT: cap str+dex.
+	 * Level 1 gems have no attribute requirements — can't filter by color, returns null.
+	 */
+	function buyBaseUrl(variant: string, color: string): string | null {
+		const parts = variant.split('/');
+		const level = parseInt(parts[0]) || 0;
+		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
+
+		// Level 1 gems have no attribute requirements — no color filter possible.
+		if (level < 20) return null;
+
+		// Attribute caps to isolate pure-color gems (hybrids start at 98).
+		const reqFilters: Record<string, any> = {};
+		if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
+		if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
+		if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
+
+		const miscFilters: Record<string, any> = {
+			gem_level: { min: level },
+			corrupted: { option: 'false' },
+		};
+		if (quality > 0) {
+			miscFilters.quality = { min: quality };
+		} else {
+			miscFilters.quality = { max: 0 };
+		}
+
+		const q = {
+			query: {
+				status: { option: 'securable' },
+				filters: {
+					type_filters: { filters: { category: { option: 'gem.activegem' } } },
+					req_filters: { filters: reqFilters },
+					misc_filters: { filters: miscFilters },
+					trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
+				},
+			},
+			sort: { price: 'asc' },
+		};
+		return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
+	}
+
 	$effect(() => { refreshKey; loadAll(); });
 </script>
 
@@ -87,6 +132,7 @@
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
+					<th class="buy-header">Buy Bases</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -127,6 +173,23 @@
 								{/if}
 							</td>
 						{/each}
+						<td class="buy-col">
+							{#if parseInt(variant) >= 20}
+								<div class="buy-buttons">
+									{#each COLORS as color}
+										{@const url = buyBaseUrl(variant, color)}
+										{#if url}
+											<a
+												class="buy-btn buy-{color.toLowerCase()}"
+												href={url}
+												target="_blank"
+												title="Buy cheapest {color} base gem ({variant})"
+											>{color}</a>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -213,4 +276,56 @@
 	.t-safe { color: #5eead4; }
 	.t-premium { color: #c084fc; }
 	.t-jackpot { color: #fbbf24; }
+
+	.buy-header {
+		width: 80px;
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+	}
+	.buy-col {
+		width: 80px;
+	}
+	.buy-buttons {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+	}
+	.buy-btn {
+		display: block;
+		width: 56px;
+		padding: 3px 0;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-align: center;
+		text-decoration: none;
+		letter-spacing: 0.04em;
+		border: 1px solid;
+		cursor: pointer;
+	}
+	.buy-red {
+		color: var(--color-lab-red);
+		border-color: rgba(239, 68, 68, 0.4);
+		background: rgba(239, 68, 68, 0.08);
+	}
+	.buy-red:hover { background: rgba(239, 68, 68, 0.2); }
+	.buy-green {
+		color: var(--color-lab-green);
+		border-color: rgba(34, 197, 94, 0.4);
+		background: rgba(34, 197, 94, 0.08);
+	}
+	.buy-green:hover { background: rgba(34, 197, 94, 0.2); }
+	.buy-blue {
+		color: var(--color-lab-blue, #3b82f6);
+		border-color: rgba(59, 130, 246, 0.4);
+		background: rgba(59, 130, 246, 0.08);
+	}
+	.buy-blue:hover { background: rgba(59, 130, 246, 0.2); }
+	.buy-na {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.75rem;
+		opacity: 0.5;
+	}
 </style>
