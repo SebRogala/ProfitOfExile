@@ -19,6 +19,7 @@ import (
 	"profitofexile/internal/lab"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
+	"profitofexile/internal/server/handlers"
 	"profitofexile/internal/trade"
 )
 
@@ -315,6 +316,20 @@ func main() {
 					}
 					labCache.SetDivineRate(rate)
 					slog.Info("currency event: divine rate updated", "rate", rate)
+				}()
+			}
+
+			if endpoint == "ninja_fragments" || endpoint == "ninja-fragments" {
+				go func() {
+					qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					offerings := handlers.ComputeOfferingTimings(qCtx, pool)
+					if len(offerings) > 0 {
+						if data, err := json.Marshal(offerings); err == nil {
+							labCache.SetOfferingTiming(data)
+							slog.Info("fragment event: offering timing updated", "offerings", len(offerings))
+						}
+					}
 				}()
 			}
 

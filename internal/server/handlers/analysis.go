@@ -1296,21 +1296,18 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		// Lab offering price timing analysis from fragment_snapshots.
-		if pool != nil {
-			offerings := []struct {
-				name       string
-				fragmentID string
-			}{
-				{"Gift to the Goddess", "offer-gift"},
-				{"Dedication to the Goddess", "offer-dedication"},
+		// Lab offering timing: serve from cache when available, compute on miss.
+		if cache != nil {
+			if cached := cache.OfferingTiming(); cached != nil {
+				_ = json.Unmarshal(cached, &resp.Offerings)
 			}
-			dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
-
-			for _, off := range offerings {
-				ot := computeOfferingTiming(r.Context(), pool, off.name, off.fragmentID, dayNames)
-				if ot != nil {
-					resp.Offerings = append(resp.Offerings, *ot)
+		}
+		if len(resp.Offerings) == 0 && pool != nil {
+			resp.Offerings = ComputeOfferingTimings(r.Context(), pool)
+			// Populate cache for next request.
+			if cache != nil && len(resp.Offerings) > 0 {
+				if data, err := json.Marshal(resp.Offerings); err == nil {
+					cache.SetOfferingTiming(data)
 				}
 			}
 		}
@@ -1356,6 +1353,27 @@ type giftTimingEntry struct {
 type giftDayEntry struct {
 	Day    string  `json:"day"`
 	Median float64 `json:"median"`
+}
+
+// ComputeOfferingTimings computes timing analysis for all lab offerings.
+func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool) []offeringTiming {
+	offerings := []struct {
+		name       string
+		fragmentID string
+	}{
+		{"Gift to the Goddess", "offer-gift"},
+		{"Dedication to the Goddess", "offer-dedication"},
+	}
+	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+
+	var result []offeringTiming
+	for _, off := range offerings {
+		ot := computeOfferingTiming(ctx, pool, off.name, off.fragmentID, dayNames)
+		if ot != nil {
+			result = append(result, *ot)
+		}
+	}
+	return result
 }
 
 // computeOfferingTiming queries fragment_snapshots for a single offering's

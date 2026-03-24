@@ -14,14 +14,18 @@
 
 	async function loadAll() {
 		loading = true;
-		const results = await Promise.all(
-			VARIANTS.map(async (v) => {
-				const d = await fetchFontEV(v);
-				return [v, d] as const;
-			})
-		);
-		for (const [v, d] of results) {
-			data[v] = d;
+		try {
+			const results = await Promise.all(
+				VARIANTS.map(async (v) => {
+					const d = await fetchFontEV(v);
+					return [v, d] as const;
+				})
+			);
+			for (const [v, d] of results) {
+				data[v] = d;
+			}
+		} catch (err) {
+			console.error('[FontEV] Failed to load:', err);
 		}
 		loading = false;
 	}
