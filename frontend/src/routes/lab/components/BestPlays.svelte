@@ -397,6 +397,8 @@
 		font-weight: 700;
 		padding: 2px 8px;
 		letter-spacing: 0.03em;
+		white-space: nowrap;
+		text-align: center;
 	}
 	.col-tier { width: 65px; }
 	.tier-top { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
