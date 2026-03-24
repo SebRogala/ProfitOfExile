@@ -463,6 +463,10 @@
 									<span class="trade-loading-text">Fetching trade data...</span>
 								{/if}
 							</div>
+						{:else if !tradeData[gem.name]}
+							<div class="trade-empty">
+								<button class="trade-action-btn trade-fetch-btn" onclick={() => refreshTradeData(gem.name)}>&#8635; Fetch trade data</button>
+							</div>
 						{/if}
 						{#if tradeData[gem.name]}
 							{@const td = tradeData[gem.name]}
@@ -1028,6 +1032,13 @@
 		display: flex;
 		gap: 4px;
 		margin-left: auto;
+	}
+	.trade-empty {
+		padding: 6px 0;
+	}
+	.trade-fetch-btn {
+		font-size: 0.8125rem;
+		padding: 5px 14px;
 	}
 	.trade-cache-age {
 		color: var(--color-lab-text-muted, #888);
