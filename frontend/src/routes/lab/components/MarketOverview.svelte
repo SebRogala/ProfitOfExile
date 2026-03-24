@@ -149,7 +149,7 @@
 
 						{#if off.sparkline?.length > 2}
 							<div class="off-chart-row">
-								<OfferingChart data={off.sparkline} hourlyMedians={off.hourlyMedians} height={140} />
+								<OfferingChart data={off.sparkline} hourlyMedians={off.hourlyMedians} todayHourMedians={off.todayHourMedians} height={140} />
 							</div>
 						{/if}
 

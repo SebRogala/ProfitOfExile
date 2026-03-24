@@ -1327,8 +1327,9 @@ type offeringTiming struct {
 	ExpensiveHours []giftTimingEntry `json:"expensiveHours,omitempty"`
 	CheapDays      []giftDayEntry    `json:"cheapDays,omitempty"`
 	ExpensiveDays  []giftDayEntry    `json:"expensiveDays,omitempty"`
-	HourlyMedians  []giftTimingEntry `json:"hourlyMedians,omitempty"`
-	Sparkline      []offeringSparkPt `json:"sparkline,omitempty"`
+	HourlyMedians     []giftTimingEntry `json:"hourlyMedians,omitempty"`
+	TodayHourMedians  []giftTimingEntry `json:"todayHourMedians,omitempty"`
+	Sparkline         []offeringSparkPt `json:"sparkline,omitempty"`
 }
 
 // offeringSparkPt is a single sparkline data point for offering price history.
@@ -1435,6 +1436,33 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 			// Sort by hour, not by price.
 			sort.Slice(ot.CheapHours, func(i, j int) bool { return ot.CheapHours[i].Hour < ot.CheapHours[j].Hour })
 			sort.Slice(ot.ExpensiveHours, func(i, j int) bool { return ot.ExpensiveHours[i].Hour < ot.ExpensiveHours[j].Hour })
+		}
+	}
+
+	// Today's weekday-specific hourly medians (for prediction accuracy).
+	todayDOW := int(time.Now().UTC().Weekday())
+	todayRows, err := pool.Query(ctx, `
+		SELECT EXTRACT(HOUR FROM time)::int AS h,
+		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
+		FROM fragment_snapshots
+		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
+		  AND EXTRACT(DOW FROM time)::int = $2
+		GROUP BY 1 HAVING COUNT(*) >= 1
+		ORDER BY h`, fragmentID, todayDOW)
+	if err != nil {
+		slog.Warn("offering timing: today hourly query failed", "fragment", fragmentID, "error", err)
+	} else {
+		for todayRows.Next() {
+			var hm giftHourMedian
+			if err := todayRows.Scan(&hm.Hour, &hm.Median); err != nil {
+				slog.Warn("offering timing: today hourly scan failed", "fragment", fragmentID, "error", err)
+				continue
+			}
+			ot.TodayHourMedians = append(ot.TodayHourMedians, giftTimingEntry{Hour: hm.Hour, Median: math.Round(hm.Median)})
+		}
+		todayRows.Close()
+		if err := todayRows.Err(); err != nil {
+			slog.Warn("offering timing: today hourly iteration error", "fragment", fragmentID, "error", err)
 		}
 	}
 

@@ -2,10 +2,12 @@
 	let {
 		data,
 		hourlyMedians,
+		todayHourMedians,
 		height = 140,
 	}: {
 		data: { time: string; price: number }[];
 		hourlyMedians?: { hour: number; median: number }[];
+		todayHourMedians?: { hour: number; median: number }[];
 		height?: number;
 	} = $props();
 
@@ -98,11 +100,17 @@
 	});
 
 	// Prediction line: apply historical hour-to-hour relative changes to current price.
-	// Uses the median at each hour to compute % change between consecutive hours,
-	// then chains those changes from the current actual price.
+	// Prefers today's weekday-specific medians (e.g., "what does Monday look like")
+	// and falls back to overall medians for hours without weekday-specific data.
 	let predictionPath = $derived.by(() => {
-		if (!hourlyMedians?.length || data.length < 2) return '';
-		const medianByHour = new Map(hourlyMedians.map(h => [h.hour, h.median]));
+		const baseMedians = hourlyMedians?.length ? hourlyMedians : [];
+		const todayMedians = todayHourMedians?.length ? todayHourMedians : [];
+		if (!baseMedians.length || data.length < 2) return '';
+
+		// Today's weekday medians take priority, fall back to overall.
+		const overallByHour = new Map(baseMedians.map(h => [h.hour, h.median]));
+		const todayByHour = new Map(todayMedians.map(h => [h.hour, h.median]));
+		const medianByHour = new Map([...overallByHour, ...todayByHour]); // today overwrites overall
 
 		const lastPt = data[data.length - 1];
 		const lastTime = new Date(lastPt.time).getTime();

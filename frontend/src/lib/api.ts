@@ -123,6 +123,7 @@ export interface MarketOverviewData {
 		cheapDays: { day: string; median: number }[];
 		expensiveDays: { day: string; median: number }[];
 		hourlyMedians: { hour: number; median: number }[];
+		todayHourMedians: { hour: number; median: number }[];
 		sparkline: { time: string; price: number }[];
 	}[];
 }
@@ -380,6 +381,7 @@ export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 			cheapDays: o.cheapDays || [],
 			expensiveDays: o.expensiveDays || [],
 			hourlyMedians: o.hourlyMedians || [],
+			todayHourMedians: o.todayHourMedians || [],
 			sparkline: (o.sparkline || []).map((p: any) => ({ time: p.time, price: p.price })),
 		})),
 	};
