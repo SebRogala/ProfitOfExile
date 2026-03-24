@@ -154,34 +154,38 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 	return "LOW"
 }
 
-// cascadeCappedPrice returns the effective price for a gem, capping CASCADE-regime
-// spikes using the gem's own historical distribution. The ceiling is derived from
-// the gem's price range and CV — no hardcoded multipliers.
+// cascadeCappedPrice returns the effective price for a CASCADE-regime gem,
+// capped relative to the color pool. poolP75 is the 75th percentile price
+// of all gems in the same color+variant pool.
 //
-// For CASCADE gems where current price exceeds the data-derived ceiling,
-// the price is capped at the historical high (the highest real-market price
-// observed in the available window).
-func cascadeCappedPrice(chaos float64, feat *GemFeature) float64 {
-	if feat.MarketRegime != "CASCADE" || feat.High7Days <= 0 {
+// CASCADE gems with < 5 listings whose price exceeds 2× the pool P75 are
+// capped at the pool P75. This prevents buyout spikes (e.g., 19000c on a
+// gem whose pool P75 is 500c) from inflating the entire color's Font EV.
+//
+// Uses pool-relative comparison because the gem's own High7Days/Low7Days
+// are already poisoned by the spike.
+func cascadeCappedPrice(chaos float64, feat *GemFeature, poolP75 float64) float64 {
+	if feat.MarketRegime != "CASCADE" || poolP75 <= 0 {
 		return chaos
 	}
-
-	// Derive spike threshold from the gem's own volatility.
-	// Range-based: ceiling = high + range × (1 + CV/100).
-	// At CV=0 (perfectly stable), ceiling = high + range (2× range above low).
-	// At CV=50 (volatile), ceiling = high + 1.5× range (more tolerant).
-	// This adapts to each gem's actual price behavior.
-	priceRange := feat.High7Days - feat.Low7Days
-	if priceRange <= 0 {
-		priceRange = feat.High7Days * 0.1 // flat history: allow 10% above high
-	}
-	cvFactor := 1.0 + feat.CV/100.0
-	ceiling := feat.High7Days + priceRange*cvFactor
-
-	if chaos > ceiling {
-		return feat.High7Days
+	if feat.Listings < 5 && chaos > poolP75*2 {
+		return poolP75
 	}
 	return chaos
+}
+
+// computePoolP75 returns the 75th percentile price from a slice of prices.
+// Requires at least 1 value; returns 0 for empty input.
+func computePoolP75(prices []float64) float64 {
+	n := len(prices)
+	if n == 0 {
+		return 0
+	}
+	sorted := make([]float64, n)
+	copy(sorted, prices)
+	sort.Float64s(sorted)
+	idx := (n - 1) * 3 / 4
+	return sorted[idx]
 }
 
 // AnalyzeFont computes Font of Divine Skill EV per (color, variant) in three modes:
@@ -257,6 +261,13 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
+			// Compute pool P75 for CASCADE cap (before any capping).
+			poolPrices := make([]float64, 0, len(entries))
+			for _, e := range entries {
+				poolPrices = append(poolPrices, e.chaos)
+			}
+			poolP75 := computePoolP75(poolPrices)
+
 			// Compute CASCADE-adjusted prices for tier boundaries.
 			// Without this, a single buyout spike (e.g., 19000c on a ~800c gem)
 			// distorts the entire color's tier distribution.
@@ -264,7 +275,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			for _, e := range entries {
 				price := e.chaos
 				if feat, ok := featureLookup[featureKey{e.name, variant}]; ok {
-					price = cascadeCappedPrice(e.chaos, feat)
+					price = cascadeCappedPrice(e.chaos, feat, poolP75)
 				}
 				colorGems = append(colorGems, GemPrice{
 					Name: e.name, Variant: variant, Chaos: price,
@@ -288,7 +299,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 
 				// CASCADE guard: when a thin-market buyout spikes the ninja price
 				// far above its historical range, cap at a data-derived ceiling.
-				effectivePrice := cascadeCappedPrice(e.chaos, feat)
+				effectivePrice := cascadeCappedPrice(e.chaos, feat, poolP75)
 
 				// Compute sell probability and stability from CURRENT gem data.
 				sellProb := sellProbabilityFactor(e.listings, feat.Low7Days, effectivePrice)
@@ -361,7 +372,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 					continue
 				}
 				// Re-apply CASCADE guard (same as first pass).
-				ep := cascadeCappedPrice(e.chaos, feat)
+				ep := cascadeCappedPrice(e.chaos, feat, poolP75)
 				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7Days, ep)
 				stabDisc2 := stabilityDiscount(feat.CVShort)
 				adjPrice := ep * sellProb2 * stabDisc2
