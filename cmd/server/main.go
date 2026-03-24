@@ -360,6 +360,16 @@ func main() {
 						slog.Warn("trend analysis failed", "error", err)
 					}
 				}()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("v2 analysis panicked", "recover", r)
+						}
+					}()
+					if err := analyzer.RunV2(subCtx); err != nil {
+						slog.Warn("v2 analysis failed", "error", err)
+					}
+				}()
 			}
 		})
 		go sub.Run(subCtx)
