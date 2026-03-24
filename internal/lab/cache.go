@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -22,8 +23,9 @@ type Cache struct {
 	gemNames    []string // unique transfigured gem names, sorted
 	lastUpdated time.Time
 	nextFetch   time.Time
-	divineRate  float64
-	gcpPrice    float64
+	divineRate      float64
+	gcpPrice        float64
+	offeringTiming  json.RawMessage // pre-computed offering timing JSON
 
 	// V2 pre-computed results. These three fields are populated together by
 	// Analyzer.RunV2 from the same snapshot time, but may be nil independently
@@ -198,6 +200,20 @@ func (c *Cache) DivineRate() float64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.divineRate
+}
+
+// SetOfferingTiming stores pre-computed offering timing JSON.
+func (c *Cache) SetOfferingTiming(data json.RawMessage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offeringTiming = data
+}
+
+// OfferingTiming returns cached offering timing JSON, or nil if not set.
+func (c *Cache) OfferingTiming() json.RawMessage {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.offeringTiming
 }
 
 // SetGCPPrice stores the latest GCP price.

@@ -103,16 +103,21 @@ const API_BASE = '/api';
  * request every 3s (max 10 attempts) — once the gate completes, the
  * result is cached and the retry returns 200 immediately.
  */
-export async function lookupTrade(gem: string, variant: string, force = false): Promise<LookupResponse> {
+export async function lookupTrade(gem: string, variant: string, force = false, cacheOnly = false): Promise<LookupResponse> {
 	const resp = await fetch(`${API_BASE}/trade/lookup`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ gem, variant, force }),
+		body: JSON.stringify({ gem, variant, force, cacheOnly }),
 	});
 
 	if (resp.status === 200) {
 		const data: TradeLookupResult = await resp.json();
 		return { immediate: data, requestId: null };
+	}
+
+	// 204 = cacheOnly miss — no data, no GGG request queued.
+	if (resp.status === 204) {
+		return { immediate: null, requestId: null };
 	}
 
 	if (resp.status === 202) {

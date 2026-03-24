@@ -45,6 +45,7 @@
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, { loading: boolean; waitSeconds?: number }>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
+	let tradeGeneration = $state<Record<string, number>>({});
 	let autoTradeDisabled = $state(true);
 
 	const TRADE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
@@ -85,48 +86,57 @@
 		return `${remaining}m`;
 	}
 
-	/** Fetch trade data — full lookup with async wait for GGG response. */
+	/** Fetch trade data — full lookup with async wait for GGG response.
+	 *  Uses a generation counter so cancelled requests don't overwrite current state. */
 	async function fetchTradeData(gem: string, force = false) {
+		const gen = (tradeGeneration[gem] || 0) + 1;
+		tradeGeneration[gem] = gen;
 		tradeLoading[gem] = { loading: true };
+		const isStale = () => tradeGeneration[gem] !== gen;
+
 		try {
 			const { immediate, requestId } = await lookupTrade(gem, variant, force);
+			if (isStale()) return;
 			if (immediate) {
 				tradeData[gem] = immediate;
 				tradeLoading[gem] = { loading: false };
 			} else if (requestId) {
 				let resolved = false;
 				const unsub = registerTradeListener(requestId, {
-					onWait: (s) => { tradeLoading[gem] = { loading: true, waitSeconds: s }; },
-					onReady: (data) => { resolved = true; tradeData[gem] = data; tradeLoading[gem] = { loading: false }; unsub(); },
-					onError: () => { resolved = true; tradeLoading[gem] = { loading: false }; unsub(); },
+					onWait: (s) => { if (!isStale()) tradeLoading[gem] = { loading: true, waitSeconds: s }; },
+					onReady: (data) => { resolved = true; if (!isStale()) { tradeData[gem] = data; tradeLoading[gem] = { loading: false }; } unsub(); },
+					onError: () => { resolved = true; if (!isStale()) tradeLoading[gem] = { loading: false }; unsub(); },
 				});
 				// Polling fallback when Mercure SSE isn't connected
 				pollTradeResult(gem, variant).then((data) => {
-					if (!resolved && data) {
+					if (!resolved && !isStale() && data) {
 						resolved = true;
 						tradeData[gem] = data;
 						tradeLoading[gem] = { loading: false };
 						unsub();
 					}
+				}).catch((err) => {
+					console.warn(`[Trade] Poll failed for ${gem}:`, err);
 				});
 			} else {
 				tradeLoading[gem] = { loading: false };
 			}
-		} catch {
-			tradeLoading[gem] = { loading: false };
+		} catch (err) {
+			console.warn(`[Trade] Lookup failed for ${gem}:`, err);
+			if (!isStale()) tradeLoading[gem] = { loading: false };
 		}
 	}
 
 	/** Cache-only lookup — returns backend LRU data without triggering a GGG request.
-	 *  If cache miss (202), silently ignores — no async wait, no GGG hit. */
+	 *  Returns 204 on cache miss (no API call queued). */
 	async function fetchTradeCacheOnly(gem: string) {
 		try {
-			const { immediate } = await lookupTrade(gem, variant);
+			const { immediate } = await lookupTrade(gem, variant, false, true);
 			if (immediate) {
 				tradeData[gem] = immediate;
 			}
-		} catch {
-			// silent — cache miss is expected
+		} catch (err) {
+			console.warn(`[Trade] Cache lookup failed for ${gem}:`, err);
 		}
 	}
 
@@ -146,7 +156,12 @@
 			results = [];
 			return;
 		}
-		results = await fetchCompare(active, variant);
+		try {
+			results = await fetchCompare(active, variant);
+		} catch (err) {
+			console.error('[Comparator] Failed to load results:', err);
+			results = [];
+		}
 	}
 
 	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -481,7 +496,7 @@
 								{:else}
 									<span class="trade-loading-text">Fetching trade data...</span>
 								{/if}
-								<button class="trade-cancel-btn" onclick={() => { tradeLoading[gem.name] = { loading: false }; }} title="Cancel trade request">&#215;</button>
+								<button class="trade-cancel-btn" onclick={() => { tradeGeneration[gem.name] = (tradeGeneration[gem.name] || 0) + 1; tradeLoading[gem.name] = { loading: false }; }} title="Cancel trade request">&#215;</button>
 							</div>
 						{:else if !tradeData[gem.name]}
 							<div class="trade-empty">
@@ -523,7 +538,7 @@
 										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
 										{#if tradeLoading[gem.name]?.loading}
 											<span class="trade-spinner-inline"></span>
-											<button class="trade-cancel-btn-inline" onclick={() => { tradeLoading[gem.name] = { loading: false }; }} title="Cancel">&#215;</button>
+											<button class="trade-cancel-btn-inline" onclick={() => { tradeGeneration[gem.name] = (tradeGeneration[gem.name] || 0) + 1; tradeLoading[gem.name] = { loading: false }; }} title="Cancel">&#215;</button>
 										{:else}
 											<button
 												class="trade-action-btn"

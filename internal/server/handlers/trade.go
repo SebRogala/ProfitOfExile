@@ -13,9 +13,10 @@ import (
 
 // tradeLookupRequest is the expected JSON body for POST /api/trade/lookup.
 type tradeLookupRequest struct {
-	Gem     string `json:"gem"`
-	Variant string `json:"variant"`
-	Force   bool   `json:"force"`
+	Gem       string `json:"gem"`
+	Variant   string `json:"variant"`
+	Force     bool   `json:"force"`
+	CacheOnly bool   `json:"cacheOnly"`
 }
 
 // TradeLookup handles POST /api/trade/lookup. It checks the LRU cache first
@@ -54,6 +55,12 @@ func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, syncTimeout time.Dur
 				}
 				return
 			}
+		}
+
+		// CacheOnly mode: return 204 on cache miss — no GGG API request.
+		if body.CacheOnly {
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 
 		requestID := middleware.GetReqID(r.Context())
