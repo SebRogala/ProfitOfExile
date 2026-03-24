@@ -276,12 +276,14 @@ export async function fetchStatus(): Promise<StatusData> {
 export async function fetchBestPlays(
 	variant?: string,
 	budget?: number,
-	sort?: 'roi' | 'roiPercent'
+	sort?: 'roi' | 'roiPercent',
+	limit?: number,
 ): Promise<GemPlay[]> {
 	const params: Record<string, string> = {};
 	if (variant) params.variant = variant;
 	if (budget) params.budget = String(budget);
 	if (sort === 'roiPercent') params.sort = 'pct';
+	if (limit) params.limit = String(limit);
 
 	const resp = await get<{ count: number; data: any[] }>('/analysis/collective', params);
 	return (resp.data || []).map(mapCollectiveRow);

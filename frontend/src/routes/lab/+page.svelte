@@ -142,7 +142,7 @@
 			error = '';
 			const [s, bp, mo] = await Promise.all([
 				fetchStatus(),
-				fetchBestPlays(),
+				fetchBestPlays(undefined, undefined, undefined, 100),
 				fetchMarketOverview(),
 			]);
 			status = s;
