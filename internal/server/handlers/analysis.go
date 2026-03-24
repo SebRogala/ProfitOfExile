@@ -230,8 +230,9 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			Profit        float64 `json:"profit"`
 			FontsToHit    float64              `json:"fontsToHit"`
 			JackpotGems   []lab.JackpotGemInfo `json:"jackpotGems,omitempty"`
-			ThinPoolGems  int                  `json:"thinPoolGems"`
-			LiquidityRisk string  `json:"liquidityRisk"`
+			ThinPoolGems  int                   `json:"thinPoolGems"`
+			LiquidityRisk string                `json:"liquidityRisk"`
+			PoolBreakdown []lab.TierPoolInfo    `json:"poolBreakdown,omitempty"`
 		}
 
 		toRows := func(results []lab.FontResult) []row {
@@ -254,6 +255,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					JackpotGems:   r.JackpotGems,
 					ThinPoolGems:  r.ThinPoolGems,
 					LiquidityRisk: r.LiquidityRisk,
+					PoolBreakdown: r.PoolBreakdown,
 				})
 			}
 			return rows

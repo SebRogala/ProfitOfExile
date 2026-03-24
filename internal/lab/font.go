@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,15 @@ type FontResult struct {
 	Mode          string  // "safe", "premium", or "jackpot"
 	ThinPoolGems  int     // count of winners with < 5 listings
 	LiquidityRisk string  // "LOW", "MEDIUM", "HIGH"
+	PoolBreakdown []TierPoolInfo `json:"poolBreakdown,omitempty"` // per-tier gem counts and price ranges
+}
+
+// TierPoolInfo holds the count and price range for gems in a specific tier within a color pool.
+type TierPoolInfo struct {
+	Tier     string  `json:"tier"`
+	Count    int     `json:"count"`
+	MinPrice float64 `json:"minPrice"`
+	MaxPrice float64 `json:"maxPrice"`
 }
 
 // JackpotGemInfo holds name, price and trade URL for a TOP-tier gem shown in Jackpot tooltip.
@@ -292,6 +302,9 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			var safeThinCount, premiumThinCount, jackpotThinCount int
 			var jackpotGems []JackpotGemInfo
 
+			// Pool breakdown: track count and price range per tier.
+			tierStats := make(map[string]*TierPoolInfo)
+
 			gemAdjustedPrice := make(map[string]float64)
 			gemRawPrice := make(map[string]float64)
 			for _, e := range entries {
@@ -314,6 +327,21 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 
 				// Safe/Premium: use color-specific tiers (per-color pool).
 				colorTier := classifyTier(effectivePrice, colorTiers)
+
+				// Track pool breakdown per tier.
+				ts, ok := tierStats[colorTier]
+				if !ok {
+					ts = &TierPoolInfo{Tier: colorTier, MinPrice: effectivePrice, MaxPrice: effectivePrice}
+					tierStats[colorTier] = ts
+				}
+				ts.Count++
+				if effectivePrice < ts.MinPrice {
+					ts.MinPrice = effectivePrice
+				}
+				if effectivePrice > ts.MaxPrice {
+					ts.MaxPrice = effectivePrice
+				}
+
 				if isSafeTierWinner(colorTier) {
 					safeWinnerCount++
 					if isThin {
@@ -394,6 +422,17 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				}
 			}
 
+			// Build sorted pool breakdown (TOP → FLOOR).
+			tierOrder := []string{"TOP", "HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"}
+			var poolBreakdown []TierPoolInfo
+			for _, tier := range tierOrder {
+				if ts, ok := tierStats[tier]; ok {
+					ts.MinPrice = math.Round(ts.MinPrice)
+					ts.MaxPrice = math.Round(ts.MaxPrice)
+					poolBreakdown = append(poolBreakdown, *ts)
+				}
+			}
+
 			// Safe mode result.
 			safePWin := pWin3Picks(safeWinnerCount, pool)
 			var safeAvgWin, safeAvgWinRaw float64
@@ -422,6 +461,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				Mode:          "safe",
 				ThinPoolGems:  safeThinCount,
 				LiquidityRisk: computeLiquidityRisk(safeThinCount, safeWinnerCount),
+				PoolBreakdown: poolBreakdown,
 			})
 
 			// Premium mode result.
