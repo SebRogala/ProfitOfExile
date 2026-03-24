@@ -2,6 +2,22 @@
 	let { text }: { text: string } = $props();
 	let visible = $state(false);
 	let pinned = $state(false);
+	let iconEl = $state<HTMLElement | null>(null);
+	let panelEl = $state<HTMLElement | null>(null);
+	let alignRight = $state(true);
+
+	function updateAlignment() {
+		if (!iconEl) return;
+		const rect = iconEl.getBoundingClientRect();
+		const midpoint = window.innerWidth / 2;
+		// If trigger is in the left half, align panel to the left; otherwise right.
+		alignRight = rect.left > midpoint;
+	}
+
+	function show() {
+		updateAlignment();
+		visible = true;
+	}
 
 	function handleClick(e: MouseEvent) {
 		e.stopPropagation();
@@ -10,7 +26,7 @@
 			visible = false;
 		} else {
 			pinned = true;
-			visible = true;
+			show();
 		}
 	}
 
@@ -28,13 +44,28 @@
 			return () => document.removeEventListener('click', handler);
 		}
 	});
+
+	// Clamp panel to viewport after render.
+	$effect(() => {
+		if (visible && panelEl) {
+			const rect = panelEl.getBoundingClientRect();
+			if (rect.left < 4) {
+				panelEl.style.left = `${4 - rect.left}px`;
+				panelEl.style.right = 'auto';
+			} else if (rect.right > window.innerWidth - 4) {
+				panelEl.style.right = `${4 - (window.innerWidth - rect.right)}px`;
+				panelEl.style.left = 'auto';
+			}
+		}
+	});
 </script>
 
 <span
 	class="info-icon"
 	role="button"
 	tabindex="0"
-	onmouseenter={() => { if (!pinned) visible = true; }}
+	bind:this={iconEl}
+	onmouseenter={() => { if (!pinned) show(); }}
 	onmouseleave={() => { if (!pinned) visible = false; }}
 	onclick={handleClick}
 >
@@ -42,7 +73,13 @@
 	{#if visible}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="info-panel" onclick={(e) => e.stopPropagation()}>
+		<div
+			class="info-panel"
+			class:align-left={!alignRight}
+			class:align-right={alignRight}
+			bind:this={panelEl}
+			onclick={(e) => e.stopPropagation()}
+		>
 			{@html text}
 		</div>
 	{/if}
@@ -83,7 +120,6 @@
 		cursor: default;
 		position: absolute;
 		top: calc(100% + 6px);
-		right: 0;
 		z-index: 100;
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
@@ -99,5 +135,13 @@
 		white-space: normal;
 		text-transform: none;
 		letter-spacing: normal;
+	}
+	.align-right {
+		right: 0;
+		left: auto;
+	}
+	.align-left {
+		left: 0;
+		right: auto;
 	}
 </style>
