@@ -72,7 +72,6 @@
 		};
 
 		sessionQueue = [...sessionQueue, item];
-		resetAutoClearTimer();
 	}
 
 	async function handleRefreshQueue() {
@@ -115,7 +114,6 @@
 			})
 		);
 
-		resetAutoClearTimer();
 	}
 
 	function handleRemoveFromQueue(index: number) {
@@ -217,11 +215,9 @@
 
 		<SessionQueue
 			queue={sessionQueue}
-			autoClearSeconds={autoClearSecondsLeft}
 			onRemove={handleRemoveFromQueue}
 			onClear={handleClearQueue}
 			onRefresh={handleRefreshQueue}
-			onAutoClearChange={handleAutoClearChange}
 		/>
 
 		<section class="section">

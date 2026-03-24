@@ -45,11 +45,50 @@
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, { loading: boolean; waitSeconds?: number }>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
+	let autoTradeDisabled = $state(false);
 
-	async function fetchTradeData(gem: string) {
+	const TRADE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+
+	function tradeCacheAge(gem: string): number | null {
+		const td = tradeData[gem];
+		if (!td?.fetchedAt) return null;
+		return Date.now() - new Date(td.fetchedAt).getTime();
+	}
+
+	function tradeCacheAgeStr(gem: string): string {
+		const age = tradeCacheAge(gem);
+		if (age == null) return '';
+		const mins = Math.floor(age / 60000);
+		if (mins < 1) return '<1m ago';
+		if (mins < 60) return `${mins}m ago`;
+		return `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
+	}
+
+	const TRADE_STALE_MS = 2 * 60 * 1000; // 2 minutes — visual staleness indicator
+
+	function canRefreshTrade(gem: string): boolean {
+		const age = tradeCacheAge(gem);
+		if (age == null) return true;
+		return age >= TRADE_COOLDOWN_MS;
+	}
+
+	function isTradeCacheStale(gem: string): boolean {
+		const age = tradeCacheAge(gem);
+		if (age == null) return false;
+		return age >= TRADE_STALE_MS;
+	}
+
+	function tradeCooldownRemaining(gem: string): string {
+		const age = tradeCacheAge(gem);
+		if (age == null || age >= TRADE_COOLDOWN_MS) return '';
+		const remaining = Math.ceil((TRADE_COOLDOWN_MS - age) / 60000);
+		return `${remaining}m`;
+	}
+
+	async function fetchTradeData(gem: string, force = false) {
 		tradeLoading[gem] = { loading: true };
 		try {
-			const { immediate, requestId } = await lookupTrade(gem, variant);
+			const { immediate, requestId } = await lookupTrade(gem, variant, force);
 			if (immediate) {
 				tradeData[gem] = immediate;
 				tradeLoading[gem] = { loading: false };
@@ -78,6 +117,7 @@
 	}
 
 	function fetchTradeDataForAll() {
+		if (autoTradeDisabled) return;
 		for (const gem of selectedGems) {
 			fetchTradeData(gem);
 		}
@@ -124,7 +164,9 @@
 		showDropdown = false;
 		highlightedIndex = -1;
 		loadResults();
-		fetchTradeData(name);
+		if (!autoTradeDisabled) {
+			fetchTradeData(name);
+		}
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
@@ -233,8 +275,8 @@
 
 
 	function refreshTradeData(gem: string) {
-		tradeData[gem] = null;
-		fetchTradeData(gem);
+		// Don't clear existing data — keep showing cached while loading.
+		fetchTradeData(gem, true);
 	}
 
 	function concentrationClass(c: TradeSignals['sellerConcentration']): string {
@@ -277,6 +319,10 @@
 			{#if selectedGems.length > 0}
 				<button class="clear-btn" onclick={clearAll}>Clear All</button>
 			{/if}
+			<label class="auto-trade-toggle" title="When enabled, trade lookups are not sent automatically on gem add">
+				<input type="checkbox" bind:checked={autoTradeDisabled} />
+				<span class="toggle-label">Disable auto-trade</span>
+			</label>
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
 				<Select bind:value={variant} options={VARIANT_OPTIONS} onchange={() => handleVariantChange()} />
@@ -408,7 +454,7 @@
 
 					<!-- Trade Data Section -->
 					<div class="trade-section">
-						{#if tradeLoading[gem.name]?.loading}
+						{#if tradeLoading[gem.name]?.loading && !tradeData[gem.name]}
 							<div class="trade-loading">
 								<span class="trade-spinner"></span>
 								{#if tradeLoading[gem.name].waitSeconds != null && tradeLoading[gem.name].waitSeconds > 0}
@@ -417,7 +463,8 @@
 									<span class="trade-loading-text">Fetching trade data...</span>
 								{/if}
 							</div>
-						{:else if tradeData[gem.name]}
+						{/if}
+						{#if tradeData[gem.name]}
 							{@const td = tradeData[gem.name]}
 							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
 							{@const chaosFloor = td.listings.find(l => l.currency === 'chaos')}
@@ -449,7 +496,17 @@
 									<span class="trade-listings-badge">{td.total} listings</span>
 									<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
 									<span class="trade-actions">
-										<button class="trade-action-btn" title="Refresh trade data" onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
+										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
+										{#if tradeLoading[gem.name]?.loading}
+											<span class="trade-spinner-inline"></span>
+										{:else}
+											<button
+												class="trade-action-btn"
+												class:trade-refresh-stale={isTradeCacheStale(gem.name)}
+												title={canRefreshTrade(gem.name) ? 'Refresh trade data' : `Cooldown: ${tradeCooldownRemaining(gem.name)} remaining`}
+												onclick={() => refreshTradeData(gem.name)}
+											>&#8635;</button>
+										{/if}
 										{#if gem.name.includes(' of ')}
 											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
 										{/if}
@@ -544,6 +601,22 @@
 		font-weight: 600;
 		cursor: pointer;
 		font-family: inherit;
+	}
+	.auto-trade-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		cursor: pointer;
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		user-select: none;
+	}
+	.auto-trade-toggle input {
+		accent-color: var(--color-lab-yellow, #eab308);
+		cursor: pointer;
+	}
+	.toggle-label {
+		white-space: nowrap;
 	}
 	.clear-btn:hover {
 		background: rgba(239, 68, 68, 0.2);
@@ -954,6 +1027,31 @@
 		display: flex;
 		gap: 4px;
 		margin-left: auto;
+	}
+	.trade-cache-age {
+		color: var(--color-lab-text-muted, #888);
+		font-size: 0.75rem;
+	}
+	.trade-cache-stale {
+		color: var(--color-lab-red);
+	}
+	.trade-refresh-stale {
+		color: var(--color-lab-red) !important;
+		border-color: rgba(239, 68, 68, 0.4) !important;
+		background: rgba(239, 68, 68, 0.12) !important;
+	}
+	.trade-refresh-stale:hover {
+		background: rgba(239, 68, 68, 0.2) !important;
+	}
+	.trade-spinner-inline {
+		display: inline-block;
+		width: 14px;
+		height: 14px;
+		border: 2px solid var(--color-lab-border);
+		border-top-color: var(--color-lab-text-secondary);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		vertical-align: middle;
 	}
 	.trade-action-btn {
 		background: rgba(42, 45, 55, 0.6);
