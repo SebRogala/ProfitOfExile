@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -1197,7 +1198,7 @@ func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.Mar
 // MarketOverview returns an aggregated market overview built from cached data.
 // No query params — returns a single object with market stats, sell confidence
 // spread, signal distribution, temporal mode, and divine rate.
-func MarketOverview(cache *lab.Cache) http.HandlerFunc {
+func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -1215,6 +1216,12 @@ func MarketOverview(cache *lab.Cache) http.HandlerFunc {
 			DivineRate           float64        `json:"divineRate"`
 			SellConfidenceSpread map[string]int `json:"sellConfidenceSpread"`
 			SignalDistribution   map[string]int `json:"signalDistribution"`
+			// Gift to the Goddess trading timing.
+			GiftCurrentPrice float64  `json:"giftCurrentPrice,omitempty"`
+			GiftCheapHours   string   `json:"giftCheapHours,omitempty"`
+			GiftExpHours     string   `json:"giftExpensiveHours,omitempty"`
+			GiftCheapDays    string   `json:"giftCheapDays,omitempty"`
+			GiftExpDays      string   `json:"giftExpensiveDays,omitempty"`
 		}
 
 		resp := overview{
@@ -1290,10 +1297,98 @@ func MarketOverview(cache *lab.Cache) http.HandlerFunc {
 			}
 		}
 
+		// Gift to the Goddess price timing analysis from fragment_snapshots.
+		if pool != nil {
+			type dayMedian struct {
+				Day    int
+				Median float64
+			}
+
+			// Current price.
+			var currentPrice *float64
+			_ = pool.QueryRow(r.Context(), `
+				SELECT chaos FROM fragment_snapshots
+				WHERE fragment_id = 'offer-gift'
+				ORDER BY time DESC LIMIT 1`).Scan(&currentPrice)
+			if currentPrice != nil {
+				resp.GiftCurrentPrice = math.Round(*currentPrice)
+			}
+
+			// Hourly medians (14-day window).
+			hourRows, err := pool.Query(r.Context(), `
+				SELECT EXTRACT(HOUR FROM time)::int AS h,
+				       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
+				FROM fragment_snapshots
+				WHERE fragment_id = 'offer-gift' AND time > NOW() - INTERVAL '14 days'
+				GROUP BY 1 HAVING COUNT(*) >= 3
+				ORDER BY median`)
+			if err == nil {
+				defer hourRows.Close()
+				var hours []giftHourMedian
+				for hourRows.Next() {
+					var hm giftHourMedian
+					if err := hourRows.Scan(&hm.Hour, &hm.Median); err == nil {
+						hours = append(hours, hm)
+					}
+				}
+				if len(hours) >= 4 {
+					resp.GiftCheapHours = formatHourRanges(hours[:3])
+					resp.GiftExpHours = formatHourRanges(hours[len(hours)-3:])
+				}
+			}
+
+			// Weekday medians (14-day window).
+			dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+			dayRows, err := pool.Query(r.Context(), `
+				SELECT EXTRACT(DOW FROM time)::int AS d,
+				       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
+				FROM fragment_snapshots
+				WHERE fragment_id = 'offer-gift' AND time > NOW() - INTERVAL '14 days'
+				GROUP BY 1 HAVING COUNT(*) >= 5
+				ORDER BY median`)
+			if err == nil {
+				defer dayRows.Close()
+				var days []dayMedian
+				for dayRows.Next() {
+					var dm dayMedian
+					if err := dayRows.Scan(&dm.Day, &dm.Median); err == nil {
+						days = append(days, dm)
+					}
+				}
+				if len(days) >= 4 {
+					cheapDays := make([]string, 0, 2)
+					expDays := make([]string, 0, 2)
+					for i := 0; i < 2 && i < len(days); i++ {
+						cheapDays = append(cheapDays, fmt.Sprintf("%s (~%dc)", dayNames[days[i].Day], int(math.Round(days[i].Median))))
+					}
+					for i := len(days) - 1; i >= len(days)-2 && i >= 0; i-- {
+						expDays = append(expDays, fmt.Sprintf("%s (~%dc)", dayNames[days[i].Day], int(math.Round(days[i].Median))))
+					}
+					resp.GiftCheapDays = strings.Join(cheapDays, ", ")
+					resp.GiftExpDays = strings.Join(expDays, ", ")
+				}
+			}
+		}
+
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("market overview: encode response", "error", err)
 		}
 	}
+}
+
+// giftHourMedian holds hourly median price for formatHourRanges.
+type giftHourMedian struct {
+	Hour   int
+	Median float64
+}
+
+// formatHourRanges formats a slice of hour medians into a readable UTC hour list.
+func formatHourRanges(hours []giftHourMedian) string {
+	parts := make([]string, 0, len(hours))
+	for _, h := range hours {
+		parts = append(parts, fmt.Sprintf("%02d:00 (~%dc)", h.Hour, int(math.Round(h.Median))))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // filterGemSignals filters and limits cached gem signals.

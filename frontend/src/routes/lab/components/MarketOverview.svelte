@@ -82,6 +82,36 @@
 				{/each}
 			</span>
 		</div>
+		{#if data.giftCurrentPrice > 0}
+			<div class="stat-item spread-row gift-section">
+				<span class="stat-label gift-label">Gift to the Goddess:</span>
+				<span class="stat-value">{data.giftCurrentPrice}c</span>
+			</div>
+			{#if data.giftCheapDays}
+				<div class="stat-item spread-row">
+					<span class="stat-label">Best days to buy:</span>
+					<span class="stat-value gift-cheap">{data.giftCheapDays}</span>
+				</div>
+			{/if}
+			{#if data.giftExpensiveDays}
+				<div class="stat-item spread-row">
+					<span class="stat-label">Avoid buying:</span>
+					<span class="stat-value gift-expensive">{data.giftExpensiveDays}</span>
+				</div>
+			{/if}
+			{#if data.giftCheapHours}
+				<div class="stat-item spread-row">
+					<span class="stat-label">Cheapest hours (UTC):</span>
+					<span class="stat-value gift-cheap">{data.giftCheapHours}</span>
+				</div>
+			{/if}
+			{#if data.giftExpensiveHours}
+				<div class="stat-item spread-row">
+					<span class="stat-label">Expensive hours (UTC):</span>
+					<span class="stat-value gift-expensive">{data.giftExpensiveHours}</span>
+				</div>
+			{/if}
+		{/if}
 	</div>
 </section>
 
@@ -149,4 +179,18 @@
 	.color-red { color: var(--color-lab-red); }
 	.color-green { color: var(--color-lab-green); }
 	.color-blue { color: var(--color-lab-blue); }
+	.gift-section {
+		margin-top: 8px;
+		padding-top: 12px;
+		border-top: 1px solid var(--color-lab-border);
+	}
+	.gift-label {
+		color: #fbbf24;
+	}
+	.gift-cheap {
+		color: var(--color-lab-green);
+	}
+	.gift-expensive {
+		color: var(--color-lab-red);
+	}
 </style>
