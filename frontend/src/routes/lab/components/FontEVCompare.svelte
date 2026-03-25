@@ -260,7 +260,8 @@
 				<div class="pool-grid">
 					{#each COLORS as color}
 						{@const breakdown = getPoolBreakdown(poolVariant, color)}
-						{@const totalGems = breakdown.reduce((s, t) => s + t.count, 0)}
+						{@const safe = getColorData(poolVariant, color, 'safe')}
+						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
 							{#each ALL_TIERS as tierName}
