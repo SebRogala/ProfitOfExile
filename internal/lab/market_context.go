@@ -15,7 +15,7 @@ var PercentileKeys = []string{"P5", "P10", "P25", "P50", "P75", "P90", "P99"}
 // ComputeMarketContext produces market-wide statistics from raw gem data and history.
 // It is a pure function with no side effects — called from RunV2 and the optimizer.
 // History may be nil when no historical data is available; velocity stats will be zero.
-func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPriceHistory) MarketContext {
+func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPriceHistory, cls ClassificationResult) MarketContext {
 	mc := MarketContext{
 		Time:               snapTime,
 		PricePercentiles:   make(map[string]float64),
@@ -87,11 +87,19 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 		mc.ListingVelMean, mc.ListingVelSigma = meanStddev(velListings)
 	}
 
-	// Compute per-variant baselines from active gems.
-	mc.VariantStats = computeVariantBaselines(active)
+	// Compute per-variant baselines from active gems, using pre-computed classification boundaries.
+	mc.VariantStats = computeVariantBaselines(active, cls)
 
-	// Compute tier boundaries using natural gap detection.
-	mc.TierBoundaries = DetectTierBoundaries(gems)
+	// Use pre-computed tier boundaries from classification (prefer "20/20" for backward compat).
+	if tb, ok := cls.Boundaries["20/20"]; ok {
+		mc.TierBoundaries = tb
+	} else {
+		// Fall back to first available variant boundary.
+		for _, tb := range cls.Boundaries {
+			mc.TierBoundaries = tb
+			break
+		}
+	}
 
 	// Compute temporal normalization coefficients from history.
 	mc.TemporalCoefficient, mc.TemporalMode, mc.TemporalBuckets = computeTemporalCoefficients(snapTime, history)
@@ -204,7 +212,7 @@ func meanStddev(vals []float64) (float64, float64) {
 // as the primary calibration metric. CV is set to 0 since we don't have
 // per-gem CV at this stage; the calling code uses stabilityDiscount(cv)
 // which operates on the individual gem's CV rather than the variant median.
-func computeVariantBaselines(active []GemPrice) map[string]VariantBaseline {
+func computeVariantBaselines(active []GemPrice, cls ClassificationResult) map[string]VariantBaseline {
 	// Group gems by variant.
 	type variantData struct {
 		listings []float64
@@ -223,31 +231,24 @@ func computeVariantBaselines(active []GemPrice) map[string]VariantBaseline {
 
 	result := make(map[string]VariantBaseline, len(byVariant)+1)
 
-	// Per-variant baselines with per-variant tier boundaries.
+	// Per-variant baselines with pre-computed classification tier boundaries.
 	for variant, vd := range byVariant {
 		sort.Float64s(vd.listings)
 		sort.Float64s(vd.prices)
-
-		// Filter active gems to this variant for tier detection.
-		var variantGems []GemPrice
-		for _, g := range active {
-			if g.Variant == variant {
-				variantGems = append(variantGems, g)
-			}
-		}
 
 		result[variant] = VariantBaseline{
 			MedianListings: percentile(vd.listings, 0.50),
 			MedianPrice:    percentile(vd.prices, 0.50),
 			GemCount:       len(vd.listings),
-			Tiers:          DetectTierBoundaries(variantGems),
+			Tiers:          cls.Boundaries[variant],
 		}
 	}
 
-	// "all" entry: combined tier boundaries across all variants.
+	// "all" entry: use "20/20" boundaries as the default combined view.
+	allTiers := cls.Boundaries["20/20"]
 	result["all"] = VariantBaseline{
 		GemCount: len(active),
-		Tiers:    DetectTierBoundaries(active),
+		Tiers:    allTiers,
 	}
 
 	return result

@@ -93,8 +93,11 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 			continue
 		}
 
+		// Step 0: Unified gem classification.
+		classification := lab.ComputeGemClassification(gems)
+
 		// Compute market context.
-		mc := lab.ComputeMarketContext(snapTime, gems, history)
+		mc := lab.ComputeMarketContext(snapTime, gems, history, classification)
 		if err := repo.SaveMarketContext(ctx, mc); err != nil {
 			continue // skip on conflict
 		}

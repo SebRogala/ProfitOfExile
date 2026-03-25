@@ -261,7 +261,10 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		return err
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, history)
+	// Step 0: Unified gem classification (CASCADE → TOP → tiers).
+	classification := ComputeGemClassification(gems)
+
+	mc := ComputeMarketContext(snapTime, gems, history, classification)
 	if err := a.repo.SaveMarketContext(ctx, mc); err != nil {
 		a.logger.Error("v2: failed to save market context", "error", err)
 		return err

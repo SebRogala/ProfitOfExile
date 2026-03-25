@@ -29,7 +29,7 @@ func TestComputeMarketContext_Percentiles(t *testing.T) {
 		{Name: "Gem J of X", Variant: "20/20", Chaos: 1000, Listings: 50, IsTransfigured: true},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, nil)
+	mc := ComputeMarketContext(snapTime, gems, nil, ClassificationResult{})
 
 	if mc.Time != snapTime {
 		t.Errorf("Time = %v, want %v", mc.Time, snapTime)
@@ -120,7 +120,7 @@ func TestComputeMarketContext_VelocityStats(t *testing.T) {
 		},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, history)
+	mc := ComputeMarketContext(snapTime, gems, history, ClassificationResult{})
 
 	// Gem A: priceVel = (50-40)/1h = 10, listingVel = (10-12)/1h = -2
 	// Gem B: priceVel = (100-90)/1h = 10, listingVel = (20-25)/1h = -5
@@ -157,7 +157,7 @@ func TestComputeMarketContext_Totals(t *testing.T) {
 		{Name: "Trarthus of X", Variant: "20/20", Chaos: 500, Listings: 15, IsTransfigured: true},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, nil)
+	mc := ComputeMarketContext(snapTime, gems, nil, ClassificationResult{})
 
 	if mc.TotalGems != 3 {
 		t.Errorf("TotalGems = %d, want 3", mc.TotalGems)
@@ -171,7 +171,7 @@ func TestComputeMarketContext_Totals(t *testing.T) {
 func TestComputeMarketContext_EmptyGems(t *testing.T) {
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
-	mc := ComputeMarketContext(snapTime, nil, nil)
+	mc := ComputeMarketContext(snapTime, nil, nil, ClassificationResult{})
 
 	if mc.TotalGems != 0 {
 		t.Errorf("TotalGems = %d, want 0", mc.TotalGems)
@@ -246,7 +246,7 @@ func TestComputeMarketContext_SingleGem(t *testing.T) {
 		{Name: "Gem A of X", Variant: "20/20", Chaos: 42, Listings: 7, IsTransfigured: true},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, nil)
+	mc := ComputeMarketContext(snapTime, gems, nil, ClassificationResult{})
 
 	if mc.TotalGems != 1 {
 		t.Errorf("TotalGems = %d, want 1", mc.TotalGems)
@@ -278,7 +278,7 @@ func TestComputeMarketContext_AllSamePrice(t *testing.T) {
 		}
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, nil)
+	mc := ComputeMarketContext(snapTime, gems, nil, ClassificationResult{})
 
 	for _, key := range PercentileKeys {
 		if got := mc.PricePercentiles[key]; !approxEqual(got, 100, 0.01) {
@@ -320,7 +320,7 @@ func TestComputeMarketContext_TemporalBiases(t *testing.T) {
 		},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, history)
+	mc := ComputeMarketContext(snapTime, gems, history, ClassificationResult{})
 
 	// Verify slice lengths.
 	if len(mc.HourlyBias) != 24 {
@@ -381,7 +381,7 @@ func TestComputeMarketContext_TemporalBiases(t *testing.T) {
 func TestComputeMarketContext_TierBoundaries(t *testing.T) {
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
-	// Create enough gems for DetectTierBoundaries to produce real thresholds.
+	// Create enough gems for tier detection to produce real thresholds.
 	// We need at least 4 unique transfigured gems with Chaos > 0.
 	var gems []GemPrice
 	prices := []float64{5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200, 300, 500, 800, 1000}
@@ -395,7 +395,9 @@ func TestComputeMarketContext_TierBoundaries(t *testing.T) {
 		})
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, nil)
+	// Pre-compute classification so MarketContext receives real tier boundaries.
+	cls := ComputeGemClassification(gems)
+	mc := ComputeMarketContext(snapTime, gems, nil, cls)
 
 	// Tier boundaries should be non-empty and strictly descending.
 	if len(mc.TierBoundaries.Boundaries) == 0 {
