@@ -328,8 +328,16 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				// Safe/Premium: use color-specific tiers (per-color pool).
 				colorTier := classifyTier(effectivePrice, colorTiers)
 
+				// For pool breakdown consistency: if a gem is color-TOP but not
+				// global-TOP, reclassify as HIGH. This prevents confusion where
+				// pool overview shows "TOP" gems that don't appear in Jackpot.
+				breakdownTier := colorTier
+				if colorTier == "TOP" && feat.GlobalTier != "TOP" {
+					breakdownTier = "HIGH"
+				}
+
 				// Track pool breakdown per tier.
-				ts, ok := tierStats[colorTier]
+				ts, ok := tierStats[breakdownTier]
 				if !ok {
 					ts = &TierPoolInfo{Tier: colorTier, MinPrice: effectivePrice, MaxPrice: effectivePrice}
 					tierStats[colorTier] = ts
