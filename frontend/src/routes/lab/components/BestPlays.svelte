@@ -9,8 +9,9 @@
 	import Select from '$lib/components/Select.svelte';
 
 	const SORT_OPTIONS = [
-		{ value: 'riskAdjusted', label: 'Risk-Adj ROI' },
+		{ value: 'price', label: 'Price' },
 		{ value: 'roi', label: 'Raw ROI' },
+		{ value: 'riskAdjusted', label: 'Risk-Adj ROI' },
 		{ value: 'roiPercent', label: 'ROI%' },
 	];
 
@@ -26,8 +27,9 @@
 		league?: string;
 	} = $props();
 
-	let sortBy = $state<'riskAdjusted' | 'roi' | 'roiPercent'>('roi');
+	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
 	let budget = $state('');
+	let showLowConf = $state(false);
 	let expandedRow = $state<number | null>(null);
 
 	let expandedHistory = $state<SignalTransition[]>([]);
@@ -35,10 +37,16 @@
 
 	let sorted = $derived.by(() => {
 		let filtered = [...plays];
+		if (!showLowConf) {
+			filtered = filtered.filter((p) => !p.lowConfidence);
+		}
 		const b = parseInt(budget);
 		if (b > 0) {
 			filtered = filtered.filter((p) => p.basePrice <= b);
 			if (b <= 50) sortBy = 'roiPercent';
+		}
+		if (sortBy === 'price') {
+			return filtered.sort((a, b) => b.transPrice - a.transPrice);
 		}
 		if (sortBy === 'riskAdjusted') {
 			return filtered.sort((a, b) => b.weightedRoi - a.weightedRoi);
@@ -79,7 +87,7 @@
 </script>
 
 <div class="plays-header">
-	<h3 class="plays-title">{title}<InfoTooltip text="<b>Best Plays — Risk-Adjusted Gem Ranking</b><br><br>Gems ranked by <b>Risk-Adjusted ROI</b>: raw profit weighted by sell probability and price stability. Higher = more profitable AND more likely to sell.<br><br><b>Columns:</b><br>• <b>Tier</b>: Price classification within each variant's market<br>&nbsp;&nbsp;<span style='color:#fbbf24'>TOP</span> = rare outliers &nbsp; <span style='color:#fb923c'>HIGH</span> = premium &nbsp; <span style='color:#c084fc'>MID-HIGH</span> = above average<br>&nbsp;&nbsp;<span style='color:#94a3b8'>MID</span> = competitive &nbsp; <span style='color:#64748b'>LOW</span> = decent &nbsp; <span style='color:#475569'>FLOOR</span> = bulk<br><br>• <b>Signal</b>: Current market behavior<br>&nbsp;&nbsp;<span style='color:#5eead4'>STABLE</span> = steady, safe to sell<br>&nbsp;&nbsp;<span style='color:#94a3b8'>UNCERTAIN</span> = no clear direction (below 50% accuracy)<br>&nbsp;&nbsp;<span style='color:#eab308'>HERD</span> = farmers flooding in, sell into pressure<br>&nbsp;&nbsp;<span style='color:#ef4444'>DUMPING</span> = price crashing, sell immediately<br>&nbsp;&nbsp;<span style='color:#ef4444'>TRAP</span> = volatile + actively moving, avoid<br><br>• <b>Sell Confidence</b>:<br>&nbsp;&nbsp;<span style='color:#22c55e'>SAFE</span> = liquid market, will sell near listed price<br>&nbsp;&nbsp;<span style='color:#eab308'>FAIR</span> = moderate, may need patience or small undercut<br>&nbsp;&nbsp;<span style='color:#ef4444'>RISKY</span> = thin market or volatile, significant crash risk<br><br><b>Sort modes</b>: Risk-Adj ROI (default, recommended), Raw ROI, ROI%." /></h3>
+	<h3 class="plays-title">{title}</h3>
 	<div class="plays-controls">
 		<label class="control-label">
 			Budget:
@@ -94,6 +102,10 @@
 			Sort:
 			<Select bind:value={sortBy} options={SORT_OPTIONS} />
 		</label>
+		<label class="low-conf-toggle" title="Show gems with very few listings (unreliable prices)">
+			<input type="checkbox" bind:checked={showLowConf} />
+			<span>Low confidence</span>
+		</label>
 	</div>
 </div>
 
@@ -103,7 +115,8 @@
 		<tr>
 			<th class="col-name" title="Transfigured gem name">Gem</th>
 			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
-			<th class="col-tier">Tier <InfoTooltip text="<b>Price Tier Classification</b><br><br>Computed per variant using recursive average splitting — each variant has its own boundaries because price distributions differ.<br><br><span style='color:#fbbf24'>TOP</span> — Monopoly outliers, massive price gap from the rest<br><span style='color:#fb923c'>HIGH</span> — Premium cluster, primary farming targets<br><span style='color:#c084fc'>MID-HIGH</span> — Above average, competitive<br><span style='color:#94a3b8'>MID</span> — Competitive, mid-range<br><span style='color:#64748b'>LOW</span> — Decent but modest<br><span style='color:#475569'>FLOOR</span> — Bulk, lowest tier<br><br>In 'ALL variants' view, tiers use global boundaries for consistent comparison across variants." /></th>
+			<th class="col-tier">Tier <InfoTooltip text="<b>Price Tier</b> — per variant, dynamic boundaries.<br><br><span style='color:#fbbf24'>TOP</span> — Monopoly outliers (gap-detected)<br><span style='color:#fb923c'>HIGH</span> — Within 30% of top gem<br><span style='color:#c084fc'>MID-HIGH</span> — Above 50% of HIGH boundary<br><span style='color:#94a3b8'>MID</span> — Natural gap above LOW<br><span style='color:#64748b'>LOW</span> — Marginal profit above FLOOR<br><span style='color:#475569'>FLOOR</span> — Below 8% of top-5 average<br><br>Low-confidence gems (thin market) excluded from tier computation. Boundaries adapt to market prices automatically." /></th>
+			<th class="col-num" title="Current ninja price of the transfigured gem">Price</th>
 			<th class="col-num" title={sortBy === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sortBy === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</th>
 			<th class="col-signal">Signal <InfoTooltip text="<b>Market Signal + Sell Confidence</b><br><br><b>Signals</b> (current market behavior):<br>• <span style='color:#5eead4'>STABLE</span> — Steady price, safe to sell at listed<br>• <span style='color:#94a3b8'>UNCERTAIN</span> — Direction unclear (accuracy &lt;50%, showing raw data)<br>• <span style='color:#eab308'>HERD</span> — Farmers flooding in, price + listings surging<br>• <span style='color:#ef4444'>DUMPING</span> — Price crashing with rising supply<br>• <span style='color:#a855f7'>RECOVERY</span> — Supply draining, potential price recovery<br>• <span style='color:#ef4444'>TRAP</span> — High volatility + active movement, avoid<br><br><b>Sell Confidence</b> (can you sell near listed price?):<br>• <span style='color:#22c55e'>✓ SAFE</span> — Liquid + stable, sell confidently<br>• <span style='color:#eab308'>• FAIR</span> — Moderate risk, may need patience<br>• <span style='color:#ef4444'>✗ RISKY</span> — Thin market or volatile, undercut aggressively" /></th>
 			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
@@ -125,12 +138,9 @@
 				</td>
 				{#if showVariantColumn}<td class="col-var">{gem.variant}</td>{/if}
 				<td class="col-tier">
-					{#if showVariantColumn && gem.globalTier}
-						<span class="tier-badge tier-{gem.globalTier.toLowerCase()}">{gem.globalTier}</span>
-					{:else}
-						<span class="tier-badge tier-{gem.priceTier.toLowerCase()}">{gem.priceTier}</span>
-					{/if}
+					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}" class:low-conf={gem.lowConfidence}>{gem.priceTier}</span>
 				</td>
+				<td class="col-num price-val">{gem.transPrice}c</td>
 				<td class="col-num roi-val">{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c</td>
 				<td class="col-signal">
 					<SignalBadge signal={gem.signal} />
@@ -159,7 +169,7 @@
 			</tr>
 			{#if expandedRow === i}
 				<tr class="expanded-row">
-					<td colspan={showVariantColumn ? 9 : 8} class="expanded-cell">
+					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
 						<div class="expanded-content">
 							<span class="expanded-meta">
 								Base: {gem.basePrice}c | Trans: {gem.transPrice}c |
@@ -351,6 +361,10 @@
 	.col-spark {
 		width: 110px;
 	}
+	.price-val {
+		color: var(--color-lab-text);
+		font-weight: 600;
+	}
 	.roi-val {
 		color: var(--color-lab-green);
 		font-weight: 700;
@@ -420,6 +434,17 @@
 	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
 	.tier-floor { color: #475569; background: rgba(71, 85, 105, 0.08); }
+	.low-conf { opacity: 0.5; border: 1px dashed currentColor; }
+	.low-conf-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		cursor: pointer;
+		user-select: none;
+	}
+	.low-conf-toggle input { accent-color: var(--color-lab-yellow, #eab308); cursor: pointer; }
 
 	/* Sellability */
 	.col-sell { width: 55px; }

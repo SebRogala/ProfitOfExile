@@ -1,12 +1,14 @@
 <script lang="ts">
 	import type { GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
+	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
 	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
+	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [
 		{ value: '10', label: '10' },
 		{ value: '20', label: '20' },
@@ -14,6 +16,7 @@
 	];
 
 	let activeTab = $state('20/20');
+	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
 	let visibleVariants = $derived(
@@ -22,16 +25,35 @@
 
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
-		return allPlays.filter(g => g.variant === variant).slice(0, parseInt(itemLimit));
+		let filtered = allPlays.filter(g => g.variant === variant);
+		if (activeColor !== 'ALL') {
+			filtered = filtered.filter(g => g.color === activeColor);
+		}
+		return filtered.slice(0, parseInt(itemLimit));
 	}
 </script>
 
 <section class="section">
 	<div class="section-header">
-		<h2 class="section-title">By Variant</h2>
+		<h2 class="section-title">By Variant<InfoTooltip text="<b>Gem Ranking by Variant</b><br><br>Gems sorted by price (default), ROI, or risk-adjusted ROI. Filter by color and toggle low-confidence gems.<br><br><b>Tiers</b> (computed per variant, dynamic boundaries):<br>&nbsp;&nbsp;<span style='color:#fbbf24'>TOP</span> = monopoly outliers (gap-detected from clean pool)<br>&nbsp;&nbsp;<span style='color:#fb923c'>HIGH</span> = premium cluster (within 30% of top gem)<br>&nbsp;&nbsp;<span style='color:#c084fc'>MID-HIGH</span> = worth farming (above 50% of HIGH boundary)<br>&nbsp;&nbsp;<span style='color:#94a3b8'>MID</span> = decent profit<br>&nbsp;&nbsp;<span style='color:#64748b'>LOW</span> = marginal ROI<br>&nbsp;&nbsp;<span style='color:#475569'>FLOOR</span> = below 8% of top-5 average (not worth farming)<br><br><b>Low confidence</b> toggle shows thin-market gems (listings &lt; 40% of median). These may be price manipulation or meta shifts — system can't tell which.<br><br><b>Sort modes</b>: Price (default), Raw ROI, Risk-Adj ROI, ROI%." /></h2>
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
 			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
+		</div>
+		<div class="color-tabs">
+			{#each COLORS as color}
+				<button
+					class="tab color-tab"
+					class:active={activeColor === color}
+					class:c-red={color === 'RED'}
+					class:c-green={color === 'GREEN'}
+					class:c-blue={color === 'BLUE'}
+					onclick={() => { activeColor = color; }}
+				>
+					{#if color !== 'ALL'}<span class="color-dot">●</span>{/if}
+					{color}
+				</button>
+			{/each}
 		</div>
 		<div class="tabs">
 			{#each TABS as tab}
@@ -89,6 +111,20 @@
 		color: var(--color-lab-text-secondary);
 		white-space: nowrap;
 	}
+	.color-tabs {
+		display: flex;
+		gap: 4px;
+	}
+	.color-dot {
+		margin-right: 2px;
+		font-size: 0.625rem;
+	}
+	.c-red.active { border-color: var(--color-lab-red); color: var(--color-lab-red); background: rgba(239, 68, 68, 0.1); }
+	.c-green.active { border-color: var(--color-lab-green); color: var(--color-lab-green); background: rgba(34, 197, 94, 0.1); }
+	.c-blue.active { border-color: var(--color-lab-blue, #3b82f6); color: var(--color-lab-blue, #3b82f6); background: rgba(59, 130, 246, 0.1); }
+	.c-red .color-dot { color: var(--color-lab-red); }
+	.c-green .color-dot { color: var(--color-lab-green); }
+	.c-blue .color-dot { color: var(--color-lab-blue, #3b82f6); }
 	.tabs {
 		display: flex;
 		gap: 4px;

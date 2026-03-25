@@ -537,7 +537,7 @@ func TestEndToEnd_TemporalNormalization(t *testing.T) {
 		{Name: "Gem A of X", Variant: "20/20", GemColor: "RED", Points: points},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, history)
+	mc := ComputeMarketContext(snapTime, gems, history, ClassificationResult{})
 
 	// Temporal fields should be populated.
 	if mc.TemporalMode == "" {
@@ -732,7 +732,7 @@ func TestPrecomputeMarketDepth_ConsistencyWithFeatures(t *testing.T) {
 	}
 
 	// Compute features.
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 	// Compute depth map.
 	depthMap := PrecomputeMarketDepth(gems, mc)
 

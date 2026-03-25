@@ -19,6 +19,8 @@ type Analyzer struct {
 	muQuality      sync.Mutex
 	muTrends       sync.Mutex
 	muV2           sync.Mutex
+	muCls          sync.RWMutex
+	latestCls      GemClassificationMap
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
@@ -171,7 +173,13 @@ func (a *Analyzer) RunTrends(ctx context.Context) error {
 		marketAvg = 0
 	}
 
-	results := AnalyzeTrends(snapTime, gems, history, baseHistory, marketAvg)
+	// Read stored classification from last RunV2.
+	// cls may be nil on first startup before RunV2 — AnalyzeTrends handles nil gracefully.
+	a.muCls.RLock()
+	cls := a.latestCls
+	a.muCls.RUnlock()
+
+	results := AnalyzeTrends(snapTime, gems, history, baseHistory, marketAvg, cls)
 
 	inserted, err := a.repo.SaveTrendResults(ctx, results)
 	if err != nil {
@@ -261,7 +269,14 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		return err
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, history)
+	// Step 0: Unified gem classification (CASCADE → TOP → tiers).
+	classification := ComputeGemClassification(gems)
+
+	a.muCls.Lock()
+	a.latestCls = classification.Gems
+	a.muCls.Unlock()
+
+	mc := ComputeMarketContext(snapTime, gems, history, classification)
 	if err := a.repo.SaveMarketContext(ctx, mc); err != nil {
 		a.logger.Error("v2: failed to save market context", "error", err)
 		return err
@@ -274,7 +289,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	depthMap := PrecomputeMarketDepth(gems, mc)
 	normalizedHistory := NormalizeHistoryDepthGated(history, mc, depthMap)
 
-	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
+	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
 	inserted, err := a.repo.SaveGemFeatures(ctx, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)

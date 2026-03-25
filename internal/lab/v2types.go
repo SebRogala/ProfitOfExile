@@ -93,7 +93,6 @@ type GemFeature struct {
 	Chaos             float64
 	Listings          int
 	Tier              string // per-variant tier (for Font Comparator)
-	GlobalTier        string // cross-variant tier (for BestPlays "all" view)
 	VelShortPrice     float64
 	VelShortListing   float64
 	VelMedPrice       float64
@@ -112,8 +111,31 @@ type GemFeature struct {
 	RelativeListings      float64
 	MarketDepth           float64 // listings / VariantBaseline.MedianListings (per-variant, league-invariant)
 	MarketRegime          string  // "TEMPORAL" (depth >= 0.4) or "CASCADE" (depth < 0.4)
+	LowConfidence         bool    // true = thin market, excluded from EV calculations
 	SellProbabilityFactor float64 // 0.3-1.0, calibrated from listing count
 	StabilityDiscount     float64 // 0.7-1.0, from CVShort (6h)
+}
+
+// GemClassification holds the pre-computed tier and confidence for a single gem.
+type GemClassification struct {
+	Tier          string // "TOP", "HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"
+	LowConfidence bool   // true = thin market, excluded from EV calculations
+}
+
+// GemClassificationKey uniquely identifies a gem for classification lookup.
+type GemClassificationKey struct {
+	Name    string
+	Variant string
+}
+
+// GemClassificationMap is the output of ComputeGemClassification.
+type GemClassificationMap map[GemClassificationKey]GemClassification
+
+// ClassificationResult is the output of ComputeGemClassification.
+type ClassificationResult struct {
+	Gems        GemClassificationMap
+	Boundaries  map[string]TierBoundaries // per-variant, for MarketContext backward compat
+	TopBoundary map[string]float64        // per-variant TOP threshold
 }
 
 // GemSignal holds the computed signal and confidence for a single gem at a snapshot.

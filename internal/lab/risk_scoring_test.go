@@ -273,7 +273,7 @@ func TestIntegration_RiskAdjustedValueNonZero(t *testing.T) {
 	}
 
 	mc := testSignalMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -340,7 +340,7 @@ func TestIntegration_NoHistoryProducesValidRiskFields(t *testing.T) {
 	}
 
 	mc := testSignalMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))

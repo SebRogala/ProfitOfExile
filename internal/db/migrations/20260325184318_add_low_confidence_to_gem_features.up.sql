@@ -1,0 +1,1 @@
+ALTER TABLE gem_features ADD COLUMN IF NOT EXISTS low_confidence BOOLEAN NOT NULL DEFAULT false;

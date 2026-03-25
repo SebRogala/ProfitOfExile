@@ -92,6 +92,45 @@ func DetectTierBoundaries(gems []GemPrice) TierBoundaries {
 	return DetectTierBoundariesRecursive(gems)
 }
 
+// DetectTierBoundariesNoTop produces tier boundaries without TOP detection.
+// Used after TOPs have already been identified and removed from the pool.
+// It performs only the recursive average-splitting phase of
+// DetectTierBoundariesRecursive, skipping the initial TOP gap search.
+func DetectTierBoundariesNoTop(gems []GemPrice) TierBoundaries {
+	prices := collectAndSortPrices(gems) // descending
+
+	if len(prices) < 4 {
+		return tierFallback(prices)
+	}
+
+	// Start with the full pool — no TOP gap detection.
+	pool := make([]float64, len(prices))
+	copy(pool, prices)
+
+	var boundaries []float64
+	for len(pool) >= 4 {
+		avg := average(pool)
+		// Find the split point: first price below average.
+		splitIdx := -1
+		for i, p := range pool {
+			if p < avg {
+				splitIdx = i
+				break
+			}
+		}
+		if splitIdx <= 0 || splitIdx >= len(pool) {
+			break // can't split meaningfully
+		}
+		boundaries = append(boundaries, pool[splitIdx])
+		pool = pool[:splitIdx] // keep only above-average gems for next iteration
+	}
+
+	// Sort boundaries descending for classifyTier to work correctly.
+	sort.Sort(sort.Reverse(sort.Float64Slice(boundaries)))
+
+	return TierBoundaries{Boundaries: boundaries}
+}
+
 // collectAndSortPrices extracts max price per gem name from analysable gems.
 // Uses a dynamic listing floor: computes median listings across the pool,
 // then excludes gems below 25% of median (minimum 2). This prevents
@@ -159,22 +198,6 @@ func findLargestGapInRange(prices []float64, maxIdx int) int {
 	return bestIdx
 }
 
-// findLargestAbsoluteGap returns the index of the price just ABOVE the largest
-// absolute gap in a descending price slice. The gap is between prices[i] and
-// prices[i+1]. Returns 0 if only one gap or no gaps.
-func findLargestAbsoluteGap(prices []float64) int {
-	bestIdx := 0
-	bestGap := 0.0
-	for i := 0; i < len(prices)-1; i++ {
-		gap := prices[i] - prices[i+1]
-		if gap > bestGap {
-			bestGap = gap
-			bestIdx = i
-		}
-	}
-	return bestIdx
-}
-
 // average computes the arithmetic mean of a float64 slice.
 func average(vals []float64) float64 {
 	if len(vals) == 0 {
@@ -185,108 +208,6 @@ func average(vals []float64) float64 {
 		sum += v
 	}
 	return sum / float64(len(vals))
-}
-
-// DetectTierBoundariesSimplified produces 3-4 tiers for small pools (Font EV
-// color pools of 7-87 gems). Uses median-based FLOOR (not mean) for stable
-// ~50% split regardless of outlier prices.
-//
-// Algorithm:
-//  1. TOP: largest absolute gap if > 3x avg gap AND in top third of pool.
-//  2. FLOOR: below median of remaining gems.
-//  3. HIGH/MID: mean of above-median splits the rest.
-//
-// Produces TierNames: TOP (if detected), HIGH, MID, FLOOR.
-func DetectTierBoundariesSimplified(gems []GemPrice) TierBoundaries {
-	// Collect ALL gem prices without filtering (no listing floor).
-	// Font EV's small color pools need every gem for accurate median split.
-	// Dedup by name (max price per name).
-	nameMax := make(map[string]float64)
-	for _, g := range gems {
-		if g.Chaos > 0 {
-			if g.Chaos > nameMax[g.Name] {
-				nameMax[g.Name] = g.Chaos
-			}
-		}
-	}
-	prices := make([]float64, 0, len(nameMax))
-	for _, p := range nameMax {
-		prices = append(prices, p)
-	}
-	sort.Float64s(prices)
-	for i, j := 0, len(prices)-1; i < j; i, j = i+1, j-1 {
-		prices[i], prices[j] = prices[j], prices[i]
-	}
-
-	if len(prices) < 3 {
-		return tierFallback(prices)
-	}
-
-	var boundaries []float64
-	pool := make([]float64, len(prices))
-	copy(pool, prices)
-
-	// Step 1: TOP detection — same as recursive, but only in top third.
-	topIdx := findLargestAbsoluteGap(pool)
-	topGap := pool[topIdx] - pool[topIdx+1]
-	var totalGap float64
-	for i := 0; i < len(pool)-1; i++ {
-		totalGap += pool[i] - pool[i+1]
-	}
-	avgGap := totalGap / float64(len(pool)-1)
-
-	topThird := len(pool) / 3
-	if topThird < 1 {
-		topThird = 1
-	}
-	if topGap >= avgGap*3 && topIdx < topThird {
-		boundaries = append(boundaries, pool[topIdx])
-		pool = pool[topIdx+1:]
-	}
-
-	if len(pool) < 2 {
-		return TierBoundaries{Boundaries: boundaries}
-	}
-
-	// Step 2: FLOOR — below average. Average is pulled up by expensive gems
-	// in right-skewed distributions, giving ~30-40% winners (not 50% like median).
-	// This produces meaningful Safe hit rates of 55-75%.
-	avg := average(pool)
-	// Find the split point: first price below average.
-	floorIdx := -1
-	for i, p := range pool {
-		if p < avg {
-			floorIdx = i
-			break
-		}
-	}
-	if floorIdx <= 0 {
-		return TierBoundaries{Boundaries: boundaries, Names: []string{"TOP", "HIGH", "MID", "FLOOR"}}
-	}
-	boundaries = append(boundaries, pool[floorIdx])
-
-	// Step 3: HIGH/MID — mean of above-average gems splits the upper portion.
-	upperPool := pool[:floorIdx]
-	if len(upperPool) >= 2 {
-		upperMean := average(upperPool)
-		// Find split point.
-		for i, p := range upperPool {
-			if p < upperMean {
-				if i > 0 {
-					boundaries = append(boundaries, upperPool[i])
-				}
-				break
-			}
-		}
-	}
-
-	// Sort descending.
-	sort.Sort(sort.Reverse(sort.Float64Slice(boundaries)))
-
-	return TierBoundaries{
-		Boundaries: boundaries,
-		Names:      []string{"TOP", "HIGH", "MID", "FLOOR"},
-	}
 }
 
 // tierFallback produces boundaries using percentile splitting when there are
