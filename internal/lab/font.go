@@ -356,7 +356,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				}
 				// Jackpot: use variant-wide tier so "Jackpot" means the same
 				// value level across all colors. Comparable.
-				if isJackpotTierWinner(feat.Tier) {
+				if isJackpotTierWinner(feat.GlobalTier) {
 					jackpotWinnerCount++
 					jackpotGems = append(jackpotGems, JackpotGemInfo{Name: e.name, Chaos: effectivePrice})
 					if isThin {
@@ -416,7 +416,7 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 					premiumWinnerSum += adjPrice
 					premiumWinnerRawSum += ep
 				}
-				if isJackpotTierWinner(feat.Tier) {
+				if isJackpotTierWinner(feat.GlobalTier) {
 					jackpotWinnerSum += adjPrice
 					jackpotWinnerRawSum += ep
 				}
