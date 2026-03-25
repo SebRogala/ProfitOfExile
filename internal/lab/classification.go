@@ -9,7 +9,7 @@ import (
 // average gem price. 0.07 = FLOOR is below 7% of the top-5 average.
 // Scales dynamically with market maturity — early league has low floor,
 // mature league has high floor as prices diverge.
-const FloorTopRatio = 0.07
+const FloorTopRatio = 0.08
 
 // FloorTop5Count is how many top gems to average for the FLOOR anchor.
 const FloorTop5Count = 5
