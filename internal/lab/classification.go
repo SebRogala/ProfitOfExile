@@ -85,47 +85,77 @@ func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 		byVariant[g.Variant] = append(byVariant[g.Variant], g)
 	}
 
-	// MaxTopGems limits how many gems can be TOP per variant.
-	// TOP is the monopoly outlier tier — should be 1-4 gems max.
-	const MaxTopGems = 4
-
 	tops := make(map[string]bool)
 	for variant, vGems := range byVariant {
-		withTop := DetectTierBoundaries(vGems)
-		withoutTop := DetectTierBoundariesNoTop(vGems)
-
-		if len(withTop.Boundaries) <= len(withoutTop.Boundaries) {
-			continue
-		}
-		if len(withTop.Boundaries) == 0 {
-			continue
-		}
-
-		topBoundary := withTop.Boundaries[0]
-
-		// Count how many gems would be TOP.
-		var topCount int
+		// Collect prices descending.
+		var prices []float64
 		for _, g := range vGems {
-			if g.Chaos >= topBoundary {
-				topCount++
+			prices = append(prices, g.Chaos)
+		}
+		sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
+
+		if len(prices) < 4 {
+			continue
+		}
+
+		// Find the natural TOP cluster by scanning gaps from the top.
+		// The TOP boundary is where a gap is significantly larger than
+		// the gap ABOVE it (the cluster gets "tight" above, then "breaks" below).
+		//
+		// Example: 1318→1116=202, 1116→930=186, 930→900=30
+		//   Gap 186→30 is a 6x drop — the cluster of {1318,1116} ends here.
+		//
+		// Also works for: 1300→1200=100 (small), 1200→800=400 (big)
+		//   Gap 100→400 is a 4x increase — boundary is at 1200 (below the jump).
+		//
+		// Algorithm: find the gap where gap[i] > gap[i-1] * 2 (gap doubles).
+		// The TOP cluster is everything above that gap.
+		// Constrain to top 10% of the pool.
+
+		topCap := len(prices) / 10
+		if topCap < 3 {
+			topCap = 3
+		}
+		if topCap >= len(prices) {
+			continue
+		}
+
+		// Compute average gap from the top portion only (top 10%).
+		// Using the full pool's avgGap is too low (dragged down by
+		// masses of 20-60c gems with 0-3c gaps), making every gap
+		// above 14c look "significant."
+		topPoolSize := topCap
+		if topPoolSize > len(prices)-1 {
+			topPoolSize = len(prices) - 1
+		}
+		topTotalGap := prices[0] - prices[topPoolSize]
+		avgGap := topTotalGap / float64(topPoolSize)
+
+		// Scan from top: find the TOP cluster boundary.
+		// Start including gems while their gaps stay large (>= avgGap*2).
+		// Stop when the gap drops below that threshold.
+		// The TOP cluster must have at least 1 significant gap to exist.
+
+		foundTop := false
+		topEnd := 0 // number of gems in TOP
+
+		for i := 0; i < topCap && i < len(prices)-1; i++ {
+			gap := prices[i] - prices[i+1]
+			if gap >= avgGap*2 {
+				// This gap is significant — the gem above it is in the TOP cluster.
+				topEnd = i + 1
+				foundTop = true
+			} else if foundTop {
+				// Gap shrunk below threshold — cluster ends.
+				break
 			}
 		}
 
-		// If too many, raise the boundary to only include MaxTopGems.
-		if topCount > MaxTopGems {
-			// Sort by price descending, take the gap after MaxTopGems.
-			var topPrices []float64
-			for _, g := range vGems {
-				if g.Chaos >= topBoundary {
-					topPrices = append(topPrices, g.Chaos)
-				}
-			}
-			sort.Sort(sort.Reverse(sort.Float64Slice(topPrices)))
-			if len(topPrices) > MaxTopGems {
-				topBoundary = topPrices[MaxTopGems-1]
-			}
+		if !foundTop || topEnd < 1 {
+			continue
 		}
 
+		topBoundary := prices[topEnd-1]
 		for _, g := range vGems {
 			if g.Chaos >= topBoundary {
 				tops[g.Name+"|"+variant] = true
