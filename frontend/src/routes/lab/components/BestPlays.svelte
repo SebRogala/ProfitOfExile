@@ -9,8 +9,9 @@
 	import Select from '$lib/components/Select.svelte';
 
 	const SORT_OPTIONS = [
-		{ value: 'riskAdjusted', label: 'Risk-Adj ROI' },
+		{ value: 'price', label: 'Price' },
 		{ value: 'roi', label: 'Raw ROI' },
+		{ value: 'riskAdjusted', label: 'Risk-Adj ROI' },
 		{ value: 'roiPercent', label: 'ROI%' },
 	];
 
@@ -26,7 +27,7 @@
 		league?: string;
 	} = $props();
 
-	let sortBy = $state<'riskAdjusted' | 'roi' | 'roiPercent'>('roi');
+	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
 	let budget = $state('');
 	let showLowConf = $state(false);
 	let expandedRow = $state<number | null>(null);
@@ -43,6 +44,9 @@
 		if (b > 0) {
 			filtered = filtered.filter((p) => p.basePrice <= b);
 			if (b <= 50) sortBy = 'roiPercent';
+		}
+		if (sortBy === 'price') {
+			return filtered.sort((a, b) => b.transPrice - a.transPrice);
 		}
 		if (sortBy === 'riskAdjusted') {
 			return filtered.sort((a, b) => b.weightedRoi - a.weightedRoi);
