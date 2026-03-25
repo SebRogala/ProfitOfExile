@@ -8,7 +8,7 @@ import (
 // ComputeGemFeatures produces per-gem feature vectors from raw gem data, history,
 // and market context. It is a pure function with no side effects -- called from RunV2.
 // Filters to transfigured, non-corrupted, non-Trarthus gems with Chaos > 5.
-func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceHistory, mc MarketContext) []GemFeature {
+func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceHistory, mc MarketContext, cls GemClassificationMap) []GemFeature {
 	// Index history by (name, variant) for fast lookup.
 	type histKey struct{ name, variant string }
 	histIndex := make(map[histKey]*GemPriceHistory, len(history))
@@ -33,14 +33,18 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		}
 
 		f := GemFeature{
-			Time:       snapTime,
-			Name:       g.Name,
-			Variant:    g.Variant,
-			Chaos:      g.Chaos,
-			Listings:   g.Listings,
-			Tier:       classifyTierForVariant(g.Chaos, g.Variant, mc),
-			GlobalTier: classifyTierGlobal(g.Chaos, mc),
+			Time:     snapTime,
+			Name:     g.Name,
+			Variant:  g.Variant,
+			Chaos:    g.Chaos,
+			Listings: g.Listings,
 		}
+		if c, ok := cls[GemClassificationKey{g.Name, g.Variant}]; ok {
+			f.Tier = c.Tier
+			f.LowConfidence = c.LowConfidence
+		}
+		// Keep GlobalTier = Tier for backward compat (field removed later in Task 10).
+		f.GlobalTier = f.Tier
 
 		h := histIndex[histKey{g.Name, g.Variant}]
 		if h != nil && len(h.Points) >= 2 {

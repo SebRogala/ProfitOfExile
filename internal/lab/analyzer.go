@@ -277,7 +277,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	depthMap := PrecomputeMarketDepth(gems, mc)
 	normalizedHistory := NormalizeHistoryDepthGated(history, mc, depthMap)
 
-	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
+	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
 	inserted, err := a.repo.SaveGemFeatures(ctx, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)

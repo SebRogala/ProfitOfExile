@@ -936,7 +936,7 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
 			         $25, $26, $27)
 			 ON CONFLICT DO NOTHING`,
-			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.GlobalTier,
+			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.Tier, // tier and global_tier get the same value
 			f.VelShortPrice, f.VelShortListing, f.VelMedPrice, f.VelMedListing,
 			f.VelLongPrice, f.VelLongListing,
 			f.CV, f.HistPosition, f.High7Days, f.Low7Days,

@@ -107,7 +107,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		normalizedHistory := lab.NormalizeHistoryDepthGated(history, mc, depthMap)
 
 		// Compute gem features.
-		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
+		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
 		repo.SaveGemFeatures(ctx, features)
 
 		// Compute gem signals (need base history).
