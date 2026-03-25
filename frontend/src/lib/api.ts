@@ -42,7 +42,7 @@ export interface GemPlay {
 	sparklineListings: number[];
 	signalHistory: SignalTransition[];
 	priceTier: PriceTier;
-	globalTier: PriceTier;
+	lowConfidence: boolean;
 	tierAction: string;
 	sellUrgency: SellUrgency;
 	sellReason: string;
@@ -207,7 +207,7 @@ function mapCollectiveRow(r: any): GemPlay {
 		sparklineListings: Array.isArray(r.sparkline) ? r.sparkline.map((p: any) => p.listings ?? 0) : [],
 		signalHistory: [],
 		priceTier: (r.priceTier || '') as PriceTier,
-		globalTier: (r.globalTier || '') as PriceTier,
+		lowConfidence: !!r.lowConfidence,
 		tierAction: r.tierAction || '',
 		sellUrgency: (r.sellUrgency || '') as SellUrgency,
 		sellReason: r.sellReason || '',

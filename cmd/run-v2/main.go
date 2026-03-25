@@ -93,8 +93,11 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 			continue
 		}
 
+		// Step 0: Unified gem classification.
+		classification := lab.ComputeGemClassification(gems)
+
 		// Compute market context.
-		mc := lab.ComputeMarketContext(snapTime, gems, history)
+		mc := lab.ComputeMarketContext(snapTime, gems, history, classification)
 		if err := repo.SaveMarketContext(ctx, mc); err != nil {
 			continue // skip on conflict
 		}
@@ -104,7 +107,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		normalizedHistory := lab.NormalizeHistoryDepthGated(history, mc, depthMap)
 
 		// Compute gem features.
-		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc)
+		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
 		repo.SaveGemFeatures(ctx, features)
 
 		// Compute gem signals (need base history).

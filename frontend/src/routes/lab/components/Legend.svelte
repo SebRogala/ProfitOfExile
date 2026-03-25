@@ -64,19 +64,20 @@
 				</div>
 
 				<div class="legend-col">
-					<h4 class="legend-heading">Price Tiers</h4>
-					<div class="legend-item"><span class="sig gold">TOP</span> rare outliers, highest value</div>
-					<div class="legend-item"><span class="sig orange">HIGH</span> premium gems</div>
-					<div class="legend-item"><span class="sig purple">MID-HIGH</span> above average</div>
-					<div class="legend-item"><span class="sig silver">MID</span> competitive, mid-range</div>
-					<div class="legend-item"><span class="sig muted">LOW</span> decent but modest</div>
-					<div class="legend-item"><span class="sig dim">FLOOR</span> bulk, lowest tier</div>
+					<h4 class="legend-heading">Price Tiers (per variant, dynamic)</h4>
+					<div class="legend-item"><span class="sig gold">TOP</span> monopoly outliers (gap-detected)</div>
+					<div class="legend-item"><span class="sig orange">HIGH</span> within 30% of top gem</div>
+					<div class="legend-item"><span class="sig purple">MID-HIGH</span> above 50% of HIGH boundary</div>
+					<div class="legend-item"><span class="sig silver">MID</span> natural gap above LOW</div>
+					<div class="legend-item"><span class="sig muted">LOW</span> marginal profit above FLOOR</div>
+					<div class="legend-item"><span class="sig dim">FLOOR</span> below 8% of top-5 avg price</div>
+					<div class="legend-note">Thin-market gems excluded from boundary computation. Tiers adapt automatically to market prices.</div>
 
 					<h4 class="legend-heading" style="margin-top: 16px;">Font EV Hit Tiers</h4>
-					<div class="legend-item"><span class="sig teal">Safe</span> above-average gems in this color pool</div>
-					<div class="legend-item"><span class="sig purple">Premium</span> high-value gems within the color pool</div>
-					<div class="legend-item"><span class="sig gold">Jackpot</span> variant-wide TOP outliers (same across colors)</div>
-					<div class="legend-note">Safe/Premium use per-color tiers. Jackpot uses variant-wide tiers for cross-color comparison. EV uses raw listed prices.</div>
+					<div class="legend-item"><span class="sig teal">Safe</span> any gem above FLOOR (not low-confidence)</div>
+					<div class="legend-item"><span class="sig purple">Premium</span> HIGH + MID-HIGH + TOP gems</div>
+					<div class="legend-item"><span class="sig gold">Jackpot</span> TOP-tier outliers only</div>
+					<div class="legend-note">Low-confidence gems excluded from EV but counted in pool size. EV uses raw listed prices.</div>
 
 					<h4 class="legend-heading" style="margin-top: 16px;">Liquidity Tiers</h4>
 					<div class="legend-item"><span class="sig green">HIGH</span> safe farm</div>

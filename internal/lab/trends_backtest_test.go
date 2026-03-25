@@ -195,7 +195,7 @@ func TestAnalyzeTrends_Backtest(t *testing.T) {
 						},
 					}
 
-					results := AnalyzeTrends(currentPt.Time, current, history, nil, 0)
+					results := AnalyzeTrends(currentPt.Time, current, history, nil, 0, nil)
 
 					if len(results) != 1 {
 						t.Fatalf("snap[%d]: got %d results, want 1", snapIdx, len(results))
@@ -233,7 +233,7 @@ func TestAnalyzeTrends_Backtest_HERD_to_DUMPING(t *testing.T) {
 			Points: fix.points[:snapIdx+1],
 		}}
 
-		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0)
+		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0, nil)
 		if len(results) != 1 {
 			t.Fatalf("step %d: no result", i)
 		}
@@ -263,7 +263,7 @@ func TestAnalyzeTrends_Backtest_STABLE_CV_zero(t *testing.T) {
 			Points: fix.points[:snapIdx+1],
 		}}
 
-		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0)
+		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0, nil)
 		if len(results) != 1 {
 			t.Fatalf("snap[%d]: no result", snapIdx)
 		}
@@ -300,7 +300,7 @@ func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 			Name: fix.gemName, Variant: fix.variant, GemColor: fix.gemColor,
 			Points: fix.points[:snapIdx+1],
 		}}
-		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0)
+		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0, nil)
 		if len(results) != 1 {
 			t.Fatal("snap[4]: no result")
 		}
@@ -326,7 +326,7 @@ func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 			Name: fix.gemName, Variant: fix.variant, GemColor: fix.gemColor,
 			Points: fix.points[:snapIdx+1],
 		}}
-		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0)
+		results := AnalyzeTrends(currentPt.Time, current, history, nil, 0, nil)
 		if len(results) != 1 {
 			t.Fatal("snap[5]: no result")
 		}

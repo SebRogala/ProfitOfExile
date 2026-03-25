@@ -220,13 +220,9 @@
 			onRefresh={handleRefreshQueue}
 		/>
 
-		<section class="section">
-			<BestPlays plays={bestPlays} league={status?.league || ''} />
-		</section>
+		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 
 		<FontEVCompare {refreshKey} league={status?.league || ''} />
-
-		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 
 		{#if marketOverview}
 			<MarketOverview data={marketOverview} />

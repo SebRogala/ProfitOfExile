@@ -155,6 +155,7 @@
 		return safe?.poolBreakdown || [];
 	}
 
+	const ALL_TIERS = ['TOP', 'HIGH', 'MID-HIGH', 'MID', 'LOW', 'FLOOR'];
 	const TIER_COLORS: Record<string, string> = {
 		TOP: '#fbbf24', HIGH: '#fb923c', 'MID-HIGH': '#c084fc',
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
@@ -171,7 +172,7 @@
 		<table class="ft">
 			<thead>
 				<tr>
-					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income (listed market price) each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>Highlighted cell</b>: Best color for highest average income.<br><br><b>Hit tiers</b> (per color pool, using listed prices):<br>• <span style='color:#5eead4'>Safe</span>: Above-average gems in this color. 'X in Y' = how often you see one. '~Nc' = average listed price when you hit.<br>• <span style='color:#c084fc'>Premium</span>: High-value gems within this color pool. Less frequent, bigger payout.<br>• <span style='color:#fbbf24'>Jackpot</span>: Variant-wide TOP outliers (same threshold across all colors). Only shown when TOP gems exist in this color.<br><br>Safe and Premium tiers are computed per color pool (RED/GREEN/BLUE have different price distributions). Jackpot uses variant-wide boundaries so '~1046c Jackpot' means the same value whether it's in GREEN or BLUE.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
+					<th class="var-header">Font EV<InfoTooltip text="<b>Font of Divine Skill — Expected Value per usage</b><br><br><b>Nc/font</b>: Your average income each time you use the Font. Based on best-of-3 random draws — you always pick the most valuable gem.<br><br><b>Highlighted cell</b>: Best color for highest average income.<br><br><b>Hit tiers</b> (using unified per-variant tier system):<br>• <span style='color:#5eead4'>Safe</span>: Any gem above FLOOR tier. 'X in Y' = probability from 3 picks.<br>• <span style='color:#c084fc'>Premium</span>: HIGH + MID-HIGH + TOP gems. Significant profit when hit.<br>• <span style='color:#fbbf24'>Jackpot</span>: TOP-tier monopoly outliers. Rare but massive payout.<br><br>Low-confidence gems (thin market, unreliable prices) are excluded from EV calculation but counted in pool size.<br><br><b>Pool Overview</b>: Expand below to see per-color tier breakdown with hit probabilities.<br><br><b>Tip</b>: With Gift Lab (8 fonts/run), even low Jackpot hit rates become viable through compound probability." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -262,11 +263,12 @@
 						{@const totalGems = breakdown.reduce((s, t) => s + t.count, 0)}
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
-							{#if breakdown.length > 0}
-								{#each breakdown as tier}
-									{@const tierPWin = Math.round(pWin3(tier.count, totalGems) * 100)}
-									<div class="pool-tier-row">
-										<span class="pool-tier-name" style="color: {TIER_COLORS[tier.tier] || '#94a3b8'}">{tier.tier}</span>
+							{#each ALL_TIERS as tierName}
+								{@const tier = breakdown.find(t => t.tier === tierName)}
+								{@const tierPWin = tier ? Math.round(pWin3(tier.count, totalGems) * 100) : 0}
+								<div class="pool-tier-row" class:pool-tier-empty={!tier}>
+									<span class="pool-tier-name" style="color: {TIER_COLORS[tierName] || '#94a3b8'}">{tierName}</span>
+									{#if tier}
 										<span class="pool-tier-count">{tier.count}</span>
 										<span class="pool-tier-range">
 											{#if tier.minPrice === tier.maxPrice}
@@ -276,14 +278,17 @@
 											{/if}
 										</span>
 										<span class="pool-tier-bar">
-											<span class="pool-tier-bar-fill" style="width: {tierPWin}%; background: {TIER_COLORS[tier.tier] || '#94a3b8'}"></span>
+											<span class="pool-tier-bar-fill" style="width: {tierPWin}%; background: {TIER_COLORS[tierName] || '#94a3b8'}"></span>
 										</span>
 										<span class="pool-tier-pwin">{tierPWin}%</span>
-									</div>
-								{/each}
-							{:else}
-								<span class="pool-empty">No data</span>
-							{/if}
+									{:else}
+										<span class="pool-tier-count">—</span>
+										<span class="pool-tier-range"></span>
+										<span class="pool-tier-bar"></span>
+										<span class="pool-tier-pwin"></span>
+									{/if}
+								</div>
+							{/each}
 						</div>
 					{/each}
 				</div>
@@ -477,10 +482,15 @@
 		font-size: 0.8125rem;
 		line-height: 1.3;
 	}
+	.pool-tier-empty {
+		opacity: 0.25;
+	}
 	.pool-tier-name {
 		font-weight: 700;
-		width: 60px;
+		width: 70px;
 		flex-shrink: 0;
+		white-space: nowrap;
+		font-size: 0.75rem;
 	}
 	.pool-tier-count {
 		color: var(--color-lab-text);
