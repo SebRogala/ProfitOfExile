@@ -67,12 +67,6 @@ func TestPWin3Picks_WinnersExceedTotal(t *testing.T) {
 	}
 }
 
-// makeTierBoundaries creates tier boundaries where:
-// TOP >= 200, HIGH >= 100, MID-HIGH >= 30
-func makeTierBoundaries() TierBoundaries {
-	return TierBoundaries{Boundaries: []float64{200, 100, 30}}
-}
-
 // makeFeature creates a GemFeature with the given parameters for testing.
 func makeFeature(name, variant string, chaos float64, listings int, tier string, sellProb, stabDisc float64) GemFeature {
 	return GemFeature{
@@ -586,65 +580,54 @@ func TestAnalyzeFont_PWin3PicksStillWorksWithTierBasedCounts(t *testing.T) {
 	t.Error("expected RED/20/20 safe result")
 }
 
-func TestAnalyzeFont_CASCADEPriceCapped(t *testing.T) {
+func TestAnalyzeFont_LowConfidenceExcludedFromEV(t *testing.T) {
 	now := time.Now()
-	// Simulate a CASCADE buyout: Viper Strike spiked to 19000c (normal ~800c).
-	// Pool prices: [19000, 500, 300, 100] → P75 = 500.
-	// CASCADE gem at 19000c with 3 listings > 2× P75 (1000) → capped at 500.
 	gems := []GemPrice{
-		{Name: "Viper Strike of the Mamba", Variant: "20", Chaos: 19000, Listings: 3, IsTransfigured: true, GemColor: "GREEN"},
-		{Name: "Normal Gem A", Variant: "20", Chaos: 500, Listings: 20, IsTransfigured: true, GemColor: "GREEN"},
-		{Name: "Normal Gem B", Variant: "20", Chaos: 300, Listings: 30, IsTransfigured: true, GemColor: "GREEN"},
-		{Name: "Normal Gem C", Variant: "20", Chaos: 100, Listings: 40, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Spike Gem", Variant: "20/20", Chaos: 5000, Listings: 3, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Normal A", Variant: "20/20", Chaos: 200, Listings: 50, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Normal B", Variant: "20/20", Chaos: 100, Listings: 60, IsTransfigured: true, GemColor: "RED"},
 	}
 
-	viperFeat := makeFeature("Viper Strike of the Mamba", "20", 19000, 3, "TOP", 0.3, 0.7)
-	viperFeat.MarketRegime = "CASCADE"
+	spikeF := makeFeature("Spike Gem", "20/20", 5000, 3, "HIGH", 0.3, 0.7)
+	spikeF.LowConfidence = true
 
 	features := []GemFeature{
-		viperFeat,
-		makeFeature("Normal Gem A", "20", 500, 20, "HIGH", 0.8, 0.9),
-		makeFeature("Normal Gem B", "20", 300, 30, "MID", 0.8, 0.9),
-		makeFeature("Normal Gem C", "20", 100, 40, "LOW", 0.8, 0.9),
+		spikeF,
+		makeFeature("Normal A", "20/20", 200, 50, "HIGH", 0.8, 0.9),
+		makeFeature("Normal B", "20/20", 100, 60, "MID", 0.8, 0.9),
 	}
 
 	analysis := AnalyzeFont(now, gems, features)
 
 	var found *FontResult
 	for i := range analysis.Safe {
-		if analysis.Safe[i].Color == "GREEN" && analysis.Safe[i].Variant == "20" {
+		if analysis.Safe[i].Color == "RED" && analysis.Safe[i].Variant == "20/20" {
 			found = &analysis.Safe[i]
 			break
 		}
 	}
 	if found == nil {
-		t.Fatal("expected GREEN/20 safe result")
+		t.Fatal("expected RED/20/20 safe result")
 	}
 
-	// Without guard: AvgWinRaw ~4975 (dominated by 19000c).
-	// With guard: Viper capped at pool P75 (500c), so pool = [500, 500, 300, 100].
-	if found.AvgWinRaw > 600 {
-		t.Errorf("AvgWinRaw = %f, want < 600 (CASCADE price should be capped at pool P75)", found.AvgWinRaw)
+	// Pool should include all 3 gems (Font draws from all).
+	if found.Pool != 3 {
+		t.Errorf("Pool = %d, want 3 (low-confidence counted in pool)", found.Pool)
 	}
-	if found.EVRaw > 500 {
-		t.Errorf("EVRaw = %f, want < 500 (CASCADE guard should prevent EV inflation)", found.EVRaw)
-	}
-}
 
-func TestComputePoolP75(t *testing.T) {
-	tests := []struct {
-		prices []float64
-		want   float64
-	}{
-		{[]float64{100, 200, 300, 400}, 300},
-		{[]float64{10, 20, 30, 40, 50, 60, 70, 80}, 60},
-		{[]float64{500}, 500},
-		{nil, 0},
+	// But only 2 winners (Spike excluded from counting).
+	// Normal A (HIGH) and Normal B (MID) are Safe winners.
+	if found.Winners > 2 {
+		t.Errorf("Winners = %d, want <= 2 (Spike excluded from winners)", found.Winners)
 	}
-	for _, tt := range tests {
-		got := computePoolP75(tt.prices)
-		if got != tt.want {
-			t.Errorf("computePoolP75(%v) = %f, want %f", tt.prices, got, tt.want)
-		}
+
+	// AvgWinRaw should not be inflated by 5000c Spike.
+	if found.AvgWinRaw > 300 {
+		t.Errorf("AvgWinRaw = %f, want < 300 (Spike excluded)", found.AvgWinRaw)
+	}
+
+	// LowConfidenceGems should contain the spike.
+	if len(found.LowConfidenceGems) != 1 {
+		t.Errorf("LowConfidenceGems = %d, want 1", len(found.LowConfidenceGems))
 	}
 }

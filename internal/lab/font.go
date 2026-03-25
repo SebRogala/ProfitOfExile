@@ -9,24 +9,33 @@ import (
 
 // FontResult holds the computed EV for a single (color, variant) Font of Divine Skill analysis.
 type FontResult struct {
-	Time          time.Time
-	Color         string  // RED, GREEN, BLUE
-	Variant       string  // "1", "1/20", "20", "20/20"
-	Pool          int     // total unique transfigured gem names of that color
-	Winners       int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
-	PWin          float64 // probability of seeing at least 1 winner in 3 picks
-	AvgWin        float64 // average risk-adjusted value when you hit (secondary info)
-	AvgWinRaw     float64 // average RAW listed price when you hit (primary display)
-	EV            float64 // expected income per font (risk-adjusted, internal use)
-	EVRaw         float64 // expected income per font using raw listed prices (primary display)
-	InputCost     float64
-	Profit        float64 // EVRaw - InputCost
-	FontsToHit    float64          // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
-	JackpotGems   []JackpotGemInfo // TOP gem names+prices (only for jackpot mode, 1-3 gems)
-	Mode          string  // "safe", "premium", or "jackpot"
-	ThinPoolGems  int     // count of winners with < 5 listings
-	LiquidityRisk string  // "LOW", "MEDIUM", "HIGH"
-	PoolBreakdown []TierPoolInfo `json:"poolBreakdown,omitempty"` // per-tier gem counts and price ranges
+	Time              time.Time
+	Color             string  // RED, GREEN, BLUE
+	Variant           string  // "1", "1/20", "20", "20/20"
+	Pool              int     // total unique transfigured gem names of that color
+	Winners           int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
+	PWin              float64 // probability of seeing at least 1 winner in 3 picks
+	AvgWin            float64 // average risk-adjusted value when you hit (secondary info)
+	AvgWinRaw         float64 // average RAW listed price when you hit (primary display)
+	EV                float64 // expected income per font (risk-adjusted, internal use)
+	EVRaw             float64 // expected income per font using raw listed prices (primary display)
+	InputCost         float64
+	Profit            float64 // EVRaw - InputCost
+	FontsToHit        float64          // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
+	JackpotGems       []JackpotGemInfo // TOP gem names+prices (only for jackpot mode, 1-3 gems)
+	Mode              string  // "safe", "premium", or "jackpot"
+	ThinPoolGems      int     // count of winners with < 5 listings
+	LiquidityRisk     string  // "LOW", "MEDIUM", "HIGH"
+	PoolBreakdown     []TierPoolInfo         `json:"poolBreakdown,omitempty"`     // per-tier gem counts and price ranges
+	LowConfidenceGems []LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"` // gems excluded from EV due to thin market
+}
+
+// LowConfidenceGemInfo holds basic info for a gem excluded from EV calculations
+// due to low market confidence (thin listings, unreliable price).
+type LowConfidenceGemInfo struct {
+	Name     string  `json:"name"`
+	Chaos    float64 `json:"chaos"`
+	Listings int     `json:"listings"`
 }
 
 // TierPoolInfo holds the count and price range for gems in a specific tier within a color pool.
@@ -167,40 +176,6 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 	return "LOW"
 }
 
-// cascadeCappedPrice returns the effective price for a CASCADE-regime gem,
-// capped relative to the color pool. poolP75 is the 75th percentile price
-// of all gems in the same color+variant pool.
-//
-// CASCADE gems with < 5 listings whose price exceeds 2× the pool P75 are
-// capped at the pool P75. This prevents buyout spikes (e.g., 19000c on a
-// gem whose pool P75 is 500c) from inflating the entire color's Font EV.
-//
-// Uses pool-relative comparison because the gem's own High7Days/Low7Days
-// are already poisoned by the spike.
-func cascadeCappedPrice(chaos float64, feat *GemFeature, poolP75 float64) float64 {
-	if feat.MarketRegime != "CASCADE" || poolP75 <= 0 {
-		return chaos
-	}
-	if feat.Listings < 5 && chaos > poolP75*2 {
-		return poolP75
-	}
-	return chaos
-}
-
-// computePoolP75 returns the 75th percentile price from a slice of prices.
-// Requires at least 1 value; returns 0 for empty input.
-func computePoolP75(prices []float64) float64 {
-	n := len(prices)
-	if n == 0 {
-		return 0
-	}
-	sorted := make([]float64, n)
-	copy(sorted, prices)
-	sort.Float64s(sorted)
-	idx := (n - 1) * 3 / 4
-	return sorted[idx]
-}
-
 // AnalyzeFont computes Font of Divine Skill EV per (color, variant) in three modes:
 // Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Winner contributions are risk-adjusted using SellProbabilityFactor and StabilityDiscount.
@@ -274,33 +249,11 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
-			// Compute pool P75 for CASCADE cap (before any capping).
-			poolPrices := make([]float64, 0, len(entries))
-			for _, e := range entries {
-				poolPrices = append(poolPrices, e.chaos)
-			}
-			poolP75 := computePoolP75(poolPrices)
-
-			// Compute CASCADE-adjusted prices for tier boundaries.
-			// Without this, a single buyout spike (e.g., 19000c on a ~800c gem)
-			// distorts the entire color's tier distribution.
-			colorGems := make([]GemPrice, 0, len(entries))
-			for _, e := range entries {
-				price := e.chaos
-				if feat, ok := featureLookup[featureKey{e.name, variant}]; ok {
-					price = cascadeCappedPrice(e.chaos, feat, poolP75)
-				}
-				colorGems = append(colorGems, GemPrice{
-					Name: e.name, Variant: variant, Chaos: price,
-					Listings: e.listings, IsTransfigured: true,
-				})
-			}
-			colorTiers := DetectTierBoundariesSimplified(colorGems)
-
 			// Count winners and thin-market gems for each mode.
 			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int
 			var safeThinCount, premiumThinCount, jackpotThinCount int
 			var jackpotGems []JackpotGemInfo
+			var lowConfGems []LowConfidenceGemInfo
 
 			// Pool breakdown: track count and price range per tier.
 			tierStats := make(map[string]*TierPoolInfo)
@@ -313,54 +266,56 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 					continue
 				}
 
-				// CASCADE guard: when a thin-market buyout spikes the ninja price
-				// far above its historical range, cap at a data-derived ceiling.
-				effectivePrice := cascadeCappedPrice(e.chaos, feat, poolP75)
+				// Low-confidence gems: track separately, exclude from EV.
+				if feat.LowConfidence {
+					lowConfGems = append(lowConfGems, LowConfidenceGemInfo{
+						Name: e.name, Chaos: e.chaos, Listings: e.listings,
+					})
+					continue
+				}
 
-				// Compute sell probability and stability from CURRENT gem data.
-				sellProb := sellProbabilityFactor(e.listings, feat.Low7Days, effectivePrice)
+				// Use unified tier from classification.
+				tier := feat.Tier
+
+				// Pool values for EV calculation (raw prices, no capping).
+				sellProb := sellProbabilityFactor(e.listings, feat.Low7Days, e.chaos)
 				stabDisc := stabilityDiscount(feat.CVShort)
-				adjustedPrice := effectivePrice * sellProb * stabDisc
+				adjustedPrice := e.chaos * sellProb * stabDisc
 				gemAdjustedPrice[e.name] = adjustedPrice
-				gemRawPrice[e.name] = effectivePrice
-				isThin := e.listings < 5
+				gemRawPrice[e.name] = e.chaos
 
-				// Color-specific tier — used for Safe/Premium counting AND pool breakdown.
-				// Both must use the same boundaries so the numbers match.
-				colorTier := classifyTier(effectivePrice, colorTiers)
-				tier := colorTier
+				isThin := e.listings < 5
 
 				// Track pool breakdown per tier.
 				ts, ok := tierStats[tier]
 				if !ok {
-					ts = &TierPoolInfo{Tier: tier, MinPrice: effectivePrice, MaxPrice: effectivePrice}
+					ts = &TierPoolInfo{Tier: tier, MinPrice: e.chaos, MaxPrice: e.chaos}
 					tierStats[tier] = ts
 				}
 				ts.Count++
-				if effectivePrice < ts.MinPrice {
-					ts.MinPrice = effectivePrice
+				if e.chaos < ts.MinPrice {
+					ts.MinPrice = e.chaos
 				}
-				if effectivePrice > ts.MaxPrice {
-					ts.MaxPrice = effectivePrice
+				if e.chaos > ts.MaxPrice {
+					ts.MaxPrice = e.chaos
 				}
 
-				if isSafeTierWinner(colorTier) {
+				// Winner counting — all use feat.Tier now.
+				if isSafeTierWinner(tier) {
 					safeWinnerCount++
 					if isThin {
 						safeThinCount++
 					}
 				}
-				if isPremiumTierWinner(colorTier) {
+				if isPremiumTierWinner(tier) {
 					premiumWinnerCount++
 					if isThin {
 						premiumThinCount++
 					}
 				}
-				// Jackpot: use variant-wide tier so "Jackpot" means the same
-				// value level across all colors. Comparable.
-				if isJackpotTierWinner(feat.GlobalTier) {
+				if isJackpotTierWinner(tier) {
 					jackpotWinnerCount++
-					jackpotGems = append(jackpotGems, JackpotGemInfo{Name: e.name, Chaos: effectivePrice})
+					jackpotGems = append(jackpotGems, JackpotGemInfo{Name: e.name, Chaos: e.chaos})
 					if isThin {
 						jackpotThinCount++
 					}
@@ -401,26 +356,24 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 			var safeWinnerRawSum, premiumWinnerRawSum, jackpotWinnerRawSum float64
 			for _, e := range entries {
 				feat := featureLookup[featureKey{e.name, variant}]
-				if feat == nil {
+				if feat == nil || feat.LowConfidence {
 					continue
 				}
-				// Re-apply CASCADE guard (same as first pass).
-				ep := cascadeCappedPrice(e.chaos, feat, poolP75)
-				sellProb2 := sellProbabilityFactor(e.listings, feat.Low7Days, ep)
-				stabDisc2 := stabilityDiscount(feat.CVShort)
-				adjPrice := ep * sellProb2 * stabDisc2
-				colorTier2 := classifyTier(ep, colorTiers)
-				if isSafeTierWinner(colorTier2) {
+				sellProb := sellProbabilityFactor(e.listings, feat.Low7Days, e.chaos)
+				stabDisc := stabilityDiscount(feat.CVShort)
+				adjPrice := e.chaos * sellProb * stabDisc
+				tier := feat.Tier
+				if isSafeTierWinner(tier) {
 					safeWinnerSum += adjPrice
-					safeWinnerRawSum += ep
+					safeWinnerRawSum += e.chaos
 				}
-				if isPremiumTierWinner(colorTier2) {
+				if isPremiumTierWinner(tier) {
 					premiumWinnerSum += adjPrice
-					premiumWinnerRawSum += ep
+					premiumWinnerRawSum += e.chaos
 				}
-				if isJackpotTierWinner(feat.GlobalTier) {
+				if isJackpotTierWinner(tier) {
 					jackpotWinnerSum += adjPrice
-					jackpotWinnerRawSum += ep
+					jackpotWinnerRawSum += e.chaos
 				}
 			}
 
@@ -447,23 +400,24 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				safeFontsToHit = 1.0 / safePWin
 			}
 			analysis.Safe = append(analysis.Safe, FontResult{
-				Time:          snapTime,
-				Color:         color,
-				Variant:       variant,
-				Pool:          pool,
-				Winners:       safeWinnerCount,
-				PWin:          safePWin,
-				AvgWin:        safeAvgWin,
-				AvgWinRaw:     safeAvgWinRaw,
-				EV:            ev,
-				EVRaw:         evRaw,
-				InputCost:     inputCost,
-				Profit:        profit,
-				FontsToHit:    safeFontsToHit,
-				Mode:          "safe",
-				ThinPoolGems:  safeThinCount,
-				LiquidityRisk: computeLiquidityRisk(safeThinCount, safeWinnerCount),
-				PoolBreakdown: poolBreakdown,
+				Time:              snapTime,
+				Color:             color,
+				Variant:           variant,
+				Pool:              pool,
+				Winners:           safeWinnerCount,
+				PWin:              safePWin,
+				AvgWin:            safeAvgWin,
+				AvgWinRaw:         safeAvgWinRaw,
+				EV:                ev,
+				EVRaw:             evRaw,
+				InputCost:         inputCost,
+				Profit:            profit,
+				FontsToHit:        safeFontsToHit,
+				Mode:              "safe",
+				ThinPoolGems:      safeThinCount,
+				LiquidityRisk:     computeLiquidityRisk(safeThinCount, safeWinnerCount),
+				PoolBreakdown:     poolBreakdown,
+				LowConfidenceGems: lowConfGems,
 			})
 
 			// Premium mode result.
