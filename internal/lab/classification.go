@@ -155,6 +155,35 @@ func largestGapWithMinAbove(prices []float64, minAbove int, significanceMultipli
 	return bestPrice
 }
 
+// largestRelativeGapWithMinAbove finds the largest percentage gap in a
+// descending price slice where at least minAbove gems are above the gap.
+// Returns the price at the top of the gap, or 0 if none qualifies.
+func largestRelativeGapWithMinAbove(prices []float64, minAbove int) float64 {
+	if len(prices) < minAbove+1 {
+		return 0
+	}
+
+	bestRelGap := 0.0
+	bestPrice := 0.0
+	for i := minAbove - 1; i < len(prices)-1; i++ {
+		if prices[i] <= 0 {
+			continue
+		}
+		relGap := (prices[i] - prices[i+1]) / prices[i]
+		if relGap > bestRelGap {
+			bestRelGap = relGap
+			bestPrice = prices[i]
+		}
+	}
+
+	// Must be at least 8% relative gap to qualify.
+	if bestRelGap < 0.08 {
+		return 0
+	}
+
+	return bestPrice
+}
+
 // gapSnap adjusts a statistical boundary to the nearest natural gap within
 // ±window positions. Returns the price at the top of the widest gap found.
 func gapSnap(prices []float64, target float64, window int) float64 {
@@ -227,28 +256,22 @@ func computeVariantTiers(prices []float64, floorBoundary float64) TierBoundaries
 	// Gems within (1-HighRatio) of the highest price are HIGH.
 	highBound := aboveFloor[0] * HighRatio
 
-	// MID-HIGH boundary: largest gap between FLOOR and HIGH with min 3 above.
-	var midHighPool []float64
-	for _, p := range aboveFloor {
-		if p >= highBound {
-			continue // exclude HIGH gems
-		}
-		midHighPool = append(midHighPool, p)
-	}
-	midHighBound := 0.0
-	if len(midHighPool) >= MinGemsAboveGap+1 {
-		midHighBound = largestGapWithMinAbove(midHighPool, MinGemsAboveGap, 1.5)
-	}
+	// MID-HIGH boundary: half of the HIGH boundary.
+	// HIGH starts at ~750c, so MID-HIGH starts at ~375c.
+	// This puts the ~300-700c "worth farming" gems into MID-HIGH.
+	midHighBound := highBound * 0.5
 
-	// MID/LOW boundary: MidLowRatio × MID-HIGH (or HIGH if no MID-HIGH), gap-snapped.
-	referenceForMidLow := midHighBound
-	if referenceForMidLow <= 0 {
-		referenceForMidLow = highBound
+	// MID/LOW boundary: largest relative gap below MID-HIGH, gap-snapped.
+	var belowMidHigh []float64
+	for _, p := range aboveFloor {
+		if p >= midHighBound {
+			continue
+		}
+		belowMidHigh = append(belowMidHigh, p)
 	}
 	midLowTarget := 0.0
-	if referenceForMidLow > 0 {
-		midLowTarget = referenceForMidLow * MidLowRatio
-		midLowTarget = gapSnap(aboveFloor, midLowTarget, GapSnapWindow)
+	if len(belowMidHigh) >= MinGemsAboveGap+1 {
+		midLowTarget = largestRelativeGapWithMinAbove(belowMidHigh, MinGemsAboveGap)
 	}
 
 	// Build boundaries (descending order).
