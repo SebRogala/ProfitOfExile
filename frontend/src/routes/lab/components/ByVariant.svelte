@@ -7,6 +7,7 @@
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
+	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [
 		{ value: '10', label: '10' },
 		{ value: '20', label: '20' },
@@ -14,6 +15,7 @@
 	];
 
 	let activeTab = $state('20/20');
+	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
 	let visibleVariants = $derived(
@@ -22,7 +24,11 @@
 
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
-		return allPlays.filter(g => g.variant === variant).slice(0, parseInt(itemLimit));
+		let filtered = allPlays.filter(g => g.variant === variant);
+		if (activeColor !== 'ALL') {
+			filtered = filtered.filter(g => g.color === activeColor);
+		}
+		return filtered.slice(0, parseInt(itemLimit));
 	}
 </script>
 
@@ -32,6 +38,21 @@
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
 			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
+		</div>
+		<div class="color-tabs">
+			{#each COLORS as color}
+				<button
+					class="tab color-tab"
+					class:active={activeColor === color}
+					class:c-red={color === 'RED'}
+					class:c-green={color === 'GREEN'}
+					class:c-blue={color === 'BLUE'}
+					onclick={() => { activeColor = color; }}
+				>
+					{#if color !== 'ALL'}<span class="color-dot">●</span>{/if}
+					{color}
+				</button>
+			{/each}
 		</div>
 		<div class="tabs">
 			{#each TABS as tab}
@@ -89,6 +110,20 @@
 		color: var(--color-lab-text-secondary);
 		white-space: nowrap;
 	}
+	.color-tabs {
+		display: flex;
+		gap: 4px;
+	}
+	.color-dot {
+		margin-right: 2px;
+		font-size: 0.625rem;
+	}
+	.c-red.active { border-color: var(--color-lab-red); color: var(--color-lab-red); background: rgba(239, 68, 68, 0.1); }
+	.c-green.active { border-color: var(--color-lab-green); color: var(--color-lab-green); background: rgba(34, 197, 94, 0.1); }
+	.c-blue.active { border-color: var(--color-lab-blue, #3b82f6); color: var(--color-lab-blue, #3b82f6); background: rgba(59, 130, 246, 0.1); }
+	.c-red .color-dot { color: var(--color-lab-red); }
+	.c-green .color-dot { color: var(--color-lab-green); }
+	.c-blue .color-dot { color: var(--color-lab-blue, #3b82f6); }
 	.tabs {
 		display: flex;
 		gap: 4px;
