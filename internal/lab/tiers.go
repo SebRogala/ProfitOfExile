@@ -92,6 +92,45 @@ func DetectTierBoundaries(gems []GemPrice) TierBoundaries {
 	return DetectTierBoundariesRecursive(gems)
 }
 
+// DetectTierBoundariesNoTop produces tier boundaries without TOP detection.
+// Used after TOPs have already been identified and removed from the pool.
+// It performs only the recursive average-splitting phase of
+// DetectTierBoundariesRecursive, skipping the initial TOP gap search.
+func DetectTierBoundariesNoTop(gems []GemPrice) TierBoundaries {
+	prices := collectAndSortPrices(gems) // descending
+
+	if len(prices) < 4 {
+		return tierFallback(prices)
+	}
+
+	// Start with the full pool — no TOP gap detection.
+	pool := make([]float64, len(prices))
+	copy(pool, prices)
+
+	var boundaries []float64
+	for len(pool) >= 4 {
+		avg := average(pool)
+		// Find the split point: first price below average.
+		splitIdx := -1
+		for i, p := range pool {
+			if p < avg {
+				splitIdx = i
+				break
+			}
+		}
+		if splitIdx <= 0 || splitIdx >= len(pool) {
+			break // can't split meaningfully
+		}
+		boundaries = append(boundaries, pool[splitIdx])
+		pool = pool[:splitIdx] // keep only above-average gems for next iteration
+	}
+
+	// Sort boundaries descending for classifyTier to work correctly.
+	sort.Sort(sort.Reverse(sort.Float64Slice(boundaries)))
+
+	return TierBoundaries{Boundaries: boundaries}
+}
+
 // collectAndSortPrices extracts max price per gem name from analysable gems.
 // Uses a dynamic listing floor: computes median listings across the pool,
 // then excludes gems below 25% of median (minimum 2). This prevents
