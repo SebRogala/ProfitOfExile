@@ -7,7 +7,7 @@ import (
 
 // FloorBaseMultiplier controls the FLOOR boundary as a multiple of the
 // variant's median base gem price. Tunable — higher = more gems in FLOOR.
-const FloorBaseMultiplier = 3.0
+const FloorBaseMultiplier = 4.0
 
 // HighRatio controls the HIGH boundary as a ratio of the top non-TOP gem.
 // 0.7 means HIGH includes gems within 30% of the highest price.
