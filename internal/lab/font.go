@@ -325,17 +325,10 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 				gemRawPrice[e.name] = effectivePrice
 				isThin := e.listings < 5
 
-				// Use the gem's pre-computed global tier for pool breakdown.
-				// This ensures the pool overview shows the same tier labels
-				// (TOP, HIGH, MID-HIGH, MID, LOW, FLOOR) as the rest of the app.
-				tier := feat.GlobalTier
-				if tier == "" {
-					tier = classifyTier(effectivePrice, colorTiers)
-				}
-
-				// Safe/Premium still use color-specific tiers for win counting
-				// (per the Font EV design: per-color pool distribution).
+				// Color-specific tier — used for Safe/Premium counting AND pool breakdown.
+				// Both must use the same boundaries so the numbers match.
 				colorTier := classifyTier(effectivePrice, colorTiers)
+				tier := colorTier
 
 				// Track pool breakdown per tier.
 				ts, ok := tierStats[tier]
