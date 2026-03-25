@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
+	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
 	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
@@ -34,7 +35,7 @@
 
 <section class="section">
 	<div class="section-header">
-		<h2 class="section-title">By Variant</h2>
+		<h2 class="section-title">By Variant<InfoTooltip text="<b>Gem Ranking by Variant</b><br><br>Gems sorted by price (default), ROI, or risk-adjusted ROI. Filter by color and toggle low-confidence gems.<br><br><b>Tiers</b> (computed per variant, dynamic boundaries):<br>&nbsp;&nbsp;<span style='color:#fbbf24'>TOP</span> = monopoly outliers (gap-detected from clean pool)<br>&nbsp;&nbsp;<span style='color:#fb923c'>HIGH</span> = premium cluster (within 30% of top gem)<br>&nbsp;&nbsp;<span style='color:#c084fc'>MID-HIGH</span> = worth farming (above 50% of HIGH boundary)<br>&nbsp;&nbsp;<span style='color:#94a3b8'>MID</span> = decent profit<br>&nbsp;&nbsp;<span style='color:#64748b'>LOW</span> = marginal ROI<br>&nbsp;&nbsp;<span style='color:#475569'>FLOOR</span> = below 8% of top-5 average (not worth farming)<br><br><b>Low confidence</b> toggle shows thin-market gems (listings &lt; 40% of median). These may be price manipulation or meta shifts — system can't tell which.<br><br><b>Sort modes</b>: Price (default), Raw ROI, Risk-Adj ROI, ROI%." /></h2>
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
 			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
