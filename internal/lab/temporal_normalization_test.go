@@ -537,7 +537,7 @@ func TestEndToEnd_TemporalNormalization(t *testing.T) {
 		{Name: "Gem A of X", Variant: "20/20", GemColor: "RED", Points: points},
 	}
 
-	mc := ComputeMarketContext(snapTime, gems, history)
+	mc := ComputeMarketContext(snapTime, gems, history, ClassificationResult{})
 
 	// Temporal fields should be populated.
 	if mc.TemporalMode == "" {
