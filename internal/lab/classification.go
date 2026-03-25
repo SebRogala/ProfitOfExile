@@ -1,6 +1,8 @@
 package lab
 
-import "sort"
+import (
+	"sort"
+)
 
 // detectLowConfidence identifies thin-market gems whose prices are unreliable.
 // Returns map["name|variant"] -> true for low-confidence gems.
@@ -44,4 +46,50 @@ func detectLowConfidence(gems []GemPrice) map[string]bool {
 		}
 	}
 	return result
+}
+
+// detectTops identifies TOP-tier gems per variant using gap detection.
+// Low-confidence gems are excluded from the pool before detection.
+// Returns map["name|variant"] -> true for TOP gems.
+//
+// Compares DetectTierBoundaries (which includes TOP gap detection) against
+// DetectTierBoundariesNoTop. If the full algorithm produces an extra boundary,
+// that boundary is the TOP threshold and gems at or above it are TOP.
+func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
+	// Group non-low-confidence gems by variant.
+	byVariant := make(map[string][]GemPrice)
+	for _, g := range gems {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := g.Name + "|" + g.Variant
+		if lowConf[key] {
+			continue
+		}
+		byVariant[g.Variant] = append(byVariant[g.Variant], g)
+	}
+
+	tops := make(map[string]bool)
+	for variant, vGems := range byVariant {
+		withTop := DetectTierBoundaries(vGems)
+		withoutTop := DetectTierBoundariesNoTop(vGems)
+
+		// A TOP boundary exists only when the full algorithm produces more
+		// boundaries than the no-TOP variant.
+		if len(withTop.Boundaries) <= len(withoutTop.Boundaries) {
+			continue
+		}
+		if len(withTop.Boundaries) == 0 {
+			continue
+		}
+
+		// First boundary is the TOP threshold.
+		topBoundary := withTop.Boundaries[0]
+		for _, g := range vGems {
+			if g.Chaos >= topBoundary {
+				tops[g.Name+"|"+variant] = true
+			}
+		}
+	}
+	return tops
 }
