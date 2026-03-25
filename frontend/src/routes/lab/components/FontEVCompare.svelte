@@ -290,6 +290,16 @@
 									{/if}
 								</div>
 							{/each}
+							{#if safe?.lowConfidenceGems?.length}
+								{@const lcGems = safe.lowConfidenceGems}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${Math.round(g.chaos)}c (${g.listings} listings)`).join('<br>')}
+								<div class="pool-tier-row pool-risky-row">
+									<span class="pool-tier-name pool-risky-name">RISKY</span>
+									<span class="pool-tier-count">{lcGems.length}</span>
+									<span class="pool-tier-range">excluded from EV</span>
+									<InfoTooltip text="<b>Low confidence gems</b> — very few listings relative to normal. Could be a new meta build (demand spike) or price manipulation (buyout). Excluded from Font EV calculation.<br><br>{lcTooltip}" />
+								</div>
+							{/if}
 						</div>
 					{/each}
 				</div>
@@ -485,6 +495,14 @@
 	}
 	.pool-tier-empty {
 		opacity: 0.25;
+	}
+	.pool-risky-row {
+		border-top: 1px solid var(--color-lab-border);
+		margin-top: 2px;
+		padding-top: 3px;
+	}
+	.pool-risky-name {
+		color: var(--color-lab-red) !important;
 	}
 	.pool-tier-name {
 		font-weight: 700;
