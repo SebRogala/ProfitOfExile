@@ -94,6 +94,56 @@ func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 	return tops
 }
 
+// ComputeGemClassification is the unified tier pipeline entry point.
+// Per variant independently:
+//  1. Low Confidence detection (thin-market gems, depth < 0.4)
+//  2. TOP detection (gap-based, from low-confidence-filtered pool)
+//  3. Tier boundaries (gap-based, from pool minus low-confidence and TOP)
+//  4. Classify every gem
+func ComputeGemClassification(gems []GemPrice) ClassificationResult {
+	// Step 1: Low confidence detection.
+	lowConf := detectLowConfidence(gems)
+
+	// Step 2: TOP detection on clean pool.
+	tops := detectTops(gems, lowConf)
+
+	// Step 3: Tier boundaries from clean pool minus TOPs.
+	boundaries := computeCleanTierBoundaries(gems, lowConf, tops)
+
+	// Step 4: Classify every gem.
+	result := ClassificationResult{
+		Gems:        make(GemClassificationMap),
+		Boundaries:  boundaries,
+		TopBoundary: make(map[string]float64),
+	}
+
+	for _, g := range gems {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := GemClassificationKey{g.Name, g.Variant}
+		gemKey := g.Name + "|" + g.Variant
+
+		isLowConf := lowConf[gemKey]
+
+		var tier string
+		if tops[gemKey] {
+			tier = "TOP"
+		} else if tb, ok := boundaries[g.Variant]; ok {
+			tier = classifyTier(g.Chaos, tb)
+		} else {
+			tier = "FLOOR"
+		}
+
+		result.Gems[key] = GemClassification{
+			Tier:          tier,
+			LowConfidence: isLowConf,
+		}
+	}
+
+	return result
+}
+
 // computeCleanTierBoundaries produces per-variant tier boundaries from the
 // pool after removing low-confidence and TOP gems. Uses gap detection
 // WITHOUT TOP step (DetectTierBoundariesNoTop) since TOPs are already removed.

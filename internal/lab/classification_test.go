@@ -231,3 +231,80 @@ func TestComputeCleanTierBoundaries_ExcludesLowConfAndTops(t *testing.T) {
 		t.Error("expected at least some boundaries from 4-gem pool")
 	}
 }
+
+func TestComputeGemClassification_Integration(t *testing.T) {
+	gems := []GemPrice{
+		// TOP: clear gap above the rest (1300, 1200 → gap ~800 → next at 400)
+		{Name: "KB of Clustering", Variant: "20/20", Chaos: 1300, Listings: 260, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Cyclone of Tumult", Variant: "20/20", Chaos: 1200, Listings: 135, IsTransfigured: true, GemColor: "GREEN"},
+		// Low confidence: thin market spike
+		{Name: "Lightning Strike", Variant: "20/20", Chaos: 3204, Listings: 3, IsTransfigured: true, GemColor: "GREEN"},
+		// Normal gems — tightly spaced to keep avg gap low
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 400, Listings: 74, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "AG of Smiting", Variant: "20/20", Chaos: 380, Listings: 68, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Lacerate", Variant: "20/20", Chaos: 350, Listings: 80, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Ground Slam", Variant: "20/20", Chaos: 300, Listings: 90, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Frostbolt", Variant: "20/20", Chaos: 250, Listings: 85, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Fireball", Variant: "20/20", Chaos: 200, Listings: 70, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Ice Shot", Variant: "20/20", Chaos: 150, Listings: 60, IsTransfigured: true, GemColor: "GREEN"},
+		{Name: "Cleave", Variant: "20/20", Chaos: 100, Listings: 90, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Some Floor", Variant: "20/20", Chaos: 50, Listings: 100, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Cheap Gem", Variant: "20/20", Chaos: 30, Listings: 120, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Another", Variant: "20/20", Chaos: 60, Listings: 80, IsTransfigured: true, GemColor: "GREEN"},
+	}
+
+	cls := ComputeGemClassification(gems)
+
+	// Lightning Strike should be low confidence (3 listings vs median ~82).
+	ls := cls.Gems[GemClassificationKey{"Lightning Strike", "20/20"}]
+	if !ls.LowConfidence {
+		t.Errorf("Lightning Strike: LowConfidence = %v, want true", ls.LowConfidence)
+	}
+
+	// KB and Cyclone should be TOP (gap of ~800 vs avg gap ~100).
+	kb := cls.Gems[GemClassificationKey{"KB of Clustering", "20/20"}]
+	if kb.Tier != "TOP" {
+		t.Errorf("KB tier = %s, want TOP", kb.Tier)
+	}
+	cyclone := cls.Gems[GemClassificationKey{"Cyclone of Tumult", "20/20"}]
+	if cyclone.Tier != "TOP" {
+		t.Errorf("Cyclone tier = %s, want TOP", cyclone.Tier)
+	}
+	if kb.LowConfidence {
+		t.Error("KB should not be low confidence")
+	}
+
+	// Normal gems should NOT be TOP.
+	spark := cls.Gems[GemClassificationKey{"Spark of Nova", "20/20"}]
+	if spark.Tier == "TOP" {
+		t.Error("Spark should not be TOP")
+	}
+	if spark.Tier == "" {
+		t.Error("Spark should have a tier assigned")
+	}
+
+	// Cheap Gem (30c) should be in a low tier — not TOP or HIGH.
+	cheap := cls.Gems[GemClassificationKey{"Cheap Gem", "20/20"}]
+	if cheap.Tier == "TOP" || cheap.Tier == "HIGH" {
+		t.Errorf("Cheap Gem (30c) tier = %s, want a low tier (MID/LOW/FLOOR)", cheap.Tier)
+	}
+	if cheap.Tier == "" {
+		t.Error("Cheap Gem should have a tier assigned")
+	}
+
+	// Boundaries should exist for 20/20.
+	if _, ok := cls.Boundaries["20/20"]; !ok {
+		t.Error("expected Boundaries for 20/20 variant")
+	}
+
+	// All analyzable gems should have a classification.
+	for _, g := range gems {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := GemClassificationKey{g.Name, g.Variant}
+		if _, ok := cls.Gems[key]; !ok {
+			t.Errorf("gem %s missing from classification", g.Name)
+		}
+	}
+}
