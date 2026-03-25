@@ -56,7 +56,7 @@ func TestComputeGemFeatures_BasicVelocities(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -115,7 +115,12 @@ func TestComputeGemFeatures_Tier(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	cls := GemClassificationMap{
+		{Name: "Expensive of Power", Variant: "20/20"}: {Tier: "TOP"},
+		{Name: "Mid of Range", Variant: "20/20"}:       {Tier: "MID-HIGH"},
+		{Name: "Cheap of Nothing", Variant: "20/20"}:   {Tier: "MID"},
+	}
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, cls)
 
 	if len(features) != 3 {
 		t.Fatalf("got %d features, want 3", len(features))
@@ -129,11 +134,9 @@ func TestComputeGemFeatures_Tier(t *testing.T) {
 	if tierMap["Expensive of Power"] != "TOP" {
 		t.Errorf("Expensive tier = %s, want TOP", tierMap["Expensive of Power"])
 	}
-	// With boundaries [300, 100, 30]: 50 >= 30 -> TierNames[2] = "MID-HIGH"
 	if tierMap["Mid of Range"] != "MID-HIGH" {
 		t.Errorf("Mid tier = %s, want MID-HIGH", tierMap["Mid of Range"])
 	}
-	// 10 < 30 -> TierNames[3] = "MID"
 	if tierMap["Cheap of Nothing"] != "MID" {
 		t.Errorf("Cheap tier = %s, want MID", tierMap["Cheap of Nothing"])
 	}
@@ -161,7 +164,7 @@ func TestComputeGemFeatures_CV(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -199,7 +202,7 @@ func TestComputeGemFeatures_CVShort(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -240,7 +243,7 @@ func TestComputeGemFeatures_CVShort_NoHistory(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -279,7 +282,7 @@ func TestComputeGemFeatures_HistPosition(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -306,7 +309,7 @@ func TestComputeGemFeatures_RelativeMetrics(t *testing.T) {
 
 	mc := testMarketContext()
 	// P50 = 50, avgListings = 2000/100 = 20
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -331,7 +334,7 @@ func TestComputeGemFeatures_NoHistory(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -371,7 +374,7 @@ func TestComputeGemFeatures_FilterCorrupted(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 0 {
 		t.Errorf("got %d features, want 0 (corrupted filtered)", len(features))
@@ -386,7 +389,7 @@ func TestComputeGemFeatures_FilterNonTransfigured(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 0 {
 		t.Errorf("got %d features, want 0 (non-transfigured filtered)", len(features))
@@ -401,7 +404,7 @@ func TestComputeGemFeatures_FilterTrarthus(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 0 {
 		t.Errorf("got %d features, want 0 (Trarthus filtered)", len(features))
@@ -416,7 +419,7 @@ func TestComputeGemFeatures_FilterCheap(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 0 {
 		t.Errorf("got %d features, want 0 (cheap gem filtered)", len(features))
@@ -431,7 +434,7 @@ func TestComputeGemFeatures_Stubs(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -482,7 +485,7 @@ func TestComputeGemFeatures_MultipleGems(t *testing.T) {
 	}
 
 	mc := testMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
 
 	if len(features) != 3 {
 		t.Fatalf("got %d features, want 3", len(features))
@@ -535,7 +538,7 @@ func TestComputeGemFeatures_ZeroMarketContext(t *testing.T) {
 		WeekdayActivity:    make([]float64, 7),
 	}
 
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -584,7 +587,7 @@ func TestComputeGemFeatures_MarketDepth(t *testing.T) {
 			gems := []GemPrice{
 				{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: tt.listings, IsTransfigured: true, GemColor: "BLUE"},
 			}
-			features := ComputeGemFeatures(snapTime, gems, nil, mc)
+			features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 			if len(features) != 1 {
 				t.Fatalf("got %d features, want 1", len(features))
 			}
@@ -610,7 +613,7 @@ func TestComputeGemFeatures_MarketDepth_Fallback(t *testing.T) {
 		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
 	}
@@ -635,7 +638,7 @@ func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
 	gems := []GemPrice{
 		{Name: "Border of Light", Variant: "20/20", Chaos: 100, Listings: 20, IsTransfigured: true, GemColor: "BLUE"},
 	}
-	features := ComputeGemFeatures(snapTime, gems, nil, mc)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
 	}
@@ -650,7 +653,7 @@ func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
 	gems2 := []GemPrice{
 		{Name: "Border of Shadow", Variant: "20/20", Chaos: 100, Listings: 19, IsTransfigured: true, GemColor: "BLUE"},
 	}
-	features2 := ComputeGemFeatures(snapTime, gems2, nil, mc)
+	features2 := ComputeGemFeatures(snapTime, gems2, nil, mc, nil)
 	if len(features2) != 1 {
 		t.Fatalf("got %d features, want 1", len(features2))
 	}
