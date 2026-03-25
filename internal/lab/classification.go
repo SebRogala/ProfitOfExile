@@ -5,9 +5,14 @@ import (
 	"sort"
 )
 
-// FloorBaseMultiplier controls the FLOOR boundary as a multiple of the
-// variant's median base gem price. Tunable — higher = more gems in FLOOR.
-const FloorBaseMultiplier = 4.0
+// FloorTopRatio controls the FLOOR boundary as a percentage of the top-5
+// average gem price. 0.07 = FLOOR is below 7% of the top-5 average.
+// Scales dynamically with market maturity — early league has low floor,
+// mature league has high floor as prices diverge.
+const FloorTopRatio = 0.07
+
+// FloorTop5Count is how many top gems to average for the FLOOR anchor.
+const FloorTop5Count = 5
 
 // HighRatio controls the HIGH boundary as a ratio of the top non-TOP gem.
 // 0.7 means HIGH includes gems within 30% of the highest price.
@@ -102,24 +107,22 @@ func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 	return tops
 }
 
-// computeMedianBasePrice returns the median chaos price of non-transfigured,
-// non-corrupted base gems for a given variant.
-func computeMedianBasePrice(gems []GemPrice, variant string) float64 {
-	var prices []float64
-	for _, g := range gems {
-		if g.IsTransfigured || g.IsCorrupted || g.Chaos <= 0 || g.Listings < 5 {
-			continue
-		}
-		if g.Variant != variant {
-			continue
-		}
-		prices = append(prices, g.Chaos)
-	}
+// computeTop5Avg returns the average price of the top N most valuable
+// transfigured gems for a given variant (excluding low-confidence).
+// Used to anchor the FLOOR boundary relative to the market's top end.
+func computeTop5Avg(prices []float64) float64 {
 	if len(prices) == 0 {
 		return 1 // fallback
 	}
-	sort.Float64s(prices)
-	return prices[len(prices)/2]
+	n := FloorTop5Count
+	if n > len(prices) {
+		n = len(prices)
+	}
+	sum := 0.0
+	for i := 0; i < n; i++ {
+		sum += prices[i] // prices are descending
+	}
+	return sum / float64(n)
 }
 
 // largestGapWithMinAbove finds the largest absolute gap in a descending price
@@ -301,7 +304,7 @@ func computeCleanTierBoundaries(gems []GemPrice, lowConf map[string]bool, tops m
 			prices[i], prices[j] = prices[j], prices[i]
 		}
 
-		floorBound := math.Max(computeMedianBasePrice(gems, variant)*FloorBaseMultiplier, 1)
+		floorBound := math.Max(computeTop5Avg(prices)*FloorTopRatio, 1)
 		result[variant] = computeVariantTiers(prices, floorBound)
 	}
 	return result
