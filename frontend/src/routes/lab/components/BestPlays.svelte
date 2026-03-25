@@ -28,6 +28,7 @@
 
 	let sortBy = $state<'riskAdjusted' | 'roi' | 'roiPercent'>('roi');
 	let budget = $state('');
+	let showLowConf = $state(false);
 	let expandedRow = $state<number | null>(null);
 
 	let expandedHistory = $state<SignalTransition[]>([]);
@@ -35,6 +36,9 @@
 
 	let sorted = $derived.by(() => {
 		let filtered = [...plays];
+		if (!showLowConf) {
+			filtered = filtered.filter((p) => !p.lowConfidence);
+		}
 		const b = parseInt(budget);
 		if (b > 0) {
 			filtered = filtered.filter((p) => p.basePrice <= b);
@@ -94,6 +98,10 @@
 			Sort:
 			<Select bind:value={sortBy} options={SORT_OPTIONS} />
 		</label>
+		<label class="low-conf-toggle" title="Show gems with very few listings (unreliable prices)">
+			<input type="checkbox" bind:checked={showLowConf} />
+			<span>Low confidence</span>
+		</label>
 	</div>
 </div>
 
@@ -125,11 +133,7 @@
 				</td>
 				{#if showVariantColumn}<td class="col-var">{gem.variant}</td>{/if}
 				<td class="col-tier">
-					{#if showVariantColumn && gem.globalTier}
-						<span class="tier-badge tier-{gem.globalTier.toLowerCase()}">{gem.globalTier}</span>
-					{:else}
-						<span class="tier-badge tier-{gem.priceTier.toLowerCase()}">{gem.priceTier}</span>
-					{/if}
+					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}" class:low-conf={gem.lowConfidence}>{gem.priceTier}</span>
 				</td>
 				<td class="col-num roi-val">{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c</td>
 				<td class="col-signal">
@@ -420,6 +424,17 @@
 	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
 	.tier-floor { color: #475569; background: rgba(71, 85, 105, 0.08); }
+	.low-conf { opacity: 0.5; border: 1px dashed currentColor; }
+	.low-conf-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+		cursor: pointer;
+		user-select: none;
+	}
+	.low-conf-toggle input { accent-color: var(--color-lab-yellow, #eab308); cursor: pointer; }
 
 	/* Sellability */
 	.col-sell { width: 55px; }
