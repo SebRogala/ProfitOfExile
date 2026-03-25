@@ -220,10 +220,6 @@
 			onRefresh={handleRefreshQueue}
 		/>
 
-		<section class="section">
-			<BestPlays plays={bestPlays} league={status?.league || ''} />
-		</section>
-
 		<FontEVCompare {refreshKey} league={status?.league || ''} />
 
 		<ByVariant allPlays={bestPlays} league={status?.league || ''} />

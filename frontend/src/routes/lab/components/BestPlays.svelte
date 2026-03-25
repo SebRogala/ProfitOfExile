@@ -112,6 +112,7 @@
 			<th class="col-name" title="Transfigured gem name">Gem</th>
 			{#if showVariantColumn}<th class="col-var" title="Gem variant: level/quality (e.g. 20/20 = level 20, 20% quality)">Var</th>{/if}
 			<th class="col-tier">Tier <InfoTooltip text="<b>Price Tier Classification</b><br><br>Computed per variant using recursive average splitting — each variant has its own boundaries because price distributions differ.<br><br><span style='color:#fbbf24'>TOP</span> — Monopoly outliers, massive price gap from the rest<br><span style='color:#fb923c'>HIGH</span> — Premium cluster, primary farming targets<br><span style='color:#c084fc'>MID-HIGH</span> — Above average, competitive<br><span style='color:#94a3b8'>MID</span> — Competitive, mid-range<br><span style='color:#64748b'>LOW</span> — Decent but modest<br><span style='color:#475569'>FLOOR</span> — Bulk, lowest tier<br><br>In 'ALL variants' view, tiers use global boundaries for consistent comparison across variants." /></th>
+			<th class="col-num" title="Current ninja price of the transfigured gem">Price</th>
 			<th class="col-num" title={sortBy === 'riskAdjusted' ? 'Risk-adjusted ROI: raw ROI weighted by sellability and market stability' : METRIC_TOOLTIPS.ROI}>{sortBy === 'riskAdjusted' ? 'Adj ROI' : 'ROI'}</th>
 			<th class="col-signal">Signal <InfoTooltip text="<b>Market Signal + Sell Confidence</b><br><br><b>Signals</b> (current market behavior):<br>• <span style='color:#5eead4'>STABLE</span> — Steady price, safe to sell at listed<br>• <span style='color:#94a3b8'>UNCERTAIN</span> — Direction unclear (accuracy &lt;50%, showing raw data)<br>• <span style='color:#eab308'>HERD</span> — Farmers flooding in, price + listings surging<br>• <span style='color:#ef4444'>DUMPING</span> — Price crashing with rising supply<br>• <span style='color:#a855f7'>RECOVERY</span> — Supply draining, potential price recovery<br>• <span style='color:#ef4444'>TRAP</span> — High volatility + active movement, avoid<br><br><b>Sell Confidence</b> (can you sell near listed price?):<br>• <span style='color:#22c55e'>✓ SAFE</span> — Liquid + stable, sell confidently<br>• <span style='color:#eab308'>• FAIR</span> — Moderate risk, may need patience<br>• <span style='color:#ef4444'>✗ RISKY</span> — Thin market or volatile, undercut aggressively" /></th>
 			<th class="col-sell" title="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</th>
@@ -135,6 +136,7 @@
 				<td class="col-tier">
 					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}" class:low-conf={gem.lowConfidence}>{gem.priceTier}</span>
 				</td>
+				<td class="col-num price-val">{gem.transPrice}c</td>
 				<td class="col-num roi-val">{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c</td>
 				<td class="col-signal">
 					<SignalBadge signal={gem.signal} />
@@ -163,7 +165,7 @@
 			</tr>
 			{#if expandedRow === i}
 				<tr class="expanded-row">
-					<td colspan={showVariantColumn ? 9 : 8} class="expanded-cell">
+					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
 						<div class="expanded-content">
 							<span class="expanded-meta">
 								Base: {gem.basePrice}c | Trans: {gem.transPrice}c |
@@ -354,6 +356,10 @@
 	}
 	.col-spark {
 		width: 110px;
+	}
+	.price-val {
+		color: var(--color-lab-text);
+		font-weight: 600;
 	}
 	.roi-val {
 		color: var(--color-lab-green);
