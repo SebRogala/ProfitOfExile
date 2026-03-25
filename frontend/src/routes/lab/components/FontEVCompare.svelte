@@ -155,6 +155,7 @@
 		return safe?.poolBreakdown || [];
 	}
 
+	const ALL_TIERS = ['TOP', 'HIGH', 'MID-HIGH', 'MID', 'LOW', 'FLOOR'];
 	const TIER_COLORS: Record<string, string> = {
 		TOP: '#fbbf24', HIGH: '#fb923c', 'MID-HIGH': '#c084fc',
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
@@ -262,11 +263,12 @@
 						{@const totalGems = breakdown.reduce((s, t) => s + t.count, 0)}
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
-							{#if breakdown.length > 0}
-								{#each breakdown as tier}
-									{@const tierPWin = Math.round(pWin3(tier.count, totalGems) * 100)}
-									<div class="pool-tier-row">
-										<span class="pool-tier-name" style="color: {TIER_COLORS[tier.tier] || '#94a3b8'}">{tier.tier}</span>
+							{#each ALL_TIERS as tierName}
+								{@const tier = breakdown.find(t => t.tier === tierName)}
+								{@const tierPWin = tier ? Math.round(pWin3(tier.count, totalGems) * 100) : 0}
+								<div class="pool-tier-row" class:pool-tier-empty={!tier}>
+									<span class="pool-tier-name" style="color: {TIER_COLORS[tierName] || '#94a3b8'}">{tierName}</span>
+									{#if tier}
 										<span class="pool-tier-count">{tier.count}</span>
 										<span class="pool-tier-range">
 											{#if tier.minPrice === tier.maxPrice}
@@ -276,14 +278,17 @@
 											{/if}
 										</span>
 										<span class="pool-tier-bar">
-											<span class="pool-tier-bar-fill" style="width: {tierPWin}%; background: {TIER_COLORS[tier.tier] || '#94a3b8'}"></span>
+											<span class="pool-tier-bar-fill" style="width: {tierPWin}%; background: {TIER_COLORS[tierName] || '#94a3b8'}"></span>
 										</span>
 										<span class="pool-tier-pwin">{tierPWin}%</span>
-									</div>
-								{/each}
-							{:else}
-								<span class="pool-empty">No data</span>
-							{/if}
+									{:else}
+										<span class="pool-tier-count">—</span>
+										<span class="pool-tier-range"></span>
+										<span class="pool-tier-bar"></span>
+										<span class="pool-tier-pwin"></span>
+									{/if}
+								</div>
+							{/each}
 						</div>
 					{/each}
 				</div>
@@ -476,6 +481,9 @@
 		padding: 1px 0;
 		font-size: 0.8125rem;
 		line-height: 1.3;
+	}
+	.pool-tier-empty {
+		opacity: 0.25;
 	}
 	.pool-tier-name {
 		font-weight: 700;
