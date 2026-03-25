@@ -9,6 +9,10 @@ import (
 // variant's median base gem price. Tunable — higher = more gems in FLOOR.
 const FloorBaseMultiplier = 3.0
 
+// HighRatio controls the HIGH boundary as a ratio of the top non-TOP gem.
+// 0.7 means HIGH includes gems within 30% of the highest price.
+const HighRatio = 0.7
+
 // MidLowRatio controls where MID/LOW boundary falls relative to the
 // MID-HIGH boundary. 0.4 = LOW tops out at 40% of the MID-HIGH boundary.
 const MidLowRatio = 0.4
@@ -121,7 +125,9 @@ func computeMedianBasePrice(gems []GemPrice, variant string) float64 {
 // largestGapWithMinAbove finds the largest absolute gap in a descending price
 // slice where at least minAbove gems are above the gap. Returns the price at
 // the top of the gap (the boundary value), or 0 if no qualifying gap exists.
-func largestGapWithMinAbove(prices []float64, minAbove int) float64 {
+// significanceMultiplier controls how large the gap must be relative to the
+// average gap (e.g., 1.5 = gap must be 50% larger than average).
+func largestGapWithMinAbove(prices []float64, minAbove int, significanceMultiplier float64) float64 {
 	if len(prices) < minAbove+1 {
 		return 0
 	}
@@ -136,10 +142,10 @@ func largestGapWithMinAbove(prices []float64, minAbove int) float64 {
 		}
 	}
 
-	// Only accept if the gap is significant (at least 2× average gap).
+	// Only accept if the gap is significant relative to average.
 	totalGap := prices[0] - prices[len(prices)-1]
 	avgGap := totalGap / float64(len(prices)-1)
-	if bestGap < avgGap*2 {
+	if bestGap < avgGap*significanceMultiplier {
 		return 0
 	}
 
@@ -190,7 +196,7 @@ func gapSnap(prices []float64, target float64, window int) float64 {
 // computeVariantTiers produces tier boundaries for a single variant using
 // the hybrid algorithm:
 //  1. FLOOR = FloorBaseMultiplier × median base price
-//  2. HIGH = largest gap above FLOOR with min 3 gems above
+//  2. HIGH = HighRatio × top gem price (gems within 30% of the highest)
 //  3. MID-HIGH = largest gap between FLOOR and HIGH with min 3 gems above
 //  4. MID/LOW = MidLowRatio × MID-HIGH boundary, gap-snapped ±5
 //
@@ -208,27 +214,27 @@ func computeVariantTiers(prices []float64, floorBoundary float64) TierBoundaries
 		}
 	}
 	if len(aboveFloor) < 4 {
-		// Not enough gems above floor — just use floor as the only boundary.
 		return TierBoundaries{
 			Boundaries: []float64{floorBoundary},
 			Names:      []string{"LOW", "FLOOR"},
 		}
 	}
 
-	// HIGH boundary: largest gap in above-floor with min 3 above.
-	highBound := largestGapWithMinAbove(aboveFloor, MinGemsAboveGap)
+	// HIGH boundary: ratio of the top gem price.
+	// Gems within (1-HighRatio) of the highest price are HIGH.
+	highBound := aboveFloor[0] * HighRatio
 
 	// MID-HIGH boundary: largest gap between FLOOR and HIGH with min 3 above.
 	var midHighPool []float64
 	for _, p := range aboveFloor {
-		if highBound > 0 && p >= highBound {
+		if p >= highBound {
 			continue // exclude HIGH gems
 		}
 		midHighPool = append(midHighPool, p)
 	}
 	midHighBound := 0.0
 	if len(midHighPool) >= MinGemsAboveGap+1 {
-		midHighBound = largestGapWithMinAbove(midHighPool, MinGemsAboveGap)
+		midHighBound = largestGapWithMinAbove(midHighPool, MinGemsAboveGap, 1.5)
 	}
 
 	// MID/LOW boundary: MidLowRatio × MID-HIGH (or HIGH if no MID-HIGH), gap-snapped.
@@ -239,7 +245,6 @@ func computeVariantTiers(prices []float64, floorBoundary float64) TierBoundaries
 	midLowTarget := 0.0
 	if referenceForMidLow > 0 {
 		midLowTarget = referenceForMidLow * MidLowRatio
-		// Gap-snap within the above-floor pool.
 		midLowTarget = gapSnap(aboveFloor, midLowTarget, GapSnapWindow)
 	}
 
@@ -263,7 +268,6 @@ func computeVariantTiers(prices []float64, floorBoundary float64) TierBoundaries
 	names = append(names, "LOW")
 	names = append(names, "FLOOR")
 
-	// Sort descending (should already be, but ensure).
 	sort.Sort(sort.Reverse(sort.Float64Slice(bounds)))
 
 	return TierBoundaries{
