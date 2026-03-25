@@ -76,7 +76,6 @@ func makeFeature(name, variant string, chaos float64, listings int, tier string,
 		Chaos:                 chaos,
 		Listings:              listings,
 		Tier:                  tier,
-		GlobalTier:            tier,
 		SellProbabilityFactor: sellProb,
 		StabilityDiscount:     stabDisc,
 	}

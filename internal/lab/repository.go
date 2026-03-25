@@ -1008,7 +1008,8 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 	var results []GemFeature
 	for rows.Next() {
 		var f GemFeature
-		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier, &f.GlobalTier,
+		var ignoredGlobalTier string
+		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier, &ignoredGlobalTier,
 			&f.VelShortPrice, &f.VelShortListing, &f.VelMedPrice, &f.VelMedListing,
 			&f.VelLongPrice, &f.VelLongListing,
 			&f.CV, &f.HistPosition, &f.High7Days, &f.Low7Days,
@@ -1172,7 +1173,8 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 	var results []GemFeature
 	for rows.Next() {
 		var f GemFeature
-		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier, &f.GlobalTier,
+		var ignoredGlobalTier string
+		if err := rows.Scan(&f.Time, &f.Name, &f.Variant, &f.Chaos, &f.Listings, &f.Tier, &ignoredGlobalTier,
 			&f.VelShortPrice, &f.VelShortListing, &f.VelMedPrice, &f.VelMedListing,
 			&f.VelLongPrice, &f.VelLongListing,
 			&f.CV, &f.HistPosition, &f.High7Days, &f.Low7Days,
