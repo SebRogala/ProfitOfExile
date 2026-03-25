@@ -82,6 +82,7 @@ export interface FontColor {
 	liquidityRisk?: string;
 	mode?: string;
 	poolBreakdown?: { tier: string; count: number; minPrice: number; maxPrice: number }[];
+	lowConfidenceGems?: { name: string; chaos: number; listings: number }[];
 }
 
 export interface FontEVData {
@@ -330,6 +331,7 @@ function mapFontRows(rows: any[]): FontColor[] {
 		liquidityRisk: r.liquidityRisk || 'LOW',
 		mode: r.mode || '',
 		poolBreakdown: r.poolBreakdown || [],
+		lowConfidenceGems: r.lowConfidenceGems || [],
 	}));
 }
 
