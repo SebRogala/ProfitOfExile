@@ -85,6 +85,10 @@ func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 		byVariant[g.Variant] = append(byVariant[g.Variant], g)
 	}
 
+	// MaxTopGems limits how many gems can be TOP per variant.
+	// TOP is the monopoly outlier tier — should be 1-4 gems max.
+	const MaxTopGems = 4
+
 	tops := make(map[string]bool)
 	for variant, vGems := range byVariant {
 		withTop := DetectTierBoundaries(vGems)
@@ -98,6 +102,30 @@ func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 		}
 
 		topBoundary := withTop.Boundaries[0]
+
+		// Count how many gems would be TOP.
+		var topCount int
+		for _, g := range vGems {
+			if g.Chaos >= topBoundary {
+				topCount++
+			}
+		}
+
+		// If too many, raise the boundary to only include MaxTopGems.
+		if topCount > MaxTopGems {
+			// Sort by price descending, take the gap after MaxTopGems.
+			var topPrices []float64
+			for _, g := range vGems {
+				if g.Chaos >= topBoundary {
+					topPrices = append(topPrices, g.Chaos)
+				}
+			}
+			sort.Sort(sort.Reverse(sort.Float64Slice(topPrices)))
+			if len(topPrices) > MaxTopGems {
+				topBoundary = topPrices[MaxTopGems-1]
+			}
+		}
+
 		for _, g := range vGems {
 			if g.Chaos >= topBoundary {
 				tops[g.Name+"|"+variant] = true
