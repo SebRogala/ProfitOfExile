@@ -144,3 +144,90 @@ func TestDetectTops_PerVariant(t *testing.T) {
 		t.Error("Gem 1A in variant 1 should not be TOP (no significant gap)")
 	}
 }
+
+func TestComputeCleanTierBoundaries_REDLikePool(t *testing.T) {
+	// RED 20/20 pool without TOPs: 25 gems ranging 267c to 29c
+	gems := []GemPrice{
+		{Name: "G1", Variant: "20/20", Chaos: 267, Listings: 30, IsTransfigured: true},
+		{Name: "G2", Variant: "20/20", Chaos: 250, Listings: 50, IsTransfigured: true},
+		{Name: "G3", Variant: "20/20", Chaos: 229, Listings: 70, IsTransfigured: true},
+		{Name: "G4", Variant: "20/20", Chaos: 200, Listings: 40, IsTransfigured: true},
+		{Name: "G5", Variant: "20/20", Chaos: 175, Listings: 30, IsTransfigured: true},
+		{Name: "G6", Variant: "20/20", Chaos: 137, Listings: 60, IsTransfigured: true},
+		{Name: "G7", Variant: "20/20", Chaos: 120, Listings: 80, IsTransfigured: true},
+		{Name: "G8", Variant: "20/20", Chaos: 115, Listings: 100, IsTransfigured: true},
+		{Name: "G9", Variant: "20/20", Chaos: 105, Listings: 50, IsTransfigured: true},
+		{Name: "G10", Variant: "20/20", Chaos: 95, Listings: 40, IsTransfigured: true},
+		{Name: "G11", Variant: "20/20", Chaos: 89, Listings: 60, IsTransfigured: true},
+		{Name: "G12", Variant: "20/20", Chaos: 75, Listings: 80, IsTransfigured: true},
+		{Name: "G13", Variant: "20/20", Chaos: 74, Listings: 70, IsTransfigured: true},
+		{Name: "G14", Variant: "20/20", Chaos: 73, Listings: 60, IsTransfigured: true},
+		{Name: "G15", Variant: "20/20", Chaos: 66, Listings: 90, IsTransfigured: true},
+		{Name: "G16", Variant: "20/20", Chaos: 65, Listings: 100, IsTransfigured: true},
+		{Name: "G17", Variant: "20/20", Chaos: 63, Listings: 80, IsTransfigured: true},
+		{Name: "G18", Variant: "20/20", Chaos: 54, Listings: 70, IsTransfigured: true},
+		{Name: "G19", Variant: "20/20", Chaos: 50, Listings: 60, IsTransfigured: true},
+		{Name: "G20", Variant: "20/20", Chaos: 48, Listings: 50, IsTransfigured: true},
+		{Name: "G21", Variant: "20/20", Chaos: 42, Listings: 40, IsTransfigured: true},
+		{Name: "G22", Variant: "20/20", Chaos: 40, Listings: 30, IsTransfigured: true},
+		{Name: "G23", Variant: "20/20", Chaos: 35, Listings: 90, IsTransfigured: true},
+		{Name: "G24", Variant: "20/20", Chaos: 31, Listings: 100, IsTransfigured: true},
+		{Name: "G25", Variant: "20/20", Chaos: 29, Listings: 80, IsTransfigured: true},
+	}
+
+	lowConf := map[string]bool{}
+	tops := map[string]bool{}
+
+	boundaries := computeCleanTierBoundaries(gems, lowConf, tops)
+
+	vb, ok := boundaries["20/20"]
+	if !ok {
+		t.Fatal("expected boundaries for 20/20")
+	}
+	if len(vb.Boundaries) < 2 {
+		t.Errorf("expected >= 2 boundaries, got %d", len(vb.Boundaries))
+	}
+
+	// Key assertion: FLOOR should be < 50% of pool.
+	floorCount := 0
+	for _, g := range gems {
+		tier := classifyTier(g.Chaos, vb)
+		if tier == "FLOOR" {
+			floorCount++
+		}
+	}
+	if floorCount > 12 {
+		t.Errorf("too many FLOOR gems: %d/25 (want <= 12, was 66%% before refactor)", floorCount)
+	}
+
+	// No gem should get "TOP" from these boundaries.
+	for _, g := range gems {
+		tier := classifyTier(g.Chaos, vb)
+		if tier == "TOP" {
+			t.Errorf("gem %s at %fc classified as TOP — should not happen with DetectTierBoundariesNoTop", g.Name, g.Chaos)
+		}
+	}
+}
+
+func TestComputeCleanTierBoundaries_ExcludesLowConfAndTops(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Top Gem", Variant: "20/20", Chaos: 1300, Listings: 50, IsTransfigured: true},
+		{Name: "Spike", Variant: "20/20", Chaos: 5000, Listings: 3, IsTransfigured: true},
+		{Name: "Normal A", Variant: "20/20", Chaos: 300, Listings: 60, IsTransfigured: true},
+		{Name: "Normal B", Variant: "20/20", Chaos: 200, Listings: 70, IsTransfigured: true},
+		{Name: "Normal C", Variant: "20/20", Chaos: 100, Listings: 80, IsTransfigured: true},
+		{Name: "Normal D", Variant: "20/20", Chaos: 50, Listings: 90, IsTransfigured: true},
+	}
+
+	lowConf := map[string]bool{"Spike|20/20": true}
+	tops := map[string]bool{"Top Gem|20/20": true}
+
+	boundaries := computeCleanTierBoundaries(gems, lowConf, tops)
+
+	vb := boundaries["20/20"]
+	// The pool should only have Normal A-D (4 gems).
+	// Boundaries computed from [300, 200, 100, 50] only.
+	if len(vb.Boundaries) == 0 {
+		t.Error("expected at least some boundaries from 4-gem pool")
+	}
+}

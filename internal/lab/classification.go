@@ -93,3 +93,32 @@ func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 	}
 	return tops
 }
+
+// computeCleanTierBoundaries produces per-variant tier boundaries from the
+// pool after removing low-confidence and TOP gems. Uses gap detection
+// WITHOUT TOP step (DetectTierBoundariesNoTop) since TOPs are already removed.
+func computeCleanTierBoundaries(gems []GemPrice, lowConf map[string]bool, tops map[string]bool) map[string]TierBoundaries {
+	byVariant := make(map[string][]GemPrice)
+	for _, g := range gems {
+		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := g.Name + "|" + g.Variant
+		if lowConf[key] || tops[key] {
+			continue
+		}
+		byVariant[g.Variant] = append(byVariant[g.Variant], g)
+	}
+
+	// Tier names for clean boundaries: skip TOP since TOPs are classified
+	// separately. The first boundary maps to HIGH instead.
+	noTopNames := TierNames[1:] // ["HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"]
+
+	result := make(map[string]TierBoundaries)
+	for variant, vGems := range byVariant {
+		tb := DetectTierBoundariesNoTop(vGems)
+		tb.Names = noTopNames
+		result[variant] = tb
+	}
+	return result
+}
