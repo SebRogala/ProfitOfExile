@@ -487,8 +487,10 @@
 	}
 	.pool-tier-name {
 		font-weight: 700;
-		width: 60px;
+		width: 70px;
 		flex-shrink: 0;
+		white-space: nowrap;
+		font-size: 0.75rem;
 	}
 	.pool-tier-count {
 		color: var(--color-lab-text);
