@@ -132,6 +132,13 @@ type GemClassificationKey struct {
 // GemClassificationMap is the output of ComputeGemClassification.
 type GemClassificationMap map[GemClassificationKey]GemClassification
 
+// ClassificationResult is the output of ComputeGemClassification.
+type ClassificationResult struct {
+	Gems        GemClassificationMap
+	Boundaries  map[string]TierBoundaries // per-variant, for MarketContext backward compat
+	TopBoundary map[string]float64        // per-variant TOP threshold
+}
+
 // GemSignal holds the computed signal and confidence for a single gem at a snapshot.
 type GemSignal struct {
 	Time             time.Time
