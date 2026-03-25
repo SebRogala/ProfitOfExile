@@ -43,8 +43,6 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			f.Tier = c.Tier
 			f.LowConfidence = c.LowConfidence
 		}
-		// Keep GlobalTier = Tier for backward compat (field removed later in Task 10).
-		f.GlobalTier = f.Tier
 
 		h := histIndex[histKey{g.Name, g.Variant}]
 		if h != nil && len(h.Points) >= 2 {
@@ -122,27 +120,6 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 	}
 
 	return features
-}
-
-// classifyTierForVariant uses per-variant tier boundaries when available,
-// falling back to global ("all") then mc.TierBoundaries.
-func classifyTierForVariant(chaos float64, variant string, mc MarketContext) string {
-	if vs, ok := mc.VariantStats[variant]; ok && len(vs.Tiers.Boundaries) > 0 {
-		return classifyTier(chaos, vs.Tiers)
-	}
-	if vs, ok := mc.VariantStats["all"]; ok && len(vs.Tiers.Boundaries) > 0 {
-		return classifyTier(chaos, vs.Tiers)
-	}
-	return classifyTier(chaos, mc.TierBoundaries)
-}
-
-// classifyTierGlobal assigns a price tier using global (all-variant) tier
-// boundaries only. Comparable across variants for BestPlays "all" view.
-func classifyTierGlobal(chaos float64, mc MarketContext) string {
-	if vs, ok := mc.VariantStats["all"]; ok && len(vs.Tiers.Boundaries) > 0 {
-		return classifyTier(chaos, vs.Tiers)
-	}
-	return classifyTier(chaos, mc.TierBoundaries)
 }
 
 // extractChaos extracts the chaos price from a PricePoint.
