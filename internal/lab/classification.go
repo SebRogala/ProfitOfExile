@@ -310,14 +310,12 @@ func computeVariantTiers(prices []float64, floorBoundary float64) TierBoundaries
 		}
 	}
 
-	// HIGH boundary: ratio of the top gem price.
-	// Gems within (1-HighRatio) of the highest price are HIGH.
-	highBound := aboveFloor[0] * HighRatio
+	// HIGH boundary: ratio of the top gem price, gap-snapped ±2 positions.
+	// Small window avoids jumping too far but catches the nearest natural gap.
+	highBound := gapSnap(aboveFloor, aboveFloor[0]*HighRatio, 2)
 
-	// MID-HIGH boundary: half of the HIGH boundary.
-	// HIGH starts at ~750c, so MID-HIGH starts at ~375c.
-	// This puts the ~300-700c "worth farming" gems into MID-HIGH.
-	midHighBound := highBound * 0.5
+	// MID-HIGH boundary: half of HIGH, gap-snapped ±2 positions.
+	midHighBound := gapSnap(aboveFloor, highBound*0.5, 2)
 
 	// MID/LOW boundary: largest relative gap below MID-HIGH, gap-snapped.
 	var belowMidHigh []float64
