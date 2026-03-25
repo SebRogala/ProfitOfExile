@@ -344,7 +344,7 @@ func TestAnalyzeTrends_BasicSignals(t *testing.T) {
 		},
 	}
 
-	results := AnalyzeTrends(now, current, history, nil, 0)
+	results := AnalyzeTrends(now, current, history, nil, 0, nil)
 
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2 (filtered out corrupted, non-trans, Trarthus, cheap)", len(results))
@@ -388,7 +388,7 @@ func TestAnalyzeTrends_NoHistory(t *testing.T) {
 		{Name: "Spark of Nova", Variant: "20/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
-	results := AnalyzeTrends(now, current, nil, nil, 0)
+	results := AnalyzeTrends(now, current, nil, nil, 0, nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -417,7 +417,7 @@ func TestAnalyzeTrends_ExcludesInvalidVariants(t *testing.T) {
 		{Name: "Spark of Nova", Variant: "5/20", Chaos: 100, Listings: 10, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
-	results := AnalyzeTrends(now, current, nil, nil, 0)
+	results := AnalyzeTrends(now, current, nil, nil, 0, nil)
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0 (invalid variant excluded)", len(results))
 	}
@@ -451,7 +451,7 @@ func TestCoefficientOfVariation_NegativeMean(t *testing.T) {
 }
 
 func TestAnalyzeTrends_EmptyInput(t *testing.T) {
-	results := AnalyzeTrends(time.Now(), nil, nil, nil, 0)
+	results := AnalyzeTrends(time.Now(), nil, nil, nil, 0, nil)
 	if len(results) != 0 {
 		t.Errorf("got %d results, want 0", len(results))
 	}
@@ -641,7 +641,7 @@ func TestAnalyzeTrends_BaseSignals(t *testing.T) {
 	}
 
 	// Market average = 100 listings. Spark at 30 = 0.3 relative → MED (just at boundary).
-	results := AnalyzeTrends(now, current, history, baseHistory, 100)
+	results := AnalyzeTrends(now, current, history, baseHistory, 100, nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -676,7 +676,7 @@ func TestAnalyzeTrends_BaseNotFound(t *testing.T) {
 	}
 
 	// No base history provided.
-	results := AnalyzeTrends(now, current, nil, nil, 100)
+	results := AnalyzeTrends(now, current, nil, nil, 100, nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -706,7 +706,7 @@ func TestAnalyzeTrends_ZeroMarketAvg(t *testing.T) {
 	}
 
 	// marketAvg = 0 → relative liquidity defaults to 1.0 → HIGH.
-	results := AnalyzeTrends(now, current, nil, nil, 0)
+	results := AnalyzeTrends(now, current, nil, nil, 0, nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -951,7 +951,7 @@ func TestAnalyzeTrends_AdvancedSignal(t *testing.T) {
 		},
 	}
 
-	results := AnalyzeTrends(now, current, history, nil, 0)
+	results := AnalyzeTrends(now, current, history, nil, 0, nil)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -1164,7 +1164,21 @@ func TestAnalyzeTrends_TierAssignment(t *testing.T) {
 		{Name: "Cheap Gem of Nothing", Variant: "20/20", Chaos: 6, Listings: 50, IsTransfigured: true, GemColor: "GREEN"},
 	}
 
-	results := AnalyzeTrends(now, current, nil, nil, 0)
+	// Build a classification map manually to test that AnalyzeTrends reads it.
+	cls := GemClassificationMap{
+		{Name: "Expensive Gem of Power", Variant: "20/20"}: {Tier: "TOP"},
+		{Name: "Filler A of X", Variant: "20/20"}:          {Tier: "HIGH"},
+		{Name: "Filler B of X", Variant: "20/20"}:          {Tier: "HIGH"},
+		{Name: "Filler C of X", Variant: "20/20"}:          {Tier: "HIGH"},
+		{Name: "Filler D of X", Variant: "20/20"}:          {Tier: "MID"},
+		{Name: "Filler E of X", Variant: "20/20"}:          {Tier: "MID"},
+		{Name: "Filler F of X", Variant: "20/20"}:          {Tier: "MID"},
+		{Name: "Filler G of X", Variant: "20/20"}:          {Tier: "LOW"},
+		{Name: "Filler H of X", Variant: "20/20"}:          {Tier: "LOW"},
+		{Name: "Cheap Gem of Nothing", Variant: "20/20"}:   {Tier: "LOW"},
+	}
+
+	results := AnalyzeTrends(now, current, nil, nil, 0, cls)
 
 	// Find the expensive and cheap gems.
 	var expensive, cheap *TrendResult
@@ -1187,11 +1201,8 @@ func TestAnalyzeTrends_TierAssignment(t *testing.T) {
 	if cheap == nil {
 		t.Fatal("missing Cheap Gem of Nothing result")
 	}
-	// With recursive-average tiering, cheap gems (6c) fall below the last boundary
-	// and land in the tier after the last boundary index. The exact tier name depends
-	// on the number of boundaries produced. Just verify it's not TOP or HIGH.
-	if cheap.PriceTier == "TOP" || cheap.PriceTier == "HIGH" {
-		t.Errorf("Cheap gem tier = %s, want a low-tier name (not TOP/HIGH)", cheap.PriceTier)
+	if cheap.PriceTier != "LOW" {
+		t.Errorf("Cheap gem tier = %s, want LOW", cheap.PriceTier)
 	}
 }
 

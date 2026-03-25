@@ -299,10 +299,8 @@ func tierAction(signal, windowSignal, priceTier string) string {
 // baseHistory maps baseName → []PricePoint for non-transfigured gems.
 // marketAvgBaseLst is the market-wide average base listings (denominator for relative liquidity).
 func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHistory,
-	baseHistory map[string][]PricePoint, marketAvgBaseLst float64) []TrendResult {
-
-	// Compute dynamic price tier thresholds from current snapshot.
-	tb := DetectTierBoundaries(current)
+	baseHistory map[string][]PricePoint, marketAvgBaseLst float64,
+	cls GemClassificationMap) []TrendResult {
 
 	// Index history by (name, variant) for fast lookup.
 	type histKey struct{ name, variant string }
@@ -373,7 +371,12 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
 		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel)
 		advSignal := classifyAdvancedSignal(g.Chaos, g.Listings, priceVel, listingVel, cv, histPos)
-		priceTier := classifyTier(g.Chaos, tb)
+		priceTier := "FLOOR" // default when classification unavailable
+		if cls != nil {
+			if c, ok := cls[GemClassificationKey{g.Name, g.Variant}]; ok {
+				priceTier = c.Tier
+			}
+		}
 		tAction := tierAction(signal, winSignal, priceTier)
 		sUrgency, sReason := sellUrgency(priceVel, listingVel, baseVel, histPos, baseLst, g.Listings, signal, priceTier)
 		sellScore, sellLabel := sellability(g.Listings, listingVel, priceVel, cv, signal, 1.0, g.Chaos)
