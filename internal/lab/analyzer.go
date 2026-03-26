@@ -107,7 +107,7 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 		return nil
 	}
 
-	analysis := AnalyzeFont(snapTime, gems, features)
+	analysis := AnalyzeFont(snapTime, features)
 
 	// Combine all three modes for DB persistence.
 	allResults := make([]FontResult, 0, len(analysis.Safe)+len(analysis.Premium)+len(analysis.Jackpot))

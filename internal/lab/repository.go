@@ -931,19 +931,19 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 			  flood_count, crash_count, listing_elasticity,
 			  relative_price, relative_listings,
 			  sell_probability_factor, stability_discount,
-			  market_depth, market_regime, low_confidence)
+			  market_depth, market_regime, low_confidence, gem_color)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
 			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
-			         $25, $26, $27)
+			         $25, $26, $27, $28)
 			 ON CONFLICT DO NOTHING`,
-			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.Tier, // tier and global_tier get the same value
+			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.Tier,
 			f.VelShortPrice, f.VelShortListing, f.VelMedPrice, f.VelMedListing,
 			f.VelLongPrice, f.VelLongListing,
 			f.CV, f.HistPosition, f.High7Days, f.Low7Days,
 			f.FloodCount, f.CrashCount, f.ListingElasticity,
 			f.RelativePrice, f.RelativeListings,
 			f.SellProbabilityFactor, f.StabilityDiscount,
-			f.MarketDepth, f.MarketRegime, f.LowConfidence,
+			f.MarketDepth, f.MarketRegime, f.LowConfidence, f.GemColor,
 		)
 	}
 
@@ -979,7 +979,7 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 		       relative_price, relative_listings,
 		       sell_probability_factor, stability_discount,
 		       COALESCE(market_depth, 0), COALESCE(market_regime, 'TEMPORAL'),
-		       COALESCE(low_confidence, false)
+		       COALESCE(low_confidence, false), COALESCE(gem_color, '')
 		FROM gem_features
 		WHERE time = (SELECT MAX(time) FROM gem_features)`
 	args := []any{}
@@ -1016,7 +1016,7 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 			&f.FloodCount, &f.CrashCount, &f.ListingElasticity,
 			&f.RelativePrice, &f.RelativeListings,
 			&f.SellProbabilityFactor, &f.StabilityDiscount,
-			&f.MarketDepth, &f.MarketRegime, &f.LowConfidence); err != nil {
+			&f.MarketDepth, &f.MarketRegime, &f.LowConfidence, &f.GemColor); err != nil {
 			return nil, fmt.Errorf("lab repo: scan gem feature: %w", err)
 		}
 		results = append(results, f)
@@ -1159,7 +1159,7 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 		       relative_price, relative_listings,
 		       sell_probability_factor, stability_discount,
 		       COALESCE(market_depth, 0), COALESCE(market_regime, 'TEMPORAL'),
-		       COALESCE(low_confidence, false)
+		       COALESCE(low_confidence, false), COALESCE(gem_color, '')
 		FROM gem_features
 		WHERE time > NOW() - make_interval(hours => $1)
 		ORDER BY time, name, variant`
@@ -1181,7 +1181,7 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 			&f.FloodCount, &f.CrashCount, &f.ListingElasticity,
 			&f.RelativePrice, &f.RelativeListings,
 			&f.SellProbabilityFactor, &f.StabilityDiscount,
-			&f.MarketDepth, &f.MarketRegime, &f.LowConfidence); err != nil {
+			&f.MarketDepth, &f.MarketRegime, &f.LowConfidence, &f.GemColor); err != nil {
 			return nil, fmt.Errorf("lab repo: scan gem feature in range: %w", err)
 		}
 		results = append(results, f)

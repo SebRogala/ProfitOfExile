@@ -38,6 +38,7 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			Variant:  g.Variant,
 			Chaos:    g.Chaos,
 			Listings: g.Listings,
+			GemColor: g.GemColor,
 		}
 		if c, ok := cls[GemClassificationKey{g.Name, g.Variant}]; ok {
 			f.Tier = c.Tier
