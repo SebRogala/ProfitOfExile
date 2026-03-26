@@ -3,7 +3,6 @@ package lab
 import (
 	"math"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -180,8 +179,10 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 // Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Winner contributions are risk-adjusted using SellProbabilityFactor and StabilityDiscount.
 // Pool size = count of distinct transfigured gem NAMES per color (across all variants).
-func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) FontAnalysis {
+func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 	// Build feature lookup: "name|variant" -> *GemFeature
+	// Build pool and entries from features — single source of truth.
+	// Features already filter: transfigured, not corrupted, not Trarthus, chaos > 5.
 	type featureKey struct{ name, variant string }
 	featureLookup := make(map[featureKey]*GemFeature, len(features))
 	for i := range features {
@@ -189,20 +190,19 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 		featureLookup[featureKey{f.Name, f.Variant}] = f
 	}
 
-	// Step 1: Build pool sizes — unique transfigured gem names per color (all variants).
+	// Pool sizes: unique gem names per color (across all variants).
 	poolNames := map[string]map[string]struct{}{
 		"RED":   {},
 		"GREEN": {},
 		"BLUE":  {},
 	}
 
-	// Also index variant-specific gem entries for winner evaluation.
+	// Variant-specific entries for winner evaluation.
 	type gemEntry struct {
 		name     string
 		chaos    float64
 		listings int
 	}
-	// byColor[color][variant] = []gemEntry
 	type colorVariantGems map[string][]gemEntry
 	byColor := map[string]colorVariantGems{
 		"RED":   {},
@@ -210,27 +210,19 @@ func AnalyzeFont(snapTime time.Time, gems []GemPrice, features []GemFeature) Fon
 		"BLUE":  {},
 	}
 
-	for _, g := range gems {
-		if g.IsCorrupted {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
-			continue
-		}
-		if !g.IsTransfigured {
-			continue
-		}
-		color := g.GemColor
+	for i := range features {
+		f := &features[i]
+		color := f.GemColor
 		if color != "RED" && color != "GREEN" && color != "BLUE" {
 			continue
 		}
 
-		poolNames[color][g.Name] = struct{}{}
+		poolNames[color][f.Name] = struct{}{}
 
-		byColor[color][g.Variant] = append(byColor[color][g.Variant], gemEntry{
-			name:     g.Name,
-			chaos:    g.Chaos,
-			listings: g.Listings,
+		byColor[color][f.Variant] = append(byColor[color][f.Variant], gemEntry{
+			name:     f.Name,
+			chaos:    f.Chaos,
+			listings: f.Listings,
 		})
 	}
 

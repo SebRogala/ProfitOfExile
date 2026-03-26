@@ -117,7 +117,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		repo.SaveGemSignals(ctx, signals)
 
 		// Compute font analysis (needs features for tier-based modes).
-		fontAnalysis := lab.AnalyzeFont(snapTime, gems, features)
+		fontAnalysis := lab.AnalyzeFont(snapTime, features)
 		allFontResults := make([]lab.FontResult, 0, len(fontAnalysis.Safe)+len(fontAnalysis.Premium)+len(fontAnalysis.Jackpot))
 		allFontResults = append(allFontResults, fontAnalysis.Safe...)
 		allFontResults = append(allFontResults, fontAnalysis.Premium...)

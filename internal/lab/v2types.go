@@ -93,6 +93,7 @@ type GemFeature struct {
 	Chaos             float64
 	Listings          int
 	Tier              string // per-variant tier (for Font Comparator)
+	GemColor          string // RED, GREEN, BLUE
 	VelShortPrice     float64
 	VelShortListing   float64
 	VelMedPrice       float64
