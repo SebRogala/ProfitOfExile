@@ -3,6 +3,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
+	import { getPairCode, clearPairCode, subscribeToDesktopGems } from '$lib/desktopBridge';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
@@ -12,10 +13,14 @@
 		league = '',
 		refreshKey = 0,
 		onQueueGem,
+		desktopPair = null,
+		onDesktopDisconnect,
 	}: {
 		league?: string;
 		refreshKey?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
+		desktopPair?: string | null;
+		onDesktopDisconnect?: () => void;
 	} = $props();
 
 	let selectedForQueue = $state<string | null>(null);
@@ -32,6 +37,42 @@
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
+
+	// --- Desktop pairing state ---
+	let desktopConnected = $state(false);
+	let activePairCode = $derived(desktopPair || getPairCode());
+
+	$effect(() => {
+		const code = desktopPair || getPairCode();
+		if (!code) return;
+
+		const unsub = subscribeToDesktopGems(
+			(gems, detectedVariant) => {
+				// Set variant if different
+				if (VARIANTS.includes(detectedVariant) && detectedVariant !== variant) {
+					variant = detectedVariant;
+				}
+				// Replace selected gems with detected ones (up to 3)
+				selectedGems = gems.slice(0, 3);
+				loadResults();
+				fetchTradeDataForAll();
+			},
+			(connected) => {
+				desktopConnected = connected;
+			}
+		);
+
+		return () => {
+			unsub();
+			desktopConnected = false;
+		};
+	});
+
+	function disconnectDesktop() {
+		clearPairCode();
+		desktopConnected = false;
+		onDesktopDisconnect?.();
+	}
 
 	let variant = $state('20/20');
 	let searchQuery = $state('');
@@ -345,7 +386,16 @@
 
 <section class="section">
 	<div class="section-header">
-		<h2 class="section-title">Lab Options Comparator</h2>
+		<div class="title-group">
+			<h2 class="section-title">Lab Options Comparator</h2>
+			{#if activePairCode}
+				<span class="desktop-badge" class:desktop-connected={desktopConnected}>
+					<span class="desktop-dot"></span>
+					Desktop ({activePairCode})
+					<button class="desktop-disconnect" onclick={disconnectDesktop} title="Disconnect desktop pairing">&#215;</button>
+				</span>
+			{/if}
+		</div>
 		<div class="header-controls">
 			{#if selectedForQueue && onQueueGem}
 				<button class="next-btn" onclick={handleNext}>&#10003; Next</button>
@@ -626,6 +676,52 @@
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
+	}
+	.title-group {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.desktop-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-lab-text-secondary);
+		background: rgba(100, 100, 120, 0.15);
+		border: 1px solid rgba(100, 100, 120, 0.3);
+		padding: 3px 10px;
+		border-radius: 12px;
+		white-space: nowrap;
+	}
+	.desktop-badge.desktop-connected {
+		color: var(--color-lab-green, #22c55e);
+		background: rgba(34, 197, 94, 0.1);
+		border-color: rgba(34, 197, 94, 0.3);
+	}
+	.desktop-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-lab-text-secondary);
+	}
+	.desktop-connected .desktop-dot {
+		background: var(--color-lab-green, #22c55e);
+		box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+	}
+	.desktop-disconnect {
+		background: none;
+		border: none;
+		color: inherit;
+		font-size: 0.875rem;
+		cursor: pointer;
+		padding: 0 0 0 2px;
+		line-height: 1;
+		opacity: 0.6;
+	}
+	.desktop-disconnect:hover {
+		opacity: 1;
 	}
 	.header-controls {
 		display: flex;

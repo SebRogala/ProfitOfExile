@@ -70,9 +70,25 @@ services:
     restart: unless-stopped
     command: ["air", "-c", ".air.collector.toml"]
 
+  desktop:
+    build:
+      context: .
+      dockerfile: Dockerfile.desktop
+    container_name: profitofexile_desktop
+    volumes:
+      - ./desktop:/app/desktop
+      - desktop_cargo_registry:/usr/local/cargo/registry
+      - desktop_cargo_git:/usr/local/cargo/git
+      - desktop_target:/app/desktop/src-tauri/target
+      - desktop_node_modules:/app/desktop/node_modules
+
 volumes:
   go-pkg:
   frontend_node_modules:
+  desktop_cargo_registry:
+  desktop_cargo_git:
+  desktop_target:
+  desktop_node_modules:
 
 networks:
   infra:

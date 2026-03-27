@@ -10,6 +10,7 @@
 		type MercureConnection,
 	} from '$lib/api';
 	import { lookupTrade, pollTradeResult, type TradeLookupResult } from '$lib/tradeApi';
+	import { getPairCode, setPairCode } from '$lib/desktopBridge';
 
 	import Header from './components/Header.svelte';
 	import Comparator from './components/Comparator.svelte';
@@ -30,6 +31,20 @@
 	let mercure = $state<MercureConnection | null>(null);
 	let isDedication = $derived(selectedLab === 'Dedication');
 	let refreshKey = $state(0);
+
+	// --- Desktop pairing ---
+	let desktopPair = $state<string | null>(null);
+
+	// Read ?pair= from URL and persist it
+	if (typeof window !== 'undefined') {
+		const urlPair = new URL(window.location.href).searchParams.get('pair');
+		if (urlPair) {
+			setPairCode(urlPair);
+			desktopPair = urlPair;
+		} else {
+			desktopPair = getPairCode();
+		}
+	}
 
 	// --- Session Queue state ---
 	let sessionQueue = $state<QueueItem[]>([]);
@@ -211,7 +226,7 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else if !loading}
-		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
 
 		<SessionQueue
 			queue={sessionQueue}

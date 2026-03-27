@@ -1,0 +1,18 @@
+FROM rust:1.94-bookworm
+
+RUN apt-get update && apt-get install -y \
+    nodejs npm \
+    libwebkit2gtk-4.1-dev \
+    libappindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install newer Node via n
+RUN npm install -g n && n lts && hash -r
+
+WORKDIR /app/desktop/src-tauri
+
+CMD ["cargo", "check"]
