@@ -95,6 +95,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))
 
+	if cfg.MercureURL != "" && cfg.MercureSecret != "" {
+		r.Post("/api/desktop/gems", handlers.DesktopGems(cfg.MercureURL, cfg.MercureSecret))
+	}
+
 	if cfg.DevMode {
 		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret))
 	}

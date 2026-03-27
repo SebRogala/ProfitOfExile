@@ -1,4 +1,4 @@
-.PHONY: build test qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector
+.PHONY: build test qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-build desktop-deploy
 
 build:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
@@ -47,3 +47,18 @@ shell-collector:
 
 logs-collector:
 	docker compose logs -f collector
+
+desktop-check:
+	docker compose run --rm -w /app/desktop/src-tauri desktop cargo check
+
+desktop-test:
+	docker compose run --rm -w /app/desktop/src-tauri desktop cargo test
+
+desktop-build:
+	docker compose run --rm -w /app/desktop/src-tauri desktop cargo build --release
+
+desktop-deploy:
+ifndef DESKTOP_DEPLOY_DIR
+	$(error Set DESKTOP_DEPLOY_DIR in .env.local or environment)
+endif
+	cp desktop/src-tauri/target/release/profitofexile-desktop $(DESKTOP_DEPLOY_DIR)/
