@@ -1,4 +1,6 @@
-.PHONY: build test qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-build desktop-deploy
+.PHONY: build test qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-build desktop-deploy desktop-sync desktop-watch
+
+-include .env.local
 
 build:
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
@@ -62,3 +64,26 @@ ifndef DESKTOP_DEPLOY_DIR
 	$(error Set DESKTOP_DEPLOY_DIR in .env.local or environment)
 endif
 	cp desktop/src-tauri/target/release/profitofexile-desktop $(DESKTOP_DEPLOY_DIR)/
+
+desktop-sync:
+ifndef DESKTOP_WIN_DIR
+	$(error Set DESKTOP_WIN_DIR in .env.local — e.g. /mnt/c/Users/you/Projects/poe-desktop)
+endif
+	rsync -av --delete \
+		--exclude node_modules --exclude .svelte-kit --exclude build \
+		--exclude target --exclude Cargo.lock \
+		desktop/ $(DESKTOP_WIN_DIR)/
+
+desktop-watch:
+ifndef DESKTOP_WIN_DIR
+	$(error Set DESKTOP_WIN_DIR in .env.local — e.g. /mnt/c/Users/you/Projects/poe-desktop)
+endif
+	@echo "Watching desktop/ → $(DESKTOP_WIN_DIR) (Ctrl+C to stop)"
+	@while true; do \
+		inotifywait -r -e modify,create,delete,move desktop/ \
+			--exclude '(node_modules|\.svelte-kit|target|build)' 2>/dev/null; \
+		rsync -av --delete \
+			--exclude node_modules --exclude .svelte-kit --exclude build \
+			--exclude target --exclude Cargo.lock \
+			desktop/ $(DESKTOP_WIN_DIR)/; \
+	done

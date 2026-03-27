@@ -1,18 +1,19 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import '../app.css';
 
 	let pairCode = $state('...');
-	let status = $state<any>(null);
+	let status = $state<any>({ state: 'Loading...', server_url: 'https://profitofexile.localhost', detected_gems: [] });
 	let testResult = $state('');
 	let sending = $state(false);
 	let logs = $state<string[]>([]);
 
-	onMount(async () => {
-		pairCode = await invoke('get_pair_code');
-		status = await invoke('get_status');
-	});
+	// Poll status — runs immediately and every second
+	setInterval(() => {
+		invoke('get_pair_code').then((c) => { pairCode = c as string; }).catch(() => {});
+		invoke('get_status').then((s) => { status = s; }).catch(() => {});
+		invoke('get_logs').then((l) => { logs = l as string[]; }).catch(() => {});
+	}, 1000);
 
 	function pairUrl(): string {
 		const base = status?.server_url || 'https://profitofexile.localhost';
@@ -44,6 +45,21 @@
 	async function refreshLogs() {
 		logs = await invoke('get_logs');
 	}
+
+	let editingPath = $state(false);
+	let pathInput = $state('');
+
+	function startEditPath() {
+		pathInput = status?.client_txt_path || '';
+		editingPath = true;
+	}
+
+	async function savePath() {
+		await invoke('set_client_txt_path', { path: pathInput });
+		editingPath = false;
+		// Restart requires app restart for now
+		status = await invoke('get_status');
+	}
 </script>
 
 <main>
@@ -65,6 +81,15 @@
 			<button class="btn-small" onclick={refreshStatus}>Refresh</button>
 		</div>
 		<div class="state">{status?.state || 'Loading...'}</div>
+		<div class="path">
+			{#if editingPath}
+				<input type="text" bind:value={pathInput} class="path-input" />
+				<button class="btn-small" onclick={savePath}>Save (restart app to apply)</button>
+			{:else}
+				<span class="path-text">{status?.client_txt_path || ''}</span>
+				<button class="btn-small" onclick={startEditPath}>Edit</button>
+			{/if}
+		</div>
 	</section>
 
 	<section class="test">
@@ -228,6 +253,27 @@
 
 	.log-error {
 		color: var(--accent);
+	}
+
+	.path {
+		margin-top: 0.5rem;
+		font-size: 0.75rem;
+	}
+
+	.path-text {
+		color: var(--text-muted);
+		word-break: break-all;
+	}
+
+	.path-input {
+		width: 100%;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		color: var(--text);
+		padding: 0.3rem;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		margin-bottom: 0.3rem;
 	}
 
 	ul {
