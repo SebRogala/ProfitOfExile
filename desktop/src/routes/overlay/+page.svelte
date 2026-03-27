@@ -48,12 +48,16 @@
 	}
 
 	onMount(async () => {
-		// Workaround for Tauri v2 / WebView2 transparency bug on Windows:
-		// Resize slightly to force WebView2 to re-render with transparency
-		const win = getCurrentWebviewWindow();
-		const size = await win.outerSize();
-		await win.setSize({ type: 'Physical', width: size.width + 1, height: size.height + 1 });
-		await win.setSize({ type: 'Physical', width: size.width, height: size.height });
+		try {
+			// Workaround for Tauri v2 / WebView2 transparency bug on Windows:
+			// Resize slightly to force WebView2 to re-render with transparency
+			const win = getCurrentWebviewWindow();
+			const size = await win.outerSize();
+			await win.setSize({ type: 'Physical', width: size.width + 1, height: size.height + 1 });
+			await win.setSize({ type: 'Physical', width: size.width, height: size.height });
+		} catch (e) {
+			console.error('Overlay transparency workaround failed:', e);
+		}
 	});
 </script>
 

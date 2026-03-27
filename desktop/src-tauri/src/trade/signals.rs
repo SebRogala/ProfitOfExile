@@ -1,7 +1,7 @@
 use chrono::Utc;
 use std::collections::HashSet;
 
-use super::types::{TradeListingDetail, TradeLookupResult, TradeSignals};
+use super::types::{CheapestStaleness, SellerConcentration, TradeListingDetail, TradeLookupResult, TradeSignals};
 
 /// Normalize a listing price to chaos using the divine exchange rate.
 pub fn normalize_to_chaos(price: f64, currency: &str, divine_rate: f64) -> f64 {
@@ -27,7 +27,7 @@ pub fn build_result(
         l.chaos_price = normalize_to_chaos(l.price, &l.currency, divine_rate);
     }
 
-    listings.sort_by(|a, b| a.chaos_price.partial_cmp(&b.chaos_price).unwrap());
+    listings.sort_by(|a, b| a.chaos_price.total_cmp(&b.chaos_price));
 
     let trade_url = if !query_id.is_empty() && !league.is_empty() {
         format!(
@@ -58,7 +58,7 @@ pub fn build_result(
         price_spread,
         median_top10: median,
         listings,
-        signals: TradeSignals::default(),
+        signals: compute_signals(&listings),
         divine_price: divine_rate,
         trade_url,
         fetched_at: Utc::now(),
@@ -79,19 +79,17 @@ pub fn compute_signals(listings: &[TradeListingDetail]) -> TradeSignals {
     let unique = seen.len() as i32;
 
     let concentration = match unique {
-        u if u >= 8 => "NORMAL",
-        u if u >= 5 => "CONCENTRATED",
-        _ => "MONOPOLY",
-    }
-    .to_string();
+        u if u >= 8 => SellerConcentration::Normal,
+        u if u >= 5 => SellerConcentration::Concentrated,
+        _ => SellerConcentration::Monopoly,
+    };
 
     let age = Utc::now() - listings[0].indexed_at;
     let staleness = match age.num_hours() {
-        h if h < 1 => "FRESH",
-        h if h < 6 => "AGING",
-        _ => "STALE",
-    }
-    .to_string();
+        h if h < 1 => CheapestStaleness::Fresh,
+        h if h < 6 => CheapestStaleness::Aging,
+        _ => CheapestStaleness::Stale,
+    };
 
     let median = median_chaos_price(listings);
     let outlier = listings[0].chaos_price < median * 0.5;
@@ -109,22 +107,11 @@ fn median_chaos_price(listings: &[TradeListingDetail]) -> f64 {
         return 0.0;
     }
     let mut prices: Vec<f64> = listings.iter().map(|l| l.chaos_price).collect();
-    prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    prices.sort_by(|a, b| a.total_cmp(b));
     let n = prices.len();
     if n % 2 == 0 {
         ((prices[n / 2 - 1] + prices[n / 2]) / 2.0 * 100.0).round() / 100.0
     } else {
         prices[n / 2]
-    }
-}
-
-impl Default for TradeSignals {
-    fn default() -> Self {
-        Self {
-            seller_concentration: "NORMAL".to_string(),
-            cheapest_staleness: "FRESH".to_string(),
-            price_outlier: false,
-            unique_accounts: 0,
-        }
     }
 }

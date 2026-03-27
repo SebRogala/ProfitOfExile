@@ -76,11 +76,14 @@
 	let overlayWin: any = null;
 
 	async function showOverlay() {
+		try {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 
 		// Destroy existing overlay if any
 		if (overlayWin) {
-			try { await overlayWin.destroy(); } catch {}
+			try { await overlayWin.destroy(); } catch (e) {
+				console.error('Failed to destroy existing overlay:', e);
+			}
 			overlayWin = null;
 		}
 
@@ -107,30 +110,34 @@
 		win.once('tauri://error', (e: any) => {
 			console.error('Overlay creation failed:', e);
 		});
+		} catch (e: any) {
+			console.error('Failed to create overlay:', e);
+		}
 	}
 
 	async function saveRegion() {
 		if (!overlayWin) return;
 		try {
-			// outerPosition/outerSize are on the .window property in Tauri v2
 			const w = overlayWin.window ?? overlayWin;
 			const pos = await w.outerPosition();
 			const size = await w.outerSize();
-
 			await invoke('set_gem_region', {
 				x: pos.x,
 				y: pos.y,
 				w: size.width,
 				h: size.height,
 			});
-
-			await overlayWin.destroy();
-			overlayWin = null;
-			overlayVisible = false;
-			status = await invoke('get_status');
 		} catch (e: any) {
-			console.error('Save region failed:', e);
+			console.error('Failed to read/save region:', e);
+			return;
 		}
+		// Cleanup after successful save
+		try { await overlayWin.destroy(); } catch (e) {
+			console.error('Overlay destroy failed after save:', e);
+		}
+		overlayWin = null;
+		overlayVisible = false;
+		status = await invoke('get_status');
 	}
 
 	async function cancelOverlay() {
@@ -204,9 +211,9 @@
 		</div>
 		<div class="state">{status?.state || 'Loading...'}</div>
 		{#if status?.state === 'PickingGems'}
-			<button class="btn-action btn-stop" onclick={() => invoke('stop_scanning')}>Stop Scanning</button>
+			<button class="btn-action btn-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop Scanning</button>
 		{:else}
-			<button class="btn-action" onclick={() => invoke('start_scanning')}>Start Scanning</button>
+			<button class="btn-action" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Start Scanning</button>
 		{/if}
 		<div class="path">
 			{#if editingPath}

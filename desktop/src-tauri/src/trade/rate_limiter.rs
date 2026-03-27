@@ -87,7 +87,7 @@ impl TradeRateLimiter {
     /// Stamp the current time into every tier of the named pool.
     /// Call immediately after a successful HTTP request.
     pub fn record(&self, pool_name: &str) {
-        let mut pools = self.pools.lock().unwrap();
+        let mut pools = self.pools.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(pool) = pools.get_mut(pool_name) {
             let now = Instant::now();
             for tier in &mut pool.tiers {
@@ -99,7 +99,7 @@ impl TradeRateLimiter {
     /// How long the caller should sleep before the next request to this pool.
     /// Returns Duration::ZERO if all tiers have remaining budget.
     pub fn estimate_wait(&self, pool_name: &str) -> Duration {
-        let mut pools = self.pools.lock().unwrap();
+        let mut pools = self.pools.lock().unwrap_or_else(|e| e.into_inner());
         let pool = match pools.get_mut(pool_name) {
             Some(p) => p,
             None => return Duration::ZERO,
@@ -150,15 +150,21 @@ impl TradeRateLimiter {
         let rules_header = match headers.get("x-rate-limit-rules") {
             Some(val) => match val.to_str() {
                 Ok(s) => s.to_string(),
-                Err(_) => return,
+                Err(e) => {
+                    log::warn!("Rate limiter: non-UTF8 x-rate-limit-rules header: {}", e);
+                    return;
+                }
             },
-            None => return,
+            None => return, // No rate limit headers — normal for some responses
         };
 
-        let mut pools = self.pools.lock().unwrap();
+        let mut pools = self.pools.lock().unwrap_or_else(|e| e.into_inner());
         let pool = match pools.get_mut(pool_name) {
             Some(p) => p,
-            None => return,
+            None => {
+                log::warn!("Rate limiter: unknown pool '{}', skipping sync", pool_name);
+                return;
+            }
         };
 
         for rule in rules_header.split(',') {
@@ -173,11 +179,17 @@ impl TradeRateLimiter {
 
             let limit_header = match headers.get(limit_key.as_str()).and_then(|v| v.to_str().ok()) {
                 Some(s) => s.to_string(),
-                None => continue,
+                None => {
+                    log::warn!("Rate limiter: rule '{}' declared but {} header missing", rule, limit_key);
+                    continue;
+                }
             };
             let state_header = match headers.get(state_key.as_str()).and_then(|v| v.to_str().ok()) {
                 Some(s) => s.to_string(),
-                None => continue,
+                None => {
+                    log::warn!("Rate limiter: rule '{}' declared but {} header missing", rule, state_key);
+                    continue;
+                }
             };
 
             let limit_parts: Vec<&str> = limit_header.split(',').collect();
