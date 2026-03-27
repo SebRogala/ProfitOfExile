@@ -60,6 +60,38 @@
 		status = await invoke('get_status');
 	}
 
+	let overlayVisible = $state(false);
+
+	async function showOverlay() {
+		try {
+			await invoke('show_region_overlay');
+			overlayVisible = true;
+			console.log('Overlay opened');
+		} catch (e: any) {
+			console.error('Show overlay failed:', e);
+			overlayVisible = false;
+		}
+	}
+
+	async function saveOverlay() {
+		try {
+			const region = await invoke('save_region_from_overlay');
+			overlayVisible = false;
+			console.log('Region saved:', region);
+		} catch (e: any) {
+			console.error('Save overlay failed:', e);
+		}
+	}
+
+	async function hideOverlay() {
+		try {
+			await invoke('hide_region_overlay');
+		} catch (e: any) {
+			console.error('Hide overlay failed:', e);
+		}
+		overlayVisible = false;
+	}
+
 	let ocrPath = $state('');
 	let ocrResult = $state('');
 	let ocrTesting = $state(false);
@@ -103,6 +135,22 @@
 			{:else}
 				<span class="path-text">{status?.client_txt_path || ''}</span>
 				<button class="btn-small" onclick={startEditPath}>Edit</button>
+			{/if}
+		</div>
+	</section>
+
+	<section class="region">
+		<h2>Capture Region</h2>
+		<p class="hint">
+			Position: ({status?.gem_region?.x}, {status?.gem_region?.y})
+			Size: {status?.gem_region?.w}x{status?.gem_region?.h}
+		</p>
+		<div class="region-buttons">
+			{#if !overlayVisible}
+				<button class="btn-action" onclick={showOverlay}>Show Region</button>
+			{:else}
+				<button class="btn-action" onclick={saveOverlay}>Save Region</button>
+				<button class="btn-small" onclick={hideOverlay}>Cancel</button>
 			{/if}
 		</div>
 	</section>
@@ -280,6 +328,16 @@
 
 	.log-error {
 		color: var(--accent);
+	}
+
+	.region-buttons {
+		display: flex;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+
+	.region-buttons .btn-action {
+		flex: 1;
 	}
 
 	.path {
