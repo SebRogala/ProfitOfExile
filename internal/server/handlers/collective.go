@@ -472,8 +472,8 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFu
 				json.NewEncoder(w).Encode(map[string]string{"error": "limit must be a positive integer"})
 				return
 			}
-			if n > 50 {
-				n = 50
+			if n > 500 {
+				n = 500
 			}
 			limit = n
 		}

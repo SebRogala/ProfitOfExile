@@ -1,6 +1,8 @@
+mod capture;
 mod gem_matcher;
 mod lab_state;
 mod log_watcher;
+mod ocr;
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -172,6 +174,178 @@ async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     }
 }
 
+#[tauri::command]
+async fn test_ocr_on_image(path: String, app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    app_log(&state, format!("Testing OCR on: {}", path));
+
+    let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
+    app_log(&state, format!("Image loaded: {}x{}", img.width(), img.height()));
+
+    let processed = capture::preprocess_for_ocr(&img);
+    app_log(&state, format!("Preprocessed: {}x{}", processed.width(), processed.height()));
+
+    let lines = ocr::recognize_text(&processed).map_err(|e| {
+        app_log(&state, format!("OCR failed: {}", e));
+        e
+    })?;
+
+    app_log(&state, format!("OCR found {} lines", lines.len()));
+    for (i, line) in lines.iter().enumerate() {
+        app_log(&state, format!("  Line {}: {}", i, line));
+    }
+
+    // Try all OCR lines against the matcher — pick the best match
+    let candidates = ocr::extract_gem_candidates(&lines);
+    app_log(&state, format!("{} candidate lines to match", candidates.len()));
+
+    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let gem_names = fetch_gem_names(&server).await;
+    let matcher = gem_matcher::GemMatcher::new(gem_names);
+
+    let mut best_match: Option<gem_matcher::GemMatch> = None;
+    for candidate in &candidates {
+        if let Some(m) = matcher.match_gem(candidate) {
+            if best_match.as_ref().map_or(true, |b| m.score > b.score) {
+                best_match = Some(m);
+            }
+        }
+    }
+
+    if let Some(m) = best_match {
+        let result = format!("Matched: {} (score: {:.2})", m.name, m.score);
+        app_log(&state, result.clone());
+
+        // Send to server
+        let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+        if !gems.contains(&m.name) {
+            gems.push(m.name.clone());
+            let all_gems = gems.clone();
+            drop(gems);
+            let app_clone = app.clone();
+            tauri::async_runtime::spawn(async move {
+                send_gems_to_server(&app_clone, all_gems).await;
+            });
+            app_log(&state, format!("Sent {} to comparator", m.name));
+        }
+
+        Ok(result)
+    } else {
+        let result = format!("No match in {} candidates", candidates.len());
+        app_log(&state, result.clone());
+        Ok(result)
+    }
+}
+
+/// Capture loop: periodically captures the screen, runs OCR, and matches gem names.
+/// Runs until the lab state leaves PickingGems.
+async fn run_capture_loop(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    app_log(&state, "Capture loop started".to_string());
+
+    let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Load gem names for matching — try server first, fall back to empty
+    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let gem_names = fetch_gem_names(&server).await;
+    let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
+    app_log(&state, format!("Loaded {} gem names for matching", gem_names.len()));
+
+    loop {
+        // Check if we're still in PickingGems state
+        {
+            let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if current != lab_state::LabState::PickingGems {
+                app_log(&state, "Capture loop stopped (state changed)".to_string());
+                break;
+            }
+        }
+
+        // Capture full screen for PoC — will narrow to tooltip region later
+        match capture::capture_screen() {
+            Ok(img) => {
+                // Pre-process for OCR
+                let processed = capture::preprocess_for_ocr(&img);
+
+                // Run OCR
+                match ocr::recognize_text(&processed) {
+                    Ok(lines) => {
+                        if !lines.is_empty() {
+                            let preview: Vec<&str> = lines.iter().take(3).map(|s| s.as_str()).collect();
+                            app_log(&state, format!("OCR ({} lines): {:?}", lines.len(), preview));
+                        }
+                        // Try all candidates against the matcher
+                        let candidates = ocr::extract_gem_candidates(&lines);
+                        let mut best: Option<gem_matcher::GemMatch> = None;
+                        for candidate in &candidates {
+                            if let Some(m) = matcher.match_gem(candidate) {
+                                if best.as_ref().map_or(true, |b| m.score > b.score) {
+                                    best = Some(m);
+                                }
+                            }
+                        }
+                        if let Some(gem_match) = best {
+                            if !seen_gems.contains(&gem_match.name) {
+                                seen_gems.insert(gem_match.name.clone());
+                                app_log(&state, format!(
+                                    "Gem detected: {} (score: {:.2}, raw: {})",
+                                    gem_match.name, gem_match.score, gem_match.ocr_raw
+                                ));
+
+                                let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+                                gems.push(gem_match.name.clone());
+                                let _ = app.emit("gem-detected", &gem_match.name);
+
+                                let all_gems = gems.clone();
+                                drop(gems);
+                                let app_clone = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    send_gems_to_server(&app_clone, all_gems).await;
+                                });
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        app_log(&state, format!("OCR failed: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                app_log(&state, format!("Screen capture failed: {}", e));
+            }
+        }
+
+        // Wait before next capture (2s for debugging, reduce to 500ms later)
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+    }
+}
+
+/// Fetch gem names from the server API for fuzzy matching.
+async fn fetch_gem_names(server_url: &str) -> Vec<String> {
+    let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    match client.get(&url).send().await {
+        Ok(res) if res.status().is_success() => {
+            if let Ok(body) = res.json::<serde_json::Value>().await {
+                if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
+                    return names
+                        .iter()
+                        .filter_map(|n| n.as_str().map(String::from))
+                        .collect();
+                }
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn spawn_log_watcher(app: AppHandle) {
     let state = app.state::<AppState>();
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -209,7 +383,7 @@ fn spawn_log_watcher(app: AppHandle) {
                 let state = app.state::<AppState>();
                 match &event {
                     lab_state::LabEvent::FontOpened => {
-                        app_log(&state, "Font opened! Ready to read gems.".to_string());
+                        app_log(&state, "Font opened! Starting screen reader.".to_string());
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                             lab_state::LabState::FontReady;
                         detected_gems.clear();
@@ -220,6 +394,12 @@ fn spawn_log_watcher(app: AppHandle) {
                         state_machine.start_picking();
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                             lab_state::LabState::PickingGems;
+
+                        // Start screen capture loop in background
+                        let app_capture = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            run_capture_loop(&app_capture).await;
+                        });
                     }
                     lab_state::LabEvent::ZoneChanged { area } => {
                         app_log(&state, format!("Zone changed: {} — stopping", area));
@@ -283,6 +463,7 @@ pub fn run() {
             set_server_url,
             get_logs,
             send_test_gems,
+            test_ocr_on_image,
         ])
         .setup(|app| {
             spawn_log_watcher(app.handle().clone());

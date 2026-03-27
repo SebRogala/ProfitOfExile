@@ -57,8 +57,23 @@
 	async function savePath() {
 		await invoke('set_client_txt_path', { path: pathInput });
 		editingPath = false;
-		// Restart requires app restart for now
 		status = await invoke('get_status');
+	}
+
+	let ocrPath = $state('');
+	let ocrResult = $state('');
+	let ocrTesting = $state(false);
+
+	async function testOcr() {
+		if (!ocrPath) return;
+		ocrTesting = true;
+		ocrResult = '';
+		try {
+			ocrResult = await invoke('test_ocr_on_image', { path: ocrPath }) as string;
+		} catch (e: any) {
+			ocrResult = `Error: ${e}`;
+		}
+		ocrTesting = false;
 	}
 </script>
 
@@ -100,6 +115,18 @@
 		</button>
 		{#if testResult}
 			<p class="result" class:error={testResult.startsWith('Error')}>{testResult}</p>
+		{/if}
+	</section>
+
+	<section class="test">
+		<h2>Test OCR</h2>
+		<p class="hint">Test OCR on a screenshot image file.</p>
+		<input type="text" bind:value={ocrPath} placeholder="C:\path\to\screenshot.png" class="path-input" />
+		<button class="btn-action" onclick={testOcr} disabled={ocrTesting || !ocrPath}>
+			{ocrTesting ? 'Processing...' : 'Run OCR'}
+		</button>
+		{#if ocrResult}
+			<p class="result" class:error={ocrResult.startsWith('Error')}>{ocrResult}</p>
 		{/if}
 	</section>
 

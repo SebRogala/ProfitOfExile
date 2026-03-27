@@ -28,5 +28,7 @@ windows = { version = "0.58", features = [
     "Graphics_Imaging",
     "Storage_Streams",
     "Globalization",
+    "Foundation",
+    "Foundation_Collections",
 ] }
 xcap = "0.0.13"
