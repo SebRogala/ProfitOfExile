@@ -314,8 +314,8 @@ async fn run_capture_loop(app: &AppHandle) {
             }
         }
 
-        // Wait before next capture (2s for debugging, reduce to 500ms later)
-        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        // Capture every 500ms
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 }
 
