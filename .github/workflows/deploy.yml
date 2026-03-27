@@ -5,7 +5,42 @@ on:
     branches: [main]
 
 jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      collector: ${{ steps.filter.outputs.collector }}
+      go: ${{ steps.filter.outputs.go }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            server:
+              - 'cmd/server/**'
+              - 'internal/server/**'
+              - 'internal/db/**'
+              - 'internal/lab/**'
+              - 'frontend/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Dockerfile'
+            collector:
+              - 'cmd/collector/**'
+              - 'internal/collector/**'
+              - 'internal/db/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'Dockerfile'
+
   test:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.go == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -19,7 +54,11 @@ jobs:
         run: go test ./...
 
   deploy-server:
-    needs: test
+    needs: [detect-changes, test]
+    if: |
+      always()
+      && needs.detect-changes.outputs.server == 'true'
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ubuntu-latest
 
     steps:
@@ -34,7 +73,11 @@ jobs:
             -H "Authorization: Bearer ${COOLIFY_TOKEN}"
 
   deploy-collector:
-    needs: test
+    needs: [detect-changes, test]
+    if: |
+      always()
+      && needs.detect-changes.outputs.collector == 'true'
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ubuntu-latest
 
     steps:
