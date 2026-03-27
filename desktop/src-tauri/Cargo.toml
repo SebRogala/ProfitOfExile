@@ -20,7 +20,7 @@ env_logger = "0.11"
 rand = "0.8"
 image = "0.25"
 anyhow = "1"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -30,5 +30,7 @@ windows = { version = "0.58", features = [
     "Globalization",
     "Foundation",
     "Foundation_Collections",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
 ] }
 xcap = "0.0.13"
