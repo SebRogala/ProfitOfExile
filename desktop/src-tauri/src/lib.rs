@@ -74,7 +74,10 @@ async fn send_test_gems(state: tauri::State<'_, AppState>) -> Result<String, Str
         "Summon Stone Golem of Safeguarding",
     ];
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true) // local dev uses self-signed certs
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
     let res = client
         .post(format!("{}/api/desktop/gems", server))
         .json(&serde_json::json!({
@@ -107,7 +110,7 @@ pub fn run() {
         client_txt_path: Mutex::new(String::from(
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
         )),
-        server_url: Mutex::new(String::from("http://profitofexile.localhost")),
+        server_url: Mutex::new(String::from("https://profitofexile.localhost")),
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
     };
