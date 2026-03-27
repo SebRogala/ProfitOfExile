@@ -7,6 +7,7 @@
 	let status = $state<any>(null);
 	let testResult = $state('');
 	let sending = $state(false);
+	let logs = $state<string[]>([]);
 
 	onMount(async () => {
 		pairCode = await invoke('get_pair_code');
@@ -14,7 +15,7 @@
 	});
 
 	function pairUrl(): string {
-		const base = status?.server_url || 'http://profitofexile.localhost';
+		const base = status?.server_url || 'https://profitofexile.localhost';
 		return `${base}/lab?pair=${pairCode}`;
 	}
 
@@ -32,10 +33,16 @@
 			testResult = `Error: ${e}`;
 		}
 		sending = false;
+		await refreshLogs();
 	}
 
 	async function refreshStatus() {
 		status = await invoke('get_status');
+		await refreshLogs();
+	}
+
+	async function refreshLogs() {
+		logs = await invoke('get_logs');
 	}
 </script>
 
@@ -71,14 +78,17 @@
 		{/if}
 	</section>
 
-	{#if status?.detected_gems?.length}
-		<section class="gems">
-			<h2>Detected Gems</h2>
-			<ul>
-				{#each status.detected_gems as gem}
-					<li>{gem}</li>
+	{#if logs.length > 0}
+		<section class="logs">
+			<div class="section-header">
+				<h2>Logs</h2>
+				<button class="btn-small" onclick={refreshLogs}>Refresh</button>
+			</div>
+			<div class="log-list">
+				{#each logs.toReversed() as line}
+					<div class="log-line" class:log-error={line.includes('failed') || line.includes('error')}>{line}</div>
 				{/each}
-			</ul>
+			</div>
 		</section>
 	{/if}
 </main>
@@ -194,6 +204,29 @@
 	}
 
 	.result.error {
+		color: var(--accent);
+	}
+
+	.logs {
+		max-height: 200px;
+		overflow: hidden;
+	}
+
+	.log-list {
+		max-height: 150px;
+		overflow-y: auto;
+		font-family: 'Consolas', 'Courier New', monospace;
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+
+	.log-line {
+		color: var(--text-muted);
+		padding: 0.1rem 0;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	.log-error {
 		color: var(--accent);
 	}
 

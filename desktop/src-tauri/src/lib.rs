@@ -21,6 +21,18 @@ pub struct AppState {
     pub server_url: Mutex<String>,
     pub detected_gems: Mutex<Vec<String>>,
     pub lab_state: Mutex<lab_state::LabState>,
+    pub logs: Mutex<Vec<String>>,
+}
+
+fn app_log(state: &AppState, msg: String) {
+    let mut logs = state.logs.lock().unwrap_or_else(|e| e.into_inner());
+    let timestamp = chrono::Local::now().format("%H:%M:%S");
+    logs.push(format!("[{}] {}", timestamp, msg));
+    // Keep last 50 entries
+    if logs.len() > 50 {
+        let excess = logs.len() - 50;
+        logs.drain(0..excess);
+    }
 }
 
 fn generate_pair_code() -> String {
@@ -65,21 +77,34 @@ fn set_server_url(url: String, state: tauri::State<AppState>) {
 }
 
 #[tauri::command]
+fn get_logs(state: tauri::State<AppState>) -> Vec<String> {
+    state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command]
 async fn send_test_gems(state: tauri::State<'_, AppState>) -> Result<String, String> {
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let url = format!("{}/api/desktop/gems", server);
     let gems = vec![
         "Earthquake of Fragility",
         "Boneshatter of Carnage",
         "Summon Stone Golem of Safeguarding",
     ];
 
+    app_log(&state, format!("Sending test gems to {}", url));
+
     let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true) // local dev uses self-signed certs
+        .danger_accept_invalid_certs(true)
         .build()
-        .map_err(|e| format!("HTTP client error: {}", e))?;
+        .map_err(|e| {
+            let msg = format!("HTTP client error: {}", e);
+            app_log(&state, msg.clone());
+            msg
+        })?;
+
     let res = client
-        .post(format!("{}/api/desktop/gems", server))
+        .post(&url)
         .json(&serde_json::json!({
             "pair": pair,
             "gems": gems,
@@ -87,14 +112,25 @@ async fn send_test_gems(state: tauri::State<'_, AppState>) -> Result<String, Str
         }))
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| {
+            let msg = format!("Request failed: {} (is_connect: {}, is_timeout: {})",
+                e, e.is_connect(), e.is_timeout());
+            app_log(&state, msg.clone());
+            msg
+        })?;
 
-    if res.status().is_success() {
-        Ok("Test gems sent!".to_string())
+    let status = res.status();
+    app_log(&state, format!("Response: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("")));
+
+    if status.is_success() {
+        let msg = "Test gems sent!".to_string();
+        app_log(&state, msg.clone());
+        Ok(msg)
     } else {
-        let status = res.status();
         let body = res.text().await.unwrap_or_else(|e| format!("<body read failed: {}>", e));
-        Err(format!("Server returned {}: {}", status, body))
+        let msg = format!("Server returned {}: {}", status, body);
+        app_log(&state, msg.clone());
+        Err(msg)
     }
 }
 
@@ -113,6 +149,7 @@ pub fn run() {
         server_url: Mutex::new(String::from("https://profitofexile.localhost")),
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
+        logs: Mutex::new(Vec::new()),
     };
 
     tauri::Builder::default()
@@ -124,6 +161,7 @@ pub fn run() {
             regenerate_pair_code,
             set_client_txt_path,
             set_server_url,
+            get_logs,
             send_test_gems,
         ])
         .run(tauri::generate_context!())
