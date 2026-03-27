@@ -4,9 +4,24 @@ mod lab_state;
 mod log_watcher;
 mod ocr;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureRegion {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl Default for CaptureRegion {
+    fn default() -> Self {
+        // Default for 1080p — gem name tooltip area
+        Self { x: 30, y: 45, w: 550, h: 75 }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppStatus {
@@ -15,6 +30,7 @@ pub struct AppStatus {
     pub detected_gems: Vec<String>,
     pub client_txt_path: String,
     pub server_url: String,
+    pub gem_region: CaptureRegion,
 }
 
 pub struct AppState {
@@ -24,6 +40,7 @@ pub struct AppState {
     pub detected_gems: Mutex<Vec<String>>,
     pub lab_state: Mutex<lab_state::LabState>,
     pub logs: Mutex<Vec<String>>,
+    pub gem_region: Mutex<CaptureRegion>,
 }
 
 fn app_log(state: &AppState, msg: String) {
@@ -52,6 +69,7 @@ fn get_status(state: tauri::State<AppState>) -> AppStatus {
         detected_gems: state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -76,6 +94,65 @@ fn set_client_txt_path(path: String, state: tauri::State<AppState>) {
 #[tauri::command]
 fn set_server_url(url: String, state: tauri::State<AppState>) {
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = url;
+}
+
+#[tauri::command]
+fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
+    state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command]
+fn show_region_overlay(app: AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
+    let region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    // Close existing overlay if open
+    if let Some(w) = app.get_webview_window("region-overlay") {
+        let _ = w.close();
+    }
+
+    WebviewWindowBuilder::new(&app, "region-overlay", WebviewUrl::App("/overlay".into()))
+        .title("Gem Region")
+        .inner_size(region.w as f64, region.h as f64)
+        .position(region.x as f64, region.y as f64)
+        .transparent(true)
+        .decorations(false)
+        .always_on_top(true)
+        .resizable(true)
+        .skip_taskbar(true)
+        .build()
+        .map_err(|e| format!("Failed to open overlay: {}", e))?;
+
+    app_log(&state, format!("Region overlay opened at ({}, {}) {}x{}", region.x, region.y, region.w, region.h));
+    Ok(())
+}
+
+#[tauri::command]
+fn save_region_from_overlay(app: AppHandle, state: tauri::State<AppState>) -> Result<CaptureRegion, String> {
+    let window = app.get_webview_window("region-overlay")
+        .ok_or("Overlay window not found")?;
+
+    let pos = window.outer_position().map_err(|e| format!("Failed to get position: {}", e))?;
+    let size = window.outer_size().map_err(|e| format!("Failed to get size: {}", e))?;
+
+    let region = CaptureRegion {
+        x: pos.x,
+        y: pos.y,
+        w: size.width,
+        h: size.height,
+    };
+
+    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region.clone();
+    app_log(&state, format!("Region saved: ({}, {}) {}x{}", region.x, region.y, region.w, region.h));
+
+    let _ = window.close();
+    Ok(region)
+}
+
+#[tauri::command]
+fn hide_region_overlay(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("region-overlay") {
+        let _ = w.close();
+    }
 }
 
 #[tauri::command]
@@ -260,8 +337,9 @@ async fn run_capture_loop(app: &AppHandle) {
             }
         }
 
-        // Capture full screen for PoC — will narrow to tooltip region later
-        match capture::capture_screen() {
+        // Capture configured region
+        let region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        match capture::capture_region(region.x as u32, region.y as u32, region.w, region.h) {
             Ok(img) => {
                 // Pre-process for OCR
                 let processed = capture::preprocess_for_ocr(&img);
@@ -450,6 +528,7 @@ pub fn run() {
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
+        gem_region: Mutex::new(CaptureRegion::default()),
     };
 
     tauri::Builder::default()
@@ -462,6 +541,10 @@ pub fn run() {
             set_client_txt_path,
             set_server_url,
             get_logs,
+            get_gem_region,
+            show_region_overlay,
+            save_region_from_overlay,
+            hide_region_overlay,
             send_test_gems,
             test_ocr_on_image,
         ])
