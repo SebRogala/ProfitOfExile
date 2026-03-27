@@ -3,10 +3,11 @@ mod gem_matcher;
 mod lab_state;
 mod log_watcher;
 mod ocr;
+mod trade;
 
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureRegion {
@@ -41,6 +42,7 @@ pub struct AppState {
     pub lab_state: Mutex<lab_state::LabState>,
     pub logs: Mutex<Vec<String>>,
     pub gem_region: Mutex<CaptureRegion>,
+    pub trade_client: trade::TradeApiClient,
 }
 
 fn app_log(state: &AppState, msg: String) {
@@ -102,57 +104,97 @@ fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
 }
 
 #[tauri::command]
-fn show_region_overlay(app: AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
-    let region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+fn set_gem_region(x: i32, y: i32, w: u32, h: u32, state: tauri::State<AppState>) {
+    let region = CaptureRegion { x, y, w, h };
+    app_log(&state, format!("Region set: ({}, {}) {}x{}", x, y, w, h));
+    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
+}
 
-    // Close existing overlay if open
-    if let Some(w) = app.get_webview_window("region-overlay") {
-        let _ = w.close();
+#[tauri::command]
+fn capture_mouse_position() -> Result<(i32, i32), String> {
+    // Get current mouse cursor position on screen
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        use windows::Win32::Foundation::POINT;
+        let mut point = POINT { x: 0, y: 0 };
+        unsafe {
+            GetCursorPos(&mut point)
+                .map_err(|e| format!("Failed to get cursor position: {}", e))?;
+        }
+        Ok((point.x, point.y))
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Mouse capture not available on this platform".to_string())
+    }
+}
+
+#[tauri::command]
+async fn start_scanning(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if current == lab_state::LabState::PickingGems {
+        return Err("Already scanning".to_string());
     }
 
-    WebviewWindowBuilder::new(&app, "region-overlay", WebviewUrl::App("/overlay".into()))
-        .title("Gem Region")
-        .inner_size(region.w as f64, region.h as f64)
-        .position(region.x as f64, region.y as f64)
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .resizable(true)
-        .skip_taskbar(true)
-        .build()
-        .map_err(|e| format!("Failed to open overlay: {}", e))?;
+    app_log(&state, "Manual scan started".to_string());
+    *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+    *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::PickingGems;
+    let _ = app.emit("lab-state-changed", "PickingGems");
 
-    app_log(&state, format!("Region overlay opened at ({}, {}) {}x{}", region.x, region.y, region.w, region.h));
+    let app_capture = app.clone();
+    tauri::async_runtime::spawn(async move {
+        run_capture_loop(&app_capture).await;
+    });
+
     Ok(())
 }
 
 #[tauri::command]
-fn save_region_from_overlay(app: AppHandle, state: tauri::State<AppState>) -> Result<CaptureRegion, String> {
-    let window = app.get_webview_window("region-overlay")
-        .ok_or("Overlay window not found")?;
-
-    let pos = window.outer_position().map_err(|e| format!("Failed to get position: {}", e))?;
-    let size = window.outer_size().map_err(|e| format!("Failed to get size: {}", e))?;
-
-    let region = CaptureRegion {
-        x: pos.x,
-        y: pos.y,
-        w: size.width,
-        h: size.height,
-    };
-
-    *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region.clone();
-    app_log(&state, format!("Region saved: ({}, {}) {}x{}", region.x, region.y, region.w, region.h));
-
-    let _ = window.close();
-    Ok(region)
+fn stop_scanning(app: AppHandle, state: tauri::State<AppState>) {
+    app_log(&state, "Manual scan stopped".to_string());
+    *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
+    let _ = app.emit("lab-state-changed", "Idle");
 }
 
+/// Direct trade API lookup against GGG from the desktop app.
+/// Each user has their own IP → own rate limits (no shared server bottleneck).
+/// Divine rate normalization is skipped for now (raw currency values returned).
 #[tauri::command]
-fn hide_region_overlay(app: AppHandle) {
-    if let Some(w) = app.get_webview_window("region-overlay") {
-        let _ = w.close();
-    }
+async fn trade_lookup(
+    gem: String,
+    variant: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<trade::TradeLookupResult, String> {
+    app_log(
+        &state,
+        format!("Trade lookup: {} ({})", gem, variant),
+    );
+
+    // Log the query body for debugging
+    let query_body = trade::query::build_search_query(&gem, &variant);
+    app_log(&state, format!("Trade query: {}", serde_json::to_string(&query_body).unwrap_or_default()));
+
+    // TODO: fetch divine rate from server/poe.ninja for chaos normalization
+    let divine_rate = 0.0;
+    let result = state.trade_client.lookup_gem(&gem, &variant, divine_rate).await
+        .map_err(|e| {
+            app_log(&state, format!("Trade error: {}", e));
+            e
+        })?;
+
+    app_log(
+        &state,
+        format!(
+            "Trade result: {} total, {} listings, floor={:.1} {}",
+            result.total,
+            result.listings.len(),
+            if result.listings.is_empty() { 0.0 } else { result.listings[0].price },
+            if result.listings.is_empty() { "" } else { &result.listings[0].currency },
+        ),
+    );
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -524,11 +566,12 @@ pub fn run() {
         client_txt_path: Mutex::new(String::from(
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
         )),
-        server_url: Mutex::new(String::from("https://profitofexile.localhost")),
+        server_url: Mutex::new(String::from("https://poe.softsolution.pro")),
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
         gem_region: Mutex::new(CaptureRegion::default()),
+        trade_client: trade::TradeApiClient::new("Mirage"),
     };
 
     tauri::Builder::default()
@@ -542,9 +585,11 @@ pub fn run() {
             set_server_url,
             get_logs,
             get_gem_region,
-            show_region_overlay,
-            save_region_from_overlay,
-            hide_region_overlay,
+            set_gem_region,
+            capture_mouse_position,
+            start_scanning,
+            stop_scanning,
+            trade_lookup,
             send_test_gems,
             test_ocr_on_image,
         ])

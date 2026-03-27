@@ -3,7 +3,9 @@
 	import '../app.css';
 
 	let pairCode = $state('...');
-	let status = $state<any>({ state: 'Loading...', server_url: 'https://profitofexile.localhost', detected_gems: [] });
+	const PROD_URL = 'https://poe.softsolution.pro';
+	const LOCAL_URL = 'https://profitofexile.localhost';
+	let status = $state<any>({ state: 'Loading...', server_url: PROD_URL, detected_gems: [] });
 	let testResult = $state('');
 	let sending = $state(false);
 	let logs = $state<string[]>([]);
@@ -15,8 +17,18 @@
 		invoke('get_logs').then((l) => { logs = l as string[]; }).catch(() => {});
 	}, 1000);
 
+	function isDebug(): boolean {
+		return (status?.server_url || PROD_URL) === LOCAL_URL;
+	}
+
+	async function toggleDebug() {
+		const newUrl = isDebug() ? PROD_URL : LOCAL_URL;
+		await invoke('set_server_url', { url: newUrl });
+		status = await invoke('get_status');
+	}
+
 	function pairUrl(): string {
-		const base = status?.server_url || 'https://profitofexile.localhost';
+		const base = status?.server_url || PROD_URL;
 		return `${base}/lab?pair=${pairCode}`;
 	}
 
@@ -61,35 +73,91 @@
 	}
 
 	let overlayVisible = $state(false);
+	let overlayWin: any = null;
 
 	async function showOverlay() {
-		try {
-			await invoke('show_region_overlay');
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+
+		// Destroy existing overlay if any
+		if (overlayWin) {
+			try { await overlayWin.destroy(); } catch {}
+			overlayWin = null;
+		}
+
+		const region = status?.gem_region;
+		const win = new WebviewWindow('overlay', {
+			url: '/overlay',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: true,
+			shadow: false,
+			skipTaskbar: true,
+			width: region?.w || 550,
+			height: region?.h || 75,
+			x: region?.x || 30,
+			y: region?.y || 45,
+		});
+
+		win.once('tauri://created', () => {
+			overlayWin = win;
 			overlayVisible = true;
-			console.log('Overlay opened');
-		} catch (e: any) {
-			console.error('Show overlay failed:', e);
+		});
+
+		win.once('tauri://error', (e: any) => {
+			console.error('Overlay creation failed:', e);
+		});
+	}
+
+	async function saveRegion() {
+		if (!overlayWin) return;
+		try {
+			// outerPosition/outerSize are on the .window property in Tauri v2
+			const w = overlayWin.window ?? overlayWin;
+			const pos = await w.outerPosition();
+			const size = await w.outerSize();
+
+			await invoke('set_gem_region', {
+				x: pos.x,
+				y: pos.y,
+				w: size.width,
+				h: size.height,
+			});
+
+			await overlayWin.destroy();
+			overlayWin = null;
 			overlayVisible = false;
+			status = await invoke('get_status');
+		} catch (e: any) {
+			console.error('Save region failed:', e);
 		}
 	}
 
-	async function saveOverlay() {
-		try {
-			const region = await invoke('save_region_from_overlay');
-			overlayVisible = false;
-			console.log('Region saved:', region);
-		} catch (e: any) {
-			console.error('Save overlay failed:', e);
-		}
-	}
-
-	async function hideOverlay() {
-		try {
-			await invoke('hide_region_overlay');
-		} catch (e: any) {
-			console.error('Hide overlay failed:', e);
+	async function cancelOverlay() {
+		if (overlayWin) {
+			try { await overlayWin.destroy(); } catch {}
+			overlayWin = null;
 		}
 		overlayVisible = false;
+	}
+
+	let tradeGem = $state('Earthquake of Fragility');
+	let tradeVariant = $state('20/20');
+	let tradeResult = $state<any>(null);
+	let tradeLooking = $state(false);
+
+	async function testTradeLookup() {
+		tradeLooking = true;
+		tradeResult = null;
+		try {
+			tradeResult = await invoke('trade_lookup', {
+				gem: tradeGem,
+				variant: tradeVariant,
+			});
+		} catch (e: any) {
+			tradeResult = { error: String(e) };
+		}
+		tradeLooking = false;
 	}
 
 	let ocrPath = $state('');
@@ -110,8 +178,15 @@
 </script>
 
 <main>
-	<h1>ProfitOfExile</h1>
-	<p class="subtitle">Desktop Screen Reader</p>
+	<div class="title-row">
+		<div>
+			<h1>ProfitOfExile</h1>
+			<p class="subtitle">Desktop Screen Reader</p>
+		</div>
+		<button class="btn-debug" class:active={isDebug()} onclick={toggleDebug}>
+			{isDebug() ? 'DEBUG' : 'PROD'}
+		</button>
+	</div>
 
 	<section class="pair">
 		<div class="section-header">
@@ -128,6 +203,11 @@
 			<button class="btn-small" onclick={refreshStatus}>Refresh</button>
 		</div>
 		<div class="state">{status?.state || 'Loading...'}</div>
+		{#if status?.state === 'PickingGems'}
+			<button class="btn-action btn-stop" onclick={() => invoke('stop_scanning')}>Stop Scanning</button>
+		{:else}
+			<button class="btn-action" onclick={() => invoke('start_scanning')}>Start Scanning</button>
+		{/if}
 		<div class="path">
 			{#if editingPath}
 				<input type="text" bind:value={pathInput} class="path-input" />
@@ -142,17 +222,43 @@
 	<section class="region">
 		<h2>Capture Region</h2>
 		<p class="hint">
-			Position: ({status?.gem_region?.x}, {status?.gem_region?.y})
-			Size: {status?.gem_region?.w}x{status?.gem_region?.h}
+			({status?.gem_region?.x}, {status?.gem_region?.y}) → {status?.gem_region?.w}x{status?.gem_region?.h}
 		</p>
-		<div class="region-buttons">
-			{#if !overlayVisible}
-				<button class="btn-action" onclick={showOverlay}>Show Region</button>
+		{#if overlayVisible}
+			<p class="hint" style="color: var(--warning)">Position the red rectangle over the gem name area, then save.</p>
+			<div class="region-buttons">
+				<button class="btn-action" onclick={saveRegion}>Save Region</button>
+				<button class="btn-action btn-cancel" onclick={cancelOverlay}>Cancel</button>
+			</div>
+		{:else}
+			<button class="btn-action" onclick={showOverlay}>Show Region</button>
+		{/if}
+	</section>
+
+	<section class="test">
+		<h2>Trade Lookup</h2>
+		<input type="text" bind:value={tradeGem} placeholder="Gem name" class="path-input" />
+		<input type="text" bind:value={tradeVariant} placeholder="20/20" class="path-input" style="width: 80px; margin-bottom: 0.5rem;" />
+		<button class="btn-action" onclick={testTradeLookup} disabled={tradeLooking}>
+			{tradeLooking ? 'Looking up...' : 'Trade Lookup'}
+		</button>
+		{#if tradeResult}
+			{#if tradeResult.error}
+				<p class="result error">{tradeResult.error}</p>
 			{:else}
-				<button class="btn-action" onclick={saveOverlay}>Save Region</button>
-				<button class="btn-small" onclick={hideOverlay}>Cancel</button>
+				<div class="trade-result">
+					<p><strong>{tradeResult.gem}</strong> ({tradeResult.variant}) — {tradeResult.total} total</p>
+					<p>Signals: {tradeResult.signals?.sellerConcentration} · {tradeResult.signals?.cheapestStaleness} · {tradeResult.signals?.uniqueAccounts} sellers</p>
+					{#if tradeResult.listings?.length > 0}
+						<div class="log-list" style="max-height: 100px; margin-top: 0.5rem;">
+							{#each tradeResult.listings as l}
+								<div class="log-line">{l.price} {l.currency} — {l.account}</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			{/if}
-		</div>
+		{/if}
 	</section>
 
 	<section class="test">
@@ -200,6 +306,13 @@
 		margin: 0 auto;
 	}
 
+	.title-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		margin-bottom: 1.5rem;
+	}
+
 	h1 {
 		color: var(--accent);
 		font-size: 1.4rem;
@@ -207,7 +320,23 @@
 
 	.subtitle {
 		color: var(--text-muted);
-		margin-bottom: 1.5rem;
+	}
+
+	.btn-debug {
+		background: transparent;
+		border: 1px solid var(--border);
+		color: var(--text-muted);
+		padding: 0.2rem 0.6rem;
+		border-radius: 4px;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		cursor: pointer;
+	}
+
+	.btn-debug.active {
+		border-color: var(--warning);
+		color: var(--warning);
 	}
 
 	section {
@@ -254,6 +383,7 @@
 		font-size: 1.1rem;
 		font-weight: 600;
 		color: var(--success);
+		margin-bottom: 0.5rem;
 	}
 
 	.hint {
@@ -338,6 +468,32 @@
 
 	.region-buttons .btn-action {
 		flex: 1;
+	}
+
+	.trade-result {
+		margin-top: 0.5rem;
+		font-size: 0.8rem;
+		color: var(--text);
+	}
+
+	.trade-result p {
+		margin-bottom: 0.2rem;
+	}
+
+	.btn-stop {
+		background: var(--warning);
+		color: #1a1a2e;
+	}
+
+	.btn-cancel {
+		background: transparent;
+		border: 1px solid var(--border);
+		color: var(--text-muted);
+	}
+
+	.btn-cancel:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--text);
 	}
 
 	.path {

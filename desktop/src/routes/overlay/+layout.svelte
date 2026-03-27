@@ -1,14 +1,19 @@
+<script lang="ts">
+	let { children } = $props();
+</script>
+
 {@render children()}
 
 <style>
-	:global(html), :global(body) {
+	:global(*) {
 		margin: 0;
 		padding: 0;
+	}
+	:global(html) {
+		background: transparent !important;
+	}
+	:global(body) {
 		background: transparent !important;
 		overflow: hidden;
 	}
 </style>
-
-<script lang="ts">
-	let { children } = $props();
-</script>
