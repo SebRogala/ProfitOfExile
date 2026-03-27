@@ -36,13 +36,41 @@ pub struct TradeListingDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TradeSignals {
-    pub seller_concentration: String,
-    pub cheapest_staleness: String,
+    pub seller_concentration: SellerConcentration,
+    pub cheapest_staleness: CheapestStaleness,
     pub price_outlier: bool,
     pub unique_accounts: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SellerConcentration {
+    Normal,
+    Concentrated,
+    Monopoly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CheapestStaleness {
+    Fresh,
+    Aging,
+    Stale,
+}
+
+impl Default for TradeSignals {
+    fn default() -> Self {
+        Self {
+            seller_concentration: SellerConcentration::Normal,
+            cheapest_staleness: CheapestStaleness::Fresh,
+            price_outlier: false,
+            unique_accounts: 0,
+        }
+    }
+}
+
 /// SearchResponse holds parsed GGG trade search results.
+#[derive(Debug, Clone)]
 pub struct SearchResponse {
     pub query_id: String,
     pub ids: Vec<String>,

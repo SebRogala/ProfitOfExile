@@ -171,10 +171,6 @@ async fn trade_lookup(
         format!("Trade lookup: {} ({})", gem, variant),
     );
 
-    // Log the query body for debugging
-    let query_body = trade::query::build_search_query(&gem, &variant);
-    app_log(&state, format!("Trade query: {}", serde_json::to_string(&query_body).unwrap_or_default()));
-
     // TODO: fetch divine rate from server/poe.ninja for chaos normalization
     let divine_rate = 0.0;
     let result = state.trade_client.lookup_gem(&gem, &variant, divine_rate).await

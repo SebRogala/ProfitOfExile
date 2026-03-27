@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use super::query::build_search_query;
 use super::rate_limiter::TradeRateLimiter;
-use super::signals::{build_result, compute_signals};
+use super::signals::build_result;
 use super::types::{SearchResponse, TradeListingDetail, TradeLookupResult};
 
 const TRADE_API_BASE_URL: &str = "https://www.pathofexile.com";
@@ -141,7 +141,7 @@ impl TradeApiClient {
             .fetch_listing_details(&search_response.query_id, &search_response.ids)
             .await?;
 
-        let mut result = build_result(
+        Ok(build_result(
             gem_name,
             variant,
             &self.league_name,
@@ -149,10 +149,7 @@ impl TradeApiClient {
             search_response.total,
             listings,
             divine_chaos_rate,
-        );
-        result.signals = compute_signals(&result.listings);
-
-        Ok(result)
+        ))
     }
 
     /// POST /api/trade/search/{league}
@@ -180,18 +177,21 @@ impl TradeApiClient {
             .map_err(|e| format!("Trade search request failed: {}", e))?;
 
         let response_headers = response.headers().clone();
+        // Sync rate limits from headers (GGG sends these even on 429)
         self.rate_limiter
             .sync_from_response_headers("search", &response_headers);
-        self.rate_limiter.record("search");
 
         let status_code = response.status().as_u16();
-        let body_text = response.text().await.unwrap_or_default();
-
-        log::info!("Trade search response: status={}, body={}", status_code, &body_text[..body_text.len().min(500)]);
-
         if status_code == 429 {
             return Err("Rate limited by GGG (429). Try again in a moment.".to_string());
         }
+
+        // Only record successful requests toward rate limit budget
+        self.rate_limiter.record("search");
+
+        let body_text = response.text().await
+            .map_err(|e| format!("Failed to read trade search response: {}", e))?;
+
         if status_code != 200 {
             return Err(format!(
                 "Trade search failed ({}): {}",
@@ -241,14 +241,17 @@ impl TradeApiClient {
         let response_headers = response.headers().clone();
         self.rate_limiter
             .sync_from_response_headers("fetch", &response_headers);
-        self.rate_limiter.record("fetch");
 
         let status_code = response.status().as_u16();
         if status_code == 429 {
             return Err("Rate limited by GGG (429). Try again in a moment.".to_string());
         }
+
+        self.rate_limiter.record("fetch");
+
         if status_code != 200 {
-            let body = response.text().await.unwrap_or_default();
+            let body = response.text().await
+                .map_err(|e| format!("Failed to read trade fetch response: {}", e))?;
             return Err(format!(
                 "Trade fetch failed ({}): {}",
                 status_code,
