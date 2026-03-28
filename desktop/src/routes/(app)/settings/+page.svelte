@@ -176,6 +176,7 @@
 				{:else}
 					<span class="setting-value path">{store.status?.client_txt_path ?? '...'}</span>
 					<button class="btn-small" onclick={startEditClientTxt}>Edit</button>
+					<button class="btn-small" onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Reset to default PoE path">Reset</button>
 				{/if}
 			</div>
 
