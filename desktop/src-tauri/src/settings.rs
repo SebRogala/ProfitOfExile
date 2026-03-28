@@ -44,18 +44,27 @@ impl Default for Settings {
 }
 
 /// Get the settings file path inside the Tauri app data directory.
-fn settings_path(app: &tauri::AppHandle) -> PathBuf {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .expect("failed to resolve app data dir");
-    fs::create_dir_all(&dir).ok();
-    dir.join(SETTINGS_FILENAME)
+fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Cannot resolve app data directory: {}", e);
+            return None;
+        }
+    };
+    if let Err(e) = fs::create_dir_all(&dir) {
+        log::error!("Cannot create settings directory {:?}: {}", dir, e);
+        return None;
+    }
+    Some(dir.join(SETTINGS_FILENAME))
 }
 
 /// Load settings from disk. Returns defaults if file doesn't exist or is invalid.
 pub fn load(app: &tauri::AppHandle) -> Settings {
-    let path = settings_path(app);
+    let path = match settings_path(app) {
+        Some(p) => p,
+        None => return Settings::default(),
+    };
     match fs::read_to_string(&path) {
         Ok(contents) => {
             match serde_json::from_str::<Settings>(&contents) {
@@ -69,8 +78,12 @@ pub fn load(app: &tauri::AppHandle) -> Settings {
                 }
             }
         }
-        Err(_) => {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             log::info!("No settings file found, using defaults");
+            Settings::default()
+        }
+        Err(e) => {
+            log::error!("Failed to read settings file {:?}: {} — using defaults", path, e);
             Settings::default()
         }
     }
@@ -78,7 +91,10 @@ pub fn load(app: &tauri::AppHandle) -> Settings {
 
 /// Save current settings to disk.
 pub fn save(app: &tauri::AppHandle, settings: &Settings) {
-    let path = settings_path(app);
+    let path = match settings_path(app) {
+        Some(p) => p,
+        None => return,
+    };
     match serde_json::to_string_pretty(settings) {
         Ok(json) => {
             if let Err(e) = fs::write(&path, json) {
