@@ -11,8 +11,8 @@
 </script>
 
 {#if !open}
-<div class="sidebar-collapsed">
-	<button class="collapse-btn" onclick={onToggle} title="Expand sidebar">&#9654;</button>
+<div class="sidebar-collapsed" onclick={onToggle} title="Expand sidebar">
+	<span class="collapse-icon">&#9654;</span>
 </div>
 {:else}
 <nav class="sidebar">
@@ -186,6 +186,21 @@
 		align-items: flex-start;
 		padding-top: 8px;
 		justify-content: center;
+		cursor: pointer;
+		height: 100%;
+	}
+
+	.sidebar-collapsed:hover {
+		background: rgba(255, 255, 255, 0.03);
+	}
+
+	.collapse-icon {
+		color: var(--text-muted);
+		font-size: 10px;
+	}
+
+	.sidebar-collapsed:hover .collapse-icon {
+		color: var(--text);
 	}
 
 	.collapse-btn {
