@@ -99,6 +99,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Post("/api/desktop/gems", handlers.DesktopGems(cfg.MercureURL, cfg.MercureSecret))
 	}
 
+	if cfg.Pool != nil {
+		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.Pool))
+	}
+
 	if cfg.DevMode {
 		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret))
 	}
