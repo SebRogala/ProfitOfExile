@@ -908,7 +908,10 @@ pub fn run() {
             let saved = settings::load(&handle);
             let state = handle.state::<AppState>();
             settings::apply_to_state(&saved, &state);
-            persist_settings(&handle);
+            // Write settings on startup so the file always exists
+            let s = settings::from_state(&state);
+            settings::save(&handle, &s);
+            app_log(&handle, "Settings initialized".to_string());
 
             // Restore window position/size from saved settings
             if let Some(ref win_settings) = saved.window {
