@@ -3,7 +3,7 @@
 	import { store } from '$lib/stores/status.svelte';
 
 	let overlayWin = $state<any>(null);
-	let overlayVisible = $state(false);
+	let overlayVisible = $state<string | null>(null); // null = hidden, 'gem' or 'font' = which region
 
 	// Inline editing states
 	let editingServerUrl = $state(false);
@@ -62,17 +62,14 @@
 		editingClientTxt = false;
 	}
 
-	// --- Gem Region Overlay ---
-	async function showRegionOverlay() {
+	// --- Region Overlay (shared for gem tooltip + font panel) ---
+	async function showRegionOverlay(type: 'gem' | 'font') {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		// Destroy existing if any
 		if (overlayWin) {
 			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 			overlayWin = null;
 		}
-		const region = store.status?.gem_region;
-		// Constructor takes logical pixels, but we store physical pixels.
-		// Convert physical → logical using devicePixelRatio.
+		const region = type === 'gem' ? store.status?.gem_region : store.status?.font_region;
 		const dpr = window.devicePixelRatio || 1;
 		const win = new WebviewWindow('overlay', {
 			url: '/overlay',
@@ -83,28 +80,29 @@
 			shadow: false,
 			skipTaskbar: true,
 			width: Math.round((region?.w || 550) / dpr),
-			height: Math.round((region?.h || 75) / dpr),
+			height: Math.round((region?.h || (type === 'font' ? 350 : 75)) / dpr),
 			x: Math.round((region?.x || 30) / dpr),
 			y: Math.round((region?.y || 45) / dpr),
 		});
-		win.once('tauri://created', () => { overlayWin = win; overlayVisible = true; });
-		win.once('tauri://error', (e) => console.error('Overlay failed:', e));
+		win.once('tauri://created', () => { overlayWin = win; overlayVisible = type; });
+		win.once('tauri://error', (e: any) => console.error('Overlay failed:', e));
 	}
 
 	async function saveRegion() {
-		if (!overlayWin) return;
+		if (!overlayWin || !overlayVisible) return;
+		const command = overlayVisible === 'gem' ? 'set_gem_region' : 'set_font_region';
 		try {
 			const w = overlayWin.window ?? overlayWin;
 			const pos = await w.outerPosition();
 			const size = await w.outerSize();
-			await invoke('set_gem_region', { x: pos.x, y: pos.y, w: size.width, h: size.height });
+			await invoke(command, { x: pos.x, y: pos.y, w: size.width, h: size.height });
 		} catch (e) {
 			console.error('Save region failed:', e);
 			return;
 		}
 		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 		overlayWin = null;
-		overlayVisible = false;
+		overlayVisible = null;
 		// Status auto-updates via events
 	}
 
@@ -112,7 +110,7 @@
 		if (!overlayWin) return;
 		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 		overlayWin = null;
-		overlayVisible = false;
+		overlayVisible = null;
 	}
 
 	function formatRegion(region: any): string {
@@ -185,13 +183,25 @@
 
 			<div class="setting-row">
 				<span class="setting-label">Gem Tooltip Region</span>
-				{#if overlayVisible}
+				{#if overlayVisible === 'gem'}
 					<span class="setting-value">Positioning overlay...</span>
 					<button class="btn-small save" onclick={saveRegion}>Save</button>
 					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.gem_region)}</span>
-					<button class="btn-small" onclick={showRegionOverlay}>Configure</button>
+					<button class="btn-small" onclick={() => showRegionOverlay('gem')} disabled={!!overlayVisible}>Configure</button>
+				{/if}
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Font Panel Region</span>
+				{#if overlayVisible === 'font'}
+					<span class="setting-value">Positioning overlay...</span>
+					<button class="btn-small save" onclick={saveRegion}>Save</button>
+					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
+				{:else}
+					<span class="setting-value mono">{formatRegion(store.status?.font_region)}</span>
+					<button class="btn-small" onclick={() => showRegionOverlay('font')} disabled={!!overlayVisible}>Configure</button>
 				{/if}
 			</div>
 		</section>

@@ -18,6 +18,7 @@ pub struct Settings {
     pub client_txt_path: String,
     pub server_url: String,
     pub gem_region: CaptureRegion,
+    pub font_region: CaptureRegion,
 }
 
 impl Default for Settings {
@@ -26,6 +27,7 @@ impl Default for Settings {
             client_txt_path: crate::DEFAULT_CLIENT_TXT_PATH.to_string(),
             server_url: String::from("https://poe.softsolution.pro"),
             gem_region: CaptureRegion::default(),
+            font_region: CaptureRegion::default_font_panel(),
         }
     }
 }
@@ -84,6 +86,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -92,4 +95,5 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.gem_region.clone();
+    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.font_region.clone();
 }
