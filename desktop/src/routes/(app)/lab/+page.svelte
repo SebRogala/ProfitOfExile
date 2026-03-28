@@ -33,96 +33,6 @@
 		logs = await invoke('get_logs');
 	}
 
-	let editingPath = $state(false);
-	let pathInput = $state('');
-
-	function startEditPath() {
-		pathInput = status?.client_txt_path || '';
-		editingPath = true;
-	}
-
-	async function savePath() {
-		await invoke('set_client_txt_path', { path: pathInput });
-		editingPath = false;
-		status = await invoke('get_status');
-	}
-
-	let overlayVisible = $state(false);
-	let overlayWin: any = null;
-
-	async function showOverlay() {
-		try {
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-
-		// Destroy existing overlay if any
-		if (overlayWin) {
-			try { await overlayWin.destroy(); } catch (e) {
-				console.error('Failed to destroy existing overlay:', e);
-			}
-			overlayWin = null;
-		}
-
-		const region = status?.gem_region;
-		const win = new WebviewWindow('overlay', {
-			url: '/overlay',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: true,
-			shadow: false,
-			skipTaskbar: true,
-			width: region?.w || 550,
-			height: region?.h || 75,
-			x: region?.x || 30,
-			y: region?.y || 45,
-		});
-
-		win.once('tauri://created', () => {
-			overlayWin = win;
-			overlayVisible = true;
-		});
-
-		win.once('tauri://error', (e: any) => {
-			console.error('Overlay creation failed:', e);
-		});
-		} catch (e: any) {
-			console.error('Failed to create overlay:', e);
-		}
-	}
-
-	async function saveRegion() {
-		if (!overlayWin) return;
-		try {
-			const w = overlayWin.window ?? overlayWin;
-			const pos = await w.outerPosition();
-			const size = await w.outerSize();
-			await invoke('set_gem_region', {
-				x: pos.x,
-				y: pos.y,
-				w: size.width,
-				h: size.height,
-			});
-		} catch (e: any) {
-			console.error('Failed to read/save region:', e);
-			return;
-		}
-		// Cleanup after successful save
-		try { await overlayWin.destroy(); } catch (e) {
-			console.error('Overlay destroy failed after save:', e);
-		}
-		overlayWin = null;
-		overlayVisible = false;
-		status = await invoke('get_status');
-	}
-
-	async function cancelOverlay() {
-		if (overlayWin) {
-			try { await overlayWin.destroy(); } catch {}
-			overlayWin = null;
-		}
-		overlayVisible = false;
-	}
-
 	let tradeGem = $state('Earthquake of Fragility');
 	let tradeVariant = $state('20/20');
 	let tradeResult = $state<any>(null);
@@ -161,40 +71,12 @@
 
 <div class="lab-page">
 	<section class="status">
-		<div class="section-header">
-			<h2>Status</h2>
-			<button class="btn-small" onclick={refreshStatus}>Refresh</button>
-		</div>
+		<h2>Status</h2>
 		<div class="state">{status?.state || 'Loading...'}</div>
 		{#if status?.state === 'PickingGems'}
 			<button class="btn-action btn-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop Scanning</button>
 		{:else}
 			<button class="btn-action" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Start Scanning</button>
-		{/if}
-		<div class="path">
-			{#if editingPath}
-				<input type="text" bind:value={pathInput} class="path-input" />
-				<button class="btn-small" onclick={savePath}>Save (restart app to apply)</button>
-			{:else}
-				<span class="path-text">{status?.client_txt_path || ''}</span>
-				<button class="btn-small" onclick={startEditPath}>Edit</button>
-			{/if}
-		</div>
-	</section>
-
-	<section class="region">
-		<h2>Capture Region</h2>
-		<p class="hint">
-			({status?.gem_region?.x}, {status?.gem_region?.y}) &rarr; {status?.gem_region?.w}x{status?.gem_region?.h}
-		</p>
-		{#if overlayVisible}
-			<p class="hint" style="color: var(--warning)">Position the red rectangle over the gem name area, then save.</p>
-			<div class="region-buttons">
-				<button class="btn-action" onclick={saveRegion}>Save Region</button>
-				<button class="btn-action btn-cancel" onclick={cancelOverlay}>Cancel</button>
-			</div>
-		{:else}
-			<button class="btn-action" onclick={showOverlay}>Show Region</button>
 		{/if}
 	</section>
 
@@ -375,16 +257,6 @@
 		color: var(--accent);
 	}
 
-	.region-buttons {
-		display: flex;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
-	}
-
-	.region-buttons .btn-action {
-		flex: 1;
-	}
-
 	.trade-result {
 		margin-top: 0.5rem;
 		font-size: 0.8rem;
@@ -398,27 +270,6 @@
 	.btn-stop {
 		background: var(--warning);
 		color: #1a1a2e;
-	}
-
-	.btn-cancel {
-		background: transparent;
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-	}
-
-	.btn-cancel:hover:not(:disabled) {
-		border-color: var(--accent);
-		color: var(--text);
-	}
-
-	.path {
-		margin-top: 0.5rem;
-		font-size: 0.75rem;
-	}
-
-	.path-text {
-		color: var(--text-muted);
-		word-break: break-all;
 	}
 
 	.path-input {
