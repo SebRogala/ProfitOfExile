@@ -13,9 +13,9 @@
 </script>
 
 <div class="app-shell">
-	<TopBar status={store.status} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
+	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} />
+		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={() => sidebarOpen = !sidebarOpen} />
 		<main class="content">
 			{@render children()}
 		</main>

@@ -2,13 +2,19 @@
 	let {
 		open = true,
 		currentPath = '/',
+		onToggle,
 	}: {
 		open: boolean;
 		currentPath: string;
+		onToggle: () => void;
 	} = $props();
 </script>
 
-{#if open}
+{#if !open}
+<div class="sidebar-collapsed">
+	<button class="collapse-btn" onclick={onToggle} title="Expand sidebar">&#9654;</button>
+</div>
+{:else}
 <nav class="sidebar">
 	<div class="top">
 		<div class="section">
@@ -61,6 +67,7 @@
 			<span class="mode off">off</span>
 		</div>
 	</div>
+	<button class="collapse-btn collapse-inside" onclick={onToggle} title="Collapse sidebar">&#9664;</button>
 </nav>
 {/if}
 
@@ -168,5 +175,39 @@
 
 	.mode.auto {
 		color: var(--warning);
+	}
+
+	.sidebar-collapsed {
+		width: 28px;
+		flex-shrink: 0;
+		background: var(--surface);
+		border-right: 1px solid var(--border);
+		display: flex;
+		align-items: flex-start;
+		padding-top: 8px;
+		justify-content: center;
+	}
+
+	.collapse-btn {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 10px;
+		cursor: pointer;
+		padding: 4px 6px;
+		border-radius: 3px;
+		line-height: 1;
+	}
+
+	.collapse-btn:hover {
+		color: var(--text);
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.collapse-inside {
+		width: 100%;
+		border-top: 1px solid var(--border);
+		border-radius: 0;
+		padding: 6px;
 	}
 </style>
