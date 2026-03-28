@@ -4,15 +4,12 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
-	import { onMount } from 'svelte';
 
 	let { children } = $props();
 	let sidebarOpen = $state(true);
 
-	onMount(() => {
-		const cleanup = initStatusStore();
-		return () => { cleanup.then(fn => fn()); };
-	});
+	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
+	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
 </script>
 
 <div class="app-shell">
