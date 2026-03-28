@@ -84,14 +84,14 @@ fn persist_settings(app: &AppHandle) {
 /// Emit the full app status to all frontend listeners.
 fn emit_status(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let _ = app.emit("status-changed", build_status(&state));
+    if let Err(e) = app.emit("status-changed", build_status(&state)) { log::warn!("emit status-changed failed: {}", e); }
 }
 
 /// Emit the current logs array to all frontend listeners.
 fn emit_logs(app: &AppHandle) {
     let state = app.state::<AppState>();
     let logs = state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let _ = app.emit("logs-changed", logs);
+    if let Err(e) = app.emit("logs-changed", logs) { log::warn!("emit logs-changed failed: {}", e); }
 }
 
 /// Add a log entry and emit the updated logs to the frontend.
@@ -461,6 +461,9 @@ async fn run_capture_loop(app: &AppHandle) {
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
     app_log(app, format!("Loaded {} gem names for matching", gem_names.len()));
 
+    // Error throttling — log capture/OCR errors every 20 iterations (~10s) to avoid spam
+    let mut loop_count = 0u32;
+
     // Font panel tracking
     let mut font_miss_count = 0u32;
     let mut session_rounds: Vec<serde_json::Value> = Vec::new();
@@ -478,11 +481,25 @@ async fn run_capture_loop(app: &AppHandle) {
             }
         }
 
+        loop_count += 1;
+
         // --- Region 1: Gem tooltip OCR ---
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Ok(img) = capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h) {
+        match capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h) {
+            Err(e) => {
+                if loop_count % 20 == 1 {
+                    app_log(app, format!("Gem capture failed: {}", e));
+                }
+            }
+            Ok(img) => {
             let processed = capture::preprocess_for_ocr(&img);
-            if let Ok(lines) = ocr::recognize_text(&processed) {
+            match ocr::recognize_text(&processed) {
+                Err(e) => {
+                    if loop_count % 20 == 1 {
+                        app_log(app, format!("Gem OCR failed: {}", e));
+                    }
+                }
+                Ok(lines) => {
                 let candidates = ocr::extract_gem_candidates(&lines);
                 let mut best: Option<gem_matcher::GemMatch> = None;
                 for candidate in &candidates {
@@ -503,7 +520,7 @@ async fn run_capture_loop(app: &AppHandle) {
 
                         let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
                         gems.push(gem_match.name.clone());
-                        let _ = app.emit("gem-detected", &gem_match.name);
+                        if let Err(e) = app.emit("gem-detected", &gem_match.name) { log::warn!("emit gem-detected failed: {}", e); }
                         emit_status(app);
 
                         let all_gems = gems.clone();
@@ -514,14 +531,28 @@ async fn run_capture_loop(app: &AppHandle) {
                         });
                     }
                 }
-            }
-        }
+            } // Ok(lines)
+            } // match ocr
+            } // Ok(img)
+        } // match capture region 1
 
         // --- Region 2: Font panel OCR ---
         let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Ok(img) = capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h) {
+        match capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h) {
+            Err(e) => {
+                if loop_count % 20 == 1 {
+                    app_log(app, format!("Font capture failed: {}", e));
+                }
+            }
+            Ok(img) => {
             let processed = capture::preprocess_for_ocr(&img);
-            if let Ok(lines) = ocr::recognize_text(&processed) {
+            match ocr::recognize_text(&processed) {
+                Err(e) => {
+                    if loop_count % 20 == 1 {
+                        app_log(app, format!("Font OCR failed: {}", e));
+                    }
+                }
+                Ok(lines) => {
                 let panel = font_parser::parse_font_panel(&lines);
 
                 if panel.font_active {
@@ -542,7 +573,7 @@ async fn run_capture_loop(app: &AppHandle) {
                         last_crafts_remaining = panel.crafts_remaining;
 
                         if panel.jackpot_detected {
-                            let _ = app.emit("font-jackpot", true);
+                            if let Err(e) = app.emit("font-jackpot", true) { log::warn!("emit font-jackpot failed: {}", e); }
                         }
                     }
                 } else {
@@ -590,8 +621,10 @@ async fn run_capture_loop(app: &AppHandle) {
                         session_rounds.clear();
                     }
                 }
-            }
-        }
+            } // Ok(lines)
+            } // match ocr
+            } // Ok(img)
+        } // match capture region 2
 
         // Capture every 500ms
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
