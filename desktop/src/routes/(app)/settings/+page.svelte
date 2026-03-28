@@ -71,6 +71,9 @@
 			overlayWin = null;
 		}
 		const region = store.status?.gem_region;
+		// Constructor takes logical pixels, but we store physical pixels.
+		// Convert physical → logical using devicePixelRatio.
+		const dpr = window.devicePixelRatio || 1;
 		const win = new WebviewWindow('overlay', {
 			url: '/overlay',
 			transparent: true,
@@ -79,23 +82,12 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			// Don't set position/size here — constructor uses logical pixels
-			// but our region stores physical pixels. Set after creation.
+			width: Math.round((region?.w || 550) / dpr),
+			height: Math.round((region?.h || 75) / dpr),
+			x: Math.round((region?.x || 30) / dpr),
+			y: Math.round((region?.y || 45) / dpr),
 		});
-		win.once('tauri://created', async () => {
-			// Set position/size in physical pixels to match stored region exactly
-			try {
-				const w = win.window ?? win;
-				if (region) {
-					await w.setPosition({ type: 'Physical', x: region.x, y: region.y });
-					await w.setSize({ type: 'Physical', width: region.w, height: region.h });
-				}
-			} catch (e) {
-				console.error('Failed to set overlay position:', e);
-			}
-			overlayWin = win;
-			overlayVisible = true;
-		});
+		win.once('tauri://created', () => { overlayWin = win; overlayVisible = true; });
 		win.once('tauri://error', (e) => console.error('Overlay failed:', e));
 	}
 
