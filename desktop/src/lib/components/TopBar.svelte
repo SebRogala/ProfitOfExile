@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
-	let { status, onToggleSidebar }: {
+	let { status }: {
 		status: any;
-		onToggleSidebar: () => void;
 	} = $props();
 
 	const PROD_URL = 'https://poe.softsolution.pro';
@@ -45,7 +44,6 @@
 
 <header class="topbar" onmousedown={startDrag}>
 	<div class="left">
-		<button class="hamburger" onclick={onToggleSidebar} aria-label="Toggle sidebar">&#9776;</button>
 		<img src="/icon-32.png" alt="ProfitOfExile" class="logo" />
 		<span class="app-name">ProfitOfExile</span>
 	</div>
@@ -85,23 +83,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-	}
-
-	.hamburger {
-		background: none;
-		border: none;
-		color: var(--text-muted);
-		font-size: 1.1rem;
-		cursor: pointer;
-		padding: 0.15rem 0.3rem;
-		line-height: 1;
-		border-radius: 3px;
-		-webkit-app-region: no-drag;
-	}
-
-	.hamburger:hover {
-		color: var(--text);
-		background: rgba(255, 255, 255, 0.05);
 	}
 
 	.logo {
