@@ -513,21 +513,35 @@ fn run_capture_loop_blocking(app: &AppHandle) {
 
         loop_count += 1;
 
-        // --- Region 1: Gem tooltip OCR ---
+        // Capture full screen once, crop both regions from it
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let gem_ocr_result: Result<Vec<String>, String> = (|| {
-            let img = capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h)?;
-            let processed = capture::preprocess_for_ocr(&img);
-            ocr::recognize_text(&processed)
-        })();
+        let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        match gem_ocr_result {
+        let screen = match capture::capture_screen() {
+            Ok(s) => Some(s),
             Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Gem capture/OCR failed: {}", e));
+                    app_log(app, format!("Screen capture failed: {}", e));
+                }
+                None
+            }
+        };
+
+        // --- Region 1: Gem tooltip OCR ---
+        let gem_ocr_result: Option<Result<Vec<String>, String>> = screen.as_ref().map(|s| {
+            let cropped = s.crop_imm(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h);
+            let processed = capture::preprocess_for_ocr(&cropped);
+            ocr::recognize_text(&processed)
+        });
+
+        match gem_ocr_result {
+            None => {} // screen capture failed, already logged
+            Some(Err(e)) => {
+                if loop_count % 20 == 1 {
+                    app_log(app, format!("Gem OCR failed: {}", e));
                 }
             }
-            Ok(lines) => {
+            Some(Ok(lines)) => {
                 let candidates = ocr::extract_gem_candidates(&lines);
                 let mut best: Option<gem_matcher::GemMatch> = None;
                 for candidate in &candidates {
@@ -559,24 +573,24 @@ fn run_capture_loop_blocking(app: &AppHandle) {
                         });
                     }
                 }
-            } // Ok(lines)
+            } // Some(Ok(lines))
         } // match gem_ocr_result
 
         // --- Region 2: Font panel OCR ---
-        let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let font_ocr_result: Result<Vec<String>, String> = (|| {
-            let img = capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h)?;
-            let processed = capture::preprocess_for_ocr(&img);
+        let font_ocr_result: Option<Result<Vec<String>, String>> = screen.as_ref().map(|s| {
+            let cropped = s.crop_imm(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h);
+            let processed = capture::preprocess_for_ocr(&cropped);
             ocr::recognize_text(&processed)
-        })();
+        });
 
         match font_ocr_result {
-            Err(e) => {
+            None => {} // screen capture failed, already logged
+            Some(Err(e)) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Font capture/OCR failed: {}", e));
+                    app_log(app, format!("Font OCR failed: {}", e));
                 }
             }
-            Ok(lines) => {
+            Some(Ok(lines)) => {
                 let panel = font_parser::parse_font_panel(&lines);
 
                 if panel.font_active {
@@ -645,7 +659,7 @@ fn run_capture_loop_blocking(app: &AppHandle) {
                         session_rounds.clear();
                     }
                 }
-            } // Ok(lines)
+            } // Some(Ok(lines))
         } // match font_ocr_result
 
         // Capture every 500ms
