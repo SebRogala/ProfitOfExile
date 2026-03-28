@@ -98,6 +98,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        window: None, // Window settings are saved separately on close, not from AppState
     }
 }
 
