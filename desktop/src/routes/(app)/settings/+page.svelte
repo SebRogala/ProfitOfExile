@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	let status = $state<any>(null);
+	import { appStatus } from '$lib/stores/status.svelte';
+
 	let overlayWin = $state<any>(null);
 	let overlayVisible = $state(false);
 
@@ -9,26 +10,11 @@
 	let editServerUrlValue = $state('');
 	let editingClientTxt = $state(false);
 	let editClientTxtValue = $state('');
-
-	// Load status immediately + retry until it works
-	invoke('get_status').then((s) => { status = s; }).catch(() => {});
-	const statusInterval = setInterval(() => {
-		if (!status) {
-			invoke('get_status').then((s) => { status = s; }).catch(() => {});
-		}
-	}, 500);
-
-	async function refreshStatus() {
-		try {
-			status = await invoke('get_status');
-		} catch (e) {
-			console.error('Failed to refresh status:', e);
-		}
-	}
+	// Status is reactive via the shared store — no polling or manual refresh needed.
 
 	// --- Server URL ---
 	function startEditServerUrl() {
-		editServerUrlValue = status?.server_url || '';
+		editServerUrlValue = appStatus?.server_url || '';
 		editingServerUrl = true;
 	}
 
@@ -36,7 +22,7 @@
 		try {
 			await invoke('set_server_url', { url: editServerUrlValue });
 			editingServerUrl = false;
-			await refreshStatus();
+			// Status auto-updates via events
 		} catch (e) {
 			console.error('Failed to save server URL:', e);
 		}
@@ -50,7 +36,7 @@
 	async function regeneratePairCode() {
 		try {
 			await invoke('regenerate_pair_code');
-			await refreshStatus();
+			// Status auto-updates via events
 		} catch (e) {
 			console.error('Failed to regenerate pair code:', e);
 		}
@@ -58,7 +44,7 @@
 
 	// --- Client.txt Path ---
 	function startEditClientTxt() {
-		editClientTxtValue = status?.client_txt_path || '';
+		editClientTxtValue = appStatus?.client_txt_path || '';
 		editingClientTxt = true;
 	}
 
@@ -66,7 +52,7 @@
 		try {
 			await invoke('set_client_txt_path', { path: editClientTxtValue });
 			editingClientTxt = false;
-			await refreshStatus();
+			// Status auto-updates via events
 		} catch (e) {
 			console.error('Failed to save client.txt path:', e);
 		}
@@ -84,7 +70,7 @@
 			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 			overlayWin = null;
 		}
-		const region = status?.gem_region;
+		const region = appStatus?.gem_region;
 		const win = new WebviewWindow('overlay', {
 			url: '/overlay',
 			transparent: true,
@@ -116,7 +102,7 @@
 		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 		overlayWin = null;
 		overlayVisible = false;
-		await refreshStatus();
+		// Status auto-updates via events
 	}
 
 	async function cancelRegion() {
@@ -135,7 +121,7 @@
 <div class="settings-page">
 	<h1>Settings</h1>
 
-	{#if !status}
+	{#if !appStatus}
 		<p class="loading">Loading...</p>
 	{:else}
 		<!-- General -->
@@ -156,7 +142,7 @@
 						<button class="btn-small" onclick={cancelEditServerUrl}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value">{status.server_url}</span>
+					<span class="setting-value">{appStatus.server_url}</span>
 					<button class="btn-small" onclick={startEditServerUrl}>Edit</button>
 				{/if}
 			</div>
@@ -168,7 +154,7 @@
 
 			<div class="setting-row">
 				<span class="setting-label">Pair Code</span>
-				<span class="setting-value mono">{status.pair_code}</span>
+				<span class="setting-value mono">{appStatus.pair_code}</span>
 				<button class="btn-small" onclick={regeneratePairCode}>Regenerate</button>
 			</div>
 		</section>
@@ -191,7 +177,7 @@
 						<button class="btn-small" onclick={cancelEditClientTxt}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value path">{status.client_txt_path}</span>
+					<span class="setting-value path">{appStatus.client_txt_path}</span>
 					<button class="btn-small" onclick={startEditClientTxt}>Edit</button>
 				{/if}
 			</div>
@@ -203,7 +189,7 @@
 					<button class="btn-small save" onclick={saveRegion}>Save</button>
 					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
 				{:else}
-					<span class="setting-value mono">{formatRegion(status.gem_region)}</span>
+					<span class="setting-value mono">{formatRegion(appStatus.gem_region)}</span>
 					<button class="btn-small" onclick={showRegionOverlay}>Configure</button>
 				{/if}
 			</div>

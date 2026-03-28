@@ -3,22 +3,20 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
-	import { invoke } from '@tauri-apps/api/core';
+	import { appStatus, initStatusStore } from '$lib/stores/status.svelte';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
+	let sidebarOpen = $state(true);
 
-	let status = $state<any>({ state: 'Loading...', server_url: 'https://poe.softsolution.pro', detected_gems: [] });
-	let pairCode = $state('...');
-	let sidebarOpen = $state(false);
-
-	setInterval(() => {
-		invoke('get_status').then((s) => { status = s; }).catch(() => {});
-		invoke('get_pair_code').then((c) => { pairCode = c as string; }).catch(() => {});
-	}, 1000);
+	onMount(() => {
+		const cleanup = initStatusStore();
+		return () => { cleanup.then(fn => fn()); };
+	});
 </script>
 
 <div class="app-shell">
-	<TopBar {status} {pairCode} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
+	<TopBar status={appStatus} pairCode={appStatus?.pair_code ?? '....'} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} />
 		<main class="content">

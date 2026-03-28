@@ -45,15 +45,44 @@ pub struct AppState {
     pub trade_client: trade::TradeApiClient,
 }
 
-fn app_log(state: &AppState, msg: String) {
-    let mut logs = state.logs.lock().unwrap_or_else(|e| e.into_inner());
-    let timestamp = chrono::Local::now().format("%H:%M:%S");
-    logs.push(format!("[{}] {}", timestamp, msg));
-    // Keep last 50 entries
-    if logs.len() > 50 {
-        let excess = logs.len() - 50;
-        logs.drain(0..excess);
+/// Build the full AppStatus from current state. Used by get_status command and event emitting.
+fn build_status(state: &AppState) -> AppStatus {
+    AppStatus {
+        state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
+        pair_code: state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        detected_gems: state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
+}
+
+/// Emit the full app status to all frontend listeners.
+fn emit_status(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let _ = app.emit("status-changed", build_status(&state));
+}
+
+/// Emit the current logs array to all frontend listeners.
+fn emit_logs(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let logs = state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let _ = app.emit("logs-changed", logs);
+}
+
+/// Add a log entry and emit the updated logs to the frontend.
+fn app_log(app: &AppHandle, msg: String) {
+    let state = app.state::<AppState>();
+    {
+        let mut logs = state.logs.lock().unwrap_or_else(|e| e.into_inner());
+        let timestamp = chrono::Local::now().format("%H:%M:%S");
+        logs.push(format!("[{}] {}", timestamp, msg));
+        if logs.len() > 50 {
+            let excess = logs.len() - 50;
+            logs.drain(0..excess);
+        }
+    }
+    emit_logs(app);
 }
 
 fn generate_pair_code() -> String {
@@ -65,14 +94,7 @@ fn generate_pair_code() -> String {
 
 #[tauri::command]
 fn get_status(state: tauri::State<AppState>) -> AppStatus {
-    AppStatus {
-        state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
-        pair_code: state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        detected_gems: state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-    }
+    build_status(&state)
 }
 
 #[tauri::command]
@@ -81,21 +103,26 @@ fn get_pair_code(state: tauri::State<AppState>) -> String {
 }
 
 #[tauri::command]
-fn regenerate_pair_code(state: tauri::State<AppState>) -> String {
+fn regenerate_pair_code(app: AppHandle) -> String {
+    let state = app.state::<AppState>();
     let new_code = generate_pair_code();
     *state.pair_code.lock().unwrap_or_else(|e| e.into_inner()) = new_code.clone();
-    log::info!("New pair code: {}", new_code);
+    emit_status(&app);
     new_code
 }
 
 #[tauri::command]
-fn set_client_txt_path(path: String, state: tauri::State<AppState>) {
+fn set_client_txt_path(path: String, app: AppHandle) {
+    let state = app.state::<AppState>();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = path;
+    emit_status(&app);
 }
 
 #[tauri::command]
-fn set_server_url(url: String, state: tauri::State<AppState>) {
+fn set_server_url(url: String, app: AppHandle) {
+    let state = app.state::<AppState>();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = url;
+    emit_status(&app);
 }
 
 #[tauri::command]
@@ -104,10 +131,12 @@ fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
 }
 
 #[tauri::command]
-fn set_gem_region(x: i32, y: i32, w: u32, h: u32, state: tauri::State<AppState>) {
+fn set_gem_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
+    let state = app.state::<AppState>();
     let region = CaptureRegion { x, y, w, h };
-    app_log(&state, format!("Region set: ({}, {}) {}x{}", x, y, w, h));
+    app_log(&app, format!("Region set: ({}, {}) {}x{}", x, y, w, h));
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
+    emit_status(&app);
 }
 
 #[tauri::command]
@@ -131,16 +160,17 @@ fn capture_mouse_position() -> Result<(i32, i32), String> {
 }
 
 #[tauri::command]
-async fn start_scanning(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn start_scanning(app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if current == lab_state::LabState::PickingGems {
         return Err("Already scanning".to_string());
     }
 
-    app_log(&state, "Manual scan started".to_string());
+    app_log(&app, "Manual scan started".to_string());
     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
     *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::PickingGems;
-    let _ = app.emit("lab-state-changed", "PickingGems");
+    emit_status(&app);
 
     let app_capture = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -151,10 +181,11 @@ async fn start_scanning(app: AppHandle, state: tauri::State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
-fn stop_scanning(app: AppHandle, state: tauri::State<AppState>) {
-    app_log(&state, "Manual scan stopped".to_string());
+fn stop_scanning(app: AppHandle) {
+    let state = app.state::<AppState>();
+    app_log(&app, "Manual scan stopped".to_string());
     *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
-    let _ = app.emit("lab-state-changed", "Idle");
+    emit_status(&app);
 }
 
 /// Direct trade API lookup against GGG from the desktop app.
@@ -164,23 +195,21 @@ fn stop_scanning(app: AppHandle, state: tauri::State<AppState>) {
 async fn trade_lookup(
     gem: String,
     variant: String,
-    state: tauri::State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<trade::TradeLookupResult, String> {
-    app_log(
-        &state,
-        format!("Trade lookup: {} ({})", gem, variant),
-    );
+    let state = app.state::<AppState>();
+    app_log(&app, format!("Trade lookup: {} ({})", gem, variant));
 
     // TODO: fetch divine rate from server/poe.ninja for chaos normalization
     let divine_rate = 0.0;
     let result = state.trade_client.lookup_gem(&gem, &variant, divine_rate).await
         .map_err(|e| {
-            app_log(&state, format!("Trade error: {}", e));
+            app_log(&app, format!("Trade error: {}", e));
             e
         })?;
 
     app_log(
-        &state,
+        &app,
         format!(
             "Trade result: {} total, {} listings, floor={:.1} {}",
             result.total,
@@ -199,7 +228,8 @@ fn get_logs(state: tauri::State<AppState>) -> Vec<String> {
 }
 
 #[tauri::command]
-async fn send_test_gems(state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn send_test_gems(app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let url = format!("{}/api/desktop/gems", server);
@@ -209,14 +239,14 @@ async fn send_test_gems(state: tauri::State<'_, AppState>) -> Result<String, Str
         "Summon Stone Golem of Safeguarding",
     ];
 
-    app_log(&state, format!("Sending test gems to {}", url));
+    app_log(&app, format!("Sending test gems to {}", url));
 
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|e| {
             let msg = format!("HTTP client error: {}", e);
-            app_log(&state, msg.clone());
+            app_log(&app, msg.clone());
             msg
         })?;
 
@@ -232,21 +262,21 @@ async fn send_test_gems(state: tauri::State<'_, AppState>) -> Result<String, Str
         .map_err(|e| {
             let msg = format!("Request failed: {} (is_connect: {}, is_timeout: {})",
                 e, e.is_connect(), e.is_timeout());
-            app_log(&state, msg.clone());
+            app_log(&app, msg.clone());
             msg
         })?;
 
     let status = res.status();
-    app_log(&state, format!("Response: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("")));
+    app_log(&app, format!("Response: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("")));
 
     if status.is_success() {
         let msg = "Test gems sent!".to_string();
-        app_log(&state, msg.clone());
+        app_log(&app, msg.clone());
         Ok(msg)
     } else {
         let body = res.text().await.unwrap_or_else(|e| format!("<body read failed: {}>", e));
         let msg = format!("Server returned {}: {}", status, body);
-        app_log(&state, msg.clone());
+        app_log(&app, msg.clone());
         Err(msg)
     }
 }
@@ -257,7 +287,7 @@ async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let url = format!("{}/api/desktop/gems", server);
 
-    app_log(&state, format!("Sending {} gems to server", gems.len()));
+    app_log(app, format!("Sending {} gems to server", gems.len()));
 
     let client = match reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -265,7 +295,7 @@ async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     {
         Ok(c) => c,
         Err(e) => {
-            app_log(&state, format!("HTTP client error: {}", e));
+            app_log(app, format!("HTTP client error: {}", e));
             return;
         }
     };
@@ -281,37 +311,38 @@ async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
         .await
     {
         Ok(res) => {
-            app_log(&state, format!("Server response: {}", res.status()));
+            app_log(app, format!("Server response: {}", res.status()));
         }
         Err(e) => {
-            app_log(&state, format!("Send failed: {}", e));
+            app_log(app, format!("Send failed: {}", e));
         }
     }
 }
 
 #[tauri::command]
-async fn test_ocr_on_image(path: String, app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
-    app_log(&state, format!("Testing OCR on: {}", path));
+async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    app_log(&app, format!("Testing OCR on: {}", path));
 
     let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
-    app_log(&state, format!("Image loaded: {}x{}", img.width(), img.height()));
+    app_log(&app, format!("Image loaded: {}x{}", img.width(), img.height()));
 
     let processed = capture::preprocess_for_ocr(&img);
-    app_log(&state, format!("Preprocessed: {}x{}", processed.width(), processed.height()));
+    app_log(&app, format!("Preprocessed: {}x{}", processed.width(), processed.height()));
 
     let lines = ocr::recognize_text(&processed).map_err(|e| {
-        app_log(&state, format!("OCR failed: {}", e));
+        app_log(&app, format!("OCR failed: {}", e));
         e
     })?;
 
-    app_log(&state, format!("OCR found {} lines", lines.len()));
+    app_log(&app, format!("OCR found {} lines", lines.len()));
     for (i, line) in lines.iter().enumerate() {
-        app_log(&state, format!("  Line {}: {}", i, line));
+        app_log(&app, format!("  Line {}: {}", i, line));
     }
 
     // Try all OCR lines against the matcher — pick the best match
     let candidates = ocr::extract_gem_candidates(&lines);
-    app_log(&state, format!("{} candidate lines to match", candidates.len()));
+    app_log(&app, format!("{} candidate lines to match", candidates.len()));
 
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let gem_names = fetch_gem_names(&server).await;
@@ -328,7 +359,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle, state: tauri::State<'_,
 
     if let Some(m) = best_match {
         let result = format!("Matched: {} (score: {:.2})", m.name, m.score);
-        app_log(&state, result.clone());
+        app_log(&app, result.clone());
 
         // Send to server
         let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
@@ -340,13 +371,13 @@ async fn test_ocr_on_image(path: String, app: AppHandle, state: tauri::State<'_,
             tauri::async_runtime::spawn(async move {
                 send_gems_to_server(&app_clone, all_gems).await;
             });
-            app_log(&state, format!("Sent {} to comparator", m.name));
+            app_log(&app, format!("Sent {} to comparator", m.name));
         }
 
         Ok(result)
     } else {
         let result = format!("No match in {} candidates", candidates.len());
-        app_log(&state, result.clone());
+        app_log(&app, result.clone());
         Ok(result)
     }
 }
@@ -355,7 +386,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle, state: tauri::State<'_,
 /// Runs until the lab state leaves PickingGems.
 async fn run_capture_loop(app: &AppHandle) {
     let state = app.state::<AppState>();
-    app_log(&state, "Capture loop started".to_string());
+    app_log(app, "Capture loop started".to_string());
 
     let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -363,14 +394,14 @@ async fn run_capture_loop(app: &AppHandle) {
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let gem_names = fetch_gem_names(&server).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
-    app_log(&state, format!("Loaded {} gem names for matching", gem_names.len()));
+    app_log(app, format!("Loaded {} gem names for matching", gem_names.len()));
 
     loop {
         // Check if we're still in PickingGems state
         {
             let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
             if current != lab_state::LabState::PickingGems {
-                app_log(&state, "Capture loop stopped (state changed)".to_string());
+                app_log(app, "Capture loop stopped (state changed)".to_string());
                 break;
             }
         }
@@ -387,7 +418,7 @@ async fn run_capture_loop(app: &AppHandle) {
                     Ok(lines) => {
                         if !lines.is_empty() {
                             let preview: Vec<&str> = lines.iter().take(3).map(|s| s.as_str()).collect();
-                            app_log(&state, format!("OCR ({} lines): {:?}", lines.len(), preview));
+                            app_log(app, format!("OCR ({} lines): {:?}", lines.len(), preview));
                         }
                         // Try all candidates against the matcher
                         let candidates = ocr::extract_gem_candidates(&lines);
@@ -402,7 +433,7 @@ async fn run_capture_loop(app: &AppHandle) {
                         if let Some(gem_match) = best {
                             if !seen_gems.contains(&gem_match.name) {
                                 seen_gems.insert(gem_match.name.clone());
-                                app_log(&state, format!(
+                                app_log(app, format!(
                                     "Gem detected: {} (score: {:.2}, raw: {})",
                                     gem_match.name, gem_match.score, gem_match.ocr_raw
                                 ));
@@ -421,12 +452,12 @@ async fn run_capture_loop(app: &AppHandle) {
                         }
                     }
                     Err(e) => {
-                        app_log(&state, format!("OCR failed: {}", e));
+                        app_log(app, format!("OCR failed: {}", e));
                     }
                 }
             }
             Err(e) => {
-                app_log(&state, format!("Screen capture failed: {}", e));
+                app_log(app, format!("Screen capture failed: {}", e));
             }
         }
 
@@ -465,7 +496,7 @@ async fn fetch_gem_names(server_url: &str) -> Vec<String> {
 fn spawn_log_watcher(app: AppHandle) {
     let state = app.state::<AppState>();
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    app_log(&state, format!("Starting log watcher: {}", client_txt));
+    app_log(&app, format!("Starting log watcher: {}", client_txt));
 
     tauri::async_runtime::spawn(async move {
         let watcher = log_watcher::LogWatcher::new(&client_txt);
@@ -473,15 +504,15 @@ fn spawn_log_watcher(app: AppHandle) {
             Ok(rx) => rx,
             Err(e) => {
                 let state = app.state::<AppState>();
-                app_log(&state, format!("Log watcher failed to start: {}", e));
-                let _ = app.emit("lab-state-changed", "Error");
+                app_log(&app, format!("Log watcher failed to start: {}", e));
+                emit_status(&app);
                 return;
             }
         };
 
         let state = app.state::<AppState>();
-        app_log(&state, "Log watcher active".to_string());
-        let _ = app.emit("log-watcher-started", true);
+        app_log(&app, "Log watcher active".to_string());
+        emit_status(&app);
 
         let mut state_machine = lab_state::LabStateMachine::new();
         let mut detected_gems: Vec<String> = Vec::new();
@@ -493,20 +524,20 @@ fn spawn_log_watcher(app: AppHandle) {
         while let Some(line) = rx.recv().await {
             let state = app.state::<AppState>();
             let preview = if line.len() > 60 { &line[..60] } else { &line };
-            app_log(&state, format!("Log: {}", preview));
+            app_log(&app, format!("Log: {}", preview));
 
             if let Some(event) = state_machine.process_line(&line) {
                 let state = app.state::<AppState>();
                 match &event {
                     lab_state::LabEvent::FontOpened => {
-                        app_log(&state, "Font opened! Starting screen reader.".to_string());
+                        app_log(&app, "Font opened! Starting screen reader.".to_string());
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                             lab_state::LabState::FontReady;
                         detected_gems.clear();
                         *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
                             Vec::new();
-                        let _ = app.emit("lab-state-changed", "FontReady");
-                        let _ = app.emit("font-opened", true);
+                        emit_status(&app);
+                        emit_status(&app);
                         state_machine.start_picking();
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                             lab_state::LabState::PickingGems;
@@ -518,7 +549,7 @@ fn spawn_log_watcher(app: AppHandle) {
                         });
                     }
                     lab_state::LabEvent::ZoneChanged { area } => {
-                        app_log(&state, format!("Zone changed: {} — stopping", area));
+                        app_log(&app, format!("Zone changed: {} — stopping", area));
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                             lab_state::LabState::Idle;
 
@@ -532,21 +563,21 @@ fn spawn_log_watcher(app: AppHandle) {
                             detected_gems.clear();
                         }
 
-                        let _ = app.emit("lab-state-changed", "Idle");
-                        let _ = app.emit("font-closed", true);
+                        emit_status(&app);
+                        emit_status(&app);
                     }
                     lab_state::LabEvent::FontClosed => {
-                        app_log(&state, "Font closed".to_string());
+                        app_log(&app, "Font closed".to_string());
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                             lab_state::LabState::Idle;
-                        let _ = app.emit("lab-state-changed", "Idle");
+                        emit_status(&app);
                     }
                 }
             }
         }
 
         let state = app.state::<AppState>();
-        app_log(&state, "Log watcher stopped".to_string());
+        app_log(&app, "Log watcher stopped".to_string());
     });
 }
 
