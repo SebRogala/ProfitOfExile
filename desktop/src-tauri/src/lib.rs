@@ -3,6 +3,7 @@ mod gem_matcher;
 mod lab_state;
 mod log_watcher;
 mod ocr;
+mod settings;
 mod trade;
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,13 @@ fn build_status(state: &AppState) -> AppStatus {
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
+}
+
+/// Save current settings to disk. Call after any persistent state change.
+fn persist_settings(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let s = settings::from_state(&state);
+    settings::save(app, &s);
 }
 
 /// Emit the full app status to all frontend listeners.
@@ -119,8 +127,8 @@ const DEFAULT_CLIENT_TXT_PATH: &str = r"C:\Program Files (x86)\Grinding Gear Gam
 fn set_client_txt_path(path: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = path;
+    persist_settings(&app);
     emit_status(&app);
-    // Restart log watcher with new path
     restart_log_watcher(app);
 }
 
@@ -128,6 +136,7 @@ fn set_client_txt_path(path: String, app: AppHandle) {
 fn reset_client_txt_path(app: AppHandle) {
     let state = app.state::<AppState>();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = DEFAULT_CLIENT_TXT_PATH.to_string();
+    persist_settings(&app);
     emit_status(&app);
     restart_log_watcher(app);
 }
@@ -146,6 +155,7 @@ fn restart_log_watcher(app: AppHandle) {
 fn set_server_url(url: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = url;
+    persist_settings(&app);
     emit_status(&app);
 }
 
@@ -160,6 +170,7 @@ fn set_gem_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     let region = CaptureRegion { x, y, w, h };
     app_log(&app, format!("Region set: ({}, {}) {}x{}", x, y, w, h));
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
+    persist_settings(&app);
     emit_status(&app);
 }
 
@@ -654,8 +665,12 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            // Load persisted settings and apply to state
+            let saved = settings::load(&handle);
+            let state = handle.state::<AppState>();
+            settings::apply_to_state(&saved, &state);
+
             spawn_log_watcher(handle.clone());
-            // Emit initial status so frontend gets data on boot
             emit_status(&handle);
             emit_logs(&handle);
             Ok(())

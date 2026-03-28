@@ -29,3 +29,4 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 - **Styling**: CSS custom properties from `app.css` (`--bg`, `--surface`, `--border`, `--text`, `--text-muted`, `--accent`, `--success`, `--warning`).
 - **Tauri commands**: Use `invoke()` from `@tauri-apps/api/core`. Prefer event listeners (`listen()`) over polling.
 - **State flow**: Rust emits events → `status.svelte.ts` store updates → components react. Pages never poll.
+- **Settings persistence**: Rust `settings.rs` saves/loads JSON to `%AppData%/pro.softsolution.profitofexile/settings.json`. Saved automatically on every mutation (server URL, Client.txt path, capture region).
