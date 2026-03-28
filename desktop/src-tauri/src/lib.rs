@@ -8,7 +8,7 @@ mod settings;
 mod trade;
 
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -763,7 +763,7 @@ fn spawn_log_watcher(app: AppHandle) {
 
         let mut state_machine = lab_state::LabStateMachine::new();
         let mut detected_gems: Vec<String> = Vec::new();
-        let matcher = gem_matcher::GemMatcher::new(vec![]);
+        let _matcher = gem_matcher::GemMatcher::new(vec![]); // TODO: fetch from server
 
         loop {
             tokio::select! {
@@ -776,7 +776,6 @@ fn spawn_log_watcher(app: AppHandle) {
                         Some(l) => l,
                         None => break,
                     };
-                    let state = app.state::<AppState>();
                     let preview = if line.len() > 60 { &line[..60] } else { &line };
                     app_log(&app, format!("Log: {}", preview));
 
