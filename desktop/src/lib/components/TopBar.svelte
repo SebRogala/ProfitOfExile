@@ -49,7 +49,7 @@
 		<img src="/icon-32.png" alt="ProfitOfExile" class="logo" />
 		<span class="app-name">ProfitOfExile</span>
 	</div>
-	<div class="right">
+	<div class="center">
 		<span class="status-dot" class:connected={!!status} title={status ? `Server: Connected (${status.server_url})` : 'Server: Disconnected'}></span>
 		<span class="status-dot scanning-dot" class:active={status?.state && status.state !== 'Idle'} title={`OCR Scanner: ${status?.state ?? 'Unknown'} ${status?.state === 'PickingGems' ? '— reading gem names' : status?.state === 'FontReady' ? '— font detected' : ''}`}></span>
 		{#if import.meta.env.DEV}
@@ -58,11 +58,11 @@
 			</button>
 		{/if}
 		<a href="/settings" class="settings-link" title="Settings">&#9881;&#65039;</a>
-		<div class="window-controls">
-			<button class="win-btn" onclick={minimizeWindow} title="Minimize">&#x2014;</button>
-			<button class="win-btn" onclick={toggleMaximize} title="Maximize">&#9633;</button>
-			<button class="win-btn close" onclick={closeWindow} title="Close">&#10005;</button>
-		</div>
+	</div>
+	<div class="window-controls">
+		<button class="win-btn" onclick={minimizeWindow} title="Minimize">&#x2013;</button>
+		<button class="win-btn" onclick={toggleMaximize} title="Maximize">&#9723;</button>
+		<button class="win-btn close" onclick={closeWindow} title="Close">&#10005;</button>
 	</div>
 </header>
 
@@ -80,7 +80,7 @@
 		-webkit-app-region: drag;
 	}
 
-	.left, .right {
+	.left, .center {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -180,7 +180,6 @@
 		display: flex;
 		align-items: stretch;
 		height: 36px;
-		margin-left: 0.25rem;
 		-webkit-app-region: no-drag;
 	}
 
@@ -194,12 +193,12 @@
 		align-items: center;
 		justify-content: center;
 		cursor: pointer;
-		font-size: 12px;
+		font-size: 14px;
 		transition: background 0.1s;
 	}
 
 	.win-btn:hover {
-		background: rgba(255, 255, 255, 0.08);
+		background: rgba(255, 255, 255, 0.1);
 		color: var(--text);
 	}
 
