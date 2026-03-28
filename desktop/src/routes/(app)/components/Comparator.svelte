@@ -51,18 +51,22 @@
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
 
-	// Listen for gem-detected events from Rust OCR (desktop-native, no pairing needed)
+	// Listen for gem-detected events from Rust OCR.
+	// Rust emits one gem at a time as a string. Accumulate up to 3, then auto-compare.
 	$effect(() => {
 		let cancelled = false;
-		const promise = listen<{ gems: string[]; variant: string }>('gem-detected', (event) => {
+		const promise = listen<string>('gem-detected', (event) => {
 			if (cancelled) return;
-			const { gems, variant: detectedVariant } = event.payload;
-			if (VARIANTS.includes(detectedVariant) && detectedVariant !== variant) {
-				variant = detectedVariant;
-			}
-			selectedGems = gems.slice(0, 3);
+			const gemName = event.payload;
+			if (!gemName || selectedGems.includes(gemName)) return;
+			if (selectedGems.length >= 3) return;
+			selectedGems = [...selectedGems, gemName];
 			loadResults();
-			fetchTradeDataForAll();
+			if (autoTradeDisabled) {
+				fetchTradeCacheOnly(gemName);
+			} else {
+				fetchTradeData(gemName);
+			}
 		});
 
 		return () => {
