@@ -903,10 +903,12 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
-            // Load persisted settings and apply to state
+            // Load persisted settings and apply to state.
+            // If no settings file exists, write defaults so the file is always present.
             let saved = settings::load(&handle);
             let state = handle.state::<AppState>();
             settings::apply_to_state(&saved, &state);
+            persist_settings(&handle);
 
             // Restore window position/size from saved settings
             if let Some(ref win_settings) = saved.window {
