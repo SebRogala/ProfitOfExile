@@ -265,8 +265,11 @@ async fn start_scanning(app: AppHandle) -> Result<(), String> {
     emit_status(&app);
 
     let app_capture = app.clone();
-    tauri::async_runtime::spawn(async move {
-        run_capture_loop(&app_capture).await;
+    // Capture loop uses blocking Windows COM APIs (screen capture + OCR).
+    // Must run on a dedicated OS thread — tokio's runtime and spawn_blocking
+    // pool both cause deadlocks with apartment-threaded WinRT objects.
+    std::thread::spawn(move || {
+        run_capture_loop_blocking(&app_capture);
     });
 
     Ok(())
@@ -474,10 +477,9 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     }
 }
 
-/// Capture loop: periodically captures the screen, runs OCR for gem names
-/// AND font panel craft options. Tracks full font session for statistics.
-/// Runs until the lab state leaves PickingGems.
-async fn run_capture_loop(app: &AppHandle) {
+/// Blocking capture loop for a dedicated OS thread.
+/// Delegates async work (network) to tauri::async_runtime::spawn.
+fn run_capture_loop_blocking(app: &AppHandle) {
     let state = app.state::<AppState>();
     app_log(app, "Capture loop started".to_string());
 
@@ -485,7 +487,7 @@ async fn run_capture_loop(app: &AppHandle) {
 
     // Load gem names for matching — try server first, fall back to empty
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = fetch_gem_names(app, &server).await;
+    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(app, &server));
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
     app_log(app, format!("Loaded {} gem names for matching", gem_names.len()));
 
@@ -512,26 +514,20 @@ async fn run_capture_loop(app: &AppHandle) {
         loop_count += 1;
 
         // --- Region 1: Gem tooltip OCR ---
-        // Screen capture + Windows OCR are blocking calls — run off the async runtime.
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let gem_ocr_result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+        let gem_ocr_result: Result<Vec<String>, String> = (|| {
             let img = capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h)?;
             let processed = capture::preprocess_for_ocr(&img);
             ocr::recognize_text(&processed)
-        }).await;
+        })();
 
         match gem_ocr_result {
             Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Gem capture task failed: {}", e));
-                }
-            }
-            Ok(Err(e)) => {
-                if loop_count % 20 == 1 {
                     app_log(app, format!("Gem capture/OCR failed: {}", e));
                 }
             }
-            Ok(Ok(lines)) => {
+            Ok(lines) => {
                 let candidates = ocr::extract_gem_candidates(&lines);
                 let mut best: Option<gem_matcher::GemMatch> = None;
                 for candidate in &candidates {
@@ -563,29 +559,24 @@ async fn run_capture_loop(app: &AppHandle) {
                         });
                     }
                 }
-            } // Ok(Ok(lines))
+            } // Ok(lines)
         } // match gem_ocr_result
 
         // --- Region 2: Font panel OCR ---
         let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let font_ocr_result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+        let font_ocr_result: Result<Vec<String>, String> = (|| {
             let img = capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h)?;
             let processed = capture::preprocess_for_ocr(&img);
             ocr::recognize_text(&processed)
-        }).await;
+        })();
 
         match font_ocr_result {
             Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Font capture task failed: {}", e));
-                }
-            }
-            Ok(Err(e)) => {
-                if loop_count % 20 == 1 {
                     app_log(app, format!("Font capture/OCR failed: {}", e));
                 }
             }
-            Ok(Ok(lines)) => {
+            Ok(lines) => {
                 let panel = font_parser::parse_font_panel(&lines);
 
                 if panel.font_active {
@@ -654,11 +645,11 @@ async fn run_capture_loop(app: &AppHandle) {
                         session_rounds.clear();
                     }
                 }
-            } // Ok(Ok(lines))
+            } // Ok(lines)
         } // match font_ocr_result
 
         // Capture every 500ms
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     // If session has unsent rounds on exit, send them
@@ -674,7 +665,10 @@ async fn run_capture_loop(app: &AppHandle) {
             "pair_code": pair,
             "rounds": session_rounds,
         });
-        send_font_session(app, &server, session_data).await;
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn(async move {
+            send_font_session(&app_clone, &server, session_data).await;
+        });
     }
 }
 
@@ -809,8 +803,8 @@ fn spawn_log_watcher(app: AppHandle) {
                                     lab_state::LabState::PickingGems;
 
                                 let app_capture = app.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    run_capture_loop(&app_capture).await;
+                                std::thread::spawn(move || {
+                                    run_capture_loop_blocking(&app_capture);
                                 });
                             }
                             lab_state::LabEvent::ZoneChanged { area } => {
