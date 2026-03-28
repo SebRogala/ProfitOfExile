@@ -1,40 +1,16 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 
-	let pairCode = $state('...');
-	const PROD_URL = 'https://poe.softsolution.pro';
-	const LOCAL_URL = 'https://profitofexile.localhost';
-	let status = $state<any>({ state: 'Loading...', server_url: PROD_URL, detected_gems: [] });
+	let status = $state<any>({ state: 'Loading...', detected_gems: [] });
 	let testResult = $state('');
 	let sending = $state(false);
 	let logs = $state<string[]>([]);
 
 	// Poll status — runs immediately and every second
 	setInterval(() => {
-		invoke('get_pair_code').then((c) => { pairCode = c as string; }).catch(() => {});
 		invoke('get_status').then((s) => { status = s; }).catch(() => {});
 		invoke('get_logs').then((l) => { logs = l as string[]; }).catch(() => {});
 	}, 1000);
-
-	function isDebug(): boolean {
-		return (status?.server_url || PROD_URL) === LOCAL_URL;
-	}
-
-	async function toggleDebug() {
-		const newUrl = isDebug() ? PROD_URL : LOCAL_URL;
-		await invoke('set_server_url', { url: newUrl });
-		status = await invoke('get_status');
-	}
-
-	function pairUrl(): string {
-		const base = status?.server_url || PROD_URL;
-		return `${base}/lab?pair=${pairCode}`;
-	}
-
-	async function regeneratePair() {
-		pairCode = await invoke('regenerate_pair_code');
-		status = await invoke('get_status');
-	}
 
 	async function sendTestGems() {
 		sending = true;
@@ -184,25 +160,6 @@
 </script>
 
 <main>
-	<div class="title-row">
-		<div>
-			<h1>ProfitOfExile</h1>
-			<p class="subtitle">Desktop Screen Reader</p>
-		</div>
-		<button class="btn-debug" class:active={isDebug()} onclick={toggleDebug}>
-			{isDebug() ? 'DEBUG' : 'PROD'}
-		</button>
-	</div>
-
-	<section class="pair">
-		<div class="section-header">
-			<h2>Pair with Browser</h2>
-			<button class="btn-small" onclick={regeneratePair}>New Code</button>
-		</div>
-		<a href={pairUrl()} target="_blank" rel="noopener">{pairUrl()}</a>
-		<p class="code">{pairCode}</p>
-	</section>
-
 	<section class="status">
 		<div class="section-header">
 			<h2>Status</h2>
@@ -228,7 +185,7 @@
 	<section class="region">
 		<h2>Capture Region</h2>
 		<p class="hint">
-			({status?.gem_region?.x}, {status?.gem_region?.y}) → {status?.gem_region?.w}x{status?.gem_region?.h}
+			({status?.gem_region?.x}, {status?.gem_region?.y}) &rarr; {status?.gem_region?.w}x{status?.gem_region?.h}
 		</p>
 		{#if overlayVisible}
 			<p class="hint" style="color: var(--warning)">Position the red rectangle over the gem name area, then save.</p>
@@ -253,12 +210,12 @@
 				<p class="result error">{tradeResult.error}</p>
 			{:else}
 				<div class="trade-result">
-					<p><strong>{tradeResult.gem}</strong> ({tradeResult.variant}) — {tradeResult.total} total</p>
-					<p>Signals: {tradeResult.signals?.sellerConcentration} · {tradeResult.signals?.cheapestStaleness} · {tradeResult.signals?.uniqueAccounts} sellers</p>
+					<p><strong>{tradeResult.gem}</strong> ({tradeResult.variant}) &mdash; {tradeResult.total} total</p>
+					<p>Signals: {tradeResult.signals?.sellerConcentration} &middot; {tradeResult.signals?.cheapestStaleness} &middot; {tradeResult.signals?.uniqueAccounts} sellers</p>
 					{#if tradeResult.listings?.length > 0}
 						<div class="log-list" style="max-height: 100px; margin-top: 0.5rem;">
 							{#each tradeResult.listings as l}
-								<div class="log-line">{l.price} {l.currency} — {l.account}</div>
+								<div class="log-line">{l.price} {l.currency} &mdash; {l.account}</div>
 							{/each}
 						</div>
 					{/if}
@@ -310,39 +267,8 @@
 		padding: 1.5rem;
 		max-width: 400px;
 		margin: 0 auto;
-	}
-
-	.title-row {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		margin-bottom: 1.5rem;
-	}
-
-	h1 {
-		color: var(--accent);
-		font-size: 1.4rem;
-	}
-
-	.subtitle {
-		color: var(--text-muted);
-	}
-
-	.btn-debug {
-		background: transparent;
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		padding: 0.2rem 0.6rem;
-		border-radius: 4px;
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.05em;
-		cursor: pointer;
-	}
-
-	.btn-debug.active {
-		border-color: var(--warning);
-		color: var(--warning);
+		overflow-y: auto;
+		flex: 1;
 	}
 
 	section {
@@ -369,20 +295,6 @@
 
 	.section-header h2 {
 		margin-bottom: 0;
-	}
-
-	a {
-		color: var(--accent);
-		word-break: break-all;
-		font-size: 0.9rem;
-	}
-
-	.code {
-		font-size: 2rem;
-		font-weight: bold;
-		letter-spacing: 0.3em;
-		text-align: center;
-		margin-top: 0.5rem;
 	}
 
 	.state {
@@ -521,14 +433,5 @@
 		border-radius: 4px;
 		font-size: 0.75rem;
 		margin-bottom: 0.3rem;
-	}
-
-	ul {
-		list-style: none;
-	}
-
-	li {
-		padding: 0.3rem 0;
-		border-bottom: 1px solid var(--border);
 	}
 </style>
