@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../../app.css';
 	import { invoke } from '@tauri-apps/api/core';
+	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
@@ -15,6 +16,22 @@
 		const next = !sidebarOpen;
 		invoke('set_sidebar_open', { open: next }).catch(e => console.error('set_sidebar_open failed:', e));
 	}
+
+	// Ctrl+Shift+F12 toggles devtools in production builds
+	$effect(() => {
+		function handleKeydown(e: KeyboardEvent) {
+			if (e.ctrlKey && e.shiftKey && e.key === 'F12') {
+				e.preventDefault();
+				const win = getCurrentWebviewWindow();
+				win.isDevtoolsOpen().then(open => {
+					if (open) win.closeDevtools();
+					else win.openDevtools();
+				}).catch(() => {});
+			}
+		}
+		window.addEventListener('keydown', handleKeydown);
+		return () => window.removeEventListener('keydown', handleKeydown);
+	});
 
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
