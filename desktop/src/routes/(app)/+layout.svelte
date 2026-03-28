@@ -3,7 +3,7 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
-	import { appStatus, initStatusStore } from '$lib/stores/status.svelte';
+	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { onMount } from 'svelte';
 
 	let { children } = $props();
@@ -16,7 +16,7 @@
 </script>
 
 <div class="app-shell">
-	<TopBar status={appStatus} pairCode={appStatus?.pair_code ?? '....'} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
+	<TopBar status={store.status} pairCode={store.status?.pair_code ?? '....'} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} />
 		<main class="content">

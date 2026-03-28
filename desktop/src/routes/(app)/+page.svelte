@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { appStatus, appLogs } from '$lib/stores/status.svelte';
+	import { store } from '$lib/stores/status.svelte';
 
 	let testResult = $state('');
 	let sending = $state(false);
@@ -57,8 +57,8 @@
 <div class="lab-page">
 	<section class="status">
 		<h2>Status</h2>
-		<div class="state">{appStatus?.state || 'Loading...'}</div>
-		{#if appStatus?.state === 'PickingGems'}
+		<div class="state">{store.status?.state || 'Loading...'}</div>
+		{#if store.status?.state === 'PickingGems'}
 			<button class="btn-action btn-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop Scanning</button>
 		{:else}
 			<button class="btn-action" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Start Scanning</button>
@@ -114,13 +114,13 @@
 		{/if}
 	</section>
 
-	{#if appLogs.length > 0}
+	{#if store.logs.length > 0}
 		<section class="logs">
 			<div class="section-header">
 				<h2>Logs</h2>
 			</div>
 			<div class="log-list">
-				{#each appLogs.toReversed() as line}
+				{#each store.logs.toReversed() as line}
 					<div class="log-line" class:log-error={line.includes('failed') || line.includes('error')}>{line}</div>
 				{/each}
 			</div>

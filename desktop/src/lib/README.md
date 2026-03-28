@@ -6,7 +6,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 
 | File | Export | Description |
 |------|--------|-------------|
-| `stores/status.svelte.ts` | `appStatus`, `appLogs`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. All pages read `appStatus` and `appLogs` reactively. |
+| `stores/status.svelte.ts` | `store`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. Read `store.status` and `store.logs` reactively. |
 
 ## Components
 

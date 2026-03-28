@@ -5,17 +5,20 @@
  * state mutation. The frontend subscribes once on app boot.
  *
  * Usage:
- *   import { appStatus, appLogs, initStatusStore } from '$lib/stores/status.svelte';
+ *   import { store, initStatusStore } from '$lib/stores/status.svelte';
+ *   // Read: store.status, store.logs
  *   // Call initStatusStore() once from root layout
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-/** Full app status from Rust AppState. Updates on every state change. */
-export let appStatus = $state<any>(null);
-
-/** Log entries from Rust. Updates on every new log. */
-export let appLogs = $state<string[]>([]);
+/** Reactive store — mutate properties, never reassign the export. */
+export const store = $state({
+	/** Full app status from Rust AppState. */
+	status: null as any,
+	/** Log entries from Rust. */
+	logs: [] as string[],
+});
 
 /**
  * Initialize the status store — loads initial state, subscribes to events.
@@ -25,21 +28,21 @@ export let appLogs = $state<string[]>([]);
 export async function initStatusStore(): Promise<() => void> {
 	// Initial load
 	try {
-		appStatus = await invoke('get_status');
+		store.status = await invoke('get_status');
 	} catch {
 		// Tauri not ready yet — events will catch up
 	}
 	try {
-		appLogs = await invoke('get_logs') as string[];
+		store.logs = await invoke('get_logs') as string[];
 	} catch {}
 
 	// Subscribe to backend events
 	const unlistenStatus = await listen('status-changed', (event) => {
-		appStatus = event.payload;
+		store.status = event.payload;
 	});
 
 	const unlistenLogs = await listen('logs-changed', (event) => {
-		appLogs = event.payload as string[];
+		store.logs = event.payload as string[];
 	});
 
 	return () => {
