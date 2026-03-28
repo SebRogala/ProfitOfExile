@@ -72,9 +72,12 @@ fn build_status(state: &AppState) -> AppStatus {
 }
 
 /// Save current settings to disk. Call after any persistent state change.
+/// Preserves window position from the existing file (only saved on close).
 fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let s = settings::from_state(&state);
+    let existing = settings::load(app);
+    let mut s = settings::from_state(&state);
+    s.window = existing.window; // preserve window settings from last close
     settings::save(app, &s);
 }
 
@@ -477,7 +480,7 @@ async fn run_capture_loop(app: &AppHandle) {
 
         // --- Region 1: Gem tooltip OCR ---
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Ok(img) = capture::capture_region(gem_region.x as u32, gem_region.y as u32, gem_region.w, gem_region.h) {
+        if let Ok(img) = capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h) {
             let processed = capture::preprocess_for_ocr(&img);
             if let Ok(lines) = ocr::recognize_text(&processed) {
                 let candidates = ocr::extract_gem_candidates(&lines);
@@ -516,7 +519,7 @@ async fn run_capture_loop(app: &AppHandle) {
 
         // --- Region 2: Font panel OCR ---
         let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        if let Ok(img) = capture::capture_region(font_region.x as u32, font_region.y as u32, font_region.w, font_region.h) {
+        if let Ok(img) = capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h) {
             let processed = capture::preprocess_for_ocr(&img);
             if let Ok(lines) = ocr::recognize_text(&processed) {
                 let panel = font_parser::parse_font_panel(&lines);

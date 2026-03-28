@@ -84,7 +84,7 @@ Use `app_log(&app, msg)` — it appends to the in-memory log buffer AND emits `"
 - `app.emit("custom-event", payload)` — for specific events like `"gem-detected"`
 
 ### Settings Persistence
-`settings.rs` saves/loads JSON to `%AppData%/profitofexile/settings.json`. Uses `#[serde(default)]` for forward compatibility. Persisted fields: `client_txt_path`, `server_url`, `gem_region`. Call `persist_settings(&app)` after mutating any of these.
+`settings.rs` saves/loads JSON to `%AppData%/profitofexile/settings.json`. Uses `#[serde(default)]` for forward compatibility. Persisted fields: `client_txt_path`, `server_url`, `gem_region`, `font_region`, `window` (position/size/maximized). Call `persist_settings(&app)` after mutating any of these. Window settings are saved separately on close event.
 
 ### Mutex Handling
 Always use `.unwrap_or_else(|e| e.into_inner())` on mutex locks — recovers from poisoned mutexes instead of panicking.
