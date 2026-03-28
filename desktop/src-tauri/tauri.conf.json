@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "ProfitOfExile",
-        "width": 420,
-        "height": 640,
+        "width": 1024,
+        "height": 768,
         "resizable": true,
         "fullscreen": false
       }
