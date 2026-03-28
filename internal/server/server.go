@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/lab"
@@ -43,6 +44,9 @@ type RouterConfig struct {
 	League string
 	// Analyzer is the lab analysis engine for admin recalculation endpoint.
 	Analyzer *lab.Analyzer
+	// AllowedOrigins for CORS (desktop app needs cross-origin access).
+	// Example: ["http://localhost:1420", "tauri://localhost"]
+	AllowedOrigins []string
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -54,6 +58,16 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(handlers.SlogRecoverer)
+
+	if len(cfg.AllowedOrigins) > 0 {
+		r.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   cfg.AllowedOrigins,
+			AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+			AllowedHeaders:   []string{"Content-Type", "Authorization"},
+			AllowCredentials: false,
+			MaxAge:           300,
+		}))
+	}
 
 	r.Get("/api/health", handlers.Health(pinger))
 

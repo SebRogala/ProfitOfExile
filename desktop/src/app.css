@@ -7,6 +7,20 @@
 	--accent: #e94560;
 	--success: #4ade80;
 	--warning: #fbbf24;
+
+	/* Lab dashboard theme — matches web frontend for zero-change component migration */
+	--color-lab-bg: #0f1117;
+	--color-lab-surface: #1a1d27;
+	--color-lab-border: #2a2d37;
+	--color-lab-text: #e4e4e7;
+	--color-lab-text-secondary: #9ca3af;
+	--color-lab-text-muted: #888;
+	--color-lab-green: #22c55e;
+	--color-lab-red: #ef4444;
+	--color-lab-yellow: #eab308;
+	--color-lab-blue: #3b82f6;
+	--color-lab-purple: #a855f7;
+	--color-lab-green-muted: #6b9e7a;
 }
 
 * {

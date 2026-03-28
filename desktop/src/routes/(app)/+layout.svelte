@@ -1,12 +1,20 @@
 <script lang="ts">
 	import '../../app.css';
+	import { invoke } from '@tauri-apps/api/core';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 
 	let { children } = $props();
-	let sidebarOpen = $state(true);
+
+	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).
+	let sidebarOpen = $derived(store.status?.sidebar_open ?? true);
+
+	function toggleSidebar() {
+		const next = !sidebarOpen;
+		invoke('set_sidebar_open', { open: next }).catch(e => console.error('set_sidebar_open failed:', e));
+	}
 
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
@@ -16,7 +24,7 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={() => sidebarOpen = !sidebarOpen} />
+		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={toggleSidebar} />
 		<main class="content">
 			{#if children}
 				{@render children()}

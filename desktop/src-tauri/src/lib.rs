@@ -42,6 +42,7 @@ pub struct AppStatus {
     pub server_url: String,
     pub gem_region: CaptureRegion,
     pub font_region: CaptureRegion,
+    pub sidebar_open: bool,
 }
 
 pub struct AppState {
@@ -53,6 +54,7 @@ pub struct AppState {
     pub logs: Mutex<Vec<String>>,
     pub gem_region: Mutex<CaptureRegion>,
     pub font_region: Mutex<CaptureRegion>,
+    pub sidebar_open: Mutex<bool>,
     pub trade_client: trade::TradeApiClient,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
@@ -68,6 +70,7 @@ fn build_status(state: &AppState) -> AppStatus {
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -186,6 +189,14 @@ fn restart_log_watcher(app: AppHandle) {
 fn set_server_url(url: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = url;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+#[tauri::command]
+fn set_sidebar_open(open: bool, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = open;
     persist_settings(&app);
     emit_status(&app);
 }
@@ -849,6 +860,7 @@ pub fn run() {
         logs: Mutex::new(Vec::new()),
         gem_region: Mutex::new(CaptureRegion::default()),
         font_region: Mutex::new(CaptureRegion::default_font_panel()),
+        sidebar_open: Mutex::new(true),
         trade_client: trade::TradeApiClient::new("Mirage"),
         watcher_cancel: Mutex::new(None),
     };
@@ -863,6 +875,7 @@ pub fn run() {
             set_client_txt_path,
             reset_client_txt_path,
             set_server_url,
+            set_sidebar_open,
             get_logs,
             get_gem_region,
             set_gem_region,

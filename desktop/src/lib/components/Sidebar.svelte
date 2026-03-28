@@ -11,16 +11,59 @@
 </script>
 
 {#if !open}
-<div class="sidebar-collapsed" onclick={onToggle} title="Expand sidebar">
-	<span class="collapse-icon">&#9654;</span>
-</div>
+<nav class="sidebar-collapsed">
+	<div class="collapsed-icons">
+		<a href="/" class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming">
+			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
+		</a>
+		<div class="collapsed-item disabled" title="Mapping (soon)">
+			<span class="icon">&#x1F5FA;&#xFE0F;</span>
+		</div>
+		<div class="collapsed-item disabled" title="Bosses (soon)">
+			<span class="icon">&#x1F479;</span>
+		</div>
+		<div class="collapsed-sep"></div>
+		<div class="collapsed-item disabled" title="Trade Lookup">
+			<span class="icon">&#x1F50D;</span>
+		</div>
+		<div class="collapsed-item disabled" title="Price Compare">
+			<span class="icon">&#x1F4CA;</span>
+		</div>
+		<a href="/dev" class="collapsed-item" class:active={currentPath === '/dev'} title="Dev Tools">
+			<span class="icon">&#x1F6E0;&#xFE0F;</span>
+		</a>
+		<div class="collapsed-sep"></div>
+		<a href="/settings" class="collapsed-item" class:active={currentPath === '/settings'} title="Settings">
+			<span class="icon">&#x2699;&#xFE0F;</span>
+		</a>
+	</div>
+	<div class="collapsed-overlays">
+		<div class="collapsed-overlay" title="Compass: off">
+			<span class="icon">&#x1F9ED;</span>
+			<span class="indicator off"></span>
+		</div>
+		<div class="collapsed-overlay" title="OCR: off">
+			<span class="icon">&#x1F441;</span>
+			<span class="indicator off"></span>
+		</div>
+		<div class="collapsed-overlay" title="Compare: off">
+			<span class="icon">&#x2696;&#xFE0F;</span>
+			<span class="indicator off"></span>
+		</div>
+		<div class="collapsed-overlay" title="Session: off">
+			<span class="icon">&#x1F4CB;</span>
+			<span class="indicator off"></span>
+		</div>
+	</div>
+	<button class="collapse-btn collapsed-expand" onclick={onToggle} title="Expand sidebar">&#9654;</button>
+</nav>
 {:else}
 <nav class="sidebar">
 	<div class="top">
 		<div class="section">
 			<div class="label">Strategies</div>
 			<a href="/" class="nav-item" class:active={currentPath === '/'}>
-				<span class="icon">&#x2697;&#xFE0F;</span>
+				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
 			</a>
 			<div class="nav-item disabled">
@@ -45,6 +88,10 @@
 				<span class="icon">&#x1F4CA;</span>
 				<span>Price Compare</span>
 			</div>
+			<a href="/dev" class="nav-item" class:active={currentPath === '/dev'}>
+				<span class="icon">&#x1F6E0;&#xFE0F;</span>
+				<span>Dev Tools</span>
+			</a>
 		</div>
 	</div>
 
@@ -141,6 +188,19 @@
 		text-align: center;
 	}
 
+	.lab-icon {
+		width: 22px;
+		height: 18px;
+		object-fit: contain;
+	}
+
+	.lab-icon-expanded {
+		width: 18px;
+		height: 14px;
+		object-fit: contain;
+		flex-shrink: 0;
+	}
+
 	.bottom {
 		border-top: 1px solid var(--border);
 		padding: 8px;
@@ -178,36 +238,121 @@
 	}
 
 	.sidebar-collapsed {
-		width: 28px;
+		width: 40px;
 		flex-shrink: 0;
 		background: var(--surface);
 		border-right: 1px solid var(--border);
 		display: flex;
-		align-items: flex-start;
-		padding-top: 8px;
-		justify-content: center;
-		cursor: pointer;
+		flex-direction: column;
 		height: 100%;
 	}
 
-	.sidebar-collapsed:hover {
-		background: rgba(255, 255, 255, 0.03);
+	.collapsed-icons {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 8px 0;
+		gap: 2px;
 	}
 
-	.collapse-icon {
-		color: var(--text-muted);
-		font-size: 10px;
-	}
-
-	.sidebar-collapsed:hover .collapse-icon {
+	.collapsed-item {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		border-radius: 5px;
 		color: var(--text);
+		text-decoration: none;
+		cursor: pointer;
+		font-size: 14px;
+	}
+
+	.collapsed-item:hover:not(.disabled) {
+		background: var(--border);
+	}
+
+	.collapsed-item.active {
+		background: var(--border);
+		color: var(--accent);
+	}
+
+	.collapsed-item.disabled {
+		color: var(--border);
+		cursor: default;
+	}
+
+	.collapsed-sep {
+		width: 24px;
+		height: 1px;
+		background: var(--border);
+		margin: 4px 0;
+	}
+
+	.collapsed-overlays {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		padding: 6px 0 8px;
+		border-top: 1px solid var(--border);
+	}
+
+	.collapsed-overlay {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 28px;
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 4px;
+	}
+
+	.collapsed-overlay:hover {
+		background: var(--border);
+	}
+
+	.indicator {
+		position: absolute;
+		bottom: 2px;
+		right: 4px;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+	}
+
+	.indicator.off {
+		background: var(--text-muted);
+		opacity: 0.4;
+	}
+
+	.indicator.always {
+		background: var(--success);
+		box-shadow: 0 0 4px rgba(74, 222, 128, 0.5);
+	}
+
+	.indicator.auto {
+		background: var(--warning);
+		box-shadow: 0 0 4px rgba(251, 191, 36, 0.5);
+	}
+
+	.collapsed-expand {
+		width: 100%;
+		border-top: 1px solid var(--border);
+		border-radius: 0;
+		margin-top: 6px;
+		padding: 10px 6px;
+		font-size: 14px !important;
 	}
 
 	.collapse-btn {
 		background: none;
 		border: none;
 		color: var(--text-muted);
-		font-size: 10px;
+		font-size: 12px;
 		cursor: pointer;
 		padding: 4px 6px;
 		border-radius: 3px;

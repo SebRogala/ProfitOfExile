@@ -20,6 +20,7 @@ pub struct Settings {
     pub gem_region: CaptureRegion,
     pub font_region: CaptureRegion,
     pub window: Option<WindowSettings>,
+    pub sidebar_open: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +40,7 @@ impl Default for Settings {
             gem_region: CaptureRegion::default(),
             font_region: CaptureRegion::default_font_panel(),
             window: None,
+            sidebar_open: true,
         }
     }
 }
@@ -115,6 +117,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         window: None, // Window settings are saved separately on close, not from AppState
+        sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -124,4 +127,5 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.gem_region.clone();
     *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.font_region.clone();
+    *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
 }
