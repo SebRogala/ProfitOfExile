@@ -560,13 +560,15 @@ fn run_capture_loop_blocking(app: &AppHandle) {
                             gem_match.name, gem_match.score, current_round_gems.len()
                         ));
 
-                        let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-                        gems.push(gem_match.name.clone());
+                        let all_gems = {
+                            let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+                            gems.push(gem_match.name.clone());
+                            let cloned = gems.clone();
+                            drop(gems); // Release lock BEFORE emit_status
+                            cloned
+                        };
                         if let Err(e) = app.emit("gem-detected", &gem_match.name) { log::warn!("emit gem-detected failed: {}", e); }
                         emit_status(app);
-
-                        let all_gems = gems.clone();
-                        drop(gems);
                         let app_clone = app.clone();
                         tauri::async_runtime::spawn(async move {
                             send_gems_to_server(&app_clone, all_gems).await;
