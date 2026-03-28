@@ -105,8 +105,8 @@
 	}
 
 	.logo {
-		width: 20px;
-		height: 20px;
+		width: 26px;
+		height: 26px;
 	}
 
 	.app-name {
