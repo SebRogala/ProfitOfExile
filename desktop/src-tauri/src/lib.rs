@@ -512,22 +512,26 @@ async fn run_capture_loop(app: &AppHandle) {
         loop_count += 1;
 
         // --- Region 1: Gem tooltip OCR ---
+        // Screen capture + Windows OCR are blocking calls — run off the async runtime.
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        match capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h) {
+        let gem_ocr_result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+            let img = capture::capture_region(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h)?;
+            let processed = capture::preprocess_for_ocr(&img);
+            ocr::recognize_text(&processed)
+        }).await;
+
+        match gem_ocr_result {
             Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Gem capture failed: {}", e));
+                    app_log(app, format!("Gem capture task failed: {}", e));
                 }
             }
-            Ok(img) => {
-            let processed = capture::preprocess_for_ocr(&img);
-            match ocr::recognize_text(&processed) {
-                Err(e) => {
-                    if loop_count % 20 == 1 {
-                        app_log(app, format!("Gem OCR failed: {}", e));
-                    }
+            Ok(Err(e)) => {
+                if loop_count % 20 == 1 {
+                    app_log(app, format!("Gem capture/OCR failed: {}", e));
                 }
-                Ok(lines) => {
+            }
+            Ok(Ok(lines)) => {
                 let candidates = ocr::extract_gem_candidates(&lines);
                 let mut best: Option<gem_matcher::GemMatch> = None;
                 for candidate in &candidates {
@@ -559,28 +563,29 @@ async fn run_capture_loop(app: &AppHandle) {
                         });
                     }
                 }
-            } // Ok(lines)
-            } // match ocr
-            } // Ok(img)
-        } // match capture region 1
+            } // Ok(Ok(lines))
+        } // match gem_ocr_result
 
         // --- Region 2: Font panel OCR ---
         let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        match capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h) {
+        let font_ocr_result = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+            let img = capture::capture_region(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h)?;
+            let processed = capture::preprocess_for_ocr(&img);
+            ocr::recognize_text(&processed)
+        }).await;
+
+        match font_ocr_result {
             Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Font capture failed: {}", e));
+                    app_log(app, format!("Font capture task failed: {}", e));
                 }
             }
-            Ok(img) => {
-            let processed = capture::preprocess_for_ocr(&img);
-            match ocr::recognize_text(&processed) {
-                Err(e) => {
-                    if loop_count % 20 == 1 {
-                        app_log(app, format!("Font OCR failed: {}", e));
-                    }
+            Ok(Err(e)) => {
+                if loop_count % 20 == 1 {
+                    app_log(app, format!("Font capture/OCR failed: {}", e));
                 }
-                Ok(lines) => {
+            }
+            Ok(Ok(lines)) => {
                 let panel = font_parser::parse_font_panel(&lines);
 
                 if panel.font_active {
@@ -649,10 +654,8 @@ async fn run_capture_loop(app: &AppHandle) {
                         session_rounds.clear();
                     }
                 }
-            } // Ok(lines)
-            } // match ocr
-            } // Ok(img)
-        } // match capture region 2
+            } // Ok(Ok(lines))
+        } // match font_ocr_result
 
         // Capture every 500ms
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
