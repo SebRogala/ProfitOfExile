@@ -94,18 +94,35 @@ fn emit_logs(app: &AppHandle) {
     if let Err(e) = app.emit("logs-changed", logs) { log::warn!("emit logs-changed failed: {}", e); }
 }
 
-/// Add a log entry and emit the updated logs to the frontend.
+/// Add a log entry: in-memory buffer (UI) + persistent file + emit to frontend.
 fn app_log(app: &AppHandle, msg: String) {
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let formatted = format!("[{}] {}", timestamp, msg);
+
+    // In-memory buffer for UI
     let state = app.state::<AppState>();
     {
         let mut logs = state.logs.lock().unwrap_or_else(|e| e.into_inner());
-        let timestamp = chrono::Local::now().format("%H:%M:%S");
-        logs.push(format!("[{}] {}", timestamp, msg));
+        logs.push(formatted.clone());
         if logs.len() > 50 {
             let excess = logs.len() - 50;
             logs.drain(0..excess);
         }
     }
+
+    // Persistent log file — same dir as settings
+    if let Ok(dir) = app.path().app_data_dir() {
+        let log_path = dir.join("app.log");
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = writeln!(file, "{}", formatted);
+        }
+    }
+
     emit_logs(app);
 }
 
