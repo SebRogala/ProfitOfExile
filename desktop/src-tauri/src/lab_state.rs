@@ -13,6 +13,7 @@ pub enum LabState {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub enum LabEvent {
     FontOpened,
     FontClosed,
@@ -30,6 +31,7 @@ impl LabStateMachine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn state(&self) -> &LabState {
         &self.state
     }
@@ -71,6 +73,7 @@ impl LabStateMachine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.state = LabState::Idle;
     }

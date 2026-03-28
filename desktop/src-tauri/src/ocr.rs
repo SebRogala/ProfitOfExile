@@ -108,6 +108,7 @@ pub fn extract_gem_candidates(lines: &[String]) -> Vec<String> {
 }
 
 /// Legacy single-candidate extraction (used by tests).
+#[allow(dead_code)]
 pub fn extract_gem_name(lines: &[String]) -> Option<String> {
     extract_gem_candidates(lines).into_iter().next()
 }
