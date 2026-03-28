@@ -426,7 +426,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     app_log(&app, format!("{} candidate lines to match", candidates.len()));
 
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = fetch_gem_names(app, &server).await;
+    let gem_names = fetch_gem_names(&app, &server).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names);
 
     let mut best_match: Option<gem_matcher::GemMatch> = None;
