@@ -26,27 +26,29 @@ export const store = $state({
  * Returns a cleanup function to unsubscribe.
  */
 export async function initStatusStore(): Promise<() => void> {
-	// Initial load — events from Rust setup may arrive before this,
-	// but invoke ensures we have data even if we missed the first emit.
-	try {
-		store.status = await invoke('get_status');
-	} catch (e) {
-		console.warn('Initial get_status failed (events will catch up):', e);
-	}
-	try {
-		store.logs = await invoke('get_logs') as string[];
-	} catch (e) {
-		console.warn('Initial get_logs failed:', e);
-	}
-
-	// Subscribe to backend events
+	// Subscribe to backend events first (so we don't miss any)
 	const unlistenStatus = await listen('status-changed', (event) => {
+		console.log('[store] status-changed event received');
 		store.status = event.payload;
 	});
 
 	const unlistenLogs = await listen('logs-changed', (event) => {
 		store.logs = event.payload as string[];
 	});
+
+	// Then do initial load as fallback
+	try {
+		const s = await invoke('get_status');
+		console.log('[store] initial get_status:', s);
+		store.status = s;
+	} catch (e) {
+		console.warn('[store] initial get_status failed:', e);
+	}
+	try {
+		store.logs = await invoke('get_logs') as string[];
+	} catch (e) {
+		console.warn('[store] initial get_logs failed:', e);
+	}
 
 	return () => {
 		unlistenStatus();
