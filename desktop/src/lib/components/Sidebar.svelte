@@ -1,7 +1,7 @@
 <script lang="ts">
 	let {
 		open = true,
-		currentPath = '/lab',
+		currentPath = '/',
 	}: {
 		open: boolean;
 		currentPath: string;
@@ -13,7 +13,7 @@
 	<div class="top">
 		<div class="section">
 			<div class="label">Strategies</div>
-			<a href="/lab" class="nav-item" class:active={currentPath === '/lab'}>
+			<a href="/" class="nav-item" class:active={currentPath === '/'}>
 				<span class="icon">&#x2697;&#xFE0F;</span>
 				<span>Lab Farming</span>
 			</a>
