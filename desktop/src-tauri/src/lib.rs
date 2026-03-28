@@ -621,7 +621,11 @@ pub fn run() {
             test_ocr_on_image,
         ])
         .setup(|app| {
-            spawn_log_watcher(app.handle().clone());
+            let handle = app.handle().clone();
+            spawn_log_watcher(handle.clone());
+            // Emit initial status so frontend gets data on boot
+            emit_status(&handle);
+            emit_logs(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())
