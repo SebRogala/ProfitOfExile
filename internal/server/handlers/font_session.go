@@ -63,6 +63,10 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "too many rounds (max 20)")
 			return
 		}
+		if body.PairCode != "" && !pairPattern.MatchString(body.PairCode) {
+			jsonError(w, http.StatusBadRequest, "invalid pair_code format")
+			return
+		}
 
 		ctx := r.Context()
 
