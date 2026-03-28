@@ -49,6 +49,8 @@ pub fn build_result(
         (0.0, 0.0, 0.0, 0.0)
     };
 
+    let signals = compute_signals(&listings);
+
     TradeLookupResult {
         gem: gem.to_string(),
         variant: variant.to_string(),
@@ -58,7 +60,7 @@ pub fn build_result(
         price_spread,
         median_top10: median,
         listings,
-        signals: compute_signals(&listings),
+        signals,
         divine_price: divine_rate,
         trade_url,
         fetched_at: Utc::now(),
