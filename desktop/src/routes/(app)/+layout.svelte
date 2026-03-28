@@ -22,7 +22,9 @@
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={() => sidebarOpen = !sidebarOpen} />
 		<main class="content">
-			{@render children()}
+			{#if children}
+				{@render children()}
+			{/if}
 		</main>
 	</div>
 </div>
