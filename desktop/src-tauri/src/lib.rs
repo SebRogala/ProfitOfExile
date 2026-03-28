@@ -555,56 +555,53 @@ fn spawn_log_watcher(app: AppHandle) {
                         Some(l) => l,
                         None => break,
                     };
-            let state = app.state::<AppState>();
-            let preview = if line.len() > 60 { &line[..60] } else { &line };
-            app_log(&app, format!("Log: {}", preview));
+                    let state = app.state::<AppState>();
+                    let preview = if line.len() > 60 { &line[..60] } else { &line };
+                    app_log(&app, format!("Log: {}", preview));
 
-            if let Some(event) = state_machine.process_line(&line) {
-                let state = app.state::<AppState>();
-                match &event {
-                    lab_state::LabEvent::FontOpened => {
-                        app_log(&app, "Font opened! Starting screen reader.".to_string());
-                        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                            lab_state::LabState::FontReady;
-                        detected_gems.clear();
-                        *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Vec::new();
-                        emit_status(&app);
-                        state_machine.start_picking();
-                        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                            lab_state::LabState::PickingGems;
+                    if let Some(event) = state_machine.process_line(&line) {
+                        let state = app.state::<AppState>();
+                        match &event {
+                            lab_state::LabEvent::FontOpened => {
+                                app_log(&app, "Font opened! Starting screen reader.".to_string());
+                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    lab_state::LabState::FontReady;
+                                detected_gems.clear();
+                                *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Vec::new();
+                                emit_status(&app);
+                                state_machine.start_picking();
+                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    lab_state::LabState::PickingGems;
 
-                        // Start screen capture loop in background
-                        let app_capture = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            run_capture_loop(&app_capture).await;
-                        });
-                    }
-                    lab_state::LabEvent::ZoneChanged { area } => {
-                        app_log(&app, format!("Zone changed: {} — stopping", area));
-                        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                            lab_state::LabState::Idle;
+                                let app_capture = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    run_capture_loop(&app_capture).await;
+                                });
+                            }
+                            lab_state::LabEvent::ZoneChanged { area } => {
+                                app_log(&app, format!("Zone changed: {} — stopping", area));
+                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    lab_state::LabState::Idle;
 
-                        // Send collected gems if any
-                        if !detected_gems.is_empty() {
-                            let gems = detected_gems.clone();
-                            let app_clone = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                send_gems_to_server(&app_clone, gems).await;
-                            });
-                            detected_gems.clear();
+                                if !detected_gems.is_empty() {
+                                    let gems = detected_gems.clone();
+                                    let app_clone = app.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        send_gems_to_server(&app_clone, gems).await;
+                                    });
+                                    detected_gems.clear();
+                                }
+
+                                emit_status(&app);
+                            }
+                            lab_state::LabEvent::FontClosed => {
+                                app_log(&app, "Font closed".to_string());
+                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    lab_state::LabState::Idle;
+                                emit_status(&app);
+                            }
                         }
-
-                        emit_status(&app);
-                    }
-                    lab_state::LabEvent::FontClosed => {
-                        app_log(&app, "Font closed".to_string());
-                        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                            lab_state::LabState::Idle;
-                        emit_status(&app);
-                    }
-                }
-            }
                     }
                 }
             }
