@@ -261,6 +261,7 @@ async fn start_scanning(app: AppHandle) -> Result<(), String> {
 
     app_log(&app, "Manual scan started".to_string());
     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+    if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
     *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::PickingGems;
     emit_status(&app);
 
@@ -813,6 +814,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                 detected_gems.clear();
                                 *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
                                     Vec::new();
+                                if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
                                 emit_status(&app);
                                 state_machine.start_picking();
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =

@@ -55,7 +55,7 @@
 	// Rust emits one gem at a time as a string. Accumulate up to 3, then auto-compare.
 	$effect(() => {
 		let cancelled = false;
-		const promise = listen<string>('gem-detected', (event) => {
+		const gemPromise = listen<string>('gem-detected', (event) => {
 			if (cancelled) return;
 			const gemName = event.payload;
 			if (!gemName || selectedGems.includes(gemName)) return;
@@ -69,9 +69,16 @@
 			}
 		});
 
+		// Auto-clear when new font round starts or manual scan restarts
+		const clearPromise = listen('gems-cleared', () => {
+			if (cancelled) return;
+			clearAll();
+		});
+
 		return () => {
 			cancelled = true;
-			promise.then(unlisten => unlisten());
+			gemPromise.then(unlisten => unlisten());
+			clearPromise.then(unlisten => unlisten());
 		};
 	});
 
