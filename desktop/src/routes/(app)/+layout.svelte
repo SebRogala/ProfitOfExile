@@ -1,6 +1,8 @@
 <script lang="ts">
 	import '../../app.css';
 	import TopBar from '$lib/components/TopBar.svelte';
+	import Sidebar from '$lib/components/Sidebar.svelte';
+	import { page } from '$app/stores';
 	import { invoke } from '@tauri-apps/api/core';
 
 	let { children } = $props();
@@ -18,7 +20,10 @@
 <div class="app-shell">
 	<TopBar {status} {pairCode} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
 	<div class="app-body">
-		{@render children()}
+		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} />
+		<main class="content">
+			{@render children()}
+		</main>
 	</div>
 </div>
 
@@ -35,5 +40,11 @@
 		flex-direction: row;
 		flex: 1;
 		overflow: hidden;
+	}
+
+	.content {
+		flex: 1;
+		overflow-y: auto;
+		padding: 16px;
 	}
 </style>
