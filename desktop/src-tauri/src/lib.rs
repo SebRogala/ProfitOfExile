@@ -443,7 +443,8 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     }
 }
 
-/// Capture loop: periodically captures the screen, runs OCR, and matches gem names.
+/// Capture loop: periodically captures the screen, runs OCR for gem names
+/// AND font panel craft options. Tracks full font session for statistics.
 /// Runs until the lab state leaves PickingGems.
 async fn run_capture_loop(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -457,6 +458,13 @@ async fn run_capture_loop(app: &AppHandle) {
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
     app_log(app, format!("Loaded {} gem names for matching", gem_names.len()));
 
+    // Font panel tracking
+    let mut font_miss_count = 0u32;
+    let mut session_rounds: Vec<serde_json::Value> = Vec::new();
+    let mut current_round_options: Option<Vec<font_parser::CraftOption>> = None;
+    let mut current_round_gems: Vec<String> = Vec::new();
+    let mut last_crafts_remaining: Option<i32> = None;
+
     loop {
         // Check if we're still in PickingGems state
         {
@@ -467,63 +475,164 @@ async fn run_capture_loop(app: &AppHandle) {
             }
         }
 
-        // Capture configured region
-        let region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        match capture::capture_region(region.x as u32, region.y as u32, region.w, region.h) {
-            Ok(img) => {
-                // Pre-process for OCR
-                let processed = capture::preprocess_for_ocr(&img);
-
-                // Run OCR
-                match ocr::recognize_text(&processed) {
-                    Ok(lines) => {
-                        if !lines.is_empty() {
-                            let preview: Vec<&str> = lines.iter().take(3).map(|s| s.as_str()).collect();
-                            app_log(app, format!("OCR ({} lines): {:?}", lines.len(), preview));
-                        }
-                        // Try all candidates against the matcher
-                        let candidates = ocr::extract_gem_candidates(&lines);
-                        let mut best: Option<gem_matcher::GemMatch> = None;
-                        for candidate in &candidates {
-                            if let Some(m) = matcher.match_gem(candidate) {
-                                if best.as_ref().map_or(true, |b| m.score > b.score) {
-                                    best = Some(m);
-                                }
-                            }
-                        }
-                        if let Some(gem_match) = best {
-                            if !seen_gems.contains(&gem_match.name) {
-                                seen_gems.insert(gem_match.name.clone());
-                                app_log(app, format!(
-                                    "Gem detected: {} (score: {:.2}, raw: {})",
-                                    gem_match.name, gem_match.score, gem_match.ocr_raw
-                                ));
-
-                                let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-                                gems.push(gem_match.name.clone());
-                                let _ = app.emit("gem-detected", &gem_match.name);
-
-                                let all_gems = gems.clone();
-                                drop(gems);
-                                let app_clone = app.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    send_gems_to_server(&app_clone, all_gems).await;
-                                });
-                            }
+        // --- Region 1: Gem tooltip OCR ---
+        let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Ok(img) = capture::capture_region(gem_region.x as u32, gem_region.y as u32, gem_region.w, gem_region.h) {
+            let processed = capture::preprocess_for_ocr(&img);
+            if let Ok(lines) = ocr::recognize_text(&processed) {
+                let candidates = ocr::extract_gem_candidates(&lines);
+                let mut best: Option<gem_matcher::GemMatch> = None;
+                for candidate in &candidates {
+                    if let Some(m) = matcher.match_gem(candidate) {
+                        if best.as_ref().map_or(true, |b| m.score > b.score) {
+                            best = Some(m);
                         }
                     }
-                    Err(e) => {
-                        app_log(app, format!("OCR failed: {}", e));
+                }
+                if let Some(gem_match) = best {
+                    if !seen_gems.contains(&gem_match.name) {
+                        seen_gems.insert(gem_match.name.clone());
+                        current_round_gems.push(gem_match.name.clone());
+                        app_log(app, format!(
+                            "Gem detected: {} (score: {:.2}) [{}/3]",
+                            gem_match.name, gem_match.score, current_round_gems.len()
+                        ));
+
+                        let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+                        gems.push(gem_match.name.clone());
+                        let _ = app.emit("gem-detected", &gem_match.name);
+                        emit_status(app);
+
+                        let all_gems = gems.clone();
+                        drop(gems);
+                        let app_clone = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            send_gems_to_server(&app_clone, all_gems).await;
+                        });
                     }
                 }
             }
-            Err(e) => {
-                app_log(app, format!("Screen capture failed: {}", e));
+        }
+
+        // --- Region 2: Font panel OCR ---
+        let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Ok(img) = capture::capture_region(font_region.x as u32, font_region.y as u32, font_region.w, font_region.h) {
+            let processed = capture::preprocess_for_ocr(&img);
+            if let Ok(lines) = ocr::recognize_text(&processed) {
+                let panel = font_parser::parse_font_panel(&lines);
+
+                if panel.font_active {
+                    font_miss_count = 0;
+
+                    // Store current round options (first time we see them this round)
+                    if current_round_options.is_none() && !panel.options.is_empty() {
+                        app_log(app, format!(
+                            "Font panel: {} options detected{}",
+                            panel.options.len(),
+                            if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" }
+                        ));
+                        for opt in &panel.options {
+                            app_log(app, format!("  - {} {}", opt.option_type,
+                                opt.value.map(|v| format!("({})", v)).unwrap_or_default()));
+                        }
+                        current_round_options = Some(panel.options.clone());
+                        last_crafts_remaining = panel.crafts_remaining;
+
+                        if panel.jackpot_detected {
+                            let _ = app.emit("font-jackpot", true);
+                        }
+                    }
+                } else {
+                    font_miss_count += 1;
+
+                    // If we had options and now don't → round completed (user used a craft)
+                    if current_round_options.is_some() {
+                        // Save the completed round
+                        let round = serde_json::json!({
+                            "craft_options": current_round_options.take().unwrap(),
+                            "gems_offered": if current_round_gems.is_empty() { serde_json::Value::Null } else { serde_json::json!(current_round_gems.clone()) },
+                            "gem_picked": current_round_gems.last().cloned(),
+                            "crafts_remaining": last_crafts_remaining,
+                        });
+                        session_rounds.push(round);
+                        app_log(app, format!("Font round {} complete ({} gems captured)", session_rounds.len(), current_round_gems.len()));
+
+                        // Reset for next round
+                        current_round_gems.clear();
+                        seen_gems.clear();
+                    }
+
+                    // 3 consecutive misses → font is done
+                    if font_miss_count >= 3 && !session_rounds.is_empty() {
+                        app_log(app, format!("Font session complete: {} rounds", session_rounds.len()));
+
+                        // Send session to server
+                        let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        let session_data = serde_json::json!({
+                            "lab_type": "Unknown", // TODO: detect from Client.txt
+                            "total_crafts": session_rounds.len(),
+                            "variant": "20/20",
+                            "device_id": "desktop",
+                            "pair_code": pair,
+                            "rounds": session_rounds.clone(),
+                        });
+
+                        let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        let app_clone = app.clone();
+                        let data = session_data.clone();
+                        tauri::async_runtime::spawn(async move {
+                            send_font_session(&app_clone, &server, data).await;
+                        });
+
+                        session_rounds.clear();
+                    }
+                }
             }
         }
 
         // Capture every 500ms
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    // If session has unsent rounds on exit, send them
+    if !session_rounds.is_empty() {
+        app_log(app, format!("Sending {} unsent font rounds on exit", session_rounds.len()));
+        let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let session_data = serde_json::json!({
+            "lab_type": "Unknown",
+            "total_crafts": session_rounds.len(),
+            "variant": "20/20",
+            "device_id": "desktop",
+            "pair_code": pair,
+            "rounds": session_rounds,
+        });
+        send_font_session(app, &server, session_data).await;
+    }
+}
+
+/// Send a completed font session to the server.
+async fn send_font_session(app: &AppHandle, server_url: &str, data: serde_json::Value) {
+    let url = format!("{}/api/desktop/font-session", server_url);
+
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            app_log(app, format!("HTTP client error: {}", e));
+            return;
+        }
+    };
+
+    match client.post(&url).json(&data).send().await {
+        Ok(res) => {
+            app_log(app, format!("Font session sent: {}", res.status()));
+        }
+        Err(e) => {
+            app_log(app, format!("Font session send failed: {}", e));
+        }
     }
 }
 
