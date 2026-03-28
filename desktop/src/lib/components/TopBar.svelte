@@ -78,6 +78,7 @@
 		padding: 0 0 0 0.75rem;
 		user-select: none;
 		-webkit-app-region: drag;
+		overflow: hidden;
 	}
 
 	.left, .center {
