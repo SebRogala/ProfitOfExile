@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicerdicer/tauri-v2-schema/main/schema.json",
   "productName": "ProfitOfExile",
   "version": "0.1.0",
-  "identifier": "pro.softsolution.profitofexile",
+  "identifier": "profitofexile",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
