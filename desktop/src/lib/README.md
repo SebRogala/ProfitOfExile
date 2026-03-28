@@ -14,6 +14,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 |------|-------|-------------|
 | `components/TopBar.svelte` | `status` | Custom title bar — logo, status indicators, debug toggle (dev only), settings link, window controls (min/max/close). Draggable. |
 | `components/Sidebar.svelte` | `open`, `currentPath`, `onToggle` | Collapsible nav — strategies, tools, overlay quick-toggles. Collapsed state shows thin clickable strip. |
+| `components/Select.svelte` | `value` (bindable), `options`, `onchange` | Custom dropdown select — styled dark theme, chevron indicator. Used by dashboard components. |
 
 ## Overlay Utilities
 
@@ -26,9 +27,31 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | Route | Description |
 |-------|-------------|
 | `(app)/+layout.svelte` | App shell — TopBar + Sidebar + content slot. Initializes status store. |
-| `(app)/+page.svelte` | Lab page — scan controls, trade lookup, test tools, logs. Will host migrated dashboard components. |
+| `(app)/+page.svelte` | Lab farming dashboard — scan controls, comparator, best plays, font EV, market overview, session queue, logs. |
+| `(app)/dev/+page.svelte` | Dev tools — trade lookup test, pipeline test, OCR test. |
 | `(app)/settings/+page.svelte` | Settings — General, Game Integration (2 OCR regions), Trade, Overlays. |
 | `overlay/+page.svelte` | Capture region overlay — transparent, draggable, resizable. |
+
+## Dashboard Components (Lab)
+
+Located in `routes/(app)/components/`. Lab farming dashboard components migrated from the web frontend.
+
+| File | Description |
+|------|-------------|
+| `Header.svelte` | Dashboard header — lab selector, divine rate, update timer, connection status |
+| `Comparator.svelte` | Gem comparator — search, compare up to 3 gems, trade data, session queue integration. Uses Tauri `listen('gem-detected')` for OCR events. |
+| `SessionQueue.svelte` | Session queue — picked gems with snapshot/current prices and delta tracking |
+| `BestPlays.svelte` | Sortable gem table — price, ROI, signals, sparklines, expandable rows |
+| `ByVariant.svelte` | Variant tabs — filters BestPlays by variant (1/0, 1/20, 20/0, 20/20) and color |
+| `FontEVCompare.svelte` | Font EV comparison table — all variants x colors with tier breakdowns |
+| `FontEV.svelte` | Single-variant font EV cards — color cards with safe/premium/jackpot tiers |
+| `MarketOverview.svelte` | Market stats — prices, volatility, confidence spread, offering timing charts |
+| `Legend.svelte` | Expandable legend — all signal, window, tier, and metric definitions |
+| `SignalBadge.svelte` | Signal/window/confidence badge with styled prefix icons |
+| `Sparkline.svelte` | Mini SVG sparkline chart |
+| `GemIcon.svelte` | Gem icon from poewiki.net with error fallback |
+| `InfoTooltip.svelte` | Hover/click tooltip with smart alignment |
+| `OfferingChart.svelte` | Offering price chart with prediction line and responsive SVG |
 
 ## Conventions
 

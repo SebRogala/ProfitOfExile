@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +26,23 @@ import (
 
 //go:embed all:frontend_build
 var frontendEmbed embed.FS
+
+// corsOrigins returns allowed CORS origins from the CORS_ORIGINS env var.
+// Comma-separated list, e.g. "http://localhost:1420,tauri://localhost".
+// Returns nil (no CORS) when unset.
+func corsOrigins() []string {
+	raw := os.Getenv("CORS_ORIGINS")
+	if raw == "" {
+		return nil
+	}
+	var origins []string
+	for _, o := range strings.Split(raw, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			origins = append(origins, o)
+		}
+	}
+	return origins
+}
 
 func main() {
 	port := os.Getenv("PORT")
@@ -177,6 +195,7 @@ func main() {
 		TradeSyncTimeout:     tradeSyncTimeout,
 		League:               os.Getenv("LEAGUE"),
 		Analyzer:             analyzer,
+		AllowedOrigins:       corsOrigins(),
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
