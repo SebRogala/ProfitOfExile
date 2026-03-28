@@ -43,6 +43,8 @@ pub struct AppState {
     pub logs: Mutex<Vec<String>>,
     pub gem_region: Mutex<CaptureRegion>,
     pub trade_client: trade::TradeApiClient,
+    /// Cancel signal for the current log watcher. Send () to stop it.
+    pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -111,11 +113,33 @@ fn regenerate_pair_code(app: AppHandle) -> String {
     new_code
 }
 
+const DEFAULT_CLIENT_TXT_PATH: &str = r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt";
+
 #[tauri::command]
 fn set_client_txt_path(path: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = path;
     emit_status(&app);
+    // Restart log watcher with new path
+    restart_log_watcher(app);
+}
+
+#[tauri::command]
+fn reset_client_txt_path(app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = DEFAULT_CLIENT_TXT_PATH.to_string();
+    emit_status(&app);
+    restart_log_watcher(app);
+}
+
+fn restart_log_watcher(app: AppHandle) {
+    let state = app.state::<AppState>();
+    // Cancel the existing watcher
+    if let Some(cancel_tx) = state.watcher_cancel.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        let _ = cancel_tx.send(true);
+    }
+    app_log(&app, "Restarting log watcher...".to_string());
+    spawn_log_watcher(app.clone());
 }
 
 #[tauri::command]
@@ -498,30 +522,39 @@ fn spawn_log_watcher(app: AppHandle) {
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
     app_log(&app, format!("Starting log watcher: {}", client_txt));
 
+    // Create cancel channel and store the sender
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    *state.watcher_cancel.lock().unwrap_or_else(|e| e.into_inner()) = Some(cancel_tx);
+
     tauri::async_runtime::spawn(async move {
         let watcher = log_watcher::LogWatcher::new(&client_txt);
         let mut rx = match watcher.watch().await {
             Ok(rx) => rx,
             Err(e) => {
-                let state = app.state::<AppState>();
                 app_log(&app, format!("Log watcher failed to start: {}", e));
                 emit_status(&app);
                 return;
             }
         };
 
-        let state = app.state::<AppState>();
         app_log(&app, "Log watcher active".to_string());
         emit_status(&app);
 
         let mut state_machine = lab_state::LabStateMachine::new();
         let mut detected_gems: Vec<String> = Vec::new();
-        let matcher = gem_matcher::GemMatcher::new(vec![
-            // TODO: fetch from server API on startup
-            // For now, hardcoded test set
-        ]);
+        let matcher = gem_matcher::GemMatcher::new(vec![]);
 
-        while let Some(line) = rx.recv().await {
+        loop {
+            tokio::select! {
+                _ = cancel_rx.changed() => {
+                    app_log(&app, "Log watcher cancelled (path changed)".to_string());
+                    break;
+                }
+                line = rx.recv() => {
+                    let line = match line {
+                        Some(l) => l,
+                        None => break,
+                    };
             let state = app.state::<AppState>();
             let preview = if line.len() > 60 { &line[..60] } else { &line };
             app_log(&app, format!("Log: {}", preview));
@@ -536,7 +569,6 @@ fn spawn_log_watcher(app: AppHandle) {
                         detected_gems.clear();
                         *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
                             Vec::new();
-                        emit_status(&app);
                         emit_status(&app);
                         state_machine.start_picking();
                         *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -564,7 +596,6 @@ fn spawn_log_watcher(app: AppHandle) {
                         }
 
                         emit_status(&app);
-                        emit_status(&app);
                     }
                     lab_state::LabEvent::FontClosed => {
                         app_log(&app, "Font closed".to_string());
@@ -574,9 +605,11 @@ fn spawn_log_watcher(app: AppHandle) {
                     }
                 }
             }
+                    }
+                }
+            }
         }
 
-        let state = app.state::<AppState>();
         app_log(&app, "Log watcher stopped".to_string());
     });
 }
@@ -599,6 +632,7 @@ pub fn run() {
         logs: Mutex::new(Vec::new()),
         gem_region: Mutex::new(CaptureRegion::default()),
         trade_client: trade::TradeApiClient::new("Mirage"),
+        watcher_cancel: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -609,6 +643,7 @@ pub fn run() {
             get_pair_code,
             regenerate_pair_code,
             set_client_txt_path,
+            reset_client_txt_path,
             set_server_url,
             get_logs,
             get_gem_region,
