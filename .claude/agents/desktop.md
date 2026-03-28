@@ -16,8 +16,9 @@ No polling. All state updates flow through events.
 desktop/
   src-tauri/
     src/
-      lib.rs              — Tauri commands, AppState, event emitters, app setup
-      settings.rs          — Persistent settings (JSON to %AppData%)
+      lib.rs              — Tauri commands, AppState, event emitters, app setup, capture loop
+      settings.rs          — Persistent settings (JSON to %AppData%/profitofexile/)
+      font_parser.rs       — Font panel OCR parser (keyword-based craft option detection)
       trade/               — Trade API client (direct GGG calls)
         client.rs          — TradeApiClient: search → fetch → build result
         query.rs           — GGG search query builder (mirrors Go's buildSearchQuery)
@@ -31,7 +32,7 @@ desktop/
       log_watcher.rs       — Client.txt file watcher (notify crate, filesystem events)
     capabilities/
       default.json         — Tauri permissions (window, webview, shell)
-    tauri.conf.json        — App config (window size, decorations: false, identifier)
+    tauri.conf.json        — App config (window size 1024x768, decorations: false, identifier)
   src/
     lib/
       README.md            — Component registry. READ THIS FIRST before creating/modifying.
@@ -76,12 +77,20 @@ fn set_something(value: String, app: AppHandle) {
 ```
 
 ### Logging
-Use `app_log(&app, msg)` — it appends to the in-memory log buffer AND emits `"logs-changed"` to the frontend. Takes `&AppHandle`. In background tasks that have `app: &AppHandle`, call `app_log(app, msg)` (no extra `&`).
+Use `app_log(&app, msg)` — it appends to the in-memory log buffer (50 entries, shown in UI), writes to `%AppData%/profitofexile/app.log` (persistent), AND emits `"logs-changed"` to the frontend. Takes `&AppHandle`. In background tasks that have `app: &AppHandle`, call `app_log(app, msg)` (no extra `&`).
+
+For errors in the capture loop (runs every 500ms), use throttled logging to avoid spam:
+```rust
+if loop_count % 20 == 1 { // log every ~10s
+    app_log(app, format!("Capture failed: {}", e));
+}
+```
 
 ### Events
 - `emit_status(&app)` — emits full `AppStatus` as `"status-changed"`
 - `emit_logs(&app)` — emits log array as `"logs-changed"`
-- `app.emit("custom-event", payload)` — for specific events like `"gem-detected"`
+- `app.emit("custom-event", payload)` — for specific events like `"gem-detected"`, `"font-jackpot"`
+- Always check emit result: `if let Err(e) = app.emit(...) { log::warn!(...) }` — never `let _ =`
 
 ### Settings Persistence
 `settings.rs` saves/loads JSON to `%AppData%/profitofexile/settings.json`. Uses `#[serde(default)]` for forward compatibility. Persisted fields: `client_txt_path`, `server_url`, `gem_region`, `font_region`, `window` (position/size/maximized). Call `persist_settings(&app)` after mutating any of these. Window settings are saved separately on close event.
@@ -117,6 +126,22 @@ export const store = $state({
 - Dark scrollbar styled globally in `app.css`
 - No emojis in code unless user requests them
 
+### Component Reuse — MANDATORY
+**NEVER create "pure" one-off UI elements. ALWAYS extract reusable components into `$lib/components/` and document them in `$lib/README.md`.**
+
+Before creating any new UI:
+1. Check `$lib/README.md` for an existing component that fits
+2. If none exists, create one in `$lib/components/` with proper props
+3. Add it to the README registry
+4. Use it everywhere — pages should compose lib components, not contain raw HTML patterns
+
+Examples of what MUST be components:
+- Buttons (action, small, cancel, stop variants)
+- Section cards (the `<section>` wrapper with header)
+- Setting rows (label + value + action)
+- Status indicators (dots, badges)
+- Any UI pattern used more than once
+
 ### Overlay Windows
 Created via `overlay/manager.ts`:
 ```ts
@@ -143,8 +168,40 @@ SvelteKit client-side routing within the `(app)` group. Use `<a href="/settings"
 ## File Watcher
 Uses the `notify` crate (filesystem events, NOT polling). Watches the parent directory, filters by filename. Supports cancel via `tokio::sync::watch` channel — restarts automatically when the Client.txt path changes in settings.
 
+## Capture Loop (lib.rs: run_capture_loop)
+Dual-region OCR that runs when lab state is `PickingGems`:
+- **Region 1** (gem tooltip): OCR → fuzzy match gem names → emit `"gem-detected"` events
+- **Region 2** (font panel): OCR → parse craft options via `font_parser` → track session rounds
+- Sends completed font sessions to `POST /api/desktop/font-session` on the Go server
+- Emits `"font-jackpot"` when "non-Transfigured" option detected
+- 3 consecutive font panel misses → stop OCR (user walked away or font empty)
+- Client.txt `InstanceClientLabyrinthCraftResultOptionsList` restarts OCR
+
+## Font Panel Parser (font_parser.rs)
+Keyword-based detection — scans OCR lines for anchor text, extracts numeric values:
+- `"random Transfigured Gem"` → standard transform (always present)
+- `"non-Transfigured"` → JACKPOT (direct transfigure, ~6% rate)
+- `"quality to a Gem"` → extract +X% value
+- `"experience to a Gem"` → extract Xm value
+- `"Facetor's Lens"` or `"Faction's Lens"` (OCR misread) → extract X% value
+- `"Crafts Remaining"` → extract N counter
+- Joins all lines for cross-line keyword matching
+
+## Server Endpoints (Go)
+- `POST /api/desktop/gems` — gem detection events → Mercure publish
+- `POST /api/desktop/font-session` — font session data (transactional insert)
+- Font session stores per-round craft options with types and numeric values
+
+## Custom Title Bar
+`decorations: false` in tauri.conf.json. TopBar.svelte provides:
+- Window drag (`startDragging` on mousedown, excluding buttons/links)
+- Minimize/maximize/close buttons (Windows-style, red hover on close)
+- Window position/size saved to settings on close, restored on startup
+
 ## Key References
 - `desktop/src/lib/README.md` — Component registry (read first)
 - `CLAUDE.md` — Project-wide conventions
 - `BACKBONE.md` — Full project design document
 - `docs/superpowers/specs/2026-03-28-desktop-app-shell-design.md` — App shell spec
+- `frontend/src/routes/lab/` — Web dashboard components (migration source)
+- `frontend/src/lib/api.ts` — Web API client (fetch patterns to replicate via Tauri invoke)
