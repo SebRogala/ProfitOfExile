@@ -79,12 +79,23 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: region?.w || 550,
-			height: region?.h || 75,
-			x: region?.x || 30,
-			y: region?.y || 45,
+			// Don't set position/size here — constructor uses logical pixels
+			// but our region stores physical pixels. Set after creation.
 		});
-		win.once('tauri://created', () => { overlayWin = win; overlayVisible = true; });
+		win.once('tauri://created', async () => {
+			// Set position/size in physical pixels to match stored region exactly
+			try {
+				const w = win.window ?? win;
+				if (region) {
+					await w.setPosition({ type: 'Physical', x: region.x, y: region.y });
+					await w.setSize({ type: 'Physical', width: region.w, height: region.h });
+				}
+			} catch (e) {
+				console.error('Failed to set overlay position:', e);
+			}
+			overlayWin = win;
+			overlayVisible = true;
+		});
 		win.once('tauri://error', (e) => console.error('Overlay failed:', e));
 	}
 
