@@ -13,7 +13,7 @@
 </script>
 
 <div class="app-shell">
-	<TopBar status={store.status} pairCode={store.status?.pair_code ?? '....'} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
+	<TopBar status={store.status} onToggleSidebar={() => sidebarOpen = !sidebarOpen} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} />
 		<main class="content">
