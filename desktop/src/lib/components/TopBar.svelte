@@ -1,7 +1,6 @@
 <script lang="ts">
-	let { status, pairCode, onToggleSidebar }: {
+	let { status, onToggleSidebar }: {
 		status: any;
-		pairCode: string;
 		onToggleSidebar: () => void;
 	} = $props();
 
@@ -28,9 +27,6 @@
 	<div class="right">
 		<span class="status-dot" class:connected={!!status} title={status ? 'Connected' : 'Disconnected'}></span>
 		<span class="status-dot scanning-dot" class:active={status?.state === 'PickingGems'} title={status?.state === 'PickingGems' ? 'Scanning' : 'Idle'}></span>
-		{#if pairCode && pairCode !== '...'}
-			<span class="pair-code">{pairCode}</span>
-		{/if}
 		<button class="btn-debug" class:active={isDebug()} onclick={toggleDebug}>
 			{isDebug() ? 'DEBUG' : 'PROD'}
 		</button>
@@ -108,12 +104,6 @@
 	@keyframes pulse {
 		0%, 100% { opacity: 1; }
 		50% { opacity: 0.3; }
-	}
-
-	.pair-code {
-		font-family: 'Consolas', 'Courier New', monospace;
-		font-size: 0.7rem;
-		color: var(--text-muted);
 	}
 
 	.btn-debug {
