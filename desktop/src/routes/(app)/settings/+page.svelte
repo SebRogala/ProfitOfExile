@@ -121,9 +121,6 @@
 <div class="settings-page">
 	<h1>Settings</h1>
 
-	{#if !store.status}
-		<p class="loading">Loading...</p>
-	{:else}
 		<!-- General -->
 		<section>
 			<h2>General</h2>
@@ -142,7 +139,7 @@
 						<button class="btn-small" onclick={cancelEditServerUrl}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value">{store.status.server_url}</span>
+					<span class="setting-value">{store.status?.server_url ?? '...'}</span>
 					<button class="btn-small" onclick={startEditServerUrl}>Edit</button>
 				{/if}
 			</div>
@@ -154,7 +151,7 @@
 
 			<div class="setting-row">
 				<span class="setting-label">Pair Code</span>
-				<span class="setting-value mono">{store.status.pair_code}</span>
+				<span class="setting-value mono">{store.status?.pair_code ?? '....'}</span>
 				<button class="btn-small" onclick={regeneratePairCode}>Regenerate</button>
 			</div>
 		</section>
@@ -177,7 +174,7 @@
 						<button class="btn-small" onclick={cancelEditClientTxt}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value path">{store.status.client_txt_path}</span>
+					<span class="setting-value path">{store.status?.client_txt_path ?? '...'}</span>
 					<button class="btn-small" onclick={startEditClientTxt}>Edit</button>
 				{/if}
 			</div>
@@ -189,7 +186,7 @@
 					<button class="btn-small save" onclick={saveRegion}>Save</button>
 					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
 				{:else}
-					<span class="setting-value mono">{formatRegion(store.status.gem_region)}</span>
+					<span class="setting-value mono">{formatRegion(store.status?.gem_region)}</span>
 					<button class="btn-small" onclick={showRegionOverlay}>Configure</button>
 				{/if}
 			</div>
@@ -219,7 +216,7 @@
 				<span class="setting-value muted">Coming soon</span>
 			</div>
 		</section>
-	{/if}
+
 </div>
 
 <style>
@@ -249,10 +246,7 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.loading {
-		color: var(--text-muted);
-		font-size: 0.85rem;
-	}
+
 
 	.setting-row {
 		display: flex;
