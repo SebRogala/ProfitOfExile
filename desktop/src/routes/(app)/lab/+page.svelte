@@ -159,7 +159,7 @@
 	}
 </script>
 
-<main>
+<div class="lab-page">
 	<section class="status">
 		<div class="section-header">
 			<h2>Status</h2>
@@ -260,15 +260,12 @@
 			</div>
 		</section>
 	{/if}
-</main>
+</div>
 
 <style>
-	main {
-		padding: 1.5rem;
+	.lab-page {
 		max-width: 400px;
 		margin: 0 auto;
-		overflow-y: auto;
-		flex: 1;
 	}
 
 	section {
