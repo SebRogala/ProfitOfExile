@@ -19,6 +19,16 @@ pub struct Settings {
     pub server_url: String,
     pub gem_region: CaptureRegion,
     pub font_region: CaptureRegion,
+    pub window: Option<WindowSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowSettings {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub maximized: bool,
 }
 
 impl Default for Settings {
@@ -28,6 +38,7 @@ impl Default for Settings {
             server_url: String::from("https://poe.softsolution.pro"),
             gem_region: CaptureRegion::default(),
             font_region: CaptureRegion::default_font_panel(),
+            window: None,
         }
     }
 }

@@ -808,10 +808,57 @@ pub fn run() {
             let state = handle.state::<AppState>();
             settings::apply_to_state(&saved, &state);
 
+            // Restore window position/size from saved settings
+            if let Some(ref win_settings) = saved.window {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(win_settings.x, win_settings.y));
+                    let _ = win.set_size(tauri::PhysicalSize::new(win_settings.width, win_settings.height));
+                    if win_settings.maximized {
+                        let _ = win.maximize();
+                    }
+                }
+            }
+
             spawn_log_watcher(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Save window position/size on close
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if window.label() == "main" {
+                    let app = window.app_handle();
+                    let is_maximized = window.is_maximized().unwrap_or(false);
+                    // Only save position/size if not maximized (restore to normal position)
+                    let win_settings = if is_maximized {
+                        // Save maximized flag but keep last known normal position
+                        let state = app.state::<AppState>();
+                        let current = settings::from_state(&state);
+                        settings::WindowSettings {
+                            x: current.window.as_ref().map_or(100, |w| w.x),
+                            y: current.window.as_ref().map_or(100, |w| w.y),
+                            width: current.window.as_ref().map_or(1024, |w| w.width),
+                            height: current.window.as_ref().map_or(768, |w| w.height),
+                            maximized: true,
+                        }
+                    } else {
+                        let pos = window.outer_position().unwrap_or(tauri::PhysicalPosition::new(100, 100));
+                        let size = window.outer_size().unwrap_or(tauri::PhysicalSize::new(1024, 768));
+                        settings::WindowSettings {
+                            x: pos.x,
+                            y: pos.y,
+                            width: size.width,
+                            height: size.height,
+                            maximized: false,
+                        }
+                    };
+                    let state = app.state::<AppState>();
+                    let mut s = settings::from_state(&state);
+                    s.window = Some(win_settings);
+                    settings::save(app, &s);
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
