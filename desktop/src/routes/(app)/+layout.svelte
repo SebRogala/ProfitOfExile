@@ -3,13 +3,18 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
+	import { onDestroy } from 'svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 
 	let { children } = $props();
 	let sidebarOpen = $state(true);
 
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
-	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
+	let cleanupStore: (() => void) | null = null;
+	initStatusStore()
+		.then(fn => { cleanupStore = fn; })
+		.catch(e => console.error('[layout] initStatusStore failed:', e));
+	onDestroy(() => cleanupStore?.());
 </script>
 
 <div class="app-shell">
