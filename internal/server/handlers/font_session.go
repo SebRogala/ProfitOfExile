@@ -70,9 +70,18 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 
 		ctx := r.Context()
 
+		// Use transaction — all rounds succeed or none do (prevents partial data)
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			slog.Error("font session: begin tx", "error", err)
+			jsonError(w, http.StatusInternalServerError, "failed to store session")
+			return
+		}
+		defer tx.Rollback(ctx)
+
 		// Insert session
 		var sessionID int64
-		err := pool.QueryRow(ctx,
+		err = tx.QueryRow(ctx,
 			`INSERT INTO font_sessions (lab_type, total_crafts, variant, device_id, pair_code)
 			 VALUES ($1, $2, $3, $4, $5)
 			 RETURNING id`,
@@ -93,10 +102,11 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 			optionsJSON, err := json.Marshal(round.CraftOptions)
 			if err != nil {
 				slog.Error("font session: marshal options", "error", err, "round", i)
-				continue
+				jsonError(w, http.StatusInternalServerError, "failed to serialize round options")
+				return
 			}
 
-			_, err = pool.Exec(ctx,
+			_, err = tx.Exec(ctx,
 				`INSERT INTO font_rounds (session_id, round_number, craft_options, option_chosen, gems_offered, gem_picked, crafts_remaining)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 				sessionID,
@@ -109,7 +119,15 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 			)
 			if err != nil {
 				slog.Error("font session: insert round", "error", err, "round", i, "session", sessionID)
+				jsonError(w, http.StatusInternalServerError, "failed to store round")
+				return
 			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			slog.Error("font session: commit", "error", err)
+			jsonError(w, http.StatusInternalServerError, "failed to commit session")
+			return
 		}
 
 		slog.Info("font session: stored",

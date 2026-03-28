@@ -409,7 +409,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     app_log(&app, format!("{} candidate lines to match", candidates.len()));
 
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = fetch_gem_names(&server).await;
+    let gem_names = fetch_gem_names(app, &server).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names);
 
     let mut best_match: Option<gem_matcher::GemMatch> = None;
@@ -457,7 +457,7 @@ async fn run_capture_loop(app: &AppHandle) {
 
     // Load gem names for matching — try server first, fall back to empty
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = fetch_gem_names(&server).await;
+    let gem_names = fetch_gem_names(app, &server).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
     app_log(app, format!("Loaded {} gem names for matching", gem_names.len()));
 
@@ -630,8 +630,13 @@ async fn send_font_session(app: &AppHandle, server_url: &str, data: serde_json::
     };
 
     match client.post(&url).json(&data).send().await {
+        Ok(res) if res.status().is_success() => {
+            app_log(app, "Font session sent successfully".to_string());
+        }
         Ok(res) => {
-            app_log(app, format!("Font session sent: {}", res.status()));
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            app_log(app, format!("Font session rejected: {} — {}", status, &body[..body.len().min(200)]));
         }
         Err(e) => {
             app_log(app, format!("Font session send failed: {}", e));
@@ -640,29 +645,46 @@ async fn send_font_session(app: &AppHandle, server_url: &str, data: serde_json::
 }
 
 /// Fetch gem names from the server API for fuzzy matching.
-async fn fetch_gem_names(server_url: &str) -> Vec<String> {
+async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
     let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
     let client = match reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .build()
     {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            app_log(app, format!("Gem names: HTTP client error: {}", e));
+            return Vec::new();
+        }
     };
 
     match client.get(&url).send().await {
         Ok(res) if res.status().is_success() => {
-            if let Ok(body) = res.json::<serde_json::Value>().await {
-                if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
-                    return names
-                        .iter()
-                        .filter_map(|n| n.as_str().map(String::from))
-                        .collect();
+            match res.json::<serde_json::Value>().await {
+                Ok(body) => {
+                    if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
+                        return names
+                            .iter()
+                            .filter_map(|n| n.as_str().map(String::from))
+                            .collect();
+                    }
+                    app_log(app, "Gem names: response missing 'names' field".to_string());
+                    Vec::new()
+                }
+                Err(e) => {
+                    app_log(app, format!("Gem names: failed to parse response: {}", e));
+                    Vec::new()
                 }
             }
+        }
+        Ok(res) => {
+            app_log(app, format!("Gem names: server returned {}", res.status()));
             Vec::new()
         }
-        _ => Vec::new(),
+        Err(e) => {
+            app_log(app, format!("Gem names: request failed: {}", e));
+            Vec::new()
+        }
     }
 }
 
