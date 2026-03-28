@@ -10,12 +10,29 @@ mod platform {
     use windows::Storage::Streams::DataWriter;
     use windows::Foundation::Collections::IVectorView;
 
+    use std::cell::RefCell;
+
+    thread_local! {
+        static OCR_ENGINE: RefCell<Option<OcrEngine>> = RefCell::new(None);
+    }
+
+    fn get_or_create_engine() -> Result<OcrEngine, String> {
+        OCR_ENGINE.with(|cell| {
+            let mut opt = cell.borrow_mut();
+            if let Some(ref engine) = *opt {
+                return Ok(engine.clone());
+            }
+            let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+                .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+            *opt = Some(engine.clone());
+            Ok(engine)
+        })
+    }
+
     /// Recognize text in an image using Windows.Media.Ocr.
-    /// Returns all recognized text lines.
+    /// Returns all recognized text lines. Reuses the OCR engine per thread.
     pub fn recognize_text(img: &DynamicImage) -> Result<Vec<String>, String> {
-        // Create OCR engine from user's language profile
-        let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-            .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+        let engine = get_or_create_engine()?;
 
         // Convert image to RGBA bytes
         let rgba = img.to_rgba8();
