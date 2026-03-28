@@ -25,6 +25,13 @@ impl Default for CaptureRegion {
     }
 }
 
+impl CaptureRegion {
+    /// Default for font panel area (1080p) — craft options + "Crafts Remaining"
+    pub fn default_font_panel() -> Self {
+        Self { x: 460, y: 270, w: 530, h: 350 }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AppStatus {
     pub state: String,
@@ -33,6 +40,7 @@ pub struct AppStatus {
     pub client_txt_path: String,
     pub server_url: String,
     pub gem_region: CaptureRegion,
+    pub font_region: CaptureRegion,
 }
 
 pub struct AppState {
@@ -43,6 +51,7 @@ pub struct AppState {
     pub lab_state: Mutex<lab_state::LabState>,
     pub logs: Mutex<Vec<String>>,
     pub gem_region: Mutex<CaptureRegion>,
+    pub font_region: Mutex<CaptureRegion>,
     pub trade_client: trade::TradeApiClient,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
@@ -57,6 +66,7 @@ fn build_status(state: &AppState) -> AppStatus {
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -170,6 +180,21 @@ fn set_gem_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     let region = CaptureRegion { x, y, w, h };
     app_log(&app, format!("Region set: ({}, {}) {}x{}", x, y, w, h));
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+#[tauri::command]
+fn get_font_region(state: tauri::State<AppState>) -> CaptureRegion {
+    state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command]
+fn set_font_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
+    let state = app.state::<AppState>();
+    let region = CaptureRegion { x, y, w, h };
+    app_log(&app, format!("Font region set: ({}, {}) {}x{}", x, y, w, h));
+    *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = region;
     persist_settings(&app);
     emit_status(&app);
 }
@@ -639,6 +664,7 @@ pub fn run() {
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
         gem_region: Mutex::new(CaptureRegion::default()),
+        font_region: Mutex::new(CaptureRegion::default_font_panel()),
         trade_client: trade::TradeApiClient::new("Mirage"),
         watcher_cancel: Mutex::new(None),
     };
@@ -656,6 +682,8 @@ pub fn run() {
             get_logs,
             get_gem_region,
             set_gem_region,
+            get_font_region,
+            set_font_region,
             capture_mouse_position,
             start_scanning,
             stop_scanning,
