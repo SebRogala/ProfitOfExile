@@ -25,8 +25,8 @@
 		<span class="app-name">ProfitOfExile</span>
 	</div>
 	<div class="right">
-		<span class="status-dot" class:connected={!!status} title={status ? 'Connected' : 'Disconnected'}></span>
-		<span class="status-dot scanning-dot" class:active={status?.state === 'PickingGems'} title={status?.state === 'PickingGems' ? 'Scanning' : 'Idle'}></span>
+		<span class="status-dot" class:connected={!!status} title={status ? `Server: Connected (${status.server_url})` : 'Server: Disconnected'}></span>
+		<span class="status-dot scanning-dot" class:active={status?.state === 'PickingGems'} title={`OCR Scanner: ${status?.state === 'PickingGems' ? 'Active — reading gem names from screen' : 'Idle — waiting for Font trigger'}`}></span>
 		<button class="btn-debug" class:active={isDebug()} onclick={toggleDebug}>
 			{isDebug() ? 'DEBUG' : 'PROD'}
 		</button>
