@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { onMount } from 'svelte';
-
 	let status = $state<any>(null);
 	let overlayWin = $state<any>(null);
 	let overlayVisible = $state(false);
@@ -12,9 +10,13 @@
 	let editingClientTxt = $state(false);
 	let editClientTxtValue = $state('');
 
-	onMount(() => {
-		invoke('get_status').then((s) => { status = s; }).catch((e) => console.error('Failed to load status:', e));
-	});
+	// Load status immediately + retry until it works
+	invoke('get_status').then((s) => { status = s; }).catch(() => {});
+	const statusInterval = setInterval(() => {
+		if (!status) {
+			invoke('get_status').then((s) => { status = s; }).catch(() => {});
+		}
+	}, 500);
 
 	async function refreshStatus() {
 		try {
