@@ -22,3 +22,26 @@ body {
 	font-size: 14px;
 	line-height: 1.5;
 }
+
+/* Dark scrollbar — matches the app theme */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--text-muted);
+}
+
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
