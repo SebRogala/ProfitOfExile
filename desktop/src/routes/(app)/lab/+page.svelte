@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import '../app.css';
 
 	let pairCode = $state('...');
 	const PROD_URL = 'https://poe.softsolution.pro';
