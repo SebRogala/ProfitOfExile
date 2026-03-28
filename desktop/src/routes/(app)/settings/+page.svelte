@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { appStatus } from '$lib/stores/status.svelte';
+	import { store } from '$lib/stores/status.svelte';
 
 	let overlayWin = $state<any>(null);
 	let overlayVisible = $state(false);
@@ -14,7 +14,7 @@
 
 	// --- Server URL ---
 	function startEditServerUrl() {
-		editServerUrlValue = appStatus?.server_url || '';
+		editServerUrlValue = store.status?.server_url || '';
 		editingServerUrl = true;
 	}
 
@@ -44,7 +44,7 @@
 
 	// --- Client.txt Path ---
 	function startEditClientTxt() {
-		editClientTxtValue = appStatus?.client_txt_path || '';
+		editClientTxtValue = store.status?.client_txt_path || '';
 		editingClientTxt = true;
 	}
 
@@ -70,7 +70,7 @@
 			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 			overlayWin = null;
 		}
-		const region = appStatus?.gem_region;
+		const region = store.status?.gem_region;
 		const win = new WebviewWindow('overlay', {
 			url: '/overlay',
 			transparent: true,
@@ -121,7 +121,7 @@
 <div class="settings-page">
 	<h1>Settings</h1>
 
-	{#if !appStatus}
+	{#if !store.status}
 		<p class="loading">Loading...</p>
 	{:else}
 		<!-- General -->
@@ -142,7 +142,7 @@
 						<button class="btn-small" onclick={cancelEditServerUrl}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value">{appStatus.server_url}</span>
+					<span class="setting-value">{store.status.server_url}</span>
 					<button class="btn-small" onclick={startEditServerUrl}>Edit</button>
 				{/if}
 			</div>
@@ -154,7 +154,7 @@
 
 			<div class="setting-row">
 				<span class="setting-label">Pair Code</span>
-				<span class="setting-value mono">{appStatus.pair_code}</span>
+				<span class="setting-value mono">{store.status.pair_code}</span>
 				<button class="btn-small" onclick={regeneratePairCode}>Regenerate</button>
 			</div>
 		</section>
@@ -177,7 +177,7 @@
 						<button class="btn-small" onclick={cancelEditClientTxt}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value path">{appStatus.client_txt_path}</span>
+					<span class="setting-value path">{store.status.client_txt_path}</span>
 					<button class="btn-small" onclick={startEditClientTxt}>Edit</button>
 				{/if}
 			</div>
@@ -189,7 +189,7 @@
 					<button class="btn-small save" onclick={saveRegion}>Save</button>
 					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
 				{:else}
-					<span class="setting-value mono">{formatRegion(appStatus.gem_region)}</span>
+					<span class="setting-value mono">{formatRegion(store.status.gem_region)}</span>
 					<button class="btn-small" onclick={showRegionOverlay}>Configure</button>
 				{/if}
 			</div>
