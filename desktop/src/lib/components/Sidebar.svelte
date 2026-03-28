@@ -16,22 +16,24 @@
 		<a href="/" class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming">
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
 		</a>
-		<div class="collapsed-item disabled" title="Mapping (soon)">
-			<span class="icon">&#x1F5FA;&#xFE0F;</span>
-		</div>
-		<div class="collapsed-item disabled" title="Bosses (soon)">
-			<span class="icon">&#x1F479;</span>
-		</div>
-		<div class="collapsed-sep"></div>
-		<div class="collapsed-item disabled" title="Trade Lookup">
-			<span class="icon">&#x1F50D;</span>
-		</div>
-		<div class="collapsed-item disabled" title="Price Compare">
-			<span class="icon">&#x1F4CA;</span>
-		</div>
-		<a href="/dev" class="collapsed-item" class:active={currentPath === '/dev'} title="Dev Tools">
-			<span class="icon">&#x1F6E0;&#xFE0F;</span>
-		</a>
+		{#if import.meta.env.DEV}
+			<div class="collapsed-item disabled" title="Mapping (soon)">
+				<span class="icon">&#x1F5FA;&#xFE0F;</span>
+			</div>
+			<div class="collapsed-item disabled" title="Bosses (soon)">
+				<span class="icon">&#x1F479;</span>
+			</div>
+			<div class="collapsed-sep"></div>
+			<div class="collapsed-item disabled" title="Trade Lookup">
+				<span class="icon">&#x1F50D;</span>
+			</div>
+			<div class="collapsed-item disabled" title="Price Compare">
+				<span class="icon">&#x1F4CA;</span>
+			</div>
+			<a href="/dev" class="collapsed-item" class:active={currentPath === '/dev'} title="Dev Tools">
+				<span class="icon">&#x1F6E0;&#xFE0F;</span>
+			</a>
+		{/if}
 		<div class="collapsed-sep"></div>
 		<a href="/settings" class="collapsed-item" class:active={currentPath === '/settings'} title="Settings">
 			<span class="icon">&#x2699;&#xFE0F;</span>
@@ -66,18 +68,21 @@
 				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
 			</a>
-			<div class="nav-item disabled">
-				<span class="icon">&#x1F5FA;&#xFE0F;</span>
-				<span>Mapping</span>
-				<span class="badge">soon</span>
-			</div>
-			<div class="nav-item disabled">
-				<span class="icon">&#x1F479;</span>
-				<span>Bosses</span>
-				<span class="badge">soon</span>
-			</div>
+			{#if import.meta.env.DEV}
+				<div class="nav-item disabled">
+					<span class="icon">&#x1F5FA;&#xFE0F;</span>
+					<span>Mapping</span>
+					<span class="badge">soon</span>
+				</div>
+				<div class="nav-item disabled">
+					<span class="icon">&#x1F479;</span>
+					<span>Bosses</span>
+					<span class="badge">soon</span>
+				</div>
+			{/if}
 		</div>
 
+		{#if import.meta.env.DEV}
 		<div class="section">
 			<div class="label">Tools</div>
 			<div class="nav-item disabled">
@@ -93,6 +98,7 @@
 				<span>Dev Tools</span>
 			</a>
 		</div>
+		{/if}
 	</div>
 
 	<div class="bottom">
