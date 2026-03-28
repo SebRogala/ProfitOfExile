@@ -99,7 +99,7 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) {
     };
     match serde_json::to_string_pretty(settings) {
         Ok(json) => {
-            if let Err(e) = fs::write(&path, json) {
+            if let Err(e) = fs::write(&path, &json) {
                 log::error!("Failed to write settings to {:?}: {}", path, e);
             }
         }
