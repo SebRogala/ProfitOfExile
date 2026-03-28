@@ -26,15 +26,18 @@ export const store = $state({
  * Returns a cleanup function to unsubscribe.
  */
 export async function initStatusStore(): Promise<() => void> {
-	// Initial load
+	// Initial load — events from Rust setup may arrive before this,
+	// but invoke ensures we have data even if we missed the first emit.
 	try {
 		store.status = await invoke('get_status');
-	} catch {
-		// Tauri not ready yet — events will catch up
+	} catch (e) {
+		console.warn('Initial get_status failed (events will catch up):', e);
 	}
 	try {
 		store.logs = await invoke('get_logs') as string[];
-	} catch {}
+	} catch (e) {
+		console.warn('Initial get_logs failed:', e);
+	}
 
 	// Subscribe to backend events
 	const unlistenStatus = await listen('status-changed', (event) => {
