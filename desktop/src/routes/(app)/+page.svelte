@@ -1,16 +1,9 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { appStatus, appLogs } from '$lib/stores/status.svelte';
 
-	let status = $state<any>({ state: 'Loading...', detected_gems: [] });
 	let testResult = $state('');
 	let sending = $state(false);
-	let logs = $state<string[]>([]);
-
-	// Poll status — runs immediately and every second
-	setInterval(() => {
-		invoke('get_status').then((s) => { status = s; }).catch(() => {});
-		invoke('get_logs').then((l) => { logs = l as string[]; }).catch(() => {});
-	}, 1000);
 
 	async function sendTestGems() {
 		sending = true;
@@ -21,17 +14,9 @@
 			testResult = `Error: ${e}`;
 		}
 		sending = false;
-		await refreshLogs();
 	}
 
-	async function refreshStatus() {
-		status = await invoke('get_status');
-		await refreshLogs();
-	}
-
-	async function refreshLogs() {
-		logs = await invoke('get_logs');
-	}
+	// No polling needed — status and logs update via Tauri events (status.svelte.ts)
 
 	let tradeGem = $state('Earthquake of Fragility');
 	let tradeVariant = $state('20/20');
@@ -72,8 +57,8 @@
 <div class="lab-page">
 	<section class="status">
 		<h2>Status</h2>
-		<div class="state">{status?.state || 'Loading...'}</div>
-		{#if status?.state === 'PickingGems'}
+		<div class="state">{appStatus?.state || 'Loading...'}</div>
+		{#if appStatus?.state === 'PickingGems'}
 			<button class="btn-action btn-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop Scanning</button>
 		{:else}
 			<button class="btn-action" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Start Scanning</button>
@@ -129,14 +114,13 @@
 		{/if}
 	</section>
 
-	{#if logs.length > 0}
+	{#if appLogs.length > 0}
 		<section class="logs">
 			<div class="section-header">
 				<h2>Logs</h2>
-				<button class="btn-small" onclick={refreshLogs}>Refresh</button>
 			</div>
 			<div class="log-list">
-				{#each logs.toReversed() as line}
+				{#each appLogs.toReversed() as line}
 					<div class="log-line" class:log-error={line.includes('failed') || line.includes('error')}>{line}</div>
 				{/each}
 			</div>
