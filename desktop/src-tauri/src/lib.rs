@@ -1,4 +1,5 @@
 mod capture;
+mod font_parser;
 mod gem_matcher;
 mod lab_state;
 mod log_watcher;
