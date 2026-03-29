@@ -98,7 +98,18 @@ Setting `WS_EX_NOACTIVATE` on the parent window and all child windows does NOT p
 
 `emit()` from `@tauri-apps/api/event` in one window may not reach `listen()` in another window. Use Rust `app.emit()` for reliable cross-window communication — it uses the proven Rust-to-all-windows event pipeline.
 
-### 10. Transparency Workaround Can Reset Position
+### 10. onMount Does NOT Fire in Overlay Windows
+
+`onMount` from Svelte never fires in overlay WebviewWindows. The component renders (HTML appears), but `onMount` callbacks are never called. Use `$effect` for initialization instead — it runs during component initialization and works reliably.
+
+### 11. Cross-Window Data: Use Rust Polling, Not Events
+
+JS-to-JS events (`emit`/`listen` from `@tauri-apps/api/event`) are unreliable between windows. Rust `app.emit()` also doesn't reliably reach overlay windows. The proven pattern:
+1. Main window pushes data to Rust via `invoke('set_comparator_data', { payload })`
+2. Overlay polls via `invoke('get_comparator_data')` every 500ms using `$effect` + `setInterval`
+3. Rust stores data in `AppState` behind a `Mutex<serde_json::Value>`
+
+### 12. Transparency Workaround Can Reset Position
 
 The WebView2 transparency workaround (`setSize +1/-1 pixels`) in the overlay page's `onMount` can reset window position. If you set position via the constructor and then run the workaround, the position may revert to default.
 
