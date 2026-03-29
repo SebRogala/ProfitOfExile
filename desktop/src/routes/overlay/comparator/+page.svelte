@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import type { CompareGem } from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
+	import GemIcon from '../../(app)/components/GemIcon.svelte';
 
 
 	// --- Comparator data ---
@@ -30,12 +31,13 @@
 		{ name: 'Vaal Grace of Phasing', variant: '20/20', color: 'GREEN', roi: 320, roiPercent: 160, weightedRoi: 290, signal: 'UNCERTAIN', cv: 0.18, transListings: 5, transVelocity: 1.1, baseListings: 20, baseVelocity: 3.2, basePrice: 80, transPrice: 420, liquidityTier: 'THIN', windowSignal: 'UNCERTAIN', sparkline: [400, 410, 430, 415, 420], signalHistory: [], recommendation: 'OK', priceTier: 'MID-HIGH', tierAction: 'Monitor', sellUrgency: 'WATCH', sellReason: 'Low liquidity', sellability: 40, sellabilityLabel: 'RISKY', low7d: 350, high7d: 480, histPosition: 0.45, sellConfidence: 'LOW', sellConfidenceReason: 'Thin market', quickSellPrice: 370, riskAdjustedPrice: 365 } as CompareGem,
 	];
 
+	const TRADE_STALE_MS = 2 * 60 * 1000;
+
 	let results = $state<CompareGem[]>(MOCK_RESULTS);
 	let selectedGem = $state<string | null>(null);
-	let serverUrl = $state('https://poe.softsolution.pro');
 
-	// Trade data per gem
-	let tradeData = $state<Record<string, TradeLookupResult>>({});
+	// Trade data per gem — received from main Comparator, not fetched separately
+	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, boolean>>({});
 	let tradeError = $state<Record<string, string>>({});
 
@@ -51,70 +53,39 @@
 		return `${Math.round(chaos)}c`;
 	}
 
-	// Cache-only trade lookup via Go server
-	async function fetchTradeCache(gem: CompareGem) {
-		try {
-			const resp = await fetch(`${serverUrl}/api/trade/lookup`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ gem: gem.name, variant: gem.variant, cacheOnly: true }),
-			});
-			if (resp.status === 200) {
-				tradeData[gem.name] = await resp.json();
-			}
-			// 204 = cache miss, silently skip
-		} catch (_) {}
+	function tradeCacheAge(trade: TradeLookupResult): string {
+		if (!trade.fetchedAt) return '';
+		const ms = Date.now() - new Date(trade.fetchedAt).getTime();
+		const mins = Math.floor(ms / 60000);
+		if (mins < 1) return '<1m';
+		if (mins < 60) return `${mins}m`;
+		return `${Math.floor(mins / 60)}h${mins % 60}m`;
 	}
 
-	// Full trade lookup — try Go server first, fall back to Tauri direct GGG call
-	async function fetchTrade(gem: CompareGem) {
-		tradeLoading[gem.name] = true;
-		tradeError[gem.name] = '';
+	function isTradeCacheStale(trade: TradeLookupResult): boolean {
+		if (!trade.fetchedAt) return true;
+		return Date.now() - new Date(trade.fetchedAt).getTime() >= TRADE_STALE_MS;
+	}
+
+	function listingAge(indexedAt: string): string {
+		if (!indexedAt) return '';
+		const ms = Date.now() - new Date(indexedAt).getTime();
+		const mins = Math.floor(ms / 60000);
+		if (mins < 60) return `${mins}m`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h`;
+		return `${Math.floor(hrs / 24)}d`;
+	}
+
+	// Trade refresh — try Rust event route, fallback to direct Tauri trade_lookup
+	async function requestTradeRefresh(gem: CompareGem) {
 		try {
-			const resp = await fetch(`${serverUrl}/api/trade/lookup`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ gem: gem.name, variant: gem.variant }),
-			});
-			if (resp.status === 200) {
-				tradeData[gem.name] = await resp.json();
-				tradeLoading[gem.name] = false;
-				return;
-			}
-			if (resp.status === 202) {
-				// Queued — poll for result
-				for (let i = 0; i < 10; i++) {
-					await new Promise(r => setTimeout(r, 3000));
-					const poll = await fetch(`${serverUrl}/api/trade/lookup`, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ gem: gem.name, variant: gem.variant }),
-					});
-					if (poll.status === 200) {
-						tradeData[gem.name] = await poll.json();
-						tradeLoading[gem.name] = false;
-						return;
-					}
-				}
-			}
-			// Fallback to direct Tauri GGG call
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
 				gem: gem.name, variant: gem.variant,
 			});
-			tradeData[gem.name] = result;
+			tradeData = { ...tradeData, [gem.name]: result };
 		} catch (e) {
-			tradeError[gem.name] = String(e);
-		} finally {
-			tradeLoading[gem.name] = false;
-		}
-	}
-
-	// Auto-fetch cache for all gems when results arrive
-	function fetchAllTradeCache() {
-		for (const gem of results) {
-			if (!tradeData[gem.name]) {
-				fetchTradeCache(gem);
-			}
+			console.error('Trade lookup failed:', e);
 		}
 	}
 
@@ -137,22 +108,13 @@
 	}
 
 	onMount(async () => {
-		// Get server URL from Rust state
-		try {
-			const status = await invoke<{ server_url: string }>('get_status');
-			serverUrl = status.server_url;
-		} catch (_) {}
 
-		// Auto-fetch cache for mock data
-		fetchAllTradeCache();
-
-		const unlistenResults = await listen<CompareGem[]>('comparator-results', (event) => {
-			results = event.payload;
+		const unlistenResults = await listen<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('comparator-results', (event) => {
+			results = event.payload.results;
+			tradeData = event.payload.tradeData ?? {};
 			selectedGem = null;
-			tradeData = {};
 			tradeLoading = {};
 			tradeError = {};
-			fetchAllTradeCache();
 		});
 
 		const unlistenClear = await listen('gems-cleared', () => {
@@ -174,54 +136,49 @@
 				{@const tierColor = TIER_COLORS[gem.priceTier] ?? '#94a3b8'}
 				{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
 				{@const trade = tradeData[gem.name]}
-				{@const loading = tradeLoading[gem.name]}
-				<button
-					class="gem-row"
-					class:selected={selectedGem === gem.name}
-					onclick={() => selectedGem = gem.name}
-				>
-					<div class="gem-header">
-						<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
-						<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
-					</div>
-					<div class="gem-details">
-						<span class="price">{formatPrice(gem.transPrice)}</span>
-						<span class="range">7d: {formatPrice(gem.low7d)}\u2013{formatPrice(gem.high7d)}</span>
-						<span class="sell" style="color: {sigColor}">{gem.signal}</span>
-						<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
-					</div>
-					{#if trade}
-						<div class="trade-row">
-							<span class="trade-floor">{formatPrice(trade.priceFloor)}</span>
-							<span class="trade-sep">\u2013</span>
-							<span class="trade-ceil">{formatPrice(trade.priceCeiling)}</span>
-							<span class="trade-total">({trade.total})</span>
-							{#if trade.signals.sellerConcentration !== 'NORMAL'}
-								<span class="trade-warn">{trade.signals.sellerConcentration}</span>
-							{/if}
-							<span class="trade-listings-inline">
-								{#each trade.listings.slice(0, 5) as listing}
-									<span class="listing">{formatPrice(listing.chaosPrice)}{listing.corrupted ? '*' : ''}</span>
-								{/each}
+				<div class="gem-row" class:selected={selectedGem === gem.name}>
+					<div class="gem-content">
+						<div class="row-top">
+							<GemIcon name={gem.name} size={24} />
+							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
+							<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
+							<span class="price">{formatPrice(gem.transPrice)}</span>
+							<span class="sell" style="color: {sigColor}">{gem.signal}</span>
+							<span class="range">wk {formatPrice(gem.low7d)}–{formatPrice(gem.high7d)}</span>
+							<span class="tier-age">
+								<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
+								{#if trade}
+									<span class="cache-age" class:stale={isTradeCacheStale(trade)}>{tradeCacheAge(trade)}</span>
+								{/if}
 							</span>
 						</div>
-					{:else if tradeError[gem.name]}
-						<div class="trade-row trade-err">{tradeError[gem.name]}</div>
-					{:else}
-						<div class="trade-row">
-							<button class="trade-btn" onclick={(e) => { e.stopPropagation(); fetchTrade(gem); }} disabled={loading}>
-								{loading ? 'loading...' : 'fetch trade'}
-							</button>
+						<div class="row-bottom">
+							{#if trade}
+								{#if trade.signals.sellerConcentration !== 'NORMAL'}
+									<span class="trade-warn">{trade.signals.sellerConcentration}</span>
+								{/if}
+								{#each trade.listings as listing, i}
+									<span class="listing-col" class:first={i === 0} class:corrupted={listing.corrupted}>
+										<span class="listing-price">{formatPrice(listing.chaosPrice)}</span>
+										<span class="listing-age">{listingAge(listing.indexedAt)}</span>
+									</span>
+								{/each}
+								<span class="trade-total">({trade.total})</span>
+							{:else if tradeError[gem.name]}
+								<span class="trade-err">{tradeError[gem.name]}</span>
+							{:else}
+								<span class="trade-nodata">no trade data</span>
+							{/if}
 						</div>
-					{/if}
-				</button>
+					</div>
+					<div class="gem-actions">
+						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} onclick={() => { selectedGem = gem.name; handlePick(); }} title="Pick">&#x2713;</button>
+						<button class="act-btn" onclick={() => requestTradeRefresh(gem)} title="Refresh trade">&#x21BB;</button>
+					</div>
+				</div>
 			{/each}
-
-			<div class="actions">
-				<button class="btn pick" onclick={handlePick} disabled={!selectedGem}>
-					Pick: {selectedGem ?? '\u2014'}
-				</button>
-				<button class="btn clear" onclick={handleClear}>Clear</button>
+			<div class="clear-row">
+				<button class="clear-act" onclick={handleClear}>clear</button>
 			</div>
 		</div>
 	{:else}
@@ -240,8 +197,6 @@
 	}
 
 	.surface {
-		width: 100vw;
-		height: 100vh;
 		background: transparent;
 		position: relative;
 		box-sizing: border-box;
@@ -249,13 +204,10 @@
 
 	.overlay {
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-		background: rgba(15, 17, 23, 0.92);
-		border: 1px solid rgba(42, 45, 55, 0.8);
-		border-radius: 8px;
-		padding: 8px;
 		color: #e4e4e7;
-		font-size: 12px;
-		backdrop-filter: blur(8px);
+		font-size: 14px;
+		display: inline-block;
+		pointer-events: none;
 	}
 
 	.overlay.empty {
@@ -265,203 +217,235 @@
 		min-height: 40px;
 	}
 
+
+
+
 	.waiting {
 		color: #9ca3af;
 		font-style: italic;
 	}
 
 	.gem-row {
-		all: unset;
-		display: block;
-		width: 100%;
-		padding: 5px 8px;
-		border-radius: 4px;
-		cursor: pointer;
-		border: 1px solid transparent;
-		margin-bottom: 3px;
-		box-sizing: border-box;
-	}
-
-	.gem-row:hover {
-		background: rgba(255, 255, 255, 0.04);
-	}
-
-	.gem-row.selected {
-		background: rgba(34, 197, 94, 0.08);
-		border-color: rgba(34, 197, 94, 0.25);
-	}
-
-	.gem-header {
 		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1px;
+		align-items: stretch;
 	}
 
-	.gem-name {
-		font-weight: 600;
-		font-size: 12px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.gem-content {
 		flex: 1;
-		margin-right: 8px;
+		min-width: 0;
+		padding: 6px 10px;
+		background: rgba(15, 17, 23, 0.92);
+		backdrop-filter: blur(8px);
+		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
+		border-left: 1px solid rgba(42, 45, 55, 0.8);
+		border-right: 1px solid rgba(42, 45, 55, 0.8);
 	}
 
-	.tier {
-		font-weight: 700;
-		font-size: 10px;
+	.gem-row:first-child .gem-content {
+		border-radius: 8px 8px 0 0;
+		border-top: 1px solid rgba(42, 45, 55, 0.8);
+	}
+
+	.gem-row:last-of-type .gem-content {
+		border-radius: 0 0 8px 8px;
+		border-bottom: 1px solid rgba(42, 45, 55, 0.8);
+	}
+
+	.gem-row:first-child:last-of-type .gem-content {
+		border-radius: 8px;
+	}
+
+	.gem-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 		flex-shrink: 0;
-		width: 52px;
-		text-align: center;
-		margin-right: 6px;
+		pointer-events: auto;
+		padding-right: 4px;
+		margin-left: 8px;
 	}
 
-	.gem-details {
+	.clear-row {
+		display: flex;
+		justify-content: flex-end;
+		padding: 6px 4px 0 0;
+		pointer-events: auto;
+	}
+
+	.gem-row.selected .gem-content {
+		background: rgba(14, 30, 20, 0.95);
+		border-left: 2px solid rgba(34, 197, 94, 0.5);
+	}
+
+	.act-btn {
+		all: unset;
+		cursor: pointer;
+		width: 26px;
+		height: 26px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		font-size: 14px;
+		background: rgba(15, 17, 23, 0.8);
+		color: #9ca3af;
+		border: 1px solid rgba(42, 45, 55, 0.6);
+	}
+
+	.act-btn:hover {
+		background: rgba(255, 255, 255, 0.15);
+		color: #e4e4e7;
+	}
+
+	.pick-btn.active {
+		color: #22c55e;
+		border-color: rgba(34, 197, 94, 0.4);
+		background: rgba(34, 197, 94, 0.15);
+	}
+
+	.clear-act {
+		all: unset;
+		cursor: pointer;
+		font-size: 11px;
+		color: #9ca3af;
+		padding: 4px 8px;
+		border-radius: 4px;
+		margin-top: 8px;
+		align-self: center;
+		background: rgba(15, 17, 23, 0.8);
+		border: 1px solid rgba(42, 45, 55, 0.6);
+	}
+
+	.clear-act:hover {
+		color: #ef4444;
+		border-color: rgba(239, 68, 68, 0.4);
+	}
+
+	.row-top {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 11px;
 	}
 
-	.price {
-		font-weight: 600;
-		color: #fbbf24;
-	}
-
-	.range {
-		color: #9ca3af;
-		font-size: 10px;
-	}
-
-	.sell {
-		font-weight: 500;
-	}
-
-	.rec {
-		font-size: 10px;
-		font-weight: 700;
-		padding: 1px 5px;
-		border-radius: 3px;
-		flex-shrink: 0;
-	}
-
-	/* Trade results */
-	.trade-row {
+	.row-bottom {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		font-size: 10px;
+		gap: 6px;
+		font-size: 12px;
 		margin-top: 2px;
 		color: #9ca3af;
 	}
 
-	.trade-floor {
-		color: #22c55e;
+	.gem-name {
 		font-weight: 600;
+		font-size: 14px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.trade-sep {
-		color: #4b5563;
+	.tier-age {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		flex-shrink: 0;
+		margin-left: auto;
 	}
 
-	.trade-ceil {
+	.tier {
+		font-weight: 700;
+		font-size: 11px;
+	}
+
+	.cache-age {
+		font-size: 9px;
+		color: #6b7280;
+	}
+
+	.cache-age.stale {
+		color: #ef4444;
+	}
+
+	.price {
+		font-weight: 700;
 		color: #fbbf24;
+		flex-shrink: 0;
+	}
+
+	.range {
+		color: #9ca3af;
+		font-size: 12px;
+		flex-shrink: 0;
+	}
+
+	.sell {
 		font-weight: 600;
+		flex-shrink: 0;
+	}
+
+	.rec {
+		font-size: 11px;
+		font-weight: 700;
+		padding: 2px 6px;
+		border-radius: 3px;
+		flex-shrink: 0;
 	}
 
 	.trade-total {
 		color: #6b7280;
+		flex-shrink: 0;
 	}
 
 	.trade-warn {
 		color: #ef4444;
-		font-weight: 600;
-		font-size: 9px;
+		font-weight: 700;
+		flex-shrink: 0;
 	}
 
 	.trade-err {
 		color: #ef4444;
-		font-size: 9px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.trade-listings-inline {
-		display: inline-flex;
-		gap: 4px;
-		margin-left: 4px;
-	}
-
-	.listing {
-		color: #6b7280;
-	}
-
-	.trade-btn {
-		all: unset;
-		cursor: pointer;
-		font-size: 9px;
-		color: #3b82f6;
-		padding: 0 4px;
-		border-radius: 2px;
-	}
-
-	.trade-btn:hover:not(:disabled) {
-		color: #60a5fa;
-		background: rgba(59, 130, 246, 0.1);
-	}
-
-	.trade-btn:disabled {
-		color: #6b7280;
-		cursor: default;
-	}
-
-	/* Actions */
-	.actions {
-		display: flex;
-		gap: 6px;
-		margin-top: 4px;
-		padding-top: 4px;
-		border-top: 1px solid rgba(42, 45, 55, 0.6);
-	}
-
-	.btn {
-		all: unset;
-		cursor: pointer;
-		padding: 4px 10px;
-		border-radius: 4px;
 		font-size: 11px;
-		font-weight: 600;
-		text-align: center;
-	}
-
-	.btn.pick {
-		flex: 1;
-		background: rgba(34, 197, 94, 0.15);
-		color: #22c55e;
-		border: 1px solid rgba(34, 197, 94, 0.3);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.btn.pick:hover:not(:disabled) {
-		background: rgba(34, 197, 94, 0.25);
+	.listing-col {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 0 5px;
+		border-right: 1px solid #2a2d37;
 	}
 
-	.btn.pick:disabled {
-		opacity: 0.4;
-		cursor: default;
+	.listing-col:last-of-type {
+		border-right: none;
 	}
 
-	.btn.clear {
-		background: rgba(239, 68, 68, 0.1);
+	.listing-price {
+		color: #e4e4e7;
+		font-size: 12px;
+	}
+
+	.listing-col.first .listing-price {
+		color: #22c55e;
+		font-weight: 600;
+	}
+
+	.listing-col.corrupted .listing-price {
 		color: #ef4444;
-		border: 1px solid rgba(239, 68, 68, 0.2);
 	}
 
-	.btn.clear:hover {
-		background: rgba(239, 68, 68, 0.2);
+	.listing-age {
+		color: #6b7280;
+		font-size: 9px;
 	}
+
+	.trade-nodata {
+		color: #4b5563;
+		font-size: 11px;
+		font-style: italic;
+	}
+
+
 </style>
