@@ -165,19 +165,22 @@ lib.rs
 │   ├── WIN_RECT: StdMutex<(i32,i32,i32,i32)>       — cached rect
 │   ├── IS_IGNORED: AtomicBool                       — click-through state
 │   ├── RECT_DIRTY: AtomicBool                       — rect needs refresh
-│   ├── mouse_hook_proc()                            — WH_MOUSE_LL callback
-│   ├── install_hook() -> Sender<()>                 — spawns hook thread
+│   ├── INTERACTIVE_WIDTH: AtomicI32                 — right-edge zone width (px)
+│   ├── mouse_hook_proc()                            — WH_MOUSE_LL callback, toggles WS_EX_TRANSPARENT directly
+│   ├── install_hook() -> Sender<()>                 — spawns hook thread with message pump
 │   ├── uninstall_hook()                             — cleanup
-│   ├── set_overlay_hwnd(HWND)                       — register window
-│   ├── invalidate_rect()                            — mark rect dirty
-│   └── set_noactivate(HWND)                         — WS_EX_NOACTIVATE + children
+│   ├── set_overlay_hwnd(HWND)                       — register window for tracking
+│   ├── set_interactive_width(i32)                   — configure zone width per overlay
+│   ├── invalidate_rect()                            — mark rect dirty (call on move/resize)
+│   └── set_noactivate(HWND)                         — WS_EX_NOACTIVATE on parent + all children
 │
-├── set_overlay_no_activate command
+├── set_overlay_clickthrough command (label, interactive_width)
 │   ├── Delays 1s for HWND availability
 │   ├── Calls set_ignore_cursor_events(true)
 │   ├── Sets WS_EX_NOACTIVATE on parent + children
+│   ├── Configures interactive width
 │   ├── Registers HWND for tracking
-│   ├── Installs mouse hook
+│   ├── Installs mouse hook (idempotent)
 │   └── Re-applies WS_EX_NOACTIVATE after 500ms
 │
 └── AppState.overlay_hook_stop                       — stop signal for cleanup
@@ -212,10 +215,10 @@ lib.rs
 }
 ```
 
-4. **Call `set_overlay_no_activate` after window creation**:
+4. **Call `set_overlay_clickthrough` after window creation**:
 ```typescript
 win.once('tauri://created', async () => {
-    await invoke('set_overlay_no_activate', { label: 'comparator' });
+    await invoke('set_overlay_clickthrough', { label: 'comparator', interactiveWidth: 48 });
 });
 ```
 
@@ -252,6 +255,136 @@ Overlay button click → invoke('trade_lookup', { gem, variant })
 Overlay pick button → getCurrentWebviewWindow().emit('overlay-pick', { name, variant, roi })
                     → Main Comparator listens → handleNext()
 ```
+
+## Creating a New Overlay (Step-by-Step)
+
+Use this checklist when adding a new overlay (e.g., lab compass). Every step is required.
+
+### 1. Add window label to capabilities
+
+```json
+// capabilities/default.json — "windows" array
+"windows": ["main", "overlay", "comparator", "my-new-overlay"],
+```
+
+Without this, ALL Tauri APIs silently fail for this window.
+
+### 2. Create the overlay route
+
+```
+desktop/src/routes/overlay/my-new-overlay/+page.svelte
+```
+
+The route inherits the transparent layout from `/overlay/+layout.svelte`.
+
+### 3. Essential CSS in the overlay page
+
+```css
+:global(html), :global(body) {
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Content area — visible but click-through */
+.content {
+    pointer-events: none;
+    display: inline-block;       /* sizes to fit content */
+    background: rgba(15, 17, 23, 0.92);
+    backdrop-filter: blur(8px);
+}
+
+/* Interactive buttons — MUST be at the right edge of the window */
+.buttons {
+    pointer-events: auto;
+    position: fixed;
+    right: 0;
+    top: 0;
+}
+```
+
+### 4. Create the window (JS)
+
+```typescript
+const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+const dpr = window.devicePixelRatio || 1;
+
+const win = new WebviewWindow('my-new-overlay', {
+    url: '/overlay/my-new-overlay',
+    transparent: true,
+    decorations: false,
+    alwaysOnTop: true,
+    resizable: false,
+    shadow: false,
+    skipTaskbar: true,
+    width: 900,      // oversized — transparent area is click-through
+    height: 400,
+    x: Math.round(savedX / dpr),
+    y: Math.round(savedY / dpr),
+});
+
+win.once('tauri://created', async () => {
+    // Enable click-through + interactive button zone
+    await invoke('set_overlay_clickthrough', {
+        label: 'my-new-overlay',
+        interactiveWidth: 48,    // physical pixels from right edge
+    });
+});
+```
+
+### 5. How `set_overlay_clickthrough` works
+
+The Rust command (called once after window creation):
+
+1. **Delays 1 second** — WebView2 HWND not available immediately
+2. **`set_ignore_cursor_events(true)`** — sets `WS_EX_TRANSPARENT | WS_EX_LAYERED`, entire window becomes click-through
+3. **`set_noactivate(hwnd)`** — sets `WS_EX_NOACTIVATE` on parent + all WebView2 child HWNDs
+4. **Registers HWND** for the mouse hook to track
+5. **Installs `WH_MOUSE_LL` hook** (once, shared across all overlays) — tracks cursor globally
+6. **Re-applies `WS_EX_NOACTIVATE`** after 500ms to catch late WebView2 children
+
+The hook toggles `WS_EX_TRANSPARENT` directly via `SetWindowLongW`:
+- Cursor enters interactive zone (rightmost `interactiveWidth` px) → removes `WS_EX_TRANSPARENT` → buttons clickable
+- Cursor leaves → restores `WS_EX_TRANSPARENT` → click-through
+
+### 6. Destroying the overlay
+
+Use the retry loop — single `destroy()` calls are unreliable:
+
+```typescript
+const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+for (let i = 0; i < 5; i++) {
+    const existing = await WebviewWindow.getByLabel('my-new-overlay');
+    if (!existing) break;
+    try { await existing.close(); } catch (_) {}
+    try { await existing.destroy(); } catch (_) {}
+    await new Promise(r => setTimeout(r, 100));
+}
+```
+
+Also clean up the hook in `on_window_event` when the window is destroyed (see `lib.rs` for the `Destroyed` event handler).
+
+### 7. Position persistence
+
+- Save position via `invoke('set_comparator_overlay_settings', { x, y, w, h, enabled })` (or create a similar command for your overlay)
+- Position values from `outerPosition()` are **physical pixels**
+- Constructor `x`/`y` are **logical pixels** — divide by `devicePixelRatio`
+- Cross-window `outerPosition()` returns **wrong values** — save from the overlay's own context only
+
+### 8. Data flow
+
+For overlay ↔ main window communication:
+- **Main → Overlay**: use Tauri `emit()` from `@tauri-apps/api/event` (JS→JS works main→child)
+- **Overlay → Main**: use `invoke()` to a Rust command that calls `app.emit()` (reliable Rust→all-windows path)
+- **Do NOT** rely on JS `emit()` from overlay reaching the main window
+
+### Current limitations
+
+- **One interactive zone per hook**: the hook tracks one HWND. For multiple overlays with buttons, the module would need to track multiple HWNDs and rects.
+- **Interactive zone is right-edge only**: buttons must be positioned at the right edge of the window. A different zone shape would need changes to the hook's hit-test logic.
 
 ## References
 
