@@ -128,7 +128,7 @@
 	<TopBar status={store.status} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={toggleSidebar}
-			comparatorActive={comparatorActive} onToggleComparator={toggleComparatorOverlay} />
+			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay} />
 		<main class="content">
 			{#if children}
 				{@render children()}

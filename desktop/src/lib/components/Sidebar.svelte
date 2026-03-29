@@ -4,12 +4,14 @@
 		currentPath = '/',
 		onToggle,
 		comparatorActive = false,
+		gameFocused = false,
 		onToggleComparator,
 	}: {
 		open: boolean;
 		currentPath: string;
 		onToggle: () => void;
 		comparatorActive?: boolean;
+		gameFocused?: boolean;
 		onToggleComparator?: () => void;
 	} = $props();
 </script>
@@ -52,9 +54,9 @@
 			<span class="icon">&#x1F441;</span>
 			<span class="indicator off"></span>
 		</div>
-		<button class="collapsed-overlay" title="Compare: {comparatorActive ? 'on' : 'off'}" onclick={onToggleComparator}>
+		<button class="collapsed-overlay" title="Compare: {comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleComparator}>
 			<span class="icon">&#x2696;&#xFE0F;</span>
-			<span class="indicator" class:off={!comparatorActive} class:always={comparatorActive}></span>
+			<span class="indicator" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}></span>
 		</button>
 		<div class="collapsed-overlay" title="Session: off">
 			<span class="icon">&#x1F4CB;</span>
@@ -117,7 +119,7 @@
 		</div>
 		<button class="overlay-row clickable" onclick={onToggleComparator}>
 			<span>&#x2696;&#xFE0F; Compare</span>
-			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive}>{comparatorActive ? 'on' : 'off'}</span>
+			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}>{comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<div class="overlay-row">
 			<span>&#x1F4CB; Session</span>
