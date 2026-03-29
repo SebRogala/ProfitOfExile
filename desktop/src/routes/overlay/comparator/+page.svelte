@@ -183,10 +183,6 @@
 				<button class="clear-act" onclick={handleClear}>clear</button>
 			</div>
 		</div>
-	{:else}
-		<div class="table" style="padding: 10px; min-height: auto;">
-			<span style="color: #6b7280; font-style: italic;">Waiting for gem scan...</span>
-		</div>
 	{/if}
 </div>
 
@@ -202,6 +198,9 @@
 
 	.surface {
 		background: transparent;
+		position: fixed;
+		bottom: 30px;
+		left: 0;
 	}
 
 	.layout {
@@ -219,12 +218,8 @@
 		color: #e4e4e7;
 		font-size: 14px;
 		backdrop-filter: blur(8px);
-		width: 530px;
+		width: 560px;
 		pointer-events: none;
-		display: flex;
-		flex-direction: column;
-		justify-content: flex-end;
-		min-height: 216px;
 	}
 
 	.table.empty {

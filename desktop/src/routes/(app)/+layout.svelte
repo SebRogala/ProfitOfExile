@@ -38,7 +38,7 @@
 			shadow: false,
 			skipTaskbar: true,
 
-			width: 600,
+			width: 630,
 			height: 250,
 			x: Math.round(x / dpr),
 			y: Math.round(y / dpr),
