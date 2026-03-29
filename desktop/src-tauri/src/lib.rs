@@ -61,6 +61,7 @@ pub struct AppState {
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Stop signal for the overlay mouse hook thread.
+    pub comparator_data: Mutex<serde_json::Value>,
     pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
@@ -538,6 +539,17 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
             }
         });
     }
+}
+
+#[tauri::command]
+fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()) = payload;
+}
+
+#[tauri::command]
+fn get_comparator_data(state: tauri::State<AppState>) -> serde_json::Value {
+    state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[tauri::command]
@@ -1162,6 +1174,7 @@ pub fn run() {
         game_focused: Mutex::new(false),
         trade_client: trade::TradeApiClient::new("Mirage"),
         watcher_cancel: Mutex::new(None),
+        comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
         overlay_hook_stop: Mutex::new(None),
     };
 
@@ -1187,6 +1200,8 @@ pub fn run() {
             trade_lookup,
             send_test_gems,
             test_ocr_on_image,
+            set_comparator_data,
+            get_comparator_data,
             set_overlay_clickthrough,
             request_trade_refresh,
             move_overlay,
@@ -1202,8 +1217,8 @@ pub fn run() {
             let state = handle.state::<AppState>();
             settings::apply_to_state(&saved, &state);
             // Write settings on startup so the file always exists
-            let s = settings::from_state(&state);
-            settings::save(&handle, &s);
+            // Use persist_settings to preserve window + overlay settings
+            persist_settings(&handle);
             app_log(&handle, "Settings initialized".to_string());
 
             // Restore window position/size from saved settings
@@ -1267,8 +1282,10 @@ pub fn run() {
                         }
                     };
                     let state = app.state::<AppState>();
+                    let existing = settings::load(app);
                     let mut s = settings::from_state(&state);
                     s.window = Some(win_settings);
+                    s.comparator_overlay = existing.comparator_overlay;
                     settings::save(app, &s);
                 }
             }

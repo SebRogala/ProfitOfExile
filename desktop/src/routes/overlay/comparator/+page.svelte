@@ -1,8 +1,6 @@
 <script lang="ts">
-	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { invoke } from '@tauri-apps/api/core';
-	import { onMount } from 'svelte';
 	import type { CompareGem } from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
@@ -31,7 +29,7 @@
 		{ name: 'Static Strike of Gathering Lightning', variant: '20/20', color: 'GREEN', roi: 320, roiPercent: 160, weightedRoi: 290, signal: 'UNCERTAIN', cv: 0.18, transListings: 5, transVelocity: 1.1, baseListings: 20, baseVelocity: 3.2, basePrice: 80, transPrice: 420, liquidityTier: 'THIN', windowSignal: 'UNCERTAIN', sparkline: [400, 410, 430, 415, 420], signalHistory: [], recommendation: 'OK', priceTier: 'MID-HIGH', tierAction: 'Monitor', sellUrgency: 'WATCH', sellReason: 'Low liquidity', sellability: 40, sellabilityLabel: 'RISKY', low7d: 350, high7d: 480, histPosition: 0.45, sellConfidence: 'LOW', sellConfidenceReason: 'Thin market', quickSellPrice: 370, riskAdjustedPrice: 365 } as CompareGem,
 	];
 
-	let results = $state<CompareGem[]>(MOCK_RESULTS);
+	let results = $state<CompareGem[]>([]);
 	let selectedGem = $state<string | null>(null);
 
 	// Trade data — received from main Comparator, not fetched separately
@@ -101,21 +99,30 @@
 		tradeData = {};
 	}
 
-	onMount(async () => {
-
-		const unlistenResults = await listen<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('comparator-results', (event) => {
-			results = event.payload.results;
-			tradeData = event.payload.tradeData ?? {};
-			selectedGem = null;
-		});
-
-		const unlistenClear = await listen('gems-cleared', () => {
-			handleClear();
-		});
+	// Poll Rust for comparator data (cross-window events unreliable, onMount doesn't fire in overlay)
+	let lastJson = '';
+	$effect(() => {
+		const pollInterval = setInterval(async () => {
+			try {
+				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('get_comparator_data');
+				const json = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
+				if (json !== lastJson) {
+					lastJson = json;
+					results = data.results ?? [];
+					tradeData = data.tradeData ?? {};
+					if (results.length > 0 && !selectedGem) {
+						const best = results.find((g) => g.recommendation === 'BEST');
+						selectedGem = best?.name ?? results[0]?.name ?? null;
+					}
+					if (results.length === 0) {
+						selectedGem = null;
+					}
+				}
+			} catch (_) {}
+		}, 500);
 
 		return () => {
-			unlistenResults();
-			unlistenClear();
+			clearInterval(pollInterval);
 		};
 	});
 </script>
@@ -177,8 +184,8 @@
 			</div>
 		</div>
 	{:else}
-		<div class="table empty">
-			<span class="waiting">Waiting for gems...</span>
+		<div class="table" style="padding: 10px; min-height: auto;">
+			<span style="color: #6b7280; font-style: italic;">Waiting for gem scan...</span>
 		</div>
 	{/if}
 </div>
@@ -214,6 +221,10 @@
 		backdrop-filter: blur(8px);
 		width: 530px;
 		pointer-events: none;
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		min-height: 216px;
 	}
 
 	.table.empty {
@@ -398,10 +409,12 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: flex-end;
 		pointer-events: auto;
 		position: fixed;
 		right: 0;
 		top: 1px;
+		bottom: 0;
 	}
 
 	.side-row {
