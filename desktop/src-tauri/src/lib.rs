@@ -1048,6 +1048,57 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
     }
 }
 
+/// Poll GetForegroundWindow to detect game focus changes.
+/// More reliable than Client.txt log events (no latency, works if PoE crashes).
+/// Runs every 1 second on a dedicated thread.
+fn spawn_focus_poller(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut was_focused = false;
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            #[cfg(windows)]
+            {
+                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+
+                let is_focused = unsafe {
+                    let fg = GetForegroundWindow();
+                    if fg.0.is_null() {
+                        false
+                    } else {
+                        let mut buf = [0u16; 256];
+                        let len = GetWindowTextW(fg, &mut buf);
+                        if len > 0 {
+                            let title = String::from_utf16_lossy(&buf[..len as usize]);
+                            title.contains("Path of Exile")
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if is_focused != was_focused {
+                    was_focused = is_focused;
+                    let state = app.state::<AppState>();
+                    *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()) = is_focused;
+                    if let Err(e) = app.emit("game-focus-changed", is_focused) {
+                        log::warn!("emit game-focus-changed failed: {}", e);
+                    }
+                    emit_status(&app);
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                // No-op on non-Windows
+                let _ = &app;
+                break;
+            }
+        }
+    });
+}
+
 fn spawn_log_watcher(app: AppHandle) {
     let state = app.state::<AppState>();
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1233,6 +1284,7 @@ pub fn run() {
             }
 
             spawn_log_watcher(handle.clone());
+            spawn_focus_poller(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             Ok(())
