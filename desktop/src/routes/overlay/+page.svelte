@@ -73,7 +73,7 @@
 						lastX = pos.x; lastY = pos.y; lastW = size.width; lastH = size.height;
 						await invoke('move_overlay', { label: syncTarget, x: pos.x, y: pos.y, w: size.width, h: size.height });
 					}
-				} catch (_) {}
+				} catch (e) { console.warn(`[overlay] position sync failed for '${syncTarget}':`, e); }
 			}, 100);
 		}
 

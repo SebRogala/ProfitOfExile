@@ -127,7 +127,7 @@
 			if (settings) {
 				comparatorOverlaySettings = settings;
 			}
-		}).catch(() => {});
+		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
 	});
 
 	async function showComparatorPositionOverlay() {

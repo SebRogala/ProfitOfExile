@@ -6,7 +6,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
-	import { initFocusListener, destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
+	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 
 	let { children } = $props();
 
@@ -45,7 +45,8 @@
 		});
 
 		win.once('tauri://created', async () => {
-			await invoke('set_overlay_clickthrough', { label: 'comparator', interactiveWidth: 48 }).catch(() => {});
+			await invoke('set_overlay_clickthrough', { label: 'comparator', interactiveWidth: 48 })
+				.catch(e => console.error('[overlay] click-through setup failed:', e));
 			comparatorWin = win;
 			comparatorActive = true;
 		});
@@ -72,14 +73,14 @@
 			await destroyComparatorWindow();
 			comparatorActive = false;
 			// Save disabled state
-			const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
+			const settings = await invoke<any>('get_comparator_overlay_settings').catch(e => { console.warn('[overlay] settings load failed:', e); return null; });
 			await invoke('set_comparator_overlay_settings', {
 				x: settings?.x ?? 100, y: settings?.y ?? 100,
 				w: settings?.width ?? 600, h: settings?.height ?? 250,
 				enabled: false,
-			}).catch(() => {});
+			}).catch(e => console.warn('[overlay] settings operation failed:', e));
 		} else {
-			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').catch(() => null);
+			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').catch(e => { console.warn('[overlay] settings load failed:', e); return null; });
 			await createComparatorOverlay(
 				settings?.x ?? 100,
 				settings?.y ?? 100,
@@ -89,7 +90,7 @@
 				x: settings?.x ?? 100, y: settings?.y ?? 100,
 				w: settings?.width ?? 600, h: settings?.height ?? 250,
 				enabled: true,
-			}).catch(() => {});
+			}).catch(e => console.warn('[overlay] settings operation failed:', e));
 		}
 	}
 
@@ -102,7 +103,7 @@
 				win.isDevtoolsOpen().then(open => {
 					if (open) win.closeDevtools();
 					else win.openDevtools();
-				}).catch(() => {});
+				}).catch(e => console.warn('[overlay] settings operation failed:', e));
 			}
 		}
 		window.addEventListener('keydown', handleKeydown);
@@ -112,7 +113,7 @@
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
 	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
-	initFocusListener().catch(e => console.error('[layout] initFocusListener failed:', e));
+	// Focus-based overlay show/hide handled by Rust focus poller (GetForegroundWindow)
 
 	// Auto-restore comparator overlay if it was enabled in previous session
 	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings')
@@ -121,7 +122,7 @@
 				createComparatorOverlay(settings.x, settings.y);
 			}
 		})
-		.catch(() => {});
+		.catch(e => console.warn('[overlay] settings operation failed:', e));
 </script>
 
 <div class="app-shell">
