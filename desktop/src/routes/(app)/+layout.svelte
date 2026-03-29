@@ -38,8 +38,8 @@
 			shadow: false,
 			skipTaskbar: true,
 
-			width: 640,
-			height: 220,
+			width: 700,
+			height: 250,
 			x: Math.round(x / dpr),
 			y: Math.round(y / dpr),
 		});
