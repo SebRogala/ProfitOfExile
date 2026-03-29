@@ -190,8 +190,8 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
-			width: Math.round(w! / dpr),
-			height: Math.round(h! / dpr),
+			width: 900,
+			height: 500,
 			x: Math.round(x! / dpr),
 			y: Math.round(y! / dpr),
 		});

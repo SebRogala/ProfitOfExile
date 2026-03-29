@@ -22,12 +22,13 @@
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
 
-	async function createComparatorOverlay(x: number, y: number, w: number, h: number) {
+	async function createComparatorOverlay(x: number, y: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const dpr = window.devicePixelRatio || 1;
 
 		await destroyComparatorWindow();
 
+		// Window is transparent — oversized so content can grow dynamically
 		const win = new WebviewWindow('comparator', {
 			url: '/overlay/comparator',
 			transparent: true,
@@ -36,8 +37,8 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
-			width: Math.round(w / dpr),
-			height: Math.round(h / dpr),
+			width: 900,
+			height: 500,
 			x: Math.round(x / dpr),
 			y: Math.round(y / dpr),
 		});
@@ -75,8 +76,6 @@
 			await createComparatorOverlay(
 				settings?.x ?? 100,
 				settings?.y ?? 100,
-				settings?.width ?? 380,
-				settings?.height ?? 250,
 			);
 		}
 	}
@@ -106,7 +105,7 @@
 	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings')
 		.then((settings) => {
 			if (settings?.enabled) {
-				createComparatorOverlay(settings.x, settings.y, settings.width, settings.height);
+				createComparatorOverlay(settings.x, settings.y);
 			}
 		})
 		.catch(() => {});

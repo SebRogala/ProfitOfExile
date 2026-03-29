@@ -48,9 +48,10 @@
 		}
 	});
 
-	// Relay results to overlay window via Tauri event
+	// Relay results + trade data to overlay window via Tauri event
+	// Spread tradeData to ensure Svelte tracks property-level changes
 	$effect(() => {
-		emit('comparator-results', results);
+		emit('comparator-results', { results, tradeData: { ...tradeData } });
 	});
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
@@ -88,11 +89,18 @@
 			handleNext();
 		});
 
+		// Listen for trade refresh request from overlay
+		const refreshPromise = listen<{ name: string; variant: string }>('overlay-trade-refresh', (event) => {
+			if (cancelled) return;
+			fetchTradeData(event.payload.name, true);
+		});
+
 		return () => {
 			cancelled = true;
 			gemPromise.then(unlisten => unlisten());
 			clearPromise.then(unlisten => unlisten());
 			pickPromise.then(unlisten => unlisten());
+			refreshPromise.then(unlisten => unlisten());
 		};
 	});
 

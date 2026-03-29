@@ -323,6 +323,13 @@ async fn trade_lookup(
 }
 
 #[tauri::command]
+fn request_trade_refresh(gem: String, variant: String, app: AppHandle) {
+    if let Err(e) = app.emit("overlay-trade-refresh", serde_json::json!({ "name": gem, "variant": variant })) {
+        log::warn!("emit overlay-trade-refresh failed: {}", e);
+    }
+}
+
+#[tauri::command]
 fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
@@ -953,6 +960,7 @@ pub fn run() {
             trade_lookup,
             send_test_gems,
             test_ocr_on_image,
+            request_trade_refresh,
             move_overlay,
             comparator_moved,
             get_comparator_overlay_settings,
