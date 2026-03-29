@@ -143,11 +143,11 @@
 			transparent: true,
 			decorations: false,
 			alwaysOnTop: true,
-			resizable: true,
+			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
-			width: s ? Math.round(s.width / dpr) : 700,
-			height: s ? Math.round(s.height / dpr) : 250,
+			width: 600,
+			height: 250,
 			x: s ? Math.round(s.x / dpr) : 100,
 			y: s ? Math.round(s.y / dpr) : 100,
 		});
@@ -191,7 +191,7 @@
 			shadow: false,
 			skipTaskbar: true,
 
-			width: 700,
+			width: 600,
 			height: 250,
 			x: Math.round(x! / dpr),
 			y: Math.round(y! / dpr),

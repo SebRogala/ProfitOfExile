@@ -212,7 +212,7 @@
 		color: #e4e4e7;
 		font-size: 14px;
 		backdrop-filter: blur(8px);
-		width: 630px;
+		width: 530px;
 		pointer-events: none;
 	}
 
