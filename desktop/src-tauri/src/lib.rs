@@ -63,6 +63,7 @@ pub struct AppState {
     /// Stop signal for the overlay mouse hook thread.
     pub comparator_data: Mutex<serde_json::Value>,
     pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    pub focus_poller_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -391,6 +392,9 @@ mod overlay_clickthrough {
                         if let Ok(mut wr) = WIN_RECT.lock() {
                             *wr = (rect.left, rect.top, rect.right, rect.bottom);
                         }
+                    } else {
+                        // Retry on next event
+                        RECT_DIRTY.store(true, Ordering::Relaxed);
                     }
                 }
 
@@ -441,7 +445,9 @@ mod overlay_clickthrough {
                 }
 
                 if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                    let _ = UnhookWindowsHookEx(h);
+                    if let Err(e) = UnhookWindowsHookEx(h) {
+                        log::error!("Failed to unhook mouse hook: {} — hook may leak", e);
+                    }
                 }
                 log::info!("Overlay mouse hook removed");
             }
@@ -451,7 +457,11 @@ mod overlay_clickthrough {
 
     pub fn uninstall_hook() {
         if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            unsafe { let _ = UnhookWindowsHookEx(h); }
+            unsafe {
+                if let Err(e) = UnhookWindowsHookEx(h) {
+                    log::error!("Failed to unhook mouse hook: {} — hook may leak", e);
+                }
+            }
         }
         OVERLAY_HWND.store(0, Ordering::Relaxed);
         IS_IGNORED.store(true, Ordering::Relaxed);
@@ -560,16 +570,19 @@ fn request_trade_refresh(gem: String, variant: String, app: AppHandle) {
 }
 
 #[tauri::command]
-fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
-    if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
-        let _ = window.set_size(tauri::PhysicalSize::new(w, h));
-        // Invalidate cached rect so the mouse hook picks up the new position
-        #[cfg(windows)]
-        if label == "comparator" {
-            overlay_clickthrough::invalidate_rect();
-        }
+fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window(&label)
+        .ok_or_else(|| format!("Window '{}' not found", label))?;
+    window.set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| format!("set_position failed: {}", e))?;
+    window.set_size(tauri::PhysicalSize::new(w, h))
+        .map_err(|e| format!("set_size failed: {}", e))?;
+    // Invalidate cached rect so the mouse hook picks up the new position
+    #[cfg(windows)]
+    if label == "comparator" {
+        overlay_clickthrough::invalidate_rect();
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1052,11 +1065,26 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
 /// More reliable than Client.txt log events (no latency, works if PoE crashes).
 /// Runs every 1 second on a dedicated thread.
 fn spawn_focus_poller(app: AppHandle) {
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    {
+        let state = app.state::<AppState>();
+        *state.focus_poller_stop.lock().unwrap_or_else(|e| {
+            log::warn!("focus_poller_stop mutex poisoned, recovering");
+            e.into_inner()
+        }) = Some(stop_tx);
+    }
+
     std::thread::spawn(move || {
         let mut was_focused = false;
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            // Check stop signal
+            if stop_rx.try_recv().is_ok() {
+                log::info!("Focus poller stopped");
+                break;
+            }
 
             #[cfg(windows)]
             {
@@ -1081,7 +1109,10 @@ fn spawn_focus_poller(app: AppHandle) {
                 if is_focused != was_focused {
                     was_focused = is_focused;
                     let state = app.state::<AppState>();
-                    *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()) = is_focused;
+                    *state.game_focused.lock().unwrap_or_else(|e| {
+                        log::warn!("game_focused mutex poisoned, recovering");
+                        e.into_inner()
+                    }) = is_focused;
                     if let Err(e) = app.emit("game-focus-changed", is_focused) {
                         log::warn!("emit game-focus-changed failed: {}", e);
                     }
@@ -1090,9 +1121,13 @@ fn spawn_focus_poller(app: AppHandle) {
                     // Hide/show overlay windows (only if they exist = user has them enabled)
                     if let Some(win) = app.get_webview_window("comparator") {
                         if is_focused {
-                            let _ = win.show();
+                            if let Err(e) = win.show() {
+                                log::warn!("Failed to show comparator overlay: {}", e);
+                            }
                         } else {
-                            let _ = win.hide();
+                            if let Err(e) = win.hide() {
+                                log::warn!("Failed to hide comparator overlay: {}", e);
+                            }
                         }
                     }
                 }
@@ -1100,7 +1135,6 @@ fn spawn_focus_poller(app: AppHandle) {
 
             #[cfg(not(windows))]
             {
-                // No-op on non-Windows
                 let _ = &app;
                 break;
             }
@@ -1192,16 +1226,9 @@ fn spawn_log_watcher(app: AppHandle) {
                                     lab_state::LabState::Idle;
                                 emit_status(&app);
                             }
-                            lab_state::LabEvent::GameFocused => {
-                                *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()) = true;
-                                if let Err(e) = app.emit("game-focus-changed", true) { log::warn!("emit game-focus-changed failed: {}", e); }
-                                emit_status(&app);
-                            }
-                            lab_state::LabEvent::GameBlurred => {
-                                *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()) = false;
-                                if let Err(e) = app.emit("game-focus-changed", false) { log::warn!("emit game-focus-changed failed: {}", e); }
-                                emit_status(&app);
-                            }
+                            // GameFocused/GameBlurred handled by the focus poller
+                            // (GetForegroundWindow — more reliable than Client.txt)
+                            lab_state::LabEvent::GameFocused | lab_state::LabEvent::GameBlurred => {}
                         }
                     }
                 }
@@ -1236,6 +1263,7 @@ pub fn run() {
         watcher_cancel: Mutex::new(None),
         comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
         overlay_hook_stop: Mutex::new(None),
+        focus_poller_stop: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -1306,10 +1334,10 @@ pub fn run() {
                     {
                         let app = window.app_handle();
                         let state = app.state::<AppState>();
+                        // Send stop signal — the hook thread will unhook and exit
                         if let Some(tx) = state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
                             let _ = tx.send(());
                         }
-                        overlay_clickthrough::uninstall_hook();
                         log::info!("overlay_clickthrough: cleaned up on comparator destroy");
                     }
                 }

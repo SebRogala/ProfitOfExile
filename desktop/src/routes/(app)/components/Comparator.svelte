@@ -53,7 +53,7 @@
 	$effect(() => {
 		invoke('set_comparator_data', {
 			payload: { results, tradeData: { ...tradeData } },
-		}).catch(() => {});
+		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];

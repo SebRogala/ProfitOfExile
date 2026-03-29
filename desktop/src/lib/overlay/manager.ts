@@ -43,7 +43,9 @@ export async function showOverlay(name: string, options: OverlayOptions): Promis
 	try {
 		const orphan = await WebviewWindow.getByLabel(name);
 		if (orphan) await orphan.destroy();
-	} catch (_) {}
+	} catch (e) {
+		console.warn(`[overlay] orphan cleanup for '${name}' failed:`, e);
+	}
 	// Let Tauri finish native window cleanup
 	await new Promise(r => setTimeout(r, 150));
 
