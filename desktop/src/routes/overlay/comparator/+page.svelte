@@ -212,7 +212,7 @@
 		color: #e4e4e7;
 		font-size: 14px;
 		backdrop-filter: blur(8px);
-		width: 590px;
+		width: 630px;
 		pointer-events: none;
 	}
 
@@ -267,7 +267,6 @@
 		font-size: 10px;
 		color: #6b7280;
 		flex-shrink: 0;
-		margin-right: 8px;
 	}
 
 	.gem-name {
