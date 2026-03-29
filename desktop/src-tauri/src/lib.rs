@@ -343,50 +343,47 @@ async fn trade_lookup(
 //      focus from the game.
 // ---------------------------------------------------------------------------
 
+/// Overlay click-through system for Windows/WebView2.
+///
+/// WebView2 creates child HWNDs that handle hit-testing independently, so
+/// standard approaches (WM_NCHITTEST, focusable, WS_EX_NOACTIVATE alone)
+/// don't work. See docs/OVERLAY-GUIDE.md for the full explanation.
+///
+/// Solution: WS_EX_TRANSPARENT makes the entire window click-through at the
+/// OS level. A WH_MOUSE_LL hook toggles it off when the cursor enters the
+/// interactive zone (rightmost N pixels) so buttons become clickable.
 #[cfg(windows)]
 mod overlay_clickthrough {
-    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
     use std::sync::Mutex as StdMutex;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, BOOL, RECT};
     use windows::Win32::UI::WindowsAndMessaging::*;
 
-    /// Width of the interactive button column on the right side (in physical pixels).
-    const BUTTON_COLUMN_PX: i32 = 48;
-
-    /// Global state for the mouse hook — the hook callback is a C function pointer
-    /// and cannot capture any environment, so we use statics.
-    /// HHOOK contains a raw pointer — safe to share because we only access it
-    /// from the hook thread (install/uninstall) behind a mutex.
     struct SendHook(HHOOK);
     unsafe impl Send for SendHook {}
-    static HOOK_HANDLE: StdMutex<Option<SendHook>> = StdMutex::new(None);
-    /// The overlay window HWND being tracked (raw pointer as isize for atomics).
-    static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
-    /// Window rect cache — updated each hook call. Stored as (left, top, right, bottom).
-    static WIN_RECT: StdMutex<(i32, i32, i32, i32)> = StdMutex::new((0, 0, 0, 0));
-    /// Whether cursor events are currently being ignored (click-through mode).
-    static IS_IGNORED: AtomicBool = AtomicBool::new(true);
-    /// Whether to recalculate window rect on next hook call.
-    static RECT_DIRTY: AtomicBool = AtomicBool::new(true);
 
-    /// Low-level mouse hook callback.
-    /// Runs on the hook thread. When the cursor enters/leaves the button column,
-    /// it posts a custom message to the overlay HWND which triggers the toggle.
+    static HOOK_HANDLE: StdMutex<Option<SendHook>> = StdMutex::new(None);
+    static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
+    static WIN_RECT: StdMutex<(i32, i32, i32, i32)> = StdMutex::new((0, 0, 0, 0));
+    static IS_IGNORED: AtomicBool = AtomicBool::new(true);
+    static RECT_DIRTY: AtomicBool = AtomicBool::new(true);
+    /// Width of interactive zone on the right edge (physical pixels).
+    static INTERACTIVE_WIDTH: AtomicI32 = AtomicI32::new(48);
+
     unsafe extern "system" fn mouse_hook_proc(
         n_code: i32,
         w_param: WPARAM,
         l_param: LPARAM,
     ) -> LRESULT {
         if n_code >= 0 {
-            let mouse_struct = &*(l_param.0 as *const MSLLHOOKSTRUCT);
-            let cursor_x = mouse_struct.pt.x;
-            let cursor_y = mouse_struct.pt.y;
+            let mouse = &*(l_param.0 as *const MSLLHOOKSTRUCT);
+            let cx = mouse.pt.x;
+            let cy = mouse.pt.y;
 
             let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
             if hwnd_val != 0 {
                 let hwnd = HWND(hwnd_val as *mut _);
 
-                // Refresh window rect if dirty or periodically
                 if RECT_DIRTY.swap(false, Ordering::Relaxed) {
                     let mut rect = RECT::default();
                     if GetWindowRect(hwnd, &mut rect).is_ok() {
@@ -396,78 +393,44 @@ mod overlay_clickthrough {
                     }
                 }
 
-                static LOG_COUNTER: AtomicIsize = AtomicIsize::new(0);
                 let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
-                let in_window = cursor_x >= left && cursor_x < right
-                    && cursor_y >= top && cursor_y < bottom;
-                let in_button_column = in_window
-                    && cursor_x >= (right - BUTTON_COLUMN_PX);
+                let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
+                let in_interactive = cx >= left && cx < right && cy >= top && cy < bottom
+                    && cx >= (right - iw);
+                let ignored = IS_IGNORED.load(Ordering::Relaxed);
 
-                // Log once to verify rect
-                let count = LOG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                if count == 0 {
-                    eprintln!("[hook] rect=({},{},{},{}) cursor=({},{}) in_window={} in_btn={}",
-                        left, top, right, bottom, cursor_x, cursor_y, in_window, in_button_column);
-                }
-
-                let currently_ignored = IS_IGNORED.load(Ordering::Relaxed);
-
-                if in_button_column && currently_ignored {
+                if in_interactive && ignored {
                     IS_IGNORED.store(false, Ordering::Relaxed);
-                    eprintln!("[hook] ENTER button column — making interactive");
-                    let _ = PostMessageW(hwnd, WM_APP + 1, WPARAM(0), LPARAM(0));
-                } else if !in_button_column && !currently_ignored {
+                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TRANSPARENT.0 as i32));
+                } else if !in_interactive && !ignored {
                     IS_IGNORED.store(true, Ordering::Relaxed);
-                    eprintln!("[hook] LEAVE button column — making click-through");
-                    let _ = PostMessageW(hwnd, WM_APP + 2, WPARAM(0), LPARAM(0));
+                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT.0 as i32);
                 }
             }
         }
         CallNextHookEx(None, n_code, w_param, l_param)
     }
 
-    /// Install the global low-level mouse hook on a dedicated thread.
-    /// The thread runs a message pump (required by WH_MOUSE_LL).
-    /// Returns a stop-signal sender to shut down the hook thread.
+    /// Install the global mouse hook. Returns a stop-signal sender.
     pub fn install_hook() -> Option<std::sync::mpsc::Sender<()>> {
-        eprintln!("[hook] install_hook called");
-        // Don't install twice
         if HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
-            eprintln!("[hook] already installed, skipping");
             return None;
         }
-
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
-
         std::thread::spawn(move || {
             unsafe {
-                let hook = SetWindowsHookExW(
-                    WH_MOUSE_LL,
-                    Some(mouse_hook_proc),
-                    None,    // NULL hInstance — global hook
-                    0,       // 0 = all threads
-                );
-                match hook {
-                    Ok(h) => {
-                        *HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(SendHook(h));
-                        eprintln!("[hook] mouse hook installed OK");
-                    }
-                    Err(e) => {
-                        eprintln!("[hook] SetWindowsHookExW FAILED: {}", e);
-                        return;
-                    }
-                }
+                let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0) {
+                    Ok(h) => h,
+                    Err(e) => { log::error!("Mouse hook install failed: {}", e); return; }
+                };
+                *HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(SendHook(hook));
+                log::info!("Overlay mouse hook installed");
 
-                // Message pump — required for WH_MOUSE_LL to work.
-                // The hook callback runs in this thread's context via GetMessage dispatching.
                 let mut msg = MSG::default();
                 loop {
-                    // Non-blocking check for stop signal
-                    if stop_rx.try_recv().is_ok() {
-                        break;
-                    }
-                    // PeekMessage with PM_REMOVE processes hook callbacks.
-                    // Use a short sleep to avoid spinning at 100% CPU.
+                    if stop_rx.try_recv().is_ok() { break; }
                     if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                         let _ = TranslateMessage(&msg);
                         DispatchMessageW(&msg);
@@ -476,200 +439,105 @@ mod overlay_clickthrough {
                     }
                 }
 
-                // Cleanup
                 if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
                     let _ = UnhookWindowsHookEx(h);
                 }
-                log::info!("overlay_clickthrough: mouse hook removed");
+                log::info!("Overlay mouse hook removed");
             }
         });
-
         Some(stop_tx)
     }
 
-    /// Uninstall the mouse hook.
     pub fn uninstall_hook() {
         if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            unsafe {
-                let _ = UnhookWindowsHookEx(h);
-            }
-            log::info!("overlay_clickthrough: hook uninstalled");
+            unsafe { let _ = UnhookWindowsHookEx(h); }
         }
         OVERLAY_HWND.store(0, Ordering::Relaxed);
         IS_IGNORED.store(true, Ordering::Relaxed);
     }
 
-    /// Set the overlay HWND to track for hit-testing.
     pub fn set_overlay_hwnd(hwnd: HWND) {
         OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
         RECT_DIRTY.store(true, Ordering::Relaxed);
         IS_IGNORED.store(true, Ordering::Relaxed);
     }
 
-    /// Mark the window rect as needing refresh (e.g., after a move/resize).
+    pub fn set_interactive_width(px: i32) {
+        INTERACTIVE_WIDTH.store(px, Ordering::Relaxed);
+    }
+
     pub fn invalidate_rect() {
         RECT_DIRTY.store(true, Ordering::Relaxed);
     }
 
-    /// Set WS_EX_NOACTIVATE on a window and all its children.
     pub unsafe fn set_noactivate(hwnd: HWND) {
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as i32);
+        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
 
-        unsafe extern "system" fn enum_child_proc(
-            child: HWND,
-            _lparam: LPARAM,
-        ) -> BOOL {
-            let ex_style = GetWindowLongW(child, GWL_EXSTYLE);
-            SetWindowLongW(child, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as i32);
+        unsafe extern "system" fn enum_child(child: HWND, _: LPARAM) -> BOOL {
+            let ex = GetWindowLongW(child, GWL_EXSTYLE);
+            SetWindowLongW(child, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
             BOOL(1)
         }
-
-        let _ = EnumChildWindows(hwnd, Some(enum_child_proc), LPARAM(0));
+        let _ = EnumChildWindows(hwnd, Some(enum_child), LPARAM(0));
     }
 }
 
-/// The Tauri command that replaces the old broken subclass approach.
-/// Called from JS after the overlay window is created.
+/// Set up an overlay window for click-through with an interactive zone.
+/// Call from JS after the window is created. Delays 1s for HWND availability.
 ///
-/// How it works:
-/// 1. Sets the overlay to click-through mode (WS_EX_TRANSPARENT | WS_EX_LAYERED)
-///    via Tauri's set_ignore_cursor_events(true)
-/// 2. Sets WS_EX_NOACTIVATE on parent + WebView2 child HWNDs
-/// 3. Installs a WH_MOUSE_LL hook that toggles click-through on/off based
-///    on whether the cursor is over the button column
-/// 4. Uses WM_APP+1/+2 posted to the overlay HWND to trigger the toggle —
-///    the overlay's message handler (subclassed below) calls
-///    set_ignore_cursor_events accordingly
+/// - `label`: Tauri window label
+/// - `interactive_width`: width in physical pixels of the interactive zone on the right edge
 #[tauri::command]
-fn set_overlay_no_activate(label: String, app: AppHandle) {
+fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandle) {
     #[cfg(windows)]
     {
         use windows::Win32::Foundation::HWND;
 
-        eprintln!("[overlay] set_overlay_no_activate called for '{}'", label);
         let app2 = app.clone();
         let label2 = label.clone();
-        // Delay to let the window fully initialize (HWND not available immediately)
         std::thread::spawn(move || {
+            // WebView2 HWND not available immediately — wait for init
             std::thread::sleep(std::time::Duration::from_millis(1000));
 
             let window = match app2.get_webview_window(&label2) {
                 Some(w) => w,
-                None => { eprintln!("[overlay] window '{}' not found after delay", label2); return; }
+                None => { log::warn!("Overlay '{}' not found after delay", label2); return; }
             };
 
-            // Step 1: Start in click-through mode
+            // Make entire window click-through
             if let Err(e) = window.set_ignore_cursor_events(true) {
-                eprintln!("[overlay] set_ignore_cursor_events(true) FAILED: {}", e);
-            } else {
-                eprintln!("[overlay] set_ignore_cursor_events(true) OK");
+                log::error!("set_ignore_cursor_events failed for '{}': {}", label2, e);
+                return;
             }
 
-            if let Ok(hwnd) = window.hwnd() {
-                eprintln!("[overlay] got HWND: {:?}", hwnd.0);
-                let h = windows::Win32::Foundation::HWND(hwnd.0 as *mut _);
-                unsafe {
-                    let ex = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(h, windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE);
-                    eprintln!("[overlay] ex_style={:#x} TRANSPARENT={} LAYERED={}", ex,
-                        ex & 0x20 != 0,  // WS_EX_TRANSPARENT = 0x20
-                        ex & 0x80000 != 0); // WS_EX_LAYERED = 0x80000
-                }
-            }
-
-            // Step 2: Set WS_EX_NOACTIVATE on parent + children
             if let Ok(hwnd) = window.hwnd() {
                 let h = HWND(hwnd.0 as *mut _);
-                unsafe {
-                    overlay_clickthrough::set_noactivate(h);
-                }
+                unsafe { overlay_clickthrough::set_noactivate(h); }
 
-                // Step 3: Register this HWND for tracking
+                overlay_clickthrough::set_interactive_width(interactive_width);
                 overlay_clickthrough::set_overlay_hwnd(h);
 
-                // Step 4: Install low-level mouse hook (idempotent — only installs once)
-                // Store the stop sender in AppState so we can clean up
-                let stop_tx = overlay_clickthrough::install_hook();
-                if let Some(tx) = stop_tx {
+                if let Some(tx) = overlay_clickthrough::install_hook() {
                     let state = app2.state::<AppState>();
                     *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
                 }
 
-                // Step 5: Subclass the overlay parent to handle WM_APP+1/+2 toggle messages.
-                // These are posted by the mouse hook when cursor enters/leaves the button column.
-                unsafe {
-                    use windows::Win32::UI::Shell::SetWindowSubclass;
-                    let _ = SetWindowSubclass(h, Some(overlay_toggle_proc), 1, hwnd.0 as usize);
-                }
-
-                // Step 6: Re-apply WS_EX_NOACTIVATE after a delay to catch WebView2 child
-                // windows that are created asynchronously after the parent window.
+                // Re-apply WS_EX_NOACTIVATE after WebView2 children are created
                 let hwnd_raw = hwnd.0 as isize;
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     unsafe {
-                        let h = windows::Win32::Foundation::HWND(hwnd_raw as *mut _);
-                        overlay_clickthrough::set_noactivate(h);
+                        overlay_clickthrough::set_noactivate(HWND(hwnd_raw as *mut _));
                     }
-                    log::info!("overlay_clickthrough: re-applied WS_EX_NOACTIVATE after delay");
                 });
 
-                eprintln!("[overlay] setup complete for '{}'", label2);
+                log::info!("Overlay clickthrough setup complete for '{}' (interactive={}px)", label2, interactive_width);
             } else {
-                eprintln!("[overlay] hwnd() FAILED after delay");
+                log::warn!("Overlay '{}' HWND not available after delay", label2);
             }
         });
     }
-}
-
-/// Subclass proc that handles WM_APP+1 (make interactive) and WM_APP+2
-/// (make click-through) messages posted by the mouse hook.
-#[cfg(windows)]
-unsafe extern "system" fn overlay_toggle_proc(
-    hwnd: windows::Win32::Foundation::HWND,
-    msg: u32,
-    wparam: windows::Win32::Foundation::WPARAM,
-    lparam: windows::Win32::Foundation::LPARAM,
-    _uid_subclass: usize,
-    _ref_data: usize,
-) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::UI::WindowsAndMessaging::*;
-    use windows::Win32::UI::Shell::DefSubclassProc;
-    use windows::Win32::Foundation::LRESULT;
-
-    match msg {
-        // WM_APP + 1: cursor entered button column — make window interactive
-        m if m == WM_APP + 1 => {
-            // Toggle WS_EX_TRANSPARENT off to receive mouse input.
-            // We do this via raw style manipulation rather than Tauri API to avoid
-            // the overhead of cross-thread messaging from the subclass proc.
-            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-            let new_style = ex_style & !(WS_EX_TRANSPARENT.0 as i32);
-            if new_style != ex_style {
-                SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
-            }
-            return LRESULT(0);
-        }
-        // WM_APP + 2: cursor left button column — make window click-through
-        m if m == WM_APP + 2 => {
-            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-            let new_style = ex_style | WS_EX_TRANSPARENT.0 as i32;
-            if new_style != ex_style {
-                SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
-            }
-            return LRESULT(0);
-        }
-        // WM_MOUSEACTIVATE: prevent focus steal when clicking buttons
-        WM_MOUSEACTIVATE => {
-            return LRESULT(MA_NOACTIVATE as isize);
-        }
-        // WM_MOVE / WM_SIZE: window moved/resized, invalidate cached rect
-        WM_MOVE | WM_SIZE => {
-            overlay_clickthrough::invalidate_rect();
-        }
-        _ => {}
-    }
-    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
 #[tauri::command]
@@ -1319,7 +1187,7 @@ pub fn run() {
             trade_lookup,
             send_test_gems,
             test_ocr_on_image,
-            set_overlay_no_activate,
+            set_overlay_clickthrough,
             request_trade_refresh,
             move_overlay,
             comparator_moved,

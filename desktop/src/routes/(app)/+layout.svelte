@@ -45,7 +45,7 @@
 		});
 
 		win.once('tauri://created', async () => {
-			await invoke('set_overlay_no_activate', { label: 'comparator' }).catch(() => {});
+			await invoke('set_overlay_clickthrough', { label: 'comparator', interactiveWidth: 48 }).catch(() => {});
 			comparatorWin = win;
 			comparatorActive = true;
 		});
