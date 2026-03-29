@@ -50,7 +50,9 @@ desktop/
         settings/+page.svelte — Settings page
       overlay/             — Overlay windows (outside app shell, transparent)
         +layout.svelte     — Transparent layout for all overlays
-        +page.svelte       — Capture region overlay
+        +page.svelte       — Capture region overlay (red-bordered, draggable)
+        comparator/
+          +page.svelte     — Comparator results overlay (game overlay, draggable)
     app.css                — Theme variables and global styles
     app.html               — HTML shell with favicon
 ```
@@ -152,6 +154,13 @@ await destroyOverlay('region');
 ```
 
 Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations. Route to `/overlay/{name}`.
+
+**CRITICAL — Window Capabilities**: Every new overlay window label MUST be added to `capabilities/default.json` in the `"windows"` array. Tauri v2 scopes permissions by window label — if a window label isn't listed, ALL Tauri APIs (`startDragging`, `startResizeDragging`, `show`, `hide`, `destroy`, etc.) silently fail with no error. This is the #1 gotcha when creating new overlay windows.
+
+```json
+// capabilities/default.json — add every window label here
+"windows": ["main", "overlay", "comparator", "overlay-comparator-pos"],
+```
 
 ### DPI Awareness
 The WebviewWindow constructor takes **logical** pixels. Screen capture regions store **physical** pixels. Convert with `window.devicePixelRatio`:

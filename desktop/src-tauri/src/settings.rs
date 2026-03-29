@@ -21,6 +21,16 @@ pub struct Settings {
     pub font_region: CaptureRegion,
     pub window: Option<WindowSettings>,
     pub sidebar_open: bool,
+    pub comparator_overlay: Option<OverlaySettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlaySettings {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +51,7 @@ impl Default for Settings {
             font_region: CaptureRegion::default_font_panel(),
             window: None,
             sidebar_open: true,
+            comparator_overlay: None,
         }
     }
 }
@@ -118,6 +129,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         window: None, // Window settings are saved separately on close, not from AppState
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
+        comparator_overlay: None, // Overlay settings saved separately, not from AppState
     }
 }
 
