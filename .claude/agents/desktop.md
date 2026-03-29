@@ -167,6 +167,9 @@ Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations
 - `window.hwnd()` in Rust fails if called immediately after creation — delay 1 second
 - `SetWindowSubclass` must run on the window's thread — don't call from spawned threads
 - Button columns must be CSS `position: fixed; right: 0` to match the hook's hit zone
+- Never use `.catch(() => {})` — always log errors, even on expected-flaky operations
+- Game focus detection is via `GetForegroundWindow` polling in Rust — do NOT add JS-side focus listeners
+- `onMount` doesn't fire in overlay windows — use `$effect` for initialization
 
 ### DPI Awareness
 The WebviewWindow constructor takes **logical** pixels. Screen capture regions store **physical** pixels. Convert with `window.devicePixelRatio`:

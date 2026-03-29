@@ -109,7 +109,15 @@ JS-to-JS events (`emit`/`listen` from `@tauri-apps/api/event`) are unreliable be
 2. Overlay polls via `invoke('get_comparator_data')` every 500ms using `$effect` + `setInterval`
 3. Rust stores data in `AppState` behind a `Mutex<serde_json::Value>`
 
-### 12. Transparency Workaround Can Reset Position
+### 13. Never Use Silent .catch(() => {}) in Overlay Code
+
+Every `invoke()` and `emit()` call must log errors. Silent catches hide critical failures — the overlay can show stale data, buttons can stop working, and settings can fail to save, all without any diagnostic trail. Use `console.warn` for expected-flaky operations (window destroy retries), `console.error` for critical operations (click-through setup, data pipeline).
+
+### 14. Focus Detection: Use Rust Poller, Not Client.txt
+
+Game focus is detected by `GetForegroundWindow` polling (1 second interval) in Rust, NOT from Client.txt `[WINDOW]` events. The Rust poller is more reliable (no file I/O latency, works if PoE crashes). The log watcher's `GameFocused`/`GameBlurred` events are ignored — the poller is the single source of truth. Don't add duplicate focus handling in JS (`initFocusListener` is removed).
+
+### 15. Transparency Workaround Can Reset Position
 
 The WebView2 transparency workaround (`setSize +1/-1 pixels`) in the overlay page's `onMount` can reset window position. If you set position via the constructor and then run the workaround, the position may revert to default.
 
