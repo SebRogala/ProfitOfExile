@@ -162,6 +162,12 @@ Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations
 "windows": ["main", "overlay", "comparator", "overlay-comparator-pos"],
 ```
 
+**CRITICAL — Overlay Click-Through**: Making overlays click-through on Windows/WebView2 is complex. `WM_NCHITTEST`, `setIgnoreCursorEvents`, `focusable: false`, `WS_EX_NOACTIVATE` alone do NOT work. The proven solution uses `WS_EX_TRANSPARENT` + `WH_MOUSE_LL` global hook that toggles transparency based on cursor position. **Read `docs/OVERLAY-GUIDE.md` before touching any overlay code.** Key points:
+- Cross-window JS API calls (`outerPosition`, `destroy`, `setPosition`) return wrong values — only `getCurrentWebviewWindow()` from within the overlay is reliable
+- `window.hwnd()` in Rust fails if called immediately after creation — delay 1 second
+- `SetWindowSubclass` must run on the window's thread — don't call from spawned threads
+- Button columns must be CSS `position: fixed; right: 0` to match the hook's hit zone
+
 ### DPI Awareness
 The WebviewWindow constructor takes **logical** pixels. Screen capture regions store **physical** pixels. Convert with `window.devicePixelRatio`:
 ```ts
@@ -208,7 +214,8 @@ Keyword-based detection — scans OCR lines for anchor text, extracts numeric va
 - Window position/size saved to settings on close, restored on startup
 
 ## Key References
-- `desktop/src/lib/README.md` — Component registry (read first)
+- `docs/OVERLAY-GUIDE.md` — **READ FIRST for any overlay work.** Complete guide: click-through, positioning, capabilities, cross-window gotchas
+- `desktop/src/lib/README.md` — Component registry (read first for UI work)
 - `CLAUDE.md` — Project-wide conventions
 - `BACKBONE.md` — Full project design document
 - `docs/superpowers/specs/2026-03-28-desktop-app-shell-design.md` — App shell spec
