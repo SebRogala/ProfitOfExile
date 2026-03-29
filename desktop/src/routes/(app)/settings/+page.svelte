@@ -146,8 +146,8 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: s ? Math.round(s.width / dpr) : 380,
-			height: s ? Math.round(s.height / dpr) : 200,
+			width: s ? Math.round(s.width / dpr) : 640,
+			height: s ? Math.round(s.height / dpr) : 220,
 			x: s ? Math.round(s.x / dpr) : 100,
 			y: s ? Math.round(s.y / dpr) : 100,
 		});
@@ -191,8 +191,8 @@
 			shadow: false,
 			skipTaskbar: true,
 
-			width: 650,
-			height: 300,
+			width: 640,
+			height: 220,
 			x: Math.round(x! / dpr),
 			y: Math.round(y! / dpr),
 		});

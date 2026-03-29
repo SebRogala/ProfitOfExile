@@ -140,7 +140,10 @@
 						</div>
 						<div class="row-bottom">
 							<span class="variant-label">{gem.variant}</span>
-							<span class="price">{formatPrice(gem.transPrice)}</span>
+							<span class="price-col">
+								<span class="price-label">ninja</span>
+								<span class="price">{formatPrice(gem.transPrice)}</span>
+							</span>
 							{#if trade}
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}
 									<span class="trade-warn">{trade.signals.sellerConcentration}</span>
@@ -292,10 +295,22 @@
 		color: #ef4444;
 	}
 
+	.price-col {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		flex-shrink: 0;
+		margin-left: 10px;
+	}
+
+	.price-label {
+		font-size: 10px;
+		color: #6b7280;
+	}
+
 	.price {
 		font-weight: 700;
 		color: #fbbf24;
-		flex-shrink: 0;
 	}
 
 	.range {
@@ -387,7 +402,7 @@
 		pointer-events: auto;
 		position: fixed;
 		right: 0;
-		top: 0;
+		top: 1px;
 	}
 
 	.side-row {
@@ -397,6 +412,7 @@
 		justify-content: center;
 		height: 72px;
 		gap: 2px;
+		box-sizing: border-box;
 		padding: 8px 0;
 	}
 
