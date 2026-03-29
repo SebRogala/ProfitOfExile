@@ -69,16 +69,27 @@
 
 	async function toggleComparatorOverlay() {
 		if (comparatorActive) {
-			// Position already saved by the overlay's own interval — just destroy
 			await destroyComparatorWindow();
 			comparatorActive = false;
+			// Save disabled state
+			const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
+			await invoke('set_comparator_overlay_settings', {
+				x: settings?.x ?? 100, y: settings?.y ?? 100,
+				w: settings?.width ?? 600, h: settings?.height ?? 250,
+				enabled: false,
+			}).catch(() => {});
 		} else {
 			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').catch(() => null);
-			console.log('[overlay] toggle ON — loaded settings:', settings);
 			await createComparatorOverlay(
 				settings?.x ?? 100,
 				settings?.y ?? 100,
 			);
+			// Save enabled state
+			await invoke('set_comparator_overlay_settings', {
+				x: settings?.x ?? 100, y: settings?.y ?? 100,
+				w: settings?.width ?? 600, h: settings?.height ?? 250,
+				enabled: true,
+			}).catch(() => {});
 		}
 	}
 

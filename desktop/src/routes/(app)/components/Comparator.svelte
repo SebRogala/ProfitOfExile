@@ -3,7 +3,8 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS, SIGNAL_TOOLTIPS, WINDOW_TOOLTIPS } from '$lib/tooltips';
-	import { listen, emit } from '@tauri-apps/api/event';
+	import { listen } from '@tauri-apps/api/event';
+	import { invoke } from '@tauri-apps/api/core';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
@@ -48,10 +49,11 @@
 		}
 	});
 
-	// Relay results + trade data to overlay window via Tauri event
-	// Spread tradeData to ensure Svelte tracks property-level changes
+	// Push results + trade data to Rust for overlay to poll
 	$effect(() => {
-		emit('comparator-results', { results, tradeData: { ...tradeData } });
+		invoke('set_comparator_data', {
+			payload: { results, tradeData: { ...tradeData } },
+		}).catch(() => {});
 	});
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
