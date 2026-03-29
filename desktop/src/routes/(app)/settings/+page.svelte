@@ -146,7 +146,7 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
-			width: 600,
+			width: 630,
 			height: 250,
 			x: s ? Math.round(s.x / dpr) : 100,
 			y: s ? Math.round(s.y / dpr) : 100,
@@ -191,7 +191,7 @@
 			shadow: false,
 			skipTaskbar: true,
 
-			width: 600,
+			width: 630,
 			height: 250,
 			x: Math.round(x! / dpr),
 			y: Math.round(y! / dpr),
