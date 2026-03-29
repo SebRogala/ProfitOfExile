@@ -7,8 +7,8 @@
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
 
+	const TRADE_STALE_MS = 2 * 60 * 1000;
 
-	// --- Comparator data ---
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
 		DUMPING: '#ef4444', RECOVERY: '#a855f7', TRAP: '#ef4444',
@@ -31,15 +31,11 @@
 		{ name: 'Vaal Grace of Phasing', variant: '20/20', color: 'GREEN', roi: 320, roiPercent: 160, weightedRoi: 290, signal: 'UNCERTAIN', cv: 0.18, transListings: 5, transVelocity: 1.1, baseListings: 20, baseVelocity: 3.2, basePrice: 80, transPrice: 420, liquidityTier: 'THIN', windowSignal: 'UNCERTAIN', sparkline: [400, 410, 430, 415, 420], signalHistory: [], recommendation: 'OK', priceTier: 'MID-HIGH', tierAction: 'Monitor', sellUrgency: 'WATCH', sellReason: 'Low liquidity', sellability: 40, sellabilityLabel: 'RISKY', low7d: 350, high7d: 480, histPosition: 0.45, sellConfidence: 'LOW', sellConfidenceReason: 'Thin market', quickSellPrice: 370, riskAdjustedPrice: 365 } as CompareGem,
 	];
 
-	const TRADE_STALE_MS = 2 * 60 * 1000;
-
 	let results = $state<CompareGem[]>(MOCK_RESULTS);
 	let selectedGem = $state<string | null>(null);
 
-	// Trade data per gem — received from main Comparator, not fetched separately
+	// Trade data — received from main Comparator, not fetched separately
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
-	let tradeLoading = $state<Record<string, boolean>>({});
-	let tradeError = $state<Record<string, string>>({});
 
 	$effect(() => {
 		if (results.length > 0 && !selectedGem) {
@@ -77,7 +73,7 @@
 		return `${Math.floor(hrs / 24)}d`;
 	}
 
-	// Trade refresh — try Rust event route, fallback to direct Tauri trade_lookup
+	// Trade refresh — calls Tauri directly
 	async function requestTradeRefresh(gem: CompareGem) {
 		try {
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
@@ -103,8 +99,6 @@
 		results = [];
 		selectedGem = null;
 		tradeData = {};
-		tradeLoading = {};
-		tradeError = {};
 	}
 
 	onMount(async () => {
@@ -113,8 +107,6 @@
 			results = event.payload.results;
 			tradeData = event.payload.tradeData ?? {};
 			selectedGem = null;
-			tradeLoading = {};
-			tradeError = {};
 		});
 
 		const unlistenClear = await listen('gems-cleared', () => {
@@ -130,14 +122,14 @@
 
 <div class="surface">
 	{#if results.length > 0}
-		<div class="overlay">
-			{#each results as gem (gem.name)}
-				{@const rec = REC_COLORS[gem.recommendation] ?? REC_COLORS.OK}
-				{@const tierColor = TIER_COLORS[gem.priceTier] ?? '#94a3b8'}
-				{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
-				{@const trade = tradeData[gem.name]}
-				<div class="gem-row" class:selected={selectedGem === gem.name}>
-					<div class="gem-content">
+		<div class="layout">
+			<div class="table">
+				{#each results as gem (gem.name)}
+					{@const rec = REC_COLORS[gem.recommendation] ?? REC_COLORS.OK}
+					{@const tierColor = TIER_COLORS[gem.priceTier] ?? '#94a3b8'}
+					{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
+					{@const trade = tradeData[gem.name]}
+					<div class="gem-row" class:selected={selectedGem === gem.name}>
 						<div class="row-top">
 							<GemIcon name={gem.name} size={24} />
 							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
@@ -164,25 +156,25 @@
 									</span>
 								{/each}
 								<span class="trade-total">({trade.total})</span>
-							{:else if tradeError[gem.name]}
-								<span class="trade-err">{tradeError[gem.name]}</span>
 							{:else}
 								<span class="trade-nodata">no trade data</span>
 							{/if}
 						</div>
 					</div>
-					<div class="gem-actions">
+				{/each}
+			</div>
+			<div class="side">
+				{#each results as gem, i (gem.name)}
+					<div class="side-row">
 						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} onclick={() => { selectedGem = gem.name; handlePick(); }} title="Pick">&#x2713;</button>
 						<button class="act-btn" onclick={() => requestTradeRefresh(gem)} title="Refresh trade">&#x21BB;</button>
 					</div>
-				</div>
-			{/each}
-			<div class="clear-row">
+				{/each}
 				<button class="clear-act" onclick={handleClear}>clear</button>
 			</div>
 		</div>
 	{:else}
-		<div class="overlay empty">
+		<div class="table empty">
 			<span class="waiting">Waiting for gems...</span>
 		</div>
 	{/if}
@@ -198,127 +190,55 @@
 
 	.surface {
 		background: transparent;
-		position: relative;
-		box-sizing: border-box;
 	}
 
-	.overlay {
+	.layout {
+		display: flex;
+		gap: 6px;
+		align-items: flex-start;
+	}
+
+	.table {
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		background: rgba(15, 17, 23, 0.92);
+		border: 1px solid rgba(42, 45, 55, 0.8);
+		border-radius: 8px;
+		padding: 0 10px;
 		color: #e4e4e7;
 		font-size: 14px;
+		backdrop-filter: blur(8px);
 		display: inline-block;
 		pointer-events: none;
 	}
 
-	.overlay.empty {
+	.table.empty {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		min-height: 40px;
+		padding: 10px;
 	}
-
-
-
 
 	.waiting {
 		color: #9ca3af;
 		font-style: italic;
 	}
 
+	/* --- Gem rows --- */
 	.gem-row {
-		display: flex;
-		align-items: stretch;
-	}
-
-	.gem-content {
-		flex: 1;
-		min-width: 0;
-		padding: 6px 10px;
-		background: rgba(15, 17, 23, 0.92);
-		backdrop-filter: blur(8px);
+		padding: 8px 0;
 		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
-		border-left: 1px solid rgba(42, 45, 55, 0.8);
-		border-right: 1px solid rgba(42, 45, 55, 0.8);
 	}
 
-	.gem-row:first-child .gem-content {
-		border-radius: 8px 8px 0 0;
-		border-top: 1px solid rgba(42, 45, 55, 0.8);
+	.gem-row:last-of-type {
+		border-bottom: none;
 	}
 
-	.gem-row:last-of-type .gem-content {
-		border-radius: 0 0 8px 8px;
-		border-bottom: 1px solid rgba(42, 45, 55, 0.8);
-	}
-
-	.gem-row:first-child:last-of-type .gem-content {
-		border-radius: 8px;
-	}
-
-	.gem-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		flex-shrink: 0;
-		pointer-events: auto;
-		padding-right: 4px;
-		margin-left: 8px;
-	}
-
-	.clear-row {
-		display: flex;
-		justify-content: flex-end;
-		padding: 6px 4px 0 0;
-		pointer-events: auto;
-	}
-
-	.gem-row.selected .gem-content {
-		background: rgba(14, 30, 20, 0.95);
-		border-left: 2px solid rgba(34, 197, 94, 0.5);
-	}
-
-	.act-btn {
-		all: unset;
-		cursor: pointer;
-		width: 26px;
-		height: 26px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+	.gem-row.selected {
+		margin: 0 -10px;
+		padding: 8px 10px;
+		background: rgba(34, 197, 94, 0.08);
 		border-radius: 4px;
-		font-size: 14px;
-		background: rgba(15, 17, 23, 0.8);
-		color: #9ca3af;
-		border: 1px solid rgba(42, 45, 55, 0.6);
-	}
-
-	.act-btn:hover {
-		background: rgba(255, 255, 255, 0.15);
-		color: #e4e4e7;
-	}
-
-	.pick-btn.active {
-		color: #22c55e;
-		border-color: rgba(34, 197, 94, 0.4);
-		background: rgba(34, 197, 94, 0.15);
-	}
-
-	.clear-act {
-		all: unset;
-		cursor: pointer;
-		font-size: 11px;
-		color: #9ca3af;
-		padding: 4px 8px;
-		border-radius: 4px;
-		margin-top: 8px;
-		align-self: center;
-		background: rgba(15, 17, 23, 0.8);
-		border: 1px solid rgba(42, 45, 55, 0.6);
-	}
-
-	.clear-act:hover {
-		color: #ef4444;
-		border-color: rgba(239, 68, 68, 0.4);
 	}
 
 	.row-top {
@@ -332,7 +252,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: 12px;
-		margin-top: 2px;
+		margin-top: 3px;
 		color: #9ca3af;
 	}
 
@@ -391,6 +311,7 @@
 		flex-shrink: 0;
 	}
 
+	/* --- Trade row --- */
 	.trade-total {
 		color: #6b7280;
 		flex-shrink: 0;
@@ -402,12 +323,10 @@
 		flex-shrink: 0;
 	}
 
-	.trade-err {
-		color: #ef4444;
+	.trade-nodata {
+		color: #4b5563;
 		font-size: 11px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		font-style: italic;
 	}
 
 	.listing-col {
@@ -441,11 +360,64 @@
 		font-size: 9px;
 	}
 
-	.trade-nodata {
-		color: #4b5563;
-		font-size: 11px;
-		font-style: italic;
+	/* --- Side buttons --- */
+	.side {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		pointer-events: auto;
 	}
 
+	.side-row {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 2px;
+		min-height: 60px;
+		margin-bottom: 4px;
+	}
 
+	.act-btn {
+		all: unset;
+		cursor: pointer;
+		width: 26px;
+		height: 26px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		font-size: 14px;
+		background: rgba(15, 17, 23, 0.8);
+		color: #9ca3af;
+		border: 1px solid rgba(42, 45, 55, 0.6);
+	}
+
+	.act-btn:hover {
+		background: rgba(255, 255, 255, 0.15);
+		color: #e4e4e7;
+	}
+
+	.pick-btn.active {
+		color: #22c55e;
+		border-color: rgba(34, 197, 94, 0.4);
+		background: rgba(34, 197, 94, 0.15);
+	}
+
+	.clear-act {
+		all: unset;
+		cursor: pointer;
+		font-size: 11px;
+		color: #9ca3af;
+		padding: 4px 8px;
+		border-radius: 4px;
+		margin-top: 8px;
+		background: rgba(15, 17, 23, 0.8);
+		border: 1px solid rgba(42, 45, 55, 0.6);
+	}
+
+	.clear-act:hover {
+		color: #ef4444;
+		border-color: rgba(239, 68, 68, 0.4);
+	}
 </style>
