@@ -28,7 +28,7 @@
 	const MOCK_RESULTS: CompareGem[] = [
 		{ name: 'Kinetic Blast of Clustering', variant: '20/20', color: 'GREEN', roi: 1840, roiPercent: 920, weightedRoi: 1750, signal: 'STABLE', cv: 0.08, transListings: 12, transVelocity: 3.2, baseListings: 45, baseVelocity: 8.1, basePrice: 200, transPrice: 1940, liquidityTier: 'LIQUID', windowSignal: 'STABLE', sparkline: [1900, 1920, 1940, 1960, 1940], signalHistory: [], recommendation: 'BEST', priceTier: 'TOP', tierAction: 'Sell now', sellUrgency: 'NOW', sellReason: 'High demand', sellability: 75, sellabilityLabel: 'SAFE', low7d: 1800, high7d: 2100, histPosition: 0.7, sellConfidence: 'HIGH', sellConfidenceReason: 'Stable price', quickSellPrice: 1870, riskAdjustedPrice: 1869 } as CompareGem,
 		{ name: 'Cyclone of Tumult', variant: '20/20', color: 'RED', roi: 1605, roiPercent: 803, weightedRoi: 1500, signal: 'UNCERTAIN', cv: 0.15, transListings: 8, transVelocity: 1.8, baseListings: 30, baseVelocity: 5.4, basePrice: 100, transPrice: 1705, liquidityTier: 'MODERATE', windowSignal: 'UNCERTAIN', sparkline: [1650, 1700, 1720, 1690, 1705], signalHistory: [], recommendation: 'OK', priceTier: 'TOP', tierAction: 'Monitor', sellUrgency: 'WATCH', sellReason: 'Uncertain signal', sellability: 55, sellabilityLabel: 'FAIR', low7d: 1500, high7d: 1800, histPosition: 0.6, sellConfidence: 'MEDIUM', sellConfidenceReason: 'Price fluctuating', quickSellPrice: 1580, riskAdjustedPrice: 1584 } as CompareGem,
-		{ name: 'Vaal Grace of Phasing', variant: '20/20', color: 'GREEN', roi: 320, roiPercent: 160, weightedRoi: 290, signal: 'UNCERTAIN', cv: 0.18, transListings: 5, transVelocity: 1.1, baseListings: 20, baseVelocity: 3.2, basePrice: 80, transPrice: 420, liquidityTier: 'THIN', windowSignal: 'UNCERTAIN', sparkline: [400, 410, 430, 415, 420], signalHistory: [], recommendation: 'OK', priceTier: 'MID-HIGH', tierAction: 'Monitor', sellUrgency: 'WATCH', sellReason: 'Low liquidity', sellability: 40, sellabilityLabel: 'RISKY', low7d: 350, high7d: 480, histPosition: 0.45, sellConfidence: 'LOW', sellConfidenceReason: 'Thin market', quickSellPrice: 370, riskAdjustedPrice: 365 } as CompareGem,
+		{ name: 'Static Strike of Gathering Lightning', variant: '20/20', color: 'GREEN', roi: 320, roiPercent: 160, weightedRoi: 290, signal: 'UNCERTAIN', cv: 0.18, transListings: 5, transVelocity: 1.1, baseListings: 20, baseVelocity: 3.2, basePrice: 80, transPrice: 420, liquidityTier: 'THIN', windowSignal: 'UNCERTAIN', sparkline: [400, 410, 430, 415, 420], signalHistory: [], recommendation: 'OK', priceTier: 'MID-HIGH', tierAction: 'Monitor', sellUrgency: 'WATCH', sellReason: 'Low liquidity', sellability: 40, sellabilityLabel: 'RISKY', low7d: 350, high7d: 480, histPosition: 0.45, sellConfidence: 'LOW', sellConfidenceReason: 'Thin market', quickSellPrice: 370, riskAdjustedPrice: 365 } as CompareGem,
 	];
 
 	let results = $state<CompareGem[]>(MOCK_RESULTS);
@@ -134,28 +134,28 @@
 							<GemIcon name={gem.name} size={24} />
 							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
 							<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
-							<span class="price">{formatPrice(gem.transPrice)}</span>
 							<span class="sell" style="color: {sigColor}">{gem.signal}</span>
 							<span class="range">wk {formatPrice(gem.low7d)}–{formatPrice(gem.high7d)}</span>
-							<span class="tier-age">
-								<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
-								{#if trade}
-									<span class="cache-age" class:stale={isTradeCacheStale(trade)}>{tradeCacheAge(trade)}</span>
-								{/if}
-							</span>
+							<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
 						</div>
 						<div class="row-bottom">
+							<span class="variant-label">{gem.variant}</span>
+							<span class="price">{formatPrice(gem.transPrice)}</span>
 							{#if trade}
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}
 									<span class="trade-warn">{trade.signals.sellerConcentration}</span>
 								{/if}
 								{#each trade.listings as listing, i}
 									<span class="listing-col" class:first={i === 0} class:corrupted={listing.corrupted}>
-										<span class="listing-price">{formatPrice(listing.chaosPrice)}</span>
+										<span class="listing-price">{listing.price}{listing.currency === 'divine' ? 'd' : 'c'}</span>
 										<span class="listing-age">{listingAge(listing.indexedAt)}</span>
 									</span>
 								{/each}
-								<span class="trade-total">({trade.total})</span>
+								<span class="trade-total">
+									<span>listings</span>
+									<span>{trade.total}</span>
+								</span>
+								<span class="cache-age" class:stale={isTradeCacheStale(trade)}>{tradeCacheAge(trade)}</span>
 							{:else}
 								<span class="trade-nodata">no trade data</span>
 							{/if}
@@ -209,7 +209,7 @@
 		color: #e4e4e7;
 		font-size: 14px;
 		backdrop-filter: blur(8px);
-		display: inline-block;
+		width: 590px;
 		pointer-events: none;
 	}
 
@@ -228,8 +228,13 @@
 
 	/* --- Gem rows --- */
 	.gem-row {
-		padding: 8px 0;
+		padding: 6px 0;
+		height: 80px;
+		box-sizing: border-box;
 		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
 	}
 
 	.gem-row:last-of-type {
@@ -252,10 +257,16 @@
 	.row-bottom {
 		display: flex;
 		align-items: center;
-		gap: 6px;
 		font-size: 12px;
 		margin-top: 3px;
 		color: #9ca3af;
+	}
+
+	.variant-label {
+		font-size: 10px;
+		color: #6b7280;
+		flex-shrink: 0;
+		margin-right: 8px;
 	}
 
 	.gem-name {
@@ -266,22 +277,17 @@
 		white-space: nowrap;
 	}
 
-	.tier-age {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
+	.tier {
+		font-weight: 700;
+		font-size: 11px;
 		flex-shrink: 0;
 		margin-left: auto;
 	}
 
-	.tier {
-		font-weight: 700;
-		font-size: 11px;
-	}
-
 	.cache-age {
-		font-size: 9px;
+		font-size: 10px;
 		color: #6b7280;
+		margin-left: auto;
 	}
 
 	.cache-age.stale {
@@ -315,7 +321,12 @@
 
 	/* --- Trade row --- */
 	.trade-total {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		font-size: 10px;
 		color: #6b7280;
+		margin-left: 6px;
 		flex-shrink: 0;
 	}
 
@@ -329,6 +340,7 @@
 		color: #4b5563;
 		font-size: 11px;
 		font-style: italic;
+		margin-left: 10px;
 	}
 
 	.listing-col {
@@ -336,11 +348,17 @@
 		flex-direction: column;
 		align-items: center;
 		padding: 0 5px;
-		border-right: 1px solid #2a2d37;
+		margin-right: 1px;
+		border-right: 1px solid rgba(42, 45, 55, 0.5);
+	}
+
+	.listing-col:first-of-type {
+		margin-left: 10px;
 	}
 
 	.listing-col:last-of-type {
 		border-right: none;
+		margin-right: 0;
 	}
 
 	.listing-price {
@@ -378,9 +396,9 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
+		height: 80px;
 		gap: 2px;
-		min-height: 60px;
-		margin-bottom: 4px;
+		padding: 8px 0;
 	}
 
 	.act-btn {
