@@ -228,13 +228,10 @@
 
 	/* --- Gem rows --- */
 	.gem-row {
-		padding: 6px 0;
-		height: 80px;
+		padding: 8px 0;
+		height: 72px;
 		box-sizing: border-box;
 		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
 	}
 
 	.gem-row:last-of-type {
@@ -259,6 +256,7 @@
 		align-items: center;
 		font-size: 12px;
 		margin-top: 3px;
+		height: 28px;
 		color: #9ca3af;
 	}
 
@@ -352,9 +350,6 @@
 		border-right: 1px solid rgba(42, 45, 55, 0.5);
 	}
 
-	.listing-col:first-of-type {
-		margin-left: 10px;
-	}
 
 	.listing-col:last-of-type {
 		border-right: none;
@@ -364,6 +359,10 @@
 	.listing-price {
 		color: #e4e4e7;
 		font-size: 12px;
+	}
+
+	.listing-col.first {
+		margin-left: 10px;
 	}
 
 	.listing-col.first .listing-price {
@@ -396,7 +395,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		height: 80px;
+		height: 72px;
 		gap: 2px;
 		padding: 8px 0;
 	}
