@@ -1086,6 +1086,15 @@ fn spawn_focus_poller(app: AppHandle) {
                         log::warn!("emit game-focus-changed failed: {}", e);
                     }
                     emit_status(&app);
+
+                    // Hide/show overlay windows (only if they exist = user has them enabled)
+                    if let Some(win) = app.get_webview_window("comparator") {
+                        if is_focused {
+                            let _ = win.show();
+                        } else {
+                            let _ = win.hide();
+                        }
+                    }
                 }
             }
 
