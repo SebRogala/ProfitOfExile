@@ -190,6 +190,7 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
+
 			width: 900,
 			height: 500,
 			x: Math.round(x! / dpr),

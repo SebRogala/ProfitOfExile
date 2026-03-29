@@ -37,13 +37,15 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
+
 			width: 900,
-			height: 500,
+			height: 400,
 			x: Math.round(x / dpr),
 			y: Math.round(y / dpr),
 		});
 
-		win.once('tauri://created', () => {
+		win.once('tauri://created', async () => {
+			await invoke('set_overlay_no_activate', { label: 'comparator' }).catch(() => {});
 			comparatorWin = win;
 			comparatorActive = true;
 		});

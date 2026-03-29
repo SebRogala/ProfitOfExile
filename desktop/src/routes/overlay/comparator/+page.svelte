@@ -186,6 +186,8 @@
 		padding: 0;
 		background: transparent !important;
 		overflow: hidden;
+		user-select: none;
+		-webkit-user-select: none;
 	}
 
 	.surface {
@@ -366,6 +368,9 @@
 		flex-direction: column;
 		align-items: center;
 		pointer-events: auto;
+		position: fixed;
+		right: 0;
+		top: 0;
 	}
 
 	.side-row {
