@@ -5,8 +5,16 @@
  * Routes to /overlay/{name} in SvelteKit.
  */
 
+import { listen } from '@tauri-apps/api/event';
+
 /** Active overlay window references, keyed by overlay name. */
 const activeOverlays = new Map<string, any>();
+
+/** Track which overlays were visible before game lost focus. */
+const visibleBeforeBlur = new Set<string>();
+
+/** Whether game focus listener has been initialized. */
+let focusListenerActive = false;
 
 export interface OverlayOptions {
 	/** URL path for the overlay (e.g., '/overlay/region'). */
@@ -19,6 +27,8 @@ export interface OverlayOptions {
 	x?: number;
 	/** Initial y position in pixels. */
 	y?: number;
+	/** Whether the overlay can be resized. Default: true. */
+	resizable?: boolean;
 }
 
 /**
@@ -28,8 +38,14 @@ export interface OverlayOptions {
 export async function showOverlay(name: string, options: OverlayOptions): Promise<any> {
 	const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 
-	// Destroy existing overlay with this name
+	// Fully destroy any existing overlay with this name
 	await destroyOverlay(name);
+	try {
+		const orphan = await WebviewWindow.getByLabel(name);
+		if (orphan) await orphan.destroy();
+	} catch (_) {}
+	// Let Tauri finish native window cleanup
+	await new Promise(r => setTimeout(r, 150));
 
 	return new Promise((resolve) => {
 		const win = new WebviewWindow(name, {
@@ -37,7 +53,7 @@ export async function showOverlay(name: string, options: OverlayOptions): Promis
 			transparent: true,
 			decorations: false,
 			alwaysOnTop: true,
-			resizable: true,
+			resizable: options.resizable ?? true,
 			shadow: false,
 			skipTaskbar: true,
 			width: options.width || 400,
@@ -104,4 +120,78 @@ export async function readOverlayRegion(name: string): Promise<{ x: number; y: n
 		console.error(`Failed to read overlay '${name}' region:`, e);
 		return null;
 	}
+}
+
+/**
+ * Set visibility of a specific overlay. Uses set_visible (cheap) instead of destroy/recreate.
+ */
+export async function setOverlayVisible(name: string, visible: boolean): Promise<void> {
+	const win = activeOverlays.get(name);
+	if (!win) return;
+	try {
+		if (visible) {
+			await win.show();
+		} else {
+			await win.hide();
+		}
+	} catch (e) {
+		console.error(`Failed to ${visible ? 'show' : 'hide'} overlay '${name}':`, e);
+	}
+}
+
+/**
+ * Hide all active overlays (e.g., when game loses focus).
+ */
+export async function hideAllOverlays(): Promise<void> {
+	visibleBeforeBlur.clear();
+	for (const [name, win] of activeOverlays) {
+		try {
+			const visible = await win.isVisible();
+			if (visible) {
+				visibleBeforeBlur.add(name);
+				await win.hide();
+			}
+		} catch (e) {
+			console.error(`Failed to hide overlay '${name}':`, e);
+		}
+	}
+}
+
+/**
+ * Show overlays that were visible before the last hideAllOverlays call.
+ */
+export async function showAllOverlays(): Promise<void> {
+	for (const name of visibleBeforeBlur) {
+		const win = activeOverlays.get(name);
+		if (win) {
+			try {
+				await win.show();
+			} catch (e) {
+				console.error(`Failed to show overlay '${name}':`, e);
+			}
+		}
+	}
+	visibleBeforeBlur.clear();
+}
+
+/**
+ * Initialize game focus listener — hides overlays when game loses focus,
+ * restores when game gains focus. Call once from app initialization.
+ */
+export async function initFocusListener(): Promise<() => void> {
+	if (focusListenerActive) return () => {};
+	focusListenerActive = true;
+
+	const unlisten = await listen<boolean>('game-focus-changed', async (event) => {
+		if (event.payload) {
+			await showAllOverlays();
+		} else {
+			await hideAllOverlays();
+		}
+	});
+
+	return () => {
+		unlisten();
+		focusListenerActive = false;
+	};
 }

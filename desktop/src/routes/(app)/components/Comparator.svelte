@@ -3,7 +3,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS, SIGNAL_TOOLTIPS, WINDOW_TOOLTIPS } from '$lib/tooltips';
-	import { listen } from '@tauri-apps/api/event';
+	import { listen, emit } from '@tauri-apps/api/event';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
@@ -48,6 +48,11 @@
 		}
 	});
 
+	// Relay results to overlay window via Tauri event
+	$effect(() => {
+		emit('comparator-results', results);
+	});
+
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
 
@@ -75,10 +80,19 @@
 			clearAll();
 		});
 
+		// Listen for pick from overlay window
+		const pickPromise = listen<{ name: string; variant: string; roi: number }>('overlay-pick', (event) => {
+			if (cancelled) return;
+			const { name } = event.payload;
+			selectedForQueue = name;
+			handleNext();
+		});
+
 		return () => {
 			cancelled = true;
 			gemPromise.then(unlisten => unlisten());
 			clearPromise.then(unlisten => unlisten());
+			pickPromise.then(unlisten => unlisten());
 		};
 	});
 

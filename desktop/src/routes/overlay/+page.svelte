@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
+
+	// If ?sync=<label>, move that window to match this one in real-time
+	const syncTarget = new URLSearchParams(window.location.search).get('sync');
 
 	const EDGE = 10;
 
@@ -48,16 +52,34 @@
 	}
 
 	onMount(async () => {
+		const win = getCurrentWebviewWindow();
 		try {
-			// Workaround for Tauri v2 / WebView2 transparency bug on Windows:
-			// Resize slightly to force WebView2 to re-render with transparency
-			const win = getCurrentWebviewWindow();
 			const size = await win.outerSize();
 			await win.setSize({ type: 'Physical', width: size.width + 1, height: size.height + 1 });
 			await win.setSize({ type: 'Physical', width: size.width, height: size.height });
 		} catch (e) {
 			console.error('Overlay transparency workaround failed:', e);
 		}
+
+		// Sync target window position in real-time
+		let syncInterval: ReturnType<typeof setInterval> | undefined;
+		if (syncTarget) {
+			let lastX = 0, lastY = 0, lastW = 0, lastH = 0;
+			syncInterval = setInterval(async () => {
+				try {
+					const pos = await win.outerPosition();
+					const size = await win.outerSize();
+					if (pos.x !== lastX || pos.y !== lastY || size.width !== lastW || size.height !== lastH) {
+						lastX = pos.x; lastY = pos.y; lastW = size.width; lastH = size.height;
+						await invoke('move_overlay', { label: syncTarget, x: pos.x, y: pos.y, w: size.width, h: size.height });
+					}
+				} catch (_) {}
+			}, 100);
+		}
+
+		return () => {
+			if (syncInterval) clearInterval(syncInterval);
+		};
 	});
 </script>
 

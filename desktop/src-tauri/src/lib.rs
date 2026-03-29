@@ -43,6 +43,7 @@ pub struct AppStatus {
     pub gem_region: CaptureRegion,
     pub font_region: CaptureRegion,
     pub sidebar_open: bool,
+    pub game_focused: bool,
 }
 
 pub struct AppState {
@@ -55,6 +56,7 @@ pub struct AppState {
     pub gem_region: Mutex<CaptureRegion>,
     pub font_region: Mutex<CaptureRegion>,
     pub sidebar_open: Mutex<bool>,
+    pub game_focused: Mutex<bool>,
     pub trade_client: trade::TradeApiClient,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
@@ -71,6 +73,7 @@ fn build_status(state: &AppState) -> AppStatus {
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
+        game_focused: *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -81,6 +84,7 @@ fn persist_settings(app: &AppHandle) {
     let existing = settings::load(app);
     let mut s = settings::from_state(&state);
     s.window = existing.window; // preserve window settings from last close
+    s.comparator_overlay = existing.comparator_overlay; // preserve overlay settings
     settings::save(app, &s);
 }
 
@@ -316,6 +320,42 @@ async fn trade_lookup(
     );
 
     Ok(result)
+}
+
+#[tauri::command]
+fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+    }
+}
+
+#[tauri::command]
+fn comparator_moved(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
+    // Save position
+    let mut s = settings::load(&app);
+    s.comparator_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled: true,
+    });
+    settings::save(&app, &s);
+    // Emit via Rust — guaranteed to reach all windows
+    if let Err(e) = app.emit("comparator-moved", serde_json::json!({ "x": x, "y": y, "w": w, "h": h })) {
+        log::warn!("emit comparator-moved failed: {}", e);
+    }
+}
+
+#[tauri::command]
+fn get_comparator_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
+    settings::load(&app).comparator_overlay
+}
+
+#[tauri::command]
+fn set_comparator_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.comparator_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled,
+    });
+    settings::save(&app, &s);
 }
 
 #[tauri::command]
@@ -847,6 +887,16 @@ fn spawn_log_watcher(app: AppHandle) {
                                     lab_state::LabState::Idle;
                                 emit_status(&app);
                             }
+                            lab_state::LabEvent::GameFocused => {
+                                *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                                if let Err(e) = app.emit("game-focus-changed", true) { log::warn!("emit game-focus-changed failed: {}", e); }
+                                emit_status(&app);
+                            }
+                            lab_state::LabEvent::GameBlurred => {
+                                *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()) = false;
+                                if let Err(e) = app.emit("game-focus-changed", false) { log::warn!("emit game-focus-changed failed: {}", e); }
+                                emit_status(&app);
+                            }
                         }
                     }
                 }
@@ -876,6 +926,7 @@ pub fn run() {
         gem_region: Mutex::new(CaptureRegion::default()),
         font_region: Mutex::new(CaptureRegion::default_font_panel()),
         sidebar_open: Mutex::new(true),
+        game_focused: Mutex::new(false),
         trade_client: trade::TradeApiClient::new("Mirage"),
         watcher_cancel: Mutex::new(None),
     };
@@ -902,6 +953,10 @@ pub fn run() {
             trade_lookup,
             send_test_gems,
             test_ocr_on_image,
+            move_overlay,
+            comparator_moved,
+            get_comparator_overlay_settings,
+            set_comparator_overlay_settings,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

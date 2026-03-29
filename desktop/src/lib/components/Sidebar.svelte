@@ -3,10 +3,14 @@
 		open = true,
 		currentPath = '/',
 		onToggle,
+		comparatorActive = false,
+		onToggleComparator,
 	}: {
 		open: boolean;
 		currentPath: string;
 		onToggle: () => void;
+		comparatorActive?: boolean;
+		onToggleComparator?: () => void;
 	} = $props();
 </script>
 
@@ -48,10 +52,10 @@
 			<span class="icon">&#x1F441;</span>
 			<span class="indicator off"></span>
 		</div>
-		<div class="collapsed-overlay" title="Compare: off">
+		<button class="collapsed-overlay" title="Compare: {comparatorActive ? 'on' : 'off'}" onclick={onToggleComparator}>
 			<span class="icon">&#x2696;&#xFE0F;</span>
-			<span class="indicator off"></span>
-		</div>
+			<span class="indicator" class:off={!comparatorActive} class:always={comparatorActive}></span>
+		</button>
 		<div class="collapsed-overlay" title="Session: off">
 			<span class="icon">&#x1F4CB;</span>
 			<span class="indicator off"></span>
@@ -111,10 +115,10 @@
 			<span>&#x1F441; OCR</span>
 			<span class="mode off">off</span>
 		</div>
-		<div class="overlay-row">
+		<button class="overlay-row clickable" onclick={onToggleComparator}>
 			<span>&#x2696;&#xFE0F; Compare</span>
-			<span class="mode off">off</span>
-		</div>
+			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive}>{comparatorActive ? 'on' : 'off'}</span>
+		</button>
 		<div class="overlay-row">
 			<span>&#x1F4CB; Session</span>
 			<span class="mode off">off</span>
@@ -225,6 +229,17 @@
 		margin-bottom: 3px;
 		border-radius: 4px;
 		font-size: 11px;
+		width: 100%;
+		border: none;
+		color: var(--text);
+	}
+
+	.overlay-row.clickable {
+		cursor: pointer;
+	}
+
+	.overlay-row.clickable:hover {
+		background: var(--border);
 	}
 
 	.mode {
@@ -315,6 +330,10 @@
 		font-size: 13px;
 		cursor: pointer;
 		border-radius: 4px;
+		background: none;
+		border: none;
+		color: inherit;
+		padding: 0;
 	}
 
 	.collapsed-overlay:hover {

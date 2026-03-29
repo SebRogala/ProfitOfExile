@@ -117,6 +117,91 @@
 		if (!region) return 'Not set';
 		return `(${region.x}, ${region.y}) ${region.w}\u00d7${region.h}`;
 	}
+
+	// --- Comparator Overlay Position (red frame for positioning) ---
+	let comparatorOverlaySettings = $state<{ x: number; y: number; width: number; height: number } | null>(null);
+	let comparatorPositionOverlay = $state<any>(null);
+
+	$effect(() => {
+		invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').then((settings) => {
+			if (settings) {
+				comparatorOverlaySettings = settings;
+			}
+		}).catch(() => {});
+	});
+
+	async function showComparatorPositionOverlay() {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		if (comparatorPositionOverlay) {
+			try { await comparatorPositionOverlay.destroy(); } catch (_) {}
+			comparatorPositionOverlay = null;
+		}
+		const s = comparatorOverlaySettings;
+		const dpr = window.devicePixelRatio || 1;
+		const win = new WebviewWindow('overlay-comparator-pos', {
+			url: '/overlay?sync=comparator',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: true,
+			shadow: false,
+			skipTaskbar: true,
+			width: s ? Math.round(s.width / dpr) : 380,
+			height: s ? Math.round(s.height / dpr) : 200,
+			x: s ? Math.round(s.x / dpr) : 100,
+			y: s ? Math.round(s.y / dpr) : 100,
+		});
+		win.once('tauri://created', () => { comparatorPositionOverlay = win; });
+		win.once('tauri://error', (e: any) => console.error('Position overlay failed:', e));
+	}
+
+	async function saveComparatorPosition() {
+		if (!comparatorPositionOverlay) return;
+		let x: number, y: number, w: number, h: number;
+		try {
+			const ref = comparatorPositionOverlay.window ?? comparatorPositionOverlay;
+			const pos = await ref.outerPosition();
+			const size = await ref.outerSize();
+			x = pos.x; y = pos.y; w = size.width; h = size.height;
+			await invoke('set_comparator_overlay_settings', { x, y, w, h, enabled: true });
+			comparatorOverlaySettings = { x, y, width: w, height: h };
+		} catch (e) {
+			console.error('Save comparator position failed:', e);
+			return;
+		}
+		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
+		comparatorPositionOverlay = null;
+
+		// Recreate live comparator overlay at new position
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const existing = await WebviewWindow.getByLabel('comparator');
+			if (!existing) break;
+			try { await existing.close(); } catch (_) {}
+			try { await existing.destroy(); } catch (_) {}
+			await new Promise(r => setTimeout(r, 100));
+		}
+		const dpr = window.devicePixelRatio || 1;
+		new WebviewWindow('comparator', {
+			url: '/overlay/comparator',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+			width: Math.round(w! / dpr),
+			height: Math.round(h! / dpr),
+			x: Math.round(x! / dpr),
+			y: Math.round(y! / dpr),
+		});
+	}
+
+	async function cancelComparatorPosition() {
+		if (!comparatorPositionOverlay) return;
+		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
+		comparatorPositionOverlay = null;
+	}
 </script>
 
 <div class="settings-page">
@@ -226,8 +311,15 @@
 			<h2>Overlays</h2>
 
 			<div class="setting-row">
-				<span class="setting-label">Lock / Unlock all</span>
-				<span class="setting-value muted">Coming soon</span>
+				<span class="setting-label">Comparator Position</span>
+				{#if comparatorPositionOverlay}
+					<span class="setting-value">Drag red overlay to position...</span>
+					<button class="btn-small save" onclick={saveComparatorPosition}>Save</button>
+					<button class="btn-small" onclick={cancelComparatorPosition}>Cancel</button>
+				{:else}
+					<span class="setting-value mono">{comparatorOverlaySettings ? `(${comparatorOverlaySettings.x}, ${comparatorOverlaySettings.y}) ${comparatorOverlaySettings.width}\u00d7${comparatorOverlaySettings.height}` : 'Not set'}</span>
+					<button class="btn-small" onclick={showComparatorPositionOverlay} disabled={!!overlayVisible}>Configure</button>
+				{/if}
 			</div>
 		</section>
 

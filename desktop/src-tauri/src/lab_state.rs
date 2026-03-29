@@ -18,6 +18,8 @@ pub enum LabEvent {
     FontOpened,
     FontClosed,
     ZoneChanged { area: String },
+    GameFocused,
+    GameBlurred,
 }
 
 pub struct LabStateMachine {
@@ -38,6 +40,14 @@ impl LabStateMachine {
 
     /// Process a log line and return any state transition event.
     pub fn process_line(&mut self, line: &str) -> Option<LabEvent> {
+        // Game focus events — fire regardless of lab state
+        if line.contains("[WINDOW] Gained focus") {
+            return Some(LabEvent::GameFocused);
+        }
+        if line.contains("[WINDOW] Lost focus") {
+            return Some(LabEvent::GameBlurred);
+        }
+
         // Font opened — the reliable trigger
         if line.contains("InstanceClientLabyrinthCraftResultOptionsList recieved") {
             let prev = self.state.clone();
@@ -179,6 +189,36 @@ mod tests {
         );
         assert_eq!(*sm.state(), LabState::Done);
         assert!(matches!(event, Some(LabEvent::ZoneChanged { .. })));
+    }
+
+    #[test]
+    fn game_focus_events() {
+        let mut sm = LabStateMachine::new();
+        let event = sm.process_line(
+            "2026/03/28 10:00:00 [DEBUG Client 12345] [WINDOW] Gained focus",
+        );
+        assert!(matches!(event, Some(LabEvent::GameFocused)));
+        // Focus events don't change lab state
+        assert_eq!(*sm.state(), LabState::Idle);
+
+        let event = sm.process_line(
+            "2026/03/28 10:00:01 [DEBUG Client 12345] [WINDOW] Lost focus",
+        );
+        assert!(matches!(event, Some(LabEvent::GameBlurred)));
+        assert_eq!(*sm.state(), LabState::Idle);
+    }
+
+    #[test]
+    fn focus_events_fire_during_picking() {
+        let mut sm = LabStateMachine::new();
+        sm.process_line("[INFO Client] InstanceClientLabyrinthCraftResultOptionsList recieved");
+        sm.start_picking();
+        assert_eq!(*sm.state(), LabState::PickingGems);
+
+        // Focus events should fire even during PickingGems (no state change)
+        let event = sm.process_line("[DEBUG Client] [WINDOW] Lost focus");
+        assert!(matches!(event, Some(LabEvent::GameBlurred)));
+        assert_eq!(*sm.state(), LabState::PickingGems);
     }
 
     #[test]

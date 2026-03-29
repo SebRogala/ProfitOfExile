@@ -6,6 +6,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { page } from '$app/stores';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
+	import { initFocusListener, destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 
 	let { children } = $props();
 
@@ -15,6 +16,69 @@
 	function toggleSidebar() {
 		const next = !sidebarOpen;
 		invoke('set_sidebar_open', { open: next }).catch(e => console.error('set_sidebar_open failed:', e));
+	}
+
+	// Comparator overlay state
+	let comparatorActive = $state(false);
+	let comparatorWin = $state<any>(null);
+
+	async function createComparatorOverlay(x: number, y: number, w: number, h: number) {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const dpr = window.devicePixelRatio || 1;
+
+		await destroyComparatorWindow();
+
+		const win = new WebviewWindow('comparator', {
+			url: '/overlay/comparator',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+			width: Math.round(w / dpr),
+			height: Math.round(h / dpr),
+			x: Math.round(x / dpr),
+			y: Math.round(y / dpr),
+		});
+
+		win.once('tauri://created', () => {
+			comparatorWin = win;
+			comparatorActive = true;
+		});
+		win.once('tauri://error', (e: any) => {
+			console.error('[overlay] comparator creation failed:', e);
+		});
+	}
+
+	// Destroy the comparator window — same loop that works in createComparatorOverlay
+	async function destroyComparatorWindow() {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const existing = await WebviewWindow.getByLabel('comparator');
+			if (!existing) break;
+			try { await existing.close(); } catch (_) {}
+			try { await existing.destroy(); } catch (_) {}
+			await new Promise(r => setTimeout(r, 100));
+		}
+		comparatorWin = null;
+	}
+
+	async function toggleComparatorOverlay() {
+		if (comparatorActive) {
+			// Position already saved by the overlay's own interval — just destroy
+			await destroyComparatorWindow();
+			comparatorActive = false;
+		} else {
+			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').catch(() => null);
+			console.log('[overlay] toggle ON — loaded settings:', settings);
+			await createComparatorOverlay(
+				settings?.x ?? 100,
+				settings?.y ?? 100,
+				settings?.width ?? 380,
+				settings?.height ?? 250,
+			);
+		}
 	}
 
 	// Ctrl+Shift+F12 toggles devtools in production builds
@@ -36,12 +100,23 @@
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
 	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
+	initFocusListener().catch(e => console.error('[layout] initFocusListener failed:', e));
+
+	// Auto-restore comparator overlay if it was enabled in previous session
+	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings')
+		.then((settings) => {
+			if (settings?.enabled) {
+				createComparatorOverlay(settings.x, settings.y, settings.width, settings.height);
+			}
+		})
+		.catch(() => {});
 </script>
 
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={toggleSidebar} />
+		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={toggleSidebar}
+			comparatorActive={comparatorActive} onToggleComparator={toggleComparatorOverlay} />
 		<main class="content">
 			{#if children}
 				{@render children()}
