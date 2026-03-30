@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import { store } from '$lib/stores/status.svelte';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	let overlayWin = $state<any>(null);
 	let overlayVisible = $state<string | null>(null); // null = hidden, 'gem' or 'font' = which region
@@ -348,7 +349,9 @@
 			<h2>Trade</h2>
 
 			<div class="setting-row">
-				<span class="setting-label">Stale warning (sec)</span>
+				<Tooltip text="After this many seconds, trade data shows a yellow warning indicator in the comparator and overlay. Signals that the cached prices may be getting outdated.">
+					<span class="setting-label">Stale warning (sec)</span>
+				</Tooltip>
 				{#if editingTradeStaleness}
 					<div class="setting-edit">
 						<input
@@ -365,7 +368,9 @@
 			</div>
 
 			<div class="setting-row">
-				<span class="setting-label">Stale critical (sec)</span>
+				<Tooltip text="After this many seconds, trade data shows a red critical indicator. The cached prices are likely outdated and should be refreshed before making decisions.">
+					<span class="setting-label">Stale critical (sec)</span>
+				</Tooltip>
 				{#if editingTradeStaleness}
 					<div class="setting-edit">
 						<input
@@ -382,7 +387,9 @@
 			</div>
 
 			<div class="setting-row">
-				<span class="setting-label">Auto-refresh (sec)</span>
+				<Tooltip text="When auto-trade is enabled, trade data older than this is automatically re-fetched from GGG when a gem appears in the comparator. Set higher to reduce API calls, lower for fresher data.">
+					<span class="setting-label">Auto-refresh (sec)</span>
+				</Tooltip>
 				{#if editingTradeStaleness}
 					<div class="setting-edit">
 						<input
