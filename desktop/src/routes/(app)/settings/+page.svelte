@@ -124,6 +124,7 @@
 	let tradeStaleCriticalSecs = $state(store.status?.trade_stale_critical_secs ?? 600);
 	let tradeAutoRefreshSecs = $state(store.status?.trade_auto_refresh_secs ?? 900);
 	let editingTradeStaleness = $state(false);
+	let tradeStalenessError = $state('');
 
 	// Sync from store when status changes
 	$effect(() => {
@@ -139,6 +140,15 @@
 	}
 
 	async function saveTradeStaleness() {
+		if (tradeStaleWarnSecs >= tradeStaleCriticalSecs) {
+			tradeStalenessError = 'Warn threshold must be less than critical threshold.';
+			return;
+		}
+		if (tradeStaleCriticalSecs >= tradeAutoRefreshSecs) {
+			tradeStalenessError = 'Critical threshold must be less than auto-refresh interval.';
+			return;
+		}
+		tradeStalenessError = '';
 		try {
 			await invoke('set_trade_staleness_settings', {
 				warnSecs: tradeStaleWarnSecs,
@@ -155,6 +165,7 @@
 		tradeStaleWarnSecs = store.status?.trade_stale_warn_secs ?? 120;
 		tradeStaleCriticalSecs = store.status?.trade_stale_critical_secs ?? 600;
 		tradeAutoRefreshSecs = store.status?.trade_auto_refresh_secs ?? 900;
+		tradeStalenessError = '';
 		editingTradeStaleness = false;
 	}
 
@@ -395,6 +406,12 @@
 					<button class="btn-small" onclick={startEditTradeStaleness}>Edit</button>
 				{/if}
 			</div>
+			{#if tradeStalenessError}
+				<div class="setting-row">
+					<span class="setting-label"></span>
+					<span class="setting-error">{tradeStalenessError}</span>
+				</div>
+			{/if}
 		</section>
 
 		<!-- Overlays -->
@@ -513,6 +530,11 @@
 
 	.setting-input.narrow {
 		max-width: 100px;
+	}
+
+	.setting-error {
+		color: var(--color-lab-red, #ef4444);
+		font-size: 0.75rem;
 	}
 
 	.btn-small {
