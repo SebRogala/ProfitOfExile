@@ -111,16 +111,25 @@ Port of the Go `internal/trade/` package. Same two-phase GGG API flow (POST sear
 - Derived: `let x = $derived(expression)` — NOT `$:`
 - Children: `{@render children()}` — NOT `<slot />`
 
-### Shared Store
+### Shared Stores
 `stores/status.svelte.ts` exports `store` (reactive object) and `initStatusStore()`. The store is initialized once from the `(app)/+layout.svelte`. All pages read `store.status` and `store.logs` — never poll.
 
 ```ts
-// Svelte 5: export an object, mutate properties (NOT reassign)
 export const store = $state({
     status: null as any,
     logs: [] as string[],
 });
 ```
+
+`stores/navigation.svelte.ts` exports `nav` — global view toggle. **CRITICAL: Do NOT use SvelteKit `<a href>` routing for main views.** All pages are rendered in the layout and hidden via CSS (`display: none`). SvelteKit routing unmounts components, killing event listeners (Comparator, overlay events). Use the navigation store instead:
+
+```ts
+import { nav } from '$lib/stores/navigation.svelte';
+nav.go('/settings');  // switch view
+nav.view;             // 'lab' | 'settings'
+```
+
+To add a new view: add to the `View` type in `navigation.svelte.ts`, add the component import + `{#if}` block in `+layout.svelte`, update `nav.go()` mapping.
 
 ### Styling
 - CSS custom properties from `app.css` — use `var(--bg)`, `var(--surface)`, `var(--accent)`, etc.
@@ -191,7 +200,7 @@ new WebviewWindow('overlay', { width: Math.round(physW / dpr), ... });
 ```
 
 ### Navigation
-SvelteKit client-side routing within the `(app)` group. Use `<a href="/settings">` for links. Overlay routes are outside the group and don't get the app shell layout.
+**Do NOT use SvelteKit routing (`<a href>`) for main views** — it unmounts pages and kills event listeners. Use `nav.go('/path')` from `$lib/stores/navigation.svelte`. All main views are always mounted in the layout, toggled via CSS. SvelteKit routing is only used for overlay routes (`/overlay/*`) which are separate windows outside the app shell.
 
 ## File Watcher
 Uses the `notify` crate (filesystem events, NOT polling). Watches the parent directory, filters by filename. Supports cancel via `tokio::sync::watch` channel — restarts automatically when the Client.txt path changes in settings.

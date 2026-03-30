@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
+	import { nav } from '$lib/stores/navigation.svelte';
+
 	let { status }: {
 		status: any;
 	} = $props();
@@ -55,7 +57,7 @@
 				{isDebug() ? 'DEBUG' : 'PROD'}
 			</button>
 		{/if}
-		<a href="/settings" class="settings-link" title="Settings">&#9881;&#65039;</a>
+		<button class="settings-link" title="Settings" onclick={() => nav.go('/settings')}>&#9881;&#65039;</button>
 	</div>
 	<div class="window-controls">
 		<button class="win-btn" onclick={minimizeWindow} title="Minimize">&#x2013;</button>
