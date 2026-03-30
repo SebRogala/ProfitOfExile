@@ -49,6 +49,18 @@
 				.catch(e => console.error('[overlay] click-through setup failed:', e));
 			comparatorWin = win;
 			comparatorActive = true;
+
+			// Hide immediately if game is not focused — the focus poller
+			// only handles transitions, so a window created while PoE is
+			// not in the foreground would otherwise stay visible.
+			try {
+				const status = await invoke<any>('get_status');
+				if (!status?.game_focused) {
+					await win.hide();
+				}
+			} catch (e) {
+				console.warn('[overlay] initial focus check failed:', e);
+			}
 		});
 		win.once('tauri://error', (e: any) => {
 			console.error('[overlay] comparator creation failed:', e);

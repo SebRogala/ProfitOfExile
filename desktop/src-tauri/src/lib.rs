@@ -1,4 +1,5 @@
 mod capture;
+#[allow(dead_code)] // Font panel OCR — not yet wired into the scan pipeline
 mod font_parser;
 mod gem_matcher;
 mod lab_state;
@@ -8,6 +9,7 @@ mod settings;
 mod trade;
 
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -76,6 +78,10 @@ pub struct AppState {
     pub trade_stale_warn_secs: Mutex<u32>,
     pub trade_stale_critical_secs: Mutex<u32>,
     pub trade_auto_refresh_secs: Mutex<u32>,
+    /// Generation counter for gem OCR scans. Incremented on each start trigger
+    /// (FontOpened, manual scan). The capture loop checks this every iteration —
+    /// if it doesn't match the generation it was spawned with, it exits.
+    pub gem_scan_generation: AtomicU64,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -284,28 +290,39 @@ fn capture_mouse_position() -> Result<(i32, i32), String> {
     }
 }
 
-#[tauri::command]
-async fn start_scanning(app: AppHandle) -> Result<(), String> {
+/// Start a gem OCR scan. Used by both FontOpened and manual trigger.
+/// - Clears comparator (gems-cleared)
+/// - Bumps generation counter (cancels any running scan)
+/// - Sets state to PickingGems
+/// - Spawns a new capture loop with the current generation
+fn spawn_gem_scan(app: &AppHandle, source: &str) {
     let state = app.state::<AppState>();
-    let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    if current == lab_state::LabState::PickingGems {
-        return Err("Already scanning".to_string());
-    }
 
-    app_log(&app, "Manual scan started".to_string());
+    // Bump generation — any running capture loop will see the mismatch and exit.
+    let gen = state.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+    // Clear frontend comparator.
     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
     if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
+
+    // Set state to PickingGems (capture loop checks this + generation).
     *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::PickingGems;
-    emit_status(&app);
+    emit_status(app);
+
+    app_log(app, format!("Gem scan started ({}, gen={})", source, gen));
 
     let app_capture = app.clone();
     // Capture loop uses blocking Windows COM APIs (screen capture + OCR).
     // Must run on a dedicated OS thread — tokio's runtime and spawn_blocking
     // pool both cause deadlocks with apartment-threaded WinRT objects.
     std::thread::spawn(move || {
-        run_capture_loop_blocking(&app_capture);
+        gem_scan_loop(app_capture, gen);
     });
+}
 
+#[tauri::command]
+async fn start_scanning(app: AppHandle) -> Result<(), String> {
+    spawn_gem_scan(&app, "manual");
     Ok(())
 }
 
@@ -313,6 +330,8 @@ async fn start_scanning(app: AppHandle) -> Result<(), String> {
 fn stop_scanning(app: AppHandle) {
     let state = app.state::<AppState>();
     app_log(&app, "Manual scan stopped".to_string());
+    // Bump generation to cancel any running scan.
+    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
     *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
     emit_status(&app);
 }
@@ -832,244 +851,129 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     }
 }
 
-/// Blocking capture loop for a dedicated OS thread.
-/// Delegates async work (network) to tauri::async_runtime::spawn.
-fn run_capture_loop_blocking(app: &AppHandle) {
+/// Gem-only OCR scan on a dedicated OS thread.
+///
+/// Scans the gem tooltip region every 500ms looking for transfigured gem names.
+/// Stops when:
+///   - 3 gems detected (all options scanned)
+///   - 45s timeout (user walked away or didn't hover all gems)
+///   - Generation mismatch (new scan started or manual stop)
+///   - Lab state changed to non-PickingGems (zone change)
+fn gem_scan_loop(app: AppHandle, generation: u64) {
     let state = app.state::<AppState>();
-    app_log(app, "Capture loop started".to_string());
-
-    let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Load gem names for matching — try server first, fall back to empty
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(app, &server));
+    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server));
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
-    app_log(app, format!("Loaded {} gem names for matching", gem_names.len()));
+    app_log(&app, format!("Gem scan: loaded {} gem names", gem_names.len()));
 
-    // Error throttling — log capture/OCR errors every 20 iterations (~10s) to avoid spam
+    let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut gems_found = 0u32;
     let mut loop_count = 0u32;
-
-    // Font panel tracking
-    let mut font_miss_count = 0u32;
-    let mut session_rounds: Vec<serde_json::Value> = Vec::new();
-    let mut current_round_options: Option<Vec<font_parser::CraftOption>> = None;
-    let mut current_round_gems: Vec<String> = Vec::new();
-    let mut last_crafts_remaining: Option<i32> = None;
+    let start = std::time::Instant::now();
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+    const MAX_GEMS: u32 = 3;
+    const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
     loop {
-        // Check if we're still in PickingGems state
+        // Check generation — if bumped, a new scan was started or we were stopped.
+        if state.gem_scan_generation.load(Ordering::SeqCst) != generation {
+            app_log(&app, "Gem scan stopped (new scan or manual stop)".to_string());
+            break;
+        }
+
+        // Check lab state — zone change sets this to Idle.
         {
             let current = state.lab_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
             if current != lab_state::LabState::PickingGems {
-                app_log(app, "Capture loop stopped (state changed)".to_string());
+                app_log(&app, "Gem scan stopped (state changed)".to_string());
                 break;
             }
         }
 
+        // Check timeout.
+        if start.elapsed() >= TIMEOUT {
+            app_log(&app, format!("Gem scan timed out after 45s ({} gems found)", gems_found));
+            break;
+        }
+
         loop_count += 1;
 
-        // Capture full screen once, crop both regions from it
         let gem_region = state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
         let screen = match capture::capture_screen() {
-            Ok(s) => Some(s),
+            Ok(s) => s,
             Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Screen capture failed: {}", e));
+                    app_log(&app, format!("Screen capture failed: {}", e));
                 }
-                None
+                std::thread::sleep(SCAN_INTERVAL);
+                continue;
             }
         };
 
-        // --- Region 1: Gem tooltip OCR ---
-        let gem_ocr_result: Option<Result<Vec<String>, String>> = screen.as_ref().map(|s| {
-            let cropped = s.crop_imm(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h);
-            let processed = capture::preprocess_for_ocr(&cropped);
-            ocr::recognize_text(&processed)
-        });
-
-        match gem_ocr_result {
-            None => {} // screen capture failed, already logged
-            Some(Err(e)) => {
+        let cropped = screen.crop_imm(gem_region.x.max(0) as u32, gem_region.y.max(0) as u32, gem_region.w, gem_region.h);
+        let processed = capture::preprocess_for_ocr(&cropped);
+        let lines = match ocr::recognize_text(&processed) {
+            Ok(l) => l,
+            Err(e) => {
                 if loop_count % 20 == 1 {
-                    app_log(app, format!("Gem OCR failed: {}", e));
+                    app_log(&app, format!("Gem OCR failed: {}", e));
+                }
+                std::thread::sleep(SCAN_INTERVAL);
+                continue;
+            }
+        };
+
+        let candidates = ocr::extract_gem_candidates(&lines);
+        let mut best: Option<gem_matcher::GemMatch> = None;
+        for candidate in &candidates {
+            if let Some(m) = matcher.match_gem(candidate) {
+                if best.as_ref().map_or(true, |b| m.score > b.score) {
+                    best = Some(m);
                 }
             }
-            Some(Ok(lines)) => {
-                let candidates = ocr::extract_gem_candidates(&lines);
-                let mut best: Option<gem_matcher::GemMatch> = None;
-                for candidate in &candidates {
-                    if let Some(m) = matcher.match_gem(candidate) {
-                        if best.as_ref().map_or(true, |b| m.score > b.score) {
-                            best = Some(m);
-                        }
-                    }
-                }
-                if let Some(gem_match) = best {
-                    if !seen_gems.contains(&gem_match.name) {
-                        seen_gems.insert(gem_match.name.clone());
-                        current_round_gems.push(gem_match.name.clone());
-                        app_log(app, format!(
-                            "Gem detected: {} (score: {:.2}) [{}/3]",
-                            gem_match.name, gem_match.score, current_round_gems.len()
-                        ));
+        }
 
-                        let all_gems = {
-                            let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
-                            gems.push(gem_match.name.clone());
-                            let cloned = gems.clone();
-                            drop(gems); // Release lock BEFORE emit_status
-                            cloned
-                        };
-                        if let Err(e) = app.emit("gem-detected", &gem_match.name) { log::warn!("emit gem-detected failed: {}", e); }
-                        emit_status(app);
-                        let app_clone = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            send_gems_to_server(&app_clone, all_gems).await;
-                        });
-                    }
-                }
-            } // Some(Ok(lines))
-        } // match gem_ocr_result
+        if let Some(gem_match) = best {
+            if !seen_gems.contains(&gem_match.name) {
+                seen_gems.insert(gem_match.name.clone());
+                gems_found += 1;
+                app_log(&app, format!(
+                    "Gem detected: {} (score: {:.2}) [{}/{}]",
+                    gem_match.name, gem_match.score, gems_found, MAX_GEMS
+                ));
 
-        // --- Region 2: Font panel OCR ---
-        let font_ocr_result: Option<Result<Vec<String>, String>> = screen.as_ref().map(|s| {
-            let cropped = s.crop_imm(font_region.x.max(0) as u32, font_region.y.max(0) as u32, font_region.w, font_region.h);
-            let processed = capture::preprocess_for_ocr(&cropped);
-            ocr::recognize_text(&processed)
-        });
+                let all_gems = {
+                    let mut gems = state.detected_gems.lock().unwrap_or_else(|e| e.into_inner());
+                    gems.push(gem_match.name.clone());
+                    let cloned = gems.clone();
+                    drop(gems);
+                    cloned
+                };
+                if let Err(e) = app.emit("gem-detected", &gem_match.name) { log::warn!("emit gem-detected failed: {}", e); }
+                emit_status(&app);
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    send_gems_to_server(&app_clone, all_gems).await;
+                });
 
-        match font_ocr_result {
-            None => {} // screen capture failed, already logged
-            Some(Err(e)) => {
-                if loop_count % 20 == 1 {
-                    app_log(app, format!("Font OCR failed: {}", e));
+                // All 3 gems found — stop scanning.
+                if gems_found >= MAX_GEMS {
+                    app_log(&app, "Gem scan complete (3/3 gems detected)".to_string());
+                    break;
                 }
             }
-            Some(Ok(lines)) => {
-                let panel = font_parser::parse_font_panel(&lines);
+        }
 
-                if panel.font_active {
-                    font_miss_count = 0;
-
-                    // Store current round options (first time we see them this round)
-                    if current_round_options.is_none() && !panel.options.is_empty() {
-                        app_log(app, format!(
-                            "Font panel: {} options detected{}",
-                            panel.options.len(),
-                            if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" }
-                        ));
-                        for opt in &panel.options {
-                            app_log(app, format!("  - {} {}", opt.option_type,
-                                opt.value.map(|v| format!("({})", v)).unwrap_or_default()));
-                        }
-                        current_round_options = Some(panel.options.clone());
-                        last_crafts_remaining = panel.crafts_remaining;
-
-                        if panel.jackpot_detected {
-                            if let Err(e) = app.emit("font-jackpot", true) { log::warn!("emit font-jackpot failed: {}", e); }
-                        }
-                    }
-                } else {
-                    font_miss_count += 1;
-
-                    // If we had options and now don't → round completed (user used a craft)
-                    if current_round_options.is_some() {
-                        // Save the completed round
-                        let round = serde_json::json!({
-                            "craft_options": current_round_options.take().unwrap(),
-                            "gems_offered": if current_round_gems.is_empty() { serde_json::Value::Null } else { serde_json::json!(current_round_gems.clone()) },
-                            "gem_picked": current_round_gems.last().cloned(),
-                            "crafts_remaining": last_crafts_remaining,
-                        });
-                        session_rounds.push(round);
-                        app_log(app, format!("Font round {} complete ({} gems captured)", session_rounds.len(), current_round_gems.len()));
-
-                        // Reset for next round
-                        current_round_gems.clear();
-                        seen_gems.clear();
-                    }
-
-                    // 3 consecutive misses → font is done
-                    if font_miss_count >= 3 && !session_rounds.is_empty() {
-                        app_log(app, format!("Font session complete: {} rounds", session_rounds.len()));
-
-                        // Send session to server
-                        let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        let session_data = serde_json::json!({
-                            "lab_type": "Unknown", // TODO: detect from Client.txt
-                            "total_crafts": session_rounds.len(),
-                            "variant": "20/20",
-                            "device_id": "desktop",
-                            "pair_code": pair,
-                            "rounds": session_rounds.clone(),
-                        });
-
-                        let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                        let app_clone = app.clone();
-                        let data = session_data.clone();
-                        tauri::async_runtime::spawn(async move {
-                            send_font_session(&app_clone, &server, data).await;
-                        });
-
-                        session_rounds.clear();
-                    }
-                }
-            } // Some(Ok(lines))
-        } // match font_ocr_result
-
-        // Capture every 500ms
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(SCAN_INTERVAL);
     }
 
-    // If session has unsent rounds on exit, send them
-    if !session_rounds.is_empty() {
-        app_log(app, format!("Sending {} unsent font rounds on exit", session_rounds.len()));
-        let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let session_data = serde_json::json!({
-            "lab_type": "Unknown",
-            "total_crafts": session_rounds.len(),
-            "variant": "20/20",
-            "device_id": "desktop",
-            "pair_code": pair,
-            "rounds": session_rounds,
-        });
-        let app_clone = app.clone();
-        tauri::async_runtime::spawn(async move {
-            send_font_session(&app_clone, &server, session_data).await;
-        });
-    }
-}
-
-/// Send a completed font session to the server.
-async fn send_font_session(app: &AppHandle, server_url: &str, data: serde_json::Value) {
-    let url = format!("{}/api/desktop/font-session", server_url);
-
-    let client = match reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            app_log(app, format!("HTTP client error: {}", e));
-            return;
-        }
-    };
-
-    match client.post(&url).json(&data).send().await {
-        Ok(res) if res.status().is_success() => {
-            app_log(app, "Font session sent successfully".to_string());
-        }
-        Ok(res) => {
-            let status = res.status();
-            let body = res.text().await.unwrap_or_default();
-            app_log(app, format!("Font session rejected: {} — {}", status, &body[..body.len().min(200)]));
-        }
-        Err(e) => {
-            app_log(app, format!("Font session send failed: {}", e));
-        }
+    // Transition state back to Idle if WE are still the active scan
+    // (don't clobber state if a newer scan already started).
+    if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
+        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
+        emit_status(&app);
     }
 }
 
@@ -1117,9 +1021,25 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
     }
 }
 
+/// Focus poller result: where the foreground window belongs.
+#[cfg(windows)]
+enum FocusState {
+    /// Path of Exile is the foreground window.
+    Game,
+    /// Our own process (overlay, main window) is foreground.
+    OwnWindow,
+    /// Some other application is foreground.
+    Other,
+}
+
 /// Poll GetForegroundWindow to detect game focus changes.
 /// More reliable than Client.txt log events (no latency, works if PoE crashes).
 /// Runs every 1 second on a dedicated thread.
+///
+/// Three-state logic:
+///   - Foreground is PoE → game focused, show overlay
+///   - Foreground is our own process (overlay/main window) → neutral, keep current state
+///   - Foreground is anything else → game not focused, hide overlay
 fn spawn_focus_poller(app: AppHandle) {
     let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
     {
@@ -1144,23 +1064,44 @@ fn spawn_focus_poller(app: AppHandle) {
 
             #[cfg(windows)]
             {
-                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
 
-                let is_focused = unsafe {
+                let our_pid = std::process::id();
+
+                let focus_state = unsafe {
                     let fg = GetForegroundWindow();
                     if fg.0.is_null() {
-                        false
+                        FocusState::Other // no foreground window → treat as blur
                     } else {
-                        let mut buf = [0u16; 256];
-                        let len = GetWindowTextW(fg, &mut buf);
-                        if len > 0 {
-                            let title = String::from_utf16_lossy(&buf[..len as usize]);
-                            title.contains("Path of Exile")
+                        // Check if this window belongs to our process (overlay, main window).
+                        let mut fg_pid: u32 = 0;
+                        GetWindowThreadProcessId(fg, Some(&mut fg_pid));
+                        if fg_pid == our_pid {
+                            FocusState::OwnWindow
                         } else {
-                            false
+                            let mut buf = [0u16; 256];
+                            let len = GetWindowTextW(fg, &mut buf);
+                            if len > 0 {
+                                let title = String::from_utf16_lossy(&buf[..len as usize]);
+                                if title.contains("Path of Exile") {
+                                    FocusState::Game
+                                } else {
+                                    FocusState::Other
+                                }
+                            } else {
+                                FocusState::Other
+                            }
                         }
                     }
                 };
+
+                // When foreground is our own window (overlay button click, main app),
+                // don't change game_focused — preserve the last known state.
+                if matches!(focus_state, FocusState::OwnWindow) {
+                    continue;
+                }
+
+                let is_focused = matches!(focus_state, FocusState::Game);
 
                 if is_focused != was_focused {
                     was_focused = is_focused;
@@ -1244,25 +1185,17 @@ fn spawn_log_watcher(app: AppHandle) {
                         let state = app.state::<AppState>();
                         match &event {
                             lab_state::LabEvent::FontOpened => {
-                                app_log(&app, "Font opened! Starting screen reader.".to_string());
-                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                                    lab_state::LabState::FontReady;
+                                // FontOpened = user clicked CRAFT → 3 gems on screen.
+                                // Always (re)start gem scan — bumps generation to cancel
+                                // any running scan, clears comparator, spawns fresh scan.
                                 detected_gems.clear();
-                                *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
-                                    Vec::new();
-                                if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-                                emit_status(&app);
-                                state_machine.start_picking();
-                                *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
-                                    lab_state::LabState::PickingGems;
-
-                                let app_capture = app.clone();
-                                std::thread::spawn(move || {
-                                    run_capture_loop_blocking(&app_capture);
-                                });
+                                spawn_gem_scan(&app, "font");
                             }
                             lab_state::LabEvent::ZoneChanged { area } => {
                                 app_log(&app, format!("Zone changed: {} — stopping", area));
+
+                                // Bump generation to cancel any running gem scan.
+                                state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                     lab_state::LabState::Idle;
 
@@ -1275,6 +1208,10 @@ fn spawn_log_watcher(app: AppHandle) {
                                     detected_gems.clear();
                                 }
 
+                                // Clear frontend comparator — player left the area.
+                                *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Vec::new();
+                                if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
                                 emit_status(&app);
                             }
                             lab_state::LabEvent::FontClosed => {
@@ -1328,6 +1265,7 @@ pub fn run() {
         trade_stale_warn_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_WARN_SECS),
         trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
         trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
+        gem_scan_generation: AtomicU64::new(0),
     };
 
     tauri::Builder::default()

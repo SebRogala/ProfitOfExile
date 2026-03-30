@@ -46,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ProfitOfExile
-          path: desktop/src-tauri/target/release/profitofexile-desktop.exe
+          path: desktop/src-tauri/target/release/ProfitOfExile.exe
 
       - name: Upload NSIS installer artifact
         uses: actions/upload-artifact@v4

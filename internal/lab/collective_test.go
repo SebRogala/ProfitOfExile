@@ -177,7 +177,7 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 	}
 
 	names := []string{"Best Gem", "OK Gem", "Dump Gem"}
-	results := BuildCompareResults(names, transfigure, trends, sparklines)
+	results := BuildCompareResults(names, transfigure, trends, sparklines, "20/20")
 
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want 3", len(results))
@@ -222,7 +222,7 @@ func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
 	names := []string{"Spark of Nova"}
 	// Run multiple times to confirm determinism.
 	for i := 0; i < 10; i++ {
-		results := BuildCompareResults(names, transfigure, nil, nil)
+		results := BuildCompareResults(names, transfigure, nil, nil, "")
 		if len(results) != 1 {
 			t.Fatalf("got %d results, want 1", len(results))
 		}
@@ -240,7 +240,7 @@ func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
 
 func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	names := []string{"Unknown Gem"}
-	results := BuildCompareResults(names, nil, nil, nil)
+	results := BuildCompareResults(names, nil, nil, nil, "20/20")
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -250,6 +250,10 @@ func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	}
 	if results[0].ROI != 0 {
 		t.Errorf("ROI = %f, want 0", results[0].ROI)
+	}
+	// Requested variant should be preserved even with no transfigure data.
+	if results[0].Variant != "20/20" {
+		t.Errorf("variant = %s, want 20/20 (requested variant preserved)", results[0].Variant)
 	}
 }
 
@@ -410,7 +414,7 @@ func TestBuildCompareResults_DUMPINGLiquidNotAvoided(t *testing.T) {
 		{Name: "Liquid Gem", Variant: "20/20", Signal: "DUMPING", CurrentListings: 30},
 	}
 
-	results := BuildCompareResults([]string{"Liquid Gem"}, transfigure, trends, nil)
+	results := BuildCompareResults([]string{"Liquid Gem"}, transfigure, trends, nil, "20/20")
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -429,7 +433,7 @@ func TestBuildCompareResults_ColorBaseROI(t *testing.T) {
 			GemColor: "RED", BasePrice: 5, TransfiguredPrice: 200, ROI: 195, ROIPct: 3900, Confidence: "OK"},
 	}
 
-	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil)
+	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil, "20/20")
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}

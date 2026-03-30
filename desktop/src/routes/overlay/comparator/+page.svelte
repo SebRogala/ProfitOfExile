@@ -148,9 +148,13 @@
 							<GemIcon name={gem.name} size={24} />
 							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
 							<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
-							<span class="sell" style="color: {sigColor}">{gem.signal}</span>
-							<span class="range">wk {formatPrice(gem.low7d)}–{formatPrice(gem.high7d)}</span>
-							<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
+							{#if gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0}
+								<span class="anomaly">no ninja data</span>
+							{:else}
+								<span class="sell" style="color: {sigColor}">{gem.signal}</span>
+								<span class="range">wk {formatPrice(gem.low7d)}–{formatPrice(gem.high7d)}</span>
+								<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
+							{/if}
 						</div>
 						<div class="row-bottom">
 							<span class="variant-label">{gem.variant}</span>
@@ -370,6 +374,13 @@
 		font-size: 11px;
 		font-style: italic;
 		margin-left: 10px;
+	}
+
+	.anomaly {
+		color: #eab308;
+		font-size: 11px;
+		font-style: italic;
+		margin-left: auto;
 	}
 
 	.listing-col {
