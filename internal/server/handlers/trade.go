@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,45 @@ import (
 
 	"profitofexile/internal/trade"
 )
+
+// TradeSubmit handles POST /api/trade/submit. It accepts a TradeLookupResult
+// from the desktop app (which queries GGG directly), stores it in the shared
+// LRU cache so CompareAnalysis can enrich responses, and optionally persists
+// to the database for historical tracking.
+func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var result trade.TradeLookupResult
+		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+			return
+		}
+
+		if result.Gem == "" || result.Variant == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "gem and variant are required"})
+			return
+		}
+
+		key := trade.CacheKey(result.Gem, result.Variant)
+
+		if cache != nil {
+			cache.Set(key, &result)
+		}
+
+		if repo != nil {
+			go func() {
+				if err := repo.InsertTradeLookup(context.Background(), &result, "desktop"); err != nil {
+					slog.Warn("trade submit: persist lookup failed", "gem", result.Gem, "variant", result.Variant, "error", err)
+				}
+			}()
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
 
 // tradeLookupRequest is the expected JSON body for POST /api/trade/lookup.
 type tradeLookupRequest struct {

@@ -106,6 +106,7 @@ func main() {
 	// Trade API subsystem (optional — requires TRADE_ENABLED=true).
 	var tradeGate *trade.Gate
 	var tradeCache *trade.TradeCache
+	var tradeRepo *trade.Repository
 	var tradeSyncTimeout time.Duration
 
 	if os.Getenv("TRADE_ENABLED") == "true" {
@@ -174,7 +175,7 @@ func main() {
 			return rate
 		}
 
-		tradeRepo := trade.NewRepository(pool)
+		tradeRepo = trade.NewRepository(pool)
 		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
 
 		go tradeGate.Run(ctx)
@@ -192,6 +193,7 @@ func main() {
 		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),
 		TradeGate:            tradeGate,
 		TradeCache:           tradeCache,
+		TradeRepo:            tradeRepo,
 		TradeSyncTimeout:     tradeSyncTimeout,
 		League:               os.Getenv("LEAGUE"),
 		Analyzer:             analyzer,
