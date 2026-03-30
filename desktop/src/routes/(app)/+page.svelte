@@ -204,14 +204,15 @@
 	$effect(() => {
 		if (!statusReady) return;
 
-		mercure = connectMercure(debouncedMercureUpdate, (connected) => {
+		const connection = connectMercure(debouncedMercureUpdate, (connected) => {
 			if (status) {
 				status = { ...status, connected };
 			}
 		});
+		mercure = connection;
 
 		return () => {
-			mercure?.close();
+			connection?.close();
 			if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
 		};
 	});

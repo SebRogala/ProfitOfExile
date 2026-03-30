@@ -78,8 +78,8 @@ impl LabStateMachine {
     /// Set state to PickingGems directly.
     #[cfg(test)]
     pub fn set_picking(&mut self) {
-        self.state = LabState::PickingGems;
         log::info!("Lab state: {:?} -> PickingGems", self.state);
+        self.state = LabState::PickingGems;
     }
 
     #[allow(dead_code)]
