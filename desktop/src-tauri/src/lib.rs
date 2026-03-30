@@ -342,7 +342,6 @@ async fn trade_lookup(
         let server_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let http = state.server_http.clone();
         let submit_result = result.clone();
-        let app_clone = app.clone();
         tokio::spawn(async move {
             let url = format!("{}/api/trade/submit", server_url);
             match http.post(&url).json(&submit_result).send().await {
@@ -354,7 +353,6 @@ async fn trade_lookup(
                 }
                 Err(e) => {
                     log::warn!("Trade submit to server failed: {}", e);
-                    app_log(&app_clone, format!("Trade submit to server failed (non-blocking): {}", e));
                 }
             }
         });
@@ -1290,10 +1288,7 @@ pub fn run() {
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
 
-    let server_http = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("failed to create server HTTP client");
+    let server_http = reqwest::Client::new();
 
     let app_state = AppState {
         pair_code: Mutex::new(pair_code),
@@ -1315,9 +1310,9 @@ pub fn run() {
         overlay_hook_stop: Mutex::new(None),
         focus_poller_stop: Mutex::new(None),
         debug_mode: Mutex::new(false),
-        trade_stale_warn_secs: Mutex::new(120),
-        trade_stale_critical_secs: Mutex::new(600),
-        trade_auto_refresh_secs: Mutex::new(900),
+        trade_stale_warn_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_WARN_SECS),
+        trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
+        trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
     };
 
     tauri::Builder::default()

@@ -23,19 +23,16 @@ pub struct Settings {
     pub sidebar_open: bool,
     pub comparator_overlay: Option<OverlaySettings>,
     /// Yellow indicator threshold for trade data age (seconds).
-    #[serde(default = "default_120")]
     pub trade_stale_warn_secs: u32,
     /// Red indicator threshold for trade data age (seconds).
-    #[serde(default = "default_600")]
     pub trade_stale_critical_secs: u32,
     /// Auto-refresh trade data after this many seconds.
-    #[serde(default = "default_900")]
     pub trade_auto_refresh_secs: u32,
 }
 
-fn default_120() -> u32 { 120 }
-fn default_600() -> u32 { 600 }
-fn default_900() -> u32 { 900 }
+pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
+pub const DEFAULT_TRADE_STALE_CRITICAL_SECS: u32 = 600;
+pub const DEFAULT_TRADE_AUTO_REFRESH_SECS: u32 = 900;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlaySettings {
@@ -65,9 +62,9 @@ impl Default for Settings {
             window: None,
             sidebar_open: true,
             comparator_overlay: None,
-            trade_stale_warn_secs: default_120(),
-            trade_stale_critical_secs: default_600(),
-            trade_auto_refresh_secs: default_900(),
+            trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
+            trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
+            trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
         }
     }
 }
