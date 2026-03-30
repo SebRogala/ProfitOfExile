@@ -49,6 +49,7 @@ pub struct AppStatus {
     pub trade_stale_warn_secs: u32,
     pub trade_stale_critical_secs: u32,
     pub trade_auto_refresh_secs: u32,
+    pub auto_trade_enabled: bool,
 }
 
 /// Accumulated font session data — shared between font scan loop and event handlers.
@@ -99,6 +100,7 @@ pub struct AppState {
     pub trade_stale_warn_secs: Mutex<u32>,
     pub trade_stale_critical_secs: Mutex<u32>,
     pub trade_auto_refresh_secs: Mutex<u32>,
+    pub auto_trade_enabled: Mutex<bool>,
     /// Generation counter for gem OCR scans. Incremented on each start trigger
     /// (FontOpened, manual scan). The capture loop checks this every iteration —
     /// if it doesn't match the generation it was spawned with, it exits.
@@ -130,6 +132,7 @@ fn build_status(state: &AppState) -> AppStatus {
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -267,6 +270,14 @@ fn set_trade_staleness_settings(warn_secs: u32, critical_secs: u32, auto_refresh
     *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = warn_secs;
     *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = critical_secs;
     *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = auto_refresh_secs;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+#[tauri::command]
+fn set_auto_trade(enabled: bool, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
     persist_settings(&app);
     emit_status(&app);
 }
@@ -1606,6 +1617,7 @@ pub fn run() {
         trade_stale_warn_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_WARN_SECS),
         trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
         trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
+        auto_trade_enabled: Mutex::new(false),
         gem_scan_generation: AtomicU64::new(0),
         font_scan_generation: AtomicU64::new(0),
         aspirant_trial_count: AtomicU32::new(0),
@@ -1625,6 +1637,7 @@ pub fn run() {
             set_server_url,
             set_sidebar_open,
             set_trade_staleness_settings,
+            set_auto_trade,
             get_logs,
             get_gem_region,
             set_gem_region,

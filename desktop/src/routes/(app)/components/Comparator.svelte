@@ -134,6 +134,15 @@
 	let tradeExpanded = $state<Record<string, boolean>>({});
 	let autoTradeEnabled = $state(false);
 
+	// Load persisted auto-trade setting from Rust status.
+	$effect(() => {
+		invoke<any>('get_status').then(s => {
+			if (s?.auto_trade_enabled != null) {
+				autoTradeEnabled = s.auto_trade_enabled;
+			}
+		}).catch(() => {});
+	});
+
 	/** Trade cache age in milliseconds, or null if no data. */
 	function tradeCacheAge(gem: string): number | null {
 		const td = tradeData[gem];
@@ -404,7 +413,7 @@
 				<button class="clear-btn" onclick={clearAll}>Clear All</button>
 			{/if}
 			<Tooltip text="When enabled, auto-invokes GGG trade lookup on cache miss or stale data"><label class="auto-trade-toggle">
-				<input type="checkbox" bind:checked={autoTradeEnabled} />
+				<input type="checkbox" bind:checked={autoTradeEnabled} onchange={() => invoke('set_auto_trade', { enabled: autoTradeEnabled }).catch(e => console.warn('set_auto_trade failed:', e))} />
 				<span class="toggle-label">Auto-trade</span>
 			</label></Tooltip>
 			<div class="variant-select">
