@@ -313,6 +313,7 @@
 	.row-bottom {
 		display: flex;
 		align-items: center;
+		gap: 6px;
 		font-size: 12px;
 		margin-top: 3px;
 		height: 28px;
@@ -359,7 +360,6 @@
 		flex-direction: column;
 		align-items: center;
 		flex-shrink: 0;
-		margin-left: 10px;
 	}
 
 	.price-label {
@@ -443,7 +443,7 @@
 	}
 
 	.listing-col.first {
-		margin-left: 10px;
+		margin-left: 4px;
 	}
 
 	.listing-col.first .listing-price {
