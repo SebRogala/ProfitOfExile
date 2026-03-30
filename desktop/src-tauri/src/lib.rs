@@ -1683,6 +1683,25 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
                     let app = window.app_handle();
+                    let state = app.state::<AppState>();
+
+                    // Stop all background threads before exit.
+                    // Mouse hook
+                    if let Some(tx) = state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        let _ = tx.send(());
+                    }
+                    // Focus poller
+                    if let Some(tx) = state.focus_poller_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        let _ = tx.send(());
+                    }
+                    // Log watcher
+                    if let Some(tx) = state.watcher_cancel.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        let _ = tx.send(true);
+                    }
+                    // Gem/font scan loops — bump generations so they exit
+                    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                    state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+
                     let is_maximized = window.is_maximized().unwrap_or(false);
                     // Only save position/size if not maximized (restore to normal position)
                     let win_settings = if is_maximized {
