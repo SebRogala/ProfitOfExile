@@ -29,8 +29,9 @@
 	let results = $state<CompareGem[]>([]);
 	let selectedGem = $state<string | null>(null);
 
-	// Trade data — received from main Comparator, not fetched separately
+	// Trade data + loading state — received from main Comparator, not fetched separately
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
+	let tradeLoading = $state<Record<string, boolean>>({});
 
 	$effect(() => {
 		if (results.length > 0 && !selectedGem) {
@@ -77,6 +78,7 @@
 	// Trade refresh — request the Comparator to do the lookup via event.
 	// Comparator handles it → updates tradeData → pushes to Rust → we pick it up on next poll.
 	function requestTradeRefresh(gem: CompareGem) {
+		if (tradeLoading[gem.name]) return; // already in progress
 		invoke('request_trade_refresh', { gem: gem.name, variant: gem.variant })
 			.catch(e => console.error('Trade refresh request failed:', e));
 	}
@@ -158,7 +160,10 @@
 
 		const pollInterval = setInterval(async () => {
 			try {
-				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('get_comparator_data');
+				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; tradeLoading?: Record<string, boolean> }>('get_comparator_data');
+				// Always sync loading state (changes frequently, no dedup needed).
+				tradeLoading = data.tradeLoading ?? {};
+
 				const gemsJson = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
 				// Include trade fetchedAt timestamps so refreshes are detected.
 				const tradeSig = Object.entries(data.tradeData ?? {})
@@ -240,7 +245,11 @@
 				{#each results as gem, i (gem.name)}
 					<div class="side-row">
 						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} data-action="pick" data-index={i} title="Pick">&#x2713;</button>
-						<button class="act-btn" data-action="refresh" data-index={i} title="Refresh trade">&#x21BB;</button>
+						{#if tradeLoading[gem.name]}
+							<span class="act-btn loading-btn">&#x21BB;</span>
+						{:else}
+							<button class="act-btn" data-action="refresh" data-index={i} title="Refresh trade">&#x21BB;</button>
+						{/if}
 					</div>
 				{/each}
 				<button class="clear-act" data-action="clear">clear</button>
@@ -523,6 +532,16 @@
 		color: #22c55e;
 		border-color: rgba(34, 197, 94, 0.4);
 		background: rgba(34, 197, 94, 0.15);
+	}
+
+	.loading-btn {
+		animation: spin 1s linear infinite;
+		color: #6b7280;
+		cursor: default;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
 	}
 
 	.clear-act {
