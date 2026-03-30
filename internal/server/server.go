@@ -38,6 +38,8 @@ type RouterConfig struct {
 	TradeGate *trade.Gate
 	// TradeCache is the LRU cache for trade lookup results. May be nil if trade is disabled.
 	TradeCache *trade.TradeCache
+	// TradeRepo is the trade lookup persistence repository. May be nil if trade is disabled.
+	TradeRepo *trade.Repository
 	// TradeSyncTimeout is the max time the handler blocks waiting for a fast-path response.
 	TradeSyncTimeout time.Duration
 	// League is the current PoE league name (e.g. "Mirage").
@@ -84,7 +86,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/trends", handlers.TrendAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache, cfg.TradeCache))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool, cfg.League))
 		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
@@ -105,6 +107,12 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	if cfg.TradeGate != nil {
 		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.TradeSyncTimeout))
+	}
+
+	// Trade submit: available whenever trade cache exists (desktop can submit
+	// even when the server-side gate is disabled).
+	if cfg.TradeCache != nil {
+		r.Post("/api/trade/submit", handlers.TradeSubmit(cfg.TradeCache, cfg.TradeRepo))
 	}
 
 	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))

@@ -43,6 +43,10 @@ pub struct AppStatus {
     pub gem_region: CaptureRegion,
     pub font_region: CaptureRegion,
     pub sidebar_open: bool,
+    pub game_focused: bool,
+    pub trade_stale_warn_secs: u32,
+    pub trade_stale_critical_secs: u32,
+    pub trade_auto_refresh_secs: u32,
 }
 
 pub struct AppState {
@@ -55,9 +59,23 @@ pub struct AppState {
     pub gem_region: Mutex<CaptureRegion>,
     pub font_region: Mutex<CaptureRegion>,
     pub sidebar_open: Mutex<bool>,
+    pub game_focused: Mutex<bool>,
     pub trade_client: trade::TradeApiClient,
+    /// General-purpose HTTP client for server communication (separate from trade_client
+    /// which has GGG-specific User-Agent/headers).
+    pub server_http: reqwest::Client,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// Cached comparator overlay data (results + trade data) shared between windows.
+    pub comparator_data: Mutex<serde_json::Value>,
+    /// Stop signal for the overlay mouse hook thread.
+    pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    pub focus_poller_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    pub debug_mode: Mutex<bool>,
+    /// Trade staleness thresholds (seconds) — configurable from settings.
+    pub trade_stale_warn_secs: Mutex<u32>,
+    pub trade_stale_critical_secs: Mutex<u32>,
+    pub trade_auto_refresh_secs: Mutex<u32>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -71,6 +89,10 @@ fn build_status(state: &AppState) -> AppStatus {
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
+        game_focused: *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -81,6 +103,7 @@ fn persist_settings(app: &AppHandle) {
     let existing = settings::load(app);
     let mut s = settings::from_state(&state);
     s.window = existing.window; // preserve window settings from last close
+    s.comparator_overlay = existing.comparator_overlay; // preserve overlay settings
     settings::save(app, &s);
 }
 
@@ -202,6 +225,16 @@ fn set_sidebar_open(open: bool, app: AppHandle) {
 }
 
 #[tauri::command]
+fn set_trade_staleness_settings(warn_secs: u32, critical_secs: u32, auto_refresh_secs: u32, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = warn_secs;
+    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = critical_secs;
+    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = auto_refresh_secs;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+#[tauri::command]
 fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
     state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -315,7 +348,328 @@ async fn trade_lookup(
         ),
     );
 
+    // Fire-and-forget: submit trade result to server for cache enrichment
+    {
+        let server_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let http = state.server_http.clone();
+        let submit_result = result.clone();
+        tokio::spawn(async move {
+            let url = format!("{}/api/trade/submit", server_url);
+            match http.post(&url).json(&submit_result).send().await {
+                Ok(res) if res.status().is_success() => {
+                    log::info!("Trade result submitted to server for {} ({})", submit_result.gem, submit_result.variant);
+                }
+                Ok(res) => {
+                    log::warn!("Trade submit rejected by server: {}", res.status());
+                }
+                Err(e) => {
+                    log::warn!("Trade submit to server failed: {}", e);
+                }
+            }
+        });
+    }
+
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Overlay click-through system
+//
+// Problem: WebView2 creates child HWNDs (Chrome_WidgetWin_0/1, Intermediate
+// D3D Window) that handle hit-testing independently. Subclassing the parent
+// with WM_NCHITTEST → HTTRANSPARENT does NOT work because WebView2's child
+// windows intercept mouse input before the parent sees it.
+//
+// Solution (same approach as Electron's setIgnoreMouseEvents + forward):
+//   1. Set WS_EX_TRANSPARENT | WS_EX_LAYERED on the overlay window via
+//      Tauri's set_ignore_cursor_events(true) — makes entire window click-through.
+//   2. Install a global WH_MOUSE_LL hook to track cursor position.
+//   3. When cursor enters the interactive button column on the right edge,
+//      call set_ignore_cursor_events(false) so buttons become clickable.
+//   4. When cursor leaves, call set_ignore_cursor_events(true) again.
+//   5. Set WS_EX_NOACTIVATE on all HWNDs so clicking buttons doesn't steal
+//      focus from the game.
+// ---------------------------------------------------------------------------
+
+/// Overlay click-through system for Windows/WebView2.
+///
+/// WebView2 creates child HWNDs that handle hit-testing independently, so
+/// standard approaches (WM_NCHITTEST, focusable, WS_EX_NOACTIVATE alone)
+/// don't work. See docs/OVERLAY-GUIDE.md for the full explanation.
+///
+/// Solution: WS_EX_TRANSPARENT makes the entire window click-through at the
+/// OS level. A WH_MOUSE_LL hook toggles it off when the cursor enters the
+/// interactive zone (rightmost N pixels) so buttons become clickable.
+#[cfg(windows)]
+mod overlay_clickthrough {
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
+    use std::sync::Mutex as StdMutex;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, BOOL, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    struct SendHook(HHOOK);
+    unsafe impl Send for SendHook {}
+
+    static HOOK_HANDLE: StdMutex<Option<SendHook>> = StdMutex::new(None);
+    static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
+    static WIN_RECT: StdMutex<(i32, i32, i32, i32)> = StdMutex::new((0, 0, 0, 0));
+    static IS_IGNORED: AtomicBool = AtomicBool::new(true);
+    static RECT_DIRTY: AtomicBool = AtomicBool::new(true);
+    /// Width of interactive zone on the right edge (physical pixels).
+    static INTERACTIVE_WIDTH: AtomicI32 = AtomicI32::new(48);
+
+    unsafe extern "system" fn mouse_hook_proc(
+        n_code: i32,
+        w_param: WPARAM,
+        l_param: LPARAM,
+    ) -> LRESULT {
+        if n_code >= 0 {
+            let mouse = &*(l_param.0 as *const MSLLHOOKSTRUCT);
+            let cx = mouse.pt.x;
+            let cy = mouse.pt.y;
+
+            let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
+            if hwnd_val != 0 {
+                let hwnd = HWND(hwnd_val as *mut _);
+
+                if RECT_DIRTY.swap(false, Ordering::Relaxed) {
+                    let mut rect = RECT::default();
+                    if GetWindowRect(hwnd, &mut rect).is_ok() {
+                        if let Ok(mut wr) = WIN_RECT.lock() {
+                            *wr = (rect.left, rect.top, rect.right, rect.bottom);
+                        }
+                    } else {
+                        // Retry on next event
+                        RECT_DIRTY.store(true, Ordering::Relaxed);
+                    }
+                }
+
+                let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+                let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
+                let in_interactive = cx >= left && cx < right && cy >= top && cy < bottom
+                    && cx >= (right - iw);
+                let ignored = IS_IGNORED.load(Ordering::Relaxed);
+
+                if in_interactive && ignored {
+                    IS_IGNORED.store(false, Ordering::Relaxed);
+                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TRANSPARENT.0 as i32));
+                } else if !in_interactive && !ignored {
+                    IS_IGNORED.store(true, Ordering::Relaxed);
+                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT.0 as i32);
+                }
+            }
+        }
+        CallNextHookEx(None, n_code, w_param, l_param)
+    }
+
+    /// Install the global mouse hook. Returns a stop-signal sender.
+    pub fn install_hook() -> Option<std::sync::mpsc::Sender<()>> {
+        if HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+            return None;
+        }
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            unsafe {
+                let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0) {
+                    Ok(h) => h,
+                    Err(e) => { log::error!("Mouse hook install failed: {}", e); return; }
+                };
+                *HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(SendHook(hook));
+                log::info!("Overlay mouse hook installed");
+
+                let mut msg = MSG::default();
+                loop {
+                    if stop_rx.try_recv().is_ok() { break; }
+                    if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+
+                if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    if let Err(e) = UnhookWindowsHookEx(h) {
+                        log::error!("Failed to unhook mouse hook: {} — hook may leak", e);
+                    }
+                }
+                log::info!("Overlay mouse hook removed");
+            }
+        });
+        Some(stop_tx)
+    }
+
+
+
+    pub fn set_overlay_hwnd(hwnd: HWND) {
+        OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
+        RECT_DIRTY.store(true, Ordering::Relaxed);
+        IS_IGNORED.store(true, Ordering::Relaxed);
+    }
+
+    pub fn set_interactive_width(px: i32) {
+        INTERACTIVE_WIDTH.store(px, Ordering::Relaxed);
+    }
+
+    pub fn invalidate_rect() {
+        RECT_DIRTY.store(true, Ordering::Relaxed);
+    }
+
+    pub unsafe fn set_noactivate(hwnd: HWND) {
+        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
+
+        unsafe extern "system" fn enum_child(child: HWND, _: LPARAM) -> BOOL {
+            let ex = GetWindowLongW(child, GWL_EXSTYLE);
+            SetWindowLongW(child, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as i32);
+            BOOL(1)
+        }
+        let _ = EnumChildWindows(hwnd, Some(enum_child), LPARAM(0));
+    }
+}
+
+/// Set up an overlay window for click-through with an interactive zone.
+/// Call from JS after the window is created. Delays 1s for HWND availability.
+///
+/// - `label`: Tauri window label
+/// - `interactive_width`: width in physical pixels of the interactive zone on the right edge
+#[tauri::command]
+fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandle) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+
+        let app2 = app.clone();
+        let label2 = label.clone();
+        std::thread::spawn(move || {
+            // WebView2 HWND not available immediately — wait for init
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            let window = match app2.get_webview_window(&label2) {
+                Some(w) => w,
+                None => { log::warn!("Overlay '{}' not found after delay", label2); return; }
+            };
+
+            // Make entire window click-through
+            if let Err(e) = window.set_ignore_cursor_events(true) {
+                log::error!("set_ignore_cursor_events failed for '{}': {}", label2, e);
+                return;
+            }
+
+            if let Ok(hwnd) = window.hwnd() {
+                let h = HWND(hwnd.0 as *mut _);
+                unsafe { overlay_clickthrough::set_noactivate(h); }
+
+                overlay_clickthrough::set_interactive_width(interactive_width);
+                overlay_clickthrough::set_overlay_hwnd(h);
+
+                if let Some(tx) = overlay_clickthrough::install_hook() {
+                    let state = app2.state::<AppState>();
+                    *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+                }
+
+                // Re-apply WS_EX_NOACTIVATE after WebView2 children are created
+                let hwnd_raw = hwnd.0 as isize;
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    unsafe {
+                        overlay_clickthrough::set_noactivate(HWND(hwnd_raw as *mut _));
+                    }
+                });
+
+                log::info!("Overlay clickthrough setup complete for '{}' (interactive={}px)", label2, interactive_width);
+            } else {
+                log::warn!("Overlay '{}' HWND not available after delay", label2);
+            }
+        });
+    }
+}
+
+#[tauri::command]
+fn force_show_overlays(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let mut debug_guard = state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
+    let was_debug = *debug_guard;
+    *debug_guard = !was_debug;
+    drop(debug_guard);
+    if !was_debug {
+        // Turning debug ON — show all overlays
+        if let Some(win) = app.get_webview_window("comparator") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show overlay: {}", e);
+            }
+        }
+        log::info!("Debug mode ON — overlays force-shown");
+    } else {
+        log::info!("Debug mode OFF");
+    }
+}
+
+#[tauri::command]
+fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()) = payload;
+}
+
+#[tauri::command]
+fn get_comparator_data(state: tauri::State<AppState>) -> serde_json::Value {
+    state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command]
+fn request_trade_refresh(gem: String, variant: String, app: AppHandle) {
+    if let Err(e) = app.emit("overlay-trade-refresh", serde_json::json!({ "name": gem, "variant": variant })) {
+        log::warn!("emit overlay-trade-refresh failed: {}", e);
+    }
+}
+
+#[tauri::command]
+fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window(&label)
+        .ok_or_else(|| format!("Window '{}' not found", label))?;
+    window.set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| format!("set_position failed: {}", e))?;
+    window.set_size(tauri::PhysicalSize::new(w, h))
+        .map_err(|e| format!("set_size failed: {}", e))?;
+    // Invalidate cached rect so the mouse hook picks up the new position
+    #[cfg(windows)]
+    if label == "comparator" {
+        overlay_clickthrough::invalidate_rect();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn comparator_moved(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
+    // Save position
+    let mut s = settings::load(&app);
+    s.comparator_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled: true,
+    });
+    settings::save(&app, &s);
+    // Invalidate cached rect so the mouse hook picks up the new position
+    #[cfg(windows)]
+    overlay_clickthrough::invalidate_rect();
+    // Emit via Rust — guaranteed to reach all windows
+    if let Err(e) = app.emit("comparator-moved", serde_json::json!({ "x": x, "y": y, "w": w, "h": h })) {
+        log::warn!("emit comparator-moved failed: {}", e);
+    }
+}
+
+#[tauri::command]
+fn get_comparator_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
+    settings::load(&app).comparator_overlay
+}
+
+#[tauri::command]
+fn set_comparator_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.comparator_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled,
+    });
+    settings::save(&app, &s);
 }
 
 #[tauri::command]
@@ -763,6 +1117,88 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
     }
 }
 
+/// Poll GetForegroundWindow to detect game focus changes.
+/// More reliable than Client.txt log events (no latency, works if PoE crashes).
+/// Runs every 1 second on a dedicated thread.
+fn spawn_focus_poller(app: AppHandle) {
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    {
+        let state = app.state::<AppState>();
+        *state.focus_poller_stop.lock().unwrap_or_else(|e| {
+            log::warn!("focus_poller_stop mutex poisoned, recovering");
+            e.into_inner()
+        }) = Some(stop_tx);
+    }
+
+    std::thread::spawn(move || {
+        let mut was_focused = false;
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            // Check stop signal
+            if stop_rx.try_recv().is_ok() {
+                log::info!("Focus poller stopped");
+                break;
+            }
+
+            #[cfg(windows)]
+            {
+                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+
+                let is_focused = unsafe {
+                    let fg = GetForegroundWindow();
+                    if fg.0.is_null() {
+                        false
+                    } else {
+                        let mut buf = [0u16; 256];
+                        let len = GetWindowTextW(fg, &mut buf);
+                        if len > 0 {
+                            let title = String::from_utf16_lossy(&buf[..len as usize]);
+                            title.contains("Path of Exile")
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if is_focused != was_focused {
+                    was_focused = is_focused;
+                    let state = app.state::<AppState>();
+                    *state.game_focused.lock().unwrap_or_else(|e| {
+                        log::warn!("game_focused mutex poisoned, recovering");
+                        e.into_inner()
+                    }) = is_focused;
+                    if let Err(e) = app.emit("game-focus-changed", is_focused) {
+                        log::warn!("emit game-focus-changed failed: {}", e);
+                    }
+                    emit_status(&app);
+
+                    // Hide/show overlay windows (skip hide in debug mode)
+                    let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(win) = app.get_webview_window("comparator") {
+                        if is_focused {
+                            if let Err(e) = win.show() {
+                                log::warn!("Failed to show comparator overlay: {}", e);
+                            }
+                        } else if !debug {
+                            if let Err(e) = win.hide() {
+                                log::warn!("Failed to hide comparator overlay: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            #[cfg(not(windows))]
+            {
+                let _ = &app;
+                break;
+            }
+        }
+    });
+}
+
 fn spawn_log_watcher(app: AppHandle) {
     let state = app.state::<AppState>();
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -847,6 +1283,9 @@ fn spawn_log_watcher(app: AppHandle) {
                                     lab_state::LabState::Idle;
                                 emit_status(&app);
                             }
+                            // GameFocused/GameBlurred handled by the focus poller
+                            // (GetForegroundWindow — more reliable than Client.txt)
+                            lab_state::LabEvent::GameFocused | lab_state::LabEvent::GameBlurred => {}
                         }
                     }
                 }
@@ -864,6 +1303,8 @@ pub fn run() {
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
 
+    let server_http = reqwest::Client::new();
+
     let app_state = AppState {
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(
@@ -876,8 +1317,17 @@ pub fn run() {
         gem_region: Mutex::new(CaptureRegion::default()),
         font_region: Mutex::new(CaptureRegion::default_font_panel()),
         sidebar_open: Mutex::new(true),
+        game_focused: Mutex::new(false),
         trade_client: trade::TradeApiClient::new("Mirage"),
+        server_http,
         watcher_cancel: Mutex::new(None),
+        comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
+        overlay_hook_stop: Mutex::new(None),
+        focus_poller_stop: Mutex::new(None),
+        debug_mode: Mutex::new(false),
+        trade_stale_warn_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_WARN_SECS),
+        trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
+        trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
     };
 
     tauri::Builder::default()
@@ -891,6 +1341,7 @@ pub fn run() {
             reset_client_txt_path,
             set_server_url,
             set_sidebar_open,
+            set_trade_staleness_settings,
             get_logs,
             get_gem_region,
             set_gem_region,
@@ -902,6 +1353,15 @@ pub fn run() {
             trade_lookup,
             send_test_gems,
             test_ocr_on_image,
+            force_show_overlays,
+            set_comparator_data,
+            get_comparator_data,
+            set_overlay_clickthrough,
+            request_trade_refresh,
+            move_overlay,
+            comparator_moved,
+            get_comparator_overlay_settings,
+            set_comparator_overlay_settings,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -911,8 +1371,8 @@ pub fn run() {
             let state = handle.state::<AppState>();
             settings::apply_to_state(&saved, &state);
             // Write settings on startup so the file always exists
-            let s = settings::from_state(&state);
-            settings::save(&handle, &s);
+            // Use persist_settings to preserve window + overlay settings
+            persist_settings(&handle);
             app_log(&handle, "Settings initialized".to_string());
 
             // Restore window position/size from saved settings
@@ -927,11 +1387,27 @@ pub fn run() {
             }
 
             spawn_log_watcher(handle.clone());
+            spawn_focus_poller(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Clean up overlay mouse hook when comparator window is destroyed
+            if let tauri::WindowEvent::Destroyed = event {
+                if window.label() == "comparator" {
+                    #[cfg(windows)]
+                    {
+                        let app = window.app_handle();
+                        let state = app.state::<AppState>();
+                        // Send stop signal — the hook thread will unhook and exit
+                        if let Some(tx) = state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                            let _ = tx.send(());
+                        }
+                        log::info!("overlay_clickthrough: cleaned up on comparator destroy");
+                    }
+                }
+            }
             // Save window position/size on close
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if window.label() == "main" {
@@ -961,8 +1437,10 @@ pub fn run() {
                         }
                     };
                     let state = app.state::<AppState>();
+                    let existing = settings::load(app);
                     let mut s = settings::from_state(&state);
                     s.window = Some(win_settings);
+                    s.comparator_overlay = existing.comparator_overlay;
                     settings::save(app, &s);
                 }
             }

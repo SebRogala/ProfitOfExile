@@ -117,6 +117,143 @@
 		if (!region) return 'Not set';
 		return `(${region.x}, ${region.y}) ${region.w}\u00d7${region.h}`;
 	}
+
+	// --- Comparator Overlay Position (red frame for positioning) ---
+	// --- Trade Staleness Settings ---
+	let tradeStaleWarnSecs = $state(store.status?.trade_stale_warn_secs ?? 120);
+	let tradeStaleCriticalSecs = $state(store.status?.trade_stale_critical_secs ?? 600);
+	let tradeAutoRefreshSecs = $state(store.status?.trade_auto_refresh_secs ?? 900);
+	let editingTradeStaleness = $state(false);
+	let tradeStalenessError = $state('');
+
+	// Sync from store when status changes
+	$effect(() => {
+		if (store.status && !editingTradeStaleness) {
+			tradeStaleWarnSecs = store.status.trade_stale_warn_secs ?? 120;
+			tradeStaleCriticalSecs = store.status.trade_stale_critical_secs ?? 600;
+			tradeAutoRefreshSecs = store.status.trade_auto_refresh_secs ?? 900;
+		}
+	});
+
+	function startEditTradeStaleness() {
+		editingTradeStaleness = true;
+	}
+
+	async function saveTradeStaleness() {
+		if (tradeStaleWarnSecs >= tradeStaleCriticalSecs) {
+			tradeStalenessError = 'Warn threshold must be less than critical threshold.';
+			return;
+		}
+		if (tradeStaleCriticalSecs >= tradeAutoRefreshSecs) {
+			tradeStalenessError = 'Critical threshold must be less than auto-refresh interval.';
+			return;
+		}
+		tradeStalenessError = '';
+		try {
+			await invoke('set_trade_staleness_settings', {
+				warnSecs: tradeStaleWarnSecs,
+				criticalSecs: tradeStaleCriticalSecs,
+				autoRefreshSecs: tradeAutoRefreshSecs,
+			});
+			editingTradeStaleness = false;
+		} catch (e) {
+			console.error('Failed to save trade staleness settings:', e);
+			tradeStalenessError = 'Failed to save settings. Please try again.';
+		}
+	}
+
+	function cancelEditTradeStaleness() {
+		tradeStaleWarnSecs = store.status?.trade_stale_warn_secs ?? 120;
+		tradeStaleCriticalSecs = store.status?.trade_stale_critical_secs ?? 600;
+		tradeAutoRefreshSecs = store.status?.trade_auto_refresh_secs ?? 900;
+		tradeStalenessError = '';
+		editingTradeStaleness = false;
+	}
+
+	let comparatorOverlaySettings = $state<{ x: number; y: number; width: number; height: number } | null>(null);
+	let comparatorPositionOverlay = $state<any>(null);
+
+	$effect(() => {
+		invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').then((settings) => {
+			if (settings) {
+				comparatorOverlaySettings = settings;
+			}
+		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
+	});
+
+	async function showComparatorPositionOverlay() {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		if (comparatorPositionOverlay) {
+			try { await comparatorPositionOverlay.destroy(); } catch (_) {}
+			comparatorPositionOverlay = null;
+		}
+		const s = comparatorOverlaySettings;
+		const dpr = window.devicePixelRatio || 1;
+		const win = new WebviewWindow('overlay-comparator-pos', {
+			url: '/overlay?sync=comparator',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+			width: 630,
+			height: 250,
+			x: s ? Math.round(s.x / dpr) : 100,
+			y: s ? Math.round(s.y / dpr) : 100,
+		});
+		win.once('tauri://created', () => { comparatorPositionOverlay = win; });
+		win.once('tauri://error', (e: any) => console.error('Position overlay failed:', e));
+	}
+
+	async function saveComparatorPosition() {
+		if (!comparatorPositionOverlay) return;
+		let x: number, y: number, w: number, h: number;
+		try {
+			const ref = comparatorPositionOverlay.window ?? comparatorPositionOverlay;
+			const pos = await ref.outerPosition();
+			const size = await ref.outerSize();
+			x = pos.x; y = pos.y; w = size.width; h = size.height;
+			await invoke('set_comparator_overlay_settings', { x, y, w, h, enabled: true });
+			comparatorOverlaySettings = { x, y, width: w, height: h };
+		} catch (e) {
+			console.error('Save comparator position failed:', e);
+			return;
+		}
+		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
+		comparatorPositionOverlay = null;
+
+		// Recreate live comparator overlay at new position
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const existing = await WebviewWindow.getByLabel('comparator');
+			if (!existing) break;
+			try { await existing.close(); } catch (_) {}
+			try { await existing.destroy(); } catch (_) {}
+			await new Promise(r => setTimeout(r, 100));
+		}
+		const dpr = window.devicePixelRatio || 1;
+		new WebviewWindow('comparator', {
+			url: '/overlay/comparator',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+
+			width: 630,
+			height: 250,
+			x: Math.round(x! / dpr),
+			y: Math.round(y! / dpr),
+		});
+	}
+
+	async function cancelComparatorPosition() {
+		if (!comparatorPositionOverlay) return;
+		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
+		comparatorPositionOverlay = null;
+	}
 </script>
 
 <div class="settings-page">
@@ -211,14 +348,71 @@
 			<h2>Trade</h2>
 
 			<div class="setting-row">
-				<span class="setting-label">Auto-trigger lookup</span>
-				<span class="setting-value muted">Coming soon</span>
+				<span class="setting-label">Stale warning (sec)</span>
+				{#if editingTradeStaleness}
+					<div class="setting-edit">
+						<input
+							type="number"
+							class="setting-input narrow"
+							bind:value={tradeStaleWarnSecs}
+							min="30"
+							max="3600"
+						/>
+					</div>
+				{:else}
+					<span class="setting-value mono">{store.status?.trade_stale_warn_secs ?? 120}s</span>
+				{/if}
 			</div>
 
 			<div class="setting-row">
-				<span class="setting-label">Cache min-age</span>
-				<span class="setting-value muted">Coming soon</span>
+				<span class="setting-label">Stale critical (sec)</span>
+				{#if editingTradeStaleness}
+					<div class="setting-edit">
+						<input
+							type="number"
+							class="setting-input narrow"
+							bind:value={tradeStaleCriticalSecs}
+							min="60"
+							max="7200"
+						/>
+					</div>
+				{:else}
+					<span class="setting-value mono">{store.status?.trade_stale_critical_secs ?? 600}s</span>
+				{/if}
 			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Auto-refresh (sec)</span>
+				{#if editingTradeStaleness}
+					<div class="setting-edit">
+						<input
+							type="number"
+							class="setting-input narrow"
+							bind:value={tradeAutoRefreshSecs}
+							min="60"
+							max="7200"
+						/>
+					</div>
+				{:else}
+					<span class="setting-value mono">{store.status?.trade_auto_refresh_secs ?? 900}s</span>
+				{/if}
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label"></span>
+				{#if editingTradeStaleness}
+					<button class="btn-small save" onclick={saveTradeStaleness}>Save</button>
+					<button class="btn-small" onclick={cancelEditTradeStaleness}>Cancel</button>
+				{:else}
+					<button class="btn-small" onclick={startEditTradeStaleness}>Edit</button>
+				{/if}
+			</div>
+			{#if tradeStalenessError}
+				<div class="setting-row">
+					<span class="setting-label"></span>
+					<span class="setting-error">{tradeStalenessError}</span>
+				</div>
+			{/if}
 		</section>
 
 		<!-- Overlays -->
@@ -226,8 +420,15 @@
 			<h2>Overlays</h2>
 
 			<div class="setting-row">
-				<span class="setting-label">Lock / Unlock all</span>
-				<span class="setting-value muted">Coming soon</span>
+				<span class="setting-label">Comparator Position</span>
+				{#if comparatorPositionOverlay}
+					<span class="setting-value">Drag red overlay to position...</span>
+					<button class="btn-small save" onclick={saveComparatorPosition}>Save</button>
+					<button class="btn-small" onclick={cancelComparatorPosition}>Cancel</button>
+				{:else}
+					<span class="setting-value mono">{comparatorOverlaySettings ? `(${comparatorOverlaySettings.x}, ${comparatorOverlaySettings.y}) ${comparatorOverlaySettings.width}\u00d7${comparatorOverlaySettings.height}` : 'Not set'}</span>
+					<button class="btn-small" onclick={showComparatorPositionOverlay} disabled={!!overlayVisible}>Configure</button>
+				{/if}
 			</div>
 		</section>
 
@@ -326,6 +527,15 @@
 	.setting-input:focus {
 		outline: none;
 		border-color: var(--accent);
+	}
+
+	.setting-input.narrow {
+		max-width: 100px;
+	}
+
+	.setting-error {
+		color: var(--color-lab-red, #ef4444);
+		font-size: 0.75rem;
 	}
 
 	.btn-small {

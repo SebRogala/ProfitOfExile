@@ -31,6 +31,7 @@ windows = { version = "0.58", features = [
     "Foundation",
     "Foundation_Collections",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
     "Win32_Foundation",
 ] }
 xcap = "0.0.13"

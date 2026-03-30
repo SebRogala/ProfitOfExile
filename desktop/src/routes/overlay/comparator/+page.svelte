@@ -1,0 +1,479 @@
+<script lang="ts">
+	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import { invoke } from '@tauri-apps/api/core';
+	import type { CompareGem } from '$lib/api';
+	import type { TradeLookupResult } from '$lib/tradeApi';
+	import GemIcon from '../../(app)/components/GemIcon.svelte';
+
+	// Staleness thresholds — read from polled Rust status, with sensible defaults
+	let tradeStaleWarnSecs = $state(120);
+	let tradeStaleCriticalSecs = $state(600);
+
+	const SIGNAL_COLORS: Record<string, string> = {
+		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
+		DUMPING: '#ef4444', RECOVERY: '#a855f7', TRAP: '#ef4444',
+	};
+
+	const TIER_COLORS: Record<string, string> = {
+		TOP: '#fbbf24', HIGH: '#fb923c', 'MID-HIGH': '#c084fc',
+		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
+	};
+
+	const REC_COLORS: Record<string, { color: string; bg: string }> = {
+		BEST: { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.15)' },
+		OK: { color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.1)' },
+		AVOID: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' },
+	};
+
+	let results = $state<CompareGem[]>([]);
+	let selectedGem = $state<string | null>(null);
+
+	// Trade data — received from main Comparator, not fetched separately
+	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
+
+	$effect(() => {
+		if (results.length > 0 && !selectedGem) {
+			const best = results.find((g) => g.recommendation === 'BEST');
+			selectedGem = best?.name ?? results[0]?.name ?? null;
+		}
+	});
+
+	function formatPrice(chaos: number): string {
+		if (chaos >= 1000) return `${(chaos / 1000).toFixed(1)}k`;
+		return `${Math.round(chaos)}c`;
+	}
+
+	function tradeCacheAge(trade: TradeLookupResult): string {
+		if (!trade.fetchedAt) return '';
+		const ms = Date.now() - new Date(trade.fetchedAt).getTime();
+		const mins = Math.floor(ms / 60000);
+		if (mins < 1) return '<1m';
+		if (mins < 60) return `${mins}m`;
+		return `${Math.floor(mins / 60)}h${mins % 60}m`;
+	}
+
+	function tradeStaleness(trade: TradeLookupResult): 'normal' | 'warn' | 'critical' {
+		if (!trade.fetchedAt) return 'critical';
+		const ageMs = Date.now() - new Date(trade.fetchedAt).getTime();
+		if (ageMs >= tradeStaleCriticalSecs * 1000) return 'critical';
+		if (ageMs >= tradeStaleWarnSecs * 1000) return 'warn';
+		return 'normal';
+	}
+
+	function listingAge(indexedAt: string): string {
+		if (!indexedAt) return '';
+		const ms = Date.now() - new Date(indexedAt).getTime();
+		const mins = Math.floor(ms / 60000);
+		if (mins < 60) return `${mins}m`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h`;
+		return `${Math.floor(hrs / 24)}d`;
+	}
+
+	// Trade refresh — calls Tauri directly
+	async function requestTradeRefresh(gem: CompareGem) {
+		try {
+			const result = await invoke<TradeLookupResult>('trade_lookup', {
+				gem: gem.name, variant: gem.variant,
+			});
+			tradeData = { ...tradeData, [gem.name]: result };
+		} catch (e) {
+			console.error('Trade lookup failed:', e);
+		}
+	}
+
+	function handlePick() {
+		if (!selectedGem) return;
+		const gem = results.find((g) => g.name === selectedGem);
+		if (gem) {
+			getCurrentWebviewWindow().emit('overlay-pick', {
+				name: gem.name, variant: gem.variant, roi: gem.roi,
+			}).catch(e => console.error('[overlay] emit overlay-pick failed:', e));
+		}
+	}
+
+	function handleClear() {
+		results = [];
+		selectedGem = null;
+		tradeData = {};
+	}
+
+	// Poll Rust for comparator data (cross-window events unreliable, onMount doesn't fire in overlay)
+	let lastJson = '';
+	$effect(() => {
+		// Fetch staleness thresholds once on mount — they only change when the user edits settings.
+		invoke<any>('get_status').then((status) => {
+			if (status) {
+				tradeStaleWarnSecs = status.trade_stale_warn_secs ?? 120;
+				tradeStaleCriticalSecs = status.trade_stale_critical_secs ?? 600;
+			}
+		}).catch(e => console.warn('[overlay] Failed to fetch staleness thresholds, using defaults:', e));
+
+		const pollInterval = setInterval(async () => {
+			try {
+				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('get_comparator_data');
+				const json = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
+				if (json !== lastJson) {
+					lastJson = json;
+					results = data.results ?? [];
+					tradeData = data.tradeData ?? {};
+					if (results.length > 0 && !selectedGem) {
+						const best = results.find((g) => g.recommendation === 'BEST');
+						selectedGem = best?.name ?? results[0]?.name ?? null;
+					}
+					if (results.length === 0) {
+						selectedGem = null;
+					}
+				}
+			} catch (e) { console.warn('[overlay] poll failed:', e); }
+		}, 500);
+
+		return () => {
+			clearInterval(pollInterval);
+		};
+	});
+</script>
+
+<div class="surface">
+	{#if results.length > 0}
+		<div class="layout">
+			<div class="table">
+				{#each results as gem (gem.name)}
+					{@const rec = REC_COLORS[gem.recommendation] ?? REC_COLORS.OK}
+					{@const tierColor = TIER_COLORS[gem.priceTier] ?? '#94a3b8'}
+					{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
+					{@const trade = tradeData[gem.name]}
+					<div class="gem-row" class:selected={selectedGem === gem.name}>
+						<div class="row-top">
+							<GemIcon name={gem.name} size={24} />
+							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
+							<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
+							<span class="sell" style="color: {sigColor}">{gem.signal}</span>
+							<span class="range">wk {formatPrice(gem.low7d)}–{formatPrice(gem.high7d)}</span>
+							<span class="tier" style="color: {tierColor}">{gem.priceTier}</span>
+						</div>
+						<div class="row-bottom">
+							<span class="variant-label">{gem.variant}</span>
+							<span class="price-col">
+								<span class="price-label">ninja</span>
+								<span class="price">{formatPrice(gem.transPrice)}</span>
+							</span>
+							{#if trade}
+								{#if trade.signals.sellerConcentration !== 'NORMAL'}
+									<span class="trade-warn">{trade.signals.sellerConcentration}</span>
+								{/if}
+								{#each trade.listings as listing, i}
+									<span class="listing-col" class:first={i === 0} class:corrupted={listing.corrupted}>
+										<span class="listing-price">{listing.price}{listing.currency === 'divine' ? 'd' : 'c'}</span>
+										<span class="listing-age">{listingAge(listing.indexedAt)}</span>
+									</span>
+								{/each}
+								<span class="trade-total">
+									<span>listings</span>
+									<span>{trade.total}</span>
+								</span>
+								<span class="cache-age" class:warn={tradeStaleness(trade) === 'warn'} class:critical={tradeStaleness(trade) === 'critical'}>{tradeCacheAge(trade)}</span>
+							{:else}
+								<span class="trade-nodata">no trade data</span>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+			<div class="side">
+				{#each results as gem, i (gem.name)}
+					<div class="side-row">
+						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} onclick={() => { selectedGem = gem.name; handlePick(); }} title="Pick">&#x2713;</button>
+						<button class="act-btn" onclick={() => requestTradeRefresh(gem)} title="Refresh trade">&#x21BB;</button>
+					</div>
+				{/each}
+				<button class="clear-act" onclick={handleClear}>clear</button>
+			</div>
+		</div>
+	{/if}
+</div>
+
+<style>
+	:global(html), :global(body) {
+		margin: 0;
+		padding: 0;
+		background: transparent !important;
+		overflow: hidden;
+		user-select: none;
+		-webkit-user-select: none;
+	}
+
+	.surface {
+		background: transparent;
+		position: fixed;
+		bottom: 30px;
+		left: 0;
+	}
+
+	.layout {
+		display: flex;
+		gap: 6px;
+		align-items: flex-start;
+	}
+
+	.table {
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+		background: rgba(15, 17, 23, 0.92);
+		border: 1px solid rgba(42, 45, 55, 0.8);
+		border-radius: 8px;
+		padding: 0 10px;
+		color: #e4e4e7;
+		font-size: 14px;
+		backdrop-filter: blur(8px);
+		width: 560px;
+		pointer-events: none;
+	}
+
+	.table.empty {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 40px;
+		padding: 10px;
+	}
+
+	.waiting {
+		color: #9ca3af;
+		font-style: italic;
+	}
+
+	/* --- Gem rows --- */
+	.gem-row {
+		padding: 8px 0;
+		height: 72px;
+		box-sizing: border-box;
+		border-bottom: 1px solid rgba(42, 45, 55, 0.4);
+	}
+
+	.gem-row:last-of-type {
+		border-bottom: none;
+	}
+
+	.gem-row.selected {
+		margin: 0 -10px;
+		padding: 8px 10px;
+		background: rgba(34, 197, 94, 0.08);
+		border-radius: 4px;
+	}
+
+	.row-top {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.row-bottom {
+		display: flex;
+		align-items: center;
+		font-size: 12px;
+		margin-top: 3px;
+		height: 28px;
+		color: #9ca3af;
+	}
+
+	.variant-label {
+		font-size: 10px;
+		color: #6b7280;
+		flex-shrink: 0;
+	}
+
+	.gem-name {
+		font-weight: 600;
+		font-size: 14px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.tier {
+		font-weight: 700;
+		font-size: 11px;
+		flex-shrink: 0;
+		margin-left: auto;
+	}
+
+	.cache-age {
+		font-size: 10px;
+		color: #6b7280;
+		margin-left: auto;
+	}
+
+	.cache-age.warn {
+		color: #eab308;
+	}
+
+	.cache-age.critical {
+		color: #ef4444;
+	}
+
+	.price-col {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		flex-shrink: 0;
+		margin-left: 10px;
+	}
+
+	.price-label {
+		font-size: 10px;
+		color: #6b7280;
+	}
+
+	.price {
+		font-weight: 700;
+		color: #fbbf24;
+	}
+
+	.range {
+		color: #9ca3af;
+		font-size: 12px;
+		flex-shrink: 0;
+	}
+
+	.sell {
+		font-weight: 600;
+		flex-shrink: 0;
+	}
+
+	.rec {
+		font-size: 11px;
+		font-weight: 700;
+		padding: 2px 6px;
+		border-radius: 3px;
+		flex-shrink: 0;
+	}
+
+	/* --- Trade row --- */
+	.trade-total {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		font-size: 10px;
+		color: #6b7280;
+		margin-left: 6px;
+		flex-shrink: 0;
+	}
+
+	.trade-warn {
+		color: #ef4444;
+		font-weight: 700;
+		flex-shrink: 0;
+	}
+
+	.trade-nodata {
+		color: #4b5563;
+		font-size: 11px;
+		font-style: italic;
+		margin-left: 10px;
+	}
+
+	.listing-col {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 0 5px;
+		margin-right: 1px;
+		border-right: 1px solid rgba(42, 45, 55, 0.5);
+	}
+
+
+	.listing-col:last-of-type {
+		border-right: none;
+		margin-right: 0;
+	}
+
+	.listing-price {
+		color: #e4e4e7;
+		font-size: 12px;
+	}
+
+	.listing-col.first {
+		margin-left: 10px;
+	}
+
+	.listing-col.first .listing-price {
+		color: #22c55e;
+		font-weight: 600;
+	}
+
+	.listing-col.corrupted .listing-price {
+		color: #ef4444;
+	}
+
+	.listing-age {
+		color: #6b7280;
+		font-size: 9px;
+	}
+
+	/* --- Side buttons --- */
+	.side {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-end;
+		pointer-events: auto;
+		position: fixed;
+		right: 0;
+		top: 1px;
+		bottom: 0;
+	}
+
+	.side-row {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 72px;
+		gap: 2px;
+		box-sizing: border-box;
+		padding: 8px 0;
+	}
+
+	.act-btn {
+		all: unset;
+		cursor: pointer;
+		width: 26px;
+		height: 26px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+		font-size: 14px;
+		background: rgba(15, 17, 23, 0.8);
+		color: #9ca3af;
+		border: 1px solid rgba(42, 45, 55, 0.6);
+	}
+
+	.act-btn:hover {
+		background: rgba(255, 255, 255, 0.15);
+		color: #e4e4e7;
+	}
+
+	.pick-btn.active {
+		color: #22c55e;
+		border-color: rgba(34, 197, 94, 0.4);
+		background: rgba(34, 197, 94, 0.15);
+	}
+
+	.clear-act {
+		all: unset;
+		cursor: pointer;
+		font-size: 11px;
+		color: #9ca3af;
+		padding: 4px 8px;
+		border-radius: 4px;
+		margin-top: 8px;
+		background: rgba(15, 17, 23, 0.8);
+		border: 1px solid rgba(42, 45, 55, 0.6);
+	}
+
+	.clear-act:hover {
+		color: #ef4444;
+		border-color: rgba(239, 68, 68, 0.4);
+	}
+</style>

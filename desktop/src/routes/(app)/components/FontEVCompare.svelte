@@ -162,6 +162,7 @@
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
 	};
 
+	// Re-run when refreshKey changes (parent debounces Mercure updates) or on mount.
 	$effect(() => { refreshKey; loadAll(); });
 </script>
 

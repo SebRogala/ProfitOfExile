@@ -22,13 +22,6 @@ mod platform {
 
         Ok(DynamicImage::ImageRgba8(img))
     }
-
-    /// Capture a specific region of the screen.
-    pub fn capture_region(x: u32, y: u32, w: u32, h: u32) -> Result<DynamicImage, String> {
-        let full = capture_screen()?;
-        let cropped = full.crop_imm(x, y, w, h);
-        Ok(cropped)
-    }
 }
 
 #[cfg(not(windows))]
