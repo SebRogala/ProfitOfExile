@@ -148,7 +148,7 @@
 		return 1 - (losers / total) * ((losers - 1) / (total - 1)) * ((losers - 2) / (total - 2));
 	}
 
-	let showPool = $state(false);
+	let showPool = $state(true);
 	let poolVariant = $state('20/20');
 
 	function getPoolBreakdown(variant: string, color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
