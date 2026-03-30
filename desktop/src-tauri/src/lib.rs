@@ -439,16 +439,16 @@ async fn trade_lookup(
 
 /// Overlay click-through system for Windows/WebView2.
 ///
-/// WebView2 creates child HWNDs that handle hit-testing independently, so
-/// standard approaches (WM_NCHITTEST, focusable, WS_EX_NOACTIVATE alone)
-/// don't work. See docs/OVERLAY-GUIDE.md for the full explanation.
+/// The overlay is ALWAYS fully click-through (WS_EX_TRANSPARENT). The game
+/// never sees the overlay window — cursor and input pass through completely.
 ///
-/// Solution: WS_EX_TRANSPARENT makes the entire window click-through at the
-/// OS level. A WH_MOUSE_LL hook toggles it off when the cursor enters the
-/// interactive zone (rightmost N pixels) so buttons become clickable.
+/// A WH_MOUSE_LL hook intercepts clicks in the interactive zone (rightmost N
+/// pixels) and emits Tauri events instead. The hook consumes these clicks so
+/// they don't reach the game. The overlay frontend maps click coordinates to
+/// button actions.
 #[cfg(windows)]
 mod overlay_clickthrough {
-    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicI32, AtomicIsize, AtomicBool, Ordering};
     use std::sync::Mutex as StdMutex;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, BOOL, RECT};
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -459,10 +459,35 @@ mod overlay_clickthrough {
     static HOOK_HANDLE: StdMutex<Option<SendHook>> = StdMutex::new(None);
     static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
     static WIN_RECT: StdMutex<(i32, i32, i32, i32)> = StdMutex::new((0, 0, 0, 0));
-    static IS_IGNORED: AtomicBool = AtomicBool::new(true);
     static RECT_DIRTY: AtomicBool = AtomicBool::new(true);
     /// Width of interactive zone on the right edge (physical pixels).
     static INTERACTIVE_WIDTH: AtomicI32 = AtomicI32::new(48);
+    /// Click buffer — hook pushes overlay-relative coordinates, message loop drains and emits events.
+    static CLICK_BUFFER: StdMutex<Vec<(i32, i32)>> = StdMutex::new(Vec::new());
+
+    /// Check if cursor is in the interactive zone. Also refreshes cached rect if dirty.
+    fn check_interactive(cx: i32, cy: i32) -> bool {
+        let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
+        if hwnd_val == 0 { return false; }
+
+        unsafe {
+            let hwnd = HWND(hwnd_val as *mut _);
+            if RECT_DIRTY.swap(false, Ordering::Relaxed) {
+                let mut rect = RECT::default();
+                if GetWindowRect(hwnd, &mut rect).is_ok() {
+                    if let Ok(mut wr) = WIN_RECT.lock() {
+                        *wr = (rect.left, rect.top, rect.right, rect.bottom);
+                    }
+                } else {
+                    RECT_DIRTY.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+
+        let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+        let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
+        cx >= left && cx < right && cy >= top && cy < bottom && cx >= (right - iw)
+    }
 
     unsafe extern "system" fn mouse_hook_proc(
         n_code: i32,
@@ -474,44 +499,39 @@ mod overlay_clickthrough {
             let cx = mouse.pt.x;
             let cy = mouse.pt.y;
 
+            // WebView2 may strip WS_EX_TRANSPARENT when creating/updating child
+            // windows. Re-apply on every mouse event to keep the overlay fully
+            // click-through.
             let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
             if hwnd_val != 0 {
                 let hwnd = HWND(hwnd_val as *mut _);
-
-                if RECT_DIRTY.swap(false, Ordering::Relaxed) {
-                    let mut rect = RECT::default();
-                    if GetWindowRect(hwnd, &mut rect).is_ok() {
-                        if let Ok(mut wr) = WIN_RECT.lock() {
-                            *wr = (rect.left, rect.top, rect.right, rect.bottom);
-                        }
-                    } else {
-                        // Retry on next event
-                        RECT_DIRTY.store(true, Ordering::Relaxed);
-                    }
-                }
-
-                let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
-                let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
-                let in_interactive = cx >= left && cx < right && cy >= top && cy < bottom
-                    && cx >= (right - iw);
-                let ignored = IS_IGNORED.load(Ordering::Relaxed);
-
-                if in_interactive && ignored {
-                    IS_IGNORED.store(false, Ordering::Relaxed);
-                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TRANSPARENT.0 as i32));
-                } else if !in_interactive && !ignored {
-                    IS_IGNORED.store(true, Ordering::Relaxed);
-                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                if ex & WS_EX_TRANSPARENT.0 as i32 == 0 {
                     SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT.0 as i32);
+                }
+            }
+
+            if check_interactive(cx, cy) {
+                let msg_id = w_param.0 as u32;
+                // Consume clicks in the interactive zone — don't pass to game.
+                if msg_id == WM_LBUTTONDOWN || msg_id == WM_LBUTTONUP {
+                    if msg_id == WM_LBUTTONDOWN {
+                        // Buffer overlay-relative coordinates for the message loop to emit.
+                        let (left, top, _, _) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Ok(mut buf) = CLICK_BUFFER.lock() {
+                            buf.push((cx - left, cy - top));
+                        }
+                    }
+                    return LRESULT(1); // Consume — don't pass to game or CallNextHookEx
                 }
             }
         }
         CallNextHookEx(None, n_code, w_param, l_param)
     }
 
-    /// Install the global mouse hook. Returns a stop-signal sender.
-    pub fn install_hook() -> Option<std::sync::mpsc::Sender<()>> {
+    /// Install the global mouse hook. The message loop drains click events and
+    /// emits Tauri `overlay-click` events. Returns a stop-signal sender.
+    pub fn install_hook(app: tauri::AppHandle) -> Option<std::sync::mpsc::Sender<()>> {
         if HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
             return None;
         }
@@ -523,11 +543,22 @@ mod overlay_clickthrough {
                     Err(e) => { log::error!("Mouse hook install failed: {}", e); return; }
                 };
                 *HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()) = Some(SendHook(hook));
-                log::info!("Overlay mouse hook installed");
+                log::info!("Overlay mouse hook installed (fully click-through mode)");
 
                 let mut msg = MSG::default();
                 loop {
                     if stop_rx.try_recv().is_ok() { break; }
+
+                    // Drain click buffer → emit Tauri events.
+                    if let Ok(mut buf) = CLICK_BUFFER.lock() {
+                        for (x, y) in buf.drain(..) {
+                            use tauri::Emitter;
+                            if let Err(e) = app.emit("overlay-click", serde_json::json!({ "x": x, "y": y })) {
+                                log::warn!("emit overlay-click failed: {}", e);
+                            }
+                        }
+                    }
+
                     if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                         let _ = TranslateMessage(&msg);
                         DispatchMessageW(&msg);
@@ -552,7 +583,6 @@ mod overlay_clickthrough {
     pub fn set_overlay_hwnd(hwnd: HWND) {
         OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
         RECT_DIRTY.store(true, Ordering::Relaxed);
-        IS_IGNORED.store(true, Ordering::Relaxed);
     }
 
     pub fn set_interactive_width(px: i32) {
@@ -611,7 +641,7 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
                 overlay_clickthrough::set_interactive_width(interactive_width);
                 overlay_clickthrough::set_overlay_hwnd(h);
 
-                if let Some(tx) = overlay_clickthrough::install_hook() {
+                if let Some(tx) = overlay_clickthrough::install_hook(app2.clone()) {
                     let state = app2.state::<AppState>();
                     *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
                 }
