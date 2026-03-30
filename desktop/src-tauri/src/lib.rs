@@ -406,17 +406,18 @@ async fn trade_lookup(
         let server_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let http = state.server_http.clone();
         let submit_result = result.clone();
-        tokio::spawn(async move {
+        let app_clone = app.clone();
+        tauri::async_runtime::spawn(async move {
             let url = format!("{}/api/trade/submit", server_url);
             match http.post(&url).json(&submit_result).send().await {
                 Ok(res) if res.status().is_success() => {
-                    log::info!("Trade result submitted to server for {} ({})", submit_result.gem, submit_result.variant);
+                    app_log(&app_clone, format!("Trade submitted to server: {} ({})", submit_result.gem, submit_result.variant));
                 }
                 Ok(res) => {
-                    log::warn!("Trade submit rejected by server: {}", res.status());
+                    app_log(&app_clone, format!("Trade submit rejected: {}", res.status()));
                 }
                 Err(e) => {
-                    log::warn!("Trade submit to server failed: {}", e);
+                    app_log(&app_clone, format!("Trade submit failed: {}", e));
                 }
             }
         });
