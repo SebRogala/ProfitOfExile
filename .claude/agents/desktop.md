@@ -162,13 +162,14 @@ Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations
 "windows": ["main", "overlay", "comparator", "overlay-comparator-pos"],
 ```
 
-**CRITICAL — Overlay Click-Through**: Making overlays click-through on Windows/WebView2 is complex. `WM_NCHITTEST`, `setIgnoreCursorEvents`, `focusable: false`, `WS_EX_NOACTIVATE` alone do NOT work. The proven solution uses `WS_EX_TRANSPARENT` + `WH_MOUSE_LL` global hook that toggles transparency based on cursor position. **Read `docs/OVERLAY-GUIDE.md` before touching any overlay code.** Key points:
+**CRITICAL — Overlay Click-Through**: The overlay is ALWAYS fully click-through (`WS_EX_TRANSPARENT` + `WS_EX_NOACTIVATE`). The game never sees the overlay window. A `WH_MOUSE_LL` global mouse hook intercepts clicks in the interactive zone (rightmost 48px), consumes them, and emits `overlay-click` Tauri events. The frontend uses `document.elementFromPoint()` + `data-action` attributes to map click coordinates to button actions. The hook also re-applies `WS_EX_TRANSPARENT` on every mouse event near the overlay (WebView2 strips it when creating child windows). A `HAS_CONTENT` flag gates interception — empty overlay passes all clicks to the game. Key points:
 - Cross-window JS API calls (`outerPosition`, `destroy`, `setPosition`) return wrong values — only `getCurrentWebviewWindow()` from within the overlay is reliable
 - `window.hwnd()` in Rust fails if called immediately after creation — delay 1 second
-- `SetWindowSubclass` must run on the window's thread — don't call from spawned threads
 - Button columns must be CSS `position: fixed; right: 0` to match the hook's hit zone
+- Buttons need `data-action` and `data-index` attributes for `elementFromPoint` mapping
+- `pointer-events: auto` required on buttons — `elementFromPoint` respects CSS pointer-events
 - Never use `.catch(() => {})` — always log errors, even on expected-flaky operations
-- Game focus detection is via `GetForegroundWindow` polling in Rust — do NOT add JS-side focus listeners
+- Game focus detection is via `GetForegroundWindow` three-state polling (Game/OwnWindow/Other) — clicking overlay doesn't trigger game blur
 - `onMount` doesn't fire in overlay windows — use `$effect` for initialization
 
 ### DPI Awareness
@@ -186,14 +187,31 @@ SvelteKit client-side routing within the `(app)` group. Use `<a href="/settings"
 ## File Watcher
 Uses the `notify` crate (filesystem events, NOT polling). Watches the parent directory, filters by filename. Supports cancel via `tokio::sync::watch` channel — restarts automatically when the Client.txt path changes in settings.
 
-## Capture Loop (lib.rs: run_capture_loop)
-Dual-region OCR that runs when lab state is `PickingGems`:
-- **Region 1** (gem tooltip): OCR → fuzzy match gem names → emit `"gem-detected"` events
-- **Region 2** (font panel): OCR → parse craft options via `font_parser` → track session rounds
-- Sends completed font sessions to `POST /api/desktop/font-session` on the Go server
+## OCR Lifecycle (Decoupled Gem + Font Scans)
+
+Two independent scan loops on dedicated OS threads (required by Windows COM/WinRT).
+
+### Gem Tooltip OCR (`gem_scan_loop`)
+Scans the gem tooltip region at 250ms to detect transfigured gem names for the comparator.
+- **Start triggers** (all: clear comparator, restart scan): `FontOpened` (Client.txt), manual "Start Scanning" button
+- **Stop triggers**: 3 gems detected (auto-stop), 45s timeout, ZoneChanged, manual stop, next start trigger
+- Uses `AtomicU64` generation counter — `spawn_gem_scan` bumps it, old scan exits on mismatch
+- Aborts immediately if gem name list is empty (server unreachable)
+- On exit: sets state back to Idle only if still the active generation (TOCTOU-safe under lab_state lock)
+
+### Font Panel OCR (`font_scan_loop`)
+Scans the font region at 250ms to capture craft options from the CRAFT screen.
+- **Start**: 3rd "Aspirant's Trial" zone entry (counter resets on "Aspirants' Plaza")
+- **Running**: Parses options via `font_parser`, deduplicates by option_type list. User reopening font without crafting doesn't create duplicates.
+- **Round sealing**: `FontOpened` (Client.txt) calls `seal_font_round` — moves current options into session. No "Crafts Remaining" = last craft → stops scan.
+- **Stop**: Last craft sealed, ZoneChanged, 5-min timeout safety net
+- **Data**: `ZoneChanged` sends accumulated session to `POST /api/desktop/font-session`
 - Emits `"font-jackpot"` when "non-Transfigured" option detected
-- 3 consecutive font panel misses → stop OCR (user walked away or font empty)
-- Client.txt `InstanceClientLabyrinthCraftResultOptionsList` restarts OCR
+
+### Game UI Context
+- **CRAFT screen**: Options list + "Crafts Remaining: X" + CRAFT button. No Client.txt event when opened.
+- **CONFIRM screen**: 3 gem slots + CONFIRM button. `FontOpened` fires when user clicks CRAFT.
+- "Crafts Remaining: X" only visible when X > 1 — absent on last/single craft.
 
 ## Font Panel Parser (font_parser.rs)
 Keyword-based detection — scans OCR lines for anchor text, extracts numeric values:

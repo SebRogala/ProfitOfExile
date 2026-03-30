@@ -102,7 +102,7 @@ The focus poller (1s interval, `GetForegroundWindow`) uses three-state logic:
 - **OwnWindow** (our process foreground): preserve state — no hide/show/status events
 - **Other** (any other app): hide overlay
 
-Overlay is created with `WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`. A global `WH_MOUSE_LL` hook toggles `WS_EX_TRANSPARENT` off in the rightmost 48px (interactive zone) for button clicks.
+Overlay is always fully click-through (`WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`). A global `WH_MOUSE_LL` hook intercepts clicks in the rightmost 48px (interactive zone), consumes them, and emits `overlay-click` Tauri events. The frontend maps coordinates to button actions via `elementFromPoint` + `data-action` attributes. The hook also re-applies `WS_EX_TRANSPARENT` on every mouse event (WebView2 strips it when creating child windows). Click interception is gated on a `HAS_CONTENT` flag — when the overlay is empty, all clicks pass through to the game.
 
 ## Conventions
 
