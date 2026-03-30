@@ -103,10 +103,22 @@ func main() {
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
 	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache)
 
-	// Trade API subsystem (optional — requires TRADE_ENABLED=true).
-	var tradeGate *trade.Gate
-	var tradeCache *trade.TradeCache
+	// Trade cache + submit endpoint — always available so the desktop app can
+	// submit trade results and CompareAnalysis can enrich responses.
+	tradeCacheMax := 200
+	if v := os.Getenv("TRADE_CACHE_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			tradeCacheMax = n
+		}
+	}
+	tradeCache := trade.NewTradeCache(tradeCacheMax)
 	var tradeRepo *trade.Repository
+	if pool != nil {
+		tradeRepo = trade.NewRepository(pool)
+	}
+
+	// Trade Gate (server-side GGG lookups) — optional, requires TRADE_ENABLED=true.
+	var tradeGate *trade.Gate
 	var tradeSyncTimeout time.Duration
 
 	if os.Getenv("TRADE_ENABLED") == "true" {
@@ -126,12 +138,6 @@ func main() {
 		if v := os.Getenv("TRADE_MAX_WAIT"); v != "" {
 			if d, err := time.ParseDuration(v); err == nil {
 				tradeMaxWait = d
-			}
-		}
-		tradeCacheMax := 200
-		if v := os.Getenv("TRADE_CACHE_MAX"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				tradeCacheMax = n
 			}
 		}
 		tradeSyncTimeout = 500 * time.Millisecond
@@ -156,7 +162,6 @@ func main() {
 
 		tradeLimiter := trade.NewRateLimiter(tradeCfg)
 		tradeClient := trade.NewClient(tradeCfg)
-		tradeCache = trade.NewTradeCache(tradeCfg.CacheMaxEntries)
 		tradePub := &mercure.HubPublisher{URL: mercureURL, Secret: mercureSecret}
 
 		// Divine rate function: queries latest currency snapshot from DB.
@@ -175,7 +180,6 @@ func main() {
 			return rate
 		}
 
-		tradeRepo = trade.NewRepository(pool)
 		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
 
 		go tradeGate.Run(ctx)
