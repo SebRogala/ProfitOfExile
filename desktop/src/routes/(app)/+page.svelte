@@ -242,7 +242,7 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else if !loading}
-		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} />
+		<Comparator league={status?.league || ''} onQueueGem={handleQueueGem} />
 
 		<SessionQueue
 			queue={sessionQueue}

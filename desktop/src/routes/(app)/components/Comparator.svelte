@@ -29,11 +29,9 @@
 
 	let {
 		league = '',
-		refreshKey = 0,
 		onQueueGem,
 	}: {
 		league?: string;
-		refreshKey?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 	} = $props();
 
