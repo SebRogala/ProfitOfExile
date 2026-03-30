@@ -17,11 +17,13 @@
 	import Comparator from './components/Comparator.svelte';
 	import SessionQueue from './components/SessionQueue.svelte';
 	import type { QueueItem } from './components/SessionQueue.svelte';
-	import BestPlays from './components/BestPlays.svelte';
 	import ByVariant from './components/ByVariant.svelte';
 	import MarketOverview from './components/MarketOverview.svelte';
-	import Legend from './components/Legend.svelte';
 	import FontEVCompare from './components/FontEVCompare.svelte';
+
+	const TABS = ['Session', 'Rankings', 'Font EV', 'Market'] as const;
+	type Tab = typeof TABS[number];
+	let activeTab = $state<Tab>('Session');
 
 	let selectedLab = $state('Merciless');
 	let status = $state<StatusData | null>(null);
@@ -219,15 +221,25 @@
 </script>
 
 <div class="dashboard">
-	<!-- Scan controls (desktop-specific) -->
-	<div class="scan-bar">
-		<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
-		{#if store.status?.state === 'PickingGems'}
-			<button class="scan-btn scan-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop Scanning</button>
-		{:else}
-			<button class="scan-btn" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Start Scanning</button>
-		{/if}
+	<!-- Tab bar + scan controls -->
+	<div class="tab-bar">
+		<div class="tabs">
+			{#each TABS as tab}
+				<button class="tab" class:active={activeTab === tab} onclick={() => { activeTab = tab; }}>
+					{tab}
+				</button>
+			{/each}
+		</div>
+		<div class="scan-controls">
+			<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
+			{#if store.status?.state === 'PickingGems'}
+				<button class="scan-btn scan-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop</button>
+			{:else}
+				<button class="scan-btn" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Scan</button>
+			{/if}
+		</div>
 	</div>
+
 	{#if status}
 		<Header {status} {selectedLab} onLabChange={handleLabChange} />
 	{/if}
@@ -242,59 +254,73 @@
 			<p class="error-text">{error}</p>
 			<button class="retry-btn" onclick={loadAll}>Retry</button>
 		</div>
-	{/if}
-
-	{#if isDedication}
+	{:else if isDedication}
 		<section class="section dedication">
 			<h2 class="section-title">Dedication Lab -- Corrupted Gem Exchange</h2>
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
-	{:else if !loading}
-		<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} />
-
-		<SessionQueue
-			queue={sessionQueue}
-			onRemove={handleRemoveFromQueue}
-			onClear={handleClearQueue}
-			onRefresh={handleRefreshQueue}
-		/>
-
-		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
-
-		<FontEVCompare {refreshKey} league={status?.league || ''} />
-
-		{#if marketOverview}
-			<MarketOverview data={marketOverview} />
+	{:else}
+		{#if activeTab === 'Session'}
+			<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} />
+			<SessionQueue
+				queue={sessionQueue}
+				onRemove={handleRemoveFromQueue}
+				onClear={handleClearQueue}
+				onRefresh={handleRefreshQueue}
+			/>
+		{:else if activeTab === 'Rankings'}
+			<ByVariant allPlays={bestPlays} league={status?.league || ''} />
+		{:else if activeTab === 'Font EV'}
+			<FontEVCompare {refreshKey} league={status?.league || ''} />
+		{:else if activeTab === 'Market'}
+			{#if marketOverview}
+				<MarketOverview data={marketOverview} />
+			{/if}
 		{/if}
-
-		<Legend />
 	{/if}
 </div>
 
-{#if store.logs.length > 0}
-<div class="logs-section">
-	<div class="logs-header">Logs</div>
-	<div class="log-list">
-		{#each store.logs.toReversed() as line}
-			<div class="log-line" class:log-error={line.includes('failed') || line.includes('error')}>{line}</div>
-		{/each}
-	</div>
-</div>
-{/if}
-
 <style>
-	/* Scan controls bar */
-	.scan-bar {
+	/* Tab bar + scan controls */
+	.tab-bar {
 		display: flex;
 		align-items: center;
-		gap: 12px;
+		justify-content: space-between;
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
-		padding: 8px 16px;
+		padding: 0 16px;
 		margin-bottom: 12px;
 	}
+	.tabs {
+		display: flex;
+		gap: 0;
+	}
+	.tab {
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid transparent;
+		color: var(--color-lab-text-secondary);
+		padding: 10px 16px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+		transition: color 0.15s, border-color 0.15s;
+	}
+	.tab:hover {
+		color: var(--color-lab-text);
+	}
+	.tab.active {
+		color: var(--color-lab-text);
+		border-bottom-color: var(--color-lab-blue);
+	}
+	.scan-controls {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
 	.scan-state {
-		font-size: 0.875rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-lab-text-secondary);
 	}
@@ -305,8 +331,8 @@
 		background: var(--color-lab-blue);
 		border: none;
 		color: #fff;
-		padding: 6px 16px;
-		font-size: 0.8125rem;
+		padding: 4px 12px;
+		font-size: 0.75rem;
 		font-weight: 600;
 		cursor: pointer;
 		font-family: inherit;
@@ -561,35 +587,4 @@
 		background: rgba(239, 68, 68, 0.25);
 	}
 
-	/* Logs section */
-	.logs-section {
-		max-width: 100%;
-		margin: 0;
-		padding: 0 0 16px;
-	}
-	.logs-header {
-		font-size: 0.85rem;
-		text-transform: uppercase;
-		color: var(--color-lab-text-secondary);
-		margin-bottom: 6px;
-		font-weight: 600;
-	}
-	.log-list {
-		max-height: 150px;
-		overflow-y: auto;
-		font-family: 'Consolas', 'Courier New', monospace;
-		font-size: 0.75rem;
-		line-height: 1.4;
-		background: var(--color-lab-surface);
-		border: 1px solid var(--color-lab-border);
-		padding: 8px 12px;
-	}
-	.log-line {
-		color: var(--color-lab-text-secondary);
-		padding: 0.1rem 0;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-	}
-	.log-error {
-		color: var(--color-lab-red);
-	}
 </style>

@@ -425,6 +425,18 @@
 			</div>
 		</section>
 
+		<!-- Logs -->
+		{#if store.logs.length > 0}
+			<section>
+				<h2>Logs</h2>
+				<div class="log-list">
+					{#each store.logs.toReversed() as line}
+						<div class="log-line" class:log-error={line.includes('failed') || line.includes('error')}>{line}</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
+
 </div>
 
 <style>
@@ -555,5 +567,25 @@
 
 	.btn-small.save:hover {
 		background: rgba(74, 222, 128, 0.1);
+	}
+
+	.log-list {
+		max-height: 250px;
+		overflow-y: auto;
+		font-family: 'Consolas', 'Courier New', monospace;
+		font-size: 0.7rem;
+		line-height: 1.4;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		padding: 8px 12px;
+	}
+	.log-line {
+		color: var(--text-muted);
+		padding: 0.1rem 0;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+	}
+	.log-error {
+		color: var(--color-lab-red, #ef4444);
 	}
 </style>
