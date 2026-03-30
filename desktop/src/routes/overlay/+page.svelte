@@ -37,6 +37,8 @@
 	}
 
 	async function handleMouseDown(e: MouseEvent) {
+		// Don't start drag/resize when clicking buttons.
+		if ((e.target as HTMLElement).closest('.ctrl-btn')) return;
 		const win = getCurrentWebviewWindow();
 		const dir = getEdge(e);
 		if (dir) {
@@ -49,6 +51,16 @@
 	function handleMouseMove(e: MouseEvent) {
 		const dir = getEdge(e);
 		document.body.style.cursor = dir ? CURSORS[dir] : 'move';
+	}
+
+	function handleSave() {
+		getCurrentWebviewWindow().emit('overlay-save', {})
+			.catch(err => console.error('[overlay] emit overlay-save failed:', err));
+	}
+
+	function handleCancel() {
+		getCurrentWebviewWindow().emit('overlay-cancel', {})
+			.catch(err => console.error('[overlay] emit overlay-cancel failed:', err));
 	}
 
 	onMount(async () => {
@@ -88,7 +100,10 @@
 	<div class="border-bottom"></div>
 	<div class="border-left"></div>
 	<div class="border-right"></div>
-	<div class="label">Drag to move · Resize from edges</div>
+	<div class="label">
+		<button class="ctrl-btn save" onpointerup={handleSave}>Save</button>
+		<button class="ctrl-btn cancel" onpointerup={handleCancel}>Cancel</button>
+	</div>
 </div>
 
 <style>
@@ -120,16 +135,43 @@
 
 	.label {
 		position: absolute;
-		bottom: 5px;
+		bottom: 8px;
 		left: 50%;
 		transform: translateX(-50%);
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		font-family: -apple-system, sans-serif;
+		white-space: nowrap;
+		z-index: 10;
+	}
+
+	.ctrl-btn {
+		padding: 4px 14px;
+		border: none;
+		border-radius: 3px;
+		font-size: 11px;
+		font-weight: 600;
+		font-family: inherit;
+		cursor: pointer;
+		pointer-events: auto;
+	}
+
+	.ctrl-btn.save {
+		background: #22c55e;
+		color: #111;
+	}
+
+	.ctrl-btn.save:hover {
+		background: #16a34a;
+	}
+
+	.ctrl-btn.cancel {
 		background: #e94560;
 		color: white;
-		font-size: 11px;
-		padding: 2px 8px;
-		font-family: -apple-system, sans-serif;
-		pointer-events: none;
-		white-space: nowrap;
-		border-radius: 3px;
+	}
+
+	.ctrl-btn.cancel:hover {
+		background: #c53050;
 	}
 </style>

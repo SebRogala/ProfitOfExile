@@ -45,12 +45,12 @@ desktop/
         manager.ts         — Spawn/destroy/track Tauri overlay windows
     routes/
       (app)/               — App shell group (topbar + sidebar + content)
-        +layout.svelte     — Root app layout, initializes status store
-        +page.svelte       — Lab page (main content)
-        settings/+page.svelte — Settings page
+        +layout.svelte     — Root app layout, initializes status store, comparator overlay lifecycle
+        +page.svelte       — Lab page with tabs: Session (comparator+queue), Rankings, Font EV, Market
+        settings/+page.svelte — Settings (General, Game Integration, Overlays, Trade, Logs)
       overlay/             — Overlay windows (outside app shell, transparent)
         +layout.svelte     — Transparent layout for all overlays
-        +page.svelte       — Capture region overlay (red-bordered, draggable)
+        +page.svelte       — Capture region overlay (red-bordered, draggable, Save/Cancel buttons)
         comparator/
           +page.svelte     — Comparator results overlay (game overlay, draggable)
     app.css                — Theme variables and global styles
@@ -171,6 +171,15 @@ Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations
 - Never use `.catch(() => {})` — always log errors, even on expected-flaky operations
 - Game focus detection is via `GetForegroundWindow` three-state polling (Game/OwnWindow/Other) — clicking overlay doesn't trigger game blur
 - `onMount` doesn't fire in overlay windows — use `$effect` for initialization
+
+**CRITICAL — Win32 Mouse Capture on Overlay Destroy**: Destroying a transparent `alwaysOnTop` WebView2 window while it holds Win32 mouse capture leaves the OS mouse input stuck. This is a known Tauri/WebView2 issue. **Do NOT destroy overlay windows directly from button click handlers.** Instead:
+1. Config overlays (`/overlay/+page.svelte`) have Save/Cancel buttons that emit `overlay-save`/`overlay-cancel` events
+2. The settings page receives the event, saves data, destroys the config overlay
+3. Then emits `overlay-toggle-reset` → the layout toggles the comparator overlay off/on (100ms pause between destroy and recreate)
+4. This forces Windows to release mouse capture by cycling through a clean window destroy/create sequence
+5. The toggle-reset listener in the layout is only active while a config overlay is open (`overlay-config-start`/`overlay-config-end` events)
+
+Approaches that do NOT work: `ReleaseCapture()`, `setIgnoreCursorEvents(true)`, `win.hide()`, `stopPropagation` on mousedown, `setFocus()`, `pointerup` instead of `onclick`. The only reliable fix is the off/on toggle of a separate window.
 
 ### DPI Awareness
 The WebviewWindow constructor takes **logical** pixels. Screen capture regions store **physical** pixels. Convert with `window.devicePixelRatio`:

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../../app.css';
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
@@ -133,6 +134,29 @@
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
 	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
+
+	// Toggle comparator off/on when settings page closes a config overlay.
+	// Fixes Win32 mouse capture stuck after overlay destroy.
+	// Only active while a config overlay is open (overlay-config-start/end events).
+	let configOverlayCleanup: (() => void) | null = null;
+	listen('overlay-config-start', async () => {
+		if (configOverlayCleanup) return; // already listening
+		const unlisten = await listen('overlay-toggle-reset', async () => {
+			if (!comparatorActive) return;
+			await destroyComparatorWindow();
+			comparatorActive = false;
+			await new Promise(r => setTimeout(r, 100));
+			const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
+			await createComparatorOverlay(settings?.x ?? 100, settings?.y ?? 100);
+		});
+		configOverlayCleanup = unlisten;
+	});
+	listen('overlay-config-end', () => {
+		if (configOverlayCleanup) {
+			configOverlayCleanup();
+			configOverlayCleanup = null;
+		}
+	});
 	// Focus-based overlay show/hide handled by Rust focus poller (GetForegroundWindow)
 
 	// Auto-restore comparator overlay if it was enabled in previous session

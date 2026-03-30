@@ -1,7 +1,27 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
+	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { store } from '$lib/stores/status.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+
+	// Save/Cancel from overlay buttons (overlay-save/overlay-cancel events).
+	// Works for both OCR region overlays and comparator position overlay.
+	$effect(() => {
+		if (!overlayVisible && !comparatorPositionOverlay) return;
+		const unlistenSave = listen('overlay-save', () => {
+			if (overlayVisible) saveRegion();
+			else if (comparatorPositionOverlay) saveComparatorPosition();
+		});
+		const unlistenCancel = listen('overlay-cancel', () => {
+			if (overlayVisible) cancelRegion();
+			else if (comparatorPositionOverlay) cancelComparatorPosition();
+		});
+		return () => {
+			unlistenSave.then(u => u());
+			unlistenCancel.then(u => u());
+		};
+	});
 
 	let overlayWin = $state<any>(null);
 	let overlayVisible = $state<string | null>(null); // null = hidden, 'gem' or 'font' = which region
@@ -54,8 +74,17 @@
 		editingClientTxt = false;
 	}
 
+	/** Notify layout that a config overlay is opening/closing. */
+	function notifyConfigStart() {
+		getCurrentWebviewWindow().emit('overlay-config-start', {}).catch(() => {});
+	}
+	function notifyConfigEnd() {
+		getCurrentWebviewWindow().emit('overlay-config-end', {}).catch(() => {});
+	}
+
 	// --- Region Overlay (shared for gem tooltip + font panel) ---
 	async function showRegionOverlay(type: 'gem' | 'font') {
+		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		if (overlayWin) {
 			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
@@ -95,7 +124,7 @@
 		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 		overlayWin = null;
 		overlayVisible = null;
-		// Status auto-updates via events
+		await reclaimMouse();
 	}
 
 	async function cancelRegion() {
@@ -103,6 +132,14 @@
 		try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 		overlayWin = null;
 		overlayVisible = null;
+		await reclaimMouse();
+	}
+
+	/** After closing a config overlay, toggle the comparator off and on.
+	 *  This forces a clean window focus reset — same as sidebar toggle. */
+	async function reclaimMouse() {
+		await getCurrentWebviewWindow().emit('overlay-toggle-reset', {}).catch(() => {});
+		notifyConfigEnd();
 	}
 
 	function formatRegion(region: any): string {
@@ -174,6 +211,7 @@
 	});
 
 	async function showComparatorPositionOverlay() {
+		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		if (comparatorPositionOverlay) {
 			try { await comparatorPositionOverlay.destroy(); } catch (_) {}
@@ -214,6 +252,7 @@
 		}
 		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
 		comparatorPositionOverlay = null;
+		await reclaimMouse();
 
 		// Recreate live comparator overlay at new position
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -245,6 +284,7 @@
 		if (!comparatorPositionOverlay) return;
 		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
 		comparatorPositionOverlay = null;
+		await reclaimMouse();
 	}
 </script>
 
@@ -330,6 +370,23 @@
 			</div>
 		</section>
 
+		<!-- Overlays -->
+		<section>
+			<h2>Overlays</h2>
+
+			<div class="setting-row">
+				<span class="setting-label">Comparator Position</span>
+				{#if comparatorPositionOverlay}
+					<span class="setting-value">Drag red overlay to position...</span>
+					<button class="btn-small save" onclick={saveComparatorPosition}>Save</button>
+					<button class="btn-small" onclick={cancelComparatorPosition}>Cancel</button>
+				{:else}
+					<span class="setting-value mono">{comparatorOverlaySettings ? `(${comparatorOverlaySettings.x}, ${comparatorOverlaySettings.y}) ${comparatorOverlaySettings.width}\u00d7${comparatorOverlaySettings.height}` : 'Not set'}</span>
+					<button class="btn-small" onclick={showComparatorPositionOverlay} disabled={!!overlayVisible}>Configure</button>
+				{/if}
+			</div>
+		</section>
+
 		<!-- Trade -->
 		<section>
 			<h2>Trade</h2>
@@ -406,23 +463,6 @@
 					<span class="setting-error">{tradeStalenessError}</span>
 				</div>
 			{/if}
-		</section>
-
-		<!-- Overlays -->
-		<section>
-			<h2>Overlays</h2>
-
-			<div class="setting-row">
-				<span class="setting-label">Comparator Position</span>
-				{#if comparatorPositionOverlay}
-					<span class="setting-value">Drag red overlay to position...</span>
-					<button class="btn-small save" onclick={saveComparatorPosition}>Save</button>
-					<button class="btn-small" onclick={cancelComparatorPosition}>Cancel</button>
-				{:else}
-					<span class="setting-value mono">{comparatorOverlaySettings ? `(${comparatorOverlaySettings.x}, ${comparatorOverlaySettings.y}) ${comparatorOverlaySettings.width}\u00d7${comparatorOverlaySettings.height}` : 'Not set'}</span>
-					<button class="btn-small" onclick={showComparatorPositionOverlay} disabled={!!overlayVisible}>Configure</button>
-				{/if}
-			</div>
 		</section>
 
 		<!-- Logs -->
