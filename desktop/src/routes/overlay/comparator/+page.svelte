@@ -95,6 +95,9 @@
 		results = [];
 		selectedGem = null;
 		tradeData = {};
+		// Tell the Comparator to clear too.
+		getCurrentWebviewWindow().emit('overlay-clear', {})
+			.catch(e => console.error('[overlay] emit overlay-clear failed:', e));
 	}
 
 	// Handle clicks forwarded from the mouse hook (overlay is fully click-through).

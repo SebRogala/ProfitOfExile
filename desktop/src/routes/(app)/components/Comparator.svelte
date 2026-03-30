@@ -102,6 +102,12 @@
 			refreshTradeData(event.payload.name);
 		});
 
+		// Listen for clear from overlay
+		const overlayClearPromise = listen('overlay-clear', () => {
+			if (cancelled) return;
+			clearAll();
+		});
+
 		return () => {
 			cancelled = true;
 			if (loadDebounce) clearTimeout(loadDebounce);
@@ -110,6 +116,7 @@
 			clearPromise.then(unlisten => unlisten());
 			pickPromise.then(unlisten => unlisten());
 			refreshPromise.then(unlisten => unlisten());
+			overlayClearPromise.then(unlisten => unlisten());
 		};
 	});
 
