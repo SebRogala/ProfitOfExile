@@ -64,6 +64,7 @@ pub struct AppState {
     pub comparator_data: Mutex<serde_json::Value>,
     pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub focus_poller_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    pub debug_mode: Mutex<bool>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -548,6 +549,22 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
                 log::warn!("Overlay '{}' HWND not available after delay", label2);
             }
         });
+    }
+}
+
+#[tauri::command]
+fn force_show_overlays(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let was_debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
+    *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner()) = !was_debug;
+    if !was_debug {
+        // Turning debug ON — show all overlays
+        if let Some(win) = app.get_webview_window("comparator") {
+            let _ = win.show();
+        }
+        log::info!("Debug mode ON — overlays force-shown");
+    } else {
+        log::info!("Debug mode OFF");
     }
 }
 
@@ -1118,13 +1135,14 @@ fn spawn_focus_poller(app: AppHandle) {
                     }
                     emit_status(&app);
 
-                    // Hide/show overlay windows (only if they exist = user has them enabled)
+                    // Hide/show overlay windows (skip hide in debug mode)
+                    let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(win) = app.get_webview_window("comparator") {
                         if is_focused {
                             if let Err(e) = win.show() {
                                 log::warn!("Failed to show comparator overlay: {}", e);
                             }
-                        } else {
+                        } else if !debug {
                             if let Err(e) = win.hide() {
                                 log::warn!("Failed to hide comparator overlay: {}", e);
                             }
@@ -1264,6 +1282,7 @@ pub fn run() {
         comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
         overlay_hook_stop: Mutex::new(None),
         focus_poller_stop: Mutex::new(None),
+        debug_mode: Mutex::new(false),
     };
 
     tauri::Builder::default()
@@ -1288,6 +1307,7 @@ pub fn run() {
             trade_lookup,
             send_test_gems,
             test_ocr_on_image,
+            force_show_overlays,
             set_comparator_data,
             get_comparator_data,
             set_overlay_clickthrough,
