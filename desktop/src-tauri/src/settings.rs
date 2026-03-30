@@ -28,6 +28,8 @@ pub struct Settings {
     pub trade_stale_critical_secs: u32,
     /// Auto-refresh trade data after this many seconds.
     pub trade_auto_refresh_secs: u32,
+    /// Whether auto-trade is enabled (fetch trade data automatically on compare).
+    pub auto_trade_enabled: bool,
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -65,6 +67,7 @@ impl Default for Settings {
             trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
             trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
             trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
+            auto_trade_enabled: false,
         }
     }
 }
@@ -146,6 +149,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -159,4 +163,5 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
     *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
     *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
+    *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.auto_trade_enabled;
 }
