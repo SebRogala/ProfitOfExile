@@ -841,7 +841,8 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     app_log(&app, format!("{} candidate lines to match", candidates.len()));
 
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = fetch_gem_names(&app, &server).await;
+    let http = state.server_http.clone();
+    let gem_names = fetch_gem_names(&app, &server, &http).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names);
 
     let mut best_match: Option<gem_matcher::GemMatch> = None;
@@ -880,7 +881,7 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
 
 /// Gem-only OCR scan on a dedicated OS thread.
 ///
-/// Scans the gem tooltip region every 500ms looking for transfigured gem names.
+/// Scans the gem tooltip region every 250ms looking for transfigured gem names.
 /// Stops when:
 ///   - 3 gems detected (all options scanned)
 ///   - 45s timeout (user walked away or didn't hover all gems)
@@ -889,9 +890,18 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
 fn gem_scan_loop(app: AppHandle, generation: u64) {
     let state = app.state::<AppState>();
 
-    // Load gem names for matching — try server first, fall back to empty
+    // Load gem names for matching — abort early if server unreachable.
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server));
+    let http = state.server_http.clone();
+    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server, &http));
+    if gem_names.is_empty() {
+        app_log(&app, "Gem scan aborted — no gem names loaded (server unreachable?)".to_string());
+        if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
+            *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
+            emit_status(&app);
+        }
+        return;
+    }
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
     app_log(&app, format!("Gem scan: loaded {} gem names", gem_names.len()));
 
@@ -996,11 +1006,16 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
         std::thread::sleep(SCAN_INTERVAL);
     }
 
-    // Transition state back to Idle if WE are still the active scan
-    // (don't clobber state if a newer scan already started).
-    if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
-        *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
-        emit_status(&app);
+    // Transition state back to Idle if WE are still the active scan.
+    // Hold the lab_state lock while checking generation to prevent TOCTOU
+    // race with spawn_gem_scan (which bumps generation then sets PickingGems).
+    {
+        let mut lab = state.lab_state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
+            *lab = lab_state::LabState::Idle;
+            drop(lab);
+            emit_status(&app);
+        }
     }
 }
 
@@ -1029,12 +1044,19 @@ fn spawn_font_scan(app: &AppHandle) {
 fn font_scan_loop(app: AppHandle, generation: u64) {
     let state = app.state::<AppState>();
     let mut loop_count = 0u32;
+    let start = std::time::Instant::now();
     const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 min safety net
 
     loop {
         // Check generation.
         if state.font_scan_generation.load(Ordering::SeqCst) != generation {
             app_log(&app, "Font scan stopped (generation mismatch)".to_string());
+            break;
+        }
+
+        if start.elapsed() >= TIMEOUT {
+            app_log(&app, "Font scan timed out after 5 minutes".to_string());
             break;
         }
 
@@ -1073,16 +1095,24 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         let panel = font_parser::parse_font_panel(&lines);
 
         if panel.font_active && !panel.options.is_empty() {
-            let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+            // Check dedup and update session under lock, then log/emit outside.
+            let is_new = {
+                let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+                let new_types: Vec<&str> = panel.options.iter().map(|o| o.option_type.as_str()).collect();
+                let same = session.current_options.as_ref().map_or(false, |existing| {
+                    let existing_types: Vec<&str> = existing.iter().map(|o| o.option_type.as_str()).collect();
+                    existing_types == new_types
+                });
+                if !same {
+                    session.current_options = Some(panel.options.clone());
+                    session.current_crafts_remaining = panel.crafts_remaining;
+                    true
+                } else {
+                    false
+                }
+            }; // lock released
 
-            // Dedup: only store if options differ from what we already have.
-            let new_types: Vec<&str> = panel.options.iter().map(|o| o.option_type.as_str()).collect();
-            let same = session.current_options.as_ref().map_or(false, |existing| {
-                let existing_types: Vec<&str> = existing.iter().map(|o| o.option_type.as_str()).collect();
-                existing_types == new_types
-            });
-
-            if !same {
+            if is_new {
                 app_log(&app, format!(
                     "Font options captured: {} options{}{}",
                     panel.options.len(),
@@ -1102,9 +1132,6 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
                         log::warn!("emit font-jackpot failed: {}", e);
                     }
                 }
-
-                session.current_options = Some(panel.options);
-                session.current_crafts_remaining = panel.crafts_remaining;
             }
         }
 
@@ -1121,8 +1148,7 @@ fn seal_font_round(app: &AppHandle) -> bool {
     let options = match session.current_options.take() {
         Some(opts) => opts,
         None => {
-            // No options captured yet — FontOpened fired before OCR saw the CRAFT screen.
-            // This is normal for the first craft if OCR started late.
+            app_log(app, "Font round seal skipped — OCR did not capture options before CRAFT click".to_string());
             return false;
         }
     };
@@ -1178,6 +1204,8 @@ fn send_font_session_data(app: &AppHandle) {
 
     app_log(app, format!("Sending font session: {} rounds", session.rounds.len()));
 
+    let http = state.server_http.clone();
+
     // Reset session.
     *session = FontSessionData::default();
     drop(session);
@@ -1185,18 +1213,7 @@ fn send_font_session_data(app: &AppHandle) {
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         let url = format!("{}/api/desktop/font-session", server);
-        let client = match reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                app_log(&app_clone, format!("Font session: HTTP client error: {}", e));
-                return;
-            }
-        };
-
-        match client.post(&url).json(&session_data).send().await {
+        match http.post(&url).json(&session_data).send().await {
             Ok(res) if res.status().is_success() => {
                 app_log(&app_clone, "Font session sent successfully".to_string());
             }
@@ -1213,19 +1230,8 @@ fn send_font_session_data(app: &AppHandle) {
 }
 
 /// Fetch gem names from the server API for fuzzy matching.
-async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
+async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Client) -> Vec<String> {
     let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
-    let client = match reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            app_log(app, format!("Gem names: HTTP client error: {}", e));
-            return Vec::new();
-        }
-    };
-
     match client.get(&url).send().await {
         Ok(res) if res.status().is_success() => {
             match res.json::<serde_json::Value>().await {
@@ -1287,6 +1293,8 @@ fn spawn_focus_poller(app: AppHandle) {
 
     std::thread::spawn(move || {
         let mut was_focused = false;
+        #[cfg(windows)]
+        let our_pid = std::process::id();
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -1301,8 +1309,6 @@ fn spawn_focus_poller(app: AppHandle) {
             {
                 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
 
-                let our_pid = std::process::id();
-
                 let focus_state = unsafe {
                     let fg = GetForegroundWindow();
                     if fg.0.is_null() {
@@ -1310,8 +1316,12 @@ fn spawn_focus_poller(app: AppHandle) {
                     } else {
                         // Check if this window belongs to our process (overlay, main window).
                         let mut fg_pid: u32 = 0;
-                        GetWindowThreadProcessId(fg, Some(&mut fg_pid));
-                        if fg_pid == our_pid {
+                        let tid = GetWindowThreadProcessId(fg, Some(&mut fg_pid));
+                        if tid == 0 {
+                            // HWND invalidated between GetForegroundWindow and here (TOCTOU).
+                            // Fall through to title-based detection.
+                            FocusState::Other
+                        } else if fg_pid == our_pid {
                             FocusState::OwnWindow
                         } else {
                             let mut buf = [0u16; 256];
@@ -1425,8 +1435,8 @@ fn spawn_log_watcher(app: AppHandle) {
                         } else if line.contains("Aspirant's Trial") {
                             let count = state.aspirant_trial_count.fetch_add(1, Ordering::SeqCst) + 1;
                             app_log(&app, format!("Aspirant's Trial #{}", count));
-                            if count == 3 {
-                                app_log(&app, "3rd Aspirant's Trial — starting font panel OCR".to_string());
+                            if count >= 3 {
+                                app_log(&app, "3rd+ Aspirant's Trial — starting font panel OCR".to_string());
                                 spawn_font_scan(&app);
                             }
                         }
