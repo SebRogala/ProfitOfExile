@@ -50,10 +50,10 @@
 		}
 	});
 
-	// Push results + trade data to Rust for overlay to poll
+	// Push results + trade data + loading state to Rust for overlay to poll
 	$effect(() => {
 		invoke('set_comparator_data', {
-			payload: { results, tradeData: { ...tradeData } },
+			payload: { results, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading } },
 		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
