@@ -21,6 +21,26 @@ pub struct Settings {
     pub font_region: CaptureRegion,
     pub window: Option<WindowSettings>,
     pub sidebar_open: bool,
+    pub comparator_overlay: Option<OverlaySettings>,
+    /// Yellow indicator threshold for trade data age (seconds).
+    pub trade_stale_warn_secs: u32,
+    /// Red indicator threshold for trade data age (seconds).
+    pub trade_stale_critical_secs: u32,
+    /// Auto-refresh trade data after this many seconds.
+    pub trade_auto_refresh_secs: u32,
+}
+
+pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
+pub const DEFAULT_TRADE_STALE_CRITICAL_SECS: u32 = 600;
+pub const DEFAULT_TRADE_AUTO_REFRESH_SECS: u32 = 900;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlaySettings {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +61,10 @@ impl Default for Settings {
             font_region: CaptureRegion::default_font_panel(),
             window: None,
             sidebar_open: true,
+            comparator_overlay: None,
+            trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
+            trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
+            trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
         }
     }
 }
@@ -118,6 +142,10 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         window: None, // Window settings are saved separately on close, not from AppState
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
+        comparator_overlay: None, // Overlay settings saved separately, not from AppState
+        trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -128,4 +156,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.gem_region.clone();
     *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.font_region.clone();
     *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
+    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
+    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
+    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
 }

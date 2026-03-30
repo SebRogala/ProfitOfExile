@@ -50,7 +50,9 @@ desktop/
         settings/+page.svelte — Settings page
       overlay/             — Overlay windows (outside app shell, transparent)
         +layout.svelte     — Transparent layout for all overlays
-        +page.svelte       — Capture region overlay
+        +page.svelte       — Capture region overlay (red-bordered, draggable)
+        comparator/
+          +page.svelte     — Comparator results overlay (game overlay, draggable)
     app.css                — Theme variables and global styles
     app.html               — HTML shell with favicon
 ```
@@ -153,6 +155,22 @@ await destroyOverlay('region');
 
 Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations. Route to `/overlay/{name}`.
 
+**CRITICAL — Window Capabilities**: Every new overlay window label MUST be added to `capabilities/default.json` in the `"windows"` array. Tauri v2 scopes permissions by window label — if a window label isn't listed, ALL Tauri APIs (`startDragging`, `startResizeDragging`, `show`, `hide`, `destroy`, etc.) silently fail with no error. This is the #1 gotcha when creating new overlay windows.
+
+```json
+// capabilities/default.json — add every window label here
+"windows": ["main", "overlay", "comparator", "overlay-comparator-pos"],
+```
+
+**CRITICAL — Overlay Click-Through**: Making overlays click-through on Windows/WebView2 is complex. `WM_NCHITTEST`, `setIgnoreCursorEvents`, `focusable: false`, `WS_EX_NOACTIVATE` alone do NOT work. The proven solution uses `WS_EX_TRANSPARENT` + `WH_MOUSE_LL` global hook that toggles transparency based on cursor position. **Read `docs/OVERLAY-GUIDE.md` before touching any overlay code.** Key points:
+- Cross-window JS API calls (`outerPosition`, `destroy`, `setPosition`) return wrong values — only `getCurrentWebviewWindow()` from within the overlay is reliable
+- `window.hwnd()` in Rust fails if called immediately after creation — delay 1 second
+- `SetWindowSubclass` must run on the window's thread — don't call from spawned threads
+- Button columns must be CSS `position: fixed; right: 0` to match the hook's hit zone
+- Never use `.catch(() => {})` — always log errors, even on expected-flaky operations
+- Game focus detection is via `GetForegroundWindow` polling in Rust — do NOT add JS-side focus listeners
+- `onMount` doesn't fire in overlay windows — use `$effect` for initialization
+
 ### DPI Awareness
 The WebviewWindow constructor takes **logical** pixels. Screen capture regions store **physical** pixels. Convert with `window.devicePixelRatio`:
 ```ts
@@ -199,7 +217,8 @@ Keyword-based detection — scans OCR lines for anchor text, extracts numeric va
 - Window position/size saved to settings on close, restored on startup
 
 ## Key References
-- `desktop/src/lib/README.md` — Component registry (read first)
+- `docs/OVERLAY-GUIDE.md` — **READ FIRST for any overlay work.** Complete guide: click-through, positioning, capabilities, cross-window gotchas
+- `desktop/src/lib/README.md` — Component registry (read first for UI work)
 - `CLAUDE.md` — Project-wide conventions
 - `BACKBONE.md` — Full project design document
 - `docs/superpowers/specs/2026-03-28-desktop-app-shell-design.md` — App shell spec

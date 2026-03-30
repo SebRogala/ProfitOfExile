@@ -45,13 +45,13 @@ jobs:
       - name: Upload exe artifact
         uses: actions/upload-artifact@v4
         with:
-          name: profitofexile-desktop-windows
+          name: ProfitOfExile
           path: desktop/src-tauri/target/release/profitofexile-desktop.exe
 
       - name: Upload NSIS installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: profitofexile-desktop-windows-installer
+          name: ProfitOfExile-installer
           path: desktop/src-tauri/target/release/bundle/nsis/*.exe
 
   release:
@@ -65,13 +65,13 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: profitofexile-desktop-windows
+          name: ProfitOfExile
           path: artifacts/exe
 
       - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
-          name: profitofexile-desktop-windows-installer
+          name: ProfitOfExile-installer
           path: artifacts/installer
 
       - name: Create GitHub Release

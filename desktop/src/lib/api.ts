@@ -4,7 +4,7 @@
  */
 
 import { store } from '$lib/stores/status.svelte';
-import { dispatchTradeEvent } from './tradeApi';
+import type { TradeLookupResult } from './tradeApi';
 
 // --- Types ---
 
@@ -163,6 +163,7 @@ export interface CompareGem {
 	sellConfidenceReason: string;
 	quickSellPrice: number;
 	riskAdjustedPrice: number;
+	trade?: TradeLookupResult;
 }
 
 // --- API helpers ---
@@ -269,6 +270,7 @@ function mapCompareRow(r: any): CompareGem {
 		sellConfidenceReason: r.sellConfidenceReason || '',
 		quickSellPrice: Math.round(r.quickSellPrice || 0),
 		riskAdjustedPrice: Math.round(r.riskAdjustedPrice || 0),
+		trade: r.trade ?? undefined,
 	};
 }
 
@@ -405,12 +407,16 @@ export async function fetchGemNames(query: string): Promise<string[]> {
 	return resp.names || [];
 }
 
-export async function fetchCompare(gems: string[], variant: string): Promise<CompareGem[]> {
-	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', {
-		gems: gems.join(','),
-		variant,
-	});
-	const results = (resp.data || []).map(mapCompareRow);
+export async function fetchCompare(gems: string[], variant: string, signal?: AbortSignal): Promise<CompareGem[]> {
+	const url = new URL(`${getApiBase()}/analysis/compare`);
+	url.searchParams.set('gems', gems.join(','));
+	url.searchParams.set('variant', variant);
+	const resp = await fetch(url.toString(), { signal });
+	if (!resp.ok) {
+		throw new Error(`API /analysis/compare: ${resp.status} ${resp.statusText}`);
+	}
+	const body = await resp.json() as { count: number; data: any[] };
+	const results = (body.data || []).map(mapCompareRow);
 
 	// Enrich with signal history in parallel
 	const settled = await Promise.allSettled(
@@ -518,18 +524,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				retries = 0;
 			};
 
-			eventSource.onmessage = (msg) => {
-				let parsed: any;
-				try {
-					parsed = JSON.parse(msg.data);
-				} catch {
-					onUpdate();
-					return;
-				}
-				if (parsed.type === 'waiting' || parsed.type === 'ready' || parsed.type === 'error') {
-					dispatchTradeEvent(parsed);
-					return;
-				}
+			eventSource.onmessage = () => {
 				onUpdate();
 			};
 

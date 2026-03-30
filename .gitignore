@@ -17,3 +17,4 @@ desktop/node_modules/
 desktop/.svelte-kit/
 desktop/build/
 .superpowers/
+.claude/worktrees/
