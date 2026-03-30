@@ -456,17 +456,7 @@ mod overlay_clickthrough {
         Some(stop_tx)
     }
 
-    pub fn uninstall_hook() {
-        if let Some(SendHook(h)) = HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            unsafe {
-                if let Err(e) = UnhookWindowsHookEx(h) {
-                    log::error!("Failed to unhook mouse hook: {} — hook may leak", e);
-                }
-            }
-        }
-        OVERLAY_HWND.store(0, Ordering::Relaxed);
-        IS_IGNORED.store(true, Ordering::Relaxed);
-    }
+
 
     pub fn set_overlay_hwnd(hwnd: HWND) {
         OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
