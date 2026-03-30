@@ -224,6 +224,16 @@ fn set_sidebar_open(open: bool, app: AppHandle) {
 }
 
 #[tauri::command]
+fn set_trade_staleness_settings(warn_secs: u32, critical_secs: u32, auto_refresh_secs: u32, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = warn_secs;
+    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = critical_secs;
+    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = auto_refresh_secs;
+    persist_settings(&app);
+    emit_status(&app);
+}
+
+#[tauri::command]
 fn get_gem_region(state: tauri::State<AppState>) -> CaptureRegion {
     state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -1326,6 +1336,7 @@ pub fn run() {
             reset_client_txt_path,
             set_server_url,
             set_sidebar_open,
+            set_trade_staleness_settings,
             get_logs,
             get_gem_region,
             set_gem_region,
