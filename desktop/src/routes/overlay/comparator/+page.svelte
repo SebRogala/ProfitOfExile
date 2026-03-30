@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
@@ -98,6 +99,44 @@
 		tradeData = {};
 	}
 
+	// Handle clicks forwarded from the mouse hook (overlay is fully click-through).
+	// The hook sends overlay-relative {x, y} in physical pixels. We convert to
+	// logical pixels and use elementFromPoint to find the target button — no
+	// fragile coordinate math, works regardless of DPI/layout.
+	$effect(() => {
+		let cancelled = false;
+
+		const unlistenPromise = listen<{ x: number; y: number }>('overlay-click', (event) => {
+			if (cancelled || results.length === 0) return;
+			const dpr = window.devicePixelRatio || 1;
+			const lx = event.payload.x / dpr;
+			const ly = event.payload.y / dpr;
+
+			const el = document.elementFromPoint(lx, ly);
+			if (!el) return;
+
+			const btn = el.closest('[data-action]') as HTMLElement | null;
+			if (!btn) return;
+
+			const action = btn.dataset.action;
+			const idx = parseInt(btn.dataset.index || '0', 10);
+
+			if (action === 'pick' && idx < results.length) {
+				selectedGem = results[idx].name;
+				handlePick();
+			} else if (action === 'refresh' && idx < results.length) {
+				requestTradeRefresh(results[idx]);
+			} else if (action === 'clear') {
+				handleClear();
+			}
+		});
+
+		return () => {
+			cancelled = true;
+			unlistenPromise.then(unlisten => unlisten());
+		};
+	});
+
 	// Poll Rust for comparator data (cross-window events unreliable, onMount doesn't fire in overlay)
 	let lastJson = '';
 	$effect(() => {
@@ -187,11 +226,11 @@
 			<div class="side">
 				{#each results as gem, i (gem.name)}
 					<div class="side-row">
-						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} onclick={() => { selectedGem = gem.name; handlePick(); }} title="Pick">&#x2713;</button>
-						<button class="act-btn" onclick={() => requestTradeRefresh(gem)} title="Refresh trade">&#x21BB;</button>
+						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} data-action="pick" data-index={i} title="Pick">&#x2713;</button>
+						<button class="act-btn" data-action="refresh" data-index={i} title="Refresh trade">&#x21BB;</button>
 					</div>
 				{/each}
-				<button class="clear-act" onclick={handleClear}>clear</button>
+				<button class="clear-act" data-action="clear">clear</button>
 			</div>
 		</div>
 	{/if}
@@ -421,7 +460,9 @@
 		font-size: 9px;
 	}
 
-	/* --- Side buttons --- */
+	/* --- Side buttons (clicks come from mouse hook via overlay-click events) ---
+	   pointer-events: auto is needed so elementFromPoint can find the buttons.
+	   OS-level click-through is handled by WS_EX_TRANSPARENT, not CSS. */
 	.side {
 		display: flex;
 		flex-direction: column;
