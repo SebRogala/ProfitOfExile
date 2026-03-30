@@ -7,6 +7,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | File | Export | Description |
 |------|--------|-------------|
 | `stores/status.svelte.ts` | `store`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. Read `store.status` and `store.logs` reactively. |
+| `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings'`. `nav.go('/settings')` switches. All pages are always mounted (hidden via CSS) — **do NOT use SvelteKit `<a href>` routing** for main views, it unmounts components and kills event listeners. |
 
 ## Components
 

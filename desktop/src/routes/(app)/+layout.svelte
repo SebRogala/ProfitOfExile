@@ -5,9 +5,11 @@
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { page } from '$app/stores';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
+	import { nav } from '$lib/stores/navigation.svelte';
 	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
+	import LabPage from './+page.svelte';
+	import SettingsPage from './settings/+page.svelte';
 
 	let { children } = $props();
 
@@ -172,12 +174,15 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={$page.url.pathname} onToggle={toggleSidebar}
+		<Sidebar open={sidebarOpen} currentPath={nav.view === 'lab' ? '/' : '/settings'} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay} />
 		<main class="content">
-			{#if children}
-				{@render children()}
-			{/if}
+			<div class:view-hidden={nav.view !== 'lab'}>
+				<LabPage />
+			</div>
+			<div class:view-hidden={nav.view !== 'settings'}>
+				<SettingsPage />
+			</div>
 		</main>
 	</div>
 </div>
@@ -201,5 +206,9 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 16px;
+	}
+
+	.view-hidden {
+		display: none;
 	}
 </style>

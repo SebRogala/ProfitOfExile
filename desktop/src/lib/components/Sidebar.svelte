@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { nav } from '$lib/stores/navigation.svelte';
+
 	let {
 		open = true,
 		currentPath = '/',
@@ -19,9 +21,9 @@
 {#if !open}
 <nav class="sidebar-collapsed">
 	<div class="collapsed-icons">
-		<a href="/" class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming">
+		<button class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming" onclick={() => nav.go('/')}>
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
-		</a>
+		</button>
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
 				<span class="icon">&#x1F5FA;&#xFE0F;</span>
@@ -41,9 +43,9 @@
 			</a>
 		{/if}
 		<div class="collapsed-sep"></div>
-		<a href="/settings" class="collapsed-item" class:active={currentPath === '/settings'} title="Settings">
+		<button class="collapsed-item" class:active={currentPath === '/settings'} title="Settings" onclick={() => nav.go('/settings')}>
 			<span class="icon">&#x2699;&#xFE0F;</span>
-		</a>
+		</button>
 	</div>
 	<div class="collapsed-overlays">
 		<div class="collapsed-overlay" title="Compass: off">
@@ -70,10 +72,10 @@
 	<div class="top">
 		<div class="section">
 			<div class="label">Strategies</div>
-			<a href="/" class="nav-item" class:active={currentPath === '/'}>
+			<button class="nav-item" class:active={currentPath === '/'} onclick={() => nav.go('/')}>
 				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
-			</a>
+			</button>
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
 					<span class="icon">&#x1F5FA;&#xFE0F;</span>
