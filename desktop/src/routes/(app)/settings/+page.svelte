@@ -119,6 +119,45 @@
 	}
 
 	// --- Comparator Overlay Position (red frame for positioning) ---
+	// --- Trade Staleness Settings ---
+	let tradeStaleWarnSecs = $state(store.status?.trade_stale_warn_secs ?? 120);
+	let tradeStaleCriticalSecs = $state(store.status?.trade_stale_critical_secs ?? 600);
+	let tradeAutoRefreshSecs = $state(store.status?.trade_auto_refresh_secs ?? 900);
+	let editingTradeStaleness = $state(false);
+
+	// Sync from store when status changes
+	$effect(() => {
+		if (store.status && !editingTradeStaleness) {
+			tradeStaleWarnSecs = store.status.trade_stale_warn_secs ?? 120;
+			tradeStaleCriticalSecs = store.status.trade_stale_critical_secs ?? 600;
+			tradeAutoRefreshSecs = store.status.trade_auto_refresh_secs ?? 900;
+		}
+	});
+
+	function startEditTradeStaleness() {
+		editingTradeStaleness = true;
+	}
+
+	async function saveTradeStaleness() {
+		try {
+			await invoke('set_trade_staleness_settings', {
+				warnSecs: tradeStaleWarnSecs,
+				criticalSecs: tradeStaleCriticalSecs,
+				autoRefreshSecs: tradeAutoRefreshSecs,
+			});
+			editingTradeStaleness = false;
+		} catch (e) {
+			console.error('Failed to save trade staleness settings:', e);
+		}
+	}
+
+	function cancelEditTradeStaleness() {
+		tradeStaleWarnSecs = store.status?.trade_stale_warn_secs ?? 120;
+		tradeStaleCriticalSecs = store.status?.trade_stale_critical_secs ?? 600;
+		tradeAutoRefreshSecs = store.status?.trade_auto_refresh_secs ?? 900;
+		editingTradeStaleness = false;
+	}
+
 	let comparatorOverlaySettings = $state<{ x: number; y: number; width: number; height: number } | null>(null);
 	let comparatorPositionOverlay = $state<any>(null);
 
@@ -297,13 +336,64 @@
 			<h2>Trade</h2>
 
 			<div class="setting-row">
-				<span class="setting-label">Auto-trigger lookup</span>
-				<span class="setting-value muted">Coming soon</span>
+				<span class="setting-label">Stale warning (sec)</span>
+				{#if editingTradeStaleness}
+					<div class="setting-edit">
+						<input
+							type="number"
+							class="setting-input narrow"
+							bind:value={tradeStaleWarnSecs}
+							min="30"
+							max="3600"
+						/>
+					</div>
+				{:else}
+					<span class="setting-value mono">{store.status?.trade_stale_warn_secs ?? 120}s</span>
+				{/if}
 			</div>
 
 			<div class="setting-row">
-				<span class="setting-label">Cache min-age</span>
-				<span class="setting-value muted">Coming soon</span>
+				<span class="setting-label">Stale critical (sec)</span>
+				{#if editingTradeStaleness}
+					<div class="setting-edit">
+						<input
+							type="number"
+							class="setting-input narrow"
+							bind:value={tradeStaleCriticalSecs}
+							min="60"
+							max="7200"
+						/>
+					</div>
+				{:else}
+					<span class="setting-value mono">{store.status?.trade_stale_critical_secs ?? 600}s</span>
+				{/if}
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Auto-refresh (sec)</span>
+				{#if editingTradeStaleness}
+					<div class="setting-edit">
+						<input
+							type="number"
+							class="setting-input narrow"
+							bind:value={tradeAutoRefreshSecs}
+							min="60"
+							max="7200"
+						/>
+					</div>
+				{:else}
+					<span class="setting-value mono">{store.status?.trade_auto_refresh_secs ?? 900}s</span>
+				{/if}
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label"></span>
+				{#if editingTradeStaleness}
+					<button class="btn-small save" onclick={saveTradeStaleness}>Save</button>
+					<button class="btn-small" onclick={cancelEditTradeStaleness}>Cancel</button>
+				{:else}
+					<button class="btn-small" onclick={startEditTradeStaleness}>Edit</button>
+				{/if}
 			</div>
 		</section>
 
@@ -419,6 +509,10 @@
 	.setting-input:focus {
 		outline: none;
 		border-color: var(--accent);
+	}
+
+	.setting-input.narrow {
+		max-width: 100px;
 	}
 
 	.btn-small {

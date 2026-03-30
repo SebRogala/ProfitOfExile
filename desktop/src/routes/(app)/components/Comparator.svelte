@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
-	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
-	import { METRIC_TOOLTIPS, SIGNAL_TOOLTIPS, WINDOW_TOOLTIPS } from '$lib/tooltips';
+	import type { TradeLookupResult, TradeSignals } from '$lib/tradeApi';
+	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
+	import { store } from '$lib/stores/status.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import SignalBadge from './SignalBadge.svelte';
@@ -59,6 +60,15 @@
 
 	// Listen for gem-detected events from Rust OCR.
 	// Rust emits one gem at a time as a string. Accumulate up to 3, then auto-compare.
+	// loadResults is debounced with 300ms to collapse rapid OCR detections.
+	let loadDebounce: ReturnType<typeof setTimeout> | null = null;
+	let compareAbort: AbortController | null = null;
+
+	function debouncedLoadResults() {
+		if (loadDebounce) clearTimeout(loadDebounce);
+		loadDebounce = setTimeout(() => loadResults(), 300);
+	}
+
 	$effect(() => {
 		let cancelled = false;
 		const gemPromise = listen<string>('gem-detected', (event) => {
@@ -67,12 +77,7 @@
 			if (!gemName || selectedGems.includes(gemName)) return;
 			if (selectedGems.length >= 3) return;
 			selectedGems = [...selectedGems, gemName];
-			loadResults();
-			if (autoTradeDisabled) {
-				fetchTradeCacheOnly(gemName);
-			} else {
-				fetchTradeData(gemName);
-			}
+			debouncedLoadResults();
 		});
 
 		// Auto-clear when new font round starts or manual scan restarts
@@ -92,11 +97,13 @@
 		// Listen for trade refresh request from overlay
 		const refreshPromise = listen<{ name: string; variant: string }>('overlay-trade-refresh', (event) => {
 			if (cancelled) return;
-			fetchTradeData(event.payload.name, true);
+			refreshTradeData(event.payload.name);
 		});
 
 		return () => {
 			cancelled = true;
+			if (loadDebounce) clearTimeout(loadDebounce);
+			if (compareAbort) compareAbort.abort();
 			gemPromise.then(unlisten => unlisten());
 			clearPromise.then(unlisten => unlisten());
 			pickPromise.then(unlisten => unlisten());
@@ -114,13 +121,11 @@
 	let inputRef = $state<HTMLInputElement | null>(null);
 
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
-	let tradeLoading = $state<Record<string, { loading: boolean; waitSeconds?: number }>>({});
+	let tradeLoading = $state<Record<string, boolean>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
-	let tradeGeneration = $state<Record<string, number>>({});
-	let autoTradeDisabled = $state(true);
+	let autoTradeEnabled = $state(false);
 
-	const TRADE_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
-
+	/** Trade cache age in milliseconds, or null if no data. */
 	function tradeCacheAge(gem: string): number | null {
 		const td = tradeData[gem];
 		if (!td?.fetchedAt) return null;
@@ -136,89 +141,23 @@
 		return `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
 	}
 
-	const TRADE_STALE_MS = 2 * 60 * 1000; // 2 minutes — visual staleness indicator
-
-	function canRefreshTrade(gem: string): boolean {
+	/** Staleness level based on store thresholds: 'normal', 'warn', or 'critical'. */
+	function tradeStaleness(gem: string): 'normal' | 'warn' | 'critical' {
 		const age = tradeCacheAge(gem);
-		if (age == null) return true;
-		return age >= TRADE_COOLDOWN_MS;
+		if (age == null) return 'normal';
+		const warnMs = (store.status?.trade_stale_warn_secs ?? 120) * 1000;
+		const critMs = (store.status?.trade_stale_critical_secs ?? 600) * 1000;
+		if (age >= critMs) return 'critical';
+		if (age >= warnMs) return 'warn';
+		return 'normal';
 	}
 
-	function isTradeCacheStale(gem: string): boolean {
+	/** Check if trade data is stale enough to warrant auto-refresh. */
+	function isTradeAutoRefreshDue(gem: string): boolean {
 		const age = tradeCacheAge(gem);
-		if (age == null) return false;
-		return age >= TRADE_STALE_MS;
-	}
-
-	function tradeCooldownRemaining(gem: string): string {
-		const age = tradeCacheAge(gem);
-		if (age == null || age >= TRADE_COOLDOWN_MS) return '';
-		const remaining = Math.ceil((TRADE_COOLDOWN_MS - age) / 60000);
-		return `${remaining}m`;
-	}
-
-	/** Fetch trade data — full lookup with async wait for GGG response.
-	 *  Uses a generation counter so cancelled requests don't overwrite current state. */
-	async function fetchTradeData(gem: string, force = false) {
-		const gen = (tradeGeneration[gem] || 0) + 1;
-		tradeGeneration[gem] = gen;
-		tradeLoading[gem] = { loading: true };
-		const isStale = () => tradeGeneration[gem] !== gen;
-
-		try {
-			const { immediate, requestId } = await lookupTrade(gem, variant, force);
-			if (isStale()) return;
-			if (immediate) {
-				tradeData[gem] = immediate;
-				tradeLoading[gem] = { loading: false };
-			} else if (requestId) {
-				let resolved = false;
-				const unsub = registerTradeListener(requestId, {
-					onWait: (s) => { if (!isStale()) tradeLoading[gem] = { loading: true, waitSeconds: s }; },
-					onReady: (data) => { resolved = true; if (!isStale()) { tradeData[gem] = data; tradeLoading[gem] = { loading: false }; } unsub(); },
-					onError: () => { resolved = true; if (!isStale()) tradeLoading[gem] = { loading: false }; unsub(); },
-				});
-				// Polling fallback when Mercure SSE isn't connected
-				pollTradeResult(gem, variant).then((data) => {
-					if (!resolved && !isStale() && data) {
-						resolved = true;
-						tradeData[gem] = data;
-						tradeLoading[gem] = { loading: false };
-						unsub();
-					}
-				}).catch((err) => {
-					console.warn(`[Trade] Poll failed for ${gem}:`, err);
-				});
-			} else {
-				tradeLoading[gem] = { loading: false };
-			}
-		} catch (err) {
-			console.warn(`[Trade] Lookup failed for ${gem}:`, err);
-			if (!isStale()) tradeLoading[gem] = { loading: false };
-		}
-	}
-
-	/** Cache-only lookup — returns backend LRU data without triggering a GGG request.
-	 *  Returns 204 on cache miss (no API call queued). */
-	async function fetchTradeCacheOnly(gem: string) {
-		try {
-			const { immediate } = await lookupTrade(gem, variant, false, true);
-			if (immediate) {
-				tradeData[gem] = immediate;
-			}
-		} catch (err) {
-			console.warn(`[Trade] Cache lookup failed for ${gem}:`, err);
-		}
-	}
-
-	function fetchTradeDataForAll() {
-		for (const gem of selectedGems) {
-			if (autoTradeDisabled) {
-				fetchTradeCacheOnly(gem);
-			} else {
-				fetchTradeData(gem);
-			}
-		}
+		if (age == null) return true; // no data at all
+		const refreshMs = (store.status?.trade_auto_refresh_secs ?? 900) * 1000;
+		return age >= refreshMs;
 	}
 
 	async function loadResults() {
@@ -227,11 +166,44 @@
 			results = [];
 			return;
 		}
+		// Cancel any in-flight compare request
+		if (compareAbort) compareAbort.abort();
+		compareAbort = new AbortController();
 		try {
-			results = await fetchCompare(active, variant);
-		} catch (err) {
+			results = await fetchCompare(active, variant, compareAbort.signal);
+			// Populate tradeData from compare response (server-side cache enrichment)
+			for (const gem of results) {
+				if (gem.trade) {
+					tradeData[gem.name] = gem.trade;
+				}
+			}
+			// Auto-trade: if enabled, invoke Rust trade_lookup for gems with no/stale trade data
+			if (autoTradeEnabled) {
+				for (const gem of results) {
+					if (!tradeData[gem.name] || isTradeAutoRefreshDue(gem.name)) {
+						invokeRustTrade(gem.name);
+					}
+				}
+			}
+		} catch (err: any) {
+			if (err?.name === 'AbortError') return; // cancelled, not an error
 			console.error('[Comparator] Failed to load results:', err);
 			results = [];
+		}
+	}
+
+	/** Invoke Rust-side trade lookup (hits GGG directly, Rust handles server submit). */
+	async function invokeRustTrade(gem: string) {
+		tradeLoading[gem] = true;
+		try {
+			const result = await invoke<TradeLookupResult>('trade_lookup', {
+				gem, variant,
+			});
+			tradeData[gem] = result;
+		} catch (err) {
+			console.warn(`[Trade] Rust lookup failed for ${gem}:`, err);
+		} finally {
+			tradeLoading[gem] = false;
 		}
 	}
 
@@ -267,11 +239,6 @@
 		showDropdown = false;
 		highlightedIndex = -1;
 		loadResults();
-		if (autoTradeDisabled) {
-			fetchTradeCacheOnly(name);
-		} else {
-			fetchTradeData(name);
-		}
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
@@ -288,6 +255,8 @@
 	}
 
 	function clearAll() {
+		if (compareAbort) compareAbort.abort();
+		if (loadDebounce) clearTimeout(loadDebounce);
 		selectedGems = [];
 		results = [];
 		tradeData = {};
@@ -302,7 +271,6 @@
 
 	function handleVariantChange() {
 		loadResults();
-		fetchTradeDataForAll();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -381,7 +349,7 @@
 
 	function refreshTradeData(gem: string) {
 		// Don't clear existing data — keep showing cached while loading.
-		fetchTradeData(gem, true);
+		invokeRustTrade(gem);
 	}
 
 	function concentrationClass(c: TradeSignals['sellerConcentration']): string {
@@ -426,9 +394,9 @@
 			{#if selectedGems.length > 0}
 				<button class="clear-btn" onclick={clearAll}>Clear All</button>
 			{/if}
-			<Tooltip text="When enabled, trade lookups are not sent automatically on gem add"><label class="auto-trade-toggle">
-				<input type="checkbox" bind:checked={autoTradeDisabled} />
-				<span class="toggle-label">Disable auto-trade</span>
+			<Tooltip text="When enabled, auto-invokes GGG trade lookup on cache miss or stale data"><label class="auto-trade-toggle">
+				<input type="checkbox" bind:checked={autoTradeEnabled} />
+				<span class="toggle-label">Auto-trade</span>
 			</label></Tooltip>
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
@@ -543,15 +511,10 @@
 
 					<!-- Trade Data Section -->
 					<div class="trade-section">
-						{#if tradeLoading[gem.name]?.loading && !tradeData[gem.name]}
+						{#if tradeLoading[gem.name] && !tradeData[gem.name]}
 							<div class="trade-loading">
 								<span class="trade-spinner"></span>
-								{#if tradeLoading[gem.name].waitSeconds != null && tradeLoading[gem.name].waitSeconds > 0}
-									<span class="trade-loading-text">Waiting {tradeLoading[gem.name].waitSeconds}s...</span>
-								{:else}
-									<span class="trade-loading-text">Fetching trade data...</span>
-								{/if}
-								<Tooltip text="Cancel trade request"><button class="trade-cancel-btn" onclick={() => { tradeGeneration[gem.name] = (tradeGeneration[gem.name] || 0) + 1; tradeLoading[gem.name] = { loading: false }; }}>&#215;</button></Tooltip>
+								<span class="trade-loading-text">Fetching trade data...</span>
 							</div>
 						{:else if !tradeData[gem.name]}
 							<div class="trade-empty">
@@ -589,11 +552,11 @@
 									<span class="trade-listings-badge">{td.total} listings</span>
 									<span class="trade-median">median: {fmtPrice(td.medianTop10)}c</span>
 									<span class="trade-meta-right">
-										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)}>{tradeCacheAgeStr(gem.name)}</span>
-										{#if tradeLoading[gem.name]?.loading}
+										<span class="trade-cache-age" class:trade-cache-warn={tradeStaleness(gem.name) === 'warn'} class:trade-cache-critical={tradeStaleness(gem.name) === 'critical'}>{tradeCacheAgeStr(gem.name)}</span>
+										{#if tradeLoading[gem.name]}
 											<span class="trade-spinner-inline"></span>
 										{:else}
-											<button class="trade-action-btn" class:trade-refresh-stale={isTradeCacheStale(gem.name)} onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
+											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
 										{/if}
 										{#if gem.name.includes(' of ')}
 											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
@@ -1203,7 +1166,10 @@
 		color: var(--color-lab-text-muted, #888);
 		font-size: 0.75rem;
 	}
-	.trade-cache-stale {
+	.trade-cache-warn {
+		color: #eab308;
+	}
+	.trade-cache-critical {
 		color: var(--color-lab-red);
 	}
 	.trade-refresh-stale {

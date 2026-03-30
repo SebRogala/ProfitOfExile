@@ -11,7 +11,7 @@
 		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
-	import { lookupTrade, pollTradeResult, type TradeLookupResult } from '$lib/tradeApi';
+	import type { TradeLookupResult } from '$lib/tradeApi';
 
 	import Header from './components/Header.svelte';
 	import Comparator from './components/Comparator.svelte';
@@ -99,22 +99,19 @@
 		await Promise.allSettled(
 			sessionQueue.map(async (item, idx) => {
 				try {
-					const { immediate, requestId } = await lookupTrade(item.gem, item.variant, true);
-					let result: TradeLookupResult | null = immediate;
-
-					if (!result && requestId) {
-						result = await pollTradeResult(item.gem, item.variant);
-					}
+					const result = await invoke<TradeLookupResult>('trade_lookup', {
+						gem: item.gem, variant: item.variant,
+					});
 
 					if (result) {
 						sessionQueue = sessionQueue.map((q, i) =>
 							i === idx
 								? {
 										...q,
-										currentFloor: result!.priceFloor,
-										currentFloorOriginal: result!.listings[0]?.price ?? result!.priceFloor,
-										currentCurrency: result!.listings[0]?.currency ?? 'chaos',
-										priceDelta: result!.priceFloor - q.snapshotFloor,
+										currentFloor: result.priceFloor,
+										currentFloorOriginal: result.listings[0]?.price ?? result.priceFloor,
+										currentCurrency: result.listings[0]?.currency ?? 'chaos',
+										priceDelta: result.priceFloor - q.snapshotFloor,
 										refreshing: false,
 									}
 								: q

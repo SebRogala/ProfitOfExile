@@ -5,7 +5,9 @@
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
 
-	const TRADE_STALE_MS = 2 * 60 * 1000;
+	// Staleness thresholds — read from polled Rust status, with sensible defaults
+	let tradeStaleWarnSecs = $state(120);
+	let tradeStaleCriticalSecs = $state(600);
 
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
@@ -50,9 +52,12 @@
 		return `${Math.floor(mins / 60)}h${mins % 60}m`;
 	}
 
-	function isTradeCacheStale(trade: TradeLookupResult): boolean {
-		if (!trade.fetchedAt) return true;
-		return Date.now() - new Date(trade.fetchedAt).getTime() >= TRADE_STALE_MS;
+	function tradeStaleness(trade: TradeLookupResult): 'normal' | 'warn' | 'critical' {
+		if (!trade.fetchedAt) return 'critical';
+		const ageMs = Date.now() - new Date(trade.fetchedAt).getTime();
+		if (ageMs >= tradeStaleCriticalSecs * 1000) return 'critical';
+		if (ageMs >= tradeStaleWarnSecs * 1000) return 'warn';
+		return 'normal';
 	}
 
 	function listingAge(indexedAt: string): string {
@@ -112,6 +117,12 @@
 						selectedGem = null;
 					}
 				}
+				// Also refresh staleness thresholds from status
+				const status = await invoke<any>('get_status');
+				if (status) {
+					tradeStaleWarnSecs = status.trade_stale_warn_secs ?? 120;
+					tradeStaleCriticalSecs = status.trade_stale_critical_secs ?? 600;
+				}
 			} catch (e) { console.warn('[overlay] poll failed:', e); }
 		}, 500);
 
@@ -159,7 +170,7 @@
 									<span>listings</span>
 									<span>{trade.total}</span>
 								</span>
-								<span class="cache-age" class:stale={isTradeCacheStale(trade)}>{tradeCacheAge(trade)}</span>
+								<span class="cache-age" class:warn={tradeStaleness(trade) === 'warn'} class:critical={tradeStaleness(trade) === 'critical'}>{tradeCacheAge(trade)}</span>
 							{:else}
 								<span class="trade-nodata">no trade data</span>
 							{/if}
@@ -290,7 +301,11 @@
 		margin-left: auto;
 	}
 
-	.cache-age.stale {
+	.cache-age.warn {
+		color: #eab308;
+	}
+
+	.cache-age.critical {
 		color: #ef4444;
 	}
 
