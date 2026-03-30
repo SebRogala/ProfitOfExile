@@ -132,16 +132,7 @@
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, boolean>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
-	let autoTradeEnabled = $state(false);
-
-	// Load persisted auto-trade setting from Rust status.
-	$effect(() => {
-		invoke<any>('get_status').then(s => {
-			if (s?.auto_trade_enabled != null) {
-				autoTradeEnabled = s.auto_trade_enabled;
-			}
-		}).catch(() => {});
-	});
+	let autoTradeEnabled = $state(store.status?.auto_trade_enabled ?? false);
 
 	/** Trade cache age in milliseconds, or null if no data. */
 	function tradeCacheAge(gem: string): number | null {

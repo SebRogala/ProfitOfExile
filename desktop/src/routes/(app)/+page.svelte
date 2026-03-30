@@ -260,7 +260,9 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else}
-		{#if activeTab === 'Session'}
+		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
+		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
+		<div class:tab-hidden={activeTab !== 'Session'}>
 			<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} />
 			<SessionQueue
 				queue={sessionQueue}
@@ -268,7 +270,8 @@
 				onClear={handleClearQueue}
 				onRefresh={handleRefreshQueue}
 			/>
-		{:else if activeTab === 'Rankings'}
+		</div>
+		{#if activeTab === 'Rankings'}
 			<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 		{:else if activeTab === 'Font EV'}
 			<FontEVCompare {refreshKey} league={status?.league || ''} />
@@ -343,6 +346,10 @@
 	.scan-stop {
 		background: var(--color-lab-yellow);
 		color: #1a1a2e;
+	}
+
+	.tab-hidden {
+		display: none;
 	}
 
 	/* Dashboard — adapted for desktop viewport */
