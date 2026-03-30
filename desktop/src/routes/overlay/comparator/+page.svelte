@@ -37,6 +37,9 @@
 			const best = results.find((g) => g.recommendation === 'BEST');
 			selectedGem = best?.name ?? results[0]?.name ?? null;
 		}
+		// Tell the mouse hook whether we have content — when empty, clicks pass through to game.
+		invoke('set_overlay_has_content', { hasContent: results.length > 0 })
+			.catch(e => console.warn('[overlay] set_overlay_has_content failed:', e));
 	});
 
 	function formatPrice(chaos: number): string {

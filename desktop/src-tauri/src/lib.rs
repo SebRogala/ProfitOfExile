@@ -464,6 +464,8 @@ mod overlay_clickthrough {
     static INTERACTIVE_WIDTH: AtomicI32 = AtomicI32::new(48);
     /// Click buffer — hook pushes overlay-relative coordinates, message loop drains and emits events.
     static CLICK_BUFFER: StdMutex<Vec<(i32, i32)>> = StdMutex::new(Vec::new());
+    /// Whether the overlay has visible content. When false, clicks pass through entirely.
+    static HAS_CONTENT: AtomicBool = AtomicBool::new(false);
 
     /// Check if cursor is in the interactive zone. Also refreshes cached rect if dirty.
     fn check_interactive(cx: i32, cy: i32) -> bool {
@@ -511,7 +513,7 @@ mod overlay_clickthrough {
                 }
             }
 
-            if check_interactive(cx, cy) {
+            if check_interactive(cx, cy) && HAS_CONTENT.load(Ordering::Relaxed) {
                 let msg_id = w_param.0 as u32;
                 // Consume clicks in the interactive zone — don't pass to game.
                 if msg_id == WM_LBUTTONDOWN || msg_id == WM_LBUTTONUP {
@@ -583,6 +585,10 @@ mod overlay_clickthrough {
     pub fn set_overlay_hwnd(hwnd: HWND) {
         OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
         RECT_DIRTY.store(true, Ordering::Relaxed);
+    }
+
+    pub fn set_has_content(has: bool) {
+        HAS_CONTENT.store(has, Ordering::Relaxed);
     }
 
     pub fn set_interactive_width(px: i32) {
@@ -687,6 +693,12 @@ fn force_show_overlays(app: AppHandle) {
 fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()) = payload;
+}
+
+#[tauri::command]
+fn set_overlay_has_content(has_content: bool) {
+    #[cfg(windows)]
+    overlay_clickthrough::set_has_content(has_content);
 }
 
 #[tauri::command]
@@ -1600,6 +1612,7 @@ pub fn run() {
             test_ocr_on_image,
             force_show_overlays,
             set_comparator_data,
+            set_overlay_has_content,
             get_comparator_data,
             set_overlay_clickthrough,
             request_trade_refresh,
