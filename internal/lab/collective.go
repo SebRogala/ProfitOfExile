@@ -233,11 +233,16 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 // It assigns BEST/OK/AVOID recommendations based on weighted ROI ranking.
 // ROI is computed using the cheapest base gem of the same color/variant (lab scenario:
 // you transform a random gem of that color, not a specific base).
+//
+// requestedVariant is the user's chosen variant (e.g. "20/20"). When a gem has
+// no transfigure data for this variant, the result preserves the requested variant
+// instead of falling back to a different one or leaving it empty.
 func BuildCompareResults(
 	names []string,
 	transfigure []TransfigureResult,
 	trends []TrendResult,
 	sparklines map[string][]SparklinePoint,
+	requestedVariant string,
 ) []CompareResult {
 	// Index transfigure by transfigured name + variant.
 	type trKey struct{ name, variant string }
@@ -308,8 +313,13 @@ func BuildCompareResults(
 		}
 
 		if !found {
-			// Gem not found in transfigure results — include with zero values.
+			// Gem not found in transfigure results — include with zero values
+			// but preserve the requested variant so the frontend doesn't fall
+			// back to a different one.
 			cr.Confidence = "LOW"
+			if requestedVariant != "" {
+				cr.Variant = requestedVariant
+			}
 		}
 
 		// Join trend data.

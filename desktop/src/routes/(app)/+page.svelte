@@ -47,7 +47,10 @@
 	}
 
 	// --- Mercure connection guard ---
-	let mercureInitialized = false;
+	// $state flag that flips once (false → true) when store.status first arrives.
+	// Used as the sole dependency for the Mercure effect so it fires exactly once,
+	// not on every store.status mutation (game focus, lab state, etc.).
+	let statusReady = $state(false);
 
 	// --- Session Queue state ---
 	let sessionQueue = $state<QueueItem[]>([]);
@@ -179,19 +182,27 @@
 		selectedLab = lab;
 	}
 
-	// Data load effect: re-runs when store.status changes (e.g. settings update).
-	// Only triggers a single debounced loadAll, not a connection storm.
+	// Detect when store.status first becomes available.
+	// statusReady flips once (false → true) and never changes again,
+	// so effects that depend on it run exactly once.
 	$effect(() => {
-		if (!store.status) return;
+		if (store.status && !statusReady) {
+			statusReady = true;
+		}
+	});
+
+	// Initial data load — fires once when status is ready.
+	// Subsequent reloads come from Mercure events via debouncedMercureUpdate.
+	$effect(() => {
+		if (!statusReady) return;
 		loadAll();
 	});
 
-	// Mercure connection effect: connects once, guarded by a plain `let` flag
-	// so store.status changes don't recreate the EventSource connection.
+	// Mercure connection — connects once when status is ready.
+	// statusReady only changes once, so this effect never re-runs and the
+	// EventSource is never torn down by Svelte's cleanup-on-rerun cycle.
 	$effect(() => {
-		if (!store.status) return;
-		if (mercureInitialized) return;
-		mercureInitialized = true;
+		if (!statusReady) return;
 
 		mercure = connectMercure(debouncedMercureUpdate, (connected) => {
 			if (status) {
@@ -201,7 +212,6 @@
 
 		return () => {
 			mercure?.close();
-			mercureInitialized = false;
 			if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
 		};
 	});

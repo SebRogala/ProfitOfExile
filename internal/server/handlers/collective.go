@@ -344,7 +344,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		}
 		sparklines = normalizeSparklines(sparklines, compareMC, variant)
 
-		results := lab.BuildCompareResults(names, transfigure, trends, sparklines)
+		results := lab.BuildCompareResults(names, transfigure, trends, sparklines, variant)
 
 		// Enrich with risk-adjusted price from cached v2 GemSignals.
 		if cache != nil {

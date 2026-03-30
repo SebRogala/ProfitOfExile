@@ -75,12 +75,11 @@ impl LabStateMachine {
         None
     }
 
-    /// Transition from FontReady to PickingGems (called when screen reader starts).
-    pub fn start_picking(&mut self) {
-        if self.state == LabState::FontReady {
-            self.state = LabState::PickingGems;
-            log::info!("Lab state: FontReady -> PickingGems");
-        }
+    /// Set state to PickingGems directly.
+    #[cfg(test)]
+    pub fn set_picking(&mut self) {
+        self.state = LabState::PickingGems;
+        log::info!("Lab state: {:?} -> PickingGems", self.state);
     }
 
     #[allow(dead_code)]
@@ -119,7 +118,7 @@ mod tests {
         sm.process_line(
             "[INFO Client] InstanceClientLabyrinthCraftResultOptionsList recieved",
         );
-        sm.start_picking();
+        sm.set_picking();
         assert_eq!(*sm.state(), LabState::PickingGems);
 
         let event = sm.process_line(
@@ -135,7 +134,7 @@ mod tests {
         sm.process_line(
             "[INFO Client] InstanceClientLabyrinthCraftResultOptionsList recieved",
         );
-        sm.start_picking();
+        sm.set_picking();
         assert_eq!(*sm.state(), LabState::PickingGems);
 
         // Another font usage
@@ -167,7 +166,7 @@ mod tests {
         let mut sm = LabStateMachine::new();
         // Get to Done state
         sm.process_line("[INFO Client] InstanceClientLabyrinthCraftResultOptionsList recieved");
-        sm.start_picking();
+        sm.set_picking();
         sm.process_line(r#"[DEBUG Client] Generating level 69 area "2_10_town" with seed 1"#);
         assert_eq!(*sm.state(), LabState::Done);
 
@@ -212,7 +211,7 @@ mod tests {
     fn focus_events_fire_during_picking() {
         let mut sm = LabStateMachine::new();
         sm.process_line("[INFO Client] InstanceClientLabyrinthCraftResultOptionsList recieved");
-        sm.start_picking();
+        sm.set_picking();
         assert_eq!(*sm.state(), LabState::PickingGems);
 
         // Focus events should fire even during PickingGems (no state change)

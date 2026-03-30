@@ -495,6 +495,8 @@
 								<span class="range-sep">&middot;</span>
 								<span class="range-label">7 days highest: {gem.high7d}c</span>
 							</div>
+						{:else if gem.transPrice === 0}
+							<div class="anomaly-banner">No poe.ninja data — check trade listings</div>
 						{/if}
 					</div>
 					{#if gem.signal === 'DUMPING' || gem.signal === 'TRAP'}
@@ -1403,5 +1405,11 @@
 		padding: 6px 10px;
 		background: rgba(239, 68, 68, 0.08);
 		border-left: 3px solid var(--color-lab-red);
+	}
+	.anomaly-banner {
+		color: var(--color-lab-yellow, #eab308);
+		font-size: 0.75rem;
+		font-style: italic;
+		margin-top: 4px;
 	}
 </style>
