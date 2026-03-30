@@ -162,7 +162,9 @@
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
 	};
 
-	$effect(() => { refreshKey; loadAll(); });
+	// Load once on mount. Parent no longer triggers reloads via refreshKey —
+	// Mercure storm fix ensures data refreshes are debounced at the dashboard level.
+	$effect(() => { loadAll(); });
 </script>
 
 <section class="section">
