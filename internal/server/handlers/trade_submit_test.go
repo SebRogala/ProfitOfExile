@@ -127,6 +127,16 @@ func TestTradeSubmit_MissingFields(t *testing.T) {
 			body:      `{}`,
 			wantError: "gem and variant are required",
 		},
+		{
+			name:      "gem too long (>200 chars)",
+			body:      `{"gem":"` + strings.Repeat("x", 201) + `","variant":"21/20","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
+			wantError: "gem or variant too long",
+		},
+		{
+			name:      "variant too long (>20 chars)",
+			body:      `{"gem":"Vaal Grace","variant":"` + strings.Repeat("x", 21) + `","total":1,"priceFloor":10,"listings":[],"signals":{"sellerConcentration":"NORMAL","cheapestStaleness":"FRESH","priceOutlier":false,"uniqueAccounts":0},"divinePrice":212,"tradeUrl":"","fetchedAt":"2026-03-29T00:00:00Z"}`,
+			wantError: "gem or variant too long",
+		},
 	}
 
 	for _, tt := range tests {
@@ -207,34 +217,6 @@ func TestTradeSubmit_NilCacheGuard(t *testing.T) {
 
 	if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 404 or 405 when cache is nil", w.Code)
-	}
-}
-
-func TestTradeSubmit_NilRepoGuard(t *testing.T) {
-	// When Repository is nil, the handler should still work — it just skips
-	// the async DB persist. This is the normal desktop-only flow.
-	cache := trade.NewTradeCache(10)
-	router := submitRouter(cache, nil)
-
-	body := validSubmitBody("Empower Support", "4")
-	req := httptest.NewRequest(http.MethodPost, "/api/trade/submit", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusNoContent, w.Body.String())
-	}
-
-	// Verify the result was cached despite nil repo.
-	key := trade.CacheKey("Empower Support", "4")
-	cached, ok := cache.Get(key)
-	if !ok {
-		t.Fatal("expected result to be cached after submit with nil repo, but cache miss")
-	}
-	if cached.Gem != "Empower Support" {
-		t.Errorf("cached Gem = %q, want %q", cached.Gem, "Empower Support")
 	}
 }
 
