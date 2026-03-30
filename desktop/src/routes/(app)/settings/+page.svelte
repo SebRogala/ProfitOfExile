@@ -158,6 +158,7 @@
 			editingTradeStaleness = false;
 		} catch (e) {
 			console.error('Failed to save trade staleness settings:', e);
+			tradeStalenessError = 'Failed to save settings. Please try again.';
 		}
 	}
 
