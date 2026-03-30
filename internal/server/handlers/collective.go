@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/trade"
 )
 
 // CollectiveAnalysis returns a ranked "what to farm now" list combining
@@ -253,7 +254,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 
 // CompareAnalysis returns side-by-side comparison of 1-5 specific gems.
 // Query params: gems (comma-separated, required, max 5), variant (optional).
-func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+// tradeCache may be nil — trade enrichment is skipped when unavailable.
+func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		gemsParam := r.URL.Query().Get("gems")
 		if gemsParam == "" {
@@ -395,11 +397,12 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			SellConfidenceReason string              `json:"sellConfidenceReason"`
 			QuickSellPrice       float64             `json:"quickSellPrice"`
 			RiskAdjustedPrice    float64             `json:"riskAdjustedPrice"`
+			Trade                *trade.TradeLookupResult `json:"trade,omitempty"`
 		}
 
 		rows := make([]row, 0, len(results))
 		for _, cr := range results {
-			rows = append(rows, row{
+			rw := row{
 				TransfiguredName:     cr.TransfiguredName,
 				BaseName:             cr.BaseName,
 				Variant:              cr.Variant,
@@ -434,7 +437,16 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				SellConfidenceReason: cr.SellConfidenceReason,
 				QuickSellPrice:       cr.QuickSellPrice,
 				RiskAdjustedPrice:    cr.RiskAdjustedPrice,
-			})
+			}
+
+			// Enrich with cached trade data when available.
+			if tradeCache != nil {
+				if tradeResult, ok := tradeCache.Get(trade.CacheKey(cr.TransfiguredName, cr.Variant)); ok {
+					rw.Trade = tradeResult
+				}
+			}
+
+			rows = append(rows, rw)
 		}
 
 		resp := map[string]any{
