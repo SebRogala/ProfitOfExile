@@ -22,7 +22,20 @@ pub struct Settings {
     pub window: Option<WindowSettings>,
     pub sidebar_open: bool,
     pub comparator_overlay: Option<OverlaySettings>,
+    /// Yellow indicator threshold for trade data age (seconds).
+    #[serde(default = "default_120")]
+    pub trade_stale_warn_secs: u32,
+    /// Red indicator threshold for trade data age (seconds).
+    #[serde(default = "default_600")]
+    pub trade_stale_critical_secs: u32,
+    /// Auto-refresh trade data after this many seconds.
+    #[serde(default = "default_900")]
+    pub trade_auto_refresh_secs: u32,
 }
+
+fn default_120() -> u32 { 120 }
+fn default_600() -> u32 { 600 }
+fn default_900() -> u32 { 900 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlaySettings {
@@ -52,6 +65,9 @@ impl Default for Settings {
             window: None,
             sidebar_open: true,
             comparator_overlay: None,
+            trade_stale_warn_secs: default_120(),
+            trade_stale_critical_secs: default_600(),
+            trade_auto_refresh_secs: default_900(),
         }
     }
 }
@@ -130,6 +146,9 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         window: None, // Window settings are saved separately on close, not from AppState
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         comparator_overlay: None, // Overlay settings saved separately, not from AppState
+        trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -140,4 +159,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.gem_region.clone();
     *state.font_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.font_region.clone();
     *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()) = settings.sidebar_open;
+    *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_warn_secs;
+    *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
+    *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
 }

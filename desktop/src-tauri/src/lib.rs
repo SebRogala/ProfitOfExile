@@ -44,6 +44,9 @@ pub struct AppStatus {
     pub font_region: CaptureRegion,
     pub sidebar_open: bool,
     pub game_focused: bool,
+    pub trade_stale_warn_secs: u32,
+    pub trade_stale_critical_secs: u32,
+    pub trade_auto_refresh_secs: u32,
 }
 
 pub struct AppState {
@@ -58,6 +61,9 @@ pub struct AppState {
     pub sidebar_open: Mutex<bool>,
     pub game_focused: Mutex<bool>,
     pub trade_client: trade::TradeApiClient,
+    /// General-purpose HTTP client for server communication (separate from trade_client
+    /// which has GGG-specific User-Agent/headers).
+    pub server_http: reqwest::Client,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Stop signal for the overlay mouse hook thread.
@@ -65,6 +71,10 @@ pub struct AppState {
     pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub focus_poller_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub debug_mode: Mutex<bool>,
+    /// Trade staleness thresholds (seconds) — configurable from settings.
+    pub trade_stale_warn_secs: Mutex<u32>,
+    pub trade_stale_critical_secs: Mutex<u32>,
+    pub trade_auto_refresh_secs: Mutex<u32>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -79,6 +89,9 @@ fn build_status(state: &AppState) -> AppStatus {
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         game_focused: *state.game_focused.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
+        trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -323,6 +336,29 @@ async fn trade_lookup(
             if result.listings.is_empty() { "" } else { &result.listings[0].currency },
         ),
     );
+
+    // Fire-and-forget: submit trade result to server for cache enrichment
+    {
+        let server_url = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let http = state.server_http.clone();
+        let submit_result = result.clone();
+        let app_clone = app.clone();
+        tokio::spawn(async move {
+            let url = format!("{}/api/trade/submit", server_url);
+            match http.post(&url).json(&submit_result).send().await {
+                Ok(res) if res.status().is_success() => {
+                    log::info!("Trade result submitted to server for {} ({})", submit_result.gem, submit_result.variant);
+                }
+                Ok(res) => {
+                    log::warn!("Trade submit rejected by server: {}", res.status());
+                }
+                Err(e) => {
+                    log::warn!("Trade submit to server failed: {}", e);
+                    app_log(&app_clone, format!("Trade submit to server failed (non-blocking): {}", e));
+                }
+            }
+        });
+    }
 
     Ok(result)
 }
@@ -1254,6 +1290,11 @@ pub fn run() {
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
 
+    let server_http = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .expect("failed to create server HTTP client");
+
     let app_state = AppState {
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(
@@ -1268,11 +1309,15 @@ pub fn run() {
         sidebar_open: Mutex::new(true),
         game_focused: Mutex::new(false),
         trade_client: trade::TradeApiClient::new("Mirage"),
+        server_http,
         watcher_cancel: Mutex::new(None),
         comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
         overlay_hook_stop: Mutex::new(None),
         focus_poller_stop: Mutex::new(None),
         debug_mode: Mutex::new(false),
+        trade_stale_warn_secs: Mutex::new(120),
+        trade_stale_critical_secs: Mutex::new(600),
+        trade_auto_refresh_secs: Mutex::new(900),
     };
 
     tauri::Builder::default()
