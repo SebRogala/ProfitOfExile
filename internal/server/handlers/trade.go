@@ -32,6 +32,12 @@ func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFu
 			json.NewEncoder(w).Encode(map[string]string{"error": "gem and variant are required"})
 			return
 		}
+		if len(result.Gem) > 200 || len(result.Variant) > 20 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "gem or variant too long"})
+			return
+		}
 
 		key := trade.CacheKey(result.Gem, result.Variant)
 
