@@ -33,15 +33,6 @@
 		editingServerUrl = false;
 	}
 
-	// --- Pair Code ---
-	async function regeneratePairCode() {
-		try {
-			await invoke('regenerate_pair_code');
-			// Status auto-updates via events
-		} catch (e) {
-			console.error('Failed to regenerate pair code:', e);
-		}
-	}
 
 	// --- Client.txt Path ---
 	function startEditClientTxt() {
@@ -288,11 +279,6 @@
 				<span class="setting-value">Mirage</span>
 			</div>
 
-			<div class="setting-row">
-				<span class="setting-label">Pair Code</span>
-				<span class="setting-value mono">{store.status?.pair_code ?? '....'}</span>
-				<button class="btn-small" onclick={regeneratePairCode}>Regenerate</button>
-			</div>
 		</section>
 
 		<!-- Game Integration -->
