@@ -13,9 +13,9 @@ pub enum LabState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)]
 pub enum LabEvent {
     FontOpened,
+    #[allow(dead_code)]
     FontClosed,
     ZoneChanged { area: String },
     GameFocused,
