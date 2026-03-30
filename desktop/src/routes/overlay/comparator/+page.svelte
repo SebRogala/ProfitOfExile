@@ -101,6 +101,14 @@
 	// Poll Rust for comparator data (cross-window events unreliable, onMount doesn't fire in overlay)
 	let lastJson = '';
 	$effect(() => {
+		// Fetch staleness thresholds once on mount — they only change when the user edits settings.
+		invoke<any>('get_status').then((status) => {
+			if (status) {
+				tradeStaleWarnSecs = status.trade_stale_warn_secs ?? 120;
+				tradeStaleCriticalSecs = status.trade_stale_critical_secs ?? 600;
+			}
+		}).catch(() => {});
+
 		const pollInterval = setInterval(async () => {
 			try {
 				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('get_comparator_data');
@@ -116,12 +124,6 @@
 					if (results.length === 0) {
 						selectedGem = null;
 					}
-				}
-				// Also refresh staleness thresholds from status
-				const status = await invoke<any>('get_status');
-				if (status) {
-					tradeStaleWarnSecs = status.trade_stale_warn_secs ?? 120;
-					tradeStaleCriticalSecs = status.trade_stale_critical_secs ?? 600;
 				}
 			} catch (e) { console.warn('[overlay] poll failed:', e); }
 		}, 500);

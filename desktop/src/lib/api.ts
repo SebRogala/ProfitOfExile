@@ -416,7 +416,22 @@ export async function fetchCompare(gems: string[], variant: string, signal?: Abo
 		throw new Error(`API /analysis/compare: ${resp.status} ${resp.statusText}`);
 	}
 	const body = await resp.json() as { count: number; data: any[] };
-	return (body.data || []).map(mapCompareRow);
+	const results = (body.data || []).map(mapCompareRow);
+
+	// Enrich with signal history in parallel
+	const settled = await Promise.allSettled(
+		results.map(async (gem) => {
+			gem.signalHistory = await fetchSignalHistory(gem.name, gem.variant);
+		})
+	);
+	settled.forEach((result, i) => {
+		if (result.status === 'rejected') {
+			console.warn(`[Comparator] Signal history failed for ${results[i].name}:`, result.reason);
+			results[i].signalHistory = [];
+		}
+	});
+
+	return results;
 }
 
 // --- Signal History ---
