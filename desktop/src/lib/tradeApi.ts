@@ -39,11 +39,3 @@ export interface TradeSignals {
 	uniqueAccounts: number;
 }
 
-// --- Lookup response ---
-
-export interface LookupResponse {
-	/** Populated when the gate returns data within the sync budget (200). */
-	immediate: TradeLookupResult | null;
-	/** Populated when the request was queued for async processing (202). */
-	requestId: string | null;
-}

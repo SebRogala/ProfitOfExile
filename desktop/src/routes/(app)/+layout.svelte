@@ -104,12 +104,12 @@
 				debugMode = !debugMode;
 				const win = getCurrentWebviewWindow();
 				if (debugMode) {
-					win.openDevtools().catch(() => {});
+					win.openDevtools().catch(e => console.warn('[debug] openDevtools failed:', e));
 					// Force-show overlays regardless of game focus
-					invoke('force_show_overlays').catch(() => {});
+					invoke('force_show_overlays').catch(e => console.warn('[debug] force_show_overlays failed:', e));
 					console.log('[debug] Debug mode ON — overlays force-shown');
 				} else {
-					win.closeDevtools().catch(() => {});
+					win.closeDevtools().catch(e => console.warn('[debug] closeDevtools failed:', e));
 					console.log('[debug] Debug mode OFF');
 				}
 			}

@@ -107,7 +107,7 @@
 				tradeStaleWarnSecs = status.trade_stale_warn_secs ?? 120;
 				tradeStaleCriticalSecs = status.trade_stale_critical_secs ?? 600;
 			}
-		}).catch(() => {});
+		}).catch(e => console.warn('[overlay] Failed to fetch staleness thresholds, using defaults:', e));
 
 		const pollInterval = setInterval(async () => {
 			try {
