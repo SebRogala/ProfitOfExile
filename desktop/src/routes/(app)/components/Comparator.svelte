@@ -30,9 +30,11 @@
 
 	let {
 		league = '',
+		divineRate = 0,
 		onQueueGem,
 	}: {
 		league?: string;
+		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 	} = $props();
 
@@ -197,7 +199,7 @@
 		tradeLoading[gem] = true;
 		try {
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
-				gem, variant,
+				gem, variant, divineRate: divineRate || undefined,
 			});
 			tradeData[gem] = result;
 		} catch (err) {

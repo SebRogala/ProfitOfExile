@@ -370,14 +370,14 @@ fn stop_scanning(app: AppHandle) {
 async fn trade_lookup(
     gem: String,
     variant: String,
+    divine_rate: Option<f64>,
     app: AppHandle,
 ) -> Result<trade::TradeLookupResult, String> {
     let state = app.state::<AppState>();
-    app_log(&app, format!("Trade lookup: {} ({})", gem, variant));
+    let rate = divine_rate.unwrap_or(0.0);
+    app_log(&app, format!("Trade lookup: {} ({}) divine_rate={:.0}", gem, variant, rate));
 
-    // TODO: fetch divine rate from server/poe.ninja for chaos normalization
-    let divine_rate = 0.0;
-    let result = state.trade_client.lookup_gem(&gem, &variant, divine_rate).await
+    let result = state.trade_client.lookup_gem(&gem, &variant, rate).await
         .map_err(|e| {
             app_log(&app, format!("Trade error: {}", e));
             e

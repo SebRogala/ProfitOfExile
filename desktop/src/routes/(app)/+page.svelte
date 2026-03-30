@@ -250,7 +250,7 @@
 			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
 		</section>
 	{:else if !loading}
-		<Comparator league={status?.league || ''} onQueueGem={handleQueueGem} />
+		<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} />
 
 		<SessionQueue
 			queue={sessionQueue}
