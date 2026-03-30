@@ -94,16 +94,24 @@
 		}
 	}
 
-	// Ctrl+Shift+F12 toggles devtools in production builds
+	// Ctrl+Shift+F12 toggles debug mode (devtools + force-show overlays)
+	let debugMode = $state(false);
+
 	$effect(() => {
 		function handleKeydown(e: KeyboardEvent) {
 			if (e.ctrlKey && e.shiftKey && e.key === 'F12') {
 				e.preventDefault();
+				debugMode = !debugMode;
 				const win = getCurrentWebviewWindow();
-				win.isDevtoolsOpen().then(open => {
-					if (open) win.closeDevtools();
-					else win.openDevtools();
-				}).catch(e => console.warn('[overlay] settings operation failed:', e));
+				if (debugMode) {
+					win.openDevtools().catch(() => {});
+					// Force-show overlays regardless of game focus
+					invoke('force_show_overlays').catch(() => {});
+					console.log('[debug] Debug mode ON — overlays force-shown');
+				} else {
+					win.closeDevtools().catch(() => {});
+					console.log('[debug] Debug mode OFF');
+				}
 			}
 		}
 		window.addEventListener('keydown', handleKeydown);
