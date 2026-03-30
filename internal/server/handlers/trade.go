@@ -18,6 +18,8 @@ import (
 // to the database for historical tracking.
 func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 65536)
+
 		var result trade.TradeLookupResult
 		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -39,6 +41,14 @@ func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFu
 			return
 		}
 
+		// Cap listings to max 20 and validate price floor.
+		if len(result.Listings) > 20 {
+			result.Listings = result.Listings[:20]
+		}
+		if result.PriceFloor < 0 {
+			result.PriceFloor = 0
+		}
+
 		key := trade.CacheKey(result.Gem, result.Variant)
 
 		if cache != nil {
@@ -47,7 +57,9 @@ func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFu
 
 		if repo != nil {
 			go func() {
-				if err := repo.InsertTradeLookup(context.Background(), &result, "desktop"); err != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := repo.InsertTradeLookup(ctx, &result, "desktop"); err != nil {
 					slog.Warn("trade submit: persist lookup failed", "gem", result.Gem, "variant", result.Variant, "error", err)
 				}
 			}()

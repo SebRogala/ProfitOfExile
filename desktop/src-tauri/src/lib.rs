@@ -66,8 +66,9 @@ pub struct AppState {
     pub server_http: reqwest::Client,
     /// Cancel signal for the current log watcher. Send () to stop it.
     pub watcher_cancel: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
-    /// Stop signal for the overlay mouse hook thread.
+    /// Cached comparator overlay data (results + trade data) shared between windows.
     pub comparator_data: Mutex<serde_json::Value>,
+    /// Stop signal for the overlay mouse hook thread.
     pub overlay_hook_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub focus_poller_stop: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     pub debug_mode: Mutex<bool>,
@@ -589,12 +590,16 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
 #[tauri::command]
 fn force_show_overlays(app: AppHandle) {
     let state = app.state::<AppState>();
-    let was_debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
-    *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner()) = !was_debug;
+    let mut debug_guard = state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
+    let was_debug = *debug_guard;
+    *debug_guard = !was_debug;
+    drop(debug_guard);
     if !was_debug {
         // Turning debug ON — show all overlays
         if let Some(win) = app.get_webview_window("comparator") {
-            let _ = win.show();
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show overlay: {}", e);
+            }
         }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
