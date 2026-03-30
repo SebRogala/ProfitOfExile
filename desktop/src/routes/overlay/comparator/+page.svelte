@@ -71,16 +71,11 @@
 		return `${Math.floor(hrs / 24)}d`;
 	}
 
-	// Trade refresh — calls Tauri directly
-	async function requestTradeRefresh(gem: CompareGem) {
-		try {
-			const result = await invoke<TradeLookupResult>('trade_lookup', {
-				gem: gem.name, variant: gem.variant,
-			});
-			tradeData = { ...tradeData, [gem.name]: result };
-		} catch (e) {
-			console.error('Trade lookup failed:', e);
-		}
+	// Trade refresh — request the Comparator to do the lookup via event.
+	// Comparator handles it → updates tradeData → pushes to Rust → we pick it up on next poll.
+	function requestTradeRefresh(gem: CompareGem) {
+		invoke('request_trade_refresh', { gem: gem.name, variant: gem.variant })
+			.catch(e => console.error('Trade refresh request failed:', e));
 	}
 
 	function handlePick() {
@@ -151,9 +146,14 @@
 		const pollInterval = setInterval(async () => {
 			try {
 				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null> }>('get_comparator_data');
-				const json = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
-				if (json !== lastJson) {
-					lastJson = json;
+				const gemsJson = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
+				// Include trade fetchedAt timestamps so refreshes are detected.
+				const tradeSig = Object.entries(data.tradeData ?? {})
+					.map(([k, v]: [string, any]) => `${k}:${v?.fetchedAt || ''}`)
+					.sort().join(',');
+				const combinedKey = gemsJson + '|' + tradeSig;
+				if (combinedKey !== lastJson) {
+					lastJson = combinedKey;
 					results = data.results ?? [];
 					tradeData = data.tradeData ?? {};
 					if (results.length > 0 && !selectedGem) {
