@@ -365,7 +365,7 @@ fn stop_scanning(app: AppHandle) {
 
 /// Direct trade API lookup against GGG from the desktop app.
 /// Each user has their own IP → own rate limits (no shared server bottleneck).
-/// Divine rate normalization is skipped for now (raw currency values returned).
+/// Accepts optional divine rate for chaos normalization of divine-priced listings.
 #[tauri::command]
 async fn trade_lookup(
     gem: String,
@@ -375,6 +375,9 @@ async fn trade_lookup(
 ) -> Result<trade::TradeLookupResult, String> {
     let state = app.state::<AppState>();
     let rate = divine_rate.unwrap_or(0.0);
+    if rate <= 0.0 {
+        log::warn!("Trade lookup: divine_rate is 0 — divine-priced listings will NOT be normalized to chaos");
+    }
     app_log(&app, format!("Trade lookup: {} ({}) divine_rate={:.0}", gem, variant, rate));
 
     let result = state.trade_client.lookup_gem(&gem, &variant, rate).await
@@ -424,17 +427,19 @@ async fn trade_lookup(
 // Problem: WebView2 creates child HWNDs (Chrome_WidgetWin_0/1, Intermediate
 // D3D Window) that handle hit-testing independently. Subclassing the parent
 // with WM_NCHITTEST → HTTRANSPARENT does NOT work because WebView2's child
-// windows intercept mouse input before the parent sees it.
+// windows intercept mouse input before the parent sees it. WebView2 also
+// strips WS_EX_TRANSPARENT when creating/updating child windows.
 //
-// Solution (same approach as Electron's setIgnoreMouseEvents + forward):
-//   1. Set WS_EX_TRANSPARENT | WS_EX_LAYERED on the overlay window via
-//      Tauri's set_ignore_cursor_events(true) — makes entire window click-through.
-//   2. Install a global WH_MOUSE_LL hook to track cursor position.
-//   3. When cursor enters the interactive button column on the right edge,
-//      call set_ignore_cursor_events(false) so buttons become clickable.
-//   4. When cursor leaves, call set_ignore_cursor_events(true) again.
-//   5. Set WS_EX_NOACTIVATE on all HWNDs so clicking buttons doesn't steal
-//      focus from the game.
+// Solution:
+//   1. Set WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE on the
+//      overlay window — always fully click-through, game never sees it.
+//   2. Install a global WH_MOUSE_LL hook.
+//   3. Hook re-applies WS_EX_TRANSPARENT on every mouse event (WebView2 fix).
+//   4. When a click lands in the interactive zone (rightmost N pixels),
+//      buffer the coordinates and consume the click (game doesn't see it).
+//   5. Message loop drains the buffer and emits Tauri `overlay-click` events.
+//   6. Frontend uses elementFromPoint + data-action attributes to map clicks.
+//   7. HAS_CONTENT flag gates interception — empty overlay passes clicks through.
 // ---------------------------------------------------------------------------
 
 /// Overlay click-through system for Windows/WebView2.
@@ -502,14 +507,21 @@ mod overlay_clickthrough {
             let cy = mouse.pt.y;
 
             // WebView2 may strip WS_EX_TRANSPARENT when creating/updating child
-            // windows. Re-apply on every mouse event to keep the overlay fully
-            // click-through.
+            // windows. Re-apply when it's missing. Only check when cursor is near
+            // the overlay to avoid per-mouse-event Win32 calls system-wide.
             let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
             if hwnd_val != 0 {
                 let hwnd = HWND(hwnd_val as *mut _);
-                let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
-                if ex & WS_EX_TRANSPARENT.0 as i32 == 0 {
-                    SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT.0 as i32);
+                // Only do the GetWindowLongW check when cursor is near the overlay
+                // (within the full window rect, not just the interactive zone).
+                let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+                if cx >= left && cx < right && cy >= top && cy < bottom {
+                    let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                    // ex == 0 can mean failure OR "no styles" — only re-apply if we
+                    // got a nonzero result that's missing WS_EX_TRANSPARENT.
+                    if ex != 0 && ex & WS_EX_TRANSPARENT.0 as i32 == 0 {
+                        SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT.0 as i32);
+                    }
                 }
             }
 
@@ -520,9 +532,8 @@ mod overlay_clickthrough {
                     if msg_id == WM_LBUTTONDOWN {
                         // Buffer overlay-relative coordinates for the message loop to emit.
                         let (left, top, _, _) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Ok(mut buf) = CLICK_BUFFER.lock() {
-                            buf.push((cx - left, cy - top));
-                        }
+                        CLICK_BUFFER.lock().unwrap_or_else(|e| e.into_inner())
+                            .push((cx - left, cy - top));
                     }
                     return LRESULT(1); // Consume — don't pass to game or CallNextHookEx
                 }
@@ -535,6 +546,7 @@ mod overlay_clickthrough {
     /// emits Tauri `overlay-click` events. Returns a stop-signal sender.
     pub fn install_hook(app: tauri::AppHandle) -> Option<std::sync::mpsc::Sender<()>> {
         if HOOK_HANDLE.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+            log::info!("Overlay mouse hook already installed — reusing existing hook");
             return None;
         }
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
@@ -552,7 +564,8 @@ mod overlay_clickthrough {
                     if stop_rx.try_recv().is_ok() { break; }
 
                     // Drain click buffer → emit Tauri events.
-                    if let Ok(mut buf) = CLICK_BUFFER.lock() {
+                    {
+                        let mut buf = CLICK_BUFFER.lock().unwrap_or_else(|e| e.into_inner());
                         for (x, y) in buf.drain(..) {
                             use tauri::Emitter;
                             if let Err(e) = app.emit("overlay-click", serde_json::json!({ "x": x, "y": y })) {

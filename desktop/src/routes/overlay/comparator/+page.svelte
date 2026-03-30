@@ -111,21 +111,28 @@
 			const ly = event.payload.y / dpr;
 
 			const el = document.elementFromPoint(lx, ly);
-			if (!el) return;
+			if (!el) {
+				console.warn(`[overlay] elementFromPoint(${lx}, ${ly}) returned null — DPI or layout mismatch?`);
+				return;
+			}
 
 			const btn = el.closest('[data-action]') as HTMLElement | null;
-			if (!btn) return;
+			if (!btn) return; // clicked on non-interactive area (gap between buttons)
 
 			const action = btn.dataset.action;
-			const idx = parseInt(btn.dataset.index || '0', 10);
-
-			if (action === 'pick' && idx < results.length) {
-				selectedGem = results[idx].name;
-				handlePick();
-			} else if (action === 'refresh' && idx < results.length) {
-				requestTradeRefresh(results[idx]);
-			} else if (action === 'clear') {
+			if (action === 'clear') {
 				handleClear();
+			} else if (action === 'pick' || action === 'refresh') {
+				const rawIndex = btn.dataset.index;
+				if (rawIndex == null) return; // no index on this button
+				const idx = parseInt(rawIndex, 10);
+				if (isNaN(idx) || idx >= results.length) return;
+				if (action === 'pick') {
+					selectedGem = results[idx].name;
+					handlePick();
+				} else {
+					requestTradeRefresh(results[idx]);
+				}
 			}
 		});
 
