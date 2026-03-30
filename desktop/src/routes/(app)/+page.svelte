@@ -33,6 +33,22 @@
 	let isDedication = $derived(selectedLab === 'Dedication');
 	let refreshKey = $state(0);
 
+	// --- Mercure debounce ---
+	let mercureDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	const MERCURE_DEBOUNCE_MS = 2000;
+
+	function debouncedMercureUpdate() {
+		if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
+		mercureDebounceTimer = setTimeout(() => {
+			console.log('[Dashboard] Mercure debounce fired — reloading data');
+			refreshKey++;
+			loadAll();
+		}, MERCURE_DEBOUNCE_MS);
+	}
+
+	// --- Mercure connection guard ---
+	let mercureInitialized = false;
+
 	// --- Session Queue state ---
 	let sessionQueue = $state<QueueItem[]>([]);
 	let autoClearMinutes = $state(
@@ -166,17 +182,21 @@
 		selectedLab = lab;
 	}
 
-	// Guard both loadAll and Mercure behind store.status so getApiBase()
-	// uses the correct server_url from Rust settings (not the fallback URL).
+	// Data load effect: re-runs when store.status changes (e.g. settings update).
+	// Only triggers a single debounced loadAll, not a connection storm.
 	$effect(() => {
 		if (!store.status) return;
 		loadAll();
+	});
 
-		mercure = connectMercure(() => {
-			console.log('[Dashboard] Mercure event — reloading data');
-			refreshKey++;
-			loadAll();
-		}, (connected) => {
+	// Mercure connection effect: connects once, guarded by a plain `let` flag
+	// so store.status changes don't recreate the EventSource connection.
+	$effect(() => {
+		if (!store.status) return;
+		if (mercureInitialized) return;
+		mercureInitialized = true;
+
+		mercure = connectMercure(debouncedMercureUpdate, (connected) => {
 			if (status) {
 				status = { ...status, connected };
 			}
@@ -184,6 +204,8 @@
 
 		return () => {
 			mercure?.close();
+			mercureInitialized = false;
+			if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
 		};
 	});
 </script>
