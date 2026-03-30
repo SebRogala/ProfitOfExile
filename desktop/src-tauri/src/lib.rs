@@ -1494,8 +1494,6 @@ fn spawn_log_watcher(app: AppHandle) {
                         Some(l) => l,
                         None => break,
                     };
-                    let preview = if line.len() > 60 { &line[..60] } else { &line };
-                    app_log(&app, format!("Log: {}", preview));
 
                     // --- Aspirant's Trial / Plaza tracking (outside state machine) ---
                     if line.contains("You have entered") {
