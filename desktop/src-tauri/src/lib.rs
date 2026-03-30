@@ -9,7 +9,7 @@ mod settings;
 mod trade;
 
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -51,6 +51,27 @@ pub struct AppStatus {
     pub trade_auto_refresh_secs: u32,
 }
 
+/// Accumulated font session data — shared between font scan loop and event handlers.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FontSessionData {
+    /// Sealed rounds (one per FontOpened/CRAFT click).
+    pub rounds: Vec<FontRound>,
+    /// Current round's detected options (not yet sealed by FontOpened).
+    /// None = no options detected yet this round.
+    #[serde(skip)]
+    pub current_options: Option<Vec<font_parser::CraftOption>>,
+    /// Crafts remaining from the last detected options.
+    #[serde(skip)]
+    pub current_crafts_remaining: Option<i32>,
+}
+
+/// A sealed font round — options captured before user clicked CRAFT.
+#[derive(Debug, Clone, Serialize)]
+pub struct FontRound {
+    pub options: Vec<font_parser::CraftOption>,
+    pub crafts_remaining: Option<i32>,
+}
+
 pub struct AppState {
     pub pair_code: Mutex<String>,
     pub client_txt_path: Mutex<String>,
@@ -82,6 +103,12 @@ pub struct AppState {
     /// (FontOpened, manual scan). The capture loop checks this every iteration —
     /// if it doesn't match the generation it was spawned with, it exits.
     pub gem_scan_generation: AtomicU64,
+    /// Generation counter for font panel OCR scans.
+    pub font_scan_generation: AtomicU64,
+    /// Aspirant's Trial entry count (reset on Aspirants' Plaza). Font OCR starts at 3.
+    pub aspirant_trial_count: AtomicU32,
+    /// Font session data — accumulated rounds, shared between font scan loop and handlers.
+    pub font_session: Mutex<FontSessionData>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -977,6 +1004,214 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     }
 }
 
+/// Start font panel OCR. Bumps generation to cancel any running scan, spawns a new loop.
+fn spawn_font_scan(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let gen = state.font_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+    // Reset font session for the new scan.
+    *state.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
+
+    app_log(app, format!("Font scan started (gen={})", gen));
+
+    let app_capture = app.clone();
+    std::thread::spawn(move || {
+        font_scan_loop(app_capture, gen);
+    });
+}
+
+/// Font panel OCR loop on a dedicated OS thread.
+///
+/// Scans the font region every 250ms looking for craft options (CRAFT screen).
+/// Stores detected options in AppState.font_session. Stops when:
+///   - Generation mismatch (zone change, manual stop, new scan started)
+///   - Last craft completed (no "Crafts Remaining" seen → FontOpened seals it → done)
+fn font_scan_loop(app: AppHandle, generation: u64) {
+    let state = app.state::<AppState>();
+    let mut loop_count = 0u32;
+    const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+    loop {
+        // Check generation.
+        if state.font_scan_generation.load(Ordering::SeqCst) != generation {
+            app_log(&app, "Font scan stopped (generation mismatch)".to_string());
+            break;
+        }
+
+        loop_count += 1;
+
+        let font_region = state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let screen = match capture::capture_screen() {
+            Ok(s) => s,
+            Err(e) => {
+                if loop_count % 40 == 1 {
+                    app_log(&app, format!("Font scan: screen capture failed: {}", e));
+                }
+                std::thread::sleep(SCAN_INTERVAL);
+                continue;
+            }
+        };
+
+        let cropped = screen.crop_imm(
+            font_region.x.max(0) as u32,
+            font_region.y.max(0) as u32,
+            font_region.w,
+            font_region.h,
+        );
+        let processed = capture::preprocess_for_ocr(&cropped);
+        let lines = match ocr::recognize_text(&processed) {
+            Ok(l) => l,
+            Err(e) => {
+                if loop_count % 40 == 1 {
+                    app_log(&app, format!("Font scan: OCR failed: {}", e));
+                }
+                std::thread::sleep(SCAN_INTERVAL);
+                continue;
+            }
+        };
+
+        let panel = font_parser::parse_font_panel(&lines);
+
+        if panel.font_active && !panel.options.is_empty() {
+            let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+
+            // Dedup: only store if options differ from what we already have.
+            let new_types: Vec<&str> = panel.options.iter().map(|o| o.option_type.as_str()).collect();
+            let same = session.current_options.as_ref().map_or(false, |existing| {
+                let existing_types: Vec<&str> = existing.iter().map(|o| o.option_type.as_str()).collect();
+                existing_types == new_types
+            });
+
+            if !same {
+                app_log(&app, format!(
+                    "Font options captured: {} options{}{}",
+                    panel.options.len(),
+                    if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" },
+                    panel.crafts_remaining.map_or(
+                        " (last craft)".to_string(),
+                        |n| format!(" (remaining: {})", n),
+                    ),
+                ));
+                for opt in &panel.options {
+                    app_log(&app, format!("  - {} {}", opt.option_type,
+                        opt.value.map(|v| format!("({})", v)).unwrap_or_default()));
+                }
+
+                if panel.jackpot_detected {
+                    if let Err(e) = app.emit("font-jackpot", true) {
+                        log::warn!("emit font-jackpot failed: {}", e);
+                    }
+                }
+
+                session.current_options = Some(panel.options);
+                session.current_crafts_remaining = panel.crafts_remaining;
+            }
+        }
+
+        std::thread::sleep(SCAN_INTERVAL);
+    }
+}
+
+/// Called by FontOpened handler to seal the current font round.
+/// Moves current_options into the rounds list. Returns true if this was the last craft.
+fn seal_font_round(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+
+    let options = match session.current_options.take() {
+        Some(opts) => opts,
+        None => {
+            // No options captured yet — FontOpened fired before OCR saw the CRAFT screen.
+            // This is normal for the first craft if OCR started late.
+            return false;
+        }
+    };
+
+    let crafts_remaining = session.current_crafts_remaining.take();
+    let is_last = crafts_remaining.is_none();
+
+    let round_num = session.rounds.len() + 1;
+    app_log(app, format!(
+        "Font round {} sealed ({} options{})",
+        round_num,
+        options.len(),
+        if is_last { ", last craft" } else { "" },
+    ));
+
+    session.rounds.push(FontRound {
+        options,
+        crafts_remaining,
+    });
+
+    is_last
+}
+
+/// Send accumulated font session to the server and reset.
+fn send_font_session_data(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Seal any unsent current round (user left without clicking CRAFT).
+    if let Some(options) = session.current_options.take() {
+        let crafts_remaining = session.current_crafts_remaining.take();
+        session.rounds.push(FontRound { options, crafts_remaining });
+    }
+
+    if session.rounds.is_empty() {
+        return;
+    }
+
+    let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    let session_data = serde_json::json!({
+        "lab_type": "Unknown",
+        "total_crafts": session.rounds.len(),
+        "variant": "20/20",
+        "device_id": "desktop",
+        "pair_code": pair,
+        "rounds": session.rounds.iter().map(|r| serde_json::json!({
+            "craft_options": r.options,
+            "crafts_remaining": r.crafts_remaining,
+        })).collect::<Vec<_>>(),
+    });
+
+    app_log(app, format!("Sending font session: {} rounds", session.rounds.len()));
+
+    // Reset session.
+    *session = FontSessionData::default();
+    drop(session);
+
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let url = format!("{}/api/desktop/font-session", server);
+        let client = match reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                app_log(&app_clone, format!("Font session: HTTP client error: {}", e));
+                return;
+            }
+        };
+
+        match client.post(&url).json(&session_data).send().await {
+            Ok(res) if res.status().is_success() => {
+                app_log(&app_clone, "Font session sent successfully".to_string());
+            }
+            Ok(res) => {
+                let status = res.status();
+                let body = res.text().await.unwrap_or_default();
+                app_log(&app_clone, format!("Font session rejected: {} — {}", status, &body[..body.len().min(200)]));
+            }
+            Err(e) => {
+                app_log(&app_clone, format!("Font session send failed: {}", e));
+            }
+        }
+    });
+}
+
 /// Fetch gem names from the server API for fuzzy matching.
 async fn fetch_gem_names(app: &AppHandle, server_url: &str) -> Vec<String> {
     let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
@@ -1181,6 +1416,22 @@ fn spawn_log_watcher(app: AppHandle) {
                     let preview = if line.len() > 60 { &line[..60] } else { &line };
                     app_log(&app, format!("Log: {}", preview));
 
+                    // --- Aspirant's Trial / Plaza tracking (outside state machine) ---
+                    if line.contains("You have entered") {
+                        let state = app.state::<AppState>();
+                        if line.contains("Aspirants' Plaza") || line.contains("Aspirant's Plaza") {
+                            state.aspirant_trial_count.store(0, Ordering::SeqCst);
+                            app_log(&app, "Aspirants' Plaza — trial counter reset".to_string());
+                        } else if line.contains("Aspirant's Trial") {
+                            let count = state.aspirant_trial_count.fetch_add(1, Ordering::SeqCst) + 1;
+                            app_log(&app, format!("Aspirant's Trial #{}", count));
+                            if count == 3 {
+                                app_log(&app, "3rd Aspirant's Trial — starting font panel OCR".to_string());
+                                spawn_font_scan(&app);
+                            }
+                        }
+                    }
+
                     if let Some(event) = state_machine.process_line(&line) {
                         let state = app.state::<AppState>();
                         match &event {
@@ -1190,12 +1441,22 @@ fn spawn_log_watcher(app: AppHandle) {
                                 // any running scan, clears comparator, spawns fresh scan.
                                 detected_gems.clear();
                                 spawn_gem_scan(&app, "font");
+
+                                // Seal the current font round (options captured by font scan).
+                                let is_last = seal_font_round(&app);
+                                if is_last {
+                                    // No "Crafts Remaining" was seen → this was the last craft.
+                                    // Stop font scan — no more options to capture.
+                                    app_log(&app, "Last font craft — stopping font scan".to_string());
+                                    state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                }
                             }
                             lab_state::LabEvent::ZoneChanged { area } => {
                                 app_log(&app, format!("Zone changed: {} — stopping", area));
 
-                                // Bump generation to cancel any running gem scan.
+                                // Stop both gem and font scans.
                                 state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                     lab_state::LabState::Idle;
 
@@ -1207,6 +1468,9 @@ fn spawn_log_watcher(app: AppHandle) {
                                     });
                                     detected_gems.clear();
                                 }
+
+                                // Send accumulated font session data to server.
+                                send_font_session_data(&app);
 
                                 // Clear frontend comparator — player left the area.
                                 *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -1266,6 +1530,9 @@ pub fn run() {
         trade_stale_critical_secs: Mutex::new(settings::DEFAULT_TRADE_STALE_CRITICAL_SECS),
         trade_auto_refresh_secs: Mutex::new(settings::DEFAULT_TRADE_AUTO_REFRESH_SECS),
         gem_scan_generation: AtomicU64::new(0),
+        font_scan_generation: AtomicU64::new(0),
+        aspirant_trial_count: AtomicU32::new(0),
+        font_session: Mutex::new(FontSessionData::default()),
     };
 
     tauri::Builder::default()
