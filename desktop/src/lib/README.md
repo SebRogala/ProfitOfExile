@@ -53,6 +53,57 @@ Located in `routes/(app)/components/`. Lab farming dashboard components migrated
 | `InfoTooltip.svelte` | Hover/click tooltip with smart alignment |
 | `OfferingChart.svelte` | Offering price chart with prediction line and responsive SVG |
 
+## OCR Lifecycle
+
+Two decoupled scan loops, each on a dedicated OS thread (required by Windows COM/WinRT).
+
+### Gem Tooltip OCR
+
+Scans the gem tooltip region to detect transfigured gem names for the comparator.
+
+**Start triggers** (all: clear comparator, restart scan):
+- `FontOpened` — Client.txt `InstanceClientLabyrinthCraftResultOptionsList recieved` (user clicked CRAFT button)
+- Manual "Start Scanning" button
+
+**Stop triggers**:
+- 3 gems detected (auto-stop)
+- 45s timeout
+- ZoneChanged (left area)
+- Manual "Stop Scanning"
+- Next start trigger (bumps generation counter → old scan exits)
+
+**Key behavior**: Aborts immediately if gem name list is empty (server unreachable). Uses `AtomicU64` generation counter for clean cancellation — no thread cleanup needed.
+
+### Font Panel OCR
+
+Scans the font region to capture craft options (transform, quality, experience, etc.) from the CRAFT screen.
+
+**Start**: 3rd "Aspirant's Trial" zone entry (counter resets on "Aspirants' Plaza").
+
+**Running**: Scans at 250ms, parses options via `font_parser`. Deduplicates — same options seen again (user reopened font without crafting) are skipped.
+
+**Round tracking**: `FontOpened` seals the current round into the session. If no "Crafts Remaining" text was detected alongside options, this was the last craft → scan stops.
+
+**Stop**: Last craft sealed, ZoneChanged, or 5-min timeout safety net.
+
+**Data flow**: ZoneChanged sends accumulated session (all rounds with options + crafts_remaining) to server via `POST /api/desktop/font-session`.
+
+### Game UI Context
+
+- **CRAFT screen**: Shows options list + "Crafts Remaining: X" + CRAFT button. "Crafts Remaining" only visible when X > 1.
+- **CONFIRM screen**: Shows 3 gem slots + CONFIRM button. Options list is gone. This is when gem tooltip OCR runs.
+- Clicking the font opens the CRAFT screen (no Client.txt event). Clicking CRAFT fires `FontOpened` and switches to CONFIRM screen.
+- Gem tooltips cover the font panel area when hovering — OCR regions overlap.
+
+### Focus & Overlay
+
+The focus poller (1s interval, `GetForegroundWindow`) uses three-state logic:
+- **Game** (PoE foreground): show overlay
+- **OwnWindow** (our process foreground): preserve state — no hide/show/status events
+- **Other** (any other app): hide overlay
+
+Overlay is created with `WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`. A global `WH_MOUSE_LL` hook toggles `WS_EX_TRANSPARENT` off in the rightmost 48px (interactive zone) for button clicks.
+
 ## Conventions
 
 - **Stores**: `.svelte.ts` extension (Svelte 5 runes). Export objects, mutate properties (NOT reassign).
