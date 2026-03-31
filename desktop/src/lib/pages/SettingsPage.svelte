@@ -2,8 +2,63 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import { check } from '@tauri-apps/plugin-updater';
+	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import { getVersion } from '@tauri-apps/api/app';
+
+	// --- Update ---
+	let appVersion = $state('...');
+	let updateStatus = $state<'idle' | 'checking' | 'available' | 'downloading' | 'error'>('idle');
+	let updateVersion = $state('');
+	let updateError = $state('');
+	let updateProgress = $state(0);
+
+	// Load version on mount
+	$effect(() => {
+		getVersion().then(v => { appVersion = v; }).catch(() => {});
+	});
+
+	async function checkForUpdates() {
+		updateStatus = 'checking';
+		updateError = '';
+		try {
+			const update = await check();
+			if (update) {
+				updateStatus = 'available';
+				updateVersion = update.version;
+			} else {
+				updateStatus = 'idle';
+				updateError = 'You are on the latest version.';
+			}
+		} catch (e: any) {
+			updateStatus = 'error';
+			updateError = e?.message || String(e);
+		}
+	}
+
+	async function installUpdate() {
+		updateStatus = 'downloading';
+		updateError = '';
+		try {
+			const update = await check();
+			if (!update) return;
+			await update.downloadAndInstall((progress) => {
+				if (progress.event === 'Started' && progress.data.contentLength) {
+					updateProgress = 0;
+				} else if (progress.event === 'Progress') {
+					updateProgress += progress.data.chunkLength;
+				} else if (progress.event === 'Finished') {
+					updateProgress = 0;
+				}
+			});
+			await relaunch();
+		} catch (e: any) {
+			updateStatus = 'error';
+			updateError = e?.message || String(e);
+		}
+	}
 
 	// Save/Cancel from overlay buttons (overlay-save/overlay-cancel events).
 	// Works for both OCR region overlays and comparator position overlay.
@@ -291,6 +346,36 @@
 <div class="settings-page">
 	<h1>Settings</h1>
 
+		<!-- About & Updates -->
+		<section>
+			<h2>About</h2>
+
+			<div class="setting-row">
+				<span class="setting-label">Version</span>
+				<span class="setting-value mono">{appVersion}</span>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Updates</span>
+				{#if updateStatus === 'checking'}
+					<span class="setting-value muted">Checking...</span>
+				{:else if updateStatus === 'available'}
+					<span class="setting-value update-available">v{updateVersion} available</span>
+					<button class="btn-small save" onclick={installUpdate}>Install & Restart</button>
+				{:else if updateStatus === 'downloading'}
+					<span class="setting-value muted">Downloading... {updateProgress > 0 ? `(${Math.round(updateProgress / 1024)}KB)` : ''}</span>
+				{:else if updateStatus === 'error'}
+					<span class="setting-value update-error">{updateError}</span>
+					<button class="btn-small" onclick={checkForUpdates}>Retry</button>
+				{:else}
+					{#if updateError}
+						<span class="setting-value muted">{updateError}</span>
+					{/if}
+					<button class="btn-small" onclick={checkForUpdates}>Check for Updates</button>
+				{/if}
+			</div>
+		</section>
+
 		<!-- General -->
 		<section>
 			<h2>General</h2>
@@ -541,6 +626,16 @@
 	.setting-value.mono {
 		font-family: 'Consolas', 'Courier New', monospace;
 		letter-spacing: 0.1em;
+	}
+
+	.update-available {
+		color: var(--success, #22c55e);
+		font-weight: 600;
+	}
+
+	.update-error {
+		color: var(--color-lab-red, #ef4444);
+		font-size: 0.75rem;
 	}
 
 	.setting-value.path {
