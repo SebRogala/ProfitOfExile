@@ -195,6 +195,37 @@ func main() {
 
 		go tradeGate.Run(ctx)
 		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
+
+		// Periodic trade refresher — keeps high-tier 20/20 gems fresh.
+		refresher := trade.NewRefresher(trade.RefresherConfig{
+			Gate:     tradeGate,
+			Cache:    tradeCache,
+			Interval: 45 * time.Second,
+			MinAge:   5 * time.Minute,
+			Variant:  "20/20",
+			Tiers: func(variant string) map[string]bool {
+				trends := labCache.Trends()
+				highTier := make(map[string]bool)
+				for _, t := range trends {
+					if t.Variant != variant {
+						continue
+					}
+					switch t.PriceTier {
+					case "TOP", "HIGH", "MID-HIGH":
+						highTier[t.Name] = true
+					}
+				}
+				return highTier
+			},
+		})
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("trade refresher panicked", "recover", r)
+				}
+			}()
+			refresher.Run(ctx)
+		}()
 	}
 
 	routerCfg := server.RouterConfig{
