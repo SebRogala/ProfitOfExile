@@ -18,3 +18,6 @@ desktop/.svelte-kit/
 desktop/build/
 .superpowers/
 .claude/worktrees/
+
+# Tauri signing keys (private key MUST NOT be committed)
+desktop/.tauri/
