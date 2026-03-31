@@ -246,7 +246,7 @@
 					<div class="side-row">
 						<button class="act-btn pick-btn" class:active={selectedGem === gem.name} data-action="pick" data-index={i} title="Pick">&#x2713;</button>
 						{#if tradeLoading[gem.name]}
-							<span class="act-btn loading-btn">&#x21BB;</span>
+							<span class="act-btn loading-btn"><span class="spin-icon">&#x21BB;</span></span>
 						{:else}
 							<button class="act-btn" data-action="refresh" data-index={i} title="Refresh trade">&#x21BB;</button>
 						{/if}
@@ -535,9 +535,13 @@
 	}
 
 	.loading-btn {
-		animation: spin 1s linear infinite;
 		color: #6b7280;
 		cursor: default;
+	}
+
+	.spin-icon {
+		display: inline-block;
+		animation: spin 1s linear infinite;
 	}
 
 	@keyframes spin {
