@@ -53,7 +53,7 @@
 	// Push results + trade data + loading state to Rust for overlay to poll
 	$effect(() => {
 		invoke('set_comparator_data', {
-			payload: { results, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading } },
+			payload: { results, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading }, tradeError: { ...tradeError } },
 		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
@@ -131,6 +131,7 @@
 
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, boolean>>({});
+	let tradeError = $state<Record<string, boolean>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
 	let autoTradeEnabled = $state(store.status?.auto_trade_enabled ?? false);
 
@@ -204,6 +205,7 @@
 	/** Invoke Rust-side trade lookup (hits GGG directly, Rust handles server submit). */
 	async function invokeRustTrade(gem: string) {
 		tradeLoading[gem] = true;
+		tradeError[gem] = false;
 		try {
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
 				gem, variant, divineRate: divineRate || undefined,
@@ -211,6 +213,7 @@
 			tradeData[gem] = result;
 		} catch (err) {
 			console.warn(`[Trade] Rust lookup failed for ${gem}:`, err);
+			tradeError[gem] = true;
 		} finally {
 			tradeLoading[gem] = false;
 		}
@@ -257,6 +260,7 @@
 		if (removed) {
 			delete tradeData[removed];
 			delete tradeLoading[removed];
+			delete tradeError[removed];
 			delete tradeExpanded[removed];
 		}
 		loadResults();
@@ -270,6 +274,7 @@
 		results = [];
 		tradeData = {};
 		tradeLoading = {};
+		tradeError = {};
 		tradeExpanded = {};
 		searchQuery = '';
 		suggestions = [];
@@ -567,7 +572,7 @@
 										{#if tradeLoading[gem.name]}
 											<span class="trade-spinner-inline"></span>
 										{:else}
-											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} onclick={() => refreshTradeData(gem.name)}>&#8635;</button>
+											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} class:trade-refresh-error={tradeError[gem.name]} onclick={() => refreshTradeData(gem.name)} title={tradeError[gem.name] ? 'Rate limited — click to retry' : 'Refresh trade data'}>&#8635;</button>
 										{/if}
 										{#if gem.name.includes(' of ')}
 											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
@@ -1190,6 +1195,14 @@
 	}
 	.trade-refresh-stale:hover {
 		background: rgba(239, 68, 68, 0.2) !important;
+	}
+	.trade-refresh-error {
+		color: #ef4444 !important;
+		border-color: rgba(239, 68, 68, 0.6) !important;
+		background: rgba(239, 68, 68, 0.2) !important;
+	}
+	.trade-refresh-error:hover {
+		background: rgba(239, 68, 68, 0.3) !important;
 	}
 	.trade-spinner-inline {
 		display: inline-block;
