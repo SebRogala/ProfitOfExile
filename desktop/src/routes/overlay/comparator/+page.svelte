@@ -10,6 +10,11 @@
 	let tradeStaleWarnSecs = $state(120);
 	let tradeStaleCriticalSecs = $state(600);
 
+	// Cache the monitor scale factor from Tauri (more reliable than window.devicePixelRatio
+	// which can be wrong in transparent overlay WebViews on high-DPI displays).
+	let cachedScaleFactor = $state(window.devicePixelRatio || 1);
+	getCurrentWebviewWindow().scaleFactor().then(sf => { cachedScaleFactor = sf; });
+
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
 		DUMPING: '#ef4444', RECOVERY: '#a855f7', TRAP: '#ef4444',
@@ -111,9 +116,8 @@
 
 		const unlistenPromise = listen<{ x: number; y: number }>('overlay-click', (event) => {
 			if (cancelled || results.length === 0) return;
-			const dpr = window.devicePixelRatio || 1;
-			const lx = event.payload.x / dpr;
-			const ly = event.payload.y / dpr;
+			const lx = event.payload.x / cachedScaleFactor;
+			const ly = event.payload.y / cachedScaleFactor;
 
 			const el = document.elementFromPoint(lx, ly);
 			if (!el) {
