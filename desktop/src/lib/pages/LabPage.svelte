@@ -25,14 +25,12 @@
 	type Tab = typeof TABS[number];
 	let activeTab = $state<Tab>('Session');
 
-	let selectedLab = $state('Merciless');
 	let status = $state<StatusData | null>(null);
 	let bestPlays = $state<GemPlay[]>([]);
 	let marketOverview = $state<MarketOverviewData | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let mercure = $state<MercureConnection | null>(null);
-	let isDedication = $derived(selectedLab === 'Dedication');
 	let refreshKey = $state(0);
 
 	// --- Mercure debounce ---
@@ -180,9 +178,6 @@
 		}
 	}
 
-	function handleLabChange(lab: string) {
-		selectedLab = lab;
-	}
 
 	// Detect when store.status first becomes available.
 	// statusReady flips once (false → true) and never changes again,
@@ -241,7 +236,7 @@
 	</div>
 
 	{#if status}
-		<Header {status} {selectedLab} onLabChange={handleLabChange} />
+		<Header {status} />
 	{/if}
 
 	{#if loading}
@@ -254,11 +249,6 @@
 			<p class="error-text">{error}</p>
 			<button class="retry-btn" onclick={loadAll}>Retry</button>
 		</div>
-	{:else if isDedication}
-		<section class="section dedication">
-			<h2 class="section-title">Dedication Lab -- Corrupted Gem Exchange</h2>
-			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
-		</section>
 	{:else}
 		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->

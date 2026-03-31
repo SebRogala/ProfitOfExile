@@ -4,15 +4,9 @@
 
 	let {
 		status,
-		selectedLab,
-		onLabChange,
 	}: {
 		status: StatusData;
-		selectedLab: string;
-		onLabChange: (lab: string) => void;
 	} = $props();
-
-	const LABS = ['Merciless'];
 
 	// Tick every 1s to keep timers live
 	let now = $state(Date.now());
@@ -52,17 +46,6 @@
 <header class="header">
 	<div class="header-row">
 		<h1 class="title">ProfitOfExile — Lab Farming Dashboard</h1>
-		<div class="lab-selector">
-			{#each LABS as lab}
-				<button
-					class="lab-btn"
-					class:active={selectedLab === lab}
-					onclick={() => onLabChange(lab)}
-				>
-					{lab}
-				</button>
-			{/each}
-		</div>
 		<div class="meta-row">
 			{#if status.divinePrice > 0}
 				<Tooltip text="Current Divine Orb price"><span class="meta divine-rate">1 div = {Math.round(status.divinePrice)}c</span></Tooltip>
@@ -102,28 +85,6 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 16px;
-	}
-	.lab-selector {
-		display: flex;
-		gap: 4px;
-	}
-	.lab-btn {
-		background: transparent;
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text-secondary);
-		padding: 5px 14px;
-		font-size: 0.875rem;
-		cursor: pointer;
-		font-family: inherit;
-	}
-	.lab-btn:hover {
-		color: var(--color-lab-text);
-		border-color: var(--color-lab-text-secondary);
-	}
-	.lab-btn.active {
-		color: var(--color-lab-text);
-		border-color: var(--color-lab-blue);
-		background: rgba(59, 130, 246, 0.1);
 	}
 	.meta-row {
 		display: flex;
