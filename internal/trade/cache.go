@@ -75,6 +75,17 @@ func (c *TradeCache) Delete(key string) {
 	c.removeFromOrder(key)
 }
 
+// Warm loads trade lookup results into the cache (e.g. from DB on startup).
+func (c *TradeCache) Warm(results []TradeLookupResult) int {
+	loaded := 0
+	for i := range results {
+		key := CacheKey(results[i].Gem, results[i].Variant)
+		c.Set(key, &results[i])
+		loaded++
+	}
+	return loaded
+}
+
 // Len returns the number of entries in the cache.
 func (c *TradeCache) Len() int {
 	c.mu.Lock()
