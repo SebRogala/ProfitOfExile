@@ -146,7 +146,7 @@
 			overlayWin = null;
 		}
 		const region = type === 'gem' ? store.status?.gem_region : store.status?.font_region;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = await getCurrentWebviewWindow().scaleFactor();
 		const win = new WebviewWindow('overlay', {
 			url: '/overlay',
 			transparent: true,
@@ -273,7 +273,7 @@
 			comparatorPositionOverlay = null;
 		}
 		const s = comparatorOverlaySettings;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = await getCurrentWebviewWindow().scaleFactor();
 		const win = new WebviewWindow('overlay-comparator-pos', {
 			url: '/overlay?sync=comparator',
 			transparent: true,
@@ -318,7 +318,7 @@
 			try { await existing.destroy(); } catch (_) {}
 			await new Promise(r => setTimeout(r, 100));
 		}
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = await getCurrentWebviewWindow().scaleFactor();
 		new WebviewWindow('comparator', {
 			url: '/overlay/comparator',
 			transparent: true,

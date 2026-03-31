@@ -26,7 +26,7 @@
 
 	async function createComparatorOverlay(x: number, y: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = await getCurrentWebviewWindow().scaleFactor();
 
 		await destroyComparatorWindow();
 
