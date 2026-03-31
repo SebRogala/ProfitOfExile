@@ -148,11 +148,12 @@
 	}
 
 	.settings-link {
-		text-decoration: none;
+		all: unset;
 		font-size: 1rem;
 		opacity: 0.6;
 		transition: opacity 0.15s;
 		line-height: 1;
+		cursor: pointer;
 		-webkit-app-region: no-drag;
 	}
 
