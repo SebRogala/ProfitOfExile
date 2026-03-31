@@ -115,6 +115,17 @@ func main() {
 	var tradeRepo *trade.Repository
 	if pool != nil {
 		tradeRepo = trade.NewRepository(pool)
+
+		// Warm trade cache from DB — load latest lookup per gem+variant (last 24h).
+		warmCtx, warmCancel := context.WithTimeout(ctx, 10*time.Second)
+		results, err := tradeRepo.LatestLookups(warmCtx, 24)
+		warmCancel()
+		if err != nil {
+			slog.Warn("trade cache warm failed", "error", err)
+		} else if len(results) > 0 {
+			loaded := tradeCache.Warm(results)
+			slog.Info("trade cache warmed from DB", "entries", loaded)
+		}
 	}
 
 	// Trade Gate (server-side GGG lookups) — optional, requires TRADE_ENABLED=true.
