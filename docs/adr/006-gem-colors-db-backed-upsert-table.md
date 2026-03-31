@@ -89,4 +89,4 @@ Run suffix-stripping at query time, deriving colors on-the-fly from gem names wi
 
 - [ADR-003](003-no-orm-direct-pgx-queries.md) — direct pgx queries; the resolver uses pgx pool for both load and UPSERT
 - [ADR-005](005-gem-snapshots-unified-row-model.md) — gem_snapshots stores gem_color resolved by this package
-- [POE-19](https://softsolution.youtrack.cloud/issue/POE-19) — TimescaleDB schema task that includes the gem_colors table and resolver package
+- [POE-19](POE-19) — TimescaleDB schema task that includes the gem_colors table and resolver package

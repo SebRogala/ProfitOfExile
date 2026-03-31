@@ -91,9 +91,9 @@ All secrets live in Coolify env vars and GitHub Secrets — never in code or con
 
 ## Production Infrastructure
 
-- **Server**: `poe.softsolution.pro` — Go binary serving SvelteKit frontend + API
-- **Collector**: `poe-collector.softsolution.pro` — 24/7 price data collection from poe.ninja
-- **Database**: TimescaleDB (shared instance on VPS, managed via Coolify)
+- **Server**: Go binary serving SvelteKit frontend + API (domain in Coolify env vars)
+- **Collector**: 24/7 price data collection from poe.ninja (separate container)
+- **Database**: TimescaleDB (managed via Coolify)
 - **Deployment**: Coolify with Docker Build Stage Targets (`server` / `collector`), auto-deploy via GitHub Actions on merge to main
 - **Mercure**: Event hub for collector → server SSE events (topics: `poe/collector/gems`, `poe/collector/currency`)
 

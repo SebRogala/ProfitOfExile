@@ -21,3 +21,4 @@ desktop/build/
 
 # Tauri signing keys (private key MUST NOT be committed)
 desktop/.tauri/
+.env.local

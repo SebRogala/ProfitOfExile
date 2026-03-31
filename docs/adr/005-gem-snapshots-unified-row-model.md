@@ -77,5 +77,5 @@ Store all price data for a gem as a JSONB blob keyed by variant.
 
 - [ADR-003](003-no-orm-direct-pgx-queries.md) — direct pgx queries; this schema is designed for efficient raw SQL without ORM abstraction
 - [ADR-004](004-database-migration-strategy.md) — migration tooling; this table is created via golang-migrate timestamp-named files
-- [POE-19](https://softsolution.youtrack.cloud/issue/POE-19) — TimescaleDB schema design task that prompted this decision
-- [POE-18](https://softsolution.youtrack.cloud/issue/POE-18) — price collector that will write to this table
+- [POE-19](POE-19) — TimescaleDB schema design task that prompted this decision
+- [POE-18](POE-18) — price collector that will write to this table

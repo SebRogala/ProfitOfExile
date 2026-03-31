@@ -71,7 +71,7 @@ A 200c gem with 30 listings and 15% vol = 200 × 0.9 × 1.0 = **180c risk-adjust
 
 Same as data-analyst agent:
 ```bash
-docker exec postgres psql -U profitofexile -d profitofexile
+docker exec postgres psql -U $PGUSER -d $PGDATABASE
 ```
 
 Use gem_snapshots for raw prices, gem_features for computed metrics, market_context for tier boundaries and temporal data.

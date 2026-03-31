@@ -10,7 +10,7 @@ You analyze Path of Exile gem market data to answer specific hypotheses. You are
 
 Connect via:
 ```bash
-docker exec postgres psql -U profitofexile -d profitofexile
+docker exec postgres psql -U $PGUSER -d $PGDATABASE
 ```
 
 ## Schema Knowledge
