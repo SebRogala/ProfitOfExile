@@ -39,9 +39,10 @@
 	let results = $state<CompareGem[]>([]);
 	let selectedGem = $state<string | null>(null);
 
-	// Trade data + loading state — received from main Comparator, not fetched separately
+	// Trade data + loading/error state — received from main Comparator, not fetched separately
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, boolean>>({});
+	let tradeError = $state<Record<string, boolean>>({});
 
 	$effect(() => {
 		if (results.length > 0 && !selectedGem) {
@@ -169,9 +170,10 @@
 
 		const pollInterval = setInterval(async () => {
 			try {
-				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; tradeLoading?: Record<string, boolean> }>('get_comparator_data');
-				// Always sync loading state (changes frequently, no dedup needed).
+				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; tradeLoading?: Record<string, boolean>; tradeError?: Record<string, boolean> }>('get_comparator_data');
+				// Always sync loading + error state (changes frequently, no dedup needed).
 				tradeLoading = data.tradeLoading ?? {};
+				tradeError = data.tradeError ?? {};
 
 				const gemsJson = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
 				// Include trade fetchedAt timestamps so refreshes are detected.
@@ -257,7 +259,7 @@
 						{#if tradeLoading[gem.name]}
 							<span class="act-btn loading-btn"><span class="spin-icon">&#x21BB;</span></span>
 						{:else}
-							<button class="act-btn" data-action="refresh" data-index={i} title="Refresh trade">&#x21BB;</button>
+							<button class="act-btn" class:error-btn={tradeError[gem.name]} data-action="refresh" data-index={i} title={tradeError[gem.name] ? 'Rate limited — retry' : 'Refresh trade'}>&#x21BB;</button>
 						{/if}
 					</div>
 				{/each}
@@ -546,6 +548,12 @@
 	.loading-btn {
 		color: #6b7280;
 		cursor: default;
+	}
+
+	.error-btn {
+		color: #ef4444 !important;
+		border-color: rgba(239, 68, 68, 0.6) !important;
+		background: rgba(239, 68, 68, 0.2) !important;
 	}
 
 	.spin-icon {
