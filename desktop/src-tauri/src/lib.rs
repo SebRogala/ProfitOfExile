@@ -115,6 +115,9 @@ pub struct AppState {
     /// new gem scans (CONFIRM click also fires the same Client.txt event).
     /// Reset on ZoneChanged or Aspirants' Plaza.
     pub font_exhausted: AtomicBool,
+    /// Set when gem scan completes with 3/3 gems. Used to distinguish CONFIRM
+    /// from CRAFT clicks (both fire FontOpened). Reset on next CRAFT.
+    pub gem_scan_done: AtomicBool,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -342,6 +345,7 @@ fn spawn_gem_scan(app: &AppHandle, source: &str) {
 
     // Bump generation — any running capture loop will see the mismatch and exit.
     let gen = state.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.gem_scan_done.store(false, Ordering::SeqCst);
 
     // Clear frontend comparator.
     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
@@ -1068,6 +1072,7 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
 
                 // All 3 gems found — stop scanning.
                 if gems_found >= MAX_GEMS {
+                    state.gem_scan_done.store(true, Ordering::SeqCst);
                     app_log(&app, "Gem scan complete (3/3 gems detected)".to_string());
                     break;
                 }
@@ -1528,19 +1533,36 @@ fn spawn_log_watcher(app: AppHandle) {
                         match &event {
                             lab_state::LabEvent::FontOpened => {
                                 // CONFIRM click also fires this Client.txt event.
-                                // If font is exhausted (last craft already sealed), ignore.
+                                // Use gem_scan_completed to distinguish: if the previous
+                                // gem scan found 3/3 gems, this FontOpened is CONFIRM
+                                // (not a new CRAFT) — stop scan, don't restart.
                                 if state.font_exhausted.load(Ordering::SeqCst) {
-                                    app_log(&app, "FontOpened ignored — font exhausted".to_string());
+                                    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                    app_log(&app, "FontOpened ignored — font exhausted, gem scan stopped".to_string());
+                                } else if state.gem_scan_done.load(Ordering::SeqCst) {
+                                    // Previous scan found 3/3 → this is CONFIRM, not CRAFT.
+                                    // Stop any running scan and clear comparator — user made their choice.
+                                    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                    detected_gems.clear();
+                                    *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+                                    if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
+                                    app_log(&app, "FontOpened — CONFIRM click, comparator cleared".to_string());
+
+                                    // Seal font round data.
+                                    let is_last = seal_font_round(&app);
+                                    if is_last {
+                                        app_log(&app, "Last font craft — stopping font scan".to_string());
+                                        state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                        state.font_exhausted.store(true, Ordering::SeqCst);
+                                    }
                                 } else {
-                                    // FontOpened = user clicked CRAFT → 3 gems on screen.
+                                    // CRAFT click → start gem scan.
                                     detected_gems.clear();
                                     spawn_gem_scan(&app, "font");
 
-                                    // Seal the current font round (options captured by font scan).
+                                    // Seal font round data.
                                     let is_last = seal_font_round(&app);
                                     if is_last {
-                                        // No "Crafts Remaining" was seen → this was the last craft.
-                                        // Stop font scan and mark font as exhausted.
                                         app_log(&app, "Last font craft — stopping font scan".to_string());
                                         state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
                                         state.font_exhausted.store(true, Ordering::SeqCst);
@@ -1632,6 +1654,7 @@ pub fn run() {
         aspirant_trial_count: AtomicU32::new(0),
         font_session: Mutex::new(FontSessionData::default()),
         font_exhausted: AtomicBool::new(false),
+        gem_scan_done: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
