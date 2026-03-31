@@ -12,8 +12,13 @@
 
 	// Cache the monitor scale factor from Tauri (more reliable than window.devicePixelRatio
 	// which can be wrong in transparent overlay WebViews on high-DPI displays).
-	let cachedScaleFactor = $state(window.devicePixelRatio || 1);
-	getCurrentWebviewWindow().scaleFactor().then(sf => { cachedScaleFactor = sf; });
+	let cachedScaleFactor = $state(0);
+	getCurrentWebviewWindow().scaleFactor()
+		.then(sf => { cachedScaleFactor = sf; })
+		.catch(e => {
+			console.warn('[overlay] scaleFactor() failed, using devicePixelRatio fallback:', e);
+			cachedScaleFactor = window.devicePixelRatio || 1;
+		});
 
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
@@ -115,7 +120,7 @@
 		let cancelled = false;
 
 		const unlistenPromise = listen<{ x: number; y: number }>('overlay-click', (event) => {
-			if (cancelled || results.length === 0) return;
+			if (cancelled || results.length === 0 || cachedScaleFactor === 0) return;
 			const lx = event.payload.x / cachedScaleFactor;
 			const ly = event.payload.y / cachedScaleFactor;
 
