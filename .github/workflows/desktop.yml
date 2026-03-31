@@ -2,14 +2,8 @@ name: Desktop Build
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'desktop/**'
     tags:
       - 'v-desktop-*'
-
-# Note: GitHub evaluates push triggers as an OR between branches+paths and tags.
-# A tag push matching v-desktop-* will trigger regardless of the paths filter.
 
 jobs:
   build-desktop:
