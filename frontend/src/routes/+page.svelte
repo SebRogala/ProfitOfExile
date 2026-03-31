@@ -1,5 +1,6 @@
 <script lang="ts">
 	let currentFeature = $state(0);
+	let zoomedImg = $state<string | null>(null);
 	const features = [
 		{
 			title: 'OCR Gem Detection',
@@ -118,7 +119,19 @@
 				<span class="step-num">2</span>
 				<div class="step-content">
 					<h3>Configure OCR Regions</h3>
-					<p>Go to Settings &rarr; Game Integration. Configure two red rectangles: one for the gem tooltip area (top-left of screen), one for the font panel (center). The app reads these areas with OCR.</p>
+					<p>Go to Settings &rarr; Game Integration. Configure two red rectangles: one for the <strong>gem tooltip area</strong> (top of screen, where gem names appear on hover), and one for the <strong>font craft panel</strong> (center, where craft options are listed).</p>
+					<div class="step-images">
+						<figure class="step-figure">
+							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							<img src="/setup-gem-region.png" alt="Gem tooltip OCR region" class="step-img" onclick={() => { zoomedImg = 'gem'; }} />
+							<figcaption>Gem tooltip region <span class="click-hint">(click to enlarge)</span></figcaption>
+						</figure>
+						<figure class="step-figure">
+							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							<img src="/setup-font-region.png" alt="Font panel OCR region" class="step-img" onclick={() => { zoomedImg = 'font'; }} />
+							<figcaption>Font panel region <span class="click-hint">(click to enlarge)</span></figcaption>
+						</figure>
+					</div>
 				</div>
 			</div>
 			<div class="step">
@@ -146,6 +159,13 @@
 		</p>
 		<a href="/lab" class="cta-secondary">Open Dashboard</a>
 	</section>
+
+	{#if zoomedImg}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="lightbox" onclick={() => { zoomedImg = null; }}>
+			<img src={zoomedImg === 'gem' ? '/setup-gem-region.png' : '/setup-font-region.png'} alt="Enlarged view" class="lightbox-img" />
+		</div>
+	{/if}
 
 	<!-- Footer -->
 	<footer class="footer">
@@ -478,6 +498,54 @@
 		line-height: 1.6;
 		color: #8a8a9a;
 		font-weight: 300;
+	}
+
+	.step-images {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		margin-top: 16px;
+	}
+
+	.step-figure {
+		margin: 0;
+	}
+
+	.step-img {
+		width: 100%;
+		border: 1px solid rgba(201, 170, 113, 0.15);
+		border-radius: 4px;
+		cursor: zoom-in;
+		transition: transform 0.2s;
+	}
+
+	.lightbox {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.9);
+		z-index: 200;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: zoom-out;
+	}
+
+	.lightbox-img {
+		max-width: 95vw;
+		max-height: 90vh;
+		border: 1px solid rgba(201, 170, 113, 0.3);
+	}
+
+	.step-figure figcaption {
+		font-size: 0.8rem;
+		color: #5a5a6a;
+		margin-top: 6px;
+		font-style: italic;
+	}
+
+	.click-hint {
+		color: #4a4a5a;
+		font-size: 0.75rem;
 	}
 
 	.step-content a {
