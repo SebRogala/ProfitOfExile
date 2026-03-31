@@ -167,7 +167,7 @@ func main() {
 			DefaultFetchRate:  1,
 			MaxQueueWait:      tradeMaxWait,
 			CacheMaxEntries:   tradeCacheMax,
-			UserAgent:         getEnvDefault("TRADE_USER_AGENT", "profitofexile/0.1.0 (contact: profitofexile@softsolution.pro)"),
+			UserAgent:         getEnvDefault("TRADE_USER_AGENT", "profitofexile/0.1.0"),
 			SyncWaitBudget:    tradeSyncTimeout,
 		}
 

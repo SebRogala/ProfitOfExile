@@ -173,7 +173,7 @@ export interface CompareGem {
  * Called fresh on every request so it picks up server_url changes (e.g. after settings edit).
  */
 function getApiBase(): string {
-	return (store.status?.server_url || 'https://poe.softsolution.pro') + '/api';
+	return (store.status?.server_url || import.meta.env.VITE_SERVER_URL || 'https://profitofexile.localhost') + '/api';
 }
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {

@@ -58,7 +58,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             client_txt_path: crate::DEFAULT_CLIENT_TXT_PATH.to_string(),
-            server_url: String::from("https://poe.softsolution.pro"),
+            server_url: String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost")),
             gem_region: CaptureRegion::default(),
             font_region: CaptureRegion::default_font_panel(),
             window: None,
