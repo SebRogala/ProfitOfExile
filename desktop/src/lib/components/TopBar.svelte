@@ -7,7 +7,7 @@
 		status: any;
 	} = $props();
 
-	const PROD_URL = 'https://poe.softsolution.pro';
+	const PROD_URL = import.meta.env.VITE_SERVER_URL || 'https://profitofexile.localhost';
 	const LOCAL_URL = 'https://profitofexile.localhost';
 
 	function isDebug(): boolean {

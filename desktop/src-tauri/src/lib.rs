@@ -1608,7 +1608,7 @@ pub fn run() {
         client_txt_path: Mutex::new(String::from(
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
         )),
-        server_url: Mutex::new(String::from("https://poe.softsolution.pro")),
+        server_url: Mutex::new(String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost"))),
         detected_gems: Mutex::new(Vec::new()),
         lab_state: Mutex::new(lab_state::LabState::Idle),
         logs: Mutex::new(Vec::new()),
