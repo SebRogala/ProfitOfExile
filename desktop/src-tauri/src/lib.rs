@@ -1761,6 +1761,10 @@ pub fn run() {
                     s.window = Some(win_settings);
                     s.comparator_overlay = existing.comparator_overlay;
                     settings::save(app, &s);
+
+                    // Force exit — background threads (focus poller, mouse hook, scan loops)
+                    // may still be mid-sleep and keeping the process alive.
+                    std::process::exit(0);
                 }
             }
         })
