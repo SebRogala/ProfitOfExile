@@ -24,9 +24,19 @@
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
 
-	async function createComparatorOverlay(x: number, y: number) {
+	/** Convert monitor-relative physical coords to absolute logical for window placement. */
+	async function overlayAbsoluteLogical(relX: number, relY: number): Promise<{ x: number; y: number }> {
+		const win = getCurrentWebviewWindow();
+		const monitor = await win.currentMonitor();
+		const dpr = monitor?.scaleFactor ?? await win.scaleFactor().catch(() => window.devicePixelRatio || 1);
+		const mx = monitor?.position.x ?? 0;
+		const my = monitor?.position.y ?? 0;
+		return { x: Math.round((mx + relX) / dpr), y: Math.round((my + relY) / dpr) };
+	}
+
+	async function createComparatorOverlay(relX: number, relY: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const dpr = await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
+		const absPos = await overlayAbsoluteLogical(relX, relY);
 
 		await destroyComparatorWindow();
 
@@ -42,8 +52,8 @@
 
 			width: 630,
 			height: 250,
-			x: Math.round(x / dpr),
-			y: Math.round(y / dpr),
+			x: absPos.x,
+			y: absPos.y,
 		});
 
 		win.once('tauri://created', async () => {

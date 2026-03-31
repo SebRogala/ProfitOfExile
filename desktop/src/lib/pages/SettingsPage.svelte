@@ -265,6 +265,16 @@
 		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
 	});
 
+	/** Convert monitor-relative physical coords to absolute logical for window creation. */
+	async function overlayAbsoluteLogical(relX: number, relY: number): Promise<{ x: number; y: number }> {
+		const win = getCurrentWebviewWindow();
+		const monitor = await win.currentMonitor();
+		const dpr = monitor?.scaleFactor ?? await win.scaleFactor().catch(() => window.devicePixelRatio || 1);
+		const mx = monitor?.position.x ?? 0;
+		const my = monitor?.position.y ?? 0;
+		return { x: Math.round((mx + relX) / dpr), y: Math.round((my + relY) / dpr) };
+	}
+
 	async function showComparatorPositionOverlay() {
 		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -273,7 +283,7 @@
 			comparatorPositionOverlay = null;
 		}
 		const s = comparatorOverlaySettings;
-		const dpr = await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
+		const pos = s ? await overlayAbsoluteLogical(s.x, s.y) : { x: 100, y: 100 };
 		const win = new WebviewWindow('overlay-comparator-pos', {
 			url: '/overlay?sync=comparator',
 			transparent: true,
@@ -284,8 +294,8 @@
 			skipTaskbar: true,
 			width: 630,
 			height: 250,
-			x: s ? Math.round(s.x / dpr) : 100,
-			y: s ? Math.round(s.y / dpr) : 100,
+			x: pos.x,
+			y: pos.y,
 		});
 		win.once('tauri://created', () => { comparatorPositionOverlay = win; });
 		win.once('tauri://error', (e: any) => console.error('Position overlay failed:', e));
@@ -293,14 +303,20 @@
 
 	async function saveComparatorPosition() {
 		if (!comparatorPositionOverlay) return;
-		let x: number, y: number, w: number, h: number;
+		let relX: number, relY: number, w: number, h: number;
 		try {
 			const ref = comparatorPositionOverlay.window ?? comparatorPositionOverlay;
-			const pos = await ref.outerPosition();
+			const absPos = await ref.outerPosition();
 			const size = await ref.outerSize();
-			x = pos.x; y = pos.y; w = size.width; h = size.height;
-			await invoke('set_comparator_overlay_settings', { x, y, w, h, enabled: true });
-			comparatorOverlaySettings = { x, y, width: w, height: h };
+			// Save position relative to the monitor the overlay is on
+			const monitor = await ref.currentMonitor();
+			const mx = monitor?.position.x ?? 0;
+			const my = monitor?.position.y ?? 0;
+			relX = absPos.x - mx;
+			relY = absPos.y - my;
+			w = size.width; h = size.height;
+			await invoke('set_comparator_overlay_settings', { x: relX, y: relY, w, h, enabled: true });
+			comparatorOverlaySettings = { x: relX, y: relY, width: w, height: h };
 		} catch (e) {
 			console.error('Save comparator position failed:', e);
 			return;
@@ -318,7 +334,7 @@
 			try { await existing.destroy(); } catch (_) {}
 			await new Promise(r => setTimeout(r, 100));
 		}
-		const dpr = await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
+		const absPos = await overlayAbsoluteLogical(relX!, relY!);
 		new WebviewWindow('comparator', {
 			url: '/overlay/comparator',
 			transparent: true,
@@ -330,8 +346,8 @@
 
 			width: 630,
 			height: 250,
-			x: Math.round(x! / dpr),
-			y: Math.round(y! / dpr),
+			x: absPos.x,
+			y: absPos.y,
 		});
 	}
 
