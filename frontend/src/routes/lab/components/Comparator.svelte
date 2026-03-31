@@ -403,10 +403,6 @@
 			{#if selectedGems.length > 0}
 				<button class="clear-btn" onclick={clearAll}>Clear All</button>
 			{/if}
-			<label class="auto-trade-toggle" title="When enabled, trade lookups are not sent automatically on gem add">
-				<input type="checkbox" bind:checked={autoTradeDisabled} />
-				<span class="toggle-label">Disable auto-trade</span>
-			</label>
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
 				<Select bind:value={variant} options={VARIANT_OPTIONS} onchange={() => handleVariantChange()} />

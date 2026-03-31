@@ -50,7 +50,8 @@
 	<!-- Hero -->
 	<header class="hero">
 		<div class="hero-content">
-			<p class="tagline">Divine Font Farming Companion</p>
+			<img src="/logo-128.png" alt="ProfitOfExile" class="hero-logo" />
+		<p class="tagline">Divine Font Farming Companion</p>
 			<h1 class="title">
 				<span class="title-profit">Profit</span><span class="title-of">Of</span><span class="title-exile">Exile</span>
 			</h1>
@@ -218,6 +219,15 @@
 		padding: 120px 24px 60px;
 		max-width: 720px;
 		margin: 0 auto;
+	}
+
+	.hero-logo {
+		width: 80px;
+		height: 80px;
+		margin-bottom: 20px;
+		opacity: 0;
+		animation: fadeUp 0.8s ease forwards;
+		filter: drop-shadow(0 0 24px rgba(201, 170, 113, 0.3));
 	}
 
 	.tagline {

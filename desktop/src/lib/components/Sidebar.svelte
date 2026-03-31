@@ -48,22 +48,10 @@
 		</button>
 	</div>
 	<div class="collapsed-overlays">
-		<div class="collapsed-overlay" title="Compass: off">
-			<span class="icon">&#x1F9ED;</span>
-			<span class="indicator off"></span>
-		</div>
-		<div class="collapsed-overlay" title="OCR: off">
-			<span class="icon">&#x1F441;</span>
-			<span class="indicator off"></span>
-		</div>
 		<button class="collapsed-overlay" title="Compare: {comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleComparator}>
 			<span class="icon">&#x2696;&#xFE0F;</span>
 			<span class="indicator" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}></span>
 		</button>
-		<div class="collapsed-overlay" title="Session: off">
-			<span class="icon">&#x1F4CB;</span>
-			<span class="indicator off"></span>
-		</div>
 	</div>
 	<button class="collapse-btn collapsed-expand" onclick={onToggle} title="Expand sidebar">&#9654;</button>
 </nav>
@@ -111,22 +99,10 @@
 
 	<div class="bottom">
 		<div class="label">Overlays</div>
-		<div class="overlay-row">
-			<span>&#x1F9ED; Compass</span>
-			<span class="mode off">off</span>
-		</div>
-		<div class="overlay-row">
-			<span>&#x1F441; OCR</span>
-			<span class="mode off">off</span>
-		</div>
 		<button class="overlay-row clickable" onclick={onToggleComparator}>
 			<span>&#x2696;&#xFE0F; Compare</span>
 			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}>{comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
-		<div class="overlay-row">
-			<span>&#x1F4CB; Session</span>
-			<span class="mode off">off</span>
-		</div>
 	</div>
 	<button class="collapse-btn collapse-inside" onclick={onToggle} title="Collapse sidebar">&#9664;</button>
 </nav>
