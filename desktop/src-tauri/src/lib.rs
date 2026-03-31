@@ -1513,6 +1513,7 @@ fn spawn_log_watcher(app: AppHandle) {
                         if line.contains("Aspirants' Plaza") || line.contains("Aspirant's Plaza") {
                             state.aspirant_trial_count.store(0, Ordering::SeqCst);
                             state.font_exhausted.store(false, Ordering::SeqCst);
+                            state.gem_scan_done.store(false, Ordering::SeqCst);
                             app_log(&app, "Aspirants' Plaza — trial counter reset".to_string());
                         } else if line.contains("Aspirant's Trial") {
                             // Dedup: same Trial zone within 0.5s is a log batch artifact.
@@ -1543,6 +1544,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                     // Previous scan found 3/3 → this is CONFIRM, not CRAFT.
                                     // Stop any running scan and clear comparator — user made their choice.
                                     state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                    state.gem_scan_done.store(false, Ordering::SeqCst);
                                     detected_gems.clear();
                                     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
                                     if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
@@ -1572,10 +1574,11 @@ fn spawn_log_watcher(app: AppHandle) {
                             lab_state::LabEvent::ZoneChanged { area } => {
                                 app_log(&app, format!("Zone changed: {} — stopping", area));
 
-                                // Stop both gem and font scans + reset font exhausted.
+                                // Stop both gem and font scans + reset font state.
                                 state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 state.font_exhausted.store(false, Ordering::SeqCst);
+                                state.gem_scan_done.store(false, Ordering::SeqCst);
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                     lab_state::LabState::Idle;
 
