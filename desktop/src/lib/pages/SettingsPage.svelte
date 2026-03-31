@@ -295,6 +295,7 @@
 		<section>
 			<h2>General</h2>
 
+			{#if import.meta.env.DEV}
 			<div class="setting-row">
 				<span class="setting-label">Server URL</span>
 				{#if editingServerUrl}
@@ -313,6 +314,7 @@
 					<button class="btn-small" onclick={startEditServerUrl}>Edit</button>
 				{/if}
 			</div>
+			{/if}
 
 			<div class="setting-row">
 				<span class="setting-label">League</span>
