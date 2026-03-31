@@ -3,6 +3,7 @@ package trade
 import (
 	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -90,6 +91,15 @@ type SearchResponse struct {
 // CacheKey returns the canonical cache/dedup key for a gem+variant pair.
 func CacheKey(gem, variant string) string {
 	return gem + "|" + variant
+}
+
+// ParseCacheKey splits a cache key back into gem and variant.
+func ParseCacheKey(key string) (gem, variant string) {
+	parts := strings.SplitN(key, "|", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return key, ""
 }
 
 // ComputeSignals derives market health signals from the top listings.

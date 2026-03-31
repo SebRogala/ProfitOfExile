@@ -1,6 +1,9 @@
 package trade
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // TradeCache is a concurrency-safe LRU cache for trade lookup results.
 // All operations acquire a write lock because even Get promotes the
@@ -109,6 +112,32 @@ func (c *TradeCache) removeFromOrder(key string) {
 			return
 		}
 	}
+}
+
+// OldestStale returns the cache key whose FetchedAt is oldest among entries
+// matching the filter. Only entries older than minAge are considered.
+// Returns ("", false) if nothing qualifies.
+func (c *TradeCache) OldestStale(minAge time.Duration, filter func(key string, r *TradeLookupResult) bool) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cutoff := time.Now().Add(-minAge)
+	var oldestKey string
+	var oldestTime time.Time
+
+	for key, e := range c.entries {
+		if e.Result.FetchedAt.After(cutoff) {
+			continue // too fresh
+		}
+		if filter != nil && !filter(key, e.Result) {
+			continue
+		}
+		if oldestKey == "" || e.Result.FetchedAt.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = e.Result.FetchedAt
+		}
+	}
+	return oldestKey, oldestKey != ""
 }
 
 // evictOldest removes the least-recently-used entry (order[0]).
