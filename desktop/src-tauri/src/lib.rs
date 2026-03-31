@@ -1538,8 +1538,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                 // gem scan found 3/3 gems, this FontOpened is CONFIRM
                                 // (not a new CRAFT) — stop scan, don't restart.
                                 if state.font_exhausted.load(Ordering::SeqCst) {
-                                    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                    app_log(&app, "FontOpened ignored — font exhausted, gem scan stopped".to_string());
+                                    app_log(&app, "FontOpened ignored — font exhausted".to_string());
                                 } else if state.gem_scan_done.load(Ordering::SeqCst) {
                                     // Previous scan found 3/3 → this is CONFIRM, not CRAFT.
                                     // Stop any running scan and clear comparator — user made their choice.
