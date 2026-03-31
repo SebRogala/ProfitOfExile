@@ -1482,6 +1482,7 @@ fn spawn_log_watcher(app: AppHandle) {
         let mut state_machine = lab_state::LabStateMachine::new();
         let mut detected_gems: Vec<String> = Vec::new();
         let _matcher = gem_matcher::GemMatcher::new(vec![]); // TODO: fetch from server
+        let mut last_trial_entered = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
         loop {
             tokio::select! {
@@ -1503,11 +1504,15 @@ fn spawn_log_watcher(app: AppHandle) {
                             state.font_exhausted.store(false, Ordering::SeqCst);
                             app_log(&app, "Aspirants' Plaza — trial counter reset".to_string());
                         } else if line.contains("Aspirant's Trial") {
-                            let count = state.aspirant_trial_count.fetch_add(1, Ordering::SeqCst) + 1;
-                            app_log(&app, format!("Aspirant's Trial #{}", count));
-                            if count >= 3 {
-                                app_log(&app, "3rd+ Aspirant's Trial — starting font panel OCR".to_string());
-                                spawn_font_scan(&app);
+                            // Dedup: same Trial zone within 0.5s is a log batch artifact.
+                            if last_trial_entered.elapsed() >= std::time::Duration::from_millis(500) {
+                                last_trial_entered = std::time::Instant::now();
+                                let count = state.aspirant_trial_count.fetch_add(1, Ordering::SeqCst) + 1;
+                                app_log(&app, format!("Aspirant's Trial #{}", count));
+                                if count == 3 {
+                                    app_log(&app, "3rd Aspirant's Trial — starting font panel OCR".to_string());
+                                    spawn_font_scan(&app);
+                                }
                             }
                         }
                     }
