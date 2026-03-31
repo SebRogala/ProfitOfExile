@@ -4,7 +4,7 @@
 
 **Goal:** Migrate the full web lab farming dashboard (15 components, ~5300 lines) to the Tauri desktop app with zero simplifications.
 
-**Architecture:** The web dashboard fetches from `/api/*` (same origin). The desktop app fetches from `store.status.server_url + '/api/*'` (configured server URL, default `https://poe.softsolution.pro`). CSS theming uses identical `--color-lab-*` variables added to desktop's `app.css`. Components are copied verbatim except: (1) the API layer uses server URL instead of relative paths, (2) the Comparator uses Tauri events for gem detection instead of Mercure SSE desktop bridge.
+**Architecture:** The web dashboard fetches from `/api/*` (same origin). The desktop app fetches from `store.status.server_url + '/api/*'` (configured server URL, default `https://SERVER_URL`). CSS theming uses identical `--color-lab-*` variables added to desktop's `app.css`. Components are copied verbatim except: (1) the API layer uses server URL instead of relative paths, (2) the Comparator uses Tauri events for gem detection instead of Mercure SSE desktop bridge.
 
 **Tech Stack:** SvelteKit 5 (runes), Tauri v2 (events/invoke), CSS custom properties, EventSource (Mercure SSE)
 
@@ -84,7 +84,7 @@ Desktop pattern:
 ```ts
 import { store } from '$lib/stores/status.svelte';
 function getApiBase(): string {
-    return (store.status?.server_url || 'https://poe.softsolution.pro') + '/api';
+    return (store.status?.server_url || 'https://SERVER_URL') + '/api';
 }
 const url = new URL(`${getApiBase()}${path}`);
 ```
@@ -168,7 +168,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 import { store } from '$lib/stores/status.svelte';
 
 function getApiBase(): string {
-    return (store.status?.server_url || 'https://poe.softsolution.pro') + '/api';
+    return (store.status?.server_url || 'https://SERVER_URL') + '/api';
 }
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
@@ -203,7 +203,7 @@ const resp = await fetch(`${API_BASE}/trade/lookup`, {
 import { store } from '$lib/stores/status.svelte';
 
 function getApiBase(): string {
-    return (store.status?.server_url || 'https://poe.softsolution.pro') + '/api';
+    return (store.status?.server_url || 'https://SERVER_URL') + '/api';
 }
 // ...
 const resp = await fetch(`${getApiBase()}/trade/lookup`, {

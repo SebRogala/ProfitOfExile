@@ -107,4 +107,4 @@ Require explicit `make migrate` before every deploy.
 ## References
 
 - [ADR-003](003-no-orm-direct-pgx-queries.md) — established golang-migrate as the migration tool; this ADR defines the operational model
-- [POE-15](https://softsolution.youtrack.cloud/issue/POE-15) — database layer + migration tooling task that prompted these decisions
+- [POE-15](POE-15) — database layer + migration tooling task that prompted these decisions

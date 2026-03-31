@@ -57,4 +57,4 @@ The conventional Go module path for open-source or distributable projects.
 
 ## References
 
-- [POE-13](https://softsolution.youtrack.cloud/issue/POE-13) — Go module init + project scaffold (task that prompted this decision)
+- [POE-13](POE-13) — Go module init + project scaffold (task that prompted this decision)

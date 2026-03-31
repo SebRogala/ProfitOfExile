@@ -130,7 +130,7 @@ Create `desktop/src/lib/components/TopBar.svelte`:
 		onToggleSidebar: () => void;
 	} = $props();
 
-	const PROD_URL = 'https://poe.softsolution.pro';
+	const PROD_URL = 'https://SERVER_URL';
 	const LOCAL_URL = 'https://profitofexile.localhost';
 
 	function isDebug(): boolean {

@@ -104,5 +104,5 @@ Following Go standard library style: small, focused packages like `price`, `lab`
 
 - [ARCHITECTURE.md](../../ARCHITECTURE.md) — Full structural specification, module layout, request flow diagrams
 - [ADR-001](001-go-module-path.md) — Module path decision (foundational to all import paths)
-- [POE-13](https://softsolution.youtrack.cloud/issue/POE-13) — Go module init + project scaffold
-- [POE-2](https://softsolution.youtrack.cloud/issue/POE-2) — Foundation epic that this architecture serves
+- [POE-13](POE-13) — Go module init + project scaffold
+- [POE-2](POE-2) — Foundation epic that this architecture serves
