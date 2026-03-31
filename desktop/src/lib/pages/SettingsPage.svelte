@@ -267,9 +267,9 @@
 
 	/** Convert monitor-relative physical coords to absolute logical for window creation. */
 	async function overlayAbsoluteLogical(relX: number, relY: number): Promise<{ x: number; y: number }> {
-		const win = getCurrentWebviewWindow();
-		const monitor = await win.currentMonitor();
-		const dpr = monitor?.scaleFactor ?? await win.scaleFactor().catch(() => window.devicePixelRatio || 1);
+		const { currentMonitor } = await import('@tauri-apps/api/window');
+		const monitor = await currentMonitor();
+		const dpr = monitor?.scaleFactor ?? await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
 		const mx = monitor?.position.x ?? 0;
 		const my = monitor?.position.y ?? 0;
 		return { x: Math.round((mx + relX) / dpr), y: Math.round((my + relY) / dpr) };
@@ -309,7 +309,8 @@
 			const absPos = await ref.outerPosition();
 			const size = await ref.outerSize();
 			// Save position relative to the monitor the overlay is on
-			const monitor = await ref.currentMonitor();
+			const { currentMonitor } = await import('@tauri-apps/api/window');
+			const monitor = await currentMonitor();
 			const mx = monitor?.position.x ?? 0;
 			const my = monitor?.position.y ?? 0;
 			relX = absPos.x - mx;
