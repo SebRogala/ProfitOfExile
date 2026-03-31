@@ -8,8 +8,8 @@
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
-	import LabPage from '$lib/components/LabPage.svelte';
-	import SettingsPage from '$lib/components/SettingsPage.svelte';
+	import LabPage from '$lib/pages/LabPage.svelte';
+	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).

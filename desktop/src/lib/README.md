@@ -23,15 +23,25 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 |------|---------|-------------|
 | `overlay/manager.ts` | `showOverlay()`, `destroyOverlay()`, `getOverlay()`, `isOverlayActive()`, `readOverlayRegion()` | Spawn/destroy/manage Tauri overlay windows. Tracks active overlays by name. |
 
+## Pages
+
+Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store — **not** SvelteKit routing.
+
+| File | Description |
+|------|-------------|
+| `pages/LabPage.svelte` | Lab farming dashboard — tabs (Session/Rankings/Font EV/Market), comparator, session queue, best plays, font EV, market overview. |
+| `pages/SettingsPage.svelte` | Settings — General, Game Integration, Overlays, Trade, Logs. |
+
 ## Routes
+
+Only used for the app shell and overlay windows. **Do NOT add page routes** — use `$lib/pages/` + `nav` store instead.
 
 | Route | Description |
 |-------|-------------|
-| `(app)/+layout.svelte` | App shell — TopBar + Sidebar + content slot. Initializes status store. |
-| `(app)/+page.svelte` | Lab farming dashboard — scan controls, comparator, best plays, font EV, market overview, session queue, logs. |
-| `(app)/dev/+page.svelte` | Dev tools — trade lookup test, pipeline test, OCR test. |
-| `(app)/settings/+page.svelte` | Settings — General, Game Integration (2 OCR regions), Trade, Overlays. |
-| `overlay/+page.svelte` | Capture region overlay — transparent, draggable, resizable. |
+| `(app)/+layout.svelte` | App shell — TopBar + Sidebar + renders all pages (LabPage, SettingsPage). View switching via `nav` store. |
+| `(app)/+page.svelte` | Empty stub — required by adapter-static for HTML generation. |
+| `(app)/dev/+page.svelte` | Dev tools — trade lookup test, pipeline test, OCR test. (DEV only) |
+| `overlay/+page.svelte` | Capture region overlay — transparent, draggable, resizable, Save/Cancel buttons. |
 
 ## Dashboard Components (Lab)
 

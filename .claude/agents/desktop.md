@@ -43,11 +43,14 @@ desktop/
         Sidebar.svelte     — Collapsible nav with strategies, tools, overlay toggles
       overlay/
         manager.ts         — Spawn/destroy/track Tauri overlay windows
+      pages/
+        LabPage.svelte     — Lab farming dashboard (tabs: Session, Rankings, Font EV, Market)
+        SettingsPage.svelte — Settings (General, Game Integration, Overlays, Trade, Logs)
     routes/
       (app)/               — App shell group (topbar + sidebar + content)
-        +layout.svelte     — Root app layout, initializes status store, comparator overlay lifecycle
-        +page.svelte       — Lab page with tabs: Session (comparator+queue), Rankings, Font EV, Market
-        settings/+page.svelte — Settings (General, Game Integration, Overlays, Trade, Logs)
+        +layout.svelte     — Root app layout — renders ALL pages, view switching via nav store
+        +page.svelte       — Empty stub (required by adapter-static)
+        components/        — Dashboard-specific components (Header, Comparator, etc.)
       overlay/             — Overlay windows (outside app shell, transparent)
         +layout.svelte     — Transparent layout for all overlays
         +page.svelte       — Capture region overlay (red-bordered, draggable, Save/Cancel buttons)
