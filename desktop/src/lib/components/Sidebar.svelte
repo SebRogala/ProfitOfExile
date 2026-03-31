@@ -164,6 +164,7 @@
 	}
 
 	.nav-item {
+		all: unset;
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -171,8 +172,9 @@
 		font-size: 12px;
 		border-radius: 5px;
 		color: var(--text);
-		text-decoration: none;
 		cursor: pointer;
+		width: 100%;
+		box-sizing: border-box;
 	}
 
 	.nav-item:hover:not(.disabled) {
@@ -282,6 +284,7 @@
 	}
 
 	.collapsed-item {
+		all: unset;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -289,7 +292,6 @@
 		height: 32px;
 		border-radius: 5px;
 		color: var(--text);
-		text-decoration: none;
 		cursor: pointer;
 		font-size: 14px;
 	}
