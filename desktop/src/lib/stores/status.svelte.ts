@@ -30,7 +30,6 @@ export const store = $state({
 export async function initStatusStore(): Promise<() => void> {
 	// Subscribe to backend events first (so we don't miss any)
 	const unlistenStatus = await listen('status-changed', (event) => {
-		console.log('[store] status-changed event received');
 		store.status = event.payload;
 	});
 
@@ -40,9 +39,7 @@ export async function initStatusStore(): Promise<() => void> {
 
 	// Then do initial load as fallback
 	try {
-		const s = await invoke('get_status');
-		console.log('[store] initial get_status:', s);
-		store.status = s;
+		store.status = await invoke('get_status');
 	} catch (e) {
 		console.warn('[store] initial get_status failed:', e);
 	}
