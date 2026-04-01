@@ -61,16 +61,18 @@
 	}
 
 	// Save/Cancel from overlay buttons (overlay-save/overlay-cancel events).
-	// Works for both OCR region overlays and comparator position overlay.
+	// Works for OCR region overlays, comparator position, and compass position overlays.
 	$effect(() => {
-		if (!overlayVisible && !comparatorPositionOverlay) return;
+		if (!overlayVisible && !comparatorPositionOverlay && !compassPositionOverlay) return;
 		const unlistenSave = listen('overlay-save', () => {
 			if (overlayVisible) saveRegion();
 			else if (comparatorPositionOverlay) saveComparatorPosition();
+			else if (compassPositionOverlay) saveCompassPosition();
 		});
 		const unlistenCancel = listen('overlay-cancel', () => {
 			if (overlayVisible) cancelRegion();
 			else if (comparatorPositionOverlay) cancelComparatorPosition();
+			else if (compassPositionOverlay) cancelCompassPosition();
 		});
 		return () => {
 			unlistenSave.then(u => u());
@@ -262,7 +264,18 @@
 			if (settings) {
 				comparatorOverlaySettings = settings;
 			}
-		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
+		}).catch(e => console.warn('[settings] load comparator overlay settings failed:', e));
+	});
+
+	let compassOverlaySettings = $state<{ x: number; y: number; width: number; height: number } | null>(null);
+	let compassPositionOverlay = $state<any>(null);
+
+	$effect(() => {
+		invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings').then((settings) => {
+			if (settings) {
+				compassOverlaySettings = settings;
+			}
+		}).catch(e => console.warn('[settings] load compass overlay settings failed:', e));
 	});
 
 	async function showComparatorPositionOverlay() {
@@ -317,6 +330,59 @@
 		if (!comparatorPositionOverlay) return;
 		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
 		comparatorPositionOverlay = null;
+		await reclaimMouse();
+	}
+
+	async function showCompassPositionOverlay() {
+		notifyConfigStart();
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
+		if (compassPositionOverlay) {
+			try { await compassPositionOverlay.destroy(); } catch (_) {}
+			compassPositionOverlay = null;
+		}
+		const s = compassOverlaySettings;
+		const win = new WebviewWindow('overlay-compass-pos', {
+			url: '/overlay?sync=compass',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+			width: 250,
+			height: 220,
+		});
+		win.once('tauri://created', async () => {
+			if (s) await win.setPosition(new PhysicalPosition(s.x, s.y));
+			compassPositionOverlay = win;
+		});
+		win.once('tauri://error', (e: any) => console.error('Compass position overlay failed:', e));
+	}
+
+	async function saveCompassPosition() {
+		if (!compassPositionOverlay) return;
+		let x: number, y: number, w: number, h: number;
+		try {
+			const ref = compassPositionOverlay.window ?? compassPositionOverlay;
+			const pos = await ref.outerPosition();
+			const size = await ref.outerSize();
+			x = pos.x; y = pos.y; w = size.width; h = size.height;
+			await invoke('set_compass_overlay_settings', { x, y, w, h, enabled: true });
+			compassOverlaySettings = { x, y, width: w, height: h };
+		} catch (e) {
+			console.error('Save compass position failed:', e);
+			return;
+		}
+		try { await compassPositionOverlay.destroy(); } catch (_) {}
+		compassPositionOverlay = null;
+		await reclaimMouse();
+	}
+
+	async function cancelCompassPosition() {
+		if (!compassPositionOverlay) return;
+		try { await compassPositionOverlay.destroy(); } catch (_) {}
+		compassPositionOverlay = null;
 		await reclaimMouse();
 	}
 </script>
@@ -448,6 +514,18 @@
 				{:else}
 					<span class="setting-value mono">{comparatorOverlaySettings ? `(${comparatorOverlaySettings.x}, ${comparatorOverlaySettings.y}) ${comparatorOverlaySettings.width}\u00d7${comparatorOverlaySettings.height}` : 'Not set'}</span>
 					<button class="btn-small" onclick={showComparatorPositionOverlay} disabled={!!overlayVisible}>Configure</button>
+				{/if}
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Compass Position</span>
+				{#if compassPositionOverlay}
+					<span class="setting-value">Drag overlay to position...</span>
+					<button class="btn-small save" onclick={saveCompassPosition}>Save</button>
+					<button class="btn-small" onclick={cancelCompassPosition}>Cancel</button>
+				{:else}
+					<span class="setting-value mono">{compassOverlaySettings ? `(${compassOverlaySettings.x}, ${compassOverlaySettings.y}) ${compassOverlaySettings.width}\u00d7${compassOverlaySettings.height}` : 'Not set'}</span>
+					<button class="btn-small" onclick={showCompassPositionOverlay} disabled={!!overlayVisible}>Configure</button>
 				{/if}
 			</div>
 		</section>
