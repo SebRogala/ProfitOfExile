@@ -25,6 +25,10 @@
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
 
+	// Compass overlay state
+	let compassActive = $state(false);
+	let compassWin = $state<any>(null);
+
 	async function createComparatorOverlay(physX: number, physY: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
@@ -106,6 +110,85 @@
 		}
 	}
 
+	async function createCompassOverlay(physX: number, physY: number) {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
+
+		await destroyCompassWindow();
+
+		const win = new WebviewWindow('compass', {
+			url: '/overlay/compass',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+			width: 250,
+			height: 220,
+		});
+
+		win.once('tauri://created', async () => {
+			await win.setPosition(new PhysicalPosition(physX, physY));
+			await invoke('set_overlay_clickthrough', { label: 'compass', interactiveWidth: 0 })
+				.catch(e => console.error('[overlay] compass click-through setup failed:', e));
+			compassWin = win;
+			compassActive = true;
+
+			// Hide immediately if game is not focused
+			try {
+				const status = await invoke<any>('get_status');
+				if (!status?.game_focused) {
+					await win.hide();
+				}
+			} catch (e) {
+				console.warn('[overlay] compass initial focus check failed:', e);
+			}
+		});
+		win.once('tauri://error', (e: any) => {
+			console.error('[overlay] compass creation failed:', e);
+		});
+	}
+
+	// Destroy the compass window — retries up to 5 times for async cleanup.
+	async function destroyCompassWindow() {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const existing = await WebviewWindow.getByLabel('compass');
+			if (!existing) break;
+			try { await existing.close(); } catch (_) {}
+			try { await existing.destroy(); } catch (_) {}
+			await new Promise(r => setTimeout(r, 100));
+		}
+		compassWin = null;
+	}
+
+	async function toggleCompassOverlay() {
+		if (compassActive) {
+			await destroyCompassWindow();
+			compassActive = false;
+			// Save disabled state
+			const settings = await invoke<any>('get_compass_overlay_settings').catch(e => { console.warn('[overlay] compass settings load failed:', e); return null; });
+			await invoke('set_compass_overlay_settings', {
+				x: settings?.x ?? 100, y: settings?.y ?? 100,
+				w: settings?.width ?? 250, h: settings?.height ?? 220,
+				enabled: false,
+			}).catch(e => console.warn('[overlay] compass settings operation failed:', e));
+		} else {
+			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings').catch(e => { console.warn('[overlay] compass settings load failed:', e); return null; });
+			await createCompassOverlay(
+				settings?.x ?? 100,
+				settings?.y ?? 100,
+			);
+			// Save enabled state
+			await invoke('set_compass_overlay_settings', {
+				x: settings?.x ?? 100, y: settings?.y ?? 100,
+				w: settings?.width ?? 250, h: settings?.height ?? 220,
+				enabled: true,
+			}).catch(e => console.warn('[overlay] compass settings operation failed:', e));
+		}
+	}
+
 	// Ctrl+Shift+F12 toggles debug mode (devtools + force-show overlays)
 	let debugMode = $state(false);
 
@@ -141,12 +224,20 @@
 	listen('overlay-config-start', async () => {
 		if (configOverlayCleanup) return; // already listening
 		const unlisten = await listen('overlay-toggle-reset', async () => {
-			if (!comparatorActive) return;
-			// Move existing overlay to saved position — no destroy/recreate needed.
-			const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
-			if (settings) {
-				await invoke('move_overlay', { label: 'comparator', x: settings.x, y: settings.y, w: settings.width ?? 630, h: settings.height ?? 250 })
-					.catch(e => console.warn('[overlay] move failed:', e));
+			if (comparatorActive) {
+				// Move existing overlay to saved position — no destroy/recreate needed.
+				const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
+				if (settings) {
+					await invoke('move_overlay', { label: 'comparator', x: settings.x, y: settings.y, w: settings.width ?? 630, h: settings.height ?? 250 })
+						.catch(e => console.warn('[overlay] comparator move failed:', e));
+				}
+			}
+			if (compassActive) {
+				const compassSettings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
+				if (compassSettings) {
+					await invoke('move_overlay', { label: 'compass', x: compassSettings.x, y: compassSettings.y, w: compassSettings.width ?? 250, h: compassSettings.height ?? 220 })
+						.catch(e => console.warn('[overlay] compass move failed:', e));
+				}
 			}
 		});
 		configOverlayCleanup = unlisten;
@@ -166,14 +257,34 @@
 				createComparatorOverlay(settings.x, settings.y);
 			}
 		})
-		.catch(e => console.warn('[overlay] settings operation failed:', e));
+		.catch(e => console.warn('[overlay] comparator settings operation failed:', e));
+
+	// Auto-restore compass overlay if it was enabled in previous session
+	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings')
+		.then((settings) => {
+			if (settings?.enabled) {
+				createCompassOverlay(settings.x, settings.y);
+			}
+		})
+		.catch(e => console.warn('[overlay] compass settings operation failed:', e));
+
+	// Auto-show compass on lab entry (PlazaEntered)
+	listen('lab-nav', async (event: any) => {
+		if (event.payload === 'PlazaEntered') {
+			const settings = await invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings').catch(() => null);
+			if (settings?.enabled && !compassWin) {
+				await createCompassOverlay(settings.x, settings.y);
+			}
+		}
+	});
 </script>
 
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
 		<Sidebar open={sidebarOpen} currentPath={nav.view === 'planner' ? '/planner' : nav.view === 'settings' ? '/settings' : '/'} onToggle={toggleSidebar}
-			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay} />
+			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
+			compassActive={compassActive} onToggleCompass={toggleCompassOverlay} />
 		<main class="content">
 			<div class:view-hidden={nav.view !== 'lab'}>
 				<LabPage />

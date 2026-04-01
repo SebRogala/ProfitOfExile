@@ -735,6 +735,11 @@ fn force_show_overlays(app: AppHandle) {
                 log::warn!("Failed to force-show overlay: {}", e);
             }
         }
+        if let Some(win) = app.get_webview_window("compass") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show compass: {}", e);
+            }
+        }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
         log::info!("Debug mode OFF");
@@ -806,6 +811,20 @@ fn get_comparator_overlay_settings(app: AppHandle) -> Option<settings::OverlaySe
 fn set_comparator_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
     let mut s = settings::load(&app);
     s.comparator_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled,
+    });
+    settings::save(&app, &s);
+}
+
+#[tauri::command]
+fn get_compass_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
+    settings::load(&app).compass_overlay
+}
+
+#[tauri::command]
+fn set_compass_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.compass_overlay = Some(settings::OverlaySettings {
         x, y, width: w, height: h, enabled,
     });
     settings::save(&app, &s);
@@ -1473,6 +1492,17 @@ fn spawn_focus_poller(app: AppHandle) {
                             }
                         }
                     }
+                    if let Some(win) = app.get_webview_window("compass") {
+                        if is_focused {
+                            if let Err(e) = win.show() {
+                                log::warn!("Failed to show compass overlay: {}", e);
+                            }
+                        } else if !debug {
+                            if let Err(e) = win.hide() {
+                                log::warn!("Failed to hide compass overlay: {}", e);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1754,6 +1784,8 @@ pub fn run() {
             comparator_moved,
             get_comparator_overlay_settings,
             set_comparator_overlay_settings,
+            get_compass_overlay_settings,
+            set_compass_overlay_settings,
             get_compass_settings,
             set_compass_mode,
         ])
