@@ -190,8 +190,8 @@
 		await reclaimMouse();
 	}
 
-	/** After closing a config overlay, toggle the comparator off and on.
-	 *  This forces a clean window focus reset — same as sidebar toggle. */
+	/** After closing a config overlay, emit toggle-reset so the layout
+	 *  moves the comparator to its saved position and re-establishes focus. */
 	async function reclaimMouse() {
 		await getCurrentWebviewWindow().emit('overlay-toggle-reset', {}).catch(() => {});
 		notifyConfigEnd();
@@ -309,7 +309,7 @@
 		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
 		comparatorPositionOverlay = null;
 		// reclaimMouse triggers overlay-toggle-reset in layout, which
-		// destroys and recreates the comparator at the saved position.
+		// moves the comparator overlay to the saved position.
 		await reclaimMouse();
 	}
 

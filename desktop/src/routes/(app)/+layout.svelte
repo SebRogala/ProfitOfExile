@@ -66,7 +66,7 @@
 		});
 	}
 
-	// Destroy the comparator window — same loop that works in createComparatorOverlay
+	// Destroy the comparator window — retries up to 5 times for async cleanup.
 	async function destroyComparatorWindow() {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		for (let i = 0; i < 5; i++) {
@@ -133,8 +133,8 @@
 	// No cleanup needed — desktop app layout never unmounts.
 	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
 
-	// Toggle comparator off/on when settings page closes a config overlay.
-	// Fixes Win32 mouse capture stuck after overlay destroy.
+	// Reposition comparator overlay when settings page closes a config overlay.
+	// The config overlay destroy can leave Win32 mouse capture stuck; this move resets focus.
 	// Only active while a config overlay is open (overlay-config-start/end events).
 	let configOverlayCleanup: (() => void) | null = null;
 	listen('overlay-config-start', async () => {
