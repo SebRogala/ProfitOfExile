@@ -8,6 +8,8 @@
 		comparatorActive = false,
 		gameFocused = false,
 		onToggleComparator,
+		compassActive = false,
+		onToggleCompass = (() => {}) as () => void,
 	}: {
 		open: boolean;
 		currentPath: string;
@@ -15,6 +17,8 @@
 		comparatorActive?: boolean;
 		gameFocused?: boolean;
 		onToggleComparator?: () => void;
+		compassActive?: boolean;
+		onToggleCompass?: () => void;
 	} = $props();
 </script>
 
@@ -54,6 +58,10 @@
 		<button class="collapsed-overlay" title="Compare: {comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleComparator}>
 			<span class="icon">&#x2696;&#xFE0F;</span>
 			<span class="indicator" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}></span>
+		</button>
+		<button class="collapsed-overlay" title="Compass: {compassActive ? (gameFocused ? 'on' : 'hidden') : 'off'}" onclick={onToggleCompass}>
+			<span class="icon">&#x1F9ED;</span>
+			<span class="indicator" class:off={!compassActive} class:always={compassActive && gameFocused} class:auto={compassActive && !gameFocused}></span>
 		</button>
 	</div>
 	<button class="collapse-btn collapsed-expand" onclick={onToggle} title="Expand sidebar">&#9654;</button>
@@ -109,6 +117,10 @@
 		<button class="overlay-row clickable" onclick={onToggleComparator}>
 			<span>&#x2696;&#xFE0F; Compare</span>
 			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}>{comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
+		</button>
+		<button class="overlay-row clickable" onclick={onToggleCompass}>
+			<span>&#x1F9ED; Compass</span>
+			<span class="mode" class:off={!compassActive} class:always={compassActive && gameFocused} class:auto={compassActive && !gameFocused}>{compassActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 	</div>
 	<button class="collapse-btn collapse-inside" onclick={onToggle} title="Collapse sidebar">&#9664;</button>

@@ -22,6 +22,7 @@ pub struct Settings {
     pub window: Option<WindowSettings>,
     pub sidebar_open: bool,
     pub comparator_overlay: Option<OverlaySettings>,
+    pub compass_overlay: Option<OverlaySettings>,
     /// Yellow indicator threshold for trade data age (seconds).
     pub trade_stale_warn_secs: u32,
     /// Red indicator threshold for trade data age (seconds).
@@ -65,6 +66,7 @@ impl Default for Settings {
             window: None,
             sidebar_open: true,
             comparator_overlay: None,
+            compass_overlay: None,
             trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
             trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
             trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
@@ -148,6 +150,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         window: None, // Window settings are saved separately on close, not from AppState
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         comparator_overlay: None, // Overlay settings saved separately, not from AppState
+        compass_overlay: None,    // Overlay settings saved separately, not from AppState
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
