@@ -202,6 +202,7 @@
 		if (!statusReady) return;
 
 		const connection = connectMercure(debouncedMercureUpdate, (connected) => {
+			store.serverConnected = connected;
 			if (status) {
 				status = { ...status, connected };
 			}
