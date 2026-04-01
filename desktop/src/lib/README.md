@@ -125,7 +125,7 @@ Overlay is always fully click-through (`WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`)
 - **State flow**: Rust emits events → `status.svelte.ts` store updates → components react. Pages never poll.
 - **Settings persistence**: `%AppData%/profitofexile/settings.json`. Saved automatically on every mutation.
 - **Logging**: `%AppData%/profitofexile/app.log` (persistent) + in-memory buffer (50 entries, UI).
-- **DPI**: Overlay constructors take logical pixels. Regions stored as physical. Convert with `devicePixelRatio`.
+- **DPI**: Comparator overlay uses `PhysicalPosition` via Rust `move_overlay` — no DPI conversion. OCR region overlays use `scaleFactor()` for constructor coords. Never use `devicePixelRatio` in overlay WebViews.
 - **Error handling**: Log errors to `app_log`, never silently discard. Throttle capture loop errors.
 
 ## Migration Notes (web → desktop)

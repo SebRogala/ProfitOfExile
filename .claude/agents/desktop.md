@@ -187,19 +187,39 @@ Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations
 **CRITICAL — Win32 Mouse Capture on Overlay Destroy**: Destroying a transparent `alwaysOnTop` WebView2 window while it holds Win32 mouse capture leaves the OS mouse input stuck. This is a known Tauri/WebView2 issue. **Do NOT destroy overlay windows directly from button click handlers.** Instead:
 1. Config overlays (`/overlay/+page.svelte`) have Save/Cancel buttons that emit `overlay-save`/`overlay-cancel` events
 2. The settings page receives the event, saves data, destroys the config overlay
-3. Then emits `overlay-toggle-reset` → the layout toggles the comparator overlay off/on (100ms pause between destroy and recreate)
-4. This forces Windows to release mouse capture by cycling through a clean window destroy/create sequence
-5. The toggle-reset listener in the layout is only active while a config overlay is open (`overlay-config-start`/`overlay-config-end` events)
+3. Then emits `overlay-toggle-reset` → the layout **moves** the comparator overlay to the saved position via `invoke('move_overlay', ...)` (no destroy/recreate)
+4. The toggle-reset listener in the layout is only active while a config overlay is open (`overlay-config-start`/`overlay-config-end` events)
 
-Approaches that do NOT work: `ReleaseCapture()`, `setIgnoreCursorEvents(true)`, `win.hide()`, `stopPropagation` on mousedown, `setFocus()`, `pointerup` instead of `onclick`. The only reliable fix is the off/on toggle of a separate window.
+**Do NOT destroy/recreate overlay windows to update their position.** Tauri's window label cleanup is async and unreliable — rapid destroy+create causes "already exists" errors. Use `move_overlay` (Rust PhysicalPosition) instead.
 
-### DPI Awareness
-The WebviewWindow constructor takes **logical** pixels. Screen capture regions store **physical** pixels. Convert with `window.devicePixelRatio`:
+### DPI & Multi-Monitor Overlay Positioning
+
+**CRITICAL — Do NOT use the WebviewWindow constructor's `x`/`y` for overlay positioning.** Tauri's constructor applies unpredictable DPI conversion that breaks on multi-monitor setups with different scale factors. Instead:
+
+1. **Save**: Use `outerPosition()` to get absolute physical coords — store directly, no conversion
+2. **Restore**: Use the Rust-side `invoke('move_overlay', { label, x, y, w, h })` command which calls `window.set_position(PhysicalPosition::new(x, y))` — same coordinate space, no DPI conversion
+3. **Reposition (not recreate)**: When updating an overlay's position, use `move_overlay` on the existing window instead of destroying and recreating. Tauri window label cleanup is async and unreliable — "already exists" errors are common.
+
 ```ts
-const dpr = window.devicePixelRatio || 1;
-// Physical → logical for constructor
-new WebviewWindow('overlay', { width: Math.round(physW / dpr), ... });
-// outerPosition/outerSize return physical — store directly
+// WRONG — DPI conversion breaks multi-monitor
+new WebviewWindow('overlay', { x: physX / dpr, y: physY / dpr });
+
+// RIGHT — save absolute, restore via Rust PhysicalPosition
+const pos = await win.outerPosition();
+await invoke('set_comparator_overlay_settings', { x: pos.x, y: pos.y, w, h, enabled: true });
+// On restore:
+await invoke('move_overlay', { label: 'comparator', x: saved.x, y: saved.y, w: 630, h: 250 });
+```
+
+**OCR region overlays** are different — they still use `scaleFactor()` / DPI for the initial window creation because the user always drags them to the correct position. The saved physical coords are used for `crop_imm()` on the screen capture, which is in the same physical coordinate space. This works because OCR configuration is interactive (user adjusts visually).
+
+**For click coordinate conversion** in overlay click-through handlers, use `scaleFactor()` from Tauri (not `window.devicePixelRatio` which can be wrong in transparent WebViews):
+```ts
+let cachedScaleFactor = $state(0);
+getCurrentWebviewWindow().scaleFactor().then(sf => { cachedScaleFactor = sf; });
+// In click handler — skip if scale factor not yet resolved
+if (cachedScaleFactor === 0) return;
+const lx = event.payload.x / cachedScaleFactor;
 ```
 
 ### Navigation
