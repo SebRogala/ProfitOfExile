@@ -122,6 +122,7 @@ pub struct AppState {
     /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
     /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
     pub in_lab: AtomicBool,
+    pub compass_mode: Mutex<String>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -287,6 +288,20 @@ fn set_auto_trade(enabled: bool, app: AppHandle) {
     *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
     persist_settings(&app);
     emit_status(&app);
+}
+
+#[tauri::command]
+fn get_compass_settings(app: AppHandle) -> serde_json::Value {
+    let state = app.state::<AppState>();
+    let mode = state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    serde_json::json!({ "mode": mode })
+}
+
+#[tauri::command]
+fn set_compass_mode(mode: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    persist_settings(&app);
 }
 
 #[tauri::command]
@@ -1700,6 +1715,7 @@ pub fn run() {
         font_exhausted: AtomicBool::new(false),
         gem_scan_done: AtomicBool::new(false),
         in_lab: AtomicBool::new(false),
+        compass_mode: Mutex::new(String::from("minimap")),
     };
 
     tauri::Builder::default()
@@ -1738,6 +1754,8 @@ pub fn run() {
             comparator_moved,
             get_comparator_overlay_settings,
             set_comparator_overlay_settings,
+            get_compass_settings,
+            set_compass_mode,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

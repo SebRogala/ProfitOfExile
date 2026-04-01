@@ -30,6 +30,15 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `compass/room-presets.ts` | `getPresetByAreaCode()`, `getPresetsByName()`, `getTileRect()`, `getDoorExitLocations()`, `getContentLocations()`, `VALID_AREA_CODES` | Room preset data + coordinate math. Loads `room-presets.json` at import time. 35 rooms, 53 variants. |
 | `compass/svg-loader.ts` | `getRoomSvgUrl()`, `getDisabledSvgUrl()` | Resolves area code to SVG path in `/compass/presets/`. Returns null for invalid codes. |
 
+## Compass Components
+
+| File | Props | Description |
+|------|-------|-------------|
+| `compass/RoomMinimap.svelte` | `areaCode`, `doors`, `contents`, `targetDirection`, `roomName` | Room SVG background with positioned door/content overlays. Target exit highlighted green. |
+| `compass/DirectionCompass.svelte` | `directions`, `targetDirection`, `roomName`, `hasContent` | Compass circle with exit markers at compass angles. |
+| `compass/MinimalBar.svelte` | `targetDirection`, `contents`, `timerText` | Compact bar with arrow, content badges, timer. |
+| `compass/CompassOverlay.svelte` | `mode`, all child props | Mode switcher — renders minimap, direction, or minimal mode. |
+
 ## Pages
 
 Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store — **not** SvelteKit routing.

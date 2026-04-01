@@ -30,6 +30,7 @@ pub struct Settings {
     pub trade_auto_refresh_secs: u32,
     /// Whether auto-trade is enabled (fetch trade data automatically on compare).
     pub auto_trade_enabled: bool,
+    pub compass_mode: String,
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -68,6 +69,7 @@ impl Default for Settings {
             trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
             trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
             auto_trade_enabled: false,
+            compass_mode: String::from("minimap"),
         }
     }
 }
@@ -150,6 +152,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
+        compass_mode: state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -164,4 +167,5 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_stale_critical_secs;
     *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
     *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.auto_trade_enabled;
+    *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_mode.clone();
 }
