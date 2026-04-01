@@ -2,6 +2,7 @@ mod capture;
 #[allow(dead_code)] // Font panel OCR — not yet wired into the scan pipeline
 mod font_parser;
 mod gem_matcher;
+mod lab_navigation;
 mod lab_state;
 mod log_watcher;
 mod ocr;
@@ -118,6 +119,9 @@ pub struct AppState {
     /// Set when gem scan completes with 3/3 gems. Used to distinguish CONFIRM
     /// from CRAFT clicks (both fire FontOpened). Reset on next CRAFT.
     pub gem_scan_done: AtomicBool,
+    /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
+    /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
+    pub in_lab: AtomicBool,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -1528,6 +1532,45 @@ fn spawn_log_watcher(app: AppHandle) {
                         }
                     }
 
+                    // --- Lab navigation events (outside state machine) ---
+                    {
+                        let state = app.state::<AppState>();
+                        let in_lab = state.in_lab.load(Ordering::SeqCst);
+                        if let Some(nav_event) = lab_navigation::parse_nav_event(&line, in_lab) {
+                            match &nav_event {
+                                lab_navigation::NavEvent::PlazaEntered => {
+                                    state.in_lab.store(true, Ordering::SeqCst);
+                                    app_log(&app, "Lab nav: Plaza entered".to_string());
+                                }
+                                lab_navigation::NavEvent::LabStarted => {
+                                    app_log(&app, "Lab nav: Izaro started".to_string());
+                                }
+                                lab_navigation::NavEvent::RoomChanged { name } => {
+                                    app_log(&app, format!("Lab nav: room {}", name));
+                                }
+                                lab_navigation::NavEvent::LabExited => {
+                                    state.in_lab.store(false, Ordering::SeqCst);
+                                    app_log(&app, "Lab nav: exited lab".to_string());
+                                }
+                                lab_navigation::NavEvent::LabFinished => {
+                                    app_log(&app, "Lab nav: Izaro defeated!".to_string());
+                                }
+                                lab_navigation::NavEvent::SectionFinished => {
+                                    app_log(&app, "Lab nav: section finished".to_string());
+                                }
+                                lab_navigation::NavEvent::IzaroBattleStarted => {
+                                    app_log(&app, "Lab nav: Izaro battle started".to_string());
+                                }
+                                lab_navigation::NavEvent::PortalSpawned => {
+                                    app_log(&app, "Lab nav: portal spawned".to_string());
+                                }
+                            }
+                            if let Err(e) = app.emit("lab-nav", &nav_event) {
+                                log::warn!("emit lab-nav failed: {}", e);
+                            }
+                        }
+                    }
+
                     if let Some(event) = state_machine.process_line(&line) {
                         let state = app.state::<AppState>();
                         match &event {
@@ -1656,6 +1699,7 @@ pub fn run() {
         font_session: Mutex::new(FontSessionData::default()),
         font_exhausted: AtomicBool::new(false),
         gem_scan_done: AtomicBool::new(false),
+        in_lab: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
