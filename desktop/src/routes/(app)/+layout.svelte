@@ -9,6 +9,7 @@
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 	import LabPage from '$lib/pages/LabPage.svelte';
+	import PlannerPage from '$lib/pages/PlannerPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 
 
@@ -171,11 +172,14 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={nav.view === 'lab' ? '/' : '/settings'} onToggle={toggleSidebar}
+		<Sidebar open={sidebarOpen} currentPath={nav.view === 'planner' ? '/planner' : nav.view === 'settings' ? '/settings' : '/'} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay} />
 		<main class="content">
 			<div class:view-hidden={nav.view !== 'lab'}>
 				<LabPage />
+			</div>
+			<div class:view-hidden={nav.view !== 'planner'}>
+				<PlannerPage />
 			</div>
 			<div class:view-hidden={nav.view !== 'settings'}>
 				<SettingsPage />

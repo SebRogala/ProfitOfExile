@@ -500,6 +500,22 @@ export function getRoomContents(state: NavState, roomId: string): string[] {
 	return state.roomById.get(roomId)?.contents ?? [];
 }
 
+/** Toggle a room as a manual target and recompute the route. */
+export function toggleTargetRoom(state: NavState, roomId: string): NavState {
+	const newState = { ...state };
+	if (state.targetRooms.includes(roomId)) {
+		newState.targetRooms = state.targetRooms.filter((id) => id !== roomId);
+	} else {
+		newState.targetRooms = [...state.targetRooms, roomId];
+	}
+	if (state.currentRoom) {
+		newState.plannedRoute = computeRouteFrom(newState, state.currentRoom, state.strategy);
+	} else {
+		newState.plannedRoute = computeRoute(newState, state.strategy);
+	}
+	return newState;
+}
+
 /** Update the routing strategy and recompute the route. */
 export function setStrategy(state: NavState, strategy: RouteStrategy): NavState {
 	const newState = { ...state, strategy };

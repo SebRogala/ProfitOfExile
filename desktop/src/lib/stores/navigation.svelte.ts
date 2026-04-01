@@ -10,12 +10,13 @@
  *   // Navigate: nav.go('/settings')
  */
 
-export type View = 'lab' | 'settings';
+export type View = 'lab' | 'settings' | 'planner';
 
 export const nav = $state({
 	view: 'lab' as View,
 	go(path: string) {
 		if (path === '/settings') nav.view = 'settings';
+		else if (path === '/planner') nav.view = 'planner';
 		else nav.view = 'lab';
 	},
 });
