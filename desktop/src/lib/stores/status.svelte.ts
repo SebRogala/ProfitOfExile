@@ -18,6 +18,8 @@ export const store = $state({
 	status: null as any,
 	/** Log entries from Rust. */
 	logs: [] as string[],
+	/** Whether the Mercure SSE connection to the server is alive. */
+	serverConnected: false,
 });
 
 /**

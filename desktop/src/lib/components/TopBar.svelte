@@ -2,6 +2,7 @@
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 	import { nav } from '$lib/stores/navigation.svelte';
+	import { store } from '$lib/stores/status.svelte';
 
 	let { status }: {
 		status: any;
@@ -50,7 +51,7 @@
 		<span class="app-name">ProfitOfExile</span>
 	</div>
 	<div class="center">
-		<span class="status-dot" class:connected={!!status} title={status ? `Server: Connected (${status.server_url})` : 'Server: Disconnected'}></span>
+		<span class="status-dot" class:connected={store.serverConnected} title={store.serverConnected ? `Server: Connected (${status?.server_url})` : 'Server: Disconnected'}></span>
 		<span class="status-dot scanning-dot" class:active={status?.state && status.state !== 'Idle'} title={`OCR Scanner: ${status?.state ?? 'Unknown'} ${status?.state === 'PickingGems' ? '— reading gem names' : status?.state === 'FontReady' ? '— font detected' : ''}`}></span>
 		{#if import.meta.env.DEV}
 			<button class="btn-debug" class:active={isDebug()} onclick={toggleDebug}>
