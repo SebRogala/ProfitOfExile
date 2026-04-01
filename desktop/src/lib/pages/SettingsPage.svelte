@@ -265,28 +265,23 @@
 		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
 	});
 
-	/** Find the monitor containing a physical point, or fall back to primary. */
-	async function monitorAt(physX: number, physY: number) {
+	/** Convert absolute physical coords to logical using the correct monitor's DPI. */
+	async function physicalToLogical(physX: number, physY: number): Promise<{ x: number; y: number }> {
 		const { availableMonitors, primaryMonitor } = await import('@tauri-apps/api/window');
 		const monitors = await availableMonitors();
+		let dpr = window.devicePixelRatio || 1;
 		for (const m of monitors) {
 			const { x, y } = m.position;
 			if (physX >= x && physX < x + m.size.width && physY >= y && physY < y + m.size.height) {
-				return m;
+				dpr = m.scaleFactor;
+				break;
 			}
 		}
-		return await primaryMonitor();
-	}
-
-	/** Convert monitor-relative physical coords to absolute logical for window creation.
-	 *  Uses the main window's monitor as the target (overlay should appear on the same screen). */
-	async function overlayAbsoluteLogical(relX: number, relY: number): Promise<{ x: number; y: number }> {
-		const { currentMonitor } = await import('@tauri-apps/api/window');
-		const monitor = await currentMonitor();
-		const dpr = monitor?.scaleFactor ?? await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
-		const mx = monitor?.position.x ?? 0;
-		const my = monitor?.position.y ?? 0;
-		return { x: Math.round((mx + relX) / dpr), y: Math.round((my + relY) / dpr) };
+		if (dpr === (window.devicePixelRatio || 1)) {
+			const pm = await primaryMonitor();
+			if (pm) dpr = pm.scaleFactor;
+		}
+		return { x: Math.round(physX / dpr), y: Math.round(physY / dpr) };
 	}
 
 	async function showComparatorPositionOverlay() {
@@ -297,7 +292,7 @@
 			comparatorPositionOverlay = null;
 		}
 		const s = comparatorOverlaySettings;
-		const pos = s ? await overlayAbsoluteLogical(s.x, s.y) : { x: 100, y: 100 };
+		const pos = s ? await physicalToLogical(s.x, s.y) : { x: 100, y: 100 };
 		const win = new WebviewWindow('overlay-comparator-pos', {
 			url: '/overlay?sync=comparator',
 			transparent: true,
@@ -317,20 +312,14 @@
 
 	async function saveComparatorPosition() {
 		if (!comparatorPositionOverlay) return;
-		let relX: number, relY: number, w: number, h: number;
+		let x: number, y: number, w: number, h: number;
 		try {
 			const ref = comparatorPositionOverlay.window ?? comparatorPositionOverlay;
-			const absPos = await ref.outerPosition();
+			const pos = await ref.outerPosition();
 			const size = await ref.outerSize();
-			// Save position relative to the monitor the overlay is actually on
-			const monitor = await monitorAt(absPos.x, absPos.y);
-			const mx = monitor?.position.x ?? 0;
-			const my = monitor?.position.y ?? 0;
-			relX = absPos.x - mx;
-			relY = absPos.y - my;
-			w = size.width; h = size.height;
-			await invoke('set_comparator_overlay_settings', { x: relX, y: relY, w, h, enabled: true });
-			comparatorOverlaySettings = { x: relX, y: relY, width: w, height: h };
+			x = pos.x; y = pos.y; w = size.width; h = size.height;
+			await invoke('set_comparator_overlay_settings', { x, y, w, h, enabled: true });
+			comparatorOverlaySettings = { x, y, width: w, height: h };
 		} catch (e) {
 			console.error('Save comparator position failed:', e);
 			return;
@@ -348,7 +337,7 @@
 			try { await existing.destroy(); } catch (_) {}
 			await new Promise(r => setTimeout(r, 100));
 		}
-		const absPos = await overlayAbsoluteLogical(relX!, relY!);
+		const logicalPos = await physicalToLogical(x!, y!);
 		new WebviewWindow('comparator', {
 			url: '/overlay/comparator',
 			transparent: true,
@@ -360,8 +349,8 @@
 
 			width: 630,
 			height: 250,
-			x: absPos.x,
-			y: absPos.y,
+			x: logicalPos.x,
+			y: logicalPos.y,
 		});
 	}
 
