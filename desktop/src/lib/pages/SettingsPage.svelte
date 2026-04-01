@@ -265,7 +265,21 @@
 		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
 	});
 
-	/** Convert monitor-relative physical coords to absolute logical for window creation. */
+	/** Find the monitor containing a physical point, or fall back to primary. */
+	async function monitorAt(physX: number, physY: number) {
+		const { availableMonitors, primaryMonitor } = await import('@tauri-apps/api/window');
+		const monitors = await availableMonitors();
+		for (const m of monitors) {
+			const { x, y } = m.position;
+			if (physX >= x && physX < x + m.size.width && physY >= y && physY < y + m.size.height) {
+				return m;
+			}
+		}
+		return await primaryMonitor();
+	}
+
+	/** Convert monitor-relative physical coords to absolute logical for window creation.
+	 *  Uses the main window's monitor as the target (overlay should appear on the same screen). */
 	async function overlayAbsoluteLogical(relX: number, relY: number): Promise<{ x: number; y: number }> {
 		const { currentMonitor } = await import('@tauri-apps/api/window');
 		const monitor = await currentMonitor();
@@ -308,9 +322,8 @@
 			const ref = comparatorPositionOverlay.window ?? comparatorPositionOverlay;
 			const absPos = await ref.outerPosition();
 			const size = await ref.outerSize();
-			// Save position relative to the monitor the overlay is on
-			const { currentMonitor } = await import('@tauri-apps/api/window');
-			const monitor = await currentMonitor();
+			// Save position relative to the monitor the overlay is actually on
+			const monitor = await monitorAt(absPos.x, absPos.y);
 			const mx = monitor?.position.x ?? 0;
 			const my = monitor?.position.y ?? 0;
 			relX = absPos.x - mx;
