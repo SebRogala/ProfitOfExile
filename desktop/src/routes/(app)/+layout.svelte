@@ -24,32 +24,12 @@
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
 
-	/** Convert absolute physical coords to logical using the correct monitor's DPI. */
-	async function physicalToLogical(physX: number, physY: number): Promise<{ x: number; y: number }> {
-		const { availableMonitors, primaryMonitor } = await import('@tauri-apps/api/window');
-		const monitors = await availableMonitors();
-		let dpr = window.devicePixelRatio || 1;
-		for (const m of monitors) {
-			const { x, y } = m.position;
-			if (physX >= x && physX < x + m.size.width && physY >= y && physY < y + m.size.height) {
-				dpr = m.scaleFactor;
-				break;
-			}
-		}
-		if (dpr === (window.devicePixelRatio || 1)) {
-			const pm = await primaryMonitor();
-			if (pm) dpr = pm.scaleFactor;
-		}
-		return { x: Math.round(physX / dpr), y: Math.round(physY / dpr) };
-	}
-
 	async function createComparatorOverlay(physX: number, physY: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const logicalPos = await physicalToLogical(physX, physY);
+		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
 
 		await destroyComparatorWindow();
 
-		// Window is transparent — oversized so content can grow dynamically
 		const win = new WebviewWindow('comparator', {
 			url: '/overlay/comparator',
 			transparent: true,
@@ -58,14 +38,12 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
-
 			width: 630,
 			height: 250,
-			x: logicalPos.x,
-			y: logicalPos.y,
 		});
 
 		win.once('tauri://created', async () => {
+			await win.setPosition(new PhysicalPosition(physX, physY));
 			await invoke('set_overlay_clickthrough', { label: 'comparator', interactiveWidth: 48 })
 				.catch(e => console.error('[overlay] click-through setup failed:', e));
 			comparatorWin = win;
@@ -163,11 +141,12 @@
 		if (configOverlayCleanup) return; // already listening
 		const unlisten = await listen('overlay-toggle-reset', async () => {
 			if (!comparatorActive) return;
-			await destroyComparatorWindow();
-			comparatorActive = false;
-			await new Promise(r => setTimeout(r, 100));
+			// Move existing overlay to saved position — no destroy/recreate needed.
 			const settings = await invoke<any>('get_comparator_overlay_settings').catch(() => null);
-			await createComparatorOverlay(settings?.x ?? 100, settings?.y ?? 100);
+			if (settings) {
+				await invoke('move_overlay', { label: 'comparator', x: settings.x, y: settings.y, w: settings.width ?? 630, h: settings.height ?? 250 })
+					.catch(e => console.warn('[overlay] move failed:', e));
+			}
 		});
 		configOverlayCleanup = unlisten;
 	});

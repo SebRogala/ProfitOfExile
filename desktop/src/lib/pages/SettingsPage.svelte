@@ -265,34 +265,15 @@
 		}).catch(e => console.warn('[settings] load overlay settings failed:', e));
 	});
 
-	/** Convert absolute physical coords to logical using the correct monitor's DPI. */
-	async function physicalToLogical(physX: number, physY: number): Promise<{ x: number; y: number }> {
-		const { availableMonitors, primaryMonitor } = await import('@tauri-apps/api/window');
-		const monitors = await availableMonitors();
-		let dpr = window.devicePixelRatio || 1;
-		for (const m of monitors) {
-			const { x, y } = m.position;
-			if (physX >= x && physX < x + m.size.width && physY >= y && physY < y + m.size.height) {
-				dpr = m.scaleFactor;
-				break;
-			}
-		}
-		if (dpr === (window.devicePixelRatio || 1)) {
-			const pm = await primaryMonitor();
-			if (pm) dpr = pm.scaleFactor;
-		}
-		return { x: Math.round(physX / dpr), y: Math.round(physY / dpr) };
-	}
-
 	async function showComparatorPositionOverlay() {
 		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
 		if (comparatorPositionOverlay) {
 			try { await comparatorPositionOverlay.destroy(); } catch (_) {}
 			comparatorPositionOverlay = null;
 		}
 		const s = comparatorOverlaySettings;
-		const pos = s ? await physicalToLogical(s.x, s.y) : { x: 100, y: 100 };
 		const win = new WebviewWindow('overlay-comparator-pos', {
 			url: '/overlay?sync=comparator',
 			transparent: true,
@@ -303,10 +284,11 @@
 			skipTaskbar: true,
 			width: 630,
 			height: 250,
-			x: pos.x,
-			y: pos.y,
 		});
-		win.once('tauri://created', () => { comparatorPositionOverlay = win; });
+		win.once('tauri://created', async () => {
+			if (s) await win.setPosition(new PhysicalPosition(s.x, s.y));
+			comparatorPositionOverlay = win;
+		});
 		win.once('tauri://error', (e: any) => console.error('Position overlay failed:', e));
 	}
 
@@ -326,32 +308,9 @@
 		}
 		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
 		comparatorPositionOverlay = null;
+		// reclaimMouse triggers overlay-toggle-reset in layout, which
+		// destroys and recreates the comparator at the saved position.
 		await reclaimMouse();
-
-		// Recreate live comparator overlay at new position
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		for (let i = 0; i < 5; i++) {
-			const existing = await WebviewWindow.getByLabel('comparator');
-			if (!existing) break;
-			try { await existing.close(); } catch (_) {}
-			try { await existing.destroy(); } catch (_) {}
-			await new Promise(r => setTimeout(r, 100));
-		}
-		const logicalPos = await physicalToLogical(x!, y!);
-		new WebviewWindow('comparator', {
-			url: '/overlay/comparator',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: false,
-			shadow: false,
-			skipTaskbar: true,
-
-			width: 630,
-			height: 250,
-			x: logicalPos.x,
-			y: logicalPos.y,
-		});
 	}
 
 	async function cancelComparatorPosition() {
