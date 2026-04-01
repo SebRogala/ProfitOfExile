@@ -99,6 +99,7 @@ func main() {
 	}
 
 	labRepo := lab.NewRepository(pool)
+	layoutRepo := lab.NewLayoutRepository(pool)
 	labCache := lab.NewCache()
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
 	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache)
@@ -234,6 +235,7 @@ func main() {
 		DevMode:              devMode,
 		Pool:                 pool,
 		LabRepo:              labRepo,
+		LayoutRepo:           layoutRepo,
 		LabCache:             labCache,
 		MercureSubscriberKey: os.Getenv("MERCURE_SUBSCRIBER_KEY"),
 		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),

@@ -46,6 +46,8 @@ type RouterConfig struct {
 	League string
 	// Analyzer is the lab analysis engine for admin recalculation endpoint.
 	Analyzer *lab.Analyzer
+	// LayoutRepo is the repository for daily lab layout data.
+	LayoutRepo *lab.LayoutRepository
 	// AllowedOrigins for CORS (desktop app needs cross-origin access).
 	// Example: ["http://localhost:1420", "tauri://localhost"]
 	AllowedOrigins []string
@@ -123,6 +125,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	if cfg.Pool != nil {
 		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.Pool))
+	}
+
+	if cfg.LayoutRepo != nil {
+		r.Get("/api/lab/layout/{difficulty}", handlers.GetLayout(cfg.LayoutRepo))
+		r.Post("/api/lab/layout/{difficulty}", handlers.UploadLayout(cfg.LayoutRepo))
 	}
 
 	if cfg.DevMode {
