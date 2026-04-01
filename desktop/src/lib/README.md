@@ -29,6 +29,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 |------|---------|-------------|
 | `compass/room-presets.ts` | `getPresetByAreaCode()`, `getPresetsByName()`, `getTileRect()`, `getDoorExitLocations()`, `getContentLocations()`, `VALID_AREA_CODES` | Room preset data + coordinate math. Loads `room-presets.json` at import time. 35 rooms, 53 variants. |
 | `compass/svg-loader.ts` | `getRoomSvgUrl()`, `getDisabledSvgUrl()` | Resolves area code to SVG path in `/compass/presets/`. Returns null for invalid codes. |
+| `compass/navigation.ts` | `createNavState()`, `loadLayout()`, `handleNavEvent()`, `computeRoute()`, `getNextDirection()`, `getNextExitText()`, `setStrategy()` | Navigation engine — position tracking, auto-routing (BFS + target waypoints), golden key/door tracking. Pure functions, no Svelte reactivity. |
 
 ## Compass Components
 
