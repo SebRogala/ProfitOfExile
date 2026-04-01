@@ -23,6 +23,13 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 |------|---------|-------------|
 | `overlay/manager.ts` | `showOverlay()`, `destroyOverlay()`, `getOverlay()`, `isOverlayActive()`, `readOverlayRegion()` | Spawn/destroy/manage Tauri overlay windows. Tracks active overlays by name. |
 
+## Compass Data
+
+| File | Exports | Description |
+|------|---------|-------------|
+| `compass/room-presets.ts` | `getPresetByAreaCode()`, `getPresetsByName()`, `getTileRect()`, `getDoorExitLocations()`, `getContentLocations()`, `VALID_AREA_CODES` | Room preset data + coordinate math. Loads `room-presets.json` at import time. 35 rooms, 53 variants. |
+| `compass/svg-loader.ts` | `getRoomSvgUrl()`, `getDisabledSvgUrl()` | Resolves area code to SVG path in `/compass/presets/`. Returns null for invalid codes. |
+
 ## Pages
 
 Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store — **not** SvelteKit routing.
