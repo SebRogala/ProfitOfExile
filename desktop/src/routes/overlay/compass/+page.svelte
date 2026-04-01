@@ -2,34 +2,26 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import CompassOverlay from '$lib/compass/CompassOverlay.svelte';
+	import { getPresetByAreaCode, getDoorExitLocations, getContentLocations } from '$lib/compass/room-presets';
 	import {
-		getPresetsByName,
-		getDoorExitLocations,
-		getContentLocations,
-		type RoomPreset,
-		type DoorExitLocation,
-		type ContentLocation,
-	} from '$lib/compass/room-presets';
-
-	// --- Navigation event payload (tagged enum from Rust) ---
-	type NavEvent =
-		| { type: 'PlazaEntered' }
-		| { type: 'RoomChanged'; name: string }
-		| { type: 'SectionFinished' }
-		| { type: 'LabFinished' }
-		| { type: 'LabExited' };
+		createNavState,
+		loadLayout,
+		handleNavEvent,
+		getNextDirection,
+		getNextExitText,
+		getRoomContents,
+		type NavEvent,
+		type LabLayout,
+	} from '$lib/compass/navigation';
+	import type { DoorExitLocation, ContentLocation } from '$lib/compass/room-presets';
 
 	// --- State ---
-	let inLab = $state(false);
-	let roomName = $state('');
-	let currentPreset = $state<RoomPreset | null>(null);
-	let doors = $state<DoorExitLocation[]>([]);
-	let contents = $state<ContentLocation[]>([]);
+	let navState = $state(createNavState());
 	let mode = $state<'minimap' | 'direction' | 'minimal'>('minimap');
 
 	// Timer state
 	let timerStart = $state<number | null>(null);
-	let timerInterval = $state<ReturnType<typeof setInterval> | null>(null);
+	let timerInterval: ReturnType<typeof setInterval> | null = null;
 	let elapsed = $state(0);
 
 	let timerText = $derived(formatTimer(elapsed));
@@ -41,7 +33,7 @@
 	}
 
 	function startTimer() {
-		if (timerStart !== null) return; // already running
+		if (timerStart !== null) return;
 		timerStart = Date.now();
 		elapsed = 0;
 		timerInterval = setInterval(() => {
@@ -56,91 +48,91 @@
 			clearInterval(timerInterval);
 			timerInterval = null;
 		}
-		// Keep timerStart and elapsed so the display persists
 	}
 
-	function clearAll() {
-		inLab = false;
-		roomName = '';
-		currentPreset = null;
-		doors = [];
-		contents = [];
+	function resetTimer() {
 		stopTimer();
 		timerStart = null;
 		elapsed = 0;
 	}
 
-	function handleNavEvent(event: NavEvent) {
+	// --- Derived from navigation state ---
+	let currentRoom = $derived(navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null);
+	let preset = $derived(currentRoom?.areacode ? getPresetByAreaCode(currentRoom.areacode) : null);
+	let doors = $derived<DoorExitLocation[]>(preset ? getDoorExitLocations(preset) : []);
+	let contents = $derived<ContentLocation[]>(preset ? getContentLocations(preset) : []);
+	let targetDirection = $derived(getNextDirection(navState));
+	let exitText = $derived(getNextExitText(navState));
+	let roomName = $derived(currentRoom?.name ?? '');
+	let areaCode = $derived(currentRoom?.areacode ?? '');
+	let contentNames = $derived(currentRoom ? getRoomContents(navState, currentRoom.id) : []);
+	let showOverlay = $derived(navState.inLab || navState.currentRoom !== null);
+
+	// --- Event handling ---
+
+	function onNavEvent(event: NavEvent) {
+		navState = handleNavEvent(navState, event);
+
 		switch (event.type) {
 			case 'PlazaEntered':
-				inLab = true;
-				roomName = '';
-				currentPreset = null;
-				doors = [];
-				contents = [];
+				resetTimer();
 				break;
-
-			case 'RoomChanged': {
-				const presets = getPresetsByName(event.name, false);
-				roomName = event.name;
-
-				if (presets.length === 0) {
-					currentPreset = null;
-					doors = [];
-					contents = [];
-				} else {
-					const variant = presets[0];
-					currentPreset = variant;
-					doors = getDoorExitLocations(variant);
-					contents = getContentLocations(variant);
-				}
-
-				// Start timer on first room change inside the lab
-				if (inLab && timerStart === null) {
+			case 'RoomChanged':
+				if (navState.inLab && timerStart === null) {
 					startTimer();
 				}
 				break;
-			}
-
-			case 'SectionFinished':
-				// No special handling — room data stays
-				break;
-
 			case 'LabFinished':
 				stopTimer();
-				// Keep display so the player can see final state
 				break;
-
 			case 'LabExited':
-				clearAll();
+				resetTimer();
 				break;
 		}
 	}
 
 	// --- Initialization via $effect (onMount does not fire in overlay windows) ---
 
-	// Load compass mode setting from Rust
+	// Load compass mode setting
 	$effect(() => {
-		invoke<string>('get_compass_settings')
-			.then((settings: any) => {
-				if (settings?.mode) {
-					mode = settings.mode;
-				}
+		invoke<any>('get_compass_settings')
+			.then((settings) => {
+				if (settings?.mode) mode = settings.mode;
 			})
-			.catch((e) => {
-				console.warn('[compass] get_compass_settings failed, using default:', e);
-			});
+			.catch((e) => console.warn('[compass] get_compass_settings failed:', e));
 	});
 
-	// Listen for lab-nav events from the Rust backend
+	// Fetch today's layout from server
+	$effect(() => {
+		invoke<any>('get_status')
+			.then((status) => {
+				const serverUrl = status?.server_url;
+				if (!serverUrl) return;
+				// Try all difficulties — Uber is most common for lab farming
+				for (const diff of ['Uber', 'Merciless', 'Cruel', 'Normal']) {
+					fetch(`${serverUrl}/api/lab/layout/${diff}`)
+						.then((r) => {
+							if (r.ok) return r.json();
+							return null;
+						})
+						.then((layout: LabLayout | null) => {
+							if (layout && !navState.layout) {
+								navState = loadLayout(navState, layout);
+							}
+						})
+						.catch(() => {});
+				}
+			})
+			.catch((e) => console.warn('[compass] get_status failed:', e));
+	});
+
+	// Listen for lab-nav events
 	$effect(() => {
 		let cancelled = false;
-
 		const unlistenPromise = listen<NavEvent>('lab-nav', (event) => {
 			if (cancelled) return;
-			handleNavEvent(event.payload);
+			onNavEvent(event.payload);
 		});
-
 		return () => {
 			cancelled = true;
 			unlistenPromise.then((unlisten) => unlisten());
@@ -149,15 +141,20 @@
 </script>
 
 <div class="compass-container">
-	{#if inLab || currentPreset}
+	{#if showOverlay}
 		<CompassOverlay
 			{mode}
-			areaCode={currentPreset?.areaCode ?? ''}
+			{areaCode}
 			{doors}
 			{contents}
-			roomName={roomName}
+			{targetDirection}
+			{roomName}
+			{contentNames}
 			{timerText}
 		/>
+		{#if exitText && mode === 'minimap'}
+			<div class="exit-text">{exitText}</div>
+		{/if}
 	{/if}
 </div>
 
@@ -167,5 +164,16 @@
 		top: 0;
 		right: 0;
 		pointer-events: none;
+	}
+
+	.exit-text {
+		color: #9ca3af;
+		font-size: 9px;
+		font-family: system-ui, sans-serif;
+		text-align: center;
+		margin-top: 2px;
+		padding: 2px 6px;
+		background: rgba(13, 13, 21, 0.85);
+		border-radius: 3px;
 	}
 </style>
