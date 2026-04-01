@@ -40,7 +40,6 @@
 	function debouncedMercureUpdate() {
 		if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
 		mercureDebounceTimer = setTimeout(() => {
-			console.log('[Dashboard] Mercure debounce fired — reloading data');
 			refreshKey++;
 			loadAll();
 		}, MERCURE_DEBOUNCE_MS);
