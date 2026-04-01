@@ -764,21 +764,9 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
 
 #[tauri::command]
 fn comparator_moved(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
-    // Convert absolute physical to monitor-relative physical
-    let (rel_x, rel_y) = if let Some(win) = app.get_webview_window("comparator") {
-        if let Ok(Some(monitor)) = win.current_monitor() {
-            let mp = monitor.position();
-            (x - mp.x, y - mp.y)
-        } else {
-            (x, y)
-        }
-    } else {
-        (x, y)
-    };
-
     let mut s = settings::load(&app);
     s.comparator_overlay = Some(settings::OverlaySettings {
-        x: rel_x, y: rel_y, width: w, height: h, enabled: true,
+        x, y, width: w, height: h, enabled: true,
     });
     settings::save(&app, &s);
     // Invalidate cached rect so the mouse hook picks up the new position

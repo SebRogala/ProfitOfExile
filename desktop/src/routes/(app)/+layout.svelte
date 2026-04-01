@@ -24,19 +24,28 @@
 	let comparatorActive = $state(false);
 	let comparatorWin = $state<any>(null);
 
-	/** Convert monitor-relative physical coords to absolute logical for window placement. */
-	async function overlayAbsoluteLogical(relX: number, relY: number): Promise<{ x: number; y: number }> {
-		const { currentMonitor } = await import('@tauri-apps/api/window');
-		const monitor = await currentMonitor();
-		const dpr = monitor?.scaleFactor ?? await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
-		const mx = monitor?.position.x ?? 0;
-		const my = monitor?.position.y ?? 0;
-		return { x: Math.round((mx + relX) / dpr), y: Math.round((my + relY) / dpr) };
+	/** Convert absolute physical coords to logical using the correct monitor's DPI. */
+	async function physicalToLogical(physX: number, physY: number): Promise<{ x: number; y: number }> {
+		const { availableMonitors, primaryMonitor } = await import('@tauri-apps/api/window');
+		const monitors = await availableMonitors();
+		let dpr = window.devicePixelRatio || 1;
+		for (const m of monitors) {
+			const { x, y } = m.position;
+			if (physX >= x && physX < x + m.size.width && physY >= y && physY < y + m.size.height) {
+				dpr = m.scaleFactor;
+				break;
+			}
+		}
+		if (dpr === (window.devicePixelRatio || 1)) {
+			const pm = await primaryMonitor();
+			if (pm) dpr = pm.scaleFactor;
+		}
+		return { x: Math.round(physX / dpr), y: Math.round(physY / dpr) };
 	}
 
-	async function createComparatorOverlay(relX: number, relY: number) {
+	async function createComparatorOverlay(physX: number, physY: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const absPos = await overlayAbsoluteLogical(relX, relY);
+		const logicalPos = await physicalToLogical(physX, physY);
 
 		await destroyComparatorWindow();
 
@@ -52,8 +61,8 @@
 
 			width: 630,
 			height: 250,
-			x: absPos.x,
-			y: absPos.y,
+			x: logicalPos.x,
+			y: logicalPos.y,
 		});
 
 		win.once('tauri://created', async () => {
