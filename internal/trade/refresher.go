@@ -3,6 +3,7 @@ package trade
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -121,11 +122,11 @@ func (r *Refresher) pickTiered() (string, bool) {
 	})
 }
 
-// pickOldest finds the oldest cached gem for the target variant regardless of tier.
+// pickOldest finds the oldest cached transfigured gem for the target variant.
 func (r *Refresher) pickOldest() (string, bool) {
 	return r.cache.OldestStale(r.minAge, func(key string, _ *TradeLookupResult) bool {
-		_, variant := ParseCacheKey(key)
-		return variant == r.variant
+		gem, variant := ParseCacheKey(key)
+		return variant == r.variant && strings.Contains(gem, " of ")
 	})
 }
 
