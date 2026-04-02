@@ -275,6 +275,26 @@ Keyword-based detection — scans OCR lines for anchor text, extracts numeric va
 - Minimize/maximize/close buttons (Windows-style, red hover on close)
 - Window position/size saved to settings on close, restored on startup
 
+## Adding a New Overlay (Checklist)
+
+When adding a new overlay window (e.g., pathstrip, session tally):
+
+1. **Rust settings**: Add `pub {name}_overlay: Option<OverlaySettings>` to `Settings` struct + `Default` impl + `from_state` (as `None`)
+2. **Rust commands**: Add `get_{name}_overlay_settings` / `set_{name}_overlay_settings` (clone comparator pattern: `load` → mutate → `save`). Register in `generate_handler![]`
+3. **`persist_overlay_settings`**: Add `target.{name}_overlay = existing.{name}_overlay.clone()` — this function is called by BOTH `persist_settings` AND the window close handler. Without this, the overlay settings get wiped on every settings save or app close.
+4. **Capabilities**: Add `"{name}"` and `"overlay-{name}-pos"` to `capabilities/default.json` windows array
+5. **Focus poller**: Add `get_webview_window("{name}")` show/hide block after the compass block (~line 1575)
+6. **`force_show_overlays`**: Add `get_webview_window("{name}")` show block (~line 789)
+7. **Layout (`+layout.svelte`)**: Add state vars, create/destroy/toggle functions (clone compass pattern), auto-restore on startup, extend `overlay-toggle-reset` handler
+8. **Settings page**: Add position config row (clone compass position pattern)
+9. **Sidebar** (if needed): Add toggle button with 3-state indicator
+10. **Overlay route**: Create `/overlay/{name}/+page.svelte`
+
+**Critical gotchas:**
+- `persist_overlay_settings` must include ALL overlay settings — missing one causes it to be wiped to null on every save
+- `set_overlay_clickthrough` with `interactiveWidth: 0` is required even for display-only overlays (WebView2 strips `WS_EX_TRANSPARENT`)
+- Window labels MUST be in `capabilities/default.json` or ALL Tauri APIs silently fail
+
 ## Key References
 - `docs/OVERLAY-GUIDE.md` — **READ FIRST for any overlay work.** Complete guide: click-through, positioning, capabilities, cross-window gotchas
 - `desktop/src/lib/README.md` — Component registry (read first for UI work)

@@ -130,6 +130,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	if cfg.LayoutRepo != nil {
 		r.Get("/api/lab/layout/{difficulty}", handlers.GetLayout(cfg.LayoutRepo))
 		r.Post("/api/lab/layout/{difficulty}", handlers.UploadLayout(cfg.LayoutRepo))
+		r.Patch("/api/lab/layout/{difficulty}/room/{roomId}", handlers.PatchRoom(cfg.LayoutRepo))
 	}
 
 	if cfg.DevMode {

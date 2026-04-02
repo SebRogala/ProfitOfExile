@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import Select from '$lib/components/Select.svelte';
+	import RoomEditor from '$lib/compass/RoomEditor.svelte';
 	import {
 		createNavState,
 		loadLayout,
@@ -8,14 +9,14 @@
 		toggleTargetRoom,
 		type NavState,
 		type LabLayout,
-		type LabLayoutRoom,
 		type RouteStrategy,
 	} from '$lib/compass/navigation';
+	import LabGraph from '$lib/compass/LabGraph.svelte';
 
 	// --- State ---
 	let navState = $state<NavState>(createNavState());
-	let difficulty = $state('uber');
-	let strategyValue = $state<string>('darkshrines');
+	let difficulty = $state('Uber');
+	let strategyValue = $state<string>('shortest');
 	let compassMode = $state('minimap');
 	let serverUrl = $state('');
 	let loading = $state(false);
@@ -23,10 +24,10 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 
 	const difficultyOptions = [
-		{ value: 'uber', label: 'Uber Lab' },
-		{ value: 'merciless', label: 'Merciless' },
-		{ value: 'cruel', label: 'Cruel' },
-		{ value: 'normal', label: 'Normal' },
+		{ value: 'Uber', label: 'Uber Lab' },
+		{ value: 'Merciless', label: 'Merciless' },
+		{ value: 'Cruel', label: 'Cruel' },
+		{ value: 'Normal', label: 'Normal' },
 	];
 
 	const strategyOptions = [
@@ -42,112 +43,9 @@
 		{ value: 'minimal', label: 'Minimal' },
 	];
 
-	// --- SVG graph computed values ---
-	const SVG_WIDTH = 800;
-	const SVG_HEIGHT = 300;
-	const PADDING = 30;
-
-	interface RoomNode {
-		room: LabLayoutRoom;
-		cx: number;
-		cy: number;
-		onRoute: boolean;
-		isTrial: boolean;
-		contentColor: string | null;
-	}
-
-	interface Edge {
-		x1: number;
-		y1: number;
-		x2: number;
-		y2: number;
-		onRoute: boolean;
-		key: string;
-	}
-
-	let roomNodes = $derived.by(() => {
-		if (!navState.layout) return [];
-		const rooms = navState.layout.rooms;
-		if (rooms.length === 0) return [];
-
-		const xs = rooms.map((r) => parseFloat(r.x));
-		const ys = rooms.map((r) => parseFloat(r.y));
-		const minX = Math.min(...xs);
-		const maxX = Math.max(...xs);
-		const minY = Math.min(...ys);
-		const maxY = Math.max(...ys);
-		const rangeX = maxX - minX || 1;
-		const rangeY = maxY - minY || 1;
-
-		const routeSet = new Set(navState.plannedRoute);
-
-		return rooms.map((room): RoomNode => {
-			const rawX = parseFloat(room.x);
-			const rawY = parseFloat(room.y);
-			const cx = PADDING + ((rawX - minX) / rangeX) * (SVG_WIDTH - 2 * PADDING);
-			const cy = PADDING + ((rawY - minY) / rangeY) * (SVG_HEIGHT - 2 * PADDING);
-			const isTrial = room.name.toLowerCase() === "aspirant's trial";
-			const contentsLower = room.contents.map((c) => c.toLowerCase());
-
-			let contentColor: string | null = null;
-			if (contentsLower.includes('darkshrine')) contentColor = '#a855f7';
-			else if (contentsLower.includes('argus')) contentColor = '#4ade80';
-			else if (contentsLower.some((c) => c.includes('golden-key'))) contentColor = '#fbbf24';
-			else if (contentsLower.some((c) => c.includes('puzzle'))) contentColor = '#60a5fa';
-			else if (contentsLower.some((c) => c.includes('silver'))) contentColor = '#9ca3af';
-
-			return {
-				room,
-				cx,
-				cy,
-				onRoute: routeSet.has(room.id),
-				isTrial,
-				contentColor,
-			};
-		});
-	});
-
-	let edges = $derived.by(() => {
-		if (!navState.layout || roomNodes.length === 0) return [];
-		const nodeMap = new Map<string, RoomNode>();
-		for (const node of roomNodes) {
-			nodeMap.set(node.room.id, node);
-		}
-
-		const seen = new Set<string>();
-		const result: Edge[] = [];
-		const routeEdges = new Set<string>();
-
-		// Build route edge set
-		for (let i = 0; i < navState.plannedRoute.length - 1; i++) {
-			const pair = [navState.plannedRoute[i], navState.plannedRoute[i + 1]].sort().join('|');
-			routeEdges.add(pair);
-		}
-
-		for (const room of navState.layout.rooms) {
-			for (const targetId of Object.values(room.exits)) {
-				const pair = [room.id, targetId].sort();
-				const key = pair.join('|');
-				if (seen.has(key)) continue;
-				seen.add(key);
-
-				const from = nodeMap.get(room.id);
-				const to = nodeMap.get(targetId);
-				if (!from || !to) continue;
-
-				result.push({
-					x1: from.cx,
-					y1: from.cy,
-					x2: to.cx,
-					y2: to.cy,
-					onRoute: routeEdges.has(key),
-					key,
-				});
-			}
-		}
-
-		return result;
-	});
+	const SVG_WIDTH = 900;
+	const SVG_HEIGHT = 350;
+	const PADDING = 40;
 
 	// --- Plan summary ---
 	let routeRoomCount = $derived(navState.plannedRoute.length);
@@ -184,6 +82,14 @@
 				}
 			})
 			.catch((e) => console.error('[planner] get_status failed:', e));
+		// Load saved preferences
+		invoke<any>('get_compass_settings')
+			.then((s) => {
+				if (s?.strategy) strategyValue = s.strategy;
+				if (s?.difficulty) difficulty = s.difficulty;
+				if (s?.mode) compassMode = s.mode;
+			})
+			.catch(() => {});
 	});
 
 	// Fetch layout when serverUrl or difficulty changes
@@ -208,6 +114,8 @@
 			}
 			const layout: LabLayout = await res.json();
 			navState = loadLayout(createNavState(), layout);
+			// Notify overlays that layout changed
+			invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: layout.difficulty } }).catch(() => {});
 		} catch (e: any) {
 			error = e?.message || 'Failed to fetch layout';
 			navState = createNavState();
@@ -219,10 +127,29 @@
 	// --- Handlers ---
 	function handleStrategyChange() {
 		navState = setStrategy(navState, strategyValue as RouteStrategy);
+		invoke('set_compass_strategy', { strategy: strategyValue }).catch(() => {});
+		invoke('emit_lab_nav', { eventJson: { type: 'StrategyChanged', strategy: strategyValue } }).catch(() => {});
+	}
+
+	// --- Room editor ---
+	let editingRoom = $state<import('$lib/compass/navigation').LabLayoutRoom | null>(null);
+
+	function handleRoomRightClick(roomId: string) {
+		const room = navState.roomById.get(roomId);
+		if (room && room.name.toLowerCase() !== "aspirant's trial") {
+			editingRoom = room;
+		}
+	}
+
+	function handleEditorSave() {
+		editingRoom = null;
+		// Refetch layout to pick up changes
+		if (serverUrl) fetchLayout(serverUrl, difficulty);
 	}
 
 	function handleDifficultyChange() {
-		// Effect will refetch
+		invoke('set_compass_difficulty', { difficulty }).catch(() => {});
+		// Effect will refetch and emit LayoutChanged
 	}
 
 	function handleModeChange() {
@@ -230,6 +157,7 @@
 			console.error('[planner] set_compass_mode failed:', e),
 		);
 	}
+
 
 	function handleRoomClick(roomId: string) {
 		const room = navState.roomById.get(roomId);
@@ -262,13 +190,6 @@
 		if (fileInput) fileInput.value = '';
 	}
 
-	function roomTooltip(room: LabLayoutRoom): string {
-		const parts = [room.name];
-		if (room.contents.length > 0) {
-			parts.push(room.contents.join(', '));
-		}
-		return parts.join('\n');
-	}
 </script>
 
 <div class="planner-page">
@@ -307,83 +228,32 @@
 		</div>
 	{:else}
 		<div class="planner-body">
-			<div class="graph-area">
-				<svg
-					viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}"
-					class="lab-graph"
-					xmlns="http://www.w3.org/2000/svg"
-				>
-					<!-- Connection lines (background) -->
-					{#each edges as edge (edge.key)}
-						<line
-							x1={edge.x1}
-							y1={edge.y1}
-							x2={edge.x2}
-							y2={edge.y2}
-							class="edge"
-							class:edge-route={edge.onRoute}
+			<div class="graph-column">
+				<div class="graph-area">
+					<LabGraph
+						{navState}
+						width={SVG_WIDTH}
+						height={SVG_HEIGHT}
+						padding={PADDING}
+						nodeRadius={20}
+						interactive={true}
+						editingRoomId={editingRoom?.id ?? null}
+						onRoomClick={handleRoomClick}
+						onRoomRightClick={handleRoomRightClick}
+					/>
+				</div>
+
+				{#if editingRoom}
+					{#key editingRoom.id}
+						<RoomEditor
+							room={editingRoom}
+							{serverUrl}
+							{difficulty}
+							onSave={handleEditorSave}
+							onClose={() => { editingRoom = null; }}
 						/>
-					{/each}
-
-					<!-- Route highlight overlay -->
-					{#each edges.filter((e) => e.onRoute) as edge (edge.key + '-route')}
-						<line
-							x1={edge.x1}
-							y1={edge.y1}
-							x2={edge.x2}
-							y2={edge.y2}
-							class="edge-highlight"
-						/>
-					{/each}
-
-					<!-- Room nodes -->
-					{#each roomNodes as node (node.room.id)}
-						<g
-							class="room-group"
-							class:off-route={!node.onRoute}
-							class:is-trial={node.isTrial}
-							onclick={() => handleRoomClick(node.room.id)}
-						>
-							<!-- Outer circle -->
-							<circle
-								cx={node.cx}
-								cy={node.cy}
-								r="14"
-								class="room-circle"
-								class:room-trial={node.isTrial}
-								class:room-target={navState.targetRooms.includes(node.room.id)}
-							/>
-
-							<!-- Content indicator -->
-							{#if node.contentColor}
-								<circle
-									cx={node.cx}
-									cy={node.cy}
-									r="5"
-									fill={node.contentColor}
-								/>
-							{/if}
-
-							<!-- Trial label -->
-							{#if node.isTrial}
-								<text
-									x={node.cx}
-									y={node.cy + 4}
-									class="trial-label"
-								>I</text>
-							{/if}
-
-							<!-- Room name label -->
-							<text
-								x={node.cx}
-								y={node.cy + 24}
-								class="room-name"
-							>{node.room.name}</text>
-
-							<title>{roomTooltip(node.room)}</title>
-						</g>
-					{/each}
-				</svg>
+					{/key}
+				{/if}
 			</div>
 
 			<div class="config-panel">
@@ -489,6 +359,14 @@
 		min-height: 0;
 	}
 
+	.graph-column {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		min-height: 0;
+	}
+
 	/* --- Graph area --- */
 	.graph-area {
 		flex: 1;
@@ -499,74 +377,6 @@
 		align-items: center;
 		justify-content: center;
 		min-width: 0;
-	}
-
-	.lab-graph {
-		width: 100%;
-		height: auto;
-		max-height: 100%;
-	}
-
-	/* Edges */
-	.edge {
-		stroke: #374151;
-		stroke-width: 1.5;
-	}
-
-	.edge-route {
-		stroke: #374151;
-		stroke-width: 1.5;
-	}
-
-	.edge-highlight {
-		stroke: #10b981;
-		stroke-width: 4;
-		opacity: 0.5;
-		stroke-linecap: round;
-	}
-
-	/* Room nodes */
-	.room-group {
-		cursor: pointer;
-	}
-
-	.room-group.off-route {
-		opacity: 0.35;
-	}
-
-	.room-group.is-trial {
-		cursor: default;
-	}
-
-	.room-circle {
-		fill: #1f2937;
-		stroke: #4b5563;
-		stroke-width: 2;
-	}
-
-	.room-circle.room-trial {
-		stroke: #f59e0b;
-		stroke-width: 2.5;
-	}
-
-	.room-circle.room-target {
-		stroke: #10b981;
-		stroke-width: 2.5;
-	}
-
-	.trial-label {
-		fill: #f59e0b;
-		font-size: 12px;
-		font-weight: 700;
-		text-anchor: middle;
-		pointer-events: none;
-	}
-
-	.room-name {
-		fill: var(--color-lab-text-secondary);
-		font-size: 7px;
-		text-anchor: middle;
-		pointer-events: none;
 	}
 
 	/* --- Config panel --- */
@@ -594,6 +404,7 @@
 		color: var(--color-lab-text-secondary);
 		font-weight: 600;
 	}
+
 
 	.summary-title {
 		font-size: 0.6875rem;

@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default permissions for the desktop app",
-  "windows": ["main", "overlay", "comparator", "overlay-comparator-pos", "compass", "overlay-compass-pos"],
+  "windows": ["main", "overlay", "comparator", "overlay-comparator-pos", "compass", "overlay-compass-pos", "pathstrip", "overlay-pathstrip-pos"],
   "permissions": [
     "core:default",
     "shell:allow-open",

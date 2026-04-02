@@ -23,7 +23,12 @@
 	<img src={svgUrl} alt={roomName} class="room-svg" />
 
 	{#if hasFallback}
-		<div class="fallback-label">{roomName || 'Unknown Room'}</div>
+		<div class="fallback-box">
+			<div class="fallback-name">{roomName || 'Unknown Room'}</div>
+			{#if targetDirection}
+				<div class="fallback-dir">{targetDirection}</div>
+			{/if}
+		</div>
 	{:else}
 		<!-- Door exit markers -->
 		{#each doors as door}
@@ -68,15 +73,35 @@
 		display: block;
 	}
 
-	.fallback-label {
+	.fallback-box {
 		position: absolute;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		color: #6b7280;
-		font-size: 12px;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.5);
+		border-radius: 4px;
+	}
+
+	.fallback-name {
+		color: #d1d5db;
+		font-size: 14px;
 		font-family: system-ui, sans-serif;
 		text-align: center;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+	}
+
+	.fallback-dir {
+		color: #10b981;
+		font-size: 28px;
+		font-family: system-ui, sans-serif;
+		font-weight: 900;
+		margin-top: 4px;
+		text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
 	}
 
 	.door-marker {

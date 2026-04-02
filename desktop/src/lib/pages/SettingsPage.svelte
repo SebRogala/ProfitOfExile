@@ -63,16 +63,18 @@
 	// Save/Cancel from overlay buttons (overlay-save/overlay-cancel events).
 	// Works for OCR region overlays, comparator position, and compass position overlays.
 	$effect(() => {
-		if (!overlayVisible && !comparatorPositionOverlay && !compassPositionOverlay) return;
+		if (!overlayVisible && !anyPositionOverlayOpen) return;
 		const unlistenSave = listen('overlay-save', () => {
-			if (overlayVisible) saveRegion();
-			else if (comparatorPositionOverlay) saveComparatorPosition();
-			else if (compassPositionOverlay) saveCompassPosition();
+			if (overlayVisible) { saveRegion(); return; }
+			for (const name of Object.keys(positionOverlays)) {
+				if (positionOverlays[name]) { savePositionOverlay(name); return; }
+			}
 		});
 		const unlistenCancel = listen('overlay-cancel', () => {
-			if (overlayVisible) cancelRegion();
-			else if (comparatorPositionOverlay) cancelComparatorPosition();
-			else if (compassPositionOverlay) cancelCompassPosition();
+			if (overlayVisible) { cancelRegion(); return; }
+			for (const name of Object.keys(positionOverlays)) {
+				if (positionOverlays[name]) { cancelPositionOverlay(name); return; }
+			}
 		});
 		return () => {
 			unlistenSave.then(u => u());
@@ -121,9 +123,18 @@
 		try {
 			await invoke('set_client_txt_path', { path: editClientTxtValue });
 			editingClientTxt = false;
-			// Status auto-updates via events
 		} catch (e) {
 			console.error('Failed to save client.txt path:', e);
+		}
+	}
+
+	async function browseClientTxt() {
+		try {
+			await invoke('browse_client_txt');
+		} catch (e: any) {
+			if (e !== 'No file selected') {
+				console.error('Browse failed:', e);
+			}
 		}
 	}
 
@@ -143,12 +154,19 @@
 	async function showRegionOverlay(type: 'gem' | 'font') {
 		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
 		if (overlayWin) {
 			try { await overlayWin.destroy(); } catch (e) { console.error(e); }
 			overlayWin = null;
 		}
-		const region = type === 'gem' ? store.status?.gem_region : store.status?.font_region;
-		const dpr = await getCurrentWebviewWindow().scaleFactor().catch(() => window.devicePixelRatio || 1);
+		// Read fresh from Rust (not store — store may lag behind after save)
+		const command = type === 'gem' ? 'get_gem_region' : 'get_font_region';
+		const region = await invoke<{ x: number; y: number; w: number; h: number }>(command).catch(() => null);
+		const px = region?.x ?? 30;
+		const py = region?.y ?? 45;
+		const pw = region?.w ?? 550;
+		const ph = region?.h ?? (type === 'font' ? 350 : 75);
+		// Create without position — constructor DPI conversion is unreliable.
 		const win = new WebviewWindow('overlay', {
 			url: '/overlay',
 			transparent: true,
@@ -157,12 +175,18 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: Math.round((region?.w || 550) / dpr),
-			height: Math.round((region?.h || (type === 'font' ? 350 : 75)) / dpr),
-			x: Math.round((region?.x || 30) / dpr),
-			y: Math.round((region?.y || 45) / dpr),
+			width: 550,
+			height: 350,
 		});
-		win.once('tauri://created', () => { overlayWin = win; overlayVisible = type; });
+		win.once('tauri://created', async () => {
+			// Set physical position + size (same space as outerPosition used by save)
+			await win.setPosition(new PhysicalPosition(px, py))
+				.catch(e => console.warn('[region] setPosition failed:', e));
+			await win.setSize(new PhysicalSize(pw, ph))
+				.catch(e => console.warn('[region] setSize failed:', e));
+			overlayWin = win;
+			overlayVisible = type;
+		});
 		win.once('tauri://error', (e: any) => console.error('Overlay failed:', e));
 	}
 
@@ -256,135 +280,99 @@
 		editingTradeStaleness = false;
 	}
 
-	let comparatorOverlaySettings = $state<{ x: number; y: number; width: number; height: number } | null>(null);
-	let comparatorPositionOverlay = $state<any>(null);
+	// --- Generic overlay position config ---
+	// DRY: one set of functions for all overlay position configurations.
+	interface OverlayConfig {
+		label: string;          // window label for position overlay (e.g., 'overlay-comparator-pos')
+		syncParam: string;      // URL param (e.g., 'comparator')
+		getCommand: string;     // Rust get settings command
+		setCommand: string;     // Rust set settings command
+		defaultW: number;
+		defaultH: number;
+	}
 
-	$effect(() => {
-		invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_comparator_overlay_settings').then((settings) => {
-			if (settings) {
-				comparatorOverlaySettings = settings;
-			}
-		}).catch(e => console.warn('[settings] load comparator overlay settings failed:', e));
+	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {
+		comparator: { label: 'overlay-comparator-pos', syncParam: 'comparator', getCommand: 'get_comparator_overlay_settings', setCommand: 'set_comparator_overlay_settings', defaultW: 630, defaultH: 250 },
+		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 250, defaultH: 220 },
+		pathstrip: { label: 'overlay-pathstrip-pos', syncParam: 'pathstrip', getCommand: 'get_pathstrip_overlay_settings', setCommand: 'set_pathstrip_overlay_settings', defaultW: 450, defaultH: 180 },
+	};
+
+	// Per-overlay state
+	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
+		comparator: null, compass: null, pathstrip: null,
+	});
+	let positionOverlays = $state<Record<string, any>>({
+		comparator: null, compass: null, pathstrip: null,
 	});
 
-	let compassOverlaySettings = $state<{ x: number; y: number; width: number; height: number } | null>(null);
-	let compassPositionOverlay = $state<any>(null);
-
+	// Load all overlay settings on init
 	$effect(() => {
-		invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings').then((settings) => {
-			if (settings) {
-				compassOverlaySettings = settings;
-			}
-		}).catch(e => console.warn('[settings] load compass overlay settings failed:', e));
+		for (const [name, cfg] of Object.entries(OVERLAY_CONFIGS)) {
+			invoke<any>(cfg.getCommand).then((s) => {
+				if (s) overlaySettings[name] = s;
+			}).catch(() => {});
+		}
 	});
 
-	async function showComparatorPositionOverlay() {
+	async function showPositionOverlay(name: string) {
+		const cfg = OVERLAY_CONFIGS[name];
+		if (!cfg) return;
 		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
-		if (comparatorPositionOverlay) {
-			try { await comparatorPositionOverlay.destroy(); } catch (_) {}
-			comparatorPositionOverlay = null;
+		if (positionOverlays[name]) {
+			try { await positionOverlays[name].destroy(); } catch (_) {}
+			positionOverlays[name] = null;
 		}
-		const s = comparatorOverlaySettings;
-		const win = new WebviewWindow('overlay-comparator-pos', {
-			url: '/overlay?sync=comparator',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: false,
-			shadow: false,
-			skipTaskbar: true,
-			width: 630,
-			height: 250,
+		const s = overlaySettings[name];
+		const win = new WebviewWindow(cfg.label, {
+			url: `/overlay?sync=${cfg.syncParam}`,
+			transparent: true, decorations: false, alwaysOnTop: true,
+			resizable: name === 'pathstrip' || name === 'compass', shadow: false, skipTaskbar: true,
+			width: cfg.defaultW, height: cfg.defaultH,
 		});
 		win.once('tauri://created', async () => {
-			if (s) await win.setPosition(new PhysicalPosition(s.x, s.y));
-			comparatorPositionOverlay = win;
+			if (s) {
+				const { PhysicalSize } = await import('@tauri-apps/api/dpi');
+				await win.setPosition(new PhysicalPosition(s.x, s.y));
+				await win.setSize(new PhysicalSize(s.width, s.height));
+			}
+			positionOverlays[name] = win;
 		});
-		win.once('tauri://error', (e: any) => console.error('Position overlay failed:', e));
+		win.once('tauri://error', (e: any) => console.error(`${name} position overlay failed:`, e));
 	}
 
-	async function saveComparatorPosition() {
-		if (!comparatorPositionOverlay) return;
-		let x: number, y: number, w: number, h: number;
+	async function savePositionOverlay(name: string) {
+		const cfg = OVERLAY_CONFIGS[name];
+		const win = positionOverlays[name];
+		if (!cfg || !win) return;
 		try {
-			const ref = comparatorPositionOverlay.window ?? comparatorPositionOverlay;
+			const ref = win.window ?? win;
 			const pos = await ref.outerPosition();
 			const size = await ref.outerSize();
-			x = pos.x; y = pos.y; w = size.width; h = size.height;
-			await invoke('set_comparator_overlay_settings', { x, y, w, h, enabled: true });
-			comparatorOverlaySettings = { x, y, width: w, height: h };
+			await invoke(cfg.setCommand, { x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true });
+			overlaySettings[name] = { x: pos.x, y: pos.y, width: size.width, height: size.height };
 		} catch (e) {
-			console.error('Save comparator position failed:', e);
+			console.error(`Save ${name} position failed:`, e);
 			return;
 		}
-		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
-		comparatorPositionOverlay = null;
-		// reclaimMouse triggers overlay-toggle-reset in layout, which
-		// moves the comparator overlay to the saved position.
+		try { await win.destroy(); } catch (_) {}
+		positionOverlays[name] = null;
 		await reclaimMouse();
 	}
 
-	async function cancelComparatorPosition() {
-		if (!comparatorPositionOverlay) return;
-		try { await comparatorPositionOverlay.destroy(); } catch (_) {}
-		comparatorPositionOverlay = null;
+	async function cancelPositionOverlay(name: string) {
+		const win = positionOverlays[name];
+		if (!win) return;
+		try { await win.destroy(); } catch (_) {}
+		positionOverlays[name] = null;
 		await reclaimMouse();
 	}
 
-	async function showCompassPositionOverlay() {
-		notifyConfigStart();
-		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
-		if (compassPositionOverlay) {
-			try { await compassPositionOverlay.destroy(); } catch (_) {}
-			compassPositionOverlay = null;
-		}
-		const s = compassOverlaySettings;
-		const win = new WebviewWindow('overlay-compass-pos', {
-			url: '/overlay?sync=compass',
-			transparent: true,
-			decorations: false,
-			alwaysOnTop: true,
-			resizable: false,
-			shadow: false,
-			skipTaskbar: true,
-			width: 250,
-			height: 220,
-		});
-		win.once('tauri://created', async () => {
-			if (s) await win.setPosition(new PhysicalPosition(s.x, s.y));
-			compassPositionOverlay = win;
-		});
-		win.once('tauri://error', (e: any) => console.error('Compass position overlay failed:', e));
-	}
-
-	async function saveCompassPosition() {
-		if (!compassPositionOverlay) return;
-		let x: number, y: number, w: number, h: number;
-		try {
-			const ref = compassPositionOverlay.window ?? compassPositionOverlay;
-			const pos = await ref.outerPosition();
-			const size = await ref.outerSize();
-			x = pos.x; y = pos.y; w = size.width; h = size.height;
-			await invoke('set_compass_overlay_settings', { x, y, w, h, enabled: true });
-			compassOverlaySettings = { x, y, width: w, height: h };
-		} catch (e) {
-			console.error('Save compass position failed:', e);
-			return;
-		}
-		try { await compassPositionOverlay.destroy(); } catch (_) {}
-		compassPositionOverlay = null;
-		await reclaimMouse();
-	}
-
-	async function cancelCompassPosition() {
-		if (!compassPositionOverlay) return;
-		try { await compassPositionOverlay.destroy(); } catch (_) {}
-		compassPositionOverlay = null;
-		await reclaimMouse();
-	}
+	// Convenience: check if any position overlay is open (for overlay-save/cancel guard)
+	let anyPositionOverlayOpen = $derived(
+		Object.values(positionOverlays).some(w => w !== null)
+	);
 </script>
 
 <div class="settings-page">
@@ -456,6 +444,12 @@
 		<section>
 			<h2>Game Integration</h2>
 
+			{#if store.status && !store.status.client_txt_exists}
+				<div class="warning-banner">
+					Client.txt not found at the configured path. Lab detection, OCR, and compass will not work. Use Browse to locate your Path of Exile Client.txt file.
+				</div>
+			{/if}
+
 			<div class="setting-row">
 				<span class="setting-label">Client.txt Path</span>
 				{#if editingClientTxt}
@@ -470,9 +464,10 @@
 						<button class="btn-small" onclick={cancelEditClientTxt}>Cancel</button>
 					</div>
 				{:else}
-					<span class="setting-value path">{store.status?.client_txt_path ?? '...'}</span>
+					<span class="setting-value path" class:path-missing={!store.status?.client_txt_exists}>{store.status?.client_txt_path ?? '...'}</span>
+					<button class="btn-small" onclick={browseClientTxt}>Browse</button>
 					<button class="btn-small" onclick={startEditClientTxt}>Edit</button>
-					<button class="btn-small" onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Reset to default PoE path">Reset</button>
+					<button class="btn-small" onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Auto-detect GGG or Steam install">Reset</button>
 				{/if}
 			</div>
 
@@ -503,31 +498,26 @@
 
 		<!-- Overlays -->
 		<section>
-			<h2>Overlays</h2>
+			<h2>Overlay Positions</h2>
 
-			<div class="setting-row">
-				<span class="setting-label">Comparator Position</span>
-				{#if comparatorPositionOverlay}
-					<span class="setting-value">Drag red overlay to position...</span>
-					<button class="btn-small save" onclick={saveComparatorPosition}>Save</button>
-					<button class="btn-small" onclick={cancelComparatorPosition}>Cancel</button>
-				{:else}
-					<span class="setting-value mono">{comparatorOverlaySettings ? `(${comparatorOverlaySettings.x}, ${comparatorOverlaySettings.y}) ${comparatorOverlaySettings.width}\u00d7${comparatorOverlaySettings.height}` : 'Not set'}</span>
-					<button class="btn-small" onclick={showComparatorPositionOverlay} disabled={!!overlayVisible}>Configure</button>
-				{/if}
-			</div>
-
-			<div class="setting-row">
-				<span class="setting-label">Compass Position</span>
-				{#if compassPositionOverlay}
-					<span class="setting-value">Drag overlay to position...</span>
-					<button class="btn-small save" onclick={saveCompassPosition}>Save</button>
-					<button class="btn-small" onclick={cancelCompassPosition}>Cancel</button>
-				{:else}
-					<span class="setting-value mono">{compassOverlaySettings ? `(${compassOverlaySettings.x}, ${compassOverlaySettings.y}) ${compassOverlaySettings.width}\u00d7${compassOverlaySettings.height}` : 'Not set'}</span>
-					<button class="btn-small" onclick={showCompassPositionOverlay} disabled={!!overlayVisible}>Configure</button>
-				{/if}
-			</div>
+			{#each [
+				{ name: 'comparator', label: 'Gems Compare' },
+				{ name: 'compass', label: 'Lab Compass' },
+				{ name: 'pathstrip', label: 'Lab Map' },
+			] as cfg (cfg.name)}
+				<div class="setting-row">
+					<span class="setting-label">{cfg.label}</span>
+					{#if positionOverlays[cfg.name]}
+						<span class="setting-value">Drag overlay to position...</span>
+						<button class="btn-small save" onclick={() => savePositionOverlay(cfg.name)}>Save</button>
+						<button class="btn-small" onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</button>
+					{:else}
+						{@const s = overlaySettings[cfg.name]}
+						<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
+						<button class="btn-small" onclick={() => showPositionOverlay(cfg.name)} disabled={!!overlayVisible}>Configure</button>
+					{/if}
+				</div>
+			{/each}
 		</section>
 
 		<!-- Trade -->
@@ -608,10 +598,29 @@
 			{/if}
 		</section>
 
+		<!-- Danger Zone -->
+		<section class="danger-section">
+			<h2>Danger Zone</h2>
+			<div class="setting-row">
+				<span class="setting-label">Reset All Settings</span>
+				<span class="setting-value">Deletes settings file and re-detects everything</span>
+				<button class="btn-danger" onclick={() => {
+					if (confirm('Reset all settings to defaults? This will clear all overlay positions, Client.txt path, and trade settings. The app will re-detect your PoE installation.')) {
+						invoke('reset_all_settings').then(() => {
+							alert('Settings reset. The app will now use fresh defaults.');
+						}).catch(e => console.error('Reset failed:', e));
+					}
+				}}>Reset Everything</button>
+			</div>
+		</section>
+
 		<!-- Logs -->
 		{#if store.logs.length > 0}
 			<section>
-				<h2>Logs</h2>
+				<div class="log-header">
+					<h2>Logs</h2>
+					<button class="btn-small" onclick={() => { navigator.clipboard.writeText(store.logs.toReversed().join('\n')); }}>Copy</button>
+				</div>
 				<div class="log-list">
 					{#each store.logs.toReversed() as line}
 						<div class="log-line" class:log-error={line.includes('failed') || line.includes('error')}>{line}</div>
@@ -699,6 +708,21 @@
 		font-family: 'Consolas', 'Courier New', monospace;
 	}
 
+	.setting-value.path-missing {
+		color: var(--accent, #ef4444);
+	}
+
+	.warning-banner {
+		background: rgba(239, 68, 68, 0.15);
+		border: 1px solid rgba(239, 68, 68, 0.4);
+		border-radius: 6px;
+		padding: 8px 12px;
+		margin-bottom: 8px;
+		font-size: 0.8rem;
+		color: #fca5a5;
+		line-height: 1.4;
+	}
+
 	.setting-value.muted {
 		color: var(--border);
 		font-style: italic;
@@ -760,6 +784,40 @@
 
 	.btn-small.save:hover {
 		background: rgba(74, 222, 128, 0.1);
+	}
+
+	.danger-section {
+		border-color: rgba(239, 68, 68, 0.3);
+	}
+
+	.danger-section h2 {
+		color: #ef4444;
+	}
+
+	.btn-danger {
+		background: transparent;
+		border: 1px solid rgba(239, 68, 68, 0.5);
+		color: #ef4444;
+		padding: 0.3rem 0.7rem;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		cursor: pointer;
+	}
+
+	.btn-danger:hover {
+		background: rgba(239, 68, 68, 0.1);
+		border-color: #ef4444;
+	}
+
+	.log-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.5rem;
+	}
+
+	.log-header h2 {
+		margin-bottom: 0;
 	}
 
 	.log-list {

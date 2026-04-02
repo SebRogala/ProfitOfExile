@@ -33,6 +33,8 @@ pub struct Settings {
     /// Whether auto-trade is enabled (fetch trade data automatically on compare).
     pub auto_trade_enabled: bool,
     pub compass_mode: String,
+    pub compass_strategy: String,
+    pub compass_difficulty: String,
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -74,11 +76,17 @@ impl Default for Settings {
             trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
             auto_trade_enabled: false,
             compass_mode: String::from("minimap"),
+            compass_strategy: String::from("shortest"),
+            compass_difficulty: String::from("Uber"),
         }
     }
 }
 
 /// Get the settings file path inside the Tauri app data directory.
+pub fn settings_path_pub(app: &tauri::AppHandle) -> Option<PathBuf> {
+    settings_path(app)
+}
+
 fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     let dir = match app.path().app_data_dir() {
         Ok(d) => d,
@@ -159,6 +167,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
         compass_mode: state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        compass_strategy: state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        compass_difficulty: state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -174,4 +184,6 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()) = settings.trade_auto_refresh_secs;
     *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.auto_trade_enabled;
     *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_mode.clone();
+    *state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_strategy.clone();
+    *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = settings.compass_difficulty.clone();
 }
