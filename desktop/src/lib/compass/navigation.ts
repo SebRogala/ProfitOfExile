@@ -82,7 +82,7 @@ export function createNavState(): NavState {
 		previousRoom: null,
 		plannedRoute: [],
 		targetRooms: [],
-		strategy: 'darkshrines',
+		strategy: 'shortest',
 		goldenKeys: 0,
 		lockedDoors: [],
 		portalRooms: new Set(),

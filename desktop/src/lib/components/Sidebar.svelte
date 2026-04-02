@@ -10,6 +10,9 @@
 		onToggleComparator,
 		compassActive = false,
 		onToggleCompass = (() => {}) as () => void,
+		pathstripActive = false,
+		pathstripHasData = false,
+		onTogglePathstrip = (() => {}) as () => void,
 	}: {
 		open: boolean;
 		currentPath: string;
@@ -19,6 +22,9 @@
 		onToggleComparator?: () => void;
 		compassActive?: boolean;
 		onToggleCompass?: () => void;
+		pathstripActive?: boolean;
+		pathstripHasData?: boolean;
+		onTogglePathstrip?: () => void;
 	} = $props();
 </script>
 
@@ -27,9 +33,6 @@
 	<div class="collapsed-icons">
 		<button class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming" onclick={() => nav.go('/')}>
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
-		</button>
-		<button class="collapsed-item" class:active={currentPath === '/planner'} title="Lab Planner" onclick={() => nav.go('/planner')}>
-			<span class="icon">&#x1F9ED;</span>
 		</button>
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
@@ -45,9 +48,9 @@
 			<div class="collapsed-item disabled" title="Price Compare">
 				<span class="icon">&#x1F4CA;</span>
 			</div>
-			<a href="/dev" class="collapsed-item" class:active={currentPath === '/dev'} title="Dev Tools">
+			<button class="collapsed-item" class:active={currentPath === '/dev'} title="Dev Tools" onclick={() => nav.go('/dev')}>
 				<span class="icon">&#x1F6E0;&#xFE0F;</span>
-			</a>
+			</button>
 		{/if}
 		<div class="collapsed-sep"></div>
 		<button class="collapsed-item" class:active={currentPath === '/settings'} title="Settings" onclick={() => nav.go('/settings')}>
@@ -63,6 +66,10 @@
 			<span class="icon">&#x1F9ED;</span>
 			<span class="indicator" class:off={!compassActive} class:always={compassActive && gameFocused} class:auto={compassActive && !gameFocused}></span>
 		</button>
+		<button class="collapsed-overlay" title="Lab Map: {pathstripActive ? (pathstripHasData ? (gameFocused ? 'on' : 'hidden') : 'no data') : 'off'}" onclick={onTogglePathstrip}>
+			<span class="icon">&#x1F5FA;&#xFE0F;</span>
+			<span class="indicator" class:off={!pathstripActive} class:always={pathstripActive && pathstripHasData && gameFocused} class:auto={pathstripActive && pathstripHasData && !gameFocused} class:nodata={pathstripActive && !pathstripHasData}></span>
+		</button>
 	</div>
 	<button class="collapse-btn collapsed-expand" onclick={onToggle} title="Expand sidebar">&#9654;</button>
 </nav>
@@ -74,10 +81,6 @@
 			<button class="nav-item" class:active={currentPath === '/'} onclick={() => nav.go('/')}>
 				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
-			</button>
-			<button class="nav-item" class:active={currentPath === '/planner'} onclick={() => nav.go('/planner')}>
-				<span class="icon">&#x1F9ED;</span>
-				<span>Lab Planner</span>
 			</button>
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
@@ -104,10 +107,10 @@
 				<span class="icon">&#x1F4CA;</span>
 				<span>Price Compare</span>
 			</div>
-			<a href="/dev" class="nav-item" class:active={currentPath === '/dev'}>
+			<button class="nav-item" class:active={currentPath === '/dev'} onclick={() => nav.go('/dev')}>
 				<span class="icon">&#x1F6E0;&#xFE0F;</span>
 				<span>Dev Tools</span>
-			</a>
+			</button>
 		</div>
 		{/if}
 	</div>
@@ -115,12 +118,16 @@
 	<div class="bottom">
 		<div class="label">Overlays</div>
 		<button class="overlay-row clickable" onclick={onToggleComparator}>
-			<span>&#x2696;&#xFE0F; Compare</span>
+			<span>&#x2696;&#xFE0F; Gems Compare</span>
 			<span class="mode" class:off={!comparatorActive} class:always={comparatorActive && gameFocused} class:auto={comparatorActive && !gameFocused}>{comparatorActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<button class="overlay-row clickable" onclick={onToggleCompass}>
-			<span>&#x1F9ED; Compass</span>
+			<span>&#x1F9ED; Lab Compass</span>
 			<span class="mode" class:off={!compassActive} class:always={compassActive && gameFocused} class:auto={compassActive && !gameFocused}>{compassActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
+		</button>
+		<button class="overlay-row clickable" onclick={onTogglePathstrip}>
+			<span>&#x1F5FA;&#xFE0F; Lab Map</span>
+			<span class="mode" class:off={!pathstripActive} class:always={pathstripActive && pathstripHasData && gameFocused} class:auto={pathstripActive && pathstripHasData && !gameFocused} class:nodata={pathstripActive && !pathstripHasData}>{pathstripActive ? (pathstripHasData ? (gameFocused ? 'on' : 'hidden') : 'no data') : 'off'}</span>
 		</button>
 	</div>
 	<button class="collapse-btn collapse-inside" onclick={onToggle} title="Collapse sidebar">&#9664;</button>
@@ -259,6 +266,10 @@
 		color: var(--warning);
 	}
 
+	.mode.nodata {
+		color: var(--accent);
+	}
+
 	.sidebar-collapsed {
 		width: 40px;
 		flex-shrink: 0;
@@ -363,6 +374,11 @@
 	.indicator.auto {
 		background: var(--warning);
 		box-shadow: 0 0 4px rgba(251, 191, 36, 0.5);
+	}
+
+	.indicator.nodata {
+		background: var(--accent);
+		box-shadow: 0 0 4px rgba(233, 69, 96, 0.5);
 	}
 
 	.collapsed-expand {

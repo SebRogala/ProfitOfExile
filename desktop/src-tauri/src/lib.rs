@@ -124,6 +124,8 @@ pub struct AppState {
     /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
     pub in_lab: AtomicBool,
     pub compass_mode: Mutex<String>,
+    pub compass_strategy: Mutex<String>,
+    pub compass_difficulty: Mutex<String>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -351,6 +353,33 @@ fn set_client_txt_path(path: String, app: AppHandle) {
     restart_log_watcher(app);
 }
 
+/// Nuclear reset: delete settings file and re-initialize with defaults.
+#[tauri::command]
+fn reset_all_settings(app: AppHandle) {
+    // Delete the settings file
+    if let Some(path) = settings::settings_path_pub(&app) {
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                app_log(&app, format!("Failed to delete settings: {}", e));
+            } else {
+                app_log(&app, format!("Settings file deleted: {:?}", path));
+            }
+        }
+    }
+    // Re-apply defaults to AppState
+    let defaults = settings::Settings::default();
+    let state = app.state::<AppState>();
+    settings::apply_to_state(&defaults, &state);
+    // Re-detect Client.txt
+    let detected = detect_client_txt_path();
+    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
+    // Save fresh settings
+    persist_settings(&app);
+    app_log(&app, "All settings reset to defaults".to_string());
+    emit_status(&app);
+    restart_log_watcher(app);
+}
+
 #[tauri::command]
 fn reset_client_txt_path(app: AppHandle) {
     let state = app.state::<AppState>();
@@ -433,13 +462,29 @@ fn set_auto_trade(enabled: bool, app: AppHandle) {
 fn get_compass_settings(app: AppHandle) -> serde_json::Value {
     let state = app.state::<AppState>();
     let mode = state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    serde_json::json!({ "mode": mode })
+    let strategy = state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let difficulty = state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    serde_json::json!({ "mode": mode, "strategy": strategy, "difficulty": difficulty })
 }
 
 #[tauri::command]
 fn set_compass_mode(mode: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    persist_settings(&app);
+}
+
+#[tauri::command]
+fn set_compass_strategy(strategy: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()) = strategy;
+    persist_settings(&app);
+}
+
+#[tauri::command]
+fn set_compass_difficulty(difficulty: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = difficulty;
     persist_settings(&app);
 }
 
@@ -1943,6 +1988,8 @@ pub fn run() {
         gem_scan_done: AtomicBool::new(false),
         in_lab: AtomicBool::new(false),
         compass_mode: Mutex::new(String::from("minimap")),
+        compass_strategy: Mutex::new(String::from("shortest")),
+        compass_difficulty: Mutex::new(String::from("Uber")),
     };
 
     tauri::Builder::default()
@@ -1956,6 +2003,7 @@ pub fn run() {
             regenerate_pair_code,
             set_client_txt_path,
             reset_client_txt_path,
+            reset_all_settings,
             browse_client_txt,
             emit_lab_nav,
             app_log_from_frontend,
@@ -1990,6 +2038,8 @@ pub fn run() {
             set_pathstrip_overlay_settings,
             get_compass_settings,
             set_compass_mode,
+            set_compass_strategy,
+            set_compass_difficulty,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

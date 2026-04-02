@@ -12,8 +12,11 @@
 		showContentDots = true,
 		compact = false,
 		currentRoomId = null as string | null,
+		visitedRoomIds = null as string[] | null,
+		editingRoomId = null as string | null,
 		interactive = false,
 		onRoomClick = null as ((roomId: string) => void) | null,
+		onRoomRightClick = null as ((roomId: string) => void) | null,
 	} = $props();
 
 	// --- Direction angle mapping for exit dots on circle perimeter ---
@@ -70,7 +73,11 @@
 
 		const routeSet = new Set(navState.plannedRoute);
 		const visitedSet = new Set<string>();
-		if (currentRoomId && navState.plannedRoute.length > 0) {
+		if (visitedRoomIds) {
+			// Explicit visited list provided (from overlay tracking)
+			for (const id of visitedRoomIds) visitedSet.add(id);
+		} else if (currentRoomId && navState.plannedRoute.length > 0) {
+			// Fallback: infer from route position (for planner)
 			const currentIdx = navState.plannedRoute.indexOf(currentRoomId);
 			if (currentIdx > 0) {
 				for (let i = 0; i < currentIdx; i++) visitedSet.add(navState.plannedRoute[i]);
@@ -121,12 +128,20 @@
 
 		const routeEdges = new Set<string>();
 		const visitedEdges = new Set<string>();
-		const currentIdx = currentRoomId ? navState.plannedRoute.indexOf(currentRoomId) : -1;
+		const visitedNodeSet = visitedRoomIds ? new Set(visitedRoomIds) : null;
 
 		for (let i = 0; i < navState.plannedRoute.length - 1; i++) {
 			const pair = [navState.plannedRoute[i], navState.plannedRoute[i + 1]].sort().join('|');
 			routeEdges.add(pair);
-			if (currentIdx > 0 && i < currentIdx) visitedEdges.add(pair);
+			// Edge is visited if both endpoints are visited
+			if (visitedNodeSet) {
+				if (visitedNodeSet.has(navState.plannedRoute[i]) && visitedNodeSet.has(navState.plannedRoute[i + 1])) {
+					visitedEdges.add(pair);
+				}
+			} else {
+				const currentIdx = currentRoomId ? navState.plannedRoute.indexOf(currentRoomId) : -1;
+				if (currentIdx > 0 && i < currentIdx) visitedEdges.add(pair);
+			}
 		}
 
 		const seen = new Set<string>();
@@ -209,6 +224,7 @@
 			class:is-current={node.isCurrent}
 			class:is-visited={node.isVisited}
 			onclick={() => interactive && onRoomClick?.(node.room.id)}
+			oncontextmenu={(e) => { if (onRoomRightClick) { e.preventDefault(); onRoomRightClick(node.room.id); } }}
 			style={interactive ? 'cursor: pointer;' : ''}
 		>
 			<circle
@@ -217,6 +233,7 @@
 				class:room-trial={node.isTrial}
 				class:room-target={navState.targetRooms.includes(node.room.id)}
 				class:room-current={node.isCurrent}
+				class:room-editing={node.room.id === editingRoomId}
 			/>
 			{#if node.isTrial}
 				<!-- Izaro: inner ring for ornate look -->
@@ -364,10 +381,19 @@
 		opacity: 0.6;
 	}
 
+	.compact .conn-off {
+		stroke-width: 1;
+		opacity: 0.4;
+	}
+
 	.conn-route {
 		stroke: #10b981;
 		stroke-width: 4;
 		stroke-linecap: round;
+	}
+
+	.compact .conn-route {
+		stroke-width: 2;
 	}
 
 	.edge-visited {
@@ -407,6 +433,10 @@
 		stroke-width: 2.5;
 	}
 
+	.compact .room-circle {
+		stroke-width: 1.5;
+	}
+
 	.room-circle.room-trial {
 		stroke: #f59e0b;
 		stroke-width: 3;
@@ -422,6 +452,12 @@
 		stroke: #22c55e;
 		stroke-width: 3;
 		fill: #064e3b;
+	}
+
+	.room-circle.room-editing {
+		stroke: #f43f5e;
+		stroke-width: 4;
+		filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.7));
 	}
 
 	.room-id {

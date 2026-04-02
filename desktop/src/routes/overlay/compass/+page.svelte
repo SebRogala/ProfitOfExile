@@ -2,7 +2,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import CompassOverlay from '$lib/compass/CompassOverlay.svelte';
-	import { getPresetByAreaCode, getDoorExitLocations, getContentLocations, getTileRect, matchExitToPresetDoor } from '$lib/compass/room-presets';
+	import { getPresetByAreaCode, getPresetsByName, getDoorExitLocations, getContentLocations, getTileRect, matchExitToPresetDoor } from '$lib/compass/room-presets';
 	import {
 		createNavState,
 		loadLayout,
@@ -10,6 +10,7 @@
 		getNextDirection,
 		getNextExitText,
 		getRoomContents,
+		setStrategy,
 		type NavEvent,
 		type LabLayout,
 	} from '$lib/compass/navigation';
@@ -58,7 +59,21 @@
 
 	// --- Derived from navigation state ---
 	let currentRoom = $derived(navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null);
-	let preset = $derived(currentRoom?.areacode ? getPresetByAreaCode(currentRoom.areacode) : null);
+	let preset = $derived.by(() => {
+		if (!currentRoom) return null;
+		// Try area code first (exact match)
+		if (currentRoom.areacode) {
+			const p = getPresetByAreaCode(currentRoom.areacode);
+			if (p) return p;
+		}
+		// Fallback: look up by room name (handles missing area codes in Normal/Cruel labs)
+		const hasGoldenDoor = currentRoom.contents.some(c => c.toLowerCase().includes('golden-door'));
+		const byName = getPresetsByName(currentRoom.name, hasGoldenDoor);
+		if (byName.length <= 1) return byName[0] ?? null;
+		// Multiple variants: prefer non-bottleneck (simpler room shape, more common)
+		const nonBottleneck = byName.find(p => !p.areaCode.includes('bottleneck'));
+		return nonBottleneck ?? byName[0];
+	});
 	// Door markers use PRESET doorLocations for positioning (they know where
 	// physical doors are in the room SVG). The target is determined by matching
 	// the navigation engine's next direction against the layout exits, then
@@ -75,9 +90,10 @@
 	);
 	let exitText = $derived(getNextExitText(navState));
 	let roomName = $derived(currentRoom?.name ?? '');
-	let areaCode = $derived(currentRoom?.areacode ?? '');
+	let areaCode = $derived(preset?.areaCode ?? currentRoom?.areacode ?? '');
 	let contentNames = $derived(currentRoom ? getRoomContents(navState, currentRoom.id) : []);
-	let showOverlay = $derived(navState.inLab || navState.currentRoom !== null);
+	let hidden = $state(false);
+	let showOverlay = $derived(layoutLoaded && !hidden);
 
 	// --- Event handling ---
 
@@ -85,28 +101,41 @@
 		invoke('app_log_from_frontend', { msg }).catch(() => {});
 	}
 
-	function onNavEvent(event: NavEvent) {
-		navState = handleNavEvent(navState, event);
-		// Debug: log to app logs (visible in Settings > Logs)
+	function onNavEvent(event: any) {
+		if (event.type === 'LayoutChanged') {
+			fetchLayoutFromServer(event.difficulty);
+			return;
+		}
+		if (event.type === 'StrategyChanged') {
+			navState = setStrategy(navState, event.strategy);
+			return;
+		}
+		navState = handleNavEvent(navState, event as NavEvent);
 		if (navState.currentRoom) {
 			const room = navState.roomById.get(navState.currentRoom);
-			logToApp(`[compass] room=${room?.name} id=${navState.currentRoom} route=${navState.plannedRoute.slice(0,4).join('>')} navDir=${navDirection} targetDir=${targetDirection} exits=${room ? Object.keys(room.exits).join(',') : '?'} doors=${preset?.doorLocations?.join(',') ?? '?'}`);
+			logToApp(`[compass] room=${room?.name} id=${navState.currentRoom} route=${navState.plannedRoute.slice(0,4).join('>')} navDir=${navDirection} targetDir=${targetDirection}`);
 		}
 
 		switch (event.type) {
 			case 'PlazaEntered':
 				resetTimer();
+				hidden = false;
 				break;
-			case 'RoomChanged':
+			case 'RoomChanged': {
 				if (navState.inLab && timerStart === null) {
 					startTimer();
 				}
+				// Hide during Izaro fights, show again on regular rooms
+				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
+				hidden = room?.name.toLowerCase() === "aspirant's trial";
 				break;
+			}
 			case 'LabFinished':
 				stopTimer();
 				break;
 			case 'LabExited':
 				resetTimer();
+				hidden = true;
 				break;
 		}
 	}
@@ -127,28 +156,41 @@
 		return () => clearInterval(interval);
 	});
 
-	// Fetch today's layout from server
-	$effect(() => {
-		invoke<any>('get_status')
-			.then((status) => {
-				const serverUrl = status?.server_url;
-				if (!serverUrl) return;
-				// Try all difficulties — Uber is most common for lab farming
-				for (const diff of ['Uber', 'Merciless', 'Cruel', 'Normal']) {
-					fetch(`${serverUrl}/api/lab/layout/${diff}`)
-						.then((r) => {
-							if (r.ok) return r.json();
-							return null;
-						})
-						.then((layout: LabLayout | null) => {
-							if (layout && !navState.layout) {
-								navState = loadLayout(navState, layout);
-							}
-						})
-						.catch(() => {});
+	let lockedDifficulty = $state<string | null>(null);
+	let layoutLoaded = $state(false);
+
+	async function fetchLayoutFromServer(preferredDiff?: string) {
+		try {
+			const status = await invoke<any>('get_status');
+			const serverUrl = status?.server_url;
+			if (!serverUrl) {
+				logToApp('[compass] no server_url yet, retrying in 2s');
+				setTimeout(() => fetchLayoutFromServer(preferredDiff), 2000);
+				return;
+			}
+			if (preferredDiff) lockedDifficulty = preferredDiff;
+			const diff = preferredDiff ?? lockedDifficulty;
+			const diffs = diff ? [diff] : ['Normal', 'Cruel', 'Merciless', 'Uber'];
+			for (const d of diffs) {
+				const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
+				if (r.ok) {
+					const layout: LabLayout = await r.json();
+					navState = loadLayout(createNavState(), layout);
+					if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
+					layoutLoaded = true;
+					logToApp(`[compass] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
+					return;
 				}
-			})
-			.catch((e) => console.warn('[compass] get_status failed:', e));
+			}
+			logToApp(`[compass] no layout found for: ${diffs.join(', ')}`);
+		} catch (e) {
+			logToApp(`[compass] fetchLayout error: ${e}`);
+		}
+	}
+
+	// Fetch layout on init — only once
+	$effect(() => {
+		if (!layoutLoaded) fetchLayoutFromServer();
 	});
 
 	// Listen for lab-nav events
@@ -167,16 +209,18 @@
 
 <div class="compass-container">
 	{#if showOverlay}
-		<CompassOverlay
-			{mode}
-			{areaCode}
-			{doors}
-			{contents}
-			{targetDirection}
-			{roomName}
-			{contentNames}
-			{timerText}
-		/>
+		<div class="compass-content">
+			<CompassOverlay
+				{mode}
+				{areaCode}
+				{doors}
+				{contents}
+				{targetDirection}
+				{roomName}
+				{contentNames}
+				{timerText}
+			/>
+		</div>
 		{#if exitText && mode === 'minimap'}
 			<div class="exit-text">{exitText}</div>
 		{/if}
@@ -187,8 +231,17 @@
 	.compass-container {
 		position: fixed;
 		top: 0;
+		left: 0;
 		right: 0;
+		bottom: 0;
 		pointer-events: none;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.compass-content {
+		flex: 1;
+		min-height: 0;
 	}
 
 	.exit-text {

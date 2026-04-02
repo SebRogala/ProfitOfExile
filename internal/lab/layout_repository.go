@@ -49,3 +49,15 @@ func (r *LayoutRepository) SaveLayout(ctx context.Context, difficulty string, da
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+// UpdateLayout replaces an existing layout for the given difficulty+date.
+func (r *LayoutRepository) UpdateLayout(ctx context.Context, difficulty string, date string, layout json.RawMessage) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE lab_layouts SET layout = $3 WHERE difficulty = $1 AND date = $2`,
+		difficulty, date, layout,
+	)
+	if err != nil {
+		return fmt.Errorf("lab layout repo: update layout: %w", err)
+	}
+	return nil
+}

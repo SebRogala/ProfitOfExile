@@ -102,6 +102,94 @@ func UploadLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 	}
 }
 
+// PatchRoom handles PATCH /api/lab/layout/{difficulty}/room/{roomId}.
+// Updates a single room's areacode, contents, or secret_passage in today's layout.
+func PatchRoom(repo *lab.LayoutRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw := chi.URLParam(r, "difficulty")
+		if !isValidDifficulty(raw) {
+			jsonError(w, http.StatusBadRequest, "invalid difficulty")
+			return
+		}
+		difficulty := normalizeDifficulty(raw)
+		roomId := chi.URLParam(r, "roomId")
+
+		today := time.Now().UTC().Format("2006-01-02")
+		layoutJSON, err := repo.GetLayout(r.Context(), difficulty, today)
+		if err != nil {
+			slog.Error("patch room: get layout failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		if layoutJSON == nil {
+			jsonError(w, http.StatusNotFound, "no layout for today")
+			return
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		type patchRequest struct {
+			AreaCode      *string  `json:"areacode,omitempty"`
+			Contents      []string `json:"contents,omitempty"`
+			SecretPassage *string  `json:"secret_passage,omitempty"`
+		}
+		var patch patchRequest
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		// Parse layout, find room, apply patch
+		var layout lab.LabLayout
+		if err := json.Unmarshal(layoutJSON, &layout); err != nil {
+			slog.Error("patch room: unmarshal layout failed", "error", err)
+			http.Error(w, `{"error":"corrupt layout"}`, http.StatusInternalServerError)
+			return
+		}
+
+		found := false
+		for i := range layout.Rooms {
+			if layout.Rooms[i].ID == roomId {
+				if patch.AreaCode != nil {
+					layout.Rooms[i].AreaCode = *patch.AreaCode
+				}
+				if patch.Contents != nil {
+					layout.Rooms[i].Contents = patch.Contents
+				}
+				if patch.SecretPassage != nil {
+					layout.Rooms[i].SecretPassage = *patch.SecretPassage
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			jsonError(w, http.StatusNotFound, "room not found")
+			return
+		}
+
+		lab.SanitizeLayout(&layout)
+		if err := lab.ValidateLayout(&layout); err != nil {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		updatedJSON, err := json.Marshal(layout)
+		if err != nil {
+			http.Error(w, `{"error":"marshal failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		if err := repo.UpdateLayout(r.Context(), difficulty, today, updatedJSON); err != nil {
+			slog.Error("patch room: update failed", "error", err)
+			http.Error(w, `{"error":"update failed"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	}
+}
+
 func isValidDifficulty(d string) bool {
 	switch strings.ToLower(d) {
 	case "normal", "cruel", "merciless", "uber":
