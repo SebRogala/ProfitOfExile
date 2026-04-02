@@ -1664,11 +1664,14 @@ fn spawn_focus_poller(app: AppHandle) {
                         } else if fg_pid == our_pid {
                             FocusState::OwnWindow
                         } else {
-                            let mut buf = [0u16; 256];
-                            let len = GetWindowTextW(fg, &mut buf);
-                            if len > 0 {
-                                let title = String::from_utf16_lossy(&buf[..len as usize]);
-                                if title.contains("Path of Exile") {
+                            // Check window class (more reliable than title — avoids
+                            // matching browser tabs like "Path of Exile Trade")
+                            use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+                            let mut cls_buf = [0u16; 256];
+                            let cls_len = GetClassNameW(fg, &mut cls_buf);
+                            if cls_len > 0 {
+                                let class_name = String::from_utf16_lossy(&cls_buf[..cls_len as usize]);
+                                if class_name == "POEWindowClass" {
                                     FocusState::Game
                                 } else {
                                     FocusState::Other
