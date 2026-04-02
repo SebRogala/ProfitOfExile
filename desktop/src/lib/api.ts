@@ -78,7 +78,7 @@ export interface FontColor {
 	avgWin?: number;
 	avgWinRaw?: number;
 	evRaw?: number;
-	jackpotGems?: { name: string; chaos: number }[];
+	jackpotGems?: { name: string; chaos: number; gcpRecipeCost: number; gcpRecipeBase: number; gcpRecipeSaves: number }[];
 	thinPoolGems?: number;
 	liquidityRisk?: string;
 	mode?: string;

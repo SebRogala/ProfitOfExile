@@ -50,7 +50,7 @@ export interface ContentLocation {
 const byAreaCode = new Map<string, RoomPreset>();
 const byNameAndDoor = new Map<string, RoomPreset[]>();
 
-for (const roomType of roomTypesData as RoomType[]) {
+for (const roomType of roomTypesData as unknown as RoomType[]) {
 	const key = `${roomType.roomName.toLowerCase()}|${roomType.goldenDoor}`;
 	if (!byNameAndDoor.has(key)) {
 		byNameAndDoor.set(key, []);

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+	import { PhysicalSize } from '@tauri-apps/api/dpi';
 	import { invoke } from '@tauri-apps/api/core';
 	import { onMount } from 'svelte';
 
@@ -63,31 +64,34 @@
 			.catch(err => console.error('[overlay] emit overlay-cancel failed:', err));
 	}
 
-	onMount(async () => {
-		const win = getCurrentWebviewWindow();
-		try {
-			const size = await win.outerSize();
-			await win.setSize({ type: 'Physical', width: size.width + 1, height: size.height + 1 });
-			await win.setSize({ type: 'Physical', width: size.width, height: size.height });
-		} catch (e) {
-			console.error('Overlay transparency workaround failed:', e);
-		}
+	let syncInterval: ReturnType<typeof setInterval> | undefined;
 
-		// Sync target window position in real-time
-		let syncInterval: ReturnType<typeof setInterval> | undefined;
-		if (syncTarget) {
-			let lastX = 0, lastY = 0, lastW = 0, lastH = 0;
-			syncInterval = setInterval(async () => {
-				try {
-					const pos = await win.outerPosition();
-					const size = await win.outerSize();
-					if (pos.x !== lastX || pos.y !== lastY || size.width !== lastW || size.height !== lastH) {
-						lastX = pos.x; lastY = pos.y; lastW = size.width; lastH = size.height;
-						await invoke('move_overlay', { label: syncTarget, x: pos.x, y: pos.y, w: size.width, h: size.height });
-					}
-				} catch (e) { console.warn(`[overlay] position sync failed for '${syncTarget}':`, e); }
-			}, 100);
-		}
+	onMount(() => {
+		const win = getCurrentWebviewWindow();
+		(async () => {
+			try {
+				const size = await win.outerSize();
+				await win.setSize(new PhysicalSize(size.width + 1, size.height + 1));
+				await win.setSize(new PhysicalSize(size.width, size.height));
+			} catch (e) {
+				console.error('Overlay transparency workaround failed:', e);
+			}
+
+			// Sync target window position in real-time
+			if (syncTarget) {
+				let lastX = 0, lastY = 0, lastW = 0, lastH = 0;
+				syncInterval = setInterval(async () => {
+					try {
+						const pos = await win.outerPosition();
+						const size = await win.outerSize();
+						if (pos.x !== lastX || pos.y !== lastY || size.width !== lastW || size.height !== lastH) {
+							lastX = pos.x; lastY = pos.y; lastW = size.width; lastH = size.height;
+							await invoke('move_overlay', { label: syncTarget, x: pos.x, y: pos.y, w: size.width, h: size.height });
+						}
+					} catch (e) { console.warn(`[overlay] position sync failed for '${syncTarget}':`, e); }
+				}, 100);
+			}
+		})().catch(e => console.error('[overlay] unexpected async error:', e));
 
 		return () => {
 			if (syncInterval) clearInterval(syncInterval);

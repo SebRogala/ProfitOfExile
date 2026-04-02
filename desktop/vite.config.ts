@@ -1,6 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
+// @ts-expect-error process is available at Vite build time (Node)
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
