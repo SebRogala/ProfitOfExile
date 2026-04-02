@@ -20,8 +20,9 @@
 	import ByVariant from '../../routes/(app)/components/ByVariant.svelte';
 	import MarketOverview from '../../routes/(app)/components/MarketOverview.svelte';
 	import FontEVCompare from '../../routes/(app)/components/FontEVCompare.svelte';
+	import PlannerPage from './PlannerPage.svelte';
 
-	const TABS = ['Session', 'Rankings', 'Font EV', 'Market'] as const;
+	const TABS = ['Session', 'Rankings', 'Font EV', 'Market', 'Planner'] as const;
 	type Tab = typeof TABS[number];
 	let activeTab = $state<Tab>('Session');
 
@@ -269,6 +270,8 @@
 			{#if marketOverview}
 				<MarketOverview data={marketOverview} />
 			{/if}
+		{:else if activeTab === 'Planner'}
+			<PlannerPage />
 		{/if}
 	{/if}
 </div>
