@@ -88,19 +88,21 @@ type SparklinePoint struct {
 }
 
 // signalWeight returns the ROI multiplier for a given trend signal.
-// UNCERTAIN maps to 1.0 (neutral) — no directional prediction, no weight adjustment.
+// Weights are gentle adjustments, NOT hard penalties — a DUMPING 1000c gem
+// is still far better than a STABLE 80c gem. The price difference dominates;
+// the signal is a tiebreaker within similar price ranges.
 func signalWeight(signal string) float64 {
 	switch signal {
 	case "TRAP":
-		return 0 // excluded
+		return 0.7
 	case "DUMPING":
-		return 0.3
+		return 0.85
 	case "HERD":
-		return 0.8
+		return 0.95
 	case "STABLE", "UNCERTAIN":
 		return 1.0
 	case "RECOVERY":
-		return 1.2
+		return 1.05
 	default:
 		return 1.0
 	}
