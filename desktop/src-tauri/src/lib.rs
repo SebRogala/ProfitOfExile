@@ -1779,6 +1779,7 @@ fn spawn_log_watcher(app: AppHandle) {
         let _matcher = gem_matcher::GemMatcher::new(vec![]); // TODO: fetch from server
         let mut last_trial_entered = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let mut line_count: u64 = 0;
+        let mut font_opened_count: u32 = 0;
 
         loop {
             tokio::select! {
@@ -1805,8 +1806,7 @@ fn spawn_log_watcher(app: AppHandle) {
                         let state = app.state::<AppState>();
                         if line.contains("Aspirants' Plaza") || line.contains("Aspirant's Plaza") {
                             state.aspirant_trial_count.store(0, Ordering::SeqCst);
-                            state.font_exhausted.store(false, Ordering::SeqCst);
-                            state.gem_scan_done.store(false, Ordering::SeqCst);
+                            font_opened_count = 0;
                             app_log(&app, "Aspirants' Plaza — trial counter reset".to_string());
                         } else if line.contains("Aspirant's Trial") {
                             // Dedup: same Trial zone within 0.5s is a log batch artifact.
@@ -1842,10 +1842,8 @@ fn spawn_log_watcher(app: AppHandle) {
                                     app_log(&app, "Lab nav: exited lab".to_string());
                                 }
                                 lab_navigation::NavEvent::LabFinished => {
-                                    app_log(&app, "Lab nav: Izaro defeated! Resetting font state, starting font panel OCR".to_string());
-                                    // Reset font state for multi-craft labs (Uber=2, Gift=8)
-                                    state.font_exhausted.store(false, Ordering::SeqCst);
-                                    state.gem_scan_done.store(false, Ordering::SeqCst);
+                                    app_log(&app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
+                                    font_opened_count = 0;
                                     spawn_font_scan(&app);
                                 }
                                 lab_navigation::NavEvent::SectionFinished => {
@@ -1868,51 +1866,33 @@ fn spawn_log_watcher(app: AppHandle) {
                         let state = app.state::<AppState>();
                         match &event {
                             lab_state::LabEvent::FontOpened => {
-                                // CONFIRM click also fires this Client.txt event.
-                                // Use gem_scan_completed to distinguish: if the previous
-                                // gem scan found 3/3 gems, this FontOpened is CONFIRM
-                                // (not a new CRAFT) — stop scan, don't restart.
-                                if state.font_exhausted.load(Ordering::SeqCst) {
-                                    app_log(&app, "FontOpened ignored — font exhausted".to_string());
-                                } else if state.gem_scan_done.load(Ordering::SeqCst) {
-                                    // Previous scan found 3/3 → this is CONFIRM, not CRAFT.
-                                    // Stop any running scan and clear comparator — user made their choice.
+                                // Count-based: odd = CRAFT (start gem scan),
+                                // even = CONFIRM (stop gem scan).
+                                // Works for any number of crafts (Normal=1, Uber=2, Gift=8).
+                                font_opened_count += 1;
+                                if font_opened_count % 2 == 1 {
+                                    // Odd: CRAFT click → start gem scan
+                                    detected_gems.clear();
+                                    spawn_gem_scan(&app, "font");
+                                    app_log(&app, format!("FontOpened #{} — CRAFT, gem scan started", font_opened_count));
+                                    seal_font_round(&app);
+                                } else {
+                                    // Even: CONFIRM click → stop scanning, clear comparator
                                     state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                    state.gem_scan_done.store(false, Ordering::SeqCst);
                                     detected_gems.clear();
                                     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
                                     if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-                                    app_log(&app, "FontOpened — CONFIRM click, comparator cleared".to_string());
-
-                                    // Seal font round data.
-                                    let is_last = seal_font_round(&app);
-                                    if is_last {
-                                        app_log(&app, "Last font craft — stopping font scan".to_string());
-                                        state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                        state.font_exhausted.store(true, Ordering::SeqCst);
-                                    }
-                                } else {
-                                    // CRAFT click → start gem scan.
-                                    detected_gems.clear();
-                                    spawn_gem_scan(&app, "font");
-
-                                    // Seal font round data.
-                                    let is_last = seal_font_round(&app);
-                                    if is_last {
-                                        app_log(&app, "Last font craft — stopping font scan".to_string());
-                                        state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                        state.font_exhausted.store(true, Ordering::SeqCst);
-                                    }
+                                    app_log(&app, format!("FontOpened #{} — CONFIRM, gem scan stopped", font_opened_count));
+                                    seal_font_round(&app);
                                 }
                             }
                             lab_state::LabEvent::ZoneChanged { area } => {
                                 app_log(&app, format!("Zone changed: {} — stopping", area));
 
-                                // Stop both gem and font scans + reset font state.
+                                // Stop both gem and font scans + reset state.
                                 state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                state.font_exhausted.store(false, Ordering::SeqCst);
-                                state.gem_scan_done.store(false, Ordering::SeqCst);
+                                font_opened_count = 0;
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                     lab_state::LabState::Idle;
 
