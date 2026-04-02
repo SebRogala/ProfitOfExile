@@ -23,6 +23,7 @@ pub struct Settings {
     pub sidebar_open: bool,
     pub comparator_overlay: Option<OverlaySettings>,
     pub compass_overlay: Option<OverlaySettings>,
+    pub pathstrip_overlay: Option<OverlaySettings>,
     /// Yellow indicator threshold for trade data age (seconds).
     pub trade_stale_warn_secs: u32,
     /// Red indicator threshold for trade data age (seconds).
@@ -59,7 +60,7 @@ pub struct WindowSettings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            client_txt_path: crate::DEFAULT_CLIENT_TXT_PATH.to_string(),
+            client_txt_path: crate::detect_client_txt_path(),
             server_url: String::from(option_env!("POE_SERVER_URL").unwrap_or("https://profitofexile.localhost")),
             gem_region: CaptureRegion::default(),
             font_region: CaptureRegion::default_font_panel(),
@@ -67,6 +68,7 @@ impl Default for Settings {
             sidebar_open: true,
             comparator_overlay: None,
             compass_overlay: None,
+            pathstrip_overlay: None,
             trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
             trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
             trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
@@ -151,6 +153,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         sidebar_open: *state.sidebar_open.lock().unwrap_or_else(|e| e.into_inner()),
         comparator_overlay: None, // Overlay settings saved separately, not from AppState
         compass_overlay: None,    // Overlay settings saved separately, not from AppState
+        pathstrip_overlay: None,  // Overlay settings saved separately, not from AppState
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
