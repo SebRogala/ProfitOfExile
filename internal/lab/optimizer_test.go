@@ -292,10 +292,11 @@ func TestBuildEvalPoints_DroppedCountDiagnostics(t *testing.T) {
 
 func TestToSignalConfig(t *testing.T) {
 	mc := MarketContext{
-		VelocityMean:    5,
-		VelocitySigma:   10,
-		ListingVelMean:  2,
-		ListingVelSigma: 4,
+		VelocityMean:     5,
+		VelocitySigma:    10,
+		ListingVelMean:   2,
+		ListingVelSigma:  4,
+		PricePercentiles: map[string]float64{"P50": 100},
 	}
 
 	sc := SigmaConfig{
@@ -308,38 +309,43 @@ func TestToSignalConfig(t *testing.T) {
 
 	cfg := sc.ToSignalConfig(mc)
 
-	// PreHERDPriceVel = VelocityMean + HERDPriceMult * VelocitySigma = 5 + 2.0 * 10 = 25
-	if got := cfg.PreHERDPriceVel; !approxEqual(got, 25.0, 0.01) {
-		t.Errorf("PreHERDPriceVel: got %.2f, want 25.0", got)
+	// PreHERDPriceVelPct = (VelocityMean + HERDPriceMult * VelocitySigma) / P50 * 100
+	//                    = (5 + 2.0 * 10) / 100 * 100 = 25%
+	if got := cfg.PreHERDPriceVelPct; !approxEqual(got, 25.0, 0.01) {
+		t.Errorf("PreHERDPriceVelPct: got %.2f, want 25.0", got)
 	}
 
-	// PreHERDListingVel = ListingVelMean + HERDListingMult * ListingVelSigma = 2 + 1.5 * 4 = 8
-	if got := cfg.PreHERDListingVel; !approxEqual(got, 8.0, 0.01) {
-		t.Errorf("PreHERDListingVel: got %.2f, want 8.0", got)
+	// PreHERDListingVelPct = (ListingVelMean + HERDListingMult * ListingVelSigma) * 100 / 50
+	//                      = (2 + 1.5 * 4) * 100 / 50 = 16%
+	if got := cfg.PreHERDListingVelPct; !approxEqual(got, 16.0, 0.01) {
+		t.Errorf("PreHERDListingVelPct: got %.2f, want 16.0", got)
 	}
 
-	// StablePriceVel = StablePriceMult * VelocitySigma = 0.5 * 10 = 5
-	if got := cfg.StablePriceVel; !approxEqual(got, 5.0, 0.01) {
-		t.Errorf("StablePriceVel: got %.2f, want 5.0", got)
+	// StablePriceVelPct = StablePriceMult * VelocitySigma / P50 * 100
+	//                   = 0.5 * 10 / 100 * 100 = 5%
+	if got := cfg.StablePriceVelPct; !approxEqual(got, 5.0, 0.01) {
+		t.Errorf("StablePriceVelPct: got %.2f, want 5.0", got)
 	}
 
-	// BrewingMinPVel = BrewingPriceMult * VelocitySigma = 1.0 * 10 = 10
+	// BrewingMinPVel stays absolute = BrewingPriceMult * VelocitySigma = 1.0 * 10 = 10
 	if got := cfg.BrewingMinPVel; !approxEqual(got, 10.0, 0.01) {
 		t.Errorf("BrewingMinPVel: got %.2f, want 10.0", got)
 	}
 
-	// DumpPriceVel = -(DumpPriceMult * VelocitySigma) = -(2.0 * 10) = -20
-	if got := cfg.DumpPriceVel; !approxEqual(got, -20.0, 0.01) {
-		t.Errorf("DumpPriceVel: got %.2f, want -20.0", got)
+	// DumpPriceVelPct = -(DumpPriceMult * VelocitySigma) / P50 * 100
+	//                 = -(2.0 * 10) / 100 * 100 = -20%
+	if got := cfg.DumpPriceVelPct; !approxEqual(got, -20.0, 0.01) {
+		t.Errorf("DumpPriceVelPct: got %.2f, want -20.0", got)
 	}
 }
 
 func TestToSignalConfig_PreservesDefaults(t *testing.T) {
 	mc := MarketContext{
-		VelocityMean:    5,
-		VelocitySigma:   10,
-		ListingVelMean:  2,
-		ListingVelSigma: 4,
+		VelocityMean:     5,
+		VelocitySigma:    10,
+		ListingVelMean:   2,
+		ListingVelSigma:  4,
+		PricePercentiles: map[string]float64{"P50": 100},
 	}
 
 	sc := SigmaConfig{
@@ -354,20 +360,20 @@ func TestToSignalConfig_PreservesDefaults(t *testing.T) {
 	defaults := DefaultSignalConfig()
 
 	// Non-swept fields must retain default values.
-	if cfg.HERDPriceVel != defaults.HERDPriceVel {
-		t.Errorf("HERDPriceVel: got %.2f, want default %.2f", cfg.HERDPriceVel, defaults.HERDPriceVel)
+	if cfg.HERDPriceVelPct != defaults.HERDPriceVelPct {
+		t.Errorf("HERDPriceVelPct: got %.2f, want default %.2f", cfg.HERDPriceVelPct, defaults.HERDPriceVelPct)
 	}
-	if cfg.HERDListingVel != defaults.HERDListingVel {
-		t.Errorf("HERDListingVel: got %.2f, want default %.2f", cfg.HERDListingVel, defaults.HERDListingVel)
+	if cfg.HERDListingVelPct != defaults.HERDListingVelPct {
+		t.Errorf("HERDListingVelPct: got %.2f, want default %.2f", cfg.HERDListingVelPct, defaults.HERDListingVelPct)
 	}
-	if cfg.StableListingVel != defaults.StableListingVel {
-		t.Errorf("StableListingVel: got %.2f, want default %.2f", cfg.StableListingVel, defaults.StableListingVel)
+	if cfg.StableListingVelPct != defaults.StableListingVelPct {
+		t.Errorf("StableListingVelPct: got %.2f, want default %.2f", cfg.StableListingVelPct, defaults.StableListingVelPct)
 	}
-	if cfg.DumpListingVel != defaults.DumpListingVel {
-		t.Errorf("DumpListingVel: got %.2f, want default %.2f", cfg.DumpListingVel, defaults.DumpListingVel)
+	if cfg.DumpListingVelPct != defaults.DumpListingVelPct {
+		t.Errorf("DumpListingVelPct: got %.2f, want default %.2f", cfg.DumpListingVelPct, defaults.DumpListingVelPct)
 	}
-	if cfg.RecoveryMaxList != defaults.RecoveryMaxList {
-		t.Errorf("RecoveryMaxList: got %d, want default %d", cfg.RecoveryMaxList, defaults.RecoveryMaxList)
+	if cfg.RecoveryMaxListPct != defaults.RecoveryMaxListPct {
+		t.Errorf("RecoveryMaxListPct: got %.2f, want default %.2f", cfg.RecoveryMaxListPct, defaults.RecoveryMaxListPct)
 	}
 	if cfg.OpenMinPVel != defaults.OpenMinPVel {
 		t.Errorf("OpenMinPVel: got %.2f, want default %.2f", cfg.OpenMinPVel, defaults.OpenMinPVel)
