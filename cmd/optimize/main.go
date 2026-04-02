@@ -650,7 +650,8 @@ func approxSigmaEquivalents(def lab.SignalConfig, mc *lab.MarketContext) (herdP,
 		brewP = def.BrewingMinPVel / mc.VelocitySigma
 	}
 	if mc.ListingVelSigma > 0 {
-		absPreHERDListingVel := def.PreHERDListingVelPct / 100 * 50 // approximate median listings
+		const approxMedianListings = 50.0 // MarketContext lacks listing percentiles
+		absPreHERDListingVel := def.PreHERDListingVelPct / 100 * approxMedianListings
 		herdL = (absPreHERDListingVel - mc.ListingVelMean) / mc.ListingVelSigma
 	}
 	return

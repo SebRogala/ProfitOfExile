@@ -372,8 +372,8 @@ func TestToSignalConfig_PreservesDefaults(t *testing.T) {
 	if cfg.DumpListingVelPct != defaults.DumpListingVelPct {
 		t.Errorf("DumpListingVelPct: got %.2f, want default %.2f", cfg.DumpListingVelPct, defaults.DumpListingVelPct)
 	}
-	if cfg.RecoveryMaxListPct != defaults.RecoveryMaxListPct {
-		t.Errorf("RecoveryMaxListPct: got %.2f, want default %.2f", cfg.RecoveryMaxListPct, defaults.RecoveryMaxListPct)
+	if cfg.RecoveryMaxListings != defaults.RecoveryMaxListings {
+		t.Errorf("RecoveryMaxListings: got %d, want default %d", cfg.RecoveryMaxListings, defaults.RecoveryMaxListings)
 	}
 	if cfg.OpenMinPVel != defaults.OpenMinPVel {
 		t.Errorf("OpenMinPVel: got %.2f, want default %.2f", cfg.OpenMinPVel, defaults.OpenMinPVel)

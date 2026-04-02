@@ -435,7 +435,9 @@ func (sc SigmaConfig) ToSignalConfig(mc MarketContext) SignalConfig {
 		p50 = 100 // fallback
 	}
 	cfg.PreHERDPriceVelPct = (mc.VelocityMean + sc.HERDPriceMult*mc.VelocitySigma) / p50 * 100
-	cfg.PreHERDListingVelPct = (mc.ListingVelMean + sc.HERDListingMult*mc.ListingVelSigma) * 100 / 50 // rough % of median listings
+	// Approximate: MarketContext lacks listing percentiles, so we use a rough estimate.
+	const approxMedianListings = 50.0
+	cfg.PreHERDListingVelPct = (mc.ListingVelMean + sc.HERDListingMult*mc.ListingVelSigma) * 100 / approxMedianListings
 	cfg.StablePriceVelPct = sc.StablePriceMult * mc.VelocitySigma / p50 * 100
 	cfg.BrewingMinPVel = sc.BrewingPriceMult * mc.VelocitySigma
 	cfg.DumpPriceVelPct = -(sc.DumpPriceMult * mc.VelocitySigma) / p50 * 100
