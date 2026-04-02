@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
-	import type { TradeLookupResult, TradeSignals } from '$lib/tradeApi';
+	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { store } from '$lib/stores/status.svelte';
 	import { listen } from '@tauri-apps/api/event';
@@ -40,11 +40,52 @@
 
 	let selectedForQueue = $state<string | null>(null);
 
+	/** Score a gem for auto-selection. Higher = better pick to sell. */
+	function gemPickScore(gem: CompareGem): number {
+		const td = tradeData[gem.name];
+
+		if (td && td.listings.length > 0) {
+			// Trade data available — use real market data
+			let base = td.signals.priceOutlier ? td.medianTop10 : td.priceFloor;
+			if (td.signals.sellerConcentration === 'MONOPOLY') base *= 0.85;
+			else if (td.signals.sellerConcentration === 'CONCENTRATED') base *= 0.95;
+			if (td.total < 5) base *= 0.90; // thin market
+			return base;
+		}
+
+		// No trade data — fall back to ninja + gentle signal adjustments.
+		// Price difference dominates; signals are tiebreakers within 10%.
+		let base = gem.transPrice;
+		if (gem.signal === 'TRAP') base *= 0.85;
+		else if (gem.signal === 'DUMPING') base *= 0.90;
+		else if (gem.signal === 'UNCERTAIN') base *= 0.97;
+		return base;
+	}
+
 	$effect(() => {
-		// Auto-select the BEST gem when results change
+		// Auto-select: most expensive gem, with signal-based tiebreaker within 10%
 		if (results.length > 0) {
-			const best = results.find((g) => g.recommendation === 'BEST');
-			selectedForQueue = best?.name ?? null;
+			let best = results[0];
+			let bestPrice = best.transPrice;
+			for (const g of results) {
+				if (g.transPrice > bestPrice) {
+					best = g;
+					bestPrice = g.transPrice;
+				}
+			}
+			// Check if any other gem within 10% scores higher
+			const threshold = bestPrice * 0.90;
+			let bestScore = gemPickScore(best);
+			for (const g of results) {
+				if (g.name === best.name) continue;
+				if (g.transPrice < threshold) continue; // too cheap, price wins
+				const score = gemPickScore(g);
+				if (score > bestScore) {
+					best = g;
+					bestScore = score;
+				}
+			}
+			selectedForQueue = best.name;
 		} else {
 			selectedForQueue = null;
 		}
@@ -108,6 +149,28 @@
 			clearAll();
 		});
 
+		// Listen for trade queue events from Rust
+		const tradeQueuePromise = listen<TradeQueueEvent>('trade-queue', (event) => {
+			if (cancelled) return;
+			const e = event.payload;
+			switch (e.kind) {
+				case 'queued':
+					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'queued', waitSecs: 0 };
+					break;
+				case 'waiting':
+					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'waiting', waitSecs: e.waitSecs };
+					break;
+				case 'fetching':
+					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'fetching', waitSecs: 0 };
+					break;
+				case 'done':
+				case 'error':
+				case 'cancelled':
+					tradeQueue = null;
+					break;
+			}
+		});
+
 		return () => {
 			cancelled = true;
 			if (loadDebounce) clearTimeout(loadDebounce);
@@ -117,6 +180,7 @@
 			pickPromise.then(unlisten => unlisten());
 			refreshPromise.then(unlisten => unlisten());
 			overlayClearPromise.then(unlisten => unlisten());
+			tradeQueuePromise.then(unlisten => unlisten());
 		};
 	});
 
@@ -134,6 +198,9 @@
 	let tradeError = $state<Record<string, boolean>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
 	let autoTradeEnabled = $state(store.status?.auto_trade_enabled ?? false);
+
+	// Trade queue state — driven by Rust trade-queue events
+	let tradeQueue = $state<TradeQueueDisplay | null>(null);
 
 	/** Trade cache age in milliseconds, or null if no data. */
 	function tradeCacheAge(gem: string): number | null {
@@ -211,7 +278,8 @@
 				gem, variant, divineRate: divineRate || undefined,
 			});
 			tradeData[gem] = result;
-		} catch (err) {
+		} catch (err: any) {
+			if (typeof err === 'string' && err === 'cancelled') return; // queue cancelled, not an error
 			console.warn(`[Trade] Rust lookup failed for ${gem}:`, err);
 			tradeError[gem] = true;
 		} finally {
@@ -267,7 +335,15 @@
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
-	function clearAll() {
+	function clearAll(autoQueue = true) {
+		// Auto-add selected gem to session queue before clearing
+		if (autoQueue && selectedForQueue && onQueueGem) {
+			const selected = results.find((g) => g.name === selectedForQueue);
+			if (selected) {
+				const trade = tradeData[selectedForQueue] ?? null;
+				onQueueGem(selectedForQueue, variant, selected.roi, trade);
+			}
+		}
 		if (compareAbort) compareAbort.abort();
 		if (loadDebounce) clearTimeout(loadDebounce);
 		selectedGems = [];
@@ -391,7 +467,7 @@
 		if (!selected) return;
 		const trade = tradeData[selectedForQueue] ?? null;
 		onQueueGem(selectedForQueue, variant, selected.roi, trade);
-		clearAll();
+		clearAll(false); // already queued explicitly, don't auto-queue again
 	}
 
 </script>
@@ -400,13 +476,26 @@
 	<div class="section-header">
 		<div class="title-group">
 			<h2 class="section-title">Lab Options Comparator</h2>
+			{#if tradeQueue}
+				<span class="trade-queue-status">
+					<span class="trade-queue-text">
+						Trade {tradeQueue.position}/{tradeQueue.total}
+						{#if tradeQueue.status === 'waiting'}
+							— Waiting {Math.ceil(tradeQueue.waitSecs)}s
+						{:else if tradeQueue.status === 'fetching'}
+							— Fetching
+						{/if}
+					</span>
+					<button class="trade-queue-cancel" onclick={() => invoke('trade_cancel').catch(e => console.error('trade_cancel failed:', e))} title="Cancel all trade lookups">&times;</button>
+				</span>
+			{/if}
 		</div>
 		<div class="header-controls">
 			{#if selectedForQueue && onQueueGem}
 				<button class="next-btn" onclick={handleNext}>&#10003; Next</button>
 			{/if}
 			{#if selectedGems.length > 0}
-				<button class="clear-btn" onclick={clearAll}>Clear All</button>
+				<button class="clear-btn" onclick={() => clearAll()}>Clear All</button>
 			{/if}
 			<Tooltip text="When enabled, auto-invokes GGG trade lookup on cache miss or stale data"><label class="auto-trade-toggle">
 				<input type="checkbox" bind:checked={autoTradeEnabled} onchange={() => invoke('set_auto_trade', { enabled: autoTradeEnabled }).catch(e => console.warn('set_auto_trade failed:', e))} />
@@ -538,7 +627,7 @@
 							</div>
 						{/if}
 						{#if tradeData[gem.name]}
-							{@const td = tradeData[gem.name]}
+							{@const td = tradeData[gem.name]!}
 							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
 							{@const chaosFloor = td.listings.find(l => l.currency === 'chaos')}
 							<div class="trade-data">
@@ -662,6 +751,31 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
+	}
+	.trade-queue-status {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.75rem;
+		color: #eab308;
+		background: rgba(234, 179, 8, 0.1);
+		border: 1px solid rgba(234, 179, 8, 0.25);
+		border-radius: 4px;
+		padding: 2px 8px;
+	}
+	.trade-queue-text {
+		white-space: nowrap;
+	}
+	.trade-queue-cancel {
+		all: unset;
+		cursor: pointer;
+		font-size: 14px;
+		line-height: 1;
+		color: #9ca3af;
+		padding: 0 2px;
+	}
+	.trade-queue-cancel:hover {
+		color: #ef4444;
 	}
 	.header-controls {
 		display: flex;

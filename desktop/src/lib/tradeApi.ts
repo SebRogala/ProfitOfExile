@@ -39,3 +39,21 @@ export interface TradeSignals {
 	uniqueAccounts: number;
 }
 
+// --- Trade queue events (mirrors Rust TradeQueueEvent) ---
+
+export type TradeQueueEvent =
+	| { kind: 'queued'; gem: string; position: number; total: number }
+	| { kind: 'waiting'; gem: string; waitSecs: number; position: number; total: number }
+	| { kind: 'fetching'; gem: string; position: number; total: number }
+	| { kind: 'done'; gem: string }
+	| { kind: 'error'; gem: string; error: string }
+	| { kind: 'cancelled'; remaining: number };
+
+export interface TradeQueueDisplay {
+	gem?: string;
+	position: number;
+	total: number;
+	status: 'queued' | 'waiting' | 'fetching';
+	waitSecs: number;
+}
+
