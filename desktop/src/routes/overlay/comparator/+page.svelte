@@ -3,7 +3,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
-	import type { TradeLookupResult } from '$lib/tradeApi';
+	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
 
 	// Staleness thresholds — read from polled Rust status, with sensible defaults
@@ -46,8 +46,12 @@
 
 	$effect(() => {
 		if (results.length > 0 && !selectedGem) {
-			const best = results.find((g) => g.recommendation === 'BEST');
-			selectedGem = best?.name ?? results[0]?.name ?? null;
+			// Default to most expensive — Comparator handles signal-aware scoring
+			let best = results[0];
+			for (const g of results) {
+				if (g.transPrice > best.transPrice) best = g;
+			}
+			selectedGem = best.name;
 		}
 		// Tell the mouse hook whether we have content — when empty, clicks pass through to game.
 		invoke('set_overlay_has_content', { hasContent: results.length > 0 })
@@ -85,6 +89,32 @@
 		if (hrs < 24) return `${hrs}h`;
 		return `${Math.floor(hrs / 24)}d`;
 	}
+
+	// Trade queue state — driven by Rust trade-queue events
+	let tradeQueue = $state<TradeQueueDisplay | null>(null);
+
+	$effect(() => {
+		let cancelled = false;
+		const unlistenPromise = listen<TradeQueueEvent>('trade-queue', (event) => {
+			if (cancelled) return;
+			const e = event.payload;
+			switch (e.kind) {
+				case 'queued':
+				case 'fetching':
+					tradeQueue = { position: e.position, total: e.total, status: e.kind, waitSecs: 0 };
+					break;
+				case 'waiting':
+					tradeQueue = { position: e.position, total: e.total, status: 'waiting', waitSecs: e.waitSecs };
+					break;
+				default:
+					tradeQueue = null;
+			}
+		});
+		return () => {
+			cancelled = true;
+			unlistenPromise.then(unlisten => unlisten());
+		};
+	});
 
 	// Trade refresh — request the Comparator to do the lookup via event.
 	// Comparator handles it → updates tradeData → pushes to Rust → we pick it up on next poll.
@@ -137,6 +167,8 @@
 			const action = btn.dataset.action;
 			if (action === 'clear') {
 				handleClear();
+			} else if (action === 'cancel') {
+				invoke('trade_cancel').catch(e => console.error('trade_cancel failed:', e));
 			} else if (action === 'pick' || action === 'refresh') {
 				const rawIndex = btn.dataset.index;
 				if (rawIndex == null) return; // no index on this button
@@ -264,6 +296,13 @@
 					</div>
 				{/each}
 				<button class="clear-act" data-action="clear">clear</button>
+				{#if tradeQueue}
+					<span class="queue-status">
+						{tradeQueue.position}/{tradeQueue.total}
+						{#if tradeQueue.status === 'waiting'}{Math.ceil(tradeQueue.waitSecs)}s{/if}
+					</span>
+					<button class="clear-act queue-cancel" data-action="cancel">&times;</button>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -578,6 +617,26 @@
 	}
 
 	.clear-act:hover {
+		color: #ef4444;
+		border-color: rgba(239, 68, 68, 0.4);
+	}
+
+	.queue-status {
+		font-size: 9px;
+		color: #eab308;
+		white-space: nowrap;
+		margin-top: 4px;
+	}
+
+	.queue-cancel {
+		margin-top: 2px;
+		font-size: 13px;
+		padding: 2px 6px;
+		color: #eab308;
+		border-color: rgba(234, 179, 8, 0.3);
+	}
+
+	.queue-cancel:hover {
 		color: #ef4444;
 		border-color: rgba(239, 68, 68, 0.4);
 	}

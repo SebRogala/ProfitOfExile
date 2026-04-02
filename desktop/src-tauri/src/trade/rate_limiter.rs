@@ -31,6 +31,8 @@ struct Pool {
     tiers: Vec<Tier>,
     padding: Duration,
     ceiling_factor: f64,
+    /// Set when GGG state header reports an active ban (3rd field > 0).
+    banned_until: Option<Instant>,
 }
 
 /// Default ceiling factor — use only 65% of the reported budget.
@@ -64,6 +66,7 @@ impl TradeRateLimiter {
                 }],
                 padding: DEFAULT_LATENCY_PADDING,
                 ceiling_factor: DEFAULT_CEILING_FACTOR,
+                banned_until: None,
             },
         );
         pools.insert(
@@ -77,6 +80,7 @@ impl TradeRateLimiter {
                 }],
                 padding: DEFAULT_LATENCY_PADDING,
                 ceiling_factor: DEFAULT_CEILING_FACTOR,
+                banned_until: None,
             },
         );
         Self {
@@ -108,6 +112,15 @@ impl TradeRateLimiter {
         let now = Instant::now();
         let mut max_wait = Duration::ZERO;
 
+        // Respect active ban from GGG state headers.
+        if let Some(until) = pool.banned_until {
+            if until > now {
+                max_wait = until - now;
+            } else {
+                pool.banned_until = None;
+            }
+        }
+
         for tier in &mut pool.tiers {
             purge_expired(&mut tier.slots, tier.window, now);
 
@@ -126,19 +139,6 @@ impl TradeRateLimiter {
         }
 
         max_wait
-    }
-
-    /// Wait until the rate limit allows the next request to this pool.
-    pub async fn wait_for_capacity(&self, pool_name: &str) {
-        let wait = self.estimate_wait(pool_name);
-        if !wait.is_zero() {
-            log::info!(
-                "Rate limiter: waiting {:?} for {} pool capacity",
-                wait,
-                pool_name
-            );
-            tokio::time::sleep(wait).await;
-        }
     }
 
     /// Update pool tier definitions and slot counts from GGG response headers.
@@ -240,6 +240,22 @@ impl TradeRateLimiter {
                     let deficit = state.current_hits - tier.slots.len();
                     inject_phantoms(&mut tier.slots, deficit, tier.window, now);
                 }
+
+                // GGG state 3rd field > 0 = active ban. Only extend, never shorten.
+                if state.ban_secs > 0 {
+                    let until = now + Duration::from_secs(state.ban_secs);
+                    let update = match pool.banned_until {
+                        Some(existing) => until > existing,
+                        None => true,
+                    };
+                    if update {
+                        log::warn!(
+                            "Rate limiter: GGG reports active ban of {}s for {} pool",
+                            state.ban_secs, pool_name
+                        );
+                        pool.banned_until = Some(until);
+                    }
+                }
             }
 
             // Only process first matching rule.
@@ -260,6 +276,7 @@ struct TierDef {
 
 struct TierState {
     current_hits: usize,
+    ban_secs: u64,
 }
 
 /// Parse "5:10:60" → max_hits=5, window=10s, penalty=60s
@@ -278,15 +295,23 @@ fn parse_tier_def(s: &str) -> Option<TierDef> {
     })
 }
 
-/// Parse "3:10:0" → current_hits=3
+/// Parse "3:10:0" → current_hits=3, ban_secs=0
 fn parse_tier_state(s: &str) -> Option<TierState> {
     let parts: Vec<&str> = s.trim().split(':').collect();
     if parts.len() != 3 {
         return None;
     }
     let hits: usize = parts[0].parse().ok()?;
+    let ban_secs: u64 = match parts[2].parse() {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("Rate limiter: failed to parse ban_secs '{}': {} — treating as 0", parts[2], e);
+            0
+        }
+    };
     Some(TierState {
         current_hits: hits,
+        ban_secs,
     })
 }
 

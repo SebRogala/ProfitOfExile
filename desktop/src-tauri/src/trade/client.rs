@@ -10,7 +10,8 @@
 //! No POESESSID needed for public listings.
 
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::query::build_search_query;
@@ -80,6 +81,21 @@ struct GggItemProperty {
 }
 
 // ---------------------------------------------------------------------------
+// Trade queue events (emitted to frontend via Tauri)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TradeQueueEvent {
+    Queued { gem: String, position: usize, total: usize },
+    Waiting { gem: String, wait_secs: f64, position: usize, total: usize },
+    Fetching { gem: String, position: usize, total: usize },
+    Done { gem: String },
+    Error { gem: String, error: String },
+    Cancelled { remaining: usize },
+}
+
+// ---------------------------------------------------------------------------
 // Trade API client
 // ---------------------------------------------------------------------------
 
@@ -88,10 +104,23 @@ struct GggItemProperty {
 /// Each desktop app instance has its own client = own IP = own rate limits.
 /// The rate limiter maintains separate "search" and "fetch" pools with
 /// multi-tier sliding windows, synced from GGG's X-Rate-Limit-* headers.
+///
+/// All lookups are serialized through `lookup_mutex` to prevent concurrent
+/// requests from bypassing the rate limiter (TOCTOU race fix).
 pub struct TradeApiClient {
     http_client: reqwest::Client,
     league_name: String,
     rate_limiter: TradeRateLimiter,
+    /// Serializes all lookup_gem calls — one search+fetch pair at a time.
+    lookup_mutex: tokio::sync::Mutex<()>,
+    /// Number of lookups waiting to acquire the mutex + the one in flight.
+    pending_count: AtomicUsize,
+    /// Set by trade_cancel command; checked after acquiring mutex.
+    cancel_flag: AtomicBool,
+    /// Counter of enqueued lookups in the current batch. Reset when queue drains.
+    enqueued: AtomicUsize,
+    /// Counter of completed/cancelled lookups in the current batch. Reset when queue drains.
+    completed: AtomicUsize,
 }
 
 impl TradeApiClient {
@@ -106,24 +135,108 @@ impl TradeApiClient {
             http_client,
             league_name: league_name.to_string(),
             rate_limiter: TradeRateLimiter::new(),
+            lookup_mutex: tokio::sync::Mutex::new(()),
+            pending_count: AtomicUsize::new(0),
+            cancel_flag: AtomicBool::new(false),
+            enqueued: AtomicUsize::new(0),
+            completed: AtomicUsize::new(0),
         }
     }
 
-    /// Full trade lookup: rate-limit → search → rate-limit → fetch → build result.
+    /// Cancel all pending trade lookups. In-flight request completes but
+    /// queued lookups bail out with Err("cancelled") without making GGG requests.
+    pub fn cancel(&self) -> usize {
+        self.cancel_flag.store(true, Ordering::SeqCst);
+        let remaining = self.pending_count.load(Ordering::SeqCst);
+        log::info!("Trade queue: cancel requested ({} pending)", remaining);
+        remaining
+    }
+
+    /// Number of lookups currently pending (queued + in-flight).
+    pub fn pending(&self) -> usize {
+        self.pending_count.load(Ordering::Relaxed)
+    }
+
+    /// Full trade lookup: serialize → rate-limit → search → rate-limit → fetch → build result.
     ///
     /// `divine_chaos_rate`: divine→chaos exchange rate for price normalization.
     /// Pass 0.0 to skip normalization (listings keep raw currency values).
+    /// `emit`: callback to emit TradeQueueEvent to the frontend.
     pub async fn lookup_gem(
         &self,
         gem_name: &str,
         variant: &str,
         divine_chaos_rate: f64,
+        emit: impl Fn(TradeQueueEvent),
     ) -> Result<TradeLookupResult, String> {
-        // Phase 1: Search
-        self.rate_limiter.wait_for_capacity("search").await;
-        let search_response = self.execute_search(gem_name, variant).await?;
+        let pending = self.pending_count.fetch_add(1, Ordering::SeqCst) + 1;
+        self.enqueued.fetch_add(1, Ordering::SeqCst);
+        let position = pending - self.completed.load(Ordering::SeqCst);
+
+        emit(TradeQueueEvent::Queued {
+            gem: gem_name.to_string(),
+            position,
+            total: pending,
+        });
+
+        // Serialize: wait for previous lookup to finish.
+        let _guard = self.lookup_mutex.lock().await;
+
+        // Check cancel flag after acquiring mutex.
+        if self.cancel_flag.load(Ordering::SeqCst) {
+            let remaining = self.pending_count.fetch_sub(1, Ordering::SeqCst) - 1;
+            self.completed.fetch_add(1, Ordering::SeqCst);
+            // Last cancelled lookup resets the flag and counters.
+            if remaining == 0 {
+                self.cancel_flag.store(false, Ordering::SeqCst);
+                self.enqueued.store(0, Ordering::SeqCst);
+                self.completed.store(0, Ordering::SeqCst);
+            }
+            return Err("cancelled".to_string());
+        }
+
+        let current_pending = self.pending_count.load(Ordering::SeqCst);
+        let current_pos = self.completed.load(Ordering::SeqCst) + 1;
+
+        // Phase 1: Search (rate-limit → request)
+        let search_wait = self.rate_limiter.estimate_wait("search");
+        if !search_wait.is_zero() {
+            emit(TradeQueueEvent::Waiting {
+                gem: gem_name.to_string(),
+                wait_secs: search_wait.as_secs_f64(),
+                position: current_pos,
+                total: current_pending,
+            });
+            log::info!("Rate limiter: waiting {:?} for search pool capacity", search_wait);
+            tokio::time::sleep(search_wait).await;
+        }
+
+        emit(TradeQueueEvent::Fetching {
+            gem: gem_name.to_string(),
+            position: current_pos,
+            total: current_pending,
+        });
+
+        let search_result = self.execute_search(gem_name, variant).await;
+        let search_response = match search_result {
+            Ok(r) => r,
+            Err(e) => {
+                self.pending_count.fetch_sub(1, Ordering::SeqCst);
+                self.completed.fetch_add(1, Ordering::SeqCst);
+                self.maybe_reset_counters();
+                emit(TradeQueueEvent::Error {
+                    gem: gem_name.to_string(),
+                    error: e.clone(),
+                });
+                return Err(e);
+            }
+        };
 
         if search_response.ids.is_empty() {
+            self.pending_count.fetch_sub(1, Ordering::SeqCst);
+            self.completed.fetch_add(1, Ordering::SeqCst);
+            self.maybe_reset_counters();
+            emit(TradeQueueEvent::Done { gem: gem_name.to_string() });
             return Ok(build_result(
                 gem_name,
                 variant,
@@ -135,21 +248,65 @@ impl TradeApiClient {
             ));
         }
 
-        // Phase 2: Fetch top 10
-        self.rate_limiter.wait_for_capacity("fetch").await;
-        let listings = self
-            .fetch_listing_details(&search_response.query_id, &search_response.ids)
-            .await?;
+        // Check cancel between search and fetch — no point fetching if cancelled.
+        if self.cancel_flag.load(Ordering::SeqCst) {
+            self.pending_count.fetch_sub(1, Ordering::SeqCst);
+            self.completed.fetch_add(1, Ordering::SeqCst);
+            self.maybe_reset_counters();
+            return Err("cancelled".to_string());
+        }
 
-        Ok(build_result(
-            gem_name,
-            variant,
-            &self.league_name,
-            &search_response.query_id,
-            search_response.total,
-            listings,
-            divine_chaos_rate,
-        ))
+        // Phase 2: Fetch top 10 (rate-limit → request)
+        let fetch_wait = self.rate_limiter.estimate_wait("fetch");
+        if !fetch_wait.is_zero() {
+            emit(TradeQueueEvent::Waiting {
+                gem: gem_name.to_string(),
+                wait_secs: fetch_wait.as_secs_f64(),
+                position: current_pos,
+                total: current_pending,
+            });
+            log::info!("Rate limiter: waiting {:?} for fetch pool capacity", fetch_wait);
+            tokio::time::sleep(fetch_wait).await;
+        }
+
+        let listings_result = self
+            .fetch_listing_details(&search_response.query_id, &search_response.ids)
+            .await;
+
+        self.pending_count.fetch_sub(1, Ordering::SeqCst);
+        self.completed.fetch_add(1, Ordering::SeqCst);
+        self.maybe_reset_counters();
+
+        match listings_result {
+            Ok(listings) => {
+                emit(TradeQueueEvent::Done { gem: gem_name.to_string() });
+                Ok(build_result(
+                    gem_name,
+                    variant,
+                    &self.league_name,
+                    &search_response.query_id,
+                    search_response.total,
+                    listings,
+                    divine_chaos_rate,
+                ))
+            }
+            Err(e) => {
+                emit(TradeQueueEvent::Error {
+                    gem: gem_name.to_string(),
+                    error: e.clone(),
+                });
+                Err(e)
+            }
+        }
+    }
+
+    /// Reset counters and cancel flag when queue fully drains.
+    fn maybe_reset_counters(&self) {
+        if self.pending_count.load(Ordering::SeqCst) == 0 {
+            self.cancel_flag.store(false, Ordering::SeqCst);
+            self.enqueued.store(0, Ordering::SeqCst);
+            self.completed.store(0, Ordering::SeqCst);
+        }
     }
 
     /// POST /api/trade/search/{league}
