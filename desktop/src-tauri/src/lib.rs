@@ -585,6 +585,19 @@ fn stop_scanning(app: AppHandle) {
     emit_status(&app);
 }
 
+/// Cancel all pending trade lookups. In-flight request completes but
+/// queued lookups bail out without making GGG requests.
+#[tauri::command]
+fn trade_cancel(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let remaining = state.trade_client.cancel();
+    use tauri::Emitter;
+    if let Err(e) = app.emit("trade-queue", trade::TradeQueueEvent::Cancelled { remaining }) {
+        log::warn!("emit trade-queue Cancelled failed: {}", e);
+    }
+    app_log(&app, format!("Trade queue cancelled ({} pending)", remaining));
+}
+
 /// Direct trade API lookup against GGG from the desktop app.
 /// Each user has their own IP → own rate limits (no shared server bottleneck).
 /// Accepts optional divine rate for chaos normalization of divine-priced listings.
@@ -602,8 +615,17 @@ async fn trade_lookup(
     }
     app_log(&app, format!("Trade lookup: {} ({}) divine_rate={:.0}", gem, variant, rate));
 
-    let result = state.trade_client.lookup_gem(&gem, &variant, rate).await
+    let app_for_emit = app.clone();
+    let result = state.trade_client.lookup_gem(&gem, &variant, rate, |event| {
+        use tauri::Emitter;
+        if let Err(e) = app_for_emit.emit("trade-queue", &event) {
+            log::warn!("emit trade-queue failed: {}", e);
+        }
+    }).await
         .map_err(|e| {
+            if e == "cancelled" {
+                return e; // Don't log cancellations as errors
+            }
             app_log(&app, format!("Trade error: {}", e));
             e
         })?;
@@ -880,12 +902,17 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
                 let h = HWND(hwnd.0 as *mut _);
                 unsafe { overlay_clickthrough::set_noactivate(h); }
 
-                overlay_clickthrough::set_interactive_width(interactive_width);
-                overlay_clickthrough::set_overlay_hwnd(h);
+                // Only set interactive zone globals for overlays that need click
+                // interception (interactive_width > 0). Non-interactive overlays
+                // (compass, pathstrip) must not overwrite the comparator's HWND.
+                if interactive_width > 0 {
+                    overlay_clickthrough::set_interactive_width(interactive_width);
+                    overlay_clickthrough::set_overlay_hwnd(h);
 
-                if let Some(tx) = overlay_clickthrough::install_hook(app2.clone()) {
-                    let state = app2.state::<AppState>();
-                    *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+                    if let Some(tx) = overlay_clickthrough::install_hook(app2.clone()) {
+                        let state = app2.state::<AppState>();
+                        *state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+                    }
                 }
 
                 // Re-apply WS_EX_NOACTIVATE after WebView2 children are created
@@ -2009,6 +2036,7 @@ pub fn run() {
             start_scanning,
             stop_scanning,
             trade_lookup,
+            trade_cancel,
             send_test_gems,
             test_ocr_on_image,
             force_show_overlays,
