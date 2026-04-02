@@ -1491,7 +1491,10 @@ fn seal_font_round(app: &AppHandle) -> bool {
     };
 
     let crafts_remaining = session.current_crafts_remaining.take();
-    let is_last = crafts_remaining.is_none();
+    // is_last: only true if we've already used at least one craft AND no "Crafts Remaining"
+    // text was detected. On the first craft, None could mean single-craft OR OCR missed it —
+    // so don't assume last on first round (prevents blocking multi-craft labs).
+    let is_last = crafts_remaining.is_none() && !session.rounds.is_empty();
 
     let round_num = session.rounds.len() + 1;
     app_log(app, format!(
@@ -1839,7 +1842,10 @@ fn spawn_log_watcher(app: AppHandle) {
                                     app_log(&app, "Lab nav: exited lab".to_string());
                                 }
                                 lab_navigation::NavEvent::LabFinished => {
-                                    app_log(&app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
+                                    app_log(&app, "Lab nav: Izaro defeated! Resetting font state, starting font panel OCR".to_string());
+                                    // Reset font state for multi-craft labs (Uber=2, Gift=8)
+                                    state.font_exhausted.store(false, Ordering::SeqCst);
+                                    state.gem_scan_done.store(false, Ordering::SeqCst);
                                     spawn_font_scan(&app);
                                 }
                                 lab_navigation::NavEvent::SectionFinished => {
