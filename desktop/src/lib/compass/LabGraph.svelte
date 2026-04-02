@@ -64,8 +64,8 @@
 		const rooms = navState.layout.rooms;
 		if (rooms.length === 0) return [];
 
-		const xs = rooms.map(r => parseFloat(r.x));
-		const ys = rooms.map(r => parseFloat(r.y));
+		const xs = rooms.map((r: LabLayoutRoom) => parseFloat(r.x));
+		const ys = rooms.map((r: LabLayoutRoom) => parseFloat(r.y));
 		const minX = Math.min(...xs), maxX = Math.max(...xs);
 		const minY = Math.min(...ys), maxY = Math.max(...ys);
 		const rangeX = maxX - minX || 1;
@@ -88,7 +88,7 @@
 		const sortedYs = [...ys].sort((a, b) => a - b);
 		const medianY = sortedYs[Math.floor(sortedYs.length / 2)];
 
-		return rooms.map((room): RoomNode => {
+		return rooms.map((room: LabLayoutRoom): RoomNode => {
 			const rawX = parseFloat(room.x), rawY = parseFloat(room.y);
 			const cx = padding + ((rawX - minX) / rangeX) * (width - 2 * padding);
 			// Compress vertical distance: branch rooms pulled closer to main path
@@ -153,7 +153,7 @@
 			const fromR = nodeR(fromNode);
 
 			for (const [dir, targetId] of Object.entries(room.exits)) {
-				const toNode = nodeMap.get(targetId);
+				const toNode = nodeMap.get(targetId as string);
 				if (!toNode) continue;
 
 				// Dedup: only draw each pair once

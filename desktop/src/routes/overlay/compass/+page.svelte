@@ -93,6 +93,7 @@
 	let areaCode = $derived(preset?.areaCode ?? currentRoom?.areacode ?? '');
 	let contentNames = $derived(currentRoom ? getRoomContents(navState, currentRoom.id) : []);
 	let hidden = $state(false);
+	let layoutLoaded = $state(false);
 	let showOverlay = $derived(layoutLoaded && !hidden);
 
 	// --- Event handling ---
@@ -157,7 +158,6 @@
 	});
 
 	let lockedDifficulty = $state<string | null>(null);
-	let layoutLoaded = $state(false);
 
 	async function fetchLayoutFromServer(preferredDiff?: string) {
 		try {
