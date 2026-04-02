@@ -84,10 +84,13 @@ pub fn is_lab_room(name: &str) -> bool {
 /// Extract the area name from a "You have entered X." log line.
 /// Returns None if the line doesn't match the pattern.
 pub fn parse_entered_area(line: &str) -> Option<&str> {
-    let marker = ": You have entered ";
+    let marker = "You have entered ";
     let start = line.find(marker)? + marker.len();
     let rest = &line[start..];
     let end = rest.find('.')?;
+    if end == 0 {
+        return None;
+    }
     Some(&rest[..end])
 }
 

@@ -60,10 +60,35 @@ fn watch_file(path: &Path, tx: mpsc::Sender<String>) -> anyhow::Result<()> {
     // Open file and seek to end — only read new lines
     let mut pos = std::fs::metadata(path)?.len();
     log::info!(
-        "Watching {:?} for changes (notify), starting at pos {}",
+        "Watching {:?} for changes (notify), starting at pos {}, file size {}",
         path,
+        pos,
         pos
     );
+
+    // Log a diagnostic sample of the last few bytes to verify encoding
+    if pos > 0 {
+        if let Ok(mut f) = File::open(path) {
+            let sample_start = if pos > 200 { pos - 200 } else { 0 };
+            if f.seek(SeekFrom::Start(sample_start)).is_ok() {
+                let mut buf = vec![0u8; (pos - sample_start) as usize];
+                if std::io::Read::read(&mut f, &mut buf).is_ok() {
+                    // Check for BOM or non-UTF8
+                    if buf.starts_with(&[0xFF, 0xFE]) || buf.starts_with(&[0xFE, 0xFF]) {
+                        log::warn!("Client.txt appears to be UTF-16 encoded — this may cause issues");
+                    }
+                    // Log last line as diagnostic
+                    if let Ok(sample) = String::from_utf8(buf) {
+                        if let Some(last_line) = sample.lines().last() {
+                            log::info!("Last log line sample: {}", &last_line[..last_line.len().min(120)]);
+                        }
+                    } else {
+                        log::warn!("Client.txt contains non-UTF8 bytes — encoding issue?");
+                    }
+                }
+            }
+        }
+    }
 
     // Set up filesystem watcher
     let (notify_tx, notify_rx) = std::sync::mpsc::channel();

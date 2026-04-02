@@ -42,6 +42,7 @@ pub struct AppStatus {
     pub pair_code: String,
     pub detected_gems: Vec<String>,
     pub client_txt_path: String,
+    pub client_txt_exists: bool,
     pub server_url: String,
     pub gem_region: CaptureRegion,
     pub font_region: CaptureRegion,
@@ -127,11 +128,14 @@ pub struct AppState {
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
 fn build_status(state: &AppState) -> AppStatus {
+    let client_txt_path = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let client_txt_exists = std::path::Path::new(&client_txt_path).exists();
     AppStatus {
         state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
         pair_code: state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         detected_gems: state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        client_txt_path,
+        client_txt_exists,
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         gem_region: state.gem_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         font_region: state.font_region.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -150,9 +154,20 @@ fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
     let existing = settings::load(app);
     let mut s = settings::from_state(&state);
-    s.window = existing.window; // preserve window settings from last close
-    s.comparator_overlay = existing.comparator_overlay; // preserve overlay settings
+    // Preserve fields that are saved separately (not via AppState):
+    // window position (saved on close), overlay positions (saved via set_*_overlay_settings).
+    // This is DRY — from_state handles AppState fields, persist_overlay_settings handles the rest.
+    persist_overlay_settings(&existing, &mut s);
     settings::save(app, &s);
+}
+
+/// Copy overlay/window settings from existing file into the new settings struct.
+/// These fields are managed by their own save commands, not by AppState.
+fn persist_overlay_settings(existing: &settings::Settings, target: &mut settings::Settings) {
+    target.window = existing.window.clone();
+    target.comparator_overlay = existing.comparator_overlay.clone();
+    target.compass_overlay = existing.compass_overlay.clone();
+    target.pathstrip_overlay = existing.pathstrip_overlay.clone();
 }
 
 /// Emit the full app status to all frontend listeners.
@@ -226,7 +241,106 @@ fn regenerate_pair_code(app: AppHandle) -> String {
     new_code
 }
 
-const DEFAULT_CLIENT_TXT_PATH: &str = r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt";
+/// Detect Client.txt path using multiple strategies (most reliable first).
+/// 1. Running PoE process → derive logs path from executable location
+/// 2. Hardcoded common paths (GGG standalone, Steam default, Epic Games)
+fn detect_client_txt_path() -> String {
+    // Strategy 1: Find running PoE process and derive logs path
+    if let Some(path) = detect_from_running_process() {
+        log::info!("Client.txt detected from running process: {}", path);
+        return path;
+    }
+
+    // Strategy 2: Check common install paths
+    let common_paths = [
+        r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
+        r"C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\logs\Client.txt",
+        r"C:\Program Files\Epic Games\PathOfExile\logs\Client.txt",
+        // 32-bit GGG path
+        r"C:\Program Files\Grinding Gear Games\Path of Exile\logs\Client.txt",
+    ];
+
+    for path in &common_paths {
+        if std::path::Path::new(path).exists() {
+            log::info!("Client.txt found at common path: {}", path);
+            return path.to_string();
+        }
+    }
+
+    // Strategy 3: Try Steam library folders from registry
+    if let Some(path) = detect_from_steam_libraries() {
+        log::info!("Client.txt detected from Steam library: {}", path);
+        return path;
+    }
+
+    // Default fallback — user will see the warning
+    log::warn!("Client.txt not found in any known location");
+    common_paths[0].to_string()
+}
+
+/// Find Client.txt by detecting a running PathOfExile process.
+fn detect_from_running_process() -> Option<String> {
+    use sysinfo::System;
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    for process in sys.processes().values() {
+        let name = process.name().to_string_lossy().to_lowercase();
+        if name.contains("pathofexile") && name.ends_with(".exe") {
+            if let Some(exe_path) = process.exe() {
+                let game_dir = exe_path.parent()?;
+                let client_txt = game_dir.join("logs").join("Client.txt");
+                if client_txt.exists() {
+                    return Some(client_txt.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find Client.txt in Steam library folders by reading Steam's config.
+fn detect_from_steam_libraries() -> Option<String> {
+    #[cfg(windows)]
+    {
+        // Read Steam install path from registry
+        use std::process::Command;
+        let output = Command::new("reg")
+            .args(["query", r"HKCU\Software\Valve\Steam", "/v", "SteamPath"])
+            .output()
+            .ok()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let steam_path = stdout.lines()
+            .find(|l| l.contains("SteamPath"))?
+            .split("REG_SZ")
+            .nth(1)?
+            .trim()
+            .to_string();
+
+        // Parse libraryfolders.vdf to find all library paths
+        let vdf_path = format!(r"{}\steamapps\libraryfolders.vdf", steam_path);
+        let vdf_content = std::fs::read_to_string(&vdf_path).ok()?;
+
+        // Simple VDF parser: look for "path" values
+        for line in vdf_content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("\"path\"") {
+                let path = trimmed
+                    .split('"')
+                    .nth(3)?
+                    .replace("\\\\", "\\");
+                let client_txt = format!(
+                    r"{}\steamapps\common\Path of Exile\logs\Client.txt",
+                    path
+                );
+                if std::path::Path::new(&client_txt).exists() {
+                    return Some(client_txt);
+                }
+            }
+        }
+    }
+    None
+}
 
 #[tauri::command]
 fn set_client_txt_path(path: String, app: AppHandle) {
@@ -240,10 +354,35 @@ fn set_client_txt_path(path: String, app: AppHandle) {
 #[tauri::command]
 fn reset_client_txt_path(app: AppHandle) {
     let state = app.state::<AppState>();
-    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = DEFAULT_CLIENT_TXT_PATH.to_string();
+    let detected = detect_client_txt_path();
+    app_log(&app, format!("Auto-detect Client.txt: {}", detected));
+    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
     persist_settings(&app);
     emit_status(&app);
     restart_log_watcher(app);
+}
+
+#[tauri::command]
+async fn browse_client_txt(app: AppHandle) -> Result<String, String> {
+    let file = tokio::task::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .add_filter("Text files", &["txt"])
+            .set_title("Select Path of Exile Client.txt")
+            .pick_file()
+    }).await.map_err(|e| format!("dialog thread error: {}", e))?;
+
+    match file {
+        Some(path) => {
+            let path_str = path.to_string_lossy().to_string();
+            let state = app.state::<AppState>();
+            *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = path_str.clone();
+            persist_settings(&app);
+            emit_status(&app);
+            restart_log_watcher(app);
+            Ok(path_str)
+        }
+        None => Err("No file selected".to_string()),
+    }
 }
 
 fn restart_log_watcher(app: AppHandle) {
@@ -740,6 +879,11 @@ fn force_show_overlays(app: AppHandle) {
                 log::warn!("Failed to force-show compass: {}", e);
             }
         }
+        if let Some(win) = app.get_webview_window("pathstrip") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show pathstrip: {}", e);
+            }
+        }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
         log::info!("Debug mode OFF");
@@ -831,8 +975,37 @@ fn set_compass_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, a
 }
 
 #[tauri::command]
+fn get_pathstrip_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
+    settings::load(&app).pathstrip_overlay
+}
+
+#[tauri::command]
+fn set_pathstrip_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.pathstrip_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled,
+    });
+    settings::save(&app, &s);
+}
+
+#[tauri::command]
 fn get_logs(state: tauri::State<AppState>) -> Vec<String> {
     state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Dev-only: emit a fake lab-nav event to all windows for testing the compass overlay.
+#[tauri::command]
+fn emit_lab_nav(event_json: serde_json::Value, app: AppHandle) {
+    app_log(&app, format!("Dev: emitting lab-nav {:?}", event_json));
+    if let Err(e) = app.emit("lab-nav", &event_json) {
+        log::warn!("emit lab-nav failed: {}", e);
+    }
+}
+
+/// Frontend can log messages to the app log (visible in Settings > Logs).
+#[tauri::command]
+fn app_log_from_frontend(msg: String, app: AppHandle) {
+    app_log(&app, msg);
 }
 
 #[tauri::command]
@@ -1503,6 +1676,17 @@ fn spawn_focus_poller(app: AppHandle) {
                             }
                         }
                     }
+                    if let Some(win) = app.get_webview_window("pathstrip") {
+                        if is_focused {
+                            if let Err(e) = win.show() {
+                                log::warn!("Failed to show pathstrip overlay: {}", e);
+                            }
+                        } else if !debug {
+                            if let Err(e) = win.hide() {
+                                log::warn!("Failed to hide pathstrip overlay: {}", e);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1518,7 +1702,11 @@ fn spawn_focus_poller(app: AppHandle) {
 fn spawn_log_watcher(app: AppHandle) {
     let state = app.state::<AppState>();
     let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    app_log(&app, format!("Starting log watcher: {}", client_txt));
+    let exists = std::path::Path::new(&client_txt).exists();
+    app_log(&app, format!("Starting log watcher: {} (exists: {})", client_txt, exists));
+    if !exists {
+        app_log(&app, "WARNING: Client.txt not found — check path in Settings".to_string());
+    }
 
     // Create cancel channel and store the sender
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
@@ -1542,6 +1730,7 @@ fn spawn_log_watcher(app: AppHandle) {
         let mut detected_gems: Vec<String> = Vec::new();
         let _matcher = gem_matcher::GemMatcher::new(vec![]); // TODO: fetch from server
         let mut last_trial_entered = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        let mut line_count: u64 = 0;
 
         loop {
             tokio::select! {
@@ -1554,6 +1743,14 @@ fn spawn_log_watcher(app: AppHandle) {
                         Some(l) => l,
                         None => break,
                     };
+
+                    line_count += 1;
+                    // Log first line and then every 100th to confirm watcher is reading
+                    if line_count == 1 {
+                        app_log(&app, format!("Log watcher: first line received (len={})", line.len()));
+                    } else if line_count % 100 == 0 {
+                        app_log(&app, format!("Log watcher: {} lines processed", line_count));
+                    }
 
                     // --- Aspirant's Trial / Plaza tracking (outside state machine) ---
                     if line.contains("You have entered") {
@@ -1570,8 +1767,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                 let count = state.aspirant_trial_count.fetch_add(1, Ordering::SeqCst) + 1;
                                 app_log(&app, format!("Aspirant's Trial #{}", count));
                                 if count == 3 {
-                                    app_log(&app, "3rd Aspirant's Trial — starting font panel OCR".to_string());
-                                    spawn_font_scan(&app);
+                                    app_log(&app, "3rd Aspirant's Trial — final Izaro fight".to_string());
                                 }
                             }
                         }
@@ -1598,7 +1794,8 @@ fn spawn_log_watcher(app: AppHandle) {
                                     app_log(&app, "Lab nav: exited lab".to_string());
                                 }
                                 lab_navigation::NavEvent::LabFinished => {
-                                    app_log(&app, "Lab nav: Izaro defeated!".to_string());
+                                    app_log(&app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
+                                    spawn_font_scan(&app);
                                 }
                                 lab_navigation::NavEvent::SectionFinished => {
                                     app_log(&app, "Lab nav: section finished".to_string());
@@ -1759,6 +1956,9 @@ pub fn run() {
             regenerate_pair_code,
             set_client_txt_path,
             reset_client_txt_path,
+            browse_client_txt,
+            emit_lab_nav,
+            app_log_from_frontend,
             set_server_url,
             set_sidebar_open,
             set_trade_staleness_settings,
@@ -1786,6 +1986,8 @@ pub fn run() {
             set_comparator_overlay_settings,
             get_compass_overlay_settings,
             set_compass_overlay_settings,
+            get_pathstrip_overlay_settings,
+            set_pathstrip_overlay_settings,
             get_compass_settings,
             set_compass_mode,
         ])
@@ -1796,6 +1998,17 @@ pub fn run() {
             let saved = settings::load(&handle);
             let state = handle.state::<AppState>();
             settings::apply_to_state(&saved, &state);
+
+            // If saved Client.txt path doesn't exist, re-detect
+            {
+                let current_path = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if !std::path::Path::new(&current_path).exists() {
+                    let detected = detect_client_txt_path();
+                    app_log(&handle, format!("Saved Client.txt not found ({}), re-detected: {}", current_path, detected));
+                    *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
+                }
+            }
+
             // Write settings on startup so the file always exists
             // Use persist_settings to preserve window + overlay settings
             persist_settings(&handle);
@@ -1885,7 +2098,7 @@ pub fn run() {
                     let existing = settings::load(app);
                     let mut s = settings::from_state(&state);
                     s.window = Some(win_settings);
-                    s.comparator_overlay = existing.comparator_overlay;
+                    persist_overlay_settings(&existing, &mut s);
                     settings::save(app, &s);
 
                     // Force exit — background threads (focus poller, mouse hook, scan loops)
