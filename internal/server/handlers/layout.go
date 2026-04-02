@@ -15,11 +15,12 @@ import (
 // Returns today's lab layout for the given difficulty, or 404 if not yet uploaded.
 func GetLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		difficulty := chi.URLParam(r, "difficulty")
-		if !isValidDifficulty(difficulty) {
+		raw := chi.URLParam(r, "difficulty")
+		if !isValidDifficulty(raw) {
 			jsonError(w, http.StatusBadRequest, "invalid difficulty: must be Normal, Cruel, Merciless, or Uber")
 			return
 		}
+		difficulty := normalizeDifficulty(raw)
 
 		today := time.Now().UTC().Format("2006-01-02")
 		layout, err := repo.GetLayout(r.Context(), difficulty, today)
@@ -42,11 +43,12 @@ func GetLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 // Validates and stores a poelab.com layout JSON. First upload per difficulty+date wins.
 func UploadLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		difficulty := chi.URLParam(r, "difficulty")
-		if !isValidDifficulty(difficulty) {
+		raw := chi.URLParam(r, "difficulty")
+		if !isValidDifficulty(raw) {
 			jsonError(w, http.StatusBadRequest, "invalid difficulty: must be Normal, Cruel, Merciless, or Uber")
 			return
 		}
+		difficulty := normalizeDifficulty(raw)
 
 		r.Body = http.MaxBytesReader(w, r.Body, 102400) // 100KB max
 
@@ -101,9 +103,24 @@ func UploadLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 }
 
 func isValidDifficulty(d string) bool {
-	switch d {
-	case "Normal", "Cruel", "Merciless", "Uber":
+	switch strings.ToLower(d) {
+	case "normal", "cruel", "merciless", "uber":
 		return true
 	}
 	return false
+}
+
+// normalizeDifficulty returns the canonical title-case form.
+func normalizeDifficulty(d string) string {
+	switch strings.ToLower(d) {
+	case "normal":
+		return "Normal"
+	case "cruel":
+		return "Cruel"
+	case "merciless":
+		return "Merciless"
+	case "uber":
+		return "Uber"
+	}
+	return d
 }
