@@ -513,7 +513,6 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 			const authedUrl = new URL(url);
 			authedUrl.searchParams.set('topic', 'poe/analysis/updated');
-			authedUrl.searchParams.append('topic', 'poe/trade/results');
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());

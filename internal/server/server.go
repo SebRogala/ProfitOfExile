@@ -66,7 +66,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	if len(cfg.AllowedOrigins) > 0 {
 		r.Use(cors.Handler(cors.Options{
 			AllowedOrigins:   cfg.AllowedOrigins,
-			AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+			AllowedMethods:   []string{"GET", "POST", "PATCH", "OPTIONS"},
 			AllowedHeaders:   []string{"Content-Type", "Authorization"},
 			AllowCredentials: false,
 			MaxAge:           300,
