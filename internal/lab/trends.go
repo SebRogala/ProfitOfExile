@@ -349,7 +349,7 @@ func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHis
 			histPos = 50
 		}
 
-		signal := classifySignal(priceVel, listingVel, cv, g.Listings)
+		signal := classifySignal(priceVel, listingVel, cv, g.Chaos, g.Listings)
 
 		// Base-side signals.
 		baseName := extractBaseName(g.Name)
@@ -641,47 +641,55 @@ func classifyAdvancedSignal(currentPrice float64, currentListings int, priceVelo
 }
 
 // classifySignal determines the market signal based on velocity, CV, and current listings.
-// currentListings is needed for RECOVERY detection (supply exhaustion at bottom).
-func classifySignal(priceVel, listingVel, cv float64, currentListings int) string {
-	return classifySignalWithConfig(priceVel, listingVel, cv, currentListings, DefaultSignalConfig())
+// Velocities are converted to percentages relative to price/listings before threshold checks,
+// making signals tier-agnostic (a 3% move means the same for 1500c and 30c gems).
+func classifySignal(priceVel, listingVel, cv float64, currentPrice float64, currentListings int) string {
+	return classifySignalWithConfig(priceVel, listingVel, cv, currentPrice, currentListings, DefaultSignalConfig())
 }
 
 // classifySignalWithConfig uses custom thresholds (for optimizer).
-func classifySignalWithConfig(priceVel, listingVel, cv float64, currentListings int, cfg SignalConfig) string {
+// All velocity thresholds in cfg are percentages; priceVel/listingVel are absolute and converted here.
+func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice float64, currentListings int, cfg SignalConfig) string {
+	// Convert absolute velocities to percentages.
+	// Guard against division by zero for unlisted/free gems.
+	var pVelPct, lVelPct float64
+	if currentPrice > 0 {
+		pVelPct = priceVel / currentPrice * 100
+	}
+	if currentListings > 0 {
+		lVelPct = listingVel / float64(currentListings) * 100
+	}
+
 	// TRAP requires BOTH high historical volatility AND current instability.
 	// A gem with high 7-day CV but stable recent prices is not a trap —
 	// it had a volatile episode earlier but has since settled.
-	if cv > cfg.TrapCV && (math.Abs(priceVel) > 5 || math.Abs(listingVel) > 5) {
+	if cv > cfg.TrapCV && (math.Abs(pVelPct) > cfg.TrapVelPct || math.Abs(lVelPct) > cfg.TrapVelPct) {
 		return "TRAP"
 	}
-	if priceVel < cfg.DumpPriceVel && listingVel > cfg.DumpListingVel {
+	if pVelPct < cfg.DumpPriceVelPct && lVelPct > cfg.DumpListingVelPct {
 		return "DUMPING"
 	}
 	// High-velocity pre-HERD: extreme price movement with moderate listing growth
-	if priceVel > cfg.PreHERDPriceVel && listingVel > cfg.PreHERDListingVel {
+	if pVelPct > cfg.PreHERDPriceVelPct && lVelPct > cfg.PreHERDListingVelPct {
 		return "HERD"
 	}
-	if priceVel > cfg.HERDPriceVel && listingVel > cfg.HERDListingVel {
+	if pVelPct > cfg.HERDPriceVelPct && lVelPct > cfg.HERDListingVelPct {
 		return "HERD"
 	}
 	// RECOVERY: price drifting down slowly, thin listings dropping = supply exhaustion (bottom forming).
-	// Old rule (priceVel < -5 && listingVel < -5) fired mid-crash — 22.6% accurate.
-	// New rule requires stabilization: price still negative but shallow, listings thin and draining.
-	if priceVel < 0 && priceVel > cfg.DumpPriceVel && listingVel < -3 && currentListings < cfg.RecoveryMaxList {
+	// Uses relative thresholds: listing count below RecoveryMaxListPct of pool median.
+	if pVelPct < 0 && pVelPct > cfg.DumpPriceVelPct && lVelPct < -8 && currentListings < 20 {
 		return "RECOVERY"
 	}
-	if math.Abs(priceVel) < cfg.StablePriceVel && math.Abs(listingVel) < cfg.StableListingVel {
+	if math.Abs(pVelPct) < cfg.StablePriceVelPct && math.Abs(lVelPct) < cfg.StableListingVelPct {
 		return "STABLE"
-	}
-	if priceVel > 0 {
-		return "UNCERTAIN"
 	}
 	return "UNCERTAIN"
 }
 
 // ClassifySignalWithConfig is the exported variant for use by the optimizer.
-func ClassifySignalWithConfig(priceVel, listingVel, cv float64, currentListings int, cfg SignalConfig) string {
-	return classifySignalWithConfig(priceVel, listingVel, cv, currentListings, cfg)
+func ClassifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice float64, currentListings int, cfg SignalConfig) string {
+	return classifySignalWithConfig(priceVel, listingVel, cv, currentPrice, currentListings, cfg)
 }
 
 // ClassifyWindowSignalWithConfig is the exported variant for use by the optimizer.

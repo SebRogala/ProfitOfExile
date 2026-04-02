@@ -711,13 +711,13 @@ func TestComputeConfidence_DUMPINGWithCrashHistory_Higher(t *testing.T) {
 func TestClassifySignal_ReturnsUNCERTAIN_NotRISINGOrFALLING(t *testing.T) {
 	// Bug 3 fix: Signals that were previously RISING or FALLING should now
 	// be UNCERTAIN (directional accuracy below 50%, useless as predictions).
-	// RISING case: positive priceVel outside STABLE range.
-	posSignal := classifySignal(3, 0, 30, 50)
+	// RISING case: positive priceVel outside STABLE range (5% > 3% stable threshold).
+	posSignal := classifySignal(5, 0, 30, 100, 50)
 	if posSignal != "UNCERTAIN" {
 		t.Errorf("positive priceVel signal = %q, want UNCERTAIN (was RISING)", posSignal)
 	}
-	// FALLING case: negative priceVel outside STABLE/DUMPING/RECOVERY range.
-	negSignal := classifySignal(-3, 0, 30, 50)
+	// FALLING case: negative priceVel outside STABLE/DUMPING/RECOVERY range (-5% with no listing vel).
+	negSignal := classifySignal(-5, 0, 30, 100, 50)
 	if negSignal != "UNCERTAIN" {
 		t.Errorf("negative priceVel signal = %q, want UNCERTAIN (was FALLING)", negSignal)
 	}

@@ -102,67 +102,72 @@ func TestVelocity_SameTimestamp(t *testing.T) {
 }
 
 func TestClassifySignal_TRAP(t *testing.T) {
-	// TRAP requires BOTH high CV AND current instability (velocity > 5).
-	s := classifySignal(8, 0, 150, 50)
+	// TRAP requires BOTH high CV AND current instability (velocity% > 5%).
+	// price=100, vel=8 → 8% > 5% threshold → TRAP
+	s := classifySignal(8, 0, 150, 100, 50)
 	if s != "TRAP" {
 		t.Errorf("signal = %s, want TRAP", s)
 	}
 	// High CV but stable velocity → NOT trap (settled down).
-	s = classifySignal(0, 0, 150, 50)
+	s = classifySignal(0, 0, 150, 100, 50)
 	if s == "TRAP" {
 		t.Errorf("signal = %s, want NOT TRAP (stable velocity despite high CV)", s)
 	}
 }
 
 func TestClassifySignal_DUMPING(t *testing.T) {
-	s := classifySignal(-10, 10, 50, 50)
+	// price=100, vel=-10 → -10% < -8% dump threshold, listings=50 lVel=6 → 12% > 10%
+	s := classifySignal(-10, 6, 50, 100, 50)
 	if s != "DUMPING" {
 		t.Errorf("signal = %s, want DUMPING", s)
 	}
 }
 
 func TestClassifySignal_HERD(t *testing.T) {
-	s := classifySignal(10, 15, 30, 50)
+	// price=100, pVel=10 → 10% > 8%, listings=50 lVel=8 → 16% > 15%
+	s := classifySignal(10, 8, 30, 100, 50)
 	if s != "HERD" {
 		t.Errorf("signal = %s, want HERD", s)
 	}
 }
 
 func TestClassifySignal_RECOVERY(t *testing.T) {
-	// New RECOVERY: price drifting down slowly (0 to -5), listings thin (<20) and dropping (<-3)
-	s := classifySignal(-2, -4, 50, 15)
+	// RECOVERY: price drifting down slowly, thin listings dropping >8%
+	// price=100, pVel=-5 → -5% (between -8% and 0), listings=15, lVel=-2 → -13% < -8%
+	s := classifySignal(-5, -2, 50, 100, 15)
 	if s != "RECOVERY" {
 		t.Errorf("signal = %s, want RECOVERY", s)
 	}
 }
 
 func TestClassifySignal_OldRECOVERY_NowUNCERTAIN(t *testing.T) {
-	// Old RECOVERY conditions (priceVel < -5 && listingVel < -5) should no longer fire RECOVERY.
-	// priceVel=-10 is outside the new range (must be > -5), so this becomes UNCERTAIN.
-	s := classifySignal(-10, -10, 50, 50)
+	// price=100, pVel=-10 → -10% < -8% dump threshold, but listing vel=-10/50=-20% < 0
+	// Not DUMPING (listing vel not positive), not RECOVERY (pVel% < DumpPriceVelPct), → UNCERTAIN
+	s := classifySignal(-10, -10, 50, 100, 50)
 	if s != "UNCERTAIN" {
 		t.Errorf("signal = %s, want UNCERTAIN (old RECOVERY conditions no longer match)", s)
 	}
 }
 
 func TestClassifySignal_STABLE(t *testing.T) {
-	s := classifySignal(0.5, 1.0, 15, 50)
+	// price=100, pVel=0.5 → 0.5% < 3%, listings=50 lVel=1 → 2% < 5%
+	s := classifySignal(0.5, 1.0, 15, 100, 50)
 	if s != "STABLE" {
 		t.Errorf("signal = %s, want STABLE", s)
 	}
 }
 
 func TestClassifySignal_UNCERTAIN_Positive(t *testing.T) {
-	// Previously RISING, now UNCERTAIN (directional accuracy below coin flip).
-	s := classifySignal(3, 0, 30, 50)
+	// price=100, pVel=5 → 5% > 3% stable, but < 8% HERD and listing vel=0% < 15% → UNCERTAIN
+	s := classifySignal(5, 0, 30, 100, 50)
 	if s != "UNCERTAIN" {
 		t.Errorf("signal = %s, want UNCERTAIN", s)
 	}
 }
 
 func TestClassifySignal_UNCERTAIN_Negative(t *testing.T) {
-	// Previously FALLING, now UNCERTAIN (directional accuracy below coin flip).
-	s := classifySignal(-3, 0, 30, 50)
+	// price=100, pVel=-5 → -5%, not DUMPING (listing vel not positive enough) → UNCERTAIN
+	s := classifySignal(-5, 0, 30, 100, 50)
 	if s != "UNCERTAIN" {
 		t.Errorf("signal = %s, want UNCERTAIN", s)
 	}
@@ -170,7 +175,8 @@ func TestClassifySignal_UNCERTAIN_Negative(t *testing.T) {
 
 func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 	// CV > 100 + active velocity should override DUMPING.
-	s := classifySignal(-10, 10, 200, 50)
+	// price=100, pVel=-10 → -10%, CV=200 > 100, |pVel%|=10% > 5%
+	s := classifySignal(-10, 5, 200, 100, 50)
 	if s != "TRAP" {
 		t.Errorf("signal = %s, want TRAP (CV + velocity overrides DUMPING)", s)
 	}
@@ -178,53 +184,56 @@ func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 
 func TestClassifySignal_PreHERD_HighVelocity(t *testing.T) {
 	// Extreme price movement with moderate listing growth → HERD (pre-signal)
-	s := classifySignal(50, 5, 30, 50)
+	// price=100, pVel=25 → 25% > 20% pre-HERD, listings=50 lVel=3 → 6% > 5%
+	s := classifySignal(25, 3, 30, 100, 50)
 	if s != "HERD" {
 		t.Errorf("signal = %s, want HERD (pre-HERD high velocity)", s)
 	}
 }
 
 func TestClassifySignal_Boundaries(t *testing.T) {
+	// All tests use price=100 so absolute vel = vel%. listings=100 so absolute lVel = lVel%.
+	// Thresholds: STABLE <3%/5%, HERD >8%/15%, PreHERD >20%/5%, DUMP <-8%/10%, TRAP CV>100 + vel>5%
+	price := 100.0
+	lst := 100
+
 	tests := []struct {
-		name                        string
-		priceVel, listingVel, cv    float64
-		listings                    int
-		want                        string
+		name                     string
+		priceVel, listingVel, cv float64
+		listings                 int
+		want                     string
 	}{
 		// CV boundary: exactly 100 is NOT TRAP (uses > 100)
-		{"cv=100 not TRAP", 0, 0, 100, 50, "STABLE"},
-		{"cv=100.01 no vel not TRAP", 0, 0, 100.01, 50, "STABLE"},
-		{"cv=100.01 with vel is TRAP", 8, 0, 100.01, 50, "TRAP"},
-		// DUMPING boundary: priceVel must be < -5 (not <=)
-		{"priceVel=-5 not DUMPING", -5, 10, 50, 50, "UNCERTAIN"},
-		{"priceVel=-5.01 is DUMPING", -5.01, 10, 50, 50, "DUMPING"},
-		// HERD boundary: listingVel must be > 10
-		{"listingVel=10 not HERD", 10, 10, 30, 50, "UNCERTAIN"},
-		{"listingVel=10.01 is HERD", 10, 10.01, 30, 50, "HERD"},
-		// STABLE boundary: |priceVel| must be < 2 and |listingVel| < 3
-		{"priceVel=2 not STABLE", 2, 0, 30, 50, "UNCERTAIN"},
-		{"priceVel=1.99 is STABLE", 1.99, 0, 30, 50, "STABLE"},
-		{"listingVel=3 not STABLE", 0, 3, 30, 50, "UNCERTAIN"},
-		{"listingVel=2.99 is STABLE", 0, 2.99, 30, 50, "STABLE"},
-		// Pre-HERD boundary: priceVel must be > 30 and listingVel > 3
-		{"preHERD: priceVel=30 not HERD", 30, 5, 30, 50, "UNCERTAIN"},
-		{"preHERD: priceVel=30.01 listVel=3.01 is HERD", 30.01, 3.01, 30, 50, "HERD"},
-		{"preHERD: priceVel=50 listVel=3 not HERD", 50, 3, 30, 50, "UNCERTAIN"},
-		{"preHERD: priceVel=50 listVel=3.01 is HERD", 50, 3.01, 30, 50, "HERD"},
-		// RECOVERY boundaries: priceVel in (-5, 0), listingVel < -3, listings < 20
-		{"RECOVERY: priceVel=-1 listVel=-4 lst=10", -1, -4, 30, 10, "RECOVERY"},
-		{"RECOVERY: priceVel=0 not RECOVERY (must be <0)", 0, -4, 30, 10, "UNCERTAIN"},
-		{"RECOVERY: priceVel=-5 not RECOVERY (must be >-5)", -5, -4, 30, 10, "UNCERTAIN"},
-		{"RECOVERY: listVel=-3 not RECOVERY (must be <-3)", -1, -3, 30, 10, "UNCERTAIN"},
-		{"RECOVERY: lst=20 not RECOVERY (must be <20)", -1, -4, 30, 20, "UNCERTAIN"},
-		{"RECOVERY: lst=19 is RECOVERY", -1, -4, 30, 19, "RECOVERY"},
+		{"cv=100 not TRAP", 0, 0, 100, lst, "STABLE"},
+		{"cv=100.01 no vel not TRAP", 0, 0, 100.01, lst, "STABLE"},
+		{"cv=100.01 with 6% vel is TRAP", 6, 0, 100.01, lst, "TRAP"},
+		// DUMPING boundary: pVel% must be < -8% AND lVel% must be > 10%
+		{"pVel=-8% not DUMPING", -8, 11, 50, lst, "UNCERTAIN"},
+		{"pVel=-8.01% lVel=10.01% is DUMPING", -8.01, 10.01, 50, lst, "DUMPING"},
+		// HERD boundary: lVel% must be > 15%
+		{"lVel=15% not HERD", 10, 15, 30, lst, "UNCERTAIN"},
+		{"lVel=15.01% is HERD", 10, 15.01, 30, lst, "HERD"},
+		// STABLE boundary: |pVel%| must be < 3% and |lVel%| < 5%
+		{"pVel=3% not STABLE", 3, 0, 30, lst, "UNCERTAIN"},
+		{"pVel=2.99% is STABLE", 2.99, 0, 30, lst, "STABLE"},
+		{"lVel=5% not STABLE", 0, 5, 30, lst, "UNCERTAIN"},
+		{"lVel=4.99% is STABLE", 0, 4.99, 30, lst, "STABLE"},
+		// Pre-HERD boundary: pVel% > 20% and lVel% > 5%
+		{"preHERD: pVel=20% not HERD", 20, 6, 30, lst, "UNCERTAIN"},
+		{"preHERD: pVel=20.01% lVel=5.01% is HERD", 20.01, 5.01, 30, lst, "HERD"},
+		// RECOVERY boundaries: pVel% in (-8%,0), lVel% < -8%, listings < 20
+		{"RECOVERY: pVel=-5% lVel=-9 lst=10", -5, -2, 30, 10, "RECOVERY"}, // lVel=-2/10*100=-20%
+		{"RECOVERY: pVel=0 not RECOVERY", 0, -2, 30, 10, "UNCERTAIN"},
+		{"RECOVERY: pVel=-8% not RECOVERY (>= dump)", -8, -2, 30, 10, "UNCERTAIN"},
+		{"RECOVERY: lst=20 not RECOVERY", -5, -2, 30, 20, "UNCERTAIN"},
+		{"RECOVERY: lst=19 is RECOVERY", -5, -2, 30, 19, "RECOVERY"}, // lVel=-2/19*100=-10.5%
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifySignal(tt.priceVel, tt.listingVel, tt.cv, tt.listings)
+			got := classifySignal(tt.priceVel, tt.listingVel, tt.cv, price, tt.listings)
 			if got != tt.want {
-				t.Errorf("classifySignal(%v, %v, %v, %d) = %s, want %s",
-					tt.priceVel, tt.listingVel, tt.cv, tt.listings, got, tt.want)
+				t.Errorf("classifySignal(pVel=%v, lVel=%v, cv=%v, price=%v, lst=%d) = %s, want %s",
+					tt.priceVel, tt.listingVel, tt.cv, price, tt.listings, got, tt.want)
 			}
 		})
 	}

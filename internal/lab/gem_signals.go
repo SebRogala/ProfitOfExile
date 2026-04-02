@@ -44,14 +44,17 @@ func ComputeGemSignals(
 	for _, f := range features {
 		// 1. Primary signal from v1 classifier.
 		// Uses 6h velocity (VelLong) — 2h was too sensitive to temporal normalization noise.
-		signal := classifySignal(f.VelLongPrice, f.VelLongListing, f.CV, f.Listings)
+		signal := classifySignal(f.VelLongPrice, f.VelLongListing, f.CV, f.Chaos, f.Listings)
 
 		// 2. Advanced signal from v1 classifier.
 		advSignal := classifyAdvancedSignal(f.Chaos, f.Listings, f.VelLongPrice, f.VelLongListing, f.CV, f.HistPosition)
 
-		// CASCADE: thin-market buyout lifecycle. PRICE_MANIPULATION keeps priority.
+		// CASCADE: buyout aftermath — price spiked and crashed back.
+		// Detected by extreme CV (>200%) combined with high spike ratio (high7d/low7d > 20x).
+		// The old depth-based rule missed cascades once listings recovered.
+		// PRICE_MANIPULATION keeps priority (active manipulation vs aftermath).
 		if advSignal != "PRICE_MANIPULATION" {
-			if f.MarketRegime == "CASCADE" && f.Low7Days > 0 && f.Chaos > f.Low7Days*1.5 {
+			if f.CV > 200 && f.Low7Days > 0 && f.High7Days/f.Low7Days > 20 {
 				advSignal = "CASCADE"
 			}
 		}

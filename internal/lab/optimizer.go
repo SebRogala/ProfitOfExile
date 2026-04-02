@@ -138,6 +138,7 @@ func SweepV2(evals []EvalPoint, mc MarketContext, grid []SigmaConfig) []SweepRes
 				ep.Feature.VelLongPrice,
 				ep.Feature.VelLongListing,
 				ep.Feature.CV,
+				ep.Feature.Chaos,
 				ep.Feature.Listings,
 				cfg,
 			)
@@ -425,11 +426,19 @@ type SigmaConfig struct {
 func (sc SigmaConfig) ToSignalConfig(mc MarketContext) SignalConfig {
 	cfg := DefaultSignalConfig()
 
-	cfg.PreHERDPriceVel = mc.VelocityMean + sc.HERDPriceMult*mc.VelocitySigma
-	cfg.PreHERDListingVel = mc.ListingVelMean + sc.HERDListingMult*mc.ListingVelSigma
-	cfg.StablePriceVel = sc.StablePriceMult * mc.VelocitySigma
+	// Sigma-multiplied overrides for percentage-based thresholds.
+	// Market-wide sigma is in absolute terms; convert to approximate percentage
+	// using the median price (P50) as reference. This preserves the optimizer's
+	// ability to sweep relative to market conditions.
+	p50 := mc.PricePercentiles["P50"]
+	if p50 <= 0 {
+		p50 = 100 // fallback
+	}
+	cfg.PreHERDPriceVelPct = (mc.VelocityMean + sc.HERDPriceMult*mc.VelocitySigma) / p50 * 100
+	cfg.PreHERDListingVelPct = (mc.ListingVelMean + sc.HERDListingMult*mc.ListingVelSigma) * 100 / 50 // rough % of median listings
+	cfg.StablePriceVelPct = sc.StablePriceMult * mc.VelocitySigma / p50 * 100
 	cfg.BrewingMinPVel = sc.BrewingPriceMult * mc.VelocitySigma
-	cfg.DumpPriceVel = -(sc.DumpPriceMult * mc.VelocitySigma)
+	cfg.DumpPriceVelPct = -(sc.DumpPriceMult * mc.VelocitySigma) / p50 * 100
 
 	return cfg
 }
@@ -538,6 +547,7 @@ func ValidateDefaults(evals []EvalPoint, mc MarketContext) ValidationReport {
 			ep.Feature.VelLongPrice,
 			ep.Feature.VelLongListing,
 			ep.Feature.CV,
+			ep.Feature.Chaos,
 			ep.Feature.Listings,
 			cfg,
 		)
@@ -796,6 +806,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 			ep.Feature.VelLongPrice,
 			ep.Feature.VelLongListing,
 			ep.Feature.CV,
+			ep.Feature.Chaos,
 			ep.Feature.Listings,
 			cfg,
 		)

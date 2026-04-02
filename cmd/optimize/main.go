@@ -283,10 +283,10 @@ func printConsole(results []lab.SweepResultV2, mc *lab.MarketContext, evalCount,
 	fmt.Println("=== CURRENT DEFAULTS (approximate sigma equivalents) ===")
 	def := lab.DefaultSignalConfig()
 	approxHP, approxHL, approxSP, approxBP := approxSigmaEquivalents(def, mc)
-	fmt.Printf("  PreHERDPriceVel=%.0f   -> approx HP_m=%.2f\n", def.PreHERDPriceVel, approxHP)
-	fmt.Printf("  PreHERDListingVel=%.0f  -> approx HL_m=%.2f\n", def.PreHERDListingVel, approxHL)
-	fmt.Printf("  StablePriceVel=%.1f     -> approx SP_m=%.2f\n", def.StablePriceVel, approxSP)
-	fmt.Printf("  BrewingMinPVel=%.1f     -> approx BP_m=%.2f\n", def.BrewingMinPVel, approxBP)
+	fmt.Printf("  PreHERDPriceVelPct=%.0f%%  -> approx HP_m=%.2f\n", def.PreHERDPriceVelPct, approxHP)
+	fmt.Printf("  PreHERDListingVelPct=%.0f%% -> approx HL_m=%.2f\n", def.PreHERDListingVelPct, approxHL)
+	fmt.Printf("  StablePriceVelPct=%.1f%%   -> approx SP_m=%.2f\n", def.StablePriceVelPct, approxSP)
+	fmt.Printf("  BrewingMinPVel=%.1f        -> approx BP_m=%.2f\n", def.BrewingMinPVel, approxBP)
 	fmt.Println()
 }
 
@@ -634,17 +634,24 @@ func printSellabilityJSON(report lab.SellabilityReport, mc *lab.MarketContext, e
 }
 
 // approxSigmaEquivalents computes approximate sigma multipliers for the current
-// default absolute thresholds by dividing by the market context's sigma values.
-// Returns 0 for any field where the corresponding sigma is zero (avoids NaN in JSON output).
-// This is a simple division for reference, not an exact inversion.
+// percentage-based thresholds by converting to absolute (using P50 price) then
+// dividing by the market context's sigma values.
+// Returns 0 for any field where the corresponding sigma is zero.
 func approxSigmaEquivalents(def lab.SignalConfig, mc *lab.MarketContext) (herdP, herdL, stableP, brewP float64) {
+	p50 := mc.PricePercentiles["P50"]
+	if p50 <= 0 {
+		p50 = 100
+	}
 	if mc.VelocitySigma > 0 {
-		herdP = (def.PreHERDPriceVel - mc.VelocityMean) / mc.VelocitySigma
-		stableP = def.StablePriceVel / mc.VelocitySigma
+		absPreHERDPriceVel := def.PreHERDPriceVelPct / 100 * p50
+		absStablePriceVel := def.StablePriceVelPct / 100 * p50
+		herdP = (absPreHERDPriceVel - mc.VelocityMean) / mc.VelocitySigma
+		stableP = absStablePriceVel / mc.VelocitySigma
 		brewP = def.BrewingMinPVel / mc.VelocitySigma
 	}
 	if mc.ListingVelSigma > 0 {
-		herdL = (def.PreHERDListingVel - mc.ListingVelMean) / mc.ListingVelSigma
+		absPreHERDListingVel := def.PreHERDListingVelPct / 100 * 50 // approximate median listings
+		herdL = (absPreHERDListingVel - mc.ListingVelMean) / mc.ListingVelSigma
 	}
 	return
 }
