@@ -337,7 +337,7 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 	if (!state.layout || state.sections.length === 0) return [];
 
 	const route: string[] = [];
-	const targets = getTargetRooms(state, strategy);
+	const targets = state.targetRooms;
 
 	// Find which section the fromRoom belongs to
 	let startSectionIdx = 0;
@@ -467,13 +467,27 @@ export function getNextDirection(state: NavState): string | null {
 	const currentRoom = state.roomById.get(state.currentRoom);
 	if (!currentRoom) return null;
 
-	// Find which exit direction leads to the next room
+	// Check forward exits (current room exits to next room)
 	for (const [direction, targetId] of Object.entries(currentRoom.exits)) {
 		if (targetId === nextRoomId) return direction;
 	}
 
+	// Check reverse exits (next room exits to current room — backtracking)
+	// The direction to go is the opposite of the next room's exit to us.
+	const nextRoom = state.roomById.get(nextRoomId);
+	if (nextRoom) {
+		for (const [direction, targetId] of Object.entries(nextRoom.exits)) {
+			if (targetId === state.currentRoom) return OPPOSITE_DIR[direction] ?? direction;
+		}
+	}
+
 	return null;
 }
+
+const OPPOSITE_DIR: Record<string, string> = {
+	N: 'S', S: 'N', E: 'W', W: 'E',
+	NE: 'SW', SW: 'NE', NW: 'SE', SE: 'NW',
+};
 
 /** Get the exit text description (e.g., "Northwest Exit To Estate Path"). */
 export function getNextExitText(state: NavState): string | null {

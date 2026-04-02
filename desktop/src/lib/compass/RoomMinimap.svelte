@@ -14,9 +14,8 @@
 	const hasFallback = $derived(!areaCode || doors.length === 0);
 
 	function contentColor(direction: string, major: boolean): string {
-		const dir = direction.toLowerCase();
-		if (dir.includes('shrine') || major) return '#a855f7';
-		return '#fbbf24';
+		if (major) return '#ef4444'; // darkshrine/major = red (poelab style)
+		return '#fbbf24'; // generic content = gold
 	}
 </script>
 
@@ -58,7 +57,7 @@
 		width: 100%;
 		height: 100%;
 		overflow: hidden;
-		background: #0a0a12;
+		background: transparent;
 		border-radius: 4px;
 	}
 
@@ -89,22 +88,22 @@
 	}
 
 	.door-label {
-		background: rgba(55, 65, 81, 0.85);
+		background: rgba(0, 0, 0, 0.7);
 		color: #9ca3af;
-		font-size: 8px;
+		font-size: 9px;
 		font-family: system-ui, sans-serif;
-		font-weight: 600;
-		padding: 1px 4px;
+		font-weight: 700;
+		padding: 2px 5px;
 		border-radius: 3px;
-		border: 1px solid rgba(75, 85, 99, 0.6);
 		white-space: nowrap;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 	}
 
 	.door-marker.target .door-label {
 		background: rgba(5, 150, 105, 0.9);
 		color: #ecfdf5;
-		border-color: #10b981;
-		box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+		box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 	}
 
 	.content-marker {
@@ -116,23 +115,23 @@
 	}
 
 	.content-dot {
-		width: 6px;
-		height: 6px;
+		width: 5px;
+		height: 5px;
 		border-radius: 50%;
 		background: var(--content-color, #fbbf24);
-		box-shadow: 0 0 4px var(--content-color, #fbbf24);
+		opacity: 0.7;
 	}
 
 	.room-badge {
 		position: absolute;
 		top: 4px;
 		left: 4px;
-		background: rgba(13, 13, 21, 0.9);
-		border: 1px solid rgba(42, 42, 58, 0.6);
+		background: rgba(0, 0, 0, 0.75);
 		border-radius: 3px;
-		padding: 1px 5px;
-		font-size: 8px;
-		color: #6b7280;
+		padding: 2px 6px;
+		font-size: 9px;
+		color: #d1d5db;
 		font-family: system-ui, sans-serif;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 	}
 </style>

@@ -109,6 +109,46 @@ export function getDoorExitLocations(preset: RoomPreset): DoorExitLocation[] {
 	}));
 }
 
+/** Direction angles for proximity matching. */
+const DIR_ANGLES: Record<string, number> = {
+	N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225, W: 270, NW: 315,
+};
+
+function angleDiff(a: number, b: number): number {
+	const d = Math.abs(a - b) % 360;
+	return d > 180 ? 360 - d : d;
+}
+
+/**
+ * Match a layout exit direction to the closest preset door direction.
+ * Layout exits use inter-cardinal directions (NE, NW) for graph edges,
+ * while preset doors use the physical door positions within the room.
+ * Returns the preset door direction closest in angle to the layout exit.
+ */
+export function matchExitToPresetDoor(
+	exitDirection: string,
+	presetDoorLocations: string[],
+): string | null {
+	if (presetDoorLocations.length === 0) return null;
+	// "C" = secret passage — not a compass direction. Map to the first available door.
+	if (exitDirection === 'C') return presetDoorLocations[0];
+	const exitAngle = DIR_ANGLES[exitDirection];
+	if (exitAngle === undefined) return null;
+
+	let bestDoor: string | null = null;
+	let bestDiff = Infinity;
+	for (const door of presetDoorLocations) {
+		const doorAngle = DIR_ANGLES[door];
+		if (doorAngle === undefined) continue;
+		const diff = angleDiff(exitAngle, doorAngle);
+		if (diff < bestDiff) {
+			bestDiff = diff;
+			bestDoor = door;
+		}
+	}
+	return bestDoor;
+}
+
 /** Get all content positions with computed tile rects. */
 export function getContentLocations(preset: RoomPreset): ContentLocation[] {
 	const result: ContentLocation[] = [];

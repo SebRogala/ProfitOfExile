@@ -7,7 +7,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | File | Export | Description |
 |------|--------|-------------|
 | `stores/status.svelte.ts` | `store`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. Read `store.status` and `store.logs` reactively. |
-| `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings' \| 'planner'`. `nav.go('/planner')` switches. All pages are always mounted (hidden via CSS) — **do NOT use SvelteKit `<a href>` routing** for main views, it unmounts components and kills event listeners. |
+| `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings'`. `nav.go('/settings')` switches. All pages are always mounted (hidden via CSS) — **do NOT use SvelteKit `<a href>` routing** for main views, it unmounts components and kills event listeners. |
 
 ## Components
 
@@ -47,7 +47,7 @@ Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store 
 | File | Description |
 |------|-------------|
 | `pages/LabPage.svelte` | Lab farming dashboard — tabs (Session/Rankings/Font EV/Market), comparator, session queue, best plays, font EV, market overview. |
-| `pages/PlannerPage.svelte` | Lab Planner — full lab graph view, route strategy, compass mode, layout import. |
+| `pages/PlannerPage.svelte` | Lab Planner — full lab graph view, route strategy, compass mode, layout import. Rendered as the "Planner" tab inside LabPage. |
 | `pages/SettingsPage.svelte` | Settings — General, Game Integration, Overlays, Trade, Logs. |
 
 ## Routes
@@ -107,7 +107,7 @@ Scans the gem tooltip region to detect transfigured gem names for the comparator
 
 Scans the font region to capture craft options (transform, quality, experience, etc.) from the CRAFT screen.
 
-**Start**: 3rd "Aspirant's Trial" zone entry (counter resets on "Aspirants' Plaza").
+**Start**: Izaro death voiceline (`LabFinished` nav event) — triggers when final Izaro is killed, right when the font becomes available.
 
 **Running**: Scans at 250ms, parses options via `font_parser`. Deduplicates — same options seen again (user reopened font without crafting) are skipped.
 
