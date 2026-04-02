@@ -651,14 +651,12 @@ func classifySignal(priceVel, listingVel, cv float64, currentPrice float64, curr
 // All velocity thresholds in cfg are percentages; priceVel/listingVel are absolute and converted here.
 func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice float64, currentListings int, cfg SignalConfig) string {
 	// Convert absolute velocities to percentages.
-	// Guard against division by zero for unlisted/free gems.
-	var pVelPct, lVelPct float64
-	if currentPrice > 0 {
-		pVelPct = priceVel / currentPrice * 100
+	// Gems with zero price or zero listings can't be meaningfully classified.
+	if currentPrice <= 0 || currentListings <= 0 {
+		return "UNCERTAIN"
 	}
-	if currentListings > 0 {
-		lVelPct = listingVel / float64(currentListings) * 100
-	}
+	pVelPct := priceVel / currentPrice * 100
+	lVelPct := listingVel / float64(currentListings) * 100
 
 	// TRAP requires BOTH high historical volatility AND current instability.
 	// A gem with high 7-day CV but stable recent prices is not a trap —
@@ -677,8 +675,8 @@ func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice flo
 		return "HERD"
 	}
 	// RECOVERY: price drifting down slowly, thin listings dropping = supply exhaustion (bottom forming).
-	// Uses relative thresholds: listing count below RecoveryMaxListPct of pool median.
-	if pVelPct < 0 && pVelPct > cfg.DumpPriceVelPct && lVelPct < -8 && currentListings < 20 {
+	// Requires thin market (absolute listing cap) + listing drain (relative %).
+	if pVelPct < 0 && pVelPct > cfg.DumpPriceVelPct && lVelPct < cfg.RecoveryListingVelPct && currentListings < cfg.RecoveryMaxListings {
 		return "RECOVERY"
 	}
 	if math.Abs(pVelPct) < cfg.StablePriceVelPct && math.Abs(lVelPct) < cfg.StableListingVelPct {
