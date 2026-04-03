@@ -58,6 +58,11 @@
 				{isDebug() ? 'DEBUG' : 'PROD'}
 			</button>
 		{/if}
+		{#if store.updateAvailable}
+			<button class="update-badge" title="Update available: v{store.updateVersion}" onclick={() => nav.go('/settings')}>
+				v{store.updateVersion}
+			</button>
+		{/if}
 		<button class="settings-link" title="Settings" onclick={() => nav.go('/settings')}>&#9881;&#65039;</button>
 	</div>
 	<div class="window-controls">
@@ -146,6 +151,25 @@
 	.btn-debug.active {
 		border-color: var(--warning);
 		color: var(--warning);
+	}
+
+	.update-badge {
+		all: unset;
+		font-size: 0.65rem;
+		font-weight: 700;
+		color: #22c55e;
+		background: rgba(34, 197, 94, 0.12);
+		border: 1px solid rgba(34, 197, 94, 0.3);
+		padding: 0.1rem 0.5rem;
+		border-radius: 4px;
+		cursor: pointer;
+		letter-spacing: 0.03em;
+		-webkit-app-region: no-drag;
+		animation: pulse 2s ease-in-out infinite;
+	}
+
+	.update-badge:hover {
+		background: rgba(34, 197, 94, 0.25);
 	}
 
 	.settings-link {

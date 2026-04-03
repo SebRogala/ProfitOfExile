@@ -20,6 +20,10 @@ export const store = $state({
 	logs: [] as string[],
 	/** Whether the Mercure SSE connection to the server is alive. */
 	serverConnected: false,
+	/** Update available — set by periodic check. */
+	updateAvailable: false,
+	/** Version string of the available update. */
+	updateVersion: '',
 });
 
 /**
@@ -49,8 +53,31 @@ export async function initStatusStore(): Promise<() => void> {
 		console.warn('[store] initial get_logs failed:', e);
 	}
 
+	// Check for updates on startup + every 30 minutes.
+	checkForUpdates();
+	const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
+
 	return () => {
 		unlistenStatus();
 		unlistenLogs();
+		clearInterval(updateInterval);
 	};
+}
+
+/** Silently check for app updates and update the store. */
+async function checkForUpdates() {
+	try {
+		const { check } = await import('@tauri-apps/plugin-updater');
+		const update = await check();
+		if (update) {
+			store.updateAvailable = true;
+			store.updateVersion = update.version;
+		} else {
+			store.updateAvailable = false;
+			store.updateVersion = '';
+		}
+	} catch (e) {
+		// Silent — don't bother the user if the check fails (network, GitHub down, etc.)
+		console.warn('[updater] check failed:', e);
+	}
 }
