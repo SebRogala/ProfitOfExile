@@ -109,6 +109,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	if cfg.TradeGate != nil {
 		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.TradeSyncTimeout))
+		r.Post("/api/internal/trade/refresh", handlers.TradeRefresh(cfg.TradeGate, cfg.TradeCache, cfg.LabCache, cfg.TradeSyncTimeout))
 	}
 
 	// Trade submit: available whenever trade cache exists (desktop can submit

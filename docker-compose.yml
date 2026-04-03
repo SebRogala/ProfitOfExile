@@ -13,7 +13,7 @@ services:
       - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
       - LEAGUE=${LEAGUE:-Mirage}
-      - TRADE_ENABLED=${TRADE_ENABLED:-true}
+      - TRADE_ENABLED=${TRADE_ENABLED:-false}
       - TRADE_SYNC_WAIT=${TRADE_SYNC_WAIT:-15s}
       - MERCURE_SUBSCRIBER_KEY=${MERCURE_SUBSCRIBER_KEY:-!ChangeThisMercureHubJWTSecretKey!}
       - MERCURE_PUBLIC_URL=${MERCURE_PUBLIC_URL:-https://mercure.localhost/.well-known/mercure}
@@ -66,6 +66,7 @@ services:
       # - NINJA_MIN_SLEEP=30s
       - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
+      - SERVER_URL=${SERVER_URL:-http://app:8080}
     networks:
       - infra
     restart: unless-stopped
