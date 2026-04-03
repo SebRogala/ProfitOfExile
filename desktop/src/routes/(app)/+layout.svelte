@@ -376,13 +376,20 @@
 					return true;
 				}
 			}
-		} catch {}
+		} catch (e) {
+			console.warn('[pathstrip] data check failed:', e);
+		}
 		pathstripHasData = false;
 		return false;
 	}
 
-	// Check once on startup for the sidebar indicator.
-	checkPathstripData();
+	// Check on startup with retry — server may not be ready immediately.
+	(async () => {
+		for (let i = 0; i < 3; i++) {
+			if (await checkPathstripData()) return;
+			await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+		}
+	})();
 
 	// Auto-show overlays on lab entry (PlazaEntered)
 	listen('lab-nav', async (event: any) => {

@@ -525,13 +525,20 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			};
 
 			eventSource.onmessage = (event) => {
+				let data: any;
 				try {
-					const data = JSON.parse(event.data);
-					if (data?.topic === 'poe/lab/layout') {
-						onLayoutUpdate?.(data);
-						return;
-					}
-				} catch {}
+					data = JSON.parse(event.data);
+				} catch {
+					// Non-JSON event data — expected for analysis update pings
+					onUpdate();
+					return;
+				}
+
+				if (data?.topic === 'poe/lab/layout') {
+					onLayoutUpdate?.(data);
+					return;
+				}
+
 				onUpdate();
 			};
 

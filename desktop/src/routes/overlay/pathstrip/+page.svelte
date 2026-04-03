@@ -76,7 +76,9 @@
 					return;
 				}
 			}
-		} catch {}
+		} catch (e) {
+			console.warn('[pathstrip] fetchLayout error:', e);
+		}
 	}
 
 	// Fetch layout on init — only once
