@@ -214,7 +214,7 @@
 			<div class="footer-links">
 				<a href="https://discord.gg/F7NnSUyBR" target="_blank" rel="noopener">Discord</a>
 				<a href="/lab">Dashboard</a>
-				<a href="https://github.com/SebRogala/ProfitOfExile/issues" target="_blank" rel="noopener">Report Issue</a>
+				<a href="https://discord.gg/F7NnSUyBR" target="_blank" rel="noopener">Report Issue</a>
 			</div>
 			<p class="footer-disclaimer">
 				Not affiliated with Grinding Gear Games. Path of Exile is a trademark of Grinding Gear Games.
