@@ -17,14 +17,18 @@ func publishLayoutEvent(pub mercure.Publisher, action, difficulty string) {
 	if pub == nil {
 		return
 	}
-	payload, _ := json.Marshal(map[string]string{
+	payload, err := json.Marshal(map[string]string{
 		"action":     action,
 		"difficulty": difficulty,
 		"topic":      "poe/lab/layout",
 	})
+	if err != nil {
+		slog.Error("layout: marshal event failed", "error", err, "action", action, "difficulty", difficulty)
+		return
+	}
 	go func() {
 		if err := pub.Publish(context.Background(), "poe/lab/layout", string(payload)); err != nil {
-			slog.Warn("layout: mercure publish failed", "error", err)
+			slog.Warn("layout: mercure publish failed", "error", err, "action", action, "difficulty", difficulty)
 		}
 	}()
 }
