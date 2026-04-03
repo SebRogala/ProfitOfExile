@@ -121,7 +121,7 @@
 			<th class="col-signal"><Tooltip text="<b>Market Signal + Sell Confidence</b><br><br><b>Signals</b> (current market behavior):<br>• <span style='color:#5eead4'>STABLE</span> — Steady price, safe to sell at listed<br>• <span style='color:#94a3b8'>UNCERTAIN</span> — Direction unclear (accuracy &lt;50%, showing raw data)<br>• <span style='color:#eab308'>HERD</span> — Farmers flooding in, price + listings surging<br>• <span style='color:#ef4444'>DUMPING</span> — Price crashing with rising supply<br>• <span style='color:#a855f7'>RECOVERY</span> — Supply draining, potential price recovery<br>• <span style='color:#ef4444'>TRAP</span> — High volatility + active movement, avoid<br><br><b>Sell Confidence</b> (can you sell near listed price?):<br>• <span style='color:#22c55e'>✓ SAFE</span> — Liquid + stable, sell confidently<br>• <span style='color:#eab308'>• FAIR</span> — Moderate risk, may need patience<br>• <span style='color:#ef4444'>✗ RISKY</span> — Thin market or volatile, undercut aggressively">Signal</Tooltip></th>
 			<th class="col-sell"><Tooltip text="Sellability score 0-100. How quickly you can sell this gem. Based on listings, demand velocity, and price tier.">Sell</Tooltip></th>
 			<th class="col-signals"><Tooltip text="Window: CLOSED, BREWING, OPENING, OPEN, CLOSING, EXHAUSTED. Advanced: BREAKOUT, COMEBACK, POTENTIAL, CASCADE, PRICE_MANIPULATION.">Signals</Tooltip></th>
-			<th class="col-num"><Tooltip text="Current transfigured gem listings on trade. Velocity arrow shows listing change direction.">Listings</Tooltip></th>
+			<th class="col-num"><Tooltip text="Current listings on trade. The colored number is the 6h velocity — how many listings appeared (+) or disappeared (-) in the last 6 hours.">Listings</Tooltip></th>
 			<th class="col-spark"><Tooltip text="Price sparkline over the last 12 hours. Shows recent price trend at a glance.">12h</Tooltip></th>
 		</tr>
 	</thead>
@@ -157,7 +157,7 @@
 						<SignalBadge signal={gem.advancedSignal} type="advanced" />
 					{/if}
 				</td>
-				<td class="col-listings">
+				<td class="col-listings" title="{gem.transListings} listings now. {gem.transVelocity > 0 ? '+' + gem.transVelocity + ' new in last 6h (sellers flooding in)' : gem.transVelocity < 0 ? gem.transVelocity + ' fewer in last 6h (supply draining)' : 'No change in 6h'}">
 					<span class="lst-count">{gem.transListings}</span>
 					{#if gem.transVelocity > 0}
 						<span class="vel-up">+{gem.transVelocity}</span>
