@@ -24,7 +24,7 @@
 		},
 		{
 			title: 'Lab Map Overlays',
-			desc: 'Compass and path strip overlays show your route through the labyrinth with room content markers and navigation cues.',
+			desc: 'Compass and path strip overlays show your route through the labyrinth with room content markers, navigation cues, and lab room progress.',
 			icon: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7',
 		},
 	];
@@ -108,6 +108,7 @@
 				</button>
 			{/each}
 		</div>
+
 	</section>
 
 	<!-- Setup -->
@@ -144,8 +145,15 @@
 			<div class="step">
 				<span class="step-num">3</span>
 				<div class="step-content">
-					<h3>Position the Overlay</h3>
-					<p>Settings &rarr; Overlays &rarr; Comparator Position. Drag the red rectangle where you want the in-game overlay. Bottom-left is recommended — out of the way but visible.</p>
+					<h3>Position the Overlays</h3>
+					<p>Settings &rarr; Overlays to configure three in-game overlays: the <strong>Comparator</strong> (gem comparison with trade data), the <strong>Path Strip</strong> (lab room progress), and the <strong>Compass</strong> (room map with content markers and navigation). Drag each red rectangle where you want it.</p>
+					<div class="step-images">
+						<figure class="step-figure">
+							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+							<img src="/overlay-labmap.png" alt="Lab map path strip overlay" class="step-img" onclick={() => { zoomedImg = 'labmap'; }} />
+							<figcaption>Path strip overlay — lab progress with room contents <span class="click-hint">(click to enlarge)</span></figcaption>
+						</figure>
+					</div>
 				</div>
 			</div>
 			<div class="step">
@@ -170,9 +178,31 @@
 	{#if zoomedImg}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="lightbox" onclick={() => { zoomedImg = null; }}>
-			<img src={zoomedImg === 'gem' ? '/setup-gem-region.png' : '/setup-font-region.png'} alt="Enlarged view" class="lightbox-img" />
+			<img src={zoomedImg === 'gem' ? '/setup-gem-region.png' : zoomedImg === 'font' ? '/setup-font-region.png' : '/overlay-labmap.png'} alt="Enlarged view" class="lightbox-img" />
 		</div>
 	{/if}
+
+	<!-- Credits -->
+	<section class="credits">
+		<h2 class="section-heading">Standing on the Shoulders of Giants</h2>
+		<div class="credits-list">
+			<div class="credit">
+				<a href="https://www.poelab.com/" target="_blank" rel="noopener">poelab.com</a>
+				<span class="credit-desc">Without their daily lab layouts, our lab map overlays wouldn't exist</span>
+			</div>
+			<div class="credit">
+				<a href="https://github.com/yznpku/LabCompass" target="_blank" rel="noopener">LabCompass</a>
+				<span class="credit-desc">The original lab compass — our navigation system is built on their work</span>
+			</div>
+			<div class="credit">
+				<a href="https://poe.ninja/" target="_blank" rel="noopener">poe.ninja</a>
+				<span class="credit-desc">Powers our entire analysis engine with reliable price data</span>
+			</div>
+		</div>
+		<p class="credits-note">
+			Gem prices are also periodically fetched from the GGG trade API. If the tool gains more traction, an official API key will be requested for dedicated price collection.
+		</p>
+	</section>
 
 	<!-- Footer -->
 	<footer class="footer">
@@ -261,7 +291,7 @@
 
 	.tagline {
 		font-family: 'Cinzel', serif;
-		font-size: 0.8rem;
+		font-size: 0.9rem;
 		font-weight: 400;
 		letter-spacing: 0.35em;
 		text-transform: uppercase;
@@ -297,9 +327,9 @@
 	}
 
 	.subtitle {
-		font-size: 1.2rem;
+		font-size: 1.3rem;
 		line-height: 1.7;
-		color: #9a9aaa;
+		color: #b0b0be;
 		font-weight: 300;
 		max-width: 560px;
 		margin: 0 auto 40px;
@@ -320,11 +350,11 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
-		background: linear-gradient(135deg, #c9aa71, #a8894d);
+		background: linear-gradient(135deg, #d4b87a, #b89855);
 		color: #0a0a12;
 		font-family: 'Cinzel', serif;
 		font-weight: 700;
-		font-size: 0.95rem;
+		font-size: 1.05rem;
 		padding: 14px 28px;
 		text-decoration: none;
 		letter-spacing: 0.05em;
@@ -341,10 +371,10 @@
 		align-items: center;
 		gap: 8px;
 		background: transparent;
-		color: #c9aa71;
+		color: #d4b87a;
 		font-family: 'Cinzel', serif;
 		font-weight: 700;
-		font-size: 0.95rem;
+		font-size: 1.05rem;
 		padding: 14px 28px;
 		text-decoration: none;
 		letter-spacing: 0.05em;
@@ -365,14 +395,14 @@
 
 	.platform-note {
 		margin-top: 20px;
-		font-size: 0.8rem;
-		color: #5a5a6a;
+		font-size: 0.9rem;
+		color: #7a7a8a;
 		opacity: 0;
 		animation: fadeUp 0.8s ease 0.6s forwards;
 	}
 
 	.portable-link {
-		color: #6a6a7a;
+		color: #8a8a9a;
 		text-decoration: none;
 		border-bottom: 1px solid rgba(106, 106, 122, 0.3);
 		margin-left: 8px;
@@ -405,7 +435,7 @@
 
 	.section-heading {
 		font-family: 'Cinzel', serif;
-		font-size: 1.5rem;
+		font-size: 1.7rem;
 		font-weight: 700;
 		color: #e0e0e0;
 		text-align: center;
@@ -414,14 +444,18 @@
 	}
 
 	.features-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		display: flex;
+		flex-wrap: wrap;
 		gap: 16px;
+		justify-content: center;
 	}
 
 	.feature-card {
 		all: unset;
 		cursor: pointer;
+		width: calc(33.333% - 11px);
+		min-width: 200px;
+		box-sizing: border-box;
 		background: rgba(26, 26, 46, 0.6);
 		border: 1px solid rgba(201, 170, 113, 0.08);
 		padding: 28px 20px;
@@ -459,7 +493,7 @@
 
 	.feature-title {
 		font-family: 'Cinzel', serif;
-		font-size: 0.95rem;
+		font-size: 1.05rem;
 		font-weight: 700;
 		color: #e0e0e0;
 		margin-bottom: 10px;
@@ -467,9 +501,9 @@
 	}
 
 	.feature-desc {
-		font-size: 0.9rem;
+		font-size: 1rem;
 		line-height: 1.6;
-		color: #8a8a9a;
+		color: #a0a0b0;
 		font-weight: 300;
 	}
 
@@ -507,7 +541,7 @@
 
 	.step-content h3 {
 		font-family: 'Cinzel', serif;
-		font-size: 1rem;
+		font-size: 1.1rem;
 		font-weight: 700;
 		color: #e0e0e0;
 		margin-bottom: 6px;
@@ -515,9 +549,9 @@
 	}
 
 	.step-content p {
-		font-size: 0.95rem;
+		font-size: 1.05rem;
 		line-height: 1.6;
-		color: #8a8a9a;
+		color: #a0a0b0;
 		font-weight: 300;
 	}
 
@@ -592,11 +626,64 @@
 	}
 
 	.dashboard-desc {
-		font-size: 1rem;
+		font-size: 1.1rem;
 		line-height: 1.7;
-		color: #8a8a9a;
+		color: #a0a0b0;
 		font-weight: 300;
 		margin-bottom: 28px;
+	}
+
+	/* === Credits === */
+	.credits {
+		position: relative;
+		z-index: 2;
+		max-width: 640px;
+		margin: 0 auto;
+		padding: 60px 24px 60px;
+		border-top: 1px solid rgba(201, 170, 113, 0.08);
+		text-align: center;
+	}
+
+	.credits-list {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		margin-bottom: 24px;
+	}
+
+	.credit {
+		display: flex;
+		align-items: baseline;
+		justify-content: center;
+		gap: 12px;
+	}
+
+	.credit a {
+		color: #d4b87a;
+		text-decoration: none;
+		font-family: 'Cinzel', serif;
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		border-bottom: 1px solid rgba(201, 170, 113, 0.2);
+		transition: border-color 0.2s;
+	}
+
+	.credit a:hover {
+		border-color: #c9aa71;
+	}
+
+	.credit-desc {
+		font-size: 0.95rem;
+		color: #8a8a9a;
+		font-weight: 300;
+	}
+
+	.credits-note {
+		font-size: 0.9rem;
+		color: #7a7a8a;
+		line-height: 1.6;
+		font-style: italic;
 	}
 
 	/* === Footer === */
@@ -614,8 +701,8 @@
 	}
 
 	.footer-text {
-		font-size: 0.9rem;
-		color: #6a6a7a;
+		font-size: 0.95rem;
+		color: #8a8a9a;
 		margin-bottom: 16px;
 	}
 
@@ -627,9 +714,9 @@
 	}
 
 	.footer-links a {
-		color: #8a8a9a;
+		color: #9a9aaa;
 		text-decoration: none;
-		font-size: 0.85rem;
+		font-size: 0.95rem;
 		font-family: 'Cinzel', serif;
 		letter-spacing: 0.05em;
 		transition: color 0.2s;
