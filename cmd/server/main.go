@@ -214,6 +214,7 @@ func main() {
 		TradeCache:           tradeCache,
 		TradeRepo:            tradeRepo,
 		TradeSyncTimeout:     tradeSyncTimeout,
+		InternalSecret:       os.Getenv("INTERNAL_SECRET"),
 		League:               os.Getenv("LEAGUE"),
 		Analyzer:             analyzer,
 		AllowedOrigins:       corsOrigins(),

@@ -37,8 +37,14 @@ var tierRank = map[string]int{
 // Called by the collector to trigger a single trade lookup for the oldest stale
 // gem matching the given variant + tier filter. The server picks the gem, the
 // collector controls the schedule.
-func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, syncTimeout time.Duration) http.HandlerFunc {
+// Protected by INTERNAL_SECRET — requests without a valid X-Internal-Token are rejected.
+func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, syncTimeout time.Duration, internalSecret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if internalSecret != "" && r.Header.Get("X-Internal-Token") != internalSecret {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
 		var body tradeRefreshRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, tradeRefreshResponse{Error: "invalid JSON body"})
@@ -124,6 +130,8 @@ func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache
 				Total:   res.Data.Total,
 				Floor:   res.Data.PriceFloor,
 			})
+		case <-r.Context().Done():
+			return // collector disconnected
 		case <-time.After(syncTimeout):
 			writeJSON(w, http.StatusAccepted, tradeRefreshResponse{Gem: gem, Variant: variant})
 		}
