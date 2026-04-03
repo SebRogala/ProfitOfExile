@@ -183,7 +183,8 @@ func main() {
 		if d, err := time.ParseDuration(os.Getenv("TRADE_REFRESH_INTERVAL")); err == nil && d > 0 {
 			tradeInterval = d
 		}
-		go runTradeRefresher(schedulerCtx, serverURL, tradeInterval)
+		internalSecret := os.Getenv("INTERNAL_SECRET")
+		go runTradeRefresher(schedulerCtx, serverURL, tradeInterval, internalSecret)
 		slog.Info("trade refresh scheduler started", "serverURL", serverURL, "interval", tradeInterval)
 	} else {
 		slog.Info("trade refresh scheduler disabled (SERVER_URL not set)")
@@ -288,7 +289,7 @@ func main() {
 // runTradeRefresher periodically calls the server's trade refresh endpoint.
 // Alternates between tier-filtered (MID-HIGH+ for 20/20) and any-gem refreshes,
 // mirroring the old server-side Refresher behavior but with the collector owning the schedule.
-func runTradeRefresher(ctx context.Context, serverURL string, interval time.Duration) {
+func runTradeRefresher(ctx context.Context, serverURL string, interval time.Duration, internalSecret string) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -309,9 +310,20 @@ func runTradeRefresher(ctx context.Context, serverURL string, interval time.Dura
 			tierTick = !tierTick
 
 			url := serverURL + "/api/internal/trade/refresh"
-			resp, err := client.Post(url, "application/json", strings.NewReader(body))
+			req, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if internalSecret != "" {
+				req.Header.Set("X-Internal-Token", internalSecret)
+			}
+			resp, err := client.Do(req)
 			if err != nil {
 				slog.Warn("trade refresh: server request failed", "error", err)
+				continue
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode >= 400 {
+				slog.Warn("trade refresh: server returned error", "status", resp.StatusCode)
 				continue
 			}
 
@@ -322,7 +334,6 @@ func runTradeRefresher(ctx context.Context, serverURL string, interval time.Dura
 				Error   string  `json:"error"`
 			}
 			json.NewDecoder(resp.Body).Decode(&result)
-			resp.Body.Close()
 
 			if result.Skipped {
 				continue // nothing stale

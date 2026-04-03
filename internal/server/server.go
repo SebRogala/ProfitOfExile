@@ -42,6 +42,8 @@ type RouterConfig struct {
 	TradeRepo *trade.Repository
 	// TradeSyncTimeout is the max time the handler blocks waiting for a fast-path response.
 	TradeSyncTimeout time.Duration
+	// InternalSecret protects /api/internal/* endpoints. Empty = no auth (dev only).
+	InternalSecret string
 	// League is the current PoE league name (e.g. "Mirage").
 	League string
 	// Analyzer is the lab analysis engine for admin recalculation endpoint.
@@ -109,7 +111,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	if cfg.TradeGate != nil {
 		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.TradeSyncTimeout))
-		r.Post("/api/internal/trade/refresh", handlers.TradeRefresh(cfg.TradeGate, cfg.TradeCache, cfg.LabCache, cfg.TradeSyncTimeout))
+		r.Post("/api/internal/trade/refresh", handlers.TradeRefresh(cfg.TradeGate, cfg.TradeCache, cfg.LabCache, cfg.TradeSyncTimeout, cfg.InternalSecret))
 	}
 
 	// Trade submit: available whenever trade cache exists (desktop can submit
