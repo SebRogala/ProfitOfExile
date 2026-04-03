@@ -1,0 +1,76 @@
+name: Discord Announcement
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: 'Announcement title (e.g. "v0.3.0 — Signal Overhaul")'
+        required: true
+        type: string
+      desktop_notes:
+        description: 'Desktop changes (leave empty to skip section)'
+        required: false
+        type: string
+      backend_notes:
+        description: 'Backend/analysis changes (leave empty to skip section)'
+        required: false
+        type: string
+      general_notes:
+        description: 'General notes (leave empty to skip section)'
+        required: false
+        type: string
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TITLE: ${{ inputs.title }}
+          DESKTOP: ${{ inputs.desktop_notes }}
+          BACKEND: ${{ inputs.backend_notes }}
+          GENERAL: ${{ inputs.general_notes }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Build description from non-empty sections
+          DESC=""
+
+          if [ -n "$DESKTOP" ]; then
+            DESC="${DESC}**🖥️ Desktop**\n${DESKTOP}\n\n"
+          fi
+
+          if [ -n "$BACKEND" ]; then
+            DESC="${DESC}**⚙️ Backend**\n${BACKEND}\n\n"
+          fi
+
+          if [ -n "$GENERAL" ]; then
+            DESC="${DESC}${GENERAL}\n\n"
+          fi
+
+          # Subtle download link for new users (existing users get auto-update)
+          if [ -n "$DESKTOP" ]; then
+            DESC="${DESC}-# [Download](https://github.com/$GH_REPO/releases/latest/download/ProfitOfExile-setup.exe) — *existing users will be prompted to update automatically*"
+          fi
+
+          # Determine color: green if desktop, blue if backend-only, gold if general-only
+          if [ -n "$DESKTOP" ]; then
+            COLOR=5763719
+          elif [ -n "$BACKEND" ]; then
+            COLOR=5814783
+          else
+            COLOR=16766720
+          fi
+
+          # Post embed (jq handles escaping safely)
+          PAYLOAD=$(jq -n \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --argjson color "$COLOR" \
+            '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: "ProfitOfExile"}, timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}]}')
+
+          curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+          echo "Posted to Discord: $TITLE"

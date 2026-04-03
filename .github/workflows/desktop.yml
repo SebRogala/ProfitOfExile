@@ -126,3 +126,6 @@ jobs:
             artifacts/ProfitOfExile-standalone.exe
             artifacts/latest.json
           generate_release_notes: true
+
+      # Discord announcement handled via manual dispatch workflow (discord-announce.yml)
+      # so desktop + backend changes can be combined into one quality message.
