@@ -85,18 +85,25 @@ jobs:
           name: ProfitOfExile
           path: artifacts/exe
 
-      - name: Generate update manifest
+      - name: Prepare release assets
         env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_REPO: ${{ github.repository }}
+          GH_REF: ${{ github.ref }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${GH_REF#refs/tags/}"
           VERSION="${TAG#v-desktop-}"
 
-          # Find the NSIS installer and its signature
-          INSTALLER=$(ls artifacts/installer/*.exe | head -1)
-          INSTALLER_NAME=$(basename "$INSTALLER")
+          # Read the signature for latest.json
           SIG=$(cat artifacts/sig/*.sig)
 
+          # Rename installer to fixed name (for stable download URLs)
+          INSTALLER=$(ls artifacts/installer/*.exe | head -1)
+          cp "$INSTALLER" artifacts/ProfitOfExile-setup.exe
+
+          # Rename standalone for clarity
+          cp artifacts/exe/ProfitOfExile.exe artifacts/ProfitOfExile-standalone.exe
+
+          # Generate update manifest (updater fetches this to check for new versions)
           cat > artifacts/latest.json << EOF
           {
             "version": "${VERSION}",
@@ -105,7 +112,7 @@ jobs:
             "platforms": {
               "windows-x86_64": {
                 "signature": "${SIG}",
-                "url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${INSTALLER_NAME}"
+                "url": "https://github.com/${GH_REPO}/releases/download/${TAG}/ProfitOfExile-setup.exe"
               }
             }
           }
@@ -115,8 +122,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/exe/*.exe
-            artifacts/installer/*.exe
-            artifacts/sig/*.sig
+            artifacts/ProfitOfExile-setup.exe
+            artifacts/ProfitOfExile-standalone.exe
             artifacts/latest.json
           generate_release_notes: true
