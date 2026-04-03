@@ -363,7 +363,9 @@
 		})
 		.catch(e => console.warn('[overlay] pathstrip settings operation failed:', e));
 
-	// Check if any lab layout is available on the server
+	// Check if any lab layout is available on the server.
+	// Retries every 30s until data is found (layouts are published daily).
+	let pathstripCheckInterval: ReturnType<typeof setInterval> | undefined;
 	async function checkPathstripData(): Promise<boolean> {
 		try {
 			const status = await invoke<any>('get_status');
@@ -371,12 +373,26 @@
 			if (!serverUrl) return false;
 			for (const diff of ['Uber', 'Merciless', 'Cruel', 'Normal']) {
 				const r = await fetch(`${serverUrl}/api/lab/layout/${diff}`);
-				if (r.ok) { pathstripHasData = true; return true; }
+				if (r.ok) {
+					pathstripHasData = true;
+					if (pathstripCheckInterval) clearInterval(pathstripCheckInterval);
+					return true;
+				}
 			}
 		} catch {}
 		pathstripHasData = false;
 		return false;
 	}
+
+	// Check on startup — sidebar indicator needs to know if data exists regardless of overlay state.
+	checkPathstripData().then(found => {
+		if (!found) {
+			// Retry every 30s until layout data is available
+			pathstripCheckInterval = setInterval(() => {
+				checkPathstripData();
+			}, 30_000);
+		}
+	});
 
 	// Auto-show overlays on lab entry (PlazaEntered)
 	listen('lab-nav', async (event: any) => {
