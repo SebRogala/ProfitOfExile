@@ -341,27 +341,9 @@
 		})
 		.catch(e => console.warn('[overlay] comparator settings operation failed:', e));
 
-	// Auto-restore compass overlay if it was enabled in previous session
-	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings')
-		.then((settings) => {
-			if (settings?.enabled) {
-				createCompassOverlay(settings.x, settings.y, settings.width ?? 300, settings.height ?? 280);
-			}
-		})
-		.catch(e => console.warn('[overlay] compass settings operation failed:', e));
-
-	// Auto-restore pathstrip overlay if it was enabled in previous session
-	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_pathstrip_overlay_settings')
-		.then((settings) => {
-			if (settings?.enabled) {
-				pathstripActive = true;
-				// Check if layout data exists before creating the overlay
-				checkPathstripData().then(hasData => {
-					if (hasData) createPathstripOverlay(settings!.x, settings!.y, settings!.width ?? 450, settings!.height ?? 180);
-				});
-			}
-		})
-		.catch(e => console.warn('[overlay] pathstrip settings operation failed:', e));
+	// Compass and pathstrip overlays are NOT created on startup — they only
+	// appear when entering the lab (PlazaEntered event). The 'enabled' setting
+	// controls whether they auto-create on lab entry, not on app boot.
 
 	// Check if lab layout is available on the server.
 	async function checkPathstripData(): Promise<boolean> {
@@ -401,6 +383,15 @@
 			const pathstripSettings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
 			if (pathstripSettings?.enabled && !pathstripWin) {
 				await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
+			}
+		}
+		if (event.payload?.type === 'LabExited') {
+			// Hide compass and pathstrip when leaving the lab
+			if (compassWin) {
+				await compassWin.hide().catch(() => {});
+			}
+			if (pathstripWin) {
+				await pathstripWin.hide().catch(() => {});
 			}
 		}
 	});
