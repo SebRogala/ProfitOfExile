@@ -2081,10 +2081,33 @@ pub fn run() {
             persist_settings(&handle);
             app_log(&handle, "Settings initialized".to_string());
 
-            // Restore window position/size from saved settings
+            // Restore window position/size from saved settings.
+            // Check if saved position is still visible on a connected monitor —
+            // prevents the window from opening off-screen after a monitor is disconnected.
             if let Some(ref win_settings) = saved.window {
                 if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.set_position(tauri::PhysicalPosition::new(win_settings.x, win_settings.y));
+                    let visible = win.available_monitors()
+                        .map(|monitors| {
+                            monitors.iter().any(|m| {
+                                let pos = m.position();
+                                let size = m.size();
+                                let mx = pos.x as i32;
+                                let my = pos.y as i32;
+                                let mw = size.width as i32;
+                                let mh = size.height as i32;
+                                // At least part of the window title bar must be on this monitor
+                                win_settings.x < mx + mw && win_settings.x + 100 > mx
+                                    && win_settings.y < my + mh && win_settings.y + 50 > my
+                            })
+                        })
+                        .unwrap_or(true); // if monitor query fails, trust saved position
+
+                    if visible {
+                        let _ = win.set_position(tauri::PhysicalPosition::new(win_settings.x, win_settings.y));
+                    } else {
+                        log::info!("Saved window position ({}, {}) is off-screen, centering", win_settings.x, win_settings.y);
+                        let _ = win.center();
+                    }
                     let _ = win.set_size(tauri::PhysicalSize::new(win_settings.width, win_settings.height));
                     if win_settings.maximized {
                         let _ = win.maximize();
