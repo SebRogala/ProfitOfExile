@@ -33,19 +33,20 @@ jobs:
           GENERAL: ${{ inputs.general_notes }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # Build description from non-empty sections
+          # Build description from non-empty sections (use real newlines, not \n)
+          NL=$'\n'
           DESC=""
 
           if [ -n "$DESKTOP" ]; then
-            DESC="${DESC}**🖥️ Desktop**\n${DESKTOP}\n\n"
+            DESC="${DESC}**🖥️ Desktop**${NL}${DESKTOP}${NL}${NL}"
           fi
 
           if [ -n "$BACKEND" ]; then
-            DESC="${DESC}**⚙️ Backend**\n${BACKEND}\n\n"
+            DESC="${DESC}**⚙️ Backend**${NL}${BACKEND}${NL}${NL}"
           fi
 
           if [ -n "$GENERAL" ]; then
-            DESC="${DESC}${GENERAL}\n\n"
+            DESC="${DESC}${GENERAL}${NL}${NL}"
           fi
 
           # Subtle download link for new users (existing users get auto-update)

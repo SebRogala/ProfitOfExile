@@ -46,6 +46,7 @@ func signSubscriberToken(secret string) (string, error) {
 				"poe/analysis/updated",
 				"poe/trade/results",
 				"poe/desktop/{pair}",
+				"poe/lab/layout",
 			},
 		},
 		"iat": now.Unix(),

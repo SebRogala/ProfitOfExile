@@ -492,7 +492,7 @@ export interface MercureConnection {
 	connected: boolean;
 }
 
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: () => void): MercureConnection {
+export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -528,7 +528,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				try {
 					const data = JSON.parse(event.data);
 					if (data?.topic === 'poe/lab/layout') {
-						onLayoutUpdate?.();
+						onLayoutUpdate?.(data);
 						return;
 					}
 				} catch {}
