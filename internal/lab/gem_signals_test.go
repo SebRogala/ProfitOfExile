@@ -145,12 +145,15 @@ func TestComputeGemSignals_HighVelocityAgreementHighConfidence(t *testing.T) {
 
 	f := testFeature("Spark of Nova", "20/20", 200, 15)
 	// All velocities strongly positive and agreeing => HERD signal + high confidence.
-	f.VelShortPrice = 10
-	f.VelMedPrice = 8
-	f.VelLongPrice = 6
-	f.VelShortListing = 12
-	f.VelMedListing = 11
-	f.VelLongListing = 11
+	// classifySignal converts to percentages: pVelPct = vel/price*100, lVelPct = vel/listings*100.
+	// HERD needs pVelPct > 8 AND lVelPct > 15.
+	// At price=200, VelLongPrice=20 → 10%. At listings=15, VelLongListing=4 → 26.7%.
+	f.VelShortPrice = 30
+	f.VelMedPrice = 25
+	f.VelLongPrice = 20
+	f.VelShortListing = 5
+	f.VelMedListing = 4
+	f.VelLongListing = 4
 	f.CV = 20
 	f.Tier = "HIGH"
 	f.ListingElasticity = -0.5 // predictable
@@ -174,7 +177,7 @@ func TestComputeGemSignals_HighVelocityAgreementHighConfidence(t *testing.T) {
 	if sig.Confidence < 55 {
 		t.Errorf("high velocity + agreement confidence = %d, want >= 55", sig.Confidence)
 	}
-	// Signal should be HERD (high priceVel + high listingVel via VelLong).
+	// Signal should be HERD (pVelPct=10% > 8%, lVelPct=26.7% > 15% via VelLong).
 	if sig.Signal != "HERD" {
 		t.Errorf("Signal = %q, want HERD", sig.Signal)
 	}
@@ -278,12 +281,14 @@ func TestComputeGemSignals_RecommendationAVOID_DUMPING(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	f := testFeature("Dump of Doom", "20/20", 100, 20)
-	f.VelShortPrice = -8
-	f.VelMedPrice = -7
-	f.VelLongPrice = -6 // 6h velocity: < -5 triggers DUMPING
-	f.VelShortListing = 8
-	f.VelMedListing = 7
-	f.VelLongListing = 6 // 6h velocity: > 5 confirms DUMPING
+	// DUMPING needs pVelPct < -8 AND lVelPct > 10.
+	// At price=100, VelLongPrice=-9 → -9%. At listings=20, VelLongListing=3 → 15%.
+	f.VelShortPrice = -12
+	f.VelMedPrice = -10
+	f.VelLongPrice = -9
+	f.VelShortListing = 5
+	f.VelMedListing = 4
+	f.VelLongListing = 3
 	f.CV = 30
 	f.Tier = "MID"
 
@@ -337,13 +342,15 @@ func TestComputeGemSignals_RecommendationOK_HighConfidencePositive(t *testing.T)
 	f := testFeature("Spark of Nova", "20/20", 200, 15)
 	// Set up for HERD signal with high confidence: all velocity windows positive +
 	// agreeing, bullish hour (14:00 Monday), predictable profile (CV=20, neg elasticity).
-	// Signal classification uses VelLong (6h). VelLongPrice=6 > 5 and VelLongListing=11 > 10 => HERD.
-	f.VelShortPrice = 10
-	f.VelMedPrice = 8
-	f.VelLongPrice = 6
-	f.VelShortListing = 12
-	f.VelMedListing = 11
-	f.VelLongListing = 11
+	// classifySignal converts to percentages: pVelPct = vel/price*100, lVelPct = vel/listings*100.
+	// HERD needs pVelPct > 8 AND lVelPct > 15.
+	// At price=200, VelLongPrice=20 → 10%. At listings=15, VelLongListing=4 → 26.7%.
+	f.VelShortPrice = 30
+	f.VelMedPrice = 25
+	f.VelLongPrice = 20
+	f.VelShortListing = 5
+	f.VelMedListing = 4
+	f.VelLongListing = 4
 	f.CV = 20
 	f.HistPosition = 50 // not at peak, so not SELL_NOW
 	f.Tier = "HIGH"
@@ -387,13 +394,15 @@ func TestComputeGemSignals_HERDAtHistoricalPeakUNDERCUT(t *testing.T) {
 	f := testFeature("Lacerate of Haemophilia", "20/20", 350, 5)
 	// HERD signal at historical peak (histPos > 90) => sellUrgency overrides to UNDERCUT.
 	// See trends.go: sellUrgency checks HERD && histPosition > 90 before other rules.
-	// Signal classification uses VelLong (6h). VelLongPrice=6 > 5 and VelLongListing=11 > 10 => HERD.
-	f.VelShortPrice = 10
-	f.VelMedPrice = 8
-	f.VelLongPrice = 6
-	f.VelShortListing = 12
-	f.VelMedListing = 11
-	f.VelLongListing = 11
+	// classifySignal converts to percentages: pVelPct = vel/price*100, lVelPct = vel/listings*100.
+	// HERD needs pVelPct > 8 AND lVelPct > 15.
+	// At price=350, VelLongPrice=35 → 10%. At listings=5, VelLongListing=2 → 40%.
+	f.VelShortPrice = 50
+	f.VelMedPrice = 40
+	f.VelLongPrice = 35
+	f.VelShortListing = 3
+	f.VelMedListing = 2
+	f.VelLongListing = 2
 	f.CV = 30
 	f.HistPosition = 95 // at historical peak
 	f.Tier = "TOP"
@@ -628,12 +637,14 @@ func TestComputeGemSignals_SellReasonPopulated(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	f := testFeature("Dump of Doom", "20/20", 100, 20)
-	f.VelShortPrice = -8
-	f.VelMedPrice = -7
-	f.VelLongPrice = -6 // 6h velocity: < -5 triggers DUMPING
-	f.VelShortListing = 8
-	f.VelMedListing = 7
-	f.VelLongListing = 6 // 6h velocity: > 5 confirms DUMPING
+	// DUMPING needs pVelPct < -8 AND lVelPct > 10.
+	// At price=100, VelLongPrice=-9 → -9%. At listings=20, VelLongListing=3 → 15%.
+	f.VelShortPrice = -12
+	f.VelMedPrice = -10
+	f.VelLongPrice = -9
+	f.VelShortListing = 5
+	f.VelMedListing = 4
+	f.VelLongListing = 3
 	f.CV = 30
 	f.Tier = "MID"
 
@@ -723,14 +734,13 @@ func TestComputeGemSignals_CASCADEAdvancedSignal(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	// CASCADE requires: MarketRegime="CASCADE", Low7Days > 0, Chaos > Low7Days*1.5
-	f := testFeature("Rare of Cascade", "20/20", 300, 5)
-	f.MarketRegime = "CASCADE"
-	f.MarketDepth = 0.1
-	f.Low7Days = 100       // price is 3x the 7d low
-	f.High7Days = 300
-	f.HistPosition = 95
-	f.Tier = "TOP"
+	// CASCADE requires: CV > 200 AND High7Days/Low7Days > 20 (buyout aftermath).
+	f := testFeature("Rare of Cascade", "20/20", 65, 35)
+	f.CV = 283         // extreme CV from buyout spike
+	f.Low7Days = 30    // normal pre-buyout price
+	f.High7Days = 4220 // buyout spike (ratio: 140x > 20x threshold)
+	f.HistPosition = 50
+	f.Tier = "FLOOR"
 
 	gems := testBaseGems("Rare", 30)
 
@@ -740,7 +750,7 @@ func TestComputeGemSignals_CASCADEAdvancedSignal(t *testing.T) {
 	}
 
 	if signals[0].AdvancedSignal != "CASCADE" {
-		t.Errorf("AdvancedSignal = %q, want CASCADE (MarketRegime=CASCADE, price > 1.5x low)", signals[0].AdvancedSignal)
+		t.Errorf("AdvancedSignal = %q, want CASCADE (CV=283 > 200, spike ratio=140x > 20x)", signals[0].AdvancedSignal)
 	}
 }
 
@@ -749,7 +759,7 @@ func TestComputeGemSignals_CASCADEDoesNotOverridePRICE_MANIPULATION(t *testing.T
 	mc := testSignalMarketContext()
 
 	// Set up PRICE_MANIPULATION: listings <= 3, price > 200, |velocity| < 1, CV > 80
-	// Also set CASCADE conditions: MarketRegime=CASCADE, price > 1.5x low.
+	// Also set CASCADE conditions: CV > 200, spike ratio > 20x.
 	f := testFeature("Manipulated of Cascade", "20/20", 500, 2)
 	f.VelShortPrice = 0.5
 	f.VelMedPrice = 0.3
@@ -757,13 +767,10 @@ func TestComputeGemSignals_CASCADEDoesNotOverridePRICE_MANIPULATION(t *testing.T
 	f.VelShortListing = 0.1
 	f.VelMedListing = 0.1
 	f.VelLongListing = 0.1
-	f.CV = 90
+	f.CV = 250 // CASCADE condition: CV > 200
 	f.Listings = 2
 	f.Tier = "TOP"
-	// CASCADE conditions met:
-	f.MarketRegime = "CASCADE"
-	f.MarketDepth = 0.05
-	f.Low7Days = 100       // 500 > 100*1.5 = 150
+	f.Low7Days = 20        // CASCADE condition: 500/20 = 25x > 20x
 	f.High7Days = 500
 
 	gems := testBaseGems("Manipulated", 30)
@@ -779,16 +786,16 @@ func TestComputeGemSignals_CASCADEDoesNotOverridePRICE_MANIPULATION(t *testing.T
 	}
 }
 
-func TestComputeGemSignals_CASCADENotFiredWhenTemporal(t *testing.T) {
+func TestComputeGemSignals_CASCADENotFiredWithLowCV(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	// High price spike (chaos > 1.5x low) but TEMPORAL regime — CASCADE should NOT fire.
+	// Normal gem with moderate spike ratio but low CV — CASCADE should NOT fire.
+	// CASCADE requires CV > 200, which filters out normal volatility.
 	f := testFeature("Spike of Normal", "20/20", 300, 50)
-	f.MarketRegime = "TEMPORAL" // not CASCADE
-	f.MarketDepth = 2.0
+	f.CV = 25 // below 200 threshold
 	f.Low7Days = 100
-	f.High7Days = 300
+	f.High7Days = 3000 // spike ratio 30x > 20x, but CV too low
 	f.Tier = "TOP"
 
 	gems := testBaseGems("Spike", 50)
@@ -799,6 +806,6 @@ func TestComputeGemSignals_CASCADENotFiredWhenTemporal(t *testing.T) {
 	}
 
 	if signals[0].AdvancedSignal == "CASCADE" {
-		t.Errorf("AdvancedSignal = CASCADE, should NOT fire when MarketRegime=TEMPORAL")
+		t.Errorf("AdvancedSignal = CASCADE, should NOT fire when CV=%v (below 200 threshold)", f.CV)
 	}
 }

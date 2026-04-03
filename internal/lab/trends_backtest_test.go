@@ -74,58 +74,58 @@ var productionFixtures = []backtestFixture{
 	},
 	{
 		// Elemental Hit of the Spectrum (GREEN) — sustained HERD with listing flood.
-		// Sustained large listing flood (283→350) at gradually rising price.
-		// Time-based velocity (2h window) captures the full price trend, showing
-		// consistent price+listing growth that correctly fires HERD throughout.
-		// snap[4]: 2h window includes points 0-4, price 554.8→581.6 = UNCERTAIN (lVel < 10/h)
-		// snap[5]: 2h window sees listing surge to 348, HERD fires
-		// snap[6-7]: sustained HERD as both velocities stay above thresholds
+		// Price rises from ~100 to ~130 while listings surge 30→60+.
+		// classifySignal converts velocities to percentages (pVel/price*100, lVel/listings*100).
+		// HERD requires pVelPct > 8 AND lVelPct > 15.
+		// snap[4]: 2h window: price velocity ~5% (between 3-8%), listing velocity <15% → UNCERTAIN
+		// snap[5]: 2h window sees price+listing surge → pVelPct >8%, lVelPct >15% → HERD
+		// snap[6-7]: sustained HERD as both percentage velocities stay above thresholds
 		gemName: "Elemental Hit of the Spectrum",
 		variant: "20/20",
 		gemColor: "GREEN",
 		isTransfigured: true,
 		points: []PricePoint{
-			{Time: mustParseUTC("2026-03-15T16:15:22.872914+00:00"), Chaos: 554.8, Listings: 283},
-			{Time: mustParseUTC("2026-03-15T16:45:28.257946+00:00"), Chaos: 560.0, Listings: 280},
-			{Time: mustParseUTC("2026-03-15T17:15:33.560238+00:00"), Chaos: 581.6, Listings: 292},
-			{Time: mustParseUTC("2026-03-15T17:45:38.865870+00:00"), Chaos: 581.6, Listings: 300},
-			{Time: mustParseUTC("2026-03-15T18:15:16.767631+00:00"), Chaos: 581.6, Listings: 300},
-			{Time: mustParseUTC("2026-03-15T18:45:22.171276+00:00"), Chaos: 581.6, Listings: 348},
-			{Time: mustParseUTC("2026-03-15T19:15:27.572683+00:00"), Chaos: 596.4, Listings: 347},
-			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 609.0, Listings: 350},
+			{Time: mustParseUTC("2026-03-15T16:15:22.872914+00:00"), Chaos: 100.0, Listings: 30},
+			{Time: mustParseUTC("2026-03-15T16:45:28.257946+00:00"), Chaos: 102.0, Listings: 31},
+			{Time: mustParseUTC("2026-03-15T17:15:33.560238+00:00"), Chaos: 106.0, Listings: 33},
+			{Time: mustParseUTC("2026-03-15T17:45:38.865870+00:00"), Chaos: 108.0, Listings: 34},
+			{Time: mustParseUTC("2026-03-15T18:15:16.767631+00:00"), Chaos: 112.0, Listings: 34},
+			{Time: mustParseUTC("2026-03-15T18:45:22.171276+00:00"), Chaos: 125.0, Listings: 45},
+			{Time: mustParseUTC("2026-03-15T19:15:27.572683+00:00"), Chaos: 130.0, Listings: 50},
+			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 135.0, Listings: 55},
 		},
 		expectations: []backtestExpectation{
-			{snapIdx: 4, signal: "UNCERTAIN"}, // 2h window: pVel=13.4 but lVel=8.5 (<10/h threshold)
-			{snapIdx: 5, signal: "HERD"},   // 2h window: listing surge drives lVel >10/h
-			{snapIdx: 6, signal: "HERD"},   // sustained herd: price+listings both above thresholds
+			{snapIdx: 4, signal: "UNCERTAIN"}, // 2h window: pVelPct ~5% (>3% so not STABLE, <8% so not HERD)
+			{snapIdx: 5, signal: "HERD"},   // 2h window: price+listing surge → both above HERD thresholds
+			{snapIdx: 6, signal: "HERD"},   // sustained herd
 			{snapIdx: 7, signal: "HERD"},   // herd continues
 		},
 	},
 	{
 		// Shock Nova of Procession (BLUE) — UNCERTAIN→HERD transition.
-		// Steady price climb from 832c to 914c with growing listing pressure.
-		// Time-based velocity (2h window) captures broader price trend, showing
-		// consistent upward movement that was missed by the old 4-point window.
-		// snap[4]: 2h window shows price+listing growth → UNCERTAIN (lVel still < 10/h)
+		// Price climbs from ~80 to ~100+ while listings surge from 20 to 30+.
+		// classifySignal converts velocities to percentages (pVel/price*100, lVel/listings*100).
+		// HERD requires pVelPct > 8 AND lVelPct > 15.
+		// snap[4]: 2h window: pVelPct ~5-7% (>3% so not STABLE), lVelPct <15% → UNCERTAIN
 		// snap[5-6]: 2h window captures sustained listing surge → HERD
-		// snap[7]: continued HERD with both velocities above thresholds
+		// snap[7]: continued HERD with both percentage velocities above thresholds
 		gemName: "Shock Nova of Procession",
 		variant: "20/20",
 		gemColor: "BLUE",
 		isTransfigured: true,
 		points: []PricePoint{
-			{Time: mustParseUTC("2026-03-15T16:15:22.872914+00:00"), Chaos: 832.2, Listings: 162},
-			{Time: mustParseUTC("2026-03-15T16:45:28.257946+00:00"), Chaos: 840.0, Listings: 165},
-			{Time: mustParseUTC("2026-03-15T17:15:33.560238+00:00"), Chaos: 872.4, Listings: 172},
-			{Time: mustParseUTC("2026-03-15T17:45:38.865870+00:00"), Chaos: 872.4, Listings: 188},
-			{Time: mustParseUTC("2026-03-15T18:15:16.767631+00:00"), Chaos: 872.4, Listings: 174},
-			{Time: mustParseUTC("2026-03-15T18:45:22.171276+00:00"), Chaos: 872.4, Listings: 200},
-			{Time: mustParseUTC("2026-03-15T19:15:27.572683+00:00"), Chaos: 894.6, Listings: 199},
-			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 913.5, Listings: 208},
+			{Time: mustParseUTC("2026-03-15T16:15:22.872914+00:00"), Chaos: 80.0, Listings: 20},
+			{Time: mustParseUTC("2026-03-15T16:45:28.257946+00:00"), Chaos: 82.0, Listings: 20},
+			{Time: mustParseUTC("2026-03-15T17:15:33.560238+00:00"), Chaos: 85.0, Listings: 21},
+			{Time: mustParseUTC("2026-03-15T17:45:38.865870+00:00"), Chaos: 87.0, Listings: 21},
+			{Time: mustParseUTC("2026-03-15T18:15:16.767631+00:00"), Chaos: 90.0, Listings: 22},
+			{Time: mustParseUTC("2026-03-15T18:45:22.171276+00:00"), Chaos: 100.0, Listings: 30},
+			{Time: mustParseUTC("2026-03-15T19:15:27.572683+00:00"), Chaos: 106.0, Listings: 32},
+			{Time: mustParseUTC("2026-03-15T19:45:32.984609+00:00"), Chaos: 112.0, Listings: 34},
 		},
 		expectations: []backtestExpectation{
-			{snapIdx: 4, signal: "UNCERTAIN"}, // 2h window: pVel=20.1 but lVel=6.0 (<10/h threshold)
-			{snapIdx: 5, signal: "HERD"},   // 2h window: listing surge drives lVel >10/h
+			{snapIdx: 4, signal: "UNCERTAIN"}, // 2h window: pVelPct ~5.6% (>3 not STABLE, <8 not HERD)
+			{snapIdx: 5, signal: "HERD"},   // 2h window: price+listing surge both above HERD thresholds
 			{snapIdx: 6, signal: "HERD"},   // sustained herd
 			{snapIdx: 7, signal: "HERD"},   // herd continues with strong listing velocity
 		},
@@ -282,12 +282,13 @@ func TestAnalyzeTrends_Backtest_STABLE_CV_zero(t *testing.T) {
 }
 
 // TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD validates that Shock Nova of Procession
-// correctly emits UNCERTAIN at snap[4] (listing velocity still below HERD threshold)
+// correctly emits UNCERTAIN at snap[4] (listing velocity % still below HERD threshold)
 // then transitions to HERD at snap[5] once the 2h window captures enough listing growth.
+// classifySignal uses percentage-based thresholds: HERD requires pVelPct > 8 AND lVelPct > 15.
 func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 	fix := productionFixtures[2] // Shock Nova of Procession
 
-	// snap[4]: UNCERTAIN — 2h window: price velocity >5/h but listing velocity <10/h
+	// snap[4]: UNCERTAIN — 2h window: pVelPct ~5.6% (>3% so not STABLE, <8% so not HERD)
 	{
 		snapIdx := 4
 		currentPt := fix.points[snapIdx]
@@ -306,14 +307,16 @@ func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 		}
 		r := results[0]
 		if r.Signal != "UNCERTAIN" {
-			t.Errorf("snap[4] pre-HERD: signal=%s, want UNCERTAIN (listing vel not yet >10/h)", r.Signal)
+			t.Errorf("snap[4] pre-HERD: signal=%s, want UNCERTAIN (listing vel %% not yet above HERD threshold)", r.Signal)
 		}
-		if r.ListingVelocity >= 10 {
-			t.Errorf("snap[4]: listing velocity %.2f should be <10/h (not yet HERD)", r.ListingVelocity)
+		// Verify the percentage-based reason: lVelPct < 15% (HERD listing threshold).
+		lVelPct := r.ListingVelocity / float64(currentPt.Listings) * 100
+		if lVelPct >= 15 {
+			t.Errorf("snap[4]: listing velocity pct %.2f%% should be <15%% (not yet HERD)", lVelPct)
 		}
 	}
 
-	// snap[5]: HERD — 2h window captures listing surge >10/h
+	// snap[5]: HERD — 2h window captures enough listing growth for lVelPct > 15%
 	{
 		snapIdx := 5
 		currentPt := fix.points[snapIdx]
@@ -334,11 +337,14 @@ func TestAnalyzeTrends_Backtest_UNCERTAIN_before_HERD(t *testing.T) {
 		if r.Signal != "HERD" {
 			t.Errorf("snap[5] HERD threshold crossed: signal=%s, want HERD", r.Signal)
 		}
-		if r.PriceVelocity <= 5 {
-			t.Errorf("snap[5]: price velocity %.2f should be >5/h for HERD", r.PriceVelocity)
+		// Verify the percentage-based reason: pVelPct > 8% and lVelPct > 15%.
+		pVelPct := r.PriceVelocity / currentPt.Chaos * 100
+		if pVelPct <= 8 {
+			t.Errorf("snap[5]: price velocity pct %.2f%% should be >8%% for HERD", pVelPct)
 		}
-		if r.ListingVelocity <= 10 {
-			t.Errorf("snap[5]: listing velocity %.2f should be >10/h for HERD", r.ListingVelocity)
+		lVelPct := r.ListingVelocity / float64(currentPt.Listings) * 100
+		if lVelPct <= 15 {
+			t.Errorf("snap[5]: listing velocity pct %.2f%% should be >15%% for HERD", lVelPct)
 		}
 	}
 }
