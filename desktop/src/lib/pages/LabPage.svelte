@@ -357,13 +357,6 @@
 		margin: 0;
 		padding: 0 0 16px;
 	}
-	.section {
-		background: var(--color-lab-surface);
-		border: 1px solid var(--color-lab-border);
-		padding: 16px;
-		margin-bottom: 16px;
-	}
-
 	/* Override child component section spacing for desktop density */
 	.dashboard :global(section),
 	.dashboard :global(.section) {
@@ -525,22 +518,6 @@
 		font-size: 0.6rem;
 		padding: 2px 0;
 	}
-	.section-title {
-		font-size: 1.125rem;
-		font-weight: 700;
-		color: var(--color-lab-text);
-		margin: 0 0 14px 0;
-	}
-	.dedication {
-		text-align: center;
-		padding: 24px 16px;
-	}
-	.coming-soon {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.875rem;
-		margin-top: 8px;
-	}
-
 	/* Loading */
 	.loading {
 		display: flex;

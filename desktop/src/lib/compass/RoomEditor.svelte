@@ -19,12 +19,15 @@
 	} = $props();
 
 	// Available variants for this room
-	const hasGoldenDoor = room.contents.some(c => c.toLowerCase().includes('golden-door'));
-	const variants = getPresetsByName(room.name, hasGoldenDoor);
-	const variantsNoDoor = hasGoldenDoor ? [] : getPresetsByName(room.name, true);
-	const allVariants = [...variants, ...variantsNoDoor];
+	let hasGoldenDoor = $derived(room.contents.some(c => c.toLowerCase().includes('golden-door')));
+	let variants = $derived(getPresetsByName(room.name, hasGoldenDoor));
+	let variantsNoDoor = $derived(hasGoldenDoor ? [] : getPresetsByName(room.name, true));
+	let allVariants = $derived([...variants, ...variantsNoDoor]);
 
-	let selectedAreaCode = $state(room.areacode || (allVariants[0]?.areaCode ?? ''));
+	let selectedAreaCode = $state('');
+	$effect(() => {
+		selectedAreaCode = room.areacode || (allVariants[0]?.areaCode ?? '');
+	});
 
 	// Content toggles
 	const contentTypes = [
@@ -39,21 +42,27 @@
 	let contentState = $state<Record<string, boolean>>({});
 
 	// Initialize from room contents
-	for (const ct of contentTypes) {
-		contentState[ct.key] = room.contents.some(c => c.toLowerCase().includes(ct.key));
-	}
+	$effect(() => {
+		const state: Record<string, boolean> = {};
+		for (const ct of contentTypes) {
+			state[ct.key] = room.contents.some(c => c.toLowerCase().includes(ct.key));
+		}
+		contentState = state;
+	});
 
 	const gauntletOptions = ['', 'Trap gauntlet', 'Escort gauntlet'];
 	const puzzleOptions = ['', 'Switch puzzle', 'Lever puzzle'];
 	const secretOptions = ['', 'Well', 'Loose Grating', 'Hidden Switch', 'Crumbling Wall'];
 
-	let gauntletValue = $state(
-		room.contents.find(c => c.toLowerCase().includes('gauntlet')) ?? ''
-	);
-	let puzzleValue = $state(
-		room.contents.find(c => c.toLowerCase().includes('puzzle')) ?? ''
-	);
-	let secretPassage = $state(room.secret_passage ?? '');
+	let gauntletValue = $state('');
+	let puzzleValue = $state('');
+	let secretPassage = $state('');
+
+	$effect(() => {
+		gauntletValue = room.contents.find(c => c.toLowerCase().includes('gauntlet')) ?? '';
+		puzzleValue = room.contents.find(c => c.toLowerCase().includes('puzzle')) ?? '';
+		secretPassage = room.secret_passage ?? '';
+	});
 	let saving = $state(false);
 	let error = $state('');
 

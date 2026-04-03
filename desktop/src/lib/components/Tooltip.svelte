@@ -100,7 +100,7 @@
 	});
 </script>
 
-<span class="tooltip-wrap" bind:this={wrap} onmouseenter={show} onmouseleave={hide}>
+<span class="tooltip-wrap" role="tooltip" bind:this={wrap} onmouseenter={show} onmouseleave={hide}>
 	{@render children()}
 </span>
 

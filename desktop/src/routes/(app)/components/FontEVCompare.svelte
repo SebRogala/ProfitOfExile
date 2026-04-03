@@ -382,8 +382,6 @@
 	.tier-label {
 		font-weight: 600;
 	}
-	.tier-val {
-	}
 	.t-safe { color: #5eead4; }
 	.t-premium { color: #c084fc; }
 	.t-jackpot { color: #fbbf24; }

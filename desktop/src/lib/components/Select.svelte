@@ -3,15 +3,17 @@
 		value = $bindable(''),
 		options,
 		onchange,
+		id,
 	}: {
 		value: string;
 		options: { value: string; label: string }[];
 		onchange?: () => void;
+		id?: string;
 	} = $props();
 </script>
 
 <div class="select-container">
-	<select bind:value onchange={onchange}>
+	<select {id} bind:value onchange={onchange}>
 		{#each options as opt}
 			<option value={opt.value}>{opt.label}</option>
 		{/each}
