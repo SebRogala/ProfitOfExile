@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -174,6 +175,20 @@ func main() {
 		errCh <- scheduler.Run(schedulerCtx)
 	}()
 
+	// Trade refresh scheduler — calls server to refresh stale trade data.
+	// Alternates between tier-filtered (MID-HIGH+) and any-gem refreshes.
+	serverURL := os.Getenv("SERVER_URL")
+	if serverURL != "" {
+		tradeInterval := 45 * time.Second
+		if d, err := time.ParseDuration(os.Getenv("TRADE_REFRESH_INTERVAL")); err == nil && d > 0 {
+			tradeInterval = d
+		}
+		go runTradeRefresher(schedulerCtx, serverURL, tradeInterval)
+		slog.Info("trade refresh scheduler started", "serverURL", serverURL, "interval", tradeInterval)
+	} else {
+		slog.Info("trade refresh scheduler disabled (SERVER_URL not set)")
+	}
+
 	// Health/debug HTTP server.
 	startedAt := time.Now()
 	mux := http.NewServeMux()
@@ -268,4 +283,55 @@ func main() {
 	}
 
 	slog.Info("collector stopped")
+}
+
+// runTradeRefresher periodically calls the server's trade refresh endpoint.
+// Alternates between tier-filtered (MID-HIGH+ for 20/20) and any-gem refreshes,
+// mirroring the old server-side Refresher behavior but with the collector owning the schedule.
+func runTradeRefresher(ctx context.Context, serverURL string, interval time.Duration) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	tierTick := true
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			var body string
+			if tierTick {
+				body = `{"variant":"20/20","minTier":"MID-HIGH","minAge":"5m"}`
+			} else {
+				body = `{"variant":"20/20","minAge":"5m"}`
+			}
+			tierTick = !tierTick
+
+			url := serverURL + "/api/internal/trade/refresh"
+			resp, err := client.Post(url, "application/json", strings.NewReader(body))
+			if err != nil {
+				slog.Warn("trade refresh: server request failed", "error", err)
+				continue
+			}
+
+			var result struct {
+				Gem     string  `json:"gem"`
+				Skipped bool    `json:"skipped"`
+				Floor   float64 `json:"floor"`
+				Error   string  `json:"error"`
+			}
+			json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
+
+			if result.Skipped {
+				continue // nothing stale
+			}
+			if result.Error != "" {
+				slog.Warn("trade refresh: server error", "gem", result.Gem, "error", result.Error)
+			} else if result.Gem != "" {
+				slog.Info("trade refresh: done", "gem", result.Gem, "floor", result.Floor)
+			}
+		}
+	}
 }
