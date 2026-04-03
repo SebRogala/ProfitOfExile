@@ -163,9 +163,9 @@ func TestRankCollective_NoTrendDataDefaultsStable(t *testing.T) {
 
 func TestBuildCompareResults_Recommendations(t *testing.T) {
 	transfigure := []TransfigureResult{
-		{TransfiguredName: "Best Gem", BaseName: "Best", Variant: "20/20", ROI: 100, Confidence: "OK"},
+		{TransfiguredName: "Best Gem", BaseName: "Best", Variant: "20/20", ROI: 200, Confidence: "OK"},
 		{TransfiguredName: "OK Gem", BaseName: "OK", Variant: "20/20", ROI: 50, Confidence: "OK"},
-		{TransfiguredName: "Dump Gem", BaseName: "Dump", Variant: "20/20", ROI: 200, Confidence: "OK"},
+		{TransfiguredName: "Dump Gem", BaseName: "Dump", Variant: "20/20", ROI: 150, Confidence: "OK"},
 	}
 	trends := []TrendResult{
 		{Name: "Best Gem", Variant: "20/20", Signal: "UNCERTAIN"},
@@ -189,15 +189,15 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 		byName[r.TransfiguredName] = r
 	}
 
-	// Best Gem: ROI 100 * 1.0 (UNCERTAIN) = 100 → BEST
+	// Best Gem: ROI 200 * 1.0 (UNCERTAIN weight) * 0.5 (default sell) = 100 → highest score → BEST
 	if byName["Best Gem"].Recommendation != "BEST" {
 		t.Errorf("Best Gem recommendation = %s, want BEST", byName["Best Gem"].Recommendation)
 	}
-	// OK Gem: ROI 50 * 1.0 (STABLE) = 50 → OK
+	// OK Gem: ROI 50 * 1.0 (STABLE) * 0.5 = 25 → OK
 	if byName["OK Gem"].Recommendation != "OK" {
 		t.Errorf("OK Gem recommendation = %s, want OK", byName["OK Gem"].Recommendation)
 	}
-	// Dump Gem: DUMPING → AVOID
+	// Dump Gem: DUMPING on thin market (TransListings=0 < 15) → AVOID
 	if byName["Dump Gem"].Recommendation != "AVOID" {
 		t.Errorf("Dump Gem recommendation = %s, want AVOID", byName["Dump Gem"].Recommendation)
 	}
@@ -456,13 +456,12 @@ func TestSignalWeight(t *testing.T) {
 		signal string
 		want   float64
 	}{
-		{"TRAP", 0},
-		{"DUMPING", 0.3},
+		{"TRAP", 0.7},
+		{"DUMPING", 0.85},
 		{"UNCERTAIN", 1.0},
-		{"HERD", 0.8},
+		{"HERD", 0.95},
 		{"STABLE", 1.0},
-
-		{"RECOVERY", 1.2},
+		{"RECOVERY", 1.05},
 		{"UNKNOWN", 1.0},
 	}
 	for _, tt := range tests {

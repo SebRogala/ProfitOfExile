@@ -191,6 +191,41 @@ func TestClassifySignal_PreHERD_HighVelocity(t *testing.T) {
 	}
 }
 
+func TestClassifySignal_ZeroPrice(t *testing.T) {
+	// Free gems (price=0) should return UNCERTAIN, not panic or default to STABLE.
+	s := classifySignal(50, 10, 150, 0, 50)
+	if s != "UNCERTAIN" {
+		t.Errorf("signal = %s, want UNCERTAIN for price=0", s)
+	}
+}
+
+func TestClassifySignal_ZeroListings(t *testing.T) {
+	// Unlisted gems (listings=0) should return UNCERTAIN.
+	s := classifySignal(5, 10, 30, 100, 0)
+	if s != "UNCERTAIN" {
+		t.Errorf("signal = %s, want UNCERTAIN for listings=0", s)
+	}
+}
+
+func TestClassifySignal_TierAgnostic(t *testing.T) {
+	// A TOP gem at 1500c with 30c/6h velocity (2%) and 150 listings with 6 listing vel (4%)
+	// should be STABLE — the same relative move as a FLOOR gem.
+	s := classifySignal(30, 6, 15, 1500, 150)
+	if s != "STABLE" {
+		t.Errorf("signal = %s, want STABLE for TOP gem at 1500c with 2%% price vel", s)
+	}
+	// Same percentages on a 30c gem (0.6c move, 0.8 listing vel):
+	s = classifySignal(0.6, 0.8, 15, 30, 20)
+	if s != "STABLE" {
+		t.Errorf("signal = %s, want STABLE for FLOOR gem at 30c with 2%% price vel", s)
+	}
+	// But 45c absolute on a 30c gem (150%!) should NOT be STABLE:
+	s = classifySignal(45, 0, 30, 30, 50)
+	if s == "STABLE" {
+		t.Errorf("signal = %s, should NOT be STABLE for 30c gem with 150%% price vel", s)
+	}
+}
+
 func TestClassifySignal_Boundaries(t *testing.T) {
 	// All tests use price=100 so absolute vel = vel%. listings=100 so absolute lVel = lVel%.
 	// Thresholds: STABLE <3%/5%, HERD >8%/15%, PreHERD >20%/5%, DUMP <-8%/10%, TRAP CV>100 + vel>5%

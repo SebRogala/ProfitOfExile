@@ -838,17 +838,17 @@ func TestValidateDefaults_PerSignalAccuracy(t *testing.T) {
 	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
 	mc := sweepMarketContext(0, 10, 0, 5)
 
-	// Use DefaultSignalConfig to compute STABLE threshold:
-	// StablePriceVel=2, StableListingVel=3
-	// STABLE fires when |priceVel|<2 and |listingVel|<3.
+	// classifySignal uses VelLongPrice/VelLongListing and converts to pct via Chaos/Listings.
+	// STABLE fires when |pVelPct| < 3 AND |lVelPct| < 5.
+	// Using Chaos=100 so absolute vel = percentage for convenience.
 
 	evals := []EvalPoint{
 		// STABLE signal (low vel), FLAT actual -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: 0.5, VelMedListing: 0.5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 0.5, VelLongListing: 0.3, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
 		// STABLE signal, FLAT actual -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: -0.3, VelMedListing: 0.2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -1.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: -0.3, VelLongListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -1.0, SnapTime: t0},
 		// STABLE signal, UP actual -> wrong
-		{Feature: GemFeature{Time: t0, VelMedPrice: 0.2, VelMedListing: -0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: t0},
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 0.2, VelLongListing: -0.05, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 5.0, SnapTime: t0},
 	}
 
 	report := ValidateDefaults(evals, mc)
@@ -1052,18 +1052,20 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
 	mc := sweepMarketContext(0, 10, 0, 5)
 
-	// DefaultSignalConfig: DumpPriceVel=-5, DumpListingVel=5
-	// DUMPING: priceVel < -5 && listingVel > 5
-	// UNCERTAIN: priceVel > 0 (after other checks fail) — replaces RISING/FALLING
-	// STABLE: |priceVel| < 2 && |listingVel| < 3
+	// classifySignal uses VelLongPrice/VelLongListing and converts to pct via Chaos/Listings.
+	// Using Chaos=100 so absolute vel = percentage for convenience.
+	// STABLE: |pVelPct| < 3 AND |lVelPct| < 5
+	// DUMPING: pVelPct < -8 AND lVelPct > 10
+	// UNCERTAIN: anything else that doesn't match a specific signal
 
 	evals := []EvalPoint{
 		// STABLE: predicts FLAT, actual FLAT -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: 0.1, VelMedListing: 0.1, VelLongPrice: 0.1, VelLongListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
-		// DUMPING: priceVel=-10 < -5, listingVel=10 > 5 -> predicts DOWN, actual DOWN -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: -10, VelMedListing: 10, VelLongPrice: -10, VelLongListing: 10, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
-		// UNCERTAIN: priceVel=3 > 0 (not STABLE: |3|>2), predicts FLAT, actual FLAT -> correct
-		{Feature: GemFeature{Time: t0, VelMedPrice: 3, VelMedListing: 5, VelLongPrice: 3, VelLongListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
+		// pVelPct=0.1%, lVelPct=1% → STABLE
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 0.1, VelLongListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		// DUMPING: pVelPct=-10% < -8, lVelPct=20% > 10 -> predicts DOWN, actual DOWN -> correct
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: -10, VelLongListing: 2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
+		// UNCERTAIN: pVelPct=4% (not STABLE: |4|>3), lVelPct=50% → not HERD/DUMPING → UNCERTAIN, predicts FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 4, VelLongListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
 	}
 
 	report := ValidateDefaults(evals, mc)
