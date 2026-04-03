@@ -45,6 +45,7 @@
 	}
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <header class="topbar" onmousedown={startDrag}>
 	<div class="left">
 		<img src="/icon-32.png" alt="ProfitOfExile" class="logo" />

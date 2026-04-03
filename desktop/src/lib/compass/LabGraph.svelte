@@ -218,12 +218,17 @@
 	<!-- Layer 1: Room nodes -->
 	{#each roomNodes as node (node.room.id)}
 		{@const nr = nodeR(node)}
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<g
 			class="room-group"
 			class:off-route={!node.onRoute}
 			class:is-current={node.isCurrent}
 			class:is-visited={node.isVisited}
+			role={interactive ? 'button' : undefined}
+			tabindex={interactive ? 0 : undefined}
 			onclick={() => interactive && onRoomClick?.(node.room.id)}
+			onkeydown={(e) => { if (interactive && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRoomClick?.(node.room.id); } }}
 			oncontextmenu={(e) => { if (onRoomRightClick) { e.preventDefault(); onRoomRightClick(node.room.id); } }}
 			style={interactive ? 'cursor: pointer;' : ''}
 		>
@@ -474,10 +479,4 @@
 		pointer-events: none;
 	}
 
-	.room-name {
-		fill: #e4e4e7;
-		font-weight: 500;
-		text-anchor: middle;
-		pointer-events: none;
-	}
 </style>

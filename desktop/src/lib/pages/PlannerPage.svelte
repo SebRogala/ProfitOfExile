@@ -258,8 +258,9 @@
 
 			<div class="config-panel">
 				<div class="config-section">
-					<label class="config-label">Strategy</label>
+					<label class="config-label" for="planner-strategy">Strategy</label>
 					<Select
+						id="planner-strategy"
 						bind:value={strategyValue}
 						options={strategyOptions}
 						onchange={handleStrategyChange}
@@ -267,8 +268,9 @@
 				</div>
 
 				<div class="config-section">
-					<label class="config-label">Compass Mode</label>
+					<label class="config-label" for="planner-compass-mode">Compass Mode</label>
 					<Select
+						id="planner-compass-mode"
 						bind:value={compassMode}
 						options={modeOptions}
 						onchange={handleModeChange}

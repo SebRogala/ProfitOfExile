@@ -344,19 +344,6 @@
 		pointer-events: none;
 	}
 
-	.table.empty {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 40px;
-		padding: 10px;
-	}
-
-	.waiting {
-		color: #9ca3af;
-		font-style: italic;
-	}
-
 	/* --- Gem rows --- */
 	.gem-row {
 		padding: 8px 0;
