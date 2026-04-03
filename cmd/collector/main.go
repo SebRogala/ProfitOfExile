@@ -317,12 +317,15 @@ func runTradeRefresher(ctx context.Context, serverURL string, interval time.Dura
 			}
 			resp, err := client.Do(req)
 			if err != nil {
+				if ctx.Err() != nil {
+					return // shutting down
+				}
 				slog.Warn("trade refresh: server request failed", "error", err)
 				continue
 			}
-			defer resp.Body.Close()
 
 			if resp.StatusCode >= 400 {
+				resp.Body.Close()
 				slog.Warn("trade refresh: server returned error", "status", resp.StatusCode)
 				continue
 			}
@@ -333,7 +336,12 @@ func runTradeRefresher(ctx context.Context, serverURL string, interval time.Dura
 				Floor   float64 `json:"floor"`
 				Error   string  `json:"error"`
 			}
-			json.NewDecoder(resp.Body).Decode(&result)
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				resp.Body.Close()
+				slog.Warn("trade refresh: failed to decode response", "error", err, "status", resp.StatusCode)
+				continue
+			}
+			resp.Body.Close()
 
 			if result.Skipped {
 				continue // nothing stale
@@ -342,6 +350,8 @@ func runTradeRefresher(ctx context.Context, serverURL string, interval time.Dura
 				slog.Warn("trade refresh: server error", "gem", result.Gem, "error", result.Error)
 			} else if result.Gem != "" {
 				slog.Info("trade refresh: done", "gem", result.Gem, "floor", result.Floor)
+			} else {
+				slog.Warn("trade refresh: unexpected empty response")
 			}
 		}
 	}
