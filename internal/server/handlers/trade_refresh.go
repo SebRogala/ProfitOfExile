@@ -56,12 +56,23 @@ func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache
 		}
 		minAge := 5 * time.Minute
 		if body.MinAge != "" {
-			if d, err := time.ParseDuration(body.MinAge); err == nil {
-				minAge = d
+			d, err := time.ParseDuration(body.MinAge)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, tradeRefreshResponse{Error: "invalid minAge: " + body.MinAge})
+				return
 			}
+			minAge = d
 		}
 
-		minTierRank := tierRank[body.MinTier] // 0 if empty/unknown = no tier filter
+		minTierRank := 0
+		if body.MinTier != "" {
+			rank, ok := tierRank[body.MinTier]
+			if !ok {
+				writeJSON(w, http.StatusBadRequest, tradeRefreshResponse{Error: "unknown minTier: " + body.MinTier})
+				return
+			}
+			minTierRank = rank
+		}
 
 		// Build tier set from lab cache.
 		var tierSet map[string]bool
@@ -133,6 +144,7 @@ func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache
 		case <-r.Context().Done():
 			return // collector disconnected
 		case <-time.After(syncTimeout):
+			slog.Info("trade refresh: sync timeout", "gem", gem, "variant", variant)
 			writeJSON(w, http.StatusAccepted, tradeRefreshResponse{Gem: gem, Variant: variant})
 		}
 	}
@@ -141,5 +153,7 @@ func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("writeJSON: encode failed", "error", err)
+	}
 }
