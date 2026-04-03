@@ -115,7 +115,7 @@
 		}
 	}
 
-	async function createCompassOverlay(physX: number, physY: number) {
+	async function createCompassOverlay(physX: number, physY: number, w = 300, h = 280) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
 
@@ -129,8 +129,8 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: 300,
-			height: 280,
+			width: w,
+			height: h,
 		});
 
 		win.once('tauri://created', async () => {
@@ -181,7 +181,7 @@
 
 		} else {
 			const settings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
-			await createCompassOverlay(settings?.x ?? 100, settings?.y ?? 100);
+			await createCompassOverlay(settings?.x ?? 100, settings?.y ?? 100, settings?.width ?? 300, settings?.height ?? 280);
 			await invoke('set_compass_overlay_settings', {
 				x: settings?.x ?? 100, y: settings?.y ?? 100,
 				w: settings?.width ?? 300, h: settings?.height ?? 280,
@@ -192,7 +192,7 @@
 
 	// --- Path strip overlay ---
 
-	async function createPathstripOverlay(physX: number, physY: number) {
+	async function createPathstripOverlay(physX: number, physY: number, w = 450, h = 180) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
 		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
 
@@ -206,8 +206,8 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: 450,
-			height: 180,
+			width: w,
+			height: h,
 		});
 
 		win.once('tauri://created', async () => {
@@ -255,7 +255,7 @@
 			}).catch(e => console.warn('[overlay] pathstrip settings operation failed:', e));
 		} else {
 			const settings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
-			await createPathstripOverlay(settings?.x ?? 100, settings?.y ?? 300);
+			await createPathstripOverlay(settings?.x ?? 100, settings?.y ?? 300, settings?.width ?? 450, settings?.height ?? 180);
 			await invoke('set_pathstrip_overlay_settings', {
 				x: settings?.x ?? 100, y: settings?.y ?? 300,
 				w: settings?.width ?? 450, h: settings?.height ?? 180,
@@ -345,7 +345,7 @@
 	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings')
 		.then((settings) => {
 			if (settings?.enabled) {
-				createCompassOverlay(settings.x, settings.y);
+				createCompassOverlay(settings.x, settings.y, settings.width ?? 300, settings.height ?? 280);
 			}
 		})
 		.catch(e => console.warn('[overlay] compass settings operation failed:', e));
@@ -357,7 +357,7 @@
 				pathstripActive = true;
 				// Check if layout data exists before creating the overlay
 				checkPathstripData().then(hasData => {
-					if (hasData) createPathstripOverlay(settings!.x, settings!.y);
+					if (hasData) createPathstripOverlay(settings!.x, settings!.y, settings!.width ?? 450, settings!.height ?? 180);
 				});
 			}
 		})
@@ -396,11 +396,11 @@
 		if (event.payload?.type === 'PlazaEntered') {
 			const compassSettings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
 			if (compassSettings?.enabled && !compassWin) {
-				await createCompassOverlay(compassSettings.x, compassSettings.y);
+				await createCompassOverlay(compassSettings.x, compassSettings.y, compassSettings.width ?? 300, compassSettings.height ?? 280);
 			}
 			const pathstripSettings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
 			if (pathstripSettings?.enabled && !pathstripWin) {
-				await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y);
+				await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
 			}
 		}
 	});
