@@ -193,16 +193,21 @@
 		if (!layoutLoaded) fetchLayoutFromServer();
 	});
 
-	// Listen for lab-nav events
+	// Listen for lab-nav events + layout updates from server
 	$effect(() => {
 		let cancelled = false;
-		const unlistenPromise = listen<NavEvent>('lab-nav', (event) => {
+		const navPromise = listen<NavEvent>('lab-nav', (event) => {
 			if (cancelled) return;
 			onNavEvent(event.payload);
 		});
+		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
+			if (cancelled) return;
+			fetchLayoutFromServer(event.payload?.difficulty);
+		});
 		return () => {
 			cancelled = true;
-			unlistenPromise.then((unlisten) => unlisten());
+			navPromise.then((unlisten) => unlisten());
+			layoutPromise.then((unlisten) => unlisten());
 		};
 	});
 </script>

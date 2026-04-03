@@ -206,6 +206,11 @@
 			if (status) {
 				status = { ...status, connected };
 			}
+		}, () => {
+			// Layout updated on server — notify overlays to refetch
+			import('@tauri-apps/api/event').then(({ emit }) => {
+				emit('lab-layout-updated', {});
+			}).catch(() => {}); // not in Tauri context (web dashboard)
 		});
 		mercure = connection;
 

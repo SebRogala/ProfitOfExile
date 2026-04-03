@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/mercure"
 	"profitofexile/internal/server/handlers"
 	"profitofexile/internal/trade"
 )
@@ -131,9 +132,13 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.LayoutRepo != nil {
+		var layoutPub mercure.Publisher
+		if cfg.MercureURL != "" && cfg.MercureSecret != "" {
+			layoutPub = &mercure.HubPublisher{URL: cfg.MercureURL, Secret: cfg.MercureSecret}
+		}
 		r.Get("/api/lab/layout/{difficulty}", handlers.GetLayout(cfg.LayoutRepo))
-		r.Post("/api/lab/layout/{difficulty}", handlers.UploadLayout(cfg.LayoutRepo))
-		r.Patch("/api/lab/layout/{difficulty}/room/{roomId}", handlers.PatchRoom(cfg.LayoutRepo))
+		r.Post("/api/lab/layout/{difficulty}", handlers.UploadLayout(cfg.LayoutRepo, layoutPub))
+		r.Patch("/api/lab/layout/{difficulty}/room/{roomId}", handlers.PatchRoom(cfg.LayoutRepo, layoutPub))
 	}
 
 	if cfg.DevMode {

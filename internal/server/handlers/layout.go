@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -8,8 +9,25 @@ import (
 	"time"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/mercure"
 	"github.com/go-chi/chi/v5"
 )
+
+func publishLayoutEvent(pub mercure.Publisher, action, difficulty string) {
+	if pub == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"action":     action,
+		"difficulty": difficulty,
+		"topic":      "poe/lab/layout",
+	})
+	go func() {
+		if err := pub.Publish(context.Background(), "poe/lab/layout", string(payload)); err != nil {
+			slog.Warn("layout: mercure publish failed", "error", err)
+		}
+	}()
+}
 
 // GetLayout handles GET /api/lab/layout/{difficulty}.
 // Returns today's lab layout for the given difficulty, or 404 if not yet uploaded.
@@ -41,7 +59,7 @@ func GetLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 
 // UploadLayout handles POST /api/lab/layout/{difficulty}.
 // Validates and stores a poelab.com layout JSON. First upload per difficulty+date wins.
-func UploadLayout(repo *lab.LayoutRepository) http.HandlerFunc {
+func UploadLayout(repo *lab.LayoutRepository, pub mercure.Publisher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw := chi.URLParam(r, "difficulty")
 		if !isValidDifficulty(raw) {
@@ -86,6 +104,7 @@ func UploadLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if inserted {
+			publishLayoutEvent(pub, "created", layout.Difficulty)
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
 				"status":     "created",
@@ -104,7 +123,7 @@ func UploadLayout(repo *lab.LayoutRepository) http.HandlerFunc {
 
 // PatchRoom handles PATCH /api/lab/layout/{difficulty}/room/{roomId}.
 // Updates a single room's areacode, contents, or secret_passage in today's layout.
-func PatchRoom(repo *lab.LayoutRepository) http.HandlerFunc {
+func PatchRoom(repo *lab.LayoutRepository, pub mercure.Publisher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw := chi.URLParam(r, "difficulty")
 		if !isValidDifficulty(raw) {
@@ -185,6 +204,7 @@ func PatchRoom(repo *lab.LayoutRepository) http.HandlerFunc {
 			return
 		}
 
+		publishLayoutEvent(pub, "updated", difficulty)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 	}
