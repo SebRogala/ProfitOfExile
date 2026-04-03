@@ -118,19 +118,40 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 	// Detect sections: split at Aspirant's Trial rooms
 	const sections = detectSections(layout.rooms, adjacency);
 
-	// Identify golden door/key locations
+	// Identify golden door/key locations.
+	// A golden door is marked on one room. It blocks forward passage — you must
+	// pick up the golden key first (from a branch room, or the door room itself).
+	//
+	// Model: the door room's connections to rooms FURTHER from start are locked.
+	// Connections back toward start stay open (so you can reach the door room).
+	// If key is in a neighbor, that connection also stays open.
+	// If key is in the door room itself, all forward connections are locked
+	// but the room is still reachable from the start side.
 	const lockedDoors: [string, string][] = [];
 	for (const room of layout.rooms) {
-		if (room.contents.some((c) => c.toLowerCase().includes('golden-door'))) {
-			// Find the connection through the golden door
-			for (const neighborId of adjacency.get(room.id) ?? []) {
-				const neighbor = roomById.get(neighborId);
-				if (neighbor?.contents.some((c) => c.toLowerCase().includes('golden-door'))) {
-					const pair: [string, string] = [room.id, neighborId].sort() as [string, string];
-					if (!lockedDoors.some(([a, b]) => a === pair[0] && b === pair[1])) {
-						lockedDoors.push(pair);
-					}
-				}
+		if (!room.contents.some((c) => c.toLowerCase().includes('golden-door'))) continue;
+
+		const doorX = parseFloat(room.x);
+		const keyNeighbors = new Set<string>();
+		for (const neighborId of adjacency.get(room.id) ?? []) {
+			const neighbor = roomById.get(neighborId);
+			if (neighbor?.contents.some((c) => c.toLowerCase().includes('golden-key'))) {
+				keyNeighbors.add(neighborId);
+			}
+		}
+
+		// Lock connections to neighbors that are further from start (higher x)
+		// and are not the key room. This keeps the entry side open.
+		for (const neighborId of adjacency.get(room.id) ?? []) {
+			if (keyNeighbors.has(neighborId)) continue;
+			const neighbor = roomById.get(neighborId);
+			if (!neighbor) continue;
+			const neighborX = parseFloat(neighbor.x);
+			// Lock forward connections only (neighbor further from start)
+			if (neighborX <= doorX) continue;
+			const pair: [string, string] = [room.id, neighborId].sort() as [string, string];
+			if (!lockedDoors.some(([a, b]) => a === pair[0] && b === pair[1])) {
+				lockedDoors.push(pair);
 			}
 		}
 	}
@@ -354,7 +375,10 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 		const end = section.endRoom;
 		const sectionTargets = targets.filter((t) => section.roomIds.includes(t));
 
-		const sectionRoute = shortestPathThroughTargets(
+		// Golden door handling: if route must cross a locked door, split into
+		// pre-key (unlocked adjacency) and post-key (full adjacency) phases.
+		const goldenRoute = routeWithGoldenDoor(state, section, start, end, sectionTargets);
+		const sectionRoute = goldenRoute ?? shortestPathThroughTargets(
 			state.adjacency,
 			start,
 			end,
@@ -369,6 +393,79 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 	}
 
 	return route;
+}
+
+/**
+ * If the section has golden doors, check whether the route needs to cross one.
+ * If so, split routing into two phases:
+ *   1. Route from start → key room (using unlocked adjacency, visiting targets along the way)
+ *   2. Route from key room → end (using full adjacency since door is now open)
+ * If a path exists that avoids the locked edges entirely (secret passage), no key needed.
+ * Returns null if no golden door handling is needed (caller uses normal routing).
+ */
+function routeWithGoldenDoor(
+	state: NavState,
+	section: LabSection,
+	start: string,
+	end: string,
+	targets: string[],
+): string[] | null {
+	if (state.lockedDoors.length === 0) return null;
+
+	// Find locked doors in this section
+	const sectionLocks = state.lockedDoors.filter(
+		([a, b]) => section.roomIds.includes(a) && section.roomIds.includes(b),
+	);
+	if (sectionLocks.length === 0) return null;
+
+	// Build adjacency without golden door edges
+	const unlockedAdj = new Map<string, string[]>();
+	for (const [roomId, neighbors] of state.adjacency) {
+		unlockedAdj.set(roomId, neighbors.filter((n) => {
+			const pair = [roomId, n].sort();
+			return !sectionLocks.some(([a, b]) => a === pair[0] && b === pair[1]);
+		}));
+	}
+
+	// Check if a route through all targets to the end exists WITHOUT crossing locked doors.
+	// If so, use it directly — don't return null, because the caller would use full adjacency
+	// which might find a "shorter" path through the locked door the player can't open.
+	const bypassRoute = shortestPathThroughTargets(unlockedAdj, start, end, targets);
+	if (bypassRoute.length > 0) {
+		return bypassRoute;
+	}
+
+	// Route needs the locked door — find golden key room in this section
+	let keyRoom: string | null = null;
+	for (const roomId of section.roomIds) {
+		const room = state.roomById.get(roomId);
+		if (room?.contents.some((c) => c.toLowerCase().includes('golden-key'))) {
+			keyRoom = roomId;
+			break;
+		}
+	}
+
+	if (!keyRoom) return null; // no key room found — data issue, don't break
+
+	// Phase 1: start → key room, using unlocked adjacency (can't cross door yet).
+	// Visit any targets reachable before the door.
+	const preKeyTargets = targets.filter((t) => {
+		const path = bfs(unlockedAdj, start, t);
+		return path.length > 0;
+	});
+	const keyTargets = preKeyTargets.includes(keyRoom) ? preKeyTargets : [...preKeyTargets, keyRoom];
+	const phase1 = shortestPathThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom));
+
+	// Phase 2: key room → end, using full adjacency (door now open).
+	// Visit remaining targets.
+	const visitedInPhase1 = new Set(phase1);
+	const postKeyTargets = targets.filter((t) => !visitedInPhase1.has(t));
+	const phase2 = shortestPathThroughTargets(state.adjacency, keyRoom, end, postKeyTargets);
+
+	if (phase1.length === 0 || phase2.length === 0) return null; // fallback to normal routing
+
+	// Merge phases (avoid duplicate key room at boundary)
+	return [...phase1, ...phase2.slice(1)];
 }
 
 function shortestPathThroughTargets(
