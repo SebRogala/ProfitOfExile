@@ -354,9 +354,10 @@ func filterFont(all []lab.FontResult, variant string, limit int) []lab.FontResul
 	return filtered
 }
 
-// TrendAnalysis returns the latest trend analysis results.
+// TrendAnalysis returns the latest trend analysis results sourced from v2 GemSignals + GemFeatures.
 // Query params: variant (optional, e.g. "20/20"), signal (optional, e.g. "TRAP"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
+// Response shape matches the original v1 endpoint for frontend compatibility.
 func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
@@ -370,26 +371,46 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			return
 		}
 
-		var results []lab.TrendResult
+		// Load signals and features from cache or DB.
+		var signals []lab.GemSignal
+		var features []lab.GemFeature
+		usedCache := false
 
-		// Fast path: serve from cache.
 		if cache != nil {
-			if cached := cache.Trends(); len(cached) > 0 {
-				results = filterTrends(cached, variant, signal, window, advanced, tier, limit)
+			cs := cache.GemSignals()
+			cf := cache.GemFeatures()
+			if len(cs) > 0 && len(cf) > 0 {
+				signals = cs
+				features = cf
+				usedCache = true
 			}
 		}
 
-		// Slow path: fall back to DB query.
-		if results == nil {
+		if !usedCache {
 			var err error
-			results, err = repo.LatestTrendResults(r.Context(), variant, signal, window, advanced, tier, limit)
+			signals, err = repo.LatestGemSignals(r.Context(), variant, tier, 50000)
 			if err != nil {
-				slog.Error("trend analysis: query failed", "error", err, "variant", variant, "signal", signal)
+				slog.Error("trend analysis: gem signals query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+			features, err = repo.LatestGemFeatures(r.Context(), variant, tier, 50000)
+			if err != nil {
+				slog.Error("trend analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
 		}
 
+		// Index features by (name, variant) for joining.
+		type gk struct{ name, variant string }
+		featIndex := make(map[gk]*lab.GemFeature, len(features))
+		for i := range features {
+			f := &features[i]
+			featIndex[gk{f.Name, f.Variant}] = f
+		}
+
+		// Build merged rows, applying filters.
 		type row struct {
 			Time              string  `json:"time"`
 			Name              string  `json:"name"`
@@ -402,8 +423,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			CV                float64 `json:"cv"`
 			Signal            string  `json:"signal"`
 			HistPosition      float64 `json:"histPosition"`
-			PriceHigh7Days       float64 `json:"priceHigh7d"`
-			PriceLow7Days        float64 `json:"priceLow7d"`
+			PriceHigh7Days    float64 `json:"priceHigh7d"`
+			PriceLow7Days     float64 `json:"priceLow7d"`
 			BaseListings      int     `json:"baseListings"`
 			BaseVelocity      float64 `json:"baseVelocity"`
 			RelativeLiquidity float64 `json:"relativeLiquidity"`
@@ -422,24 +443,52 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			BaseListingsTrend []int   `json:"baseListingsTrend,omitempty"`
 		}
 
-		// Collect window alert gems for trend enrichment (deduplicated).
-		windowSignals := map[string]bool{"BREWING": true, "OPENING": true, "OPEN": true, "CLOSING": true}
+		// Collect filtered signals into pre-row list for sparkline enrichment.
+		type sigWithFeat struct {
+			sig  *lab.GemSignal
+			feat *lab.GemFeature // may be nil
+		}
+		var filtered []sigWithFeat
+
+		for i := range signals {
+			s := &signals[i]
+			if variant != "" && s.Variant != variant {
+				continue
+			}
+			if signal != "" && s.Signal != signal {
+				continue
+			}
+			if window != "" && s.WindowSignal != window {
+				continue
+			}
+			if advanced != "" && s.AdvancedSignal != advanced {
+				continue
+			}
+			if tier != "" && s.Tier != tier {
+				continue
+			}
+			f := featIndex[gk{s.Name, s.Variant}]
+			filtered = append(filtered, sigWithFeat{sig: s, feat: f})
+			if len(filtered) >= limit {
+				break
+			}
+		}
+
+		// Collect window alert gems for sparkline enrichment (deduplicated).
+		windowAlerts := map[string]bool{"BREWING": true, "OPENING": true, "OPEN": true, "CLOSING": true}
 		type gemKey struct{ name, variant string }
 		seen := make(map[gemKey]bool)
 		var transNames, baseNames []string
-		// Map base name back to gemKey for result distribution.
-		baseToGem := make(map[string][]gemKey)
-		for _, r := range results {
-			gk := gemKey{r.Name, r.Variant}
-			if windowSignals[r.WindowSignal] && !seen[gk] {
-				seen[gk] = true
-				transNames = append(transNames, r.Name)
-				baseName := r.Name
-				if idx := strings.LastIndex(r.Name, " of "); idx > 0 {
-					baseName = r.Name[:idx]
+		for _, sf := range filtered {
+			key := gemKey{sf.sig.Name, sf.sig.Variant}
+			if windowAlerts[sf.sig.WindowSignal] && !seen[key] {
+				seen[key] = true
+				transNames = append(transNames, sf.sig.Name)
+				baseName := sf.sig.Name
+				if idx := strings.LastIndex(sf.sig.Name, " of "); idx > 0 {
+					baseName = sf.sig.Name[:idx]
 				}
 				baseNames = append(baseNames, baseName)
-				baseToGem[baseName] = append(baseToGem[baseName], gk)
 			}
 		}
 
@@ -452,13 +501,12 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			trendMC, _ = repo.LatestMarketContext(r.Context())
 		}
 
-		// Batch fetch sparkline data grouped by variant (2 queries per variant group).
+		// Batch fetch sparkline data grouped by variant.
 		type trendData struct {
 			prices, listings, baseListings []int
 		}
 		trends := make(map[gemKey]trendData)
 		if len(transNames) > 0 {
-			// Group gems by variant for batching.
 			type variantGroup struct {
 				transNames []string
 				baseNames  []string
@@ -466,22 +514,22 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			}
 			groups := make(map[string]*variantGroup)
 			for i, name := range transNames {
-				gk := gemKey{name, ""}
-				// Find the variant for this gem from results.
-				for _, res := range results {
-					if res.Name == name && windowSignals[res.WindowSignal] {
-						gk.variant = res.Variant
+				key := gemKey{name, ""}
+				// Find the variant for this gem from filtered results.
+				for _, sf := range filtered {
+					if sf.sig.Name == name && windowAlerts[sf.sig.WindowSignal] {
+						key.variant = sf.sig.Variant
 						break
 					}
 				}
-				g, ok := groups[gk.variant]
-				if !ok {
+				g, exists := groups[key.variant]
+				if !exists {
 					g = &variantGroup{}
-					groups[gk.variant] = g
+					groups[key.variant] = g
 				}
 				g.transNames = append(g.transNames, name)
 				g.baseNames = append(g.baseNames, baseNames[i])
-				g.gems = append(g.gems, gk)
+				g.gems = append(g.gems, key)
 			}
 
 			last4 := func(pts []lab.SparklinePoint) []lab.SparklinePoint {
@@ -505,58 +553,63 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
 					baseSparklines = make(map[string][]lab.SparklinePoint)
 				}
-				// Note: base sparklines are not normalized — base gem prices are used
-				// for listing counts only, not for price display.
+				// Normalize base sparklines consistently with trans sparklines.
+				baseSparklines = normalizeSparklines(baseSparklines, trendMC, v)
 
-				for i, gk := range g.gems {
+				for idx, key := range g.gems {
 					td := trendData{}
-					if pts := last4(transSparklines[gk.name]); len(pts) >= 2 {
+					if pts := last4(transSparklines[key.name]); len(pts) >= 2 {
 						for _, p := range pts {
 							td.prices = append(td.prices, int(math.Round(p.Price)))
 							td.listings = append(td.listings, p.Listings)
 						}
 					}
-					if pts := last4(baseSparklines[g.baseNames[i]]); len(pts) >= 2 {
+					if pts := last4(baseSparklines[g.baseNames[idx]]); len(pts) >= 2 {
 						for _, p := range pts {
 							td.baseListings = append(td.baseListings, p.Listings)
 						}
 					}
-					trends[gk] = td
+					trends[key] = td
 				}
 			}
 		}
 
-		rows := make([]row, 0, len(results))
-		for _, r := range results {
+		rows := make([]row, 0, len(filtered))
+		for _, sf := range filtered {
+			s := sf.sig
 			rr := row{
-				Time:              r.Time.UTC().Format(time.RFC3339),
-				Name:              r.Name,
-				Variant:           r.Variant,
-				GemColor:          r.GemColor,
-				CurrentPrice:      r.CurrentPrice,
-				CurrentListings:   r.CurrentListings,
-				PriceVelocity:     r.PriceVelocity,
-				ListingVelocity:   r.ListingVelocity,
-				CV:                r.CV,
-				Signal:            r.Signal,
-				HistPosition:      r.HistPosition,
-				PriceHigh7Days:       r.PriceHigh7Days,
-				PriceLow7Days:        r.PriceLow7Days,
-				BaseListings:      r.BaseListings,
-				BaseVelocity:      r.BaseVelocity,
-				RelativeLiquidity: r.RelativeLiquidity,
-				LiquidityTier:     r.LiquidityTier,
-				WindowScore:       r.WindowScore,
-				WindowSignal:      r.WindowSignal,
-				AdvancedSignal:    r.AdvancedSignal,
-				PriceTier:         r.PriceTier,
-				TierAction:        r.TierAction,
-				SellUrgency:       r.SellUrgency,
-				SellReason:        r.SellReason,
-				Sellability:       r.Sellability,
-				SellabilityLabel:  r.SellabilityLabel,
+				Time:             s.Time.UTC().Format(time.RFC3339),
+				Name:             s.Name,
+				Variant:          s.Variant,
+				Signal:           s.Signal,
+				WindowSignal:     s.WindowSignal,
+				AdvancedSignal:   s.AdvancedSignal,
+				PriceTier:        s.Tier,
+				TierAction:       lab.TierActionFor(s.Signal, s.WindowSignal, s.Tier),
+				SellUrgency:      s.SellUrgency,
+				SellReason:       s.SellReason,
+				Sellability:      s.Sellability,
+				SellabilityLabel: s.SellabilityLabel,
 			}
-			if td, ok := trends[gemKey{r.Name, r.Variant}]; ok {
+
+			// Enrich from features.
+			if f := sf.feat; f != nil {
+				rr.GemColor = f.GemColor
+				rr.CurrentPrice = f.Chaos
+				rr.CurrentListings = f.Listings
+				rr.PriceVelocity = f.VelLongPrice
+				rr.ListingVelocity = f.VelLongListing
+				rr.CV = f.CV
+				rr.HistPosition = f.HistPosition
+				rr.PriceHigh7Days = f.High7Days
+				rr.PriceLow7Days = f.Low7Days
+				rr.RelativeLiquidity = f.RelativeListings
+				rr.LiquidityTier = lab.LiquidityTierFor(f.MarketDepth)
+				// BaseListings and BaseVelocity intentionally left at zero —
+				// TODO: base gem listings/velocity not available in v2 pipeline, requires separate query.
+			}
+
+			if td, ok := trends[gemKey{s.Name, s.Variant}]; ok {
 				rr.PriceTrend = td.prices
 				rr.ListingsTrend = td.listings
 				rr.BaseListingsTrend = td.baseListings
@@ -572,42 +625,6 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			slog.Error("trend analysis: encode response", "error", err)
 		}
 	}
-}
-
-// filterTrends filters and limits cached trend results.
-// Results are sorted by CV descending, then current price descending (matching the DB query order).
-func filterTrends(all []lab.TrendResult, variant, signal, window, advanced, tier string, limit int) []lab.TrendResult {
-	var filtered []lab.TrendResult
-	for _, r := range all {
-		if variant != "" && r.Variant != variant {
-			continue
-		}
-		if signal != "" && r.Signal != signal {
-			continue
-		}
-		if window != "" && r.WindowSignal != window {
-			continue
-		}
-		if advanced != "" && r.AdvancedSignal != advanced {
-			continue
-		}
-		if tier != "" && r.PriceTier != tier {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-
-	sort.Slice(filtered, func(i, j int) bool {
-		if filtered[i].CV != filtered[j].CV {
-			return filtered[i].CV > filtered[j].CV
-		}
-		return filtered[i].CurrentPrice > filtered[j].CurrentPrice
-	})
-
-	if len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	return filtered
 }
 
 // QualityAnalysis returns the latest quality-roll ROI results.
@@ -757,7 +774,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 			"fontPremium": len(fontAnalysis.Premium),
 			"fontJackpot": len(fontAnalysis.Jackpot),
 			"quality":     len(cache.Quality()),
-			"trends":      len(cache.Trends()),
+			"trends":      len(cache.GemSignals()),
 		}
 		if cached {
 			resp["lastUpdated"] = lastUpdated.UTC().Format(time.RFC3339)
@@ -1243,22 +1260,22 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		// Aggregate from trends for price/listings/volatile/stable.
-		if trends := cache.Trends(); len(trends) > 0 {
+		// Aggregate from gem features for price/listings/volatile/stable.
+		if feats := cache.GemFeatures(); len(feats) > 0 {
 			var totalPrice, totalListings float64
 			colorCV := make(map[string][]float64)
 
-			for _, t := range trends {
-				totalPrice += t.CurrentPrice
-				totalListings += float64(t.BaseListings)
-				if t.GemColor != "" {
-					colorCV[t.GemColor] = append(colorCV[t.GemColor], t.CV)
+			for _, f := range feats {
+				totalPrice += f.Chaos
+				totalListings += float64(f.Listings)
+				if f.GemColor != "" {
+					colorCV[f.GemColor] = append(colorCV[f.GemColor], f.CV)
 				}
 			}
 
-			resp.ActiveGems = len(trends)
-			resp.AvgTransPrice = math.Round(totalPrice / float64(len(trends)))
-			resp.AvgBaseListings = math.Round(totalListings / float64(len(trends)))
+			resp.ActiveGems = len(feats)
+			resp.AvgTransPrice = math.Round(totalPrice / float64(len(feats)))
+			resp.AvgBaseListings = math.Round(totalListings / float64(len(feats)))
 
 			// Most volatile / most stable by avg CV per color.
 			type colorStat struct {

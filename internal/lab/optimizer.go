@@ -814,7 +814,7 @@ func ValidateSellability(evals []EvalPoint, mc MarketContext) SellabilityReport 
 		)
 
 		// Classify sell confidence.
-		sellConf := classifySellConfidence(sellProb, stabDisc)
+		sellConf, _ := classifySellConfidence(sellProb, stabDisc, ep.Feature)
 
 		// Determine tier.
 		tier := ep.Feature.Tier

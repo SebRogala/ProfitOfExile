@@ -47,15 +47,18 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 
 		// Fast path: serve from cache.
 		var transfigure []lab.TransfigureResult
-		var trends []lab.TrendResult
+		var signals []lab.GemSignal
+		var features []lab.GemFeature
 		usedCache := false
 
 		if cache != nil {
 			ct := cache.Transfigure()
-			ctr := cache.Trends()
-			if len(ct) > 0 && len(ctr) > 0 {
+			cs := cache.GemSignals()
+			cf := cache.GemFeatures()
+			if len(ct) > 0 && len(cs) > 0 {
 				transfigure = filterTransfigure(ct, variant, 1000)
-				trends = filterTrends(ctr, variant, "", "", "", "", 5000)
+				signals = filterGemSignals(cs, variant, "", 5000)
+				features = cf // features used for velocity/CV join, no need to filter heavily
 				usedCache = true
 			}
 		}
@@ -70,9 +73,16 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				return
 			}
 
-			trends, err = repo.LatestTrendResults(r.Context(), variant, "", "", "", "", 5000)
+			signals, err = repo.LatestGemSignals(r.Context(), variant, "", 5000)
 			if err != nil {
-				slog.Error("collective analysis: trends query failed", "error", err)
+				slog.Error("collective analysis: gem signals query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+
+			features, err = repo.LatestGemFeatures(r.Context(), variant, "", 50000)
+			if err != nil {
+				slog.Error("collective analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
@@ -85,7 +95,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		}
 		// Empty sortBy lets RankCollective apply budget-aware default.
 
-		results := lab.RankCollective(transfigure, trends, budget, limit, sortBy)
+		results := lab.RankCollective(transfigure, signals, features, budget, limit, sortBy)
 
 		// Build base price index: baseName → variant → basePrice (for GCP recipe).
 		type bKey struct{ name, variant string }
@@ -180,9 +190,10 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			Sellability          int     `json:"sellability"`
 			SellabilityLabel     string              `json:"sellabilityLabel"`
 			Sparkline            []lab.SparklinePoint `json:"sparkline"`
-			Low7Days                float64 `json:"low7d"`
-			High7Days               float64 `json:"high7d"`
-			SellConfidence       string  `json:"sellConfidence"`
+			Low7Days             float64              `json:"low7d"`
+			High7Days            float64              `json:"high7d"`
+			SellConfidence       string               `json:"sellConfidence"`
+			TradeConfidenceNote  string               `json:"tradeConfidenceNote,omitempty"`
 			// GCP recipe: buy 20/0 base + 20 GCPs instead of 20/20 base.
 			GCPRecipeCost  float64 `json:"gcpRecipeCost,omitempty"`  // 20/0 base + 20×GCP
 			GCPRecipeBase  float64 `json:"gcpRecipeBase,omitempty"`  // 20/0 base price alone
@@ -219,10 +230,11 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				SellReason:           cr.SellReason,
 				Sellability:          cr.Sellability,
 				SellabilityLabel:     cr.SellabilityLabel,
-				Sparkline:           sparklines[cr.TransfiguredName],
-				Low7Days:               cr.Low7Days,
-				High7Days:              cr.High7Days,
-				SellConfidence:      cr.SellConfidence,
+				Sparkline:            sparklines[cr.TransfiguredName],
+				Low7Days:             cr.Low7Days,
+				High7Days:            cr.High7Days,
+				SellConfidence:       cr.SellConfidence,
+				TradeConfidenceNote:  cr.TradeConfidenceNote,
 			}
 
 			// GCP recipe for 20/20 variants: buy 20/0 base + 20×GCP.
@@ -294,15 +306,18 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		// Fast path: serve from cache.
 		var transfigure []lab.TransfigureResult
-		var trends []lab.TrendResult
+		var signals []lab.GemSignal
+		var features []lab.GemFeature
 		usedCache := false
 
 		if cache != nil {
 			ct := cache.Transfigure()
-			ctr := cache.Trends()
-			if len(ct) > 0 && len(ctr) > 0 {
+			cs := cache.GemSignals()
+			cf := cache.GemFeatures()
+			if len(ct) > 0 && len(cs) > 0 {
 				transfigure = filterTransfigure(ct, variant, 1000)
-				trends = filterTrends(ctr, variant, "", "", "", "", 5000)
+				signals = filterGemSignals(cs, variant, "", 5000)
+				features = cf
 				usedCache = true
 			}
 		}
@@ -317,9 +332,16 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 				return
 			}
 
-			trends, err = repo.LatestTrendResults(r.Context(), variant, "", "", "", "", 5000)
+			signals, err = repo.LatestGemSignals(r.Context(), variant, "", 5000)
 			if err != nil {
-				slog.Error("compare analysis: trends query failed", "error", err)
+				slog.Error("compare analysis: gem signals query failed", "error", err)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+
+			features, err = repo.LatestGemFeatures(r.Context(), variant, "", 50000)
+			if err != nil {
+				slog.Error("compare analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
@@ -344,23 +366,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		}
 		sparklines = normalizeSparklines(sparklines, compareMC, variant)
 
-		results := lab.BuildCompareResults(names, transfigure, trends, sparklines, variant)
-
-		// Enrich with risk-adjusted price from cached v2 GemSignals.
-		if cache != nil {
-			if signals := cache.GemSignals(); len(signals) > 0 {
-				type sKey struct{ name, variant string }
-				sigIndex := make(map[sKey]float64, len(signals))
-				for _, s := range signals {
-					sigIndex[sKey{s.Name, s.Variant}] = s.RiskAdjustedValue
-				}
-				for i := range results {
-					if raVal, ok := sigIndex[sKey{results[i].TransfiguredName, results[i].Variant}]; ok {
-						results[i].RiskAdjustedPrice = raVal
-					}
-				}
-			}
-		}
+		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant)
 
 		type row struct {
 			TransfiguredName     string              `json:"transfiguredName"`

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"profitofexile/internal/trade"
 )
 
 // Analyzer orchestrates analysis runs triggered by Mercure events.
@@ -13,25 +15,25 @@ type Analyzer struct {
 	repo           *Repository
 	throttler      *Throttler
 	cache          *Cache
+	tradeCache     *trade.TradeCache // nil-safe: when nil, trade enrichment is skipped
 	logger         *slog.Logger
 	muTransfigure  sync.Mutex
 	muFont         sync.Mutex
 	muQuality      sync.Mutex
-	muTrends       sync.Mutex
 	muV2           sync.Mutex
-	muCls          sync.RWMutex
-	latestCls      GemClassificationMap
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
 // The throttler may be nil — in that case no Mercure signals are emitted.
 // The cache may be nil — in that case results are only persisted to the DB.
-func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache) *Analyzer {
+// The tradeCache may be nil — in that case trade enrichment is skipped in ComputeGemFeatures.
+func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache, tradeCache *trade.TradeCache) *Analyzer {
 	return &Analyzer{
-		repo:      repo,
-		throttler: throttler,
-		cache:     cache,
-		logger:    slog.Default(),
+		repo:       repo,
+		throttler:  throttler,
+		cache:      cache,
+		tradeCache: tradeCache,
+		logger:     slog.Default(),
 	}
 }
 
@@ -136,70 +138,6 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 	return nil
 }
 
-// RunTrends fetches the latest gem snapshot plus historical data and computes trend signals.
-// It is safe to call from multiple goroutines; concurrent runs are serialized.
-func (a *Analyzer) RunTrends(ctx context.Context) error {
-	a.muTrends.Lock()
-	defer a.muTrends.Unlock()
-
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
-	if err != nil {
-		a.logger.Error("trends: failed to load gem prices", "error", err)
-		return err
-	}
-	if len(gems) == 0 {
-		a.logger.Info("trends: no gem snapshots available yet, skipping")
-		return nil
-	}
-
-	// Fetch 7 days of history (168 hours) for CV and historical position.
-	history, err := a.repo.GemPriceHistoryByVariant(ctx, "", 168)
-	if err != nil {
-		a.logger.Error("trends: failed to load gem price history", "error", err)
-		return err
-	}
-
-	// Fetch base gem history (shorter window — velocity needs recent data).
-	baseHistory, err := a.repo.BasePriceHistory(ctx, "", 24)
-	if err != nil {
-		a.logger.Error("trends: failed to load base price history", "error", err)
-		return err
-	}
-
-	// Compute market-wide average base listings for relative liquidity.
-	marketAvg, err := a.repo.MarketAvgBaseListings(ctx, "")
-	if err != nil {
-		a.logger.Warn("trends: failed to compute market avg base listings, using 0", "error", err)
-		marketAvg = 0
-	}
-
-	// Read stored classification from last RunV2.
-	// cls may be nil on first startup before RunV2 — AnalyzeTrends handles nil gracefully.
-	a.muCls.RLock()
-	cls := a.latestCls
-	a.muCls.RUnlock()
-
-	results := AnalyzeTrends(snapTime, gems, history, baseHistory, marketAvg, cls)
-
-	inserted, err := a.repo.SaveTrendResults(ctx, results)
-	if err != nil {
-		a.logger.Error("trends: failed to save results", "error", err)
-		return err
-	}
-
-	if a.cache != nil {
-		a.cache.SetTrends(results)
-	}
-
-	a.logger.Info("trend analysis complete",
-		"snapTime", snapTime,
-		"results", len(results),
-		"inserted", inserted,
-	)
-	a.throttler.Signal()
-	return nil
-}
-
 // RunQuality fetches the latest gem snapshot and computes quality-roll ROI.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunQuality(ctx context.Context) error {
@@ -262,7 +200,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 		return nil
 	}
 
-	// Fetch history for velocity computation (same call RunTrends uses).
+	// Fetch history for velocity computation.
 	history, err := a.repo.GemPriceHistoryByVariant(ctx, "", 168)
 	if err != nil {
 		a.logger.Error("v2: failed to load gem price history", "error", err)
@@ -271,10 +209,6 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 
 	// Step 0: Unified gem classification (CASCADE → TOP → tiers).
 	classification := ComputeGemClassification(gems)
-
-	a.muCls.Lock()
-	a.latestCls = classification.Gems
-	a.muCls.Unlock()
 
 	mc := ComputeMarketContext(snapTime, gems, history, classification)
 	if err := a.repo.SaveMarketContext(ctx, mc); err != nil {
@@ -289,7 +223,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	depthMap := PrecomputeMarketDepth(gems, mc)
 	normalizedHistory := NormalizeHistoryDepthGated(history, mc, depthMap)
 
-	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
+	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, a.tradeCache)
 	inserted, err := a.repo.SaveGemFeatures(ctx, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)

@@ -60,12 +60,6 @@ type PricePoint struct {
 	Listings int
 }
 
-// analysisVariants are the gem variants we analyze trends for.
-var analysisVariants = map[string]bool{
-	"1": true, "1/20": true, "20": true, "20/20": true,
-}
-
-
 // sellUrgency computes actionable sell timing for gems you already have.
 // Uses price velocity, listing velocity, base drain, and historical position.
 func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListings, transListings int, signal, priceTier string) (urgency, reason string) {
@@ -294,125 +288,6 @@ func tierAction(signal, windowSignal, priceTier string) string {
 	return ""
 }
 
-// AnalyzeTrends computes trend signals for all transfigured gems.
-// current provides the latest snapshot; history provides time-series data per gem.
-// baseHistory maps baseName → []PricePoint for non-transfigured gems.
-// marketAvgBaseLst is the market-wide average base listings (denominator for relative liquidity).
-func AnalyzeTrends(snapTime time.Time, current []GemPrice, history []GemPriceHistory,
-	baseHistory map[string][]PricePoint, marketAvgBaseLst float64,
-	cls GemClassificationMap) []TrendResult {
-
-	// Index history by (name, variant) for fast lookup.
-	type histKey struct{ name, variant string }
-	histIndex := make(map[histKey]*GemPriceHistory, len(history))
-	for i := range history {
-		h := &history[i]
-		histIndex[histKey{h.Name, h.Variant}] = h
-	}
-
-	// Index current base gem listings by name for quick lookup.
-	baseCurrentListings := make(map[string]int)
-	for _, g := range current {
-		if g.IsCorrupted || g.IsTransfigured {
-			continue
-		}
-		// Keep the highest listing count per base name across variants.
-		if g.Listings > baseCurrentListings[g.Name] {
-			baseCurrentListings[g.Name] = g.Listings
-		}
-	}
-
-	var results []TrendResult
-
-	for _, g := range current {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 || !analysisVariants[g.Variant] {
-			continue
-		}
-
-		h := histIndex[histKey{g.Name, g.Variant}]
-
-		var priceVel, listingVel, cv, histPos, high7d, low7d float64
-		if h != nil && len(h.Points) >= 2 {
-			priceVel = velocity(h.Points, func(p PricePoint) float64 { return p.Chaos })
-			listingVel = velocity(h.Points, func(p PricePoint) float64 { return float64(p.Listings) })
-
-			prices := make([]float64, len(h.Points))
-			for i, p := range h.Points {
-				prices[i] = p.Chaos
-			}
-			cv = coefficientOfVariation(prices)
-			high7d, low7d, histPos = historicalPosition(g.Chaos, prices)
-		} else {
-			// Not enough data — defaults: velocity 0, CV 0, position 50 (midpoint).
-			high7d = g.Chaos
-			low7d = g.Chaos
-			histPos = 50
-		}
-
-		signal := classifySignal(priceVel, listingVel, cv, g.Chaos, g.Listings)
-
-		// Base-side signals.
-		baseName := extractBaseName(g.Name)
-		baseLst := -1 // sentinel: base not found
-		if v, ok := baseCurrentListings[baseName]; ok {
-			baseLst = v
-		}
-		var baseVel float64
-		if bp, ok := baseHistory[baseName]; ok && len(bp) >= 2 {
-			baseVel = velocity(bp, func(p PricePoint) float64 { return float64(p.Listings) })
-		}
-
-		baseLstForCalc := float64(baseLst)
-		if baseLst < 0 {
-			baseLstForCalc = 0
-		}
-		relLiq := computeRelativeLiquidity(baseLstForCalc, marketAvgBaseLst)
-		liqTier := liquidityTier(relLiq)
-		winScore := computeWindowScore(g.Chaos, baseVel, float64(g.Listings), relLiq)
-		winSignal := classifyWindowSignal(winScore, baseVel, listingVel, baseLst, priceVel)
-		advSignal := classifyAdvancedSignal(g.Chaos, g.Listings, priceVel, listingVel, cv, histPos)
-		priceTier := "FLOOR" // default when classification unavailable
-		if cls != nil {
-			if c, ok := cls[GemClassificationKey{g.Name, g.Variant}]; ok {
-				priceTier = c.Tier
-			}
-		}
-		tAction := tierAction(signal, winSignal, priceTier)
-		sUrgency, sReason := sellUrgency(priceVel, listingVel, baseVel, histPos, baseLst, g.Listings, signal, priceTier)
-		sellScore, sellLabel := sellability(g.Listings, listingVel, priceVel, cv, signal, 1.0, g.Chaos)
-
-		results = append(results, TrendResult{
-			Time:              snapTime,
-			Name:              g.Name,
-			Variant:           g.Variant,
-			GemColor:          g.GemColor,
-			CurrentPrice:      g.Chaos,
-			CurrentListings:   g.Listings,
-			PriceVelocity:     sanitizeFloat(priceVel),
-			ListingVelocity:   sanitizeFloat(listingVel),
-			CV:                cv,
-			Signal:            signal,
-			HistPosition:      sanitizeFloat(histPos),
-			PriceHigh7Days:       high7d,
-			PriceLow7Days:        low7d,
-			BaseListings:      baseLst,
-			BaseVelocity:      sanitizeFloat(baseVel),
-			RelativeLiquidity: sanitizeFloat(relLiq),
-			LiquidityTier:     liqTier,
-			WindowScore:       sanitizeFloat(winScore),
-			WindowSignal:      winSignal,
-			AdvancedSignal:    advSignal,
-			PriceTier:         priceTier,
-			TierAction:        tAction,
-			SellUrgency:       sUrgency,
-			SellReason:        sReason,
-			Sellability:       sellScore,
-			SellabilityLabel:  sellLabel,
-		})
-	}
-
-	return results
-}
 
 // computeRelativeLiquidity returns the gem's base listings relative to the market average.
 // Returns 1.0 (average) when market data is unavailable.
@@ -693,5 +568,15 @@ func ClassifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice flo
 // ClassifyWindowSignalWithConfig is the exported variant for use by the optimizer.
 func ClassifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel float64, baseListings int, priceVelocity float64, cfg SignalConfig) string {
 	return classifyWindowSignalWithConfig(windowScore, baseVelocity, transListingVel, baseListings, priceVelocity, cfg)
+}
+
+// TierActionFor is the exported wrapper around tierAction for handler use.
+func TierActionFor(signal, windowSignal, priceTier string) string {
+	return tierAction(signal, windowSignal, priceTier)
+}
+
+// LiquidityTierFor is the exported wrapper around liquidityTier for handler use.
+func LiquidityTierFor(marketDepth float64) string {
+	return liquidityTier(marketDepth)
 }
 

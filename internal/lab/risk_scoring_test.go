@@ -202,12 +202,13 @@ func TestQuickSellUndercutFactor_TierModifier(t *testing.T) {
 
 func TestClassifySellConfidence_SAFE(t *testing.T) {
 	// SAFE requires sellProb >= 0.8 AND stabilityDisc >= 0.85.
-	got := classifySellConfidence(0.8, 0.85)
+	noTrade := GemFeature{} // TradeDataAvailable=false → base path only
+	got, _ := classifySellConfidence(0.8, 0.85, noTrade)
 	if got != "SAFE" {
 		t.Errorf("classifySellConfidence(0.8, 0.85) = %q, want SAFE", got)
 	}
 
-	got = classifySellConfidence(0.9, 0.95)
+	got, _ = classifySellConfidence(0.9, 0.95, noTrade)
 	if got != "SAFE" {
 		t.Errorf("classifySellConfidence(0.9, 0.95) = %q, want SAFE", got)
 	}
@@ -215,6 +216,7 @@ func TestClassifySellConfidence_SAFE(t *testing.T) {
 
 func TestClassifySellConfidence_FAIR(t *testing.T) {
 	// FAIR: not SAFE and not RISKY.
+	noTrade := GemFeature{} // TradeDataAvailable=false → base path only
 	tests := []struct {
 		sellProb     float64
 		stabilityDsc float64
@@ -227,7 +229,7 @@ func TestClassifySellConfidence_FAIR(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := classifySellConfidence(tt.sellProb, tt.stabilityDsc)
+		got, _ := classifySellConfidence(tt.sellProb, tt.stabilityDsc, noTrade)
 		if got != "FAIR" {
 			t.Errorf("classifySellConfidence(%f, %f) = %q, want FAIR",
 				tt.sellProb, tt.stabilityDsc, got)
@@ -237,12 +239,13 @@ func TestClassifySellConfidence_FAIR(t *testing.T) {
 
 func TestClassifySellConfidence_RISKY(t *testing.T) {
 	// RISKY: sellProb < 0.5 AND stabilityDisc < 0.8.
-	got := classifySellConfidence(0.4, 0.6)
+	noTrade := GemFeature{} // TradeDataAvailable=false → base path only
+	got, _ := classifySellConfidence(0.4, 0.6, noTrade)
 	if got != "RISKY" {
 		t.Errorf("classifySellConfidence(0.4, 0.6) = %q, want RISKY", got)
 	}
 
-	got = classifySellConfidence(0.3, 0.5)
+	got, _ = classifySellConfidence(0.3, 0.5, noTrade)
 	if got != "RISKY" {
 		t.Errorf("classifySellConfidence(0.3, 0.5) = %q, want RISKY", got)
 	}
@@ -273,7 +276,7 @@ func TestIntegration_RiskAdjustedValueNonZero(t *testing.T) {
 	}
 
 	mc := testSignalMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, history, mc, nil)
+	features := ComputeGemFeatures(snapTime, gems, history, mc, nil, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))
@@ -340,7 +343,7 @@ func TestIntegration_NoHistoryProducesValidRiskFields(t *testing.T) {
 	}
 
 	mc := testSignalMarketContext()
-	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil, nil)
 
 	if len(features) != 1 {
 		t.Fatalf("got %d features, want 1", len(features))

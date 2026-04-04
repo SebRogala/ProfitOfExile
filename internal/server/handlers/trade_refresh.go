@@ -74,16 +74,16 @@ func TradeRefresh(gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache
 			minTierRank = rank
 		}
 
-		// Build tier set from lab cache.
+		// Build tier set from lab cache (v2 GemSignals).
 		var tierSet map[string]bool
 		if minTierRank > 0 {
 			tierSet = make(map[string]bool)
-			for _, t := range labCache.Trends() {
-				if t.Variant != body.Variant {
+			for _, s := range labCache.GemSignals() {
+				if s.Variant != body.Variant {
 					continue
 				}
-				if tierRank[t.PriceTier] >= minTierRank {
-					tierSet[t.Name] = true
+				if tierRank[s.Tier] >= minTierRank {
+					tierSet[s.Name] = true
 				}
 			}
 			if len(tierSet) == 0 {
