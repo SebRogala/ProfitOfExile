@@ -104,7 +104,8 @@ func main() {
 
 		res, err := processSnapshot(ctx, pool, snapTime)
 		if err != nil {
-			continue // skip failures silently
+			fmt.Fprintf(os.Stderr, "  Skip %s: %v\n", snapTime.Format("2006-01-02 15:04"), err)
+			continue
 		}
 		if res != nil {
 			allResults = append(allResults, *res)
@@ -224,6 +225,7 @@ func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time
 		 ORDER BY name, time
 		 LIMIT 500000`, cutoff, upTo)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "  loadBaseHistoryUpTo: query error: %v\n", err)
 		return nil
 	}
 	defer rows.Close()
@@ -237,6 +239,9 @@ func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time
 			continue
 		}
 		result[name] = append(result[name], lab.PricePoint{Time: t, Listings: listings})
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "  loadBaseHistoryUpTo: rows error: %v\n", err)
 	}
 	return result
 }
@@ -283,6 +288,10 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, target time.Time
 			r.Signals = trade.ComputeSignals(r.Listings)
 		}
 		results = append(results, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "  loadTradeDataNear: rows error: %v\n", err)
 	}
 
 	if len(results) == 0 {
@@ -555,7 +564,12 @@ func buildOutcomes(currentGems []lab.GemPrice, futureGems map[int][]lab.GemPrice
 }
 
 // scoreSignal evaluates whether a signal's prediction was correct for both timeframes.
+// UNCERTAIN signals are excluded entirely — they have no directional prediction to evaluate.
 func scoreSignal(signal, tier string, outcome *gemOutcome, hasTrade bool) []signalScore {
+	if signal == "UNCERTAIN" {
+		return nil
+	}
+
 	var scores []signalScore
 
 	if outcome.hasShort {
@@ -584,6 +598,7 @@ func scoreSignal(signal, tier string, outcome *gemOutcome, hasTrade bool) []sign
 }
 
 // evaluateSignal checks if the actual price/listing movement matches the signal's prediction.
+// UNCERTAIN is handled upstream in scoreSignal (excluded entirely, not passed here).
 //
 // Signal expectations:
 //   - BREWING:  short-term price rise or stable + listings drop or stable = correct
@@ -592,7 +607,6 @@ func scoreSignal(signal, tier string, outcome *gemOutcome, hasTrade bool) []sign
 //   - RECOVERY: price stabilization or rise = correct
 //   - STABLE:   small changes in both = correct
 //   - TRAP:     high volatility (large |price change|) = correct
-//   - UNCERTAIN: always scored as neutral (not counted)
 //
 // Medium-term: stabilization or continued trend = acceptable (signal was about window of opportunity).
 func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe string) bool {
@@ -614,8 +628,8 @@ func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe s
 		if timeframe == "short" {
 			return priceDelta < -smallThresh
 		}
-		// Medium-term: continued drop or stabilization at lower level.
-		return priceDelta < smallThresh
+		// Medium-term: continued drop or flat — any meaningful rise disproves the signal.
+		return priceDelta <= 0
 
 	case "HERD":
 		// Listings should spike (rising supply).
@@ -641,10 +655,6 @@ func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe s
 		// High volatility — large absolute price movement confirms the signal.
 		return math.Abs(priceDelta) > smallThresh
 
-	case "UNCERTAIN":
-		// Not scored — always "correct" to avoid polluting accuracy.
-		return true
-
 	default:
 		return true // unknown signals not penalized
 	}
@@ -659,9 +669,9 @@ type BacktestReport struct {
 	SnapshotsProcessed int                      `json:"snapshots_processed"`
 	TotalScores        int                      `json:"total_scores"`
 	GemsWithTrade      int                      `json:"gems_with_trade_data"`
-	BySignal           map[string]*SignalReport  `json:"by_signal"`
-	ByTier             map[string]*TierReport    `json:"by_tier"`
-	V2vsV3             *ComparisonReport         `json:"v2_vs_v3"`
+	BySignal           map[string]*SignalReport `json:"by_signal"`
+	ByTier             map[string]*TierReport   `json:"by_tier"`
+	V2vsV3             *ComparisonReport        `json:"v2_vs_v3"`
 }
 
 // SignalReport holds accuracy stats for a single signal type.
@@ -674,15 +684,8 @@ type SignalReport struct {
 	MedAccPct    float64 `json:"med_accuracy_pct"`
 }
 
-// TierReport holds accuracy stats for a single tier.
-type TierReport struct {
-	ShortTotal   int     `json:"short_total"`
-	ShortCorrect int     `json:"short_correct"`
-	ShortAccPct  float64 `json:"short_accuracy_pct"`
-	MedTotal     int     `json:"med_total"`
-	MedCorrect   int     `json:"med_correct"`
-	MedAccPct    float64 `json:"med_accuracy_pct"`
-}
+// TierReport holds accuracy stats for a single tier (same shape as SignalReport).
+type TierReport = SignalReport
 
 // ComparisonReport compares v2 (no trade) vs v3 (trade-enriched) accuracy.
 type ComparisonReport struct {
