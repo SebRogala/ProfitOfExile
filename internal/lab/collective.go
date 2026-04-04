@@ -366,7 +366,7 @@ func BuildCompareResults(
 			cr.PriceVelocity = f.VelLongPrice
 			cr.ListingVelocity = f.VelLongListing
 			cr.HistPosition = f.HistPosition
-			cr.BaseListings = int(f.MarketDepth)
+			cr.BaseListings = 0 // TODO: base gem listings not available in v2 pipeline — requires separate query
 			cr.LiquidityTier = liquidityTier(f.MarketDepth)
 			cr.TransListings = f.Listings
 			cr.Low7Days = f.Low7Days

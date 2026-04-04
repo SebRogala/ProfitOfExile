@@ -388,13 +388,13 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 		if !usedCache {
 			var err error
-			signals, err = repo.LatestGemSignals(r.Context(), "", "", 50000)
+			signals, err = repo.LatestGemSignals(r.Context(), variant, tier, 50000)
 			if err != nil {
 				slog.Error("trend analysis: gem signals query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
-			features, err = repo.LatestGemFeatures(r.Context(), "", "", 50000)
+			features, err = repo.LatestGemFeatures(r.Context(), variant, tier, 50000)
 			if err != nil {
 				slog.Error("trend analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -605,6 +605,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				rr.PriceLow7Days = f.Low7Days
 				rr.RelativeLiquidity = f.RelativeListings
 				rr.LiquidityTier = lab.LiquidityTierFor(f.MarketDepth)
+				// BaseListings and BaseVelocity intentionally left at zero —
+				// TODO: base gem listings/velocity not available in v2 pipeline, requires separate query.
 			}
 
 			if td, ok := trends[gemKey{s.Name, s.Variant}]; ok {
