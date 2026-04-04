@@ -680,7 +680,7 @@ func newTestTradeCache(entries map[string]*trade.TradeLookupResult) *trade.Trade
 	return tc
 }
 
-func TestComputeGemFeatures_NilTradeCache_IdenticalToV2(t *testing.T) {
+func TestComputeGemFeatures_NilTradeCache_NoTradeFields(t *testing.T) {
 	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
 
 	gems := []GemPrice{

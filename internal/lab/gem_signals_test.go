@@ -1007,32 +1007,20 @@ func TestClassifySellConfidence_STALE_SafeToFair(t *testing.T) {
 	}
 }
 
-func TestClassifySellConfidence_FRESH_RiskyToFair(t *testing.T) {
+func TestClassifySellConfidence_FRESH_NoPromotionWhenSellProbTooLow(t *testing.T) {
+	// FRESH promotion requires sellProb >= 0.5, but RISKY base requires sellProb < 0.5,
+	// so these conditions are mutually exclusive for the base classification.
+	// This test confirms FRESH does not promote when sellProb is below the threshold.
 	f := GemFeature{
 		TradeDataAvailable:     true,
 		TradeDataAge:           60,
 		TradeCheapestStaleness: "FRESH",
 	}
-	// Base: RISKY (sellProb < 0.5 AND stabilityDisc < 0.8). But FRESH with sellProb >= 0.5
-	// requires adjusting condition: need sellProb < 0.5 for RISKY *but* >= 0.5 for promotion.
-	// Let's use borderline: sellProb=0.45, stabilityDisc=0.75 → RISKY base.
-	// But FRESH promotion requires sellProb >= 0.5 AND stabilityDisc >= 0.7.
-	// So we need sellProb in [0.5, ...) and stabilityDisc in [0.7, 0.8).
-	// With sellProb=0.5 and stabilityDisc=0.75 → base would be FAIR (not RISKY).
-	// Actually RISKY requires sellProb < 0.5 AND stabilityDisc < 0.8.
-	// For the promotion to trigger: result == "RISKY" && sellProb >= 0.5 && stabilityDisc >= 0.7.
-	// But if sellProb >= 0.5, then (sellProb < 0.5 && stabilityDisc < 0.8) is false → base is FAIR.
-	// To get base=RISKY: sellProb=0.4, stabilityDisc=0.7. But then sellProb < 0.5 → promotion blocked.
-	// This means FRESH promotion only fires when someone manually passes in a RISKY result.
-	// Let's test the case where base would be RISKY but stabilityDisc is decent: 0.49, 0.79.
-	// That IS RISKY (0.49 < 0.5 && 0.79 < 0.8). Promotion needs sellProb >= 0.5 — fails.
-	// The only way is: 0.49, 0.75 → RISKY, but 0.49 < 0.5 → no promotion.
-	// In practice, FRESH RISKY→FAIR requires a trade-adjusted sellProb that stays RISKY.
-	// Let's verify the no-promotion case instead.
+	// sellProb=0.49, stabilityDisc=0.75 → RISKY base (both < 0.5 and < 0.8).
+	// FRESH promotion needs sellProb >= 0.5 — not met.
 	got, _ := classifySellConfidence(0.49, 0.75, f)
-	// Base is RISKY. sellProb(0.49) < 0.5, so FRESH promotion doesn't fire.
 	if got != "RISKY" {
-		t.Errorf("FRESH no-promotion: got %q, want RISKY (sellProb too low for promotion)", got)
+		t.Errorf("FRESH no-promotion: got %q, want RISKY (sellProb 0.49 below 0.5 threshold)", got)
 	}
 }
 
