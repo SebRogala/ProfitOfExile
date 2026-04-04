@@ -17,9 +17,11 @@ type SignalConfig struct {
 	StablePriceVelPct   float64 // max |priceVel%| for STABLE (default: 3)
 	StableListingVelPct float64 // max |listingVel%| for STABLE (default: 5)
 
-	// DUMPING/RECOVERY thresholds (percentage-based)
+	// DUMPING/DEMAND/RECOVERY thresholds (percentage-based)
 	DumpPriceVelPct       float64 // price velocity % for DUMPING (default: -8)
 	DumpListingVelPct     float64 // listing velocity % for DUMPING (default: 10)
+	DemandListingVelPct   float64 // max listing velocity % for DEMAND — significant drain (default: -15)
+	DemandPriceVelPct     float64 // min price velocity % for DEMAND — price not crashing (default: -5)
 	RecoveryListingVelPct float64 // min listing drain % for RECOVERY (default: -8)
 	RecoveryMaxListings   int     // max absolute listings for RECOVERY — thin markets only (default: 20)
 
@@ -51,6 +53,8 @@ func DefaultSignalConfig() SignalConfig {
 		StableListingVelPct:  5,
 		DumpPriceVelPct:      -8,
 		DumpListingVelPct:    10,
+		DemandListingVelPct:   -15,
+		DemandPriceVelPct:     -5,
 		RecoveryListingVelPct: -8,
 		RecoveryMaxListings:   20,
 		BrewingMinPVel:       2,

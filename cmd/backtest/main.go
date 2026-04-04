@@ -639,6 +639,14 @@ func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe s
 		// Medium-term: continued supply rise or stabilization.
 		return listingDelta >= -smallThresh
 
+	case "DEMAND":
+		// Listings should continue dropping (supply absorbed).
+		if timeframe == "short" {
+			return listingDelta < -smallThresh
+		}
+		// Medium-term: continued drain or stabilization — any large supply spike disproves.
+		return listingDelta <= smallThresh
+
 	case "RECOVERY":
 		// Price should stabilize or rise.
 		if timeframe == "short" {

@@ -16,7 +16,7 @@ type TrendResult struct {
 	PriceVelocity   float64 // chaos/hour, computed from last 4 data points
 	ListingVelocity float64 // listings/hour, computed from last 4 data points
 	CV              float64 // coefficient of variation (%)
-	Signal          string  // TRAP, DUMPING, HERD, RECOVERY, STABLE, UNCERTAIN (priority order)
+	Signal          string  // TRAP, DUMPING, HERD, DEMAND, RECOVERY, STABLE, UNCERTAIN (priority order)
 	HistPosition    float64 // 0-100 percentile vs 7-day range
 	PriceHigh7Days     float64
 	PriceLow7Days      float64
@@ -82,6 +82,11 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 	// HERD at peak = override everything to UNDERCUT (catches Lacerate peak scenario)
 	if signal == "HERD" && histPosition > 90 {
 		return "UNDERCUT", "HERD at historical peak — undercut 10-15% NOW before crash"
+	}
+
+	// DEMAND = supply being absorbed, sell at market price — no need to undercut.
+	if signal == "DEMAND" {
+		return "SELL_NOW", "Active demand — list at market price, buyers are absorbing supply"
 	}
 
 	// DUMPING: thin market = sell immediately, liquid market = undercut (likely noise).
@@ -198,9 +203,12 @@ func sellability(transListings int, listingVel, priceVel, cv float64, signal str
 		s -= 10
 	}
 
-	// HERD/DUMPING = price is moving, creates urgency for buyers
+	// Signal-based adjustments
 	if signal == "HERD" {
 		s += 5 // momentum creates FOMO buyers
+	}
+	if signal == "DEMAND" {
+		s += 15 // active buyer absorption — your gem will sell
 	}
 	if signal == "DUMPING" || signal == "TRAP" {
 		s -= 20 // buyers avoid these
@@ -238,6 +246,8 @@ func tierAction(signal, windowSignal, priceTier string) string {
 		switch signal {
 		case "HERD":
 			return "WATCH — early stage, monitor closely"
+		case "DEMAND":
+			return "SELL — active demand, list at market price"
 		case "DUMPING":
 			return "SELL IMMEDIATELY"
 		}
@@ -251,6 +261,8 @@ func tierAction(signal, windowSignal, priceTier string) string {
 		switch signal {
 		case "HERD":
 			return "UNDERCUT — herd arrived, sell into pressure"
+		case "DEMAND":
+			return "SELL — buyers active, list at market price"
 		case "DUMPING":
 			return "SELL IMMEDIATELY"
 		case "UNCERTAIN":
@@ -266,6 +278,8 @@ func tierAction(signal, windowSignal, priceTier string) string {
 		switch signal {
 		case "HERD":
 			return "SELL — move is over, exit position"
+		case "DEMAND":
+			return "SELL — demand active, good sell window"
 		case "UNCERTAIN":
 			return "MONITOR — direction unclear, check listings"
 		}
@@ -548,6 +562,12 @@ func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice flo
 	}
 	if pVelPct > cfg.HERDPriceVelPct && lVelPct > cfg.HERDListingVelPct {
 		return "HERD"
+	}
+	// DEMAND: listings draining significantly while price holds — supply being absorbed by buyers.
+	// Unlike RECOVERY, works in any market thickness (not just thin markets <20 listings).
+	// The mirror of DUMPING: DUMPING = sellers flooding, DEMAND = buyers absorbing.
+	if lVelPct < cfg.DemandListingVelPct && pVelPct > cfg.DemandPriceVelPct {
+		return "DEMAND"
 	}
 	// RECOVERY: price drifting down slowly, thin listings dropping = supply exhaustion (bottom forming).
 	// Requires thin market (absolute listing cap) + listing drain (relative %).
