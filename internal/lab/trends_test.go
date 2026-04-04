@@ -258,7 +258,9 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		{"preHERD: pVel=20.01% lVel=5.01% is HERD", 20.01, 5.01, 30, lst, "HERD"},
 		// RECOVERY boundaries: pVel% in (-8%,0), lVel% < -8%, listings < 20
 		{"RECOVERY: pVel=-5% lVel=-9 lst=10", -5, -2, 30, 10, "RECOVERY"}, // lVel=-2/10*100=-20%
-		{"DEMAND: pVel=0 lVel=-20% lst=10", 0, -2, 30, 10, "DEMAND"}, // lVelPct=-20%<-15%, pVelPct=0%>-5% → DEMAND
+		{"DEMAND: pVel=0 lVel=-20% lst=10 abs<5", 0, -2, 30, 10, "UNCERTAIN"},    // lVelPct=-20% but absVel=2 < floor(5) → noise
+		{"DEMAND: pVel=0 lVel=-10 lst=50", 0, -10, 30, 50, "DEMAND"},           // lVelPct=-20%, absVel=10 >= 5 → real signal
+		{"DEMAND: pVel=-4% lVel=-20 lst=100", -4, -20, 30, 100, "DEMAND"},       // lVelPct=-20%<-15%, pVelPct=-4%>-5%, absVel=20 >= 5 ✓
 		{"RECOVERY: pVel=-8% not RECOVERY (>= dump)", -8, -2, 30, 10, "UNCERTAIN"},
 		{"RECOVERY: lst=20 not RECOVERY", -5, -2, 30, 20, "UNCERTAIN"},
 		{"RECOVERY: lst=19 is RECOVERY", -5, -2, 30, 19, "RECOVERY"}, // lVel=-2/19*100=-10.5%

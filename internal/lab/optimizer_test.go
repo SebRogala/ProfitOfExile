@@ -1052,20 +1052,17 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 	t0 := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)
 	mc := sweepMarketContext(0, 10, 0, 5)
 
-	// classifySignal uses VelLongPrice/VelLongListing and converts to pct via Chaos/Listings.
-	// Using Chaos=100 so absolute vel = percentage for convenience.
-	// STABLE: |pVelPct| < 3 AND |lVelPct| < 5
-	// DUMPING: pVelPct < -8 AND lVelPct > 10
-	// UNCERTAIN: anything else that doesn't match a specific signal
+	// classifySignal converts to pct via Chaos/Listings. Absolute listing velocity
+	// must also pass floor checks (>=3 for DUMPING, >=5 for HERD/DEMAND).
+	// Using Chaos=100 and Listings=50 for realistic absolute values.
 
 	evals := []EvalPoint{
-		// STABLE: predicts FLAT, actual FLAT -> correct
-		// pVelPct=0.1%, lVelPct=1% → STABLE
-		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 0.1, VelLongListing: 0.1, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
-		// DUMPING: pVelPct=-10% < -8, lVelPct=20% > 10 -> predicts DOWN, actual DOWN -> correct
-		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: -10, VelLongListing: 2, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
-		// UNCERTAIN: pVelPct=4% (not STABLE: |4|>3), lVelPct=50% → not HERD/DUMPING → UNCERTAIN, predicts FLAT, actual FLAT -> correct
-		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 4, VelLongListing: 5, CV: 0.1, Listings: 10, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
+		// STABLE: pVelPct=0.1%, lVelPct=0.2% → STABLE, predicts FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 0.1, VelLongListing: 0.1, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
+		// DUMPING: pVelPct=-10% < -8, lVelPct=12% > 10, absVel=6 >= 3 -> predicts DOWN, actual DOWN -> correct
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: -10, VelLongListing: 6, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
+		// UNCERTAIN: pVelPct=4% (>3 so not STABLE), lVelPct=2% → not HERD/DUMPING/DEMAND → UNCERTAIN, predicts FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 4, VelLongListing: 1, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
 	}
 
 	report := ValidateDefaults(evals, mc)
