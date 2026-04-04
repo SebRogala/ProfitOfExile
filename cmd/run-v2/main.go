@@ -34,7 +34,7 @@ func main() {
 	repo := lab.NewRepository(pool)
 	cache := lab.NewCache()
 	throttler := lab.NewThrottler("", "", 1*time.Second, cache)
-	analyzer := lab.NewAnalyzer(repo, throttler, cache)
+	analyzer := lab.NewAnalyzer(repo, throttler, cache, nil)
 
 	if *backfill {
 		runBackfill(ctx, pool, repo, analyzer, *hours)
@@ -107,7 +107,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		normalizedHistory := lab.NormalizeHistoryDepthGated(history, mc, depthMap)
 
 		// Compute gem features.
-		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
+		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, nil)
 		repo.SaveGemFeatures(ctx, features)
 
 		// Compute gem signals (need base history).

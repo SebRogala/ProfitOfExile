@@ -102,10 +102,8 @@ func main() {
 	layoutRepo := lab.NewLayoutRepository(pool)
 	labCache := lab.NewCache()
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
-	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache)
 
-	// Trade cache + submit endpoint — always available so the desktop app can
-	// submit trade results and CompareAnalysis can enrich responses.
+	// Trade cache — created before analyzer so the v2 pipeline can use it.
 	tradeCacheMax := 200
 	if v := os.Getenv("TRADE_CACHE_MAX"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -113,6 +111,8 @@ func main() {
 		}
 	}
 	tradeCache := trade.NewTradeCache(tradeCacheMax)
+
+	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache, tradeCache)
 	var tradeRepo *trade.Repository
 	if pool != nil {
 		tradeRepo = trade.NewRepository(pool)

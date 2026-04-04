@@ -732,7 +732,7 @@ func TestPrecomputeMarketDepth_ConsistencyWithFeatures(t *testing.T) {
 	}
 
 	// Compute features.
-	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil)
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil, nil)
 	// Compute depth map.
 	depthMap := PrecomputeMarketDepth(gems, mc)
 
