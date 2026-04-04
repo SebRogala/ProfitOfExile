@@ -140,7 +140,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			if err != nil {
 				slog.Error("collective analysis: sparkline query failed", "error", err)
 			} else {
-				sparklines = normalizeSparklines(sp, mc, sparkVariant)
+				sparklines = sp // Raw prices — normalization creates edge artifacts
 			}
 		} else {
 			// ALL variants — group by each gem's own variant.
@@ -154,8 +154,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 					slog.Error("collective analysis: sparkline query failed", "variant", v, "error", err)
 					continue
 				}
-				normalized := normalizeSparklines(sp, mc, v)
-				for k, pts := range normalized {
+				for k, pts := range sp {
 					sparklines[k] = pts
 				}
 			}
@@ -356,15 +355,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			warnings = append(warnings, "Sparkline data temporarily unavailable")
 		}
 
-		// Load MarketContext for sparkline normalization.
-		var compareMC *lab.MarketContext
-		if cache != nil {
-			compareMC = cache.MarketContext()
-		}
-		if compareMC == nil {
-			compareMC, _ = repo.LatestMarketContext(r.Context())
-		}
-		sparklines = normalizeSparklines(sparklines, compareMC, variant)
+		// Sparkline normalization removed — temporal coefficients create edge artifacts
 
 		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant)
 

@@ -546,7 +546,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					transSparklines = make(map[string][]lab.SparklinePoint)
 				}
 				// Normalize trans sparkline prices with temporal coefficients.
-				transSparklines = normalizeSparklines(transSparklines, trendMC, v)
+				// Raw prices — normalization creates edge artifacts
 
 				baseSparklines, err := repo.SparklineData(r.Context(), g.baseNames, v, 24*7)
 				if err != nil {
@@ -554,7 +554,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 					baseSparklines = make(map[string][]lab.SparklinePoint)
 				}
 				// Normalize base sparklines consistently with trans sparklines.
-				baseSparklines = normalizeSparklines(baseSparklines, trendMC, v)
+				// Raw prices — normalization creates edge artifacts
 
 				for idx, key := range g.gems {
 					td := trendData{}
