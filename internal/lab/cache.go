@@ -19,7 +19,6 @@ type Cache struct {
 	fontPremium  []FontResult
 	fontJackpot  []FontResult
 	quality      []QualityResult
-	trends      []TrendResult
 	gemNames    []string // unique transfigured gem names, sorted
 	lastUpdated time.Time
 	nextFetch   time.Time
@@ -78,14 +77,6 @@ func (c *Cache) SetQuality(results []QualityResult) {
 	c.lastUpdated = time.Now()
 }
 
-// SetTrends replaces the cached trend results.
-func (c *Cache) SetTrends(results []TrendResult) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.trends = results
-	c.lastUpdated = time.Now()
-}
-
 // Transfigure returns the cached transfigure results (nil if empty).
 func (c *Cache) Transfigure() []TransfigureResult {
 	c.mu.RLock()
@@ -126,13 +117,6 @@ func (c *Cache) Quality() []QualityResult {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.quality
-}
-
-// Trends returns the cached trend results (nil if empty).
-func (c *Cache) Trends() []TrendResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.trends
 }
 
 // GemNamesSearch returns transfigured gem names matching all query words (case-insensitive).

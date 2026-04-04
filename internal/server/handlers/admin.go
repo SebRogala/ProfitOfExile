@@ -28,9 +28,6 @@ func AdminRecalculate(analyzer *lab.Analyzer) http.HandlerFunc {
 			if err := analyzer.RunQuality(ctx); err != nil {
 				slog.Error("admin recalculate: quality failed", "error", err)
 			}
-			if err := analyzer.RunTrends(ctx); err != nil {
-				slog.Error("admin recalculate: trends failed", "error", err)
-			}
 			if err := analyzer.RecomputeLatestV2(ctx); err != nil {
 				slog.Error("admin recalculate: v2 failed", "error", err)
 			}

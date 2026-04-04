@@ -454,135 +454,6 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, variant strin
 	return result, nil
 }
 
-// SaveTrendResults batch-inserts trend analysis results.
-func (r *Repository) SaveTrendResults(ctx context.Context, results []TrendResult) (int, error) {
-	if len(results) == 0 {
-		return 0, nil
-	}
-
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	batch := &pgx.Batch{}
-	for _, r := range results {
-		batch.Queue(
-			`INSERT INTO trend_results
-			 (time, name, variant, gem_color, current_price, current_listings,
-			  price_velocity, listing_velocity, cv, signal, hist_position,
-			  price_high_7d, price_low_7d,
-			  base_listings, base_velocity, relative_liquidity, liquidity_tier,
-			  window_score, window_signal, advanced_signal, price_tier, tier_action,
-			  sell_urgency, sell_reason, sellability, sellability_label)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
-			 ON CONFLICT DO NOTHING`,
-			r.Time, r.Name, r.Variant, r.GemColor, r.CurrentPrice, r.CurrentListings,
-			r.PriceVelocity, r.ListingVelocity, r.CV, r.Signal, r.HistPosition,
-			r.PriceHigh7Days, r.PriceLow7Days,
-			r.BaseListings, r.BaseVelocity, r.RelativeLiquidity, r.LiquidityTier,
-			r.WindowScore, r.WindowSignal, r.AdvancedSignal, r.PriceTier, r.TierAction,
-			r.SellUrgency, r.SellReason, r.Sellability, r.SellabilityLabel,
-		)
-	}
-
-	br := tx.SendBatch(ctx, batch)
-	inserted := 0
-	for range results {
-		ct, err := br.Exec()
-		if err != nil {
-			br.Close()
-			return 0, fmt.Errorf("lab repo: insert trend result: %w", err)
-		}
-		inserted += int(ct.RowsAffected())
-	}
-	if err := br.Close(); err != nil {
-		return 0, fmt.Errorf("lab repo: close batch: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("lab repo: commit trend results: %w", err)
-	}
-
-	return inserted, nil
-}
-
-// LatestTrendResults returns the most recent trend results, optionally filtered by variant, signal, window, advanced, and/or tier.
-func (r *Repository) LatestTrendResults(ctx context.Context, variant, signal, window, advanced, tier string, limit int) ([]TrendResult, error) {
-	query := `
-		SELECT time, name, variant, gem_color, current_price, current_listings,
-		       price_velocity, listing_velocity, cv, signal, hist_position,
-		       price_high_7d, price_low_7d,
-		       base_listings, base_velocity, relative_liquidity, liquidity_tier,
-		       window_score, window_signal, COALESCE(advanced_signal, ''),
-		       COALESCE(price_tier, 'LOW'), COALESCE(tier_action, ''),
-		       COALESCE(sell_urgency, ''), COALESCE(sell_reason, ''),
-		       COALESCE(sellability, 50), COALESCE(sellability_label, 'MODERATE')
-		FROM trend_results
-		WHERE time = (SELECT MAX(time) FROM trend_results)`
-	args := []any{}
-	argIdx := 1
-
-	if variant != "" {
-		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
-		args = append(args, variant)
-		argIdx++
-	}
-	if signal != "" {
-		query += fmt.Sprintf(` AND signal = $%d`, argIdx)
-		args = append(args, signal)
-		argIdx++
-	}
-	if window != "" {
-		query += fmt.Sprintf(` AND window_signal = $%d`, argIdx)
-		args = append(args, window)
-		argIdx++
-	}
-	if advanced != "" {
-		query += fmt.Sprintf(` AND advanced_signal = $%d`, argIdx)
-		args = append(args, advanced)
-		argIdx++
-	}
-	if tier != "" {
-		query += fmt.Sprintf(` AND price_tier = $%d`, argIdx)
-		args = append(args, tier)
-		argIdx++
-	}
-
-	query += fmt.Sprintf(` ORDER BY cv DESC, current_price DESC LIMIT $%d`, argIdx)
-	args = append(args, limit)
-
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("lab repo: query trend results: %w", err)
-	}
-	defer rows.Close()
-
-	var results []TrendResult
-	for rows.Next() {
-		var tr TrendResult
-		if err := rows.Scan(&tr.Time, &tr.Name, &tr.Variant, &tr.GemColor,
-			&tr.CurrentPrice, &tr.CurrentListings,
-			&tr.PriceVelocity, &tr.ListingVelocity, &tr.CV, &tr.Signal, &tr.HistPosition,
-			&tr.PriceHigh7Days, &tr.PriceLow7Days,
-			&tr.BaseListings, &tr.BaseVelocity, &tr.RelativeLiquidity, &tr.LiquidityTier,
-			&tr.WindowScore, &tr.WindowSignal, &tr.AdvancedSignal,
-			&tr.PriceTier, &tr.TierAction,
-			&tr.SellUrgency, &tr.SellReason,
-			&tr.Sellability, &tr.SellabilityLabel); err != nil {
-			return nil, fmt.Errorf("lab repo: scan trend result: %w", err)
-		}
-		results = append(results, tr)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("lab repo: trend rows iteration: %w", err)
-	}
-
-	return results, nil
-}
-
 // LatestTransfigureResults returns the most recent analysis results, optionally filtered by variant.
 func (r *Repository) LatestTransfigureResults(ctx context.Context, variant string, limit int) ([]TransfigureResult, error) {
 	query := `
@@ -728,13 +599,16 @@ type SignalChange struct {
 }
 
 // SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
+// Queries gem_signals joined with gem_features for velocity and price data.
 func (r *Repository) SignalHistory(ctx context.Context, name, variant string, limit int) ([]SignalChange, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT time, signal, window_signal, COALESCE(advanced_signal, ''),
-		       price_velocity, listing_velocity, current_price, current_listings
-		FROM trend_results
-		WHERE name = $1 AND variant = $2
-		ORDER BY time DESC
+		SELECT s.time, s.signal, s.window_signal, COALESCE(s.advanced_signal, ''),
+		       COALESCE(f.vel_long_price, 0), COALESCE(f.vel_long_listing, 0),
+		       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
+		FROM gem_signals s
+		LEFT JOIN gem_features f ON f.time = s.time AND f.name = s.name AND f.variant = s.variant
+		WHERE s.name = $1 AND s.variant = $2
+		ORDER BY s.time DESC
 		LIMIT $3`, name, variant, limit)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: signal history: %w", err)
