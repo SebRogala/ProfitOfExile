@@ -120,6 +120,9 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 			tradeKey := trade.CacheKey(g.Name, g.Variant)
 			if tr, ok := tradeSnap[tradeKey]; ok && tr != nil {
 				ageSeconds := snapTime.Sub(tr.FetchedAt).Seconds()
+				if ageSeconds < 0 {
+					ageSeconds = 0 // guard against clock skew (FetchedAt slightly in future)
+				}
 				weight := tradeDataWeight(ageSeconds)
 				if weight > 0 {
 					f.TradeDataAvailable = true
