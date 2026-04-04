@@ -165,7 +165,10 @@ func SanitizeLayout(layout *LabLayout) {
 	layout.Difficulty = strings.TrimSpace(layout.Difficulty)
 	layout.Date = strings.TrimSpace(layout.Date)
 	for i := range layout.Rooms {
-		layout.Rooms[i].Name = strings.TrimSpace(layout.Rooms[i].Name)
+		layout.Rooms[i].Name = strings.TrimSpace(htmlTagPattern.ReplaceAllString(layout.Rooms[i].Name, ""))
+		if layout.Rooms[i].Name == "" || layout.Rooms[i].Name == "manually added" {
+			layout.Rooms[i].Name = "unknown room"
+		}
 		layout.Rooms[i].AreaCode = strings.TrimSpace(layout.Rooms[i].AreaCode)
 		layout.Rooms[i].ID = strings.TrimSpace(layout.Rooms[i].ID)
 		for j := range layout.Rooms[i].Contents {
