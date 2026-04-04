@@ -207,12 +207,14 @@ func quickSellUndercutFactor(listings int, tier, signal string) float64 {
 // RISKY: at least one factor is poor.
 // FAIR: everything in between.
 //
+// Non-trade override (always applied):
+//   - CASCADE regime: always RISKY (listing-depth-based, not trade-data-based)
+//
 // Trade overrides (applied when TradeDataAvailable && TradeDataAge < 5400):
 //   - MONOPOLY: SAFE→FAIR, FAIR→RISKY (hard override)
-//   - CASCADE regime: always RISKY (hard override)
 //   - PriceOutlier + MONOPOLY: always RISKY
 //   - STALE cheapest: SAFE→FAIR
-//   - FRESH cheapest on borderline RISKY: promote to FAIR if sellProb >= 0.5
+//   - FRESH cheapest on borderline RISKY: promote to FAIR if sellProb >= 0.5 && stabilityDisc >= 0.7
 func classifySellConfidence(sellProb, stabilityDisc float64, f GemFeature) (string, string) {
 	// Base classification.
 	var base string
@@ -224,6 +226,12 @@ func classifySellConfidence(sellProb, stabilityDisc float64, f GemFeature) (stri
 		base = "FAIR"
 	}
 
+	// CASCADE regime: always RISKY regardless of trade data availability.
+	// MarketDepth is listing-depth-based, not trade-data-based.
+	if f.MarketRegime == "CASCADE" {
+		return "RISKY", "CASCADE regime: always RISKY"
+	}
+
 	// No trade data or stale (>90min) — return base.
 	if !f.TradeDataAvailable || f.TradeDataAge >= 5400 {
 		return base, ""
@@ -231,11 +239,6 @@ func classifySellConfidence(sellProb, stabilityDisc float64, f GemFeature) (stri
 
 	result := base
 	var note string
-
-	// CASCADE regime: always RISKY (hard override).
-	if f.MarketRegime == "CASCADE" {
-		return "RISKY", "CASCADE regime: always RISKY"
-	}
 
 	// MONOPOLY hard overrides.
 	if f.TradeSellerConcentration == "MONOPOLY" {
@@ -259,8 +262,10 @@ func classifySellConfidence(sellProb, stabilityDisc float64, f GemFeature) (stri
 		note = "STALE cheapest listing: downgraded from SAFE to FAIR"
 	}
 
-	// FRESH cheapest on borderline RISKY: promote if sell probability is decent.
-	if f.TradeCheapestStaleness == "FRESH" && result == "RISKY" && sellProb >= 0.5 {
+	// FRESH cheapest on borderline RISKY: promote if sell probability AND stability are decent.
+	// Requires sellProb >= 0.5 to confirm price pull, AND stabilityDisc >= 0.7 to exclude
+	// deeply volatile gems (the minimum stabilityDiscount floor from stabilityDiscount()).
+	if f.TradeCheapestStaleness == "FRESH" && result == "RISKY" && sellProb >= 0.5 && stabilityDisc >= 0.7 {
 		result = "FAIR"
 		note = "FRESH cheapest listing + decent sell probability: promoted from RISKY to FAIR"
 	}
