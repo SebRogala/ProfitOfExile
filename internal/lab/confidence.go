@@ -50,7 +50,7 @@ func clampInt(v, min, max int) int {
 // below coin flip (50%).
 func signalBaseConfidence(signal string) float64 {
 	switch signal {
-	case "HERD", "DUMPING":
+	case "HERD", "DUMPING", "DEMAND":
 		return 65
 	case "UNCERTAIN", "RECOVERY":
 		return 40

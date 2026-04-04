@@ -103,6 +103,8 @@ func signalWeight(signal string) float64 {
 		return 1.0
 	case "RECOVERY":
 		return 1.05
+	case "DEMAND":
+		return 1.1
 	default:
 		return 1.0
 	}
