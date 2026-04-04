@@ -144,17 +144,17 @@ func TestComputeGemSignals_HighVelocityAgreementHighConfidence(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	f := testFeature("Spark of Nova", "20/20", 200, 15)
+	f := testFeature("Spark of Nova", "20/20", 200, 50)
 	// All velocities strongly positive and agreeing => HERD signal + high confidence.
 	// classifySignal converts to percentages: pVelPct = vel/price*100, lVelPct = vel/listings*100.
-	// HERD needs pVelPct > 8 AND lVelPct > 15.
-	// At price=200, VelLongPrice=20 → 10%. At listings=15, VelLongListing=4 → 26.7%.
+	// HERD needs pVelPct > 8 AND lVelPct > 15 AND absListingVel >= 5.
+	// At price=200, VelLongPrice=20 → 10%. At listings=50, VelLongListing=10 → 20%. Abs=10 >= 5.
 	f.VelShortPrice = 30
 	f.VelMedPrice = 25
 	f.VelLongPrice = 20
-	f.VelShortListing = 5
-	f.VelMedListing = 4
-	f.VelLongListing = 4
+	f.VelShortListing = 15
+	f.VelMedListing = 12
+	f.VelLongListing = 10
 	f.CV = 20
 	f.Tier = "HIGH"
 	f.ListingElasticity = -0.5 // predictable
@@ -340,18 +340,17 @@ func TestComputeGemSignals_RecommendationOK_HighConfidencePositive(t *testing.T)
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	f := testFeature("Spark of Nova", "20/20", 200, 15)
+	f := testFeature("Spark of Nova", "20/20", 200, 50)
 	// Set up for HERD signal with high confidence: all velocity windows positive +
 	// agreeing, bullish hour (14:00 Monday), predictable profile (CV=20, neg elasticity).
-	// classifySignal converts to percentages: pVelPct = vel/price*100, lVelPct = vel/listings*100.
-	// HERD needs pVelPct > 8 AND lVelPct > 15.
-	// At price=200, VelLongPrice=20 → 10%. At listings=15, VelLongListing=4 → 26.7%.
+	// HERD needs pVelPct > 8% AND lVelPct > 15% AND absListingVel >= 5.
+	// At price=200, VelLongPrice=20 → 10%. At listings=50, VelLongListing=10 → 20%. Abs=10 >= 5.
 	f.VelShortPrice = 30
 	f.VelMedPrice = 25
 	f.VelLongPrice = 20
-	f.VelShortListing = 5
-	f.VelMedListing = 4
-	f.VelLongListing = 4
+	f.VelShortListing = 15
+	f.VelMedListing = 12
+	f.VelLongListing = 10
 	f.CV = 20
 	f.HistPosition = 50 // not at peak, so not SELL_NOW
 	f.Tier = "HIGH"
@@ -392,18 +391,16 @@ func TestComputeGemSignals_HERDAtHistoricalPeakUNDERCUT(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	f := testFeature("Lacerate of Haemophilia", "20/20", 350, 5)
+	f := testFeature("Lacerate of Haemophilia", "20/20", 350, 40)
 	// HERD signal at historical peak (histPos > 90) => sellUrgency overrides to UNDERCUT.
-	// See trends.go: sellUrgency checks HERD && histPosition > 90 before other rules.
-	// classifySignal converts to percentages: pVelPct = vel/price*100, lVelPct = vel/listings*100.
-	// HERD needs pVelPct > 8 AND lVelPct > 15.
-	// At price=350, VelLongPrice=35 → 10%. At listings=5, VelLongListing=2 → 40%.
+	// HERD needs pVelPct > 8% AND lVelPct > 15% AND absListingVel >= 5.
+	// At price=350, VelLongPrice=35 → 10%. At listings=40, VelLongListing=8 → 20%. Abs=8 >= 5.
 	f.VelShortPrice = 50
 	f.VelMedPrice = 40
 	f.VelLongPrice = 35
-	f.VelShortListing = 3
-	f.VelMedListing = 2
-	f.VelLongListing = 2
+	f.VelShortListing = 12
+	f.VelMedListing = 10
+	f.VelLongListing = 8
 	f.CV = 30
 	f.HistPosition = 95 // at historical peak
 	f.Tier = "TOP"

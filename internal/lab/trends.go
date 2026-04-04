@@ -553,20 +553,23 @@ func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice flo
 	if cv > cfg.TrapCV && (math.Abs(pVelPct) > cfg.TrapVelPct || math.Abs(lVelPct) > cfg.TrapVelPct) {
 		return "TRAP"
 	}
-	if pVelPct < cfg.DumpPriceVelPct && lVelPct > cfg.DumpListingVelPct {
+	// Absolute listing velocity for floor checks (percentage alone is noise on thin markets).
+	absListingVel := math.Abs(listingVel)
+
+	if pVelPct < cfg.DumpPriceVelPct && lVelPct > cfg.DumpListingVelPct && absListingVel >= cfg.DumpListingAbsFloor {
 		return "DUMPING"
 	}
 	// High-velocity pre-HERD: extreme price movement with moderate listing growth
 	if pVelPct > cfg.PreHERDPriceVelPct && lVelPct > cfg.PreHERDListingVelPct {
 		return "HERD"
 	}
-	if pVelPct > cfg.HERDPriceVelPct && lVelPct > cfg.HERDListingVelPct {
+	if pVelPct > cfg.HERDPriceVelPct && lVelPct > cfg.HERDListingVelPct && absListingVel >= cfg.HERDListingAbsFloor {
 		return "HERD"
 	}
 	// DEMAND: listings draining significantly while price holds — supply being absorbed by buyers.
 	// Unlike RECOVERY, works in any market thickness (not just thin markets <20 listings).
 	// The mirror of DUMPING: DUMPING = sellers flooding, DEMAND = buyers absorbing.
-	if lVelPct < cfg.DemandListingVelPct && pVelPct > cfg.DemandPriceVelPct {
+	if lVelPct < cfg.DemandListingVelPct && pVelPct > cfg.DemandPriceVelPct && absListingVel >= cfg.DemandListingAbsFloor {
 		return "DEMAND"
 	}
 	// RECOVERY: price drifting down slowly, thin listings dropping = supply exhaustion (bottom forming).
