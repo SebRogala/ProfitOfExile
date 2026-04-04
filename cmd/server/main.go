@@ -306,6 +306,13 @@ func main() {
 		delayedRecomputeMu    sync.Mutex
 		delayedRecomputeTimer *time.Timer
 	)
+	defer func() {
+		delayedRecomputeMu.Lock()
+		if delayedRecomputeTimer != nil {
+			delayedRecomputeTimer.Stop()
+		}
+		delayedRecomputeMu.Unlock()
+	}()
 
 	// Start Mercure subscriber in background if configured.
 	if mercureURL != "" {
