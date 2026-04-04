@@ -6,7 +6,7 @@
 		SELL_CONFIDENCE_TOOLTIPS,
 	} from '$lib/tooltips';
 
-	let { signal, type = 'signal' }: { signal: string; type?: 'signal' | 'window' | 'advanced' | 'confidence' } =
+	let { signal, type = 'signal', extraTooltip = '' }: { signal: string; type?: 'signal' | 'window' | 'advanced' | 'confidence'; extraTooltip?: string } =
 		$props();
 
 	const SIGNAL_STYLES: Record<string, { prefix: string; cssClass: string }> = {
@@ -58,7 +58,7 @@
 	}
 
 	let style = $derived(getStyle());
-	let tooltip = $derived(getTooltip());
+	let tooltip = $derived(extraTooltip ? `${getTooltip()} — ${extraTooltip}` : getTooltip());
 </script>
 
 {#if signal}

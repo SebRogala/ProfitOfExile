@@ -38,7 +38,8 @@ type CollectiveResult struct {
 	// From features/signals (risk-adjusted display)
 	Low7Days          float64 `json:"low7d"`
 	High7Days         float64 `json:"high7d"`
-	SellConfidence string  `json:"sellConfidence"`
+	SellConfidence     string `json:"sellConfidence"`
+	TradeConfidenceNote string `json:"tradeConfidenceNote,omitempty"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.
@@ -178,11 +179,13 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 			cr.WindowSignal = s.WindowSignal
 			cr.AdvancedSignal = s.AdvancedSignal
 			cr.PriceTier = s.Tier
+			cr.TierAction = tierAction(s.Signal, s.WindowSignal, s.Tier)
 			cr.SellUrgency = s.SellUrgency
 			cr.SellReason = s.SellReason
 			cr.Sellability = s.Sellability
 			cr.SellabilityLabel = s.SellabilityLabel
 			cr.SellConfidence = s.SellConfidence
+			cr.TradeConfidenceNote = s.TradeConfidenceNote
 		}
 
 		// Join with v2 gem feature data for velocity, CV, histPosition, etc.
@@ -349,6 +352,7 @@ func BuildCompareResults(
 			cr.Sellability = s.Sellability
 			cr.SellabilityLabel = s.SellabilityLabel
 			cr.PriceTier = s.Tier
+			cr.TierAction = tierAction(s.Signal, s.WindowSignal, s.Tier)
 			cr.WindowSignal = s.WindowSignal
 			cr.SellConfidence = s.SellConfidence
 			cr.SellConfidenceReason = s.TradeConfidenceNote
