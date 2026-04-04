@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -308,6 +309,15 @@ func main() {
 		}
 	}()
 
+	// Delayed recompute timer — fires 15min after the last ninja_gems event
+	// so that the v2 pipeline picks up trade data accumulated since the snapshot.
+	// Protected by a mutex since the timer callback and Mercure handler run on
+	// different goroutines.
+	var (
+		delayedRecomputeMu    sync.Mutex
+		delayedRecomputeTimer *time.Timer
+	)
+
 	// Start Mercure subscriber in background if configured.
 	if mercureURL != "" {
 		subCtx, subCancel := context.WithCancel(ctx)
@@ -427,6 +437,26 @@ func main() {
 						slog.Warn("v2 analysis failed", "error", err)
 					}
 				}()
+
+				// Schedule a delayed recompute T+15min after each ninja_gems event.
+				// This picks up trade data accumulated since the snapshot.
+				// A new ninja event cancels any pending delayed recompute.
+				delayedRecomputeMu.Lock()
+				if delayedRecomputeTimer != nil {
+					delayedRecomputeTimer.Stop()
+				}
+				delayedRecomputeTimer = time.AfterFunc(15*time.Minute, func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("delayed v2 recompute panicked", "recover", r)
+						}
+					}()
+					slog.Info("delayed recompute: running v2 with accumulated trade data")
+					if err := analyzer.RunV2(context.Background()); err != nil {
+						slog.Warn("delayed v2 recompute failed", "error", err)
+					}
+				})
+				delayedRecomputeMu.Unlock()
 			}
 		})
 		go sub.Run(subCtx)
