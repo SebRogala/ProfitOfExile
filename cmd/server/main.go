@@ -396,16 +396,6 @@ func main() {
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
-							slog.Error("font analysis panicked", "recover", r)
-						}
-					}()
-					if err := analyzer.RunFont(subCtx); err != nil {
-						slog.Warn("font analysis failed", "error", err)
-					}
-				}()
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
 							slog.Error("quality analysis panicked", "recover", r)
 						}
 					}()
@@ -413,14 +403,22 @@ func main() {
 						slog.Warn("quality analysis failed", "error", err)
 					}
 				}()
+				// RunV2 must complete before RunFont — font reads GemFeatures
+				// from cache (tier classification). Running them concurrently
+				// causes font to read stale tiers from the previous cycle.
 				go func() {
 					defer func() {
 						if r := recover(); r != nil {
-							slog.Error("v2 analysis panicked", "recover", r)
+							slog.Error("v2/font analysis panicked", "recover", r)
 						}
 					}()
 					if err := analyzer.RunV2(subCtx); err != nil {
 						slog.Warn("v2 analysis failed", "error", err)
+						return
+					}
+					// Font runs after V2 so it reads fresh GemFeatures with current tier classification.
+					if err := analyzer.RunFont(subCtx); err != nil {
+						slog.Warn("font analysis failed", "error", err)
 					}
 				}()
 
