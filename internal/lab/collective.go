@@ -36,10 +36,10 @@ type CollectiveResult struct {
 	Sellability      int    `json:"sellability"`
 	SellabilityLabel string `json:"sellabilityLabel"`
 	// From features/signals (risk-adjusted display)
-	Low7Days          float64 `json:"low7d"`
-	High7Days         float64 `json:"high7d"`
-	SellConfidence     string `json:"sellConfidence"`
-	TradeConfidenceNote string `json:"tradeConfidenceNote,omitempty"`
+	Low7Days            float64 `json:"low7d"`
+	High7Days           float64 `json:"high7d"`
+	SellConfidence      string  `json:"sellConfidence"`
+	TradeConfidenceNote string  `json:"tradeConfidenceNote,omitempty"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.

@@ -58,7 +58,11 @@
 	}
 
 	let style = $derived(getStyle());
-	let tooltip = $derived(extraTooltip ? `${getTooltip()} — ${extraTooltip}` : getTooltip());
+	let tooltip = $derived((() => {
+		const base = getTooltip();
+		if (!extraTooltip) return base;
+		return base ? `${base} — ${extraTooltip}` : extraTooltip;
+	})());
 </script>
 
 {#if signal}
