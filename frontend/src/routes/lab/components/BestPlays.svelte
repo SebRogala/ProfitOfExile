@@ -384,17 +384,17 @@
 	}
 	.vel-up {
 		font-size: 0.75rem;
-		color: var(--color-lab-green);
-		font-weight: 700;
-		padding: 1px 5px;
-		background: rgba(34, 197, 94, 0.1);
-	}
-	.vel-down {
-		font-size: 0.75rem;
 		color: var(--color-lab-red);
 		font-weight: 700;
 		padding: 1px 5px;
 		background: rgba(239, 68, 68, 0.1);
+	}
+	.vel-down {
+		font-size: 0.75rem;
+		color: var(--color-lab-green);
+		font-weight: 700;
+		padding: 1px 5px;
+		background: rgba(34, 197, 94, 0.1);
 	}
 	.expanded-row {
 		background: var(--color-lab-bg);

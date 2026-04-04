@@ -9,6 +9,8 @@ export const SIGNAL_TOOLTIPS: Record<string, string> = {
 	UNCERTAIN:
 		'Directional prediction accuracy is below 50% (coin flip) — showing raw market data instead. Price velocity and listing trends are available for your own assessment.',
 	HERD: "Both price AND listings are rising. Multiple farmers flooding the market. Sell now if you have stock. Don't start farming \u2014 you're late. Triggered: price velocity > 5, listing velocity > 10",
+	DEMAND:
+		'Listings draining fast while price holds \u2014 buyers are absorbing supply. Sell at market price, your gem will move. Good farming target.',
 	DUMPING:
 		'Price dropping while listings rise. Sellers undercutting each other. Avoid \u2014 will keep falling. Triggered: price velocity < -5, listing velocity > 5',
 	RECOVERY:
