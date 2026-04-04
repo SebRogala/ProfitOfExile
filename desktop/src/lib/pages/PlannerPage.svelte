@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { store } from '$lib/stores/status.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import RoomEditor from '$lib/compass/RoomEditor.svelte';
 	import {
@@ -75,6 +76,10 @@
 
 	// --- Lifecycle ---
 	$effect(() => {
+		// Keep serverUrl in sync with store (reacts to debug toggle)
+		if (store.status?.server_url) {
+			serverUrl = store.status.server_url;
+		}
 		invoke<any>('get_status')
 			.then((status) => {
 				if (status?.server_url) {
@@ -175,13 +180,20 @@
 		try {
 			const text = await file.text();
 			const json = JSON.parse(text);
+			// Re-read server URL (may have changed via debug toggle)
+			const status = await invoke<any>('get_status');
+			const uploadUrl = status?.server_url || serverUrl;
 			// POST to server
-			await fetch(`${serverUrl}/api/lab/layout/${difficulty}`, {
+			const res = await fetch(`${uploadUrl}/api/lab/layout/${difficulty}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: text,
 			});
-			// Reload layout from parsed JSON
+			if (!res.ok) {
+				const body = await res.json().catch(() => ({}));
+				error = body?.error || `Upload failed (${res.status})`;
+			}
+			// Reload layout from parsed JSON regardless of upload result
 			navState = loadLayout(createNavState(), json);
 		} catch (e: any) {
 			error = e?.message || 'Failed to import layout';
