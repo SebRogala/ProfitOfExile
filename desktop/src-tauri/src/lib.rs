@@ -2082,8 +2082,6 @@ pub fn run() {
             app_log(&handle, "Settings initialized".to_string());
 
             // Restore window position/size from saved settings.
-            // Check if saved position is still visible on a connected monitor —
-            // prevents the window from opening off-screen after a monitor is disconnected.
             if let Some(ref win_settings) = saved.window {
                 if let Some(win) = app.get_webview_window("main") {
                     let visible = win.available_monitors()
@@ -2095,12 +2093,11 @@ pub fn run() {
                                 let my = pos.y as i32;
                                 let mw = size.width as i32;
                                 let mh = size.height as i32;
-                                // At least part of the window title bar must be on this monitor
                                 win_settings.x < mx + mw && win_settings.x + 100 > mx
                                     && win_settings.y < my + mh && win_settings.y + 50 > my
                             })
                         })
-                        .unwrap_or(true); // if monitor query fails, trust saved position
+                        .unwrap_or(true);
 
                     if visible {
                         let _ = win.set_position(tauri::PhysicalPosition::new(win_settings.x, win_settings.y));
@@ -2163,14 +2160,14 @@ pub fn run() {
                     let is_maximized = window.is_maximized().unwrap_or(false);
                     // Only save position/size if not maximized (restore to normal position)
                     let win_settings = if is_maximized {
-                        // Save maximized flag but keep last known normal position
-                        let state = app.state::<AppState>();
-                        let current = settings::from_state(&state);
+                        // Save maximized flag but keep last known normal position from file.
+                        // AppState doesn't store window settings, so from_state returns None.
+                        let existing = settings::load(app);
                         settings::WindowSettings {
-                            x: current.window.as_ref().map_or(100, |w| w.x),
-                            y: current.window.as_ref().map_or(100, |w| w.y),
-                            width: current.window.as_ref().map_or(1024, |w| w.width),
-                            height: current.window.as_ref().map_or(768, |w| w.height),
+                            x: existing.window.as_ref().map_or(100, |w| w.x),
+                            y: existing.window.as_ref().map_or(100, |w| w.y),
+                            width: existing.window.as_ref().map_or(1024, |w| w.width),
+                            height: existing.window.as_ref().map_or(768, |w| w.height),
                             maximized: true,
                         }
                     } else {
@@ -2187,8 +2184,8 @@ pub fn run() {
                     let state = app.state::<AppState>();
                     let existing = settings::load(app);
                     let mut s = settings::from_state(&state);
-                    s.window = Some(win_settings);
                     persist_overlay_settings(&existing, &mut s);
+                    s.window = Some(win_settings); // AFTER persist_overlay, so it's not overwritten
                     settings::save(app, &s);
 
                     // Force exit — background threads (focus poller, mouse hook, scan loops)

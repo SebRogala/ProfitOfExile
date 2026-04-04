@@ -341,9 +341,33 @@
 		})
 		.catch(e => console.warn('[overlay] comparator settings operation failed:', e));
 
-	// Compass and pathstrip overlays are NOT created on startup — they only
-	// appear when entering the lab (PlazaEntered event). The 'enabled' setting
-	// controls whether they auto-create on lab entry, not on app boot.
+	// Restore enabled overlays on startup — created but HIDDEN.
+	// 'Enabled' = user wants the overlay (persistent preference).
+	// 'Visible' = currently showing (transient, driven by lab events).
+	// PlazaEntered → show, LabExited → hide. Toggle button changes 'enabled'.
+	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_compass_overlay_settings')
+		.then(async (settings) => {
+			if (settings?.enabled) {
+				await createCompassOverlay(settings.x, settings.y, settings.width ?? 300, settings.height ?? 280);
+				// Start hidden — will show on PlazaEntered
+				if (compassWin) await compassWin.hide().catch(() => {});
+			}
+		})
+		.catch(e => console.warn('[overlay] compass restore failed:', e));
+
+	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_pathstrip_overlay_settings')
+		.then(async (settings) => {
+			if (settings?.enabled) {
+				pathstripActive = true;
+				const hasData = await checkPathstripData();
+				if (hasData) {
+					await createPathstripOverlay(settings!.x, settings!.y, settings!.width ?? 450, settings!.height ?? 180);
+					// Start hidden — will show on PlazaEntered
+					if (pathstripWin) await pathstripWin.hide().catch(() => {});
+				}
+			}
+		})
+		.catch(e => console.warn('[overlay] pathstrip restore failed:', e));
 
 	// Check if lab layout is available on the server.
 	async function checkPathstripData(): Promise<boolean> {
@@ -373,20 +397,29 @@
 		}
 	})();
 
-	// Auto-show overlays on lab entry (PlazaEntered)
+	// Show/hide overlays based on lab events.
+	// Overlays are created on startup (hidden). PlazaEntered shows them, LabExited hides them.
 	listen('lab-nav', async (event: any) => {
 		if (event.payload?.type === 'PlazaEntered') {
+			// Show existing overlay windows (or create if not yet created)
 			const compassSettings = await invoke<any>('get_compass_overlay_settings').catch(() => null);
-			if (compassSettings?.enabled && !compassWin) {
-				await createCompassOverlay(compassSettings.x, compassSettings.y, compassSettings.width ?? 300, compassSettings.height ?? 280);
+			if (compassSettings?.enabled) {
+				if (compassWin) {
+					await compassWin.show().catch(() => {});
+				} else {
+					await createCompassOverlay(compassSettings.x, compassSettings.y, compassSettings.width ?? 300, compassSettings.height ?? 280);
+				}
 			}
 			const pathstripSettings = await invoke<any>('get_pathstrip_overlay_settings').catch(() => null);
-			if (pathstripSettings?.enabled && !pathstripWin) {
-				await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
+			if (pathstripSettings?.enabled) {
+				if (pathstripWin) {
+					await pathstripWin.show().catch(() => {});
+				} else if (pathstripHasData) {
+					await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
+				}
 			}
 		}
 		if (event.payload?.type === 'LabExited') {
-			// Hide compass and pathstrip when leaving the lab
 			if (compassWin) {
 				await compassWin.hide().catch(() => {});
 			}
