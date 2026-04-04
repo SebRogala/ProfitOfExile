@@ -3,12 +3,24 @@ package lab
 import (
 	"math"
 	"time"
+
+	"profitofexile/internal/trade"
 )
 
 // ComputeGemFeatures produces per-gem feature vectors from raw gem data, history,
 // and market context. It is a pure function with no side effects -- called from RunV2.
 // Filters to transfigured, non-corrupted, non-Trarthus gems with Chaos > 5.
-func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceHistory, mc MarketContext, cls GemClassificationMap) []GemFeature {
+//
+// tradeCache is nil-safe: when nil, trade enrichment is skipped entirely.
+// When non-nil, a snapshot is taken once at the start and each gem is enriched
+// with trade data subject to freshness-based degradation.
+func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceHistory, mc MarketContext, cls GemClassificationMap, tradeCache *trade.TradeCache) []GemFeature {
+	// Take a snapshot of all trade data once (single lock acquisition).
+	var tradeSnap map[string]*trade.TradeLookupResult
+	if tradeCache != nil {
+		tradeSnap = tradeCache.GetSnapshot()
+	}
+
 	// Index history by (name, variant) for fast lookup.
 	type histKey struct{ name, variant string }
 	histIndex := make(map[histKey]*GemPriceHistory, len(history))
@@ -103,6 +115,27 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		f.SellProbabilityFactor = sellProbabilityFactor(g.Listings, f.Low7Days, g.Chaos)
 		f.StabilityDiscount = stabilityDiscount(f.CVShort)
 
+		// Trade enrichment: populate trade fields from snapshot.
+		if tradeSnap != nil {
+			tradeKey := trade.CacheKey(g.Name, g.Variant)
+			if tr, ok := tradeSnap[tradeKey]; ok && tr != nil {
+				ageSeconds := snapTime.Sub(tr.FetchedAt).Seconds()
+				weight := tradeDataWeight(ageSeconds)
+				if weight > 0 {
+					f.TradeDataAvailable = true
+					f.TradeDataAge = ageSeconds
+					f.TradeSellerConcentration = tr.Signals.SellerConcentration
+					f.TradeCheapestStaleness = tr.Signals.CheapestStaleness
+					f.TradePriceOutlier = tr.Signals.PriceOutlier
+					f.TradePriceFloor = tr.PriceFloor * weight
+					f.TradeMedianTop10 = tr.MedianTop10 * weight
+
+					// Apply trade multipliers to sell probability.
+					f.SellProbabilityFactor = applyTradeMultipliers(f.SellProbabilityFactor, tr.Signals)
+				}
+			}
+		}
+
 		// Sanitize non-velocity float fields.
 		// Velocity fields are already sanitized by velocityWindow; CV, hist, and
 		// relative fields are sanitized here because their producers do not guarantee it.
@@ -116,6 +149,9 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 		f.MarketDepth = sanitizeFloat(f.MarketDepth)
 		f.SellProbabilityFactor = sanitizeFloat(f.SellProbabilityFactor)
 		f.StabilityDiscount = sanitizeFloat(f.StabilityDiscount)
+		f.TradePriceFloor = sanitizeFloat(f.TradePriceFloor)
+		f.TradeMedianTop10 = sanitizeFloat(f.TradeMedianTop10)
+		f.TradeDataAge = sanitizeFloat(f.TradeDataAge)
 
 		features = append(features, f)
 	}
@@ -188,4 +224,40 @@ func stabilityDiscount(cvShort float64) float64 {
 		return 1.0
 	}
 	return d
+}
+
+// tradeDataWeight returns a freshness-based weight for trade data.
+// <5min: full weight (1.0), 5-30min: 0.75, 30-90min: 0.50, >90min: 0 (ignore).
+func tradeDataWeight(ageSeconds float64) float64 {
+	switch {
+	case ageSeconds < 300: // <5min
+		return 1.0
+	case ageSeconds < 1800: // 5-30min
+		return 0.75
+	case ageSeconds < 5400: // 30-90min
+		return 0.50
+	default:
+		return 0 // stale — ignore
+	}
+}
+
+// applyTradeMultipliers adjusts the sell probability factor based on trade signals.
+// MONOPOLY: 0.8x, CONCENTRATED: 0.9x, STALE: 0.9x, FRESH: 1.05x.
+// Result is clamped to [0.3, 1.0].
+func applyTradeMultipliers(base float64, signals trade.TradeSignals) float64 {
+	switch signals.SellerConcentration {
+	case "MONOPOLY":
+		base *= 0.8
+	case "CONCENTRATED":
+		base *= 0.9
+	}
+
+	switch signals.CheapestStaleness {
+	case "STALE":
+		base *= 0.9
+	case "FRESH":
+		base *= 1.05
+	}
+
+	return math.Max(math.Min(base, 1.0), 0.3)
 }

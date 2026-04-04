@@ -115,6 +115,15 @@ type GemFeature struct {
 	LowConfidence         bool    // true = thin market, excluded from EV calculations
 	SellProbabilityFactor float64 // 0.3-1.0, calibrated from listing count
 	StabilityDiscount     float64 // 0.7-1.0, from CVShort (6h)
+
+	// Trade-enriched fields (populated when TradeCache has fresh data for this gem).
+	TradeSellerConcentration string  // NORMAL/CONCENTRATED/MONOPOLY/"" (no data)
+	TradeCheapestStaleness  string  // FRESH/AGING/STALE/""
+	TradePriceOutlier       bool    // cheapest < 50% of median top 10
+	TradePriceFloor         float64 // 0 = no data
+	TradeMedianTop10        float64 // more reliable than ninja for MID+
+	TradeDataAge            float64 // seconds since FetchedAt
+	TradeDataAvailable      bool    // true = fresh trade data was used
 }
 
 // GemClassification holds the pre-computed tier and confidence for a single gem.
@@ -155,7 +164,8 @@ type GemSignal struct {
 	PhaseModifier    float64
 	Recommendation    string
 	Tier              string
-	RiskAdjustedValue float64 // price * sell_probability * stability_discount
-	QuickSellPrice    float64 // aggressive undercut estimate
-	SellConfidence    string  // "SAFE", "FAIR", "RISKY"
+	RiskAdjustedValue   float64 // price * sell_probability * stability_discount
+	QuickSellPrice      float64 // aggressive undercut estimate
+	SellConfidence      string  // "SAFE", "FAIR", "RISKY"
+	TradeConfidenceNote string  // human-readable explanation of trade-based adjustments
 }

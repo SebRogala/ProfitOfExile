@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"profitofexile/internal/trade"
 )
 
 // Analyzer orchestrates analysis runs triggered by Mercure events.
@@ -13,6 +15,7 @@ type Analyzer struct {
 	repo           *Repository
 	throttler      *Throttler
 	cache          *Cache
+	tradeCache     *trade.TradeCache // nil-safe: when nil, trade enrichment is skipped
 	logger         *slog.Logger
 	muTransfigure  sync.Mutex
 	muFont         sync.Mutex
@@ -26,12 +29,14 @@ type Analyzer struct {
 // NewAnalyzer creates an analyzer wired to the given repository.
 // The throttler may be nil — in that case no Mercure signals are emitted.
 // The cache may be nil — in that case results are only persisted to the DB.
-func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache) *Analyzer {
+// The tradeCache may be nil — in that case trade enrichment is skipped in ComputeGemFeatures.
+func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache, tradeCache *trade.TradeCache) *Analyzer {
 	return &Analyzer{
-		repo:      repo,
-		throttler: throttler,
-		cache:     cache,
-		logger:    slog.Default(),
+		repo:       repo,
+		throttler:  throttler,
+		cache:      cache,
+		tradeCache: tradeCache,
+		logger:     slog.Default(),
 	}
 }
 
@@ -289,7 +294,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	depthMap := PrecomputeMarketDepth(gems, mc)
 	normalizedHistory := NormalizeHistoryDepthGated(history, mc, depthMap)
 
-	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems)
+	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, a.tradeCache)
 	inserted, err := a.repo.SaveGemFeatures(ctx, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)
