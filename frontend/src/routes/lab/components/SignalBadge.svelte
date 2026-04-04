@@ -13,6 +13,7 @@
 		STABLE: { prefix: '━', cssClass: 'badge-green-muted' },
 		UNCERTAIN: { prefix: '?', cssClass: 'badge-muted' },
 		HERD: { prefix: '⚡', cssClass: 'badge-yellow' },
+		DEMAND: { prefix: '🛒', cssClass: 'badge-green' },
 		DUMPING: { prefix: '⏬', cssClass: 'badge-red' },
 		RECOVERY: { prefix: '🔄', cssClass: 'badge-purple' },
 		TRAP: { prefix: '🚫', cssClass: 'badge-red' },
