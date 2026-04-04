@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"profitofexile/internal/trade"
 )
 
 // testMarketContext returns a MarketContext suitable for testing ComputeGemFeatures.
@@ -662,5 +664,328 @@ func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
 	}
 	if features2[0].MarketDepth >= 0.4 {
 		t.Errorf("depth=0.38: MarketDepth = %f, want < 0.4", features2[0].MarketDepth)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Trade enrichment tests (from POE-101 chunk-4)
+// ---------------------------------------------------------------------------
+
+// newTestTradeCache creates a TradeCache pre-populated with the given entries.
+func newTestTradeCache(entries map[string]*trade.TradeLookupResult) *trade.TradeCache {
+	tc := trade.NewTradeCache(100)
+	for k, v := range entries {
+		tc.Set(k, v)
+	}
+	return tc
+}
+
+func TestComputeGemFeatures_NilTradeCache_IdenticalToV2(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	gems := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 15, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	mc := testMarketContext()
+
+	// Compute with nil TradeCache.
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil, nil)
+
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	f := features[0]
+
+	// All trade fields should be zero/false.
+	if f.TradeDataAvailable {
+		t.Error("TradeDataAvailable = true, want false (nil cache)")
+	}
+	if f.TradeDataAge != 0 {
+		t.Errorf("TradeDataAge = %f, want 0", f.TradeDataAge)
+	}
+	if f.TradeSellerConcentration != "" {
+		t.Errorf("TradeSellerConcentration = %q, want empty", f.TradeSellerConcentration)
+	}
+	if f.TradeCheapestStaleness != "" {
+		t.Errorf("TradeCheapestStaleness = %q, want empty", f.TradeCheapestStaleness)
+	}
+	if f.TradePriceOutlier {
+		t.Error("TradePriceOutlier = true, want false")
+	}
+	if f.TradePriceFloor != 0 {
+		t.Errorf("TradePriceFloor = %f, want 0", f.TradePriceFloor)
+	}
+	if f.TradeMedianTop10 != 0 {
+		t.Errorf("TradeMedianTop10 = %f, want 0", f.TradeMedianTop10)
+	}
+}
+
+func TestComputeGemFeatures_TradeCache_PopulatesFields(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	gems := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 15, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	mc := testMarketContext()
+
+	// Create a trade cache with a fresh entry (2 minutes old).
+	tc := newTestTradeCache(map[string]*trade.TradeLookupResult{
+		trade.CacheKey("Spark of Nova", "20/20"): {
+			Gem:         "Spark of Nova",
+			Variant:     "20/20",
+			Total:       42,
+			PriceFloor:  185.0,
+			MedianTop10: 195.0,
+			FetchedAt:   snapTime.Add(-2 * time.Minute),
+			Signals: trade.TradeSignals{
+				SellerConcentration: "CONCENTRATED",
+				CheapestStaleness:   "FRESH",
+				PriceOutlier:        false,
+				UniqueAccounts:      6,
+			},
+		},
+	})
+
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, nil, tc)
+
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	f := features[0]
+
+	if !f.TradeDataAvailable {
+		t.Fatal("TradeDataAvailable = false, want true")
+	}
+	if f.TradeDataAge < 120 || f.TradeDataAge > 130 {
+		t.Errorf("TradeDataAge = %f, want ~120 (2 minutes)", f.TradeDataAge)
+	}
+	if f.TradeSellerConcentration != "CONCENTRATED" {
+		t.Errorf("TradeSellerConcentration = %q, want CONCENTRATED", f.TradeSellerConcentration)
+	}
+	if f.TradeCheapestStaleness != "FRESH" {
+		t.Errorf("TradeCheapestStaleness = %q, want FRESH", f.TradeCheapestStaleness)
+	}
+	if f.TradePriceOutlier {
+		t.Error("TradePriceOutlier = true, want false")
+	}
+	// At 2 min age, weight = 1.0 (< 5min). PriceFloor should be 185 * 1.0 = 185.
+	if math.Abs(f.TradePriceFloor-185.0) > 0.01 {
+		t.Errorf("TradePriceFloor = %f, want 185.0 (full weight)", f.TradePriceFloor)
+	}
+	if math.Abs(f.TradeMedianTop10-195.0) > 0.01 {
+		t.Errorf("TradeMedianTop10 = %f, want 195.0 (full weight)", f.TradeMedianTop10)
+	}
+}
+
+func TestComputeGemFeatures_TradeFreshnessDegradation(t *testing.T) {
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	gems := []GemPrice{
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 15, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	mc := testMarketContext()
+
+	tests := []struct {
+		name        string
+		age         time.Duration
+		wantWeight  float64
+		wantAvail   bool
+	}{
+		{"very fresh (1min)", 1 * time.Minute, 1.0, true},
+		{"fresh (4min)", 4 * time.Minute, 1.0, true},
+		{"medium (10min)", 10 * time.Minute, 0.75, true},
+		{"medium (25min)", 25 * time.Minute, 0.75, true},
+		{"stale (45min)", 45 * time.Minute, 0.50, true},
+		{"stale (80min)", 80 * time.Minute, 0.50, true},
+		{"expired (100min)", 100 * time.Minute, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newTestTradeCache(map[string]*trade.TradeLookupResult{
+				trade.CacheKey("Spark of Nova", "20/20"): {
+					Gem:         "Spark of Nova",
+					Variant:     "20/20",
+					PriceFloor:  100.0,
+					MedianTop10: 200.0,
+					FetchedAt:   snapTime.Add(-tt.age),
+					Signals: trade.TradeSignals{
+						SellerConcentration: "NORMAL",
+						CheapestStaleness:   "FRESH",
+					},
+				},
+			})
+
+			features := ComputeGemFeatures(snapTime, gems, nil, mc, nil, tc)
+			if len(features) != 1 {
+				t.Fatalf("got %d features, want 1", len(features))
+			}
+			f := features[0]
+
+			if f.TradeDataAvailable != tt.wantAvail {
+				t.Errorf("TradeDataAvailable = %v, want %v", f.TradeDataAvailable, tt.wantAvail)
+			}
+
+			if tt.wantWeight > 0 {
+				expectedFloor := 100.0 * tt.wantWeight
+				if math.Abs(f.TradePriceFloor-expectedFloor) > 0.5 {
+					t.Errorf("TradePriceFloor = %f, want %f (weight=%f)", f.TradePriceFloor, expectedFloor, tt.wantWeight)
+				}
+				expectedMedian := 200.0 * tt.wantWeight
+				if math.Abs(f.TradeMedianTop10-expectedMedian) > 0.5 {
+					t.Errorf("TradeMedianTop10 = %f, want %f (weight=%f)", f.TradeMedianTop10, expectedMedian, tt.wantWeight)
+				}
+			} else {
+				// Expired: no trade data populated.
+				if f.TradePriceFloor != 0 {
+					t.Errorf("TradePriceFloor = %f, want 0 (expired)", f.TradePriceFloor)
+				}
+			}
+		})
+	}
+}
+
+func TestComputeGemFeatures_TradeData_LOWFloorGem(t *testing.T) {
+	// Trade data for LOW/FLOOR gems should be consumed when fresh (user-submitted).
+	snapTime := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+
+	gems := []GemPrice{
+		{Name: "Cheap of Nothing", Variant: "20/20", Chaos: 15, Listings: 8, IsTransfigured: true, GemColor: "GREEN"},
+	}
+
+	mc := testMarketContext()
+	cls := GemClassificationMap{
+		{Name: "Cheap of Nothing", Variant: "20/20"}: {Tier: "LOW"},
+	}
+
+	tc := newTestTradeCache(map[string]*trade.TradeLookupResult{
+		trade.CacheKey("Cheap of Nothing", "20/20"): {
+			Gem:         "Cheap of Nothing",
+			Variant:     "20/20",
+			PriceFloor:  12.0,
+			MedianTop10: 14.0,
+			FetchedAt:   snapTime.Add(-1 * time.Minute), // fresh
+			Signals: trade.TradeSignals{
+				SellerConcentration: "NORMAL",
+				CheapestStaleness:   "FRESH",
+			},
+		},
+	})
+
+	features := ComputeGemFeatures(snapTime, gems, nil, mc, cls, tc)
+	if len(features) != 1 {
+		t.Fatalf("got %d features, want 1", len(features))
+	}
+	f := features[0]
+
+	// LOW tier gem should still get trade data when fresh.
+	if !f.TradeDataAvailable {
+		t.Error("TradeDataAvailable = false, want true (user-submitted trade data for LOW gem)")
+	}
+	if f.TradePriceFloor != 12.0 {
+		t.Errorf("TradePriceFloor = %f, want 12.0", f.TradePriceFloor)
+	}
+	if f.Tier != "LOW" {
+		t.Errorf("Tier = %q, want LOW", f.Tier)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// tradeDataWeight tests
+// ---------------------------------------------------------------------------
+
+func TestTradeDataWeight_Thresholds(t *testing.T) {
+	tests := []struct {
+		name       string
+		ageSeconds float64
+		want       float64
+	}{
+		{"very fresh (0s)", 0, 1.0},
+		{"fresh (60s)", 60, 1.0},
+		{"fresh (299s)", 299, 1.0},
+		{"medium boundary (300s)", 300, 0.75},
+		{"medium (600s)", 600, 0.75},
+		{"medium (1799s)", 1799, 0.75},
+		{"stale boundary (1800s)", 1800, 0.50},
+		{"stale (3600s)", 3600, 0.50},
+		{"stale (5399s)", 5399, 0.50},
+		{"expired boundary (5400s)", 5400, 0},
+		{"expired (7200s)", 7200, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tradeDataWeight(tt.ageSeconds)
+			if got != tt.want {
+				t.Errorf("tradeDataWeight(%f) = %f, want %f", tt.ageSeconds, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// applyTradeMultipliers tests
+// ---------------------------------------------------------------------------
+
+func TestApplyTradeMultipliers_MONOPOLY(t *testing.T) {
+	signals := trade.TradeSignals{SellerConcentration: "MONOPOLY", CheapestStaleness: ""}
+	got := applyTradeMultipliers(1.0, signals)
+	// 1.0 * 0.8 = 0.8
+	if math.Abs(got-0.8) > 0.001 {
+		t.Errorf("MONOPOLY: applyTradeMultipliers(1.0) = %f, want 0.8", got)
+	}
+}
+
+func TestApplyTradeMultipliers_CONCENTRATED(t *testing.T) {
+	signals := trade.TradeSignals{SellerConcentration: "CONCENTRATED", CheapestStaleness: ""}
+	got := applyTradeMultipliers(1.0, signals)
+	// 1.0 * 0.9 = 0.9
+	if math.Abs(got-0.9) > 0.001 {
+		t.Errorf("CONCENTRATED: applyTradeMultipliers(1.0) = %f, want 0.9", got)
+	}
+}
+
+func TestApplyTradeMultipliers_STALE(t *testing.T) {
+	signals := trade.TradeSignals{SellerConcentration: "NORMAL", CheapestStaleness: "STALE"}
+	got := applyTradeMultipliers(1.0, signals)
+	// 1.0 * 0.9 = 0.9
+	if math.Abs(got-0.9) > 0.001 {
+		t.Errorf("STALE: applyTradeMultipliers(1.0) = %f, want 0.9", got)
+	}
+}
+
+func TestApplyTradeMultipliers_FRESH(t *testing.T) {
+	signals := trade.TradeSignals{SellerConcentration: "NORMAL", CheapestStaleness: "FRESH"}
+	got := applyTradeMultipliers(1.0, signals)
+	// 1.0 * 1.05 = 1.0 (clamped)
+	if got != 1.0 {
+		t.Errorf("FRESH: applyTradeMultipliers(1.0) = %f, want 1.0 (clamped)", got)
+	}
+	// With lower base, FRESH should boost.
+	got = applyTradeMultipliers(0.9, signals)
+	// 0.9 * 1.05 = 0.945
+	if math.Abs(got-0.945) > 0.001 {
+		t.Errorf("FRESH: applyTradeMultipliers(0.9) = %f, want 0.945", got)
+	}
+}
+
+func TestApplyTradeMultipliers_ClampsToFloor(t *testing.T) {
+	// MONOPOLY + STALE: 0.3 * 0.8 * 0.9 = 0.216 → clamped to 0.3
+	signals := trade.TradeSignals{SellerConcentration: "MONOPOLY", CheapestStaleness: "STALE"}
+	got := applyTradeMultipliers(0.3, signals)
+	if got != 0.3 {
+		t.Errorf("MONOPOLY+STALE floor: applyTradeMultipliers(0.3) = %f, want 0.3 (clamped)", got)
+	}
+}
+
+func TestApplyTradeMultipliers_CombinedEffect(t *testing.T) {
+	// MONOPOLY + FRESH: 1.0 * 0.8 * 1.05 = 0.84
+	signals := trade.TradeSignals{SellerConcentration: "MONOPOLY", CheapestStaleness: "FRESH"}
+	got := applyTradeMultipliers(1.0, signals)
+	if math.Abs(got-0.84) > 0.001 {
+		t.Errorf("MONOPOLY+FRESH: applyTradeMultipliers(1.0) = %f, want 0.84", got)
 	}
 }
