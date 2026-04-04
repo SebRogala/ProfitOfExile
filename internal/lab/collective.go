@@ -1,7 +1,6 @@
 package lab
 
 import (
-	"fmt"
 	"sort"
 )
 
@@ -37,9 +36,10 @@ type CollectiveResult struct {
 	Sellability      int    `json:"sellability"`
 	SellabilityLabel string `json:"sellabilityLabel"`
 	// From features/signals (risk-adjusted display)
-	Low7Days          float64 `json:"low7d"`
-	High7Days         float64 `json:"high7d"`
-	SellConfidence string  `json:"sellConfidence"`
+	Low7Days            float64 `json:"low7d"`
+	High7Days           float64 `json:"high7d"`
+	SellConfidence      string  `json:"sellConfidence"`
+	TradeConfidenceNote string  `json:"tradeConfidenceNote,omitempty"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.
@@ -116,12 +116,12 @@ const (
 	SortPct   SortMode = "pct"   // sort by weighted ROI percentage
 )
 
-// RankCollective combines transfigure results with trend signals to produce
+// RankCollective combines transfigure results with v2 gem signals to produce
 // a ranked list of profitable farming targets. Results with TRAP signal are
 // excluded. Budget filters on basePrice. The returned slice is sorted by
 // the chosen metric descending and capped at limit entries.
 // When budget <= 50 and sortBy is empty, defaults to SortPct.
-func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budget float64, limit int, sortBy SortMode) []CollectiveResult {
+func RankCollective(transfigure []TransfigureResult, signals []GemSignal, features []GemFeature, budget float64, limit int, sortBy SortMode) []CollectiveResult {
 	// Budget-aware default: small budgets benefit from ROI% ranking.
 	if sortBy == "" {
 		if budget > 0 && budget <= 50 {
@@ -130,12 +130,19 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			sortBy = SortChaos
 		}
 	}
-	// Index trends by (name, variant) for fast lookup.
-	type trendKey struct{ name, variant string }
-	trendIndex := make(map[trendKey]*TrendResult, len(trends))
-	for i := range trends {
-		t := &trends[i]
-		trendIndex[trendKey{t.Name, t.Variant}] = t
+	// Index signals by (name, variant) for fast lookup.
+	type sigKey struct{ name, variant string }
+	sigIndex := make(map[sigKey]*GemSignal, len(signals))
+	for i := range signals {
+		s := &signals[i]
+		sigIndex[sigKey{s.Name, s.Variant}] = s
+	}
+
+	// Index features by (name, variant) for CV, velocity, histPosition, etc.
+	featIndex := make(map[sigKey]*GemFeature, len(features))
+	for i := range features {
+		f := &features[i]
+		featIndex[sigKey{f.Name, f.Variant}] = f
 	}
 
 	var results []CollectiveResult
@@ -163,28 +170,33 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 			BaseListings:         tr.BaseListings,
 			TransfiguredListings: tr.TransfiguredListings,
 			Confidence:           tr.Confidence,
-			Signal:               "STABLE", // default when no trend data
+			Signal:               "STABLE", // default when no signal data
 		}
 
-		// Join with trend data.
-		if t, ok := trendIndex[trendKey{tr.TransfiguredName, tr.Variant}]; ok {
-			cr.Signal = t.Signal
-			cr.PriceVelocity = t.PriceVelocity
-			cr.ListingVelocity = t.ListingVelocity
-			cr.CV = t.CV
-			cr.HistPosition = t.HistPosition
-			cr.WindowSignal = t.WindowSignal
-			cr.AdvancedSignal = t.AdvancedSignal
-			cr.LiquidityTier = t.LiquidityTier
-			cr.PriceTier = t.PriceTier
-			cr.TierAction = t.TierAction
-			cr.SellUrgency = t.SellUrgency
-			cr.SellReason = t.SellReason
-			cr.Sellability = t.Sellability
-			cr.SellabilityLabel = t.SellabilityLabel
-			cr.Low7Days = t.PriceLow7Days
-			cr.High7Days = t.PriceHigh7Days
-			cr.SellConfidence = deriveSellConfidence(t.CurrentListings, t.CV, t.Signal)
+		// Join with v2 gem signal data.
+		if s, ok := sigIndex[sigKey{tr.TransfiguredName, tr.Variant}]; ok {
+			cr.Signal = s.Signal
+			cr.WindowSignal = s.WindowSignal
+			cr.AdvancedSignal = s.AdvancedSignal
+			cr.PriceTier = s.Tier
+			cr.TierAction = tierAction(s.Signal, s.WindowSignal, s.Tier)
+			cr.SellUrgency = s.SellUrgency
+			cr.SellReason = s.SellReason
+			cr.Sellability = s.Sellability
+			cr.SellabilityLabel = s.SellabilityLabel
+			cr.SellConfidence = s.SellConfidence
+			cr.TradeConfidenceNote = s.TradeConfidenceNote
+		}
+
+		// Join with v2 gem feature data for velocity, CV, histPosition, etc.
+		if f, ok := featIndex[sigKey{tr.TransfiguredName, tr.Variant}]; ok {
+			cr.PriceVelocity = f.VelLongPrice
+			cr.ListingVelocity = f.VelLongListing
+			cr.CV = f.CV
+			cr.HistPosition = f.HistPosition
+			cr.Low7Days = f.Low7Days
+			cr.High7Days = f.High7Days
+			cr.LiquidityTier = liquidityTier(f.MarketDepth)
 		}
 
 		// Exclude TRAP gems entirely — no actionable signal.
@@ -193,7 +205,7 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 		}
 
 		// Weighted ROI: liquidity-based scoring with saturation penalty.
-		// Default sellability to 50 (neutral) when no trend data exists,
+		// Default sellability to 50 (neutral) when no signal data exists,
 		// so gems without signals still appear in rankings.
 		sellability := cr.Sellability
 		if sellability == 0 && cr.Signal == "" {
@@ -242,7 +254,8 @@ func RankCollective(transfigure []TransfigureResult, trends []TrendResult, budge
 func BuildCompareResults(
 	names []string,
 	transfigure []TransfigureResult,
-	trends []TrendResult,
+	signals []GemSignal,
+	features []GemFeature,
 	sparklines map[string][]SparklinePoint,
 	requestedVariant string,
 ) []CompareResult {
@@ -266,11 +279,18 @@ func BuildCompareResults(
 		}
 	}
 
-	// Index trends by (name, variant).
-	trendIndex := make(map[trKey]*TrendResult, len(trends))
-	for i := range trends {
-		t := &trends[i]
-		trendIndex[trKey{t.Name, t.Variant}] = t
+	// Index signals by (name, variant).
+	sigIndex := make(map[trKey]*GemSignal, len(signals))
+	for i := range signals {
+		s := &signals[i]
+		sigIndex[trKey{s.Name, s.Variant}] = s
+	}
+
+	// Index features by (name, variant).
+	featIndex := make(map[trKey]*GemFeature, len(features))
+	for i := range features {
+		f := &features[i]
+		featIndex[trKey{f.Name, f.Variant}] = f
 	}
 
 	var results []CompareResult
@@ -324,28 +344,33 @@ func BuildCompareResults(
 			}
 		}
 
-		// Join trend data.
-		if t, ok := trendIndex[trKey{name, cr.Variant}]; ok {
-			cr.Signal = t.Signal
-			cr.CV = t.CV
-			cr.PriceVelocity = t.PriceVelocity
-			cr.ListingVelocity = t.ListingVelocity
-			cr.HistPosition = t.HistPosition
-			cr.SellUrgency = t.SellUrgency
-			cr.SellReason = t.SellReason
-			cr.Sellability = t.Sellability
-			cr.SellabilityLabel = t.SellabilityLabel
-			cr.PriceTier = t.PriceTier
-			cr.TierAction = t.TierAction
-			cr.WindowSignal = t.WindowSignal
-			cr.BaseListings = t.BaseListings
-			cr.LiquidityTier = t.LiquidityTier
-			cr.TransListings = t.CurrentListings
-			cr.Low7Days = t.PriceLow7Days
-			cr.High7Days = t.PriceHigh7Days
-			cr.SellConfidence = deriveSellConfidence(t.CurrentListings, t.CV, t.Signal)
-			cr.SellConfidenceReason = deriveSellConfidenceReason(t.CurrentListings, t.CV, t.Signal)
-			cr.QuickSellPrice = deriveQuickSellPrice(t.CurrentPrice, t.CurrentListings, t.CV)
+		// Join v2 gem signal data.
+		if s, ok := sigIndex[trKey{name, cr.Variant}]; ok {
+			cr.Signal = s.Signal
+			cr.SellUrgency = s.SellUrgency
+			cr.SellReason = s.SellReason
+			cr.Sellability = s.Sellability
+			cr.SellabilityLabel = s.SellabilityLabel
+			cr.PriceTier = s.Tier
+			cr.TierAction = tierAction(s.Signal, s.WindowSignal, s.Tier)
+			cr.WindowSignal = s.WindowSignal
+			cr.SellConfidence = s.SellConfidence
+			cr.SellConfidenceReason = s.TradeConfidenceNote
+			cr.QuickSellPrice = s.QuickSellPrice
+			cr.RiskAdjustedPrice = s.RiskAdjustedValue
+		}
+
+		// Join v2 gem feature data for velocity, CV, histPosition, etc.
+		if f, ok := featIndex[trKey{name, cr.Variant}]; ok {
+			cr.CV = f.CV
+			cr.PriceVelocity = f.VelLongPrice
+			cr.ListingVelocity = f.VelLongListing
+			cr.HistPosition = f.HistPosition
+			cr.BaseListings = 0 // TODO: base gem listings not available in v2 pipeline — requires separate query
+			cr.LiquidityTier = liquidityTier(f.MarketDepth)
+			cr.TransListings = f.Listings
+			cr.Low7Days = f.Low7Days
+			cr.High7Days = f.High7Days
 		}
 
 		// Attach sparkline.
@@ -370,7 +395,7 @@ func BuildCompareResults(
 			w := signalWeight(cr.Signal)
 			sell := float64(cr.Sellability)
 			if sell == 0 {
-				sell = 50 // default if no trend data
+				sell = 50 // default if no signal data
 			}
 			score := cr.ROI * w * (sell / 100)
 			ranks[i] = ranked{idx: i, score: score}
@@ -400,66 +425,3 @@ func BuildCompareResults(
 	return results
 }
 
-// deriveSellConfidence returns SAFE/FAIR/RISKY based on market conditions.
-// SAFE = liquid + stable, FAIR = moderate risk, RISKY = thin/volatile.
-// Market health gates prevent false RISKY on liquid markets with noisy signals.
-func deriveSellConfidence(listings int, cv float64, signal string) string {
-	if signal == "TRAP" {
-		return "RISKY"
-	}
-	// DUMPING on a liquid, stable market is often 2h velocity noise —
-	// don't override to RISKY when fundamentals are healthy.
-	if signal == "DUMPING" {
-		if listings >= 15 && cv < 30 {
-			return "FAIR"
-		}
-		return "RISKY"
-	}
-	if listings >= 15 && cv < 30 {
-		return "SAFE"
-	}
-	if listings >= 5 && cv < 60 {
-		return "FAIR"
-	}
-	return "RISKY"
-}
-
-// deriveSellConfidenceReason returns a human-readable explanation of sell confidence.
-func deriveSellConfidenceReason(listings int, cv float64, signal string) string {
-	if signal == "TRAP" {
-		return "extreme volatility — price unpredictable"
-	}
-	if signal == "DUMPING" {
-		if listings >= 15 && cv < 30 {
-			return fmt.Sprintf("price softening but %d listings — liquid market", listings)
-		}
-		return "price dropping — sellers undercutting"
-	}
-	conf := deriveSellConfidence(listings, cv, signal)
-	switch conf {
-	case "SAFE":
-		return fmt.Sprintf("%d listings — liquid, stable", listings)
-	case "FAIR":
-		return fmt.Sprintf("%d listings — moderate liquidity", listings)
-	default:
-		if listings < 5 {
-			return fmt.Sprintf("%d listings — thin market", listings)
-		}
-		return fmt.Sprintf("CV %.0f%% — volatile pricing", cv)
-	}
-}
-
-// deriveQuickSellPrice estimates an aggressive undercut price.
-// Thin markets need larger undercuts; stable markets need minimal.
-func deriveQuickSellPrice(currentPrice float64, listings int, cv float64) float64 {
-	discount := 0.05 // 5% default undercut
-	if listings < 5 {
-		discount = 0.15
-	} else if listings < 15 {
-		discount = 0.10
-	}
-	if cv > 50 {
-		discount += 0.05
-	}
-	return currentPrice * (1.0 - discount)
-}

@@ -39,8 +39,7 @@ func velocityWindow(points []PricePoint, window time.Duration, extract func(Pric
 }
 
 // velocity computes the rate of change per hour using a 2-hour window.
-// This preserves backward compatibility with all existing callers (AnalyzeTrends,
-// ComputeMarketContext) while delegating to the time-based velocityWindow.
+// Delegates to the time-based velocityWindow.
 func velocity(points []PricePoint, extract func(PricePoint) float64) float64 {
 	return velocityWindow(points, 2*time.Hour, extract)
 }

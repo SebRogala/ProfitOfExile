@@ -287,7 +287,7 @@ func main() {
 }
 
 // runTradeRefresher periodically calls the server's trade refresh endpoint.
-// Alternates between tier-filtered (MID-HIGH+ for 20/20) and any-gem refreshes,
+// Alternates between tier-filtered (MID+ for 20/20) and any-gem refreshes,
 // mirroring the old server-side Refresher behavior but with the collector owning the schedule.
 func runTradeRefresher(ctx context.Context, serverURL string, interval time.Duration, internalSecret string) {
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -303,7 +303,7 @@ func runTradeRefresher(ctx context.Context, serverURL string, interval time.Dura
 		case <-ticker.C:
 			var body string
 			if tierTick {
-				body = `{"variant":"20/20","minTier":"MID-HIGH","minAge":"5m"}`
+				body = `{"variant":"20/20","minTier":"MID","minAge":"5m"}`
 			} else {
 				body = `{"variant":"20/20","minAge":"5m"}`
 			}

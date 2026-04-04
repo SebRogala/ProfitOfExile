@@ -145,7 +145,7 @@
 				<td class="col-signal">
 					<SignalBadge signal={gem.signal} />
 					{#if gem.sellConfidence}
-						<SignalBadge signal={gem.sellConfidence} type="confidence" />
+						<SignalBadge signal={gem.sellConfidence} type="confidence" extraTooltip={gem.tradeConfidenceNote} />
 					{/if}
 				</td>
 				<td class="col-sell">

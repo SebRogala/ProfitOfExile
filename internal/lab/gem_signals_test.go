@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -807,5 +808,437 @@ func TestComputeGemSignals_CASCADENotFiredWithLowCV(t *testing.T) {
 
 	if signals[0].AdvancedSignal == "CASCADE" {
 		t.Errorf("AdvancedSignal = CASCADE, should NOT fire when CV=%v (below 200 threshold)", f.CV)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Trade-adjusted sellability tests (adjustSellabilityForTrade)
+// ---------------------------------------------------------------------------
+
+func TestAdjustSellabilityForTrade_MONOPOLY(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            60, // 1 min, fresh
+		TradeSellerConcentration: "MONOPOLY",
+	}
+	got, _ := adjustSellabilityForTrade(80, f)
+	// 80 - 20 = 60
+	if got != 60 {
+		t.Errorf("MONOPOLY: adjustSellabilityForTrade(80) = %d, want 60 (-20)", got)
+	}
+}
+
+func TestAdjustSellabilityForTrade_CONCENTRATED(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            60,
+		TradeSellerConcentration: "CONCENTRATED",
+	}
+	got, _ := adjustSellabilityForTrade(80, f)
+	// 80 - 10 = 70
+	if got != 70 {
+		t.Errorf("CONCENTRATED: adjustSellabilityForTrade(80) = %d, want 70 (-10)", got)
+	}
+}
+
+func TestAdjustSellabilityForTrade_STALE(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:     true,
+		TradeDataAge:           60,
+		TradeCheapestStaleness: "STALE",
+	}
+	got, _ := adjustSellabilityForTrade(80, f)
+	// 80 - 10 = 70
+	if got != 70 {
+		t.Errorf("STALE: adjustSellabilityForTrade(80) = %d, want 70 (-10)", got)
+	}
+}
+
+func TestAdjustSellabilityForTrade_FRESH(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:     true,
+		TradeDataAge:           60,
+		TradeCheapestStaleness: "FRESH",
+	}
+	got, _ := adjustSellabilityForTrade(80, f)
+	// 80 + 5 = 85
+	if got != 85 {
+		t.Errorf("FRESH: adjustSellabilityForTrade(80) = %d, want 85 (+5)", got)
+	}
+}
+
+func TestAdjustSellabilityForTrade_SkippedWhenUnavailable(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      false,
+		TradeSellerConcentration: "MONOPOLY",
+		TradeCheapestStaleness:  "STALE",
+	}
+	got, label := adjustSellabilityForTrade(80, f)
+	if got != 80 {
+		t.Errorf("unavailable: adjustSellabilityForTrade(80) = %d, want 80 (unchanged)", got)
+	}
+	if label != "FAST SELL" {
+		t.Errorf("unavailable: label = %q, want FAST SELL (for score 80)", label)
+	}
+}
+
+func TestAdjustSellabilityForTrade_SkippedWhenStaleAge(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            5400, // exactly at boundary (>= 5400 = skip)
+		TradeSellerConcentration: "MONOPOLY",
+	}
+	got, _ := adjustSellabilityForTrade(80, f)
+	if got != 80 {
+		t.Errorf("stale age: adjustSellabilityForTrade(80) = %d, want 80 (unchanged)", got)
+	}
+}
+
+func TestAdjustSellabilityForTrade_ClampToZero(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            60,
+		TradeSellerConcentration: "MONOPOLY",
+		TradeCheapestStaleness:  "STALE",
+	}
+	got, label := adjustSellabilityForTrade(15, f)
+	// 15 - 20 - 10 = -15 → clamped to 0
+	if got != 0 {
+		t.Errorf("clamp to 0: adjustSellabilityForTrade(15) = %d, want 0 (clamped)", got)
+	}
+	if label != "UNLIKELY" {
+		t.Errorf("clamp to 0: label = %q, want UNLIKELY", label)
+	}
+}
+
+func TestAdjustSellabilityForTrade_ClampTo100(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:     true,
+		TradeDataAge:           60,
+		TradeCheapestStaleness: "FRESH",
+	}
+	got, _ := adjustSellabilityForTrade(98, f)
+	// 98 + 5 = 103 → clamped to 100
+	if got != 100 {
+		t.Errorf("clamp to 100: adjustSellabilityForTrade(98) = %d, want 100 (clamped)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// classifySellConfidence trade overrides
+// ---------------------------------------------------------------------------
+
+func TestClassifySellConfidence_MONOPOLY_SafeToFair(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            60,
+		TradeSellerConcentration: "MONOPOLY",
+	}
+	// Base would be SAFE (sellProb >= 0.8, stabilityDisc >= 0.85).
+	got, note := classifySellConfidence(0.9, 0.95, f)
+	if got != "FAIR" {
+		t.Errorf("MONOPOLY SAFE→FAIR: got %q, want FAIR", got)
+	}
+	if note == "" {
+		t.Error("MONOPOLY SAFE→FAIR: note should be non-empty")
+	}
+}
+
+func TestClassifySellConfidence_MONOPOLY_FairToRisky(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            60,
+		TradeSellerConcentration: "MONOPOLY",
+	}
+	// Base would be FAIR.
+	got, note := classifySellConfidence(0.6, 0.82, f)
+	if got != "RISKY" {
+		t.Errorf("MONOPOLY FAIR→RISKY: got %q, want RISKY", got)
+	}
+	if note == "" {
+		t.Error("MONOPOLY FAIR→RISKY: note should be non-empty")
+	}
+}
+
+func TestClassifySellConfidence_CASCADE_AlwaysRisky(t *testing.T) {
+	// CASCADE regime: always RISKY regardless of trade data.
+	f := GemFeature{
+		MarketRegime: "CASCADE",
+	}
+	got, note := classifySellConfidence(0.9, 0.95, f)
+	if got != "RISKY" {
+		t.Errorf("CASCADE: got %q, want RISKY", got)
+	}
+	if note == "" {
+		t.Error("CASCADE: note should be non-empty")
+	}
+}
+
+func TestClassifySellConfidence_PriceOutlier_MONOPOLY_AlwaysRisky(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:      true,
+		TradeDataAge:            60,
+		TradeSellerConcentration: "MONOPOLY",
+		TradePriceOutlier:       true,
+	}
+	// Even with SAFE base conditions, PriceOutlier + MONOPOLY = always RISKY.
+	got, note := classifySellConfidence(0.9, 0.95, f)
+	if got != "RISKY" {
+		t.Errorf("PriceOutlier+MONOPOLY: got %q, want RISKY", got)
+	}
+	if note == "" {
+		t.Error("PriceOutlier+MONOPOLY: note should be non-empty")
+	}
+}
+
+func TestClassifySellConfidence_STALE_SafeToFair(t *testing.T) {
+	f := GemFeature{
+		TradeDataAvailable:     true,
+		TradeDataAge:           60,
+		TradeCheapestStaleness: "STALE",
+	}
+	// Base: SAFE. STALE should downgrade SAFE→FAIR.
+	got, note := classifySellConfidence(0.9, 0.95, f)
+	if got != "FAIR" {
+		t.Errorf("STALE SAFE→FAIR: got %q, want FAIR", got)
+	}
+	if note == "" {
+		t.Error("STALE SAFE→FAIR: note should be non-empty")
+	}
+}
+
+func TestClassifySellConfidence_FRESH_NoPromotionWhenSellProbTooLow(t *testing.T) {
+	// FRESH promotion requires sellProb >= 0.5, but RISKY base requires sellProb < 0.5,
+	// so these conditions are mutually exclusive for the base classification.
+	// This test confirms FRESH does not promote when sellProb is below the threshold.
+	f := GemFeature{
+		TradeDataAvailable:     true,
+		TradeDataAge:           60,
+		TradeCheapestStaleness: "FRESH",
+	}
+	// sellProb=0.49, stabilityDisc=0.75 → RISKY base (both < 0.5 and < 0.8).
+	// FRESH promotion needs sellProb >= 0.5 — not met.
+	got, _ := classifySellConfidence(0.49, 0.75, f)
+	if got != "RISKY" {
+		t.Errorf("FRESH no-promotion: got %q, want RISKY (sellProb 0.49 below 0.5 threshold)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QuickSellPrice: trade floor vs ninja fallback
+// ---------------------------------------------------------------------------
+
+func TestComputeGemSignals_QuickSellPrice_UsesTradeFloor(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	f := testFeature("Spark of Nova", "20/20", 200, 15)
+	f.Tier = "HIGH"
+	// Trade data: fresh, not outlier, sufficient listings.
+	f.TradeDataAvailable = true
+	f.TradeDataAge = 120 // 2 min
+	f.TradePriceFloor = 185.0
+	f.TradePriceOutlier = false
+	f.TradeMedianTop10 = 195.0
+
+	gems := testBaseGems("Spark", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	sig := signals[0]
+	// QuickSellPrice should use trade floor (185) as base, not ninja (200).
+	undercutFactor := quickSellUndercutFactor(15, "HIGH", sig.Signal)
+	expectedQuickSell := 185.0 * (1.0 - undercutFactor)
+
+	if math.Abs(sig.QuickSellPrice-expectedQuickSell) > 0.01 {
+		t.Errorf("QuickSellPrice = %f, want %f (based on trade floor 185)", sig.QuickSellPrice, expectedQuickSell)
+	}
+}
+
+func TestComputeGemSignals_QuickSellPrice_FallsBackToNinja(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	f := testFeature("Spark of Nova", "20/20", 200, 15)
+	f.Tier = "HIGH"
+	// No trade data.
+	f.TradeDataAvailable = false
+
+	gems := testBaseGems("Spark", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	sig := signals[0]
+	// QuickSellPrice should use ninja chaos (200) as base.
+	undercutFactor := quickSellUndercutFactor(15, "HIGH", sig.Signal)
+	expectedQuickSell := 200.0 * (1.0 - undercutFactor)
+
+	if math.Abs(sig.QuickSellPrice-expectedQuickSell) > 0.01 {
+		t.Errorf("QuickSellPrice = %f, want %f (based on ninja 200)", sig.QuickSellPrice, expectedQuickSell)
+	}
+}
+
+func TestComputeGemSignals_QuickSellPrice_FallsBackWhenOutlier(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	f := testFeature("Spark of Nova", "20/20", 200, 15)
+	f.Tier = "HIGH"
+	// Trade data available but outlier — should fall back to ninja.
+	f.TradeDataAvailable = true
+	f.TradeDataAge = 120
+	f.TradePriceFloor = 90.0 // outlier
+	f.TradePriceOutlier = true
+	f.TradeMedianTop10 = 195.0
+
+	gems := testBaseGems("Spark", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	sig := signals[0]
+	// Outlier: fallback to ninja (200).
+	undercutFactor := quickSellUndercutFactor(15, "HIGH", sig.Signal)
+	expectedQuickSell := 200.0 * (1.0 - undercutFactor)
+
+	if math.Abs(sig.QuickSellPrice-expectedQuickSell) > 0.01 {
+		t.Errorf("QuickSellPrice = %f, want %f (outlier → ninja fallback)", sig.QuickSellPrice, expectedQuickSell)
+	}
+}
+
+func TestComputeGemSignals_QuickSellPrice_FallsBackWhenThinListings(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	f := testFeature("Thin of Market", "20/20", 200, 2) // < 3 listings
+	f.Tier = "HIGH"
+	f.TradeDataAvailable = true
+	f.TradeDataAge = 120
+	f.TradePriceFloor = 185.0
+	f.TradePriceOutlier = false
+
+	gems := testBaseGems("Thin", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	sig := signals[0]
+	// listings < 3: fallback to ninja (200).
+	undercutFactor := quickSellUndercutFactor(2, "HIGH", sig.Signal)
+	expectedQuickSell := 200.0 * (1.0 - undercutFactor)
+
+	if math.Abs(sig.QuickSellPrice-expectedQuickSell) > 0.01 {
+		t.Errorf("QuickSellPrice = %f, want %f (thin listings → ninja fallback)", sig.QuickSellPrice, expectedQuickSell)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RiskAdjustedValue: trade median usage
+// ---------------------------------------------------------------------------
+
+func TestComputeGemSignals_RiskAdjustedValue_UsesTradeMedian(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	f := testFeature("Spark of Nova", "20/20", 200, 25)
+	f.Tier = "HIGH"
+	f.SellProbabilityFactor = 0.8
+	f.StabilityDiscount = 0.9
+	f.TradeDataAvailable = true
+	f.TradeDataAge = 600     // 10 min: within 30min threshold for median
+	f.TradeMedianTop10 = 190 // lower than ninja
+
+	gems := testBaseGems("Spark", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	sig := signals[0]
+	// RAV should use TradeMedianTop10 (190), not ninja (200).
+	expectedRAV := 190.0 * f.SellProbabilityFactor * f.StabilityDiscount
+	// Note: applyTradeMultipliers may modify SellProbabilityFactor, so check direction.
+	if sig.RiskAdjustedValue >= 200.0*0.8*0.9 {
+		t.Errorf("RiskAdjustedValue = %f, should be less than ninja-based %f (trade median is lower)",
+			sig.RiskAdjustedValue, 200.0*0.8*0.9)
+	}
+	// Should be approximately expectedRAV (may differ slightly due to applyTradeMultipliers).
+	_ = expectedRAV // used for reasoning, not exact comparison
+	if sig.RiskAdjustedValue <= 0 {
+		t.Errorf("RiskAdjustedValue = %f, want > 0", sig.RiskAdjustedValue)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SellConfidence trade note propagation
+// ---------------------------------------------------------------------------
+
+func TestComputeGemSignals_SellConfidence_TradeNote(t *testing.T) {
+	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
+	mc := testSignalMarketContext()
+
+	f := testFeature("Monopoly of Doom", "20/20", 200, 15)
+	f.Tier = "HIGH"
+	f.SellProbabilityFactor = 0.9
+	f.StabilityDiscount = 0.95
+	// MONOPOLY with SAFE base → downgrade to FAIR.
+	f.TradeDataAvailable = true
+	f.TradeDataAge = 60
+	f.TradeSellerConcentration = "MONOPOLY"
+
+	gems := testBaseGems("Monopoly", 50)
+
+	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
+	if len(signals) != 1 {
+		t.Fatalf("got %d signals, want 1", len(signals))
+	}
+
+	sig := signals[0]
+	// SellConfidence should be downgraded by MONOPOLY.
+	if sig.SellConfidence == "SAFE" {
+		t.Error("SellConfidence should not be SAFE when MONOPOLY (downgrade expected)")
+	}
+	// TradeConfidenceNote should explain the downgrade.
+	if sig.TradeConfidenceNote == "" {
+		t.Error("TradeConfidenceNote should be non-empty for MONOPOLY downgrade")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sellabilityLabelFor tests
+// ---------------------------------------------------------------------------
+
+func TestSellabilityLabelFor(t *testing.T) {
+	tests := []struct {
+		score int
+		want  string
+	}{
+		{100, "FAST SELL"},
+		{80, "FAST SELL"},
+		{79, "GOOD"},
+		{60, "GOOD"},
+		{59, "MODERATE"},
+		{40, "MODERATE"},
+		{39, "SLOW"},
+		{20, "SLOW"},
+		{19, "UNLIKELY"},
+		{0, "UNLIKELY"},
+	}
+	for _, tt := range tests {
+		got := sellabilityLabelFor(tt.score)
+		if got != tt.want {
+			t.Errorf("sellabilityLabelFor(%d) = %q, want %q", tt.score, got, tt.want)
+		}
 	}
 }

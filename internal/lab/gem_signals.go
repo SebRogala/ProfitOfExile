@@ -60,7 +60,7 @@ func ComputeGemSignals(
 		}
 
 		// 3. Sellability from v1 classifier.
-		sellScore, sellLabel := sellability(f.Listings, f.VelLongListing, f.VelLongPrice, f.CV, signal, f.MarketDepth, f.Chaos)
+		sellScore, _ := sellability(f.Listings, f.VelLongListing, f.VelLongPrice, f.CV, signal, f.MarketDepth, f.Chaos)
 
 		// 4. Base-dependent signals.
 		baseName := extractBaseName(f.Name)
@@ -93,30 +93,47 @@ func ComputeGemSignals(
 		// 6. Recommendation (follows collective.go:311 pattern).
 		recommendation := computeRecommendation(signal, sUrgency, confidence)
 
-		// 7. Risk-adjusted scoring (POE-69).
-		riskAdjValue := f.Chaos * f.SellProbabilityFactor * f.StabilityDiscount
+		// 7. Trade-adjusted sellability.
+		adjSellScore, adjSellLabel := adjustSellabilityForTrade(sellScore, f)
+
+		// 8. Risk-adjusted scoring (POE-69).
+		// Use trade price floor for quick-sell when fresh trade data is available
+		// and the listing is not a price outlier, with at least 3 total listings.
+		basePrice := f.Chaos
+		if f.TradeDataAvailable && f.TradeDataAge < 300 && !f.TradePriceOutlier && f.TradePriceFloor > 0 && f.Listings >= 3 {
+			basePrice = f.TradePriceFloor
+		}
+
+		// Use trade median for risk-adjusted value when fresh, else ninja price.
+		ravPrice := f.Chaos
+		if f.TradeDataAvailable && f.TradeDataAge < 1800 && f.TradeMedianTop10 > 0 {
+			ravPrice = f.TradeMedianTop10
+		}
+
+		riskAdjValue := ravPrice * f.SellProbabilityFactor * f.StabilityDiscount
 		undercutFactor := quickSellUndercutFactor(f.Listings, f.Tier, signal)
-		quickSell := f.Chaos * (1.0 - undercutFactor)
-		sellConf := classifySellConfidence(f.SellProbabilityFactor, f.StabilityDiscount)
+		quickSell := basePrice * (1.0 - undercutFactor)
+		sellConf, tradeNote := classifySellConfidence(f.SellProbabilityFactor, f.StabilityDiscount, f)
 
 		signals = append(signals, GemSignal{
-			Time:              snapTime,
-			Name:              f.Name,
-			Variant:           f.Variant,
-			Signal:            signal,
-			Confidence:        confidence,
-			SellUrgency:       sUrgency,
-			SellReason:        sReason,
-			Sellability:       sellScore,
-			SellabilityLabel:  sellLabel,
-			WindowSignal:      winSignal,
-			AdvancedSignal:    advSignal,
-			PhaseModifier:     phaseMod,
-			Recommendation:    recommendation,
-			Tier:              f.Tier,
-			RiskAdjustedValue: riskAdjValue,
-			QuickSellPrice:    quickSell,
-			SellConfidence:    sellConf,
+			Time:                snapTime,
+			Name:                f.Name,
+			Variant:             f.Variant,
+			Signal:              signal,
+			Confidence:          confidence,
+			SellUrgency:         sUrgency,
+			SellReason:          sReason,
+			Sellability:         adjSellScore,
+			SellabilityLabel:    adjSellLabel,
+			WindowSignal:        winSignal,
+			AdvancedSignal:      advSignal,
+			PhaseModifier:       phaseMod,
+			Recommendation:      recommendation,
+			Tier:                f.Tier,
+			RiskAdjustedValue:   riskAdjValue,
+			QuickSellPrice:      quickSell,
+			SellConfidence:      sellConf,
+			TradeConfidenceNote: tradeNote,
 		})
 	}
 
@@ -185,16 +202,126 @@ func quickSellUndercutFactor(listings int, tier, signal string) float64 {
 }
 
 // classifySellConfidence returns SAFE, FAIR, or RISKY based on the
-// sell probability factor and stability discount.
+// sell probability factor, stability discount, and trade signals.
 // SAFE: both factors well above typical (top quartile).
 // RISKY: at least one factor is poor.
 // FAIR: everything in between.
-func classifySellConfidence(sellProb, stabilityDisc float64) string {
+//
+// Non-trade override (always applied):
+//   - CASCADE regime: always RISKY (listing-depth-based, not trade-data-based)
+//
+// Trade overrides (applied when TradeDataAvailable && TradeDataAge < 5400):
+//   - MONOPOLY: SAFE→FAIR, FAIR→RISKY (hard override)
+//   - PriceOutlier + MONOPOLY: always RISKY
+//   - STALE cheapest: SAFE→FAIR
+//   - FRESH cheapest on borderline RISKY: promote to FAIR if sellProb >= 0.5 && stabilityDisc >= 0.7
+func classifySellConfidence(sellProb, stabilityDisc float64, f GemFeature) (string, string) {
+	// Base classification.
+	var base string
 	if sellProb >= 0.8 && stabilityDisc >= 0.85 {
-		return "SAFE"
+		base = "SAFE"
+	} else if sellProb < 0.5 && stabilityDisc < 0.8 {
+		base = "RISKY"
+	} else {
+		base = "FAIR"
 	}
-	if sellProb < 0.5 && stabilityDisc < 0.8 {
-		return "RISKY"
+
+	// CASCADE regime: always RISKY regardless of trade data availability.
+	// MarketDepth is listing-depth-based, not trade-data-based.
+	if f.MarketRegime == "CASCADE" {
+		return "RISKY", "CASCADE regime: always RISKY"
 	}
-	return "FAIR"
+
+	// No trade data or stale (>90min) — return base.
+	if !f.TradeDataAvailable || f.TradeDataAge >= 5400 {
+		return base, ""
+	}
+
+	result := base
+	var note string
+
+	// MONOPOLY hard overrides.
+	if f.TradeSellerConcentration == "MONOPOLY" {
+		if f.TradePriceOutlier {
+			return "RISKY", "MONOPOLY + price outlier: always RISKY"
+		}
+		switch result {
+		case "SAFE":
+			result = "FAIR"
+			note = "MONOPOLY: downgraded from SAFE to FAIR"
+		case "FAIR":
+			result = "RISKY"
+			note = "MONOPOLY: downgraded from FAIR to RISKY"
+		}
+		return result, note
+	}
+
+	// STALE cheapest: SAFE→FAIR.
+	if f.TradeCheapestStaleness == "STALE" && result == "SAFE" {
+		result = "FAIR"
+		note = "STALE cheapest listing: downgraded from SAFE to FAIR"
+	}
+
+	// FRESH cheapest on borderline RISKY: promote if sell probability AND stability are decent.
+	// Requires sellProb >= 0.5 to confirm price pull, AND stabilityDisc >= 0.7 to exclude
+	// deeply volatile gems (the minimum stabilityDiscount floor from stabilityDiscount()).
+	if f.TradeCheapestStaleness == "FRESH" && result == "RISKY" && sellProb >= 0.5 && stabilityDisc >= 0.7 {
+		result = "FAIR"
+		note = "FRESH cheapest listing + decent sell probability: promoted from RISKY to FAIR"
+	}
+
+	return result, note
+}
+
+// adjustSellabilityForTrade applies trade signal adjustments to the base sellability score.
+// Only applied when TradeDataAvailable && TradeDataAge < 5400 (90min).
+// Adjustments: MONOPOLY -20, CONCENTRATED -10, STALE -10, FRESH +5.
+// Result is clamped to [0, 100]. Always returns a valid label.
+func adjustSellabilityForTrade(score int, f GemFeature) (int, string) {
+	if !f.TradeDataAvailable || f.TradeDataAge >= 5400 {
+		return score, sellabilityLabelFor(score)
+	}
+
+	adjusted := score
+
+	switch f.TradeSellerConcentration {
+	case "MONOPOLY":
+		adjusted -= 20
+	case "CONCENTRATED":
+		adjusted -= 10
+	}
+
+	switch f.TradeCheapestStaleness {
+	case "STALE":
+		adjusted -= 10
+	case "FRESH":
+		adjusted += 5
+	}
+
+	// Clamp [0, 100].
+	if adjusted < 0 {
+		adjusted = 0
+	}
+	if adjusted > 100 {
+		adjusted = 100
+	}
+
+	return adjusted, sellabilityLabelFor(adjusted)
+}
+
+// sellabilityLabelFor maps a sellability score to its human-readable label.
+// Same thresholds as sellability() in trends.go.
+func sellabilityLabelFor(score int) string {
+	switch {
+	case score >= 80:
+		return "FAST SELL"
+	case score >= 60:
+		return "GOOD"
+	case score >= 40:
+		return "MODERATE"
+	case score >= 20:
+		return "SLOW"
+	default:
+		return "UNLIKELY"
+	}
 }

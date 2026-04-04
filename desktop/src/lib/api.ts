@@ -53,6 +53,7 @@ export interface GemPlay {
 	high7d: number;
 	histPosition: number;
 	sellConfidence: string;
+	tradeConfidenceNote: string;
 	gcpRecipeCost: number;
 	gcpRecipeBase: number;
 	gcpRecipeSaves: number;
@@ -226,6 +227,7 @@ function mapCollectiveRow(r: any): GemPlay {
 		high7d: Math.round(r.high7d || 0),
 		histPosition: Math.round(r.histPosition || 0),
 		sellConfidence: r.sellConfidence || '',
+		tradeConfidenceNote: r.tradeConfidenceNote || '',
 		gcpRecipeCost: Math.round(r.gcpRecipeCost || 0),
 		gcpRecipeBase: Math.round(r.gcpRecipeBase || 0),
 		gcpRecipeSaves: Math.round(r.gcpRecipeSaves || 0),

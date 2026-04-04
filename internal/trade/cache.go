@@ -140,6 +140,21 @@ func (c *TradeCache) OldestStale(minAge time.Duration, filter func(key string, r
 	return oldestKey, oldestKey != ""
 }
 
+// GetSnapshot returns a shallow copy of all cached entries keyed by cache key.
+// Unlike Get(), this does NOT promote entries (no LRU touch), so it acquires
+// the lock only once for the entire batch — ideal for analysis pipelines that
+// need to read all entries without 500 individual write-lock acquisitions.
+func (c *TradeCache) GetSnapshot() map[string]*TradeLookupResult {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	snap := make(map[string]*TradeLookupResult, len(c.entries))
+	for k, e := range c.entries {
+		snap[k] = e.Result
+	}
+	return snap
+}
+
 // evictOldest removes the least-recently-used entry (order[0]).
 // Caller must hold c.mu.
 func (c *TradeCache) evictOldest() {
