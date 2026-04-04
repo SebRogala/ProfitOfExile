@@ -428,6 +428,137 @@ func TestBuildCompareResults_ColorBaseROI(t *testing.T) {
 	}
 }
 
+func TestRankCollective_TierCountsConsistentWithSignals(t *testing.T) {
+	// Acceptance criterion: tier counts in collective results must match
+	// the input signals. This verifies the v2 migration preserves tier data.
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Top Gem", Variant: "20/20", ROI: 200, Confidence: "OK"},
+		{Time: now, TransfiguredName: "High Gem", Variant: "20/20", ROI: 150, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Mid Gem", Variant: "20/20", ROI: 50, Confidence: "OK"},
+	}
+	signals := []GemSignal{
+		{Name: "Top Gem", Variant: "20/20", Signal: "STABLE", Tier: "TOP", Sellability: 80, SellConfidence: "SAFE"},
+		{Name: "High Gem", Variant: "20/20", Signal: "STABLE", Tier: "HIGH", Sellability: 70, SellConfidence: "FAIR"},
+		{Name: "Mid Gem", Variant: "20/20", Signal: "STABLE", Tier: "MID", Sellability: 60, SellConfidence: "RISKY"},
+	}
+
+	results := RankCollective(transfigure, signals, nil, 0, 50, "")
+
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+
+	tierCounts := map[string]int{}
+	for _, r := range results {
+		tierCounts[r.PriceTier]++
+	}
+
+	if tierCounts["TOP"] != 1 {
+		t.Errorf("TOP tier count = %d, want 1", tierCounts["TOP"])
+	}
+	if tierCounts["HIGH"] != 1 {
+		t.Errorf("HIGH tier count = %d, want 1", tierCounts["HIGH"])
+	}
+	if tierCounts["MID"] != 1 {
+		t.Errorf("MID tier count = %d, want 1", tierCounts["MID"])
+	}
+}
+
+func TestRankCollective_SellConfidenceFromSignal(t *testing.T) {
+	// Verify that SellConfidence in collective results comes from GemSignal (v2),
+	// not from inline derivation (the deleted deriveSellConfidence).
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 100, Confidence: "OK"},
+	}
+	signals := []GemSignal{
+		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 80,
+			SellConfidence: "FAIR", TradeConfidenceNote: "MONOPOLY: downgraded from SAFE"},
+	}
+
+	results := RankCollective(transfigure, signals, nil, 0, 50, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].SellConfidence != "FAIR" {
+		t.Errorf("SellConfidence = %q, want FAIR (from GemSignal)", results[0].SellConfidence)
+	}
+}
+
+func TestBuildCompareResults_SellConfidenceFromSignal(t *testing.T) {
+	// Compare endpoint should use GemSignal.SellConfidence, not inline derivation.
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20",
+			ROI: 100, TransfiguredPrice: 200, Confidence: "OK"},
+	}
+	signals := []GemSignal{
+		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE",
+			SellConfidence: "RISKY", TradeConfidenceNote: "CASCADE regime: always RISKY",
+			QuickSellPrice: 170, RiskAdjustedValue: 150},
+	}
+
+	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, signals, nil, nil, "20/20")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	r := results[0]
+	if r.SellConfidence != "RISKY" {
+		t.Errorf("SellConfidence = %q, want RISKY (from GemSignal)", r.SellConfidence)
+	}
+	if r.SellConfidenceReason != "CASCADE regime: always RISKY" {
+		t.Errorf("SellConfidenceReason = %q, want 'CASCADE regime: always RISKY'", r.SellConfidenceReason)
+	}
+	if r.QuickSellPrice != 170 {
+		t.Errorf("QuickSellPrice = %f, want 170 (from GemSignal)", r.QuickSellPrice)
+	}
+	if r.RiskAdjustedPrice != 150 {
+		t.Errorf("RiskAdjustedPrice = %f, want 150 (from GemSignal.RiskAdjustedValue)", r.RiskAdjustedPrice)
+	}
+}
+
+func TestRankCollective_FeaturesJoinPopulatesFields(t *testing.T) {
+	// Verify that joining GemFeature data populates velocity, CV, histPosition, etc.
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Spark of Nova", Variant: "20/20", ROI: 100, Confidence: "OK"},
+	}
+	signals := []GemSignal{
+		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 80},
+	}
+	features := []GemFeature{
+		{Name: "Spark of Nova", Variant: "20/20", VelLongPrice: 5.5, VelLongListing: -2.0,
+			CV: 18.0, HistPosition: 75, MarketDepth: 1.5, Low7Days: 150, High7Days: 220},
+	}
+
+	results := RankCollective(transfigure, signals, features, 0, 50, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	r := results[0]
+	if r.PriceVelocity != 5.5 {
+		t.Errorf("PriceVelocity = %f, want 5.5", r.PriceVelocity)
+	}
+	if r.ListingVelocity != -2.0 {
+		t.Errorf("ListingVelocity = %f, want -2.0", r.ListingVelocity)
+	}
+	if r.CV != 18.0 {
+		t.Errorf("CV = %f, want 18.0", r.CV)
+	}
+	if r.HistPosition != 75 {
+		t.Errorf("HistPosition = %f, want 75", r.HistPosition)
+	}
+	if r.Low7Days != 150 {
+		t.Errorf("Low7Days = %f, want 150", r.Low7Days)
+	}
+	if r.High7Days != 220 {
+		t.Errorf("High7Days = %f, want 220", r.High7Days)
+	}
+}
+
 func TestSignalWeight(t *testing.T) {
 	tests := []struct {
 		signal string

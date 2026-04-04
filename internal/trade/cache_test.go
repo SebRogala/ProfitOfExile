@@ -132,6 +132,81 @@ func TestCache_Delete(t *testing.T) {
 	c.Delete("nonexistent")
 }
 
+func TestCache_GetSnapshot(t *testing.T) {
+	c := NewTradeCache(10)
+
+	r1 := makeResult("Spark of Nova", "20/20")
+	r2 := makeResult("Cleave of Rage", "20/20")
+	r3 := makeResult("Ice Shot of Frost", "1/20")
+
+	c.Set(CacheKey("Spark of Nova", "20/20"), r1)
+	c.Set(CacheKey("Cleave of Rage", "20/20"), r2)
+	c.Set(CacheKey("Ice Shot of Frost", "1/20"), r3)
+
+	snap := c.GetSnapshot()
+
+	// Snapshot should contain all 3 entries.
+	if len(snap) != 3 {
+		t.Fatalf("GetSnapshot() returned %d entries, want 3", len(snap))
+	}
+
+	// Verify specific entries are accessible by key.
+	if got, ok := snap[CacheKey("Spark of Nova", "20/20")]; !ok {
+		t.Error("snapshot missing Spark of Nova")
+	} else if got.Gem != "Spark of Nova" {
+		t.Errorf("Spark Gem = %q, want %q", got.Gem, "Spark of Nova")
+	}
+
+	if got, ok := snap[CacheKey("Cleave of Rage", "20/20")]; !ok {
+		t.Error("snapshot missing Cleave of Rage")
+	} else if got.Gem != "Cleave of Rage" {
+		t.Errorf("Cleave Gem = %q, want %q", got.Gem, "Cleave of Rage")
+	}
+
+	if got, ok := snap[CacheKey("Ice Shot of Frost", "1/20")]; !ok {
+		t.Error("snapshot missing Ice Shot of Frost")
+	} else if got.Variant != "1/20" {
+		t.Errorf("Ice Shot Variant = %q, want %q", got.Variant, "1/20")
+	}
+}
+
+func TestCache_GetSnapshot_Empty(t *testing.T) {
+	c := NewTradeCache(10)
+
+	snap := c.GetSnapshot()
+
+	if snap == nil {
+		t.Fatal("GetSnapshot() returned nil, want non-nil empty map")
+	}
+	if len(snap) != 0 {
+		t.Errorf("GetSnapshot() returned %d entries, want 0", len(snap))
+	}
+}
+
+func TestCache_GetSnapshot_DoesNotPromote(t *testing.T) {
+	c := NewTradeCache(3)
+
+	c.Set("a", makeResult("a", "1"))
+	c.Set("b", makeResult("b", "1"))
+	c.Set("c", makeResult("c", "1"))
+
+	// Take a snapshot — this should NOT promote "a".
+	_ = c.GetSnapshot()
+
+	// Insert "d" — should evict "a" (still the oldest since snapshot didn't promote).
+	c.Set("d", makeResult("d", "1"))
+
+	if _, ok := c.Get("a"); ok {
+		t.Error("expected 'a' to be evicted (GetSnapshot should not promote), but it was found")
+	}
+	// "b", "c", "d" should survive.
+	for _, key := range []string{"b", "c", "d"} {
+		if _, ok := c.Get(key); !ok {
+			t.Errorf("expected %q to be present, got miss", key)
+		}
+	}
+}
+
 func TestCache_ConcurrentAccess(t *testing.T) {
 	c := NewTradeCache(50)
 	var wg sync.WaitGroup
