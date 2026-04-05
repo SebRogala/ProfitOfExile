@@ -150,6 +150,65 @@ func (r *Repository) List(ctx context.Context) ([]Device, error) {
 	return collectDevices(rows)
 }
 
+// DeviceStats holds aggregate device statistics.
+type DeviceStats struct {
+	Total      int
+	Active24h  int
+	Active7d   int
+	Identified int
+	Banned     int
+	ByRole     map[string]int
+	ByVersion  map[string]int
+}
+
+// Stats returns aggregate device statistics.
+func (r *Repository) Stats(ctx context.Context) (*DeviceStats, error) {
+	s := &DeviceStats{ByRole: make(map[string]int), ByVersion: make(map[string]int)}
+
+	err := r.pool.QueryRow(ctx, `SELECT
+		COUNT(*),
+		COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '24 hours'),
+		COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '7 days'),
+		COUNT(*) FILTER (WHERE alias IS NOT NULL),
+		COUNT(*) FILTER (WHERE banned = true)
+		FROM devices`).Scan(&s.Total, &s.Active24h, &s.Active7d, &s.Identified, &s.Banned)
+	if err != nil {
+		return nil, fmt.Errorf("device stats: %w", err)
+	}
+
+	// By role
+	rows, err := r.pool.Query(ctx, `SELECT role, COUNT(*) FROM devices GROUP BY role`)
+	if err != nil {
+		return nil, fmt.Errorf("device stats by role: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role string
+		var count int
+		if err := rows.Scan(&role, &count); err != nil {
+			continue
+		}
+		s.ByRole[role] = count
+	}
+
+	// By version
+	rows2, err := r.pool.Query(ctx, `SELECT COALESCE(app_version, 'unknown'), COUNT(*) FROM devices GROUP BY app_version`)
+	if err != nil {
+		return nil, fmt.Errorf("device stats by version: %w", err)
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var version string
+		var count int
+		if err := rows2.Scan(&version, &count); err != nil {
+			continue
+		}
+		s.ByVersion[version] = count
+	}
+
+	return s, nil
+}
+
 // collectDevices scans all rows into a Device slice.
 func collectDevices(rows pgx.Rows) ([]Device, error) {
 	var devices []Device
