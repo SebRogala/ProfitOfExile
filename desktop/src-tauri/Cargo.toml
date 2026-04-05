@@ -29,8 +29,12 @@ anyhow = "1"
 rfd = "0.15"
 sysinfo = "0.33"
 chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 windows = { version = "0.58", features = [
     "Media_Ocr",
     "Graphics_Imaging",

@@ -1,4 +1,5 @@
 mod capture;
+mod fingerprint;
 #[allow(dead_code)] // Font panel OCR — not yet wired into the scan pipeline
 mod font_parser;
 mod gem_matcher;
@@ -52,6 +53,7 @@ pub struct AppStatus {
     pub trade_stale_critical_secs: u32,
     pub trade_auto_refresh_secs: u32,
     pub auto_trade_enabled: bool,
+    pub device_id: String,
 }
 
 /// Accumulated font session data — shared between font scan loop and event handlers.
@@ -76,6 +78,9 @@ pub struct FontRound {
 }
 
 pub struct AppState {
+    /// Hardware-based device fingerprint — computed once at startup, immutable.
+    /// String is Sync so no Mutex needed.
+    pub device_id: String,
     pub pair_code: Mutex<String>,
     pub client_txt_path: Mutex<String>,
     pub server_url: Mutex<String>,
@@ -147,6 +152,7 @@ fn build_status(state: &AppState) -> AppStatus {
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
+        device_id: state.device_id.clone(),
     }
 }
 
@@ -232,6 +238,12 @@ fn get_status(state: tauri::State<AppState>) -> AppStatus {
 #[tauri::command]
 fn get_pair_code(state: tauri::State<AppState>) -> String {
     state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Returns the first 8 characters of the device fingerprint (for display in the identify dialog).
+#[tauri::command]
+fn get_device_id(state: tauri::State<AppState>) -> String {
+    state.device_id.chars().take(8).collect()
 }
 
 #[tauri::command]
@@ -1094,16 +1106,9 @@ async fn send_test_gems(app: AppHandle) -> Result<String, String> {
 
     app_log(&app, format!("Sending test gems to {}", url));
 
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|e| {
-            let msg = format!("HTTP client error: {}", e);
-            app_log(&app, msg.clone());
-            msg
-        })?;
+    let http = state.server_http.clone();
 
-    let res = client
+    let res = http
         .post(&url)
         .json(&serde_json::json!({
             "pair": pair,
@@ -1139,21 +1144,11 @@ async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let url = format!("{}/api/desktop/gems", server);
+    let http = state.server_http.clone();
 
     app_log(app, format!("Sending {} gems to server", gems.len()));
 
-    let client = match reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            app_log(app, format!("HTTP client error: {}", e));
-            return;
-        }
-    };
-
-    match client
+    match http
         .post(&url)
         .json(&serde_json::json!({
             "pair": pair,
@@ -1557,11 +1552,13 @@ fn send_font_session_data(app: &AppHandle) {
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
+    let device_id = state.device_id.clone();
+
     let session_data = serde_json::json!({
         "lab_type": "Unknown",
         "total_crafts": session.rounds.len(),
         "variant": "20/20",
-        "device_id": "desktop",
+        "device_id": device_id,
         "pair_code": pair,
         "rounds": session.rounds.iter().map(|r| serde_json::json!({
             "craft_options": r.options,
@@ -1970,9 +1967,26 @@ pub fn run() {
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
 
-    let server_http = reqwest::Client::new();
+    let device_id = fingerprint::compute_device_id();
+    log::info!("Device ID: {}... ({})", &device_id[..device_id.len().min(8)],
+        if device_id.len() == 64 { "hardware" } else { "volatile" });
+
+    // Build server HTTP client with default device headers.
+    let version = env!("CARGO_PKG_VERSION");
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    if let Ok(v) = reqwest::header::HeaderValue::from_str(&device_id) {
+        default_headers.insert("X-Device-ID", v);
+    }
+    if let Ok(v) = reqwest::header::HeaderValue::from_str(version) {
+        default_headers.insert("X-App-Version", v);
+    }
+    let server_http = reqwest::Client::builder()
+        .default_headers(default_headers)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
 
     let app_state = AppState {
+        device_id: device_id.clone(),
         pair_code: Mutex::new(pair_code),
         client_txt_path: Mutex::new(String::from(
             r"C:\Program Files (x86)\Grinding Gear Games\Path of Exile\logs\Client.txt",
@@ -2016,6 +2030,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_pair_code,
+            get_device_id,
             regenerate_pair_code,
             set_client_txt_path,
             reset_client_txt_path,

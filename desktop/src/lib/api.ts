@@ -5,6 +5,7 @@
 
 import { store } from '$lib/stores/status.svelte';
 import type { TradeLookupResult } from './tradeApi';
+import { getVersion } from '@tauri-apps/api/app';
 
 // --- Types ---
 
@@ -169,6 +170,26 @@ export interface CompareGem {
 
 // --- API helpers ---
 
+/** Cached app version — resolved once, reused on every request. */
+let cachedVersion = '';
+getVersion().then(v => { cachedVersion = v; }).catch(() => {});
+
+/**
+ * Build device identity headers for server requests.
+ * Omits headers when values are not yet available (prevents sending "undefined").
+ */
+function deviceHeaders(): Record<string, string> {
+	const headers: Record<string, string> = {};
+	const deviceId = store.status?.device_id;
+	if (deviceId && typeof deviceId === 'string') {
+		headers['X-Device-ID'] = deviceId;
+	}
+	if (cachedVersion) {
+		headers['X-App-Version'] = cachedVersion;
+	}
+	return headers;
+}
+
 /**
  * Returns the API base URL from the Rust backend settings.
  * Called fresh on every request so it picks up server_url changes (e.g. after settings edit).
@@ -184,7 +205,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 			if (v) url.searchParams.set(k, v);
 		}
 	}
-	const resp = await fetch(url.toString());
+	const resp = await fetch(url.toString(), { headers: deviceHeaders() });
 	if (!resp.ok) {
 		throw new Error(`API ${path}: ${resp.status} ${resp.statusText}`);
 	}
@@ -415,7 +436,7 @@ export async function fetchCompare(gems: string[], variant: string, signal?: Abo
 	const url = new URL(`${getApiBase()}/analysis/compare`);
 	url.searchParams.set('gems', gems.join(','));
 	url.searchParams.set('variant', variant);
-	const resp = await fetch(url.toString(), { signal });
+	const resp = await fetch(url.toString(), { signal, headers: deviceHeaders() });
 	if (!resp.ok) {
 		throw new Error(`API /analysis/compare: ${resp.status} ${resp.statusText}`);
 	}

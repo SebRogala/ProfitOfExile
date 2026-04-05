@@ -16,6 +16,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `components/TopBar.svelte` | `status` | Custom title bar — logo, status indicators, debug toggle (dev only), settings link, window controls (min/max/close). Draggable. |
 | `components/Sidebar.svelte` | `open`, `currentPath`, `onToggle` | Collapsible nav — strategies, tools, overlay quick-toggles. Collapsed state shows thin clickable strip. |
 | `components/Select.svelte` | `value` (bindable), `options`, `onchange` | Custom dropdown select — styled dark theme, chevron indicator. Used by dashboard components. |
+| `components/IdentifyDialog.svelte` | `open` (bindable) | Device identify dialog — shows short device ID, alias input, POST to `/api/device/identify`. Triggered by Ctrl+Shift+I. |
 
 ## Overlay Utilities
 
