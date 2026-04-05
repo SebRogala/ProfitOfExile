@@ -309,12 +309,14 @@ export async function fetchBestPlays(
 	budget?: number,
 	sort?: 'roi' | 'roiPercent',
 	limit?: number,
+	search?: string,
 ): Promise<GemPlay[]> {
 	const params: Record<string, string> = {};
 	if (variant) params.variant = variant;
 	if (budget) params.budget = String(budget);
 	if (sort === 'roiPercent') params.sort = 'pct';
 	if (limit) params.limit = String(limit);
+	if (search) params.search = search;
 
 	const resp = await get<{ count: number; data: any[] }>('/analysis/collective', params);
 	return (resp.data || []).map(mapCollectiveRow);

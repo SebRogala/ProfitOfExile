@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchSignalHistory, fetchGemNames, type GemPlay, type SignalTransition } from '$lib/api';
+	import { fetchSignalHistory, fetchGemNames, fetchBestPlays, type GemPlay, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
@@ -41,6 +41,7 @@
 		if (searchDebounce) clearTimeout(searchDebounce);
 		if (!query.trim()) {
 			searchFilter = '';
+			searchResults = null;
 			suggestions = [];
 			showDropdown = false;
 			return;
@@ -60,11 +61,16 @@
 		}, 100);
 	}
 
-	function selectGem(name: string) {
+	let searchResults = $state<GemPlay[] | null>(null);
+
+	async function selectGem(name: string) {
 		searchQuery = name;
 		searchFilter = name;
 		suggestions = [];
 		showDropdown = false;
+		// Fetch this gem's data from the server (it may not be in the top-N loaded list).
+		const results = await fetchBestPlays(undefined, undefined, undefined, undefined, name);
+		searchResults = results;
 	}
 
 	function handleSearchKeydown(e: KeyboardEvent) {
@@ -81,6 +87,7 @@
 			showDropdown = false;
 			searchQuery = '';
 			searchFilter = '';
+			searchResults = null;
 		}
 	}
 	let showLowConf = $state(typeof localStorage !== 'undefined' && localStorage.getItem('poe-show-low-conf') === 'true');
@@ -93,13 +100,10 @@
 	let historyLoading = $state(false);
 
 	let sorted = $derived.by(() => {
-		let filtered = [...plays];
-		if (!showLowConf) {
+		// When search is active, use server-fetched results instead of local data.
+		let filtered = searchResults ? [...searchResults] : [...plays];
+		if (!showLowConf && !searchResults) {
 			filtered = filtered.filter((p) => !p.lowConfidence);
-		}
-		if (searchFilter) {
-			const q = searchFilter.toLowerCase();
-			filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
 		}
 		const b = parseInt(budget);
 		if (b > 0) {
