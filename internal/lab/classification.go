@@ -420,11 +420,11 @@ func ComputeGemClassification(gems []GemPrice) ClassificationResult {
 			tier = "TOP"
 		} else if tb, ok := boundaries[g.Variant]; ok {
 			tier = classifyTier(g.Chaos, tb)
-			// Low-confidence gems were excluded from TOP detection for a reason
-			// (thin market, unreliable price). Don't let them sneak back to TOP
-			// via the price-based classification — cap at HIGH.
-			if isLowConf && tier == "TOP" {
-				tier = "HIGH"
+			// Low-confidence gems with prices above the highest tier boundary
+			// have unreliable inflated prices (CASCADE, manipulation, thin market
+			// spike). Classify as CHAOTIC — excluded from font EV and rankings.
+			if isLowConf && len(tb.Boundaries) > 0 && g.Chaos > tb.Boundaries[0] {
+				tier = "CHAOTIC"
 			}
 		} else {
 			tier = "FLOOR"

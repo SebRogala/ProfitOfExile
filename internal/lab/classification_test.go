@@ -237,8 +237,8 @@ func TestComputeGemClassification_Integration(t *testing.T) {
 		// TOP: clear gap above the rest (1300, 1200 → gap ~800 → next at 400)
 		{Name: "KB of Clustering", Variant: "20/20", Chaos: 1300, Listings: 260, IsTransfigured: true, GemColor: "BLUE"},
 		{Name: "Cyclone of Tumult", Variant: "20/20", Chaos: 1200, Listings: 135, IsTransfigured: true, GemColor: "GREEN"},
-		// Low confidence: thin market spike
-		{Name: "Lightning Strike", Variant: "20/20", Chaos: 3204, Listings: 3, IsTransfigured: true, GemColor: "GREEN"},
+		// Low confidence: thin market spike (4500c with 3 listings — CASCADE-like)
+		{Name: "Lightning Strike", Variant: "20/20", Chaos: 4500, Listings: 3, IsTransfigured: true, GemColor: "GREEN"},
 		// Normal gems — tightly spaced to keep avg gap low
 		{Name: "Spark of Nova", Variant: "20/20", Chaos: 400, Listings: 74, IsTransfigured: true, GemColor: "BLUE"},
 		{Name: "AG of Smiting", Variant: "20/20", Chaos: 380, Listings: 68, IsTransfigured: true, GemColor: "RED"},
@@ -255,10 +255,24 @@ func TestComputeGemClassification_Integration(t *testing.T) {
 
 	cls := ComputeGemClassification(gems)
 
-	// Lightning Strike should be low confidence (3 listings vs median ~82).
+	// Lightning Strike should be low confidence (3 listings vs median ~82)
+	// and CHAOTIC tier (price 3204c would be TOP, but low conf caps at CHAOTIC).
 	ls := cls.Gems[GemClassificationKey{"Lightning Strike", "20/20"}]
 	if !ls.LowConfidence {
 		t.Errorf("Lightning Strike: LowConfidence = %v, want true", ls.LowConfidence)
+	}
+	if ls.Tier != "CHAOTIC" {
+		t.Errorf("Lightning Strike tier = %s, want CHAOTIC (low-conf gem with TOP-level price)", ls.Tier)
+	}
+	// CHAOTIC gems must NOT qualify as font EV winners in any mode.
+	if isSafeTierWinner(ls.Tier) {
+		t.Error("CHAOTIC tier should not be a Safe winner")
+	}
+	if isPremiumTierWinner(ls.Tier) {
+		t.Error("CHAOTIC tier should not be a Premium winner")
+	}
+	if isJackpotTierWinner(ls.Tier) {
+		t.Error("CHAOTIC tier should not be a Jackpot winner")
 	}
 
 	// KB and Cyclone should be TOP (gap of ~800 vs avg gap ~100).
