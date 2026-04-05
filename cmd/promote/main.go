@@ -78,8 +78,8 @@ func runList(ctx context.Context, repo *device.Repository) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PREFIX\tALIAS\tROLE\tVERSION\tLAST SEEN")
-	fmt.Fprintln(w, "------\t-----\t----\t-------\t---------")
+	fmt.Fprintln(w, "PREFIX\tALIAS\tROLE\tBANNED\tVERSION\tLAST SEEN")
+	fmt.Fprintln(w, "------\t-----\t----\t------\t-------\t---------")
 	for _, d := range devices {
 		prefix := d.Fingerprint
 		if len(prefix) > 8 {
@@ -91,6 +91,11 @@ func runList(ctx context.Context, repo *device.Repository) error {
 			alias = *d.Alias
 		}
 
+		banned := "no"
+		if d.Banned {
+			banned = "YES"
+		}
+
 		version := "-"
 		if d.AppVersion != nil {
 			version = *d.AppVersion
@@ -98,7 +103,7 @@ func runList(ctx context.Context, repo *device.Repository) error {
 
 		lastSeen := d.LastSeen.Format(time.RFC3339)
 
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", prefix, alias, d.Role, version, lastSeen)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", prefix, alias, d.Role, banned, version, lastSeen)
 	}
 	return w.Flush()
 }
@@ -161,7 +166,7 @@ Commands:
 Valid roles: user, editor, admin
 
 Environment:
-  DATABASE_URL    PostgreSQL connection string (required)
+  DATABASE_URL    PostgreSQL connection string (defaults to local Docker dev DB)
 
 Examples:
   promote list
