@@ -547,10 +547,10 @@ func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice flo
 	pVelPct := priceVel / currentPrice * 100
 	lVelPct := listingVel / float64(currentListings) * 100
 
-	// TRAP requires BOTH high historical volatility AND current instability.
-	// A gem with high 7-day CV but stable recent prices is not a trap —
-	// it had a volatile episode earlier but has since settled.
-	if cv > cfg.TrapCV && (math.Abs(pVelPct) > cfg.TrapVelPct || math.Abs(lVelPct) > cfg.TrapVelPct) {
+	// TRAP requires BOTH high CV AND dangerous directional movement:
+	// price falling (negative velocity) OR listings flooding (positive velocity).
+	// Positive price velocity with high CV is appreciating, not a trap.
+	if cv > cfg.TrapCV && (pVelPct < -cfg.TrapVelPct || lVelPct > cfg.TrapVelPct) {
 		return "TRAP"
 	}
 	// Absolute listing velocity for floor checks (percentage alone is noise on thin markets).

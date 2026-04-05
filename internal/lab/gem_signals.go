@@ -44,7 +44,8 @@ func ComputeGemSignals(
 	for _, f := range features {
 		// 1. Primary signal from v1 classifier.
 		// Uses 6h velocity (VelLong) — 2h was too sensitive to temporal normalization noise.
-		signal := classifySignal(f.VelLongPrice, f.VelLongListing, f.CV, f.Chaos, f.Listings)
+		// CVShort (6h) for TRAP — more meaningful than 7-day CV for detecting current instability.
+		signal := classifySignal(f.VelLongPrice, f.VelLongListing, f.CVShort, f.Chaos, f.Listings)
 
 		// 2. Advanced signal from v1 classifier.
 		advSignal := classifyAdvancedSignal(f.Chaos, f.Listings, f.VelLongPrice, f.VelLongListing, f.CV, f.HistPosition)

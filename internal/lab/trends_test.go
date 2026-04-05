@@ -102,11 +102,22 @@ func TestVelocity_SameTimestamp(t *testing.T) {
 }
 
 func TestClassifySignal_TRAP(t *testing.T) {
-	// TRAP requires BOTH high CV AND current instability (velocity% > 5%).
-	// price=100, vel=8 → 8% > 5% threshold → TRAP
-	s := classifySignal(8, 0, 150, 100, 50)
+	// TRAP requires BOTH high CV AND dangerous directional movement:
+	// price falling (negative vel%) OR listings flooding (positive lVel%).
+	// price=100, pVel=-8 → -8% < -5% threshold → TRAP
+	s := classifySignal(-8, 0, 150, 100, 50)
 	if s != "TRAP" {
-		t.Errorf("signal = %s, want TRAP", s)
+		t.Errorf("signal = %s, want TRAP (falling price + high CV)", s)
+	}
+	// Listings flooding: lVel=+8 on 50 listings → +16% > 5% → TRAP
+	s = classifySignal(0, 8, 150, 100, 50)
+	if s != "TRAP" {
+		t.Errorf("signal = %s, want TRAP (listing flood + high CV)", s)
+	}
+	// Positive price velocity should NOT trigger TRAP (gem is appreciating).
+	s = classifySignal(8, 0, 150, 100, 50)
+	if s == "TRAP" {
+		t.Errorf("signal = %s, want NOT TRAP (positive price velocity is not dangerous)", s)
 	}
 	// High CV but stable velocity → NOT trap (settled down).
 	s = classifySignal(0, 0, 150, 100, 50)
@@ -228,7 +239,7 @@ func TestClassifySignal_TierAgnostic(t *testing.T) {
 
 func TestClassifySignal_Boundaries(t *testing.T) {
 	// All tests use price=100 so absolute vel = vel%. listings=100 so absolute lVel = lVel%.
-	// Thresholds: STABLE <3%/5%, HERD >8%/15%, PreHERD >20%/5%, DUMP <-8%/10%, TRAP CV>100 + vel>5%
+	// Thresholds: STABLE <3%/5%, HERD >8%/15%, PreHERD >20%/5%, DUMP <-8%/10%, TRAP CV>50 + directional vel>5%
 	price := 100.0
 	lst := 100
 
@@ -238,10 +249,15 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		listings                 int
 		want                     string
 	}{
-		// CV boundary: exactly 100 is NOT TRAP (uses > 100)
-		{"cv=100 not TRAP", 0, 0, 100, lst, "STABLE"},
-		{"cv=100.01 no vel not TRAP", 0, 0, 100.01, lst, "STABLE"},
-		{"cv=100.01 with 6% vel is TRAP", 6, 0, 100.01, lst, "TRAP"},
+		// CV boundary: exactly 50 is NOT TRAP (uses > 50)
+		{"cv=50 not TRAP", 0, 0, 50, lst, "STABLE"},
+		{"cv=50.01 no vel not TRAP", 0, 0, 50.01, lst, "STABLE"},
+		// Directional: positive price vel does NOT trigger TRAP (appreciating).
+		{"cv=50.01 +6% pVel not TRAP", 6, 0, 50.01, lst, "UNCERTAIN"},
+		// Directional: negative price vel triggers TRAP.
+		{"cv=50.01 -6% pVel is TRAP", -6, 0, 50.01, lst, "TRAP"},
+		// Directional: listing flooding triggers TRAP.
+		{"cv=50.01 +6% lVel is TRAP", 0, 6, 50.01, lst, "TRAP"},
 		// DUMPING boundary: pVel% must be < -8% AND lVel% must be > 10%
 		{"pVel=-8% not DUMPING", -8, 11, 50, lst, "UNCERTAIN"},
 		{"pVel=-8.01% lVel=10.01% is DUMPING", -8.01, 10.01, 50, lst, "DUMPING"},
