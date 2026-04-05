@@ -12,10 +12,30 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+/** Shape of the Rust AppStatus struct emitted via "status-changed" events. */
+export interface AppStatus {
+	state: string;
+	pair_code: string;
+	detected_gems: string[];
+	client_txt_path: string;
+	client_txt_exists: boolean;
+	server_url: string;
+	gem_region: { x: number; y: number; w: number; h: number };
+	font_region: { x: number; y: number; w: number; h: number };
+	sidebar_open: boolean;
+	game_focused: boolean;
+	trade_stale_warn_secs: number;
+	trade_stale_critical_secs: number;
+	trade_auto_refresh_secs: number;
+	auto_trade_enabled: boolean;
+	/** Hardware device fingerprint — hex SHA-256 (64 chars) for hardware, UUID for fallback. */
+	device_id: string;
+}
+
 /** Reactive store — mutate properties, never reassign the export. */
 export const store = $state({
 	/** Full app status from Rust AppState. */
-	status: null as any,
+	status: null as AppStatus | null,
 	/** Log entries from Rust. */
 	logs: [] as string[],
 	/** Whether the Mercure SSE connection to the server is alive. */
@@ -33,7 +53,7 @@ export const store = $state({
  */
 export async function initStatusStore(): Promise<() => void> {
 	// Subscribe to backend events first (so we don't miss any)
-	const unlistenStatus = await listen('status-changed', (event) => {
+	const unlistenStatus = await listen<AppStatus>('status-changed', (event) => {
 		store.status = event.payload;
 	});
 
@@ -43,7 +63,7 @@ export async function initStatusStore(): Promise<() => void> {
 
 	// Then do initial load as fallback
 	try {
-		store.status = await invoke('get_status');
+		store.status = await invoke<AppStatus>('get_status');
 	} catch (e) {
 		console.warn('[store] initial get_status failed:', e);
 	}

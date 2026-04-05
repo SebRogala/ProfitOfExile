@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"profitofexile/internal/db"
+	"profitofexile/internal/device"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
@@ -201,6 +202,8 @@ func main() {
 		// POST /api/internal/trade/refresh for collector to trigger.
 	}
 
+	deviceRepo := device.NewRepository(pool)
+
 	routerCfg := server.RouterConfig{
 		MercureURL:           mercureURL,
 		MercureSecret:        mercureSecret,
@@ -219,6 +222,7 @@ func main() {
 		League:               os.Getenv("LEAGUE"),
 		Analyzer:             analyzer,
 		AllowedOrigins:       corsOrigins(),
+		DeviceRepo:           deviceRepo,
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
