@@ -95,7 +95,25 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		}
 		// Empty sortBy lets RankCollective apply budget-aware default.
 
-		results := lab.RankCollective(transfigure, signals, features, budget, limit, sortBy)
+		searchName := r.URL.Query().Get("search")
+
+		effectiveLimit := limit
+		if searchName != "" {
+			effectiveLimit = 1000 // search returns all matches, not top-N
+		}
+		results := lab.RankCollective(transfigure, signals, features, budget, effectiveLimit, sortBy)
+
+		// Filter by gem name search (case-insensitive substring).
+		if searchName != "" {
+			q := strings.ToLower(searchName)
+			var matched []lab.CollectiveResult
+			for _, cr := range results {
+				if strings.Contains(strings.ToLower(cr.TransfiguredName), q) {
+					matched = append(matched, cr)
+				}
+			}
+			results = matched
+		}
 
 		// Build base price index: baseName → variant → basePrice (for GCP recipe).
 		type bKey struct{ name, variant string }
