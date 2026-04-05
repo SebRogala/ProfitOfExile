@@ -1,9 +1,9 @@
 // cmd/backtest scores v2 and v3 (trade-enriched) signals against subsequent
-// gem_snapshots to measure prediction accuracy. The tool iterates historical
+// gem_snapshots to measure signal accuracy. The tool iterates historical
 // snapshot times within the trade data overlap window (since 2026-03-16),
-// recomputes signals for each, then checks whether the predicted direction
-// materialized in short-term (T+1/T+2, ~30-60 min) and medium-term (T+6-T+8,
-// ~3-4 h) follow-up snapshots.
+// recomputes signals for each, then checks whether the signal correctly
+// described the market state in short-term (T+1h) and medium-term (T+4h)
+// follow-up windows. Time-based, not snapshot-count-based.
 //
 // Usage:
 //
@@ -303,52 +303,48 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, target time.Time
 	return tc
 }
 
-// loadFutureSnapshots loads gem prices at specific future snapshot times
-// following the target time. Returns a map from offset index to gem prices.
-// offsets is a list of how many snapshots ahead (e.g., 1, 2, 6, 7, 8).
-func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, after time.Time, offsets []int) (map[int][]lab.GemPrice, error) {
-	maxOffset := 0
-	for _, o := range offsets {
-		if o > maxOffset {
-			maxOffset = o
-		}
-	}
+// loadFutureSnapshots loads gem prices at specific future time offsets (durations)
+// following the target time. For each duration, finds the nearest snapshot within
+// a 15-minute tolerance window. Returns a map from offset index to gem prices.
+// durations maps an arbitrary key to a time offset (e.g., 0 → 1h, 1 → 4h).
+func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, after time.Time, durations map[int]time.Duration) (map[int][]lab.GemPrice, error) {
+	// Find the nearest snapshot time to each target time.
+	const tolerance = 15 * time.Minute
 
-	// Get the next N distinct snapshot times after our target.
-	rows, err := pool.Query(ctx,
-		`SELECT DISTINCT time FROM gem_snapshots
-		 WHERE time > $1
-		 ORDER BY time
-		 LIMIT $2`, after, maxOffset)
-	if err != nil {
-		return nil, fmt.Errorf("query future snapshot times: %w", err)
-	}
-	defer rows.Close()
-
-	var futureTimes []time.Time
-	for rows.Next() {
-		var t time.Time
-		if err := rows.Scan(&t); err != nil {
-			continue
-		}
-		futureTimes = append(futureTimes, t)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Load gem prices for each requested offset.
 	result := make(map[int][]lab.GemPrice)
-	for _, offset := range offsets {
-		idx := offset - 1 // 0-based
-		if idx < 0 || idx >= len(futureTimes) {
-			continue
-		}
-		gems, err := loadGemsAtTime(ctx, pool, futureTimes[idx])
+	for key, dur := range durations {
+		target := after.Add(dur)
+		// Find closest snapshot within tolerance.
+		rows, err := pool.Query(ctx,
+			`SELECT time FROM (
+			   SELECT DISTINCT time FROM gem_snapshots
+			   WHERE time BETWEEN $1 AND $2
+			 ) t
+			 ORDER BY ABS(EXTRACT(EPOCH FROM time - $3))
+			 LIMIT 1`, target.Add(-tolerance), target.Add(tolerance), target)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "  WARN: future snapshot query failed for offset %v: %v\n", dur, err)
 			continue
 		}
-		result[offset] = gems
+
+		var snapTime time.Time
+		found := false
+		for rows.Next() {
+			if err := rows.Scan(&snapTime); err != nil {
+				continue
+			}
+			found = true
+		}
+		rows.Close()
+		if !found {
+			continue
+		}
+		gems, err := loadGemsAtTime(ctx, pool, snapTime)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  WARN: load gems at %v failed: %v\n", snapTime, err)
+			continue
+		}
+		result[key] = gems
 	}
 	return result, nil
 }
@@ -413,8 +409,11 @@ func processSnapshot(ctx context.Context, pool *pgxpool.Pool, snapTime time.Time
 		return nil, fmt.Errorf("load history: %w", err)
 	}
 
-	// Load future snapshots for scoring.
-	futureGems, err := loadFutureSnapshots(ctx, pool, snapTime, []int{1, 2, 6, 7, 8})
+	// Load future snapshots for scoring: short-term (T+1h) and medium-term (T+4h).
+	futureGems, err := loadFutureSnapshots(ctx, pool, snapTime, map[int]time.Duration{
+		0: 1 * time.Hour, // short-term
+		1: 4 * time.Hour, // medium-term
+	})
 	if err != nil || len(futureGems) == 0 {
 		return nil, fmt.Errorf("no future data for %s", snapTime)
 	}
@@ -523,35 +522,21 @@ func buildOutcomes(currentGems []lab.GemPrice, futureGems map[int][]lab.GemPrice
 			variant: cur.Variant,
 		}
 
-		// Short-term: T+1, T+2.
-		var shortPriceDeltas, shortListingDeltas []float64
-		for _, offset := range []int{1, 2} {
-			if fp, ok := fIdx[offset]; ok && cur.Chaos > 0 {
-				shortPriceDeltas = append(shortPriceDeltas, (fp.chaos-cur.Chaos)/cur.Chaos)
-				if cur.Listings > 0 {
-					shortListingDeltas = append(shortListingDeltas, (float64(fp.listings)-float64(cur.Listings))/float64(cur.Listings))
-				}
+		// Short-term: T+1h (key 0).
+		if fp, ok := fIdx[0]; ok && cur.Chaos > 0 {
+			out.shortPriceDelta = (fp.chaos - cur.Chaos) / cur.Chaos
+			if cur.Listings > 0 {
+				out.shortListingDelta = (float64(fp.listings) - float64(cur.Listings)) / float64(cur.Listings)
 			}
-		}
-		if len(shortPriceDeltas) > 0 {
-			out.shortPriceDelta = avg(shortPriceDeltas)
-			out.shortListingDelta = avg(shortListingDeltas)
 			out.hasShort = true
 		}
 
-		// Medium-term: T+6, T+7, T+8.
-		var medPriceDeltas, medListingDeltas []float64
-		for _, offset := range []int{6, 7, 8} {
-			if fp, ok := fIdx[offset]; ok && cur.Chaos > 0 {
-				medPriceDeltas = append(medPriceDeltas, (fp.chaos-cur.Chaos)/cur.Chaos)
-				if cur.Listings > 0 {
-					medListingDeltas = append(medListingDeltas, (float64(fp.listings)-float64(cur.Listings))/float64(cur.Listings))
-				}
+		// Medium-term: T+4h (key 1).
+		if fp, ok := fIdx[1]; ok && cur.Chaos > 0 {
+			out.mediumPriceDelta = (fp.chaos - cur.Chaos) / cur.Chaos
+			if cur.Listings > 0 {
+				out.mediumListingDelta = (float64(fp.listings) - float64(cur.Listings)) / float64(cur.Listings)
 			}
-		}
-		if len(medPriceDeltas) > 0 {
-			out.mediumPriceDelta = avg(medPriceDeltas)
-			out.mediumListingDelta = avg(medListingDeltas)
 			out.hasMedium = true
 		}
 
@@ -597,71 +582,67 @@ func scoreSignal(signal, tier string, outcome *gemOutcome, hasTrade bool) []sign
 	return scores
 }
 
-// evaluateSignal checks if the actual price/listing movement matches the signal's prediction.
+// evaluateSignal checks if the signal correctly described the market state.
 // UNCERTAIN is handled upstream in scoreSignal (excluded entirely, not passed here).
 //
-// Signal expectations:
-//   - BREWING:  short-term price rise or stable + listings drop or stable = correct
-//   - DUMPING:  continued price drop = correct
-//   - HERD:     listing spike (rise) = correct
-//   - RECOVERY: price stabilization or rise = correct
-//   - STABLE:   small changes in both = correct
-//   - TRAP:     high volatility (large |price change|) = correct
+// Trend signals (predict continuation):
+//   - BREWING:  price didn't crash within 1h = signal was correct (opportunity existed)
+//   - HERD:     listings kept rising = crowd behavior confirmed
+//   - RECOVERY: price didn't crash further = bottom-forming confirmed
+//   - STABLE:   small changes = calm market confirmed
 //
-// Medium-term: stabilization or continued trend = acceptable (signal was about window of opportunity).
+// State signals (describe current conditions, not predictions):
+//   - DEMAND:   price didn't crash within 1h = selling at market price was safe
+//   - DUMPING:  price didn't recover within 1h = avoiding was correct
+//   - TRAP:     price swung significantly = volatility warning was justified
 func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe string) bool {
-	// Thresholds: small = within 5%, significant = beyond 10%.
 	const smallThresh = 0.05
 	const sigThresh = 0.10
 
 	switch signal {
 	case "BREWING":
-		// Price should rise or stay stable, listings drop or stable.
-		if timeframe == "short" {
-			return priceDelta >= -smallThresh && listingDelta <= smallThresh
-		}
-		// Medium-term: any non-crash is acceptable (the window was about short-term opportunity).
-		return priceDelta >= -sigThresh
-
-	case "DUMPING":
-		// Price should continue dropping.
-		if timeframe == "short" {
-			return priceDelta < -smallThresh
-		}
-		// Medium-term: continued drop or flat — any meaningful rise disproves the signal.
-		return priceDelta <= 0
-
-	case "HERD":
-		// Listings should spike (rising supply).
-		if timeframe == "short" {
-			return listingDelta > smallThresh
-		}
-		// Medium-term: continued supply rise or stabilization.
-		return listingDelta >= -smallThresh
+		// Opportunity signal: price didn't crash = the window was real.
+		return priceDelta >= -smallThresh
 
 	case "DEMAND":
-		// Listings should continue dropping (supply absorbed).
+		// State signal: "buyers are absorbing supply, safe to sell at market price."
+		// Correct if price didn't crash — the demand was real, you could sell.
+		return priceDelta >= -smallThresh
+
+	case "DUMPING":
+		// State signal: "sellers flooding, avoid this gem."
+		// Correct if price didn't meaningfully recover — avoiding was right.
 		if timeframe == "short" {
-			return listingDelta < -smallThresh
+			return priceDelta < smallThresh // didn't bounce back >5%
 		}
-		// Medium-term: continued drain or stabilization — any large supply spike disproves.
-		return listingDelta <= smallThresh
+		return priceDelta < sigThresh // didn't recover >10% medium-term
+
+	case "HERD":
+		// Trend signal: crowd FOMO, listings should keep rising.
+		if timeframe == "short" {
+			return listingDelta > 0 // any listing increase confirms
+		}
+		return listingDelta >= -smallThresh
 
 	case "RECOVERY":
-		// Price should stabilize or rise.
-		if timeframe == "short" {
-			return priceDelta >= -smallThresh
-		}
-		// Medium-term: meaningful price recovery.
-		return priceDelta > -sigThresh
+		// Trend signal: bottom forming, price should stabilize or rise.
+		return priceDelta >= -smallThresh
 
 	case "STABLE":
-		// Both price and listings should stay within small range.
+		// State signal: calm market. Both should stay within range.
 		return math.Abs(priceDelta) < sigThresh && math.Abs(listingDelta) < sigThresh
 
 	case "TRAP":
-		// High volatility — large absolute price movement confirms the signal.
-		return math.Abs(priceDelta) > smallThresh
+		// Caution signal: "volatile gem, don't farm."
+		// Correct if the gem didn't become a safe buy — price didn't stabilize
+		// into a gentle upward trend. Any of: price dropped, swung big, or
+		// listings changed significantly = avoiding was right.
+		if timeframe == "short" {
+			// Within 1h: price didn't rise stably (any drop or big swing = correct warning)
+			return priceDelta < smallThresh || math.Abs(listingDelta) > smallThresh
+		}
+		// Medium-term: price didn't settle into stable growth
+		return priceDelta < sigThresh || math.Abs(listingDelta) > sigThresh
 
 	default:
 		return true // unknown signals not penalized
