@@ -10,9 +10,11 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"profitofexile/internal/device"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server/handlers"
+	devmw "profitofexile/internal/server/middleware"
 	"profitofexile/internal/trade"
 )
 
@@ -54,6 +56,9 @@ type RouterConfig struct {
 	// AllowedOrigins for CORS (desktop app needs cross-origin access).
 	// Example: ["http://localhost:1420", "tauri://localhost"]
 	AllowedOrigins []string
+	// DeviceRepo is the device repository for fingerprint-based identity.
+	// May be nil — device middleware is skipped when nil.
+	DeviceRepo *device.Repository
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -70,10 +75,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Use(cors.Handler(cors.Options{
 			AllowedOrigins:   cfg.AllowedOrigins,
 			AllowedMethods:   []string{"GET", "POST", "PATCH", "OPTIONS"},
-			AllowedHeaders:   []string{"Content-Type", "Authorization"},
+			AllowedHeaders:   []string{"Content-Type", "Authorization", "X-Device-ID", "X-App-Version"},
 			AllowCredentials: false,
 			MaxAge:           300,
 		}))
+	}
+
+	if cfg.DeviceRepo != nil {
+		r.Use(devmw.DeviceMiddleware(cfg.DeviceRepo))
 	}
 
 	r.Get("/api/health", handlers.Health(pinger))
@@ -108,6 +117,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		if cfg.Analyzer != nil {
 			r.Post("/api/internal/recalculate", handlers.AdminRecalculate(cfg.Analyzer, cfg.InternalSecret))
 		}
+	}
+
+	if cfg.DeviceRepo != nil {
+		r.Get("/api/admin/devices", handlers.AdminDevices(cfg.DeviceRepo, cfg.InternalSecret))
+		r.Post("/api/device/identify", handlers.DeviceIdentify(cfg.DeviceRepo))
 	}
 
 	if cfg.TradeGate != nil {
