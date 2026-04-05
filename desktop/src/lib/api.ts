@@ -501,8 +501,18 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	let retries = 0;
 
 	function retryDelay(): number {
-		// Exponential backoff: 2s, 4s, 8s, 16s, 32s, capped at 60s
-		return Math.min(2000 * Math.pow(2, retries), 60000);
+		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after deploys)
+		return Math.min(2000 * Math.pow(2, retries), 10000);
+	}
+
+	function closeEventSource() {
+		if (eventSource) {
+			eventSource.onopen = null;
+			eventSource.onmessage = null;
+			eventSource.onerror = null;
+			eventSource.close();
+			eventSource = null;
+		}
 	}
 
 	async function connect() {
@@ -511,7 +521,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			const { token, url } = tokenResp;
 			retries = 0;
 
-			if (eventSource) eventSource.close();
+			closeEventSource();
 
 			const authedUrl = new URL(url);
 			authedUrl.searchParams.append('topic', 'poe/analysis/updated');
@@ -531,7 +541,6 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				try {
 					data = JSON.parse(event.data);
 				} catch {
-					// Non-JSON event data — expected for analysis update pings
 					onUpdate();
 					return;
 				}
@@ -545,6 +554,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			};
 
 			eventSource.onerror = () => {
+				closeEventSource();
 				state.connected = false;
 				onConnectionChange?.(false);
 				if (tokenTimeout) clearTimeout(tokenTimeout);
@@ -558,7 +568,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 		} catch (err) {
 			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
 			state.connected = false;
-				onConnectionChange?.(false);
+			onConnectionChange?.(false);
 			retries++;
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, retryDelay());
