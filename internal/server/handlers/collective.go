@@ -193,6 +193,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			High7Days            float64              `json:"high7d"`
 			SellConfidence       string               `json:"sellConfidence"`
 			TradeConfidenceNote  string               `json:"tradeConfidenceNote,omitempty"`
+			LowConfidence        bool                 `json:"lowConfidence,omitempty"`
 			// GCP recipe: buy 20/0 base + 20 GCPs instead of 20/20 base.
 			GCPRecipeCost  float64 `json:"gcpRecipeCost,omitempty"`  // 20/0 base + 20×GCP
 			GCPRecipeBase  float64 `json:"gcpRecipeBase,omitempty"`  // 20/0 base price alone
@@ -234,6 +235,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				High7Days:            cr.High7Days,
 				SellConfidence:       cr.SellConfidence,
 				TradeConfidenceNote:  cr.TradeConfidenceNote,
+				LowConfidence:       cr.LowConfidence,
 			}
 
 			// GCP recipe for 20/20 variants: buy 20/0 base + 20×GCP.
