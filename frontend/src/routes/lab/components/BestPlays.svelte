@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchSignalHistory, type GemPlay, type SignalTransition } from '$lib/api';
+	import { fetchSignalHistory, fetchGemNames, type GemPlay, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
@@ -29,13 +29,59 @@
 
 	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
 	let budget = $state('');
-	let searchInput = $state('');
-	let search = $state('');
+	let searchQuery = $state('');
+	let searchFilter = $state('');
+	let suggestions = $state<string[]>([]);
+	let showDropdown = $state(false);
+	let highlightedIndex = $state(-1);
 	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-	function handleSearch(query: string) {
-		searchInput = query;
+
+	function handleSearchInput(query: string) {
+		searchQuery = query;
 		if (searchDebounce) clearTimeout(searchDebounce);
-		searchDebounce = setTimeout(() => { search = query; }, 150);
+		if (!query.trim()) {
+			searchFilter = '';
+			suggestions = [];
+			showDropdown = false;
+			return;
+		}
+		if (query.length < 2) {
+			suggestions = [];
+			showDropdown = false;
+			return;
+		}
+		searchDebounce = setTimeout(async () => {
+			if (searchQuery !== query) return;
+			const names = await fetchGemNames(query);
+			if (searchQuery !== query) return;
+			suggestions = names;
+			showDropdown = suggestions.length > 0;
+			highlightedIndex = suggestions.length === 1 ? 0 : -1;
+		}, 100);
+	}
+
+	function selectGem(name: string) {
+		searchQuery = name;
+		searchFilter = name;
+		suggestions = [];
+		showDropdown = false;
+	}
+
+	function handleSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown' && showDropdown) {
+			e.preventDefault();
+			highlightedIndex = Math.min(highlightedIndex + 1, suggestions.length - 1);
+		} else if (e.key === 'ArrowUp' && showDropdown) {
+			e.preventDefault();
+			highlightedIndex = Math.max(highlightedIndex - 1, 0);
+		} else if (e.key === 'Enter' && highlightedIndex >= 0) {
+			e.preventDefault();
+			selectGem(suggestions[highlightedIndex]);
+		} else if (e.key === 'Escape') {
+			showDropdown = false;
+			searchQuery = '';
+			searchFilter = '';
+		}
 	}
 	let showLowConf = $state(typeof localStorage !== 'undefined' && localStorage.getItem('poe-show-low-conf') === 'true');
 	$effect(() => {
@@ -51,8 +97,8 @@
 		if (!showLowConf) {
 			filtered = filtered.filter((p) => !p.lowConfidence);
 		}
-		if (search.trim()) {
-			const q = search.trim().toLowerCase();
+		if (searchFilter) {
+			const q = searchFilter.toLowerCase();
 			filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
 		}
 		const b = parseInt(budget);
@@ -103,13 +149,29 @@
 
 <div class="plays-header">
 	<h3 class="plays-title">{title}</h3>
-	<input
-		type="text"
-		class="gem-search"
-		placeholder="Search gem..."
-		value={searchInput}
-		oninput={(e) => handleSearch(e.currentTarget.value)}
-	/>
+	<div class="search-wrapper">
+		<input
+			type="text"
+			class="search-input"
+			placeholder="Search gem..."
+			value={searchQuery}
+			oninput={(e) => handleSearchInput(e.currentTarget.value)}
+			onkeydown={handleSearchKeydown}
+			onfocus={() => { if (suggestions.length) showDropdown = true; }}
+			onblur={() => setTimeout(() => { showDropdown = false; }, 200)}
+		/>
+		{#if showDropdown && suggestions.length > 0}
+			<div class="dropdown">
+				{#each suggestions as gem, i}
+					<button
+						class="dropdown-item"
+						class:highlighted={i === highlightedIndex}
+						onmousedown={() => selectGem(gem)}
+					>{gem}</button>
+				{/each}
+			</div>
+		{/if}
+	</div>
 	<div class="plays-controls">
 		<label class="control-label">
 			Budget:
@@ -267,22 +329,50 @@
 		color: var(--color-lab-text);
 		margin: 0;
 	}
-	.gem-search {
+	.search-wrapper {
+		position: relative;
 		flex: 1;
 		max-width: 300px;
-		padding: 4px 10px;
-		font-size: 0.8125rem;
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 4px;
+	}
+	.search-input {
+		width: 100%;
+		background: var(--color-lab-bg);
+		border: 1px solid var(--color-lab-border);
 		color: var(--color-lab-text);
+		padding: 6px 12px;
+		font-size: 0.8125rem;
+		font-family: inherit;
+		box-sizing: border-box;
 		outline: none;
 	}
-	.gem-search:focus {
-		border-color: var(--color-lab-blue);
-	}
-	.gem-search::placeholder {
+	.search-input::placeholder {
 		color: var(--color-lab-text-secondary);
+	}
+	.dropdown {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		background: var(--color-lab-surface);
+		border: 1px solid var(--color-lab-border);
+		border-top: none;
+		max-height: 200px;
+		overflow-y: auto;
+		z-index: 100;
+	}
+	.dropdown-item {
+		display: block;
+		width: 100%;
+		padding: 6px 12px;
+		text-align: left;
+		background: none;
+		border: none;
+		color: var(--color-lab-text);
+		font-size: 0.8125rem;
+		cursor: pointer;
+	}
+	.dropdown-item:hover, .dropdown-item.highlighted {
+		background: rgba(255, 255, 255, 0.08);
 	}
 	.plays-controls {
 		display: flex;
