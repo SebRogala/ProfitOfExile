@@ -90,7 +90,7 @@ fn read_wmi_value(class: &str, property: &str) -> Option<String> {
             "-NonInteractive",
             "-Command",
             &format!(
-                "(Get-CimInstance -ClassName {} -Property {}).{}",
+                "(Get-CimInstance -ClassName '{}' -Property '{}').'{}'",
                 class, property, property
             ),
         ])

@@ -28,7 +28,7 @@ export interface AppStatus {
 	trade_stale_critical_secs: number;
 	trade_auto_refresh_secs: number;
 	auto_trade_enabled: boolean;
-	/** First 8 chars of the hardware device fingerprint (via get_device_id command for display). */
+	/** Hardware device fingerprint — hex SHA-256 (64 chars) for hardware, UUID for fallback. */
 	device_id: string;
 }
 
