@@ -231,7 +231,7 @@ func TestAdminDevices_ListError_Returns500(t *testing.T) {
 // --- DeviceIdentify tests ---
 
 func TestDeviceIdentify_WithAlias_UpdatesDevice(t *testing.T) {
-	fingerprint := "abc123def456"
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 	var capturedFingerprint, capturedAlias string
 
 	upserter := &mockUpserter{
@@ -324,7 +324,7 @@ func TestDeviceIdentify_WithoutDeviceID_Returns400(t *testing.T) {
 }
 
 func TestDeviceIdentify_EmptyAlias_Returns400(t *testing.T) {
-	fingerprint := "abc123def456"
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
 			return &device.Device{Fingerprint: fp, Role: "user"}, nil
@@ -362,7 +362,7 @@ func TestDeviceIdentify_EmptyAlias_Returns400(t *testing.T) {
 }
 
 func TestDeviceIdentify_AliasTooLong_Returns400(t *testing.T) {
-	fingerprint := "abc123def456"
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
 			return &device.Device{Fingerprint: fp, Role: "user"}, nil
@@ -401,7 +401,7 @@ func TestDeviceIdentify_AliasTooLong_Returns400(t *testing.T) {
 }
 
 func TestDeviceIdentify_MaxLengthAlias_Accepted(t *testing.T) {
-	fingerprint := "abc123def456"
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
 			return &device.Device{Fingerprint: fp, Role: "user"}, nil
@@ -436,7 +436,7 @@ func TestDeviceIdentify_MaxLengthAlias_Accepted(t *testing.T) {
 }
 
 func TestDeviceIdentify_InvalidJSON_Returns400(t *testing.T) {
-	fingerprint := "abc123def456"
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 
 	tests := []struct {
 		name string
@@ -486,7 +486,7 @@ func TestDeviceIdentify_InvalidJSON_Returns400(t *testing.T) {
 }
 
 func TestDeviceIdentify_SetAliasError_Returns500(t *testing.T) {
-	fingerprint := "abc123def456"
+	fingerprint := "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 	upserter := &mockUpserter{
 		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
 			return &device.Device{Fingerprint: fp, Role: "user"}, nil

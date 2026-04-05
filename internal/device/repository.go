@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -34,7 +35,7 @@ func (r *Repository) Upsert(ctx context.Context, fingerprint, appVersion string)
 		`INSERT INTO devices (fingerprint, app_version)
 		 VALUES ($1, $2)
 		 ON CONFLICT (fingerprint) DO UPDATE
-		   SET last_seen = NOW(), app_version = EXCLUDED.app_version
+		   SET last_seen = NOW(), app_version = COALESCE(EXCLUDED.app_version, devices.app_version)
 		 RETURNING fingerprint, alias, role, banned, app_version, first_seen, last_seen`,
 		fingerprint, nilIfEmpty(appVersion),
 	).Scan(&d.Fingerprint, &d.Alias, &d.Role, &d.Banned, &d.AppVersion, &d.FirstSeen, &d.LastSeen)
@@ -102,8 +103,11 @@ func (r *Repository) ListIdentified(ctx context.Context) ([]Device, error) {
 // SetRole updates the role and optionally the alias for a device.
 // An empty alias string leaves the existing alias unchanged.
 func (r *Repository) SetRole(ctx context.Context, fingerprint, role, alias string) error {
+	var ct pgconn.CommandTag
+	var err error
+
 	if alias != "" {
-		_, err := r.pool.Exec(ctx,
+		ct, err = r.pool.Exec(ctx,
 			`UPDATE devices SET role = $2, alias = $3 WHERE fingerprint = $1`,
 			fingerprint, role, alias,
 		)
@@ -111,7 +115,7 @@ func (r *Repository) SetRole(ctx context.Context, fingerprint, role, alias strin
 			return fmt.Errorf("device set role+alias %q: %w", fingerprint, err)
 		}
 	} else {
-		_, err := r.pool.Exec(ctx,
+		ct, err = r.pool.Exec(ctx,
 			`UPDATE devices SET role = $2 WHERE fingerprint = $1`,
 			fingerprint, role,
 		)
@@ -119,17 +123,23 @@ func (r *Repository) SetRole(ctx context.Context, fingerprint, role, alias strin
 			return fmt.Errorf("device set role %q: %w", fingerprint, err)
 		}
 	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
 	return nil
 }
 
 // SetAlias updates just the alias for a device. Used by the identify endpoint.
 func (r *Repository) SetAlias(ctx context.Context, fingerprint, alias string) error {
-	_, err := r.pool.Exec(ctx,
+	ct, err := r.pool.Exec(ctx,
 		`UPDATE devices SET alias = $2 WHERE fingerprint = $1`,
 		fingerprint, alias,
 	)
 	if err != nil {
 		return fmt.Errorf("device set alias %q: %w", fingerprint, err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -186,9 +196,12 @@ func (r *Repository) Stats(ctx context.Context) (*DeviceStats, error) {
 		var role string
 		var count int
 		if err := rows.Scan(&role, &count); err != nil {
-			continue
+			return nil, fmt.Errorf("device stats scan role: %w", err)
 		}
 		s.ByRole[role] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("device stats rows role: %w", err)
 	}
 
 	// By version
@@ -201,9 +214,12 @@ func (r *Repository) Stats(ctx context.Context) (*DeviceStats, error) {
 		var version string
 		var count int
 		if err := rows2.Scan(&version, &count); err != nil {
-			continue
+			return nil, fmt.Errorf("device stats scan version: %w", err)
 		}
 		s.ByVersion[version] = count
+	}
+	if err := rows2.Err(); err != nil {
+		return nil, fmt.Errorf("device stats rows version: %w", err)
 	}
 
 	return s, nil

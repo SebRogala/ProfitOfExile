@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
+	"unicode/utf8"
 
 	"profitofexile/internal/device"
 	"profitofexile/internal/server/middleware"
@@ -57,12 +59,14 @@ func DeviceIdentify(repo device.AliasSetter) http.HandlerFunc {
 			return
 		}
 
+		body.Alias = strings.TrimSpace(body.Alias)
+
 		if body.Alias == "" {
 			jsonError(w, http.StatusBadRequest, "alias is required")
 			return
 		}
 
-		if len(body.Alias) > 64 {
+		if utf8.RuneCountInString(body.Alias) > 64 {
 			jsonError(w, http.StatusBadRequest, "alias too long (max 64 characters)")
 			return
 		}
