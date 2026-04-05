@@ -218,6 +218,14 @@ func TestAdminDevices_ListError_Returns500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
 	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "failed to list devices" {
+		t.Errorf("error = %q, want %q", resp["error"], "failed to list devices")
+	}
 }
 
 // --- DeviceIdentify tests ---
@@ -400,8 +408,10 @@ func TestDeviceIdentify_MaxLengthAlias_Accepted(t *testing.T) {
 		},
 	}
 
+	setAliasCalled := false
 	setter := &mockAliasSetter{
 		SetAliasFn: func(_ context.Context, _, _ string) error {
+			setAliasCalled = true
 			return nil
 		},
 	}
@@ -420,24 +430,13 @@ func TestDeviceIdentify_MaxLengthAlias_Accepted(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
+	if !setAliasCalled {
+		t.Error("SetAlias should have been called for a valid max-length alias")
+	}
 }
 
 func TestDeviceIdentify_InvalidJSON_Returns400(t *testing.T) {
 	fingerprint := "abc123def456"
-	upserter := &mockUpserter{
-		UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
-			return &device.Device{Fingerprint: fp, Role: "user"}, nil
-		},
-	}
-
-	setter := &mockAliasSetter{
-		SetAliasFn: func(_ context.Context, _, _ string) error {
-			t.Error("SetAlias should not be called with invalid JSON")
-			return nil
-		},
-	}
-
-	router := identifyRouter(upserter, setter)
 
 	tests := []struct {
 		name string
@@ -449,6 +448,21 @@ func TestDeviceIdentify_InvalidJSON_Returns400(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			upserter := &mockUpserter{
+				UpsertFn: func(_ context.Context, fp, _ string) (*device.Device, error) {
+					return &device.Device{Fingerprint: fp, Role: "user"}, nil
+				},
+			}
+
+			setter := &mockAliasSetter{
+				SetAliasFn: func(_ context.Context, _, _ string) error {
+					t.Error("SetAlias should not be called with invalid JSON")
+					return nil
+				},
+			}
+
+			router := identifyRouter(upserter, setter)
+
 			req := httptest.NewRequest(http.MethodPost, "/api/device/identify", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Device-ID", fingerprint)

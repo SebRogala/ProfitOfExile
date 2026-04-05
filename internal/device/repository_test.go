@@ -71,14 +71,16 @@ func TestNilIfEmpty(t *testing.T) {
 }
 
 func TestErrAmbiguousPrefix_ErrorMessage(t *testing.T) {
-	if ErrAmbiguousPrefix.Error() == "" {
-		t.Error("ErrAmbiguousPrefix should have a non-empty error message")
+	want := "device: ambiguous fingerprint prefix — matches multiple devices"
+	if got := ErrAmbiguousPrefix.Error(); got != want {
+		t.Errorf("ErrAmbiguousPrefix.Error() = %q, want %q", got, want)
 	}
 }
 
 func TestErrNotFound_ErrorMessage(t *testing.T) {
-	if ErrNotFound.Error() == "" {
-		t.Error("ErrNotFound should have a non-empty error message")
+	want := "device: not found"
+	if got := ErrNotFound.Error(); got != want {
+		t.Errorf("ErrNotFound.Error() = %q, want %q", got, want)
 	}
 }
 
