@@ -167,6 +167,15 @@ func sellability(transListings int, listingVel, priceVel, cv float64, signal str
 		s += 15 // deep: proven market, active buyers, your gem WILL sell
 	}
 
+	// Liquidity floor: gems with 50+ listings are liquid markets — your gem WILL sell
+	// regardless of price movement. TOP gems like KB/Cyclone with 80-200 listings
+	// sell in minutes even during moderate price swings.
+	if transListings >= 50 {
+		s += 15
+	} else if transListings >= 20 {
+		s += 5
+	}
+
 	// Price rising = buyers active (percentage-based)
 	if pctPriceVel > 3 {
 		s += 15

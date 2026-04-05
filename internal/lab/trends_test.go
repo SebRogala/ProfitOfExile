@@ -798,15 +798,15 @@ func TestTierAction_SignalOverridesWindow(t *testing.T) {
 }
 
 func TestSellability_Baseline(t *testing.T) {
-	// Neutral inputs: moderate everything → 50 baseline + stability bonus
-	// pctPriceVel=0%, pctListingVel=0%
-	// s=50 + 0(depth) + 0(pctPV) + 0(pctLV) + 20(stability |0%|<2%) = 70
+	// Neutral inputs: moderate everything → 50 baseline + liquidity + stability bonus
+	// pctPriceVel=0%, pctListingVel=0%, 50 listings → +15 liquidity
+	// s=50 + 0(depth) + 15(liquidity) + 0(pctPV) + 0(pctLV) + 20(stability |0%|<2%) = 85
 	score, label := sellability(50, 0, 0, 50, "STABLE", 1.0, 100)
-	if score != 70 {
-		t.Errorf("sellability baseline score = %d, want 70", score)
+	if score != 85 {
+		t.Errorf("sellability baseline score = %d, want 85", score)
 	}
-	if label != "GOOD" {
-		t.Errorf("sellability baseline label = %s, want GOOD", label)
+	if label != "FAST SELL" {
+		t.Errorf("sellability baseline label = %s, want FAST SELL", label)
 	}
 }
 
@@ -838,30 +838,30 @@ func TestSellability_TurnoverProxy(t *testing.T) {
 
 func TestSellability_TurnoverProxyNotFiredOnHighPriceVel(t *testing.T) {
 	// priceVel=5 on 100c → pctPV=5%, listingVel=-2 on 20 → pctLV=-10%
-	// s=50 + 0(depth) + 15(pctPV 5%>3%) + 10(pctLV -10%<-5%)
-	// + 0(stability: |5%| not <2%) + 0(turnover: |5%| not <3%) = 75
+	// s=50 + 0(depth) + 5(liquidity: 20>=20) + 15(pctPV 5%>3%) + 10(pctLV -10%<-5%)
+	// + 0(stability: |5%| not <2%) + 0(turnover: |5%| not <3%) = 80
 	score, _ := sellability(20, -2, 5, 30, "STABLE", 1.0, 100)
-	if score != 75 {
-		t.Errorf("no turnover proxy when priceVel high: score = %d, want 75", score)
+	if score != 80 {
+		t.Errorf("no turnover proxy when priceVel high: score = %d, want 80", score)
 	}
 }
 
 func TestSellability_CVPenaltyHalved(t *testing.T) {
 	// High CV (>80) applies -10
-	// s=50 + 0(depth) + 0 + 0 + 20(stability) - 10(cv>80) = 60
+	// s=50 + 0(depth) + 5(liquidity: 20>=20) + 0 + 0 + 20(stability) - 10(cv>80) = 65
 	score, _ := sellability(20, 0, 0, 90, "STABLE", 1.0, 100)
-	if score != 60 {
-		t.Errorf("high CV penalty score = %d, want 60", score)
+	if score != 65 {
+		t.Errorf("high CV penalty score = %d, want 65", score)
 	}
 }
 
 func TestSellability_StabilityBonusNotFiredWhenVolatile(t *testing.T) {
 	// priceVel=5 on 100c → pctPV=5%, listingVel=-4 on 20 → pctLV=-20%
-	// s=50 + 0(depth) + 15(pctPV 5%>3%) + 10(pctLV -20%<-5%)
-	// + 0(stability: |5%| not <2%) + 0(turnover: |5%| not <3%) = 75
+	// s=50 + 0(depth) + 5(liquidity: 20>=20) + 15(pctPV 5%>3%) + 10(pctLV -20%<-5%)
+	// + 0(stability: |5%| not <2%) + 0(turnover: |5%| not <3%) = 80
 	score, _ := sellability(20, -4, 5, 30, "STABLE", 1.0, 100)
-	if score != 75 {
-		t.Errorf("volatile gem score = %d, want 75 (no stability bonus)", score)
+	if score != 80 {
+		t.Errorf("volatile gem score = %d, want 80 (no stability bonus)", score)
 	}
 }
 
@@ -879,9 +879,9 @@ func TestSellability_Labels(t *testing.T) {
 	}{
 		// GOOD: s=50 + 0(depth) + 20(stability) = 70 → GOOD
 		{"stable gem", 5, 0, 0, 30, "STABLE", 1.0, 100, "GOOD"},
-		// UNLIKELY: pctPV=-10%<-3%, pctLV=6.7%<10%, cv>80, DUMPING
-		// s=50 + 0(depth) - 15(pctPV) + 0(pctLV) - 10(cv>80) - 20(DUMPING) = 5
-		{"dumping+lots", 150, 10, -10, 100, "DUMPING", 1.0, 100, "UNLIKELY"},
+		// SLOW: pctPV=-10%<-3%, pctLV=6.7%<10%, cv>80, DUMPING
+		// s=50 + 0(depth) + 15(liquidity: 150>=50) - 15(pctPV) + 0(pctLV) - 10(cv>80) - 20(DUMPING) = 20
+		{"dumping+lots", 150, 10, -10, 100, "DUMPING", 1.0, 100, "SLOW"},
 		// FAST SELL: depth=0.3 → +15(thin). s=50 + 15 + 20(stability) = 85
 		{"thin depth + stable", 5, 0, 0, 30, "STABLE", 0.3, 100, "FAST SELL"},
 	}
@@ -896,7 +896,7 @@ func TestSellability_Labels(t *testing.T) {
 }
 
 func TestSellability_RelativeDepth(t *testing.T) {
-	// Test marketDepth effect. Neutral: pctPV=0, pctLV=0, stability bonus +20.
+	// Test marketDepth effect. Neutral: pctPV=0, pctLV=0, stability bonus +20, liquidity bonus +5 (20>=20).
 	// Thin (<0.5): +15, Deep (>2.0): +15, Normal: no bonus.
 
 	tests := []struct {
@@ -905,10 +905,10 @@ func TestSellability_RelativeDepth(t *testing.T) {
 		wantScore   int
 		wantLabel   string
 	}{
-		{"thin market", 0.3, 85, "FAST SELL"},  // 50 + 15(thin) + 20(stability) = 85
-		{"normal depth", 1.0, 70, "GOOD"},       // 50 + 20(stability) = 70
-		{"deep market", 3.0, 85, "FAST SELL"},   // 50 + 15(deep) + 20(stability) = 85
-		{"very deep", 13.5, 85, "FAST SELL"},    // 50 + 15(deep) + 20(stability) = 85
+		{"thin market", 0.3, 90, "FAST SELL"},  // 50 + 15(thin) + 5(liquidity) + 20(stability) = 90
+		{"normal depth", 1.0, 75, "GOOD"},       // 50 + 5(liquidity) + 20(stability) = 75
+		{"deep market", 3.0, 90, "FAST SELL"},   // 50 + 15(deep) + 5(liquidity) + 20(stability) = 90
+		{"very deep", 13.5, 90, "FAST SELL"},    // 50 + 15(deep) + 5(liquidity) + 20(stability) = 90
 	}
 
 	for _, tt := range tests {
