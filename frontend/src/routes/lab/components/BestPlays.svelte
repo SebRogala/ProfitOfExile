@@ -29,7 +29,18 @@
 
 	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
 	let budget = $state('');
-	let showLowConf = $state(false);
+	let searchInput = $state('');
+	let search = $state('');
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+	function handleSearch(query: string) {
+		searchInput = query;
+		if (searchDebounce) clearTimeout(searchDebounce);
+		searchDebounce = setTimeout(() => { search = query; }, 150);
+	}
+	let showLowConf = $state(typeof localStorage !== 'undefined' && localStorage.getItem('poe-show-low-conf') === 'true');
+	$effect(() => {
+		localStorage.setItem('poe-show-low-conf', String(showLowConf));
+	});
 	let expandedRow = $state<number | null>(null);
 
 	let expandedHistory = $state<SignalTransition[]>([]);
@@ -39,6 +50,10 @@
 		let filtered = [...plays];
 		if (!showLowConf) {
 			filtered = filtered.filter((p) => !p.lowConfidence);
+		}
+		if (search.trim()) {
+			const q = search.trim().toLowerCase();
+			filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
 		}
 		const b = parseInt(budget);
 		if (b > 0) {
@@ -88,6 +103,13 @@
 
 <div class="plays-header">
 	<h3 class="plays-title">{title}</h3>
+	<input
+		type="text"
+		class="gem-search"
+		placeholder="Search gem..."
+		value={searchInput}
+		oninput={(e) => handleSearch(e.currentTarget.value)}
+	/>
 	<div class="plays-controls">
 		<label class="control-label">
 			Budget:
@@ -244,6 +266,23 @@
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
+	}
+	.gem-search {
+		flex: 1;
+		max-width: 300px;
+		padding: 4px 10px;
+		font-size: 0.8125rem;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 4px;
+		color: var(--color-lab-text);
+		outline: none;
+	}
+	.gem-search:focus {
+		border-color: var(--color-lab-blue);
+	}
+	.gem-search::placeholder {
+		color: var(--color-lab-text-secondary);
 	}
 	.plays-controls {
 		display: flex;

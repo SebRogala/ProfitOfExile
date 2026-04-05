@@ -39,7 +39,8 @@ type CollectiveResult struct {
 	Low7Days            float64 `json:"low7d"`
 	High7Days           float64 `json:"high7d"`
 	SellConfidence      string  `json:"sellConfidence"`
-	TradeConfidenceNote string  `json:"tradeConfidenceNote,omitempty"`
+	TradeConfidenceNote string `json:"tradeConfidenceNote,omitempty"`
+	LowConfidence       bool   `json:"lowConfidence,omitempty"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.
@@ -196,6 +197,7 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 			cr.HistPosition = f.HistPosition
 			cr.Low7Days = f.Low7Days
 			cr.High7Days = f.High7Days
+			cr.LowConfidence = f.LowConfidence
 			cr.LiquidityTier = liquidityTier(f.MarketDepth)
 		}
 
