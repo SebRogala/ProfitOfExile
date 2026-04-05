@@ -632,7 +632,7 @@ func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe s
 		// State signal: calm market. Both should stay within range.
 		return math.Abs(priceDelta) < sigThresh && math.Abs(listingDelta) < sigThresh
 
-	case "TRAP":
+	case "CAUTION":
 		// Caution signal: "don't farm — you'd lose money."
 		// Correct if price dropped AND/OR listings flooded (supply dumped).
 		// This is what matters to a farmer: did the gem become unprofitable?

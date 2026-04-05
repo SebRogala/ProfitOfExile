@@ -93,13 +93,11 @@ type SparklinePoint struct {
 // the signal is a tiebreaker within similar price ranges.
 func signalWeight(signal string) float64 {
 	switch signal {
-	case "TRAP":
-		return 0.7
 	case "DUMPING":
 		return 0.85
 	case "HERD":
 		return 0.95
-	case "STABLE", "UNCERTAIN":
+	case "STABLE", "UNCERTAIN", "CAUTION":
 		return 1.0
 	case "RECOVERY":
 		return 1.05
@@ -202,7 +200,7 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 		}
 
 		// Exclude TRAP gems entirely — no actionable signal.
-		if cr.Signal == "TRAP" {
+		if cr.Signal == "CAUTION" {
 			continue
 		}
 
@@ -409,7 +407,7 @@ func BuildCompareResults(
 
 		for pos, r := range ranks {
 			cr := results[r.idx]
-			if cr.Signal == "TRAP" || cr.SellUrgency == "SELL_NOW" {
+			if cr.Signal == "CAUTION" || cr.SellUrgency == "SELL_NOW" {
 				results[r.idx].Recommendation = "AVOID"
 			} else if cr.Signal == "DUMPING" && cr.TransListings < 15 {
 				// DUMPING on thin market = real danger, avoid.

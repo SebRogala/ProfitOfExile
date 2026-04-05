@@ -449,7 +449,7 @@ func TestPredictedDirection(t *testing.T) {
 		{"HERD", "UP"},
 		{"RECOVERY", "UP"},
 		{"DUMPING", "DOWN"},
-		{"TRAP", "DOWN"},
+		{"CAUTION", "DOWN"},
 		{"STABLE", "FLAT"},
 		{"UNCERTAIN", "FLAT"},
 		{"UNKNOWN", "FLAT"},

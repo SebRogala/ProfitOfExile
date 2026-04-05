@@ -376,7 +376,7 @@ func printValidateConsole(report lab.ValidationReport, mc *lab.MarketContext, ev
 	fmt.Printf("  %s\n", strings.Repeat("-", 62))
 
 	// Sort signals for deterministic output.
-	signalOrder := []string{"HERD", "DUMPING", "UNCERTAIN", "RECOVERY", "STABLE", "TRAP"}
+	signalOrder := []string{"HERD", "DUMPING", "UNCERTAIN", "RECOVERY", "STABLE", "CAUTION"}
 	for _, sig := range signalOrder {
 		sa, ok := report.PerSignal[sig]
 		if !ok {
@@ -514,7 +514,7 @@ func printSellabilityConsole(report lab.SellabilityReport, mc *lab.MarketContext
 
 	// Section 2: Per-signal value capture
 	fmt.Println("Per-Signal Value Capture (actual / risk-adjusted):")
-	signalOrder := []string{"HERD", "STABLE", "DUMPING", "UNCERTAIN", "RECOVERY", "TRAP"}
+	signalOrder := []string{"HERD", "STABLE", "DUMPING", "UNCERTAIN", "RECOVERY", "CAUTION"}
 	printedSignals := make(map[string]bool)
 	for _, sig := range signalOrder {
 		vc, ok := report.PerSignalCapture[sig]

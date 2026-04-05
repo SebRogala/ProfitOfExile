@@ -5,17 +5,19 @@
 
 export const SIGNAL_TOOLTIPS: Record<string, string> = {
 	STABLE:
-		'Price and listings are steady. Safe to farm — predictable returns. Triggered: price velocity < \u00b12c/h, listing velocity < \u00b13/h',
+		'Price and listings are steady. Safe to farm \u2014 predictable returns.',
 	UNCERTAIN:
-		'Directional prediction accuracy is below 50% (coin flip) — showing raw market data instead. Price velocity and listing trends are available for your own assessment.',
-	HERD: "Both price AND listings are rising. Multiple farmers flooding the market. Sell now if you have stock. Don't start farming \u2014 you're late. Triggered: price velocity > 5, listing velocity > 10",
+		'Market movement doesn\u2019t fit a clear pattern. Check price and listing trends manually before deciding.',
+	HERD:
+		'Price AND listings both rising \u2014 multiple farmers flooding the market. Sell now if you have stock. Don\u2019t start farming, you\u2019re late.',
 	DEMAND:
-		'Listings draining fast while price holds \u2014 buyers are absorbing supply. Sell at market price, your gem will move. Good farming target.',
+		'Listings draining while price holds \u2014 buyers are absorbing supply. Good time to sell at market price. Good farming target.',
 	DUMPING:
-		'Price dropping while listings rise. Sellers undercutting each other. Avoid \u2014 will keep falling. Triggered: price velocity < -5, listing velocity > 5',
+		'Price dropping while listings rise \u2014 sellers undercutting each other. Avoid farming this gem.',
 	RECOVERY:
-		'Price and listings both dropping. Supply drying up \u2014 potential comeback. Watch for COMEBACK signal. Triggered: price velocity < -5, listing velocity < -5',
-	TRAP: "Extreme volatility \u2014 this gem's price swings wildly. Never farm regardless of current ROI. Triggered: CV > 100%",
+		'Price drifting down in a thin market while supply dries up \u2014 potential bottom forming. Watch for price stabilization.',
+	CAUTION:
+		'Short-term volatility detected \u2014 price is swinging. Check recent price history before committing. Informational only, does not affect rankings.',
 };
 
 export const WINDOW_TOOLTIPS: Record<string, string> = {

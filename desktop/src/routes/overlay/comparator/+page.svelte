@@ -22,7 +22,7 @@
 
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
-		DUMPING: '#ef4444', RECOVERY: '#a855f7', TRAP: '#ef4444',
+		DUMPING: '#ef4444', RECOVERY: '#a855f7', DEMAND: '#22c55e', CAUTION: '#eab308',
 	};
 
 	const TIER_COLORS: Record<string, string> = {

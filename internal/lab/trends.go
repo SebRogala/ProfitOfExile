@@ -16,7 +16,7 @@ type TrendResult struct {
 	PriceVelocity   float64 // chaos/hour, computed from last 4 data points
 	ListingVelocity float64 // listings/hour, computed from last 4 data points
 	CV              float64 // coefficient of variation (%)
-	Signal          string  // TRAP, DUMPING, HERD, DEMAND, RECOVERY, STABLE, UNCERTAIN (priority order)
+	Signal          string  // CAUTION, DUMPING, HERD, DEMAND, RECOVERY, STABLE, UNCERTAIN (priority order)
 	HistPosition    float64 // 0-100 percentile vs 7-day range
 	PriceHigh7Days     float64
 	PriceLow7Days      float64
@@ -74,10 +74,7 @@ func sellUrgency(priceVel, listingVel, baseVel, histPosition float64, baseListin
 		return "HOLD", "Low-tier gem — volatile, wait for direction"
 	}
 
-	// TRAP = sell immediately regardless
-	if signal == "TRAP" {
-		return "SELL_NOW", "Extreme volatility — sell at any price before crash"
-	}
+	// CAUTION is informational — no sell urgency override, normal logic applies.
 
 	// HERD at peak = override everything to UNDERCUT (catches Lacerate peak scenario)
 	if signal == "HERD" && histPosition > 90 {
@@ -210,9 +207,10 @@ func sellability(transListings int, listingVel, priceVel, cv float64, signal str
 	if signal == "DEMAND" {
 		s += 15 // active buyer absorption — your gem will sell
 	}
-	if signal == "DUMPING" || signal == "TRAP" {
+	if signal == "DUMPING" {
 		s -= 20 // buyers avoid these
 	}
+	// CAUTION: no sellability penalty — informational only
 
 	// Clamp
 	if s > 100 {
@@ -551,7 +549,7 @@ func classifySignalWithConfig(priceVel, listingVel, cv float64, currentPrice flo
 	// price falling (negative velocity) OR listings flooding (positive velocity).
 	// Positive price velocity with high CV is appreciating, not a trap.
 	if cv > cfg.TrapCV && (pVelPct < -cfg.TrapVelPct || lVelPct > cfg.TrapVelPct) {
-		return "TRAP"
+		return "CAUTION"
 	}
 	// Absolute listing velocity for floor checks (percentage alone is noise on thin markets).
 	absListingVel := math.Abs(listingVel)

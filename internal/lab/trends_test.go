@@ -106,22 +106,22 @@ func TestClassifySignal_TRAP(t *testing.T) {
 	// price falling (negative vel%) OR listings flooding (positive lVel%).
 	// price=100, pVel=-8 → -8% < -5% threshold → TRAP
 	s := classifySignal(-8, 0, 150, 100, 50)
-	if s != "TRAP" {
+	if s != "CAUTION" {
 		t.Errorf("signal = %s, want TRAP (falling price + high CV)", s)
 	}
 	// Listings flooding: lVel=+8 on 50 listings → +16% > 5% → TRAP
 	s = classifySignal(0, 8, 150, 100, 50)
-	if s != "TRAP" {
+	if s != "CAUTION" {
 		t.Errorf("signal = %s, want TRAP (listing flood + high CV)", s)
 	}
 	// Positive price velocity should NOT trigger TRAP (gem is appreciating).
 	s = classifySignal(8, 0, 150, 100, 50)
-	if s == "TRAP" {
+	if s == "CAUTION" {
 		t.Errorf("signal = %s, want NOT TRAP (positive price velocity is not dangerous)", s)
 	}
 	// High CV but stable velocity → NOT trap (settled down).
 	s = classifySignal(0, 0, 150, 100, 50)
-	if s == "TRAP" {
+	if s == "CAUTION" {
 		t.Errorf("signal = %s, want NOT TRAP (stable velocity despite high CV)", s)
 	}
 }
@@ -188,7 +188,7 @@ func TestClassifySignal_TRAPOverridesDUMPING(t *testing.T) {
 	// CV > 100 + active velocity should override DUMPING.
 	// price=100, pVel=-10 → -10%, CV=200 > 100, |pVel%|=10% > 5%
 	s := classifySignal(-10, 5, 200, 100, 50)
-	if s != "TRAP" {
+	if s != "CAUTION" {
 		t.Errorf("signal = %s, want TRAP (CV + velocity overrides DUMPING)", s)
 	}
 }
@@ -255,9 +255,9 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		// Directional: positive price vel does NOT trigger TRAP (appreciating).
 		{"cv=50.01 +6% pVel not TRAP", 6, 0, 50.01, lst, "UNCERTAIN"},
 		// Directional: negative price vel triggers TRAP.
-		{"cv=50.01 -6% pVel is TRAP", -6, 0, 50.01, lst, "TRAP"},
+		{"cv=50.01 -6% pVel is TRAP", -6, 0, 50.01, lst, "CAUTION"},
 		// Directional: listing flooding triggers TRAP.
-		{"cv=50.01 +6% lVel is TRAP", 0, 6, 50.01, lst, "TRAP"},
+		{"cv=50.01 +6% lVel is TRAP", 0, 6, 50.01, lst, "CAUTION"},
 		// DUMPING boundary: pVel% must be < -8% AND lVel% must be > 10%
 		{"pVel=-8% not DUMPING", -8, 11, 50, lst, "UNCERTAIN"},
 		{"pVel=-8.01% lVel=10.01% is DUMPING", -8.01, 10.01, 50, lst, "DUMPING"},
@@ -812,13 +812,14 @@ func TestSellability_Baseline(t *testing.T) {
 
 func TestSellability_TRAPGemHighCVButStable(t *testing.T) {
 	// TRAP gem (high CV=150) but currently stable (pctPriceVel=0%):
-	// s=50 + 0(depth) + 0(pctPV) + 0(pctLV) + 20(stability) - 10(cv>80) - 20(TRAP) = 40
-	score, label := sellability(5, 0, 0, 150, "TRAP", 1.0, 100)
-	if score != 40 {
-		t.Errorf("TRAP gem stable score = %d, want 40", score)
+	// s=50 + 0(depth) + 0(pctPV) + 0(pctLV) + 20(stability) - 10(cv>80) = 60
+	// CAUTION is informational — no sellability penalty.
+	score, label := sellability(5, 0, 0, 150, "CAUTION", 1.0, 100)
+	if score != 60 {
+		t.Errorf("CAUTION gem stable score = %d, want 60", score)
 	}
-	if label != "MODERATE" {
-		t.Errorf("TRAP gem stable label = %s, want MODERATE", label)
+	if label != "GOOD" {
+		t.Errorf("CAUTION gem stable label = %s, want GOOD", label)
 	}
 }
 
