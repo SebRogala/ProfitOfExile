@@ -56,6 +56,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "stats":
+		if err := runStats(ctx, repo); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -155,11 +160,49 @@ func runPromote(ctx context.Context, repo *device.Repository, args []string) err
 	return nil
 }
 
+func runStats(ctx context.Context, repo *device.Repository) error {
+	s, err := repo.Stats(ctx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Total devices:  %d\n", s.Total)
+	fmt.Printf("Active (24h):   %d\n", s.Active24h)
+	fmt.Printf("Active (7d):    %d\n", s.Active7d)
+	fmt.Printf("Identified:     %d\n", s.Identified)
+	fmt.Printf("Banned:         %d\n", s.Banned)
+
+	fmt.Print("\nBy role: ")
+	first := true
+	for role, count := range s.ByRole {
+		if !first {
+			fmt.Print(", ")
+		}
+		fmt.Printf("%s=%d", role, count)
+		first = false
+	}
+	fmt.Println()
+
+	fmt.Print("By version: ")
+	first = true
+	for version, count := range s.ByVersion {
+		if !first {
+			fmt.Print(", ")
+		}
+		fmt.Printf("%s=%d", version, count)
+		first = false
+	}
+	fmt.Println()
+
+	return nil
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: promote <command>
 
 Commands:
   list                         List all identified devices
+  stats                        Show device statistics (total, active, by role/version)
   <prefix> <role>              Set role for device matching fingerprint prefix
   <prefix> <role> "alias"      Set role and alias
 
