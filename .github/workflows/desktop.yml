@@ -39,6 +39,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           POE_SERVER_URL: ${{ secrets.POE_SERVER_URL }}
           VITE_SERVER_URL: ${{ secrets.POE_SERVER_URL }}
+          APP_FINGERPRINT_SECRET: ${{ secrets.APP_FINGERPRINT_SECRET }}
         run: cd desktop && npx tauri build
 
       - name: Upload exe artifact
