@@ -188,8 +188,9 @@ func sellability(transListings int, listingVel, priceVel, cv float64, signal str
 		s += 20
 	}
 
-	// Turnover proxy: listings dropping while price holds = items ARE selling
-	if pctListingVel < -2 && math.Abs(pctPriceVel) < 3 {
+	// Turnover proxy: listings dropping while price holds = items ARE selling.
+	// Price threshold matches STABLE (5%) — a gem with 4% price drift and listing drain is selling.
+	if pctListingVel < -2 && math.Abs(pctPriceVel) < 5 {
 		s += 25
 	}
 

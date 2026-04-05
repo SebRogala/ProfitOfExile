@@ -59,7 +59,7 @@ func DefaultSignalConfig() SignalConfig {
 		DumpListingVelPct:    10,
 		DumpListingAbsFloor:   3,
 		DemandListingVelPct:   -10,
-		DemandListingAbsFloor: 5,
+		DemandListingAbsFloor: 3,
 		DemandPriceVelPct:     -8,
 		RecoveryListingVelPct: -8,
 		RecoveryMaxListings:   20,

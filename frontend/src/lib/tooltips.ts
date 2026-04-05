@@ -42,7 +42,7 @@ export const ADVANCED_TOOLTIPS: Record<string, string> = {
 	PRICE_MANIPULATION:
 		'Suspicious pricing. Very few listings at high price with no movement. Likely someone trying to set a fake price floor. Avoid. Triggered: \u2264 3 listings, price > 200c, no velocity, high CV',
 	CASCADE:
-		'Thin-market cascade lifecycle. Someone bought out all listings, relisted high, and undercutters are driving the price down. Price will keep falling until it stabilizes. Avoid buying/farming until the cascade completes. Triggered: market depth < 0.4x median, price > 1.5x 7-day low',
+		'Thin-market extreme movement. Two possible causes: (1) Cascade \u2014 someone bought out listings, relisted high, undercutters driving price down. (2) Streamer effect \u2014 new build released, genuine demand spike. Either way this is RISKY \u2014 the system cannot distinguish the cause. Use your game knowledge to decide.',
 	BREAKOUT:
 		'Price breaking above historical range with rising listings. Genuine demand increase, not manipulation. Strong buy/farm signal. Triggered: price > 90th percentile, listings rising, positive velocity',
 };
