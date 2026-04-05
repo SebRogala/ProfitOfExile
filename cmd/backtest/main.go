@@ -633,16 +633,13 @@ func evaluateSignal(signal string, priceDelta, listingDelta float64, timeframe s
 		return math.Abs(priceDelta) < sigThresh && math.Abs(listingDelta) < sigThresh
 
 	case "TRAP":
-		// Caution signal: "volatile gem, don't farm."
-		// Correct if the gem didn't become a safe buy — price didn't stabilize
-		// into a gentle upward trend. Any of: price dropped, swung big, or
-		// listings changed significantly = avoiding was right.
+		// Caution signal: "don't farm — you'd lose money."
+		// Correct if price dropped AND/OR listings flooded (supply dumped).
+		// This is what matters to a farmer: did the gem become unprofitable?
 		if timeframe == "short" {
-			// Within 1h: price didn't rise stably (any drop or big swing = correct warning)
-			return priceDelta < smallThresh || math.Abs(listingDelta) > smallThresh
+			return priceDelta < -smallThresh || listingDelta > smallThresh
 		}
-		// Medium-term: price didn't settle into stable growth
-		return priceDelta < sigThresh || math.Abs(listingDelta) > sigThresh
+		return priceDelta < -smallThresh || listingDelta > smallThresh
 
 	default:
 		return true // unknown signals not penalized
@@ -660,6 +657,7 @@ type BacktestReport struct {
 	GemsWithTrade      int                      `json:"gems_with_trade_data"`
 	BySignal           map[string]*SignalReport `json:"by_signal"`
 	ByTier             map[string]*TierReport   `json:"by_tier"`
+	BySignalTier       map[string]*SignalReport `json:"by_signal_tier"` // key: "SIGNAL|TIER"
 	V2vsV3             *ComparisonReport        `json:"v2_vs_v3"`
 }
 
@@ -697,6 +695,7 @@ func aggregateResults(results []snapshotResult) *BacktestReport {
 		SnapshotsProcessed: len(results),
 		BySignal:           make(map[string]*SignalReport),
 		ByTier:             make(map[string]*TierReport),
+		BySignalTier:       make(map[string]*SignalReport),
 		V2vsV3:             &ComparisonReport{},
 	}
 
@@ -742,6 +741,25 @@ func aggregateResults(results []snapshotResult) *BacktestReport {
 				}
 			}
 
+			// By signal x tier.
+			stKey := s.signal + "|" + s.tier
+			st, ok := report.BySignalTier[stKey]
+			if !ok {
+				st = &SignalReport{}
+				report.BySignalTier[stKey] = st
+			}
+			if s.timeframe == "short" {
+				st.ShortTotal++
+				if s.correct {
+					st.ShortCorrect++
+				}
+			} else {
+				st.MedTotal++
+				if s.correct {
+					st.MedCorrect++
+				}
+			}
+
 			// V2 vs V3 comparison.
 			cmp := report.V2vsV3
 			if s.hasTrade {
@@ -781,6 +799,10 @@ func aggregateResults(results []snapshotResult) *BacktestReport {
 		tr.ShortAccPct = pct(tr.ShortCorrect, tr.ShortTotal)
 		tr.MedAccPct = pct(tr.MedCorrect, tr.MedTotal)
 	}
+	for _, st := range report.BySignalTier {
+		st.ShortAccPct = pct(st.ShortCorrect, st.ShortTotal)
+		st.MedAccPct = pct(st.MedCorrect, st.MedTotal)
+	}
 	cmp := report.V2vsV3
 	cmp.V2ShortAccPct = pct(cmp.V2ShortCorrect, cmp.V2ShortTotal)
 	cmp.V3ShortAccPct = pct(cmp.V3ShortCorrect, cmp.V3ShortTotal)
@@ -819,6 +841,24 @@ func printReport(r *BacktestReport) {
 		fmt.Printf("%-12s %6d %6d %7.1f%%    %6d %6d %7.1f%%\n",
 			tier, tr.ShortTotal, tr.ShortCorrect, tr.ShortAccPct,
 			tr.MedTotal, tr.MedCorrect, tr.MedAccPct)
+	}
+
+	// Signal x Tier cross-tabulation.
+	fmt.Println("\n--- Signal × Tier Accuracy ---")
+	signalOrderST := sortedKeys(r.BySignal) // reuse same signal sort
+	tierOrderST := []string{"TOP", "HIGH", "MID-HIGH", "MID", "LOW", "FLOOR"}
+	fmt.Printf("%-16s %-12s %6s %6s %8s    %6s %6s %8s\n", "Signal", "Tier", "S.Tot", "S.Hit", "S.Acc%", "M.Tot", "M.Hit", "M.Acc%")
+	for _, sig := range signalOrderST {
+		for _, tier := range tierOrderST {
+			key := sig + "|" + tier
+			st, ok := r.BySignalTier[key]
+			if !ok {
+				continue
+			}
+			fmt.Printf("%-16s %-12s %6d %6d %7.1f%%    %6d %6d %7.1f%%\n",
+				sig, tier, st.ShortTotal, st.ShortCorrect, st.ShortAccPct,
+				st.MedTotal, st.MedCorrect, st.MedAccPct)
+		}
 	}
 
 	// V2 vs V3 comparison.

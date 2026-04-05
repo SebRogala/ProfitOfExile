@@ -189,11 +189,11 @@ func TestComputeGemSignals_TRAPLowConfidence(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	f := testFeature("Volatile of Storm", "20/20", 100, 10)
-	// Very high CV + active velocity => TRAP signal.
-	f.CV = 110
+	// Very high CVShort + dangerous directional velocity => TRAP signal.
+	f.CVShort = 110
 	f.VelShortPrice = 8
 	f.VelMedPrice = -7
-	f.VelLongPrice = -7 // 6h velocity used for signal classification
+	f.VelLongPrice = -7 // 6h velocity used for signal classification (negative = falling)
 	f.Tier = "MID"
 
 	gems := testBaseGems("Volatile", 30)
@@ -205,7 +205,7 @@ func TestComputeGemSignals_TRAPLowConfidence(t *testing.T) {
 
 	sig := signals[0]
 	if sig.Signal != "TRAP" {
-		t.Errorf("Signal = %q, want TRAP (CV=110)", sig.Signal)
+		t.Errorf("Signal = %q, want TRAP (CVShort=110)", sig.Signal)
 	}
 	if sig.Confidence > 25 {
 		t.Errorf("TRAP confidence = %d, want <= 25", sig.Confidence)
@@ -260,9 +260,9 @@ func TestComputeGemSignals_RecommendationAVOID_TRAP(t *testing.T) {
 	mc := testSignalMarketContext()
 
 	f := testFeature("Volatile of Storm", "20/20", 100, 10)
-	f.CV = 110 // TRAP requires high CV + active velocity
+	f.CVShort = 110 // TRAP uses CVShort (6h) + dangerous directional velocity
 	f.VelMedPrice = -8
-	f.VelLongPrice = -8 // 6h velocity used for signal classification
+	f.VelLongPrice = -8 // 6h velocity used for signal classification (negative = falling)
 	f.Tier = "MID"
 
 	gems := testBaseGems("Volatile", 30)
@@ -315,9 +315,9 @@ func TestComputeGemSignals_RecommendationAVOID_SELL_NOW(t *testing.T) {
 	// TRAP signal on a HIGH tier gem always produces SellUrgency=SELL_NOW.
 	// See trends.go: sellUrgency checks TRAP before any other condition for non-LOW tiers.
 	f := testFeature("Trap of Danger", "20/20", 100, 10)
-	f.CV = 110 // TRAP requires high CV + active velocity
-	f.VelMedPrice = 10
-	f.VelLongPrice = 10 // 6h velocity used for signal classification
+	f.CVShort = 110 // TRAP uses CVShort (6h) — high CV + dangerous directional velocity
+	f.VelMedPrice = -10
+	f.VelLongPrice = -10 // 6h velocity used for signal classification (negative = falling)
 	f.Tier = "HIGH"
 
 	gems := testBaseGems("Trap", 30)

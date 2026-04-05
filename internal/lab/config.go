@@ -41,7 +41,7 @@ type SignalConfig struct {
 	BreakoutMinLVel  float64 // min listing velocity drop (default: -5)
 
 	// TRAP threshold
-	TrapCV          float64 // CV threshold for TRAP (default: 100)
+	TrapCV          float64 // CV threshold for TRAP (default: 50)
 	TrapVelPct      float64 // min |velocity%| to confirm TRAP (default: 5)
 }
 
@@ -71,7 +71,7 @@ func DefaultSignalConfig() SignalConfig {
 		BreakoutMaxPrice:     200,
 		BreakoutMaxList:      30,
 		BreakoutMinLVel:      -5,
-		TrapCV:               100,
+		TrapCV:               50,
 		TrapVelPct:           5,
 	}
 }
