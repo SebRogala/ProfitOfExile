@@ -15,9 +15,12 @@
 	let updateError = $state('');
 	let updateProgress = $state(0);
 
-	// Load version on mount
+	// Load version on mount + auto-check if update was already detected
 	$effect(() => {
 		getVersion().then(v => { appVersion = v; }).catch(() => {});
+		if (store.updateAvailable && updateStatus === 'idle') {
+			checkForUpdates();
+		}
 	});
 
 	async function checkForUpdates() {
