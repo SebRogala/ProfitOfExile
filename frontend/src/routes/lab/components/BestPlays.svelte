@@ -434,6 +434,7 @@
 	.tier-mid { color: #94a3b8; background: rgba(148, 163, 184, 0.12); }
 	.tier-low { color: #64748b; background: rgba(100, 116, 139, 0.1); }
 	.tier-floor { color: #475569; background: rgba(71, 85, 105, 0.08); }
+	.tier-chaotic { color: #f87171; background: rgba(248, 113, 113, 0.15); }
 	.low-conf { opacity: 0.5; border: 1px dashed currentColor; }
 	.low-conf-toggle {
 		display: inline-flex;
