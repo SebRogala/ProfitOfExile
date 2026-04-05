@@ -12,7 +12,7 @@ import (
 // AdminDevices returns an HTTP handler that lists all registered devices.
 // Protected by INTERNAL_SECRET.
 // GET /api/admin/devices
-func AdminDevices(repo *device.Repository, internalSecret string) http.HandlerFunc {
+func AdminDevices(repo device.Lister, internalSecret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if internalSecret != "" && r.Header.Get("X-Internal-Token") != internalSecret {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -42,7 +42,7 @@ type identifyRequest struct {
 // DeviceIdentify handles POST /api/device/identify. Reads the device from
 // request context (set by DeviceMiddleware) and updates its alias.
 // Returns 400 if no device is in context (no X-Device-ID header).
-func DeviceIdentify(repo *device.Repository) http.HandlerFunc {
+func DeviceIdentify(repo device.AliasSetter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d := middleware.DeviceFromContext(r.Context())
 		if d == nil {
