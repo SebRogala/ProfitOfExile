@@ -264,11 +264,11 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		// HERD boundary: lVel% must be > 15%
 		{"lVel=15% not HERD", 10, 15, 30, lst, "UNCERTAIN"},
 		{"lVel=15.01% is HERD", 10, 15.01, 30, lst, "HERD"},
-		// STABLE boundary: |pVel%| must be < 3% and |lVel%| < 5%
-		{"pVel=3% not STABLE", 3, 0, 30, lst, "UNCERTAIN"},
-		{"pVel=2.99% is STABLE", 2.99, 0, 30, lst, "STABLE"},
-		{"lVel=5% not STABLE", 0, 5, 30, lst, "UNCERTAIN"},
-		{"lVel=4.99% is STABLE", 0, 4.99, 30, lst, "STABLE"},
+		// STABLE boundary: |pVel%| must be < 5% and |lVel%| < 10% (widened for 6h velocity window)
+		{"pVel=5% not STABLE", 5, 0, 30, lst, "UNCERTAIN"},
+		{"pVel=4.99% is STABLE", 4.99, 0, 30, lst, "STABLE"},
+		{"lVel=10% not STABLE", 0, 10, 30, lst, "UNCERTAIN"},
+		{"lVel=9.99% is STABLE", 0, 9.99, 30, lst, "STABLE"},
 		// Pre-HERD boundary: pVel% > 20% and lVel% > 5%
 		{"preHERD: pVel=20% not HERD", 20, 6, 30, lst, "UNCERTAIN"},
 		{"preHERD: pVel=20.01% lVel=5.01% is HERD", 20.01, 5.01, 30, lst, "HERD"},
