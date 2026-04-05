@@ -23,7 +23,7 @@ func DeviceFromContext(ctx context.Context) *device.Device {
 // ID is present it upserts the device record (auto-registration), attaches it
 // to the request context, and enforces bans. Requests without X-Device-ID pass
 // through untracked.
-func DeviceMiddleware(repo *device.Repository) func(http.Handler) http.Handler {
+func DeviceMiddleware(repo device.Upserter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			fingerprint := r.Header.Get("X-Device-ID")
