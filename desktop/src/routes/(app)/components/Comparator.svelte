@@ -14,12 +14,12 @@
 
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
-		DUMPING: '#ef4444', RECOVERY: '#a855f7', TRAP: '#ef4444',
+		DUMPING: '#ef4444', RECOVERY: '#a855f7', DEMAND: '#22c55e', CAUTION: '#eab308',
 	};
 
 	const SIGNAL_ICONS: Record<string, string> = {
 		STABLE: '\u200B', UNCERTAIN: '?', HERD: '\u26A1',
-		DUMPING: '\u23EC', RECOVERY: '\uD83D\uDD04', TRAP: '\uD83D\uDEAB',
+		DUMPING: '\u23EC', RECOVERY: '\uD83D\uDD04', DEMAND: '\uD83D\uDED2', CAUTION: '\u26A0',
 	};
 
 	function signalTooltipHtml(signal: string): string {
@@ -56,8 +56,7 @@
 		// No trade data — fall back to ninja + gentle signal adjustments.
 		// Price difference dominates; signals are tiebreakers within 10%.
 		let base = gem.transPrice;
-		if (gem.signal === 'TRAP') base *= 0.85;
-		else if (gem.signal === 'DUMPING') base *= 0.90;
+		if (gem.signal === 'DUMPING') base *= 0.90;
 		else if (gem.signal === 'UNCERTAIN') base *= 0.97;
 		return base;
 	}
@@ -602,9 +601,9 @@
 							<div class="anomaly-banner">No poe.ninja data — check trade listings</div>
 						{/if}
 					</div>
-					{#if gem.signal === 'DUMPING' || gem.signal === 'TRAP'}
+					{#if gem.signal === 'DUMPING'}
 						<div class="listing-warning">
-							{gem.signal === 'DUMPING' ? 'Listings rising — price may drop' : 'Price trap — avoid'}
+							Listings rising — price may drop
 						</div>
 					{/if}
 

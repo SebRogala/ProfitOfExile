@@ -36,7 +36,7 @@ func predictedDirection(signal string) string {
 	switch signal {
 	case "HERD", "RECOVERY":
 		return "UP"
-	case "DUMPING", "TRAP":
+	case "DUMPING", "CAUTION":
 		return "DOWN"
 	case "STABLE", "UNCERTAIN":
 		return "FLAT"

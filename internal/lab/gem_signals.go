@@ -145,8 +145,8 @@ func ComputeGemSignals(
 // Priority: AVOID for dangerous signals, OK for high-confidence positive signals.
 // DUMPING is gated on confidence — low-confidence DUMPING on liquid markets is noise.
 func computeRecommendation(signal, sellUrgency string, confidence int) string {
-	// TRAP always avoided. SELL_NOW already gated on market thinness.
-	if signal == "TRAP" || sellUrgency == "SELL_NOW" {
+	// SELL_NOW gated on market thinness. CAUTION is informational — no auto-AVOID.
+	if sellUrgency == "SELL_NOW" {
 		return "AVOID"
 	}
 
@@ -191,7 +191,7 @@ func quickSellUndercutFactor(listings int, tier, signal string) float64 {
 	switch signal {
 	case "DUMPING":
 		base += 0.05 // 65% achievable without this — needs aggressive pricing
-	case "TRAP":
+	case "CAUTION":
 		base += 0.03
 	case "STABLE":
 		base -= 0.03 // 93% achievable — can afford to be less aggressive

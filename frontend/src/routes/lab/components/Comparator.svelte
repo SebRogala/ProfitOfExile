@@ -505,9 +505,9 @@
 							</div>
 						{/if}
 					</div>
-					{#if gem.signal === 'DUMPING' || gem.signal === 'TRAP'}
+					{#if gem.signal === 'DUMPING'}
 						<div class="listing-warning">
-							{gem.signal === 'DUMPING' ? 'Listings rising — price may drop' : 'Price trap — avoid'}
+							Listings rising — price may drop
 						</div>
 					{/if}
 

@@ -13,7 +13,7 @@ func TestRankCollective_ExcludesTRAP(t *testing.T) {
 	}
 	signals := []GemSignal{
 		{Name: "Spark of Nova", Variant: "20/20", Signal: "STABLE", Sellability: 60},
-		{Name: "Cleave of Rage", Variant: "20/20", Signal: "TRAP", Sellability: 60},
+		{Name: "Cleave of Rage", Variant: "20/20", Signal: "CAUTION", Sellability: 60},
 	}
 
 	results := RankCollective(transfigure, signals, nil, 0, 50, "")
@@ -564,7 +564,7 @@ func TestSignalWeight(t *testing.T) {
 		signal string
 		want   float64
 	}{
-		{"TRAP", 0.7},
+		{"CAUTION", 1.0},
 		{"DUMPING", 0.85},
 		{"UNCERTAIN", 1.0},
 		{"HERD", 0.95},

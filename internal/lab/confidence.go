@@ -54,10 +54,8 @@ func signalBaseConfidence(signal string) float64 {
 		return 65
 	case "UNCERTAIN", "RECOVERY":
 		return 40
-	case "STABLE":
+	case "STABLE", "CAUTION":
 		return 55
-	case "TRAP":
-		return 15
 	default:
 		return 40
 	}

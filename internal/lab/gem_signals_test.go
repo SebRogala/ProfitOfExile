@@ -204,11 +204,12 @@ func TestComputeGemSignals_TRAPLowConfidence(t *testing.T) {
 	}
 
 	sig := signals[0]
-	if sig.Signal != "TRAP" {
-		t.Errorf("Signal = %q, want TRAP (CVShort=110)", sig.Signal)
+	if sig.Signal != "CAUTION" {
+		t.Errorf("Signal = %q, want CAUTION (CVShort=110)", sig.Signal)
 	}
-	if sig.Confidence > 25 {
-		t.Errorf("TRAP confidence = %d, want <= 25", sig.Confidence)
+	// CAUTION is informational — confidence base is 55 (same as STABLE), not 15.
+	if sig.Confidence < 40 || sig.Confidence > 70 {
+		t.Errorf("CAUTION confidence = %d, want 40-70", sig.Confidence)
 	}
 }
 
@@ -272,8 +273,9 @@ func TestComputeGemSignals_RecommendationAVOID_TRAP(t *testing.T) {
 		t.Fatalf("got %d signals, want 1", len(signals))
 	}
 
-	if signals[0].Recommendation != "AVOID" {
-		t.Errorf("Recommendation = %q, want AVOID for TRAP signal", signals[0].Recommendation)
+	// CAUTION is informational — no auto-AVOID.
+	if signals[0].Recommendation == "AVOID" {
+		t.Errorf("Recommendation = AVOID, want OK or empty — CAUTION is informational, not dangerous")
 	}
 }
 
@@ -312,27 +314,28 @@ func TestComputeGemSignals_RecommendationAVOID_SELL_NOW(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 	mc := testSignalMarketContext()
 
-	// TRAP signal on a HIGH tier gem always produces SellUrgency=SELL_NOW.
-	// See trends.go: sellUrgency checks TRAP before any other condition for non-LOW tiers.
-	f := testFeature("Trap of Danger", "20/20", 100, 10)
-	f.CVShort = 110 // TRAP uses CVShort (6h) — high CV + dangerous directional velocity
+	// CAUTION is informational — no SELL_NOW override, no auto-AVOID.
+	// It falls through to normal sell urgency logic based on velocity/tier.
+	f := testFeature("Caution of Danger", "20/20", 100, 10)
+	f.CVShort = 110
 	f.VelMedPrice = -10
-	f.VelLongPrice = -10 // 6h velocity used for signal classification (negative = falling)
+	f.VelLongPrice = -10
 	f.Tier = "HIGH"
 
-	gems := testBaseGems("Trap", 30)
+	gems := testBaseGems("Caution", 30)
 
 	signals := ComputeGemSignals(snapTime, []GemFeature{f}, mc, gems, nil, 40.0)
 	if len(signals) != 1 {
 		t.Fatalf("got %d signals, want 1", len(signals))
 	}
 
-	// TRAP signal => SellUrgency should be SELL_NOW (for non-LOW tier).
-	if signals[0].SellUrgency != "SELL_NOW" {
-		t.Errorf("SellUrgency = %q, want SELL_NOW for TRAP signal", signals[0].SellUrgency)
+	// CAUTION does NOT force SELL_NOW — normal urgency logic applies.
+	if signals[0].SellUrgency == "SELL_NOW" {
+		t.Errorf("SellUrgency = SELL_NOW, want normal urgency — CAUTION is informational")
 	}
-	if signals[0].Recommendation != "AVOID" {
-		t.Errorf("Recommendation = %q, want AVOID when SellUrgency=SELL_NOW", signals[0].Recommendation)
+	// CAUTION does NOT force AVOID.
+	if signals[0].Recommendation == "AVOID" {
+		t.Errorf("Recommendation = AVOID, want OK — CAUTION is informational")
 	}
 }
 

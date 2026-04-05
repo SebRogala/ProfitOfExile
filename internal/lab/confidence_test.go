@@ -126,9 +126,9 @@ func TestComputeConfidence_TRAPAlwaysLow(t *testing.T) {
 	mc := testConfidenceMarketContext()
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC) // bullish
 
-	confidence, _ := computeConfidence("TRAP", f, mc, snapTime)
-	if confidence < 10 || confidence > 20 {
-		t.Errorf("TRAP confidence = %d, want 10-20", confidence)
+	confidence, _ := computeConfidence("CAUTION", f, mc, snapTime)
+	if confidence < 40 || confidence > 70 {
+		t.Errorf("CAUTION confidence = %d, want 40-70 (informational, same base as STABLE)", confidence)
 	}
 }
 

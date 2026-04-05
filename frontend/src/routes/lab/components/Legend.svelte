@@ -12,12 +12,13 @@
 			<div class="legend-grid">
 				<div class="legend-col">
 					<h4 class="legend-heading">Signals</h4>
-					<div class="legend-item"><span class="sig green-muted">━ STABLE</span> steady price+listings</div>
-					<div class="legend-item"><span class="sig muted">? UNCERTAIN</span> direction unpredictable</div>
-					<div class="legend-item"><span class="sig yellow">⚡ HERD</span> price+listings both up</div>
+					<div class="legend-item"><span class="sig green-muted">━ STABLE</span> steady market</div>
+					<div class="legend-item"><span class="sig green">🛒 DEMAND</span> listings draining, buyers active</div>
+					<div class="legend-item"><span class="sig yellow">⚡ HERD</span> price+listings both rising</div>
 					<div class="legend-item"><span class="sig red">⏬ DUMPING</span> price↓ listings↑</div>
-					<div class="legend-item"><span class="sig purple">🔄 RECOVERY</span> price↓ listings↓</div>
-					<div class="legend-item"><span class="sig red">🚫 TRAP</span> CV>100% avoid</div>
+					<div class="legend-item"><span class="sig purple">🔄 RECOVERY</span> thin market bottoming</div>
+					<div class="legend-item"><span class="sig yellow">⚠ CAUTION</span> volatile, check history</div>
+					<div class="legend-item"><span class="sig muted">? UNCERTAIN</span> no clear pattern</div>
 				</div>
 
 				<div class="legend-col">

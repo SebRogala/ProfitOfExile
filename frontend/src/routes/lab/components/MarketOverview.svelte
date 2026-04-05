@@ -58,7 +58,7 @@
 		UNCERTAIN: 'var(--color-lab-yellow)',
 		HERD: 'var(--color-lab-purple)',
 		DUMPING: 'var(--color-lab-red)',
-		TRAP: 'var(--color-lab-red)',
+		CAUTION: 'var(--color-lab-yellow)',
 	};
 </script>
 

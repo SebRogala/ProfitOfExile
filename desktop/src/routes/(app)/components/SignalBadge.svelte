@@ -16,7 +16,7 @@
 		DEMAND: { prefix: '🛒', cssClass: 'badge-green' },
 		DUMPING: { prefix: '⏬', cssClass: 'badge-red' },
 		RECOVERY: { prefix: '🔄', cssClass: 'badge-purple' },
-		TRAP: { prefix: '🚫', cssClass: 'badge-red' },
+		CAUTION: { prefix: '⚠', cssClass: 'badge-yellow' },
 	};
 
 	const WINDOW_STYLES: Record<string, { prefix: string; cssClass: string }> = {
