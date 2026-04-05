@@ -1,71 +1,55 @@
-// cmd/recalculate triggers a full recomputation of all analysis pipelines.
-// Runs: Transfigure, Quality, V2 (recompute), Font — in correct order.
-// V2 runs before Font so Font reads fresh tier classification.
+// cmd/recalculate triggers a full recomputation via the running server process.
+// Calls the server's /api/internal/recalculate endpoint on localhost, which
+// updates the in-memory cache AND triggers Mercure events to the frontend.
 //
 // Usage (on prod via docker exec):
 //
-//	docker exec <server-container> /app/recalculate
+//	docker exec <server-container> /recalculate
 package main
 
 import (
-	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
-
-	"profitofexile/internal/db"
-	"profitofexile/internal/lab"
 )
 
 func main() {
-	ctx := context.Background()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgresql://profitofexile:profitofexile@postgres:5432/profitofexile"
+	secret := os.Getenv("INTERNAL_SECRET")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
-	pool, err := db.NewPool(ctx, dbURL)
+	url := fmt.Sprintf("http://localhost:%s/api/internal/recalculate", port)
+
+	fmt.Printf("Triggering recalculation on %s...\n", url)
+
+	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "DB: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
-
-	repo := lab.NewRepository(pool)
-	cache := lab.NewCache()
-	throttler := lab.NewThrottler("", "", 1*time.Second, cache)
-	analyzer := lab.NewAnalyzer(repo, throttler, cache, nil)
-
-	fmt.Println("Recalculating all analysis pipelines...")
-
-	start := time.Now()
-
-	fmt.Print("  Transfigure... ")
-	if err := analyzer.RunTransfigure(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
-	} else {
-		fmt.Println("OK")
+	if secret != "" {
+		req.Header.Set("X-Internal-Token", secret)
 	}
 
-	fmt.Print("  Quality... ")
-	if err := analyzer.RunQuality(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
-	} else {
-		fmt.Println("OK")
-	}
-
-	fmt.Print("  V2 (recompute)... ")
-	if err := analyzer.RecomputeLatestV2(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to reach server: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Is the server process running in this container?\n")
 		os.Exit(1)
 	}
-	fmt.Println("OK")
+	defer resp.Body.Close()
 
-	fmt.Print("  Font... ")
-	if err := analyzer.RunFont(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
-	} else {
-		fmt.Println("OK")
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Server returned %d: %s\n", resp.StatusCode, string(body))
+		os.Exit(1)
 	}
 
-	fmt.Printf("Done in %s\n", time.Since(start).Round(time.Millisecond))
+	fmt.Printf("OK: %s\n", string(body))
+	fmt.Println("Recalculation started on server — cache + Mercure will update.")
 }
