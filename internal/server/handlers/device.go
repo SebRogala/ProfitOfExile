@@ -22,9 +22,7 @@ func AdminDevices(repo *device.Repository, internalSecret string) http.HandlerFu
 		devices, err := repo.List(r.Context())
 		if err != nil {
 			slog.Error("admin devices: list failed", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "failed to list devices"})
+			jsonError(w, http.StatusInternalServerError, "failed to list devices")
 			return
 		}
 
@@ -48,32 +46,24 @@ func DeviceIdentify(repo *device.Repository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		d := middleware.DeviceFromContext(r.Context())
 		if d == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "X-Device-ID header required"})
+			jsonError(w, http.StatusBadRequest, "X-Device-ID header required")
 			return
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var body identifyRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON body"})
+			jsonError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
 
 		if body.Alias == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "alias is required"})
+			jsonError(w, http.StatusBadRequest, "alias is required")
 			return
 		}
 
 		if len(body.Alias) > 64 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "alias too long (max 64 characters)"})
+			jsonError(w, http.StatusBadRequest, "alias too long (max 64 characters)")
 			return
 		}
 
@@ -83,9 +73,7 @@ func DeviceIdentify(repo *device.Repository) http.HandlerFunc {
 				"alias", body.Alias,
 				"error", err,
 			)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "failed to update alias"})
+			jsonError(w, http.StatusInternalServerError, "failed to update alias")
 			return
 		}
 

@@ -51,7 +51,7 @@ func (r *Repository) GetByPrefix(ctx context.Context, prefix string) (*Device, e
 	rows, err := r.pool.Query(ctx,
 		`SELECT fingerprint, alias, role, banned, app_version, first_seen, last_seen
 		 FROM devices
-		 WHERE fingerprint LIKE $1 || '%'
+		 WHERE LEFT(fingerprint, LENGTH($1)) = $1
 		 LIMIT 2`,
 		prefix,
 	)
