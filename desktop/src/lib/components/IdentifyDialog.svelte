@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
 	import { store } from '$lib/stores/status.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 
@@ -18,9 +17,7 @@
 			error = '';
 			success = '';
 			submitting = false;
-			invoke<string>('get_device_id')
-				.then(id => { shortId = id; })
-				.catch(() => { shortId = '??'; });
+			shortId = store.status?.device_id?.slice(0, 8) ?? '??';
 			getVersion()
 				.then(v => { appVersion = v; })
 				.catch(() => {});
