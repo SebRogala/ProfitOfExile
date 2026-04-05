@@ -157,12 +157,12 @@
 						<SignalBadge signal={gem.advancedSignal} type="advanced" />
 					{/if}
 				</td>
-				<td class="col-listings" title="{gem.transListings} listings now. {gem.transVelocity > 0 ? '+' + gem.transVelocity + ' new in last 6h (sellers flooding in)' : gem.transVelocity < 0 ? gem.transVelocity + ' fewer in last 6h (supply draining)' : 'No change in 6h'}">
+				<td class="col-listings" title="{gem.transListings} listings now. {gem.baseVelocity > 0 ? '+' + gem.baseVelocity + '/h new (sellers flooding in)' : gem.baseVelocity < 0 ? gem.baseVelocity + '/h fewer (supply draining)' : 'No change'}">
 					<span class="lst-count">{gem.transListings}</span>
-					{#if gem.transVelocity > 0}
-						<span class="vel-up">+{gem.transVelocity}</span>
-					{:else if gem.transVelocity < 0}
-						<span class="vel-down">{gem.transVelocity}</span>
+					{#if gem.baseVelocity > 0}
+						<span class="vel-up">+{gem.baseVelocity}</span>
+					{:else if gem.baseVelocity < 0}
+						<span class="vel-down">{gem.baseVelocity}</span>
 					{/if}
 				</td>
 				<td class="col-spark"><Sparkline data={gem.sparkline} width={100} height={24} /></td>
