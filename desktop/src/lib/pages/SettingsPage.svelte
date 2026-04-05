@@ -10,16 +10,23 @@
 
 	// --- Update ---
 	let appVersion = $state('...');
-	let updateStatus = $state<'idle' | 'checking' | 'available' | 'downloading' | 'error'>('idle');
-	let updateVersion = $state('');
+	let updateStatus = $state<'idle' | 'checking' | 'available' | 'downloading' | 'error'>(
+		store.updateAvailable ? 'available' : 'idle'
+	);
+	let updateVersion = $state(store.updateVersion || '');
 	let updateError = $state('');
 	let updateProgress = $state(0);
 
-	// Load version on mount + auto-check if update was already detected
+	// Load version on mount
 	$effect(() => {
 		getVersion().then(v => { appVersion = v; }).catch(() => {});
+	});
+
+	// Sync: when background checker detects an update, reflect it immediately
+	$effect(() => {
 		if (store.updateAvailable && updateStatus === 'idle') {
-			checkForUpdates();
+			updateStatus = 'available';
+			updateVersion = store.updateVersion;
 		}
 	});
 
