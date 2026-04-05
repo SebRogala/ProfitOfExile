@@ -3786,11 +3786,12 @@ dependencies = [
 
 [[package]]
 name = "profitofexile-desktop"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
  "env_logger",
+ "hex",
  "image",
  "log",
  "notify",
@@ -3799,6 +3800,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "strsim",
  "sysinfo 0.33.1",
  "tauri",
@@ -3807,7 +3809,9 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "tokio",
+ "uuid",
  "windows 0.58.0",
+ "winreg",
  "xcap",
 ]
 
