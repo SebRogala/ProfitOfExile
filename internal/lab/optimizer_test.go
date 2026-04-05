@@ -1061,8 +1061,8 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 0.1, VelLongListing: 0.1, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: 0.5, SnapTime: t0},
 		// DUMPING: pVelPct=-10% < -8, lVelPct=12% > 10, absVel=6 >= 3 -> predicts DOWN, actual DOWN -> correct
 		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: -10, VelLongListing: 6, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: -8.0, SnapTime: t0},
-		// UNCERTAIN: pVelPct=4% (>3 so not STABLE), lVelPct=2% → not HERD/DUMPING/DEMAND → UNCERTAIN, predicts FLAT, actual FLAT -> correct
-		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 4, VelLongListing: 1, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
+		// UNCERTAIN: pVelPct=6% (>5 so not STABLE), lVelPct=2% → not HERD/DUMPING/DEMAND → UNCERTAIN, predicts FLAT, actual FLAT -> correct
+		{Feature: GemFeature{Time: t0, Chaos: 100, VelLongPrice: 6, VelLongListing: 1, CV: 0.1, Listings: 50, Tier: "MID"}, FuturePct: 1.0, SnapTime: t0},
 	}
 
 	report := ValidateDefaults(evals, mc)
