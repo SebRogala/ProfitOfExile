@@ -258,7 +258,11 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 					continue
 				}
 
-				// Low-confidence gems: track separately, exclude from EV.
+				// Low-confidence gems: track separately, exclude from EV and winners.
+				// They still count in pool size (via poolNames populated above) with
+				// zero price — they're real outcomes that reduce win probability
+				// without inflating EV. CHAOTIC gems (inflated price spikes) are
+				// the primary case this protects against.
 				if feat.LowConfidence {
 					lowConfGems = append(lowConfGems, LowConfidenceGemInfo{
 						Name: e.name, Chaos: e.chaos, Listings: e.listings,
