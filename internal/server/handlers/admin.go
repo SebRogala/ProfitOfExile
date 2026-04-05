@@ -10,10 +10,15 @@ import (
 )
 
 // AdminRecalculate triggers a full recomputation of all analysis pipelines.
-// Deletes stale v2 data for the latest snapshot and re-runs everything.
-// POST /api/admin/recalculate
-func AdminRecalculate(analyzer *lab.Analyzer) http.HandlerFunc {
+// V2 runs before Font so Font reads fresh features with current tier classification.
+// POST /api/internal/recalculate (protected by INTERNAL_SECRET)
+func AdminRecalculate(analyzer *lab.Analyzer, internalSecret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if internalSecret != "" && r.Header.Get("X-Internal-Token") != internalSecret {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		slog.Info("admin: recalculate triggered")
 
 		go func() {
@@ -22,14 +27,15 @@ func AdminRecalculate(analyzer *lab.Analyzer) http.HandlerFunc {
 			if err := analyzer.RunTransfigure(ctx); err != nil {
 				slog.Error("admin recalculate: transfigure failed", "error", err)
 			}
-			if err := analyzer.RunFont(ctx); err != nil {
-				slog.Error("admin recalculate: font failed", "error", err)
-			}
 			if err := analyzer.RunQuality(ctx); err != nil {
 				slog.Error("admin recalculate: quality failed", "error", err)
 			}
+			// V2 must complete before Font — Font reads GemFeatures for tier classification.
 			if err := analyzer.RecomputeLatestV2(ctx); err != nil {
 				slog.Error("admin recalculate: v2 failed", "error", err)
+			}
+			if err := analyzer.RunFont(ctx); err != nil {
+				slog.Error("admin recalculate: font failed", "error", err)
 			}
 
 			slog.Info("admin: recalculate complete")
