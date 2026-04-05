@@ -11,6 +11,7 @@
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
+	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).
@@ -266,6 +267,8 @@
 
 	// Ctrl+Shift+F12 toggles debug mode (devtools + force-show overlays)
 	let debugMode = $state(false);
+	// Ctrl+Shift+I opens the identify dialog (device alias registration)
+	let identifyOpen = $state(false);
 
 	$effect(() => {
 		function handleKeydown(e: KeyboardEvent) {
@@ -282,6 +285,10 @@
 					(win as any).closeDevtools().catch((e: any) => console.warn('[debug] closeDevtools failed:', e));
 					console.log('[debug] Debug mode OFF');
 				}
+			}
+			if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+				e.preventDefault();
+				identifyOpen = !identifyOpen;
 			}
 		}
 		window.addEventListener('keydown', handleKeydown);
@@ -452,6 +459,8 @@
 		</main>
 	</div>
 </div>
+
+<IdentifyDialog bind:open={identifyOpen} />
 
 <style>
 	.app-shell {
