@@ -163,6 +163,7 @@ func (r *Repository) List(ctx context.Context) ([]Device, error) {
 // DeviceStats holds aggregate device statistics.
 type DeviceStats struct {
 	Total      int
+	Active8h  int
 	Active24h  int
 	Active7d   int
 	Identified int
@@ -177,11 +178,12 @@ func (r *Repository) Stats(ctx context.Context) (*DeviceStats, error) {
 
 	err := r.pool.QueryRow(ctx, `SELECT
 		COUNT(*),
+		COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '8 hours'),
 		COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '24 hours'),
 		COUNT(*) FILTER (WHERE last_seen > NOW() - INTERVAL '7 days'),
 		COUNT(*) FILTER (WHERE alias IS NOT NULL),
 		COUNT(*) FILTER (WHERE banned = true)
-		FROM devices`).Scan(&s.Total, &s.Active24h, &s.Active7d, &s.Identified, &s.Banned)
+		FROM devices`).Scan(&s.Total, &s.Active8h, &s.Active24h, &s.Active7d, &s.Identified, &s.Banned)
 	if err != nil {
 		return nil, fmt.Errorf("device stats: %w", err)
 	}
