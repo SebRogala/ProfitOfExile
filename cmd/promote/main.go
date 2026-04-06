@@ -167,6 +167,7 @@ func runStats(ctx context.Context, repo *device.Repository) error {
 	}
 
 	fmt.Printf("Total devices:  %d\n", s.Total)
+	fmt.Printf("Active (8h):    %d\n", s.Active8h)
 	fmt.Printf("Active (24h):   %d\n", s.Active24h)
 	fmt.Printf("Active (7d):    %d\n", s.Active7d)
 	fmt.Printf("Identified:     %d\n", s.Identified)
