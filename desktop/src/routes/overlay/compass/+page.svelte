@@ -79,7 +79,7 @@
 	// the navigation engine's next direction against the layout exits, then
 	// finding which preset door corresponds to that connection.
 	let doors = $derived<DoorExitLocation[]>(preset ? getDoorExitLocations(preset) : []);
-	let contents = $derived<ContentLocation[]>(preset ? getContentLocations(preset) : []);
+	let contents = $derived<ContentLocation[]>(preset && currentRoom?.contents.length ? getContentLocations(preset) : []);
 	// Nav engine returns layout exit direction (e.g. "NE") but preset doors use
 	// physical positions (e.g. "N", "S"). Match by angular proximity.
 	let navDirection = $derived(getNextDirection(navState));
