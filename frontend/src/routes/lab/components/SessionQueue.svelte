@@ -79,12 +79,7 @@
 		<div class="section-header">
 			<h2 class="section-title">Session Queue</h2>
 			<div class="header-actions">
-				<button class="refresh-btn" onclick={onRefresh} disabled={anyRefreshing}>
-					{#if anyRefreshing}
-						<span class="btn-spinner"></span>
-					{/if}
-					Refresh Prices
-				</button>
+				<!-- Trade refresh disabled on web — available in desktop app only -->
 				<button class="clear-btn" onclick={onClear}>Clear Session</button>
 			</div>
 		</div>

@@ -9,7 +9,7 @@
 		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
-	import { lookupTrade, pollTradeResult, type TradeLookupResult } from '$lib/tradeApi';
+	import type { TradeLookupResult } from '$lib/tradeApi';
 	import { getPairCode, setPairCode } from '$lib/desktopBridge';
 
 	import Header from './components/Header.svelte';
@@ -90,45 +90,8 @@
 	}
 
 	async function handleRefreshQueue() {
-		// Mark all items as refreshing
-		sessionQueue = sessionQueue.map((item) => ({ ...item, refreshing: true }));
-
-		await Promise.allSettled(
-			sessionQueue.map(async (item, idx) => {
-				try {
-					const { immediate, requestId } = await lookupTrade(item.gem, item.variant, true);
-					let result: TradeLookupResult | null = immediate;
-
-					if (!result && requestId) {
-						result = await pollTradeResult(item.gem, item.variant);
-					}
-
-					if (result) {
-						sessionQueue = sessionQueue.map((q, i) =>
-							i === idx
-								? {
-										...q,
-										currentFloor: result!.priceFloor,
-										currentFloorOriginal: result!.listings[0]?.price ?? result!.priceFloor,
-										currentCurrency: result!.listings[0]?.currency ?? 'chaos',
-										priceDelta: result!.priceFloor - q.snapshotFloor,
-										refreshing: false,
-									}
-								: q
-						);
-					} else {
-						sessionQueue = sessionQueue.map((q, i) =>
-							i === idx ? { ...q, refreshing: false } : q
-						);
-					}
-				} catch {
-					sessionQueue = sessionQueue.map((q, i) =>
-						i === idx ? { ...q, refreshing: false } : q
-					);
-				}
-			})
-		);
-
+		// Trade refresh disabled on web — only available in desktop app.
+		// Web users see cached trade data from the collector's background refresh.
 	}
 
 	function handleRemoveFromQueue(index: number) {

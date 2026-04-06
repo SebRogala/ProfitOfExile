@@ -546,7 +546,7 @@
 							</div>
 						{:else if !tradeData[gem.name]}
 							<div class="trade-empty">
-								<button class="trade-action-btn trade-fetch-btn" onclick={() => refreshTradeData(gem.name)}>&#8635; Fetch trade data</button>
+								<span class="trade-no-data">No trade data available</span>
 							</div>
 						{/if}
 						{#if tradeData[gem.name]}
@@ -582,17 +582,6 @@
 									<span class="trade-median" title="Median price of top 10 listings">median: {fmtPrice(td.medianTop10)}c</span>
 									<span class="trade-actions">
 										<span class="trade-cache-age" class:trade-cache-stale={isTradeCacheStale(gem.name)} title="Time since last trade lookup">{tradeCacheAgeStr(gem.name)}</span>
-										{#if tradeLoading[gem.name]?.loading}
-											<span class="trade-spinner-inline"></span>
-											<button class="trade-cancel-btn-inline" onclick={() => { tradeGeneration[gem.name] = (tradeGeneration[gem.name] || 0) + 1; tradeLoading[gem.name] = { loading: false }; }} title="Cancel">&#215;</button>
-										{:else}
-											<button
-												class="trade-action-btn"
-												class:trade-refresh-stale={isTradeCacheStale(gem.name)}
-												title={canRefreshTrade(gem.name) ? 'Refresh trade data' : `Cooldown: ${tradeCooldownRemaining(gem.name)} remaining`}
-												onclick={() => refreshTradeData(gem.name)}
-											>&#8635;</button>
-										{/if}
 										{#if gem.name.includes(' of ')}
 											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Buy Base</a>
 										{/if}
