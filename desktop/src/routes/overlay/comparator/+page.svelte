@@ -283,7 +283,7 @@
 						</div>
 					</div>
 				{/each}
-			</div>
+				</div>
 			<div class="side">
 				{#each results as gem, i (gem.name)}
 					<div class="side-row">
@@ -296,14 +296,16 @@
 					</div>
 				{/each}
 				<button class="clear-act" data-action="clear">clear</button>
-				{#if tradeQueue}
+			</div>
+			{#if tradeQueue}
+				<div class="queue-row">
 					<span class="queue-status">
 						{tradeQueue.position}/{tradeQueue.total}
 						{#if tradeQueue.status === 'waiting'}{Math.ceil(tradeQueue.waitSecs)}s{/if}
 					</span>
 					<button class="clear-act queue-cancel" data-action="cancel">&times;</button>
-				{/if}
-			</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -608,15 +610,25 @@
 		border-color: rgba(239, 68, 68, 0.4);
 	}
 
+	.queue-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		pointer-events: auto;
+		position: fixed;
+		bottom: 2px;
+		right: 56px;
+	}
+
 	.queue-status {
 		font-size: 9px;
 		color: #eab308;
 		white-space: nowrap;
-		margin-top: 4px;
+		display: flex;
+		align-items: center;
 	}
 
 	.queue-cancel {
-		margin-top: 2px;
 		font-size: 13px;
 		padding: 2px 6px;
 		color: #eab308;
