@@ -195,13 +195,10 @@ function detectSections(rooms: LabLayoutRoom[], adjacency: Map<string, string[]>
 		}
 	}
 
-	// Last section (after last trial) — if any rooms remain
-	if (currentSection.length > 0 && trialRooms.length > 0) {
-		sections.push({
-			roomIds: currentSection,
-			startRoom: currentSection[0],
-			endRoom: trialRooms[trialRooms.length - 1],
-		});
+	// Rooms after the last trial are side rooms of the final section — absorb them.
+	// Don't create a phantom section that routes back to the last trial.
+	if (currentSection.length > 0 && sections.length > 0) {
+		sections[sections.length - 1].roomIds.push(...currentSection);
 	}
 
 	return sections;
