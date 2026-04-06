@@ -987,6 +987,12 @@ fn set_overlay_has_content(has_content: bool) {
 }
 
 #[tauri::command]
+fn set_overlay_interactive_width(width: i32) {
+    #[cfg(windows)]
+    overlay_clickthrough::set_interactive_width(width);
+}
+
+#[tauri::command]
 fn get_comparator_data(state: tauri::State<AppState>) -> serde_json::Value {
     state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -2068,6 +2074,7 @@ pub fn run() {
             force_show_overlays,
             set_comparator_data,
             set_overlay_has_content,
+            set_overlay_interactive_width,
             get_comparator_data,
             set_overlay_clickthrough,
             request_trade_refresh,

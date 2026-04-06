@@ -116,6 +116,13 @@
 		};
 	});
 
+	// Widen the interactive click zone when the queue row is visible.
+	$effect(() => {
+		const width = tradeQueue ? 140 : 48;
+		invoke('set_overlay_interactive_width', { width })
+			.catch(e => console.warn('[overlay] set_overlay_interactive_width failed:', e));
+	});
+
 	// Trade refresh — request the Comparator to do the lookup via event.
 	// Comparator handles it → updates tradeData → pushes to Rust → we pick it up on next poll.
 	function requestTradeRefresh(gem: CompareGem) {
@@ -297,16 +304,16 @@
 				{/each}
 				<button class="clear-act" data-action="clear">clear</button>
 			</div>
-			{#if tradeQueue}
-				<div class="queue-row">
-					<span class="queue-status">
-						{tradeQueue.position}/{tradeQueue.total}
-						{#if tradeQueue.status === 'waiting'}{Math.ceil(tradeQueue.waitSecs)}s{/if}
-					</span>
-					<button class="clear-act queue-cancel" data-action="cancel">&times;</button>
-				</div>
-			{/if}
 		</div>
+		{#if tradeQueue}
+			<div class="queue-row">
+				<span class="queue-status">
+					{tradeQueue.position}/{tradeQueue.total}
+					{#if tradeQueue.status === 'waiting'}{Math.ceil(tradeQueue.waitSecs)}s{/if}
+				</span>
+				<button class="clear-act queue-cancel" data-action="cancel">&times;</button>
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -616,21 +623,20 @@
 		gap: 4px;
 		pointer-events: auto;
 		position: fixed;
-		bottom: 2px;
-		right: 56px;
+		bottom: 0;
+		right: 48px;
 	}
 
 	.queue-status {
 		font-size: 9px;
 		color: #eab308;
 		white-space: nowrap;
-		display: flex;
-		align-items: center;
 	}
 
 	.queue-cancel {
-		font-size: 13px;
-		padding: 2px 6px;
+		font-size: 11px;
+		padding: 4px 6px;
+		margin-top: 0;
 		color: #eab308;
 		border-color: rgba(234, 179, 8, 0.3);
 	}
