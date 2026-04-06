@@ -1727,8 +1727,14 @@ fn spawn_focus_poller(app: AppHandle) {
                     }
                     emit_status(&app);
 
-                    // Hide/show overlay windows (skip hide in debug mode)
+                    // Hide/show overlay windows based on game focus.
+                    // Comparator: shows whenever game is focused (used everywhere).
+                    // Compass + Pathstrip: only show when game is focused AND in lab.
+                    // Skip hide in debug mode.
                     let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
+                    let in_lab = state.in_lab.load(Ordering::SeqCst);
+
+                    // Comparator: game focus only
                     if let Some(win) = app.get_webview_window("comparator") {
                         if is_focused {
                             if let Err(e) = win.show() {
@@ -1740,25 +1746,18 @@ fn spawn_focus_poller(app: AppHandle) {
                             }
                         }
                     }
-                    if let Some(win) = app.get_webview_window("compass") {
-                        if is_focused {
-                            if let Err(e) = win.show() {
-                                log::warn!("Failed to show compass overlay: {}", e);
-                            }
-                        } else if !debug {
-                            if let Err(e) = win.hide() {
-                                log::warn!("Failed to hide compass overlay: {}", e);
-                            }
-                        }
-                    }
-                    if let Some(win) = app.get_webview_window("pathstrip") {
-                        if is_focused {
-                            if let Err(e) = win.show() {
-                                log::warn!("Failed to show pathstrip overlay: {}", e);
-                            }
-                        } else if !debug {
-                            if let Err(e) = win.hide() {
-                                log::warn!("Failed to hide pathstrip overlay: {}", e);
+
+                    // Lab overlays: game focus + in_lab
+                    for overlay_name in &["compass", "pathstrip"] {
+                        if let Some(win) = app.get_webview_window(overlay_name) {
+                            if is_focused && in_lab {
+                                if let Err(e) = win.show() {
+                                    log::warn!("Failed to show {} overlay: {}", overlay_name, e);
+                                }
+                            } else if !debug {
+                                if let Err(e) = win.hide() {
+                                    log::warn!("Failed to hide {} overlay: {}", overlay_name, e);
+                                }
                             }
                         }
                     }
@@ -1857,6 +1856,12 @@ fn spawn_log_watcher(app: AppHandle) {
                                 lab_navigation::NavEvent::PlazaEntered => {
                                     state.in_lab.store(true, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: Plaza entered".to_string());
+                                    // Show lab overlays on lab entry
+                                    for name in &["compass", "pathstrip"] {
+                                        if let Some(win) = app.get_webview_window(name) {
+                                            let _ = win.show();
+                                        }
+                                    }
                                 }
                                 lab_navigation::NavEvent::LabStarted => {
                                     app_log(&app, "Lab nav: Izaro started".to_string());
@@ -1867,6 +1872,12 @@ fn spawn_log_watcher(app: AppHandle) {
                                 lab_navigation::NavEvent::LabExited => {
                                     state.in_lab.store(false, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: exited lab".to_string());
+                                    // Hide lab overlays on lab exit
+                                    for name in &["compass", "pathstrip"] {
+                                        if let Some(win) = app.get_webview_window(name) {
+                                            let _ = win.hide();
+                                        }
+                                    }
                                 }
                                 lab_navigation::NavEvent::LabFinished => {
                                     app_log(&app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
