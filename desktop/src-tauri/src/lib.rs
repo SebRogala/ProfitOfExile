@@ -1677,7 +1677,7 @@ fn spawn_focus_poller(app: AppHandle) {
 
             #[cfg(windows)]
             {
-                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+                use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
                 let focus_state = unsafe {
                     let fg = GetForegroundWindow();
