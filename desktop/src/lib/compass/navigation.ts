@@ -383,6 +383,7 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 			start,
 			end,
 			sectionTargets,
+			state.roomById,
 		);
 		// Avoid duplicate room at section boundaries
 		if (route.length > 0 && sectionRoute.length > 0 && route[route.length - 1] === sectionRoute[0]) {
@@ -430,7 +431,7 @@ function routeWithGoldenDoor(
 	// Check if a route through all targets to the end exists WITHOUT crossing locked doors.
 	// If so, use it directly — don't return null, because the caller would use full adjacency
 	// which might find a "shorter" path through the locked door the player can't open.
-	const bypassRoute = shortestPathThroughTargets(unlockedAdj, start, end, targets);
+	const bypassRoute = shortestPathThroughTargets(unlockedAdj, start, end, targets, state.roomById);
 	if (bypassRoute.length > 0) {
 		return bypassRoute;
 	}
@@ -454,7 +455,7 @@ function routeWithGoldenDoor(
 		return path.length > 0;
 	});
 	const keyTargets = preKeyTargets.includes(keyRoom) ? preKeyTargets : [...preKeyTargets, keyRoom];
-	const phase1 = shortestPathThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom));
+	const phase1 = shortestPathThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom), state.roomById);
 
 	// Phase 2: key room → end, using full adjacency (door now open).
 	// Visit remaining targets. If key room != door room, the player must
@@ -476,7 +477,7 @@ function routeWithGoldenDoor(
 		postKeyTargets.push(doorRoom);
 	}
 
-	const phase2 = shortestPathThroughTargets(state.adjacency, keyRoom, end, postKeyTargets);
+	const phase2 = shortestPathThroughTargets(state.adjacency, keyRoom, end, postKeyTargets, state.roomById);
 
 	if (phase1.length === 0 || phase2.length === 0) return null; // fallback to normal routing
 
@@ -489,15 +490,17 @@ function shortestPathThroughTargets(
 	start: string,
 	end: string,
 	targets: string[],
+	roomById?: Map<string, { contents: string[] }>,
 ): string[] {
 	if (targets.length === 0) {
-		return bfs(adjacency, start, end);
+		return bfs(adjacency, start, end, roomById);
 	}
 
 	// For small target sets (typically 1-4 per section), try all permutations
 	const perms = permutations(targets);
 	let bestRoute: string[] = [];
 	let bestLength = Infinity;
+	let bestContentScore = -1;
 
 	for (const perm of perms) {
 		const waypoints = [start, ...perm, end];
@@ -505,7 +508,7 @@ function shortestPathThroughTargets(
 		let valid = true;
 
 		for (let i = 0; i < waypoints.length - 1; i++) {
-			const segment = bfs(adjacency, waypoints[i], waypoints[i + 1]);
+			const segment = bfs(adjacency, waypoints[i], waypoints[i + 1], roomById);
 			if (segment.length === 0) {
 				valid = false;
 				break;
@@ -517,42 +520,104 @@ function shortestPathThroughTargets(
 			}
 		}
 
-		if (valid && route.length < bestLength) {
+		if (!valid) continue;
+
+		if (route.length < bestLength) {
 			bestLength = route.length;
 			bestRoute = route;
+			bestContentScore = roomById ? routeContentScore(route, roomById) : 0;
+		} else if (route.length === bestLength && roomById) {
+			// Tiebreaker: prefer route passing through more content rooms (darkshrines > other)
+			const score = routeContentScore(route, roomById);
+			if (score > bestContentScore) {
+				bestRoute = route;
+				bestContentScore = score;
+			}
 		}
 	}
 
 	return bestRoute;
 }
 
-function bfs(adjacency: Map<string, string[]>, start: string, end: string): string[] {
+/** Score a route by darkshrines it passes through. Only darkshrines matter for tiebreaking. */
+function routeContentScore(route: string[], roomById: Map<string, { contents: string[] }>): number {
+	let score = 0;
+	for (const roomId of route) {
+		const room = roomById.get(roomId);
+		if (!room) continue;
+		if (room.contents.some((c) => c.toLowerCase().includes('darkshrine'))) {
+			score += 1;
+		}
+	}
+	return score;
+}
+
+function bfs(
+	adjacency: Map<string, string[]>,
+	start: string,
+	end: string,
+	roomById?: Map<string, { contents: string[] }>,
+): string[] {
 	if (start === end) return [start];
+
+	// BFS with depth tracking. When we find the target, finish the current
+	// depth level to collect ALL shortest paths, then pick the one with
+	// the highest darkshrine score.
 	const visited = new Set<string>([start]);
 	const parent = new Map<string, string>();
-	const queue = [start];
+	const queue: { id: string; depth: number }[] = [{ id: start, depth: 0 }];
+	let foundDepth = -1;
+	const endParents: string[] = []; // all parents that reach `end` at shortest depth
 
 	while (queue.length > 0) {
-		const current = queue.shift()!;
+		const { id: current, depth } = queue.shift()!;
+
+		// Stop expanding beyond the depth where we found the target
+		if (foundDepth >= 0 && depth > foundDepth) break;
+
 		for (const neighbor of adjacency.get(current) ?? []) {
+			if (neighbor === end) {
+				if (foundDepth < 0) foundDepth = depth + 1;
+				endParents.push(current);
+				continue; // don't mark end as visited — collect all arrivals
+			}
 			if (visited.has(neighbor)) continue;
 			visited.add(neighbor);
 			parent.set(neighbor, current);
-			if (neighbor === end) {
-				// Reconstruct path
-				const path: string[] = [];
-				let node: string | undefined = end;
-				while (node !== undefined) {
-					path.unshift(node);
-					node = parent.get(node);
-				}
-				return path;
-			}
-			queue.push(neighbor);
+			queue.push({ id: neighbor, depth: depth + 1 });
 		}
 	}
 
-	return []; // No path found
+	if (endParents.length === 0) return []; // No path found
+
+	if (endParents.length === 1 || !roomById) {
+		// Single path or no scoring — reconstruct from the first parent
+		const path: string[] = [end];
+		let node: string | undefined = endParents[0];
+		while (node !== undefined) {
+			path.unshift(node);
+			node = parent.get(node);
+		}
+		return path;
+	}
+
+	// Multiple shortest paths — score each by darkshrine content
+	let bestPath: string[] = [];
+	let bestScore = -1;
+	for (const ep of endParents) {
+		const path: string[] = [end];
+		let node: string | undefined = ep;
+		while (node !== undefined) {
+			path.unshift(node);
+			node = parent.get(node);
+		}
+		const score = routeContentScore(path, roomById);
+		if (score > bestScore) {
+			bestScore = score;
+			bestPath = path;
+		}
+	}
+	return bestPath;
 }
 
 function permutations<T>(arr: T[]): T[][] {
