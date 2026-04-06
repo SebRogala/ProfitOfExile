@@ -273,12 +273,14 @@
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}
 									<span class="trade-warn">{trade.signals.sellerConcentration}</span>
 								{/if}
-								{#each trade.listings as listing, i}
-									<span class="listing-col" class:first={i === 0} class:corrupted={listing.corrupted}>
-										<span class="listing-price">{listing.price}{listing.currency === 'divine' ? 'd' : 'c'}</span>
-										<span class="listing-age">{listingAge(listing.indexedAt)}</span>
-									</span>
-								{/each}
+								<span class="listings-wrap">
+									{#each trade.listings as listing, i}
+										<span class="listing-col" class:first={i === 0} class:corrupted={listing.corrupted}>
+											<span class="listing-price">{listing.price}{listing.currency === 'divine' ? 'd' : 'c'}</span>
+											<span class="listing-age">{listingAge(listing.indexedAt)}</span>
+										</span>
+									{/each}
+								</span>
 								<span class="trade-total">
 									<span>listings</span>
 									<span>{trade.total}</span>
@@ -460,6 +462,13 @@
 	}
 
 	/* --- Trade row --- */
+	.listings-wrap {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+	}
+
 	.trade-total {
 		display: flex;
 		flex-direction: column;
@@ -494,7 +503,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 0 5px;
+		padding: 0 9px;
 		margin-right: 1px;
 		border-right: 1px solid rgba(42, 45, 55, 0.5);
 	}
