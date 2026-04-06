@@ -239,6 +239,16 @@ func parseVariant(variant string) (int, int) {
 //
 //   type_filters:
 //     category     — "gem" restricts to skill/support gems only
+// stripDiacritics replaces accented characters with ASCII equivalents.
+// GGG trade API returns 0 results for "Maelström" but 35 for "Maelstrom".
+var diacriticReplacer = strings.NewReplacer(
+	"ö", "o", "ä", "a", "ü", "u", "é", "e", "è", "e", "ê", "e",
+	"á", "a", "à", "a", "â", "a", "í", "i", "ó", "o", "ú", "u",
+	"Ö", "O", "Ä", "A", "Ü", "U", "É", "E",
+)
+
+func stripDiacritics(s string) string { return diacriticReplacer.Replace(s) }
+
 func buildSearchQuery(gem string, gemLevel, gemQuality int) ([]byte, error) {
 	miscFilters := map[string]interface{}{
 		"corrupted": map[string]interface{}{"option": "false"},
@@ -255,6 +265,11 @@ func buildSearchQuery(gem string, gemLevel, gemQuality int) ([]byte, error) {
 		miscFilters["quality"] = map[string]interface{}{"min": 20, "max": 20}
 	}
 	// quality 0 or unspecified: no filter applied
+
+	// GGG trade API uses ASCII gem names — poe.ninja stores Unicode diacritics
+	// (e.g., "Maelström" vs "Maelstrom"). Confirmed: search with ö returns 0,
+	// search with o returns 35 results. Normalize before querying.
+	gem = stripDiacritics(gem)
 
 	// Base gems use "type" for exact match (prevents "Kinetic Blast" from also
 	// matching "Kinetic Blast of Clustering"). Transfigured gems (containing " of ")

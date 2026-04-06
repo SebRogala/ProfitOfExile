@@ -168,6 +168,13 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 		}
 	}
 
+	// Skip fetch when search returned no results (gem has no listings).
+	if len(searchResp.IDs) == 0 {
+		slog.Info("trade gate: no listings found, skipping fetch", "gem", req.Gem)
+		g.deliverError(key, fmt.Errorf("no listings found for %s", req.Gem))
+		return
+	}
+
 	// Phase 2: Fetch listing details.
 	listings, fetchHeaders, err := g.client.Fetch(ctx, searchResp.QueryID, searchResp.IDs)
 	if err != nil {
