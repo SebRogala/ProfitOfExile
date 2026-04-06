@@ -182,6 +182,180 @@
 		</div>
 	{/if}
 
+	<!-- Transparency -->
+	<section class="transparency" id="transparency">
+		<h2 class="section-heading">Transparency & Terms of Service</h2>
+		<p class="transparency-intro">
+			We believe transparency is non-negotiable. This section explains exactly what the desktop app does,
+			what it doesn't do, and where the gray areas are.
+		</p>
+
+		<div class="transparency-block">
+			<h3 class="transparency-subheading">What We Do</h3>
+			<div class="transparency-items">
+				<div class="transparency-item">
+					<span class="transparency-label">1. Read Client.txt</span>
+					<p>Path of Exile writes a plain-text log file called <code>Client.txt</code>. We watch this file to detect
+						game events &mdash; which zone you entered, when the Font of Divine Skill craft options appear, when you
+						exit the Labyrinth. This is read-only. We never write to or modify this file.</p>
+				</div>
+				<div class="transparency-item">
+					<span class="transparency-label">2. Screen Capture & OCR</span>
+					<p>When the Font craft options appear (detected via Client.txt), the app automatically captures a small region
+						of your screen (550&times;75 pixels by default) using the standard Windows screenshot API. It then runs
+						Windows' built-in text recognition (Windows.Media.Ocr) to read gem names. This runs every 250ms for a
+						maximum of 45 seconds, then stops. The automatic trigger is a quality-of-life choice &mdash; there is no
+						time limit on the Font interaction. We trigger it automatically because Client.txt tells us exactly when
+						the craft options are on screen, so there's no reason to make you press a hotkey.</p>
+					<p><strong>Important privacy detail:</strong> no screenshot or screen capture ever leaves your machine.
+						The captured image is processed entirely locally by Windows' built-in OCR engine, then immediately
+						discarded. The only data sent to the server is the extracted text &mdash; gem names and font crafting
+						option wording. Plain text, nothing else.</p>
+				</div>
+				<div class="transparency-item">
+					<span class="transparency-label">3. Trade API (opt-in)</span>
+					<p>The app can query GGG's public Trade API to look up gem prices &mdash; but this is <strong>off by
+						default</strong>. You enable it manually via the "auto-trade" option in the comparator. When enabled,
+						our rate limiter reads GGG's own rate-limit headers and stays at 65% of the allowed budget with
+						additional safety padding.</p>
+				</div>
+				<div class="transparency-item">
+					<span class="transparency-label">4. Price Data from poe.ninja</span>
+					<p>Gem and currency prices come from <a href="https://poe.ninja" target="_blank" rel="noopener">poe.ninja</a>
+						&mdash; a third-party community aggregator. Our server fetches this data periodically, not the desktop
+						app directly. We do not scrape the Path of Exile website.</p>
+				</div>
+				<div class="transparency-item">
+					<span class="transparency-label">5. Display an Overlay</span>
+					<p>The overlay is a transparent, click-through window. It sits on top of the game but is completely
+						non-interactive from the game's perspective &mdash; your cursor and all input pass through it entirely.
+						The game does not know the overlay exists.</p>
+				</div>
+			</div>
+		</div>
+
+		<div class="transparency-block">
+			<h3 class="transparency-subheading">What We Never Do</h3>
+			<ul class="transparency-never">
+				<li><strong>Inject code</strong> into the Path of Exile process</li>
+				<li><strong>Read game memory</strong> &mdash; we have zero access to game internals</li>
+				<li><strong>Modify game files</strong> &mdash; not the executable, not data files, nothing</li>
+				<li><strong>Send input</strong> to the game &mdash; no clicks, no keystrokes, no mouse movements</li>
+				<li><strong>Hook game functions</strong> &mdash; no DLL injection, no API hooking</li>
+				<li><strong>Automate gameplay</strong> &mdash; the app does not play the game for you in any way</li>
+				<li><strong>Connect to game servers</strong> &mdash; we only use the public Trade API (when you opt in), same as the official trade website</li>
+			</ul>
+		</div>
+
+		<div class="transparency-block">
+			<h3 class="transparency-subheading">Why OCR Instead of Clipboard?</h3>
+			<p>Tools like Awakened PoE Trade read item data by triggering the game's built-in "Copy Item to Clipboard"
+				feature. This works because those items <strong>exist</strong> in the game world &mdash; they have an
+				internal ID and full metadata that the game can serialize to text.</p>
+			<p>Font of Divine Skill craft options are different. The gems shown as choices are <strong>draft items</strong>
+				&mdash; they don't exist yet. They have no item ID, no metadata the game can copy. There is nothing to put
+				on your clipboard. The same applies to Grand Heist reward choices and similar "pick one" mechanics.</p>
+			<p>OCR is the only way to read what's on screen when the game itself has no copy mechanism for it.</p>
+		</div>
+
+		<div class="transparency-block">
+			<h3 class="transparency-subheading">Where We Sit Among Community Tools</h3>
+			<p>Not all tools work the same way. Here's an honest comparison:</p>
+			<div class="transparency-table-wrap">
+				<table class="transparency-table">
+					<thead>
+						<tr>
+							<th>Tool</th>
+							<th>How It Reads Game Data</th>
+							<th>When It Activates</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr>
+							<td><a href="https://github.com/SnosMe/awakened-poe-trade" target="_blank" rel="noopener">Awakened PoE Trade</a></td>
+							<td>Sends Ctrl+C to game on hotkey, reads clipboard</td>
+							<td>Hotkey (default Ctrl+D)</td>
+						</tr>
+						<tr>
+							<td><a href="https://github.com/Lailloken/Exile-UI" target="_blank" rel="noopener">Exile-UI</a></td>
+							<td>Reads screen pixels via OCR</td>
+							<td>Manual hotkey</td>
+						</tr>
+						<tr>
+							<td><a href="https://github.com/Morph21/MercuryTrade-Community-Fork" target="_blank" rel="noopener">MercuryTrade</a></td>
+							<td>Duplicates a screen region to display elsewhere</td>
+							<td>Set once, always mirrors</td>
+						</tr>
+						<tr>
+							<td><a href="https://github.com/yznpku/LabCompass" target="_blank" rel="noopener">LabCompass</a></td>
+							<td>Reads Client.txt for zone changes</td>
+							<td>Automatic &mdash; overlay updates on room transition</td>
+						</tr>
+						<tr>
+							<td><a href="https://github.com/dermow/TraXile" target="_blank" rel="noopener">TraXile</a></td>
+							<td>Reads Client.txt for map/zone events</td>
+							<td>Automatic &mdash; overlay reacts to game log</td>
+						</tr>
+						<tr class="transparency-table-highlight">
+							<td>ProfitOfExile</td>
+							<td>Reads Client.txt + screen pixels via OCR</td>
+							<td>Automatic &mdash; triggered by game log event</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+			<p>Each technique we use exists individually across established community tools: auto-trigger from Client.txt
+				(LabCompass, TraXile), screen reading (MercuryTrade, Exile-UI). We combine them.</p>
+		</div>
+
+		<div class="transparency-block">
+			<h3 class="transparency-subheading">GGG's Known Stance on Community Tools</h3>
+			<p>GGG has given explicit guidance on tool interactions. In a
+				<a href="https://www.pathofexile.com/forum/view-thread/1675115" target="_blank" rel="noopener">forum post</a>,
+				the policy is clear: <strong>one server-side action per one keypress.</strong> A single key can send
+				<code>/hideout</code> or a trade whisper &mdash; but not both. This is why overlay tools with trade response
+				buttons or party management are considered fine.</p>
+			<p>ProfitOfExile doesn't send any input to the game at all. No chat commands, no clicks, no keystrokes &mdash;
+				nothing. We are entirely below the threshold of what GGG has explicitly allowed for community tools.</p>
+		</div>
+
+		<div class="transparency-block transparency-gray">
+			<h3 class="transparency-subheading">The Gray Area &mdash; Honest Assessment</h3>
+			<p>GGG's Terms of Use prohibit <em>"automated software or bots in relation to your access or use of the
+				Services."</em></p>
+			<p><strong>Our position:</strong></p>
+			<ul class="transparency-position">
+				<li>The app is <strong>passive</strong> &mdash; it reads information and displays it. It never acts on your behalf.</li>
+				<li>It does not automate gameplay. You still make every decision and every click yourself.</li>
+				<li>It sends <strong>zero input</strong> to the game &mdash; well below GGG's "one action per one keypress"
+					guideline that other tools actively use.</li>
+				<li>Client.txt reading is an established community practice used by dozens of tools.</li>
+				<li>Screen OCR is used by other community tools (e.g. Exile-UI, MercuryTrade), though typically triggered manually.</li>
+			</ul>
+			<p><strong>The honest truth:</strong></p>
+			<ul class="transparency-position">
+				<li><strong>GGG has never explicitly approved any local third-party tool.</strong> Not Awakened PoE Trade,
+					not Exile-UI, not Path of Building, not LabCompass. Community tools exist in a space of implicit tolerance.</li>
+				<li><strong>No bans have been reported</strong> for using OCR-based overlay tools. This is weak but real evidence.</li>
+				<li><strong>Auto-triggered OCR is the part closest to the line.</strong> We believe it falls on the right side
+					because it's read-only information display, not automation &mdash; but we cannot guarantee GGG sees it the
+					same way.</li>
+			</ul>
+			<p class="transparency-promise">If GGG ever communicates that this approach crosses a line, we will change it
+				immediately. We have no interest in putting your account at risk.</p>
+		</div>
+
+		<div class="transparency-block">
+			<h3 class="transparency-subheading">You Are in Control</h3>
+			<ul class="transparency-position">
+				<li>You can see when OCR is active (the scan indicator is visible on the overlay)</li>
+				<li>You can adjust or disable features in settings</li>
+				<li>The app is <a href="https://github.com/SebRogala/ProfitOfExile" target="_blank" rel="noopener">open source</a>
+					&mdash; you can inspect exactly what it does</li>
+			</ul>
+		</div>
+	</section>
+
 	<!-- Credits -->
 	<section class="credits">
 		<h2 class="section-heading">Standing on the Shoulders of Giants</h2>
@@ -741,6 +915,215 @@
 
 	.footer-gh:hover {
 		color: #8a8a9a;
+	}
+
+	/* === Transparency === */
+	.transparency {
+		position: relative;
+		z-index: 2;
+		max-width: 760px;
+		margin: 0 auto;
+		padding: 60px 24px 80px;
+		border-top: 1px solid rgba(201, 170, 113, 0.08);
+	}
+
+	.transparency-intro {
+		font-size: 1.15rem;
+		line-height: 1.7;
+		color: #b0b0be;
+		font-weight: 300;
+		text-align: center;
+		margin-bottom: 48px;
+	}
+
+	.transparency-block {
+		margin-bottom: 36px;
+	}
+
+	.transparency-subheading {
+		font-family: 'Cinzel', serif;
+		font-size: 1.15rem;
+		font-weight: 700;
+		color: #d4b87a;
+		letter-spacing: 0.04em;
+		margin-bottom: 16px;
+	}
+
+	.transparency-block p {
+		font-size: 1.05rem;
+		line-height: 1.7;
+		color: #a0a0b0;
+		font-weight: 300;
+		margin-bottom: 12px;
+	}
+
+	.transparency-block a {
+		color: #c9aa71;
+		text-decoration: none;
+		border-bottom: 1px solid rgba(201, 170, 113, 0.3);
+		transition: border-color 0.2s;
+	}
+
+	.transparency-block a:hover {
+		border-color: #c9aa71;
+	}
+
+	.transparency-block code {
+		font-family: monospace;
+		background: rgba(201, 170, 113, 0.08);
+		padding: 2px 6px;
+		font-size: 0.95em;
+		color: #d4b87a;
+	}
+
+	.transparency-items {
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.transparency-item {
+		padding-left: 16px;
+		border-left: 2px solid rgba(201, 170, 113, 0.15);
+	}
+
+	.transparency-label {
+		font-family: 'Cinzel', serif;
+		font-size: 0.95rem;
+		font-weight: 700;
+		color: #e0e0e0;
+		letter-spacing: 0.02em;
+		display: block;
+		margin-bottom: 6px;
+	}
+
+	.transparency-item p {
+		font-size: 1rem;
+		margin-bottom: 0;
+	}
+
+	.transparency-never {
+		list-style: none;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.transparency-never li {
+		font-size: 1.05rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+		padding-left: 24px;
+		position: relative;
+	}
+
+	.transparency-never li::before {
+		content: '\2717';
+		position: absolute;
+		left: 0;
+		color: #8b4040;
+		font-weight: 700;
+	}
+
+	.transparency-never li strong {
+		color: #c8c8d0;
+	}
+
+	.transparency-table-wrap {
+		overflow-x: auto;
+		margin: 16px 0;
+	}
+
+	.transparency-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.95rem;
+	}
+
+	.transparency-table th {
+		font-family: 'Cinzel', serif;
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: #c9aa71;
+		letter-spacing: 0.06em;
+		text-align: left;
+		padding: 10px 12px;
+		border-bottom: 1px solid rgba(201, 170, 113, 0.2);
+	}
+
+	.transparency-table td {
+		padding: 10px 12px;
+		color: #a0a0b0;
+		font-weight: 300;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+	}
+
+	.transparency-table a {
+		color: #c9aa71;
+		text-decoration: none;
+		border-bottom: 1px solid rgba(201, 170, 113, 0.3);
+		transition: border-color 0.2s;
+	}
+
+	.transparency-table a:hover {
+		border-color: #c9aa71;
+	}
+
+	.transparency-table tbody tr:last-child td {
+		border-bottom: none;
+	}
+
+	.transparency-table-highlight {
+		background: rgba(201, 170, 113, 0.06);
+	}
+
+	.transparency-table-highlight td {
+		color: #e0e0e0;
+		font-weight: 400;
+	}
+
+	.transparency-gray {
+		background: rgba(26, 26, 46, 0.6);
+		border: 1px solid rgba(201, 170, 113, 0.1);
+		padding: 28px 24px;
+	}
+
+	.transparency-position {
+		list-style: none;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-bottom: 16px;
+	}
+
+	.transparency-position li {
+		font-size: 1.05rem;
+		line-height: 1.6;
+		color: #a0a0b0;
+		font-weight: 300;
+		padding-left: 20px;
+		position: relative;
+	}
+
+	.transparency-position li::before {
+		content: '\2022';
+		position: absolute;
+		left: 0;
+		color: #c9aa71;
+	}
+
+	.transparency-position li strong {
+		color: #c8c8d0;
+	}
+
+	.transparency-promise {
+		font-style: italic;
+		color: #c9aa71 !important;
+		font-weight: 400 !important;
+		margin-bottom: 0 !important;
 	}
 
 	/* === Animations === */
