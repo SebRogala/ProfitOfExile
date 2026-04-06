@@ -457,9 +457,25 @@ function routeWithGoldenDoor(
 	const phase1 = shortestPathThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom));
 
 	// Phase 2: key room → end, using full adjacency (door now open).
-	// Visit remaining targets.
+	// Visit remaining targets. If key room != door room, the player must
+	// backtrack through the door room to proceed — add it as a mandatory target.
 	const visitedInPhase1 = new Set(phase1);
 	const postKeyTargets = targets.filter((t) => !visitedInPhase1.has(t));
+
+	// Find the door room — the room with golden-door content.
+	// It appears in all locked pairs. When door and key are in the same room, no backtracking needed.
+	let doorRoom: string | null = null;
+	for (const roomId of section.roomIds) {
+		const room = state.roomById.get(roomId);
+		if (room?.contents.some((c) => c.toLowerCase().includes('golden-door'))) {
+			doorRoom = roomId;
+			break;
+		}
+	}
+	if (doorRoom && doorRoom !== keyRoom && !postKeyTargets.includes(doorRoom)) {
+		postKeyTargets.push(doorRoom);
+	}
+
 	const phase2 = shortestPathThroughTargets(state.adjacency, keyRoom, end, postKeyTargets);
 
 	if (phase1.length === 0 || phase2.length === 0) return null; // fallback to normal routing
