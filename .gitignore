@@ -5,6 +5,7 @@ bin/
 /server
 /collector
 /optimize
+/promote
 tmp/
 frontend/node_modules/
 frontend/.svelte-kit/
