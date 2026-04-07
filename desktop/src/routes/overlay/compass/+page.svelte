@@ -251,13 +251,13 @@
 
 	.exit-text {
 		color: #e5e7eb;
-		font-size: 10px;
+		font-size: 13px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
 		font-family: system-ui, sans-serif;
 		text-align: center;
 		margin-top: 4px;
-		background: rgba(0, 0, 0, 0.7);
-		padding: 3px 8px;
-		border-radius: 4px;
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 		padding: 2px 6px;
 		background: rgba(13, 13, 21, 0.85);
