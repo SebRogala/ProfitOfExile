@@ -363,7 +363,7 @@
 		const win = new WebviewWindow(cfg.label, {
 			url: `/overlay?sync=${cfg.syncParam}`,
 			transparent: true, decorations: false, alwaysOnTop: true,
-			resizable: name === 'pathstrip' || name === 'compass', shadow: false, skipTaskbar: true,
+			resizable: ['compass', 'pathstrip', 'timer'].includes(name), shadow: false, skipTaskbar: true,
 			width: Math.round(physW / sf), height: Math.round(physH / sf),
 		});
 		win.once('tauri://created', async () => {

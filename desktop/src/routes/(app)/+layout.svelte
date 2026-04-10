@@ -475,6 +475,13 @@
 						.catch(e => console.warn('[overlay] pathstrip move failed:', e));
 				}
 			}
+			if (timerActive) {
+				const timerSettings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
+				if (timerSettings) {
+					await invoke('move_overlay', { label: 'timer', x: timerSettings.x, y: timerSettings.y, w: timerSettings.width ?? 160, h: timerSettings.height ?? 50 })
+						.catch(e => console.warn('[overlay] timer move failed:', e));
+				}
+			}
 		});
 		configOverlayCleanup = unlisten;
 	});
