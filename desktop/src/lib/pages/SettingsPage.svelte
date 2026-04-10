@@ -303,16 +303,17 @@
 
 	const OVERLAY_CONFIGS: Record<string, OverlayConfig> = {
 		comparator: { label: 'overlay-comparator-pos', syncParam: 'comparator', getCommand: 'get_comparator_overlay_settings', setCommand: 'set_comparator_overlay_settings', defaultW: 630, defaultH: 250 },
-		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 250, defaultH: 220 },
+		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 300, defaultH: 280 },
 		pathstrip: { label: 'overlay-pathstrip-pos', syncParam: 'pathstrip', getCommand: 'get_pathstrip_overlay_settings', setCommand: 'set_pathstrip_overlay_settings', defaultW: 450, defaultH: 180 },
+		timer: { label: 'overlay-timer-pos', syncParam: 'timer', getCommand: 'get_timer_overlay_settings', setCommand: 'set_timer_overlay_settings', defaultW: 160, defaultH: 50 },
 	};
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
-		comparator: null, compass: null, pathstrip: null,
+		comparator: null, compass: null, pathstrip: null, timer: null,
 	});
 	let positionOverlays = $state<Record<string, any>>({
-		comparator: null, compass: null, pathstrip: null,
+		comparator: null, compass: null, pathstrip: null, timer: null,
 	});
 
 	// Load all overlay settings on init
@@ -320,7 +321,7 @@
 		for (const [name, cfg] of Object.entries(OVERLAY_CONFIGS)) {
 			invoke<any>(cfg.getCommand).then((s) => {
 				if (s) overlaySettings[name] = s;
-			}).catch(() => {});
+			}).catch((e) => console.warn(`[settings] failed to load ${name} overlay settings:`, e));
 		}
 	});
 
@@ -329,24 +330,45 @@
 		if (!cfg) return;
 		notifyConfigStart();
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
+		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
 		if (positionOverlays[name]) {
 			try { await positionOverlays[name].destroy(); } catch (_) {}
 			positionOverlays[name] = null;
 		}
-		const s = overlaySettings[name];
+		// Read live overlay position/size (physical pixels) so the config window
+		// matches exactly. This prevents the sync loop from resizing the real overlay.
+		const live = await invoke<any>(cfg.getCommand).catch(() => null);
+		const realWin = await WebviewWindow.getByLabel(cfg.syncParam);
+		let physX = live?.x ?? 100, physY = live?.y ?? 100;
+		let physW = cfg.defaultW, physH = cfg.defaultH;
+		if (realWin) {
+			try {
+				const pos = await realWin.outerPosition();
+				const size = await realWin.outerSize();
+				physX = pos.x; physY = pos.y;
+				physW = size.width; physH = size.height;
+			} catch (e) {
+				console.warn(`[settings] failed to read live ${name} overlay position/size, using saved:`, e);
+			}
+		} else if (live) {
+			physW = live.width ?? cfg.defaultW;
+			physH = live.height ?? cfg.defaultH;
+		}
+		// Save pre-configure state (physical pixels) so cancel restores it
+		overlaySettings[name] = { x: physX, y: physY, width: physW, height: physH };
+		// Constructor takes logical pixels; convert physical → logical.
+		// setSize(PhysicalSize) in tauri://created will set the exact physical size.
+		const mainWin = getCurrentWebviewWindow();
+		const sf = await mainWin.scaleFactor().catch((e: any) => { console.warn('[settings] scaleFactor failed, using 1:', e); return 1; });
 		const win = new WebviewWindow(cfg.label, {
 			url: `/overlay?sync=${cfg.syncParam}`,
 			transparent: true, decorations: false, alwaysOnTop: true,
 			resizable: name === 'pathstrip' || name === 'compass', shadow: false, skipTaskbar: true,
-			width: cfg.defaultW, height: cfg.defaultH,
+			width: Math.round(physW / sf), height: Math.round(physH / sf),
 		});
 		win.once('tauri://created', async () => {
-			if (s) {
-				const { PhysicalSize } = await import('@tauri-apps/api/dpi');
-				await win.setPosition(new PhysicalPosition(s.x, s.y));
-				await win.setSize(new PhysicalSize(s.width, s.height));
-			}
+			await win.setPosition(new PhysicalPosition(physX, physY));
+			await win.setSize(new PhysicalSize(physW, physH));
 			positionOverlays[name] = win;
 		});
 		win.once('tauri://error', (e: any) => console.error(`${name} position overlay failed:`, e));
@@ -372,10 +394,19 @@
 	}
 
 	async function cancelPositionOverlay(name: string) {
+		const cfg = OVERLAY_CONFIGS[name];
 		const win = positionOverlays[name];
 		if (!win) return;
 		try { await win.destroy(); } catch (_) {}
 		positionOverlays[name] = null;
+		// Persist pre-configure state so overlay-toggle-reset (from reclaimMouse)
+		// restores the overlay to its exact pre-configure size.
+		const pre = overlaySettings[name];
+		if (pre && cfg) {
+			await invoke(cfg.setCommand, {
+				x: pre.x, y: pre.y, w: pre.width, h: pre.height, enabled: true,
+			}).catch((e: any) => console.warn(`[settings] failed to restore ${name} pre-configure position:`, e));
+		}
 		await reclaimMouse();
 	}
 
@@ -514,6 +545,7 @@
 				{ name: 'comparator', label: 'Gems Compare' },
 				{ name: 'compass', label: 'Lab Compass' },
 				{ name: 'pathstrip', label: 'Lab Map' },
+				{ name: 'timer', label: 'Lab Timer' },
 			] as cfg (cfg.name)}
 				<div class="setting-row">
 					<span class="setting-label">{cfg.label}</span>

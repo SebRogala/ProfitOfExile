@@ -94,7 +94,6 @@ internal/
 ## Price Data Sources
 
 - **poe.ninja**: REST API with `chaosEquivalent` for currency/fragments, `chaosValue` for items. 60-min cache TTL.
-- **TFT**: Static JSON from GitHub. Lifeforce entries have `ratio: 1000` — must divide chaos by ratio.
 - Cache prices in PostgreSQL `price_cache` table with TTL-based invalidation.
 - **Listing count** is as important as price — it's the leading indicator for saturation and crash risk. Always store and expose listing counts alongside prices.
 - **Confidence filtering**: items with <5 listings have unreliable prices. The system should support a minimum listing threshold for strategy calculations.

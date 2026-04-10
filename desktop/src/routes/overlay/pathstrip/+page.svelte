@@ -65,12 +65,12 @@
 			}
 			if (preferredDiff) lockedDifficulty = preferredDiff;
 			const diff = preferredDiff ?? lockedDifficulty;
-			const diffs = diff ? [diff] : ['Normal', 'Cruel', 'Merciless', 'Uber'];
+			const diffs = diff ? [diff] : ['Uber', 'Merciless', 'Cruel', 'Normal'];
 			for (const d of diffs) {
 				const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
 				if (r.ok) {
 					const layout: LabLayout = await r.json();
-					navState = loadLayout(createNavState(), layout);
+					navState = loadLayout(navState, layout);
 					if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
 					layoutLoaded = true;
 					return;
@@ -81,9 +81,49 @@
 		}
 	}
 
-	// Fetch layout on init — only once
+	// Fetch layout and catch up to current lab state on init
 	$effect(() => {
-		if (!layoutLoaded) fetchLayoutFromServer();
+		if (layoutLoaded) return;
+		(async () => {
+			// Read difficulty/strategy from compass settings before fetching layout
+			const settings = await invoke<any>('get_compass_settings').catch(() => null);
+			if (settings?.difficulty) lockedDifficulty = settings.difficulty;
+			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
+			await fetchLayoutFromServer();
+			// Replay recent Client.txt events to reconstruct current room
+			const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
+				console.warn('[pathstrip] catchup failed:', e);
+				return null;
+			});
+			if (catchup?.events?.length) {
+				for (const event of catchup.events) {
+					onNavEvent(event);
+				}
+			}
+		})();
+	});
+
+	// Poll strategy from compass settings every 2s — pathstrip shares strategy with compass (set from planner tab)
+	let settingsErrorLogged = false;
+	$effect(() => {
+		function loadSettings() {
+			invoke<any>('get_compass_settings')
+				.then((settings) => {
+					settingsErrorLogged = false;
+					if (settings?.strategy && settings.strategy !== navState.strategy) {
+						navState = setStrategy(navState, settings.strategy);
+					}
+				})
+				.catch((e: any) => {
+					if (!settingsErrorLogged) {
+						console.warn('[pathstrip] settings poll failed:', e);
+						settingsErrorLogged = true;
+					}
+				});
+		}
+		loadSettings();
+		const interval = setInterval(loadSettings, 2000);
+		return () => clearInterval(interval);
 	});
 
 	// Listen for lab-nav events + layout updates from server polling

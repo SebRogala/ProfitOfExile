@@ -19,6 +19,10 @@
 	let difficulty = $state('Uber');
 	let strategyValue = $state<string>('shortest');
 	let compassMode = $state('minimap');
+	let shrineEnabled = $state(true);
+	let shrineSize = $state('medium');
+	let shrineCorner = $state('bottom-right');
+	let shrineOnTake = $state('green');
 	let serverUrl = $state('');
 	let loading = $state(false);
 	let error = $state('');
@@ -42,6 +46,24 @@
 		{ value: 'minimap', label: 'Minimap' },
 		{ value: 'direction', label: 'Direction' },
 		{ value: 'minimal', label: 'Minimal' },
+	];
+
+	const shrineSizeOptions = [
+		{ value: 'small', label: 'Small' },
+		{ value: 'medium', label: 'Medium' },
+		{ value: 'large', label: 'Large' },
+	];
+
+	const shrineCornerOptions = [
+		{ value: 'top-left', label: 'Top Left' },
+		{ value: 'top-right', label: 'Top Right' },
+		{ value: 'bottom-left', label: 'Bottom Left' },
+		{ value: 'bottom-right', label: 'Bottom Right' },
+	];
+
+	const shrineOnTakeOptions = [
+		{ value: 'green', label: 'Turn Green' },
+		{ value: 'hide', label: 'Hide' },
 	];
 
 	const SVG_WIDTH = 900;
@@ -93,6 +115,10 @@
 				if (s?.strategy) strategyValue = s.strategy;
 				if (s?.difficulty) difficulty = s.difficulty;
 				if (s?.mode) compassMode = s.mode;
+				if (s?.shrine_warn_enabled !== undefined) shrineEnabled = s.shrine_warn_enabled;
+				if (s?.shrine_warn_size) shrineSize = s.shrine_warn_size;
+				if (s?.shrine_warn_corner) shrineCorner = s.shrine_warn_corner;
+				if (s?.shrine_warn_on_take) shrineOnTake = s.shrine_warn_on_take;
 			})
 			.catch(() => {});
 	});
@@ -118,7 +144,7 @@
 				throw new Error(`Server returned ${res.status}`);
 			}
 			const layout: LabLayout = await res.json();
-			navState = loadLayout(createNavState(), layout);
+			navState = loadLayout(navState, layout);
 			// Notify overlays that layout changed
 			invoke('emit_lab_nav', { eventJson: { type: 'LayoutChanged', difficulty: layout.difficulty } }).catch(() => {});
 		} catch (e: any) {
@@ -155,6 +181,10 @@
 	function handleDifficultyChange() {
 		invoke('set_compass_difficulty', { difficulty }).catch(() => {});
 		// Effect will refetch and emit LayoutChanged
+	}
+
+	function handleShrineChange() {
+		invoke('set_shrine_warn', { enabled: shrineEnabled, size: shrineSize, corner: shrineCorner, onTake: shrineOnTake }).catch(() => {});
 	}
 
 	function handleModeChange() {
@@ -194,7 +224,7 @@
 				error = body?.error || `Upload failed (${res.status})`;
 			}
 			// Reload layout from parsed JSON regardless of upload result
-			navState = loadLayout(createNavState(), json);
+			navState = loadLayout(navState, json);
 		} catch (e: any) {
 			error = e?.message || 'Failed to import layout';
 		}
@@ -287,6 +317,30 @@
 						options={modeOptions}
 						onchange={handleModeChange}
 					/>
+				</div>
+
+				<div class="config-section">
+					<button class="config-toggle" class:active={shrineEnabled} onclick={() => { shrineEnabled = !shrineEnabled; handleShrineChange(); }}>
+						<span class="toggle-dot" class:on={shrineEnabled}></span>
+						Darkshrine Remind
+					</button>
+					{#if shrineEnabled}
+						<Select
+							bind:value={shrineSize}
+							options={shrineSizeOptions}
+							onchange={handleShrineChange}
+						/>
+						<Select
+							bind:value={shrineCorner}
+							options={shrineCornerOptions}
+							onchange={handleShrineChange}
+						/>
+						<Select
+							bind:value={shrineOnTake}
+							options={shrineOnTakeOptions}
+							onchange={handleShrineChange}
+						/>
+					{/if}
 				</div>
 
 				<div class="config-section">
@@ -417,6 +471,36 @@
 		letter-spacing: 0.5px;
 		color: var(--color-lab-text-secondary);
 		font-weight: 600;
+	}
+
+	.config-toggle {
+		all: unset;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: var(--color-lab-text-secondary);
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.config-toggle.active {
+		color: var(--color-lab-text);
+	}
+
+	.toggle-dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--color-lab-border);
+		flex-shrink: 0;
+	}
+
+	.toggle-dot.on {
+		background: #4ade80;
+		box-shadow: 0 0 4px rgba(74, 222, 128, 0.5);
 	}
 
 

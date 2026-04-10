@@ -252,6 +252,28 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 				candidates = matchingRooms;
 			}
 
+			// Priority 4: exclude current room — if we're already in a room with
+			// this name, the event must be for a different room with the same name.
+			if (candidates.length > 1 && state.currentRoom) {
+				const filtered = candidates.filter((id) => id !== state.currentRoom);
+				if (filtered.length > 0) candidates = filtered;
+			}
+
+			// Priority 5: prefer forward movement — if exactly one candidate has a
+			// higher x than current room, pick it. Multiple forward candidates
+			// remain ambiguous.
+			if (candidates.length > 1) {
+				const withX = candidates
+					.map((id) => ({ id, x: parseFloat(state.roomById.get(id)?.x ?? '0') }))
+					.sort((a, b) => b.x - a.x);
+				// If current room exists, prefer rooms further forward than it
+				if (state.currentRoom) {
+					const currentX = parseFloat(state.roomById.get(state.currentRoom)?.x ?? '0');
+					const forward = withX.filter((r) => r.x > currentX);
+					if (forward.length === 1) candidates = [forward[0].id];
+				}
+			}
+
 			const newState = { ...state };
 			newState.possibleRooms = new Set(candidates);
 
