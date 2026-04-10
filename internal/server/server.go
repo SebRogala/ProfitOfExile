@@ -143,6 +143,8 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 
 	if cfg.Pool != nil {
 		r.Post("/api/desktop/font-session", handlers.FontSession(cfg.Pool))
+		r.Post("/api/lab/runs", handlers.StoreLabRun(cfg.Pool))
+		r.Get("/api/lab/runs", handlers.ListLabRuns(cfg.Pool))
 	}
 
 	if cfg.LayoutRepo != nil {

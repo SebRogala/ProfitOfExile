@@ -11,6 +11,7 @@
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
+	import RunHistoryPage from '$lib/pages/RunHistoryPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
 
@@ -34,6 +35,13 @@
 	let pathstripActive = $state(false);
 	let pathstripHasData = $state(false);
 	let pathstripWin = $state<any>(null);
+
+	// Timer overlay state
+	let timerActive = $state(false);
+	let timerWin = $state<any>(null);
+
+	// Lab overlays category toggle
+	let labOverlaysActive = $state(true);
 
 	async function createComparatorOverlay(physX: number, physY: number) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -118,10 +126,13 @@
 
 	async function createCompassOverlay(physX: number, physY: number, w = 300, h = 280) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
+		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
 
 		await destroyCompassWindow();
 
+		// Constructor takes logical pixels; w/h are physical — convert for initial size.
+		// tauri://created sets exact physical size via PhysicalSize.
+		const sf = await getCurrentWebviewWindow().scaleFactor().catch((e: any) => { console.warn('[overlay] scaleFactor failed, using 1:', e); return 1; });
 		const win = new WebviewWindow('compass', {
 			url: '/overlay/compass',
 			transparent: true,
@@ -130,12 +141,13 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: w,
-			height: h,
+			width: Math.round(w / sf),
+			height: Math.round(h / sf),
 		});
 
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
+			await win.setSize(new PhysicalSize(w, h));
 			await invoke('set_overlay_clickthrough', { label: 'compass', interactiveWidth: 0 })
 				.catch(e => console.error('[overlay] compass click-through setup failed:', e));
 			compassWin = win;
@@ -195,10 +207,13 @@
 
 	async function createPathstripOverlay(physX: number, physY: number, w = 450, h = 180) {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-		const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
+		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
 
 		await destroyPathstripWindow();
 
+		// Constructor takes logical pixels; w/h are physical — convert for initial size.
+		// tauri://created sets exact physical size via PhysicalSize.
+		const sf = await getCurrentWebviewWindow().scaleFactor().catch((e: any) => { console.warn('[overlay] scaleFactor failed, using 1:', e); return 1; });
 		const win = new WebviewWindow('pathstrip', {
 			url: '/overlay/pathstrip',
 			transparent: true,
@@ -207,12 +222,13 @@
 			resizable: true,
 			shadow: false,
 			skipTaskbar: true,
-			width: w,
-			height: h,
+			width: Math.round(w / sf),
+			height: Math.round(h / sf),
 		});
 
 		win.once('tauri://created', async () => {
 			await win.setPosition(new PhysicalPosition(physX, physY));
+			await win.setSize(new PhysicalSize(w, h));
 			await invoke('set_overlay_clickthrough', { label: 'pathstrip', interactiveWidth: 0 })
 				.catch(e => console.error('[overlay] pathstrip click-through setup failed:', e));
 			pathstripWin = win;
@@ -262,6 +278,137 @@
 				w: settings?.width ?? 450, h: settings?.height ?? 180,
 				enabled: true,
 			}).catch(e => console.warn('[overlay] pathstrip settings operation failed:', e));
+		}
+	}
+
+	// --- Timer overlay ---
+
+	async function createTimerOverlay(physX: number, physY: number, w = 160, h = 50) {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+
+		await destroyTimerWindow();
+
+		// Constructor takes logical pixels; w/h are physical — convert for initial size.
+		// tauri://created sets exact physical size via PhysicalSize.
+		const sf = await getCurrentWebviewWindow().scaleFactor().catch((e: any) => { console.warn('[overlay] scaleFactor failed, using 1:', e); return 1; });
+		const win = new WebviewWindow('timer', {
+			url: '/overlay/timer',
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			resizable: true,
+			shadow: false,
+			skipTaskbar: true,
+			width: Math.round(w / sf),
+			height: Math.round(h / sf),
+		});
+
+		win.once('tauri://created', async () => {
+			await win.setPosition(new PhysicalPosition(physX, physY));
+			await win.setSize(new PhysicalSize(w, h));
+			await invoke('set_overlay_clickthrough', { label: 'timer', interactiveWidth: 0 })
+				.catch(e => console.error('[overlay] timer click-through setup failed:', e));
+			timerWin = win;
+			timerActive = true;
+
+			try {
+				const status = await invoke<any>('get_status');
+				if (!status?.game_focused) {
+					await win.hide();
+				}
+			} catch (e) {
+				console.warn('[overlay] timer initial focus check failed:', e);
+			}
+		});
+		win.once('tauri://error', (e: any) => {
+			console.error('[overlay] timer creation failed:', e);
+		});
+	}
+
+	async function destroyTimerWindow() {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const existing = await WebviewWindow.getByLabel('timer');
+			if (!existing) break;
+			try { await existing.close(); } catch (_) {}
+			try { await existing.destroy(); } catch (_) {}
+			await new Promise(r => setTimeout(r, 100));
+		}
+		timerWin = null;
+	}
+
+	async function toggleTimerOverlay() {
+		if (timerActive) {
+			await destroyTimerWindow();
+			timerActive = false;
+			const settings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
+			await invoke('set_timer_overlay_settings', {
+				x: settings?.x ?? 100, y: settings?.y ?? 500,
+				w: settings?.width ?? 160, h: settings?.height ?? 50,
+				enabled: false,
+			}).catch(e => console.warn('[overlay] timer settings operation failed:', e));
+		} else {
+			const settings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
+			await createTimerOverlay(settings?.x ?? 100, settings?.y ?? 500, settings?.width ?? 160, settings?.height ?? 50);
+			await invoke('set_timer_overlay_settings', {
+				x: settings?.x ?? 100, y: settings?.y ?? 500,
+				w: settings?.width ?? 160, h: settings?.height ?? 50,
+				enabled: true,
+			}).catch(e => console.warn('[overlay] timer settings operation failed:', e));
+		}
+	}
+
+	// --- Lab overlays category toggle ---
+
+	async function toggleLabOverlays() {
+		const next = !labOverlaysActive;
+		labOverlaysActive = next;
+		await invoke('set_lab_overlays_enabled', { enabled: next }).catch(e => console.warn('[overlay] set_lab_overlays_enabled failed:', e));
+		if (next) {
+			// Enable all — respect each overlay's individual enabled state
+			if (!comparatorActive) await toggleComparatorOverlay();
+			if (!compassActive) await toggleCompassOverlay();
+			if (!pathstripActive) await togglePathstripOverlay();
+			if (!timerActive) await toggleTimerOverlay();
+		} else {
+			// Disable all
+			if (comparatorActive) await toggleComparatorOverlay();
+			if (compassActive) await toggleCompassOverlay();
+			if (pathstripActive) await togglePathstripOverlay();
+			if (timerActive) await toggleTimerOverlay();
+		}
+	}
+
+	// Save current overlay positions/sizes to Rust settings.
+	// Called on LabExited (captures user's resize during lab run).
+	async function saveOverlayPositions() {
+		if (compassWin) {
+			try {
+				const pos = await compassWin.outerPosition();
+				const size = await compassWin.outerSize();
+				await invoke('set_compass_overlay_settings', {
+					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
+				});
+			} catch (e) { console.warn('[overlay] failed to save compass position:', e); }
+		}
+		if (pathstripWin) {
+			try {
+				const pos = await pathstripWin.outerPosition();
+				const size = await pathstripWin.outerSize();
+				await invoke('set_pathstrip_overlay_settings', {
+					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
+				});
+			} catch (e) { console.warn('[overlay] failed to save pathstrip position:', e); }
+		}
+		if (timerWin) {
+			try {
+				const pos = await timerWin.outerPosition();
+				const size = await timerWin.outerSize();
+				await invoke('set_timer_overlay_settings', {
+					x: pos.x, y: pos.y, w: size.width, h: size.height, enabled: true,
+				});
+			} catch (e) { console.warn('[overlay] failed to save timer position:', e); }
 		}
 	}
 
@@ -376,6 +523,21 @@
 		})
 		.catch(e => console.warn('[overlay] pathstrip restore failed:', e));
 
+	// Restore timer overlay on startup (hidden, shown on PlazaEntered)
+	invoke<{ x: number; y: number; width: number; height: number; enabled: boolean } | null>('get_timer_overlay_settings')
+		.then(async (settings) => {
+			if (settings?.enabled) {
+				await createTimerOverlay(settings.x, settings.y, settings.width ?? 160, settings.height ?? 50);
+				if (timerWin) await timerWin.hide().catch(() => {});
+			}
+		})
+		.catch(e => console.warn('[overlay] timer restore failed:', e));
+
+	// Restore lab overlays category toggle state
+	invoke<boolean>('get_lab_overlays_enabled')
+		.then((enabled) => { labOverlaysActive = enabled; })
+		.catch(e => console.warn('[overlay] get_lab_overlays_enabled failed:', e));
+
 	// Check if lab layout is available on the server.
 	async function checkPathstripData(): Promise<boolean> {
 		try {
@@ -425,13 +587,26 @@
 					await createPathstripOverlay(pathstripSettings.x, pathstripSettings.y, pathstripSettings.width ?? 450, pathstripSettings.height ?? 180);
 				}
 			}
+			const timerSettings = await invoke<any>('get_timer_overlay_settings').catch(() => null);
+			if (timerSettings?.enabled) {
+				if (timerWin) {
+					await timerWin.show().catch(() => {});
+				} else {
+					await createTimerOverlay(timerSettings.x, timerSettings.y, timerSettings.width ?? 160, timerSettings.height ?? 50);
+				}
+			}
 		}
 		if (event.payload?.type === 'LabExited') {
+			// Persist current overlay positions/sizes before hiding
+			await saveOverlayPositions();
 			if (compassWin) {
 				await compassWin.hide().catch(() => {});
 			}
 			if (pathstripWin) {
 				await pathstripWin.hide().catch(() => {});
+			}
+			if (timerWin) {
+				await timerWin.hide().catch(() => {});
 			}
 		}
 	});
@@ -440,13 +615,18 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={nav.view === 'dev' ? '/dev' : nav.view === 'settings' ? '/settings' : '/'} onToggle={toggleSidebar}
+		<Sidebar open={sidebarOpen} currentPath={nav.view === 'dev' ? '/dev' : nav.view === 'settings' ? '/settings' : nav.view === 'runs' ? '/runs' : '/'} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
 			compassActive={compassActive} onToggleCompass={toggleCompassOverlay}
-			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay} />
+			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay}
+			timerActive={timerActive} onToggleTimer={toggleTimerOverlay}
+			labOverlaysActive={labOverlaysActive} onToggleLabOverlays={toggleLabOverlays} />
 		<main class="content">
 			<div class:view-hidden={nav.view !== 'lab'}>
 				<LabPage />
+			</div>
+			<div class:view-hidden={nav.view !== 'runs'}>
+				<RunHistoryPage />
 			</div>
 			<div class:view-hidden={nav.view !== 'settings'}>
 				<SettingsPage />

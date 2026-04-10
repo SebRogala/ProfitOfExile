@@ -131,6 +131,11 @@ pub struct AppState {
     pub compass_mode: Mutex<String>,
     pub compass_strategy: Mutex<String>,
     pub compass_difficulty: Mutex<String>,
+    pub shrine_warn_enabled: Mutex<bool>,
+    pub shrine_warn_size: Mutex<String>,
+    pub shrine_warn_corner: Mutex<String>,
+    pub shrine_warn_on_take: Mutex<String>,
+    pub lab_overlays_enabled: Mutex<bool>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -157,7 +162,7 @@ fn build_status(state: &AppState) -> AppStatus {
 }
 
 /// Save current settings to disk. Call after any persistent state change.
-/// Preserves window position from the existing file (only saved on close).
+/// Preserves window and overlay positions from the existing file (only updated by their own save paths).
 fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
     let existing = settings::load(app);
@@ -169,13 +174,8 @@ fn persist_settings(app: &AppHandle) {
     settings::save(app, &s);
 }
 
-/// Copy overlay/window settings from existing file into the new settings struct.
-/// These fields are managed by their own save commands, not by AppState.
 fn persist_overlay_settings(existing: &settings::Settings, target: &mut settings::Settings) {
-    target.window = existing.window.clone();
-    target.comparator_overlay = existing.comparator_overlay.clone();
-    target.compass_overlay = existing.compass_overlay.clone();
-    target.pathstrip_overlay = existing.pathstrip_overlay.clone();
+    settings::persist_overlay_settings(existing, target);
 }
 
 /// Emit the full app status to all frontend listeners.
@@ -476,7 +476,17 @@ fn get_compass_settings(app: AppHandle) -> serde_json::Value {
     let mode = state.compass_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let strategy = state.compass_strategy.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let difficulty = state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    serde_json::json!({ "mode": mode, "strategy": strategy, "difficulty": difficulty })
+    let shrine_enabled = *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner());
+    let shrine_size = state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let shrine_corner = state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let shrine_on_take = state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    serde_json::json!({
+        "mode": mode, "strategy": strategy, "difficulty": difficulty,
+        "shrine_warn_enabled": shrine_enabled,
+        "shrine_warn_size": shrine_size,
+        "shrine_warn_corner": shrine_corner,
+        "shrine_warn_on_take": shrine_on_take,
+    })
 }
 
 #[tauri::command]
@@ -498,6 +508,28 @@ fn set_compass_difficulty(difficulty: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.compass_difficulty.lock().unwrap_or_else(|e| e.into_inner()) = difficulty;
     persist_settings(&app);
+}
+
+#[tauri::command]
+fn set_shrine_warn(enabled: bool, size: String, corner: String, on_take: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.shrine_warn_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
+    *state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()) = size;
+    *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = corner;
+    *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = on_take;
+    persist_settings(&app);
+}
+
+/// Returns recent lab nav events for overlays to catch up on mount.
+/// Reads last 32KB of Client.txt and replays from last PlazaEntered/LabExited.
+#[tauri::command]
+fn get_lab_catchup(app: AppHandle) -> serde_json::Value {
+    let state = app.state::<AppState>();
+    let client_txt = state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let (events, in_lab) = lab_navigation::replay_recent_log(
+        std::path::Path::new(&client_txt),
+    );
+    serde_json::json!({ "events": events, "in_lab": in_lab })
 }
 
 #[tauri::command]
@@ -1076,6 +1108,36 @@ fn set_pathstrip_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool,
         x, y, width: w, height: h, enabled,
     });
     settings::save(&app, &s);
+}
+
+#[tauri::command]
+fn get_timer_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
+    settings::load(&app).timer_overlay
+}
+
+#[tauri::command]
+fn set_timer_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.timer_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled,
+    });
+    settings::save(&app, &s);
+}
+
+#[tauri::command]
+fn get_lab_overlays_enabled(app: AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    let val = *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner());
+    val
+}
+
+#[tauri::command]
+fn set_lab_overlays_enabled(enabled: bool, app: AppHandle) {
+    {
+        let state = app.state::<AppState>();
+        *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = enabled;
+    }
+    persist_settings(&app);
 }
 
 #[tauri::command]
@@ -1754,7 +1816,7 @@ fn spawn_focus_poller(app: AppHandle) {
                     }
 
                     // Lab overlays: game focus + in_lab
-                    for overlay_name in &["compass", "pathstrip"] {
+                    for overlay_name in &["compass", "pathstrip", "timer"] {
                         if let Some(win) = app.get_webview_window(overlay_name) {
                             if is_focused && in_lab {
                                 if let Err(e) = win.show() {
@@ -1804,6 +1866,37 @@ fn spawn_log_watcher(app: AppHandle) {
         };
 
         app_log(&app, "Log watcher active".to_string());
+
+        // --- Catchup: replay recent Client.txt history to reconstruct lab state ---
+        {
+            let (replay_events, was_in_lab) = lab_navigation::replay_recent_log(
+                std::path::Path::new(&client_txt),
+            );
+            if !replay_events.is_empty() {
+                app_log(&app, format!("Catchup: replaying {} events from Client.txt history", replay_events.len()));
+                let state = app.state::<AppState>();
+                state.in_lab.store(was_in_lab, std::sync::atomic::Ordering::SeqCst);
+                // Show/hide overlays based on reconstructed state
+                for name in &["compass", "pathstrip", "timer"] {
+                    if let Some(win) = app.get_webview_window(name) {
+                        let action = if was_in_lab { win.show() } else { win.hide() };
+                        if let Err(e) = action {
+                            log::warn!("catchup: failed to show/hide {}: {}", name, e);
+                        }
+                    } else {
+                        app_log(&app, format!("Catchup: overlay '{}' not yet created, skipping show/hide", name));
+                    }
+                }
+                // Emit all replay events to frontend so overlays reconstruct navigation
+                for event in &replay_events {
+                    if let Err(e) = app.emit("lab-nav", event) {
+                        log::warn!("catchup emit failed: {}", e);
+                    }
+                }
+                app_log(&app, format!("Catchup complete: in_lab={}", was_in_lab));
+            }
+        }
+
         emit_status(&app);
 
         let mut state_machine = lab_state::LabStateMachine::new();
@@ -1863,7 +1956,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                     state.in_lab.store(true, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: Plaza entered".to_string());
                                     // Show lab overlays on lab entry
-                                    for name in &["compass", "pathstrip"] {
+                                    for name in &["compass", "pathstrip", "timer"] {
                                         if let Some(win) = app.get_webview_window(name) {
                                             let _ = win.show();
                                         }
@@ -1879,7 +1972,7 @@ fn spawn_log_watcher(app: AppHandle) {
                                     state.in_lab.store(false, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: exited lab".to_string());
                                     // Hide lab overlays on lab exit
-                                    for name in &["compass", "pathstrip"] {
+                                    for name in &["compass", "pathstrip", "timer"] {
                                         if let Some(win) = app.get_webview_window(name) {
                                             let _ = win.hide();
                                         }
@@ -1898,6 +1991,9 @@ fn spawn_log_watcher(app: AppHandle) {
                                 }
                                 lab_navigation::NavEvent::PortalSpawned => {
                                     app_log(&app, "Lab nav: portal spawned".to_string());
+                                }
+                                lab_navigation::NavEvent::DarkshrineActivated => {
+                                    app_log(&app, "Lab nav: darkshrine activated".to_string());
                                 }
                             }
                             if let Err(e) = app.emit("lab-nav", &nav_event) {
@@ -2037,6 +2133,11 @@ pub fn run() {
         compass_mode: Mutex::new(String::from("minimap")),
         compass_strategy: Mutex::new(String::from("shortest")),
         compass_difficulty: Mutex::new(String::from("Uber")),
+        shrine_warn_enabled: Mutex::new(true),
+        shrine_warn_size: Mutex::new(String::from("medium")),
+        shrine_warn_corner: Mutex::new(String::from("bottom-right")),
+        shrine_warn_on_take: Mutex::new(String::from("green")),
+        lab_overlays_enabled: Mutex::new(true),
     };
 
     tauri::Builder::default()
@@ -2086,10 +2187,16 @@ pub fn run() {
             set_compass_overlay_settings,
             get_pathstrip_overlay_settings,
             set_pathstrip_overlay_settings,
+            get_timer_overlay_settings,
+            set_timer_overlay_settings,
+            get_lab_overlays_enabled,
+            set_lab_overlays_enabled,
             get_compass_settings,
+            get_lab_catchup,
             set_compass_mode,
             set_compass_strategy,
             set_compass_difficulty,
+            set_shrine_warn,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -2218,6 +2325,41 @@ pub fn run() {
                     let existing = settings::load(app);
                     let mut s = settings::from_state(&state);
                     persist_overlay_settings(&existing, &mut s);
+                    // Capture live overlay positions/sizes (user may have resized since last save)
+                    for (label, setter) in [
+                        ("compass", "compass_overlay" as &str),
+                        ("pathstrip", "pathstrip_overlay"),
+                        ("timer", "timer_overlay"),
+                    ] {
+                        if let Some(win) = app.get_webview_window(label) {
+                            match (win.outer_position(), win.outer_size()) {
+                                (Ok(pos), Ok(size)) => {
+                                    let overlay = settings::OverlaySettings {
+                                        x: pos.x,
+                                        y: pos.y,
+                                        width: size.width,
+                                        height: size.height,
+                                        enabled: match setter {
+                                            "compass_overlay" => s.compass_overlay.as_ref().map_or(false, |o| o.enabled),
+                                            "pathstrip_overlay" => s.pathstrip_overlay.as_ref().map_or(false, |o| o.enabled),
+                                            "timer_overlay" => s.timer_overlay.as_ref().map_or(false, |o| o.enabled),
+                                            _ => false,
+                                        },
+                                    };
+                                    match setter {
+                                        "compass_overlay" => s.compass_overlay = Some(overlay),
+                                        "pathstrip_overlay" => s.pathstrip_overlay = Some(overlay),
+                                        "timer_overlay" => s.timer_overlay = Some(overlay),
+                                        _ => {}
+                                    }
+                                }
+                                (pos, size) => {
+                                    log::warn!("on-close: failed to capture {} overlay: pos={:?} size={:?}",
+                                        label, pos.err(), size.err());
+                                }
+                            }
+                        }
+                    }
                     s.window = Some(win_settings); // AFTER persist_overlay, so it's not overwritten
                     settings::save(app, &s);
 
