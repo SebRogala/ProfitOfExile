@@ -1130,6 +1130,29 @@ fn set_timer_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app
 }
 
 #[tauri::command]
+fn get_timer_appearance(app: AppHandle) -> serde_json::Value {
+    let s = settings::load(&app);
+    serde_json::json!({
+        "bg_opacity": s.timer_bg_opacity.unwrap_or(0.75),
+        "text_stroke": s.timer_text_stroke.unwrap_or(true),
+    })
+}
+
+#[tauri::command]
+fn set_timer_appearance(bg_opacity: f32, text_stroke: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.timer_bg_opacity = Some(bg_opacity.clamp(0.0, 1.0));
+    s.timer_text_stroke = Some(text_stroke);
+    settings::save(&app, &s);
+    if let Err(e) = app.emit("timer-appearance-changed", serde_json::json!({
+        "bg_opacity": bg_opacity.clamp(0.0, 1.0),
+        "text_stroke": text_stroke,
+    })) {
+        log::warn!("emit timer-appearance-changed failed: {}", e);
+    }
+}
+
+#[tauri::command]
 fn get_lab_overlays_enabled(app: AppHandle) -> bool {
     let state = app.state::<AppState>();
     let val = *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner());
@@ -2194,6 +2217,8 @@ pub fn run() {
             set_pathstrip_overlay_settings,
             get_timer_overlay_settings,
             set_timer_overlay_settings,
+            get_timer_appearance,
+            set_timer_appearance,
             get_lab_overlays_enabled,
             set_lab_overlays_enabled,
             get_compass_settings,

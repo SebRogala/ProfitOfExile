@@ -403,8 +403,8 @@
 
 	.indicator {
 		position: absolute;
-		bottom: 2px;
-		right: 4px;
+		top: 2px;
+		right: 2px;
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;

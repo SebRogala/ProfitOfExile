@@ -28,6 +28,11 @@
 	let timerText = $derived(formatTimer(elapsed));
 	let hidden = $state(true);
 
+	// --- Appearance (configurable from settings) ---
+	let bgOpacity = $state(0.75);
+	let textStroke = $state(true);
+	let bgStyle = $derived(`rgba(13, 13, 21, ${bgOpacity})`);
+
 	// --- Room tracking for run submission ---
 	let roomLog = $state<{ room_name: string; entered_at: string; room_number: number }[]>([]);
 	let roomCounter = 0;
@@ -189,7 +194,17 @@
 		})();
 	});
 
-	// --- Listen for lab-nav events ---
+	// --- Load appearance settings ---
+	$effect(() => {
+		invoke<any>('get_timer_appearance').then((a) => {
+			if (a) {
+				bgOpacity = a.bg_opacity;
+				textStroke = a.text_stroke;
+			}
+		}).catch(() => {});
+	});
+
+	// --- Listen for lab-nav events + appearance changes ---
 	$effect(() => {
 		let cancelled = false;
 		const navPromise = listen<NavEvent>('lab-nav', (event) => {
@@ -200,17 +215,28 @@
 			if (cancelled) return;
 			fetchLayoutFromServer(event.payload?.difficulty);
 		});
+		const appearancePromise = listen<any>('timer-appearance-changed', (event) => {
+			if (cancelled) return;
+			const a = event.payload;
+			if (a) {
+				bgOpacity = a.bg_opacity;
+				textStroke = a.text_stroke;
+			}
+		});
 		return () => {
 			cancelled = true;
 			navPromise.then((unlisten) => unlisten());
 			layoutPromise.then((unlisten) => unlisten());
+			appearancePromise.then((unlisten) => unlisten());
 		};
 	});
 </script>
 
-<div class="timer-container">
+<div class="timer-container" style:background={!hidden ? bgStyle : 'transparent'}>
 	{#if !hidden}
-		<div class="timer-display">{timerText}</div>
+		<svg viewBox="0 0 236 60" class="timer-svg" preserveAspectRatio="xMidYMid meet">
+			<text x="118" y="52" text-anchor="middle" class="timer-text" class:stroked={textStroke}>{timerText}</text>
+		</svg>
 	{/if}
 </div>
 
@@ -229,22 +255,25 @@
 		right: 0;
 		bottom: 0;
 		pointer-events: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+		border-radius: 4px;
 	}
 
-	.timer-display {
+	.timer-svg {
+		width: 100%;
+		height: 100%;
+	}
+
+	.timer-text {
 		font-family: 'Consolas', 'Monaco', monospace;
-		font-size: min(70vh, 28vw);
+		font-size: 72px;
 		font-weight: 700;
-		color: #e5e7eb;
-		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
-		background: rgba(13, 13, 21, 0.75);
-		padding: 0 0.15em;
-		border-radius: 4px;
-		white-space: nowrap;
-		line-height: 1;
+		fill: #e5e7eb;
 		letter-spacing: 0.05em;
+	}
+
+	.timer-text.stroked {
+		stroke: rgba(0, 0, 0, 0.85);
+		stroke-width: 2px;
+		paint-order: stroke fill;
 	}
 </style>
