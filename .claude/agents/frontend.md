@@ -54,7 +54,7 @@ UI implementation principles. Extends the general agent with SvelteKit, componen
 ## Domain-Specific UI
 
 - **Strategy Tree Editor**: Composable tree visualization. Nodes represent farming activities with inputs, outputs, series counts. Some nodes have sub-strategies (e.g., Lab Run contains enchant-specific branches). Show gem type constraints (skill-only, support-only, both).
-- **Price Display**: Always show source (poe.ninja / TFT) alongside price. Color-code buy (lowest) vs sell (highest) sources. Show listing count as a confidence indicator — <5 listings = low confidence warning. Support time-of-day context (peak vs dip hours).
+- **Price Display**: Always show source alongside price. Color-code buy (lowest) vs sell (highest) sources. Show listing count as a confidence indicator — <5 listings = low confidence warning. Support time-of-day context (peak vs dip hours).
 - **Profitability Dashboard**: c/hr (chaos per hour) as the primary metric. Breakpoint charts showing optimal sell depths. Show risk level alongside profit (based on listing velocity, saturation signals).
 - **Inventory View**: Real-time inventory state during simulation. Highlight auto-buy triggers and set conversions.
 - **Market Risk Indicators**: Listing velocity trends (rising listings = saturation risk). Price crash/recovery patterns. Saturation watchlist for strategies to avoid. Visual signals: listing count doubling overnight is a red flag.

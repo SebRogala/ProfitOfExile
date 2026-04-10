@@ -60,7 +60,7 @@ Output a summary of what was updated:
 ```
 Fixture updates:
 - strategies_seed.sql: added 3 strategies covering wrapper/series/leaf node types
-- price_cache_seed.sql: added TFT lifeforce entries with ratio normalization
+- price_cache_seed.sql: added price entries with normalization
 ```
 
 ### 6. Save fixture conventions

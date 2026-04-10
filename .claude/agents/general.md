@@ -76,7 +76,7 @@ This project models Path of Exile 1 farming strategies. Key concepts:
 
 - **Strategy Tree**: Composable tree of farming activities with series counts, item inputs/outputs, and probabilities. Strategies can be nested (e.g., a Lab Run contains sub-strategies for each enchant type).
 - **Inventory-Driven Cascade**: Shared inventory with automatic set conversion (e.g., 4 fragments -> 1 set) and auto-buy from cheapest source.
-- **Multi-Source Pricing**: Prices from poe.ninja (individual) and TFT (bulk). Optimal buy/sell source selection. Listing count is a first-class metric alongside price.
+- **Multi-Source Pricing**: Prices from poe.ninja. Optimal buy/sell source selection. Listing count is a first-class metric alongside price.
 - **Breakpoint Analysis**: Simulate at each tree depth to find optimal sell points.
 - **Decision Optimization**: Some strategies present choices (e.g., Lab enchant selection from 4 options). The optimizer picks the highest-ROI option given available inputs and their type constraints.
 - **Variant-Aware Inputs**: The same item at different quality/level variants (20/20, 20/0, 1/20) has different ROI. Input variant selection is part of optimization.

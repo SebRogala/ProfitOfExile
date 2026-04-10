@@ -15,47 +15,26 @@
 		type LabLayout,
 	} from '$lib/compass/navigation';
 	import type { DoorExitLocation, ContentLocation } from '$lib/compass/room-presets';
+	import {
+		createTimerState,
+		formatTimer,
+		startTimer as timerStart_fn,
+		stopTimer as timerStop_fn,
+		resetTimer as timerReset_fn,
+	} from '$lib/compass/timer';
 
 	// --- State ---
 	let navState = $state(createNavState());
 	let mode = $state<'minimap' | 'direction' | 'minimal'>('minimap');
 
-	// Timer state
-	let timerStart = $state<number | null>(null);
-	let timerInterval: ReturnType<typeof setInterval> | null = null;
+	// Timer state (shared module)
+	let timer = $state(createTimerState());
 	let elapsed = $state(0);
-
 	let timerText = $derived(formatTimer(elapsed));
 
-	function formatTimer(seconds: number): string {
-		const m = Math.floor(seconds / 60);
-		const s = seconds % 60;
-		return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-	}
-
-	function startTimer() {
-		if (timerStart !== null) return;
-		timerStart = Date.now();
-		elapsed = 0;
-		timerInterval = setInterval(() => {
-			if (timerStart !== null) {
-				elapsed = Math.floor((Date.now() - timerStart) / 1000);
-			}
-		}, 1000);
-	}
-
-	function stopTimer() {
-		if (timerInterval !== null) {
-			clearInterval(timerInterval);
-			timerInterval = null;
-		}
-	}
-
-	function resetTimer() {
-		stopTimer();
-		timerStart = null;
-		elapsed = 0;
-	}
+	function startTimer() { timer = timerStart_fn(timer, (e) => { elapsed = e; }); }
+	function stopTimer() { timer = timerStop_fn(timer); }
+	function resetTimer() { timer = timerReset_fn(timer); elapsed = 0; }
 
 	// --- Derived from navigation state ---
 	let currentRoom = $derived(navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null);
@@ -123,14 +102,18 @@
 				hidden = false;
 				break;
 			case 'RoomChanged': {
-				if (navState.inLab && timerStart === null) {
+				if (navState.inLab && timer.startTimestamp === null) {
 					startTimer();
 				}
+				shrineTakenInRoom = false;
 				// Hide during Izaro fights, show again on regular rooms
 				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
 				hidden = room?.name.toLowerCase() === "aspirant's trial";
 				break;
 			}
+			case 'DarkshrineActivated':
+				shrineTakenInRoom = true;
+				break;
 			case 'LabFinished':
 				stopTimer();
 				break;
@@ -143,17 +126,42 @@
 
 	// --- Initialization via $effect (onMount does not fire in overlay windows) ---
 
-	// Poll compass mode setting every 2s (mode can change from planner tab)
+	// Shrine warning state
+	let shrineEnabled = $state(true);
+	let shrineSize = $state('medium');
+	let shrineCorner = $state('bottom-right');
+	let shrineOnTake = $state('green');
+	let shrineTakenInRoom = $state(false);
+	let hasDarkshrine = $derived(contentNames.some(c => c.toLowerCase() === 'darkshrine'));
+
+	// Poll compass settings every 2s (mode/strategy/difficulty can change from planner tab)
+	let settingsErrorLogged = false;
 	$effect(() => {
-		function loadMode() {
+		function loadSettings() {
 			invoke<any>('get_compass_settings')
 				.then((settings) => {
+					settingsErrorLogged = false;
 					if (settings?.mode && settings.mode !== mode) mode = settings.mode;
+					if (settings?.strategy && settings.strategy !== navState.strategy) {
+						navState = setStrategy(navState, settings.strategy);
+					}
+					if (settings?.difficulty && !lockedDifficulty) {
+						lockedDifficulty = settings.difficulty;
+					}
+					if (settings?.shrine_warn_enabled !== undefined) shrineEnabled = settings.shrine_warn_enabled;
+					if (settings?.shrine_warn_size) shrineSize = settings.shrine_warn_size;
+					if (settings?.shrine_warn_corner) shrineCorner = settings.shrine_warn_corner;
+					if (settings?.shrine_warn_on_take) shrineOnTake = settings.shrine_warn_on_take;
 				})
-				.catch(() => {});
+				.catch((e: any) => {
+					if (!settingsErrorLogged) {
+						logToApp(`[compass] settings poll failed: ${e}`);
+						settingsErrorLogged = true;
+					}
+				});
 		}
-		loadMode();
-		const interval = setInterval(loadMode, 2000);
+		loadSettings();
+		const interval = setInterval(loadSettings, 2000);
 		return () => clearInterval(interval);
 	});
 
@@ -170,12 +178,12 @@
 			}
 			if (preferredDiff) lockedDifficulty = preferredDiff;
 			const diff = preferredDiff ?? lockedDifficulty;
-			const diffs = diff ? [diff] : ['Normal', 'Cruel', 'Merciless', 'Uber'];
+			const diffs = diff ? [diff] : ['Uber', 'Merciless', 'Cruel', 'Normal'];
 			for (const d of diffs) {
 				const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
 				if (r.ok) {
 					const layout: LabLayout = await r.json();
-					navState = loadLayout(createNavState(), layout);
+					navState = loadLayout(navState, layout);
 					if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
 					layoutLoaded = true;
 					logToApp(`[compass] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
@@ -188,9 +196,28 @@
 		}
 	}
 
-	// Fetch layout on init — only once
+	// Fetch layout and catch up to current lab state on init
 	$effect(() => {
-		if (!layoutLoaded) fetchLayoutFromServer();
+		if (layoutLoaded) return;
+		(async () => {
+			// Read difficulty from settings before fetching layout
+			const settings = await invoke<any>('get_compass_settings').catch(() => null);
+			if (settings?.difficulty) lockedDifficulty = settings.difficulty;
+			if (settings?.strategy) navState = setStrategy(navState, settings.strategy);
+			if (settings?.mode) mode = settings.mode;
+			await fetchLayoutFromServer();
+			// Replay recent Client.txt events to reconstruct current room
+			const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
+				logToApp(`[compass] catchup failed: ${e}`);
+				return null;
+			});
+			if (catchup?.events?.length) {
+				logToApp(`[compass] replaying ${catchup.events.length} catchup events`);
+				for (const event of catchup.events) {
+					onNavEvent(event);
+				}
+			}
+		})();
 	});
 
 	// Listen for lab-nav events + layout updates from server
@@ -225,6 +252,9 @@
 				{contentNames}
 				{timerText}
 			/>
+			{#if shrineEnabled && hasDarkshrine && !(shrineTakenInRoom && shrineOnTake === 'hide')}
+				<div class="shrine-warn shrine-{shrineCorner} shrine-{shrineSize}" class:shrine-taken={shrineTakenInRoom}>D</div>
+			{/if}
 		</div>
 		{#if exitText && mode === 'minimap'}
 			<div class="exit-text">{exitText}</div>
@@ -247,7 +277,34 @@
 	.compass-content {
 		flex: 1;
 		min-height: 0;
+		position: relative;
 	}
+
+	.shrine-warn {
+		position: absolute;
+		z-index: 10;
+		font-family: 'Consolas', 'Monaco', monospace;
+		font-weight: 900;
+		color: #dc2626;
+		text-shadow: 0 0 6px rgba(220, 38, 38, 0.8), 0 1px 2px rgba(0, 0, 0, 0.9);
+		line-height: 1;
+	}
+
+	/* Corner positions */
+	.shrine-top-left { top: 4px; left: 4px; }
+	.shrine-top-right { top: 4px; right: 4px; }
+	.shrine-bottom-left { bottom: 4px; left: 4px; }
+	.shrine-bottom-right { bottom: 4px; right: 4px; }
+
+	.shrine-taken {
+		color: #22c55e;
+		text-shadow: 0 0 6px rgba(34, 197, 94, 0.8), 0 1px 2px rgba(0, 0, 0, 0.9);
+	}
+
+	/* Sizes */
+	.shrine-small { font-size: 18px; }
+	.shrine-medium { font-size: 40px; }
+	.shrine-large { font-size: 56px; }
 
 	.exit-text {
 		color: #e5e7eb;

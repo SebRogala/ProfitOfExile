@@ -132,7 +132,6 @@ For any query/filter function: empty inputs, nil values, zero-length slices, and
 ## 7. Price Data Testing
 
 - Use deterministic test prices, not live API calls, in unit tests.
-- Test TFT lifeforce ratio division (chaos / 1000) explicitly — this is a known gotcha.
 - Test multi-source price selection: verify cheapest buy source and highest sell source are chosen correctly.
 - Test cache TTL behavior: stale prices should trigger refresh.
 - Test listing count thresholds: items with <5 listings should be flagged as low-confidence.
