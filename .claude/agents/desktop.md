@@ -192,23 +192,35 @@ Overlays are Tauri WebviewWindows — transparent, always-on-top, no decorations
 
 **Do NOT destroy/recreate overlay windows to update their position.** Tauri's window label cleanup is async and unreliable — rapid destroy+create causes "already exists" errors. Use `move_overlay` (Rust PhysicalPosition) instead.
 
-### DPI & Multi-Monitor Overlay Positioning
+### DPI & Multi-Monitor Overlay Positioning and Sizing
 
 **CRITICAL — Do NOT use the WebviewWindow constructor's `x`/`y` for overlay positioning.** Tauri's constructor applies unpredictable DPI conversion that breaks on multi-monitor setups with different scale factors. Instead:
 
-1. **Save**: Use `outerPosition()` to get absolute physical coords — store directly, no conversion
-2. **Restore**: Use the Rust-side `invoke('move_overlay', { label, x, y, w, h })` command which calls `window.set_position(PhysicalPosition::new(x, y))` — same coordinate space, no DPI conversion
-3. **Reposition (not recreate)**: When updating an overlay's position, use `move_overlay` on the existing window instead of destroying and recreating. Tauri window label cleanup is async and unreliable — "already exists" errors are common.
+1. **Save**: Use `outerPosition()` / `outerSize()` to get absolute physical coords — store directly, no conversion
+2. **Restore (existing window)**: Use the Rust-side `invoke('move_overlay', { label, x, y, w, h })` command which calls `window.set_position(PhysicalPosition::new(x, y))` + `set_size(PhysicalSize::new(w, h))` — same coordinate space, no DPI conversion
+3. **Create (new window)**: Use the constructor with logical pixels (divide by scaleFactor), then `setPosition(PhysicalPosition) + setSize(PhysicalSize)` in `tauri://created`
+4. **Reposition (not recreate)**: When updating an overlay's position, use `move_overlay` on the existing window instead of destroying and recreating. Tauri window label cleanup is async and unreliable — "already exists" errors are common.
+
+**CRITICAL — Constructor `width`/`height` are LOGICAL pixels.** All saved sizes are physical pixels (from `outerSize()`). When creating a new overlay window, you MUST:
+1. Divide saved physical size by `scaleFactor()` for the constructor (approximate initial size)
+2. Call `setSize(new PhysicalSize(w, h))` in the `tauri://created` callback (exact size)
+
+Without step 2, overlays will be too large on non-100% DPI displays.
 
 ```ts
-// WRONG — DPI conversion breaks multi-monitor
-new WebviewWindow('overlay', { x: physX / dpr, y: physY / dpr });
+// WRONG — physical pixels passed as logical, overlay too large on high DPI
+new WebviewWindow('overlay', { width: saved.width, height: saved.height });
 
-// RIGHT — save absolute, restore via Rust PhysicalPosition
-const pos = await win.outerPosition();
-await invoke('set_comparator_overlay_settings', { x: pos.x, y: pos.y, w, h, enabled: true });
-// On restore:
-await invoke('move_overlay', { label: 'comparator', x: saved.x, y: saved.y, w: 630, h: 250 });
+// RIGHT — convert for constructor, then set exact physical size in callback
+const sf = await getCurrentWebviewWindow().scaleFactor().catch(() => 1);
+const win = new WebviewWindow('overlay', {
+    width: Math.round(saved.width / sf),
+    height: Math.round(saved.height / sf),
+});
+win.once('tauri://created', async () => {
+    await win.setPosition(new PhysicalPosition(saved.x, saved.y));
+    await win.setSize(new PhysicalSize(saved.width, saved.height));
+});
 ```
 
 **OCR region overlays** are different — they still use `scaleFactor()` / DPI for the initial window creation because the user always drags them to the correct position. The saved physical coords are used for `crop_imm()` on the screen capture, which is in the same physical coordinate space. This works because OCR configuration is interactive (user adjusts visually).
@@ -277,23 +289,32 @@ Keyword-based detection — scans OCR lines for anchor text, extracts numeric va
 
 ## Adding a New Overlay (Checklist)
 
-When adding a new overlay window (e.g., pathstrip, session tally):
+When adding a new overlay window, ALL of these steps are required. Missing any one causes silent failures (settings wiped, overlay invisible, wrong size, etc.).
 
-1. **Rust settings**: Add `pub {name}_overlay: Option<OverlaySettings>` to `Settings` struct + `Default` impl + `from_state` (as `None`)
-2. **Rust commands**: Add `get_{name}_overlay_settings` / `set_{name}_overlay_settings` (clone comparator pattern: `load` → mutate → `save`). Register in `generate_handler![]`
-3. **`persist_overlay_settings`**: Add `target.{name}_overlay = existing.{name}_overlay.clone()` — this function is called by BOTH `persist_settings` AND the window close handler. Without this, the overlay settings get wiped on every settings save or app close.
-4. **Capabilities**: Add `"{name}"` and `"overlay-{name}-pos"` to `capabilities/default.json` windows array
-5. **Focus poller**: Add `get_webview_window("{name}")` show/hide block after the compass block (~line 1575)
-6. **`force_show_overlays`**: Add `get_webview_window("{name}")` show block (~line 789)
-7. **Layout (`+layout.svelte`)**: Add state vars, create/destroy/toggle functions (clone compass pattern), auto-restore on startup, extend `overlay-toggle-reset` handler
-8. **Settings page**: Add position config row (clone compass position pattern)
-9. **Sidebar** (if needed): Add toggle button with 3-state indicator
-10. **Overlay route**: Create `/overlay/{name}/+page.svelte`
+### Rust side (`src-tauri/src/`)
+1. **Settings struct** (`settings.rs`): Add `pub {name}_overlay: Option<OverlaySettings>` to `Settings` + `Default` impl (as `None`) + `from_state` (as `None`)
+2. **`persist_overlay_settings`** (`settings.rs`): Add `target.{name}_overlay = existing.{name}_overlay.clone()` — called by BOTH `persist_settings` AND the on-close handler. Missing this = overlay settings wiped on every save.
+3. **Tauri commands** (`lib.rs`): Add `get_{name}_overlay_settings` / `set_{name}_overlay_settings`. Register in `invoke_handler![]`.
+4. **On-close capture** (`lib.rs`): Add `("{name}", "{name}_overlay")` to the `for (label, setter)` loop in `CloseRequested`. Use explicit match arms (no `_ =>` fallthrough).
+5. **Catchup show/hide** (`lib.rs`): Add `"{name}"` to the `for name in &["compass", "pathstrip", "timer"]` loops (catchup block + PlazaEntered/LabExited handlers).
+6. **Focus poller** (`lib.rs`): Add `get_webview_window("{name}")` show/hide block.
+7. **`force_show_overlays`** (`lib.rs`): Add show block.
+8. **Capabilities** (`capabilities/default.json`): Add `"{name}"` and `"overlay-{name}-pos"` to the windows array.
+
+### Frontend side (`desktop/src/`)
+9. **Layout** (`+layout.svelte`): Add state vars (`{name}Active`, `{name}Win`), create/destroy/toggle functions (clone compass pattern), DPI-safe creation (`scaleFactor` for constructor + `setSize(PhysicalSize)` in `tauri://created`), auto-restore on startup (hidden), show/hide on PlazaEntered/LabExited, save position in `saveOverlayPositions()`.
+10. **Settings page** (`SettingsPage.svelte`): Add entry to `OVERLAY_CONFIGS`, `overlaySettings`, and `positionOverlays` maps. Add row to the `{#each}` template list.
+11. **Sidebar** (`Sidebar.svelte`): Add toggle button (both expanded + collapsed views). Add to Lab Overlays category toggle if it's a lab overlay.
+12. **Category toggle** (`+layout.svelte`): Include in `toggleLabOverlays()` on/off cycle if it's a lab overlay.
+13. **Overlay route**: Create `/overlay/{name}/+page.svelte`. Read settings on mount (`get_compass_settings`), call `get_lab_catchup` for state reconstruction.
+14. **Settings persistence tests** (`settings.rs`): Add to `test_overlay_settings_survive_persist_cycle`.
 
 **Critical gotchas:**
 - `persist_overlay_settings` must include ALL overlay settings — missing one causes it to be wiped to null on every save
 - `set_overlay_clickthrough` with `interactiveWidth: 0` is required even for display-only overlays (WebView2 strips `WS_EX_TRANSPARENT`)
 - Window labels MUST be in `capabilities/default.json` or ALL Tauri APIs silently fail
+- Constructor `width`/`height` are LOGICAL pixels — saved sizes are PHYSICAL. Always divide by `scaleFactor()` for constructor, then `setSize(PhysicalSize)` in `tauri://created`
+- The SettingsPage `OVERLAY_CONFIGS` map, `overlaySettings`, and `positionOverlays` must all include the new overlay — missing from any one means the Configure button won't appear or won't work
 
 ## Key References
 - `docs/OVERLAY-GUIDE.md` — **READ FIRST for any overlay work.** Complete guide: click-through, positioning, capabilities, cross-window gotchas
