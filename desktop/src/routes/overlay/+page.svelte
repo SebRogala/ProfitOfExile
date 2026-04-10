@@ -7,7 +7,7 @@
 	// If ?sync=<label>, move that window to match this one in real-time
 	const syncTarget = new URLSearchParams(window.location.search).get('sync');
 
-	const EDGE = 10;
+	const BASE_EDGE = 10;
 
 	type Dir = 'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast' | 'SouthWest' | 'West';
 
@@ -21,10 +21,12 @@
 	function getEdge(e: MouseEvent): Dir | null {
 		const w = window.innerWidth;
 		const h = window.innerHeight;
-		const t = e.clientY < EDGE;
-		const b = e.clientY > h - EDGE;
-		const l = e.clientX < EDGE;
-		const r = e.clientX > w - EDGE;
+		// Scale edge zone for small windows — ensures enough drag area
+		const edge = Math.min(BASE_EDGE, Math.floor(h / 8), Math.floor(w / 8));
+		const t = e.clientY < edge;
+		const b = e.clientY > h - edge;
+		const l = e.clientX < edge;
+		const r = e.clientX > w - edge;
 
 		if (t && l) return 'NorthWest';
 		if (t && r) return 'NorthEast';

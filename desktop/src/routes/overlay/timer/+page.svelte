@@ -236,13 +236,15 @@
 
 	.timer-display {
 		font-family: 'Consolas', 'Monaco', monospace;
-		font-size: 24px;
+		font-size: min(70vh, 28vw);
 		font-weight: 700;
 		color: #e5e7eb;
 		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 		background: rgba(13, 13, 21, 0.75);
-		padding: 4px 12px;
+		padding: 0 0.15em;
 		border-radius: 4px;
+		white-space: nowrap;
+		line-height: 1;
 		letter-spacing: 0.05em;
 	}
 </style>

@@ -1000,6 +1000,11 @@ fn force_show_overlays(app: AppHandle) {
                 log::warn!("Failed to force-show pathstrip: {}", e);
             }
         }
+        if let Some(win) = app.get_webview_window("timer") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show timer: {}", e);
+            }
+        }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
         log::info!("Debug mode OFF");
