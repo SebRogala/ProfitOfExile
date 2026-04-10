@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS lab_run_rooms;
+DROP TABLE IF EXISTS lab_runs;
