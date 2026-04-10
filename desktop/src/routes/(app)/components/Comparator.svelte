@@ -148,25 +148,33 @@
 			clearAll();
 		});
 
-		// Listen for trade queue events from Rust
+		// Listen for trade queue events from Rust.
+		// tradeQueueStale: after cancel, ignore events from the in-flight request
+		// until a fresh 'queued' event arrives (new lookup batch).
+		let tradeQueueStale = false;
 		const tradeQueuePromise = listen<TradeQueueEvent>('trade-queue', (event) => {
 			if (cancelled) return;
 			const e = event.payload;
 			switch (e.kind) {
 				case 'queued':
+					tradeQueueStale = false;
 					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'queued', waitSecs: 0 };
 					break;
 				case 'waiting':
-					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'waiting', waitSecs: e.waitSecs };
-					break;
 				case 'fetching':
-					tradeQueue = { gem: e.gem, position: e.position, total: e.total, status: 'fetching', waitSecs: 0 };
+					if (tradeQueueStale) break;
+					tradeQueue = {
+						gem: e.gem, position: e.position, total: e.total,
+						status: e.kind === 'waiting' ? 'waiting' : 'fetching',
+						waitSecs: e.kind === 'waiting' ? (e as any).waitSecs ?? 0 : 0,
+					};
 					break;
-				case 'done':
-				case 'error':
 				case 'cancelled':
+					tradeQueueStale = true;
 					tradeQueue = null;
 					break;
+				default:
+					tradeQueue = null;
 			}
 		});
 
@@ -478,8 +486,8 @@
 			{#if tradeQueue}
 				<span class="trade-queue-status">
 					<span class="trade-queue-text">
-						Trade {tradeQueue.position}/{tradeQueue.total}
-						{#if tradeQueue.status === 'waiting'}
+						Trade {Math.min(tradeQueue.position, tradeQueue.total)}/{tradeQueue.total}
+						{#if tradeQueue.status === 'waiting' && tradeQueue.waitSecs > 0}
 							— Waiting {Math.ceil(tradeQueue.waitSecs)}s
 						{:else if tradeQueue.status === 'fetching'}
 							— Fetching

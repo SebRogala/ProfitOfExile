@@ -90,8 +90,11 @@
 		return `${Math.floor(hrs / 24)}d`;
 	}
 
-	// Trade queue state — driven by Rust trade-queue events
+	// Trade queue state — driven by Rust trade-queue events.
+	// tradeQueueStale: after user cancels, ignore events from the in-flight request
+	// until a fresh 'queued' event arrives (new lookup batch).
 	let tradeQueue = $state<TradeQueueDisplay | null>(null);
+	let tradeQueueStale = false;
 
 	$effect(() => {
 		let cancelled = false;
@@ -100,11 +103,21 @@
 			const e = event.payload;
 			switch (e.kind) {
 				case 'queued':
-				case 'fetching':
+					tradeQueueStale = false;
 					tradeQueue = { position: e.position, total: e.total, status: e.kind, waitSecs: 0 };
 					break;
+				case 'fetching':
 				case 'waiting':
-					tradeQueue = { position: e.position, total: e.total, status: 'waiting', waitSecs: e.waitSecs };
+					if (tradeQueueStale) break;
+					tradeQueue = {
+						position: e.position, total: e.total,
+						status: e.kind === 'waiting' ? 'waiting' : 'fetching',
+						waitSecs: e.kind === 'waiting' ? (e as any).waitSecs ?? 0 : 0,
+					};
+					break;
+				case 'cancelled':
+					tradeQueueStale = true;
+					tradeQueue = null;
 					break;
 				default:
 					tradeQueue = null;
@@ -310,8 +323,8 @@
 		{#if tradeQueue}
 			<div class="queue-row">
 				<span class="queue-status">
-					{tradeQueue.position}/{tradeQueue.total}
-					{#if tradeQueue.status === 'waiting'}{Math.ceil(tradeQueue.waitSecs)}s{/if}
+					{Math.min(tradeQueue.position, tradeQueue.total)}/{tradeQueue.total}
+					{#if tradeQueue.status === 'waiting' && tradeQueue.waitSecs > 0}{Math.ceil(tradeQueue.waitSecs)}s{/if}
 				</span>
 				<button class="clear-act queue-cancel" data-action="cancel">&times;</button>
 			</div>

@@ -42,6 +42,10 @@ pub struct Settings {
     pub shrine_warn_size: String,
     pub shrine_warn_corner: String,
     pub shrine_warn_on_take: String,
+    /// Timer overlay background opacity (0.0–1.0, default 0.75).
+    pub timer_bg_opacity: Option<f32>,
+    /// Timer overlay text stroke/outline enabled (default true).
+    pub timer_text_stroke: Option<bool>,
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -91,6 +95,8 @@ impl Default for Settings {
             shrine_warn_size: String::from("medium"),
             shrine_warn_corner: String::from("bottom-right"),
             shrine_warn_on_take: String::from("green"),
+            timer_bg_opacity: None,
+            timer_text_stroke: None,
         }
     }
 }
@@ -188,6 +194,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         shrine_warn_size: state.shrine_warn_size.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         shrine_warn_corner: state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         shrine_warn_on_take: state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        timer_bg_opacity: None,    // Appearance settings saved separately, not from AppState
+        timer_text_stroke: None,   // Appearance settings saved separately, not from AppState
     }
 }
 
@@ -199,6 +207,8 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.compass_overlay = existing.compass_overlay.clone();
     target.pathstrip_overlay = existing.pathstrip_overlay.clone();
     target.timer_overlay = existing.timer_overlay.clone();
+    target.timer_bg_opacity = existing.timer_bg_opacity;
+    target.timer_text_stroke = existing.timer_text_stroke;
 }
 
 #[cfg(test)]

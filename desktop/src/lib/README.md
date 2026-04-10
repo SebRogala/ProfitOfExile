@@ -17,6 +17,9 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `components/Sidebar.svelte` | `open`, `currentPath`, `onToggle` | Collapsible nav — strategies, tools, overlay quick-toggles. Collapsed state shows thin clickable strip. |
 | `components/Select.svelte` | `value` (bindable), `options`, `onchange` | Custom dropdown select — styled dark theme, chevron indicator. Used by dashboard components. |
 | `components/IdentifyDialog.svelte` | `open` (bindable) | Device identify dialog — shows short device ID, alias input, POST to `/api/device/identify`. Triggered by Ctrl+Shift+I. |
+| `components/Button.svelte` | `variant` (`'default'`/`'save'`/`'danger'`), `disabled`, `title`, `onclick`, children | Small action button — default (neutral), save (green), danger (red). Disabled state dims to 35% opacity. |
+| `components/Toggle.svelte` | `checked` (bindable) | On/off toggle switch — dark-themed, animated knob. |
+| `components/RangeSlider.svelte` | `value` (bindable), `min`, `max`, `step`, `formatValue` | Range slider with value display — optional format function for labels (e.g., `v => \`${v}%\``). |
 
 ## Overlay Utilities
 

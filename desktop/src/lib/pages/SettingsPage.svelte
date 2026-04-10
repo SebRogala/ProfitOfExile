@@ -6,6 +6,9 @@
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import Toggle from '$lib/components/Toggle.svelte';
+	import RangeSlider from '$lib/components/RangeSlider.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { getVersion } from '@tauri-apps/api/app';
 
 	// --- Update ---
@@ -316,6 +319,24 @@
 		comparator: null, compass: null, pathstrip: null, timer: null,
 	});
 
+	// --- Timer appearance ---
+	let timerBgOpacity = $state(75);
+	let timerTextStroke = $state(true);
+	let savedBgOpacity = $state(75);
+	let savedTextStroke = $state(true);
+	let timerAppearanceDirty = $derived(
+		timerBgOpacity !== savedBgOpacity || timerTextStroke !== savedTextStroke
+	);
+
+	function saveTimerAppearance() {
+		invoke('set_timer_appearance', { bgOpacity: timerBgOpacity / 100, textStroke: timerTextStroke })
+			.then(() => {
+				savedBgOpacity = timerBgOpacity;
+				savedTextStroke = timerTextStroke;
+			})
+			.catch((e: any) => console.warn('[settings] save timer appearance failed:', e));
+	}
+
 	// Load all overlay settings on init
 	$effect(() => {
 		for (const [name, cfg] of Object.entries(OVERLAY_CONFIGS)) {
@@ -323,6 +344,14 @@
 				if (s) overlaySettings[name] = s;
 			}).catch((e) => console.warn(`[settings] failed to load ${name} overlay settings:`, e));
 		}
+		invoke<any>('get_timer_appearance').then((a) => {
+			if (a) {
+				timerBgOpacity = Math.round(a.bg_opacity * 100);
+				timerTextStroke = a.text_stroke;
+				savedBgOpacity = timerBgOpacity;
+				savedTextStroke = a.text_stroke;
+			}
+		}).catch((e: any) => console.warn('[settings] load timer appearance failed:', e));
 	});
 
 	async function showPositionOverlay(name: string) {
@@ -434,17 +463,17 @@
 					<span class="setting-value muted">Checking...</span>
 				{:else if updateStatus === 'available'}
 					<span class="setting-value update-available">v{updateVersion} available</span>
-					<button class="btn-small save" onclick={installUpdate}>Install & Restart</button>
+					<Button variant="save" onclick={installUpdate}>Install & Restart</Button>
 				{:else if updateStatus === 'downloading'}
 					<span class="setting-value muted">Downloading... {updateProgress > 0 ? `(${Math.round(updateProgress / 1024)}KB)` : ''}</span>
 				{:else if updateStatus === 'error'}
 					<span class="setting-value update-error">{updateError}</span>
-					<button class="btn-small" onclick={checkForUpdates}>Retry</button>
+					<Button onclick={checkForUpdates}>Retry</Button>
 				{:else}
 					{#if updateError}
 						<span class="setting-value muted">{updateError}</span>
 					{/if}
-					<button class="btn-small" onclick={checkForUpdates}>Check for Updates</button>
+					<Button onclick={checkForUpdates}>Check for Updates</Button>
 				{/if}
 			</div>
 		</section>
@@ -464,12 +493,12 @@
 							bind:value={editServerUrlValue}
 							onkeydown={(e) => { if (e.key === 'Enter') saveServerUrl(); if (e.key === 'Escape') cancelEditServerUrl(); }}
 						/>
-						<button class="btn-small save" onclick={saveServerUrl}>Save</button>
-						<button class="btn-small" onclick={cancelEditServerUrl}>Cancel</button>
+						<Button variant="save" onclick={saveServerUrl}>Save</Button>
+						<Button onclick={cancelEditServerUrl}>Cancel</Button>
 					</div>
 				{:else}
 					<span class="setting-value">{store.status?.server_url ?? '...'}</span>
-					<button class="btn-small" onclick={startEditServerUrl}>Edit</button>
+					<Button onclick={startEditServerUrl}>Edit</Button>
 				{/if}
 			</div>
 			{/if}
@@ -501,14 +530,14 @@
 							bind:value={editClientTxtValue}
 							onkeydown={(e) => { if (e.key === 'Enter') saveClientTxt(); if (e.key === 'Escape') cancelEditClientTxt(); }}
 						/>
-						<button class="btn-small save" onclick={saveClientTxt}>Save</button>
-						<button class="btn-small" onclick={cancelEditClientTxt}>Cancel</button>
+						<Button variant="save" onclick={saveClientTxt}>Save</Button>
+						<Button onclick={cancelEditClientTxt}>Cancel</Button>
 					</div>
 				{:else}
 					<span class="setting-value path" class:path-missing={!store.status?.client_txt_exists}>{store.status?.client_txt_path ?? '...'}</span>
-					<button class="btn-small" onclick={browseClientTxt}>Browse</button>
-					<button class="btn-small" onclick={startEditClientTxt}>Edit</button>
-					<button class="btn-small" onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Auto-detect GGG or Steam install">Reset</button>
+					<Button onclick={browseClientTxt}>Browse</Button>
+					<Button onclick={startEditClientTxt}>Edit</Button>
+					<Button onclick={() => invoke('reset_client_txt_path').catch(e => console.error(e))} title="Auto-detect GGG or Steam install">Reset</Button>
 				{/if}
 			</div>
 
@@ -516,11 +545,11 @@
 				<span class="setting-label">Gem Tooltip Region</span>
 				{#if overlayVisible === 'gem'}
 					<span class="setting-value">Positioning overlay...</span>
-					<button class="btn-small save" onclick={saveRegion}>Save</button>
-					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
+					<Button variant="save" onclick={saveRegion}>Save</Button>
+					<Button onclick={cancelRegion}>Cancel</Button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.gem_region)}</span>
-					<button class="btn-small" onclick={() => showRegionOverlay('gem')} disabled={!!overlayVisible}>Configure</button>
+					<Button onclick={() => showRegionOverlay('gem')} disabled={!!overlayVisible}>Configure</Button>
 				{/if}
 			</div>
 
@@ -528,11 +557,11 @@
 				<span class="setting-label">Font Panel Region</span>
 				{#if overlayVisible === 'font'}
 					<span class="setting-value">Positioning overlay...</span>
-					<button class="btn-small save" onclick={saveRegion}>Save</button>
-					<button class="btn-small" onclick={cancelRegion}>Cancel</button>
+					<Button variant="save" onclick={saveRegion}>Save</Button>
+					<Button onclick={cancelRegion}>Cancel</Button>
 				{:else}
 					<span class="setting-value mono">{formatRegion(store.status?.font_region)}</span>
-					<button class="btn-small" onclick={() => showRegionOverlay('font')} disabled={!!overlayVisible}>Configure</button>
+					<Button onclick={() => showRegionOverlay('font')} disabled={!!overlayVisible}>Configure</Button>
 				{/if}
 			</div>
 		</section>
@@ -551,15 +580,35 @@
 					<span class="setting-label">{cfg.label}</span>
 					{#if positionOverlays[cfg.name]}
 						<span class="setting-value">Drag overlay to position...</span>
-						<button class="btn-small save" onclick={() => savePositionOverlay(cfg.name)}>Save</button>
-						<button class="btn-small" onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</button>
+						<Button variant="save" onclick={() => savePositionOverlay(cfg.name)}>Save</Button>
+						<Button onclick={() => cancelPositionOverlay(cfg.name)}>Cancel</Button>
 					{:else}
 						{@const s = overlaySettings[cfg.name]}
 						<span class="setting-value mono">{s ? `(${s.x}, ${s.y}) ${s.width}\u00d7${s.height}` : 'Not set'}</span>
-						<button class="btn-small" onclick={() => showPositionOverlay(cfg.name)} disabled={!!overlayVisible}>Configure</button>
+						<Button onclick={() => showPositionOverlay(cfg.name)} disabled={!!overlayVisible}>Configure</Button>
 					{/if}
 				</div>
 			{/each}
+		</section>
+
+		<!-- Timer Appearance -->
+		<section>
+			<h2>Timer Appearance</h2>
+
+			<div class="setting-row">
+				<span class="setting-label">Background</span>
+				<RangeSlider bind:value={timerBgOpacity} min={0} max={100} step={5} formatValue={(v) => `${v}%`} />
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Text outline</span>
+				<Toggle bind:checked={timerTextStroke} />
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label"></span>
+				<Button variant="save" onclick={saveTimerAppearance} disabled={!timerAppearanceDirty}>Apply</Button>
+			</div>
 		</section>
 
 		<!-- Trade -->
@@ -626,10 +675,10 @@
 			<div class="setting-row">
 				<span class="setting-label"></span>
 				{#if editingTradeStaleness}
-					<button class="btn-small save" onclick={saveTradeStaleness}>Save</button>
-					<button class="btn-small" onclick={cancelEditTradeStaleness}>Cancel</button>
+					<Button variant="save" onclick={saveTradeStaleness}>Save</Button>
+					<Button onclick={cancelEditTradeStaleness}>Cancel</Button>
 				{:else}
-					<button class="btn-small" onclick={startEditTradeStaleness}>Edit</button>
+					<Button onclick={startEditTradeStaleness}>Edit</Button>
 				{/if}
 			</div>
 			{#if tradeStalenessError}
@@ -646,13 +695,13 @@
 			<div class="setting-row">
 				<span class="setting-label">Reset All Settings</span>
 				<span class="setting-value">Deletes settings file and re-detects everything</span>
-				<button class="btn-danger" onclick={() => {
+				<Button variant="danger" onclick={() => {
 					if (confirm('Reset all settings to defaults? This will clear all overlay positions, Client.txt path, and trade settings. The app will re-detect your PoE installation.')) {
 						invoke('reset_all_settings').then(() => {
 							alert('Settings reset. The app will now use fresh defaults.');
 						}).catch(e => console.error('Reset failed:', e));
 					}
-				}}>Reset Everything</button>
+				}}>Reset Everything</Button>
 			</div>
 		</section>
 
@@ -661,7 +710,7 @@
 			<section>
 				<div class="log-header">
 					<h2>Logs</h2>
-					<button class="btn-small" onclick={() => { navigator.clipboard.writeText(store.logs.toReversed().join('\n')); }}>Copy</button>
+					<Button onclick={() => { navigator.clipboard.writeText(store.logs.toReversed().join('\n')); }}>Copy</Button>
 				</div>
 				<div class="log-list">
 					{#each store.logs.toReversed() as line}
@@ -802,53 +851,12 @@
 		font-size: 0.75rem;
 	}
 
-	.btn-small {
-		background: transparent;
-		border: 1px solid var(--border);
-		color: var(--text-muted);
-		padding: 0.2rem 0.5rem;
-		border-radius: 4px;
-		font-size: 0.75rem;
-		cursor: pointer;
-		white-space: nowrap;
-		flex-shrink: 0;
-	}
-
-	.btn-small:hover {
-		border-color: var(--accent);
-		color: var(--text);
-	}
-
-	.btn-small.save {
-		border-color: var(--success);
-		color: var(--success);
-	}
-
-	.btn-small.save:hover {
-		background: rgba(74, 222, 128, 0.1);
-	}
-
 	.danger-section {
 		border-color: rgba(239, 68, 68, 0.3);
 	}
 
 	.danger-section h2 {
 		color: #ef4444;
-	}
-
-	.btn-danger {
-		background: transparent;
-		border: 1px solid rgba(239, 68, 68, 0.5);
-		color: #ef4444;
-		padding: 0.3rem 0.7rem;
-		border-radius: 4px;
-		font-size: 0.75rem;
-		cursor: pointer;
-	}
-
-	.btn-danger:hover {
-		background: rgba(239, 68, 68, 0.1);
-		border-color: #ef4444;
 	}
 
 	.log-header {

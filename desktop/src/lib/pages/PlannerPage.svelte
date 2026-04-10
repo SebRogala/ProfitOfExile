@@ -70,6 +70,11 @@
 	const SVG_HEIGHT = 350;
 	const PADDING = 40;
 
+	// --- Izaro info (humanize camelCase field values) ---
+	function humanize(s: string): string {
+		return s.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+	}
+
 	// --- Plan summary ---
 	let routeRoomCount = $derived(navState.plannedRoute.length);
 
@@ -271,6 +276,17 @@
 	{:else}
 		<div class="planner-body">
 			<div class="graph-column">
+				{#if navState.layout?.phase1}
+					<div class="izaro-bar">
+						<span class="izaro-tag">{humanize(navState.layout.weapon)}</span>
+						<span class="izaro-sep"></span>
+						<span class="izaro-item"><span class="izaro-label">Phase 1</span> {humanize(navState.layout.phase1)}</span>
+						<span class="izaro-item"><span class="izaro-label">Phase 2</span> {humanize(navState.layout.phase2)}</span>
+						<span class="izaro-sep"></span>
+						<span class="izaro-item">{humanize(navState.layout.trap1)}</span>
+						<span class="izaro-item">{humanize(navState.layout.trap2)}</span>
+					</div>
+				{/if}
 				<div class="graph-area">
 					<LabGraph
 						{navState}
@@ -433,6 +449,39 @@
 		flex-direction: column;
 		gap: 8px;
 		min-height: 0;
+	}
+
+	/* --- Izaro info bar --- */
+	.izaro-bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		background: var(--color-lab-surface);
+		border: 1px solid var(--color-lab-border);
+		padding: 6px 14px;
+		font-size: 0.75rem;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.izaro-tag {
+		font-weight: 700;
+		color: var(--color-lab-text);
+	}
+
+	.izaro-sep {
+		width: 1px;
+		height: 14px;
+		background: var(--color-lab-border);
+		flex-shrink: 0;
+	}
+
+	.izaro-label {
+		color: var(--color-lab-text-secondary);
+		margin-right: 4px;
+	}
+
+	.izaro-item {
+		color: var(--color-lab-text);
 	}
 
 	/* --- Graph area --- */

@@ -223,6 +223,28 @@ win.once('tauri://created', async () => {
 });
 ```
 
+### Overlay Content Scaling
+
+**Use SVG viewBox for overlay content that should fill the window proportionally.** CSS viewport units (`vh`/`vw`) and `getBBox()` auto-measurement are unreliable in transparent WebView2 windows (font timing, DPI interactions). Instead:
+
+1. Use a **fixed SVG viewBox** sized to match the content's natural dimensions (e.g., `viewBox="0 0 236 60"` for monospace "MM:SS" at 72px font)
+2. Set `preserveAspectRatio="xMidYMid meet"` — content fills the constraining dimension, centered
+3. Style the SVG with `width: 100%; height: 100%` to fill the overlay container
+4. Put background color on the **container** (not SVG), controlled dynamically via `style:background`
+
+This is the same approach used by `LabGraph.svelte` (pathstrip overlay) — `viewBox="0 0 900 350"` with fixed internal layout.
+
+```svelte
+<!-- Timer overlay — SVG scales text to fill window proportionally -->
+<div class="container" style:background={bgStyle}>
+    <svg viewBox="0 0 236 60" class="content" preserveAspectRatio="xMidYMid meet">
+        <text x="118" y="52" text-anchor="middle" class="text">{value}</text>
+    </svg>
+</div>
+```
+
+**Do NOT use CSS `min(Xvh, Yvw)` for overlay text sizing** — it works but doesn't give proportional fill behavior. **Do NOT use `getBBox()` auto-measurement** — WebView2 returns wrong values before fonts render, causing extreme zoom artifacts.
+
 **OCR region overlays** are different — they still use `scaleFactor()` / DPI for the initial window creation because the user always drags them to the correct position. The saved physical coords are used for `crop_imm()` on the screen capture, which is in the same physical coordinate space. This works because OCR configuration is interactive (user adjusts visually).
 
 **For click coordinate conversion** in overlay click-through handlers, use `scaleFactor()` from Tauri (not `window.devicePixelRatio` which can be wrong in transparent WebViews):
