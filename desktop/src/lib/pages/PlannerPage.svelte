@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { open as shellOpen } from '@tauri-apps/plugin-shell';
 	import { store } from '$lib/stores/status.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import RoomEditor from '$lib/compass/RoomEditor.svelte';
@@ -272,7 +271,7 @@
 				No layout available for today's {difficultyOptions.find((d) => d.value === difficulty)?.label ?? difficulty} lab.
 			</p>
 			<button class="btn-import-large" onclick={triggerImport}>Import Layout</button>
-			<p class="empty-hint">Download from <button class="link-btn" onclick={() => shellOpen('https://www.poelab.com/').catch(() => {})}>poelab.com</button> and import.</p>
+			<p class="empty-hint">Download from <button class="link-btn" onclick={() => invoke('plugin:shell|open', { path: 'https://www.poelab.com/' }).catch(() => {})}>poelab.com</button> and import.</p>
 		</div>
 	{:else}
 		<div class="planner-body">
