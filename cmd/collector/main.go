@@ -84,11 +84,9 @@ func main() {
 	defer pool.Close()
 	slog.Info("database connected")
 
-	if err := db.MigrateUp(db.MigrationsFS, databaseURL); err != nil {
-		slog.Error("auto-migrate failed", "error", err)
-		fmt.Fprintln(os.Stderr, "Failed to apply database migrations. Check migration files and database state.")
-		os.Exit(1)
-	}
+	// Migrations are handled by the server — the collector only reads/writes
+	// data and should not manage schema. This avoids crash loops when the
+	// collector image is rebuilt separately from the server.
 
 	// Initialize components.
 	resolver, err := gemcolor.NewResolver(ctx, pool)
