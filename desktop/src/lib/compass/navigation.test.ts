@@ -99,6 +99,59 @@ describe('RoomChanged disambiguation', () => {
 	});
 });
 
+describe('Golden door routing', () => {
+	// Layout where the golden door connects directly to the trial room.
+	// The key room is a dead-end branch from the door room.
+	//
+	//   r1 ─── door(golden-door) ─── trial
+	//             │
+	//           key(golden-key)
+	//
+	const goldenDoorToTrialLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'door' } },
+		{ id: 'door', name: 'Mansion Atrium', x: '1', exits: { N: 'key', E: 'trial' }, contents: ['golden-door'] },
+		{ id: 'key', name: 'Basilica Annex', x: '1.5', exits: {}, contents: ['golden-key'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should route through golden key room when golden door connects to trial', () => {
+		const state = loadLayout(createNavState(), goldenDoorToTrialLayout);
+		// Route must visit the key room before reaching the trial
+		expect(state.plannedRoute).toContain('key');
+		const keyIdx = state.plannedRoute.indexOf('key');
+		const trialIdx = state.plannedRoute.indexOf('trial');
+		expect(keyIdx).toBeLessThan(trialIdx);
+	});
+
+	it('should backtrack through door room after picking up golden key', () => {
+		const state = loadLayout(createNavState(), goldenDoorToTrialLayout);
+		// Route: r1 → door → key → door → trial
+		expect(state.plannedRoute).toEqual(['r1', 'door', 'key', 'door', 'trial']);
+	});
+
+	// Layout where a secret passage bypasses the golden door entirely.
+	//
+	//   r1 ─── door(golden-door) ─── trial
+	//    │         │                   │
+	//    └── shortcut ─────────────────┘
+	//             key(golden-key)
+	//
+	const goldenDoorWithBypassLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'door', SE: 'shortcut' } },
+		{ id: 'door', name: 'Mansion Atrium', x: '1', exits: { N: 'key', E: 'trial' }, contents: ['golden-door'] },
+		{ id: 'key', name: 'Basilica Annex', x: '1.5', exits: {}, contents: ['golden-key'] },
+		{ id: 'shortcut', name: 'Secret Passage', x: '1', exits: { E: 'trial' } },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should skip golden key when a bypass route exists', () => {
+		const state = loadLayout(createNavState(), goldenDoorWithBypassLayout);
+		// Route should use the shortcut and skip the key room
+		expect(state.plannedRoute).not.toContain('key');
+		expect(state.plannedRoute).toContain('shortcut');
+	});
+});
+
 describe('Route strategy', () => {
 	const simpleLayout = makeLayout([
 		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'r2', SE: 'r3' } },

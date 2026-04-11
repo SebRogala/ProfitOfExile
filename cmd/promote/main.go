@@ -15,6 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -184,18 +187,41 @@ func runStats(ctx context.Context, repo *device.Repository) error {
 	}
 	fmt.Println()
 
-	fmt.Print("By version: ")
-	first = true
-	for version, count := range s.ByVersion {
-		if !first {
-			fmt.Print(", ")
-		}
-		fmt.Printf("%s=%d", version, count)
-		first = false
+	fmt.Println("By version:")
+	versions := make([]string, 0, len(s.ByVersion))
+	for v := range s.ByVersion {
+		versions = append(versions, v)
 	}
-	fmt.Println()
+	sort.Slice(versions, func(i, j int) bool {
+		return compareSemver(versions[i], versions[j]) < 0
+	})
+	for _, v := range versions {
+		fmt.Printf("  %s = %d\n", v, s.ByVersion[v])
+	}
 
 	return nil
+}
+
+// compareSemver compares two version strings like "0.4.1" and "0.5.0".
+// Returns -1, 0, or 1. Non-numeric parts sort after numeric ones.
+func compareSemver(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var na, nb int
+		if i < len(pa) {
+			na, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			nb, _ = strconv.Atoi(pb[i])
+		}
+		if na < nb {
+			return -1
+		}
+		if na > nb {
+			return 1
+		}
+	}
+	return 0
 }
 
 func printUsage() {

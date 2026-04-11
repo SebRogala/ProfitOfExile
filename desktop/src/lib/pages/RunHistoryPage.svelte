@@ -4,7 +4,7 @@
 	import Select from '$lib/components/Select.svelte';
 
 	let runs = $state<any[]>([]);
-	let stats = $state<{ avg_seconds: number; best_seconds: number; total_runs: number }>({ avg_seconds: 0, best_seconds: 0, total_runs: 0 });
+	let stats = $state<{ avg_seconds: number; best_seconds: number; avg_kill_seconds: number; best_kill_seconds: number; total_runs: number }>({ avg_seconds: 0, best_seconds: 0, avg_kill_seconds: 0, best_kill_seconds: 0, total_runs: 0 });
 	let difficulty = $state('');
 	let loading = $state(false);
 	let error = $state('');
@@ -50,11 +50,11 @@
 			if (!res.ok) throw new Error(`Server returned ${res.status}`);
 			const data = await res.json();
 			runs = data.runs ?? [];
-			stats = data.stats ?? { avg_seconds: 0, best_seconds: 0, total_runs: 0 };
+			stats = data.stats ?? { avg_seconds: 0, best_seconds: 0, avg_kill_seconds: 0, best_kill_seconds: 0, total_runs: 0 };
 		} catch (e: any) {
 			error = e?.message || 'Failed to fetch runs';
 			runs = [];
-			stats = { avg_seconds: 0, best_seconds: 0, total_runs: 0 };
+			stats = { avg_seconds: 0, best_seconds: 0, avg_kill_seconds: 0, best_kill_seconds: 0, total_runs: 0 };
 		} finally {
 			loading = false;
 		}
@@ -76,13 +76,24 @@
 
 	{#if stats.total_runs > 0}
 		<div class="stats-row">
+			{#if stats.best_kill_seconds > 0}
+				<div class="stat-card best">
+					<div class="stat-value">{formatTime(stats.best_kill_seconds)}</div>
+					<div class="stat-label">Best Kill</div>
+				</div>
+				<div class="stat-card">
+					<div class="stat-value">{formatTime(Math.round(stats.avg_kill_seconds))}</div>
+					<div class="stat-label">Avg Kill</div>
+				</div>
+			{:else}
+				<div class="stat-card best">
+					<div class="stat-value">{formatTime(stats.best_seconds)}</div>
+					<div class="stat-label">Best Time</div>
+				</div>
+			{/if}
 			<div class="stat-card">
 				<div class="stat-value">{formatTime(Math.round(stats.avg_seconds))}</div>
-				<div class="stat-label">Average</div>
-			</div>
-			<div class="stat-card best">
-				<div class="stat-value">{formatTime(stats.best_seconds)}</div>
-				<div class="stat-label">Personal Best</div>
+				<div class="stat-label">Avg Total</div>
 			</div>
 			<div class="stat-card">
 				<div class="stat-value">{stats.total_runs}</div>
@@ -108,7 +119,8 @@
 						<th>Date</th>
 						<th>Difficulty</th>
 						<th>Strategy</th>
-						<th>Time</th>
+						<th>Kill</th>
+						<th>Total</th>
 						<th>Rooms</th>
 						<th>Golden Door</th>
 					</tr>
@@ -119,6 +131,7 @@
 							<td>{formatDate(run.started_at)}</td>
 							<td>{run.difficulty}</td>
 							<td>{run.strategy}</td>
+							<td class="mono">{run.kill_seconds ? formatTime(run.kill_seconds) : '-'}</td>
 							<td class="mono">{formatTime(run.elapsed_seconds)}</td>
 							<td>{run.room_count}</td>
 							<td>{run.has_golden_door ? 'Yes' : '-'}</td>

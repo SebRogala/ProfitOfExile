@@ -42,9 +42,6 @@
 		<button class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming" onclick={() => nav.go('/')}>
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
 		</button>
-		<button class="collapsed-item" class:active={currentPath === '/runs'} title="Run History" onclick={() => nav.go('/runs')}>
-			<span class="icon">&#x23F1;&#xFE0F;</span>
-		</button>
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
 				<span class="icon">&#x1F5FA;&#xFE0F;</span>
@@ -100,10 +97,6 @@
 			<button class="nav-item" class:active={currentPath === '/'} onclick={() => nav.go('/')}>
 				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
-			</button>
-			<button class="nav-item" class:active={currentPath === '/runs'} onclick={() => nav.go('/runs')}>
-				<span class="icon">&#x23F1;&#xFE0F;</span>
-				<span>Run History</span>
 			</button>
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
