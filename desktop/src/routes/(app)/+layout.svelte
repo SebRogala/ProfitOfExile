@@ -11,7 +11,6 @@
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
-	import RunHistoryPage from '$lib/pages/RunHistoryPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
 
@@ -622,7 +621,7 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={nav.view === 'dev' ? '/dev' : nav.view === 'settings' ? '/settings' : nav.view === 'runs' ? '/runs' : '/'} onToggle={toggleSidebar}
+		<Sidebar open={sidebarOpen} currentPath={nav.view === 'dev' ? '/dev' : nav.view === 'settings' ? '/settings' : '/'} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
 			compassActive={compassActive} onToggleCompass={toggleCompassOverlay}
 			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay}
@@ -631,9 +630,6 @@
 		<main class="content">
 			<div class:view-hidden={nav.view !== 'lab'}>
 				<LabPage />
-			</div>
-			<div class:view-hidden={nav.view !== 'runs'}>
-				<RunHistoryPage />
 			</div>
 			<div class:view-hidden={nav.view !== 'settings'}>
 				<SettingsPage />

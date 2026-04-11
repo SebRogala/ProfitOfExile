@@ -18,6 +18,7 @@ type labRunRequest struct {
 	Difficulty     string       `json:"difficulty"`
 	Strategy       string       `json:"strategy"`
 	ElapsedSeconds int          `json:"elapsed_seconds"`
+	KillSeconds    *int         `json:"kill_seconds,omitempty"`
 	RoomCount      int          `json:"room_count"`
 	HasGoldenDoor  bool         `json:"has_golden_door"`
 	StartedAt      time.Time    `json:"started_at"`
@@ -58,6 +59,10 @@ func StoreLabRun(pool *pgxpool.Pool) http.HandlerFunc {
 			jsonError(w, http.StatusBadRequest, "elapsed_seconds must be 1-86400")
 			return
 		}
+		if body.KillSeconds != nil && (*body.KillSeconds <= 0 || *body.KillSeconds > body.ElapsedSeconds) {
+			jsonError(w, http.StatusBadRequest, "kill_seconds must be 1..elapsed_seconds")
+			return
+		}
 		if body.RoomCount <= 0 {
 			jsonError(w, http.StatusBadRequest, "room_count must be positive")
 			return
@@ -88,14 +93,15 @@ func StoreLabRun(pool *pgxpool.Pool) http.HandlerFunc {
 
 		var runID int64
 		err = tx.QueryRow(ctx,
-			`INSERT INTO lab_runs (device_id, difficulty, strategy, started_at, elapsed_seconds, room_count, has_golden_door)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`INSERT INTO lab_runs (device_id, difficulty, strategy, started_at, elapsed_seconds, kill_seconds, room_count, has_golden_door)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			 RETURNING id`,
 			deviceID,
 			body.Difficulty,
 			body.Strategy,
 			body.StartedAt,
 			body.ElapsedSeconds,
+			body.KillSeconds,
 			body.RoomCount,
 			body.HasGoldenDoor,
 		).Scan(&runID)
@@ -155,14 +161,17 @@ type labRunResponse struct {
 	Strategy       string    `json:"strategy"`
 	StartedAt      time.Time `json:"started_at"`
 	ElapsedSeconds int       `json:"elapsed_seconds"`
+	KillSeconds    *int      `json:"kill_seconds"`
 	RoomCount      int       `json:"room_count"`
 	HasGoldenDoor  bool      `json:"has_golden_door"`
 }
 
 type labRunStats struct {
-	AvgSeconds  float64 `json:"avg_seconds"`
-	BestSeconds int     `json:"best_seconds"`
-	TotalRuns   int     `json:"total_runs"`
+	AvgSeconds     float64 `json:"avg_seconds"`
+	BestSeconds    int     `json:"best_seconds"`
+	AvgKillSeconds float64 `json:"avg_kill_seconds"`
+	BestKillSecs   int     `json:"best_kill_seconds"`
+	TotalRuns      int     `json:"total_runs"`
 }
 
 // ListLabRuns handles GET /api/lab/runs. Returns run history and aggregate
@@ -186,7 +195,7 @@ func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
 		ctx := r.Context()
 
 		// Query runs
-		query := `SELECT id, difficulty, strategy, started_at, elapsed_seconds, room_count, has_golden_door
+		query := `SELECT id, difficulty, strategy, started_at, elapsed_seconds, kill_seconds, room_count, has_golden_door
 			FROM lab_runs WHERE device_id = $1`
 		args := []any{dev.Fingerprint}
 
@@ -210,7 +219,7 @@ func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
 		var runs []labRunResponse
 		for rows.Next() {
 			var run labRunResponse
-			if err := rows.Scan(&run.ID, &run.Difficulty, &run.Strategy, &run.StartedAt, &run.ElapsedSeconds, &run.RoomCount, &run.HasGoldenDoor); err != nil {
+			if err := rows.Scan(&run.ID, &run.Difficulty, &run.Strategy, &run.StartedAt, &run.ElapsedSeconds, &run.KillSeconds, &run.RoomCount, &run.HasGoldenDoor); err != nil {
 				slog.Error("lab runs: scan", "error", err)
 				jsonError(w, http.StatusInternalServerError, "failed to read runs")
 				return
@@ -226,8 +235,15 @@ func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
 			runs = []labRunResponse{}
 		}
 
-		// Compute stats
-		statsQuery := `SELECT COALESCE(AVG(elapsed_seconds), 0), COALESCE(MIN(elapsed_seconds), 0), COUNT(*)
+		// Compute stats — kill_seconds is the competitive metric (Izaro death),
+		// elapsed_seconds is total time (including looting). Use COALESCE for
+		// backwards compat with runs that don't have kill_seconds.
+		statsQuery := `SELECT
+				COALESCE(AVG(elapsed_seconds), 0),
+				COALESCE(MIN(elapsed_seconds), 0),
+				COALESCE(AVG(kill_seconds), 0),
+				COALESCE(MIN(kill_seconds), 0),
+				COUNT(*)
 			FROM lab_runs WHERE device_id = $1`
 		statsArgs := []any{dev.Fingerprint}
 		if difficulty != "" && allowedDifficulties[difficulty] {
@@ -236,13 +252,14 @@ func ListLabRuns(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		var stats labRunStats
-		var avgRaw float64
-		if err := pool.QueryRow(ctx, statsQuery, statsArgs...).Scan(&avgRaw, &stats.BestSeconds, &stats.TotalRuns); err != nil {
+		var avgRaw, avgKillRaw float64
+		if err := pool.QueryRow(ctx, statsQuery, statsArgs...).Scan(&avgRaw, &stats.BestSeconds, &avgKillRaw, &stats.BestKillSecs, &stats.TotalRuns); err != nil {
 			slog.Error("lab runs: stats", "error", err)
 			jsonError(w, http.StatusInternalServerError, "failed to compute stats")
 			return
 		}
 		stats.AvgSeconds = math.Round(avgRaw*10) / 10
+		stats.AvgKillSeconds = math.Round(avgKillRaw*10) / 10
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{

@@ -247,9 +247,11 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 				candidates = matchingRooms.filter((id) => connected.includes(id));
 				if (candidates.length === 0) candidates = matchingRooms;
 			}
-			// Priority 3: first room (entering from plaza)
+			// Priority 3: first room (entering from plaza) — pick the earliest
+			// matching room on the planned route to disambiguate duplicate names.
 			else {
-				candidates = matchingRooms;
+				const firstOnRoute = state.plannedRoute.find((id) => matchingRooms.includes(id));
+				candidates = firstOnRoute ? [firstOnRoute] : matchingRooms;
 			}
 
 			// Priority 4: exclude current room — if we're already in a room with
@@ -416,12 +418,21 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 }
 
 /**
- * If the section has golden doors, check whether the route needs to cross one.
- * If so, split routing into two phases:
- *   1. Route from start → key room (using unlocked adjacency, visiting targets along the way)
- *   2. Route from key room → end (using full adjacency since door is now open)
- * If a path exists that avoids the locked edges entirely (secret passage), no key needed.
- * Returns null if no golden door handling is needed (caller uses normal routing).
+ * Golden door routing rules:
+ *
+ *  1. The golden key room is ALWAYS a mandatory routing target when a golden
+ *     door exists in the section — the key opens the door and gives access
+ *     to the treasure chest at the end.
+ *  2. Exception: if a secret passage (or other alternate path) reaches the
+ *     section end without crossing the golden door, the key is skipped and
+ *     the bypass route is used instead.
+ *  3. When routing through the key, the path is split into two phases:
+ *       Phase 1: start → key room (using unlocked adjacency only)
+ *       Phase 2: key room → end   (using full adjacency, door now open)
+ *  4. If the door room and key room are different, Phase 2 includes the door
+ *     room as a mandatory waypoint so the player backtracks through it.
+ *
+ * Returns null when no golden door exists in the section (caller uses normal routing).
  */
 function routeWithGoldenDoor(
 	state: NavState,
@@ -432,9 +443,11 @@ function routeWithGoldenDoor(
 ): string[] | null {
 	if (state.lockedDoors.length === 0) return null;
 
-	// Find locked doors in this section
+	// Find locked doors in this section. Include endRoom (trial) — a golden
+	// door can connect directly to the trial, and endRoom is not in roomIds.
+	const sectionSet = new Set([...section.roomIds, section.endRoom]);
 	const sectionLocks = state.lockedDoors.filter(
-		([a, b]) => section.roomIds.includes(a) && section.roomIds.includes(b),
+		([a, b]) => sectionSet.has(a) && sectionSet.has(b),
 	);
 	if (sectionLocks.length === 0) return null;
 
