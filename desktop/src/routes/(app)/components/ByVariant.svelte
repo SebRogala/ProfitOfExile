@@ -4,10 +4,14 @@
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
+	let { allPlays = [], league = '', labMode = 'normal' }: { allPlays?: GemPlay[]; league?: string; labMode?: 'normal' | 'dedication' } = $props();
+
+	const isDedication = $derived(labMode === 'dedication');
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	const TABS = ['ALL', ...VARIANTS];
+	const NORMAL_TABS = ['ALL', ...VARIANTS];
+	const DEDICATION_POOLS = ['ALL', 'skill', 'transfigured'];
+	const DEDICATION_POOL_LABELS: Record<string, string> = { ALL: 'ALL', skill: 'Skills', transfigured: 'Transfigured' };
 	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [
 		{ value: '10', label: '10' },
@@ -16,6 +20,7 @@
 	];
 
 	let activeTab = $state('20/20');
+	let activeDedPool = $state('ALL');
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
@@ -23,9 +28,22 @@
 		activeTab === 'ALL' ? VARIANTS : [activeTab]
 	);
 
+	let visibleDedPools = $derived(
+		activeDedPool === 'ALL' ? ['skill', 'transfigured'] : [activeDedPool]
+	);
+
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
 		let filtered = allPlays.filter(g => g.variant === variant);
+		if (activeColor !== 'ALL') {
+			filtered = filtered.filter(g => g.color === activeColor);
+		}
+		return filtered.slice(0, parseInt(itemLimit));
+	}
+
+	function playsForPool(poolType: string): GemPlay[] {
+		// baseName holds "skill" or "transfigured" for Dedication gems.
+		let filtered = allPlays.filter(g => g.baseName === poolType);
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -56,27 +74,51 @@
 			{/each}
 		</div>
 		<div class="tabs">
-			{#each TABS as tab}
-				<button
-					class="tab"
-					class:active={activeTab === tab}
-					onclick={() => { activeTab = tab; }}
-				>
-					{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
-					{tab}
-				</button>
-			{/each}
+			{#if isDedication}
+				{#each DEDICATION_POOLS as pool}
+					<button
+						class="tab"
+						class:active={activeDedPool === pool}
+						onclick={() => { activeDedPool = pool; }}
+					>
+						{#if activeDedPool === pool}<span class="tab-dot">●</span>{/if}
+						{DEDICATION_POOL_LABELS[pool]}
+					</button>
+				{/each}
+			{:else}
+				{#each NORMAL_TABS as tab}
+					<button
+						class="tab"
+						class:active={activeTab === tab}
+						onclick={() => { activeTab = tab; }}
+					>
+						{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
+						{tab}
+					</button>
+				{/each}
+			{/if}
 		</div>
 	</div>
 
-	{#each visibleVariants as variant}
-		{@const vd = playsForVariant(variant)}
-		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} />
-		{:else}
-			<div class="loading">No data for this variant</div>
-		{/if}
-	{/each}
+	{#if isDedication}
+		{#each visibleDedPools as pool}
+			{@const vd = playsForPool(pool)}
+			{#if vd.length > 0}
+				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[pool] || pool})" showVariantColumn={false} {league} />
+			{:else}
+				<div class="loading">No data for this pool</div>
+			{/if}
+		{/each}
+	{:else}
+		{#each visibleVariants as variant}
+			{@const vd = playsForVariant(variant)}
+			{#if vd.length > 0}
+				<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} />
+			{:else}
+				<div class="loading">No data for this variant</div>
+			{/if}
+		{/each}
+	{/if}
 </section>
 
 <style>

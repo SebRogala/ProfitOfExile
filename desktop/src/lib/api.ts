@@ -24,6 +24,7 @@ export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNL
 
 export interface GemPlay {
 	name: string;
+	baseName: string;
 	variant: string;
 	color: 'RED' | 'GREEN' | 'BLUE';
 	roi: number;
@@ -250,6 +251,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 function mapCollectiveRow(r: any): GemPlay {
 	return {
 		name: r.transfiguredName || r.name || '',
+		baseName: r.baseName || '',
 		variant: r.variant || '',
 		color: r.gemColor || '',
 		roi: Math.round(r.roi || 0),
@@ -363,6 +365,7 @@ export async function fetchBestPlays(
 	sort?: 'roi' | 'roiPercent',
 	limit?: number,
 	search?: string,
+	mode?: string,
 ): Promise<GemPlay[]> {
 	const params: Record<string, string> = {};
 	if (variant) params.variant = variant;
@@ -370,6 +373,7 @@ export async function fetchBestPlays(
 	if (sort === 'roiPercent') params.sort = 'pct';
 	if (limit) params.limit = String(limit);
 	if (search) params.search = search;
+	if (mode) params.mode = mode;
 
 	const resp = await get<{ count: number; data: any[] }>('/analysis/collective', params);
 	return (resp.data || []).map(mapCollectiveRow);

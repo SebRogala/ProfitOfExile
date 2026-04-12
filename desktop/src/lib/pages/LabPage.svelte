@@ -46,6 +46,10 @@
 	function handleLabModeChange(mode: LabMode) {
 		labMode = mode;
 		invoke('set_lab_mode', { mode }).catch(e => console.warn('[LabPage] set_lab_mode failed:', e));
+		// Re-fetch rankings for the new mode.
+		fetchBestPlays(undefined, undefined, undefined, 100, undefined, mode === 'Dedication' ? 'dedication' : undefined)
+			.then(bp => { bestPlays = bp; })
+			.catch(e => console.warn('[LabPage] re-fetch bestPlays failed:', e));
 	}
 
 	let status = $state<StatusData | null>(null);
@@ -182,7 +186,7 @@
 			error = '';
 			const [s, bp, mo] = await Promise.all([
 				fetchStatus(),
-				fetchBestPlays(undefined, undefined, undefined, 100),
+				fetchBestPlays(undefined, undefined, undefined, 100, undefined, isDedication ? 'dedication' : undefined),
 				fetchMarketOverview(),
 			]);
 			status = s;
@@ -300,7 +304,7 @@
 			/>
 		</div>
 		{#if activeTab === 'Rankings'}
-			<ByVariant allPlays={bestPlays} league={status?.league || ''} />
+			<ByVariant allPlays={bestPlays} league={status?.league || ''} labMode={labModeForChild} />
 		{:else if activeTab === 'Font EV'}
 			<FontEVCompare {refreshKey} league={status?.league || ''} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
 		{:else if activeTab === 'Market'}
