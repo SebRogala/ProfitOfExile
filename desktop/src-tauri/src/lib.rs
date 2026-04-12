@@ -1,6 +1,5 @@
 mod capture;
 mod fingerprint;
-#[allow(dead_code)] // Font panel OCR — not yet wired into the scan pipeline
 mod font_parser;
 mod gem_matcher;
 mod lab_navigation;
@@ -136,6 +135,9 @@ pub struct AppState {
     pub shrine_warn_corner: Mutex<String>,
     pub shrine_warn_on_take: Mutex<String>,
     pub lab_overlays_enabled: Mutex<bool>,
+    /// Lab mode: "Normal" or "Dedication". Controls OCR vocabulary, font session
+    /// metadata, and comparator behaviour. Persisted to settings.
+    pub lab_mode: Mutex<String>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -1169,6 +1171,20 @@ fn set_lab_overlays_enabled(enabled: bool, app: AppHandle) {
 }
 
 #[tauri::command]
+fn get_lab_mode(app: AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let val = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    val
+}
+
+#[tauri::command]
+fn set_lab_mode(mode: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    persist_settings(&app);
+}
+
+#[tauri::command]
 fn get_logs(state: tauri::State<AppState>) -> Vec<String> {
     state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -1290,7 +1306,8 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
 
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let http = state.server_http.clone();
-    let gem_names = fetch_gem_names(&app, &server, &http).await;
+    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let gem_names = fetch_gem_names(&app, &server, &http, &lab_mode).await;
     let matcher = gem_matcher::GemMatcher::new(gem_names);
 
     let mut best_match: Option<gem_matcher::GemMatch> = None;
@@ -1341,7 +1358,8 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     // Load gem names for matching — abort early if server unreachable.
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let http = state.server_http.clone();
-    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server, &http));
+    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server, &http, &lab_mode));
     if gem_names.is_empty() {
         app_log(&app, "Gem scan aborted — no gem names loaded (server unreachable?)".to_string());
         if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
@@ -1647,13 +1665,21 @@ fn send_font_session_data(app: &AppHandle) {
 
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
     let device_id = state.device_id.clone();
 
+    // Map lab mode to session metadata.
+    let (lab_type, variant) = if lab_mode == "Dedication" {
+        ("Dedication", "21/23")
+    } else {
+        ("Unknown", "20/20")
+    };
+
     let session_data = serde_json::json!({
-        "lab_type": "Unknown",
+        "lab_type": lab_type,
         "total_crafts": session.rounds.len(),
-        "variant": "20/20",
+        "variant": variant,
         "device_id": device_id,
         "pair_code": pair,
         "rounds": session.rounds.iter().map(|r| serde_json::json!({
@@ -1690,34 +1716,86 @@ fn send_font_session_data(app: &AppHandle) {
 }
 
 /// Fetch gem names from the server API for fuzzy matching.
-async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Client) -> Vec<String> {
-    let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
-    match client.get(&url).send().await {
-        Ok(res) if res.status().is_success() => {
-            match res.json::<serde_json::Value>().await {
-                Ok(body) => {
-                    if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
-                        return names
-                            .iter()
-                            .filter_map(|n| n.as_str().map(String::from))
-                            .collect();
+///
+/// In Normal mode: fetches transfigured gem names (contain "of").
+/// In Dedication mode: fetches BOTH corrupted skill gem names AND corrupted
+/// transfigured gem names, merged into a single vocabulary for the matcher
+/// (both font options are available per run).
+async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Client, lab_mode: &str) -> Vec<String> {
+    if lab_mode == "Dedication" {
+        // Fetch both pools in parallel and merge.
+        let url_skills = format!("{}/api/analysis/gems/names?q=+&limit=500&corrupted=true&transfigured=false", server_url);
+        let url_transfig = format!("{}/api/analysis/gems/names?q=+&limit=500&corrupted=true&transfigured=true", server_url);
+
+        let (skills_res, transfig_res) = tokio::join!(
+            client.get(&url_skills).send(),
+            client.get(&url_transfig).send(),
+        );
+
+        let mut all_names = Vec::new();
+        for (label, res) in [("skills", skills_res), ("transfigured", transfig_res)] {
+            match res {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(body) => {
+                            if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
+                                let count = names.len();
+                                for n in names {
+                                    if let Some(s) = n.as_str() {
+                                        all_names.push(s.to_string());
+                                    }
+                                }
+                                app_log(app, format!("Dedication gem names ({}): {} loaded", label, count));
+                            }
+                        }
+                        Err(e) => {
+                            app_log(app, format!("Dedication gem names ({}): parse failed: {}", label, e));
+                        }
                     }
-                    app_log(app, "Gem names: response missing 'names' field".to_string());
-                    Vec::new()
+                }
+                Ok(resp) => {
+                    app_log(app, format!("Dedication gem names ({}): server returned {}", label, resp.status()));
                 }
                 Err(e) => {
-                    app_log(app, format!("Gem names: failed to parse response: {}", e));
-                    Vec::new()
+                    app_log(app, format!("Dedication gem names ({}): request failed: {}", label, e));
                 }
             }
         }
-        Ok(res) => {
-            app_log(app, format!("Gem names: server returned {}", res.status()));
-            Vec::new()
-        }
-        Err(e) => {
-            app_log(app, format!("Gem names: request failed: {}", e));
-            Vec::new()
+
+        // Deduplicate (transfigured names are a subset of all corrupted gems).
+        all_names.sort();
+        all_names.dedup();
+        all_names
+    } else {
+        // Normal mode: transfigured gem names only.
+        let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
+        match client.get(&url).send().await {
+            Ok(res) if res.status().is_success() => {
+                match res.json::<serde_json::Value>().await {
+                    Ok(body) => {
+                        if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
+                            return names
+                                .iter()
+                                .filter_map(|n| n.as_str().map(String::from))
+                                .collect();
+                        }
+                        app_log(app, "Gem names: response missing 'names' field".to_string());
+                        Vec::new()
+                    }
+                    Err(e) => {
+                        app_log(app, format!("Gem names: failed to parse response: {}", e));
+                        Vec::new()
+                    }
+                }
+            }
+            Ok(res) => {
+                app_log(app, format!("Gem names: server returned {}", res.status()));
+                Vec::new()
+            }
+            Err(e) => {
+                app_log(app, format!("Gem names: request failed: {}", e));
+                Vec::new()
+            }
         }
     }
 }
@@ -2166,6 +2244,7 @@ pub fn run() {
         shrine_warn_corner: Mutex::new(String::from("bottom-right")),
         shrine_warn_on_take: Mutex::new(String::from("green")),
         lab_overlays_enabled: Mutex::new(true),
+        lab_mode: Mutex::new(String::from("Normal")),
     };
 
     tauri::Builder::default()
@@ -2227,6 +2306,8 @@ pub fn run() {
             set_compass_strategy,
             set_compass_difficulty,
             set_shrine_warn,
+            get_lab_mode,
+            set_lab_mode,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
