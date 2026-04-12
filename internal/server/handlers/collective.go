@@ -284,7 +284,8 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 }
 
 // CompareAnalysis returns side-by-side comparison of 1-5 specific gems.
-// Query params: gems (comma-separated, required, max 5), variant (optional).
+// Query params: gems (comma-separated, required, max 5), variant (optional),
+// mode (optional: "dedication" for corrupted 21/23c pool scoring).
 // tradeCache may be nil — trade enrichment is skipped when unavailable.
 func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +319,14 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": "at least one gem name is required"})
+			return
+		}
+
+		mode := r.URL.Query().Get("mode")
+
+		// Dedication mode: score gems against the corrupted 21/23c pool.
+		if mode == "dedication" {
+			serveDedicationCompare(w, r, repo, cache, names)
 			return
 		}
 
@@ -379,92 +388,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant)
 
-		type row struct {
-			TransfiguredName     string              `json:"transfiguredName"`
-			BaseName             string              `json:"baseName"`
-			Variant              string              `json:"variant"`
-			GemColor             string              `json:"gemColor"`
-			ROI                  float64             `json:"roi"`
-			ROIPct               float64             `json:"roiPct"`
-			BasePrice            float64             `json:"basePrice"`
-			TransfiguredPrice    float64             `json:"transfiguredPrice"`
-			Confidence           string              `json:"confidence"`
-			Signal               string              `json:"signal"`
-			CV                   float64             `json:"cv"`
-			PriceVelocity        float64             `json:"priceVelocity"`
-			ListingVelocity      float64             `json:"listingVelocity"`
-			HistPosition         float64             `json:"histPosition"`
-			Sparkline            []lab.SparklinePoint `json:"sparkline"`
-			Recommendation       string              `json:"recommendation"`
-			SellUrgency          string              `json:"sellUrgency"`
-			SellReason           string              `json:"sellReason"`
-			Sellability          int                 `json:"sellability"`
-			SellabilityLabel     string              `json:"sellabilityLabel"`
-			PriceTier            string              `json:"priceTier"`
-			TierAction           string              `json:"tierAction"`
-			WindowSignal         string              `json:"windowSignal"`
-			BaseListings         int                 `json:"baseListings"`
-			LiquidityTier        string              `json:"liquidityTier"`
-			TransListings        int                 `json:"transListings"`
-			TransfiguredListings int                 `json:"transfiguredListings"`
-			WeightedROI          float64             `json:"weightedRoi"`
-			Low7Days                float64             `json:"low7d"`
-			High7Days               float64             `json:"high7d"`
-			SellConfidence       string              `json:"sellConfidence"`
-			SellConfidenceReason string              `json:"sellConfidenceReason"`
-			QuickSellPrice       float64             `json:"quickSellPrice"`
-			RiskAdjustedPrice    float64             `json:"riskAdjustedPrice"`
-			Trade                *trade.TradeLookupResult `json:"trade,omitempty"`
-		}
-
-		rows := make([]row, 0, len(results))
-		for _, cr := range results {
-			rw := row{
-				TransfiguredName:     cr.TransfiguredName,
-				BaseName:             cr.BaseName,
-				Variant:              cr.Variant,
-				GemColor:             cr.GemColor,
-				ROI:                  cr.ROI,
-				ROIPct:               cr.ROIPct,
-				BasePrice:            cr.BasePrice,
-				TransfiguredPrice:    cr.TransfiguredPrice,
-				Confidence:           cr.Confidence,
-				Signal:               cr.Signal,
-				CV:                   cr.CV,
-				PriceVelocity:        cr.PriceVelocity,
-				ListingVelocity:      cr.ListingVelocity,
-				HistPosition:         cr.HistPosition,
-				Sparkline:            cr.Sparkline,
-				Recommendation:       cr.Recommendation,
-				SellUrgency:          cr.SellUrgency,
-				SellReason:           cr.SellReason,
-				Sellability:          cr.Sellability,
-				SellabilityLabel:     cr.SellabilityLabel,
-				PriceTier:            cr.PriceTier,
-				TierAction:           cr.TierAction,
-				WindowSignal:         cr.WindowSignal,
-				BaseListings:         cr.BaseListings,
-				LiquidityTier:        cr.LiquidityTier,
-				TransListings:        cr.TransListings,
-				TransfiguredListings: cr.TransListings,
-				WeightedROI:          cr.WeightedROI,
-				Low7Days:                cr.Low7Days,
-				High7Days:               cr.High7Days,
-				SellConfidence:       cr.SellConfidence,
-				SellConfidenceReason: cr.SellConfidenceReason,
-				QuickSellPrice:       cr.QuickSellPrice,
-				RiskAdjustedPrice:    cr.RiskAdjustedPrice,
-			}
-
-			// Enrich with cached trade data when available.
-			if tradeCache != nil {
-				if tradeResult, ok := tradeCache.Get(trade.CacheKey(cr.TransfiguredName, cr.Variant)); ok {
-					rw.Trade = tradeResult
-				}
-			}
-
-			rows = append(rows, rw)
-		}
+		rows := buildCompareRows(results, tradeCache)
 
 		resp := map[string]any{
 			"count": len(rows),
@@ -479,6 +403,166 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			slog.Error("compare analysis: encode response", "error", err)
 		}
 	}
+}
+
+// serveDedicationCompare handles the Dedication lab compare path.
+// Queries corrupted 21/23c gem prices, loads Dedication analysis for input costs,
+// and auto-detects pool (skill vs transfigured) from gem names.
+func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, names []string) {
+	// Load corrupted gem prices for the requested names.
+	gemPrices, err := repo.CorruptedGemPricesByNames(r.Context(), names)
+	if err != nil {
+		slog.Error("compare analysis (dedication): corrupted gem prices query failed", "error", err)
+		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Load Dedication analysis results for input cost context.
+	// Fast path: cache.
+	var dedicationResults []lab.DedicationResult
+	if cache != nil {
+		ded := cache.Dedication()
+		dedicationResults = append(dedicationResults, ded.Skills...)
+		dedicationResults = append(dedicationResults, ded.Transfigured...)
+	}
+
+	// Slow path: fall back to DB if cache is empty.
+	if len(dedicationResults) == 0 {
+		skills, err := repo.LatestDedicationResults(r.Context(), "skill", "", 100)
+		if err != nil {
+			slog.Error("compare analysis (dedication): dedication skills query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		trans, err := repo.LatestDedicationResults(r.Context(), "transfigured", "", 100)
+		if err != nil {
+			slog.Error("compare analysis (dedication): dedication transfigured query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		dedicationResults = append(skills, trans...)
+	}
+
+	// Load sparkline data for corrupted gems (last 12 hours).
+	var warnings []string
+	sparklines, err := repo.SparklineDataCorrupted(r.Context(), names, "21/23c", 12)
+	if err != nil {
+		slog.Error("compare analysis (dedication): sparkline query failed", "error", err)
+		sparklines = make(map[string][]lab.SparklinePoint)
+		warnings = append(warnings, "Sparkline data temporarily unavailable")
+	}
+
+	results := lab.BuildDedicationCompareResults(names, gemPrices, dedicationResults, sparklines)
+
+	rows := buildCompareRows(results, nil) // no trade enrichment for Dedication mode
+
+	resp := map[string]any{
+		"count": len(rows),
+		"data":  rows,
+		"mode":  "dedication",
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("compare analysis (dedication): encode response", "error", err)
+	}
+}
+
+// compareRow is the JSON response shape for the compare endpoint (shared between
+// normal and dedication modes).
+type compareRow struct {
+	TransfiguredName     string              `json:"transfiguredName"`
+	BaseName             string              `json:"baseName"`
+	Variant              string              `json:"variant"`
+	GemColor             string              `json:"gemColor"`
+	ROI                  float64             `json:"roi"`
+	ROIPct               float64             `json:"roiPct"`
+	BasePrice            float64             `json:"basePrice"`
+	TransfiguredPrice    float64             `json:"transfiguredPrice"`
+	Confidence           string              `json:"confidence"`
+	Signal               string              `json:"signal"`
+	CV                   float64             `json:"cv"`
+	PriceVelocity        float64             `json:"priceVelocity"`
+	ListingVelocity      float64             `json:"listingVelocity"`
+	HistPosition         float64             `json:"histPosition"`
+	Sparkline            []lab.SparklinePoint `json:"sparkline"`
+	Recommendation       string              `json:"recommendation"`
+	SellUrgency          string              `json:"sellUrgency"`
+	SellReason           string              `json:"sellReason"`
+	Sellability          int                 `json:"sellability"`
+	SellabilityLabel     string              `json:"sellabilityLabel"`
+	PriceTier            string              `json:"priceTier"`
+	TierAction           string              `json:"tierAction"`
+	WindowSignal         string              `json:"windowSignal"`
+	BaseListings         int                 `json:"baseListings"`
+	LiquidityTier        string              `json:"liquidityTier"`
+	TransListings        int                 `json:"transListings"`
+	TransfiguredListings int                 `json:"transfiguredListings"`
+	WeightedROI          float64             `json:"weightedRoi"`
+	Low7Days             float64             `json:"low7d"`
+	High7Days            float64             `json:"high7d"`
+	SellConfidence       string              `json:"sellConfidence"`
+	SellConfidenceReason string              `json:"sellConfidenceReason"`
+	QuickSellPrice       float64             `json:"quickSellPrice"`
+	RiskAdjustedPrice    float64             `json:"riskAdjustedPrice"`
+	Trade                *trade.TradeLookupResult `json:"trade,omitempty"`
+}
+
+// buildCompareRows converts CompareResult slices into the JSON-serializable row format.
+// tradeCache may be nil — trade enrichment is skipped when unavailable.
+func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache) []compareRow {
+	rows := make([]compareRow, 0, len(results))
+	for _, cr := range results {
+		rw := compareRow{
+			TransfiguredName:     cr.TransfiguredName,
+			BaseName:             cr.BaseName,
+			Variant:              cr.Variant,
+			GemColor:             cr.GemColor,
+			ROI:                  cr.ROI,
+			ROIPct:               cr.ROIPct,
+			BasePrice:            cr.BasePrice,
+			TransfiguredPrice:    cr.TransfiguredPrice,
+			Confidence:           cr.Confidence,
+			Signal:               cr.Signal,
+			CV:                   cr.CV,
+			PriceVelocity:        cr.PriceVelocity,
+			ListingVelocity:      cr.ListingVelocity,
+			HistPosition:         cr.HistPosition,
+			Sparkline:            cr.Sparkline,
+			Recommendation:       cr.Recommendation,
+			SellUrgency:          cr.SellUrgency,
+			SellReason:           cr.SellReason,
+			Sellability:          cr.Sellability,
+			SellabilityLabel:     cr.SellabilityLabel,
+			PriceTier:            cr.PriceTier,
+			TierAction:           cr.TierAction,
+			WindowSignal:         cr.WindowSignal,
+			BaseListings:         cr.BaseListings,
+			LiquidityTier:        cr.LiquidityTier,
+			TransListings:        cr.TransListings,
+			TransfiguredListings: cr.TransListings,
+			WeightedROI:          cr.WeightedROI,
+			Low7Days:             cr.Low7Days,
+			High7Days:            cr.High7Days,
+			SellConfidence:       cr.SellConfidence,
+			SellConfidenceReason: cr.SellConfidenceReason,
+			QuickSellPrice:       cr.QuickSellPrice,
+			RiskAdjustedPrice:    cr.RiskAdjustedPrice,
+		}
+
+		// Enrich with cached trade data when available.
+		if tradeCache != nil {
+			if tradeResult, ok := tradeCache.Get(trade.CacheKey(cr.TransfiguredName, cr.Variant)); ok {
+				rw.Trade = tradeResult
+			}
+		}
+
+		rows = append(rows, rw)
+	}
+	return rows
 }
 
 // GemNamesAutocomplete returns distinct transfigured gem names matching a query.
