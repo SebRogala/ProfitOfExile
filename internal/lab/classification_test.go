@@ -322,3 +322,215 @@ func TestComputeGemClassification_Integration(t *testing.T) {
 		}
 	}
 }
+
+// --- Dedication Classification Tests ---
+
+func TestComputeDedicationClassification_SkillPool(t *testing.T) {
+	// Build a pool of corrupted non-transfigured 21/23c skill gems.
+	gems := []GemPrice{
+		{Name: "Expensive Gem", Variant: "21/23c", Chaos: 1500, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "High Gem", Variant: "21/23c", Chaos: 800, Listings: 50, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Mid Gem 1", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Mid Gem 2", Variant: "21/23c", Chaos: 250, Listings: 55, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Mid Gem 3", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Low Gem 1", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Low Gem 2", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Floor Gem 1", Variant: "21/23c", Chaos: 20, Listings: 100, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Floor Gem 2", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+	}
+
+	cls := ComputeDedicationClassification(gems, false)
+
+	// All gems that pass isDedicationGem + are not transfigured + chaos > 5 should be classified.
+	for _, g := range gems {
+		if g.Chaos <= 5 {
+			continue
+		}
+		key := GemClassificationKey{g.Name, g.Variant}
+		if _, ok := cls.Gems[key]; !ok {
+			t.Errorf("gem %s missing from Dedication classification", g.Name)
+		}
+	}
+
+	// Boundaries should exist for "21/23c" variant.
+	if _, ok := cls.Boundaries["21/23c"]; !ok {
+		t.Error("expected Boundaries for 21/23c variant")
+	}
+}
+
+func TestComputeDedicationClassification_TransfiguredPool(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Trans Expensive", Variant: "21/23c", Chaos: 1200, Listings: 35, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Trans High", Variant: "21/23c", Chaos: 600, Listings: 45, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Trans Mid", Variant: "21/23c", Chaos: 200, Listings: 55, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Trans Low 1", Variant: "21/23c", Chaos: 80, Listings: 70, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Trans Low 2", Variant: "21/23c", Chaos: 50, Listings: 85, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
+		{Name: "Trans Floor", Variant: "21/23c", Chaos: 10, Listings: 100, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
+	}
+
+	cls := ComputeDedicationClassification(gems, true)
+
+	for _, g := range gems {
+		if g.Chaos <= 5 {
+			continue
+		}
+		key := GemClassificationKey{g.Name, g.Variant}
+		gc, ok := cls.Gems[key]
+		if !ok {
+			t.Errorf("gem %s missing from Dedication transfigured classification", g.Name)
+			continue
+		}
+		// Every classified gem should have a non-empty tier.
+		if gc.Tier == "" {
+			t.Errorf("gem %s has empty tier", g.Name)
+		}
+	}
+}
+
+func TestComputeDedicationClassification_ExcludesNonCorrupted(t *testing.T) {
+	gems := []GemPrice{
+		// Non-corrupted gem should be excluded by isDedicationGem.
+		{Name: "Non Corrupted", Variant: "21/23c", Chaos: 500, Listings: 50, IsCorrupted: false, IsTransfigured: false, GemColor: "RED"},
+		// Valid dedication gem.
+		{Name: "Valid Gem 1", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Valid Gem 2", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Valid Gem 3", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Valid Gem 4", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+	}
+
+	cls := ComputeDedicationClassification(gems, false)
+
+	// Non-corrupted gem should NOT be in classification.
+	key := GemClassificationKey{"Non Corrupted", "21/23c"}
+	if _, ok := cls.Gems[key]; ok {
+		t.Error("non-corrupted gem should not be in Dedication classification")
+	}
+}
+
+func TestComputeDedicationClassification_ExcludesSupports(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Lifetap Support", Variant: "21/23c", Chaos: 500, Listings: 50, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Empower Support", Variant: "21/23c", Chaos: 800, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Arc", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Fireball", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Cleave", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Slam", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+	}
+
+	cls := ComputeDedicationClassification(gems, false)
+
+	// Support gems should NOT be in classification.
+	for _, name := range []string{"Lifetap Support", "Empower Support"} {
+		key := GemClassificationKey{name, "21/23c"}
+		if _, ok := cls.Gems[key]; ok {
+			t.Errorf("support gem %q should not be in Dedication classification", name)
+		}
+	}
+
+	// Skill gems should be in classification.
+	for _, name := range []string{"Arc", "Fireball", "Cleave"} {
+		key := GemClassificationKey{name, "21/23c"}
+		if _, ok := cls.Gems[key]; !ok {
+			t.Errorf("skill gem %q should be in Dedication classification", name)
+		}
+	}
+}
+
+func TestComputeDedicationClassification_ExcludesTrarthus(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Trarthus Ire", Variant: "21/23c", Chaos: 5000, Listings: 30, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Arc", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Fireball", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Cleave", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Slam", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+	}
+
+	cls := ComputeDedicationClassification(gems, false)
+
+	key := GemClassificationKey{"Trarthus Ire", "21/23c"}
+	if _, ok := cls.Gems[key]; ok {
+		t.Error("Trarthus should not be in Dedication classification")
+	}
+}
+
+func TestComputeDedicationClassification_PoolIsolation(t *testing.T) {
+	// Both skill and transfigured gems present. Classification for skills
+	// should NOT include transfigured gems and vice versa.
+	gems := []GemPrice{
+		// Skills
+		{Name: "Arc", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Fireball", Variant: "21/23c", Chaos: 200, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Cleave", Variant: "21/23c", Chaos: 100, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Slam", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		// Transfigured
+		{Name: "Arc of Surging", Variant: "21/23c", Chaos: 800, Listings: 35, IsCorrupted: true, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Fireball of Volatility", Variant: "21/23c", Chaos: 600, Listings: 45, IsCorrupted: true, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Cleave of Rage", Variant: "21/23c", Chaos: 400, Listings: 55, IsCorrupted: true, IsTransfigured: true, GemColor: "RED"},
+		{Name: "Slam of Magnitude", Variant: "21/23c", Chaos: 250, Listings: 65, IsCorrupted: true, IsTransfigured: true, GemColor: "RED"},
+	}
+
+	skillCls := ComputeDedicationClassification(gems, false)
+	transCls := ComputeDedicationClassification(gems, true)
+
+	// Skills classification should contain only non-transfigured gems.
+	for _, name := range []string{"Arc of Surging", "Fireball of Volatility", "Cleave of Rage", "Slam of Magnitude"} {
+		key := GemClassificationKey{name, "21/23c"}
+		if _, ok := skillCls.Gems[key]; ok {
+			t.Errorf("transfigured gem %q should not be in skills classification", name)
+		}
+	}
+
+	// Transfigured classification should contain only transfigured gems.
+	for _, name := range []string{"Arc", "Fireball", "Cleave"} {
+		key := GemClassificationKey{name, "21/23c"}
+		if _, ok := transCls.Gems[key]; ok {
+			t.Errorf("non-transfigured gem %q should not be in transfigured classification", name)
+		}
+	}
+}
+
+func TestComputeDedicationClassification_TierDistribution(t *testing.T) {
+	// Create a pool with clear tier separation.
+	gems := []GemPrice{
+		{Name: "Top 1", Variant: "21/23c", Chaos: 3000, Listings: 40, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Top 2", Variant: "21/23c", Chaos: 2500, Listings: 35, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "High 1", Variant: "21/23c", Chaos: 800, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "High 2", Variant: "21/23c", Chaos: 700, Listings: 55, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Mid 1", Variant: "21/23c", Chaos: 300, Listings: 70, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Mid 2", Variant: "21/23c", Chaos: 250, Listings: 65, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Mid 3", Variant: "21/23c", Chaos: 200, Listings: 80, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Low 1", Variant: "21/23c", Chaos: 100, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Low 2", Variant: "21/23c", Chaos: 80, Listings: 85, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Floor 1", Variant: "21/23c", Chaos: 20, Listings: 100, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Floor 2", Variant: "21/23c", Chaos: 15, Listings: 110, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+		{Name: "Floor 3", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
+	}
+
+	cls := ComputeDedicationClassification(gems, false)
+
+	// Verify valid tiers are assigned.
+	validTiers := map[string]bool{
+		"TOP": true, "HIGH": true, "MID-HIGH": true,
+		"MID": true, "LOW": true, "FLOOR": true, "CHAOTIC": true,
+	}
+	tierCounts := make(map[string]int)
+	for _, g := range gems {
+		if g.Chaos <= 5 {
+			continue
+		}
+		key := GemClassificationKey{g.Name, g.Variant}
+		gc, ok := cls.Gems[key]
+		if !ok {
+			continue
+		}
+		if !validTiers[gc.Tier] {
+			t.Errorf("gem %s has invalid tier %q", g.Name, gc.Tier)
+		}
+		tierCounts[gc.Tier]++
+	}
+
+	// With 12 gems and clear price gaps, we should have at least 2 distinct tiers.
+	if len(tierCounts) < 2 {
+		t.Errorf("expected at least 2 distinct tiers, got %d: %v", len(tierCounts), tierCounts)
+	}
+}
