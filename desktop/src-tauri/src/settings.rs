@@ -46,6 +46,14 @@ pub struct Settings {
     pub timer_bg_opacity: Option<f32>,
     /// Timer overlay text stroke/outline enabled (default true).
     pub timer_text_stroke: Option<bool>,
+    /// Lab mode: "Normal" (default) or "Dedication".
+    /// Controls OCR vocabulary, font session metadata, and comparator behaviour.
+    #[serde(default = "default_lab_mode")]
+    pub lab_mode: String,
+}
+
+fn default_lab_mode() -> String {
+    "Normal".to_string()
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -97,6 +105,7 @@ impl Default for Settings {
             shrine_warn_on_take: String::from("green"),
             timer_bg_opacity: None,
             timer_text_stroke: None,
+            lab_mode: default_lab_mode(),
         }
     }
 }
@@ -196,6 +205,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         shrine_warn_on_take: state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         timer_bg_opacity: None,    // Appearance settings saved separately, not from AppState
         timer_text_stroke: None,   // Appearance settings saved separately, not from AppState
+        lab_mode: state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -305,4 +315,5 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.shrine_warn_corner.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_corner.clone();
     *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_on_take.clone();
     *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_overlays_enabled;
+    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_mode.clone();
 }

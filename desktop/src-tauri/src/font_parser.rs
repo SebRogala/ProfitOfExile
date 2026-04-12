@@ -137,6 +137,7 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
 
     // Dedication: corrupted transfigured reroll
     if full_lower.contains("corrupted transfigured") {
+        font_active = true;
         options.push(CraftOption {
             option_type: "corrupted_transfigured_reroll".to_string(),
             text: find_line_containing(lines, "Corrupted Transfigured").unwrap_or_default(),
@@ -144,13 +145,28 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
         });
     }
 
-    // Dedication: corrupted skill gem reroll
-    if full_lower.contains("corrupted skill gem") && !full_lower.contains("transfigured") {
-        options.push(CraftOption {
-            option_type: "corrupted_gem_reroll".to_string(),
-            text: find_line_containing(lines, "Corrupted Skill Gem").unwrap_or_default(),
-            value: None,
+    // Dedication: corrupted skill gem reroll (non-transfigured pool).
+    // Check line-by-line: match lines containing "corrupted skill gem" but NOT "transfigured",
+    // so it works even when the transfigured option is present in the same panel.
+    {
+        let has_non_transfig_reroll = lines.iter().any(|line| {
+            let lower = line.to_lowercase();
+            lower.contains("corrupted skill gem") && !lower.contains("transfigured")
         });
+        if has_non_transfig_reroll {
+            font_active = true;
+            options.push(CraftOption {
+                option_type: "corrupted_gem_reroll".to_string(),
+                text: lines.iter()
+                    .find(|l| {
+                        let lower = l.to_lowercase();
+                        lower.contains("corrupted skill gem") && !lower.contains("transfigured")
+                    })
+                    .cloned()
+                    .unwrap_or_default(),
+                value: None,
+            });
+        }
     }
 
     // Crafts Remaining: N
@@ -414,6 +430,52 @@ mod tests {
         assert!(state.font_active);
         assert_eq!(state.options.len(), 4);
         assert_eq!(state.crafts_remaining, Some(6));
+    }
+
+    #[test]
+    fn detects_corrupted_gem_reroll() {
+        let lines = vec![
+            "Transform a Corrupted Skill Gem into a".to_string(),
+            "random Corrupted Skill Gem of the same colour".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.font_active);
+        assert_eq!(state.options.len(), 1);
+        assert_eq!(state.options[0].option_type, "corrupted_gem_reroll");
+    }
+
+    #[test]
+    fn detects_corrupted_transfigured_reroll() {
+        let lines = vec![
+            "Transform a Corrupted Transfigured Skill Gem".to_string(),
+            "into a random Corrupted Transfigured Skill Gem".to_string(),
+            "of the same colour".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.font_active);
+        assert_eq!(state.options.len(), 1);
+        assert_eq!(state.options[0].option_type, "corrupted_transfigured_reroll");
+    }
+
+    #[test]
+    fn detects_both_dedication_options() {
+        // Both options can appear in the same Dedication font panel.
+        let lines = vec![
+            "Transform a Corrupted Skill Gem into a random".to_string(),
+            "Corrupted Skill Gem of the same colour".to_string(),
+            "Transform a Corrupted Transfigured Skill Gem".to_string(),
+            "into a random Corrupted Transfigured Skill Gem".to_string(),
+            "of the same colour".to_string(),
+            "Crafts Remaining: 3".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.font_active);
+        assert_eq!(state.crafts_remaining, Some(3));
+        // Both options detected — line-level check prevents the "transfigured" guard
+        // from suppressing the non-transfigured option when both are present.
+        let types: Vec<&str> = state.options.iter().map(|o| o.option_type.as_str()).collect();
+        assert!(types.contains(&"corrupted_transfigured_reroll"));
+        assert!(types.contains(&"corrupted_gem_reroll"));
     }
 
     #[test]
