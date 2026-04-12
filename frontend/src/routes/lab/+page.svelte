@@ -197,6 +197,12 @@
 	{#if isDedication}
 		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
+		<SessionQueue
+			queue={sessionQueue}
+			onRemove={handleRemoveFromQueue}
+			onClear={handleClearQueue}
+			onRefresh={handleRefreshQueue}
+		/>
 	{:else if !loading}
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
 
