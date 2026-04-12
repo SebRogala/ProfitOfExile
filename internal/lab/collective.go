@@ -435,6 +435,101 @@ func BuildCompareResults(
 // transfigured) is auto-detected from the gem name: names containing " of " are
 // transfigured, others are non-transfigured skills.
 // dedicationResults provides per-color input costs and pool context.
+// RankDedicationCollective returns corrupted 21/23 gems ranked by price for the
+// Dedication lab rankings table. Maps gems into CollectiveResult shape so the
+// existing ByVariant/BestPlays frontend components can render them.
+func RankDedicationCollective(
+	gems []GemPrice,
+	dedicationResults []DedicationResult,
+	limit int,
+	searchName string,
+) []CollectiveResult {
+	// Index Dedication results by (color, gemType) for input cost + tier lookup.
+	type dedKey struct{ color, gemType string }
+	inputCosts := make(map[dedKey]float64)
+	for _, dr := range dedicationResults {
+		k := dedKey{dr.Color, dr.GemType}
+		if _, exists := inputCosts[k]; !exists {
+			inputCosts[k] = dr.InputCost
+		}
+	}
+
+	// Filter to corrupted 21/23c skill gems (no supports, no Trarthus).
+	var pool []GemPrice
+	for _, g := range gems {
+		if !isDedicationGem(g) {
+			continue
+		}
+		if g.Variant != "21/23c" {
+			continue
+		}
+		pool = append(pool, g)
+	}
+
+	// Sort by price descending.
+	sort.Slice(pool, func(i, j int) bool {
+		return pool[i].Chaos > pool[j].Chaos
+	})
+
+	// Optional name search filter.
+	if searchName != "" {
+		q := strings.ToLower(searchName)
+		var matched []GemPrice
+		for _, g := range pool {
+			if strings.Contains(strings.ToLower(g.Name), q) {
+				matched = append(matched, g)
+			}
+		}
+		pool = matched
+	}
+
+	if limit > 0 && len(pool) > limit {
+		pool = pool[:limit]
+	}
+
+	results := make([]CollectiveResult, 0, len(pool))
+	for _, g := range pool {
+		gemType := "skill"
+		if g.IsTransfigured {
+			gemType = "transfigured"
+		}
+
+		inputCost := inputCosts[dedKey{g.GemColor, gemType}]
+		roi := g.Chaos - inputCost
+
+		cr := CollectiveResult{
+			TransfiguredName:     g.Name,
+			BaseName:             gemType,
+			Variant:              "21/23",
+			GemColor:             g.GemColor,
+			TransfiguredPrice:    g.Chaos,
+			TransfiguredListings: g.Listings,
+			BasePrice:            inputCost,
+			ROI:                  roi,
+		}
+		if inputCost > 0 {
+			cr.ROIPct = (roi / inputCost) * 100
+		}
+
+		// Confidence based on listings.
+		switch {
+		case g.Listings >= 5:
+			cr.Confidence = "OK"
+		case g.Listings >= 2:
+			cr.SellConfidence = "FAIR"
+			cr.Confidence = "LOW"
+		default:
+			cr.SellConfidence = "RISKY"
+			cr.Confidence = "LOW"
+			cr.LowConfidence = true
+		}
+
+		results = append(results, cr)
+	}
+
+	return results
+}
+
 func BuildDedicationCompareResults(
 	names []string,
 	gemPrices []GemPrice,

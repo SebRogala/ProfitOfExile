@@ -11,11 +11,59 @@ import (
 	"profitofexile/internal/trade"
 )
 
+// collectiveRow is the JSON response shape for the collective endpoint.
+// Used by both Normal and Dedication modes.
+type collectiveRow struct {
+	TransfiguredName     string               `json:"transfiguredName"`
+	BaseName             string               `json:"baseName"`
+	Variant              string               `json:"variant"`
+	GemColor             string               `json:"gemColor"`
+	ROI                  float64              `json:"roi"`
+	ROIPct               float64              `json:"roiPct"`
+	WeightedROI          float64              `json:"weightedRoi"`
+	WeightedROIPct       float64              `json:"weightedRoiPct"`
+	BasePrice            float64              `json:"basePrice"`
+	TransfiguredPrice    float64              `json:"transfiguredPrice"`
+	BaseListings         int                  `json:"baseListings"`
+	TransfiguredListings int                  `json:"transfiguredListings"`
+	Confidence           string               `json:"confidence"`
+	Signal               string               `json:"signal"`
+	PriceVelocity        float64              `json:"priceVelocity"`
+	ListingVelocity      float64              `json:"listingVelocity"`
+	CV                   float64              `json:"cv"`
+	HistPosition         float64              `json:"histPosition"`
+	WindowSignal         string               `json:"windowSignal"`
+	AdvancedSignal       string               `json:"advancedSignal"`
+	LiquidityTier        string               `json:"liquidityTier"`
+	PriceTier            string               `json:"priceTier"`
+	TierAction           string               `json:"tierAction"`
+	SellUrgency          string               `json:"sellUrgency"`
+	SellReason           string               `json:"sellReason"`
+	Sellability          int                  `json:"sellability"`
+	SellabilityLabel     string               `json:"sellabilityLabel"`
+	Sparkline            []lab.SparklinePoint  `json:"sparkline"`
+	SparklineListings    []lab.SparklinePoint  `json:"sparklineListings,omitempty"`
+	Low7Days             float64              `json:"low7d"`
+	High7Days            float64              `json:"high7d"`
+	SellConfidence       string               `json:"sellConfidence"`
+	TradeConfidenceNote  string               `json:"tradeConfidenceNote,omitempty"`
+	LowConfidence        bool                 `json:"lowConfidence,omitempty"`
+	GCPRecipeCost        float64              `json:"gcpRecipeCost,omitempty"`
+	GCPRecipeBase        float64              `json:"gcpRecipeBase,omitempty"`
+	GCPRecipeSaves       float64              `json:"gcpRecipeSaves,omitempty"`
+}
+
 // CollectiveAnalysis returns a ranked "what to farm now" list combining
 // transfigure ROI with trend signals.
 // Query params: variant (optional), budget (optional, max base price), limit (default 20, max 100).
 func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Dedication mode: return corrupted 21/23 gems ranked by price.
+		if r.URL.Query().Get("mode") == "dedication" {
+			serveDedicationCollective(w, r, repo, cache)
+			return
+		}
+
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
 		var budget float64
@@ -178,49 +226,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			}
 		}
 
-		type row struct {
-			TransfiguredName     string  `json:"transfiguredName"`
-			BaseName             string  `json:"baseName"`
-			Variant              string  `json:"variant"`
-			GemColor             string  `json:"gemColor"`
-			ROI                  float64 `json:"roi"`
-			ROIPct               float64 `json:"roiPct"`
-			WeightedROI          float64 `json:"weightedRoi"`
-			WeightedROIPct       float64 `json:"weightedRoiPct"`
-			BasePrice            float64 `json:"basePrice"`
-			TransfiguredPrice    float64 `json:"transfiguredPrice"`
-			BaseListings         int     `json:"baseListings"`
-			TransfiguredListings int     `json:"transfiguredListings"`
-			Confidence           string  `json:"confidence"`
-			Signal               string  `json:"signal"`
-			PriceVelocity        float64 `json:"priceVelocity"`
-			ListingVelocity      float64 `json:"listingVelocity"`
-			CV                   float64 `json:"cv"`
-			HistPosition         float64 `json:"histPosition"`
-			WindowSignal         string  `json:"windowSignal"`
-			AdvancedSignal       string  `json:"advancedSignal"`
-			LiquidityTier        string  `json:"liquidityTier"`
-			PriceTier            string  `json:"priceTier"`
-			TierAction           string  `json:"tierAction"`
-			SellUrgency          string  `json:"sellUrgency"`
-			SellReason           string  `json:"sellReason"`
-			Sellability          int     `json:"sellability"`
-			SellabilityLabel     string              `json:"sellabilityLabel"`
-			Sparkline            []lab.SparklinePoint `json:"sparkline"`
-			Low7Days             float64              `json:"low7d"`
-			High7Days            float64              `json:"high7d"`
-			SellConfidence       string               `json:"sellConfidence"`
-			TradeConfidenceNote  string               `json:"tradeConfidenceNote,omitempty"`
-			LowConfidence        bool                 `json:"lowConfidence,omitempty"`
-			// GCP recipe: buy 20/0 base + 20 GCPs instead of 20/20 base.
-			GCPRecipeCost  float64 `json:"gcpRecipeCost,omitempty"`  // 20/0 base + 20×GCP
-			GCPRecipeBase  float64 `json:"gcpRecipeBase,omitempty"`  // 20/0 base price alone
-			GCPRecipeSaves float64 `json:"gcpRecipeSaves,omitempty"` // 20/20 base - recipe cost
-		}
-
-		rows := make([]row, 0, len(results))
+		rows := make([]collectiveRow, 0, len(results))
 		for _, cr := range results {
-			r := row{
+			r := collectiveRow{
 				TransfiguredName:     cr.TransfiguredName,
 				BaseName:             cr.BaseName,
 				Variant:              cr.Variant,
@@ -280,6 +288,72 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		}); err != nil {
 			slog.Error("collective analysis: encode response", "error", err)
 		}
+	}
+}
+
+// serveDedicationCollective handles ?mode=dedication on the collective endpoint.
+// Returns corrupted 21/23 gems ranked by price, mapped to the same response shape
+// as the Normal collective so the frontend ByVariant/BestPlays components work unchanged.
+func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache) {
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
+			limit = n
+		}
+	}
+	searchName := r.URL.Query().Get("search")
+
+	// Load latest gem prices (corrupted gems are in the same snapshot).
+	gems, _, err := repo.LatestGemPrices(r.Context())
+	if err != nil {
+		slog.Error("dedication collective: gem prices query failed", "error", err)
+		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Load Dedication results for input costs.
+	var dedicationResults []lab.DedicationResult
+	if cache != nil {
+		ded := cache.Dedication()
+		dedicationResults = append(dedicationResults, ded.Skills...)
+		dedicationResults = append(dedicationResults, ded.Transfigured...)
+	}
+
+	results := lab.RankDedicationCollective(gems, dedicationResults, limit, searchName)
+
+	// Map to the same row shape as Normal collective.
+	rows := make([]collectiveRow, 0, len(results))
+	for _, cr := range results {
+		rows = append(rows, collectiveRow{
+			TransfiguredName:     cr.TransfiguredName,
+			BaseName:             cr.BaseName,
+			Variant:              cr.Variant,
+			GemColor:             cr.GemColor,
+			ROI:                  cr.ROI,
+			ROIPct:               cr.ROIPct,
+			WeightedROI:          cr.ROI, // no risk adjustment for rankings
+			WeightedROIPct:       cr.ROIPct,
+			BasePrice:            cr.BasePrice,
+			TransfiguredPrice:    cr.TransfiguredPrice,
+			BaseListings:         0,
+			TransfiguredListings: cr.TransfiguredListings,
+			Confidence:           cr.Confidence,
+			SellConfidence:       cr.SellConfidence,
+			LowConfidence:        cr.LowConfidence,
+			Sparkline:            []lab.SparklinePoint{},
+			SparklineListings:    []lab.SparklinePoint{},
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"count": len(rows),
+		"data":  rows,
+	}); err != nil {
+		slog.Error("dedication collective: encode response", "error", err)
 	}
 }
 
