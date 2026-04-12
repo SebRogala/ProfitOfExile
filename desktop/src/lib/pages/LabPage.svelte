@@ -233,9 +233,9 @@
 				status = { ...status, connected };
 			}
 		}, (data) => {
-			// Layout updated on server — notify overlays to refetch
+			// Layout updated or reset on server — notify overlays
 			import('@tauri-apps/api/event').then(({ emit }) => {
-				emit('lab-layout-updated', { difficulty: data?.difficulty })
+				emit('lab-layout-updated', { difficulty: data?.difficulty, action: data?.action })
 					.catch(e => console.warn('[mercure] failed to emit layout update:', e));
 			}).catch(() => {}); // expected: not in Tauri context (web dashboard)
 		});

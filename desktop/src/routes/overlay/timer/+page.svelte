@@ -21,6 +21,15 @@
 	let navState = $state(createNavState());
 	let lockedDifficulty = $state<string | null>(null);
 	let layoutLoaded = $state(false);
+	let pendingLayoutReset = $state(false);
+
+	function applyLayoutReset() {
+		navState = createNavState();
+		layoutLoaded = false;
+		lockedDifficulty = null;
+		pendingLayoutReset = false;
+		logToApp('[timer] layout reset applied (midnight UTC)');
+	}
 
 	// --- Timer state ---
 	let timer = $state(createTimerState());
@@ -143,6 +152,9 @@
 				submitRun();
 				resetTimer();
 				hidden = true;
+				if (pendingLayoutReset) {
+					applyLayoutReset();
+				}
 				break;
 		}
 	}
@@ -223,6 +235,16 @@
 		});
 		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
 			if (cancelled) return;
+			if (event.payload?.action === 'reset') {
+				if (navState.inLab) {
+					// Mid-run at midnight — defer reset until lab exit
+					pendingLayoutReset = true;
+					logToApp('[timer] layout reset deferred (in lab)');
+				} else {
+					applyLayoutReset();
+				}
+				return;
+			}
 			fetchLayoutFromServer(event.payload?.difficulty);
 		});
 		const appearancePromise = listen<any>('timer-appearance-changed', (event) => {
