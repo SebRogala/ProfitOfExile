@@ -2061,6 +2061,7 @@ fn spawn_log_watcher(app: AppHandle) {
                     {
                         let state = app.state::<AppState>();
                         let in_lab = state.in_lab.load(Ordering::SeqCst);
+                        let mut nav_emitted = false;
                         if let Some(nav_event) = lab_navigation::parse_nav_event(&line, in_lab) {
                             match &nav_event {
                                 lab_navigation::NavEvent::PlazaEntered => {
@@ -2082,12 +2083,18 @@ fn spawn_log_watcher(app: AppHandle) {
                                 lab_navigation::NavEvent::LabExited => {
                                     state.in_lab.store(false, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: exited lab".to_string());
-                                    // Hide lab overlays on lab exit
+                                    // Emit event BEFORE hiding overlays — timer needs
+                                    // LabExited to submit the run before being hidden.
+                                    if let Err(e) = app.emit("lab-nav", &nav_event) {
+                                        log::warn!("emit lab-nav (LabExited) failed: {}", e);
+                                    }
+                                    // Hide lab overlays after event delivery
                                     for name in &["compass", "pathstrip", "timer"] {
                                         if let Some(win) = app.get_webview_window(name) {
                                             let _ = win.hide();
                                         }
                                     }
+                                    nav_emitted = true;
                                 }
                                 lab_navigation::NavEvent::LabFinished => {
                                     app_log(&app, "Lab nav: Izaro defeated! Starting font panel OCR".to_string());
@@ -2107,8 +2114,10 @@ fn spawn_log_watcher(app: AppHandle) {
                                     app_log(&app, "Lab nav: darkshrine activated".to_string());
                                 }
                             }
-                            if let Err(e) = app.emit("lab-nav", &nav_event) {
-                                log::warn!("emit lab-nav failed: {}", e);
+                            if !nav_emitted {
+                                if let Err(e) = app.emit("lab-nav", &nav_event) {
+                                    log::warn!("emit lab-nav failed: {}", e);
+                                }
                             }
                         }
                     }
