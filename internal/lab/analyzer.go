@@ -188,13 +188,17 @@ func (a *Analyzer) RunDedication(ctx context.Context) error {
 		a.cache.SetDedication(analysis)
 
 		// Also populate corrupted gem name caches for autocomplete.
+		// Preserve the existing cached slice for any pool whose query fails — a
+		// transient DB error must not wipe a previously valid cache entry.
 		skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, false, 1000)
 		if err != nil {
 			a.logger.Warn("dedication: failed to load corrupted skill gem names", "error", err)
+			skillNames = a.cache.CorruptedGemNames(false)
 		}
 		transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, true, 1000)
 		if err != nil {
 			a.logger.Warn("dedication: failed to load corrupted transfigured gem names", "error", err)
+			transfiguredNames = a.cache.CorruptedGemNames(true)
 		}
 		a.cache.SetCorruptedGemNames(skillNames, transfiguredNames)
 	}

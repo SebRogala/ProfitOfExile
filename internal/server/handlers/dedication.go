@@ -90,7 +90,9 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 					Name         string  `json:"name"`
 					CurrentPrice float64 `json:"currentPrice"`
 				}
-				if err := json.Unmarshal(offeringJSON, &offerings); err == nil {
+				if err := json.Unmarshal(offeringJSON, &offerings); err != nil {
+					slog.Warn("dedication handler: failed to unmarshal offering timing cache", "error", err)
+				} else {
 					for _, o := range offerings {
 						if o.Name == "Dedication to the Goddess" {
 							entryFee = o.CurrentPrice
