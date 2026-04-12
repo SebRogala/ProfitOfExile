@@ -11,7 +11,7 @@
 		onLabChange: (lab: string) => void;
 	} = $props();
 
-	const LABS = ['Merciless'];
+	const LABS = ['Normal', 'Dedication'];
 
 	// Tick every 1s to keep timers live
 	let now = $state(Date.now());

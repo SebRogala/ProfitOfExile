@@ -1,34 +1,53 @@
 <script lang="ts">
-	import { fetchFontEV, type FontEVResponse, type FontColor } from '$lib/api';
-	import { baseGemTradeUrl } from '$lib/trade-utils';
+	import { fetchFontEV, fetchDedicationEV, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
+	import { baseGemTradeUrl, cheapestCorrupted2123TradeUrl } from '$lib/trade-utils';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { refreshKey = 0, league = '' }: { refreshKey?: number; league?: string } = $props();
+	let { refreshKey = 0, league = '', labMode = 'normal' }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication' } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
 
+	// --- Normal (Font) mode state ---
 	let data = $state<Record<string, FontEVResponse>>({});
+
+	// --- Dedication mode state ---
+	let dedicationData = $state<DedicationEVResponse | null>(null);
+
 	let loading = $state(true);
+
+	const isDedication = $derived(labMode === 'dedication');
+
+	// --- Dedication row definitions ---
+	const DEDICATION_ROWS = [
+		{ key: 'skills', label: '21/23 Skill Gems', poolKey: 'skills' as const },
+		{ key: 'transfigured', label: '21/23 Transfigured', poolKey: 'transfigured' as const },
+	];
 
 	async function loadAll() {
 		loading = true;
 		try {
-			const results = await Promise.all(
-				VARIANTS.map(async (v) => {
-					const d = await fetchFontEV(v);
-					return [v, d] as const;
-				})
-			);
-			for (const [v, d] of results) {
-				data[v] = d;
+			if (isDedication) {
+				dedicationData = await fetchDedicationEV();
+			} else {
+				const results = await Promise.all(
+					VARIANTS.map(async (v) => {
+						const d = await fetchFontEV(v);
+						return [v, d] as const;
+					})
+				);
+				for (const [v, d] of results) {
+					data[v] = d;
+				}
 			}
 		} catch (err) {
 			console.error('[FontEV] Failed to load:', err);
 		}
 		loading = false;
 	}
+
+	// --- Normal mode helpers ---
 
 	function getColorData(variant: string, color: string, mode: 'safe' | 'premium' | 'jackpot'): FontColor | null {
 		const vd = data[variant];
@@ -56,7 +75,47 @@
 		return best;
 	}
 
-	function tierLine(fc: FontColor | null): string {
+	// --- Dedication mode helpers ---
+
+	function getDedColorData(poolKey: 'skills' | 'transfigured', color: string, mode: 'safe' | 'premium' | 'jackpot'): DedicationColor | null {
+		if (!dedicationData) return null;
+		const pool = dedicationData[poolKey];
+		if (!pool) return null;
+		const rows = pool[mode];
+		return rows?.find((c) => c.color === color) || null;
+	}
+
+	function getDedEV(poolKey: 'skills' | 'transfigured', color: string): number {
+		const dc = getDedColorData(poolKey, color, 'safe');
+		return dc?.evRaw ?? 0;
+	}
+
+	function getDedInputCost(poolKey: 'skills' | 'transfigured', color: string): number {
+		const dc = getDedColorData(poolKey, color, 'safe');
+		return dc?.inputCost ?? 0;
+	}
+
+	function getDedProfit(poolKey: 'skills' | 'transfigured', color: string): number {
+		const dc = getDedColorData(poolKey, color, 'safe');
+		return dc?.profit ?? 0;
+	}
+
+	function dedWinner(): { poolKey: string; color: string; profit: number } {
+		let best = { poolKey: '', color: '', profit: -Infinity };
+		for (const row of DEDICATION_ROWS) {
+			for (const color of COLORS) {
+				const profit = getDedProfit(row.poolKey, color);
+				if (profit > best.profit) {
+					best = { poolKey: row.poolKey, color, profit };
+				}
+			}
+		}
+		return best;
+	}
+
+	// --- Shared helpers ---
+
+	function tierLine(fc: { winners: number; fontsToHit?: number; pWin: number; avgWinRaw?: number; avgWin?: number } | null): string {
 		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
 		const raw = fc.avgWinRaw || fc.avgWin || 0;
 		const fth = fc.fontsToHit;
@@ -64,8 +123,8 @@
 		if (fth <= 1.05) {
 			ratio = 'every font';
 		} else if (fth < 2) {
-			// > 50% hit rate — show as "X in Y" reduced fraction
-			const pctFrac = fc.pWin / 100; // pWin is 0-100
+			// > 50% hit rate
+			const pctFrac = fc.pWin / 100;
 			const hits = Math.round(pctFrac * 10);
 			const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
 			const d = hits > 0 ? gcd(hits, 10) : 1;
@@ -78,20 +137,15 @@
 	}
 
 	/**
-	 * Build trade URL for cheapest base gem of a color + variant.
-	 * Color filtering uses attribute requirement caps (max 97) to exclude hybrids (98+).
-	 * RED = STR gems: cap dex+int. GREEN = DEX: cap str+int. BLUE = INT: cap str+dex.
-	 * Level 1 gems have no attribute requirements — can't filter by color, returns null.
+	 * Build trade URL for cheapest base gem of a color + variant (Normal mode).
 	 */
 	function buyBaseUrl(variant: string, color: string): string | null {
 		const parts = variant.split('/');
 		const level = parseInt(parts[0]) || 0;
 		const quality = parts.length > 1 ? parseInt(parts[1]) : 0;
 
-		// Level 1 gems have no attribute requirements — no color filter possible.
 		if (level < 20) return null;
 
-		// Attribute caps to isolate pure-color gems (hybrids start at 98).
 		const reqFilters: Record<string, any> = {};
 		if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
 		if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
@@ -149,10 +203,16 @@
 
 	let showPool = $state(false);
 	let poolVariant = $state('20/20');
+	let dedPoolKey = $state<'skills' | 'transfigured'>('skills');
 
 	function getPoolBreakdown(variant: string, color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
 		const safe = getColorData(variant, color, 'safe');
 		return safe?.poolBreakdown || [];
+	}
+
+	function getDedPoolBreakdown(poolKey: 'skills' | 'transfigured', color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
+		const dc = getDedColorData(poolKey, color, 'safe');
+		return dc?.poolBreakdown || [];
 	}
 
 	const ALL_TIERS = ['TOP', 'HIGH', 'MID-HIGH', 'MID', 'LOW', 'FLOOR'];
@@ -161,13 +221,156 @@
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
 	};
 
-	$effect(() => { refreshKey; loadAll(); });
+	$effect(() => { refreshKey; labMode; loadAll(); });
 </script>
 
 <section class="section">
 	{#if loading}
 		<span class="loading">Loading...</span>
-	{:else}
+	{:else if isDedication && dedicationData}
+		{@const best = dedWinner()}
+		{#if dedicationData.entryFee > 0}
+			<div class="dedication-header">
+				<span class="dedication-title">Dedication Lab — Corrupted 21/23 Gem Exchange</span>
+				<span class="entry-fee">
+					Entry fee: <strong>{dedicationData.entryFee}c</strong>
+					<InfoTooltip text="<b>Dedication to the Goddess offering price</b><br><br>This is the cost of the offering required to open a Dedication Lab run. It is displayed for reference but <b>NOT included</b> in the profit calculation — profit shows pure gem exchange value minus input gem cost." />
+				</span>
+			</div>
+		{/if}
+		<table class="ft">
+			<thead>
+				<tr>
+					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options available per run:<br>• <b>21/23 Skill Gems</b>: Non-transfigured corrupted skill gems<br>• <b>21/23 Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted 21/23 gems in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
+					{#each COLORS as color}
+						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
+					{/each}
+					<th class="buy-header">Buy Input</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each DEDICATION_ROWS as row}
+					<tr>
+						<td class="var">{row.label}</td>
+						{#each COLORS as color}
+							{@const ev = getDedEV(row.poolKey, color)}
+							{@const inputCost = getDedInputCost(row.poolKey, color)}
+							{@const profit = getDedProfit(row.poolKey, color)}
+							{@const safe = getDedColorData(row.poolKey, color, 'safe')}
+							{@const premium = getDedColorData(row.poolKey, color, 'premium')}
+							{@const jackpot = getDedColorData(row.poolKey, color, 'jackpot')}
+							{@const isW = best.poolKey === row.poolKey && best.color === color}
+							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
+								{#if ev > 0}
+									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{ev}c/font</span>
+									<div class="ded-cost-line">
+										<span class="ded-input">in: {inputCost}c</span>
+										<span class="ded-profit" class:ded-profit-positive={profit > 0} class:ded-profit-negative={profit <= 0}>
+											{profit > 0 ? '+' : ''}{profit}c
+										</span>
+									</div>
+									<div class="tier-lines">
+										<div class="tier-row">
+											<span class="tier-label t-safe">Safe</span>
+											<span class="tier-val t-safe">{tierLine(safe)}</span>
+										</div>
+										<div class="tier-row">
+											<span class="tier-label t-premium">Premium</span>
+											<span class="tier-val t-premium">{tierLine(premium)}</span>
+										</div>
+										{#if jackpot && jackpot.winners > 0}
+										{@const gemList = (jackpot.jackpotGems || []).map(g => {
+											return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${Math.round(g.chaos)}c</div>`;
+										}).join('')}
+										<div class="tier-row">
+											<span class="tier-label t-jackpot">Jackpot</span>
+											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
+											<InfoTooltip text={gemList} />
+										</div>
+										{/if}
+									</div>
+								{:else}
+									<span class="nil">{'\u2014'}</span>
+								{/if}
+							</td>
+						{/each}
+						<td class="buy-col">
+							<div class="buy-buttons">
+								{#each COLORS as color}
+									{@const url = cheapestCorrupted2123TradeUrl(color, row.poolKey === 'transfigured', league || '')}
+									<a
+										class="buy-btn buy-{color.toLowerCase()}"
+										href={url}
+										target="_blank"
+										title="Buy cheapest corrupted 21/23 {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
+									>{color}</a>
+								{/each}
+							</div>
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+
+		<button class="pool-toggle" onclick={() => { showPool = !showPool; }}>
+			{showPool ? '\u25BC' : '\u25B6'} Pool Overview
+		</button>
+
+		{#if showPool}
+			<div class="pool-section">
+				<div class="pool-variant-select">
+					<span class="pool-select-label">Pool:</span>
+					<Select bind:value={dedPoolKey} options={DEDICATION_ROWS.map(r => ({ value: r.poolKey, label: r.label }))} />
+				</div>
+				<div class="pool-grid">
+					{#each COLORS as color}
+						{@const breakdown = getDedPoolBreakdown(dedPoolKey, color)}
+						{@const safe = getDedColorData(dedPoolKey, color, 'safe')}
+						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
+						<div class="pool-color-card">
+							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
+							{#each ALL_TIERS as tierName}
+								{@const tier = breakdown.find(t => t.tier === tierName)}
+								{@const tierPWin = tier ? Math.round(pWin3(tier.count, totalGems) * 100) : 0}
+								<div class="pool-tier-row" class:pool-tier-empty={!tier}>
+									<span class="pool-tier-name" style="color: {TIER_COLORS[tierName] || '#94a3b8'}">{tierName}</span>
+									{#if tier}
+										<span class="pool-tier-count">{tier.count}</span>
+										<span class="pool-tier-range">
+											{#if tier.minPrice === tier.maxPrice}
+												{tier.minPrice}c
+											{:else}
+												{tier.minPrice}c — {tier.maxPrice}c
+											{/if}
+										</span>
+										<span class="pool-tier-bar">
+											<span class="pool-tier-bar-fill" style="width: {tierPWin}%; background: {TIER_COLORS[tierName] || '#94a3b8'}"></span>
+										</span>
+										<span class="pool-tier-pwin">{tierPWin}%</span>
+									{:else}
+										<span class="pool-tier-count">—</span>
+										<span class="pool-tier-range"></span>
+										<span class="pool-tier-bar"></span>
+										<span class="pool-tier-pwin"></span>
+									{/if}
+								</div>
+							{/each}
+							{#if safe?.lowConfidenceGems?.length}
+								{@const lcGems = safe.lowConfidenceGems}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${Math.round(g.chaos)}c (${g.listings} listings)`).join('<br>')}
+								<div class="pool-tier-row pool-risky-row">
+									<span class="pool-tier-name pool-risky-name">RISKY</span>
+									<span class="pool-tier-count">{lcGems.length}</span>
+									<span class="pool-tier-range">excluded from EV</span>
+									<InfoTooltip text="<b>Low confidence gems</b> — very few listings relative to normal. Could be a new meta build (demand spike) or price manipulation (buyout). Excluded from EV calculation.<br><br>{lcTooltip}" />
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
+	{:else if !isDedication}
 		{@const best = winner()}
 		<table class="ft">
 			<thead>
@@ -204,11 +407,11 @@
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g => {
 											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${Math.round(g.chaos)}c &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, league || '')}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`;
-											if (g.gcpRecipeCost > 0) {
-												const saves = Math.round(g.gcpRecipeSaves);
+											if ((g.gcpRecipeCost || 0) > 0) {
+												const saves = Math.round(g.gcpRecipeSaves || 0);
 												const savesColor = saves >= 0 ? '#22c55e' : '#ef4444';
 												const savesText = saves >= 0 ? `saves ${saves}c` : `costs ${Math.abs(saves)}c more`;
-												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${Math.round(g.gcpRecipeBase)}c</b> base + ${Math.round(g.gcpRecipeCost - g.gcpRecipeBase)}c GCPs = <b>${Math.round(g.gcpRecipeCost)}c</b> <span style="color:${savesColor}">(${savesText})</span> &nbsp;<a href="${baseGemNoQualityUrl(g.name)}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a></div>`;
+												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${Math.round(g.gcpRecipeBase || 0)}c</b> base + ${Math.round((g.gcpRecipeCost || 0) - (g.gcpRecipeBase || 0))}c GCPs = <b>${Math.round(g.gcpRecipeCost || 0)}c</b> <span style="color:${savesColor}">(${savesText})</span> &nbsp;<a href="${baseGemNoQualityUrl(g.name)}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a></div>`;
 											}
 											html += `</div>`;
 											return html;
@@ -317,6 +520,49 @@
 	}
 	.loading { color: var(--color-lab-text-secondary); font-size: 0.875rem; }
 
+	/* Dedication header */
+	.dedication-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 16px;
+		padding: 0 4px;
+	}
+	.dedication-title {
+		font-size: 1.0625rem;
+		font-weight: 700;
+		color: var(--color-lab-text);
+	}
+	.entry-fee {
+		font-size: 0.9375rem;
+		color: var(--color-lab-text-secondary);
+	}
+	.entry-fee strong {
+		color: var(--color-lab-yellow, #eab308);
+	}
+
+	/* Dedication cost line */
+	.ded-cost-line {
+		display: flex;
+		align-items: baseline;
+		justify-content: center;
+		gap: 8px;
+		font-size: 0.8125rem;
+		margin-bottom: 4px;
+	}
+	.ded-input {
+		color: var(--color-lab-text-secondary);
+	}
+	.ded-profit {
+		font-weight: 600;
+	}
+	.ded-profit-positive {
+		color: var(--color-lab-green);
+	}
+	.ded-profit-negative {
+		color: var(--color-lab-red);
+	}
+
 	.ft { width: 100%; border-collapse: separate; border-spacing: 4px; }
 	.ft th {
 		text-align: center;
@@ -381,8 +627,6 @@
 	}
 	.tier-label {
 		font-weight: 600;
-	}
-	.tier-val {
 	}
 	.t-safe { color: #5eead4; }
 	.t-premium { color: #c084fc; }

@@ -134,40 +134,42 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 
 // dedicationRow is the JSON response shape for a single Dedication result.
 type dedicationRow struct {
-	Time              string               `json:"time"`
-	Color             string               `json:"color"`
-	GemType           string               `json:"gemType"`
-	Pool              int                  `json:"pool"`
-	Winners           int                  `json:"winners"`
-	PWin              float64              `json:"pWin"`
-	AvgWinRaw         float64              `json:"avgWinRaw"`
-	EVRaw             float64              `json:"evRaw"`
-	InputCost         float64              `json:"inputCost"`
-	Profit            float64              `json:"profit"`
-	FontsToHit        float64              `json:"fontsToHit"`
-	JackpotGems       []lab.JackpotGemInfo `json:"jackpotGems,omitempty"`
-	ThinPoolGems      int                  `json:"thinPoolGems"`
-	LiquidityRisk     string               `json:"liquidityRisk"`
-	PoolBreakdown     []lab.TierPoolInfo   `json:"poolBreakdown,omitempty"`
+	Time              string                    `json:"time"`
+	Color             string                    `json:"color"`
+	GemType           string                    `json:"gemType"`
+	Pool              int                       `json:"pool"`
+	Winners           int                       `json:"winners"`
+	PWin              float64                   `json:"pWin"`
+	AvgWinRaw         float64                   `json:"avgWinRaw"`
+	EVRaw             float64                   `json:"evRaw"`
+	InputCost         float64                   `json:"inputCost"`
+	Profit            float64                   `json:"profit"`
+	FontsToHit        float64                   `json:"fontsToHit"`
+	JackpotGems       []lab.JackpotGemInfo      `json:"jackpotGems,omitempty"`
+	ThinPoolGems      int                       `json:"thinPoolGems"`
+	LiquidityRisk     string                    `json:"liquidityRisk"`
+	PoolBreakdown     []lab.TierPoolInfo        `json:"poolBreakdown,omitempty"`
+	LowConfidenceGems []lab.LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"`
 }
 
 func toDedicationRow(dr lab.DedicationResult) dedicationRow {
 	return dedicationRow{
-		Time:          dr.Time.UTC().Format(time.RFC3339),
-		Color:         dr.Color,
-		GemType:       dr.GemType,
-		Pool:          dr.Pool,
-		Winners:       dr.Winners,
-		PWin:          dr.PWin,
-		AvgWinRaw:     dr.AvgWinRaw,
-		EVRaw:         dr.EVRaw,
-		InputCost:     dr.InputCost,
-		Profit:        dr.Profit,
-		FontsToHit:    dr.FontsToHit,
-		JackpotGems:   dr.JackpotGems,
-		ThinPoolGems:  dr.ThinPoolGems,
-		LiquidityRisk: dr.LiquidityRisk,
-		PoolBreakdown: dr.PoolBreakdown,
+		Time:              dr.Time.UTC().Format(time.RFC3339),
+		Color:             dr.Color,
+		GemType:           dr.GemType,
+		Pool:              dr.Pool,
+		Winners:           dr.Winners,
+		PWin:              dr.PWin,
+		AvgWinRaw:         dr.AvgWinRaw,
+		EVRaw:             dr.EVRaw,
+		InputCost:         dr.InputCost,
+		Profit:            dr.Profit,
+		FontsToHit:        dr.FontsToHit,
+		JackpotGems:       dr.JackpotGems,
+		ThinPoolGems:      dr.ThinPoolGems,
+		LiquidityRisk:     dr.LiquidityRisk,
+		PoolBreakdown:     dr.PoolBreakdown,
+		LowConfidenceGems: dr.LowConfidenceGems,
 	}
 }
 
