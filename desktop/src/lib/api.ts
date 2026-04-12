@@ -104,6 +104,38 @@ export interface FontEVResponse {
 	bestColorJackpot: string;
 }
 
+// --- Dedication types ---
+
+export interface DedicationColor {
+	color: 'RED' | 'GREEN' | 'BLUE';
+	gemType: string;
+	pool: number;
+	winners: number;
+	pWin: number;
+	avgWinRaw: number;
+	evRaw: number;
+	inputCost: number;
+	profit: number;
+	fontsToHit: number;
+	jackpotGems?: { name: string; chaos: number }[];
+	thinPoolGems: number;
+	liquidityRisk: string;
+	poolBreakdown?: { tier: string; count: number; minPrice: number; maxPrice: number }[];
+	lowConfidenceGems?: { name: string; chaos: number; listings: number }[];
+}
+
+export interface DedicationPoolResponse {
+	safe: DedicationColor[];
+	premium: DedicationColor[];
+	jackpot: DedicationColor[];
+}
+
+export interface DedicationEVResponse {
+	skills: DedicationPoolResponse;
+	transfigured: DedicationPoolResponse;
+	entryFee: number;
+}
+
 export interface MarketOverviewData {
 	avgTransPrice: number;
 	avgTransPriceDelta: number;
@@ -389,6 +421,48 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 		bestColorSafe: resp.bestColorSafe || '',
 		bestColorPremium: resp.bestColorPremium || '',
 		bestColorJackpot: resp.bestColorJackpot || '',
+	};
+}
+
+function mapDedicationRows(rows: any[]): DedicationColor[] {
+	return rows.map((r: any) => ({
+		color: r.color ?? '',
+		gemType: r.gemType ?? '',
+		pool: r.pool ?? 0,
+		winners: r.winners ?? 0,
+		pWin: Math.round((r.pWin ?? 0) * 10000) / 100,
+		avgWinRaw: Math.round(r.avgWinRaw ?? 0),
+		evRaw: Math.round(r.evRaw ?? 0),
+		inputCost: Math.round(r.inputCost ?? 0),
+		profit: Math.round(r.profit ?? 0),
+		fontsToHit: r.fontsToHit ?? 0,
+		jackpotGems: r.jackpotGems ?? [],
+		thinPoolGems: r.thinPoolGems ?? 0,
+		liquidityRisk: r.liquidityRisk ?? 'LOW',
+		poolBreakdown: r.poolBreakdown ?? [],
+		lowConfidenceGems: r.lowConfidenceGems ?? [],
+	}));
+}
+
+function mapDedicationPool(pool: any): DedicationPoolResponse {
+	return {
+		safe: mapDedicationRows(pool?.safe || []),
+		premium: mapDedicationRows(pool?.premium || []),
+		jackpot: mapDedicationRows(pool?.jackpot || []),
+	};
+}
+
+export async function fetchDedicationEV(): Promise<DedicationEVResponse> {
+	const resp = await get<{
+		skills: any;
+		transfigured: any;
+		entryFee: number;
+	}>('/analysis/dedication');
+
+	return {
+		skills: mapDedicationPool(resp.skills),
+		transfigured: mapDedicationPool(resp.transfigured),
+		entryFee: Math.round(resp.entryFee || 0),
 	};
 }
 
