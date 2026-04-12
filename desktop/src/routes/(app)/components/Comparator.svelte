@@ -42,6 +42,12 @@
 
 	let isDedication = $derived(labMode === 'dedication');
 
+	/** In Dedication mode, append divine equivalent in parentheses when price >= 1 div. */
+	function divSuffix(chaos: number): string {
+		if (!isDedication || !divineRate || chaos < divineRate) return '';
+		return ` (${(chaos / divineRate).toFixed(1)} div)`;
+	}
+
 	let selectedForQueue = $state<string | null>(null);
 
 	/** Score a gem for auto-selection. Higher = better pick to sell. */
@@ -97,7 +103,7 @@
 	// Push results + trade data + loading state to Rust for overlay to poll
 	$effect(() => {
 		invoke('set_comparator_data', {
-			payload: { results, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading }, tradeError: { ...tradeError } },
+			payload: { results, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading }, tradeError: { ...tradeError }, divineRate, labMode },
 		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
@@ -590,9 +596,9 @@
 					</div>
 					<div class="card-row price-line">
 						<Tooltip text="Ninja price vs risk-adjusted (sell probability × stability)"><span class="price-display">
-							<span class="price-raw">{gem.transPrice}c</span>
+							<span class="price-raw">{gem.transPrice}c{divSuffix(gem.transPrice)}</span>
 							{#if gem.riskAdjustedPrice > 0}
-								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c)</span>
+								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c{divSuffix(gem.riskAdjustedPrice)})</span>
 							{/if}
 						</span></Tooltip>
 					</div>
@@ -612,7 +618,7 @@
 					</div>
 					<div class="price-context">
 						<div class="price-row">
-							<span>Listed: {gem.transPrice}c</span>
+							<span>Listed: {gem.transPrice}c{divSuffix(gem.transPrice)}</span>
 							{#if gem.quickSellPrice > 0}
 								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
 							{/if}
