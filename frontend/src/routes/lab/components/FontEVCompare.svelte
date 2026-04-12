@@ -4,7 +4,15 @@
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { refreshKey = 0, league = '', labMode = 'normal' }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication' } = $props();
+	let { refreshKey = 0, league = '', labMode = 'normal', divineRate = 0 }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication'; divineRate?: number } = $props();
+
+	/** Format chaos value — show as divine if >= 1 div and in Dedication mode. */
+	function fmtChaos(chaos: number): string {
+		if (isDedication && divineRate > 0 && chaos >= divineRate) {
+			return `${(chaos / divineRate).toFixed(1)} div`;
+		}
+		return `${Math.round(chaos)}c`;
+	}
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
@@ -136,7 +144,7 @@
 			ratio = `1 in ${Math.round(fth)}`;
 		}
 		const pct = Math.round(fc.pWin);
-		return `${ratio} (${pct}%)  ~${raw}c`;
+		return `${ratio} (${pct}%)  ~${fmtChaos(raw)}`;
 	}
 
 	/**
@@ -238,7 +246,7 @@
 			<div class="dedication-header">
 				<span class="dedication-title">Dedication Lab — Corrupted 21/23 Gem Exchange</span>
 				<span class="entry-fee">
-					Entry fee: <strong>{dedicationData.entryFee}c</strong>
+					Entry fee: <strong>{fmtChaos(dedicationData.entryFee)}</strong>
 					<InfoTooltip text="<b>Dedication to the Goddess offering price</b><br><br>This is the cost of the offering required to open a Dedication Lab run. It is displayed for reference but <b>NOT included</b> in the profit calculation — profit shows pure gem exchange value minus input gem cost." />
 				</span>
 			</div>
@@ -267,11 +275,11 @@
 							{@const isW = best.poolKey === row.poolKey && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
 								{#if ev > 0}
-									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{ev}c/font</span>
+									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{fmtChaos(ev)}/font</span>
 									<div class="ded-cost-line">
-										<span class="ded-input">in: {inputCost}c</span>
+										<span class="ded-input">in: {fmtChaos(inputCost)}</span>
 										<span class="ded-profit" class:ded-profit-positive={profit > 0} class:ded-profit-negative={profit <= 0}>
-											{profit > 0 ? '+' : ''}{profit}c
+											{profit > 0 ? '+' : ''}{fmtChaos(Math.abs(profit))}
 										</span>
 									</div>
 									<div class="tier-lines">
