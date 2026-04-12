@@ -16,17 +16,19 @@
 	let dedicationData = $state<DedicationEVResponse | null>(null);
 
 	let loading = $state(true);
+	let loadError = $state(false);
 
 	const isDedication = $derived(labMode === 'dedication');
 
 	// --- Dedication row definitions ---
 	const DEDICATION_ROWS = [
-		{ key: 'skills', label: '21/23 Skill Gems', poolKey: 'skills' as const },
-		{ key: 'transfigured', label: '21/23 Transfigured', poolKey: 'transfigured' as const },
+		{ label: '21/23 Skill Gems', poolKey: 'skills' as const },
+		{ label: '21/23 Transfigured', poolKey: 'transfigured' as const },
 	];
 
 	async function loadAll() {
 		loading = true;
+		loadError = false;
 		try {
 			if (isDedication) {
 				dedicationData = await fetchDedicationEV();
@@ -43,6 +45,7 @@
 			}
 		} catch (err) {
 			console.error('[FontEV] Failed to load:', err);
+			loadError = true;
 		}
 		loading = false;
 	}
@@ -227,6 +230,8 @@
 <section class="section">
 	{#if loading}
 		<span class="loading">Loading...</span>
+	{:else if loadError}
+		<span class="loading">Failed to load data — check connection and refresh.</span>
 	{:else if isDedication && dedicationData}
 		{@const best = dedWinner()}
 		{#if dedicationData.entryFee > 0}
