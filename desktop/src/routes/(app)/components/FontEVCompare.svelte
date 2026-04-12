@@ -373,7 +373,7 @@
 							{/each}
 							{#if safe?.lowConfidenceGems?.length}
 								{@const lcGems = safe.lowConfidenceGems}
-								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${Math.round(g.chaos)}c (${g.listings} listings)`).join('<br>')}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${fmtChaos(g.chaos)} (${g.listings} listings)`).join('<br>')}
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
@@ -509,7 +509,7 @@
 							{/each}
 							{#if safe?.lowConfidenceGems?.length}
 								{@const lcGems = safe.lowConfidenceGems}
-								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${Math.round(g.chaos)}c (${g.listings} listings)`).join('<br>')}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${fmtChaos(g.chaos)} (${g.listings} listings)`).join('<br>')}
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
