@@ -428,7 +428,7 @@ func TestComputeDedicationClassification_ExcludesSupports(t *testing.T) {
 	}
 
 	// Skill gems should be in classification.
-	for _, name := range []string{"Arc", "Fireball", "Cleave"} {
+	for _, name := range []string{"Arc", "Fireball", "Cleave", "Slam"} {
 		key := GemClassificationKey{name, "21/23c"}
 		if _, ok := cls.Gems[key]; !ok {
 			t.Errorf("skill gem %q should be in Dedication classification", name)
@@ -529,8 +529,9 @@ func TestComputeDedicationClassification_TierDistribution(t *testing.T) {
 		tierCounts[gc.Tier]++
 	}
 
-	// With 12 gems and clear price gaps, we should have at least 2 distinct tiers.
-	if len(tierCounts) < 2 {
-		t.Errorf("expected at least 2 distinct tiers, got %d: %v", len(tierCounts), tierCounts)
+	// With 12 gems and clear price gaps (3000/2500 then 800/700 then 300/250/200 then 100/80 then 20/15/10),
+	// we should have at least 3 distinct tiers.
+	if len(tierCounts) < 3 {
+		t.Errorf("expected at least 3 distinct tiers, got %d: %v", len(tierCounts), tierCounts)
 	}
 }
