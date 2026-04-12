@@ -25,7 +25,14 @@
 
 	// --- State ---
 	let navState = $state(createNavState());
+	let pendingLayoutReset = $state(false);
 	let mode = $state<'minimap' | 'direction' | 'minimal'>('minimap');
+
+	function applyLayoutReset() {
+		navState = createNavState();
+		layoutLoaded = false;
+		pendingLayoutReset = false;
+	}
 
 	// Timer state (shared module)
 	let timer = $state(createTimerState());
@@ -120,6 +127,9 @@
 			case 'LabExited':
 				resetTimer();
 				hidden = true;
+				if (pendingLayoutReset) {
+					applyLayoutReset();
+				}
 				break;
 		}
 	}
@@ -229,6 +239,14 @@
 		});
 		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
 			if (cancelled) return;
+			if (event.payload?.action === 'reset') {
+				if (navState.inLab) {
+					pendingLayoutReset = true;
+				} else {
+					applyLayoutReset();
+				}
+				return;
+			}
 			fetchLayoutFromServer(event.payload?.difficulty);
 		});
 		return () => {

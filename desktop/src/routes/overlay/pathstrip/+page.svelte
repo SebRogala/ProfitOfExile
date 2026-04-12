@@ -12,9 +12,18 @@
 	} from '$lib/compass/navigation';
 
 	let navState = $state(createNavState());
+	let pendingLayoutReset = $state(false);
 	let currentRoomId = $state<string | null>(null);
 	let visitedRoomIds = $state<string[]>([]);
 	let hidden = $state(false);
+
+	function applyLayoutReset() {
+		navState = createNavState();
+		layoutLoaded = false;
+		pendingLayoutReset = false;
+		currentRoomId = null;
+		visitedRoomIds = [];
+	}
 
 	function onNavEvent(event: any) {
 		if (event.type === 'LayoutChanged') {
@@ -48,6 +57,9 @@
 			case 'LabExited':
 				currentRoomId = null;
 				hidden = true;
+				if (pendingLayoutReset) {
+					applyLayoutReset();
+				}
 				break;
 		}
 	}
@@ -135,6 +147,14 @@
 		});
 		const layoutPromise = listen<any>('lab-layout-updated', (event) => {
 			if (cancelled) return;
+			if (event.payload?.action === 'reset') {
+				if (navState.inLab) {
+					pendingLayoutReset = true;
+				} else {
+					applyLayoutReset();
+				}
+				return;
+			}
 			fetchLayoutFromServer(event.payload?.difficulty);
 		});
 		return () => {

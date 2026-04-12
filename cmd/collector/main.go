@@ -188,6 +188,13 @@ func main() {
 		slog.Info("trade refresh scheduler disabled (SERVER_URL not set)")
 	}
 
+	// Lab layout daily reset — publish Mercure event at 00:00 UTC so desktop
+	// clients clear stale layouts and re-fetch when the new one is uploaded.
+	if mercureJWTSecret != "" {
+		go runLayoutResetTicker(schedulerCtx, mercureURL, mercureJWTSecret)
+		slog.Info("lab layout reset ticker started (fires at 00:00 UTC daily)")
+	}
+
 	// Health/debug HTTP server.
 	startedAt := time.Now()
 	mux := http.NewServeMux()
@@ -282,6 +289,31 @@ func main() {
 	}
 
 	slog.Info("collector stopped")
+}
+
+// runLayoutResetTicker sleeps until 00:00 UTC each day, then publishes a
+// layout reset event on the Mercure hub. Desktop clients listen for this
+// and clear their cached lab layout so they fetch the new daily layout.
+func runLayoutResetTicker(ctx context.Context, mercureURL, mercureSecret string) {
+	for {
+		now := time.Now().UTC()
+		midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+		sleepDur := midnight.Sub(now)
+		slog.Info("layout reset: sleeping until midnight UTC", "duration", sleepDur.Round(time.Second))
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(sleepDur):
+		}
+
+		payload := `{"action":"reset","source":"collector"}`
+		if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/lab/layout", payload); err != nil {
+			slog.Error("layout reset: mercure publish failed", "error", err)
+		} else {
+			slog.Info("layout reset: published reset event at midnight UTC")
+		}
+	}
 }
 
 // runTradeRefresher periodically calls the server's trade refresh endpoint.
