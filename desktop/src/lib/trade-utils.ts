@@ -41,3 +41,37 @@ export function baseGemTradeUrl(name: string, variant: string, league: string): 
 	};
 	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
 }
+
+/**
+ * Build trade URL for cheapest corrupted 21/23 gems of a color, for Dedication lab input cost.
+ */
+export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boolean, league: string): string {
+	const reqFilters: Record<string, any> = {};
+	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
+	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
+	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
+
+	const miscFilters: Record<string, any> = {
+		gem_level: { min: 21 },
+		quality: { min: 23 },
+		corrupted: { option: 'true' },
+	};
+
+	if (isTransfigured) {
+		miscFilters.gem_alternate_quality = { option: 'true' };
+	}
+
+	const q: any = {
+		query: {
+			status: { option: 'securable' },
+			filters: {
+				type_filters: { filters: { category: { option: 'gem.activegem' } } },
+				req_filters: { filters: reqFilters },
+				misc_filters: { filters: miscFilters },
+				trade_filters: { filters: { sale_type: { option: 'priced' }, collapse: { option: 'true' } } },
+			},
+		},
+		sort: { price: 'asc' },
+	};
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
+}
