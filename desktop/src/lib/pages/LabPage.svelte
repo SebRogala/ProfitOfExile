@@ -300,11 +300,7 @@
 			/>
 		</div>
 		{#if activeTab === 'Rankings'}
-			{#if isDedication}
-				<div class="dedication-na">Rankings are for Normal lab mode. Switch to Normal to see transfigured gem ROI rankings.</div>
-			{:else}
-				<ByVariant allPlays={bestPlays} league={status?.league || ''} />
-			{/if}
+			<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 		{:else if activeTab === 'Font EV'}
 			<FontEVCompare {refreshKey} league={status?.league || ''} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
 		{:else if activeTab === 'Market'}
@@ -618,12 +614,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-	}
-	.dedication-na {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.875rem;
-		padding: 24px 16px;
-		text-align: center;
 	}
 	.error-text {
 		color: var(--color-lab-red);
