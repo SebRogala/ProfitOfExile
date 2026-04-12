@@ -196,6 +196,7 @@
 
 	{#if isDedication}
 		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
 	{:else if !loading}
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
 

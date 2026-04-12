@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use super::query::build_search_query;
 use super::rate_limiter::TradeRateLimiter;
 use super::signals::build_result;
 use super::types::{SearchResponse, TradeListingDetail, TradeLookupResult};
@@ -169,6 +168,17 @@ impl TradeApiClient {
         divine_chaos_rate: f64,
         emit: impl Fn(TradeQueueEvent),
     ) -> Result<TradeLookupResult, String> {
+        self.lookup_gem_with_mode(gem_name, variant, divine_chaos_rate, false, emit).await
+    }
+
+    pub async fn lookup_gem_with_mode(
+        &self,
+        gem_name: &str,
+        variant: &str,
+        divine_chaos_rate: f64,
+        dedication: bool,
+        emit: impl Fn(TradeQueueEvent),
+    ) -> Result<TradeLookupResult, String> {
         let pending = self.pending_count.fetch_add(1, Ordering::SeqCst) + 1;
         self.enqueued.fetch_add(1, Ordering::SeqCst);
         let position = pending - self.completed.load(Ordering::SeqCst);
@@ -217,7 +227,7 @@ impl TradeApiClient {
             total: current_pending,
         });
 
-        let search_result = self.execute_search(gem_name, variant).await;
+        let search_result = self.execute_search_with_mode(gem_name, variant, dedication).await;
         let search_response = match search_result {
             Ok(r) => r,
             Err(e) => {
@@ -310,12 +320,13 @@ impl TradeApiClient {
     }
 
     /// POST /api/trade/search/{league}
-    async fn execute_search(
+    async fn execute_search_with_mode(
         &self,
         gem_name: &str,
         variant: &str,
+        dedication: bool,
     ) -> Result<SearchResponse, String> {
-        let query_body = build_search_query(gem_name, variant);
+        let query_body = super::query::build_search_query_with_mode(gem_name, variant, dedication);
         let url = format!(
             "{}/api/trade/search/{}",
             TRADE_API_BASE_URL, self.league_name

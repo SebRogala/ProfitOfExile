@@ -647,22 +647,25 @@ fn trade_cancel(app: AppHandle) {
 /// Direct trade API lookup against GGG from the desktop app.
 /// Each user has their own IP → own rate limits (no shared server bottleneck).
 /// Accepts optional divine rate for chaos normalization of divine-priced listings.
+/// When mode is "dedication", the query targets corrupted 21/23 skill gems.
 #[tauri::command]
 async fn trade_lookup(
     gem: String,
     variant: String,
     divine_rate: Option<f64>,
+    mode: Option<String>,
     app: AppHandle,
 ) -> Result<trade::TradeLookupResult, String> {
     let state = app.state::<AppState>();
     let rate = divine_rate.unwrap_or(0.0);
+    let dedication = mode.as_deref() == Some("dedication");
     if rate <= 0.0 {
         log::warn!("Trade lookup: divine_rate is 0 — divine-priced listings will NOT be normalized to chaos");
     }
-    app_log(&app, format!("Trade lookup: {} ({}) divine_rate={:.0}", gem, variant, rate));
+    app_log(&app, format!("Trade lookup: {} ({}) divine_rate={:.0} dedication={}", gem, variant, rate, dedication));
 
     let app_for_emit = app.clone();
-    let result = state.trade_client.lookup_gem(&gem, &variant, rate, |event| {
+    let result = state.trade_client.lookup_gem_with_mode(&gem, &variant, rate, dedication, |event| {
         use tauri::Emitter;
         if let Err(e) = app_for_emit.emit("trade-queue", &event) {
             log::warn!("emit trade-queue failed: {}", e);

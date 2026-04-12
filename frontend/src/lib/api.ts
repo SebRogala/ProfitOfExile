@@ -467,20 +467,25 @@ export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 	};
 }
 
-export async function fetchGemNames(query: string): Promise<string[]> {
+export async function fetchGemNames(query: string, mode?: string): Promise<string[]> {
 	if (query.length < 2) return [];
-	const resp = await get<{ names: string[] }>('/analysis/gems/names', {
-		q: query,
-		limit: '15',
-	});
+	const params: Record<string, string> = { q: query, limit: '15' };
+	if (mode === 'dedication') {
+		params.corrupted = 'true';
+	}
+	const resp = await get<{ names: string[] }>('/analysis/gems/names', params);
 	return resp.names || [];
 }
 
-export async function fetchCompare(gems: string[], variant: string): Promise<CompareGem[]> {
-	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', {
+export async function fetchCompare(gems: string[], variant: string, mode?: string): Promise<CompareGem[]> {
+	const params: Record<string, string> = {
 		gems: gems.join(','),
 		variant,
-	});
+	};
+	if (mode === 'dedication') {
+		params.mode = 'dedication';
+	}
+	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', params);
 	const results = (resp.data || []).map(mapCompareRow);
 
 	// Enrich with signal history in parallel

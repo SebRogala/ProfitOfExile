@@ -27,6 +27,27 @@
 	type Tab = typeof TABS[number];
 	let activeTab = $state<Tab>('Session');
 
+	// --- Lab mode ---
+	const LAB_MODES = ['Normal', 'Dedication'] as const;
+	type LabMode = typeof LAB_MODES[number];
+	let labMode = $state<LabMode>('Normal');
+	let isDedication = $derived(labMode === 'Dedication');
+	let labModeForChild = $derived<'normal' | 'dedication'>(isDedication ? 'dedication' : 'normal');
+
+	// Load persisted lab mode from Rust on mount
+	$effect(() => {
+		invoke<string>('get_lab_mode').then((mode) => {
+			if (mode === 'Normal' || mode === 'Dedication') {
+				labMode = mode;
+			}
+		}).catch(e => console.warn('[LabPage] get_lab_mode failed:', e));
+	});
+
+	function handleLabModeChange(mode: LabMode) {
+		labMode = mode;
+		invoke('set_lab_mode', { mode }).catch(e => console.warn('[LabPage] set_lab_mode failed:', e));
+	}
+
 	let status = $state<StatusData | null>(null);
 	let bestPlays = $state<GemPlay[]>([]);
 	let marketOverview = $state<MarketOverviewData | null>(null);
@@ -233,13 +254,22 @@
 				</button>
 			{/each}
 		</div>
-		<div class="scan-controls">
-			<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
-			{#if store.status?.state === 'PickingGems'}
-				<button class="scan-btn scan-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop</button>
-			{:else}
-				<button class="scan-btn" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Scan</button>
-			{/if}
+		<div class="bar-right">
+			<div class="lab-mode-selector">
+				{#each LAB_MODES as mode}
+					<button class="lab-mode-btn" class:active={labMode === mode} onclick={() => handleLabModeChange(mode)}>
+						{mode}
+					</button>
+				{/each}
+			</div>
+			<div class="scan-controls">
+				<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
+				{#if store.status?.state === 'PickingGems'}
+					<button class="scan-btn scan-stop" onclick={() => invoke('stop_scanning').catch((e: any) => console.error('Stop scan failed:', e))}>Stop</button>
+				{:else}
+					<button class="scan-btn" onclick={() => invoke('start_scanning').catch((e: any) => console.error('Start scan failed:', e))}>Scan</button>
+				{/if}
+			</div>
 		</div>
 	</div>
 
@@ -261,7 +291,10 @@
 		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
 		<div class:tab-hidden={activeTab !== 'Session'}>
-			<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} />
+			{#if isDedication}
+				<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
+			{/if}
+			<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} />
 			<SessionQueue
 				queue={sessionQueue}
 				onRemove={handleRemoveFromQueue}
@@ -272,7 +305,7 @@
 		{#if activeTab === 'Rankings'}
 			<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 		{:else if activeTab === 'Font EV'}
-			<FontEVCompare {refreshKey} league={status?.league || ''} />
+			<FontEVCompare {refreshKey} league={status?.league || ''} labMode={labModeForChild} />
 		{:else if activeTab === 'Market'}
 			{#if marketOverview}
 				<MarketOverview data={marketOverview} />
@@ -318,6 +351,37 @@
 	.tab.active {
 		color: var(--color-lab-text);
 		border-bottom-color: var(--color-lab-blue);
+	}
+	.bar-right {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+	.lab-mode-selector {
+		display: flex;
+		gap: 0;
+		border: 1px solid var(--color-lab-border);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+	.lab-mode-btn {
+		background: transparent;
+		border: none;
+		color: var(--color-lab-text-secondary);
+		padding: 4px 10px;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+		transition: background 0.15s, color 0.15s;
+	}
+	.lab-mode-btn:hover {
+		color: var(--color-lab-text);
+		background: rgba(255, 255, 255, 0.05);
+	}
+	.lab-mode-btn.active {
+		color: var(--color-lab-text);
+		background: rgba(99, 102, 241, 0.2);
 	}
 	.scan-controls {
 		display: flex;

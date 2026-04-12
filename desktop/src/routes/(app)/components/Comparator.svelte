@@ -32,11 +32,15 @@
 		league = '',
 		divineRate = 0,
 		onQueueGem,
+		labMode = 'normal',
 	}: {
 		league?: string;
 		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
+		labMode?: 'normal' | 'dedication';
 	} = $props();
+
+	let isDedication = $derived(labMode === 'dedication');
 
 	let selectedForQueue = $state<string | null>(null);
 
@@ -97,8 +101,21 @@
 		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
-	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
+	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
+	const DEDICATION_VARIANTS = ['21/23'];
+	let activeVariants = $derived(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
+	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
+
+	// Lock variant to 21/23 in dedication mode, restore to 20/20 in normal mode.
+	$effect(() => {
+		if (isDedication && variant !== '21/23') {
+			variant = '21/23';
+			loadResults();
+		} else if (!isDedication && variant === '21/23') {
+			variant = '20/20';
+			loadResults();
+		}
+	});
 
 	// Listen for gem-detected events from Rust OCR.
 	// Rust emits one gem at a time as a string. Accumulate up to 3, then auto-compare.
@@ -254,7 +271,7 @@
 		if (compareAbort) compareAbort.abort();
 		compareAbort = new AbortController();
 		try {
-			results = await fetchCompare(active, variant, compareAbort.signal);
+			results = await fetchCompare(active, variant, compareAbort.signal, isDedication ? 'dedication' : undefined);
 			// Populate tradeData from compare response (server-side cache enrichment)
 			for (const gem of results) {
 				if (gem.trade) {
@@ -283,6 +300,7 @@
 		try {
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
 				gem, variant, divineRate: divineRate || undefined,
+				mode: isDedication ? 'dedication' : undefined,
 			});
 			tradeData[gem] = result;
 		} catch (err: any) {
@@ -308,7 +326,7 @@
 		searchDebounce = setTimeout(async () => {
 			// Guard: if query changed while waiting, skip stale fetch
 			if (searchQuery !== query) return;
-			const allNames = await fetchGemNames(query);
+			const allNames = await fetchGemNames(query, isDedication ? 'dedication' : undefined);
 			// Guard: if query changed during fetch, skip stale results
 			if (searchQuery !== query) return;
 			suggestions = allNames.filter((n) => !selectedGems.includes(n));
