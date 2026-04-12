@@ -20,6 +20,7 @@ type Analyzer struct {
 	muTransfigure  sync.Mutex
 	muFont         sync.Mutex
 	muQuality      sync.Mutex
+	muDedication   sync.Mutex
 	muV2           sync.Mutex
 }
 
@@ -132,6 +133,80 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 		"safe", len(analysis.Safe),
 		"premium", len(analysis.Premium),
 		"jackpot", len(analysis.Jackpot),
+		"inserted", inserted,
+	)
+	a.throttler.Signal()
+	return nil
+}
+
+// RunDedication fetches the latest gem snapshot and computes Dedication lab EV
+// for corrupted 21/23 gems (both skills and transfigured pools).
+// It requires GemFeature data for risk-adjustment (sell probability, stability discount).
+// It is safe to call from multiple goroutines; concurrent runs are serialized.
+func (a *Analyzer) RunDedication(ctx context.Context) error {
+	a.muDedication.Lock()
+	defer a.muDedication.Unlock()
+
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	if err != nil {
+		a.logger.Error("dedication: failed to load gem prices", "error", err)
+		return err
+	}
+	if len(gems) == 0 {
+		a.logger.Info("dedication: no gem snapshots available yet, skipping")
+		return nil
+	}
+
+	// Load gem features: try cache first, fall back to DB.
+	var features []GemFeature
+	if a.cache != nil {
+		features = a.cache.GemFeatures()
+	}
+	if len(features) == 0 {
+		features, err = a.repo.LatestGemFeatures(ctx, "", "", 50000)
+		if err != nil {
+			a.logger.Error("dedication: failed to load gem features", "error", err)
+			return err
+		}
+	}
+	// Dedication can still run without features — risk adjustments use defaults.
+
+	analysis := AnalyzeDedication(snapTime, gems, features)
+
+	// Combine both pools for DB persistence.
+	allResults := make([]DedicationResult, 0, len(analysis.Skills)+len(analysis.Transfigured))
+	allResults = append(allResults, analysis.Skills...)
+	allResults = append(allResults, analysis.Transfigured...)
+
+	inserted, err := a.repo.SaveDedicationResults(ctx, allResults)
+	if err != nil {
+		a.logger.Error("dedication: failed to save results", "error", err)
+		return err
+	}
+
+	if a.cache != nil {
+		a.cache.SetDedication(analysis)
+
+		// Also populate corrupted gem name caches for autocomplete.
+		// Preserve the existing cached slice for any pool whose query fails — a
+		// transient DB error must not wipe a previously valid cache entry.
+		skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, false, 1000)
+		if err != nil {
+			a.logger.Warn("dedication: failed to load corrupted skill gem names", "error", err)
+			skillNames = a.cache.CorruptedGemNames(false)
+		}
+		transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, true, 1000)
+		if err != nil {
+			a.logger.Warn("dedication: failed to load corrupted transfigured gem names", "error", err)
+			transfiguredNames = a.cache.CorruptedGemNames(true)
+		}
+		a.cache.SetCorruptedGemNames(skillNames, transfiguredNames)
+	}
+
+	a.logger.Info("dedication analysis complete",
+		"snapTime", snapTime,
+		"skills", len(analysis.Skills),
+		"transfigured", len(analysis.Transfigured),
 		"inserted", inserted,
 	)
 	a.throttler.Signal()

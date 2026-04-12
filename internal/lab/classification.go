@@ -389,6 +389,199 @@ func computeCleanTierBoundaries(gems []GemPrice, lowConf map[string]bool, tops m
 	return result
 }
 
+// ComputeDedicationClassification runs the tier pipeline for Dedication
+// corrupted 21/23 gems. It uses isDedicationGem as its filter (instead of
+// isAnalyzableGem) and further constrains to the given pool type.
+// isTransfigured = false → skills pool, true → transfigured pool.
+func ComputeDedicationClassification(gems []GemPrice, isTransfigured bool) ClassificationResult {
+	// Pre-filter to only the relevant Dedication pool.
+	var filtered []GemPrice
+	for _, g := range gems {
+		if isDedicationGem(g) && g.Variant == "21/23c" && g.IsTransfigured == isTransfigured {
+			filtered = append(filtered, g)
+		}
+	}
+
+	// Run the same classification pipeline with a pass-through filter
+	// (all gems already meet the criteria after pre-filtering above).
+	return classifyWithFilter(filtered, func(g GemPrice) bool { return true })
+}
+
+// classifyWithFilter runs the classification pipeline using a custom filter
+// predicate instead of isAnalyzableGem. This allows reuse for both the standard
+// Font pipeline (isAnalyzableGem) and Dedication pipeline (isDedicationGem).
+func classifyWithFilter(gems []GemPrice, filter func(GemPrice) bool) ClassificationResult {
+	lowConf := detectLowConfidenceFiltered(gems, filter)
+	tops := detectTopsFiltered(gems, lowConf, filter)
+	boundaries := computeCleanTierBoundariesFiltered(gems, lowConf, tops, filter)
+
+	result := ClassificationResult{
+		Gems:        make(GemClassificationMap),
+		Boundaries:  boundaries,
+		TopBoundary: make(map[string]float64),
+	}
+
+	for _, g := range gems {
+		if !filter(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := GemClassificationKey{g.Name, g.Variant}
+		gemKey := g.Name + "|" + g.Variant
+
+		isLowConf := lowConf[gemKey]
+
+		var tier string
+		if tops[gemKey] {
+			tier = "TOP"
+		} else if tb, ok := boundaries[g.Variant]; ok {
+			tier = classifyTier(g.Chaos, tb)
+			if isLowConf && len(tb.Boundaries) > 0 && g.Chaos > tb.Boundaries[0] {
+				tier = "CHAOTIC"
+			}
+		} else {
+			tier = "FLOOR"
+		}
+
+		result.Gems[key] = GemClassification{
+			Tier:          tier,
+			LowConfidence: isLowConf,
+		}
+	}
+
+	return result
+}
+
+// detectLowConfidenceFiltered is like detectLowConfidence but uses a custom filter.
+func detectLowConfidenceFiltered(gems []GemPrice, filter func(GemPrice) bool) map[string]bool {
+	type gemInfo struct {
+		name     string
+		variant  string
+		listings int
+	}
+	byVariant := make(map[string][]gemInfo)
+	for _, g := range gems {
+		if !filter(g) || g.Chaos <= 5 {
+			continue
+		}
+		byVariant[g.Variant] = append(byVariant[g.Variant], gemInfo{g.Name, g.Variant, g.Listings})
+	}
+
+	result := make(map[string]bool)
+	for variant, vGems := range byVariant {
+		listings := make([]float64, len(vGems))
+		for i, g := range vGems {
+			listings[i] = float64(g.listings)
+		}
+		sort.Float64s(listings)
+		median := listings[len(listings)/2]
+		if median <= 0 {
+			median = 1
+		}
+		for _, g := range vGems {
+			depth := float64(g.listings) / median
+			if depth < 0.4 {
+				result[g.name+"|"+variant] = true
+			}
+		}
+	}
+	return result
+}
+
+// detectTopsFiltered is like detectTops but uses a custom filter.
+func detectTopsFiltered(gems []GemPrice, lowConf map[string]bool, filter func(GemPrice) bool) map[string]bool {
+	byVariant := make(map[string][]GemPrice)
+	for _, g := range gems {
+		if !filter(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := g.Name + "|" + g.Variant
+		if lowConf[key] {
+			continue
+		}
+		byVariant[g.Variant] = append(byVariant[g.Variant], g)
+	}
+
+	tops := make(map[string]bool)
+	for variant, vGems := range byVariant {
+		var prices []float64
+		for _, g := range vGems {
+			prices = append(prices, g.Chaos)
+		}
+		sort.Sort(sort.Reverse(sort.Float64Slice(prices)))
+
+		if len(prices) < 4 {
+			continue
+		}
+
+		topCap := len(prices) / 10
+		if topCap < 3 {
+			topCap = 3
+		}
+		if topCap >= len(prices) {
+			continue
+		}
+
+		topPoolSize := topCap
+		if topPoolSize > len(prices)-1 {
+			topPoolSize = len(prices) - 1
+		}
+		topTotalGap := prices[0] - prices[topPoolSize]
+		avgGap := topTotalGap / float64(topPoolSize)
+
+		foundTop := false
+		topEnd := 0
+
+		for i := 0; i < topCap && i < len(prices)-1; i++ {
+			gap := prices[i] - prices[i+1]
+			if gap >= avgGap*2 {
+				topEnd = i + 1
+				foundTop = true
+			} else if foundTop {
+				break
+			}
+		}
+
+		if !foundTop || topEnd < 1 {
+			continue
+		}
+
+		topBoundary := prices[topEnd-1]
+		for _, g := range vGems {
+			if g.Chaos >= topBoundary {
+				tops[g.Name+"|"+variant] = true
+			}
+		}
+	}
+	return tops
+}
+
+// computeCleanTierBoundariesFiltered is like computeCleanTierBoundaries but uses a custom filter.
+func computeCleanTierBoundariesFiltered(gems []GemPrice, lowConf map[string]bool, tops map[string]bool, filter func(GemPrice) bool) map[string]TierBoundaries {
+	byVariant := make(map[string][]float64)
+	for _, g := range gems {
+		if !filter(g) || g.Chaos <= 5 {
+			continue
+		}
+		key := g.Name + "|" + g.Variant
+		if lowConf[key] || tops[key] {
+			continue
+		}
+		byVariant[g.Variant] = append(byVariant[g.Variant], g.Chaos)
+	}
+
+	result := make(map[string]TierBoundaries)
+	for variant, prices := range byVariant {
+		sort.Float64s(prices)
+		for i, j := 0, len(prices)-1; i < j; i, j = i+1, j-1 {
+			prices[i], prices[j] = prices[j], prices[i]
+		}
+
+		floorBound := math.Max(computeTop5Avg(prices)*FloorTopRatio, 1)
+		result[variant] = computeVariantTiers(prices, floorBound)
+	}
+	return result
+}
+
 // ComputeGemClassification is the unified tier pipeline entry point.
 // Per variant independently:
 //  1. Low Confidence detection (thin-market gems, depth < 0.4)

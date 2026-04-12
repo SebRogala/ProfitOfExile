@@ -423,19 +423,23 @@ export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 	};
 }
 
-export async function fetchGemNames(query: string): Promise<string[]> {
+export async function fetchGemNames(query: string, mode?: string): Promise<string[]> {
 	if (query.length < 2) return [];
-	const resp = await get<{ names: string[] }>('/analysis/gems/names', {
-		q: query,
-		limit: '15',
-	});
+	const params: Record<string, string> = { q: query, limit: '15' };
+	if (mode === 'dedication') {
+		params.corrupted = 'true';
+	}
+	const resp = await get<{ names: string[] }>('/analysis/gems/names', params);
 	return resp.names || [];
 }
 
-export async function fetchCompare(gems: string[], variant: string, signal?: AbortSignal): Promise<CompareGem[]> {
+export async function fetchCompare(gems: string[], variant: string, signal?: AbortSignal, mode?: string): Promise<CompareGem[]> {
 	const url = new URL(`${getApiBase()}/analysis/compare`);
 	url.searchParams.set('gems', gems.join(','));
 	url.searchParams.set('variant', variant);
+	if (mode === 'dedication') {
+		url.searchParams.set('mode', 'dedication');
+	}
 	const resp = await fetch(url.toString(), { signal, headers: deviceHeaders() });
 	if (!resp.ok) {
 		throw new Error(`API /analysis/compare: ${resp.status} ${resp.statusText}`);
