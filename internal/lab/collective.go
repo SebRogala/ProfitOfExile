@@ -2,6 +2,7 @@ package lab
 
 import (
 	"sort"
+	"strings"
 )
 
 // CollectiveResult is a cross-analyzer "what to farm now" entry combining
@@ -73,6 +74,7 @@ type CompareResult struct {
 	TransListings        int              `json:"transListings"`
 	// Risk-adjusted display fields (from features/signals)
 	WeightedROI          float64 `json:"weightedRoi"`
+	WeightedROIPct       float64 `json:"weightedRoiPct"`
 	Low7Days                float64 `json:"low7d"`
 	High7Days               float64 `json:"high7d"`
 	SellConfidence       string  `json:"sellConfidence"`
@@ -402,6 +404,7 @@ func BuildCompareResults(
 			score := cr.ROI * w * (sell / 100)
 			ranks[i] = ranked{idx: i, score: score}
 			results[i].WeightedROI = score
+			results[i].WeightedROIPct = cr.ROIPct * w * (sell / 100)
 		}
 		sort.Slice(ranks, func(i, j int) bool {
 			return ranks[i].score > ranks[j].score
@@ -427,3 +430,132 @@ func BuildCompareResults(
 	return results
 }
 
+// BuildDedicationCompareResults builds compare results for Dedication lab mode.
+// Each gem is scored against the corrupted 21/23c pool. The pool type (skill vs
+// transfigured) is auto-detected from the gem name: names containing " of " are
+// transfigured, others are non-transfigured skills.
+// dedicationResults provides per-color input costs and pool context.
+func BuildDedicationCompareResults(
+	names []string,
+	gemPrices []GemPrice,
+	dedicationResults []DedicationResult,
+	sparklines map[string][]SparklinePoint,
+) []CompareResult {
+	// Index gem prices by name. For corrupted 21/23c there should be at most one
+	// entry per name, but if duplicates exist we keep the last (highest chaos).
+	priceIndex := make(map[string]*GemPrice, len(gemPrices))
+	for i := range gemPrices {
+		g := &gemPrices[i]
+		priceIndex[g.Name] = g
+	}
+
+	// Index Dedication results by (color, gemType) for input cost lookup.
+	// Use the first mode encountered as the baseline — input cost is the same
+	// across all modes (safe/premium/jackpot).
+	type dedKey struct{ color, gemType string }
+	inputCosts := make(map[dedKey]float64)
+	for _, dr := range dedicationResults {
+		k := dedKey{dr.Color, dr.GemType}
+		if _, exists := inputCosts[k]; !exists {
+			inputCosts[k] = dr.InputCost
+		}
+	}
+
+	var results []CompareResult
+
+	for _, name := range names {
+		cr := CompareResult{
+			TransfiguredName: name,
+			Variant:          "21/23c",
+			Signal:           "STABLE",
+			Confidence:       "LOW",
+		}
+
+		// Auto-detect pool type from gem name.
+		isTransfigured := strings.Contains(name, " of ")
+		gemType := "skill"
+		if isTransfigured {
+			gemType = "transfigured"
+		}
+
+		g, found := priceIndex[name]
+		if found {
+			cr.GemColor = g.GemColor
+			cr.TransfiguredPrice = g.Chaos
+			cr.TransListings = g.Listings
+
+			// Confidence based on listings.
+			switch {
+			case g.Listings >= 5:
+				cr.Confidence = "HIGH"
+			case g.Listings >= 2:
+				cr.Confidence = "MEDIUM"
+			default:
+				cr.Confidence = "LOW"
+			}
+
+			// Look up the input cost for this color/pool.
+			inputCost := inputCosts[dedKey{g.GemColor, gemType}]
+			cr.BasePrice = inputCost
+			cr.BaseName = gemType // "skill" or "transfigured" (pool label, not a specific base gem)
+
+			if inputCost > 0 {
+				cr.ROI = g.Chaos - inputCost
+				cr.ROIPct = (cr.ROI / inputCost) * 100
+			} else {
+				cr.ROI = g.Chaos
+			}
+		}
+
+		// Attach sparkline.
+		if pts, ok := sparklines[name]; ok {
+			cr.Sparkline = pts
+		}
+		if cr.Sparkline == nil {
+			cr.Sparkline = []SparklinePoint{}
+		}
+
+		results = append(results, cr)
+	}
+
+	// Assign recommendations based on ROI ranking.
+	if len(results) > 0 {
+		type ranked struct {
+			idx   int
+			score float64
+		}
+		ranks := make([]ranked, len(results))
+		for i, cr := range results {
+			// For Dedication, weight by ROI and confidence.
+			confMultiplier := 0.5
+			switch cr.Confidence {
+			case "HIGH":
+				confMultiplier = 1.0
+			case "MEDIUM":
+				confMultiplier = 0.75
+			}
+			score := cr.ROI * confMultiplier
+			ranks[i] = ranked{idx: i, score: score}
+			results[i].WeightedROI = score
+			results[i].WeightedROIPct = cr.ROIPct * confMultiplier
+		}
+		sort.Slice(ranks, func(i, j int) bool {
+			return ranks[i].score > ranks[j].score
+		})
+
+		for pos, r := range ranks {
+			cr := results[r.idx]
+			if cr.Confidence == "LOW" && cr.TransListings < 2 {
+				results[r.idx].Recommendation = "AVOID"
+			} else if cr.ROI < 0 {
+				results[r.idx].Recommendation = "AVOID"
+			} else if pos == 0 {
+				results[r.idx].Recommendation = "BEST"
+			} else {
+				results[r.idx].Recommendation = "OK"
+			}
+		}
+	}
+
+	return results
+}

@@ -15,13 +15,17 @@
 		onQueueGem,
 		desktopPair = null,
 		onDesktopDisconnect,
+		labMode = 'normal',
 	}: {
 		league?: string;
 		refreshKey?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		desktopPair?: string | null;
 		onDesktopDisconnect?: () => void;
+		labMode?: 'normal' | 'dedication';
 	} = $props();
+
+	let isDedication = $derived(labMode === 'dedication');
 
 	let selectedForQueue = $state<string | null>(null);
 
@@ -35,8 +39,21 @@
 		}
 	});
 
-	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	const VARIANT_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
+	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
+	const DEDICATION_VARIANTS = ['21/23'];
+	let activeVariants = $derived(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
+	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
+
+	// Lock variant to 21/23 in dedication mode, restore to 20/20 in normal mode.
+	$effect(() => {
+		if (isDedication && variant !== '21/23') {
+			variant = '21/23';
+			loadResults();
+		} else if (!isDedication && variant === '21/23') {
+			variant = '20/20';
+			loadResults();
+		}
+	});
 
 	// --- Desktop pairing state ---
 	let desktopConnected = $state(false);
@@ -49,7 +66,7 @@
 		const unsub = subscribeToDesktopGems(
 			(gems, detectedVariant) => {
 				// Set variant if different
-				if (VARIANTS.includes(detectedVariant) && detectedVariant !== variant) {
+				if (activeVariants.includes(detectedVariant) && detectedVariant !== variant) {
 					variant = detectedVariant;
 				}
 				// Replace selected gems with detected ones (up to 3)
@@ -198,7 +215,7 @@
 			return;
 		}
 		try {
-			results = await fetchCompare(active, variant);
+			results = await fetchCompare(active, variant, isDedication ? 'dedication' : undefined);
 		} catch (err) {
 			console.error('[Comparator] Failed to load results:', err);
 			results = [];
@@ -219,7 +236,7 @@
 		searchDebounce = setTimeout(async () => {
 			// Guard: if query changed while waiting, skip stale fetch
 			if (searchQuery !== query) return;
-			const allNames = await fetchGemNames(query);
+			const allNames = await fetchGemNames(query, isDedication ? 'dedication' : undefined);
 			// Guard: if query changed during fetch, skip stale results
 			if (searchQuery !== query) return;
 			suggestions = allNames.filter((n) => !selectedGems.includes(n));

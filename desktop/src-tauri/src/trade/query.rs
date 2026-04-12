@@ -2,21 +2,40 @@
 ///
 /// Mirrors Go's buildSearchQuery in client.go. See that file for detailed
 /// field reference (type vs term, securable, collapse, etc.).
+///
+/// When `dedication` is true, the query targets corrupted 21/23 gems:
+/// - Removes `corrupted: false` (21/23 implies corrupted)
+/// - Sets `gem_level: min 21`, `quality: min 23`
+/// - Uses `gem.activegem` category (skills only, no supports)
 pub fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
+    build_search_query_with_mode(gem, variant, false)
+}
+
+pub fn build_search_query_with_mode(gem: &str, variant: &str, dedication: bool) -> serde_json::Value {
     let (gem_level, gem_quality) = parse_variant(variant);
 
-    let mut misc_filters = serde_json::json!({
-        "corrupted": {"option": "false"}
-    });
+    let misc_filters = if dedication {
+        // Dedication mode: no corrupted:false filter (21/23c are corrupted by definition),
+        // set min level 21 and min quality 23.
+        serde_json::json!({
+            "gem_level": {"min": 21},
+            "quality": {"min": 23}
+        })
+    } else {
+        let mut filters = serde_json::json!({
+            "corrupted": {"option": "false"}
+        });
 
-    // Level 20+ = exact filter (20/20 is a distinct market from 1/0)
-    if gem_level >= 20 {
-        misc_filters["gem_level"] = serde_json::json!({"min": gem_level, "max": gem_level});
-    }
-    // Quality 20 = exact 20%. Quality 0 = no filter (competes in full market).
-    if gem_quality == 20 {
-        misc_filters["quality"] = serde_json::json!({"min": 20, "max": 20});
-    }
+        // Level 20+ = exact filter (20/20 is a distinct market from 1/0)
+        if gem_level >= 20 {
+            filters["gem_level"] = serde_json::json!({"min": gem_level, "max": gem_level});
+        }
+        // Quality 20 = exact 20%. Quality 0 = no filter (competes in full market).
+        if gem_quality == 20 {
+            filters["quality"] = serde_json::json!({"min": 20, "max": 20});
+        }
+        filters
+    };
 
     // Transfigured gems (" of ") use "term" for fuzzy match.
     // Base gems use "type" for exact match (prevents cross-matching).
@@ -26,6 +45,9 @@ pub fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
         "type"
     };
 
+    // Dedication mode uses activegem category (skills only, excludes supports).
+    let category = if dedication { "gem.activegem" } else { "gem" };
+
     // Build query object, then insert gem name under the dynamic key.
     // serde_json::json! treats bare identifiers as literal string keys,
     // so we must insert the variable key separately.
@@ -34,7 +56,7 @@ pub fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
         "filters": {
             "type_filters": {
                 "filters": {
-                    "category": {"option": "gem"}
+                    "category": {"option": category}
                 }
             },
             "misc_filters": {
@@ -115,5 +137,41 @@ mod tests {
         let q = build_search_query("Empower Support", "1/0");
         let filters = &q["query"]["filters"]["misc_filters"]["filters"];
         assert!(filters.get("gem_level").is_none());
+    }
+
+    #[test]
+    fn dedication_query_no_corrupted_false() {
+        let q = build_search_query_with_mode("Earthquake of Fragility", "21/23", true);
+        let filters = &q["query"]["filters"]["misc_filters"]["filters"];
+        assert!(filters.get("corrupted").is_none(), "Dedication mode should not have corrupted:false");
+    }
+
+    #[test]
+    fn dedication_query_has_level_21_quality_23() {
+        let q = build_search_query_with_mode("Earthquake of Fragility", "21/23", true);
+        let filters = &q["query"]["filters"]["misc_filters"]["filters"];
+        assert_eq!(filters["gem_level"]["min"], 21);
+        assert_eq!(filters["quality"]["min"], 23);
+    }
+
+    #[test]
+    fn dedication_query_uses_activegem_category() {
+        let q = build_search_query_with_mode("Earthquake of Fragility", "21/23", true);
+        let category = &q["query"]["filters"]["type_filters"]["filters"]["category"]["option"];
+        assert_eq!(category, "gem.activegem");
+    }
+
+    #[test]
+    fn normal_query_uses_gem_category() {
+        let q = build_search_query("Earthquake of Fragility", "20/20");
+        let category = &q["query"]["filters"]["type_filters"]["filters"]["category"]["option"];
+        assert_eq!(category, "gem");
+    }
+
+    #[test]
+    fn dedication_query_base_gem_uses_type() {
+        let q = build_search_query_with_mode("Spark", "21/23", true);
+        assert!(q["query"]["type"].is_string());
+        assert!(q["query"].get("term").is_none());
     }
 }

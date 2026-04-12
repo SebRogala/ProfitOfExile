@@ -281,6 +281,10 @@ func main() {
 		if err := analyzer.RunFont(ctx); err != nil {
 			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
 		}
+		// Dedication runs after V2 for risk-adjustment features.
+		if err := analyzer.RunDedication(ctx); err != nil {
+			slog.Warn("startup dedication analysis failed (non-fatal)", "error", err)
+		}
 	}()
 	go func() {
 		defer func() {
@@ -423,6 +427,10 @@ func main() {
 					// Font runs after V2 so it reads fresh GemFeatures with current tier classification.
 					if err := analyzer.RunFont(subCtx); err != nil {
 						slog.Warn("font analysis failed", "error", err)
+					}
+					// Dedication runs after V2 for risk-adjustment features.
+					if err := analyzer.RunDedication(subCtx); err != nil {
+						slog.Warn("dedication analysis failed", "error", err)
 					}
 				}()
 

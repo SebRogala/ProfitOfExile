@@ -78,7 +78,7 @@ export interface FontColor {
 	avgWin?: number;
 	avgWinRaw?: number;
 	evRaw?: number;
-	jackpotGems?: { name: string; chaos: number }[];
+	jackpotGems?: { name: string; chaos: number; gcpRecipeCost?: number; gcpRecipeBase?: number; gcpRecipeSaves?: number }[];
 	thinPoolGems?: number;
 	liquidityRisk?: string;
 	mode?: string;
@@ -100,6 +100,38 @@ export interface FontEVResponse {
 	bestColorSafe: string;
 	bestColorPremium: string;
 	bestColorJackpot: string;
+}
+
+// --- Dedication types ---
+
+export interface DedicationColor {
+	color: 'RED' | 'GREEN' | 'BLUE';
+	gemType: string;
+	pool: number;
+	winners: number;
+	pWin: number;
+	avgWinRaw: number;
+	evRaw: number;
+	inputCost: number;
+	profit: number;
+	fontsToHit: number;
+	jackpotGems?: { name: string; chaos: number }[];
+	thinPoolGems: number;
+	liquidityRisk: string;
+	poolBreakdown?: { tier: string; count: number; minPrice: number; maxPrice: number }[];
+	lowConfidenceGems?: { name: string; chaos: number; listings: number }[];
+}
+
+export interface DedicationPoolResponse {
+	safe: DedicationColor[];
+	premium: DedicationColor[];
+	jackpot: DedicationColor[];
+}
+
+export interface DedicationEVResponse {
+	skills: DedicationPoolResponse;
+	transfigured: DedicationPoolResponse;
+	entryFee: number;
 }
 
 export interface MarketOverviewData {
@@ -362,6 +394,48 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 	};
 }
 
+function mapDedicationRows(rows: any[]): DedicationColor[] {
+	return rows.map((r: any) => ({
+		color: r.color ?? '',
+		gemType: r.gemType ?? '',
+		pool: r.pool ?? 0,
+		winners: r.winners ?? 0,
+		pWin: Math.round((r.pWin ?? 0) * 10000) / 100,
+		avgWinRaw: Math.round(r.avgWinRaw ?? 0),
+		evRaw: Math.round(r.evRaw ?? 0),
+		inputCost: Math.round(r.inputCost ?? 0),
+		profit: Math.round(r.profit ?? 0),
+		fontsToHit: r.fontsToHit ?? 0,
+		jackpotGems: r.jackpotGems ?? [],
+		thinPoolGems: r.thinPoolGems ?? 0,
+		liquidityRisk: r.liquidityRisk ?? 'LOW',
+		poolBreakdown: r.poolBreakdown ?? [],
+		lowConfidenceGems: r.lowConfidenceGems ?? [],
+	}));
+}
+
+function mapDedicationPool(pool: any): DedicationPoolResponse {
+	return {
+		safe: mapDedicationRows(pool?.safe || []),
+		premium: mapDedicationRows(pool?.premium || []),
+		jackpot: mapDedicationRows(pool?.jackpot || []),
+	};
+}
+
+export async function fetchDedicationEV(): Promise<DedicationEVResponse> {
+	const resp = await get<{
+		skills: any;
+		transfigured: any;
+		entryFee: number;
+	}>('/analysis/dedication');
+
+	return {
+		skills: mapDedicationPool(resp.skills),
+		transfigured: mapDedicationPool(resp.transfigured),
+		entryFee: Math.round(resp.entryFee || 0),
+	};
+}
+
 export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 	const resp = await get<MarketOverviewData>('/analysis/market-overview');
 	return {
@@ -393,20 +467,25 @@ export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 	};
 }
 
-export async function fetchGemNames(query: string): Promise<string[]> {
+export async function fetchGemNames(query: string, mode?: string): Promise<string[]> {
 	if (query.length < 2) return [];
-	const resp = await get<{ names: string[] }>('/analysis/gems/names', {
-		q: query,
-		limit: '15',
-	});
+	const params: Record<string, string> = { q: query, limit: '15' };
+	if (mode === 'dedication') {
+		params.corrupted = 'true';
+	}
+	const resp = await get<{ names: string[] }>('/analysis/gems/names', params);
 	return resp.names || [];
 }
 
-export async function fetchCompare(gems: string[], variant: string): Promise<CompareGem[]> {
-	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', {
+export async function fetchCompare(gems: string[], variant: string, mode?: string): Promise<CompareGem[]> {
+	const params: Record<string, string> = {
 		gems: gems.join(','),
 		variant,
-	});
+	};
+	if (mode === 'dedication') {
+		params.mode = 'dedication';
+	}
+	const resp = await get<{ count: number; data: any[] }>('/analysis/compare', params);
 	const results = (resp.data || []).map(mapCompareRow);
 
 	// Enrich with signal history in parallel
