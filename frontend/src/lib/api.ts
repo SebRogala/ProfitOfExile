@@ -396,21 +396,21 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 
 function mapDedicationRows(rows: any[]): DedicationColor[] {
 	return rows.map((r: any) => ({
-		color: r.color || '',
-		gemType: r.gemType || '',
-		pool: r.pool || 0,
-		winners: r.winners || 0,
-		pWin: Math.round((r.pWin || 0) * 10000) / 100,
-		avgWinRaw: r.avgWinRaw ? Math.round(r.avgWinRaw) : 0,
-		evRaw: r.evRaw ? Math.round(r.evRaw) : 0,
-		inputCost: r.inputCost ? Math.round(r.inputCost) : 0,
-		profit: r.profit ? Math.round(r.profit) : 0,
-		fontsToHit: r.fontsToHit || 0,
-		jackpotGems: r.jackpotGems || [],
-		thinPoolGems: r.thinPoolGems || 0,
-		liquidityRisk: r.liquidityRisk || 'LOW',
-		poolBreakdown: r.poolBreakdown || [],
-		lowConfidenceGems: r.lowConfidenceGems || [],
+		color: r.color ?? '',
+		gemType: r.gemType ?? '',
+		pool: r.pool ?? 0,
+		winners: r.winners ?? 0,
+		pWin: Math.round((r.pWin ?? 0) * 10000) / 100,
+		avgWinRaw: Math.round(r.avgWinRaw ?? 0),
+		evRaw: Math.round(r.evRaw ?? 0),
+		inputCost: Math.round(r.inputCost ?? 0),
+		profit: Math.round(r.profit ?? 0),
+		fontsToHit: r.fontsToHit ?? 0,
+		jackpotGems: r.jackpotGems ?? [],
+		thinPoolGems: r.thinPoolGems ?? 0,
+		liquidityRisk: r.liquidityRisk ?? 'LOW',
+		poolBreakdown: r.poolBreakdown ?? [],
+		lowConfidenceGems: r.lowConfidenceGems ?? [],
 	}));
 }
 
