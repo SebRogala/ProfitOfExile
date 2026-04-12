@@ -74,6 +74,7 @@ type CompareResult struct {
 	TransListings        int              `json:"transListings"`
 	// Risk-adjusted display fields (from features/signals)
 	WeightedROI          float64 `json:"weightedRoi"`
+	WeightedROIPct       float64 `json:"weightedRoiPct"`
 	Low7Days                float64 `json:"low7d"`
 	High7Days               float64 `json:"high7d"`
 	SellConfidence       string  `json:"sellConfidence"`
@@ -403,6 +404,7 @@ func BuildCompareResults(
 			score := cr.ROI * w * (sell / 100)
 			ranks[i] = ranked{idx: i, score: score}
 			results[i].WeightedROI = score
+			results[i].WeightedROIPct = cr.ROIPct * w * (sell / 100)
 		}
 		sort.Slice(ranks, func(i, j int) bool {
 			return ranks[i].score > ranks[j].score
@@ -535,6 +537,7 @@ func BuildDedicationCompareResults(
 			score := cr.ROI * confMultiplier
 			ranks[i] = ranked{idx: i, score: score}
 			results[i].WeightedROI = score
+			results[i].WeightedROIPct = cr.ROIPct * confMultiplier
 		}
 		sort.Slice(ranks, func(i, j int) bool {
 			return ranks[i].score > ranks[j].score
