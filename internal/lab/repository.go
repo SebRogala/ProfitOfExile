@@ -1201,14 +1201,15 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, gemType, mode 
 			&poolBreakdownJSON, &lowConfJSON); err != nil {
 			return nil, fmt.Errorf("lab repo: scan dedication result: %w", err)
 		}
-		if dr.PWin > 0 {
-			dr.FontsToHit = 1.0 / dr.PWin
-		}
 		if len(poolBreakdownJSON) > 0 {
-			json.Unmarshal(poolBreakdownJSON, &dr.PoolBreakdown)
+			if err := json.Unmarshal(poolBreakdownJSON, &dr.PoolBreakdown); err != nil {
+				return nil, fmt.Errorf("lab repo: unmarshal pool_breakdown: %w", err)
+			}
 		}
 		if len(lowConfJSON) > 0 {
-			json.Unmarshal(lowConfJSON, &dr.LowConfidenceGems)
+			if err := json.Unmarshal(lowConfJSON, &dr.LowConfidenceGems); err != nil {
+				return nil, fmt.Errorf("lab repo: unmarshal low_confidence_gems: %w", err)
+			}
 		}
 		results = append(results, dr)
 	}
@@ -1222,6 +1223,7 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, gemType, mode 
 // CorruptedGemNamesAutocomplete returns distinct corrupted gem names for autocomplete.
 // When isTransfigured is true, returns only transfigured corrupted gems; when false,
 // returns only non-transfigured corrupted gems. Excludes support gems.
+// Restricts to the last 2 hours to avoid full hypertable scans.
 func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, isTransfigured bool, limit int) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT name FROM gem_snapshots
@@ -1229,6 +1231,7 @@ func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, isTransf
 		  AND is_transfigured = $1
 		  AND name NOT LIKE '%Support%'
 		  AND name NOT LIKE '%Trarthus%'
+		  AND time > NOW() - INTERVAL '2 hours'
 		ORDER BY name
 		LIMIT $2`, isTransfigured, limit)
 	if err != nil {
@@ -1249,4 +1252,89 @@ func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, isTransf
 	}
 
 	return names, nil
+}
+
+// CorruptedGemPricesByNames returns the latest snapshot prices for specific corrupted gems.
+// Only returns gems matching variant "21/23c". Used by the Dedication compare endpoint.
+func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, names []string) ([]GemPrice, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
+		       is_transfigured, is_corrupted, COALESCE(gem_color, '')
+		FROM gem_snapshots
+		WHERE time = (SELECT MAX(time) FROM gem_snapshots)
+		  AND is_corrupted = true
+		  AND variant = '21/23c'
+		  AND name = ANY($1)`, names)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query corrupted gem prices by names: %w", err)
+	}
+	defer rows.Close()
+
+	var gems []GemPrice
+	for rows.Next() {
+		var g GemPrice
+		if err := rows.Scan(&g.Name, &g.Variant, &g.Chaos, &g.Listings,
+			&g.IsTransfigured, &g.IsCorrupted, &g.GemColor); err != nil {
+			return nil, fmt.Errorf("lab repo: scan corrupted gem price: %w", err)
+		}
+		gems = append(gems, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: corrupted gem prices rows iteration: %w", err)
+	}
+
+	return gems, nil
+}
+
+// SparklineDataCorrupted returns sparkline data for corrupted gems (is_corrupted = true).
+// Same shape as SparklineData but filters for corrupted gems instead.
+func (r *Repository) SparklineDataCorrupted(ctx context.Context, names []string, variant string, hours int) (map[string][]SparklinePoint, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
+		FROM gem_snapshots
+		WHERE name = ANY($1) AND is_corrupted = true
+		  AND time > NOW() - make_interval(hours => $2)`
+	args := []any{names, hours}
+
+	if variant != "" {
+		query += ` AND variant = $3`
+		args = append(args, variant)
+	}
+
+	query += ` ORDER BY name, time ASC LIMIT 10000`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query corrupted sparkline data: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string][]SparklinePoint)
+	for rows.Next() {
+		var name string
+		var t time.Time
+		var chaos float64
+		var listings int
+		if err := rows.Scan(&name, &t, &chaos, &listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan corrupted sparkline point: %w", err)
+		}
+		result[name] = append(result[name], SparklinePoint{
+			Time:     t.UTC().Format(time.RFC3339),
+			Price:    chaos,
+			Listings: listings,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: corrupted sparkline rows iteration: %w", err)
+	}
+
+	return result, nil
 }

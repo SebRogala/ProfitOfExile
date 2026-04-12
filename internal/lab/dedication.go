@@ -43,25 +43,23 @@ func isDedicationGem(g GemPrice) bool {
 	return g.IsCorrupted && !strings.Contains(g.Name, "Support") && !strings.Contains(g.Name, "Trarthus")
 }
 
-// dedicationInputCost computes the average chaos of the 10 cheapest gems in the pool.
-// If the pool has fewer than 10 gems, averages all of them.
-func dedicationInputCost(gems []GemPrice) float64 {
-	if len(gems) == 0 {
+// dedicationInputCostFromPrices computes the average of the 10 cheapest prices in the pool.
+// If the pool has fewer than 10 entries, averages all of them.
+func dedicationInputCostFromPrices(prices []float64) float64 {
+	if len(prices) == 0 {
 		return 0
 	}
-	prices := make([]float64, len(gems))
-	for i, g := range gems {
-		prices[i] = g.Chaos
-	}
-	sort.Float64s(prices)
+	sorted := make([]float64, len(prices))
+	copy(sorted, prices)
+	sort.Float64s(sorted)
 
 	n := 10
-	if n > len(prices) {
-		n = len(prices)
+	if n > len(sorted) {
+		n = len(sorted)
 	}
 	sum := 0.0
 	for i := 0; i < n; i++ {
-		sum += prices[i]
+		sum += sorted[i]
 	}
 	return sum / float64(n)
 }
@@ -91,7 +89,6 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 	}
 	poolNames := make(map[poolKey]map[string]struct{})
 	poolGems := make(map[poolKey][]gemEntry)
-	poolRawGems := make(map[poolKey][]GemPrice)
 
 	colors := []string{"RED", "GREEN", "BLUE"}
 	gemTypes := []string{"skill", "transfigured"}
@@ -127,7 +124,12 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			chaos:    g.Chaos,
 			listings: g.Listings,
 		})
-		poolRawGems[k] = append(poolRawGems[k], g)
+	}
+
+	// Precompute classification once per pool type (not once per color).
+	classificationByType := map[string]ClassificationResult{
+		"skill":        ComputeDedicationClassification(gems, false),
+		"transfigured": ComputeDedicationClassification(gems, true),
 	}
 
 	var analysis DedicationAnalysis
@@ -142,10 +144,14 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 				continue
 			}
 
-			inputCost := dedicationInputCost(poolRawGems[k])
+			poolPrices := make([]float64, len(entries))
+			for i, e := range entries {
+				poolPrices[i] = e.chaos
+			}
+			inputCost := dedicationInputCostFromPrices(poolPrices)
 
-			// Compute classification for this pool.
-			classification := ComputeDedicationClassification(gems, gemType == "transfigured")
+			// Use precomputed classification for this pool type.
+			classification := classificationByType[gemType]
 
 			// Count winners and thin-market gems for each mode.
 			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int

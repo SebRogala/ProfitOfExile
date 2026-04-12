@@ -518,12 +518,29 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFu
 				names = cache.CorruptedGemNamesSearch(q, isTransfigured, limit)
 			}
 			if names == nil {
-				var err error
-				names, err = repo.CorruptedGemNamesAutocomplete(r.Context(), isTransfigured, limit)
+				all, err := repo.CorruptedGemNamesAutocomplete(r.Context(), isTransfigured, limit*10)
 				if err != nil {
 					slog.Error("gem names autocomplete: corrupted query failed", "error", err, "q", q)
 					http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 					return
+				}
+				// Filter in memory to match cache search behaviour.
+				words := strings.Fields(strings.ToLower(q))
+				for _, name := range all {
+					lower := strings.ToLower(name)
+					match := true
+					for _, w := range words {
+						if !strings.Contains(lower, w) {
+							match = false
+							break
+						}
+					}
+					if match {
+						names = append(names, name)
+						if len(names) >= limit {
+							break
+						}
+					}
 				}
 			}
 		} else {
