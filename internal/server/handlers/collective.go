@@ -502,6 +502,7 @@ type compareRow struct {
 	TransListings        int                 `json:"transListings"`
 	TransfiguredListings int                 `json:"transfiguredListings"`
 	WeightedROI          float64             `json:"weightedRoi"`
+	WeightedROIPct       float64             `json:"weightedRoiPct"`
 	Low7Days             float64             `json:"low7d"`
 	High7Days            float64             `json:"high7d"`
 	SellConfidence       string              `json:"sellConfidence"`
@@ -545,6 +546,7 @@ func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache)
 			TransListings:        cr.TransListings,
 			TransfiguredListings: cr.TransListings,
 			WeightedROI:          cr.WeightedROI,
+			WeightedROIPct:       cr.WeightedROIPct,
 			Low7Days:             cr.Low7Days,
 			High7Days:            cr.High7Days,
 			SellConfidence:       cr.SellConfidence,
