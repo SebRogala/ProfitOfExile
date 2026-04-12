@@ -302,7 +302,7 @@
 		{#if activeTab === 'Rankings'}
 			<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 		{:else if activeTab === 'Font EV'}
-			<FontEVCompare {refreshKey} league={status?.league || ''} labMode={labModeForChild} />
+			<FontEVCompare {refreshKey} league={status?.league || ''} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
 		{:else if activeTab === 'Market'}
 			{#if marketOverview}
 				<MarketOverview data={marketOverview} />

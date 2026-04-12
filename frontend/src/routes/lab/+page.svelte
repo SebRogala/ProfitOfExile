@@ -195,6 +195,7 @@
 	{/if}
 
 	{#if isDedication}
+		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" divineRate={status?.divinePrice || 0} />
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
 		<SessionQueue
 			queue={sessionQueue}
@@ -214,7 +215,7 @@
 
 		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 
-		<FontEVCompare {refreshKey} league={status?.league || ''} />
+		<FontEVCompare {refreshKey} league={status?.league || ''} divineRate={status?.divinePrice || 0} />
 
 		{#if marketOverview}
 			<MarketOverview data={marketOverview} />
