@@ -37,6 +37,9 @@ func AdminRecalculate(analyzer *lab.Analyzer, internalSecret string) http.Handle
 			if err := analyzer.RunFont(ctx); err != nil {
 				slog.Error("admin recalculate: font failed", "error", err)
 			}
+			if err := analyzer.RunDedication(ctx); err != nil {
+				slog.Error("admin recalculate: dedication failed", "error", err)
+			}
 
 			slog.Info("admin: recalculate complete")
 		}()

@@ -1099,3 +1099,154 @@ func (r *Repository) SnapshotPricesInRange(ctx context.Context, hours int) ([]Sn
 
 	return results, nil
 }
+
+// ---------------------------------------------------------------------------
+// Dedication Lab Analysis
+// ---------------------------------------------------------------------------
+
+// SaveDedicationResults batch-inserts Dedication lab analysis results.
+func (r *Repository) SaveDedicationResults(ctx context.Context, results []DedicationResult) (int, error) {
+	if len(results) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, dr := range results {
+		poolBreakdownJSON, _ := json.Marshal(dr.PoolBreakdown)
+		lowConfJSON, _ := json.Marshal(dr.LowConfidenceGems)
+
+		batch.Queue(
+			`INSERT INTO dedication_snapshots
+			 (time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+			  input_cost, profit, fonts_to_hit, mode, thin_pool_gems, liquidity_risk,
+			  pool_breakdown, low_confidence_gems)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			 ON CONFLICT DO NOTHING`,
+			dr.Time, dr.Color, dr.GemType, dr.Pool, dr.Winners,
+			dr.PWin, dr.AvgWinRaw, dr.EVRaw,
+			dr.InputCost, dr.Profit, dr.FontsToHit,
+			dr.Mode, dr.ThinPoolGems, dr.LiquidityRisk,
+			poolBreakdownJSON, lowConfJSON,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range results {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert dedication result: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit dedication results: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// LatestDedicationResults returns the most recent Dedication analysis results,
+// optionally filtered by gemType and/or mode.
+func (r *Repository) LatestDedicationResults(ctx context.Context, gemType, mode string, limit int) ([]DedicationResult, error) {
+	query := `
+		SELECT time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+		       input_cost, profit, fonts_to_hit,
+		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW'),
+		       COALESCE(pool_breakdown, '[]'::jsonb), COALESCE(low_confidence_gems, '[]'::jsonb)
+		FROM dedication_snapshots
+		WHERE time = (SELECT MAX(time) FROM dedication_snapshots)`
+	args := []any{}
+	argIdx := 1
+
+	if gemType != "" {
+		query += fmt.Sprintf(` AND gem_type = $%d`, argIdx)
+		args = append(args, gemType)
+		argIdx++
+	}
+	if mode != "" {
+		query += fmt.Sprintf(` AND mode = $%d`, argIdx)
+		args = append(args, mode)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` ORDER BY profit DESC LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query dedication results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []DedicationResult
+	for rows.Next() {
+		var dr DedicationResult
+		var poolBreakdownJSON, lowConfJSON []byte
+		if err := rows.Scan(&dr.Time, &dr.Color, &dr.GemType, &dr.Pool, &dr.Winners,
+			&dr.PWin, &dr.AvgWinRaw, &dr.EVRaw,
+			&dr.InputCost, &dr.Profit, &dr.FontsToHit,
+			&dr.Mode, &dr.ThinPoolGems, &dr.LiquidityRisk,
+			&poolBreakdownJSON, &lowConfJSON); err != nil {
+			return nil, fmt.Errorf("lab repo: scan dedication result: %w", err)
+		}
+		if dr.PWin > 0 {
+			dr.FontsToHit = 1.0 / dr.PWin
+		}
+		if len(poolBreakdownJSON) > 0 {
+			json.Unmarshal(poolBreakdownJSON, &dr.PoolBreakdown)
+		}
+		if len(lowConfJSON) > 0 {
+			json.Unmarshal(lowConfJSON, &dr.LowConfidenceGems)
+		}
+		results = append(results, dr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: dedication rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
+// CorruptedGemNamesAutocomplete returns distinct corrupted gem names for autocomplete.
+// When isTransfigured is true, returns only transfigured corrupted gems; when false,
+// returns only non-transfigured corrupted gems. Excludes support gems.
+func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, isTransfigured bool, limit int) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT name FROM gem_snapshots
+		WHERE is_corrupted = true
+		  AND is_transfigured = $1
+		  AND name NOT LIKE '%Support%'
+		  AND name NOT LIKE '%Trarthus%'
+		ORDER BY name
+		LIMIT $2`, isTransfigured, limit)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: corrupted gem names autocomplete: %w", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("lab repo: scan corrupted gem name: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: corrupted gem names rows iteration: %w", err)
+	}
+
+	return names, nil
+}

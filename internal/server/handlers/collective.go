@@ -507,19 +507,39 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFu
 			limit = n
 		}
 
-		// Fast path: in-memory search over cached gem names (~200 entries).
-		// Falls back to DB query only if cache is empty (cold start).
+		// When corrupted=true, use corrupted gem name pools instead of transfigured.
+		corrupted := r.URL.Query().Get("corrupted") == "true"
+		isTransfigured := r.URL.Query().Get("transfigured") != "false" // default true
+
 		var names []string
-		if cache != nil {
-			names = cache.GemNamesSearch(q, limit)
-		}
-		if names == nil {
-			var err error
-			names, err = repo.GemNamesAutocomplete(r.Context(), q, limit)
-			if err != nil {
-				slog.Error("gem names autocomplete: query failed", "error", err, "q", q)
-				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-				return
+		if corrupted {
+			// Corrupted gem name autocomplete (for Dedication lab).
+			if cache != nil {
+				names = cache.CorruptedGemNamesSearch(q, isTransfigured, limit)
+			}
+			if names == nil {
+				var err error
+				names, err = repo.CorruptedGemNamesAutocomplete(r.Context(), isTransfigured, limit)
+				if err != nil {
+					slog.Error("gem names autocomplete: corrupted query failed", "error", err, "q", q)
+					http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+					return
+				}
+			}
+		} else {
+			// Fast path: in-memory search over cached gem names (~200 entries).
+			// Falls back to DB query only if cache is empty (cold start).
+			if cache != nil {
+				names = cache.GemNamesSearch(q, limit)
+			}
+			if names == nil {
+				var err error
+				names, err = repo.GemNamesAutocomplete(r.Context(), q, limit)
+				if err != nil {
+					slog.Error("gem names autocomplete: query failed", "error", err, "q", q)
+					http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 

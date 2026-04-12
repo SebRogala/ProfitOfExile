@@ -26,6 +26,12 @@ type Cache struct {
 	gcpPrice        float64
 	offeringTiming  json.RawMessage // pre-computed offering timing JSON
 
+	// Dedication lab analysis results.
+	dedicationSkills       []DedicationResult
+	dedicationTransfigured []DedicationResult
+	corruptedGemNames            []string // corrupted non-transfigured gem names, sorted
+	corruptedTransfiguredGemNames []string // corrupted transfigured gem names, sorted
+
 	// V2 pre-computed results. These three fields are populated together by
 	// Analyzer.RunV2 from the same snapshot time, but may be nil independently
 	// during startup or if a pipeline stage fails.
@@ -242,6 +248,80 @@ func (c *Cache) GemFeatures() []GemFeature {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.gemFeatures
+}
+
+// SetDedication replaces the cached Dedication analysis results for both pools.
+func (c *Cache) SetDedication(analysis DedicationAnalysis) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dedicationSkills = analysis.Skills
+	c.dedicationTransfigured = analysis.Transfigured
+	c.lastUpdated = time.Now()
+}
+
+// Dedication returns the cached Dedication analysis (nil slices if empty).
+func (c *Cache) Dedication() DedicationAnalysis {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return DedicationAnalysis{
+		Skills:       c.dedicationSkills,
+		Transfigured: c.dedicationTransfigured,
+	}
+}
+
+// SetCorruptedGemNames stores autocomplete names for corrupted gem pools.
+func (c *Cache) SetCorruptedGemNames(skills, transfigured []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.corruptedGemNames = skills
+	c.corruptedTransfiguredGemNames = transfigured
+}
+
+// CorruptedGemNames returns cached corrupted gem names for the given pool type.
+func (c *Cache) CorruptedGemNames(isTransfigured bool) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if isTransfigured {
+		return c.corruptedTransfiguredGemNames
+	}
+	return c.corruptedGemNames
+}
+
+// CorruptedGemNamesSearch returns corrupted gem names matching all query words (case-insensitive).
+// Runs entirely in memory. Returns up to limit results.
+func (c *Cache) CorruptedGemNamesSearch(query string, isTransfigured bool, limit int) []string {
+	c.mu.RLock()
+	var names []string
+	if isTransfigured {
+		names = c.corruptedTransfiguredGemNames
+	} else {
+		names = c.corruptedGemNames
+	}
+	c.mu.RUnlock()
+
+	if len(names) == 0 || query == "" {
+		return nil
+	}
+
+	words := strings.Fields(strings.ToLower(query))
+	var results []string
+	for _, name := range names {
+		lower := strings.ToLower(name)
+		match := true
+		for _, w := range words {
+			if !strings.Contains(lower, w) {
+				match = false
+				break
+			}
+		}
+		if match {
+			results = append(results, name)
+			if len(results) >= limit {
+				break
+			}
+		}
+	}
+	return results
 }
 
 // SetGemSignals replaces the cached gem signals.
