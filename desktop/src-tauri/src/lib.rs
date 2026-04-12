@@ -1746,6 +1746,8 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Cl
                                     }
                                 }
                                 app_log(app, format!("Dedication gem names ({}): {} loaded", label, count));
+                            } else {
+                                app_log(app, format!("Dedication gem names ({}): response missing 'names' field", label));
                             }
                         }
                         Err(e) => {
