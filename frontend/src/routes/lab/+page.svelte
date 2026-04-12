@@ -22,7 +22,15 @@
 	import Legend from './components/Legend.svelte';
 	import FontEVCompare from './components/FontEVCompare.svelte';
 
-	let selectedLab = $state('Merciless');
+	// Restore lab mode from localStorage (default: "Normal").
+	// Migrate old "Merciless" value to "Normal".
+	function restoreLabMode(): string {
+		if (typeof window === 'undefined') return 'Normal';
+		const saved = localStorage.getItem('poe-lab-mode');
+		if (!saved || saved === 'Merciless') return 'Normal';
+		return saved;
+	}
+	let selectedLab = $state(restoreLabMode());
 	let status = $state<StatusData | null>(null);
 	let bestPlays = $state<GemPlay[]>([]);
 	let marketOverview = $state<MarketOverviewData | null>(null);
@@ -140,6 +148,9 @@
 
 	function handleLabChange(lab: string) {
 		selectedLab = lab;
+		if (typeof window !== 'undefined') {
+			localStorage.setItem('poe-lab-mode', lab);
+		}
 	}
 
 	$effect(() => {
@@ -184,10 +195,7 @@
 	{/if}
 
 	{#if isDedication}
-		<section class="section dedication">
-			<h2 class="section-title">Dedication Lab -- Corrupted Gem Exchange</h2>
-			<p class="coming-soon">Coming soon. Corrupted gem analyzer is a separate task.</p>
-		</section>
+		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
 	{:else if !loading}
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
 
@@ -225,28 +233,6 @@
 		margin: 0 auto;
 		padding: 24px 40px;
 	}
-	.section {
-		background: var(--color-lab-surface);
-		border: 1px solid var(--color-lab-border);
-		padding: 28px;
-		margin-bottom: 32px;
-	}
-	.section-title {
-		font-size: 1.125rem;
-		font-weight: 700;
-		color: var(--color-lab-text);
-		margin: 0 0 14px 0;
-	}
-	.dedication {
-		text-align: center;
-		padding: 40px 20px;
-	}
-	.coming-soon {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.875rem;
-		margin-top: 8px;
-	}
-
 	/* Loading */
 	.loading {
 		display: flex;
