@@ -387,7 +387,7 @@ func TestAnalyzeDedication_WinnerHierarchy(t *testing.T) {
 
 func TestAnalyzeDedication_ThinLiquidity(t *testing.T) {
 	now := time.Now()
-	// All gems have < 15 listings (thin market).
+	// All gems have < 5 listings (thin market — below the isThin threshold).
 	gems := []GemPrice{
 		makeDedicationGem("Thin 1", "RED", 500, 3, false),
 		makeDedicationGem("Thin 2", "RED", 400, 4, false),
