@@ -281,7 +281,7 @@
 								{#if ev > 0}
 									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{fmtChaos(ev)}/font</span>
 									<div class="ded-cost-line">
-										<span class="ded-input">in: {fmtChaos(inputCost)}</span>
+										<span class="ded-input">base gem: {fmtChaos(inputCost)}</span>
 										<span class="ded-profit" class:ded-profit-positive={profit > 0} class:ded-profit-negative={profit <= 0}>
 											{profit > 0 ? '+' : ''}{fmtChaos(Math.abs(profit))}
 										</span>
