@@ -31,10 +31,8 @@ export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boo
 		corrupted: { option: 'true' },
 	};
 
-	// Transfigured gems have "alternate_art" = true on the trade site.
-	if (isTransfigured) {
-		miscFilters.gem_alternate_quality = { option: 'true' };
-	}
+	// "Transfigured Gem" filter on the trade site: "Yes" or "No".
+	miscFilters.gem_transfigured = { option: isTransfigured ? 'true' : 'false' };
 
 	const q: any = {
 		query: {
@@ -48,10 +46,6 @@ export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boo
 		},
 		sort: { price: 'asc' },
 	};
-
-	// For non-transfigured, we cannot filter "not transfigured" directly on the trade site.
-	// The search will return all corrupted 21/23 skill gems of that color — users can manually
-	// skip transfigured entries. This is a known trade site limitation.
 
 	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
 }

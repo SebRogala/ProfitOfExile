@@ -57,9 +57,8 @@ export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boo
 		corrupted: { option: 'true' },
 	};
 
-	if (isTransfigured) {
-		miscFilters.gem_alternate_quality = { option: 'true' };
-	}
+	// "Transfigured Gem" filter on the trade site: "Yes" or "No".
+	miscFilters.gem_transfigured = { option: isTransfigured ? 'true' : 'false' };
 
 	const q: any = {
 		query: {
