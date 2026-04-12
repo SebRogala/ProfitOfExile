@@ -499,11 +499,17 @@ export async function fetchMarketOverview(): Promise<MarketOverviewData> {
 
 export async function fetchGemNames(query: string, mode?: string): Promise<string[]> {
 	if (query.length < 2) return [];
-	const params: Record<string, string> = { q: query, limit: '15' };
 	if (mode === 'dedication') {
-		params.corrupted = 'true';
+		// Fetch both pools (skills + transfigured) and merge — both font options available per run.
+		const [skills, transfigured] = await Promise.all([
+			get<{ names: string[] }>('/analysis/gems/names', { q: query, limit: '15', corrupted: 'true', transfigured: 'false' }),
+			get<{ names: string[] }>('/analysis/gems/names', { q: query, limit: '15', corrupted: 'true', transfigured: 'true' }),
+		]);
+		const merged = [...new Set([...(skills.names || []), ...(transfigured.names || [])])];
+		merged.sort();
+		return merged.slice(0, 15);
 	}
-	const resp = await get<{ names: string[] }>('/analysis/gems/names', params);
+	const resp = await get<{ names: string[] }>('/analysis/gems/names', { q: query, limit: '15' });
 	return resp.names || [];
 }
 

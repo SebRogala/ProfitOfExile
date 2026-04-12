@@ -291,9 +291,6 @@
 		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
 		<div class:tab-hidden={activeTab !== 'Session'}>
-			{#if isDedication}
-				<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
-			{/if}
 			<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} />
 			<SessionQueue
 				queue={sessionQueue}
