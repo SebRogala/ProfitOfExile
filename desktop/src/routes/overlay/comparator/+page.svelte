@@ -43,6 +43,14 @@
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, boolean>>({});
 	let tradeError = $state<Record<string, boolean>>({});
+	let overlayDivineRate = $state(0);
+	let overlayLabMode = $state('normal');
+
+	/** In Dedication mode, append divine equivalent in parentheses when price >= 1 div. */
+	function divSuffix(chaos: number): string {
+		if (overlayLabMode !== 'dedication' || !overlayDivineRate || chaos < overlayDivineRate) return '';
+		return ` (${(chaos / overlayDivineRate).toFixed(1)} div)`;
+	}
 
 	$effect(() => {
 		if (results.length > 0 && !selectedGem) {
@@ -222,10 +230,12 @@
 
 		const pollInterval = setInterval(async () => {
 			try {
-				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; tradeLoading?: Record<string, boolean>; tradeError?: Record<string, boolean> }>('get_comparator_data');
+				const data = await invoke<{ results: CompareGem[]; tradeData: Record<string, TradeLookupResult | null>; tradeLoading?: Record<string, boolean>; tradeError?: Record<string, boolean>; divineRate?: number; labMode?: string }>('get_comparator_data');
 				// Always sync loading + error state (changes frequently, no dedup needed).
 				tradeLoading = data.tradeLoading ?? {};
 				tradeError = data.tradeError ?? {};
+				overlayDivineRate = data.divineRate ?? 0;
+				overlayLabMode = data.labMode ?? 'normal';
 
 				const gemsJson = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
 				// Include trade fetchedAt timestamps so refreshes are detected.
@@ -280,7 +290,7 @@
 							<span class="variant-label">{gem.variant}</span>
 							<span class="price-col">
 								<span class="price-label">ninja</span>
-								<span class="price">{formatPrice(gem.transPrice)}</span>
+								<span class="price">{formatPrice(gem.transPrice)}{divSuffix(gem.transPrice)}</span>
 							</span>
 							{#if trade}
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}
