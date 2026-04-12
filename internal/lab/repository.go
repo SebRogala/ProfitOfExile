@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -1118,8 +1119,16 @@ func (r *Repository) SaveDedicationResults(ctx context.Context, results []Dedica
 
 	batch := &pgx.Batch{}
 	for _, dr := range results {
-		poolBreakdownJSON, _ := json.Marshal(dr.PoolBreakdown)
-		lowConfJSON, _ := json.Marshal(dr.LowConfidenceGems)
+		poolBreakdownJSON, err := json.Marshal(dr.PoolBreakdown)
+		if err != nil {
+			slog.Warn("lab repo: marshal pool breakdown failed, using empty array", "error", err)
+			poolBreakdownJSON = []byte("[]")
+		}
+		lowConfJSON, err := json.Marshal(dr.LowConfidenceGems)
+		if err != nil {
+			slog.Warn("lab repo: marshal low confidence gems failed, using empty array", "error", err)
+			lowConfJSON = []byte("[]")
+		}
 
 		batch.Queue(
 			`INSERT INTO dedication_snapshots
