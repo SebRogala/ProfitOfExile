@@ -233,23 +233,24 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 				}
 			}
 
-			// Build pool value arrays — only for gems that passed the low-confidence
-			// filter (i.e. have an entry in gemAdjustedPrice). Low-confidence gems
-			// were skipped above so their map lookup would return 0, inflating pool
-			// size and deflating EV.
+			// Build pool value arrays — ALL gems including low-confidence (RISKY).
+			//
+			// WHY RISKY GEMS STAY IN THE POOL AT PRICE 0:
+			// The font draws from ALL corrupted gems of the color — it doesn't
+			// skip low-confidence ones. If 23 of 51 RED gems are RISKY, drawing
+			// 3 random gems means ~45% chance each pick is a RISKY gem worth 0.
+			// Excluding them from the pool would overestimate EV by pretending
+			// you only ever draw reliable gems. Including them at 0 correctly
+			// models the real probability: sometimes you draw junk, and that
+			// drags down your expected best-of-3 pick value.
+			//
+			// Pool size = total gems (including RISKY) for accurate pWin3Picks.
 			poolValues := make([]float64, 0, pool)
 			poolValuesRaw := make([]float64, 0, pool)
 			for name := range names {
-				if adj, ok := gemAdjustedPrice[name]; ok {
-					poolValues = append(poolValues, adj)
-				}
-				if raw, ok := gemRawPrice[name]; ok {
-					poolValuesRaw = append(poolValuesRaw, raw)
-				}
+				poolValues = append(poolValues, gemAdjustedPrice[name])
+				poolValuesRaw = append(poolValuesRaw, gemRawPrice[name])
 			}
-			// confidencePool is the effective pool size after excluding low-confidence
-			// gems; pWin3Picks must use this count, not len(names).
-			confidencePool := len(poolValues)
 
 			// Sort descending for expectedBestOf3.
 			sort.Float64s(poolValues)
@@ -313,7 +314,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			}
 
 			// Safe mode result.
-			safePWin := pWin3Picks(safeWinnerCount, confidencePool)
+			safePWin := pWin3Picks(safeWinnerCount, pool)
 			var safeAvgWin, safeAvgWinRaw float64
 			if safeWinnerCount > 0 {
 				safeAvgWin = safeWinnerSum / float64(safeWinnerCount)
@@ -327,7 +328,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 				Time:              snapTime,
 				Color:             color,
 				GemType:           gemType,
-				Pool:              confidencePool,
+				Pool:              pool,
 				Winners:           safeWinnerCount,
 				PWin:              safePWin,
 				AvgWin:            safeAvgWin,
@@ -345,7 +346,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			}
 
 			// Premium mode result.
-			premiumPWin := pWin3Picks(premiumWinnerCount, confidencePool)
+			premiumPWin := pWin3Picks(premiumWinnerCount, pool)
 			var premiumAvgWin, premiumAvgWinRaw float64
 			if premiumWinnerCount > 0 {
 				premiumAvgWin = premiumWinnerSum / float64(premiumWinnerCount)
@@ -359,7 +360,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 				Time:          snapTime,
 				Color:         color,
 				GemType:       gemType,
-				Pool:          confidencePool,
+				Pool:          pool,
 				Winners:       premiumWinnerCount,
 				PWin:          premiumPWin,
 				AvgWin:        premiumAvgWin,
@@ -375,7 +376,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			}
 
 			// Jackpot mode result.
-			jackpotPWin := pWin3Picks(jackpotWinnerCount, confidencePool)
+			jackpotPWin := pWin3Picks(jackpotWinnerCount, pool)
 			var jackpotAvgWin, jackpotAvgWinRaw float64
 			if jackpotWinnerCount > 0 {
 				jackpotAvgWin = jackpotWinnerSum / float64(jackpotWinnerCount)
@@ -389,7 +390,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 				Time:          snapTime,
 				Color:         color,
 				GemType:       gemType,
-				Pool:          confidencePool,
+				Pool:          pool,
 				Winners:       jackpotWinnerCount,
 				PWin:          jackpotPWin,
 				AvgWin:        jackpotAvgWin,
