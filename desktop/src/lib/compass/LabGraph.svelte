@@ -232,6 +232,11 @@
 			oncontextmenu={(e) => { if (onRoomRightClick) { e.preventDefault(); onRoomRightClick(node.room.id); } }}
 			style={interactive ? 'cursor: pointer;' : ''}
 		>
+			{#if node.isCurrent}
+				<!-- Dark outline behind current room so green circle pops against green route lines -->
+				<circle cx={node.cx} cy={node.cy} r={nr + 2}
+					fill="none" stroke="#0f172a" stroke-width="2" />
+			{/if}
 			<circle
 				cx={node.cx} cy={node.cy} r={nr}
 				class="room-circle"
