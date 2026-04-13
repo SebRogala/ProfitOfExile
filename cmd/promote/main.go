@@ -169,10 +169,12 @@ func runStats(ctx context.Context, repo *device.Repository) error {
 		return err
 	}
 
+	inactive := s.Total - s.Active8h - s.Active24h - s.Active7d
 	fmt.Printf("Total devices:  %d\n", s.Total)
 	fmt.Printf("Active (8h):    %d\n", s.Active8h)
-	fmt.Printf("Active (24h):   %d\n", s.Active24h)
-	fmt.Printf("Active (7d):    %d\n", s.Active7d)
+	fmt.Printf("Active (8h-24h):%d\n", s.Active24h)
+	fmt.Printf("Active (24h-7d):%d\n", s.Active7d)
+	fmt.Printf("Inactive (>7d): %d\n", inactive)
 	fmt.Printf("Identified:     %d\n", s.Identified)
 	fmt.Printf("Banned:         %d\n", s.Banned)
 
