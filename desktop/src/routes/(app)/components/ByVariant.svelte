@@ -10,8 +10,8 @@
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const NORMAL_TABS = ['ALL', ...VARIANTS];
-	const DEDICATION_POOLS = ['ALL', 'skill', 'transfigured'];
-	const DEDICATION_POOL_LABELS: Record<string, string> = { ALL: 'ALL', skill: 'Skills', transfigured: 'Transfigured' };
+	const DEDICATION_POOLS = ['skill', 'transfigured'];
+	const DEDICATION_POOL_LABELS: Record<string, string> = { skill: 'Skills', transfigured: 'Transfigured' };
 	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [
 		{ value: '10', label: '10' },
@@ -20,7 +20,11 @@
 	];
 
 	let activeTab = $state('20/20');
-	let activeDedPool = $state('ALL');
+	let activeDedPool = $state<string>(
+		typeof window !== 'undefined'
+			? localStorage.getItem('poe-ded-pool') || 'skill'
+			: 'skill'
+	);
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
@@ -28,9 +32,7 @@
 		activeTab === 'ALL' ? VARIANTS : [activeTab]
 	);
 
-	let visibleDedPools = $derived(
-		activeDedPool === 'ALL' ? ['skill', 'transfigured'] : [activeDedPool]
-	);
+	let visibleDedPools = $derived([activeDedPool]);
 
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
@@ -79,7 +81,7 @@
 					<button
 						class="tab"
 						class:active={activeDedPool === pool}
-						onclick={() => { activeDedPool = pool; }}
+						onclick={() => { activeDedPool = pool; localStorage.setItem('poe-ded-pool', pool); }}
 					>
 						{#if activeDedPool === pool}<span class="tab-dot">●</span>{/if}
 						{DEDICATION_POOL_LABELS[pool]}
