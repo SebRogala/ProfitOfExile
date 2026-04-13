@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import {
 		fetchStatus,
@@ -216,9 +217,12 @@
 
 	// Initial data load — fires once when status is ready.
 	// Subsequent reloads come from Mercure events via debouncedMercureUpdate.
+	// untrack prevents Svelte from tracking isDedication (read inside loadAll),
+	// which would re-trigger the full reload on mode change and overwrite
+	// status.connected, causing a disconnect flash.
 	$effect(() => {
 		if (!statusReady) return;
-		loadAll();
+		untrack(() => { loadAll(); });
 	});
 
 	// Mercure connection — connects once when status is ready.
