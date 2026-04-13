@@ -50,10 +50,27 @@ pub struct Settings {
     /// Controls OCR vocabulary, font session metadata, and comparator behaviour.
     #[serde(default = "default_lab_mode")]
     pub lab_mode: String,
+    /// Session queue auto-clear timer in minutes (default: 2).
+    #[serde(default = "default_autoclear_minutes")]
+    pub autoclear_minutes: u32,
+    /// Dedication rankings pool selector: "skill" (default) or "transfigured".
+    #[serde(default = "default_dedication_pool")]
+    pub dedication_pool: String,
+    /// Show low-confidence gems in rankings (default: false).
+    #[serde(default)]
+    pub show_low_confidence: bool,
 }
 
 fn default_lab_mode() -> String {
     "Normal".to_string()
+}
+
+fn default_autoclear_minutes() -> u32 {
+    2
+}
+
+fn default_dedication_pool() -> String {
+    "skill".to_string()
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -106,6 +123,9 @@ impl Default for Settings {
             timer_bg_opacity: None,
             timer_text_stroke: None,
             lab_mode: default_lab_mode(),
+            autoclear_minutes: default_autoclear_minutes(),
+            dedication_pool: default_dedication_pool(),
+            show_low_confidence: false,
         }
     }
 }
@@ -206,6 +226,9 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         timer_bg_opacity: None,    // Appearance settings saved separately, not from AppState
         timer_text_stroke: None,   // Appearance settings saved separately, not from AppState
         lab_mode: state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        autoclear_minutes: *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()),
+        dedication_pool: state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        show_low_confidence: *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -316,4 +339,7 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.shrine_warn_on_take.lock().unwrap_or_else(|e| e.into_inner()) = settings.shrine_warn_on_take.clone();
     *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_overlays_enabled;
     *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_mode.clone();
+    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = settings.autoclear_minutes;
+    *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_pool.clone();
+    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
 }

@@ -138,6 +138,9 @@ pub struct AppState {
     /// Lab mode: "Normal" or "Dedication". Controls OCR vocabulary, font session
     /// metadata, and comparator behaviour. Persisted to settings.
     pub lab_mode: Mutex<String>,
+    pub autoclear_minutes: Mutex<u32>,
+    pub dedication_pool: Mutex<String>,
+    pub show_low_confidence: Mutex<bool>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -1184,6 +1187,45 @@ fn get_lab_mode(app: AppHandle) -> String {
 fn set_lab_mode(mode: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    persist_settings(&app);
+}
+
+#[tauri::command]
+fn get_autoclear_minutes(app: AppHandle) -> u32 {
+    let state = app.state::<AppState>();
+    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[tauri::command]
+fn set_autoclear_minutes(minutes: u32, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = minutes;
+    persist_settings(&app);
+}
+
+#[tauri::command]
+fn get_dedication_pool(app: AppHandle) -> String {
+    let state = app.state::<AppState>();
+    state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+#[tauri::command]
+fn set_dedication_pool(pool: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = pool;
+    persist_settings(&app);
+}
+
+#[tauri::command]
+fn get_show_low_confidence(app: AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[tauri::command]
+fn set_show_low_confidence(show: bool, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = show;
     persist_settings(&app);
 }
 
@@ -2259,6 +2301,9 @@ pub fn run() {
         shrine_warn_on_take: Mutex::new(String::from("green")),
         lab_overlays_enabled: Mutex::new(true),
         lab_mode: Mutex::new(String::from("Normal")),
+        autoclear_minutes: Mutex::new(2),
+        dedication_pool: Mutex::new(String::from("skill")),
+        show_low_confidence: Mutex::new(false),
     };
 
     tauri::Builder::default()
@@ -2322,6 +2367,12 @@ pub fn run() {
             set_shrine_warn,
             get_lab_mode,
             set_lab_mode,
+            get_autoclear_minutes,
+            set_autoclear_minutes,
+            get_dedication_pool,
+            set_dedication_pool,
+            get_show_low_confidence,
+            set_show_low_confidence,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
