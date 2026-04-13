@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { invoke } from '@tauri-apps/api/core';
 	import { fetchSignalHistory, fetchGemNames, fetchBestPlays, type GemPlay, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
@@ -89,9 +90,11 @@
 			searchResults = null;
 		}
 	}
-	let showLowConf = $state(typeof localStorage !== 'undefined' && localStorage.getItem('poe-show-low-conf') === 'true');
+	let showLowConf = $state(false);
+	// Load from Tauri settings on mount
 	$effect(() => {
-		localStorage.setItem('poe-show-low-conf', String(showLowConf));
+		invoke<boolean>('get_show_low_confidence').then(v => { showLowConf = v; })
+			.catch(() => {});
 	});
 	let expandedRow = $state<number | null>(null);
 
@@ -189,7 +192,7 @@
 			<Select bind:value={sortBy} options={SORT_OPTIONS} />
 		</label>
 		<Tooltip text="Show gems with very few listings (unreliable prices)"><label class="low-conf-toggle">
-			<input type="checkbox" bind:checked={showLowConf} />
+			<input type="checkbox" bind:checked={showLowConf} onchange={() => invoke('set_show_low_confidence', { show: showLowConf }).catch(() => {})} />
 			<span>Low confidence</span>
 		</label></Tooltip>
 	</div>

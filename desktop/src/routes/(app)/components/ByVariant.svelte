@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { invoke } from '@tauri-apps/api/core';
 	import type { GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
@@ -20,11 +21,11 @@
 	];
 
 	let activeTab = $state('20/20');
-	let activeDedPool = $state<string>(
-		typeof window !== 'undefined'
-			? localStorage.getItem('poe-ded-pool') || 'skill'
-			: 'skill'
-	);
+	let activeDedPool = $state<string>('skill');
+	$effect(() => {
+		invoke<string>('get_dedication_pool').then(p => { if (p) activeDedPool = p; })
+			.catch(() => {});
+	});
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
@@ -81,7 +82,7 @@
 					<button
 						class="tab"
 						class:active={activeDedPool === pool}
-						onclick={() => { activeDedPool = pool; localStorage.setItem('poe-ded-pool', pool); }}
+						onclick={() => { activeDedPool = pool; invoke('set_dedication_pool', { pool }).catch(() => {}); }}
 					>
 						{#if activeDedPool === pool}<span class="tab-dot">●</span>{/if}
 						{DEDICATION_POOL_LABELS[pool]}

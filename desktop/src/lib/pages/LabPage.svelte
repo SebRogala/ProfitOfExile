@@ -81,11 +81,12 @@
 
 	// --- Session Queue state ---
 	let sessionQueue = $state<QueueItem[]>([]);
-	let autoClearMinutes = $state(
-		typeof window !== 'undefined'
-			? parseInt(localStorage.getItem('poe-autoclear-min') || '2')
-			: 2
-	);
+	let autoClearMinutes = $state(2);
+	// Load persisted autoclear from Rust settings
+	$effect(() => {
+		invoke<number>('get_autoclear_minutes').then(m => { autoClearMinutes = m; })
+			.catch(() => {});
+	});
 	let autoClearSecondsLeft = $state(0);
 	let autoClearTimeout: ReturnType<typeof setTimeout> | null = null;
 	let autoClearInterval: ReturnType<typeof setInterval> | null = null;
@@ -176,9 +177,7 @@
 
 	function handleAutoClearChange(mins: number) {
 		autoClearMinutes = mins;
-		if (typeof window !== 'undefined') {
-			localStorage.setItem('poe-autoclear-min', String(mins));
-		}
+		invoke('set_autoclear_minutes', { minutes: mins }).catch(() => {});
 		resetAutoClearTimer();
 	}
 
