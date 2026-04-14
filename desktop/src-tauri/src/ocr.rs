@@ -112,7 +112,7 @@ pub fn extract_gem_candidates(lines: &[String]) -> Vec<String> {
         .map(|l| l.trim().to_string())
         .filter(|l| {
             !l.is_empty()
-                && l.len() > 5
+                && l.len() > 2 // "Arc" (3 chars) is the shortest gem name
                 && !l.starts_with("Level:")
                 && !l.starts_with("Cost:")
                 && !l.starts_with("Cooldown")
