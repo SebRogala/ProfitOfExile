@@ -156,17 +156,21 @@
 				const toNode = nodeMap.get(targetId as string);
 				if (!toNode) continue;
 
-				// Dedup: only draw each pair once
+				const isSecret = dir === 'C';
+				// Dedup per pair AND per flavor: a natural exit (e.g. SE) and a
+				// secret passage (C) between the SAME two rooms are two distinct
+				// connections and must both be rendered — one solid, one dashed.
 				const pairKey = [room.id, targetId].sort().join('|');
-				if (seen.has(pairKey)) continue;
-				seen.add(pairKey);
+				const dedupKey = pairKey + (isSecret ? ':secret' : ':natural');
+				if (seen.has(dedupKey)) continue;
+				seen.add(dedupKey);
 
 				const toR = nodeR(toNode);
 
 				// Izaro trials + secret passages: center-to-center (clipped)
 				// Regular rooms: exit dot → target room perimeter
 				let startX: number, startY: number;
-				if (fromNode.isTrial || dir === 'C') {
+				if (fromNode.isTrial || isSecret) {
 					const dx0 = toNode.cx - fromNode.cx, dy0 = toNode.cy - fromNode.cy;
 					const d0 = Math.sqrt(dx0 * dx0 + dy0 * dy0);
 					startX = d0 > 0 ? fromNode.cx + (dx0 / d0) * (fromR + 2) : fromNode.cx;
@@ -188,8 +192,8 @@
 					x2: endX, y2: endY,
 					onRoute: routeEdges.has(pairKey),
 					isVisited: visitedEdges.has(pairKey),
-					isSecret: dir === 'C',
-					key: pairKey,
+					isSecret,
+					key: dedupKey,
 				});
 			}
 		}
