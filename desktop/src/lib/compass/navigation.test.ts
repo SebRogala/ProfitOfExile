@@ -150,6 +150,51 @@ describe('Golden door routing', () => {
 		expect(state.plannedRoute).not.toContain('key');
 		expect(state.plannedRoute).toContain('shortcut');
 	});
+
+	// Regression: uber-2026-04-17 "mansion halls" topology.
+	//
+	// Real-world zig-zag lab where the entry room to the door has a HIGHER
+	// x-coordinate than the door room itself, because the lab path loops
+	// north then comes back south. Under the old x-coordinate heuristic this
+	// caused the entry edge to be mis-locked and the key room to be skipped
+	// from the route, leaving the golden door impassable.
+	//
+	//         r2 (x=175, north)
+	//        ╱    ╲
+	//       ╱      ╲ SE
+	//      ╱ NE     ╲
+	//   r1(x=38) ─ r3[door, x=140] ─NE─ trial(x=244)
+	//                │ C
+	//                │
+	//              r4[key, x=72]   (dead-end branch)
+	//
+	// Rule being enforced: when a golden door blocks the section and no
+	// bypass exists, the golden-key room MUST appear in the planned route.
+	const zigzagGoldenDoorLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '38', exits: { NE: 'r2' } },
+		{ id: 'r2', name: 'Basilica Passage', x: '175', exits: { SE: 'r3' } },
+		{
+			id: 'r3',
+			name: 'Mansion Halls',
+			x: '140',
+			exits: { C: 'r4', NE: 'trial' },
+			contents: ['golden-door'],
+		},
+		{ id: 'r4', name: 'Sepulchre Annex', x: '72', exits: { C: 'r3' }, contents: ['golden-key'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '244', exits: {} },
+	]);
+
+	it('should route through key room on zig-zag layouts where entry x > door x', () => {
+		const state = loadLayout(createNavState(), zigzagGoldenDoorLayout);
+		// Rule: key room MUST be visited when the door blocks the trial.
+		expect(state.plannedRoute).toContain('r4');
+		// Player must backtrack through the door room after grabbing the key.
+		const keyIdx = state.plannedRoute.indexOf('r4');
+		const trialIdx = state.plannedRoute.indexOf('trial');
+		expect(keyIdx).toBeLessThan(trialIdx);
+		// And trial is still reached at the end.
+		expect(state.plannedRoute[state.plannedRoute.length - 1]).toBe('trial');
+	});
 });
 
 describe('Route strategy', () => {

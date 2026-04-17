@@ -118,20 +118,45 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 	// Detect sections: split at Aspirant's Trial rooms
 	const sections = detectSections(layout.rooms, adjacency);
 
-	// Identify golden door/key locations.
-	// A golden door is marked on one room. It blocks forward passage — you must
-	// pick up the golden key first (from a branch room, or the door room itself).
+	// --- Golden door / golden key locking ---
 	//
-	// Model: the door room's connections to rooms FURTHER from start are locked.
-	// Connections back toward start stay open (so you can reach the door room).
-	// If key is in a neighbor, that connection also stays open.
-	// If key is in the door room itself, all forward connections are locked
-	// but the room is still reachable from the start side.
+	// CORE RULE:
+	//   When a section contains a golden door, the golden-key room MUST be part
+	//   of the planned route — the key is needed to cross the door and reach
+	//   the trial / treasure.
+	//
+	// EXCEPTION:
+	//   When a secret passage (or any alternate adjacency) lets the player
+	//   reach the section end without crossing the golden door at all, the
+	//   key room is skipped and the bypass route is used instead.
+	//
+	// The mechanism below encodes this by marking the door room's FORWARD
+	// edges (toward the trial) as "locked" until the key is collected.
+	// `routeWithGoldenDoor` then:
+	//   - builds an unlocked adjacency (door forward-edges removed),
+	//   - tries to find a bypass (the exception); if one exists, uses it,
+	//   - otherwise requires the key room as a mandatory waypoint.
+	//
+	// FORWARD DETECTION:
+	//   A door neighbor is "forward" (past the door) iff its shortest path
+	//   from the lab start is LONGER through the door than around it — i.e.
+	//   it's topologically deeper in the lab than the door itself. We use
+	//   BFS distance from the start room for this, NOT raw x-coordinate.
+	//
+	//   (Zig-zag layouts — like uber-2026-04-17 "mansion halls" — can place
+	//   the entry room at a higher x than the door room. A pure x-coordinate
+	//   heuristic mis-locks the entry edge, strands the key room behind the
+	//   "locked" entry, and the router silently falls back to a straight BFS
+	//   that waltzes through the door without picking up the key. The test
+	//   `should route through key room on zig-zag layouts ...` guards this.)
+	const startRoomId = layout.rooms[0]?.id;
+	const distFromStart = startRoomId ? bfsDistances(adjacency, startRoomId) : new Map<string, number>();
+
 	const lockedDoors: [string, string][] = [];
 	for (const room of layout.rooms) {
 		if (!room.contents.some((c) => c.toLowerCase().includes('golden-door'))) continue;
 
-		const doorX = parseFloat(room.x);
+		const doorDist = distFromStart.get(room.id) ?? 0;
 		const keyNeighbors = new Set<string>();
 		for (const neighborId of adjacency.get(room.id) ?? []) {
 			const neighbor = roomById.get(neighborId);
@@ -140,15 +165,11 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 			}
 		}
 
-		// Lock connections to neighbors that are further from start (higher x)
-		// and are not the key room. This keeps the entry side open.
 		for (const neighborId of adjacency.get(room.id) ?? []) {
 			if (keyNeighbors.has(neighborId)) continue;
-			const neighbor = roomById.get(neighborId);
-			if (!neighbor) continue;
-			const neighborX = parseFloat(neighbor.x);
-			// Lock forward connections only (neighbor further from start)
-			if (neighborX <= doorX) continue;
+			const neighborDist = distFromStart.get(neighborId);
+			// Lock only forward edges — neighbor strictly deeper from start than door.
+			if (neighborDist === undefined || neighborDist <= doorDist) continue;
 			const pair: [string, string] = [room.id, neighborId].sort() as [string, string];
 			if (!lockedDoors.some(([a, b]) => a === pair[0] && b === pair[1])) {
 				lockedDoors.push(pair);
@@ -582,6 +603,22 @@ function routeContentScore(route: string[], roomById: Map<string, { contents: st
 		}
 	}
 	return score;
+}
+
+/** BFS from `start`, returning shortest-hop distance to every reachable room. */
+function bfsDistances(adjacency: Map<string, string[]>, start: string): Map<string, number> {
+	const dist = new Map<string, number>([[start, 0]]);
+	const queue: string[] = [start];
+	while (queue.length > 0) {
+		const current = queue.shift()!;
+		const currentDist = dist.get(current)!;
+		for (const neighbor of adjacency.get(current) ?? []) {
+			if (dist.has(neighbor)) continue;
+			dist.set(neighbor, currentDist + 1);
+			queue.push(neighbor);
+		}
+	}
+	return dist;
 }
 
 function bfs(
