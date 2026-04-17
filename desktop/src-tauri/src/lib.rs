@@ -1193,7 +1193,8 @@ fn set_lab_mode(mode: String, app: AppHandle) {
 #[tauri::command]
 fn get_autoclear_minutes(app: AppHandle) -> u32 {
     let state = app.state::<AppState>();
-    *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner())
+    let value = *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner());
+    value
 }
 
 #[tauri::command]
@@ -1206,7 +1207,8 @@ fn set_autoclear_minutes(minutes: u32, app: AppHandle) {
 #[tauri::command]
 fn get_dedication_pool(app: AppHandle) -> String {
     let state = app.state::<AppState>();
-    state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    let value = state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    value
 }
 
 #[tauri::command]
@@ -1219,7 +1221,8 @@ fn set_dedication_pool(pool: String, app: AppHandle) {
 #[tauri::command]
 fn get_show_low_confidence(app: AppHandle) -> bool {
     let state = app.state::<AppState>();
-    *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner())
+    let value = *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner());
+    value
 }
 
 #[tauri::command]
