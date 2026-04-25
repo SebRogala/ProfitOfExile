@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"profitofexile/internal/lab"
 	"profitofexile/internal/trade"
@@ -363,6 +364,15 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 // tradeCache may be nil — trade enrichment is skipped when unavailable.
 func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		var spMs int64
+		defer func() {
+			slog.Info("compare_analysis_done",
+				"duration_ms", time.Since(start).Milliseconds(),
+				"sparkline_ms", spMs,
+			)
+		}()
+
 		gemsParam := r.URL.Query().Get("gems")
 		if gemsParam == "" {
 			w.Header().Set("Content-Type", "application/json")
@@ -451,7 +461,11 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		// Load sparkline data (last 12 hours) and normalize with temporal coefficients.
 		var warnings []string
+		// NOTE: sparkline failure logs + appends a warning then CONTINUES (no early return),
+		// so spMs reflects time spent before the error rather than zero.
+		spStart := time.Now()
 		sparklines, err := repo.SparklineData(r.Context(), names, variant, 12)
+		spMs = time.Since(spStart).Milliseconds()
 		if err != nil {
 			slog.Error("compare analysis: sparkline query failed", "error", err)
 			sparklines = make(map[string][]lab.SparklinePoint)
@@ -476,6 +490,16 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("compare analysis: encode response", "error", err)
 		}
+
+		slog.Info("compare_analysis",
+			"duration_ms", time.Since(start).Milliseconds(),
+			"sparkline_ms", spMs,
+			"gems", len(names),
+			"variant", variant,
+			"cache_hit", usedCache,
+			"rows", len(rows),
+			"warnings", len(warnings),
+		)
 	}
 }
 
