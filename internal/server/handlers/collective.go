@@ -462,7 +462,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		// Load sparkline data (last 12 hours) and normalize with temporal coefficients.
 		var warnings []string
 		// NOTE: sparkline failure logs + appends a warning then CONTINUES (no early return),
-		// so spMs reflects time spent before the error rather than zero.
+		// so spMs reflects the actual query duration even on error (not zero).
 		spStart := time.Now()
 		sparklines, err := repo.SparklineData(r.Context(), names, variant, 12)
 		spMs = time.Since(spStart).Milliseconds()
