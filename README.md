@@ -72,4 +72,4 @@ Single domain via Traefik: `/api` routes to Go, everything else to Vite dev serv
 
 ## License
 
-All rights reserved.
+MIT — see [LICENSE](LICENSE).

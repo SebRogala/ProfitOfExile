@@ -130,8 +130,27 @@ func (r *Refresher) pickOldest() (string, bool) {
 	})
 }
 
-// submit sends a low-priority gate request and waits for the result.
+// submit delegates to SubmitRefresh so the refresher loop and external
+// tick callers share a single implementation.
 func (r *Refresher) submit(ctx context.Context, gem, variant string) {
+	SubmitRefresh(ctx, r.gate, gem, variant)
+}
+
+// SubmitRefresh enqueues a low-priority refresh for the given gem/variant
+// and blocks until the gate responds (or ctx is cancelled). Logs the outcome.
+//
+// Exposed so callers outside the package (e.g. a Mercure subscriber acting
+// as a tick handler) can drive a refresh without holding a *Refresher.
+//
+// Panics if gate is nil — matches NewRefresher's invariant. The Mercure
+// subscriber on the server side already nil-checks tradeGate before calling
+// this; an external caller forgetting that gate is required deserves a loud
+// failure, not a deep nil-deref inside Submit.
+func SubmitRefresh(ctx context.Context, gate *Gate, gem, variant string) {
+	if gate == nil {
+		panic("trade.SubmitRefresh: gate is required")
+	}
+
 	req := &GateRequest{
 		Gem:         gem,
 		Variant:     variant,
@@ -141,7 +160,7 @@ func (r *Refresher) submit(ctx context.Context, gem, variant string) {
 		Result:      make(chan *GateResponse, 1),
 	}
 
-	r.gate.Submit(req)
+	gate.Submit(req)
 
 	select {
 	case <-ctx.Done():

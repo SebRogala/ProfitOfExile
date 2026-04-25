@@ -29,6 +29,48 @@ import (
 //go:embed all:frontend_build
 var frontendEmbed embed.FS
 
+// runFullRecompute runs every analysis step in the order required by
+// RecomputeLatestV2. V2 must complete before Font — Font reads GemFeatures
+// for tier classification, so running them concurrently leaves Font with
+// stale tiers. Each step is run sequentially; an error in one step is logged
+// and the next step still runs (matches the pre-Mercure handler's behavior).
+//
+// Triggered by the poe/admin/recompute Mercure event from cmd/recalculate.
+func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("admin recompute panicked", "recover", r)
+		}
+	}()
+	slog.Info("admin recompute: started")
+	failures := 0
+	if err := analyzer.RunTransfigure(ctx); err != nil {
+		slog.Error("admin recompute: transfigure failed", "error", err)
+		failures++
+	}
+	if err := analyzer.RunQuality(ctx); err != nil {
+		slog.Error("admin recompute: quality failed", "error", err)
+		failures++
+	}
+	if err := analyzer.RecomputeLatestV2(ctx); err != nil {
+		slog.Error("admin recompute: v2 failed", "error", err)
+		failures++
+	}
+	if err := analyzer.RunFont(ctx); err != nil {
+		slog.Error("admin recompute: font failed", "error", err)
+		failures++
+	}
+	if err := analyzer.RunDedication(ctx); err != nil {
+		slog.Error("admin recompute: dedication failed", "error", err)
+		failures++
+	}
+	if failures == 0 {
+		slog.Info("admin recompute: complete")
+	} else {
+		slog.Warn("admin recompute: finished with failures", "failed_steps", failures, "total_steps", 5)
+	}
+}
+
 // corsOrigins returns allowed CORS origins from the CORS_ORIGINS env var.
 // Comma-separated list, e.g. "http://localhost:1420,tauri://localhost".
 // Returns nil (no CORS) when unset.
@@ -198,8 +240,8 @@ func main() {
 
 		go tradeGate.Run(ctx)
 		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
-		// Trade refresh scheduling moved to collector — server exposes
-		// POST /api/internal/trade/refresh for collector to trigger.
+		// Trade refresh scheduling: collector publishes poe/collector/trade-tick
+		// Mercure events; the server subscriber routes them to HandleTradeTick.
 	}
 
 	deviceRepo := device.NewRepository(pool)
@@ -218,7 +260,6 @@ func main() {
 		TradeCache:           tradeCache,
 		TradeRepo:            tradeRepo,
 		TradeSyncTimeout:     tradeSyncTimeout,
-		InternalSecret:       os.Getenv("INTERNAL_SECRET"),
 		League:               os.Getenv("LEAGUE"),
 		Analyzer:             analyzer,
 		AllowedOrigins:       corsOrigins(),
@@ -327,9 +368,41 @@ func main() {
 		subCtx, subCancel := context.WithCancel(ctx)
 		defer subCancel()
 
-		topics := []string{"poe/collector/gems", "poe/collector/currency", "poe/collector/fragments"}
+		topics := []string{
+			"poe/collector/gems",
+			"poe/collector/currency",
+			"poe/collector/fragments",
+			"poe/collector/trade-tick", // collector schedules trade refresh ticks
+			"poe/admin/recompute",      // operator-triggered full recompute
+		}
 		mercureSubKey := os.Getenv("MERCURE_SUBSCRIBER_KEY")
+		// One-shot warning for misconfigured deploys where the collector is
+		// publishing trade-ticks but the server has trade disabled. Repeated
+		// every-tick warnings would just be noise.
+		var tradeDisabledWarn sync.Once
 		sub := server.NewMercureSubscriber(mercureURL, topics, mercureSubKey, func(ev server.MercureEvent) {
+			// Operator-triggered full recompute (from cmd/recalculate). Use parent
+			// ctx so the pipeline survives a subscriber reconnect mid-run.
+			if ev.Topic == "poe/admin/recompute" {
+				slog.Info("mercure: admin recompute requested")
+				go runFullRecompute(ctx, analyzer)
+				return
+			}
+
+			// Collector-driven trade refresh tick. Parent ctx for the same reason —
+			// we want any in-flight gate request to complete and log its outcome
+			// even if the subscriber temporarily drops.
+			if ev.Topic == "poe/collector/trade-tick" {
+				if tradeGate == nil {
+					tradeDisabledWarn.Do(func() {
+						slog.Warn("mercure: trade-tick received but trade subsystem is disabled; further ticks will be silently dropped")
+					})
+					return
+				}
+				go server.HandleTradeTick(ctx, tradeGate, tradeCache, labCache, []byte(ev.Data))
+				return
+			}
+
 			var payload map[string]any
 			if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
 				slog.Warn("mercure: invalid event payload", "error", err)

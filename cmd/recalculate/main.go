@@ -1,55 +1,46 @@
-// cmd/recalculate triggers a full recomputation via the running server process.
-// Calls the server's /api/internal/recalculate endpoint on localhost, which
-// updates the in-memory cache AND triggers Mercure events to the frontend.
+// cmd/recalculate triggers a full recomputation by publishing a Mercure
+// event. The running server's subscriber receives poe/admin/recompute,
+// runs the analysis pipeline in-process (so its in-memory cache stays
+// consistent), and emits its own update events to the frontend.
 //
-// Usage (on prod via docker exec):
+// Usage on prod (run inside the server container so MERCURE_URL resolves
+// to the docker-network hostname):
 //
 //	docker exec <server-container> /recalculate
+//
+// Required env vars (already present in the server container's env): MERCURE_URL,
+// MERCURE_JWT_SECRET. No additional secret is required — Mercure JWT is the
+// only auth boundary, and it's already configured for the existing
+// collector→server pipeline.
 package main
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"time"
+
+	"profitofexile/internal/mercure"
 )
 
 func main() {
-	secret := os.Getenv("INTERNAL_SECRET")
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	url := fmt.Sprintf("http://localhost:%s/api/internal/recalculate", port)
-
-	fmt.Printf("Triggering recalculation on %s...\n", url)
-
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
-		os.Exit(1)
-	}
-	if secret != "" {
-		req.Header.Set("X-Internal-Token", secret)
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to reach server: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Is the server process running in this container?\n")
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "Server returned %d: %s\n", resp.StatusCode, string(body))
+	mercureURL := os.Getenv("MERCURE_URL")
+	mercureSecret := os.Getenv("MERCURE_JWT_SECRET")
+	if mercureURL == "" || mercureSecret == "" {
+		fmt.Fprintln(os.Stderr, "recalculate: MERCURE_URL and MERCURE_JWT_SECRET must be set")
 		os.Exit(1)
 	}
 
-	fmt.Printf("OK: %s\n", string(body))
-	fmt.Println("Recalculation started on server — cache + Mercure will update.")
+	pub := &mercure.HubPublisher{URL: mercureURL, Secret: mercureSecret}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := pub.Publish(ctx, "poe/admin/recompute", "{}"); err != nil {
+		fmt.Fprintf(os.Stderr, "recalculate: publish failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("recalculate: trigger published — server is running the pipeline.")
+	fmt.Println("Watch server logs for 'admin recompute: complete' (~10–30s).")
 }

@@ -88,6 +88,11 @@ func (g *Gate) Submit(req *GateRequest) {
 // them.
 func (g *Gate) HighChan() <-chan *GateRequest { return g.high }
 
+// LowChan returns the low-priority request channel. Intended for testing only
+// — symmetric counterpart to HighChan, used to assert that background-priority
+// submissions (e.g. tick-driven refreshes) reached the queue.
+func (g *Gate) LowChan() <-chan *GateRequest { return g.low }
+
 // Run is the main processing loop. It blocks until ctx is cancelled. High
 // priority requests are always drained before low priority ones via nested
 // select with a default fallback.
