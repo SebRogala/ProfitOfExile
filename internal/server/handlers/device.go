@@ -11,31 +11,6 @@ import (
 	"profitofexile/internal/server/middleware"
 )
 
-// AdminDevices returns an HTTP handler that lists all registered devices.
-// Protected by INTERNAL_SECRET.
-// GET /api/admin/devices
-func AdminDevices(repo device.Lister, internalSecret string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if internalSecret != "" && r.Header.Get("X-Internal-Token") != internalSecret {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		devices, err := repo.List(r.Context())
-		if err != nil {
-			slog.Error("admin devices: list failed", "error", err)
-			jsonError(w, http.StatusInternalServerError, "failed to list devices")
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"devices": devices,
-			"count":   len(devices),
-		})
-	}
-}
-
 // identifyRequest is the expected JSON body for POST /api/device/identify.
 type identifyRequest struct {
 	Alias string `json:"alias"`

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -173,19 +172,19 @@ func main() {
 		errCh <- scheduler.Run(schedulerCtx)
 	}()
 
-	// Trade refresh scheduler — calls server to refresh stale trade data.
-	// Alternates between tier-filtered (MID-HIGH+) and any-gem refreshes.
-	serverURL := os.Getenv("SERVER_URL")
-	if serverURL != "" {
+	// Trade refresh scheduler — publishes a Mercure tick on each interval.
+	// The server subscribes to poe/collector/trade-tick and runs the
+	// gem-pick + lookup logic on its side. Alternates between tier-filtered
+	// (MID+) and any-gem refreshes.
+	if mercureJWTSecret != "" {
 		tradeInterval := 45 * time.Second
 		if d, err := time.ParseDuration(os.Getenv("TRADE_REFRESH_INTERVAL")); err == nil && d > 0 {
 			tradeInterval = d
 		}
-		internalSecret := os.Getenv("INTERNAL_SECRET")
-		go runTradeRefresher(schedulerCtx, serverURL, tradeInterval, internalSecret)
-		slog.Info("trade refresh scheduler started", "serverURL", serverURL, "interval", tradeInterval)
+		go runTradeRefresher(schedulerCtx, mercureURL, mercureJWTSecret, tradeInterval)
+		slog.Info("trade refresh scheduler started", "interval", tradeInterval)
 	} else {
-		slog.Info("trade refresh scheduler disabled (SERVER_URL not set)")
+		slog.Info("trade refresh scheduler disabled (MERCURE_JWT_SECRET not set)")
 	}
 
 	// Lab layout daily reset — publish Mercure event at 00:00 UTC so desktop
@@ -316,73 +315,60 @@ func runLayoutResetTicker(ctx context.Context, mercureURL, mercureSecret string)
 	}
 }
 
-// runTradeRefresher periodically calls the server's trade refresh endpoint.
-// Alternates between tier-filtered (MID+ for 20/20) and any-gem refreshes,
-// mirroring the old server-side Refresher behavior but with the collector owning the schedule.
-func runTradeRefresher(ctx context.Context, serverURL string, interval time.Duration, internalSecret string) {
-	client := &http.Client{Timeout: 30 * time.Second}
+// runTradeRefresher periodically publishes poe/collector/trade-tick Mercure
+// events. The server subscribes and performs the gem-pick + GGG lookup.
+// Alternates between tier-filtered (MID+ for 20/20) and any-gem refreshes —
+// the server interprets the payload to know which mode is requested.
+//
+// Outcomes (gem chosen, lookup result) are logged on the server side. The
+// collector is fire-and-forget here; it just drives the cadence.
+//
+// Transient publish failures stay at Warn so log volume is bounded. After
+// publishErrorEscalateAfter consecutive failures the next failure is logged
+// at Error so monitoring can page on a sustained Mercure outage; the level
+// drops back to Warn once a publish succeeds.
+func runTradeRefresher(ctx context.Context, mercureURL, mercureSecret string, interval time.Duration) {
+	const publishErrorEscalateAfter = 3
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	tierTick := true
+	consecFailures := 0
+	escalated := false
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			var body string
+			var payload string
 			if tierTick {
-				body = `{"variant":"20/20","minTier":"MID","minAge":"5m"}`
+				payload = `{"variant":"20/20","minTier":"MID","minAge":"5m"}`
 			} else {
-				body = `{"variant":"20/20","minAge":"5m"}`
+				payload = `{"variant":"20/20","minAge":"5m"}`
 			}
 			tierTick = !tierTick
 
-			url := serverURL + "/api/internal/trade/refresh"
-			req, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
-			if internalSecret != "" {
-				req.Header.Set("X-Internal-Token", internalSecret)
-			}
-			resp, err := client.Do(req)
-			if err != nil {
+			if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/collector/trade-tick", payload); err != nil {
 				if ctx.Err() != nil {
-					return // shutting down
+					return
 				}
-				slog.Warn("trade refresh: server request failed", "error", err)
+				consecFailures++
+				if consecFailures >= publishErrorEscalateAfter && !escalated {
+					slog.Error("trade tick: publish failing repeatedly", "error", err, "consecutive_failures", consecFailures)
+					escalated = true
+				} else {
+					slog.Warn("trade tick: publish failed", "error", err, "consecutive_failures", consecFailures)
+				}
 				continue
 			}
 
-			if resp.StatusCode >= 400 {
-				resp.Body.Close()
-				slog.Warn("trade refresh: server returned error", "status", resp.StatusCode)
-				continue
+			if escalated {
+				slog.Info("trade tick: publish recovered", "after_failures", consecFailures)
 			}
-
-			var result struct {
-				Gem     string  `json:"gem"`
-				Skipped bool    `json:"skipped"`
-				Floor   float64 `json:"floor"`
-				Error   string  `json:"error"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-				resp.Body.Close()
-				slog.Warn("trade refresh: failed to decode response", "error", err, "status", resp.StatusCode)
-				continue
-			}
-			resp.Body.Close()
-
-			if result.Skipped {
-				continue // nothing stale
-			}
-			if result.Error != "" {
-				slog.Warn("trade refresh: server error", "gem", result.Gem, "error", result.Error)
-			} else if result.Gem != "" {
-				slog.Info("trade refresh: done", "gem", result.Gem, "floor", result.Floor)
-			} else {
-				slog.Warn("trade refresh: unexpected empty response")
-			}
+			consecFailures = 0
+			escalated = false
 		}
 	}
 }

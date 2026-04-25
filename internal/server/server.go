@@ -45,8 +45,6 @@ type RouterConfig struct {
 	TradeRepo *trade.Repository
 	// TradeSyncTimeout is the max time the handler blocks waiting for a fast-path response.
 	TradeSyncTimeout time.Duration
-	// InternalSecret protects /api/internal/* endpoints. Empty = no auth (dev only).
-	InternalSecret string
 	// League is the current PoE league name (e.g. "Mirage").
 	League string
 	// Analyzer is the lab analysis engine for admin recalculation endpoint.
@@ -113,21 +111,20 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/gem-features", handlers.GemFeaturesAnalysis(cfg.LabRepo, cfg.LabCache))
 		r.Get("/api/analysis/gem-signals", handlers.GemSignalsAnalysis(cfg.LabRepo, cfg.LabCache))
 
-		// Admin: trigger full recalculation (clear stale v2 data + recompute all).
-		// Protected by INTERNAL_SECRET — available in both dev and prod.
-		if cfg.Analyzer != nil {
-			r.Post("/api/internal/recalculate", handlers.AdminRecalculate(cfg.Analyzer, cfg.InternalSecret))
-		}
+		// Admin operations (recalculation, etc.) are intentionally NOT exposed
+		// over HTTP. Operator triggers run as CLI binaries inside the server
+		// container (e.g. `docker exec server /recalculate`), which publish
+		// Mercure events the running subscriber consumes.
 	}
 
 	if cfg.DeviceRepo != nil {
-		r.Get("/api/admin/devices", handlers.AdminDevices(cfg.DeviceRepo, cfg.InternalSecret))
 		r.Post("/api/device/identify", handlers.DeviceIdentify(cfg.DeviceRepo))
 	}
 
 	if cfg.TradeGate != nil {
 		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.TradeSyncTimeout))
-		r.Post("/api/internal/trade/refresh", handlers.TradeRefresh(cfg.TradeGate, cfg.TradeCache, cfg.LabCache, cfg.TradeSyncTimeout, cfg.InternalSecret))
+		// Trade refresh ticks arrive over Mercure (poe/collector/trade-tick),
+		// not HTTP. See cmd/server subscriber + internal/server/trade_tick.go.
 	}
 
 	// Trade submit: available whenever trade cache exists (desktop can submit
