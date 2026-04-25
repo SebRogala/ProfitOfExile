@@ -10,18 +10,44 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const defaultMaxConns = 50
+const (
+	defaultMaxConns = 50
+	maxAllowedConns = 10000
+)
 
 // resolveMaxConns returns the desired pgxpool MaxConns, honoring the
-// POE_DB_MAX_CONNS env var when present and parseable as a positive int.
-// Invalid or non-positive values silently fall back to defaultMaxConns.
+// POE_DB_MAX_CONNS env var when present and parseable as a positive int
+// within the sane upper bound (maxAllowedConns). Invalid, non-positive,
+// or out-of-range values log a WARN and fall back to defaultMaxConns.
 func resolveMaxConns() int {
 	v := os.Getenv("POE_DB_MAX_CONNS")
 	if v == "" {
 		return defaultMaxConns
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
+	if err != nil {
+		slog.Warn("db: POE_DB_MAX_CONNS rejected, using default",
+			"raw_value", v,
+			"reason", "parse error: "+err.Error(),
+			"default", defaultMaxConns,
+		)
+		return defaultMaxConns
+	}
+	if n <= 0 {
+		slog.Warn("db: POE_DB_MAX_CONNS rejected, using default",
+			"raw_value", v,
+			"reason", "must be positive",
+			"default", defaultMaxConns,
+		)
+		return defaultMaxConns
+	}
+	if n > maxAllowedConns {
+		slog.Warn("db: POE_DB_MAX_CONNS rejected, using default",
+			"raw_value", v,
+			"reason", "exceeds upper bound",
+			"max_allowed", maxAllowedConns,
+			"default", defaultMaxConns,
+		)
 		return defaultMaxConns
 	}
 	return n
@@ -37,7 +63,13 @@ func NewPool(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	}
 
 	config.MaxConns = int32(resolveMaxConns())
-	config.MinConns = 2
+	// Clamp MinConns to MaxConns to avoid pgxpool boot failure when
+	// POE_DB_MAX_CONNS=1 (MinConns > MaxConns is rejected by pgxpool).
+	minConns := int32(2)
+	if config.MaxConns < minConns {
+		minConns = config.MaxConns
+	}
+	config.MinConns = minConns
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

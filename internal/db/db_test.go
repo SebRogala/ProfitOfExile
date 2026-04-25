@@ -1,7 +1,9 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -45,16 +47,17 @@ func TestNewPool(t *testing.T) {
 
 func TestResolveMaxConns(t *testing.T) {
 	tests := []struct {
-		name string
-		env  *string // nil = unset; pointer so we can distinguish "" from "unset"
-		want int
+		name     string
+		env      *string // nil = unset; pointer so we can distinguish "" from "unset"
+		want     int
+		wantWarn bool
 	}{
-		{"unset returns default", nil, 50},
-		{"valid override", strPtr("10"), 10},
-		{"non-numeric falls back", strPtr("invalid"), 50},
-		{"zero falls back", strPtr("0"), 50},
-		{"negative falls back", strPtr("-5"), 50},
-		{"empty string falls back", strPtr(""), 50},
+		{"unset returns default", nil, 50, false},
+		{"valid override", strPtr("10"), 10, false},
+		{"non-numeric falls back", strPtr("invalid"), 50, true},
+		{"zero falls back", strPtr("0"), 50, true},
+		{"negative falls back", strPtr("-5"), 50, true},
+		{"empty string falls back", strPtr(""), 50, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,9 +74,21 @@ func TestResolveMaxConns(t *testing.T) {
 				os.Unsetenv("POE_DB_MAX_CONNS")
 				t.Cleanup(func() { os.Unsetenv("POE_DB_MAX_CONNS") })
 			}
+
+			// Capture slog output to assert WARN emissions on rejected values.
+			var buf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
 			got := resolveMaxConns()
 			if got != tt.want {
 				t.Errorf("resolveMaxConns() = %d, want %d", got, tt.want)
+			}
+
+			gotWarn := strings.Contains(buf.String(), `"level":"WARN"`)
+			if gotWarn != tt.wantWarn {
+				t.Errorf("WARN log emitted = %v, want %v (logs: %s)", gotWarn, tt.wantWarn, buf.String())
 			}
 		})
 	}
