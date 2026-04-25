@@ -365,16 +365,36 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		var spMs int64
+		// Single deferred telemetry emit captures every return path with rich fields.
+		// Locals are populated as the request flows; closure captures by reference.
+		var (
+			spMs       int64
+			outcome    = "ok"
+			statusCode = http.StatusOK
+			variant    string
+			usedCache  bool
+			gemCount   int
+			rowCount   int
+			warnCount  int
+		)
 		defer func() {
-			slog.Info("compare_analysis_done",
+			slog.Info("compare_analysis",
 				"duration_ms", time.Since(start).Milliseconds(),
 				"sparkline_ms", spMs,
+				"outcome", outcome,
+				"status_code", statusCode,
+				"gems", gemCount,
+				"variant", variant,
+				"cache_hit", usedCache,
+				"rows", rowCount,
+				"warnings", warnCount,
 			)
 		}()
 
 		gemsParam := r.URL.Query().Get("gems")
 		if gemsParam == "" {
+			outcome = "bad_request"
+			statusCode = http.StatusBadRequest
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": "gems parameter is required"})
@@ -383,6 +403,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		names := strings.Split(gemsParam, ",")
 		if len(names) > 5 {
+			outcome = "bad_request"
+			statusCode = http.StatusBadRequest
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": "maximum 5 gems allowed"})
@@ -398,8 +420,11 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			}
 		}
 		names = filtered
+		gemCount = len(names)
 
 		if len(names) == 0 {
+			outcome = "bad_request"
+			statusCode = http.StatusBadRequest
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]string{"error": "at least one gem name is required"})
@@ -409,18 +434,21 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		mode := r.URL.Query().Get("mode")
 
 		// Dedication mode: score gems against the corrupted 21/23c pool.
+		// Mark outcome explicitly so the deferred telemetry tags this branch
+		// (serveDedicationCompare has its own logic but this handler's emit
+		// still fires — outcome="dedication" disambiguates the path).
 		if mode == "dedication" {
+			outcome = "dedication"
 			serveDedicationCompare(w, r, repo, cache, names)
 			return
 		}
 
-		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		variant = normalizeVariant(r.URL.Query().Get("variant"))
 
 		// Fast path: serve from cache.
 		var transfigure []lab.TransfigureResult
 		var signals []lab.GemSignal
 		var features []lab.GemFeature
-		usedCache := false
 
 		if cache != nil {
 			ct := cache.Transfigure()
@@ -439,6 +467,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			var err error
 			transfigure, err = repo.LatestTransfigureResults(r.Context(), variant, 1000)
 			if err != nil {
+				outcome = "db_error"
+				statusCode = http.StatusInternalServerError
 				slog.Error("compare analysis: transfigure query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
@@ -446,6 +476,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 			signals, err = repo.LatestGemSignals(r.Context(), variant, "", 5000)
 			if err != nil {
+				outcome = "db_error"
+				statusCode = http.StatusInternalServerError
 				slog.Error("compare analysis: gem signals query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
@@ -453,6 +485,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 			features, err = repo.LatestGemFeatures(r.Context(), variant, "", 50000)
 			if err != nil {
+				outcome = "db_error"
+				statusCode = http.StatusInternalServerError
 				slog.Error("compare analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
@@ -477,6 +511,8 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant)
 
 		rows := buildCompareRows(results, tradeCache)
+		rowCount = len(rows)
+		warnCount = len(warnings)
 
 		resp := map[string]any{
 			"count": len(rows),
@@ -488,18 +524,9 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			outcome = "encode_error"
 			slog.Error("compare analysis: encode response", "error", err)
 		}
-
-		slog.Info("compare_analysis",
-			"duration_ms", time.Since(start).Milliseconds(),
-			"sparkline_ms", spMs,
-			"gems", len(names),
-			"variant", variant,
-			"cache_hit", usedCache,
-			"rows", len(rows),
-			"warnings", len(warnings),
-		)
 	}
 }
 
