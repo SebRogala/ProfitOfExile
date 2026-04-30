@@ -38,6 +38,35 @@ func (p *mockPublisher) getEvents() []publishedEvent {
 	return cp
 }
 
+func waitForTradeEvent(t *testing.T, pub *mockPublisher, requestID, eventType string) map[string]interface{} {
+	t.Helper()
+
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		for _, e := range pub.getEvents() {
+			if e.Topic != mercureTradeTopic {
+				continue
+			}
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(e.Payload), &payload); err != nil {
+				continue
+			}
+			if payload["type"] == eventType && payload["requestId"] == requestID {
+				return payload
+			}
+		}
+
+		select {
+		case <-deadline:
+			t.Fatalf("expected Mercure %q event for request %q", eventType, requestID)
+		case <-tick.C:
+		}
+	}
+}
+
 // testGateServer returns an httptest.Server that serves valid search+fetch
 // responses. The searchCalls counter is incremented on each search request.
 func testGateServer(t *testing.T, searchCalls *atomic.Int32) *httptest.Server {
@@ -354,25 +383,7 @@ func TestGate_QueueTimeout(t *testing.T) {
 		t.Fatal("timed out waiting for error response")
 	}
 
-	// Verify Mercure error event was published.
-	events := pub.getEvents()
-	found := false
-	for _, e := range events {
-		if e.Topic != mercureTradeTopic {
-			continue
-		}
-		var payload map[string]interface{}
-		if err := json.Unmarshal([]byte(e.Payload), &payload); err != nil {
-			continue
-		}
-		if payload["type"] == "error" && payload["requestId"] == "req-timeout" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected Mercure error event for timed-out request")
-	}
+	waitForTradeEvent(t, pub, "req-timeout", "error")
 }
 
 func TestGate_QueueTimeout_AllAttachees(t *testing.T) {
@@ -469,29 +480,12 @@ func TestGate_WaitEvent(t *testing.T) {
 	}
 
 	// Verify a Mercure "waiting" event was published.
-	events := pub.getEvents()
-	found := false
-	for _, e := range events {
-		if e.Topic != mercureTradeTopic {
-			continue
-		}
-		var payload map[string]interface{}
-		if err := json.Unmarshal([]byte(e.Payload), &payload); err != nil {
-			continue
-		}
-		if payload["type"] == "waiting" && payload["requestId"] == "req-wait" {
-			waitSec, ok := payload["waitSeconds"].(float64)
-			if !ok {
-				t.Error("waitSeconds missing or not a number")
-			} else if waitSec <= 0 {
-				t.Errorf("waitSeconds = %v, want > 0", waitSec)
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected Mercure 'waiting' event")
+	payload := waitForTradeEvent(t, pub, "req-wait", "waiting")
+	waitSec, ok := payload["waitSeconds"].(float64)
+	if !ok {
+		t.Error("waitSeconds missing or not a number")
+	} else if waitSec <= 0 {
+		t.Errorf("waitSeconds = %v, want > 0", waitSec)
 	}
 }
 
@@ -522,35 +516,13 @@ func TestGate_ReadyEvent(t *testing.T) {
 		t.Fatal("timed out waiting for response")
 	}
 
-	// Give the goroutine a moment to execute publishReady after deliverResult.
-	time.Sleep(50 * time.Millisecond)
-
 	// Verify Mercure "ready" event with result data.
-	events := pub.getEvents()
-	found := false
-	for _, e := range events {
-		if e.Topic != mercureTradeTopic {
-			continue
-		}
-		var payload map[string]interface{}
-		if err := json.Unmarshal([]byte(e.Payload), &payload); err != nil {
-			continue
-		}
-		if payload["type"] == "ready" {
-			data, ok := payload["data"].(map[string]interface{})
-			if !ok {
-				t.Error("ready event missing 'data' object")
-			} else {
-				if data["gem"] != "ReadyGem" {
-					t.Errorf("ready data gem = %v, want %q", data["gem"], "ReadyGem")
-				}
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected Mercure 'ready' event")
+	payload := waitForTradeEvent(t, pub, "req-ready", "ready")
+	data, ok := payload["data"].(map[string]interface{})
+	if !ok {
+		t.Error("ready event missing 'data' object")
+	} else if data["gem"] != "ReadyGem" {
+		t.Errorf("ready data gem = %v, want %q", data["gem"], "ReadyGem")
 	}
 }
 
