@@ -711,7 +711,11 @@ func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
 		MinSleep:         1 * time.Millisecond,
 		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
 			atomic.AddInt32(&fetchCount, 1)
-			return &FetchResult{NotModified: true, ETag: `"abc"`, Age: 0}, nil
+			// AgePresent: false explicitly exercises the legacy fallback branch
+			// (Age header absent → burst-poll then back off to FallbackInterval).
+			// Locks intent so a future reader can tell from the body which
+			// branch this test covers.
+			return &FetchResult{NotModified: true, ETag: `"abc"`, Age: 0, AgePresent: false}, nil
 		},
 		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
 			return 0, nil
@@ -1618,5 +1622,150 @@ func TestScheduler_panicInFetchFuncDoesNotCrashOtherEndpoints(t *testing.T) {
 
 	if atomic.LoadInt32(&currencyStored) == 0 {
 		t.Error("currency endpoint should have stored data despite gem endpoint panic")
+	}
+}
+
+// new304Scheduler returns a minimal Scheduler suitable for fetchAndStore unit tests.
+func new304Scheduler() *Scheduler {
+	return &Scheduler{
+		logger:     slog.Default(),
+		semaphores: map[string]chan struct{}{},
+	}
+}
+
+// new304Endpoint builds a deterministic EndpointConfig that returns a 304
+// FetchResult with the supplied Age/AgePresent values. Each test exercises a
+// single fetchAndStore cycle so we can assert sleep + retryCount precisely.
+func new304Endpoint(age int, agePresent bool) EndpointConfig {
+	return EndpointConfig{
+		Name:             EndpointNinjaGems,
+		Source:           "",
+		MaxAge:           30 * time.Minute,
+		FallbackInterval: 30 * time.Minute,
+		MaxRetries:       5,
+		MinSleep:         30 * time.Second,
+		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
+			return &FetchResult{
+				NotModified: true,
+				ETag:        `"abc"`,
+				Age:         age,
+				AgePresent:  agePresent,
+			}, nil
+		},
+		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
+			return 0, nil
+		},
+	}
+}
+
+func TestScheduler_304WithFreshAgeUsesShortSleep(t *testing.T) {
+	// Age=600s with MaxAge=1800s and FallbackInterval=30m: sleep should equal
+	// MaxAge - Age + 5s = 1205s, which is below FallbackInterval and above MinSleep.
+	s := new304Scheduler()
+	ep := new304Endpoint(600, true)
+	state := &endpointState{}
+
+	got := s.fetchAndStore(context.Background(), ep, state)
+
+	want := 1205 * time.Second
+	if got != want {
+		t.Errorf("sleep = %v, want %v", got, want)
+	}
+	if state.retryCount != 0 {
+		t.Errorf("retryCount = %d, want 0 (age-aware path must not increment)", state.retryCount)
+	}
+}
+
+func TestScheduler_304WithStaleAgeFloorsToMinSleep(t *testing.T) {
+	// Age=1800s equals MaxAge: computed sleep = 1800s - 1800s + 5s = 5s, must clamp to MinSleep.
+	s := new304Scheduler()
+	ep := new304Endpoint(1800, true)
+	state := &endpointState{}
+
+	got := s.fetchAndStore(context.Background(), ep, state)
+
+	if got != ep.MinSleep {
+		t.Errorf("sleep = %v, want %v (MinSleep floor)", got, ep.MinSleep)
+	}
+	if state.retryCount != 0 {
+		t.Errorf("retryCount = %d, want 0", state.retryCount)
+	}
+}
+
+func TestScheduler_304WithAgeZeroPresentUsesAgeAwarePath(t *testing.T) {
+	// Genuine fresh response: Age header present with value 0. Without the
+	// AgePresent disambiguation, this would be indistinguishable from "header
+	// absent" and trigger the legacy burst loop. With AgePresent=true the
+	// scheduler must take the age-aware path and NOT increment retryCount.
+	//
+	// This also covers the unparseable-Age case: ninja.go maps a malformed Age
+	// header to AgePresent=true, Age=0 — the scheduler sees the same input.
+	s := new304Scheduler()
+	ep := new304Endpoint(0, true)
+	state := &endpointState{}
+
+	got := s.fetchAndStore(context.Background(), ep, state)
+
+	// MaxAge - 0 + 5s = 1805s; FallbackInterval is 30m = 1800s, so clamped.
+	want := ep.FallbackInterval
+	if got != want {
+		t.Errorf("sleep = %v, want %v (age-aware, capped at FallbackInterval)", got, want)
+	}
+	if state.retryCount != 0 {
+		t.Errorf("retryCount = %d, want 0 (regression guard for AgePresent disambiguation)", state.retryCount)
+	}
+}
+
+func TestScheduler_304WithoutAgeHeaderFallsBackToBurstThenFallback(t *testing.T) {
+	// AgePresent=false (Age header absent at HTTP layer). Legacy fallback path:
+	// MinSleep on each call until retryCount > MaxRetries, then FallbackInterval
+	// and reset to 0.
+	s := new304Scheduler()
+	ep := new304Endpoint(0, false)
+	state := &endpointState{}
+
+	// Calls 1..MaxRetries: each returns MinSleep, retryCount climbs.
+	for i := 1; i <= ep.MaxRetries; i++ {
+		got := s.fetchAndStore(context.Background(), ep, state)
+		if got != ep.MinSleep {
+			t.Errorf("call %d sleep = %v, want %v (burst MinSleep)", i, got, ep.MinSleep)
+		}
+		if state.retryCount != i {
+			t.Errorf("call %d retryCount = %d, want %d", i, state.retryCount, i)
+		}
+	}
+
+	// Call MaxRetries+1: retryCount becomes MaxRetries+1 (> MaxRetries) -> fallback.
+	got := s.fetchAndStore(context.Background(), ep, state)
+	if got != ep.FallbackInterval {
+		t.Errorf("exhaust call sleep = %v, want %v (FallbackInterval)", got, ep.FallbackInterval)
+	}
+	if state.retryCount != 0 {
+		t.Errorf("retryCount after fallback = %d, want 0 (must reset)", state.retryCount)
+	}
+}
+
+// TestScheduler_304WithUnparseableAgeUsesAgeAwarePath is intentionally omitted:
+// ninja.go maps an unparseable Age header to AgePresent=true, Age=0, which is
+// the same scheduler input as TestScheduler_304WithAgeZeroPresentUsesAgeAwarePath.
+// The scheduler cannot distinguish the two cases — testing both would be identical.
+
+func TestScheduler_304ResetsRetryCountOnAgeAwarePath(t *testing.T) {
+	// Even if retryCount has accumulated from a prior burst (no Age header),
+	// any 304 with AgePresent=true must reset it. Guards against the old burst
+	// behaviour leaking back when the upstream starts returning Age again.
+	s := new304Scheduler()
+	ep := new304Endpoint(600, true)
+	state := &endpointState{retryCount: 3}
+
+	for i := 0; i < 3; i++ {
+		got := s.fetchAndStore(context.Background(), ep, state)
+		want := 1205 * time.Second
+		if got != want {
+			t.Errorf("iter %d sleep = %v, want %v", i, got, want)
+		}
+		if state.retryCount != 0 {
+			t.Errorf("iter %d retryCount = %d, want 0 (consecutive 304s with AgePresent must not accumulate)", i, state.retryCount)
+		}
 	}
 }

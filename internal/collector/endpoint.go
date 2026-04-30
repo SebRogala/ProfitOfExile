@@ -28,6 +28,7 @@ type FetchResult struct {
 	FragmentData []FragmentSnapshot
 	ETag         string
 	Age          int  // seconds since origin server generated the response
+	AgePresent   bool // true when the Age header was present (distinguishes header-absent from genuine Age=0)
 	NotModified  bool // true when source returned 304 Not Modified
 }
 

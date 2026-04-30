@@ -32,9 +32,6 @@ mod platform {
         Err("Screen capture not available on this platform".to_string())
     }
 
-    pub fn capture_region(_x: u32, _y: u32, _w: u32, _h: u32) -> Result<DynamicImage, String> {
-        Err("Screen capture not available on this platform".to_string())
-    }
 }
 
 pub use platform::*;

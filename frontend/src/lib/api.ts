@@ -573,6 +573,8 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
 	let retries = 0;
+	let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let visibilityHandler: (() => void) | null = null;
 
 	function retryDelay(): number {
 		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after deploys)
@@ -586,6 +588,18 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			eventSource.onerror = null;
 			eventSource.close();
 			eventSource = null;
+		}
+	}
+
+	function scheduleDisconnectIndicator() {
+		// One-shot 5s debounce per error sequence — only start if not already armed.
+		// Subsequent retries within the same sequence must NOT reset the timer
+		// (exponential backoff would compound past the threshold otherwise).
+		if (disconnectTimer === null) {
+			disconnectTimer = setTimeout(() => {
+				state.connected = false;
+				onConnectionChange?.(false);
+			}, 5000);
 		}
 	}
 
@@ -604,6 +618,10 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			eventSource = new EventSource(authedUrl.toString());
 
 			eventSource.onopen = () => {
+				if (disconnectTimer) {
+					clearTimeout(disconnectTimer);
+					disconnectTimer = null;
+				}
 				state.connected = true;
 				onConnectionChange?.(true);
 				retries = 0;
@@ -628,9 +646,33 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// Close explicitly — prevent browser's native EventSource reconnect
 				// from fighting our token-refresh retry logic.
 				closeEventSource();
-				state.connected = false;
-				onConnectionChange?.(false);
-				if (tokenTimeout) clearTimeout(tokenTimeout);
+				scheduleDisconnectIndicator();
+				// Cancel any pending token refresh / retry; we'll re-arm below once we
+				// know whether we're deferring (hidden tab) or retrying immediately.
+				if (tokenTimeout) {
+					clearTimeout(tokenTimeout);
+					tokenTimeout = null;
+				}
+
+				if (typeof document !== 'undefined' && document.hidden) {
+					// Tab is backgrounded — browsers throttle/kill SSE here. Don't burn
+					// retries while hidden; wait for visibility to flip and reconnect then.
+					console.warn('[Mercure] tab hidden, deferring reconnect until visible');
+					// Replace any existing visibility listener before registering a new one,
+					// otherwise stale handlers can leak across retry cycles.
+					if (visibilityHandler && typeof document !== 'undefined') {
+						document.removeEventListener('visibilitychange', visibilityHandler);
+						visibilityHandler = null;
+					}
+					const handler = () => {
+						visibilityHandler = null;
+						connect();
+					};
+					visibilityHandler = handler;
+					document.addEventListener('visibilitychange', handler, { once: true });
+					return;
+				}
+
 				retries++;
 				tokenTimeout = setTimeout(connect, retryDelay());
 			};
@@ -640,8 +682,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			tokenTimeout = setTimeout(connect, 25 * 60 * 1000);
 		} catch (err) {
 			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
-			state.connected = false;
-			onConnectionChange?.(false);
+			scheduleDisconnectIndicator();
 			retries++;
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, retryDelay());
@@ -649,10 +690,21 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	}
 
 	state.close = () => {
-		if (eventSource) eventSource.close();
-		if (tokenTimeout) clearTimeout(tokenTimeout);
+		closeEventSource();
+		if (tokenTimeout) {
+			clearTimeout(tokenTimeout);
+			tokenTimeout = null;
+		}
+		if (disconnectTimer) {
+			clearTimeout(disconnectTimer);
+			disconnectTimer = null;
+		}
+		if (visibilityHandler && typeof document !== 'undefined') {
+			document.removeEventListener('visibilitychange', visibilityHandler);
+			visibilityHandler = null;
+		}
 		state.connected = false;
-				onConnectionChange?.(false);
+		onConnectionChange?.(false);
 	};
 
 	connect();

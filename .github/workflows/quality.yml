@@ -1,0 +1,53 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create Compose network
+        run: docker network create infra
+      - name: Build backend image
+        run: docker compose build app
+      - name: Go tests with race detector
+        run: docker compose run --rm app go test -race ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create Compose network
+        run: docker network create infra
+      - name: Build frontend image
+        run: docker compose build frontend
+      - name: Install dependencies
+        run: docker compose run --rm frontend npm ci
+      - name: Build frontend
+        run: docker compose run --rm frontend npm run build
+
+  desktop-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build desktop image
+        run: docker compose build desktop
+      - name: Install dependencies
+        run: docker compose run --rm -w /app/desktop desktop npm ci --legacy-peer-deps
+      - name: Svelte check
+        run: docker compose run --rm -w /app/desktop desktop npm run check
+      - name: Unit tests
+        run: docker compose run --rm -w /app/desktop desktop npm test
+
+  desktop-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build desktop image
+        run: docker compose build desktop
+      - name: Cargo test
+        run: docker compose run --rm -w /app/desktop/src-tauri desktop cargo test
