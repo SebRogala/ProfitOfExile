@@ -749,10 +749,6 @@
 		color: var(--color-lab-text-secondary);
 		user-select: none;
 	}
-	.auto-trade-toggle input {
-		accent-color: var(--color-lab-yellow, #eab308);
-		cursor: pointer;
-	}
 	.toggle-label {
 		white-space: nowrap;
 	}

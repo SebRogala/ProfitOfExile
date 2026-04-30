@@ -33,6 +33,21 @@
 		currentFeature = (currentFeature + 1) % features.length;
 	}
 
+	function zoomImage(image: string) {
+		zoomedImg = image;
+	}
+
+	function closeZoom() {
+		zoomedImg = null;
+	}
+
+	function handleLightboxKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			closeZoom();
+		}
+	}
+
 	$effect(() => {
 		const interval = setInterval(cycleFeature, 4000);
 		return () => clearInterval(interval);
@@ -130,13 +145,15 @@
 					<p>Go to Settings &rarr; Game Integration. Configure two red rectangles: one for the <strong>gem tooltip area</strong> (top of screen, where gem names appear on hover), and one for the <strong>font craft panel</strong> (center, where craft options are listed).</p>
 					<div class="step-images">
 						<figure class="step-figure">
-							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-							<img src="/setup-gem-region.png" alt="Gem tooltip OCR region" class="step-img" onclick={() => { zoomedImg = 'gem'; }} />
+							<button class="step-img-button" type="button" onclick={() => zoomImage('gem')} aria-label="Enlarge gem tooltip OCR region">
+								<img src="/setup-gem-region.png" alt="Gem tooltip OCR region" class="step-img" />
+							</button>
 							<figcaption>Gem tooltip region <span class="click-hint">(click to enlarge)</span></figcaption>
 						</figure>
 						<figure class="step-figure">
-							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-							<img src="/setup-font-region.png" alt="Font panel OCR region" class="step-img" onclick={() => { zoomedImg = 'font'; }} />
+							<button class="step-img-button" type="button" onclick={() => zoomImage('font')} aria-label="Enlarge font panel OCR region">
+								<img src="/setup-font-region.png" alt="Font panel OCR region" class="step-img" />
+							</button>
 							<figcaption>Font panel region <span class="click-hint">(click to enlarge)</span></figcaption>
 						</figure>
 					</div>
@@ -149,8 +166,9 @@
 					<p>Settings &rarr; Overlays to configure three in-game overlays: the <strong>Comparator</strong> (gem comparison with trade data), the <strong>Path Strip</strong> (lab room progress), and the <strong>Compass</strong> (room map with content markers and navigation). Drag each red rectangle where you want it.</p>
 					<div class="step-images">
 						<figure class="step-figure">
-							<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-							<img src="/overlay-labmap.png" alt="Lab map path strip overlay" class="step-img" onclick={() => { zoomedImg = 'labmap'; }} />
+							<button class="step-img-button" type="button" onclick={() => zoomImage('labmap')} aria-label="Enlarge lab map path strip overlay">
+								<img src="/overlay-labmap.png" alt="Lab map path strip overlay" class="step-img" />
+							</button>
 							<figcaption>Path strip overlay — lab progress with room contents <span class="click-hint">(click to enlarge)</span></figcaption>
 						</figure>
 					</div>
@@ -176,8 +194,14 @@
 	</section>
 
 	{#if zoomedImg}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="lightbox" onclick={() => { zoomedImg = null; }}>
+		<div
+			class="lightbox"
+			role="button"
+			tabindex="0"
+			aria-label="Close enlarged image"
+			onclick={closeZoom}
+			onkeydown={handleLightboxKeydown}
+		>
 			<img src={zoomedImg === 'gem' ? '/setup-gem-region.png' : zoomedImg === 'font' ? '/setup-font-region.png' : '/overlay-labmap.png'} alt="Enlarged view" class="lightbox-img" />
 		</div>
 	{/if}
@@ -740,11 +764,22 @@
 		margin: 0;
 	}
 
+	.step-img-button {
+		all: unset;
+		display: block;
+		width: 100%;
+		cursor: zoom-in;
+	}
+
+	.step-img-button:focus-visible {
+		outline: 2px solid #c9aa71;
+		outline-offset: 3px;
+	}
+
 	.step-img {
 		width: 100%;
 		border: 1px solid rgba(201, 170, 113, 0.15);
 		border-radius: 4px;
-		cursor: zoom-in;
 		transition: transform 0.2s;
 	}
 
