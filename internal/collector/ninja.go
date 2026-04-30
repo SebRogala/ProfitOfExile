@@ -76,7 +76,8 @@ type ninjaResponse[T any] struct {
 type httpResult struct {
 	StatusCode  int
 	ETag        string
-	Age         int // seconds since origin server generated the response
+	Age         int  // seconds since origin server generated the response
+	AgePresent  bool // true when the Age header was present in the response (any value, including 0)
 	Body        io.ReadCloser
 	NotModified bool
 }
@@ -97,6 +98,7 @@ func (f *NinjaFetcher) FetchGemsEndpoint(ctx context.Context, league string, eta
 			NotModified: true,
 			ETag:        hr.ETag,
 			Age:         hr.Age,
+			AgePresent:  hr.AgePresent,
 		}, nil
 	}
 	defer hr.Body.Close()
@@ -110,9 +112,10 @@ func (f *NinjaFetcher) FetchGemsEndpoint(ctx context.Context, league string, eta
 
 	slog.Info("ninja: fetched gems", "total_api", len(resp.Lines), "after_filter", len(snapshots), "age", hr.Age, "etag", hr.ETag)
 	result := &FetchResult{
-		GemData: snapshots,
-		ETag:    hr.ETag,
-		Age:     hr.Age,
+		GemData:    snapshots,
+		ETag:       hr.ETag,
+		Age:        hr.Age,
+		AgePresent: hr.AgePresent,
 	}
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("ninja: gems result invalid: %w", err)
@@ -135,6 +138,7 @@ func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string,
 			NotModified: true,
 			ETag:        hr.ETag,
 			Age:         hr.Age,
+			AgePresent:  hr.AgePresent,
 		}, nil
 	}
 	defer hr.Body.Close()
@@ -151,6 +155,7 @@ func (f *NinjaFetcher) FetchCurrencyEndpoint(ctx context.Context, league string,
 		CurrencyData: snapshots,
 		ETag:         hr.ETag,
 		Age:          hr.Age,
+		AgePresent:   hr.AgePresent,
 	}
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("ninja: currency result invalid: %w", err)
@@ -174,6 +179,7 @@ func (f *NinjaFetcher) FetchFragmentEndpoint(ctx context.Context, league string,
 			NotModified: true,
 			ETag:        hr.ETag,
 			Age:         hr.Age,
+			AgePresent:  hr.AgePresent,
 		}, nil
 	}
 	defer hr.Body.Close()
@@ -190,6 +196,7 @@ func (f *NinjaFetcher) FetchFragmentEndpoint(ctx context.Context, league string,
 		FragmentData: snapshots,
 		ETag:         hr.ETag,
 		Age:          hr.Age,
+		AgePresent:   hr.AgePresent,
 	}
 	if err := result.Validate(); err != nil {
 		return nil, fmt.Errorf("ninja: fragment result invalid: %w", err)
@@ -290,7 +297,9 @@ func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag str
 
 	// Parse Age header (seconds since origin generated the response).
 	age := 0
-	if ageStr := resp.Header.Get("Age"); ageStr != "" {
+	ageStr := resp.Header.Get("Age")
+	agePresent := ageStr != ""
+	if agePresent {
 		parsed, parseErr := strconv.Atoi(ageStr)
 		if parseErr != nil {
 			slog.Warn("invalid Age header, defaulting to 0",
@@ -313,6 +322,7 @@ func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag str
 			StatusCode:  resp.StatusCode,
 			ETag:        respETag,
 			Age:         age,
+			AgePresent:  agePresent,
 			NotModified: true,
 		}, nil
 	}
@@ -327,6 +337,7 @@ func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag str
 		StatusCode: resp.StatusCode,
 		ETag:       respETag,
 		Age:        age,
+		AgePresent: agePresent,
 		Body:       resp.Body,
 	}, nil
 }
