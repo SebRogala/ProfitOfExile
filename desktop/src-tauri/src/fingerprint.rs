@@ -10,10 +10,12 @@
 //! service disabled). The fallback is volatile — a new ID is generated on each
 //! app launch — but it still allows activity tracking within a single session.
 
+#[cfg(windows)]
 use sha2::{Digest, Sha256};
 
 /// Build-time secret injected via `APP_FINGERPRINT_SECRET` env var.
 /// Falls back to a fixed dev-only value so local builds work without CI secrets.
+#[cfg(windows)]
 const APP_SECRET: &str = match option_env!("APP_FINGERPRINT_SECRET") {
     Some(s) => s,
     None => "poe-dev-fingerprint-salt",

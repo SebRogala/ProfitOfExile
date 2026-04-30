@@ -2,9 +2,15 @@
 	let { children } = $props();
 </script>
 
-{@render children()}
+<div class="overlay-root">
+	{@render children()}
+</div>
 
 <style>
+	.overlay-root {
+		display: contents;
+	}
+
 	:global(*) {
 		margin: 0;
 		padding: 0;

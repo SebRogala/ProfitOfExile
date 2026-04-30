@@ -39,6 +39,7 @@ impl CaptureRegion {
 #[derive(Debug, Clone, Serialize)]
 pub struct AppStatus {
     pub state: String,
+    pub app_version: String,
     pub pair_code: String,
     pub detected_gems: Vec<String>,
     pub client_txt_path: String,
@@ -149,6 +150,7 @@ fn build_status(state: &AppState) -> AppStatus {
     let client_txt_exists = std::path::Path::new(&client_txt_path).exists();
     AppStatus {
         state: format!("{:?}", *state.lab_state.lock().unwrap_or_else(|e| e.into_inner())),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
         pair_code: state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         detected_gems: state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         client_txt_path,
@@ -929,6 +931,11 @@ mod overlay_clickthrough {
 /// - `interactive_width`: width in physical pixels of the interactive zone on the right edge
 #[tauri::command]
 fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandle) {
+    #[cfg(not(windows))]
+    {
+        let _ = (label, interactive_width, app);
+    }
+
     #[cfg(windows)]
     {
         use windows::Win32::Foundation::HWND;
@@ -1029,12 +1036,18 @@ fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
 fn set_overlay_has_content(has_content: bool) {
     #[cfg(windows)]
     overlay_clickthrough::set_has_content(has_content);
+
+    #[cfg(not(windows))]
+    let _ = has_content;
 }
 
 #[tauri::command]
 fn set_overlay_interactive_width(width: i32) {
     #[cfg(windows)]
     overlay_clickthrough::set_interactive_width(width);
+
+    #[cfg(not(windows))]
+    let _ = width;
 }
 
 #[tauri::command]
@@ -1880,6 +1893,7 @@ fn spawn_focus_poller(app: AppHandle) {
     }
 
     std::thread::spawn(move || {
+        #[cfg(windows)]
         let mut was_focused = false;
         #[cfg(windows)]
         let our_pid = std::process::id();

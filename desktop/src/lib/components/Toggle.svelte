@@ -7,6 +7,7 @@
 	class:on={checked}
 	role="switch"
 	aria-checked={checked}
+	aria-label={checked ? 'Disable' : 'Enable'}
 	onclick={() => { checked = !checked; }}
 >
 	<span class="knob"></span>

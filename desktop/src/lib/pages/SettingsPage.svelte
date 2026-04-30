@@ -57,11 +57,11 @@
 		try {
 			const update = await check();
 			if (!update) return;
-			await update.downloadAndInstall((progress) => {
-				if (progress.event === 'Started' && progress.data.contentLength) {
+			await update.downloadAndInstall((progress: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
+				if (progress.event === 'Started' && progress.data?.contentLength) {
 					updateProgress = 0;
 				} else if (progress.event === 'Progress') {
-					updateProgress += progress.data.chunkLength;
+					updateProgress += progress.data?.chunkLength ?? 0;
 				} else if (progress.event === 'Finished') {
 					updateProgress = 0;
 				}
