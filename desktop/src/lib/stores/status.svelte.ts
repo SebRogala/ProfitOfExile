@@ -15,6 +15,7 @@ import { listen } from '@tauri-apps/api/event';
 /** Shape of the Rust AppStatus struct emitted via "status-changed" events. */
 export interface AppStatus {
 	state: string;
+	app_version: string;
 	pair_code: string;
 	detected_gems: string[];
 	client_txt_path: string;

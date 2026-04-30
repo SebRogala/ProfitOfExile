@@ -13,6 +13,7 @@
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
+	let { children } = $props();
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).
 	let sidebarOpen = $derived(store.status?.sidebar_open ?? true);
@@ -628,6 +629,9 @@
 			timerActive={timerActive} onToggleTimer={toggleTimerOverlay}
 			labOverlaysActive={labOverlaysActive} onToggleLabOverlays={toggleLabOverlays} />
 		<main class="content">
+			<div class="route-render-placeholder" aria-hidden="true">
+				{@render children()}
+			</div>
 			<div class:view-hidden={nav.view !== 'lab'}>
 				<LabPage />
 			</div>
@@ -667,6 +671,10 @@
 	}
 
 	.view-hidden {
+		display: none;
+	}
+
+	.route-render-placeholder {
 		display: none;
 	}
 </style>

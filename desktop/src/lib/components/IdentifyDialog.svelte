@@ -91,6 +91,7 @@
 {#if open}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="backdrop" onkeydown={handleKeydown} onclick={() => open = false}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="dialog" onclick={(e) => e.stopPropagation()}>
 			<div class="header">

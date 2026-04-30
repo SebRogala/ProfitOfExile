@@ -46,27 +46,42 @@ jobs:
               - 'go.sum'
               - 'Dockerfile'
 
-  test:
+  validate:
     needs: detect-changes
-    if: needs.detect-changes.outputs.go == 'true'
+    if: |
+      needs.detect-changes.outputs.go == 'true'
+      || needs.detect-changes.outputs.server == 'true'
+      || needs.detect-changes.outputs.collector == 'true'
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      - name: Create Compose network
+        run: docker network create infra || true
 
-      - name: Run tests
-        run: go test ./...
+      - name: Build test image
+        if: needs.detect-changes.outputs.go == 'true'
+        run: docker compose build app
+
+      - name: Run Go tests with race detector
+        if: needs.detect-changes.outputs.go == 'true'
+        run: docker compose run --rm app go test -race ./...
+
+      - name: Build production server image
+        if: needs.detect-changes.outputs.server == 'true'
+        run: docker build --target server --build-arg GIT_SHA=${{ github.sha }} .
+
+      - name: Build production collector image
+        if: needs.detect-changes.outputs.collector == 'true'
+        run: docker build --target collector --build-arg GIT_SHA=${{ github.sha }} .
 
   deploy-server:
-    needs: [detect-changes, test]
+    needs: [detect-changes, validate]
     if: |
       always()
       && needs.detect-changes.outputs.server == 'true'
-      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && needs.validate.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -81,11 +96,11 @@ jobs:
             -H "Authorization: Bearer ${COOLIFY_TOKEN}"
 
   deploy-collector:
-    needs: [detect-changes, test]
+    needs: [detect-changes, validate]
     if: |
       always()
       && needs.detect-changes.outputs.collector == 'true'
-      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && needs.validate.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

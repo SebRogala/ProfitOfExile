@@ -592,6 +592,9 @@ func TestFetchGemsEndpoint_missingAgeHeaderReturnsZero(t *testing.T) {
 	if result.Age != 0 {
 		t.Errorf("Age = %d, want 0 when Age header is missing", result.Age)
 	}
+	if result.AgePresent {
+		t.Errorf("AgePresent = true, want false when Age header is missing")
+	}
 }
 
 func TestFetchGemsEndpoint_invalidAgeHeaderReturnsZero(t *testing.T) {
@@ -613,6 +616,9 @@ func TestFetchGemsEndpoint_invalidAgeHeaderReturnsZero(t *testing.T) {
 	if result.Age != 0 {
 		t.Errorf("Age = %d, want 0 when Age header is invalid", result.Age)
 	}
+	if !result.AgePresent {
+		t.Errorf("AgePresent = false, want true when Age header is present but unparseable")
+	}
 }
 
 func TestFetchGemsEndpoint_negativeAgeHeaderReturnsZero(t *testing.T) {
@@ -633,6 +639,9 @@ func TestFetchGemsEndpoint_negativeAgeHeaderReturnsZero(t *testing.T) {
 
 	if result.Age != 0 {
 		t.Errorf("Age = %d, want 0 when Age header is negative", result.Age)
+	}
+	if !result.AgePresent {
+		t.Errorf("AgePresent = false, want true when Age header is present but negative")
 	}
 }
 

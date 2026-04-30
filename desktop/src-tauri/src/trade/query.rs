@@ -1,3 +1,8 @@
+#[cfg(test)]
+fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
+    build_search_query_with_mode(gem, variant, false)
+}
+
 /// Build the GGG trade search query JSON.
 ///
 /// Mirrors Go's buildSearchQuery in client.go. See that file for detailed
@@ -7,10 +12,6 @@
 /// - Removes `corrupted: false` (21/23 implies corrupted)
 /// - Sets `gem_level: min 21`, `quality: min 23`
 /// - Uses `gem.activegem` category (skills only, no supports)
-pub fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
-    build_search_query_with_mode(gem, variant, false)
-}
-
 pub fn build_search_query_with_mode(gem: &str, variant: &str, dedication: bool) -> serde_json::Value {
     let (gem_level, gem_quality) = parse_variant(variant);
 

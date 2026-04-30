@@ -30,6 +30,19 @@
 		}
 	}
 
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (pinned) {
+			pinned = false;
+			visible = false;
+		} else {
+			pinned = true;
+			show();
+		}
+	}
+
 	function handleClickOutside() {
 		if (pinned) {
 			pinned = false;
@@ -68,6 +81,7 @@
 	onmouseenter={() => { if (!pinned) show(); }}
 	onmouseleave={() => { if (!pinned) visible = false; }}
 	onclick={handleClick}
+	onkeydown={handleKeydown}
 >
 	<span class="icon-circle">i</span>
 	{#if visible}

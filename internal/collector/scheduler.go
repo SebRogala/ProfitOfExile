@@ -263,13 +263,31 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 
 	// 304 Not Modified — data hasn't changed.
 	if result.NotModified {
+		// Age header present: sleep until the upstream cache likely refreshes.
+		// This avoids the burst-poll pattern that wasted ~6 polls × MinSleep
+		// per cycle while the CDN's cached response remained valid.
+		if result.AgePresent {
+			state.retryCount = 0
+			sleep := s.calculateSleep(ep, result.Age)
+			s.logger.Info("source returned '304 Not Modified', sleeping until cache likely refreshes",
+				"endpoint", ep.Name,
+				"age", result.Age,
+				"sleep", sleep.Round(time.Second).String(),
+			)
+			return sleep
+		}
+
+		// Age header absent — defensive legacy fallback: burst-poll briefly,
+		// then back off to FallbackInterval. Reached only when the upstream
+		// strips the Age header entirely.
 		state.retryCount++
-		s.logger.Info("source returned 304 Not Modified",
+		s.logger.Warn("source returned '304 Not Modified' without Age header",
 			"endpoint", ep.Name,
 			"retries", state.retryCount,
+			"hint", "upstream may have stripped Age header; falling back to burst-poll",
 		)
 		if state.retryCount > ep.MaxRetries {
-			s.logger.Info("max 304 retries exceeded, falling back",
+			s.logger.Warn("max consecutive '304 Not Modified' responses reached, falling back to long sleep",
 				"endpoint", ep.Name,
 				"fallback", ep.FallbackInterval.String(),
 			)
