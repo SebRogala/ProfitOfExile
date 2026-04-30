@@ -575,7 +575,6 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	let retries = 0;
 	let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let visibilityHandler: (() => void) | null = null;
-	let pendingReconnect = false;
 
 	function retryDelay(): number {
 		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after deploys)
@@ -653,10 +652,8 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				if (typeof document !== 'undefined' && document.hidden) {
 					// Tab is backgrounded — browsers throttle/kill SSE here. Don't burn
 					// retries while hidden; wait for visibility to flip and reconnect then.
-					pendingReconnect = true;
 					const handler = () => {
 						visibilityHandler = null;
-						pendingReconnect = false;
 						connect();
 					};
 					visibilityHandler = handler;
@@ -681,17 +678,16 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	}
 
 	state.close = () => {
-		if (eventSource) eventSource.close();
+		closeEventSource();
 		if (tokenTimeout) clearTimeout(tokenTimeout);
 		if (disconnectTimer) {
 			clearTimeout(disconnectTimer);
 			disconnectTimer = null;
 		}
-		if (visibilityHandler) {
+		if (visibilityHandler && typeof document !== 'undefined') {
 			document.removeEventListener('visibilitychange', visibilityHandler);
 			visibilityHandler = null;
 		}
-		pendingReconnect = false;
 		state.connected = false;
 		onConnectionChange?.(false);
 	};
