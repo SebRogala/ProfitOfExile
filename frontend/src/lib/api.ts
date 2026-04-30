@@ -573,6 +573,9 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
 	let retries = 0;
+	let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let visibilityHandler: (() => void) | null = null;
+	let pendingReconnect = false;
 
 	function retryDelay(): number {
 		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after deploys)
@@ -586,6 +589,18 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			eventSource.onerror = null;
 			eventSource.close();
 			eventSource = null;
+		}
+	}
+
+	function scheduleDisconnectIndicator() {
+		// One-shot 5s debounce per error sequence — only start if not already armed.
+		// Subsequent retries within the same sequence must NOT reset the timer
+		// (exponential backoff would compound past the threshold otherwise).
+		if (disconnectTimer === null) {
+			disconnectTimer = setTimeout(() => {
+				state.connected = false;
+				onConnectionChange?.(false);
+			}, 5000);
 		}
 	}
 
@@ -604,6 +619,10 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			eventSource = new EventSource(authedUrl.toString());
 
 			eventSource.onopen = () => {
+				if (disconnectTimer) {
+					clearTimeout(disconnectTimer);
+					disconnectTimer = null;
+				}
 				state.connected = true;
 				onConnectionChange?.(true);
 				retries = 0;
@@ -628,9 +647,23 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// Close explicitly — prevent browser's native EventSource reconnect
 				// from fighting our token-refresh retry logic.
 				closeEventSource();
-				state.connected = false;
-				onConnectionChange?.(false);
+				scheduleDisconnectIndicator();
 				if (tokenTimeout) clearTimeout(tokenTimeout);
+
+				if (typeof document !== 'undefined' && document.hidden) {
+					// Tab is backgrounded — browsers throttle/kill SSE here. Don't burn
+					// retries while hidden; wait for visibility to flip and reconnect then.
+					pendingReconnect = true;
+					const handler = () => {
+						visibilityHandler = null;
+						pendingReconnect = false;
+						connect();
+					};
+					visibilityHandler = handler;
+					document.addEventListener('visibilitychange', handler, { once: true });
+					return;
+				}
+
 				retries++;
 				tokenTimeout = setTimeout(connect, retryDelay());
 			};
@@ -640,8 +673,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			tokenTimeout = setTimeout(connect, 25 * 60 * 1000);
 		} catch (err) {
 			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
-			state.connected = false;
-			onConnectionChange?.(false);
+			scheduleDisconnectIndicator();
 			retries++;
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, retryDelay());
@@ -651,8 +683,17 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	state.close = () => {
 		if (eventSource) eventSource.close();
 		if (tokenTimeout) clearTimeout(tokenTimeout);
+		if (disconnectTimer) {
+			clearTimeout(disconnectTimer);
+			disconnectTimer = null;
+		}
+		if (visibilityHandler) {
+			document.removeEventListener('visibilitychange', visibilityHandler);
+			visibilityHandler = null;
+		}
+		pendingReconnect = false;
 		state.connected = false;
-				onConnectionChange?.(false);
+		onConnectionChange?.(false);
 	};
 
 	connect();
