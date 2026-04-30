@@ -610,6 +610,9 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
 	let retries = 0;
+	let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let visibilityHandler: (() => void) | null = null;
+	let pendingReconnect = false;
 
 	function retryDelay(): number {
 		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after deploys)
@@ -643,6 +646,10 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 			eventSource.onopen = () => {
 				state.connected = true;
+				if (disconnectTimer) {
+					clearTimeout(disconnectTimer);
+					disconnectTimer = null;
+				}
 				onConnectionChange?.(true);
 				retries = 0;
 			};
@@ -667,7 +674,25 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			eventSource.onerror = () => {
 				closeEventSource();
 				state.connected = false;
-				onConnectionChange?.(false);
+				// Debounce the disconnected indicator: only flip after 5s of sustained outage,
+				// and only arm the timer on the first error in a retry sequence (not every retry).
+				if (disconnectTimer === null) {
+					disconnectTimer = setTimeout(() => {
+						onConnectionChange?.(false);
+					}, 5000);
+				}
+				if (typeof document !== 'undefined' && document.hidden === true) {
+					// Tab/window is hidden — don't burn retries while backgrounded.
+					// Reconnect when visibility returns instead.
+					pendingReconnect = true;
+					visibilityHandler = () => {
+						visibilityHandler = null;
+						pendingReconnect = false;
+						connect();
+					};
+					document.addEventListener('visibilitychange', visibilityHandler, { once: true });
+					return;
+				}
 				if (tokenTimeout) clearTimeout(tokenTimeout);
 				retries++;
 				tokenTimeout = setTimeout(connect, retryDelay());
@@ -679,7 +704,11 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 		} catch (err) {
 			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
 			state.connected = false;
-			onConnectionChange?.(false);
+			if (disconnectTimer === null) {
+				disconnectTimer = setTimeout(() => {
+					onConnectionChange?.(false);
+				}, 5000);
+			}
 			retries++;
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, retryDelay());
@@ -689,8 +718,17 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	state.close = () => {
 		if (eventSource) eventSource.close();
 		if (tokenTimeout) clearTimeout(tokenTimeout);
+		if (disconnectTimer) {
+			clearTimeout(disconnectTimer);
+			disconnectTimer = null;
+		}
+		if (visibilityHandler) {
+			document.removeEventListener('visibilitychange', visibilityHandler);
+			visibilityHandler = null;
+		}
+		pendingReconnect = false;
 		state.connected = false;
-				onConnectionChange?.(false);
+		onConnectionChange?.(false);
 	};
 
 	connect();

@@ -2256,6 +2256,13 @@ fn spawn_log_watcher(app: AppHandle) {
 pub fn run() {
     env_logger::init();
 
+    // Keep WebView2 renderer alive when the window is backgrounded — PoE alt-tab steals
+    // focus and Chromium's default backgrounding pauses timers and drops the SSE socket.
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
+    );
+
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);
 
