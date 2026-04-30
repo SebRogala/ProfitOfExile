@@ -647,11 +647,23 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// from fighting our token-refresh retry logic.
 				closeEventSource();
 				scheduleDisconnectIndicator();
-				if (tokenTimeout) clearTimeout(tokenTimeout);
+				// Cancel any pending token refresh / retry; we'll re-arm below once we
+				// know whether we're deferring (hidden tab) or retrying immediately.
+				if (tokenTimeout) {
+					clearTimeout(tokenTimeout);
+					tokenTimeout = null;
+				}
 
 				if (typeof document !== 'undefined' && document.hidden) {
 					// Tab is backgrounded — browsers throttle/kill SSE here. Don't burn
 					// retries while hidden; wait for visibility to flip and reconnect then.
+					console.warn('[Mercure] tab hidden, deferring reconnect until visible');
+					// Replace any existing visibility listener before registering a new one,
+					// otherwise stale handlers can leak across retry cycles.
+					if (visibilityHandler && typeof document !== 'undefined') {
+						document.removeEventListener('visibilitychange', visibilityHandler);
+						visibilityHandler = null;
+					}
 					const handler = () => {
 						visibilityHandler = null;
 						connect();
@@ -679,7 +691,10 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 	state.close = () => {
 		closeEventSource();
-		if (tokenTimeout) clearTimeout(tokenTimeout);
+		if (tokenTimeout) {
+			clearTimeout(tokenTimeout);
+			tokenTimeout = null;
+		}
 		if (disconnectTimer) {
 			clearTimeout(disconnectTimer);
 			disconnectTimer = null;
