@@ -2258,10 +2258,21 @@ pub fn run() {
 
     // Keep WebView2 renderer alive when the window is backgrounded — PoE alt-tab steals
     // focus and Chromium's default backgrounding pauses timers and drops the SSE socket.
-    std::env::set_var(
-        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows",
-    );
+    // If the outer shell already set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, append to it
+    // rather than silently clobbering — that env var is additive and operators may have
+    // set their own flags for debugging or workaround purposes.
+    let prior = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+    let ours = "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
+    let combined = if prior.is_empty() {
+        ours.to_string()
+    } else {
+        log::warn!(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS already set ({:?}); appending our flags",
+            prior
+        );
+        format!("{} {}", prior, ours)
+    };
+    std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", &combined);
 
     let pair_code = generate_pair_code();
     log::info!("Pair code: {}", pair_code);

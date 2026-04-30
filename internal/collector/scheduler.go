@@ -281,12 +281,13 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 		// then back off to FallbackInterval. Reached only when the upstream
 		// strips the Age header entirely.
 		state.retryCount++
-		s.logger.Info("source returned '304 Not Modified' without Age header",
+		s.logger.Warn("source returned '304 Not Modified' without Age header",
 			"endpoint", ep.Name,
 			"retries", state.retryCount,
+			"hint", "upstream may have stripped Age header; falling back to burst-poll",
 		)
 		if state.retryCount > ep.MaxRetries {
-			s.logger.Info("max consecutive '304 Not Modified' responses reached, falling back to long sleep",
+			s.logger.Warn("max consecutive '304 Not Modified' responses reached, falling back to long sleep",
 				"endpoint", ep.Name,
 				"fallback", ep.FallbackInterval.String(),
 			)

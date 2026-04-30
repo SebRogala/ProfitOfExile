@@ -711,7 +711,11 @@ func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
 		MinSleep:         1 * time.Millisecond,
 		FetchFunc: func(ctx context.Context, league string, etag string) (*FetchResult, error) {
 			atomic.AddInt32(&fetchCount, 1)
-			return &FetchResult{NotModified: true, ETag: `"abc"`, Age: 0}, nil
+			// AgePresent: false explicitly exercises the legacy fallback branch
+			// (Age header absent → burst-poll then back off to FallbackInterval).
+			// Locks intent so a future reader can tell from the body which
+			// branch this test covers.
+			return &FetchResult{NotModified: true, ETag: `"abc"`, Age: 0, AgePresent: false}, nil
 		},
 		StoreFunc: func(ctx context.Context, snapTime time.Time, result *FetchResult) (int, error) {
 			return 0, nil
