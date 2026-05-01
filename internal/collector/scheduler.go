@@ -387,6 +387,7 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 	// Mercure publish (non-fatal on failure).
 	nextFetch := time.Now().Add(nextSleep).UTC()
 	payload, err := json.Marshal(map[string]any{
+		"topic":     topic,
 		"league":    s.league,
 		"endpoint":  endpointName,
 		"timestamp": snapTime.Format(time.RFC3339),

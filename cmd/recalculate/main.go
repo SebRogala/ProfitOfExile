@@ -36,7 +36,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := pub.Publish(ctx, "poe/admin/recompute", "{}"); err != nil {
+	if err := pub.Publish(ctx, "poe/admin/recompute", `{"topic":"poe/admin/recompute"}`); err != nil {
 		fmt.Fprintf(os.Stderr, "recalculate: publish failed: %v\n", err)
 		os.Exit(1)
 	}

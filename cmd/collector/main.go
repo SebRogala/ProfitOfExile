@@ -306,7 +306,7 @@ func runLayoutResetTicker(ctx context.Context, mercureURL, mercureSecret string)
 		case <-time.After(sleepDur):
 		}
 
-		payload := `{"action":"reset","source":"collector"}`
+		payload := `{"topic":"poe/lab/layout","action":"reset","source":"collector"}`
 		if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/lab/layout", payload); err != nil {
 			slog.Error("layout reset: mercure publish failed", "error", err)
 		} else {
@@ -344,9 +344,9 @@ func runTradeRefresher(ctx context.Context, mercureURL, mercureSecret string, in
 		case <-ticker.C:
 			var payload string
 			if tierTick {
-				payload = `{"variant":"20/20","minTier":"MID","minAge":"5m"}`
+				payload = `{"topic":"poe/collector/trade-tick","variant":"20/20","minTier":"MID","minAge":"5m"}`
 			} else {
-				payload = `{"variant":"20/20","minAge":"5m"}`
+				payload = `{"topic":"poe/collector/trade-tick","variant":"20/20","minAge":"5m"}`
 			}
 			tierTick = !tierTick
 
