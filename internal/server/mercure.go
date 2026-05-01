@@ -146,6 +146,19 @@ func (s *MercureSubscriber) connect(ctx context.Context) (connected bool, err er
 
 		if line == "" {
 			if event.Data != "" {
+				// dunglas/mercure SSE feeds carry only `id:` + `data:` — no
+				// `event:` line. Fall back to a `topic` field embedded in the
+				// JSON payload so dispatch can branch on event type. Unmarshal
+				// failure is non-fatal: the handler will fail to parse on its
+				// own and log accordingly.
+				if event.Topic == "" {
+					var meta struct {
+						Topic string `json:"topic"`
+					}
+					if json.Unmarshal([]byte(event.Data), &meta) == nil && meta.Topic != "" {
+						event.Topic = meta.Topic
+					}
+				}
 				s.handler(event)
 			}
 			event = MercureEvent{}
