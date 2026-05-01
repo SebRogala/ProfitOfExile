@@ -52,6 +52,7 @@ func TestMercureSubscriber_TopicFallbackToPayload(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var (
 				mu       sync.Mutex
+				once     sync.Once
 				received []MercureEvent
 			)
 			done := make(chan struct{})
@@ -74,7 +75,7 @@ func TestMercureSubscriber_TopicFallbackToPayload(t *testing.T) {
 				mu.Lock()
 				received = append(received, ev)
 				mu.Unlock()
-				close(done)
+				once.Do(func() { close(done) })
 			})
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
