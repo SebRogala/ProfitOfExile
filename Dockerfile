@@ -1,4 +1,5 @@
 # Stage 0: Build frontend (SvelteKit with adapter-static)
+# Re-deploy marker for POE-111 + serial-deploy fix (do not edit).
 FROM node:22-alpine AS frontend-build
 
 WORKDIR /app
