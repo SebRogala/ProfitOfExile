@@ -96,14 +96,27 @@ jobs:
             -H "Authorization: Bearer ${COOLIFY_TOKEN}"
 
   deploy-collector:
-    needs: [detect-changes, validate]
+    # Sequential after deploy-server: prod host has ~3.7GB RAM and two
+    # concurrent Go builds (~2GB peak each) get OOM-killed at the linker
+    # step. Wait for server deploy to settle before triggering collector.
+    # If the commit only touched collector paths, deploy-server is skipped
+    # and collector runs immediately.
+    needs: [detect-changes, validate, deploy-server]
     if: |
       always()
       && needs.detect-changes.outputs.collector == 'true'
       && needs.validate.result == 'success'
+      && (needs.deploy-server.result == 'success' || needs.deploy-server.result == 'skipped')
     runs-on: ubuntu-latest
 
     steps:
+      # GH Actions sequencing alone is not enough — the webhook returns in
+      # ~1s and Coolify queues the deploy asynchronously. Sleep so the
+      # server's Coolify-side build completes before we trigger collector's.
+      - name: Stagger after server deploy
+        if: needs.deploy-server.result == 'success'
+        run: sleep 150
+
       - name: Trigger Coolify deploy (collector)
         env:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
