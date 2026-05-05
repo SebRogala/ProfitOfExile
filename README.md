@@ -17,7 +17,7 @@ Real-time profit analysis platform for Path of Exile 1 lab farming. Fetches live
 | Backend | Go 1.23 (chi router, standard library HTTP) |
 | Frontend | SvelteKit + Svelte 5 (runes), Tailwind CSS v4, adapter-static |
 | Desktop | Tauri 2.0 (Rust) + SvelteKit, OCR via Tesseract |
-| Database | PostgreSQL + TimescaleDB (12 hypertables) |
+| Database | PostgreSQL + TimescaleDB |
 | Events | Mercure (SSE hub) |
 | Deployment | Docker, Coolify, GitHub Actions CI/CD |
 
