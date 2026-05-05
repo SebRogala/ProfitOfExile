@@ -21,18 +21,18 @@ Real-time profit analysis platform for Path of Exile 1 lab farming. Fetches live
 | Events | Mercure (SSE hub) |
 | Deployment | Docker, Coolify, GitHub Actions CI/CD |
 
-## Project Stats
+## Project Stats (as of: 05.05.2026)
 
 | Metric | Count |
 |--------|-------|
-| Source lines | ~63k source LOC (excluding generated assets, lockfiles, and game-data fixtures) |
-| Go packages | 33 |
-| Test suites | 10 (886 tests, all passing) |
-| REST API endpoints | 33 |
-| DB migrations | 39 |
-| TimescaleDB hypertables | 12 |
-| Desktop releases | 11 |
-| Commits | 800+ |
+| Source lines | ~52k LOC (Go 20.9k, Svelte 19.4k, Rust 6.0k, TS 3.8k, SQL 1.7k, CSS 0.2k — excluding tests, generated assets, lockfiles) |
+| Go packages | 19 |
+| Go tests | 943 passing across 11 test packages |
+| REST API endpoints | 30 |
+| DB migrations | 41 |
+| TimescaleDB hypertables | 14 |
+| Desktop releases | 15 (v-desktop-0.1.0 → v-desktop-0.6.1) |
+| Commits | 887 |
 
 ## Architecture
 
