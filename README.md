@@ -25,7 +25,7 @@ Real-time profit analysis platform for Path of Exile 1 lab farming. Fetches live
 
 | Metric | Count |
 |--------|-------|
-| Source lines | ~107k (68k Go, 31k Svelte/TS, 5k Rust, 4k SQL) |
+| Source lines | ~63k source LOC (excluding generated assets, lockfiles, and game-data fixtures) |
 | Go packages | 33 |
 | Test suites | 10 (886 tests, all passing) |
 | REST API endpoints | 33 |
