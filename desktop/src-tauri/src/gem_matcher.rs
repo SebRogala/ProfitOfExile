@@ -45,6 +45,18 @@ impl GemMatcher {
             }
         }
 
+        // Transfigured-gem shape gate, keyed on the MATCHED name (not the mode):
+        // a transfigured name always contains " of " (e.g. "Divine Ire of
+        // Disintegration"). If the winning name has " of " but the OCR text does
+        // not, the text is arbitrary UI/area/chat noise that jaro_winkler merely
+        // prefix-inflated — reject it. This is the false-positive fix. Keying on
+        // the name (not a mode flag) covers the Dedication pool too, where
+        // transfigured and non-transfigured skill gems share one matcher: skill
+        // gems have no " of " in their name so this gate never touches them.
+        if self.names_lower[best_idx].contains(" of ") && !query.contains(" of ") {
+            return None;
+        }
+
         if best_score >= min_threshold && (best_score - second_score) >= min_gap {
             Some(GemMatch {
                 name: self.names[best_idx].clone(),
@@ -52,7 +64,11 @@ impl GemMatcher {
                 ocr_raw: ocr_text.to_string(),
             })
         } else if best_score >= 0.95 {
-            // Very high confidence — accept even without gap
+            // Very high confidence — accept even without a gap to second-best.
+            // Retained deliberately: it absorbs OCR character confusions (l<->I,
+            // I<->1, etc.) that push a clean read to a near-tie with a sibling
+            // variant. The name-keyed shape gate above already blocks the
+            // false-positive class, so this no-gap path no longer admits noise.
             Some(GemMatch {
                 name: self.names[best_idx].clone(),
                 score: best_score,
@@ -124,5 +140,39 @@ mod tests {
         let m = test_matcher();
         assert!(m.match_gem("").is_none());
         assert!(m.match_gem("   ").is_none());
+    }
+
+    #[test]
+    fn text_without_of_connector_does_not_match_transfigured_name() {
+        // Core false-positive guard: OCR text lacking " of " must not match a
+        // transfigured (" of "-bearing) name, even when prefix-similar — the
+        // gate keys on the matched name, so it holds regardless of mode.
+        // "earthquake fragility" drops the " of " the target name carries.
+        let m = test_matcher();
+        assert!(m.match_gem("earthquake fragility").is_none());
+    }
+
+    #[test]
+    fn skill_gem_without_of_in_name_still_matches() {
+        // Non-transfigured skill gems (Dedication pool) have no " of " in their
+        // name, so the name-keyed gate never applies — they must still match.
+        let m = GemMatcher::new(vec!["Empower Support".into(), "Enlighten Support".into()]);
+        let result = m.match_gem("Empower Support").unwrap();
+        assert_eq!(result.name, "Empower Support");
+    }
+
+    #[test]
+    fn no_of_text_does_not_match_transfigured_in_mixed_pool() {
+        // Dedication uses ONE matcher holding both skill gems and transfigured
+        // gems. The name-keyed gate must still protect the transfigured names
+        // here: non-" of " OCR noise must not resolve to a transfigured gem,
+        // even though the pool also contains gateless skill gems.
+        let m = GemMatcher::new(vec![
+            "Empower Support".into(),
+            "Enlighten Support".into(),
+            "Divine Ire of Disintegration".into(),
+        ]);
+        // Text prefix-similar to the transfigured name but lacking " of ".
+        assert!(m.match_gem("divine ire disintegration").is_none());
     }
 }

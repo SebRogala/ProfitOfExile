@@ -1490,6 +1490,12 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
         };
 
         let candidates = ocr::extract_gem_candidates(&lines);
+        // Diagnostic: log raw OCR candidates (throttled ~2s) so false positives
+        // can be traced to the on-screen text that triggered them. See POE gem
+        // OCR false-positive investigation ("Divine Ire of Disintegration").
+        if !candidates.is_empty() && loop_count % 8 == 1 {
+            app_log(&app, format!("Gem OCR candidates: {:?}", candidates));
+        }
         let mut best: Option<gem_matcher::GemMatch> = None;
         for candidate in &candidates {
             if let Some(m) = matcher.match_gem(candidate) {
@@ -1504,8 +1510,8 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
                 seen_gems.insert(gem_match.name.clone());
                 gems_found += 1;
                 app_log(&app, format!(
-                    "Gem detected: {} (score: {:.2}) [{}/{}]",
-                    gem_match.name, gem_match.score, gems_found, MAX_GEMS
+                    "Gem detected: {} (score: {:.2}) [{}/{}] from OCR {:?}",
+                    gem_match.name, gem_match.score, gems_found, MAX_GEMS, gem_match.ocr_raw
                 ));
 
                 let all_gems = {
