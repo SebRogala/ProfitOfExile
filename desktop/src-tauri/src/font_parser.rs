@@ -73,22 +73,35 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
         });
     }
 
-    // Add quality
-    if full_lower.contains("quality to a gem") {
+    // Add quality — anchor on "% quality" rather than "quality to a gem". The
+    // "to"→"10" OCR misread (e.g. "Add +20% quality 10 a Gem") breaks the "to a gem"
+    // anchor, but "% quality" survives it.
+    if full_lower.contains("% quality") {
         let value = extract_percentage_near(lines, "quality");
         options.push(CraftOption {
             option_type: "quality".to_string(),
-            text: find_line_containing(lines, "quality to a Gem").unwrap_or_default(),
+            text: find_line_containing(lines, "% quality").unwrap_or_default(),
             value,
         });
     }
 
-    // Add experience
-    if full_lower.contains("experience to a gem") {
+    // Add experience — detect via the "Nm experience" amount (digits + m + the word
+    // "experience") rather than "experience to a gem", which the "to"→"10" misread
+    // breaks. Bare "experience" would also false-match the Facetor's Lens line
+    // ("…total experience stored as a Facetor's Lens"), so require the Nm amount and
+    // exclude lines mentioning stored/facetor/lens.
+    if let Some(line) = lines.iter().find(|line| {
+        let lower = line.to_lowercase();
+        lower.contains("experience")
+            && !lower.contains("stored")
+            && !lower.contains("facetor")
+            && !lower.contains("lens")
+            && extract_millions_from_text(line).is_some()
+    }) {
         let value = extract_experience_amount(lines);
         options.push(CraftOption {
             option_type: "experience".to_string(),
-            text: find_line_containing(lines, "experience to a Gem").unwrap_or_default(),
+            text: line.clone(),
             value,
         });
     }
@@ -476,6 +489,68 @@ mod tests {
         let types: Vec<&str> = state.options.iter().map(|o| o.option_type.as_str()).collect();
         assert!(types.contains(&"corrupted_transfigured_reroll"));
         assert!(types.contains(&"corrupted_gem_reroll"));
+    }
+
+    #[test]
+    fn detects_quality_with_to_misread() {
+        // "to"→"10" OCR misread: "quality to a Gem" becomes "quality 10 a Gem".
+        // The "% quality" anchor survives it.
+        let lines = vec!["Add +20% quality 10 a Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        let quality = state.options.iter().find(|o| o.option_type == "quality");
+        assert!(quality.is_some(), "quality option should be detected despite the misread");
+        assert_eq!(quality.unwrap().value, Some(20));
+    }
+
+    #[test]
+    fn detects_experience_with_to_misread() {
+        // "to"→"10" OCR misread: "experience to a Gem" becomes "experience 10 a Gem".
+        // The "Nm experience" amount pattern survives it.
+        let lines = vec!["Add 30m experience 10 a Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        let exp = state.options.iter().find(|o| o.option_type == "experience");
+        assert!(exp.is_some(), "experience option should be detected despite the misread");
+        assert_eq!(exp.unwrap().value, Some(30));
+    }
+
+    #[test]
+    fn facetors_lens_line_does_not_yield_experience() {
+        // Regression guard: the Facetor's Lens line contains the word "experience"
+        // but must NOT be detected as an Add-experience option (it has no Nm amount
+        // and mentions stored/facetor/lens).
+        let lines = vec![
+            "Sacrifice a Gem to gain 60% of the gem's".to_string(),
+            "total experience stored as a Facetor's Lens".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        let types: Vec<&str> = state.options.iter().map(|o| o.option_type.as_str()).collect();
+        assert!(types.contains(&"facetors_lens"));
+        assert!(
+            !types.contains(&"experience"),
+            "Facetor's Lens line must not be mistaken for an Add-experience option"
+        );
+    }
+
+    #[test]
+    fn parses_misread_panel_from_field_log() {
+        // Exact misread panel captured in the field: "to"→"10" throughout, plus OCR
+        // noise ("년口2"). All four real craft options must still be detected.
+        let lines = vec![
+            "DIVINE FONT".to_string(),
+            "Transform a skill Gem 10 be a random Transfigured Gem Of the same colour".to_string(),
+            "Add 30m experience 10 a Gem".to_string(),
+            "Add +20% quality 10 a Gem".to_string(),
+            "sacrifice a Gem for Treasure Keys".to_string(),
+            "년口2".to_string(),
+            "CRAFT".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        let types: Vec<&str> = state.options.iter().map(|o| o.option_type.as_str()).collect();
+        assert!(state.font_active);
+        assert!(types.contains(&"transform_random"), "missing transform_random in {:?}", types);
+        assert!(types.contains(&"experience"), "missing experience in {:?}", types);
+        assert!(types.contains(&"quality"), "missing quality in {:?}", types);
+        assert!(types.contains(&"sacrifice_keys"), "missing sacrifice_keys in {:?}", types);
     }
 
     #[test]

@@ -9,11 +9,26 @@ mod platform {
     use windows::Media::Ocr::{OcrEngine, OcrLine};
     use windows::Storage::Streams::DataWriter;
     use windows::Foundation::Collections::IVectorView;
+    use windows::Globalization::Language;
+    use windows::core::HSTRING;
 
     use std::cell::RefCell;
 
     thread_local! {
         static OCR_ENGINE: RefCell<Option<OcrEngine>> = RefCell::new(None);
+    }
+
+    /// Build an OCR recognizer pinned to en-US. The PoE client renders its UI
+    /// in English regardless of the Windows profile locale, so a profile-language
+    /// recognizer (e.g. a CJK one on a Korean-locale box) mangles the game text.
+    /// Returns Err if the en-US OCR language pack isn't installed.
+    fn create_english_engine() -> Result<OcrEngine, String> {
+        let lang = Language::CreateLanguage(&HSTRING::from("en-US"))
+            .map_err(|e| format!("en-US language: {}", e))?;
+        if !OcrEngine::IsLanguageSupported(&lang).unwrap_or(false) {
+            return Err("en-US OCR language not installed".into());
+        }
+        OcrEngine::TryCreateFromLanguage(&lang).map_err(|e| format!("en-US engine: {}", e))
     }
 
     fn get_or_create_engine() -> Result<OcrEngine, String> {
@@ -22,8 +37,21 @@ mod platform {
             if let Some(ref engine) = *opt {
                 return Ok(engine.clone());
             }
-            let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-                .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+            // Prefer an English recognizer; fall back to the profile-language path
+            // only when en-US OCR isn't installed.
+            let engine = match create_english_engine() {
+                Ok(engine) => {
+                    log::info!("OCR: using en-US recognizer");
+                    engine
+                }
+                Err(e) => {
+                    log::warn!("OCR: en-US unavailable ({e}), falling back to profile languages");
+                    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+                        .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+                    log::info!("OCR: using user-profile-language recognizer (en-US OCR not installed)");
+                    engine
+                }
+            };
             *opt = Some(engine.clone());
             Ok(engine)
         })
