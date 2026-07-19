@@ -1578,7 +1578,6 @@ fn spawn_font_scan(app: &AppHandle) {
 fn font_scan_loop(app: AppHandle, generation: u64) {
     let state = app.state::<AppState>();
     let mut loop_count = 0u32;
-    let mut logged_ocr_text = false;
     let start = std::time::Instant::now();
     const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 min safety net
@@ -1630,11 +1629,6 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         let panel = font_parser::parse_font_panel(&lines);
 
         if panel.font_active && !panel.options.is_empty() {
-            // Log raw OCR text on first font detection for debugging.
-            if !logged_ocr_text {
-                logged_ocr_text = true;
-                app_log(&app, format!("Font OCR raw ({} lines): {}", lines.len(), lines.join(" | ")));
-            }
             // Check dedup and update session under lock, then log/emit outside.
             let is_new = {
                 let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
@@ -1653,6 +1647,9 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
             }; // lock released
 
             if is_new {
+                // Re-log the raw OCR each time the option set changes so later
+                // captures in the same scan aren't blinded (was a one-shot flag).
+                app_log(&app, format!("Font OCR raw ({} lines): {}", lines.len(), lines.join(" | ")));
                 app_log(&app, format!(
                     "Font options captured: {} options{}{}",
                     panel.options.len(),
