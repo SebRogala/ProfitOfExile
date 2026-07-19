@@ -65,8 +65,10 @@ pub fn preprocess_for_ocr(img: &image::DynamicImage) -> image::DynamicImage {
     // gate on height alone (POE-116). The old `w <= 800` term silently skipped
     // upscaling for wide-but-short bands (e.g. a 1432×96 gem-name strip), leaving
     // the name too small for OCR. Width is intentionally uncapped: a very wide
-    // region upscales proportionally, which is fine in practice because capture is
-    // bounded to the primary monitor.
+    // region upscales proportionally, which is fine in practice because the live
+    // capture paths crop from the primary monitor, so widths stay bounded. (The
+    // test_ocr_on_image debug command can feed an arbitrary image, which is why the
+    // gate itself does not hard-cap width.)
     if h <= 400 {
         let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, FilterType::Lanczos3);
         image::DynamicImage::ImageLuma8(upscaled)
@@ -93,6 +95,15 @@ mod tests {
     fn wide_short_band_is_upscaled_2x() {
         let out = preprocess_for_ocr(&gray(1432, 96));
         assert_eq!((out.width(), out.height()), (2864, 192));
+    }
+
+    // Width-uncap: a full-4K-wide, short band still upscales 2× on both axes.
+    // Fails if any `w <= cap` term (e.g. the old `w <= 800`) is re-added, since
+    // 3840 would exceed it and skip upscaling.
+    #[test]
+    fn full_width_short_band_is_upscaled_2x() {
+        let out = preprocess_for_ocr(&gray(3840, 96));
+        assert_eq!((out.width(), out.height()), (7680, 192));
     }
 
     // Non-regression: a tall font-panel crop (h > 400) is left at native size.

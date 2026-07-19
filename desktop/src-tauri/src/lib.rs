@@ -1431,6 +1431,9 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     }
     let matcher = gem_matcher::GemMatcher::new(gem_names.clone());
     app_log(&app, format!("Gem scan: loaded {} gem names", gem_names.len()));
+    // Surface which OCR recognizer is active (and any en-US fallback warning) —
+    // this is the only breadcrumb the LOGS panel gets for a silent CJK fallback.
+    app_log(&app, ocr::engine_report());
 
     let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut gems_found = 0u32;
@@ -1582,6 +1585,10 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
     const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 min safety net
 
+    // Surface which OCR recognizer is active (and any en-US fallback warning) so a
+    // silent CJK fallback shows up in the LOGS panel, not just stderr.
+    app_log(&app, ocr::engine_report());
+
     loop {
         // Check generation.
         if state.font_scan_generation.load(Ordering::SeqCst) != generation {
@@ -1627,6 +1634,13 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         };
 
         let panel = font_parser::parse_font_panel(&lines);
+
+        // Silent-failure breadcrumb: OCR produced text but nothing parsed as an
+        // active font panel — usually the panel garbled (e.g. a wrong-language
+        // recognizer). Throttled like the capture/OCR-failure logs above.
+        if !panel.font_active && !lines.is_empty() && loop_count % 40 == 1 {
+            app_log(&app, format!("Font OCR raw (inactive, {} lines): {}", lines.len(), lines.join(" | ")));
+        }
 
         if panel.font_active && !panel.options.is_empty() {
             // Check dedup and update session under lock, then log/emit outside.
