@@ -85,18 +85,23 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
         });
     }
 
-    // Add experience — detect via the "Nm experience" amount (digits + m + the word
-    // "experience") rather than "experience to a gem", which the "to"→"10" misread
-    // breaks. Bare "experience" would also false-match the Facetor's Lens line
-    // ("…total experience stored as a Facetor's Lens"), so require the Nm amount and
-    // exclude lines mentioning stored/facetor/lens.
+    // Add experience — detect on the word "experience" alone, decoupled from the
+    // amount (mirrors quality, which detects on "% quality" and tolerates a mangled
+    // value). Requiring an "Nm" amount here would silently drop the whole option
+    // when OCR garbles the number; instead the amount is extracted separately by
+    // extract_experience_amount, which returns None gracefully. The word-exclusions
+    // are load-bearing — they keep other "experience"-bearing lines out of this
+    // bucket: the Facetor's Lens line ("…total experience stored as a Facetor's
+    // Lens", excluded via stored/facetor/lens) and the player-XP sacrifice line
+    // ("gain X% of your own experience", excluded via "your own" — handled by
+    // sacrifice_experience below).
     if let Some(line) = lines.iter().find(|line| {
         let lower = line.to_lowercase();
         lower.contains("experience")
             && !lower.contains("stored")
             && !lower.contains("facetor")
             && !lower.contains("lens")
-            && extract_millions_from_text(line).is_some()
+            && !lower.contains("your own")
     }) {
         let value = extract_experience_amount(lines);
         options.push(CraftOption {
@@ -532,6 +537,56 @@ mod tests {
     }
 
     #[test]
+    fn facetor_line_with_millions_token_is_not_experience() {
+        // Detection is decoupled from the Nm amount, so the stored/facetor/lens
+        // guard is now the ONLY thing keeping the Facetor's Lens line out of the
+        // experience bucket — even when it carries an Nm-shaped token ("60m").
+        let lines = vec![
+            "Sacrifice a Gem to gain 60m of the gem's total experience stored as a Facetor's Lens".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        let types: Vec<&str> = state.options.iter().map(|o| o.option_type.as_str()).collect();
+        assert!(types.contains(&"facetors_lens"), "expected facetors_lens in {:?}", types);
+        assert!(
+            !types.contains(&"experience"),
+            "Facetor's Lens line with an Nm token must not yield experience: {:?}",
+            types
+        );
+    }
+
+    #[test]
+    fn player_xp_line_is_not_experience() {
+        // "gain X% of your own experience" is the player-XP sacrifice — detected as
+        // sacrifice_experience. The "your own" exclusion keeps it out of the
+        // Add-experience bucket now that detection no longer requires an Nm amount.
+        let lines = vec!["Sacrifice a Gem to gain 15% of your own experience".to_string()];
+        let state = parse_font_panel(&lines);
+        let types: Vec<&str> = state.options.iter().map(|o| o.option_type.as_str()).collect();
+        assert!(
+            types.contains(&"sacrifice_experience"),
+            "expected sacrifice_experience in {:?}",
+            types
+        );
+        assert!(
+            !types.contains(&"experience"),
+            "player-XP line must not be mistaken for an Add-experience option: {:?}",
+            types
+        );
+    }
+
+    #[test]
+    fn mangled_experience_amount_still_detects_option() {
+        // Decoupling win: the amount is dropped/garbled ("Add experience to a Gem")
+        // but the option is still reported with value: None instead of vanishing —
+        // the old `extract_millions_from_text(...).is_some()` gate dropped it whole.
+        let lines = vec!["Add experience to a Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        let exp = state.options.iter().find(|o| o.option_type == "experience");
+        assert!(exp.is_some(), "experience option should be detected despite the mangled amount");
+        assert_eq!(exp.unwrap().value, None);
+    }
+
+    #[test]
     fn parses_misread_panel_from_field_log() {
         // Exact misread panel captured in the field: "to"→"10" throughout, plus OCR
         // noise ("년口2"). All four real craft options must still be detected.
@@ -551,6 +606,17 @@ mod tests {
         assert!(types.contains(&"experience"), "missing experience in {:?}", types);
         assert!(types.contains(&"quality"), "missing quality in {:?}", types);
         assert!(types.contains(&"sacrifice_keys"), "missing sacrifice_keys in {:?}", types);
+        // The amount survives the "to"→"10" misread ("Add 30m experience 10 a Gem").
+        let exp = state.options.iter().find(|o| o.option_type == "experience").unwrap();
+        assert_eq!(exp.value, Some(30));
+        // The noise lines ("년口2", "CRAFT") produced NO spurious options — the
+        // detected set is exactly these four (pin against over-detection creep).
+        let mut sorted = types.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec!["experience", "quality", "sacrifice_keys", "transform_random"]
+        );
     }
 
     #[test]

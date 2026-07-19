@@ -16,17 +16,26 @@ mod platform {
 
     thread_local! {
         static OCR_ENGINE: RefCell<Option<OcrEngine>> = RefCell::new(None);
+        /// Human-readable status of which recognizer was selected on this thread.
+        /// Recorded by get_or_create_engine, surfaced to the LOGS panel via
+        /// engine_report() (log::warn!/info! only reach stderr, which release
+        /// builds and the in-app LOGS panel never see).
+        static OCR_STATUS: RefCell<Option<String>> = RefCell::new(None);
     }
 
     /// Build an OCR recognizer pinned to en-US. The PoE client renders its UI
     /// in English regardless of the Windows profile locale, so a profile-language
     /// recognizer (e.g. a CJK one on a Korean-locale box) mangles the game text.
-    /// Returns Err if the en-US OCR language pack isn't installed.
+    /// Distinguishes "pack not installed" (Ok(false)) from an OCR-runtime failure
+    /// of the support check (Err) so the caller reports the real reason instead of
+    /// collapsing both into "not installed".
     fn create_english_engine() -> Result<OcrEngine, String> {
         let lang = Language::CreateLanguage(&HSTRING::from("en-US"))
             .map_err(|e| format!("en-US language: {}", e))?;
-        if !OcrEngine::IsLanguageSupported(&lang).unwrap_or(false) {
-            return Err("en-US OCR language not installed".into());
+        match OcrEngine::IsLanguageSupported(&lang) {
+            Ok(true) => {}
+            Ok(false) => return Err("en-US OCR language pack not installed".into()),
+            Err(e) => return Err(format!("en-US support check failed (OCR runtime error): {e}")),
         }
         OcrEngine::TryCreateFromLanguage(&lang).map_err(|e| format!("en-US engine: {}", e))
     }
@@ -38,23 +47,47 @@ mod platform {
                 return Ok(engine.clone());
             }
             // Prefer an English recognizer; fall back to the profile-language path
-            // only when en-US OCR isn't installed.
-            let engine = match create_english_engine() {
+            // only when en-US OCR isn't installed. Record a human-readable status
+            // either way so the active recognizer (and any fallback warning)
+            // surfaces in the LOGS panel via engine_report().
+            let (engine, status) = match create_english_engine() {
                 Ok(engine) => {
                     log::info!("OCR: using en-US recognizer");
-                    engine
+                    (engine, "OCR: using English (en-US) recognizer".to_string())
                 }
-                Err(e) => {
-                    log::warn!("OCR: en-US unavailable ({e}), falling back to profile languages");
+                Err(en_err) => {
+                    log::warn!("OCR: en-US unavailable ({en_err}), falling back to profile languages");
+                    // Keep BOTH errors if the fallback also fails — the en-US
+                    // reason is the actionable one, the profile error is the proximate.
                     let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-                        .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
-                    log::info!("OCR: using user-profile-language recognizer (en-US OCR not installed)");
-                    engine
+                        .map_err(|pe| format!("Failed to create OCR engine — en-US: {en_err}; profile: {pe}"))?;
+                    let status = format!(
+                        "OCR: en-US unavailable ({en_err}) — fell back to the Windows profile \
+                         language; text may be misread. Install the English (US) OCR language \
+                         pack for reliable detection."
+                    );
+                    log::info!("{status}");
+                    (engine, status)
                 }
             };
+            OCR_STATUS.with(|s| *s.borrow_mut() = Some(status));
             *opt = Some(engine.clone());
             Ok(engine)
         })
+    }
+
+    /// Ensure the engine exists on this thread and return the recorded recognizer
+    /// status (or the creation error). Call once at the top of each scan thread so
+    /// the active recognizer — and any en-US fallback warning — lands in the LOGS panel.
+    pub fn engine_report() -> String {
+        match get_or_create_engine() {
+            Ok(_) => OCR_STATUS.with(|s| {
+                s.borrow()
+                    .clone()
+                    .unwrap_or_else(|| "OCR: recognizer status unavailable".to_string())
+            }),
+            Err(e) => format!("OCR: engine unavailable — {e}"),
+        }
     }
 
     /// Recognize text in an image using Windows.Media.Ocr.
@@ -127,6 +160,10 @@ mod platform {
 
     pub fn recognize_text(_img: &DynamicImage) -> Result<Vec<String>, String> {
         Err("OCR not available on this platform".to_string())
+    }
+
+    pub fn engine_report() -> String {
+        "OCR not available on this platform".to_string()
     }
 }
 
