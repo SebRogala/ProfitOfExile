@@ -541,6 +541,12 @@
 				{/if}
 			</div>
 
+		</section>
+
+		<!-- OCR Regions -->
+		<section>
+			<h2>OCR Regions</h2>
+
 			<div class="setting-row">
 				<span class="setting-label">Gem Tooltip Region</span>
 				{#if overlayVisible === 'gem'}
