@@ -47,6 +47,10 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
 - [AI-Native Case Study](AI-NATIVE-CASE-STUDY.md) — public project/portfolio narrative, not an implementation contract.
 
+## Codebase state
+
+- [Codebase State Report — 2026-07-22](STATE-REPORT-2026-07-22.md) — measured gate inventory, size/complexity distribution, module import graph, table-ownership map, and `project-seed` principle conformance. Dated measurement; re-run the cited commands rather than trusting the numbers after code changes.
+
 ## Dated research
 
 - [PoE Trade API Research — 2026-03-16](RESEARCH-poe-trade-api.md) — historical research notes. Verify unstable API/policy facts against current official documentation before implementation.
