@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-008](008-current-go-package-architecture.md). The repository
+did not adopt the described `domain/application/infrastructure` package tree.
 
 ## Context
 
@@ -66,7 +67,7 @@ No DI container. Dependencies are wired explicitly in `cmd/server/main.go`.
 - Domain logic is fully isolated and testable without infrastructure (database, HTTP)
 - Read and write paths are explicitly separated, making the performance and complexity asymmetry visible
 - Each vertical slice is independently deployable as a unit — adding a new feature domain means adding a new `internal/{module}/` directory with no changes to existing modules
-- Familiar pattern for developers who know hexagonal architecture; differences from cresco are documented in ARCHITECTURE.md
+- Familiar pattern for developers who know hexagonal architecture; the original differences from Cresco are preserved in the historical architecture baseline
 
 ### Negative
 
@@ -102,7 +103,7 @@ Following Go standard library style: small, focused packages like `price`, `lab`
 
 ## References
 
-- [ARCHITECTURE.md](../../ARCHITECTURE.md) — Full structural specification, module layout, request flow diagrams
+- [Historical architecture baseline](../history/architecture-rewrite-2026-03-12.md) — original structural specification, not current package layout
 - [ADR-001](001-go-module-path.md) — Module path decision (foundational to all import paths)
-- [POE-13](POE-13) — Go module init + project scaffold
-- [POE-2](POE-2) — Foundation epic that this architecture serves
+- POE-13 — Go module init + project scaffold
+- POE-2 — Foundation epic that this architecture serves

@@ -1,5 +1,7 @@
 # Lab Farming Dashboard — Frontend Design Spec
 
+> **Status: Historical implementation-era design.** Retained for context; deferred features, routes, and data-flow details may not match the current application. Start from [the documentation index](README.md) and current code.
+
 ## Tech Stack
 - SvelteKit with adapter-static
 - Tailwind CSS v4 (dark mode default, light mode later)

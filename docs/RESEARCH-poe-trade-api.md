@@ -1,5 +1,7 @@
 # PoE Official Trade API — Research (2026-03-16)
 
+> **Status: Dated, non-authoritative research.** API behavior, policy, endpoints, and rate limits can change. Verify implementation decisions against current official Path of Exile documentation and observed response headers.
+
 ## Overview
 
 The Path of Exile developer platform exposes **three distinct APIs** for price/listing data:

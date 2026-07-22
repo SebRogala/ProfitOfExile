@@ -70,6 +70,14 @@ make migration name=add_foo   # Generate new migration pair
 
 Single domain via Traefik: `/api` routes to Go, everything else to Vite dev server.
 
+## Documentation
+
+- [Documentation Index](docs/README.md) — canonical guides, accepted ADRs, proposed specifications, dated research, and historical plans.
+- [Trade and Market Data Lifecycles](docs/TRADE-LIFECYCLE.md) — public-safe overview of collection, desktop-native trade, shared contributions, optional server trading, pairing, caching, and Mercure boundaries.
+- [Overlay Guide](docs/OVERLAY-GUIDE.md) — Tauri overlay architecture and interaction conventions.
+
+Proposed and not yet implemented, specified in the tracker: `POE-118` (Mercure lifecycle reliability), `POE-117` (league SSOT and rollover), and `POE-88` (LabCompass fidelity and overlay SSOT).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -65,6 +65,6 @@ A lightweight extension to `database/sql` that adds struct scanning via reflecti
 ## References
 
 - [ADR-002](002-internal-architecture-hexagonal-cqrs-vertical-slice.md) — Hexagonal architecture that defines repository ports (interfaces) implemented by pgx adapters
-- [ARCHITECTURE.md](../../ARCHITECTURE.md) — Tech stack table specifying PostgreSQL 16 + pgx
-- [POE-13](POE-13) — Go module init + project scaffold (foundational task)
-- [POE-15](POE-15) — DB migrations + connection wiring (first actual pgx usage)
+- [Historical architecture baseline](../history/architecture-rewrite-2026-03-12.md) — original tech-stack context
+- POE-13 — Go module init + project scaffold (foundational task)
+- POE-15 — DB migrations + connection wiring (first actual pgx usage)

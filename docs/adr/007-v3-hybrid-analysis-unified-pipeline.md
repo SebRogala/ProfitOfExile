@@ -87,5 +87,5 @@ Keep trade data integration in HTTP handlers (like the existing compare endpoint
 
 ## References
 
-- [POE-101](https://softsolution.youtrack.cloud/issue/POE-101) — epic that prompted this decision
+- POE-101 — epic that prompted this decision
 - [ADR-002](002-internal-architecture-hexagonal-cqrs-vertical-slice.md) — hexagonal architecture that this pipeline follows

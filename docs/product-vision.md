@@ -1,7 +1,9 @@
-# ProfitOfExile — BACKBONE
+# ProfitOfExile — Product Vision
 
-> Design document and source of truth. Full detail, no simplifications.
-> This document captures the complete vision, architecture, and rationale for the project.
+> **Status: Historical product vision and future-scope reference.** Written for
+> the Go rewrite and preserved because it records the strategy-simulation domain
+> and rationale. It does not describe the current implementation and is not an
+> architecture authority. Start with [the documentation index](README.md).
 
 ---
 
@@ -451,4 +453,5 @@ assets/views/Compose/Results.vue               — final output shape (only rend
 
 ---
 
-*This document is the authoritative reference for the project's design. Implementation plans, task breakdowns, and technical decisions must align with what is described here. When in doubt, refer to BACKBONE.*
+*Preserved as product and domain intent. Verify implementation decisions against
+current code, accepted ADRs, and active specifications.*

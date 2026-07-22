@@ -4,6 +4,7 @@
 bin/
 /server
 /collector
+/.codex
 /optimize
 /promote
 /recalculate
