@@ -1,5 +1,7 @@
 # Plan: Live Lab Farming Dashboard
 
+> **Status: Historical/partially implemented plan.** Completion markers describe the state at the time; proposed topics, paths, scheduling, and build steps may now be obsolete. It is not current operational guidance.
+
 **Goal:** Replace `/var/www/poe` CLI scripts with a self-updating web dashboard at `profitofexile.localhost` (and eventually production). Open browser → see live market state.
 
 **YouTrack epics:** POE-17 (Market Intelligence), POE-3 (Price Engine), POE-11 (Lab Dashboard)

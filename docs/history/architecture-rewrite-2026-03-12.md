@@ -1,7 +1,13 @@
 # ProfitOfExile — Architecture
 
+> **Status: Historical architecture baseline (2026-03-12), not current system
+> documentation.** The collector, Mercure pipeline, routes, and deployment have
+> materially evolved. Use [the documentation index](../README.md) for current
+> documentation and accepted ADRs.
+
 > Decided 2026-03-12. This document captures architectural decisions for the Go rewrite.
-> For domain concepts and feature scope, see BACKBONE.md.
+> For historical domain concepts and future scope, see
+> [the product vision](../product-vision.md).
 
 ---
 

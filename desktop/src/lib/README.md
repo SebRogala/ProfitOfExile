@@ -7,7 +7,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | File | Export | Description |
 |------|--------|-------------|
 | `stores/status.svelte.ts` | `store`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. Read `store.status` and `store.logs` reactively. |
-| `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings'`. `nav.go('/settings')` switches. All pages are always mounted (hidden via CSS) — **do NOT use SvelteKit `<a href>` routing** for main views, it unmounts components and kills event listeners. |
+| `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings' \| 'dev'`. All pages are always mounted (hidden via CSS) — do not use SvelteKit routing for main views because it unmounts their listeners. |
 
 ## Components
 
@@ -20,6 +20,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `components/Button.svelte` | `variant` (`'default'`/`'save'`/`'danger'`), `disabled`, `title`, `onclick`, children | Small action button — default (neutral), save (green), danger (red). Disabled state dims to 35% opacity. |
 | `components/Toggle.svelte` | `checked` (bindable) | On/off toggle switch — dark-themed, animated knob. |
 | `components/RangeSlider.svelte` | `value` (bindable), `min`, `max`, `step`, `formatValue` | Range slider with value display — optional format function for labels (e.g., `v => \`${v}%\``). |
+| `components/Tooltip.svelte` | `content`, `position`, children | Reusable tooltip wrapper for desktop controls. |
 
 ## Overlay Utilities
 
@@ -43,6 +44,8 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `compass/DirectionCompass.svelte` | `directions`, `targetDirection`, `roomName`, `hasContent` | Compass circle with exit markers at compass angles. |
 | `compass/MinimalBar.svelte` | `targetDirection`, `contents`, `timerText` | Compact bar with arrow, content badges, timer. |
 | `compass/CompassOverlay.svelte` | `mode`, all child props | Mode switcher — renders minimap, direction, or minimal mode. |
+| `compass/LabGraph.svelte` | layout/navigation props | Full lab graph used by planner and path-strip presentation. |
+| `compass/RoomEditor.svelte` | room/editing props | Room metadata and connection editor used by planner tooling. |
 
 ## Pages
 
@@ -53,6 +56,7 @@ Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store 
 | `pages/LabPage.svelte` | Lab farming dashboard — tabs (Session/Rankings/Font EV/Market), comparator, session queue, best plays, font EV, market overview. |
 | `pages/PlannerPage.svelte` | Lab Planner — full lab graph view, route strategy, compass mode, layout import. Rendered as the "Planner" tab inside LabPage. |
 | `pages/SettingsPage.svelte` | Settings — General, Game Integration, Overlays, Trade, Logs. |
+| `pages/RunHistoryPage.svelte` | Lab run-history presentation. Present in the library but not currently wired into `nav.View`. |
 
 ## Routes
 
@@ -135,7 +139,7 @@ The focus poller (1s interval, `GetForegroundWindow`) uses three-state logic:
 - **OwnWindow** (our process foreground): preserve state — no hide/show/status events
 - **Other** (any other app): hide overlay
 
-Overlay is always fully click-through (`WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`). A global `WH_MOUSE_LL` hook intercepts clicks in the rightmost 48px (interactive zone), consumes them, and emits `overlay-click` Tauri events. The frontend maps coordinates to button actions via `elementFromPoint` + `data-action` attributes. The hook also re-applies `WS_EX_TRANSPARENT` on every mouse event (WebView2 strips it when creating child windows). Click interception is gated on a `HAS_CONTENT` flag — when the overlay is empty, all clicks pass through to the game.
+The comparator uses selective click-through (`WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`) with a global `WH_MOUSE_LL` hook and a right-edge interactive zone. Display-only compass/path-strip/timer overlays use `interactiveWidth: 0`; the capture/configuration overlay is intentionally interactive. See `docs/OVERLAY-GUIDE.md` for the current distinctions and regression guards.
 
 ## Conventions
 
@@ -143,8 +147,8 @@ Overlay is always fully click-through (`WS_EX_NOACTIVATE` + `WS_EX_TRANSPARENT`)
 - **Components**: `.svelte` files in `components/`. Props via `$props()`. Scoped styles.
 - **Utilities**: `.ts` files. Pure functions, no reactivity.
 - **Styling**: CSS custom properties from `app.css` (`--bg`, `--surface`, `--border`, `--text`, `--text-muted`, `--accent`, `--success`, `--warning`).
-- **Tauri commands**: Use `invoke()` from `@tauri-apps/api/core`. Prefer event listeners (`listen()`) over polling.
-- **State flow**: Rust emits events → `status.svelte.ts` store updates → components react. Pages never poll.
+- **Tauri commands**: Use `invoke()` from `@tauri-apps/api/core`. Follow the established event, command, or reconciliation mechanism for the state path being changed.
+- **State flow**: Shared status is event-driven, while comparator and some overlay settings/layout paths poll or reconcile against Rust/server state. Do not introduce duplicate owners.
 - **Settings persistence**: `%AppData%/profitofexile/settings.json`. Saved automatically on every mutation.
 - **Logging**: `%AppData%/profitofexile/app.log` (persistent) + in-memory buffer (50 entries, UI).
 - **DPI**: Comparator overlay uses `PhysicalPosition` via Rust `move_overlay` — no DPI conversion. OCR region overlays use `scaleFactor()` for constructor coords. Never use `devicePixelRatio` in overlay WebViews.
