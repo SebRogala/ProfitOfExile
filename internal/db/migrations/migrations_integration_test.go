@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -64,6 +65,53 @@ func requireTimescaleDB(t *testing.T, pool *pgxpool.Pool) {
 	}
 	if !available {
 		t.Skip("TimescaleDB not available, skipping test")
+	}
+}
+
+func TestLeagueMigrationsPreserveLegacySchemaContract(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	requireTimescaleDB(t, pool)
+	migrateToPreLeagueSchema(t, m)
+
+	legacyTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	insertLegacyScopedRows(t, pool, legacyTime)
+
+	compressionBefore := scopedPolicyConfigurations(t, pool, "policy_compression", scopedRelations)
+	retentionBefore := scopedPolicyConfigurations(t, pool, "policy_retention", retainedRelations)
+	refreshBefore := continuousAggregateRefreshConfigurations(t, pool)
+	assertPolicyCoverage(t, "compression", compressionBefore, scopedRelations)
+	assertPolicyCoverage(t, "retention", retentionBefore, retainedRelations)
+	assertPolicyCoverage(t, "continuous aggregate refresh", refreshBefore, continuousAggregates)
+	if _, ok := retentionBefore["trade_lookups"]; ok {
+		t.Fatal("trade_lookups unexpectedly had a retention policy before POE-119")
+	}
+
+	migrateUp(t, m)
+
+	assertLegacyRowsBackfilledToMirage(t, pool, legacyTime)
+	assertLegacyRelationsRemoved(t, pool)
+	compressionAfter := scopedPolicyConfigurations(t, pool, "policy_compression", scopedRelations)
+	retentionAfter := scopedPolicyConfigurations(t, pool, "policy_retention", retainedRelations)
+	refreshAfter := continuousAggregateRefreshConfigurations(t, pool)
+	assertPolicyCoverage(t, "compression", compressionAfter, scopedRelations)
+	assertPolicyCoverage(t, "retention", retentionAfter, retainedRelations)
+	assertPolicyCoverage(t, "continuous aggregate refresh", refreshAfter, continuousAggregates)
+	if !reflect.DeepEqual(compressionAfter, compressionBefore) {
+		t.Errorf("compression policies after migration = %v, want unchanged %v", compressionAfter, compressionBefore)
+	}
+	if !reflect.DeepEqual(retentionAfter, retentionBefore) {
+		t.Errorf("retention policies after migration = %v, want unchanged %v", retentionAfter, retentionBefore)
+	}
+	if !reflect.DeepEqual(refreshAfter, refreshBefore) {
+		t.Errorf("continuous aggregate refresh policies after migration = %v, want unchanged %v", refreshAfter, refreshBefore)
+	}
+	if _, ok := compressionAfter["trade_lookups"]; !ok {
+		t.Error("trade_lookups lost its compression policy")
+	}
+	if _, ok := retentionAfter["trade_lookups"]; ok {
+		t.Error("trade_lookups unexpectedly gained a retention policy")
 	}
 }
 
@@ -240,6 +288,19 @@ func TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys(t *testing.T) {
 			if nullLeagues != 0 {
 				t.Errorf("rows without league = %d, want 0", nullLeagues)
 			}
+
+			var unknownLeagues int
+			query = fmt.Sprintf(`
+				SELECT count(*)
+				FROM %s AS scoped_rows
+				LEFT JOIN leagues ON leagues.id = scoped_rows.league
+				WHERE leagues.id IS NULL`, relation)
+			if err := pool.QueryRow(context.Background(), query).Scan(&unknownLeagues); err != nil {
+				t.Fatalf("count rows with unknown league: %v", err)
+			}
+			if unknownLeagues != 0 {
+				t.Errorf("rows with unknown league = %d, want 0", unknownLeagues)
+			}
 		})
 	}
 }
@@ -357,72 +418,71 @@ func TestGemContinuousAggregatesPreserveLeagueAndCorruption(t *testing.T) {
 	}
 }
 
-func TestLeagueMigrationsRestoreRequiredPoliciesAndRemoveLegacyRelations(t *testing.T) {
-	pool, m := testSetup(t)
-	defer pool.Close()
-	defer m.Close()
-	requireTimescaleDB(t, pool)
-	migrateUp(t, m)
+const preLeagueSchemaVersion uint = 20260412224254
 
-	compressedRelations := []string{
-		"currency_snapshots", "dedication_snapshots", "font_snapshots", "fragment_snapshots",
-		"gem_features", "gem_signals", "gem_snapshots", "market_context", "quality_results",
-		"trade_lookups", "transfigure_results", "trend_results",
-	}
-	rows, err := pool.Query(context.Background(), `
-		SELECT hypertable_name
-		FROM timescaledb_information.jobs
-		WHERE proc_name = 'policy_compression'
-		ORDER BY hypertable_name`)
-	if err != nil {
-		t.Fatalf("query compression policies: %v", err)
-	}
-	defer rows.Close()
-	var gotCompressed []string
-	for rows.Next() {
-		var relation string
-		if err := rows.Scan(&relation); err != nil {
-			t.Fatalf("scan compression policy: %v", err)
-		}
-		gotCompressed = append(gotCompressed, relation)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate compression policies: %v", err)
-	}
-	for _, relation := range compressedRelations {
-		if !contains(gotCompressed, relation) {
-			t.Errorf("missing compression policy for %s; got %v", relation, gotCompressed)
-		}
-	}
+var scopedRelations = []string{
+	"currency_snapshots", "dedication_snapshots", "font_snapshots", "fragment_snapshots",
+	"gem_features", "gem_signals", "gem_snapshots", "market_context", "quality_results",
+	"trade_lookups", "transfigure_results", "trend_results",
+}
 
-	rows, err = pool.Query(context.Background(), `
-		SELECT aggregates.view_name
-		FROM timescaledb_information.continuous_aggregates AS aggregates
-		JOIN timescaledb_information.jobs AS jobs
-			ON jobs.hypertable_schema = aggregates.materialization_hypertable_schema
-			AND jobs.hypertable_name = aggregates.materialization_hypertable_name
-		WHERE jobs.proc_name = 'policy_refresh_continuous_aggregate'
-			AND aggregates.view_name IN ('gem_snapshots_hourly', 'gem_snapshots_daily')`)
-	if err != nil {
-		t.Fatalf("query continuous aggregate refresh policies: %v", err)
+var retainedRelations = []string{
+	"currency_snapshots", "dedication_snapshots", "font_snapshots", "fragment_snapshots",
+	"gem_features", "gem_signals", "gem_snapshots", "market_context", "quality_results",
+	"transfigure_results", "trend_results",
+}
+
+var continuousAggregates = []string{"gem_snapshots_hourly", "gem_snapshots_daily"}
+
+func migrateToPreLeagueSchema(t *testing.T, m *migrate.Migrate) {
+	t.Helper()
+	if err := m.Migrate(preLeagueSchemaVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatalf("migrate to pre-POE-119 schema: %v", err)
 	}
-	defer rows.Close()
-	var gotRefreshPolicies []string
-	for rows.Next() {
-		var aggregate string
-		if err := rows.Scan(&aggregate); err != nil {
-			t.Fatalf("scan continuous aggregate refresh policy: %v", err)
+}
+
+func insertLegacyScopedRows(t *testing.T, pool *pgxpool.Pool, legacyTime time.Time) {
+	t.Helper()
+
+	for relation, statement := range map[string]string{
+		"currency_snapshots":   `INSERT INTO currency_snapshots (time, currency_id, chaos, volume, sparkline_change) VALUES ($1, 'POE-119 Legacy Currency', 1, 2, 3)`,
+		"dedication_snapshots": `INSERT INTO dedication_snapshots (time, color, gem_type, mode, pool, winners) VALUES ($1, 'POE-119 Legacy Dedication', 'skill', 'safe', 1, 1)`,
+		"font_snapshots":       `INSERT INTO font_snapshots (time, color, variant, mode, pool, winners) VALUES ($1, 'POE-119 Legacy Font', '1/20', 'safe', 1, 1)`,
+		"fragment_snapshots":   `INSERT INTO fragment_snapshots (time, fragment_id, chaos, sparkline_change) VALUES ($1, 'POE-119 Legacy Fragment', 1, 2)`,
+		"gem_features":         `INSERT INTO gem_features (time, name, variant, chaos, listings) VALUES ($1, 'POE-119 Legacy Feature', '1/20', 1, 1)`,
+		"gem_signals":          `INSERT INTO gem_signals (time, name, variant, signal, confidence) VALUES ($1, 'POE-119 Legacy Signal', '1/20', 'STABLE', 1)`,
+		"gem_snapshots":        `INSERT INTO gem_snapshots (time, name, variant, is_corrupted, chaos, listings) VALUES ($1, 'POE-119 Legacy Snapshot', '1/20', FALSE, 1, 1)`,
+		"market_context":       `INSERT INTO market_context (time, total_gems, total_listings) VALUES ($1, 1, 1)`,
+		"quality_results":      `INSERT INTO quality_results (time, name, level, buy_price, price_q20) VALUES ($1, 'POE-119 Legacy Quality', 20, 1, 2)`,
+		"trade_lookups":        `INSERT INTO trade_lookups (time, gem, variant, total_listings, price_floor) VALUES ($1, 'POE-119 Legacy Trade', '1/20', 1, 1)`,
+		"transfigure_results":  `INSERT INTO transfigure_results (time, base_name, transfigured_name, variant, base_price, transfigured_price) VALUES ($1, 'POE-119 Legacy Base', 'POE-119 Legacy Transfigure', '1/20', 1, 2)`,
+		"trend_results":        `INSERT INTO trend_results (time, name, variant, current_price, current_listings) VALUES ($1, 'POE-119 Legacy Trend', '1/20', 1, 1)`,
+	} {
+		if _, err := pool.Exec(context.Background(), statement, legacyTime); err != nil {
+			t.Fatalf("insert legacy %s row: %v", relation, err)
 		}
-		gotRefreshPolicies = append(gotRefreshPolicies, aggregate)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate continuous aggregate refresh policies: %v", err)
+}
+
+func assertLegacyRowsBackfilledToMirage(t *testing.T, pool *pgxpool.Pool, legacyTime time.Time) {
+	t.Helper()
+
+	for _, relation := range scopedRelations {
+		t.Run(relation, func(t *testing.T) {
+			var total, mirage int
+			query := fmt.Sprintf(`SELECT count(*), count(*) FILTER (WHERE league = 'Mirage') FROM %s WHERE time = $1`, relation)
+			if err := pool.QueryRow(context.Background(), query, legacyTime).Scan(&total, &mirage); err != nil {
+				t.Fatalf("count migrated legacy rows: %v", err)
+			}
+			if total != 1 || mirage != 1 {
+				t.Errorf("Mirage-backed legacy rows = %d of %d, want 1 of 1", mirage, total)
+			}
+		})
 	}
-	for _, aggregate := range []string{"gem_snapshots_hourly", "gem_snapshots_daily"} {
-		if !contains(gotRefreshPolicies, aggregate) {
-			t.Errorf("missing refresh policy for %s; got %v", aggregate, gotRefreshPolicies)
-		}
-	}
+}
+
+func assertLegacyRelationsRemoved(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
 
 	for _, relation := range []string{"exchange_snapshots", "gcp_snapshots"} {
 		var exists bool
@@ -434,6 +494,85 @@ func TestLeagueMigrationsRestoreRequiredPoliciesAndRemoveLegacyRelations(t *test
 		}
 		if exists {
 			t.Errorf("removed relation %s still exists", relation)
+		}
+	}
+}
+
+func scopedPolicyConfigurations(t *testing.T, pool *pgxpool.Pool, policy string, relations []string) map[string]string {
+	t.Helper()
+
+	rows, err := pool.Query(context.Background(), `
+		SELECT hypertable_name,
+			jsonb_build_object(
+				'config', config - 'hypertable_id',
+				'schedule_interval', schedule_interval
+			)::text
+		FROM timescaledb_information.jobs
+		WHERE proc_name = $1 AND hypertable_name = ANY($2)
+		ORDER BY hypertable_name`, policy, relations)
+	if err != nil {
+		t.Fatalf("query %s policies: %v", policy, err)
+	}
+	defer rows.Close()
+
+	policies := make(map[string]string)
+	for rows.Next() {
+		var relation, configuration string
+		if err := rows.Scan(&relation, &configuration); err != nil {
+			t.Fatalf("scan %s policy: %v", policy, err)
+		}
+		policies[relation] = configuration
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %s policies: %v", policy, err)
+	}
+	return policies
+}
+
+func continuousAggregateRefreshConfigurations(t *testing.T, pool *pgxpool.Pool) map[string]string {
+	t.Helper()
+
+	rows, err := pool.Query(context.Background(), `
+		SELECT aggregates.view_name,
+			jsonb_build_object(
+				'config', jobs.config - 'mat_hypertable_id' - 'hypertable_id',
+				'schedule_interval', jobs.schedule_interval
+			)::text
+		FROM timescaledb_information.continuous_aggregates AS aggregates
+		JOIN timescaledb_information.jobs AS jobs
+			ON jobs.hypertable_schema = aggregates.materialization_hypertable_schema
+			AND jobs.hypertable_name = aggregates.materialization_hypertable_name
+		WHERE jobs.proc_name = 'policy_refresh_continuous_aggregate'
+			AND aggregates.view_name = ANY($1)
+		ORDER BY aggregates.view_name`, continuousAggregates)
+	if err != nil {
+		t.Fatalf("query continuous aggregate refresh policies: %v", err)
+	}
+	defer rows.Close()
+
+	policies := make(map[string]string)
+	for rows.Next() {
+		var aggregate, configuration string
+		if err := rows.Scan(&aggregate, &configuration); err != nil {
+			t.Fatalf("scan continuous aggregate refresh policy: %v", err)
+		}
+		policies[aggregate] = configuration
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate continuous aggregate refresh policies: %v", err)
+	}
+	return policies
+}
+
+func assertPolicyCoverage(t *testing.T, policy string, got map[string]string, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Errorf("%s policy coverage = %v, want %v", policy, got, want)
+	}
+	for _, relation := range want {
+		if _, ok := got[relation]; !ok {
+			t.Errorf("missing %s policy for %s; got %v", policy, relation, got)
 		}
 	}
 }
