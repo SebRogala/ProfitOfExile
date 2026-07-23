@@ -84,9 +84,6 @@ func TestLeagueMigrationsPreserveLegacySchemaContract(t *testing.T) {
 	assertPolicyCoverage(t, "compression", compressionBefore, scopedRelations)
 	assertPolicyCoverage(t, "retention", retentionBefore, retainedRelations)
 	assertPolicyCoverage(t, "continuous aggregate refresh", refreshBefore, continuousAggregates)
-	if _, ok := retentionBefore["trade_lookups"]; ok {
-		t.Fatal("trade_lookups unexpectedly had a retention policy before POE-119")
-	}
 
 	migrateUp(t, m)
 
@@ -96,22 +93,18 @@ func TestLeagueMigrationsPreserveLegacySchemaContract(t *testing.T) {
 	retentionAfter := scopedPolicyConfigurations(t, pool, "policy_retention", retainedRelations)
 	refreshAfter := continuousAggregateRefreshConfigurations(t, pool)
 	assertPolicyCoverage(t, "compression", compressionAfter, scopedRelations)
-	assertPolicyCoverage(t, "retention", retentionAfter, retainedRelations)
 	assertPolicyCoverage(t, "continuous aggregate refresh", refreshAfter, continuousAggregates)
 	if !reflect.DeepEqual(compressionAfter, compressionBefore) {
 		t.Errorf("compression policies after migration = %v, want unchanged %v", compressionAfter, compressionBefore)
 	}
-	if !reflect.DeepEqual(retentionAfter, retentionBefore) {
-		t.Errorf("retention policies after migration = %v, want unchanged %v", retentionAfter, retentionBefore)
-	}
 	if !reflect.DeepEqual(refreshAfter, refreshBefore) {
 		t.Errorf("continuous aggregate refresh policies after migration = %v, want unchanged %v", refreshAfter, refreshBefore)
 	}
+	if len(retentionAfter) != 0 {
+		t.Errorf("retention policies after migration = %v, want none so archived league history survives", retentionAfter)
+	}
 	if _, ok := compressionAfter["trade_lookups"]; !ok {
 		t.Error("trade_lookups lost its compression policy")
-	}
-	if _, ok := retentionAfter["trade_lookups"]; ok {
-		t.Error("trade_lookups unexpectedly gained a retention policy")
 	}
 }
 
@@ -302,6 +295,61 @@ func TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys(t *testing.T) {
 				t.Errorf("rows with unknown league = %d, want 0", unknownLeagues)
 			}
 		})
+	}
+}
+
+func TestScopedRelationsReferenceTheLeagueRegistry(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	requireTimescaleDB(t, pool)
+	migrateUp(t, m)
+
+	for _, relation := range scopedRelations {
+		t.Run(relation, func(t *testing.T) {
+			var referenced, column string
+			err := pool.QueryRow(context.Background(), `
+				SELECT confrelid::REGCLASS::TEXT, attributes.attname
+				FROM pg_constraint AS constraints
+				JOIN pg_attribute AS attributes
+					ON attributes.attrelid = constraints.conrelid
+					AND attributes.attnum = constraints.conkey[1]
+				WHERE constraints.conrelid = $1::REGCLASS
+					AND constraints.contype = 'f'
+					AND array_length(constraints.conkey, 1) = 1`, relation).Scan(&referenced, &column)
+			if err != nil {
+				t.Fatalf("find foreign key on %s: %v", relation, err)
+			}
+			if referenced != "leagues" || column != "league" {
+				t.Errorf("foreign key = %s(%s), want leagues(league)", referenced, column)
+			}
+		})
+	}
+}
+
+func TestGemSnapshotsRejectAnUnregisteredLeague(t *testing.T) {
+	pool, m := testSetup(t)
+	defer pool.Close()
+	defer m.Close()
+	requireTimescaleDB(t, pool)
+	migrateUp(t, m)
+
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO gem_snapshots (league, time, name, variant, is_corrupted, chaos, listings)
+		VALUES ('POE-119-Never-Registered', '2099-01-03 00:00:00+00', 'POE-119 Unregistered Gem', '1/20', FALSE, 1, 1)`)
+	if err == nil {
+		t.Fatal("snapshot for an unregistered league was accepted")
+	}
+	var dbErr *pgconn.PgError
+	if !errors.As(err, &dbErr) || dbErr.Code != "23503" {
+		t.Errorf("unregistered-league insert error = %v, want PostgreSQL foreign key violation", err)
 	}
 }
 

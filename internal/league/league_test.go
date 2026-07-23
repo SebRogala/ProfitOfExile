@@ -79,6 +79,36 @@ func TestHistoricalKeepsOnlyExplicitIdentity(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsTheZeroScope(t *testing.T) {
+	var scope Scope
+
+	if err := scope.Validate(); !errors.Is(err, ErrUnscoped) {
+		t.Errorf("Validate error = %v, want %v", err, ErrUnscoped)
+	}
+}
+
+func TestValidateRejectsAnEmptyHistoricalIdentity(t *testing.T) {
+	if err := Historical("").Validate(); !errors.Is(err, ErrUnscoped) {
+		t.Errorf("Validate error = %v, want %v", err, ErrUnscoped)
+	}
+}
+
+func TestValidateAcceptsAResolvedScope(t *testing.T) {
+	db := scopeDB{row: scopeRow{scan: func(dest ...any) error {
+		*dest[0].(*string) = "Mirage"
+		*dest[1].(*int64) = 7
+		return nil
+	}}}
+
+	scope, err := Resolve(context.Background(), db)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := scope.Validate(); err != nil {
+		t.Errorf("Validate error = %v, want nil", err)
+	}
+}
+
 func TestLockKeysAreStableAndPurposeSeparated(t *testing.T) {
 	scope := Historical("Mirage")
 
