@@ -386,7 +386,7 @@ func TestGemContinuousAggregatesPreserveLeagueAndCorruption(t *testing.T) {
 				SELECT league, is_corrupted, avg_chaos::float8
 				FROM %s
 				WHERE name = $1 AND variant = '1/20'
-					AND bucket = time_bucket(CASE WHEN $2 = 'gem_snapshots_hourly' THEN '1 hour'::interval ELSE '1 day'::interval END, $3)
+					AND bucket = time_bucket(CASE WHEN $2 = 'gem_snapshots_hourly' THEN '1 hour'::interval ELSE '1 day'::interval END, $3::timestamptz)
 				ORDER BY league, is_corrupted`, aggregate), snapshotName, aggregate, snapshotTime)
 			if err != nil {
 				t.Fatalf("query %s: %v", aggregate, err)
@@ -539,9 +539,11 @@ func continuousAggregateRefreshConfigurations(t *testing.T, pool *pgxpool.Pool) 
 				'schedule_interval', jobs.schedule_interval
 			)::text
 		FROM timescaledb_information.continuous_aggregates AS aggregates
+		JOIN _timescaledb_catalog.continuous_agg AS continuous_aggregate_catalog
+			ON continuous_aggregate_catalog.user_view_schema = aggregates.view_schema
+			AND continuous_aggregate_catalog.user_view_name = aggregates.view_name
 		JOIN timescaledb_information.jobs AS jobs
-			ON jobs.hypertable_schema = aggregates.materialization_hypertable_schema
-			AND jobs.hypertable_name = aggregates.materialization_hypertable_name
+			ON (jobs.config->>'mat_hypertable_id')::integer = continuous_aggregate_catalog.mat_hypertable_id
 		WHERE jobs.proc_name = 'policy_refresh_continuous_aggregate'
 			AND aggregates.view_name = ANY($1)
 		ORDER BY aggregates.view_name`, continuousAggregates)
