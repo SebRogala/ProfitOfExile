@@ -48,7 +48,11 @@ run the rehearsal against the live database.
    before the server binds; the collector must remain stopped.
 5. Record the post-migration migration state and repeat the count manifest.
    Each table must retain its count, and every table must have zero null
-   `league` values.
+   `league` values. Confirm that compression and continuous-aggregate refresh
+   policies match the pre-migration capture, that every scoped table now has a
+   foreign key to `leagues(id)`, and that no retention policy remains
+   (see [ADR-010](adr/010-retain-archived-league-history.md)). Record the disk
+   usage that indefinite retention will now grow.
 6. Refresh a controlled, completed source window in dependency order: hourly
    aggregate first, then daily. Do not refresh daily before hourly.
 

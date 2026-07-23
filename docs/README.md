@@ -34,6 +34,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-007: Unified analysis pipeline](adr/007-v3-hybrid-analysis-unified-pipeline.md)
 - [ADR-008: Current Go package architecture](adr/008-current-go-package-architecture.md)
 - [ADR-009: League-scoped repository convention](adr/009-league-scope-repository-convention.md)
+- [ADR-010: Archived league history is retained indefinitely](adr/010-retain-archived-league-history.md)
 
 Superseded:
 
