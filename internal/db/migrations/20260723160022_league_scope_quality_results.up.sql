@@ -23,3 +23,5 @@ CREATE INDEX idx_quality_results_league_level ON quality_results (league, level,
 ALTER TABLE quality_results SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, level', timescaledb.compress_orderby = 'time DESC, avg_roi DESC');
 SELECT add_compression_policy('quality_results', INTERVAL '7 days');
 ALTER TABLE quality_results ALTER COLUMN league SET NOT NULL;
+ALTER TABLE quality_results ADD CONSTRAINT quality_results_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

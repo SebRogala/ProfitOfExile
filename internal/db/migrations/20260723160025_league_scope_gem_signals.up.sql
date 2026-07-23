@@ -25,3 +25,5 @@ CREATE INDEX idx_gem_signals_league_tier ON gem_signals (league, tier, time DESC
 ALTER TABLE gem_signals SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, variant', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('gem_signals', INTERVAL '7 days');
 ALTER TABLE gem_signals ALTER COLUMN league SET NOT NULL;
+ALTER TABLE gem_signals ADD CONSTRAINT gem_signals_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

@@ -21,3 +21,5 @@ CREATE INDEX idx_dedication_snapshots_league_color_gemtype_mode ON dedication_sn
 ALTER TABLE dedication_snapshots SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, color, gem_type, mode');
 SELECT add_compression_policy('dedication_snapshots', INTERVAL '7 days');
 ALTER TABLE dedication_snapshots ALTER COLUMN league SET NOT NULL;
+ALTER TABLE dedication_snapshots ADD CONSTRAINT dedication_snapshots_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

@@ -23,3 +23,5 @@ CREATE INDEX idx_transfigure_results_league_variant ON transfigure_results (leag
 ALTER TABLE transfigure_results SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, variant', timescaledb.compress_orderby = 'time DESC, roi DESC');
 SELECT add_compression_policy('transfigure_results', INTERVAL '7 days');
 ALTER TABLE transfigure_results ALTER COLUMN league SET NOT NULL;
+ALTER TABLE transfigure_results ADD CONSTRAINT transfigure_results_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

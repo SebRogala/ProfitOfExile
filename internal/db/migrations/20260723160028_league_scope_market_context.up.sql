@@ -21,3 +21,5 @@ CREATE INDEX idx_market_context_league_time ON market_context (league, time DESC
 ALTER TABLE market_context SET (timescaledb.compress, timescaledb.compress_segmentby = 'league', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('market_context', INTERVAL '7 days');
 ALTER TABLE market_context ALTER COLUMN league SET NOT NULL;
+ALTER TABLE market_context ADD CONSTRAINT market_context_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);
