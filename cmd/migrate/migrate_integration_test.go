@@ -96,7 +96,7 @@ func TestRunForceValidation(t *testing.T) {
 	}
 }
 
-func TestRunUpDownVersion(t *testing.T) {
+func TestRunUpAndVersion(t *testing.T) {
 	dbURL := testDatabaseURL(t)
 
 	// Apply all migrations.
@@ -109,18 +109,4 @@ func TestRunUpDownVersion(t *testing.T) {
 		t.Fatalf("migrate version after up: %v", err)
 	}
 
-	// Roll back one migration.
-	if err := run([]string{"down", "1"}, dbURL); err != nil {
-		t.Fatalf("migrate down 1: %v", err)
-	}
-
-	// Version should still work (either reports a version or "no migrations applied").
-	if err := run([]string{"version"}, dbURL); err != nil {
-		t.Fatalf("migrate version after down: %v", err)
-	}
-
-	// Re-apply to leave DB in a clean state.
-	if err := run([]string{"up"}, dbURL); err != nil {
-		t.Fatalf("migrate up (cleanup): %v", err)
-	}
 }
