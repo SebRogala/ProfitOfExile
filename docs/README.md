@@ -9,6 +9,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
+- [League Schema Migration Runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md) — current production gate and rehearsal procedure for POE-119; requires the matching POE-120/POE-121 application revision.
 - [Architecture decisions](adr/) — accepted and superseded architecture decisions.
 
 ## Proposed specifications
@@ -32,6 +33,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-006: Database-backed gem colors](adr/006-gem-colors-db-backed-upsert-table.md)
 - [ADR-007: Unified analysis pipeline](adr/007-v3-hybrid-analysis-unified-pipeline.md)
 - [ADR-008: Current Go package architecture](adr/008-current-go-package-architecture.md)
+- [ADR-009: League-scoped repository convention](adr/009-league-scope-repository-convention.md)
 
 Superseded:
 

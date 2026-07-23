@@ -22,7 +22,9 @@ Key considerations:
 
 ## Decision
 
-Use `golang-migrate/migrate/v4` with `file`-sourced SQL migrations in `db/migrations/`. Migrations run automatically on app start. A dedicated CLI binary provides manual control.
+Use `golang-migrate/migrate/v4` with SQL migrations embedded from
+`internal/db/migrations/`. Migrations run automatically on server start. A
+dedicated CLI binary provides manual control.
 
 ### Auto-migration on start
 
@@ -31,7 +33,13 @@ Use `golang-migrate/migrate/v4` with `file`-sourced SQL migrations in `db/migrat
 - `migrate.ErrNoChange` is not an error — log at Info and continue.
 - Any other error → `slog.Error("auto-migrate failed", "error", err)` + `os.Exit(1)`. The app does not start with a broken schema.
 
-This applies to both dev and production. The migration source path is `file://db/migrations`, resolved relative to the working directory (`/app` in the container).
+This applies to both development and production. `internal/db/migrate.go`
+embeds the migration directory in `db.MigrationsFS` and constructs an `iofs`
+source for both the server and the migration CLI. The migration source is
+therefore independent of the process working directory.
+
+The collector does not run migrations. It must start only after the server has
+applied the matching revision's migrations successfully.
 
 ### Dedicated migration binary
 
@@ -57,8 +65,8 @@ make migrate-force VERSION=<n>   # force <n>
 Timestamp-based: `YYYYMMDDHHmmSS_<description>.{up,down}.sql`. Example:
 
 ```
-db/migrations/20260312100000_create_strategies.up.sql
-db/migrations/20260312100000_create_strategies.down.sql
+internal/db/migrations/20260312100000_create_strategies.up.sql
+internal/db/migrations/20260312100000_create_strategies.down.sql
 ```
 
 Timestamps avoid merge conflicts when two branches add migrations simultaneously (unlike sequential integers).
@@ -75,7 +83,8 @@ Timestamps avoid merge conflicts when two branches add migrations simultaneously
 ### Negative
 
 - Auto-migration on start means a bad migration will take down the app on every restart until fixed or rolled back. Operators need awareness of this behaviour.
-- The `file://` source path couples the binary to its working directory (`/app`). Running outside Docker requires setting the CWD or adjusting the path.
+- The migration set is compiled into each server and migration CLI binary.
+  Operators must use a binary built from the intended revision.
 - No migration locking across multiple replicas in v1 — golang-migrate uses an advisory lock, so concurrent starts are safe, but this is worth revisiting if horizontal scaling is introduced.
 
 ## Alternatives Considered
@@ -92,11 +101,15 @@ Alternative migration library with sequential or timestamp naming, Go-based migr
 
 **Rejected because**: golang-migrate was already cited in ADR-003 as the chosen tool. goose offers similar functionality but switching would diverge from the established decision without clear gain. golang-migrate's separate `up`/`down` SQL files are a better fit for this project's SQL-first approach.
 
-### Embed migrations in binary
+### External filesystem migration source
 
-Use Go `embed` to bundle migration files into the server binary, eliminating the `file://` path dependency.
+Read migrations from a `file://` source relative to the process working
+directory.
 
-**Rejected because**: Adds build-time complexity (embed directive, iofs source) for v1 when the container's working directory is deterministic. Can be revisited if the binary ever needs to run outside its expected container context.
+**Rejected because**: The current implementation embeds
+`internal/db/migrations/` and uses the same source in the server and
+`cmd/migrate`. An external source would reintroduce working-directory coupling
+and could let the running binary and applied migrations diverge.
 
 ### Manual-only migrations (no auto-migrate)
 
@@ -107,4 +120,7 @@ Require explicit `make migrate` before every deploy.
 ## References
 
 - [ADR-003](003-no-orm-direct-pgx-queries.md) — established golang-migrate as the migration tool; this ADR defines the operational model
+- `internal/db/migrate.go` — embedded migration source and `MigrateUp`
+- `cmd/server/main.go` — auto-migration before the HTTP server binds
+- `cmd/migrate/main.go` — manual migration commands
 - POE-15 — database layer + migration tooling task that prompted these decisions
