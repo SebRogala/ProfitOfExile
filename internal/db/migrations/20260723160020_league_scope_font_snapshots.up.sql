@@ -21,3 +21,5 @@ CREATE INDEX idx_font_snapshots_league_color_variant ON font_snapshots (league, 
 ALTER TABLE font_snapshots SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, color, variant', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('font_snapshots', INTERVAL '7 days');
 ALTER TABLE font_snapshots ALTER COLUMN league SET NOT NULL;
+ALTER TABLE font_snapshots ADD CONSTRAINT font_snapshots_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

@@ -21,3 +21,5 @@ CREATE INDEX idx_currency_snapshots_league_id_time ON currency_snapshots (league
 ALTER TABLE currency_snapshots SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, currency_id', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('currency_snapshots', INTERVAL '7 days');
 ALTER TABLE currency_snapshots ALTER COLUMN league SET NOT NULL;
+ALTER TABLE currency_snapshots ADD CONSTRAINT currency_snapshots_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

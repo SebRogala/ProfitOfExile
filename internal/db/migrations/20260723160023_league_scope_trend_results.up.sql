@@ -23,3 +23,5 @@ CREATE INDEX idx_trend_results_league_variant ON trend_results (league, variant,
 ALTER TABLE trend_results SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, variant', timescaledb.compress_orderby = 'time DESC, name');
 SELECT add_compression_policy('trend_results', INTERVAL '7 days');
 ALTER TABLE trend_results ALTER COLUMN league SET NOT NULL;
+ALTER TABLE trend_results ADD CONSTRAINT trend_results_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

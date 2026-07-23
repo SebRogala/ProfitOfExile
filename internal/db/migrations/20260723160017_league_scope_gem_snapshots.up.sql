@@ -49,6 +49,8 @@ ALTER TABLE gem_snapshots SET (
 SELECT add_compression_policy('gem_snapshots', INTERVAL '7 days');
 
 ALTER TABLE gem_snapshots ALTER COLUMN league SET NOT NULL;
+ALTER TABLE gem_snapshots ADD CONSTRAINT gem_snapshots_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);
 
 CREATE MATERIALIZED VIEW gem_snapshots_hourly
 WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS

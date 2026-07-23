@@ -10,12 +10,26 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrUnscoped reports a scope that never selected a league. Callers reach it
+// through the zero Scope, which would otherwise match no rows instead of
+// failing.
+var ErrUnscoped = errors.New("league scope is not set")
+
 // Scope identifies a league and the configuration revision that selected it.
 // Its fields are private so callers can obtain a scope only through Resolve or
 // Historical.
 type Scope struct {
 	id       string
 	revision int64
+}
+
+// Validate rejects a scope that carries no league identity. Repositories call
+// it before using a scope in a predicate or an inserted row.
+func (s Scope) Validate() error {
+	if s.id == "" {
+		return ErrUnscoped
+	}
+	return nil
 }
 
 // ID returns the exact upstream league identifier.
@@ -42,7 +56,7 @@ func Resolve(ctx context.Context, db interface {
 
 // Historical explicitly selects a non-runtime league for research. Its
 // revision is zero because no revision contract has been defined for archived
-// selections.
+// selections. An empty id yields the zero Scope, which Validate rejects.
 func Historical(id string) Scope {
 	return Scope{id: id}
 }

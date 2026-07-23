@@ -21,3 +21,5 @@ CREATE INDEX idx_fragment_snapshots_league_id_time ON fragment_snapshots (league
 ALTER TABLE fragment_snapshots SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, fragment_id', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('fragment_snapshots', INTERVAL '7 days');
 ALTER TABLE fragment_snapshots ALTER COLUMN league SET NOT NULL;
+ALTER TABLE fragment_snapshots ADD CONSTRAINT fragment_snapshots_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

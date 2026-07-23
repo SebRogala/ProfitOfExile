@@ -21,3 +21,5 @@ CREATE INDEX idx_trade_lookups_league_gem_variant_time ON trade_lookups (league,
 ALTER TABLE trade_lookups SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, gem, variant', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('trade_lookups', INTERVAL '7 days');
 ALTER TABLE trade_lookups ALTER COLUMN league SET NOT NULL;
+ALTER TABLE trade_lookups ADD CONSTRAINT trade_lookups_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);

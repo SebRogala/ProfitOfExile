@@ -23,3 +23,5 @@ CREATE INDEX idx_gem_features_league_variant ON gem_features (league, variant, t
 ALTER TABLE gem_features SET (timescaledb.compress, timescaledb.compress_segmentby = 'league, variant', timescaledb.compress_orderby = 'time DESC');
 SELECT add_compression_policy('gem_features', INTERVAL '7 days');
 ALTER TABLE gem_features ALTER COLUMN league SET NOT NULL;
+ALTER TABLE gem_features ADD CONSTRAINT gem_features_league_fkey
+    FOREIGN KEY (league) REFERENCES leagues(id);
