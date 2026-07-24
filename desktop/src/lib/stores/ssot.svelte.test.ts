@@ -15,6 +15,21 @@ describe('applySnapshot', () => {
 		expect(ssot.league).toBeNull();
 	});
 
+	it('maps the resolving flag from the snapshot (true then false)', () => {
+		applySnapshot({ league: { name: null }, resolving: true });
+		expect(ssot.resolving).toBe(true);
+		// A later snapshot with the flag cleared must flip it back — proves the
+		// mapping writes the incoming value, not a one-way latch.
+		applySnapshot({ league: { name: 'Mirage' }, resolving: false });
+		expect(ssot.resolving).toBe(false);
+	});
+
+	it('defaults resolving to false when the field is absent', () => {
+		applySnapshot({ league: { name: null }, resolving: true });
+		applySnapshot({ league: { name: null } });
+		expect(ssot.resolving).toBe(false);
+	});
+
 	it('coerces a missing league slice to null instead of throwing', () => {
 		applySnapshot({ league: { name: 'Settlers' } });
 		// Malformed snapshot (e.g. an older/empty payload) must not leak undefined.

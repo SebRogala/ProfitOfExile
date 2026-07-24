@@ -711,7 +711,7 @@
 										{#if tradeLoading[gem.name]}
 											<span class="trade-spinner-inline"></span>
 										{:else}
-											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} class:trade-refresh-error={tradeError[gem.name]} onclick={() => refreshTradeData(gem.name)} title={tradeError[gem.name] ? 'Rate limited — click to retry' : 'Refresh trade data'}>&#8635;</button>
+											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} class:trade-refresh-error={tradeError[gem.name]} onclick={() => refreshTradeData(gem.name)} title={tradeError[gem.name] ? (tradeErrorMsg[gem.name] ?? 'Rate limited — click to retry') : 'Refresh trade data'}>&#8635;</button>
 										{/if}
 										{#if gem.name.includes(' of ')}
 											{@const lg = ssot.league}

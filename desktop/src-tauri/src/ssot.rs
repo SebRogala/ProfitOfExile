@@ -46,6 +46,13 @@ pub struct LeagueSlice {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AppSsotSnapshot {
     pub league: LeagueSlice,
+    /// A league resolve is currently in flight (the bounded-retry fetch task is
+    /// running). Exposed in the polled snapshot so the Settings UI can show an
+    /// honest "Resolving…" for the whole retry window instead of a one-frame
+    /// flash. Doubles as the single-flight guard (see `try_begin_resolving`):
+    /// while `true`, a second `refresh_league` no-ops rather than stacking a
+    /// duplicate infinite-retry loop. `Default` is `false` (not resolving).
+    pub resolving: bool,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -90,8 +97,27 @@ fn write_league(
     {
         let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
         guard.league.name = Some(name.clone());
+        // Resolve complete: clear the in-flight flag in the SAME locked mutation
+        // that writes the league, so a poller can never observe league-set with
+        // `resolving` still true. This is the sole clear path for the flag.
+        guard.resolving = false;
     }
     trade_client.set_league(name);
+}
+
+/// Single-flight gate for the league resolver. Returns `true` (and marks the
+/// SSOT `resolving`) only when no resolve is in flight; returns `false` and
+/// changes nothing when one already is. This is what stops repeated
+/// `refresh_league` clicks against a down server from stacking N concurrent
+/// infinite-retry loops. The lock is scoped to this fn and never held across an
+/// `.await` (the fn is synchronous). Extracted for direct unit testing.
+fn try_begin_resolving(ssot: &std::sync::Mutex<AppSsotSnapshot>) -> bool {
+    let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.resolving {
+        return false;
+    }
+    guard.resolving = true;
+    true
 }
 
 /// Trim an incoming league name; return `Some(trimmed)` only when non-empty.
@@ -118,6 +144,10 @@ fn normalize_league(name: &str) -> Option<String> {
 /// snapshot. Nothing is held across the emit.
 fn apply_league(app: &AppHandle, name: String) {
     let Some(name) = normalize_league(&name) else {
+        // Blank/whitespace: reject before `write_league`, so `resolving` is left
+        // untouched (not cleared). A manual `set_league("")` is not the retry
+        // loop and must not flip the loop's flag; the loop clears `resolving`
+        // itself when it lands a real name. Nothing is written, nothing emitted.
         return;
     };
     {
@@ -184,6 +214,17 @@ async fn fetch_league_once(app: &AppHandle) -> Option<String> {
 /// unresolved (fail-closed) until the server answers. There is **no** poller:
 /// once resolved the task returns. `refresh_league` re-arms it on demand.
 pub fn spawn_league_fetch(app: AppHandle) {
+    // Single-flight: claim the resolve right before spawning. If a resolve is
+    // already in flight, do NOT spawn a duplicate loop — the live one owns the
+    // retry window and its `resolving` flag already tells the UI we're working.
+    {
+        let state = app.state::<AppState>();
+        if !try_begin_resolving(&state.ssot) {
+            return;
+        }
+    }
+    // Publish `resolving = true` to pollers/main window before the first attempt.
+    emit_ssot(&app);
     tauri::async_runtime::spawn(async move {
         let mut backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
         loop {
@@ -249,6 +290,56 @@ mod tests {
             trade_client.league().unwrap(),
             "Mirage",
             "trade client must now resolve to the same league",
+        );
+    }
+
+    /// Single-flight contract: the first caller acquires the resolve right and
+    /// marks `resolving`; a second caller is refused while a resolve is in
+    /// flight, so repeated `refresh_league` clicks can't stack duplicate loops.
+    #[test]
+    fn try_begin_resolving_refuses_second_caller_while_resolving() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        assert!(!ssot.lock().unwrap().resolving, "precondition: not resolving");
+
+        assert!(
+            try_begin_resolving(&ssot),
+            "first caller must acquire the resolve right",
+        );
+        assert!(
+            ssot.lock().unwrap().resolving,
+            "flag must be set after the right is acquired",
+        );
+        assert!(
+            !try_begin_resolving(&ssot),
+            "second caller must be refused while a resolve is in flight",
+        );
+    }
+
+    /// The resolve path clears `resolving` in the same write that sets the
+    /// league: starting from an in-flight snapshot, `write_league` must land the
+    /// league AND drop the flag, so a poller never sees league-set + resolving.
+    #[test]
+    fn write_league_clears_resolving_when_it_sets_the_league() {
+        let ssot = Mutex::new(AppSsotSnapshot {
+            resolving: true,
+            ..Default::default()
+        });
+        let trade_client = TradeApiClient::new();
+        // Precondition: resolve in flight, league not yet written.
+        assert!(ssot.lock().unwrap().resolving);
+        assert_eq!(ssot.lock().unwrap().league.name, None);
+
+        write_league(&ssot, &trade_client, "Mirage".to_string());
+
+        let guard = ssot.lock().unwrap();
+        assert_eq!(
+            guard.league.name,
+            Some("Mirage".to_string()),
+            "league must be written",
+        );
+        assert!(
+            !guard.resolving,
+            "resolving must be cleared in the same write that sets the league",
         );
     }
 

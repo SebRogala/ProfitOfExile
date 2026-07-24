@@ -29,15 +29,15 @@
 	// --- League (SSOT) ---
 	// League is owned by the Rust SSOT (see stores/ssot.svelte). This surface only
 	// displays the resolved value and asks Rust to re-resolve; it never defaults one.
-	let refreshingLeague = $state(false);
+	// The in-flight state is driven off `ssot.resolving` (the polled SSOT flag),
+	// NOT a local sub-frame flag: `refresh_league` returns immediately while the
+	// bounded-retry loop runs, so a local flag would flash for one frame and then
+	// lie about a still-retrying resolve. A repeat click is a guarded no-op in Rust.
 	async function refreshLeague() {
-		refreshingLeague = true;
 		try {
 			await invoke('refresh_league');
 		} catch (e) {
 			console.warn('[settings] refresh_league failed:', e);
-		} finally {
-			refreshingLeague = false;
 		}
 	}
 
@@ -521,10 +521,16 @@
 
 			<div class="setting-row">
 				<span class="setting-label">League</span>
-				<span class="setting-value">{ssot.league ?? 'Not detected'}</span>
-				<Button onclick={refreshLeague} disabled={refreshingLeague}>
-					{refreshingLeague ? 'Refreshing…' : 'Refresh'}
-				</Button>
+				{#if ssot.resolving}
+					<span class="setting-value muted">Resolving…</span>
+					<Button onclick={refreshLeague} disabled>Refresh</Button>
+				{:else if ssot.league == null}
+					<span class="setting-value muted">Not detected — server may be unreachable</span>
+					<Button onclick={refreshLeague}>Refresh</Button>
+				{:else}
+					<span class="setting-value">{ssot.league}</span>
+					<Button onclick={refreshLeague}>Refresh</Button>
+				{/if}
 			</div>
 
 		</section>
