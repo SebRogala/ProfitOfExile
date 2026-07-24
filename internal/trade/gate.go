@@ -197,7 +197,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 
 	// Build result, cache it, persist to DB, deliver to all fan-out waiters.
 	result := BuildResult(req.Gem, req.Variant, g.client.leagueName, *searchResp, listings, g.divineRate())
-	g.cache.Set(key, result)
+	g.cache.For(g.scope).Set(key, result)
 	if g.repo != nil {
 		go func() {
 			if err := g.repo.InsertTradeLookup(context.Background(), g.scope, result, "user"); err != nil {

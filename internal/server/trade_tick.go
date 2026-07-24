@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -30,7 +31,7 @@ var tradeTickTierRank = map[string]int{
 // filter and submit it to the trade gate. The submit outcome is logged
 // inside trade.SubmitRefresh; there is no reply path here since Mercure
 // is fire-and-forget.
-func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, raw []byte) {
+func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCache, labCache *lab.Cache, scope league.Scope, raw []byte) {
 	var p TradeTickPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		slog.Warn("trade tick: invalid payload", "error", err)
@@ -63,7 +64,7 @@ func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCa
 	var tierSet map[string]bool
 	if minTierRank > 0 {
 		tierSet = make(map[string]bool)
-		signals := labCache.GemSignals()
+		signals := labCache.For(scope).GemSignals()
 		for _, s := range signals {
 			if s.Variant != p.Variant {
 				continue
@@ -86,7 +87,7 @@ func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCa
 		}
 	}
 
-	key, found := cache.OldestStale(minAge, func(key string, _ *trade.TradeLookupResult) bool {
+	key, found := cache.For(scope).OldestStale(minAge, func(key string, _ *trade.TradeLookupResult) bool {
 		gem, variant := trade.ParseCacheKey(key)
 		if variant != p.Variant {
 			return false

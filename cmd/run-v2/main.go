@@ -39,7 +39,7 @@ func main() {
 	}
 
 	repo := lab.NewRepository(pool)
-	cache := lab.NewCache()
+	cache := lab.NewCache(scope)
 	throttler := lab.NewThrottler("", "", 1*time.Second, cache)
 	analyzer := lab.NewAnalyzer(repo, throttler, cache, nil)
 

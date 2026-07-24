@@ -54,7 +54,7 @@ func validSubmitBody(gem, variant string) string {
 }
 
 func TestTradeSubmit_ValidBody(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	router := submitRouter(cache, nil)
 
 	body := validSubmitBody("Vaal Grace of Phasing", "21/20")
@@ -100,7 +100,7 @@ func TestTradeSubmit_ValidBody(t *testing.T) {
 }
 
 func TestTradeSubmit_MissingFields(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	router := submitRouter(cache, nil)
 
 	tests := []struct {
@@ -169,7 +169,7 @@ func TestTradeSubmit_MissingFields(t *testing.T) {
 }
 
 func TestTradeSubmit_InvalidJSON(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	router := submitRouter(cache, nil)
 
 	tests := []struct {
@@ -233,7 +233,7 @@ func TestTradeSubmit_CacheKeyMatchesCompareEnrichment(t *testing.T) {
 	//
 	// The gem field in the submitted result must match the TransfiguredName
 	// from lab analysis. This test confirms the cache key alignment.
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	router := submitRouter(cache, nil)
 
 	// Submit a trade result for a transfigured gem.
@@ -272,7 +272,7 @@ func TestTradeSubmit_CacheKeyMatchesCompareEnrichment(t *testing.T) {
 }
 
 func TestTradeSubmit_OverwritesExistingCacheEntry(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	router := submitRouter(cache, nil)
 
 	gem := "Empower Support"
@@ -337,7 +337,7 @@ func TestTradeSubmit_OverwritesExistingCacheEntry(t *testing.T) {
 }
 
 func TestTradeSubmit_MultipleGems(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	router := submitRouter(cache, nil)
 
 	gems := []struct {

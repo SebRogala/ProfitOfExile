@@ -2,17 +2,28 @@ package lab
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"profitofexile/internal/league"
 )
 
 // Cache holds pre-computed analysis results in memory for instant API serving.
 // Thread-safe via sync.RWMutex — writers take a write lock, readers take a read lock.
 // Readers get a snapshot of the slice header; the underlying data is treated as
 // immutable once stored.
+//
+// A Cache is bound to exactly one league for its whole lifetime. scope is set
+// at construction from the process-active league and never changes (scope is
+// process-fixed until POE-121). Every read and write must go through For, which
+// rejects access under any other league so a warm cache cannot serve one
+// league's rows under another league's scope. See docs/adr/009.
 type Cache struct {
+	scope league.Scope
+
 	mu          sync.RWMutex
 	transfigure  []TransfigureResult
 	fontSafe     []FontResult
@@ -40,9 +51,24 @@ type Cache struct {
 	gemSignals    []GemSignal
 }
 
-// NewCache creates an empty analysis cache.
-func NewCache() *Cache {
-	return &Cache{}
+// NewCache creates an empty analysis cache bound to scope. The cache serves and
+// stores only this league's data for its lifetime.
+func NewCache(scope league.Scope) *Cache {
+	return &Cache{scope: scope}
+}
+
+// For returns the cache for access under scope. The cache is bound to a single
+// league (scope is process-fixed until POE-121), so a read or write under any
+// other league is a tenancy violation and a programming error. For rejects it
+// loudly rather than let a warm cache serve one league's rows under another
+// league's scope — the leak that would otherwise appear once POE-121 enables
+// league switching, because handlers read cache-first and only fall through to
+// the now league-scoped repository on a cache miss.
+func (c *Cache) For(scope league.Scope) *Cache {
+	if scope.ID() != c.scope.ID() {
+		panic(fmt.Sprintf("lab: cache bound to league %q accessed under league %q", c.scope.ID(), scope.ID()))
+	}
+	return c
 }
 
 // SetTransfigure replaces the cached transfigure results.

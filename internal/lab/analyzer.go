@@ -64,7 +64,7 @@ func (a *Analyzer) RunTransfigure(ctx context.Context, scope league.Scope) error
 	}
 
 	if a.cache != nil {
-		a.cache.SetTransfigure(results)
+		a.cache.For(scope).SetTransfigure(results)
 	}
 
 	a.logger.Info("transfigure analysis complete",
@@ -97,7 +97,7 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 	// Load gem features: try cache first, fall back to DB.
 	var features []GemFeature
 	if a.cache != nil {
-		features = a.cache.GemFeatures()
+		features = a.cache.For(scope).GemFeatures()
 	}
 	if len(features) == 0 {
 		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
@@ -126,7 +126,7 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 	}
 
 	if a.cache != nil {
-		a.cache.SetFont(analysis)
+		a.cache.For(scope).SetFont(analysis)
 	}
 
 	a.logger.Info("font analysis complete",
@@ -161,7 +161,7 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 	// Load gem features: try cache first, fall back to DB.
 	var features []GemFeature
 	if a.cache != nil {
-		features = a.cache.GemFeatures()
+		features = a.cache.For(scope).GemFeatures()
 	}
 	if len(features) == 0 {
 		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
@@ -186,7 +186,7 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 	}
 
 	if a.cache != nil {
-		a.cache.SetDedication(analysis)
+		a.cache.For(scope).SetDedication(analysis)
 
 		// Also populate corrupted gem name caches for autocomplete.
 		// Preserve the existing cached slice for any pool whose query fails — a
@@ -194,14 +194,14 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 		skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, false, 1000)
 		if err != nil {
 			a.logger.Warn("dedication: failed to load corrupted skill gem names", "error", err)
-			skillNames = a.cache.CorruptedGemNames(false)
+			skillNames = a.cache.For(scope).CorruptedGemNames(false)
 		}
 		transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, true, 1000)
 		if err != nil {
 			a.logger.Warn("dedication: failed to load corrupted transfigured gem names", "error", err)
-			transfiguredNames = a.cache.CorruptedGemNames(true)
+			transfiguredNames = a.cache.For(scope).CorruptedGemNames(true)
 		}
-		a.cache.SetCorruptedGemNames(skillNames, transfiguredNames)
+		a.cache.For(scope).SetCorruptedGemNames(skillNames, transfiguredNames)
 	}
 
 	a.logger.Info("dedication analysis complete",
@@ -245,8 +245,8 @@ func (a *Analyzer) RunQuality(ctx context.Context, scope league.Scope) error {
 	}
 
 	if a.cache != nil {
-		a.cache.SetQuality(results)
-		a.cache.SetGCPPrice(gcpPrice)
+		a.cache.For(scope).SetQuality(results)
+		a.cache.For(scope).SetGCPPrice(gcpPrice)
 	}
 
 	a.logger.Info("quality analysis complete",
@@ -292,21 +292,27 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 		return err
 	}
 	if a.cache != nil {
-		a.cache.SetMarketContext(&mc)
+		a.cache.For(scope).SetMarketContext(&mc)
 	}
 
 	// Normalize history using temporal coefficients before computing features.
 	depthMap := PrecomputeMarketDepth(gems, mc)
 	normalizedHistory := NormalizeHistoryDepthGated(history, mc, depthMap)
 
-	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, a.tradeCache)
+	// Scope the trade cache so enrichment reads only the active league's
+	// lookups. nil-safe: ComputeGemFeatures skips trade enrichment when nil.
+	var scopedTradeCache *trade.TradeCache
+	if a.tradeCache != nil {
+		scopedTradeCache = a.tradeCache.For(scope)
+	}
+	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, scopedTradeCache)
 	inserted, err := a.repo.SaveGemFeatures(ctx, scope, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)
 		return err
 	}
 	if a.cache != nil {
-		a.cache.SetGemFeatures(features)
+		a.cache.For(scope).SetGemFeatures(features)
 	}
 	a.logger.Info("v2 gem features computed",
 		"snapTime", snapTime,
@@ -333,7 +339,7 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 		return err
 	}
 	if a.cache != nil {
-		a.cache.SetGemSignals(signals)
+		a.cache.For(scope).SetGemSignals(signals)
 	}
 	a.logger.Info("v2 gem signals computed",
 		"snapTime", snapTime,

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -673,7 +674,7 @@ func TestComputeGemFeatures_MarketRegime_Boundary(t *testing.T) {
 
 // newTestTradeCache creates a TradeCache pre-populated with the given entries.
 func newTestTradeCache(entries map[string]*trade.TradeLookupResult) *trade.TradeCache {
-	tc := trade.NewTradeCache(100)
+	tc := trade.NewTradeCache(100, league.Historical("Mirage"))
 	for k, v := range entries {
 		tc.Set(k, v)
 	}

@@ -305,7 +305,7 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, scope league.Sco
 		return nil
 	}
 
-	tc := trade.NewTradeCache(len(results))
+	tc := trade.NewTradeCache(len(results), scope)
 	tc.Warm(results)
 	return tc
 }

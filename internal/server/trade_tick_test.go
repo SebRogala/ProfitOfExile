@@ -25,7 +25,7 @@ func newTickTestGate() *trade.Gate {
 	}
 	limiter := trade.NewRateLimiter(cfg)
 	client := trade.NewClient(cfg)
-	cache := trade.NewTradeCache(cfg.CacheMaxEntries)
+	cache := trade.NewTradeCache(cfg.CacheMaxEntries, league.Historical("Mirage"))
 	return trade.NewGate(cfg, league.Historical("Mirage"), limiter, client, nil, cache, func() float64 { return 200.0 }, nil)
 }
 
@@ -52,10 +52,10 @@ func drainLow(gate *trade.Gate) (*trade.GateRequest, bool) {
 
 func TestHandleTradeTick_InvalidJSON_NoSubmit(t *testing.T) {
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
-	HandleTradeTick(context.Background(), gate, cache, labCache, []byte("not json"))
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"), []byte("not json"))
 
 	if _, ok := drainLow(gate); ok {
 		t.Fatal("invalid payload must not enqueue a refresh")
@@ -64,13 +64,13 @@ func TestHandleTradeTick_InvalidJSON_NoSubmit(t *testing.T) {
 
 func TestHandleTradeTick_UnknownMinTier_NoSubmit(t *testing.T) {
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	// Even with a stale candidate present, an unknown minTier must short-circuit.
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
-	HandleTradeTick(context.Background(), gate, cache, labCache,
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minTier":"NOPE","minAge":"1m"}`))
 
 	if _, ok := drainLow(gate); ok {
@@ -80,10 +80,10 @@ func TestHandleTradeTick_UnknownMinTier_NoSubmit(t *testing.T) {
 
 func TestHandleTradeTick_EmptyCache_NoSubmit(t *testing.T) {
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
-	HandleTradeTick(context.Background(), gate, cache, labCache,
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minAge":"1m"}`))
 
 	if _, ok := drainLow(gate); ok {
@@ -93,8 +93,8 @@ func TestHandleTradeTick_EmptyCache_NoSubmit(t *testing.T) {
 
 func TestHandleTradeTick_StaleTierMatch_Submits(t *testing.T) {
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	// Cache one stale transfigured gem matching variant 20/20.
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
@@ -112,7 +112,7 @@ func TestHandleTradeTick_StaleTierMatch_Submits(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache,
+		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"),
 			[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`))
 		close(done)
 	}()
@@ -146,13 +146,13 @@ func TestHandleTradeTick_StaleTierMatch_Submits(t *testing.T) {
 func TestHandleTradeTick_BaseGemFilter_NoSubmit(t *testing.T) {
 	// Non-transfigured gems (no " of " in the name) must never be picked.
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	// Seed a stale base gem — should be ignored.
 	seedStaleEntry(cache, "Arc", "20/20")
 
-	HandleTradeTick(context.Background(), gate, cache, labCache,
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minAge":"1m"}`))
 
 	if _, ok := drainLow(gate); ok {
@@ -164,8 +164,8 @@ func TestHandleTradeTick_EmptyTierSet_NoSubmit(t *testing.T) {
 	// minTier is set but no signal for the variant qualifies — the early return
 	// at "len(tierSet) == 0" must fire without consulting the cache predicate.
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	// Stale entry that WOULD match if tier filter passed — proves we returned
 	// early instead of falling through.
@@ -176,7 +176,7 @@ func TestHandleTradeTick_EmptyTierSet_NoSubmit(t *testing.T) {
 		{Name: "Arc of Surging", Variant: "1/0", Tier: "HIGH"},
 	})
 
-	HandleTradeTick(context.Background(), gate, cache, labCache,
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minTier":"MID-HIGH","minAge":"1m"}`))
 
 	if _, ok := drainLow(gate); ok {
@@ -186,12 +186,12 @@ func TestHandleTradeTick_EmptyTierSet_NoSubmit(t *testing.T) {
 
 func TestHandleTradeTick_InvalidMinAge_NoSubmit(t *testing.T) {
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
-	HandleTradeTick(context.Background(), gate, cache, labCache,
+	HandleTradeTick(context.Background(), gate, cache, labCache, league.Historical("Mirage"),
 		[]byte(`{"variant":"20/20","minAge":"notaduration"}`))
 
 	if _, ok := drainLow(gate); ok {
@@ -202,8 +202,8 @@ func TestHandleTradeTick_InvalidMinAge_NoSubmit(t *testing.T) {
 func TestHandleTradeTick_DefaultsToTwentyTwenty_Submits(t *testing.T) {
 	// Payload omits variant; handler must default to "20/20".
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	seedStaleEntry(cache, "Arc of Surging", "20/20")
 
@@ -212,7 +212,7 @@ func TestHandleTradeTick_DefaultsToTwentyTwenty_Submits(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache, []byte(`{"minAge":"1m"}`))
+		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"), []byte(`{"minAge":"1m"}`))
 		close(done)
 	}()
 
@@ -237,8 +237,8 @@ func TestHandleTradeTick_NoTierFilter_PicksAnyTransfigured(t *testing.T) {
 	// minTier omitted: the tierSet branch is skipped entirely; any stale
 	// transfigured gem for the variant is picked.
 	gate := newTickTestGate()
-	cache := trade.NewTradeCache(10)
-	labCache := lab.NewCache()
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
+	labCache := lab.NewCache(league.Historical("Mirage"))
 
 	seedStaleEntry(cache, "Frost Blades of Katabasis", "20/20")
 	// Deliberately leave labCache empty — proves the tierSet==nil path doesn't
@@ -249,7 +249,7 @@ func TestHandleTradeTick_NoTierFilter_PicksAnyTransfigured(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		HandleTradeTick(ctx, gate, cache, labCache,
+		HandleTradeTick(ctx, gate, cache, labCache, league.Historical("Mirage"),
 			[]byte(`{"variant":"20/20","minAge":"1m"}`))
 		close(done)
 	}()

@@ -1,14 +1,23 @@
 package trade
 
 import (
+	"fmt"
 	"sync"
 	"time"
+
+	"profitofexile/internal/league"
 )
 
 // TradeCache is a concurrency-safe LRU cache for trade lookup results.
 // All operations acquire a write lock because even Get promotes the
 // accessed entry (LRU touch), so sync.RWMutex would not help.
+//
+// A TradeCache is bound to exactly one league for its whole lifetime. scope is
+// set at construction and never changes (scope is process-fixed until POE-121).
+// Every access must go through For, which rejects use under any other league so
+// a warm cache cannot serve one league's lookups under another league's scope.
 type TradeCache struct {
+	scope   league.Scope
 	mu      sync.Mutex
 	entries map[string]*cacheEntry
 	order   []string // LRU order: oldest at [0], newest at end
@@ -20,13 +29,27 @@ type cacheEntry struct {
 }
 
 // NewTradeCache creates an LRU cache that evicts the least-recently-used
-// entry once maxSize is reached.
-func NewTradeCache(maxSize int) *TradeCache {
+// entry once maxSize is reached. The cache is bound to scope and serves and
+// stores only this league's lookups for its lifetime.
+func NewTradeCache(maxSize int, scope league.Scope) *TradeCache {
 	return &TradeCache{
+		scope:   scope,
 		entries: make(map[string]*cacheEntry, maxSize),
 		order:   make([]string, 0, maxSize),
 		maxSize: maxSize,
 	}
+}
+
+// For returns the cache for access under scope. The cache is bound to a single
+// league (scope is process-fixed until POE-121), so a read or write under any
+// other league is a tenancy violation and a programming error. For rejects it
+// loudly rather than let a warm cache serve one league's lookups under another
+// league's scope.
+func (c *TradeCache) For(scope league.Scope) *TradeCache {
+	if scope.ID() != c.scope.ID() {
+		panic(fmt.Sprintf("trade: cache bound to league %q accessed under league %q", c.scope.ID(), scope.ID()))
+	}
+	return c
 }
 
 // Get retrieves a cached result and promotes the key to most-recently-used.

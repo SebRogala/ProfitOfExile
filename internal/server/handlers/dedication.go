@@ -27,7 +27,7 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			analysis := cache.Dedication()
+			analysis := cache.For(scope).Dedication()
 			if len(analysis.Skills) > 0 || len(analysis.Transfigured) > 0 {
 				skillResults = analysis.Skills
 				transfiguredResults = analysis.Transfigured
@@ -86,7 +86,7 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		// Extract entry fee from offering timing cache.
 		var entryFee float64
 		if cache != nil {
-			if offeringJSON := cache.OfferingTiming(); len(offeringJSON) > 0 {
+			if offeringJSON := cache.For(scope).OfferingTiming(); len(offeringJSON) > 0 {
 				var offerings []struct {
 					Name         string  `json:"name"`
 					CurrentPrice float64 `json:"currentPrice"`
