@@ -15,10 +15,18 @@ import (
 // TradeTickPayload is the wire format for poe/collector/trade-tick events.
 // Variant defaults to "20/20"; MinAge defaults to 5 minutes; MinTier is
 // optional and limits the pick to gems classified at or above the named tier.
+//
+// League and Revision carry the collector's process-active league stamp so the
+// tick's origin travels end to end. The subscriber validates them against the
+// server's active scope (via LeagueEventGuard) before dispatching a tick, so a
+// tick published for a different league or a bumped revision is dropped rather
+// than driving a live GGG lookup under the wrong league.
 type TradeTickPayload struct {
-	Variant string `json:"variant"`
-	MinTier string `json:"minTier"`
-	MinAge  string `json:"minAge"`
+	Variant  string `json:"variant"`
+	MinTier  string `json:"minTier"`
+	MinAge   string `json:"minAge"`
+	League   string `json:"league"`
+	Revision int64  `json:"leagueRevision"`
 }
 
 // tradeTickTierRank maps tier names to numeric rank for >= comparison.

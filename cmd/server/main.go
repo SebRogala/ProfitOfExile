@@ -139,6 +139,49 @@ func main() {
 	}
 	slog.Info("active league resolved", "league", scope.ID(), "revision", scope.Revision())
 
+	// EXPECTED_LEAGUE is an optional deploy-time assertion: if the operator
+	// pins the league they believe this process should serve, a mismatch with
+	// the runtime-resolved scope is a misconfiguration that must not reach
+	// readiness (e.g. pointing a Standard-configured deploy at a Mirage DB).
+	if expected := os.Getenv("EXPECTED_LEAGUE"); expected != "" && expected != scope.ID() {
+		slog.Error("EXPECTED_LEAGUE does not match the resolved active league",
+			"expected", expected, "resolved", scope.ID())
+		fmt.Fprintf(os.Stderr, "EXPECTED_LEAGUE=%q but runtime resolved league %q; refusing to start.\n", expected, scope.ID())
+		os.Exit(1)
+	}
+
+	// Server fence: the server is a writer, not a read-only consumer — it owns
+	// 9 of the 12 league-scoped tables (written on every gem event and on
+	// startup) and makes live GGG trade calls. Two servers on the same league
+	// double-write and double-call GGG (the 1616s-ban failure mode), so hold a
+	// process-lifetime advisory lock on a key distinct from the collector's
+	// RuntimeLockKey — co-located server+collector must fence independently, not
+	// deadlock on a shared key. On contention the peer is the legitimate owner:
+	// refuse readiness and exit non-zero before binding routes or subscribing.
+	//
+	// The fence parks one pooled connection for the process lifetime. With
+	// POE_DB_MAX_CONNS=1 that starves every other query, so require at least two
+	// connections before taking the lock.
+	if maxConns := pool.Config().MaxConns; maxConns < 2 {
+		slog.Error("server fence requires at least 2 DB connections", "max_conns", maxConns)
+		fmt.Fprintf(os.Stderr, "POE_DB_MAX_CONNS must be >= 2: the server fence holds one connection for the process lifetime (max_conns=%d).\n", maxConns)
+		os.Exit(1)
+	}
+
+	serverLock, err := league.AcquireProcessLock(ctx, pool, league.ServerLockKey())
+	if err != nil {
+		if errors.Is(err, league.ErrLockHeld) {
+			slog.Error("another server already holds the league fence; refusing to start", "league", scope.ID())
+			fmt.Fprintln(os.Stderr, "Another server process already holds the server fence. Refusing to start a second writer for the same database.")
+			os.Exit(1)
+		}
+		slog.Error("failed to acquire server fence", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to acquire the server advisory lock. Check database connectivity.")
+		os.Exit(1)
+	}
+	defer serverLock.Release()
+	slog.Info("server fence acquired", "league", scope.ID())
+
 	frontendFS, err := fs.Sub(frontendEmbed, "frontend_build")
 	if err != nil {
 		slog.Error("failed to load embedded frontend", "error", err)
@@ -277,6 +320,7 @@ func main() {
 		Analyzer:             analyzer,
 		AllowedOrigins:       corsOrigins(),
 		DeviceRepo:           deviceRepo,
+		FenceChecker:         serverLock,
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)
@@ -394,6 +438,10 @@ func main() {
 		// publishing trade-ticks but the server has trade disabled. Repeated
 		// every-tick warnings would just be noise.
 		var tradeDisabledWarn sync.Once
+		// Reject collector events stamped for a different league or a bumped
+		// revision — a stale publisher lingering across a rolling deploy must not
+		// have its data applied as current. Rejections are counted and logged.
+		eventGuard := server.NewLeagueEventGuard(scope)
 		sub := server.NewMercureSubscriber(mercureURL, topics, mercureSubKey, func(ev server.MercureEvent) {
 			// Operator-triggered full recompute (from cmd/recalculate). Use parent
 			// ctx so the pipeline survives a subscriber reconnect mid-run.
@@ -413,7 +461,16 @@ func main() {
 					})
 					return
 				}
+				if !eventGuard.AcceptRaw([]byte(ev.Data)) {
+					return
+				}
 				go server.HandleTradeTick(ctx, tradeGate, tradeCache, labCache, scope, []byte(ev.Data))
+				return
+			}
+
+			// Reject collector data events stamped for a non-active league or
+			// revision before they are processed as current data.
+			if !eventGuard.AcceptRaw([]byte(ev.Data)) {
 				return
 			}
 

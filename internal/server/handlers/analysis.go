@@ -751,6 +751,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		if cache == nil {
 			if err := json.NewEncoder(w).Encode(map[string]any{
 				"cached":      false,
+				"league":      scope.ID(),
 				"transfigure": 0,
 				"fontSafe":    0,
 				"fontPremium": 0,
