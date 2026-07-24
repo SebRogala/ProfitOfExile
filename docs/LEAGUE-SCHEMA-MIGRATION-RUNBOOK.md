@@ -30,6 +30,29 @@ Do not use generic down migrations against restored production data. Recovery
 is restore of the pre-deploy backup, then investigation and a new forward
 migration; it is not `migrate down`.
 
+## Merging the stack (POE-119 + POE-120 + POE-121)
+
+POE-119, POE-120, and POE-121 are developed as **stacked branches**
+(120 branches off 119, 121 off 120) and must reach `main` as **one atomic
+deploy** — every push to `main` auto-deploys to production.
+
+- **Do not merge POE-119 to `main` on its own.** Alone it makes `league`
+  `NOT NULL` on twelve tables while the still-deployed pre-POE-120 writers omit
+  it, so production writes begin failing on the next collector tick.
+- Land them together. Recommended: collapse POE-120 and POE-121 onto the
+  POE-119 branch (rebase each onto its parent so the branch carries all three),
+  then open and merge **one** PR to `main`. That single merge is the single
+  deploy the Gate above governs.
+- The pre-existing POE-119 PR predates the session commits that added the
+  foreign keys, retention removal (ADR-010), and `Scope.Validate` — rebase/refresh
+  it before relying on it.
+- Deploys must be **stop-then-start**: POE-121's boot fences (`RuntimeLockKey`
+  for the collector, `ServerLockKey` for the server) refuse readiness while a
+  previous instance still holds the lock. The bounded-retry fence waits ~15 s for
+  a handoff; a start-before-stop deploy that exceeds that window crashloops the
+  new instance until the old one releases. Confirm the orchestrator stops the old
+  container before starting the new one.
+
 ## Rehearsal
 
 Use an isolated, disposable database restored from a production backup. Never
@@ -111,6 +134,53 @@ manifest is complete only with all twelve rows:
 5. If any gate or check fails, keep both services stopped and restore the
    pre-deploy backup. Do not attempt a generic down migration on production
    data.
+
+## Interim: changing the active league (until POE-127)
+
+The active league lives in `runtime_config` in the database — there is no
+`LEAGUE` env var anymore (POE-121 removed it; `EXPECTED_LEAGUE` only *asserts*,
+it does not select). Until POE-127 delivers the rollover CLI, changing leagues is
+the manual procedure below. Activation is **restart-to-activate**: the running
+collector and server hold their resolved league for the process lifetime, so the
+DB change takes effect only after a restart.
+
+Run this while the **collector is stopped** (so no writes land under the old
+league and the runtime advisory lock is free), then restart. All statements in
+one transaction:
+
+```sql
+BEGIN;
+-- 1. Register the new league (starts_at optional; set collection_state directly to 'collecting').
+INSERT INTO leagues (id, display_name, collection_state, prepared_at, activated_at)
+VALUES ('<NewLeagueId>', '<Display Name>', 'collecting', NOW(), NOW());
+
+-- 2. Point the runtime at it and bump the revision (the revision bump is what
+--    lets a running process detect the change; do not skip it).
+UPDATE runtime_config
+SET active_league = '<NewLeagueId>', revision = revision + 1, updated_at = NOW()
+WHERE singleton = TRUE;
+
+-- 3. Archive the outgoing league. Its data is retained and stays queryable
+--    (retention was removed, ADR-010); archiving is a state flip, not a delete.
+UPDATE leagues
+SET collection_state = 'archived', archived_at = NOW()
+WHERE id = '<OldLeagueId>' AND collection_state <> 'archived';
+COMMIT;
+```
+
+Then:
+
+1. If `EXPECTED_LEAGUE` is set in the server/collector deploy config, update it to
+   `<NewLeagueId>` (or unset it) — a stale value makes both services refuse
+   readiness.
+2. Restart the server, then the collector (server applies migrations and binds
+   first; the collector must not start before the server is healthy). Each
+   resolves the new league at boot and re-acquires its fence.
+3. Verify: `/health` and `/latest` report `<NewLeagueId>`; a scoped write/read
+   lands under the new league; the server rejects any lingering old-league event.
+
+`<NewLeagueId>` is the exact upstream league identifier (the GGG league name), the
+same string used in the poe.ninja / trade requests — not a display alias.
 
 ## Evidence to retain
 
