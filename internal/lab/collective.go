@@ -151,13 +151,23 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 	var results []CollectiveResult
 
 	for _, tr := range transfigure {
-		// Only include profitable, confident results.
-		if tr.ROI <= 0 || tr.Confidence != "OK" {
+		noBase := tr.Confidence == ConfidenceNoBase
+
+		// Only include profitable, confident results — except NO_BASE gems, whose
+		// ROI is unknown rather than zero. Those are kept on their own price alone
+		// so a gem the market prices stays visible (the Font EV analyzer already
+		// shows it), with the missing base surfaced via Confidence.
+		if noBase {
+			if tr.TransfiguredPrice <= 0 {
+				continue
+			}
+		} else if tr.ROI <= 0 || tr.Confidence != "OK" {
 			continue
 		}
 
-		// Budget filter on base price.
-		if budget > 0 && tr.BasePrice > budget {
+		// Budget filter on base price. A NO_BASE gem has no known cost basis, so it
+		// cannot be shown to fit a budget — drop it whenever a budget is in play.
+		if budget > 0 && (noBase || tr.BasePrice > budget) {
 			continue
 		}
 
@@ -229,14 +239,22 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 		results = append(results, cr)
 	}
 
-	// Sort by chosen metric descending.
+	// Sort by chosen metric descending. Ties break on transfigured price so that
+	// NO_BASE gems — all of which score 0 on any ROI metric — still rank by value
+	// among themselves instead of in map order.
 	if sortBy == SortPct {
 		sort.Slice(results, func(i, j int) bool {
-			return results[i].WeightedROIPct > results[j].WeightedROIPct
+			if results[i].WeightedROIPct != results[j].WeightedROIPct {
+				return results[i].WeightedROIPct > results[j].WeightedROIPct
+			}
+			return results[i].TransfiguredPrice > results[j].TransfiguredPrice
 		})
 	} else {
 		sort.Slice(results, func(i, j int) bool {
-			return results[i].WeightedROI > results[j].WeightedROI
+			if results[i].WeightedROI != results[j].WeightedROI {
+				return results[i].WeightedROI > results[j].WeightedROI
+			}
+			return results[i].TransfiguredPrice > results[j].TransfiguredPrice
 		})
 	}
 
@@ -277,8 +295,13 @@ func BuildCompareResults(
 	type colorVariantKey struct{ color, variant string }
 	cheapestBase := make(map[colorVariantKey]float64)
 	for _, t := range transfigure {
+		// NO_BASE rows carry BasePrice 0 (unknown, not free) — letting one seed the
+		// map would make every gem of that color/variant look like a free base.
+		if t.BasePrice <= 0 {
+			continue
+		}
 		key := colorVariantKey{t.GemColor, t.Variant}
-		if existing, ok := cheapestBase[key]; !ok || (t.BasePrice > 0 && t.BasePrice < existing) {
+		if existing, ok := cheapestBase[key]; !ok || t.BasePrice < existing {
 			cheapestBase[key] = t.BasePrice
 		}
 	}

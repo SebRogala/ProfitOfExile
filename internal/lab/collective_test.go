@@ -579,3 +579,86 @@ func TestSignalWeight(t *testing.T) {
 		}
 	}
 }
+
+func TestRankCollective_KeepsNoBaseGemWithUnknownROI(t *testing.T) {
+	now := time.Now()
+	// The gem the Font EV analyzer can already price: transfigured price known,
+	// base unpriced. It must not be dropped by the profitability gate.
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Tornado of Elemental Turbulence", Variant: "1",
+			TransfiguredPrice: 20, Confidence: ConfidenceNoBase},
+	}
+
+	results := RankCollective(transfigure, nil, nil, 0, 50, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1 (NO_BASE gem must stay in the rankings)", len(results))
+	}
+	if results[0].Confidence != ConfidenceNoBase {
+		t.Errorf("Confidence = %q, want %q so the UI can mark ROI unknown",
+			results[0].Confidence, ConfidenceNoBase)
+	}
+	if results[0].TransfiguredPrice != 20 {
+		t.Errorf("TransfiguredPrice = %f, want 20", results[0].TransfiguredPrice)
+	}
+}
+
+func TestRankCollective_DropsNoBaseGemWithoutAPrice(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Unpriced Both Ways", Variant: "1", Confidence: ConfidenceNoBase},
+	}
+
+	results := RankCollective(transfigure, nil, nil, 0, 50, "")
+
+	if len(results) != 0 {
+		t.Fatalf("got %d results, want 0 — a gem with neither price is not actionable", len(results))
+	}
+}
+
+func TestRankCollective_BudgetFilterDropsNoBaseGem(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Known Cost", Variant: "20/20", ROI: 20, BasePrice: 10, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Unknown Cost", Variant: "20/20", TransfiguredPrice: 500, Confidence: ConfidenceNoBase},
+	}
+
+	results := RankCollective(transfigure, nil, nil, 50, 50, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1 — an unknown cost basis cannot be shown to fit a budget", len(results))
+	}
+	if results[0].TransfiguredName != "Known Cost" {
+		t.Errorf("got %s, want Known Cost", results[0].TransfiguredName)
+	}
+}
+
+func TestBuildCompareResults_NoBaseRowDoesNotBecomeTheCheapestBase(t *testing.T) {
+	// A NO_BASE row carries BasePrice 0 (unknown). Seeding the per-color cheapest-base
+	// map with it pins that color/variant at 0 forever — no later real price is
+	// "cheaper" — which silently drops the whole cheapest-color-base rule and prices
+	// every gem off its own base instead.
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Unpriced Base Trans", BaseName: "Unpriced Base", Variant: "20/20",
+			GemColor: "RED", TransfiguredPrice: 300, Confidence: ConfidenceNoBase},
+		{TransfiguredName: "Expensive Trans", BaseName: "Expensive Base", Variant: "20/20",
+			GemColor: "RED", BasePrice: 100, TransfiguredPrice: 500, ROI: 400, ROIPct: 400, Confidence: "OK"},
+		{TransfiguredName: "Cheap Trans", BaseName: "Cheap Base", Variant: "20/20",
+			GemColor: "RED", BasePrice: 5, TransfiguredPrice: 200, ROI: 195, ROIPct: 3900, Confidence: "OK"},
+	}
+
+	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil, nil, "20/20")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	// Lab cost basis is the cheapest RED 20/20 base (5c), not this gem's own base (100c).
+	if results[0].BasePrice != 5 {
+		t.Errorf("BasePrice = %f, want 5 (cheapest real color base, unaffected by the NO_BASE row)",
+			results[0].BasePrice)
+	}
+	if results[0].ROI != 495 {
+		t.Errorf("ROI = %f, want 495 — a poisoned 0 base falls back to the 100c own-base ROI of 400",
+			results[0].ROI)
+	}
+}

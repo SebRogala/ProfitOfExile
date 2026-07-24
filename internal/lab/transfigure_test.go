@@ -257,3 +257,61 @@ func TestAnalyzeTransfigure_MultipleTransfiguredPerBase(t *testing.T) {
 		t.Fatalf("got %d results, want 2 (two transfigured variants of one base)", len(results))
 	}
 }
+
+func TestAnalyzeTransfigure_UnpricedBaseKeepsGemWithUnknownROI(t *testing.T) {
+	now := time.Now()
+	// League-start shape: poe.ninja lists the transfigured gem before its base.
+	gems := []GemPrice{
+		{Name: "Tornado of Elemental Turbulence", Variant: "1", Chaos: 20, Listings: 1, IsTransfigured: true, GemColor: "GREEN"},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1 (gem must survive a missing base)", len(results))
+	}
+	r := results[0]
+	if r.Confidence != ConfidenceNoBase {
+		t.Errorf("Confidence = %q, want %q", r.Confidence, ConfidenceNoBase)
+	}
+	if r.TransfiguredPrice != 20 {
+		t.Errorf("TransfiguredPrice = %f, want 20 (the known half of the pair)", r.TransfiguredPrice)
+	}
+	if r.BasePrice != 0 || r.ROI != 0 || r.ROIPct != 0 {
+		t.Errorf("BasePrice/ROI/ROIPct = %f/%f/%f, want 0/0/0 — unknown, not a computed profit",
+			r.BasePrice, r.ROI, r.ROIPct)
+	}
+	if r.BaseName != "Tornado" {
+		t.Errorf("BaseName = %q, want %q (still names the base we could not price)", r.BaseName, "Tornado")
+	}
+	if r.GemColor != "GREEN" {
+		t.Errorf("GemColor = %q, want GREEN", r.GemColor)
+	}
+}
+
+func TestAnalyzeTransfigure_MissingBaseVariantMarkedNoBaseWhileOtherVariantComputes(t *testing.T) {
+	now := time.Now()
+	// Base priced only at 20/20; the transfigured gem trades at both 20/20 and 1.
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "20/20", Chaos: 50, Listings: 100, IsTransfigured: false},
+		{Name: "Spark of Nova", Variant: "20/20", Chaos: 200, Listings: 30, IsTransfigured: true},
+		{Name: "Spark of Nova", Variant: "1", Chaos: 12, Listings: 4, IsTransfigured: true},
+	}
+
+	results := AnalyzeTransfigure(now, gems)
+
+	byVariant := make(map[string]TransfigureResult, len(results))
+	for _, r := range results {
+		byVariant[r.Variant] = r
+	}
+	if len(byVariant) != 2 {
+		t.Fatalf("got variants %v, want both 1 and 20/20", byVariant)
+	}
+	if got := byVariant["20/20"]; got.ROI != 150 || got.Confidence == ConfidenceNoBase {
+		t.Errorf("20/20: ROI = %f, Confidence = %q — want ROI 150 with a real confidence", got.ROI, got.Confidence)
+	}
+	if got := byVariant["1"]; got.Confidence != ConfidenceNoBase || got.TransfiguredPrice != 12 {
+		t.Errorf("1: Confidence = %q, TransfiguredPrice = %f — want %q at 12c",
+			got.Confidence, got.TransfiguredPrice, ConfidenceNoBase)
+	}
+}

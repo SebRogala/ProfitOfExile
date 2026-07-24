@@ -107,7 +107,9 @@
 		}
 		const b = parseInt(budget);
 		if (b > 0) {
-			filtered = filtered.filter((p) => p.basePrice <= b);
+			// NO_BASE gems have no known cost basis (basePrice 0 means unknown, not
+			// free), so they can't be shown to fit a budget — same rule as the server.
+			filtered = filtered.filter((p) => p.confidence !== 'NO_BASE' && p.basePrice <= b);
 			if (b <= 50) sortBy = 'roiPercent';
 		}
 		if (sortBy === 'price') {
@@ -229,7 +231,13 @@
 					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}" class:low-conf={gem.lowConfidence}>{gem.priceTier}</span>
 				</td>
 				<td class="col-num price-val">{gem.transPrice}c</td>
-				<td class="col-num roi-val">{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c</td>
+				<td class="col-num roi-val">
+					{#if gem.confidence === 'NO_BASE'}
+						<Tooltip text="Base gem is not listed on poe.ninja yet, so ROI can't be computed. The gem's own price is real — common right after a league start."><span class="roi-unknown">—</span></Tooltip>
+					{:else}
+						{sortBy === 'riskAdjusted' ? gem.weightedRoi : gem.roi}c
+					{/if}
+				</td>
 				<td class="col-signal">
 					<SignalBadge signal={gem.signal} />
 					{#if gem.sellConfidence}
@@ -260,7 +268,7 @@
 					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
 						<div class="expanded-content">
 							<span class="expanded-meta">
-								Base: {gem.basePrice}c | Trans: {gem.transPrice}c |
+								Base: {gem.confidence === 'NO_BASE' ? 'not listed' : `${gem.basePrice}c`} | Trans: {gem.transPrice}c |
 								Liq: {gem.liquidityTier} |
 								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
 								Sellability: {gem.sellabilityLabel} ({gem.sellability})
@@ -509,6 +517,10 @@
 	.roi-val {
 		color: var(--color-lab-green);
 		font-weight: 700;
+	}
+	.roi-unknown {
+		color: var(--color-lab-text-secondary);
+		font-weight: 400;
 	}
 	.cv-val {
 		color: var(--color-lab-text-secondary);
