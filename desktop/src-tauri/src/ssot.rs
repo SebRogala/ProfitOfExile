@@ -94,11 +94,32 @@ fn write_league(
     trade_client.set_league(name);
 }
 
+/// Trim an incoming league name; return `Some(trimmed)` only when non-empty.
+///
+/// The single fail-closed gate at the mutation seam: a blank/whitespace name is
+/// rejected (`None`) so `set_league` — the advertised user-choice sink — can
+/// never write `Some("")` and defeat the fail-closed contract. Pure so it is
+/// directly unit-testable without an `AppHandle`.
+fn normalize_league(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 /// Dual-write via the app state, then emit the `ssot-changed` nudge.
 ///
-/// Locks are taken and dropped inside `write_league`; `emit_ssot` re-locks
-/// briefly to clone the snapshot. Nothing is held across the emit.
+/// Blank/whitespace names are rejected here (see `normalize_league`) so
+/// fail-closed cannot be defeated at the seam: nothing changed, so neither store
+/// is written and no `ssot-changed` nudge is emitted. Locks are taken and
+/// dropped inside `write_league`; `emit_ssot` re-locks briefly to clone the
+/// snapshot. Nothing is held across the emit.
 fn apply_league(app: &AppHandle, name: String) {
+    let Some(name) = normalize_league(&name) else {
+        return;
+    };
     {
         let state = app.state::<AppState>();
         write_league(&state.ssot, &state.trade_client, name);
@@ -229,6 +250,46 @@ mod tests {
             "Mirage",
             "trade client must now resolve to the same league",
         );
+    }
+
+    /// A blank/whitespace league name is rejected at the seam: `normalize_league`
+    /// returns `None`, so neither store is written and both stay fail-closed.
+    /// Guards the `set_league`/`refresh_league` user-choice sink that skips the
+    /// server-side `parse_league_from_status` filter.
+    #[test]
+    fn blank_league_at_seam_leaves_both_stores_unresolved() {
+        let ssot = Mutex::new(AppSsotSnapshot::default());
+        let trade_client = TradeApiClient::new();
+        // Precondition: both unresolved (fail-closed) before the guarded path.
+        assert_eq!(ssot.lock().unwrap().league.name, None);
+        assert!(trade_client.league().is_err());
+
+        // The guard `apply_league` applies before writing. Whitespace-only.
+        match normalize_league("   ") {
+            None => {} // rejected — no write, exactly what `apply_league` does.
+            Some(n) => write_league(&ssot, &trade_client, n),
+        }
+
+        assert_eq!(
+            ssot.lock().unwrap().league.name,
+            None,
+            "SSOT slice must stay unresolved after a blank set_league",
+        );
+        assert!(
+            trade_client.league().is_err(),
+            "trade client must stay unresolved after a blank set_league",
+        );
+    }
+
+    /// The pure seam gate: whitespace-only trims to empty and is rejected,
+    /// while a padded real name is accepted and trimmed. Locks the exact
+    /// blank-rejection contract `apply_league` relies on.
+    #[test]
+    fn normalize_league_rejects_blank_and_trims_real() {
+        assert_eq!(normalize_league(""), None);
+        assert_eq!(normalize_league("   "), None);
+        assert_eq!(normalize_league("\t\n"), None);
+        assert_eq!(normalize_league("  Settlers  "), Some("Settlers".to_string()));
     }
 
     #[test]
