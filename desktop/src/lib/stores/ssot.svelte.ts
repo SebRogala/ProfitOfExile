@@ -24,6 +24,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
 export interface SsotSnapshot {
 	league: { name: string | null };
+	/** A league resolve is in flight (bounded-retry fetch task running). */
+	resolving?: boolean;
 }
 
 /**
@@ -39,11 +41,16 @@ const POLL_INTERVAL_MS = 3000;
  */
 export const ssot = $state({
 	league: null as string | null,
+	/** True while Rust is resolving the league (drives the Settings "Resolving…"
+	 *  state and neutralises the Refresh button). Defaults false. */
+	resolving: false,
 });
 
-/** Map the Rust snapshot shape (`snap.league.name`) into the flat store field. */
+/** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`) into the
+ *  flat store fields. Missing/malformed fields fail closed (null / false). */
 export function applySnapshot(snap: SsotSnapshot): void {
 	ssot.league = snap.league?.name ?? null;
+	ssot.resolving = snap.resolving ?? false;
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
