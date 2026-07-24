@@ -12,7 +12,10 @@ services:
       - PORT=8080
       - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
-      - LEAGUE=${LEAGUE:-Mirage}
+      # Active league comes from runtime_config in the DB (league.Resolve), not env.
+      # EXPECTED_LEAGUE is an optional deploy assertion: if set, the process refuses
+      # readiness unless the resolved league matches exactly. Leave unset by default.
+      # - EXPECTED_LEAGUE=Mirage
       - TRADE_ENABLED=${TRADE_ENABLED:-false}
       - TRADE_SYNC_WAIT=${TRADE_SYNC_WAIT:-15s}
       - MERCURE_SUBSCRIBER_KEY=${MERCURE_SUBSCRIBER_KEY:-!ChangeThisMercureHubJWTSecretKey!}
@@ -58,7 +61,9 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql://profitofexile:profitofexile@postgres:5432/profitofexile}
       - PORT=8090
-      - LEAGUE=${LEAGUE:-Mirage}
+      # Active league comes from runtime_config in the DB (league.Resolve), not env.
+      # EXPECTED_LEAGUE is an optional deploy assertion (see server service above).
+      # - EXPECTED_LEAGUE=Mirage
       # - NINJA_INTERVAL=15m       # deprecated (POE-22), use NINJA_FALLBACK_INTERVAL. Remove after v1.1.
       # - NINJA_FALLBACK_INTERVAL=30m
       # - NINJA_MAX_AGE=30m
