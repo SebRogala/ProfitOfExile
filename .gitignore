@@ -15,6 +15,10 @@ frontend/build/
 cmd/server/frontend_build/*
 !cmd/server/frontend_build/.gitkeep
 data/
+# Fetched gem icon bytes (copyright + weight) — never commit; the embedded
+# URL map in internal/gemicon/ is the only committed part. Covered by data/
+# above for the default path, but kept explicit in case the dir is relocated.
+data/gem-icons-cache/
 desktop/src-tauri/target/
 desktop/node_modules/
 desktop/.svelte-kit/

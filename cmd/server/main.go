@@ -406,6 +406,9 @@ func main() {
 		AllowedOrigins:       corsOrigins(),
 		DeviceRepo:           deviceRepo,
 		FenceChecker:         serverLock,
+		// PROD: this dir must be a persistent Coolify volume, else every
+		// redeploy starts empty and re-fetches every icon from poewiki.
+		GemIconCacheDir: getEnvDefault("GEM_ICON_CACHE_DIR", "./data/gem-icons-cache"),
 	}
 
 	router := server.NewRouter(pool, frontendFS, routerCfg)

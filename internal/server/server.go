@@ -2,6 +2,7 @@ package server
 
 import (
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/device"
+	"profitofexile/internal/gemicon"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
@@ -72,6 +74,9 @@ type RouterConfig struct {
 	// TODO(POE-118): cancel the writer lifecycle on fence loss so a demoted server
 	// stops writing without waiting for an external restart.
 	FenceChecker handlers.LivenessChecker
+	// GemIconCacheDir is the persistent directory where fetched gem icons are
+	// cached. Empty falls back to gemicon.DefaultCacheDir.
+	GemIconCacheDir string
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -99,6 +104,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	r.Get("/api/health", handlers.Health(pinger, cfg.FenceChecker))
+
+	// Gem icons: public, static, no league scope or auth. Serves both clients
+	// from a persistent on-disk cache of poewiki images.
+	if gemIcons, err := gemicon.New(cfg.GemIconCacheDir); err != nil {
+		slog.Error("gem icon cache init failed; /api/gem-icon disabled", "error", err)
+	} else {
+		r.Get("/api/gem-icon/{name}", gemIcons.Handler())
+	}
 
 	if cfg.Pool != nil {
 		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool, cfg.League))

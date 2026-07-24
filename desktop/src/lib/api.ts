@@ -227,7 +227,7 @@ function deviceHeaders(): Record<string, string> {
  * Returns the API base URL from the Rust backend settings.
  * Called fresh on every request so it picks up server_url changes (e.g. after settings edit).
  */
-function getApiBase(): string {
+export function getApiBase(): string {
 	return (store.status?.server_url || import.meta.env.VITE_SERVER_URL || 'https://profitofexile.localhost') + '/api';
 }
 
