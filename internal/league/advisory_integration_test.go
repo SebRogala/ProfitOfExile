@@ -5,6 +5,7 @@ package league
 import (
 	"context"
 	"errors"
+	"hash/fnv"
 	"os"
 	"testing"
 
@@ -12,6 +13,21 @@ import (
 
 	"profitofexile/internal/db"
 )
+
+// testLockKey derives a deterministic, test-unique advisory-lock key from the
+// running test's name. These tests exercise the ProcessLock mechanism, not any
+// particular production fence, so they must NOT key on ServerLockKey /
+// RuntimeLockKey / DataLockKey / AdministrationLockKey: a live dev server holds
+// ServerLockKey on the shared dev DB, which would make an acquire here fail with
+// ErrLockHeld. A name-derived key cannot alias any live process fence (distinct
+// hash prefix from lockKey), so these pass even while the dev server is up.
+func testLockKey(t *testing.T) int64 {
+	t.Helper()
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("profitofexile/league/advisory_integration_test/"))
+	_, _ = h.Write([]byte(t.Name()))
+	return int64(h.Sum64() & (1<<63 - 1))
+}
 
 // newTestPool opens an isolated pool against DATABASE_URL. Two calls yield two
 // pools whose connections are distinct Postgres sessions, which is what an
@@ -48,7 +64,7 @@ func TestProcessLockExcludesSecondSessionUntilReleased(t *testing.T) {
 	requireDatabase(t)
 	ctx := context.Background()
 
-	key := ServerLockKey()
+	key := testLockKey(t)
 
 	poolA := newTestPool(t, os.Getenv("DATABASE_URL"))
 	poolB := newTestPool(t, os.Getenv("DATABASE_URL"))
@@ -80,8 +96,9 @@ func TestReleaseIsIdempotent(t *testing.T) {
 	requireDatabase(t)
 	ctx := context.Background()
 
+	key := testLockKey(t)
 	pool := newTestPool(t, os.Getenv("DATABASE_URL"))
-	lock, err := AcquireProcessLock(ctx, pool, ServerLockKey())
+	lock, err := AcquireProcessLock(ctx, pool, key)
 	if err != nil {
 		t.Fatalf("AcquireProcessLock: %v", err)
 	}
@@ -90,7 +107,7 @@ func TestReleaseIsIdempotent(t *testing.T) {
 	lock.Release() // must not panic or double-release the connection
 
 	// The key is free again, provable by re-acquiring it on the same pool.
-	reacquired, err := AcquireProcessLock(ctx, pool, ServerLockKey())
+	reacquired, err := AcquireProcessLock(ctx, pool, key)
 	if err != nil {
 		t.Fatalf("re-acquire after double Release: %v", err)
 	}
@@ -106,7 +123,7 @@ func TestCheckHeldReportsLivenessAndRelease(t *testing.T) {
 	ctx := context.Background()
 
 	pool := newTestPool(t, os.Getenv("DATABASE_URL"))
-	lock, err := AcquireProcessLock(ctx, pool, ServerLockKey())
+	lock, err := AcquireProcessLock(ctx, pool, testLockKey(t))
 	if err != nil {
 		t.Fatalf("AcquireProcessLock: %v", err)
 	}

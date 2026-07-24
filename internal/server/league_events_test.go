@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
+	"profitofexile/internal/collector"
 	"profitofexile/internal/league"
 )
 
@@ -126,5 +128,32 @@ func TestLeagueEventGuard_AcceptRawRejectsUnstampedWireEvent(t *testing.T) {
 	}
 	if got := g.Rejected(); got != 1 {
 		t.Errorf("rejected count = %d, want 1", got)
+	}
+}
+
+// TestLeagueStampFieldNamesRoundTripFromCollector closes the cross-package field
+// -name seam: the collector stamps events (collector.StampScope, used by every
+// publish path) and the server reads them back (extractLeagueStamp via
+// AcceptRaw). Both sides are hand-authored key literals in different packages,
+// so a rename on either side would silently drop every event with no other test
+// failing. Marshalling an actual collector-stamped payload and running it
+// through the real server guard ties the two literals together: renaming the key
+// in StampScope (collector side) or the json tag in extractLeagueStamp (server
+// side) makes AcceptRaw return false and fails this test. The revision is
+// non-zero so the leagueRevision int64<->float64 wire round-trip is exercised.
+func TestLeagueStampFieldNamesRoundTripFromCollector(t *testing.T) {
+	scope := mustScope(t, "Mirage", 7)
+
+	raw, err := json.Marshal(collector.StampScope(map[string]any{
+		"topic":    "poe/collector/gems",
+		"endpoint": "ninja_gems",
+	}, scope))
+	if err != nil {
+		t.Fatalf("marshal collector-stamped payload: %v", err)
+	}
+
+	g := NewLeagueEventGuard(scope)
+	if !g.AcceptRaw(raw) {
+		t.Fatalf("collector-stamped event rejected by server guard; stamp field names drifted between collector and server: %s", raw)
 	}
 }
