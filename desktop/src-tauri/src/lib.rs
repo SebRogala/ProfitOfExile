@@ -7,6 +7,7 @@ mod lab_state;
 mod log_watcher;
 mod ocr;
 mod settings;
+mod ssot;
 mod trade;
 
 use serde::{Deserialize, Serialize};
@@ -142,6 +143,9 @@ pub struct AppState {
     pub autoclear_minutes: Mutex<u32>,
     pub dedication_pool: Mutex<String>,
     pub show_low_confidence: Mutex<bool>,
+    /// App-wide cross-window state SSOT (POE-128). Rust-owned; overlays read it
+    /// by polling the `get_ssot` command. See src/ssot.rs.
+    pub ssot: Mutex<ssot::AppSsotSnapshot>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -2356,6 +2360,7 @@ pub fn run() {
         autoclear_minutes: Mutex::new(2),
         dedication_pool: Mutex::new(String::from("skill")),
         show_low_confidence: Mutex::new(false),
+        ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
     };
 
     tauri::Builder::default()
@@ -2365,6 +2370,7 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_status,
+            ssot::get_ssot,
             get_pair_code,
             get_device_id,
             regenerate_pair_code,
