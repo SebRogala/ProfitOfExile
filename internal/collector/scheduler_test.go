@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"profitofexile/internal/league"
 )
 
 // newFailingMercureServer creates an httptest server that always returns 500
@@ -47,7 +49,7 @@ func TestScheduler_recentSnapshotSkipsFirstFetch(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestScheduler_staleSnapshotFetchesImmediately(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -126,7 +128,7 @@ func TestScheduler_emptyTableFetchesImmediately(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -162,7 +164,7 @@ func TestScheduler_fetchErrorSleepsFallbackInterval(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -198,7 +200,7 @@ func TestScheduler_leaguePassedToFetchFunc(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Mirage", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Mirage"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -237,7 +239,7 @@ func TestScheduler_mercureFailureIsNonFatal(t *testing.T) {
 	defer mercureServer.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", mercureServer.URL, "test-secret", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), mercureServer.URL, "test-secret", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -254,7 +256,7 @@ func TestScheduler_mercureFailureIsNonFatal(t *testing.T) {
 }
 
 func TestNewScheduler_emptyEndpointsReturnsError(t *testing.T) {
-	_, err := NewScheduler([]EndpointConfig{}, nil, "Standard", "", "", slog.Default())
+	_, err := NewScheduler([]EndpointConfig{}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err == nil {
 		t.Fatal("expected error for empty endpoints, got nil")
 	}
@@ -264,7 +266,7 @@ func TestNewScheduler_emptyEndpointsReturnsError(t *testing.T) {
 }
 
 func TestNewScheduler_nilEndpointsReturnsError(t *testing.T) {
-	_, err := NewScheduler(nil, nil, "Standard", "", "", slog.Default())
+	_, err := NewScheduler(nil, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err == nil {
 		t.Fatal("expected error for nil endpoints, got nil")
 	}
@@ -293,7 +295,7 @@ func TestScheduler_contextCancellationStopsRun(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -349,7 +351,7 @@ func TestScheduler_multipleEndpointsRunConcurrently(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{gemEp, currencyEp}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{gemEp, currencyEp}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -391,7 +393,7 @@ func TestScheduler_stalenessCheckErrorFetchesImmediately(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -427,7 +429,7 @@ func TestScheduler_nilStalenessFuncFetchesImmediately(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -579,7 +581,7 @@ func TestScheduler_nilStoreFuncDoesNotPanic(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -637,7 +639,7 @@ func TestScheduler_storeErrorDoesNotCrash(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -677,7 +679,7 @@ func TestScheduler_recentCurrencySnapshotSkipsFirstFetch(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -723,7 +725,7 @@ func TestScheduler_304RetriesUpToMaxThenFallback(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -844,7 +846,7 @@ func TestScheduler_contextCancellationStopsAllGoroutines(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -906,7 +908,7 @@ func TestScheduler_perSourceSemaphoreShared(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -968,7 +970,7 @@ func TestScheduler_oneEndpointFailureDoesNotAffectOther(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{failingEp, workingEp}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{failingEp, workingEp}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1027,7 +1029,7 @@ func TestScheduler_upsertDiscoveriesCalledOnlyForGems(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, resolver, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, resolver, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1084,7 +1086,7 @@ func TestScheduler_etagPropagatedAcrossFetchCycles(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1148,7 +1150,7 @@ func TestScheduler_retryCountResetsOn200AfterMultiple304s(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1234,7 +1236,7 @@ func TestScheduler_mercurePublishFiresPerEndpoint(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, nil, "Standard", mercureServer.URL, "test-secret", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{gemEp, currEp}, nil, league.Historical("Standard"), mercureServer.URL, "test-secret", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1286,7 +1288,7 @@ func TestNewScheduler_emptyNameReturnsError(t *testing.T) {
 		FallbackInterval: 30 * time.Minute,
 	}
 
-	_, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	_, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err == nil {
 		t.Fatal("expected error for empty Name, got nil")
 	}
@@ -1303,7 +1305,7 @@ func TestNewScheduler_nilFetchFuncReturnsError(t *testing.T) {
 		FallbackInterval: 30 * time.Minute,
 	}
 
-	_, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	_, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err == nil {
 		t.Fatal("expected error for nil FetchFunc, got nil")
 	}
@@ -1330,7 +1332,7 @@ func TestNewScheduler_nonPositiveFallbackIntervalReturnsError(t *testing.T) {
 				FallbackInterval: tt.fallbackInterval,
 			}
 
-			_, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+			_, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 			if err == nil {
 				t.Fatal("expected error for non-positive FallbackInterval, got nil")
 			}
@@ -1370,7 +1372,7 @@ func TestScheduler_invalidFetchResultDoesNotCallStore(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1411,7 +1413,7 @@ func TestScheduler_emptySourceNoSemaphore(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1535,7 +1537,7 @@ func TestScheduler_304DoesNotOverwriteLastETag(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{ep}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{ep}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}
@@ -1601,7 +1603,7 @@ func TestScheduler_panicInFetchFuncDoesNotCrashOtherEndpoints(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s, err := NewScheduler([]EndpointConfig{panickingEp, workingEp}, nil, "Standard", "", "", slog.Default())
+	s, err := NewScheduler([]EndpointConfig{panickingEp, workingEp}, nil, league.Historical("Standard"), "", "", slog.Default())
 	if err != nil {
 		t.Fatalf("NewScheduler: %v", err)
 	}

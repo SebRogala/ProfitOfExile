@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/price/gemcolor"
 )
 
@@ -35,7 +36,7 @@ var mercureTopicSuffix = map[string]string{
 type Scheduler struct {
 	endpoints     []EndpointConfig
 	resolver      *gemcolor.Resolver
-	league        string
+	scope         league.Scope
 	mercureURL    string
 	mercureSecret string
 	logger        *slog.Logger
@@ -47,7 +48,7 @@ type Scheduler struct {
 func NewScheduler(
 	endpoints []EndpointConfig,
 	resolver *gemcolor.Resolver,
-	league string,
+	scope league.Scope,
 	mercureURL string,
 	mercureSecret string,
 	logger *slog.Logger,
@@ -87,7 +88,7 @@ func NewScheduler(
 	return &Scheduler{
 		endpoints:     eps,
 		resolver:      resolver,
-		league:        league,
+		scope:         scope,
 		mercureURL:    mercureURL,
 		mercureSecret: mercureSecret,
 		logger:        logger,
@@ -243,7 +244,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 		}
 	}
 
-	result, err := ep.FetchFunc(ctx, s.league, state.lastETag)
+	result, err := ep.FetchFunc(ctx, s.scope.ID(), state.lastETag)
 
 	if err != nil {
 		s.logger.Error("fetch failed",
@@ -387,12 +388,13 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 	// Mercure publish (non-fatal on failure).
 	nextFetch := time.Now().Add(nextSleep).UTC()
 	payload, err := json.Marshal(map[string]any{
-		"topic":     topic,
-		"league":    s.league,
-		"endpoint":  endpointName,
-		"timestamp": snapTime.Format(time.RFC3339),
-		"inserted":  inserted,
-		"nextFetch": nextFetch.Format(time.RFC3339),
+		"topic":          topic,
+		"league":         s.scope.ID(),
+		"leagueRevision": s.scope.Revision(),
+		"endpoint":       endpointName,
+		"timestamp":      snapTime.Format(time.RFC3339),
+		"inserted":       inserted,
+		"nextFetch":      nextFetch.Format(time.RFC3339),
 	})
 	if err != nil {
 		s.logger.Error("marshal mercure payload",
