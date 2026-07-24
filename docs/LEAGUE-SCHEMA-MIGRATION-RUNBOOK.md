@@ -269,3 +269,41 @@ repository.
   and policies.
 - `.github/workflows/deploy.yml` can deploy server and collector separately;
   this runbook's same-revision gate prevents a mixed writer/schema deployment.
+
+## Operational lessons from the first rollover (Mirage → Allflame, 2026-07-24)
+
+Captured live during the first wipe-first deploy. **POE-127's rollover CLI must
+encode these**; until it exists, follow them manually.
+
+1. **The deploy auto-starts services on the SEEDED league, before the flip.**
+   Pushing to main → Coolify builds → the new server + collector boot and resolve
+   `active_league='Mirage'` (the migration's seed) and immediately begin
+   collecting/computing. So stray outgoing-league rows appear *after* the wipe,
+   before you activate the new league. Expect them; clean them (step 4).
+2. **Running services hold their boot-time league scope.** The flip
+   (`runtime_config` → Allflame) does NOT affect an already-running server or
+   collector — they resolved at boot. **You must restart both** for the new
+   league to take effect. Order doesn't matter (distinct advisory locks); restart
+   both before cleaning strays.
+3. **`EXPECTED_LEAGUE` must be set to the new league only AFTER the flip.** The
+   migration seeds `Mirage`; if `EXPECTED_LEAGUE=Allflame` is set before the flip,
+   the server fails its assertion on boot and crash-loops. Leave it unset for the
+   initial deploy, set it after activating the new league, then restart.
+4. **Clean the stray outgoing-league rows** once services are on the new league
+   (so no new strays land): `DELETE FROM <each of the 12 tables> WHERE
+   league='<OldLeagueId>';` (they are recent/uncompressed, so DELETE is cheap).
+5. **Collector boot fence can crash-loop on restart.** If a previous collector
+   instance's DB connection is still holding `RuntimeLockKey`, the new one refuses
+   to start ("another collector still holds the runtime fence after 15s"). It
+   self-heals once the old connection closes (~seconds); force it by fully
+   stopping the collector, waiting ~30s, then starting one. `pg_terminate_backend`
+   on the lock holder is the guaranteed release.
+6. **Pre-launch "empty data" warnings are expected.** Before the new league opens,
+   poe.ninja returns 200-with-empty; the collector correctly refuses to store it
+   ("empty data … possible transient API issue") and the server logs "no rows".
+   Not errors — they clear once real data flows.
+7. **Gem icons need pre-population, not runtime fetch.** poewiki 403s the VPS
+   datacenter IP, so `/api/gem-icon` cannot fetch at runtime — seed the cache
+   volume from an allowed IP (`scripts/download-gem-icons.py` → repopulate the
+   volume). New-league gems also need color seeding (a `gem_colors` migration)
+   and their icon URLs added — see docs/KNOWN-MISSING-GEM-ICONS.md.
