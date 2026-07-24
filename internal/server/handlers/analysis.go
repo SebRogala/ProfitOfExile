@@ -217,23 +217,24 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 		}
 
 		type row struct {
-			Time          string  `json:"time"`
-			Color         string  `json:"color"`
-			Variant       string  `json:"variant"`
-			Pool          int     `json:"pool"`
-			Winners       int     `json:"winners"`
-			PWin          float64 `json:"pWin"`
-			AvgWin        float64 `json:"avgWin"`
-			AvgWinRaw     float64 `json:"avgWinRaw"`
-			EV            float64 `json:"ev"`
-			EVRaw         float64 `json:"evRaw"`
-			InputCost     float64 `json:"inputCost"`
-			Profit        float64 `json:"profit"`
+			Time          string               `json:"time"`
+			Color         string               `json:"color"`
+			Variant       string               `json:"variant"`
+			Pool          int                  `json:"pool"`
+			PricedGems    int                  `json:"pricedGems"`
+			Winners       int                  `json:"winners"`
+			PWin          float64              `json:"pWin"`
+			AvgWin        float64              `json:"avgWin"`
+			AvgWinRaw     float64              `json:"avgWinRaw"`
+			EV            float64              `json:"ev"`
+			EVRaw         float64              `json:"evRaw"`
+			InputCost     float64              `json:"inputCost"`
+			Profit        float64              `json:"profit"`
 			FontsToHit    float64              `json:"fontsToHit"`
 			JackpotGems   []lab.JackpotGemInfo `json:"jackpotGems,omitempty"`
-			ThinPoolGems  int                   `json:"thinPoolGems"`
-			LiquidityRisk string                `json:"liquidityRisk"`
-			PoolBreakdown []lab.TierPoolInfo    `json:"poolBreakdown,omitempty"`
+			ThinPoolGems  int                  `json:"thinPoolGems"`
+			LiquidityRisk string               `json:"liquidityRisk"`
+			PoolBreakdown []lab.TierPoolInfo   `json:"poolBreakdown,omitempty"`
 		}
 
 		toRows := func(results []lab.FontResult) []row {
@@ -244,6 +245,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 					Color:         r.Color,
 					Variant:       r.Variant,
 					Pool:          r.Pool,
+					PricedGems:    r.PricedGems,
 					Winners:       r.Winners,
 					PWin:          r.PWin,
 					AvgWin:        r.AvgWin,
@@ -305,12 +307,12 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"safe":              safeRows,
-			"premium":           premiumRows,
-			"jackpot":           jackpotRows,
-			"bestColorSafe":     bestColor(safeResults),
-			"bestColorPremium":  bestColor(premiumResults),
-			"bestColorJackpot":  bestColor(jackpotResults),
+			"safe":             safeRows,
+			"premium":          premiumRows,
+			"jackpot":          jackpotRows,
+			"bestColorSafe":    bestColor(safeResults),
+			"bestColorPremium": bestColor(premiumResults),
+			"bestColorJackpot": bestColor(jackpotResults),
 		}); err != nil {
 			slog.Error("font analysis: encode response", "error", err)
 		}
@@ -1014,8 +1016,8 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 			VelLongListing        float64 `json:"velLongListing"`
 			CV                    float64 `json:"cv"`
 			HistPosition          float64 `json:"histPosition"`
-			High7Days                float64 `json:"high7d"`
-			Low7Days                 float64 `json:"low7d"`
+			High7Days             float64 `json:"high7d"`
+			Low7Days              float64 `json:"low7d"`
 			FloodCount            int     `json:"floodCount"`
 			CrashCount            int     `json:"crashCount"`
 			ListingElasticity     float64 `json:"listingElasticity"`
@@ -1042,8 +1044,8 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 				VelLongListing:        f.VelLongListing,
 				CV:                    f.CV,
 				HistPosition:          f.HistPosition,
-				High7Days:                f.High7Days,
-				Low7Days:                 f.Low7Days,
+				High7Days:             f.High7Days,
+				Low7Days:              f.Low7Days,
 				FloodCount:            f.FloodCount,
 				CrashCount:            f.CrashCount,
 				ListingElasticity:     f.ListingElasticity,
@@ -1223,19 +1225,19 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		w.Header().Set("Content-Type", "application/json")
 
 		type overview struct {
-			AvgTransPrice        float64        `json:"avgTransPrice"`
-			AvgTransPriceDelta   float64        `json:"avgTransPriceDelta"`
-			AvgBaseListings      float64        `json:"avgBaseListings"`
-			AvgBaseListingsDelta float64        `json:"avgBaseListingsDelta"`
-			ActiveGems           int            `json:"activeGems"`
-			MostVolatileColor    string         `json:"mostVolatileColor"`
-			MostVolatileCV       float64        `json:"mostVolatileCV"`
-			MostStableColor      string         `json:"mostStableColor"`
-			MostStableCV         float64        `json:"mostStableCV"`
-			TemporalMode         string         `json:"temporalMode"`
-			DivineRate           float64        `json:"divineRate"`
-			SellConfidenceSpread map[string]int `json:"sellConfidenceSpread"`
-			SignalDistribution   map[string]int `json:"signalDistribution"`
+			AvgTransPrice        float64          `json:"avgTransPrice"`
+			AvgTransPriceDelta   float64          `json:"avgTransPriceDelta"`
+			AvgBaseListings      float64          `json:"avgBaseListings"`
+			AvgBaseListingsDelta float64          `json:"avgBaseListingsDelta"`
+			ActiveGems           int              `json:"activeGems"`
+			MostVolatileColor    string           `json:"mostVolatileColor"`
+			MostVolatileCV       float64          `json:"mostVolatileCV"`
+			MostStableColor      string           `json:"mostStableColor"`
+			MostStableCV         float64          `json:"mostStableCV"`
+			TemporalMode         string           `json:"temporalMode"`
+			DivineRate           float64          `json:"divineRate"`
+			SellConfidenceSpread map[string]int   `json:"sellConfidenceSpread"`
+			SignalDistribution   map[string]int   `json:"signalDistribution"`
 			Offerings            []offeringTiming `json:"offerings,omitempty"`
 		}
 
@@ -1338,16 +1340,16 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 
 // offeringTiming holds price timing analysis for a lab offering (Gift, Dedication, etc.).
 type offeringTiming struct {
-	Name           string            `json:"name"`
-	FragmentID     string            `json:"fragmentId"`
-	CurrentPrice   float64           `json:"currentPrice"`
-	CheapHours     []giftTimingEntry `json:"cheapHours,omitempty"`
-	ExpensiveHours []giftTimingEntry `json:"expensiveHours,omitempty"`
-	CheapDays      []giftDayEntry    `json:"cheapDays,omitempty"`
-	ExpensiveDays  []giftDayEntry    `json:"expensiveDays,omitempty"`
-	HourlyMedians     []giftTimingEntry `json:"hourlyMedians,omitempty"`
-	TodayHourMedians  []giftTimingEntry `json:"todayHourMedians,omitempty"`
-	Sparkline         []offeringSparkPt `json:"sparkline,omitempty"`
+	Name             string            `json:"name"`
+	FragmentID       string            `json:"fragmentId"`
+	CurrentPrice     float64           `json:"currentPrice"`
+	CheapHours       []giftTimingEntry `json:"cheapHours,omitempty"`
+	ExpensiveHours   []giftTimingEntry `json:"expensiveHours,omitempty"`
+	CheapDays        []giftDayEntry    `json:"cheapDays,omitempty"`
+	ExpensiveDays    []giftDayEntry    `json:"expensiveDays,omitempty"`
+	HourlyMedians    []giftTimingEntry `json:"hourlyMedians,omitempty"`
+	TodayHourMedians []giftTimingEntry `json:"todayHourMedians,omitempty"`
+	Sparkline        []offeringSparkPt `json:"sparkline,omitempty"`
 }
 
 // offeringSparkPt is a single sparkline data point for offering price history.
@@ -1514,7 +1516,7 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, scope league
 		}
 		if len(days) >= 4 {
 			type dayWithIdx struct {
-				idx int
+				idx   int
 				entry giftDayEntry
 			}
 			var cheapD, expD []dayWithIdx
@@ -1527,8 +1529,12 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, scope league
 			// Sort by weekday order (Sun=0 .. Sat=6).
 			sort.Slice(cheapD, func(i, j int) bool { return cheapD[i].idx < cheapD[j].idx })
 			sort.Slice(expD, func(i, j int) bool { return expD[i].idx < expD[j].idx })
-			for _, d := range cheapD { ot.CheapDays = append(ot.CheapDays, d.entry) }
-			for _, d := range expD { ot.ExpensiveDays = append(ot.ExpensiveDays, d.entry) }
+			for _, d := range cheapD {
+				ot.CheapDays = append(ot.CheapDays, d.entry)
+			}
+			for _, d := range expD {
+				ot.ExpensiveDays = append(ot.ExpensiveDays, d.entry)
+			}
 		}
 	}
 
