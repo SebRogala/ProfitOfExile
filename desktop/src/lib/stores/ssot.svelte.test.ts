@@ -30,6 +30,21 @@ describe('applySnapshot', () => {
 		expect(ssot.resolving).toBe(false);
 	});
 
+	it('maps the unreachable flag from the snapshot (true then false)', () => {
+		applySnapshot({ league: { name: null }, resolving: true, unreachable: true });
+		expect(ssot.unreachable).toBe(true);
+		// A later snapshot with the flag cleared must flip it back — proves the
+		// mapping writes the incoming value, not a one-way latch.
+		applySnapshot({ league: { name: 'Mirage' }, resolving: false, unreachable: false });
+		expect(ssot.unreachable).toBe(false);
+	});
+
+	it('defaults unreachable to false when the field is absent', () => {
+		applySnapshot({ league: { name: null }, resolving: true, unreachable: true });
+		applySnapshot({ league: { name: null } });
+		expect(ssot.unreachable).toBe(false);
+	});
+
 	it('coerces a missing league slice to null instead of throwing', () => {
 		applySnapshot({ league: { name: 'Settlers' } });
 		// Malformed snapshot (e.g. an older/empty payload) must not leak undefined.

@@ -13,10 +13,12 @@
 //! (`write_league`) that keeps the SSOT slice and the trade client in lockstep.
 //! The webview store lands in a later chunk.
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::Notify;
 
 use crate::trade::TradeApiClient;
 use crate::AppState;
@@ -26,6 +28,24 @@ const LEAGUE_FETCH_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
 /// Ceiling for the exponential backoff — offline-at-launch keeps retrying at
 /// most this often, never faster, until the server answers.
 const LEAGUE_FETCH_MAX_BACKOFF: Duration = Duration::from_secs(60);
+/// Consecutive failed fetch attempts before the SSOT flips to `unreachable`.
+/// With the 2→60s backoff this is ~30-60s of silence — long enough not to flag
+/// a transient blip, short enough that a genuinely down server stops showing a
+/// perpetual "Resolving…". The loop keeps retrying past this point.
+const LEAGUE_UNREACHABLE_AFTER_ATTEMPTS: u32 = 4;
+
+/// Wake signal for the live retry loop. `refresh_league` notifies this instead
+/// of spawning a duplicate loop when a resolve is already in flight, so the
+/// Settings Refresh button forces an immediate retry (and backoff reset) while
+/// "Server unreachable" is showing.
+///
+/// Module-local `static` rather than an `AppState` field: the resolver and its
+/// wake are wholly contained in this file, nothing else references the signal,
+/// and there is exactly one resolver at a time (single-flight via `resolving`),
+/// so a process-global singleton is semantically correct. Keeping it here holds
+/// the blast radius to `ssot.rs` instead of churning the ~40-field `AppState`
+/// literal for state no other module touches.
+static RETRY_NOTIFY: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 /// League slice of the SSOT.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -50,10 +70,32 @@ pub struct AppSsotSnapshot {
     /// running). Exposed in the polled snapshot so the Settings UI can show an
     /// honest "Resolving…" for the whole retry window instead of a one-frame
     /// flash. Doubles as the single-flight guard (see `try_begin_resolving`):
-    /// while `true`, a second `refresh_league` no-ops rather than stacking a
-    /// duplicate infinite-retry loop. `Default` is `false` (not resolving).
+    /// while `true`, a second `refresh_league` wakes the live loop rather than
+    /// stacking a duplicate infinite-retry loop. `Default` is `false`.
     pub resolving: bool,
+    /// The league resolver has failed `LEAGUE_UNREACHABLE_AFTER_ATTEMPTS`
+    /// consecutive times and is now treating the server as unreachable — while
+    /// STILL retrying. Set alongside `resolving == true`; distinguishes an
+    /// honest "server down, still trying" (offer an actionable Refresh) from a
+    /// fresh "Resolving…" flash (Refresh disabled). Cleared on the next
+    /// successful fetch. `Default` is `false`.
+    pub unreachable: bool,
     // future slices (e.g. account, config) added here as later tasks land.
+}
+
+/// Whether `consecutive_failures` failed fetch attempts should flip the SSOT to
+/// `unreachable`. Pure so the threshold boundary is directly unit-testable.
+fn should_flag_unreachable(consecutive_failures: u32) -> bool {
+    consecutive_failures >= LEAGUE_UNREACHABLE_AFTER_ATTEMPTS
+}
+
+/// Clear both in-flight flags — the resolver's sole success-exit mutation.
+/// Extracted (taking just the mutex) so the "success drops BOTH `resolving` and
+/// `unreachable`" contract is unit-testable without a Tauri `AppHandle`.
+fn clear_resolution_flags(ssot: &std::sync::Mutex<AppSsotSnapshot>) {
+    let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
+    guard.resolving = false;
+    guard.unreachable = false;
 }
 
 /// Emit `ssot-changed` with the current snapshot.
@@ -227,14 +269,51 @@ pub fn spawn_league_fetch(app: AppHandle) {
     emit_ssot(&app);
     tauri::async_runtime::spawn(async move {
         let mut backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
+        let mut failures: u32 = 0;
         loop {
             if let Some(league) = fetch_league_once(&app).await {
                 log::info!("league resolved: {}", league);
                 apply_league(&app, league);
+                // Sole success exit: clear BOTH flags here, decoupled from
+                // `apply_league`. `write_league` also clears `resolving`, but only
+                // downstream of `normalize_league`'s blank re-check — if that gate
+                // ever drifted from the fetch's own blank-gate it could reject an
+                // already-accepted value and leave the loop wedged. This
+                // unconditional clear cannot be gated by that re-validation, and
+                // also drops `unreachable` (which `write_league` never touches).
+                {
+                    let state = app.state::<AppState>();
+                    clear_resolution_flags(&state.ssot);
+                }
+                emit_ssot(&app);
                 return;
             }
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(LEAGUE_FETCH_MAX_BACKOFF);
+            failures += 1;
+            if should_flag_unreachable(failures) {
+                // Server looks down. Flip `unreachable` (still retrying) so the UI
+                // stops showing a perpetual "Resolving…" and offers an actionable
+                // Refresh. Emit only on the transition to avoid nudge spam.
+                let newly_unreachable = {
+                    let state = app.state::<AppState>();
+                    let mut guard = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
+                    let changed = !guard.unreachable;
+                    guard.unreachable = true;
+                    changed
+                };
+                if newly_unreachable {
+                    emit_ssot(&app);
+                }
+            }
+            // Wait out the backoff, but let a `refresh_league` wake short-circuit
+            // it: a manual Refresh retries immediately and resets the backoff.
+            tokio::select! {
+                _ = tokio::time::sleep(backoff) => {
+                    backoff = (backoff * 2).min(LEAGUE_FETCH_MAX_BACKOFF);
+                }
+                _ = RETRY_NOTIFY.notified() => {
+                    backoff = LEAGUE_FETCH_INITIAL_BACKOFF;
+                }
+            }
         }
     });
 }
@@ -243,6 +322,23 @@ pub fn spawn_league_fetch(app: AppHandle) {
 /// future user league-choice UI; also the sink the fetch task writes through.
 #[tauri::command]
 pub fn set_league(name: String, app: AppHandle) {
+    // POE-126 latent hazard: the start-only resolver loop is not cancelled here.
+    // If a manual set lands while a resolve is still in flight, that loop lives on
+    // and will overwrite this manual choice when the server recovers. The real fix
+    // (abort the JoinHandle / generation-guard the write) belongs with POE-126 —
+    // the user-choice UI that actually arms this path; there is no manual-set UI
+    // today. For now, make the collision visible if it is ever hit.
+    {
+        let state = app.state::<AppState>();
+        let in_flight = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).resolving;
+        if in_flight {
+            log::warn!(
+                "set_league({:?}) landing over an active resolver; leaving an orphan \
+                 retry loop that may clobber this manual set on server recovery (POE-126)",
+                name
+            );
+        }
+    }
     apply_league(&app, name);
 }
 
@@ -252,7 +348,20 @@ pub fn set_league(name: String, app: AppHandle) {
 /// rollover signal exists.
 #[tauri::command]
 pub fn refresh_league(app: AppHandle) {
-    spawn_league_fetch(app);
+    // If a resolve is already looping (e.g. "Server unreachable"), a fresh spawn
+    // would be refused by the single-flight guard anyway — so instead WAKE the
+    // live loop: it retries immediately and resets its backoff. Only when nothing
+    // is in flight do we spawn a new resolver.
+    let in_flight = {
+        let state = app.state::<AppState>();
+        let resolving = state.ssot.lock().unwrap_or_else(|e| e.into_inner()).resolving;
+        resolving
+    };
+    if in_flight {
+        RETRY_NOTIFY.notify_one();
+    } else {
+        spawn_league_fetch(app);
+    }
 }
 
 #[cfg(test)]
@@ -381,6 +490,36 @@ mod tests {
         assert_eq!(normalize_league("   "), None);
         assert_eq!(normalize_league("\t\n"), None);
         assert_eq!(normalize_league("  Settlers  "), Some("Settlers".to_string()));
+    }
+
+    /// The sole success-exit mutation drops BOTH flags. Starting from an
+    /// in-flight, unreachable snapshot (the exact state a recovered-after-down
+    /// server exits through), `clear_resolution_flags` must leave `resolving` and
+    /// `unreachable` both false — asserted on real post-state, not a return code.
+    #[test]
+    fn clear_resolution_flags_drops_both_flags() {
+        let ssot = Mutex::new(AppSsotSnapshot {
+            resolving: true,
+            unreachable: true,
+            ..Default::default()
+        });
+
+        clear_resolution_flags(&ssot);
+
+        let guard = ssot.lock().unwrap();
+        assert!(!guard.resolving, "resolving must be cleared on success");
+        assert!(!guard.unreachable, "unreachable must be cleared on success");
+    }
+
+    /// Threshold boundary for the unreachable flip: below the constant stays
+    /// false, at/above flips true. Locks the grace window so a transient blip of
+    /// a few failures does not flag the server down.
+    #[test]
+    fn should_flag_unreachable_at_threshold_boundary() {
+        assert!(!should_flag_unreachable(0));
+        assert!(!should_flag_unreachable(LEAGUE_UNREACHABLE_AFTER_ATTEMPTS - 1));
+        assert!(should_flag_unreachable(LEAGUE_UNREACHABLE_AFTER_ATTEMPTS));
+        assert!(should_flag_unreachable(LEAGUE_UNREACHABLE_AFTER_ATTEMPTS + 1));
     }
 
     #[test]
