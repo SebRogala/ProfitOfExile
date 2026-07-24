@@ -15,6 +15,8 @@ export function baseGemName(name: string): string {
 /**
  * Build GGG trade search URL for a base gem with variant filters.
  * Parameters: gem name (transfigured), variant string ("20/20"), league name.
+ * `league` MUST be a resolved league (callers fail closed on the SSOT `null`
+ * before calling — there is no default-league fallback here on purpose).
  * Returns: full trade URL with query.
  */
 export function baseGemTradeUrl(name: string, variant: string, league: string): string {
@@ -39,11 +41,12 @@ export function baseGemTradeUrl(name: string, variant: string, league: string): 
 		},
 		sort: { price: 'asc' },
 	};
-	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(JSON.stringify(q))}`;
 }
 
 /**
  * Build trade URL for cheapest corrupted 21/23 gems of a color, for Dedication lab input cost.
+ * `league` MUST be a resolved league (callers fail closed on the SSOT `null` first).
  */
 export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boolean, league: string): string {
 	const reqFilters: Record<string, any> = {};
@@ -72,5 +75,5 @@ export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boo
 		},
 		sort: { price: 'asc' },
 	};
-	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league || 'Mirage')}?q=${encodeURIComponent(JSON.stringify(q))}`;
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(JSON.stringify(q))}`;
 }

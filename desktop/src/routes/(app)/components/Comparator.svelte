@@ -4,6 +4,7 @@
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { store } from '$lib/stores/status.svelte';
+	import { ssot } from '$lib/stores/ssot.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import SignalBadge from './SignalBadge.svelte';
@@ -29,12 +30,10 @@
 	}
 
 	let {
-		league = '',
 		divineRate = 0,
 		onQueueGem,
 		labMode = 'normal',
 	}: {
-		league?: string;
 		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		labMode?: 'normal' | 'dedication';
@@ -196,6 +195,17 @@
 					tradeQueueStale = true;
 					tradeQueue = null;
 					break;
+				case 'error':
+					// Surface the actionable reason (e.g. "league not resolved yet")
+					// instead of silently dropping it in the default arm. The rejected
+					// invoke already flags the gem; this makes the *reason* visible.
+					if (tradeQueueStale) break;
+					if (e.gem) {
+						tradeError[e.gem] = true;
+						tradeErrorMsg[e.gem] = e.error;
+					}
+					tradeQueue = null;
+					break;
 				default:
 					tradeQueue = null;
 			}
@@ -226,6 +236,9 @@
 	let tradeData = $state<Record<string, TradeLookupResult | null>>({});
 	let tradeLoading = $state<Record<string, boolean>>({});
 	let tradeError = $state<Record<string, boolean>>({});
+	// Actionable reason string for a failed lookup (e.g. "league not resolved yet"),
+	// surfaced from the trade-queue 'error' event so the cause is visible, not just the flag.
+	let tradeErrorMsg = $state<Record<string, string>>({});
 	let tradeExpanded = $state<Record<string, boolean>>({});
 	let autoTradeEnabled = $state(store.status?.auto_trade_enabled ?? false);
 
@@ -303,6 +316,7 @@
 	async function invokeRustTrade(gem: string) {
 		tradeLoading[gem] = true;
 		tradeError[gem] = false;
+		delete tradeErrorMsg[gem];
 		try {
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
 				gem, variant, divineRate: divineRate || undefined,
@@ -360,6 +374,7 @@
 			delete tradeData[removed];
 			delete tradeLoading[removed];
 			delete tradeError[removed];
+			delete tradeErrorMsg[removed];
 			delete tradeExpanded[removed];
 		}
 		loadResults();
@@ -382,6 +397,7 @@
 		tradeData = {};
 		tradeLoading = {};
 		tradeError = {};
+		tradeErrorMsg = {};
 		tradeExpanded = {};
 		searchQuery = '';
 		suggestions = [];
@@ -657,6 +673,9 @@
 								<button class="trade-action-btn trade-fetch-btn" onclick={() => refreshTradeData(gem.name)}>&#8635; Fetch trade data</button>
 							</div>
 						{/if}
+						{#if tradeError[gem.name] && tradeErrorMsg[gem.name]}
+							<div class="trade-error-reason" title="Trade lookup failed">{tradeErrorMsg[gem.name]}</div>
+						{/if}
 						{#if tradeData[gem.name]}
 							{@const td = tradeData[gem.name]!}
 							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
@@ -695,7 +714,12 @@
 											<button class="trade-action-btn" class:trade-refresh-stale={tradeStaleness(gem.name) !== 'normal'} class:trade-refresh-error={tradeError[gem.name]} onclick={() => refreshTradeData(gem.name)} title={tradeError[gem.name] ? 'Rate limited — click to retry' : 'Refresh trade data'}>&#8635;</button>
 										{/if}
 										{#if gem.name.includes(' of ')}
-											<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, league)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
+											{@const lg = ssot.league}
+											{#if lg}
+												<a class="trade-action-btn trade-base-link" href={baseGemTradeUrl(gem.name, variant, lg)} target="_blank" title="Buy base gem: {baseGemName(gem.name)}">Base</a>
+											{:else}
+												<span class="trade-action-btn trade-base-disabled" title="League not detected — trade link unavailable">Base</span>
+											{/if}
 										{/if}
 									</span>
 								</div>
@@ -1382,6 +1406,18 @@
 	}
 	.trade-base-link:hover {
 		color: var(--color-lab-text);
+	}
+	.trade-base-disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.trade-error-reason {
+		margin-top: 6px;
+		padding: 5px 8px;
+		font-size: 0.75rem;
+		color: #fca5a5;
+		background: rgba(239, 68, 68, 0.1);
+		border-left: 3px solid var(--color-lab-red);
 	}
 	.trade-floor-sep {
 		font-size: 1.125rem;
