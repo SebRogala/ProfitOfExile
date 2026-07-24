@@ -41,12 +41,12 @@ func makeCachedResult(gem, variant string) *trade.TradeLookupResult {
 func tradeRouter(gate *trade.Gate, cache *trade.TradeCache, syncTimeout time.Duration) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Post("/api/trade/lookup", TradeLookup(gate, cache, syncTimeout))
+	r.Post("/api/trade/lookup", TradeLookup(gate, cache, league.Historical("Mirage"), syncTimeout))
 	return r
 }
 
 func TestTradeLookup_CacheHit(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	result := makeCachedResult("Vaal Grace", "21")
 	cache.Set(trade.CacheKey("Vaal Grace", "21"), result)
 
@@ -83,7 +83,7 @@ func TestTradeLookup_CacheHit(t *testing.T) {
 }
 
 func TestTradeLookup_FastPath(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	cfg := trade.TradeConfig{MaxQueueWait: 5 * time.Second}
 	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
@@ -122,7 +122,7 @@ func TestTradeLookup_FastPath(t *testing.T) {
 }
 
 func TestTradeLookup_WaitPath(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	cfg := trade.TradeConfig{MaxQueueWait: 5 * time.Second}
 	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
@@ -159,7 +159,7 @@ func TestTradeLookup_WaitPath(t *testing.T) {
 }
 
 func TestTradeLookup_InvalidJSON(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	cfg := trade.TradeConfig{MaxQueueWait: time.Second}
 	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
@@ -185,7 +185,7 @@ func TestTradeLookup_InvalidJSON(t *testing.T) {
 }
 
 func TestTradeLookup_EmptyGem(t *testing.T) {
-	cache := trade.NewTradeCache(10)
+	cache := trade.NewTradeCache(10, league.Historical("Mirage"))
 	cfg := trade.TradeConfig{MaxQueueWait: time.Second}
 	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 

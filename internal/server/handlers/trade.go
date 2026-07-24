@@ -53,7 +53,7 @@ func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.S
 		key := trade.CacheKey(result.Gem, result.Variant)
 
 		if cache != nil {
-			cache.Set(key, &result)
+			cache.For(scope).Set(key, &result)
 		}
 
 		if repo != nil {
@@ -82,7 +82,7 @@ type tradeLookupRequest struct {
 // (unless force=true), then submits a GateRequest and either returns the result
 // synchronously (if it arrives within syncTimeout) or responds with 202 and a
 // requestId for the client to await via Mercure.
-func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, syncTimeout time.Duration) http.HandlerFunc {
+func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, scope league.Scope, syncTimeout time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body tradeLookupRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -107,7 +107,7 @@ func TradeLookup(gate *trade.Gate, cache *trade.TradeCache, syncTimeout time.Dur
 
 		// Cache-first path (skip when force-refreshing).
 		if !body.Force && cache != nil {
-			if result, ok := cache.Get(trade.CacheKey(body.Gem, body.Variant)); ok {
+			if result, ok := cache.For(scope).Get(trade.CacheKey(body.Gem, body.Variant)); ok {
 				w.Header().Set("Content-Type", "application/json")
 				if err := json.NewEncoder(w).Encode(result); err != nil {
 					slog.Error("trade lookup: encode cached response", "error", err)

@@ -124,7 +124,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.TradeGate != nil {
-		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.TradeSyncTimeout))
+		r.Post("/api/trade/lookup", handlers.TradeLookup(cfg.TradeGate, cfg.TradeCache, cfg.League, cfg.TradeSyncTimeout))
 		// Trade refresh ticks arrive over Mercure (poe/collector/trade-tick),
 		// not HTTP. See cmd/server subscriber + internal/server/trade_tick.go.
 	}

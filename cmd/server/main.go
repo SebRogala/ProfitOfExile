@@ -156,7 +156,7 @@ func main() {
 
 	labRepo := lab.NewRepository(pool)
 	layoutRepo := lab.NewLayoutRepository(pool)
-	labCache := lab.NewCache()
+	labCache := lab.NewCache(scope)
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
 
 	// Trade cache — created before analyzer so the v2 pipeline can use it.
@@ -166,7 +166,7 @@ func main() {
 			tradeCacheMax = n
 		}
 	}
-	tradeCache := trade.NewTradeCache(tradeCacheMax)
+	tradeCache := trade.NewTradeCache(tradeCacheMax, scope)
 
 	analyzer := lab.NewAnalyzer(labRepo, throttler, labCache, tradeCache)
 	var tradeRepo *trade.Repository
@@ -180,7 +180,7 @@ func main() {
 		if err != nil {
 			slog.Warn("trade cache warm failed", "error", err)
 		} else if len(results) > 0 {
-			loaded := tradeCache.Warm(results)
+			loaded := tradeCache.For(scope).Warm(results)
 			slog.Info("trade cache warmed from DB", "entries", loaded)
 		}
 	}
@@ -304,7 +304,7 @@ func main() {
 				interval = 30 * time.Minute // sane fallback
 			}
 			nextFetch := lastSnap.Add(interval)
-			labCache.SetNextFetch(nextFetch)
+			labCache.For(scope).SetNextFetch(nextFetch)
 			slog.Info("startup: seeded nextFetch", "lastSnap", lastSnap, "interval", interval, "nextFetch", nextFetch)
 		}
 
@@ -314,7 +314,7 @@ func main() {
 			`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
 			scope.ID(),
 		).Scan(&divRate); err == nil && divRate > 0 {
-			labCache.SetDivineRate(divRate)
+			labCache.For(scope).SetDivineRate(divRate)
 			slog.Info("startup: seeded divine rate", "rate", divRate)
 		}
 	}()
@@ -413,7 +413,7 @@ func main() {
 					})
 					return
 				}
-				go server.HandleTradeTick(ctx, tradeGate, tradeCache, labCache, []byte(ev.Data))
+				go server.HandleTradeTick(ctx, tradeGate, tradeCache, labCache, scope, []byte(ev.Data))
 				return
 			}
 
@@ -457,7 +457,7 @@ func main() {
 						slog.Warn("currency event: divine rate query failed", "error", err)
 						return
 					}
-					labCache.SetDivineRate(rate)
+					labCache.For(scope).SetDivineRate(rate)
 					slog.Info("currency event: divine rate updated", "rate", rate)
 				}()
 			}
@@ -469,7 +469,7 @@ func main() {
 					offerings := handlers.ComputeOfferingTimings(qCtx, pool, scope)
 					if len(offerings) > 0 {
 						if data, err := json.Marshal(offerings); err == nil {
-							labCache.SetOfferingTiming(data)
+							labCache.For(scope).SetOfferingTiming(data)
 							slog.Info("fragment event: offering timing updated", "offerings", len(offerings))
 						}
 					}

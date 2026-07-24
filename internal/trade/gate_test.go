@@ -138,7 +138,7 @@ func newTestGate(t *testing.T, server *httptest.Server, pub *mockPublisher, maxW
 	limiter := NewRateLimiter(cfg)
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
-	cache := NewTradeCache(cfg.CacheMaxEntries)
+	cache := NewTradeCache(cfg.CacheMaxEntries, league.Historical("Mirage"))
 
 	return NewGate(cfg, league.Historical("Mirage"), limiter, client, pub, cache, func() float64 { return 212.0 }, nil)
 }
@@ -451,7 +451,7 @@ func TestGate_WaitEvent(t *testing.T) {
 	limiter := NewRateLimiter(cfg)
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
-	cache := NewTradeCache(100)
+	cache := NewTradeCache(100, league.Historical("Mirage"))
 	gate := NewGate(cfg, league.Historical("Mirage"), limiter, client, pub, cache, func() float64 { return 212.0 }, nil)
 
 	// Pre-fill the search pool to force a wait.
@@ -576,7 +576,7 @@ func TestGate_RateLimitSync(t *testing.T) {
 	limiter := NewRateLimiter(cfg)
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
-	cache := NewTradeCache(100)
+	cache := NewTradeCache(100, league.Historical("Mirage"))
 	gate := NewGate(cfg, league.Historical("Mirage"), limiter, client, pub, cache, func() float64 { return 212.0 }, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -634,7 +634,7 @@ func TestGate_CacheOnResult(t *testing.T) {
 	limiter := NewRateLimiter(cfg)
 	client := NewClient(cfg)
 	client.SetBaseURL(server.URL)
-	cache := NewTradeCache(100)
+	cache := NewTradeCache(100, league.Historical("Mirage"))
 	gate := NewGate(cfg, league.Historical("Mirage"), limiter, client, pub, cache, func() float64 { return 212.0 }, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())

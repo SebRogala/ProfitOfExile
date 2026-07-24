@@ -86,7 +86,7 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			if cached := cache.Transfigure(); len(cached) > 0 {
+			if cached := cache.For(scope).Transfigure(); len(cached) > 0 {
 				results = filterTransfigure(cached, variant, limit)
 			}
 		}
@@ -184,7 +184,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			analysis := cache.Font()
+			analysis := cache.For(scope).Font()
 			if len(analysis.Safe) > 0 || len(analysis.Premium) > 0 || len(analysis.Jackpot) > 0 {
 				safeResults = filterFont(analysis.Safe, variant, limit)
 				premiumResults = filterFont(analysis.Premium, variant, limit)
@@ -268,14 +268,14 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 
 		// Enrich jackpot gems with GCP recipe (20/0 base + 20×GCP vs 20/20 base).
 		if cache != nil {
-			gcpPrice := cache.GCPPrice()
+			gcpPrice := cache.For(scope).GCPPrice()
 			if gcpPrice <= 0 {
 				gcpPrice = 4.0
 			}
 			// Build base price index from transfigure cache: baseName → variant → price.
 			type bKey struct{ name, variant string }
 			basePrices := make(map[bKey]float64)
-			if ct := cache.Transfigure(); len(ct) > 0 {
+			if ct := cache.For(scope).Transfigure(); len(ct) > 0 {
 				for _, tr := range ct {
 					basePrices[bKey{tr.BaseName, tr.Variant}] = tr.BasePrice
 				}
@@ -378,8 +378,8 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 		usedCache := false
 
 		if cache != nil {
-			cs := cache.GemSignals()
-			cf := cache.GemFeatures()
+			cs := cache.For(scope).GemSignals()
+			cf := cache.For(scope).GemFeatures()
 			if len(cs) > 0 && len(cf) > 0 {
 				signals = cs
 				features = cf
@@ -496,7 +496,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 		// Load MarketContext for sparkline normalization.
 		var trendMC *lab.MarketContext
 		if cache != nil {
-			trendMC = cache.MarketContext()
+			trendMC = cache.For(scope).MarketContext()
 		}
 		if trendMC == nil {
 			trendMC, _ = repo.LatestMarketContext(r.Context(), scope)
@@ -644,7 +644,7 @@ func QualityAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope)
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			if cached := cache.Quality(); len(cached) > 0 {
+			if cached := cache.For(scope).Quality(); len(cached) > 0 {
 				results = filterQuality(cached, variant, limit)
 			}
 		}
@@ -763,29 +763,29 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 			return
 		}
 
-		lastUpdated := cache.LastUpdated()
+		lastUpdated := cache.For(scope).LastUpdated()
 		cached := !lastUpdated.IsZero()
 
-		fontAnalysis := cache.Font()
+		fontAnalysis := cache.For(scope).Font()
 		resp := map[string]any{
 			"cached":      cached,
 			"league":      scope.ID(),
-			"transfigure": len(cache.Transfigure()),
+			"transfigure": len(cache.For(scope).Transfigure()),
 			"fontSafe":    len(fontAnalysis.Safe),
 			"fontPremium": len(fontAnalysis.Premium),
 			"fontJackpot": len(fontAnalysis.Jackpot),
-			"quality":     len(cache.Quality()),
-			"trends":      len(cache.GemSignals()),
+			"quality":     len(cache.For(scope).Quality()),
+			"trends":      len(cache.For(scope).GemSignals()),
 		}
 		if cached {
 			resp["lastUpdated"] = lastUpdated.UTC().Format(time.RFC3339)
 		}
-		if nf := cache.NextFetch(); !nf.IsZero() {
+		if nf := cache.For(scope).NextFetch(); !nf.IsZero() {
 			resp["nextFetch"] = nf.UTC().Format(time.RFC3339)
 		}
 
 		// Divine→chaos rate for display in the header.
-		if dr := cache.DivineRate(); dr > 0 {
+		if dr := cache.For(scope).DivineRate(); dr > 0 {
 			resp["divinePrice"] = dr
 		} else if pool != nil {
 			// Fallback to DB query if cache not yet populated.
@@ -797,7 +797,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 				slog.Warn("analysis status: divine rate query failed", "error", err)
 			} else {
 				resp["divinePrice"] = divRate
-				cache.SetDivineRate(divRate)
+				cache.For(scope).SetDivineRate(divRate)
 			}
 		}
 
@@ -867,7 +867,7 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			mc = cache.MarketContext()
+			mc = cache.For(scope).MarketContext()
 		}
 
 		// Slow path: fall back to DB query.
@@ -981,7 +981,7 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			if cached := cache.GemFeatures(); len(cached) > 0 {
+			if cached := cache.For(scope).GemFeatures(); len(cached) > 0 {
 				results = filterGemFeatures(cached, variant, tier, limit)
 				cacheHit = true
 			}
@@ -1108,7 +1108,7 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 
 		// Fast path: serve from cache.
 		if cache != nil {
-			if cached := cache.GemSignals(); len(cached) > 0 {
+			if cached := cache.For(scope).GemSignals(); len(cached) > 0 {
 				results = filterGemSignals(cached, variant, tier, limit)
 				cacheHit = true
 			}
@@ -1252,10 +1252,10 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		}
 
 		// Divine rate.
-		resp.DivineRate = math.Round(cache.DivineRate())
+		resp.DivineRate = math.Round(cache.For(scope).DivineRate())
 
 		// Temporal mode from MarketContext.
-		if mc := cache.MarketContext(); mc != nil {
+		if mc := cache.For(scope).MarketContext(); mc != nil {
 			resp.TemporalMode = mc.TemporalMode
 			if resp.TemporalMode == "" {
 				resp.TemporalMode = "none"
@@ -1263,7 +1263,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		}
 
 		// Aggregate from gem features for price/listings/volatile/stable.
-		if feats := cache.GemFeatures(); len(feats) > 0 {
+		if feats := cache.For(scope).GemFeatures(); len(feats) > 0 {
 			var totalPrice, totalListings float64
 			colorCV := make(map[string][]float64)
 
@@ -1302,7 +1302,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		}
 
 		// Sell confidence spread and signal distribution from GemSignals.
-		if signals := cache.GemSignals(); len(signals) > 0 {
+		if signals := cache.For(scope).GemSignals(); len(signals) > 0 {
 			for _, s := range signals {
 				if s.SellConfidence != "" {
 					resp.SellConfidenceSpread[s.SellConfidence]++
@@ -1315,7 +1315,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 
 		// Lab offering timing: serve from cache when available, compute on miss.
 		if cache != nil {
-			if cached := cache.OfferingTiming(); cached != nil {
+			if cached := cache.For(scope).OfferingTiming(); cached != nil {
 				_ = json.Unmarshal(cached, &resp.Offerings)
 			}
 		}
@@ -1324,7 +1324,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 			// Populate cache for next request.
 			if cache != nil && len(resp.Offerings) > 0 {
 				if data, err := json.Marshal(resp.Offerings); err == nil {
-					cache.SetOfferingTiming(data)
+					cache.For(scope).SetOfferingTiming(data)
 				}
 			}
 		}

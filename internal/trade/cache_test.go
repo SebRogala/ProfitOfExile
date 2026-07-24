@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"profitofexile/internal/league"
 )
 
 func makeResult(gem, variant string) *TradeLookupResult {
@@ -17,7 +19,7 @@ func makeResult(gem, variant string) *TradeLookupResult {
 }
 
 func TestCache_SetGet(t *testing.T) {
-	c := NewTradeCache(10)
+	c := NewTradeCache(10, league.Historical("Mirage"))
 	r := makeResult("Empower Support", "4/20")
 
 	c.Set("empower|4/20", r)
@@ -38,7 +40,7 @@ func TestCache_SetGet(t *testing.T) {
 }
 
 func TestCache_Miss(t *testing.T) {
-	c := NewTradeCache(10)
+	c := NewTradeCache(10, league.Historical("Mirage"))
 
 	got, ok := c.Get("nonexistent")
 	if ok {
@@ -50,7 +52,7 @@ func TestCache_Miss(t *testing.T) {
 }
 
 func TestCache_Eviction(t *testing.T) {
-	c := NewTradeCache(3)
+	c := NewTradeCache(3, league.Historical("Mirage"))
 
 	c.Set("a", makeResult("a", "1"))
 	c.Set("b", makeResult("b", "1"))
@@ -72,7 +74,7 @@ func TestCache_Eviction(t *testing.T) {
 }
 
 func TestCache_LRUPromotion(t *testing.T) {
-	c := NewTradeCache(3)
+	c := NewTradeCache(3, league.Historical("Mirage"))
 
 	c.Set("a", makeResult("a", "1"))
 	c.Set("b", makeResult("b", "1"))
@@ -98,7 +100,7 @@ func TestCache_LRUPromotion(t *testing.T) {
 }
 
 func TestCache_Update(t *testing.T) {
-	c := NewTradeCache(10)
+	c := NewTradeCache(10, league.Historical("Mirage"))
 
 	c.Set("k", makeResult("old", "1"))
 	c.Set("k", makeResult("new", "1"))
@@ -116,7 +118,7 @@ func TestCache_Update(t *testing.T) {
 }
 
 func TestCache_Delete(t *testing.T) {
-	c := NewTradeCache(10)
+	c := NewTradeCache(10, league.Historical("Mirage"))
 
 	c.Set("k", makeResult("x", "1"))
 	c.Delete("k")
@@ -133,7 +135,7 @@ func TestCache_Delete(t *testing.T) {
 }
 
 func TestCache_GetSnapshot(t *testing.T) {
-	c := NewTradeCache(10)
+	c := NewTradeCache(10, league.Historical("Mirage"))
 
 	r1 := makeResult("Spark of Nova", "20/20")
 	r2 := makeResult("Cleave of Rage", "20/20")
@@ -171,7 +173,7 @@ func TestCache_GetSnapshot(t *testing.T) {
 }
 
 func TestCache_GetSnapshot_Empty(t *testing.T) {
-	c := NewTradeCache(10)
+	c := NewTradeCache(10, league.Historical("Mirage"))
 
 	snap := c.GetSnapshot()
 
@@ -184,7 +186,7 @@ func TestCache_GetSnapshot_Empty(t *testing.T) {
 }
 
 func TestCache_GetSnapshot_DoesNotPromote(t *testing.T) {
-	c := NewTradeCache(3)
+	c := NewTradeCache(3, league.Historical("Mirage"))
 
 	c.Set("a", makeResult("a", "1"))
 	c.Set("b", makeResult("b", "1"))
@@ -208,7 +210,7 @@ func TestCache_GetSnapshot_DoesNotPromote(t *testing.T) {
 }
 
 func TestCache_ConcurrentAccess(t *testing.T) {
-	c := NewTradeCache(50)
+	c := NewTradeCache(50, league.Historical("Mirage"))
 	var wg sync.WaitGroup
 
 	// Spawn writers.
@@ -247,4 +249,47 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	if c.Len() > 50 {
 		t.Errorf("Len() = %d, exceeds maxSize 50", c.Len())
 	}
+}
+
+// requirePanic fails the test unless fn panics — used to assert the cache
+// rejects access under a foreign league.
+func requirePanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected a panic (foreign-league access), got none")
+		}
+	}()
+	fn()
+}
+
+// Reading the cache under its owning league returns the stored lookup — For is
+// transparent for the league the cache is bound to.
+func TestCache_For_OwningLeagueRoundTrips(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewTradeCache(10, scope)
+
+	key := CacheKey("Spark of Nova", "20/20")
+	c.For(scope).Set(key, makeResult("Spark of Nova", "20/20"))
+
+	got, ok := c.For(scope).Get(key)
+	if !ok || got == nil || got.Gem != "Spark of Nova" {
+		t.Fatalf("owning-league read: got %+v ok=%v, want the stored lookup", got, ok)
+	}
+}
+
+// The tenancy gate: a trade cache warmed under one league must not serve those
+// lookups under another league's scope. Removing the scope check in For makes
+// this Get return LeagueA's entry instead of panicking, so this test fails.
+func TestCache_For_RejectsForeignLeague(t *testing.T) {
+	owner := league.Historical("LeagueA")
+	other := league.Historical("LeagueB")
+
+	c := NewTradeCache(10, owner)
+	key := CacheKey("Spark of Nova", "20/20")
+	c.For(owner).Set(key, makeResult("Spark of Nova", "20/20"))
+
+	requirePanic(t, func() {
+		_, _ = c.For(other).Get(key)
+	})
 }

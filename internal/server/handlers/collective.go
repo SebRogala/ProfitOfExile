@@ -102,9 +102,9 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		usedCache := false
 
 		if cache != nil {
-			ct := cache.Transfigure()
-			cs := cache.GemSignals()
-			cf := cache.GemFeatures()
+			ct := cache.For(scope).Transfigure()
+			cs := cache.For(scope).GemSignals()
+			cf := cache.For(scope).GemFeatures()
 			if len(ct) > 0 && len(cs) > 0 {
 				transfigure = filterTransfigure(ct, variant, 1000)
 				signals = filterGemSignals(cs, variant, "", 5000)
@@ -175,7 +175,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		// GCP recipe: for 20/20 gems, compare buying 20/20 base vs 20/0 base + 20×GCP.
 		var gcpPrice float64
 		if cache != nil {
-			gcpPrice = cache.GCPPrice()
+			gcpPrice = cache.For(scope).GCPPrice()
 		}
 		if gcpPrice <= 0 {
 			gcpPrice = 4.0
@@ -192,7 +192,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		// Load MarketContext for sparkline normalization.
 		var mc *lab.MarketContext
 		if cache != nil {
-			mc = cache.MarketContext()
+			mc = cache.For(scope).MarketContext()
 		}
 		if mc == nil {
 			mc, _ = repo.LatestMarketContext(r.Context(), scope)
@@ -319,7 +319,7 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 	// Load Dedication results for input costs.
 	var dedicationResults []lab.DedicationResult
 	if cache != nil {
-		ded := cache.Dedication()
+		ded := cache.For(scope).Dedication()
 		dedicationResults = append(dedicationResults, ded.Skills...)
 		dedicationResults = append(dedicationResults, ded.Transfigured...)
 	}
@@ -452,9 +452,9 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		var features []lab.GemFeature
 
 		if cache != nil {
-			ct := cache.Transfigure()
-			cs := cache.GemSignals()
-			cf := cache.GemFeatures()
+			ct := cache.For(scope).Transfigure()
+			cs := cache.For(scope).GemSignals()
+			cf := cache.For(scope).GemFeatures()
 			if len(ct) > 0 && len(cs) > 0 {
 				transfigure = filterTransfigure(ct, variant, 1000)
 				signals = filterGemSignals(cs, variant, "", 5000)
@@ -511,7 +511,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant)
 
-		rows := buildCompareRows(results, tradeCache)
+		rows := buildCompareRows(results, tradeCache, scope)
 		rowCount = len(rows)
 		warnCount = len(warnings)
 
@@ -547,7 +547,7 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 	// Fast path: cache.
 	var dedicationResults []lab.DedicationResult
 	if cache != nil {
-		ded := cache.Dedication()
+		ded := cache.For(scope).Dedication()
 		dedicationResults = append(dedicationResults, ded.Skills...)
 		dedicationResults = append(dedicationResults, ded.Transfigured...)
 	}
@@ -580,7 +580,7 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 
 	results := lab.BuildDedicationCompareResults(names, gemPrices, dedicationResults, sparklines)
 
-	rows := buildCompareRows(results, nil) // no trade enrichment for Dedication mode
+	rows := buildCompareRows(results, nil, scope) // no trade enrichment for Dedication mode
 
 	resp := map[string]any{
 		"count": len(rows),
@@ -640,7 +640,7 @@ type compareRow struct {
 
 // buildCompareRows converts CompareResult slices into the JSON-serializable row format.
 // tradeCache may be nil — trade enrichment is skipped when unavailable.
-func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache) []compareRow {
+func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache, scope league.Scope) []compareRow {
 	rows := make([]compareRow, 0, len(results))
 	for _, cr := range results {
 		rw := compareRow{
@@ -683,7 +683,7 @@ func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache)
 
 		// Enrich with cached trade data when available.
 		if tradeCache != nil {
-			if tradeResult, ok := tradeCache.Get(trade.CacheKey(cr.TransfiguredName, cr.Variant)); ok {
+			if tradeResult, ok := tradeCache.For(scope).Get(trade.CacheKey(cr.TransfiguredName, cr.Variant)); ok {
 				rw.Trade = tradeResult
 			}
 		}
@@ -727,7 +727,7 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 		if corrupted {
 			// Corrupted gem name autocomplete (for Dedication lab).
 			if cache != nil {
-				names = cache.CorruptedGemNamesSearch(q, isTransfigured, limit)
+				names = cache.For(scope).CorruptedGemNamesSearch(q, isTransfigured, limit)
 			}
 			if names == nil {
 				all, err := repo.CorruptedGemNamesAutocomplete(r.Context(), scope, isTransfigured, limit*10)
@@ -759,7 +759,7 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 			// Fast path: in-memory search over cached gem names (~200 entries).
 			// Falls back to DB query only if cache is empty (cold start).
 			if cache != nil {
-				names = cache.GemNamesSearch(q, limit)
+				names = cache.For(scope).GemNamesSearch(q, limit)
 			}
 			if names == nil {
 				var err error
