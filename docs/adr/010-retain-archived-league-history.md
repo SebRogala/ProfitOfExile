@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted, then **superseded in part by [ADR-011](011-wipe-outgoing-league-at-rollover.md)**:
+the age-based retention removal below stands, but the intent that archived leagues
+stay live and queryable is replaced by wipe-at-rollover + preserved dump.
 
 ## Context
 
