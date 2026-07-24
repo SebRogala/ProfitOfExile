@@ -825,3 +825,112 @@ func TestSaveMarketContext_storesScopeLeague(t *testing.T) {
 		t.Errorf("stored league = %q, want %q (a hardcoded 'Mirage' write would fail here)", stored, leagueID)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Inner MAX(time) league scoping.
+//
+// The LatestX methods select `WHERE league = $1 AND time = (SELECT MAX(time)
+// FROM <table> WHERE league = $1)`. The `_returnsOnlyScopedLeague` tests above
+// seed both leagues at the SAME timestamp, so they cannot observe whether the
+// INNER MAX subquery carries `WHERE league = $1`: with equal timestamps the
+// scoped and unscoped MAX return the same value.
+//
+// These tests close that gap. League A's latest row is at tA; league B's row is
+// at tB = tA+1h, STRICTLY LATER. Under the correct (scoped) inner MAX, league
+// A's MAX is tA and the read returns A's row. If the inner MAX loses its league
+// predicate it resolves to tB (the global max), the outer `league=A AND time=tB`
+// matches nothing, and the read returns EMPTY — which these tests fail on.
+//
+// Far-future timestamps guarantee tB is the global MAX(time) across every
+// league, so the unscoped-MAX mutation deterministically resolves to tB rather
+// than to unrelated production data.
+// ---------------------------------------------------------------------------
+
+func TestLatestGemFeatures_innerMaxScopedToLeague(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueA, leagueB := "POE-120-featmax-A", "POE-120-featmax-B"
+	registerLeague(t, pool, leagueA)
+	registerLeague(t, pool, leagueB)
+
+	tA := futureTime(21)
+	tB := tA.Add(time.Hour) // strictly later than league A's latest row
+	cleanupAtTime(t, pool, tA, "gem_features")
+	cleanupAtTime(t, pool, tB, "gem_features")
+
+	base := GemFeature{Name: "POE120 InnerMax Feature", Variant: "20/20", Tier: "LOW", MarketRegime: "TEMPORAL"}
+	rowA := base
+	rowA.Time = tA
+	rowA.Chaos = 111
+	rowB := base
+	rowB.Time = tB
+	rowB.Chaos = 222
+	if _, err := repo.SaveGemFeatures(ctx, league.Historical(leagueA), []GemFeature{rowA}); err != nil {
+		t.Fatalf("SaveGemFeatures league A: %v", err)
+	}
+	if _, err := repo.SaveGemFeatures(ctx, league.Historical(leagueB), []GemFeature{rowB}); err != nil {
+		t.Fatalf("SaveGemFeatures league B: %v", err)
+	}
+
+	res, err := repo.LatestGemFeatures(ctx, league.Historical(leagueA), "", "", 100)
+	if err != nil {
+		t.Fatalf("LatestGemFeatures: %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("result count = %d, want 1 (league %q's row at its own MAX time tA); empty means the inner MAX(time) subquery is unscoped and resolved to league %q's later timestamp tB", len(res), leagueA, leagueB)
+	}
+	if !res[0].Time.Equal(tA) {
+		t.Errorf("row time = %v, want %v (league %q's latest)", res[0].Time, tA, leagueA)
+	}
+	if !valuesClose(res[0].Chaos, 111) {
+		t.Errorf("chaos = %v, want 111 (league %q's row); 222 means the read pulled league %q's later row", res[0].Chaos, leagueA, leagueB)
+	}
+}
+
+func TestLatestGemSignals_innerMaxScopedToLeague(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueA, leagueB := "POE-120-sigmax-A", "POE-120-sigmax-B"
+	registerLeague(t, pool, leagueA)
+	registerLeague(t, pool, leagueB)
+
+	tA := futureTime(22)
+	tB := tA.Add(time.Hour) // strictly later than league A's latest row
+	cleanupAtTime(t, pool, tA, "gem_signals")
+	cleanupAtTime(t, pool, tB, "gem_signals")
+
+	base := GemSignal{
+		Name: "POE120 InnerMax Signal", Variant: "20/20",
+		Signal: "STABLE", WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+	}
+	rowA := base
+	rowA.Time = tA
+	rowA.Confidence = 111
+	rowB := base
+	rowB.Time = tB
+	rowB.Confidence = 222
+	if _, err := repo.SaveGemSignals(ctx, league.Historical(leagueA), []GemSignal{rowA}); err != nil {
+		t.Fatalf("SaveGemSignals league A: %v", err)
+	}
+	if _, err := repo.SaveGemSignals(ctx, league.Historical(leagueB), []GemSignal{rowB}); err != nil {
+		t.Fatalf("SaveGemSignals league B: %v", err)
+	}
+
+	res, err := repo.LatestGemSignals(ctx, league.Historical(leagueA), "", "", 100)
+	if err != nil {
+		t.Fatalf("LatestGemSignals: %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("result count = %d, want 1 (league %q's row at its own MAX time tA); empty means the inner MAX(time) subquery is unscoped and resolved to league %q's later timestamp tB", len(res), leagueA, leagueB)
+	}
+	if !res[0].Time.Equal(tA) {
+		t.Errorf("row time = %v, want %v (league %q's latest)", res[0].Time, tA, leagueA)
+	}
+	if res[0].Confidence != 111 {
+		t.Errorf("confidence = %d, want 111 (league %q's row); 222 means the read pulled league %q's later row", res[0].Confidence, leagueA, leagueB)
+	}
+}
