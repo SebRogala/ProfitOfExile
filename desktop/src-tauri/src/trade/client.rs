@@ -12,6 +12,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use super::rate_limiter::TradeRateLimiter;
@@ -108,7 +109,12 @@ pub enum TradeQueueEvent {
 /// requests from bypassing the rate limiter (TOCTOU race fix).
 pub struct TradeApiClient {
     http_client: reqwest::Client,
-    league_name: String,
+    /// Resolved league name. `None` means **not yet resolved** — trade lookups
+    /// fail closed (error out) rather than silently querying the wrong league.
+    /// No hardcoded default; written only via `set_league` once resolved
+    /// (POE-128). Guarded by a std Mutex used with lock-clone-drop discipline —
+    /// the guard is never held across an `.await`.
+    league: Mutex<Option<String>>,
     rate_limiter: TradeRateLimiter,
     /// Serializes all lookup_gem calls — one search+fetch pair at a time.
     lookup_mutex: tokio::sync::Mutex<()>,
@@ -123,7 +129,7 @@ pub struct TradeApiClient {
 }
 
 impl TradeApiClient {
-    pub fn new(league_name: &str) -> Self {
+    pub fn new() -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(TRADE_CLIENT_TIMEOUT)
             .user_agent(BROWSER_USER_AGENT)
@@ -132,7 +138,7 @@ impl TradeApiClient {
 
         Self {
             http_client,
-            league_name: league_name.to_string(),
+            league: Mutex::new(None),
             rate_limiter: TradeRateLimiter::new(),
             lookup_mutex: tokio::sync::Mutex::new(()),
             pending_count: AtomicUsize::new(0),
@@ -140,6 +146,30 @@ impl TradeApiClient {
             enqueued: AtomicUsize::new(0),
             completed: AtomicUsize::new(0),
         }
+    }
+
+    /// Set the resolved league. Lock, set `Some(name)`, drop the guard.
+    /// Unused in chunk 2 — the fetch task that calls this lands in chunk 3.
+    #[allow(dead_code)]
+    pub fn set_league(&self, name: String) {
+        let mut guard = self.league.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(name);
+    }
+
+    /// Clone-helper for the resolved league name (lock → clone → drop guard).
+    ///
+    /// Returns `Err` when the league is unset (`None`) so callers **fail
+    /// closed** instead of querying the wrong league. The guard is dropped
+    /// before returning, so it is never held across an `.await` at any call
+    /// site — preserving the `Send` bound on the async lookup path.
+    fn league(&self) -> Result<String, String> {
+        let value = {
+            let guard = self.league.lock().unwrap_or_else(|e| e.into_inner());
+            guard.clone()
+        };
+        value.ok_or_else(|| {
+            "Trade lookup unavailable: league not resolved yet".to_string()
+        })
     }
 
     /// Cancel all pending trade lookups. In-flight request completes but
@@ -179,6 +209,21 @@ impl TradeApiClient {
         dedication: bool,
         emit: impl Fn(TradeQueueEvent),
     ) -> Result<TradeLookupResult, String> {
+        // Fail closed on an unresolved league — do this before touching queue
+        // counters or awaiting anything, so an unknown league never reaches the
+        // GGG API and no bookkeeping needs unwinding. `league()` locks, clones
+        // and drops its guard, so nothing is held across the awaits below.
+        let league = match self.league() {
+            Ok(l) => l,
+            Err(e) => {
+                emit(TradeQueueEvent::Error {
+                    gem: gem_name.to_string(),
+                    error: e.clone(),
+                });
+                return Err(e);
+            }
+        };
+
         let pending = self.pending_count.fetch_add(1, Ordering::SeqCst) + 1;
         self.enqueued.fetch_add(1, Ordering::SeqCst);
         let position = pending - self.completed.load(Ordering::SeqCst);
@@ -227,7 +272,9 @@ impl TradeApiClient {
             total: current_pending,
         });
 
-        let search_result = self.execute_search_with_mode(gem_name, variant, dedication).await;
+        let search_result = self
+            .execute_search_with_mode(gem_name, variant, dedication, &league)
+            .await;
         let search_response = match search_result {
             Ok(r) => r,
             Err(e) => {
@@ -250,7 +297,7 @@ impl TradeApiClient {
             return Ok(build_result(
                 gem_name,
                 variant,
-                &self.league_name,
+                &league,
                 &search_response.query_id,
                 search_response.total,
                 vec![],
@@ -293,7 +340,7 @@ impl TradeApiClient {
                 Ok(build_result(
                     gem_name,
                     variant,
-                    &self.league_name,
+                    &league,
                     &search_response.query_id,
                     search_response.total,
                     listings,
@@ -325,11 +372,12 @@ impl TradeApiClient {
         gem_name: &str,
         variant: &str,
         dedication: bool,
+        league: &str,
     ) -> Result<SearchResponse, String> {
         let query_body = super::query::build_search_query_with_mode(gem_name, variant, dedication);
         let url = format!(
             "{}/api/trade/search/{}",
-            TRADE_API_BASE_URL, self.league_name
+            TRADE_API_BASE_URL, league
         );
 
         log::info!("Trade search: {} ({}) → {}", gem_name, variant, url);
@@ -484,5 +532,62 @@ fn extract_numeric_property_value(property: &GggItemProperty) -> i32 {
             .parse()
             .unwrap_or(0),
         None => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A freshly constructed client has no resolved league, so the clone-helper
+    /// must fail rather than hand back a default — this is the fail-closed
+    /// contract (POE-128). Mutation check: if `league()` returned `Ok` for the
+    /// `None` state, this assertion fails.
+    #[test]
+    fn league_returns_err_when_unset() {
+        let client = TradeApiClient::new();
+        assert!(client.league().is_err());
+    }
+
+    /// Once resolved via `set_league`, the clone-helper returns that exact name.
+    /// Guards against a helper that drops or mangles the stored value.
+    #[test]
+    fn league_returns_name_after_set() {
+        let client = TradeApiClient::new();
+        client.set_league("Mirage".to_string());
+        assert_eq!(client.league().unwrap(), "Mirage");
+    }
+
+    /// The full lookup read path fails closed when the league is unset: it
+    /// surfaces a `TradeQueueEvent::Error` and returns `Err` **without** ever
+    /// reaching the GGG API (no `Fetching`/`Queued` progress is emitted because
+    /// the guard trips before any network work). Asserting the emitted Error +
+    /// the Err return is the observable outcome, not a status flag.
+    #[tokio::test]
+    async fn lookup_fails_closed_when_league_unset() {
+        let client = TradeApiClient::new();
+        let events = std::sync::Mutex::new(Vec::new());
+
+        let result = client
+            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |e| {
+                events.lock().unwrap().push(e);
+            })
+            .await;
+
+        assert!(result.is_err(), "unresolved league must error, not query");
+
+        let events = events.into_inner().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, TradeQueueEvent::Error { .. })),
+            "an Error event must be surfaced on the fail-closed path, got: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, TradeQueueEvent::Fetching { .. })),
+            "must not reach the network (no Fetching) when league is unset"
+        );
     }
 }

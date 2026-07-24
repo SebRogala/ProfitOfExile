@@ -2330,7 +2330,7 @@ pub fn run() {
         font_region: Mutex::new(CaptureRegion::default_font_panel()),
         sidebar_open: Mutex::new(true),
         game_focused: Mutex::new(false),
-        trade_client: trade::TradeApiClient::new("Mirage"),
+        trade_client: trade::TradeApiClient::new(),
         server_http,
         watcher_cancel: Mutex::new(None),
         comparator_data: Mutex::new(serde_json::json!({"results":[],"tradeData":{}})),
