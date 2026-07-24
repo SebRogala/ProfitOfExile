@@ -259,6 +259,76 @@ func TestGemNamesAutocomplete_returnsOnlyScopedLeague(t *testing.T) {
 	}
 }
 
+func TestGemNamesAutocomplete_whitespaceQueryReturnsEveryName(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-128-blank-query"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(6)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// The desktop OCR path sends q=" " to mean "give me the whole dictionary".
+	// Building the SQL with zero ILIKE conditions emits "AND ORDER BY" — a syntax
+	// error that surfaces as a 500 whenever the in-memory cache is cold.
+	seedGemSnapshot(t, pool, leagueID, tm, "POE128 Blank Alpha", "20/20", true, false, 111, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueID, tm, "POE128 Blank Beta", "20/20", true, false, 222, 20, "BLUE")
+
+	names, err := repo.GemNamesAutocomplete(ctx, league.Historical(leagueID), " ", 100)
+	if err != nil {
+		t.Fatalf("GemNamesAutocomplete with a whitespace query: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("name count = %d, want 2 (both seeded names); %v", len(names), names)
+	}
+}
+
+func TestGemNameDictionary_ignoresLeagueAndMarketData(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	// gem_colors is static game data: no league column, no prices. Seed a
+	// transfigured/base pair that appears in NO snapshot, so a dictionary built
+	// from market tables could not return it.
+	const base = "POE128 Dictionary Base"
+	const transfigured = "POE128 Dictionary Base of Testing"
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM gem_colors WHERE name = ANY($1)`, []string{base, transfigured}); err != nil {
+			t.Logf("cleanup gem_colors: %v", err)
+		}
+	})
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO gem_colors (name, color) VALUES ($1, 'BLUE'), ($2, 'BLUE')
+		 ON CONFLICT (name) DO NOTHING`, base, transfigured); err != nil {
+		t.Fatalf("seed gem_colors: %v", err)
+	}
+
+	names, err := repo.GemNameDictionary(ctx, true)
+	if err != nil {
+		t.Fatalf("GemNameDictionary: %v", err)
+	}
+
+	var sawTransfigured, sawBase bool
+	for _, n := range names {
+		switch n {
+		case transfigured:
+			sawTransfigured = true
+		case base:
+			sawBase = true
+		}
+	}
+	if !sawTransfigured {
+		t.Errorf("%q missing — an unpriced gem must still be recognisable by OCR", transfigured)
+	}
+	if sawBase {
+		t.Errorf("%q returned as transfigured — it is the base gem", base)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read isolation — result tables (seeded via the scoped Save* writers)
 // ---------------------------------------------------------------------------

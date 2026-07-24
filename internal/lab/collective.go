@@ -364,8 +364,10 @@ func BuildCompareResults(
 		if !found {
 			// Gem not found in transfigure results — include with zero values
 			// but preserve the requested variant so the frontend doesn't fall
-			// back to a different one.
-			cr.Confidence = "LOW"
+			// back to a different one. NO_DATA (not LOW) so the UI can render
+			// those zeros as "unknown" rather than as a 0c price; OCR can now
+			// recognise gems the market has not priced at all.
+			cr.Confidence = ConfidenceNoData
 			if requestedVariant != "" {
 				cr.Variant = requestedVariant
 			}
