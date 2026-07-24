@@ -6,6 +6,7 @@
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
+	import { startSsotStore } from '$lib/stores/ssot.svelte';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 	import LabPage from '$lib/pages/LabPage.svelte';
@@ -445,6 +446,11 @@
 	// Initialize event listeners — runs on module load (client-side only due to ssr:false)
 	// No cleanup needed — desktop app layout never unmounts.
 	initStatusStore().catch(e => console.error('[layout] initStatusStore failed:', e));
+
+	// Start the cross-window SSOT poll. The main window may lean on the eager
+	// ssot-changed nudge, but polling get_ssot is consistent with the overlays
+	// and cheap for a low-churn slice. No cleanup — this layout never unmounts.
+	startSsotStore();
 
 	// Reposition comparator overlay when settings page closes a config overlay.
 	// The config overlay destroy can leave Win32 mouse capture stuck; this move resets focus.

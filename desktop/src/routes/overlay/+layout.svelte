@@ -1,5 +1,12 @@
 <script lang="ts">
+	import { startSsotStore } from '$lib/stores/ssot.svelte';
+
 	let { children } = $props();
+
+	// Overlay windows deliver SSOT by polling get_ssot (WebView2 cross-window
+	// events are unreliable). onMount is unreliable in overlay windows, so start
+	// the poll from an $effect and return its cleanup.
+	$effect(() => startSsotStore());
 </script>
 
 <div class="overlay-root">
