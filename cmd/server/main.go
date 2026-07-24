@@ -83,6 +83,14 @@ func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer, scope league.
 // unbounded background context so a long recompute is not truncated.
 const delayedRecomputeLockTimeout = 5 * time.Second
 
+// fenceAcquireMaxWait bounds how long the server boot fence retries a held
+// advisory lock before giving up. It absorbs a deploy handoff where the
+// orchestrator starts the new server before the previous instance has released
+// its fence, without blocking startup indefinitely on a genuinely concurrent
+// second writer. This is the boot fence only; the delayed-recompute path keeps
+// its fail-fast acquire because it wants to skip the cycle, not wait.
+const fenceAcquireMaxWait = 15 * time.Second
+
 // prepareDelayedRecompute decides whether a fired delayed-recompute timer may
 // run RunV2 for the league it was scheduled under, and if so returns the held
 // league data lock the caller must Release.
@@ -245,11 +253,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	serverLock, err := league.AcquireProcessLock(ctx, pool, league.ServerLockKey())
+	serverLock, err := league.AcquireProcessLockWait(ctx, pool, league.ServerLockKey(), fenceAcquireMaxWait)
 	if err != nil {
 		if errors.Is(err, league.ErrLockHeld) {
-			slog.Error("another server already holds the league fence; refusing to start", "league", scope.ID())
-			fmt.Fprintln(os.Stderr, "Another server process already holds the server fence. Refusing to start a second writer for the same database.")
+			slog.Error("another server still holds the league fence after wait; refusing to start", "league", scope.ID(), "wait", fenceAcquireMaxWait)
+			fmt.Fprintf(os.Stderr, "Another server still holds the server fence after %s — is a previous instance still shutting down? Refusing to start a second writer for the same database.\n", fenceAcquireMaxWait)
 			os.Exit(1)
 		}
 		slog.Error("failed to acquire server fence", "error", err)

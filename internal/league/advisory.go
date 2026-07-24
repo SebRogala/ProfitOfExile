@@ -5,9 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// lockRetryInterval is how long AcquireProcessLockWait sleeps between failed
+// acquires. Short enough that a deploy handoff resolves promptly once the old
+// process releases, long enough not to hammer pg_try_advisory_lock.
+const lockRetryInterval = 500 * time.Millisecond
 
 // ErrLockHeld reports that another session already owns the advisory lock. A
 // process fence turns this into a refusal of readiness rather than a fatal
@@ -54,6 +60,45 @@ func AcquireProcessLock(ctx context.Context, pool *pgxpool.Pool, key int64) (*Pr
 	}
 
 	return &ProcessLock{conn: conn, key: key}, nil
+}
+
+// AcquireProcessLockWait is the bounded-retry variant of AcquireProcessLock for
+// boot fences that must survive a deploy handoff. On a redeploy the orchestrator
+// may start the new process before the old one has fully released its fence; a
+// fail-fast acquire would crashloop the new process on that brief overlap. This
+// retries the acquire every lockRetryInterval until it succeeds or maxWait
+// elapses, then returns ErrLockHeld.
+//
+// It is safe against genuine double-boot: the waiting process holds no lock and
+// does no writes during the window — it only starts writing after it acquires,
+// which only happens once the incumbent releases. Two truly-concurrent processes
+// therefore resolve to exactly one owner; the loser waits maxWait and exits.
+//
+// Only ErrLockHeld is retried. Any other error (connectivity, query failure) is
+// a real fault and returns immediately. Context cancellation aborts the wait and
+// returns ctx.Err(). This is NOT for the delayed-recompute path, which wants to
+// skip its cycle immediately on contention — that keeps using AcquireProcessLock.
+func AcquireProcessLockWait(ctx context.Context, pool *pgxpool.Pool, key int64, maxWait time.Duration) (*ProcessLock, error) {
+	deadline := time.Now().Add(maxWait)
+	for {
+		lock, err := AcquireProcessLock(ctx, pool, key)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, ErrLockHeld) {
+			return nil, err
+		}
+		if time.Now().Add(lockRetryInterval).After(deadline) {
+			// The next sleep would overshoot the window; give up now with the
+			// same sentinel a fail-fast acquire would have returned.
+			return nil, ErrLockHeld
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(lockRetryInterval):
+		}
+	}
 }
 
 // CheckHeld verifies the held connection is still alive by round-tripping a
