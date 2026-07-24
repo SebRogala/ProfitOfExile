@@ -59,6 +59,11 @@ type RouterConfig struct {
 	// DeviceRepo is the device repository for fingerprint-based identity.
 	// May be nil — device middleware is skipped when nil.
 	DeviceRepo *device.Repository
+	// FenceChecker reports the liveness of the server's process fence (the held
+	// advisory-lock connection). May be nil — health then reflects the DB ping
+	// alone. When set, a dropped fence degrades /api/health so the server sheds
+	// traffic instead of double-writing behind a peer that grabbed the lock.
+	FenceChecker handlers.LivenessChecker
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -85,7 +90,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Use(devmw.DeviceMiddleware(cfg.DeviceRepo))
 	}
 
-	r.Get("/api/health", handlers.Health(pinger))
+	r.Get("/api/health", handlers.Health(pinger, cfg.FenceChecker))
 
 	if cfg.Pool != nil {
 		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool, cfg.League))

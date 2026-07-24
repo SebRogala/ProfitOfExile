@@ -85,7 +85,7 @@ func TestHealth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := chi.NewRouter()
-			router.Get("/api/health", Health(tt.pinger))
+			router.Get("/api/health", Health(tt.pinger, nil))
 
 			req := httptest.NewRequest(tt.method, "/api/health", nil)
 			w := httptest.NewRecorder()
@@ -128,12 +128,62 @@ func TestHealth_NilPingerPanics(t *testing.T) {
 			t.Error("expected panic when pinger is nil, but did not panic")
 		}
 	}()
-	Health(nil)
+	Health(nil, nil)
+}
+
+// mockFence lets a health test drive the LivenessChecker outcome.
+type mockFence struct {
+	CheckFn func(ctx context.Context) error
+}
+
+func (m mockFence) CheckHeld(ctx context.Context) error { return m.CheckFn(ctx) }
+
+func TestHealth_DegradesWhenFenceLivenessFails(t *testing.T) {
+	deadFence := mockFence{CheckFn: func(context.Context) error {
+		return errors.New("advisory lock connection dropped")
+	}}
+
+	router := chi.NewRouter()
+	router.Get("/api/health", Health(NopPinger{}, deadFence))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d (fence lost)", w.Code, http.StatusServiceUnavailable)
+	}
+	var got healthResponse
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Status != statusDegraded {
+		t.Errorf("Status = %q, want %q", got.Status, statusDegraded)
+	}
+	// DB ping still succeeded — the degradation must come from the fence alone.
+	if got.DB != dbStatusOK {
+		t.Errorf("DB = %q, want %q", got.DB, dbStatusOK)
+	}
+}
+
+func TestHealth_HealthyWhenFenceLivenessHolds(t *testing.T) {
+	liveFence := mockFence{CheckFn: func(context.Context) error { return nil }}
+
+	router := chi.NewRouter()
+	router.Get("/api/health", Health(NopPinger{}, liveFence))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (fence held)", w.Code, http.StatusOK)
+	}
 }
 
 func TestHealthResponseJSONFields(t *testing.T) {
 	router := chi.NewRouter()
-	router.Get("/api/health", Health(NopPinger{}))
+	router.Get("/api/health", Health(NopPinger{}, nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	w := httptest.NewRecorder()

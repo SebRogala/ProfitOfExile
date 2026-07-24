@@ -20,6 +20,15 @@ type NopPinger struct{}
 // Ping always returns nil.
 func (NopPinger) Ping(context.Context) error { return nil }
 
+// LivenessChecker reports whether an auxiliary process invariant still holds —
+// specifically the server's held advisory-lock connection. If that connection
+// drops, Postgres auto-releases the fence and a second server could silently
+// acquire it, so the health handler treats a non-nil error as unhealthy. A nil
+// LivenessChecker is skipped. *league.ProcessLock satisfies this interface.
+type LivenessChecker interface {
+	CheckHeld(ctx context.Context) error
+}
+
 // Version is set at build time via ldflags:
 //
 //	go build -ldflags "-X profitofexile/internal/server/handlers.Version=<sha>"
@@ -46,8 +55,11 @@ type healthResponse struct {
 
 // Health returns an HTTP handler that responds with the server health status.
 // It pings the database and returns 503 on failure. The pinger must not be nil;
-// use NopPinger in tests that don't require database access.
-func Health(pinger Pinger) http.HandlerFunc {
+// use NopPinger in tests that don't require database access. The fence may be
+// nil; when set, a failed liveness check (dropped advisory-lock connection)
+// also degrades the response so a fenceless server drops out of the load
+// balancer.
+func Health(pinger Pinger, fence LivenessChecker) http.HandlerFunc {
 	if pinger == nil {
 		panic("handlers.Health: pinger must not be nil (use NopPinger for tests)")
 	}
@@ -65,6 +77,14 @@ func Health(pinger Pinger) http.HandlerFunc {
 			httpStatus = http.StatusServiceUnavailable
 		} else {
 			resp.DB = dbStatusOK
+		}
+
+		if fence != nil {
+			if err := fence.CheckHeld(r.Context()); err != nil {
+				slog.Error("health: league fence liveness check failed", "error", err)
+				resp.Status = statusDegraded
+				httpStatus = http.StatusServiceUnavailable
+			}
 		}
 
 		data, err := json.Marshal(resp)
