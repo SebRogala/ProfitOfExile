@@ -19,6 +19,12 @@ import (
 	"profitofexile/internal/price/gemcolor"
 )
 
+// fenceAcquireMaxWait bounds how long the boot fence retries a held advisory
+// lock before giving up. It absorbs a deploy handoff where the orchestrator
+// starts this process before the previous instance has released its fence,
+// without blocking startup indefinitely on a genuinely concurrent peer.
+const fenceAcquireMaxWait = 15 * time.Second
+
 func main() {
 	// Required env vars.
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -112,11 +118,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	lock, err := league.AcquireProcessLock(ctx, pool, league.RuntimeLockKey())
+	lock, err := league.AcquireProcessLockWait(ctx, pool, league.RuntimeLockKey(), fenceAcquireMaxWait)
 	if err != nil {
 		if errors.Is(err, league.ErrLockHeld) {
-			slog.Error("another collector owns the runtime league", "league", scope.ID())
-			fmt.Fprintln(os.Stderr, "Another collector already owns the runtime league fence. Refusing to start a second collector.")
+			slog.Error("another collector still holds the runtime fence after wait", "league", scope.ID(), "wait", fenceAcquireMaxWait)
+			fmt.Fprintf(os.Stderr, "Another collector still holds the runtime league fence after %s — is a previous instance still shutting down? Refusing to start a second collector.\n", fenceAcquireMaxWait)
 			os.Exit(1)
 		}
 		slog.Error("failed to acquire runtime league fence", "error", err)

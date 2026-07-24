@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -88,6 +89,122 @@ func TestProcessLockExcludesSecondSessionUntilReleased(t *testing.T) {
 		t.Fatalf("poolB AcquireProcessLock after release = %v, want success", err)
 	}
 	lockB.Release()
+}
+
+// TestAcquireProcessLockWaitTimesOutWhileHeldWholeWindow proves the bounded
+// retry gives up with ErrLockHeld — not success, not a block — when the key
+// stays held for the entire maxWait window. This is the genuine-double-boot
+// case: a second concurrent process must be excluded, and the fence must return
+// so the caller can exit non-zero rather than hang forever.
+func TestAcquireProcessLockWaitTimesOutWhileHeldWholeWindow(t *testing.T) {
+	requireDatabase(t)
+	ctx := context.Background()
+
+	key := testLockKey(t)
+	holderPool := newTestPool(t, os.Getenv("DATABASE_URL"))
+	waiterPool := newTestPool(t, os.Getenv("DATABASE_URL"))
+
+	held, err := AcquireProcessLock(ctx, holderPool, key)
+	if err != nil {
+		t.Fatalf("holder AcquireProcessLock: %v", err)
+	}
+	defer held.Release()
+
+	const maxWait = 1 * time.Second
+	start := time.Now()
+	lock, err := AcquireProcessLockWait(ctx, waiterPool, key, maxWait)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrLockHeld) {
+		if lock != nil {
+			lock.Release()
+		}
+		t.Fatalf("AcquireProcessLockWait while held whole window = %v, want ErrLockHeld", err)
+	}
+	if lock != nil {
+		lock.Release()
+		t.Fatal("AcquireProcessLockWait returned a lock on timeout; the key was never free")
+	}
+	// It must actually have waited, not returned instantly — otherwise it is a
+	// fail-fast acquire wearing the wait signature. Allow slack below maxWait
+	// because the loop stops one retry interval short of overshooting.
+	if elapsed < maxWait-lockRetryInterval-100*time.Millisecond {
+		t.Fatalf("AcquireProcessLockWait returned after %s, want it to wait near %s", elapsed, maxWait)
+	}
+}
+
+// TestAcquireProcessLockWaitAcquiresWhenHolderReleasesMidWindow is the
+// load-bearing deploy-handoff test. The incumbent holds the fence, then releases
+// it partway through the new process's wait window; the new process must retry
+// past the initial ErrLockHeld and acquire once the key frees. A fail-fast
+// acquire (or a wait variant that does not actually retry) would return
+// ErrLockHeld on the first miss and crashloop the redeploy.
+func TestAcquireProcessLockWaitAcquiresWhenHolderReleasesMidWindow(t *testing.T) {
+	requireDatabase(t)
+	ctx := context.Background()
+
+	key := testLockKey(t)
+	holderPool := newTestPool(t, os.Getenv("DATABASE_URL"))
+	waiterPool := newTestPool(t, os.Getenv("DATABASE_URL"))
+
+	held, err := AcquireProcessLock(ctx, holderPool, key)
+	if err != nil {
+		t.Fatalf("holder AcquireProcessLock: %v", err)
+	}
+
+	// Simulate the old instance finishing its shutdown partway through the new
+	// instance's boot wait.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		held.Release()
+	}()
+
+	lock, err := AcquireProcessLockWait(ctx, waiterPool, key, 3*time.Second)
+	if err != nil {
+		t.Fatalf("AcquireProcessLockWait after mid-window release = %v, want success", err)
+	}
+	if lock == nil {
+		t.Fatal("AcquireProcessLockWait returned nil lock with nil error")
+	}
+	lock.Release()
+}
+
+// TestAcquireProcessLockWaitHonorsContextCancellation proves a cancelled context
+// aborts the wait promptly with ctx.Err() instead of running out the full
+// maxWait — a shutdown signal during boot must not be swallowed by the retry.
+func TestAcquireProcessLockWaitHonorsContextCancellation(t *testing.T) {
+	requireDatabase(t)
+
+	key := testLockKey(t)
+	holderPool := newTestPool(t, os.Getenv("DATABASE_URL"))
+	waiterPool := newTestPool(t, os.Getenv("DATABASE_URL"))
+
+	held, err := AcquireProcessLock(context.Background(), holderPool, key)
+	if err != nil {
+		t.Fatalf("holder AcquireProcessLock: %v", err)
+	}
+	defer held.Release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	lock, err := AcquireProcessLockWait(ctx, waiterPool, key, 10*time.Second)
+	elapsed := time.Since(start)
+
+	if lock != nil {
+		lock.Release()
+		t.Fatal("AcquireProcessLockWait acquired despite cancellation; key was held throughout")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("AcquireProcessLockWait on cancel = %v, want context.Canceled", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("AcquireProcessLockWait took %s to observe cancellation, want prompt return", elapsed)
+	}
 }
 
 // TestReleaseIsIdempotent proves a second Release is a no-op rather than a
