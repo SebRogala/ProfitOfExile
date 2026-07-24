@@ -26,6 +26,8 @@ export interface GemPlay {
 	baseName: string;
 	variant: string;
 	color: 'RED' | 'GREEN' | 'BLUE';
+	/** 'OK' | 'LOW' | 'NO_BASE'. NO_BASE means the base gem is unpriced, so roi/basePrice are unknown — not zero. */
+	confidence: string;
 	roi: number;
 	roiPercent: number;
 	weightedRoi: number;
@@ -246,13 +248,25 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 
 // --- Mapping helpers ---
 
+/**
+ * Convert a backend variant ("1", "20") to the UI's display format ("1/0", "20/0").
+ * The backend stores zero-quality variants without the quality suffix and normalizes
+ * "/0" away on inbound query params, but never restores it on responses — so UI code
+ * comparing against "1/0"/"20/0" would never match. Variants that already carry a
+ * quality ("1/20", "21/23") pass through unchanged.
+ */
+export function displayVariant(v: string): string {
+	return /^\d+$/.test(v) ? `${v}/0` : v;
+}
+
 /** Map a backend collective/trends row to frontend GemPlay. */
 function mapCollectiveRow(r: any): GemPlay {
 	return {
 		name: r.transfiguredName || r.name || '',
 		baseName: r.baseName || '',
-		variant: r.variant || '',
+		variant: displayVariant(r.variant || ''),
 		color: r.gemColor || '',
+		confidence: r.confidence || '',
 		roi: Math.round(r.roi || 0),
 		roiPercent: Math.round(r.roiPct || 0),
 		weightedRoi: Math.round(r.weightedRoi || 0),
@@ -295,7 +309,7 @@ function mapCompareRow(r: any): CompareGem {
 		: [];
 	return {
 		name: r.transfiguredName || '',
-		variant: r.variant || '',
+		variant: displayVariant(r.variant || ''),
 		color: r.gemColor || '',
 		roi: Math.round(r.roi || 0),
 		roiPercent: Math.round(r.roiPct || 0),
