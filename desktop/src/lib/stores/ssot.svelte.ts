@@ -26,6 +26,9 @@ export interface SsotSnapshot {
 	league: { name: string | null };
 	/** A league resolve is in flight (bounded-retry fetch task running). */
 	resolving?: boolean;
+	/** The resolver has failed enough times to treat the server as unreachable
+	 *  (still retrying). Only meaningful while `resolving` is true. */
+	unreachable?: boolean;
 }
 
 /**
@@ -44,13 +47,19 @@ export const ssot = $state({
 	/** True while Rust is resolving the league (drives the Settings "Resolving…"
 	 *  state and neutralises the Refresh button). Defaults false. */
 	resolving: false,
+	/** True when the resolver has given up reaching the server but is still
+	 *  retrying — drives the "Server unreachable" state with an actionable
+	 *  Refresh. Defaults false. */
+	unreachable: false,
 });
 
-/** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`) into the
- *  flat store fields. Missing/malformed fields fail closed (null / false). */
+/** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`,
+ *  `snap.unreachable`) into the flat store fields. Missing/malformed fields fail
+ *  closed (null / false). */
 export function applySnapshot(snap: SsotSnapshot): void {
 	ssot.league = snap.league?.name ?? null;
 	ssot.resolving = snap.resolving ?? false;
+	ssot.unreachable = snap.unreachable ?? false;
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;

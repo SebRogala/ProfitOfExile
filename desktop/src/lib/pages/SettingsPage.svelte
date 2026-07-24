@@ -32,7 +32,9 @@
 	// The in-flight state is driven off `ssot.resolving` (the polled SSOT flag),
 	// NOT a local sub-frame flag: `refresh_league` returns immediately while the
 	// bounded-retry loop runs, so a local flag would flash for one frame and then
-	// lie about a still-retrying resolve. A repeat click is a guarded no-op in Rust.
+	// lie about a still-retrying resolve. While a resolve is in flight, a click
+	// WAKES the live loop (immediate retry + backoff reset) rather than spawning;
+	// when none is in flight it spawns a fresh resolver. Handled in Rust.
 	async function refreshLeague() {
 		try {
 			await invoke('refresh_league');
@@ -521,7 +523,10 @@
 
 			<div class="setting-row">
 				<span class="setting-label">League</span>
-				{#if ssot.resolving}
+				{#if ssot.resolving && ssot.unreachable}
+					<span class="setting-value muted">Server unreachable — still retrying</span>
+					<Button onclick={refreshLeague}>Refresh</Button>
+				{:else if ssot.resolving}
 					<span class="setting-value muted">Resolving…</span>
 					<Button onclick={refreshLeague} disabled>Refresh</Button>
 				{:else if ssot.league == null}
