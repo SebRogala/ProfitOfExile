@@ -607,11 +607,19 @@ func (r *Repository) GemNamesAutocomplete(ctx context.Context, scope league.Scop
 	}
 	args = append(args, limit)
 
+	// A whitespace-only query has no words — callers use it to mean "every name"
+	// (the cache path treats it that way). Emitting an empty condition list here
+	// would produce "AND ORDER BY", a syntax error that 500s the endpoint.
+	filter := "TRUE"
+	if len(conditions) > 0 {
+		filter = strings.Join(conditions, " AND ")
+	}
+
 	sql := fmt.Sprintf(`
 		SELECT DISTINCT name FROM gem_snapshots
 		WHERE league = $1 AND is_transfigured = true AND %s
 		ORDER BY name LIMIT $%d`,
-		strings.Join(conditions, " AND "), len(args))
+		filter, len(args))
 
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -1457,4 +1465,67 @@ func (r *Repository) SparklineDataCorrupted(ctx context.Context, scope league.Sc
 	}
 
 	return result, nil
+}
+
+// GemNameDictionary returns known gem names from gem_colors, the static game-data
+// table — no league, no prices, no market activity required.
+//
+// It exists for OCR: recognising the gem under the cursor must not depend on
+// whether poe.ninja happens to price it. The market-derived sources (transfigure
+// results, gem_snapshots) collapse to a handful of names at league start, which
+// silently blinds the desktop matcher exactly when players are running the most
+// labs.
+//
+// transfigured selects between the two halves of the table:
+//   - true  — names whose base gem is itself a known gem ("Rain of Arrows of
+//     Saturation" has base "Rain of Arrows"). This is what distinguishes a
+//     transfigured gem from a base gem that merely contains " of "
+//     ("Herald of Ash" has no base gem "Herald").
+//   - false — everything else, minus support gems, which never appear in the
+//     Font or Dedication pools.
+func (r *Repository) GemNameDictionary(ctx context.Context, transfigured bool) ([]string, error) {
+	rows, err := r.pool.Query(ctx, "SELECT name FROM gem_colors ORDER BY name")
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem name dictionary: %w", err)
+	}
+	defer rows.Close()
+
+	var all []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem dictionary name: %w", err)
+		}
+		all = append(all, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem dictionary rows iteration: %w", err)
+	}
+
+	return FilterGemDictionary(all, transfigured), nil
+}
+
+// FilterGemDictionary splits a full gem-name list into transfigured and
+// non-transfigured halves. Separated from the query so the rule is testable
+// without a database.
+func FilterGemDictionary(all []string, transfigured bool) []string {
+	known := make(map[string]struct{}, len(all))
+	for _, n := range all {
+		known[n] = struct{}{}
+	}
+
+	names := make([]string, 0, len(all))
+	for _, n := range all {
+		base := extractBaseName(n)
+		_, isTransfigured := known[base]
+		isTransfigured = isTransfigured && base != n
+		if isTransfigured != transfigured {
+			continue
+		}
+		if !transfigured && strings.HasSuffix(n, " Support") {
+			continue
+		}
+		names = append(names, n)
+	}
+	return names
 }

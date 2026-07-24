@@ -31,6 +31,10 @@ type TransfigureResult struct {
 // before their bases).
 const ConfidenceNoBase = "NO_BASE"
 
+// ConfidenceNoData marks a comparison entry for a gem with no transfigure data at
+// all — neither side of the pair is priced. Its zeros are "unknown", not "worthless".
+const ConfidenceNoData = "NO_DATA"
+
 // GemPrice is the minimal price data needed for analysis. Shared across analyzers.
 type GemPrice struct {
 	Name           string

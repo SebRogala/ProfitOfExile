@@ -172,6 +172,8 @@ export interface CompareGem {
 	name: string;
 	variant: string;
 	color: 'RED' | 'GREEN' | 'BLUE';
+	/** 'OK' | 'LOW' | 'NO_BASE' | 'NO_DATA'. NO_DATA means the gem is unpriced — its zeros are unknown, not 0c. */
+	confidence: string;
 	roi: number;
 	roiPercent: number;
 	weightedRoi: number;
@@ -313,6 +315,7 @@ function mapCompareRow(r: any): CompareGem {
 		name: r.transfiguredName || '',
 		variant: displayVariant(r.variant || ''),
 		color: r.gemColor || '',
+		confidence: r.confidence || '',
 		roi: Math.round(r.roi || 0),
 		roiPercent: Math.round(r.roiPct || 0),
 		weightedRoi: Math.round(r.weightedRoi || 0),

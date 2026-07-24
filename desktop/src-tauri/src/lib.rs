@@ -1806,8 +1806,10 @@ fn send_font_session_data(app: &AppHandle) {
 async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Client, lab_mode: &str) -> Vec<String> {
     if lab_mode == "Dedication" {
         // Fetch both pools in parallel and merge.
-        let url_skills = format!("{}/api/analysis/gems/names?q=+&limit=500&corrupted=true&transfigured=false", server_url);
-        let url_transfig = format!("{}/api/analysis/gems/names?q=+&limit=500&corrupted=true&transfigured=true", server_url);
+        // Static game-data dictionary — OCR must recognise a gem whether or not the
+        // market prices it (a fresh league prices almost nothing for the first hours).
+        let url_skills = format!("{}/api/analysis/gems/dictionary?transfigured=false", server_url);
+        let url_transfig = format!("{}/api/analysis/gems/dictionary?transfigured=true", server_url);
 
         let (skills_res, transfig_res) = tokio::join!(
             client.get(&url_skills).send(),
@@ -1852,7 +1854,7 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Cl
         all_names
     } else {
         // Normal mode: transfigured gem names only.
-        let url = format!("{}/api/analysis/gems/names?q=of+&limit=500", server_url);
+        let url = format!("{}/api/analysis/gems/dictionary?transfigured=true", server_url);
         match client.get(&url).send().await {
             Ok(res) if res.status().is_success() => {
                 match res.json::<serde_json::Value>().await {

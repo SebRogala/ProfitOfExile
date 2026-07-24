@@ -245,8 +245,10 @@ func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
-	if results[0].Confidence != "LOW" {
-		t.Errorf("confidence = %s, want LOW", results[0].Confidence)
+	// NO_DATA, not LOW: LOW means "priced, but thin market". This gem has no price
+	// at all, and the UI must render its zeros as unknown rather than as 0c.
+	if results[0].Confidence != ConfidenceNoData {
+		t.Errorf("confidence = %s, want %s", results[0].Confidence, ConfidenceNoData)
 	}
 	if results[0].ROI != 0 {
 		t.Errorf("ROI = %f, want 0", results[0].ROI)

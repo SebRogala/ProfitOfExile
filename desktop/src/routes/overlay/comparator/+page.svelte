@@ -273,12 +273,13 @@
 					{@const tierColor = TIER_COLORS[gem.priceTier] ?? '#94a3b8'}
 					{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
 					{@const trade = tradeData[gem.name]}
+					{@const noData = gem.confidence === 'NO_DATA' || (gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0)}
 					<div class="gem-row" class:selected={selectedGem === gem.name}>
 						<div class="row-top">
 							<GemIcon name={gem.name} size={24} />
 							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
 							<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
-							{#if gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0}
+							{#if noData}
 								<span class="anomaly">no ninja data</span>
 							{:else}
 								<span class="sell" style="color: {sigColor}">{gem.signal}</span>
@@ -290,7 +291,8 @@
 							<span class="variant-label">{gem.variant}</span>
 							<span class="price-col">
 								<span class="price-label">ninja</span>
-								<span class="price">{formatPrice(gem.transPrice)}{divSuffix(gem.transPrice)}</span>
+								<!-- A NO_DATA gem's 0 means unpriced, not worth 0c — never print it as a price. -->
+								<span class="price">{noData ? '—' : `${formatPrice(gem.transPrice)}${divSuffix(gem.transPrice)}`}</span>
 							</span>
 							{#if trade}
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}

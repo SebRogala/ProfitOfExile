@@ -315,3 +315,46 @@ func TestAnalyzeTransfigure_MissingBaseVariantMarkedNoBaseWhileOtherVariantCompu
 			got.Confidence, got.TransfiguredPrice, ConfidenceNoBase)
 	}
 }
+
+func TestFilterGemDictionary_TransfiguredRequiresAKnownBaseGem(t *testing.T) {
+	// "Herald of Ash" contains " of " but has no base gem "Herald" — it is a base
+	// gem itself. "Rain of Arrows of Saturation" has base "Rain of Arrows", which
+	// is in the list, so it is transfigured.
+	all := []string{
+		"Herald of Ash",
+		"Rain of Arrows",
+		"Rain of Arrows of Saturation",
+		"Spark",
+		"Spark of Nova",
+	}
+
+	got := FilterGemDictionary(all, true)
+
+	want := map[string]bool{"Rain of Arrows of Saturation": true, "Spark of Nova": true}
+	if len(got) != len(want) {
+		t.Fatalf("transfigured = %v, want exactly %v", got, want)
+	}
+	for _, n := range got {
+		if !want[n] {
+			t.Errorf("%q classified transfigured — it has no known base gem", n)
+		}
+	}
+}
+
+func TestFilterGemDictionary_SkillsExcludeSupportGems(t *testing.T) {
+	all := []string{"Bloodlust Support", "Herald of Ash", "Spark", "Spark of Nova"}
+
+	got := FilterGemDictionary(all, false)
+
+	for _, n := range got {
+		if n == "Bloodlust Support" {
+			t.Fatalf("support gem in the skill dictionary: %v — supports never drop from a Font", got)
+		}
+		if n == "Spark of Nova" {
+			t.Fatalf("transfigured gem in the skill dictionary: %v", got)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("skills = %v, want Herald of Ash and Spark", got)
+	}
+}
