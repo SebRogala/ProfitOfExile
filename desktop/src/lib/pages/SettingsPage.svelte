@@ -5,6 +5,7 @@
 	import { check } from '@tauri-apps/plugin-updater';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
+	import { ssot } from '$lib/stores/ssot.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
@@ -24,6 +25,21 @@
 	$effect(() => {
 		getVersion().then(v => { appVersion = v; }).catch(() => {});
 	});
+
+	// --- League (SSOT) ---
+	// League is owned by the Rust SSOT (see stores/ssot.svelte). This surface only
+	// displays the resolved value and asks Rust to re-resolve; it never defaults one.
+	let refreshingLeague = $state(false);
+	async function refreshLeague() {
+		refreshingLeague = true;
+		try {
+			await invoke('refresh_league');
+		} catch (e) {
+			console.warn('[settings] refresh_league failed:', e);
+		} finally {
+			refreshingLeague = false;
+		}
+	}
 
 	// Sync: when background checker detects an update, reflect it immediately
 	$effect(() => {
@@ -505,7 +521,10 @@
 
 			<div class="setting-row">
 				<span class="setting-label">League</span>
-				<span class="setting-value">Mirage</span>
+				<span class="setting-value">{ssot.league ?? 'Not detected'}</span>
+				<Button onclick={refreshLeague} disabled={refreshingLeague}>
+					{refreshingLeague ? 'Refreshing…' : 'Refresh'}
+				</Button>
 			</div>
 
 		</section>

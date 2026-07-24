@@ -298,7 +298,7 @@
 		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
 		<div class:tab-hidden={activeTab !== 'Session'}>
-			<Comparator league={status?.league || ''} divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} />
+			<Comparator divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} />
 			<SessionQueue
 				queue={sessionQueue}
 				onRemove={handleRemoveFromQueue}
@@ -307,9 +307,9 @@
 			/>
 		</div>
 		{#if activeTab === 'Rankings'}
-			<ByVariant allPlays={bestPlays} league={status?.league || ''} labMode={labModeForChild} />
+			<ByVariant allPlays={bestPlays} labMode={labModeForChild} />
 		{:else if activeTab === 'Font EV'}
-			<FontEVCompare {refreshKey} league={status?.league || ''} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
+			<FontEVCompare {refreshKey} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
 		{:else if activeTab === 'Market'}
 			{#if marketOverview}
 				<MarketOverview data={marketOverview} />

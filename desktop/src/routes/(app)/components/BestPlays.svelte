@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { fetchSignalHistory, fetchGemNames, fetchBestPlays, type GemPlay, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
+	import { ssot } from '$lib/stores/ssot.svelte';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -20,12 +21,10 @@
 		plays,
 		title = 'Best Plays Now (ALL variants)',
 		showVariantColumn = true,
-		league = '',
 	}: {
 		plays: GemPlay[];
 		title?: string;
 		showVariantColumn?: boolean;
-		league?: string;
 	} = $props();
 
 	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
@@ -266,7 +265,12 @@
 								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
 								Sellability: {gem.sellabilityLabel} ({gem.sellability})
 								{#if gem.name.includes(' of ')}
-									| <Tooltip text="Buy {baseGemName(gem.name)} ({gem.variant})"><a class="buy-base-link" href={baseGemTradeUrl(gem.name, gem.variant, league)} target="_blank">Buy Base</a></Tooltip>
+									{@const lg = ssot.league}
+									{#if lg}
+										| <Tooltip text="Buy {baseGemName(gem.name)} ({gem.variant})"><a class="buy-base-link" href={baseGemTradeUrl(gem.name, gem.variant, lg)} target="_blank">Buy Base</a></Tooltip>
+									{:else}
+										| <Tooltip text="League not detected — trade link unavailable"><span class="buy-base-disabled">Buy Base</span></Tooltip>
+									{/if}
 								{/if}
 							</span>
 							{#if gem.gcpRecipeCost > 0}
@@ -279,7 +283,12 @@
 										<span class="gcp-more-expensive">(costs {Math.abs(gem.gcpRecipeSaves)}c more)</span>
 									{/if}
 									{#if gem.name.includes(' of ')}
-										<a class="buy-base-link gcp-buy" href={baseGemTradeUrl(gem.name, '20/0', league)} target="_blank">Buy 20/0</a>
+										{@const lg = ssot.league}
+										{#if lg}
+											<a class="buy-base-link gcp-buy" href={baseGemTradeUrl(gem.name, '20/0', lg)} target="_blank">Buy 20/0</a>
+										{:else}
+											<span class="gcp-buy buy-base-disabled" title="League not detected">Buy 20/0</span>
+										{/if}
 									{/if}
 								</div>
 							{/if}
@@ -620,6 +629,12 @@
 	.buy-base-link:hover {
 		color: var(--color-lab-text);
 		text-decoration: underline;
+	}
+	.buy-base-disabled {
+		color: var(--color-lab-text-secondary);
+		opacity: 0.5;
+		cursor: not-allowed;
+		font-weight: 600;
 	}
 	.gcp-recipe {
 		display: flex;
