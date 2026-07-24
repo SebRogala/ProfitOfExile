@@ -162,7 +162,7 @@ impl TradeApiClient {
     /// closed** instead of querying the wrong league. The guard is dropped
     /// before returning, so it is never held across an `.await` at any call
     /// site — preserving the `Send` bound on the async lookup path.
-    fn league(&self) -> Result<String, String> {
+    pub(crate) fn league(&self) -> Result<String, String> {
         let value = {
             let guard = self.league.lock().unwrap_or_else(|e| e.into_inner());
             guard.clone()
