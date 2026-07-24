@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -89,6 +90,42 @@ func main() {
 		os.Exit(1)
 	}
 
+	// EXPECTED_LEAGUE is an optional deploy-time assertion: if set, the resolved
+	// runtime league must match it exactly, else the collector refuses to start
+	// rather than silently writing under a league the operator did not intend.
+	// Absence is not an error — the runtime_config selection stands on its own.
+	if err := checkExpectedLeague(os.Getenv("EXPECTED_LEAGUE"), scope.ID()); err != nil {
+		slog.Error("EXPECTED_LEAGUE assertion failed", "error", err)
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
+	// Runtime fence: only one collector may own the runtime league at a time.
+	// Two concurrent collectors double-poll poe.ninja (burning the shared GGG /
+	// CDN budget) and race on snapshot inserts. The fence parks one dedicated
+	// pooled connection for the whole process lifetime, so guard that the pool
+	// can spare it — with POE_DB_MAX_CONNS=1 the fence would starve every other
+	// query. Fail fast with a named cause instead of deadlocking.
+	if maxConns := pool.Config().MaxConns; maxConns < 2 {
+		slog.Error("database pool too small for runtime fence", "max_conns", maxConns)
+		fmt.Fprintf(os.Stderr, "Runtime fence needs at least 2 DB connections (one is parked for the process-lifetime lock); POE_DB_MAX_CONNS resolved to %d. Raise it.\n", maxConns)
+		os.Exit(1)
+	}
+
+	lock, err := league.AcquireProcessLock(ctx, pool, league.RuntimeLockKey())
+	if err != nil {
+		if errors.Is(err, league.ErrLockHeld) {
+			slog.Error("another collector owns the runtime league", "league", scope.ID())
+			fmt.Fprintln(os.Stderr, "Another collector already owns the runtime league fence. Refusing to start a second collector.")
+			os.Exit(1)
+		}
+		slog.Error("failed to acquire runtime league fence", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to acquire the runtime league fence.")
+		os.Exit(1)
+	}
+	defer lock.Release()
+	slog.Info("runtime league fence acquired", "league", scope.ID(), "revision", scope.Revision())
+
 	// Migrations are handled by the server — the collector only reads/writes
 	// data and should not manage schema. This avoids crash loops when the
 	// collector image is rebuilt separately from the server.
@@ -152,7 +189,7 @@ func main() {
 	scheduler, err := collector.NewScheduler(
 		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint, fragmentEndpoint},
 		resolver,
-		scope.ID(),
+		scope,
 		mercureURL,
 		mercureJWTSecret,
 		logger,
@@ -187,7 +224,7 @@ func main() {
 		if d, err := time.ParseDuration(os.Getenv("TRADE_REFRESH_INTERVAL")); err == nil && d > 0 {
 			tradeInterval = d
 		}
-		go runTradeRefresher(schedulerCtx, mercureURL, mercureJWTSecret, tradeInterval)
+		go runTradeRefresher(schedulerCtx, scope, mercureURL, mercureJWTSecret, tradeInterval)
 		slog.Info("trade refresh scheduler started", "interval", tradeInterval)
 	} else {
 		slog.Info("trade refresh scheduler disabled (MERCURE_JWT_SECRET not set)")
@@ -196,7 +233,7 @@ func main() {
 	// Lab layout daily reset — publish Mercure event at 00:00 UTC so desktop
 	// clients clear stale layouts and re-fetch when the new one is uploaded.
 	if mercureJWTSecret != "" {
-		go runLayoutResetTicker(schedulerCtx, mercureURL, mercureJWTSecret)
+		go runLayoutResetTicker(schedulerCtx, scope, mercureURL, mercureJWTSecret)
 		slog.Info("lab layout reset ticker started (fires at 00:00 UTC daily)")
 	}
 
@@ -205,6 +242,24 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		// Fence liveness: if the dedicated lock connection dropped, Postgres
+		// auto-released the advisory lock and a peer collector could silently
+		// acquire it. Report unhealthy so orchestration restarts us to re-fence.
+		if err := lock.CheckHeld(r.Context()); err != nil {
+			slog.Error("health endpoint: runtime fence lost", "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"status":   "unhealthy",
+				"reason":   "runtime league fence lost",
+				"league":   scope.ID(),
+				"revision": scope.Revision(),
+			}); err != nil {
+				slog.Error("health endpoint: encode response", "error", err)
+			}
+			return
+		}
+
 		summary, err := repo.LatestSnapshot(r.Context(), scope)
 		if err != nil {
 			slog.Error("health endpoint: failed to fetch latest snapshot", "error", err)
@@ -215,6 +270,8 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"status":       "ok",
+			"league":       scope.ID(),
+			"revision":     scope.Revision(),
 			"lastSnapshot": summary.LastGemTime.Format(time.RFC3339),
 			"uptime":       time.Since(startedAt).Round(time.Second).String(),
 		}); err != nil {
@@ -232,6 +289,8 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
+			"league":           scope.ID(),
+			"revision":         scope.Revision(),
 			"lastGemTime":      summary.LastGemTime.Format(time.RFC3339),
 			"gemCount":         summary.GemCount,
 			"lastCurrencyTime": summary.LastCurrencyTime.Format(time.RFC3339),
@@ -296,10 +355,37 @@ func main() {
 	slog.Info("collector stopped")
 }
 
+// checkExpectedLeague enforces the optional EXPECTED_LEAGUE deploy assertion.
+// An empty expected value is a no-op (the assertion is opt-in). A non-empty
+// value must equal the resolved league exactly, otherwise it returns an error
+// the caller turns into a refusal to start.
+func checkExpectedLeague(expected, resolved string) error {
+	if expected == "" {
+		return nil
+	}
+	if expected != resolved {
+		return fmt.Errorf("EXPECTED_LEAGUE=%q does not match resolved runtime league %q", expected, resolved)
+	}
+	return nil
+}
+
 // runLayoutResetTicker sleeps until 00:00 UTC each day, then publishes a
 // layout reset event on the Mercure hub. Desktop clients listen for this
 // and clear their cached lab layout so they fetch the new daily layout.
-func runLayoutResetTicker(ctx context.Context, mercureURL, mercureSecret string) {
+func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string) {
+	payloadBytes, err := json.Marshal(map[string]any{
+		"topic":          "poe/lab/layout",
+		"action":         "reset",
+		"source":         "collector",
+		"league":         scope.ID(),
+		"leagueRevision": scope.Revision(),
+	})
+	if err != nil {
+		slog.Error("layout reset: marshal payload failed, ticker disabled", "error", err)
+		return
+	}
+	payload := string(payloadBytes)
+
 	for {
 		now := time.Now().UTC()
 		midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
@@ -312,7 +398,6 @@ func runLayoutResetTicker(ctx context.Context, mercureURL, mercureSecret string)
 		case <-time.After(sleepDur):
 		}
 
-		payload := `{"topic":"poe/lab/layout","action":"reset","source":"collector"}`
 		if err := collector.PublishMercureEvent(ctx, mercureURL, mercureSecret, "poe/lab/layout", payload); err != nil {
 			slog.Error("layout reset: mercure publish failed", "error", err)
 		} else {
@@ -333,8 +418,37 @@ func runLayoutResetTicker(ctx context.Context, mercureURL, mercureSecret string)
 // publishErrorEscalateAfter consecutive failures the next failure is logged
 // at Error so monitoring can page on a sustained Mercure outage; the level
 // drops back to Warn once a publish succeeds.
-func runTradeRefresher(ctx context.Context, mercureURL, mercureSecret string, interval time.Duration) {
+func runTradeRefresher(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string, interval time.Duration) {
 	const publishErrorEscalateAfter = 3
+
+	// Precompute both payload variants — scope is constant for the process, so
+	// stamp league + leagueRevision once. The server validates these against its
+	// own resolved scope and rejects cross-league ticks (POE-121 Chunk 3).
+	tierPayloadBytes, err := json.Marshal(map[string]any{
+		"topic":          "poe/collector/trade-tick",
+		"variant":        "20/20",
+		"minTier":        "MID",
+		"minAge":         "5m",
+		"league":         scope.ID(),
+		"leagueRevision": scope.Revision(),
+	})
+	if err != nil {
+		slog.Error("trade tick: marshal tier payload failed, refresher disabled", "error", err)
+		return
+	}
+	anyPayloadBytes, err := json.Marshal(map[string]any{
+		"topic":          "poe/collector/trade-tick",
+		"variant":        "20/20",
+		"minAge":         "5m",
+		"league":         scope.ID(),
+		"leagueRevision": scope.Revision(),
+	})
+	if err != nil {
+		slog.Error("trade tick: marshal any payload failed, refresher disabled", "error", err)
+		return
+	}
+	tierPayload := string(tierPayloadBytes)
+	anyPayload := string(anyPayloadBytes)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -348,11 +462,9 @@ func runTradeRefresher(ctx context.Context, mercureURL, mercureSecret string, in
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			var payload string
+			payload := anyPayload
 			if tierTick {
-				payload = `{"topic":"poe/collector/trade-tick","variant":"20/20","minTier":"MID","minAge":"5m"}`
-			} else {
-				payload = `{"topic":"poe/collector/trade-tick","variant":"20/20","minAge":"5m"}`
+				payload = tierPayload
 			}
 			tierTick = !tierTick
 
