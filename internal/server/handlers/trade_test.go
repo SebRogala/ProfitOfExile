@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -54,7 +55,7 @@ func TestTradeLookup_CacheHit(t *testing.T) {
 	// handler incorrectly submits to it, the test will hang or panic, which is
 	// the behaviour we want to detect.
 	cfg := trade.TradeConfig{MaxQueueWait: time.Second}
-	gate := trade.NewGate(cfg, trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
+	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
 	router := tradeRouter(gate, cache, 50*time.Millisecond)
 
@@ -84,7 +85,7 @@ func TestTradeLookup_CacheHit(t *testing.T) {
 func TestTradeLookup_FastPath(t *testing.T) {
 	cache := trade.NewTradeCache(10)
 	cfg := trade.TradeConfig{MaxQueueWait: 5 * time.Second}
-	gate := trade.NewGate(cfg, trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
+	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
 	// Simulate the gate delivering a result by intercepting Submit. We cannot
 	// easily mock Submit on a concrete Gate, so instead we pre-populate the
@@ -123,7 +124,7 @@ func TestTradeLookup_FastPath(t *testing.T) {
 func TestTradeLookup_WaitPath(t *testing.T) {
 	cache := trade.NewTradeCache(10)
 	cfg := trade.TradeConfig{MaxQueueWait: 5 * time.Second}
-	gate := trade.NewGate(cfg, trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
+	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
 	// Use a very short sync timeout so the handler gives up quickly.
 	router := tradeRouter(gate, cache, 10*time.Millisecond)
@@ -160,7 +161,7 @@ func TestTradeLookup_WaitPath(t *testing.T) {
 func TestTradeLookup_InvalidJSON(t *testing.T) {
 	cache := trade.NewTradeCache(10)
 	cfg := trade.TradeConfig{MaxQueueWait: time.Second}
-	gate := trade.NewGate(cfg, trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
+	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
 	router := tradeRouter(gate, cache, 50*time.Millisecond)
 
@@ -186,7 +187,7 @@ func TestTradeLookup_InvalidJSON(t *testing.T) {
 func TestTradeLookup_EmptyGem(t *testing.T) {
 	cache := trade.NewTradeCache(10)
 	cfg := trade.TradeConfig{MaxQueueWait: time.Second}
-	gate := trade.NewGate(cfg, trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
+	gate := trade.NewGate(cfg, league.Historical("Mirage"), trade.NewRateLimiter(cfg), nil, nil, cache, func() float64 { return 212.0 }, nil)
 
 	router := tradeRouter(gate, cache, 50*time.Millisecond)
 

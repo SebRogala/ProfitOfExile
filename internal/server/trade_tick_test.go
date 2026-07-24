@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -25,7 +26,7 @@ func newTickTestGate() *trade.Gate {
 	limiter := trade.NewRateLimiter(cfg)
 	client := trade.NewClient(cfg)
 	cache := trade.NewTradeCache(cfg.CacheMaxEntries)
-	return trade.NewGate(cfg, limiter, client, nil, cache, func() float64 { return 200.0 }, nil)
+	return trade.NewGate(cfg, league.Historical("Mirage"), limiter, client, nil, cache, func() float64 { return 200.0 }, nil)
 }
 
 // seedStaleEntry inserts a fake stale cache entry so OldestStale can find it.

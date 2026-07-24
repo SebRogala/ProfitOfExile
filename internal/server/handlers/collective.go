@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -57,11 +58,11 @@ type collectiveRow struct {
 // CollectiveAnalysis returns a ranked "what to farm now" list combining
 // transfigure ROI with trend signals.
 // Query params: variant (optional), budget (optional, max base price), limit (default 20, max 100).
-func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Dedication mode: return corrupted 21/23 gems ranked by price.
 		if r.URL.Query().Get("mode") == "dedication" {
-			serveDedicationCollective(w, r, repo, cache)
+			serveDedicationCollective(w, r, repo, cache, scope)
 			return
 		}
 
@@ -115,21 +116,21 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		// Slow path: fall back to DB query.
 		if !usedCache {
 			var err error
-			transfigure, err = repo.LatestTransfigureResults(r.Context(), variant, 1000)
+			transfigure, err = repo.LatestTransfigureResults(r.Context(), scope, variant, 1000)
 			if err != nil {
 				slog.Error("collective analysis: transfigure query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
 
-			signals, err = repo.LatestGemSignals(r.Context(), variant, "", 5000)
+			signals, err = repo.LatestGemSignals(r.Context(), scope, variant, "", 5000)
 			if err != nil {
 				slog.Error("collective analysis: gem signals query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
 
-			features, err = repo.LatestGemFeatures(r.Context(), variant, "", 50000)
+			features, err = repo.LatestGemFeatures(r.Context(), scope, variant, "", 50000)
 			if err != nil {
 				slog.Error("collective analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -194,7 +195,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			mc = cache.MarketContext()
 		}
 		if mc == nil {
-			mc, _ = repo.LatestMarketContext(r.Context())
+			mc, _ = repo.LatestMarketContext(r.Context(), scope)
 		}
 
 		if sparkVariant != "" {
@@ -203,7 +204,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 			for _, cr := range results {
 				sparkNames = append(sparkNames, cr.TransfiguredName)
 			}
-			sp, err := repo.SparklineData(r.Context(), sparkNames, sparkVariant, 12)
+			sp, err := repo.SparklineData(r.Context(), scope, sparkNames, sparkVariant, 12)
 			if err != nil {
 				slog.Error("collective analysis: sparkline query failed", "error", err)
 			} else {
@@ -216,7 +217,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 				byVariant[cr.Variant] = append(byVariant[cr.Variant], cr.TransfiguredName)
 			}
 			for v, names := range byVariant {
-				sp, err := repo.SparklineData(r.Context(), names, v, 12)
+				sp, err := repo.SparklineData(r.Context(), scope, names, v, 12)
 				if err != nil {
 					slog.Error("collective analysis: sparkline query failed", "variant", v, "error", err)
 					continue
@@ -295,7 +296,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 // serveDedicationCollective handles ?mode=dedication on the collective endpoint.
 // Returns corrupted 21/23 gems ranked by price, mapped to the same response shape
 // as the Normal collective so the frontend ByVariant/BestPlays components work unchanged.
-func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache) {
+func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, scope league.Scope) {
 	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -308,7 +309,7 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 	searchName := r.URL.Query().Get("search")
 
 	// Load latest gem prices (corrupted gems are in the same snapshot).
-	gems, _, err := repo.LatestGemPrices(r.Context())
+	gems, _, err := repo.LatestGemPrices(r.Context(), scope)
 	if err != nil {
 		slog.Error("dedication collective: gem prices query failed", "error", err)
 		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -362,7 +363,7 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 // Query params: gems (comma-separated, required, max 5), variant (optional),
 // mode (optional: "dedication" for corrupted 21/23c pool scoring).
 // tradeCache may be nil — trade enrichment is skipped when unavailable.
-func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache) http.HandlerFunc {
+func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.TradeCache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		// Single deferred telemetry emit captures every return path with rich fields.
@@ -439,7 +440,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		// still fires — outcome="dedication" disambiguates the path).
 		if mode == "dedication" {
 			outcome = "dedication"
-			serveDedicationCompare(w, r, repo, cache, names)
+			serveDedicationCompare(w, r, repo, cache, scope, names)
 			return
 		}
 
@@ -465,7 +466,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		// Slow path: fall back to DB query.
 		if !usedCache {
 			var err error
-			transfigure, err = repo.LatestTransfigureResults(r.Context(), variant, 1000)
+			transfigure, err = repo.LatestTransfigureResults(r.Context(), scope, variant, 1000)
 			if err != nil {
 				outcome = "db_error"
 				statusCode = http.StatusInternalServerError
@@ -474,7 +475,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 				return
 			}
 
-			signals, err = repo.LatestGemSignals(r.Context(), variant, "", 5000)
+			signals, err = repo.LatestGemSignals(r.Context(), scope, variant, "", 5000)
 			if err != nil {
 				outcome = "db_error"
 				statusCode = http.StatusInternalServerError
@@ -483,7 +484,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 				return
 			}
 
-			features, err = repo.LatestGemFeatures(r.Context(), variant, "", 50000)
+			features, err = repo.LatestGemFeatures(r.Context(), scope, variant, "", 50000)
 			if err != nil {
 				outcome = "db_error"
 				statusCode = http.StatusInternalServerError
@@ -498,7 +499,7 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		// NOTE: sparkline failure logs + appends a warning then CONTINUES (no early return),
 		// so spMs reflects the actual query duration even on error (not zero).
 		spStart := time.Now()
-		sparklines, err := repo.SparklineData(r.Context(), names, variant, 12)
+		sparklines, err := repo.SparklineData(r.Context(), scope, names, variant, 12)
 		spMs = time.Since(spStart).Milliseconds()
 		if err != nil {
 			slog.Error("compare analysis: sparkline query failed", "error", err)
@@ -533,9 +534,9 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 // serveDedicationCompare handles the Dedication lab compare path.
 // Queries corrupted 21/23c gem prices, loads Dedication analysis for input costs,
 // and auto-detects pool (skill vs transfigured) from gem names.
-func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, names []string) {
+func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, scope league.Scope, names []string) {
 	// Load corrupted gem prices for the requested names.
-	gemPrices, err := repo.CorruptedGemPricesByNames(r.Context(), names)
+	gemPrices, err := repo.CorruptedGemPricesByNames(r.Context(), scope, names)
 	if err != nil {
 		slog.Error("compare analysis (dedication): corrupted gem prices query failed", "error", err)
 		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -553,13 +554,13 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 
 	// Slow path: fall back to DB if cache is empty.
 	if len(dedicationResults) == 0 {
-		skills, err := repo.LatestDedicationResults(r.Context(), "skill", "", 100)
+		skills, err := repo.LatestDedicationResults(r.Context(), scope, "skill", "", 100)
 		if err != nil {
 			slog.Error("compare analysis (dedication): dedication skills query failed", "error", err)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
-		trans, err := repo.LatestDedicationResults(r.Context(), "transfigured", "", 100)
+		trans, err := repo.LatestDedicationResults(r.Context(), scope, "transfigured", "", 100)
 		if err != nil {
 			slog.Error("compare analysis (dedication): dedication transfigured query failed", "error", err)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -570,7 +571,7 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 
 	// Load sparkline data for corrupted gems (last 12 hours).
 	var warnings []string
-	sparklines, err := repo.SparklineDataCorrupted(r.Context(), names, "21/23c", 12)
+	sparklines, err := repo.SparklineDataCorrupted(r.Context(), scope, names, "21/23c", 12)
 	if err != nil {
 		slog.Error("compare analysis (dedication): sparkline query failed", "error", err)
 		sparklines = make(map[string][]lab.SparklinePoint)
@@ -694,7 +695,7 @@ func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache)
 
 // GemNamesAutocomplete returns distinct transfigured gem names matching a query.
 // Query params: q (required, matches all words in any order), limit (default 10, max 50).
-func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
 		if q == "" {
@@ -729,7 +730,7 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFu
 				names = cache.CorruptedGemNamesSearch(q, isTransfigured, limit)
 			}
 			if names == nil {
-				all, err := repo.CorruptedGemNamesAutocomplete(r.Context(), isTransfigured, limit*10)
+				all, err := repo.CorruptedGemNamesAutocomplete(r.Context(), scope, isTransfigured, limit*10)
 				if err != nil {
 					slog.Error("gem names autocomplete: corrupted query failed", "error", err, "q", q)
 					http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -762,7 +763,7 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache) http.HandlerFu
 			}
 			if names == nil {
 				var err error
-				names, err = repo.GemNamesAutocomplete(r.Context(), q, limit)
+				names, err = repo.GemNamesAutocomplete(r.Context(), scope, q, limit)
 				if err != nil {
 					slog.Error("gem names autocomplete: query failed", "error", err, "q", q)
 					http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)

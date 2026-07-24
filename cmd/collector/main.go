@@ -14,6 +14,7 @@ import (
 
 	"profitofexile/internal/collector"
 	"profitofexile/internal/db"
+	"profitofexile/internal/league"
 	"profitofexile/internal/price/gemcolor"
 )
 
@@ -35,11 +36,6 @@ func main() {
 		slog.Error("invalid PORT value", "port", port)
 		fmt.Fprintf(os.Stderr, "PORT must be a number between 1 and 65535, got %q\n", port)
 		os.Exit(1)
-	}
-
-	league := os.Getenv("LEAGUE")
-	if league == "" {
-		league = "Mirage"
 	}
 
 	// Build endpoint configuration from defaults + env var overrides.
@@ -83,6 +79,16 @@ func main() {
 	defer pool.Close()
 	slog.Info("database connected")
 
+	// Resolve the active league scope from the runtime SSOT. The collecting league
+	// IS the runtime league (POE-117), so there is no separate LEAGUE env or Mirage
+	// default — the collector writes under whatever runtime_config selects.
+	scope, err := league.Resolve(ctx, pool)
+	if err != nil {
+		slog.Error("failed to resolve active league scope", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to resolve active league from runtime_config. Ensure the server has run league control migrations and seeded runtime_config.")
+		os.Exit(1)
+	}
+
 	// Migrations are handled by the server — the collector only reads/writes
 	// data and should not manage schema. This avoids crash loops when the
 	// collector image is rebuilt separately from the server.
@@ -109,12 +115,12 @@ func main() {
 	gemEndpoint.FetchFunc = fetcher.FetchGemsEndpoint
 	gemEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
 		if len(result.GemData) == 0 {
-			return 0, fmt.Errorf("gem endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
+			return 0, fmt.Errorf("gem endpoint returned 200 with empty data for league %q — possible transient API issue", scope.ID())
 		}
-		return repo.InsertGemSnapshots(ctx, snapTime, result.GemData)
+		return repo.InsertGemSnapshots(ctx, scope, snapTime, result.GemData)
 	}
 	gemEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
-		return repo.LastGemSnapshotTime(ctx)
+		return repo.LastGemSnapshotTime(ctx, scope)
 	}
 
 	currencyEndpoint := ninjaCfg
@@ -122,12 +128,12 @@ func main() {
 	currencyEndpoint.FetchFunc = fetcher.FetchCurrencyEndpoint
 	currencyEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
 		if len(result.CurrencyData) == 0 {
-			return 0, fmt.Errorf("currency endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
+			return 0, fmt.Errorf("currency endpoint returned 200 with empty data for league %q — possible transient API issue", scope.ID())
 		}
-		return repo.InsertCurrencySnapshots(ctx, snapTime, result.CurrencyData)
+		return repo.InsertCurrencySnapshots(ctx, scope, snapTime, result.CurrencyData)
 	}
 	currencyEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
-		return repo.LastCurrencySnapshotTime(ctx)
+		return repo.LastCurrencySnapshotTime(ctx, scope)
 	}
 
 	fragmentEndpoint := ninjaCfg
@@ -135,18 +141,18 @@ func main() {
 	fragmentEndpoint.FetchFunc = fetcher.FetchFragmentEndpoint
 	fragmentEndpoint.StoreFunc = func(ctx context.Context, snapTime time.Time, result *collector.FetchResult) (int, error) {
 		if len(result.FragmentData) == 0 {
-			return 0, fmt.Errorf("fragment endpoint returned 200 with empty data for league %q — check LEAGUE env var or possible transient API issue", league)
+			return 0, fmt.Errorf("fragment endpoint returned 200 with empty data for league %q — possible transient API issue", scope.ID())
 		}
-		return repo.InsertFragmentSnapshots(ctx, snapTime, result.FragmentData)
+		return repo.InsertFragmentSnapshots(ctx, scope, snapTime, result.FragmentData)
 	}
 	fragmentEndpoint.StalenessFunc = func(ctx context.Context) (time.Time, error) {
-		return repo.LastFragmentSnapshotTime(ctx)
+		return repo.LastFragmentSnapshotTime(ctx, scope)
 	}
 
 	scheduler, err := collector.NewScheduler(
 		[]collector.EndpointConfig{gemEndpoint, currencyEndpoint, fragmentEndpoint},
 		resolver,
-		league,
+		scope.ID(),
 		mercureURL,
 		mercureJWTSecret,
 		logger,
@@ -158,7 +164,7 @@ func main() {
 	}
 
 	slog.Info("collector starting",
-		"league", league,
+		"league", scope.ID(),
 		"fallbackInterval", ninjaCfg.FallbackInterval.String(),
 		"port", port,
 	)
@@ -199,7 +205,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		summary, err := repo.LatestSnapshot(r.Context())
+		summary, err := repo.LatestSnapshot(r.Context(), scope)
 		if err != nil {
 			slog.Error("health endpoint: failed to fetch latest snapshot", "error", err)
 			http.Error(w, `{"status":"error"}`, http.StatusInternalServerError)
@@ -217,7 +223,7 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /latest", func(w http.ResponseWriter, r *http.Request) {
-		summary, err := repo.LatestSnapshot(r.Context())
+		summary, err := repo.LatestSnapshot(r.Context(), scope)
 		if err != nil {
 			slog.Error("latest endpoint failed", "error", err)
 			http.Error(w, `{"error":"failed to fetch latest snapshot"}`, http.StatusInternalServerError)
@@ -236,7 +242,7 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /snapshots", func(w http.ResponseWriter, r *http.Request) {
-		stats, err := repo.GetCollectionStats(r.Context())
+		stats, err := repo.GetCollectionStats(r.Context(), scope)
 		if err != nil {
 			slog.Error("snapshots endpoint failed", "error", err)
 			http.Error(w, `{"error":"failed to query stats"}`, http.StatusInternalServerError)

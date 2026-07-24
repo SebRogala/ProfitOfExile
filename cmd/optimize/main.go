@@ -12,6 +12,7 @@ import (
 
 	"profitofexile/internal/db"
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 )
 
 // JSONOutput is the structured output for --json mode (sweep).
@@ -117,11 +118,17 @@ func main() {
 	}
 	defer pool.Close()
 
+	scope, err := league.Resolve(ctx, pool)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Resolve league: %v\n", err)
+		os.Exit(1)
+	}
+
 	repo := lab.NewRepository(pool)
 
 	// Load market context.
 	fmt.Fprintln(os.Stderr, "Loading market context...")
-	mc, err := repo.LatestMarketContext(ctx)
+	mc, err := repo.LatestMarketContext(ctx, scope)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load market context: %v\n", err)
 		os.Exit(1)
@@ -134,7 +141,7 @@ func main() {
 	// Load gem features.
 	fmt.Fprintf(os.Stderr, "Loading gem features (%dh range)...\n", *hours)
 	t0 := time.Now()
-	features, err := repo.AllGemFeaturesInRange(ctx, *hours)
+	features, err := repo.AllGemFeaturesInRange(ctx, scope, *hours)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load gem features: %v\n", err)
 		os.Exit(1)
@@ -144,7 +151,7 @@ func main() {
 	// Load snapshot prices for ground truth.
 	fmt.Fprintf(os.Stderr, "Loading snapshot prices (%dh range)...\n", *hours)
 	t1 := time.Now()
-	prices, err := repo.SnapshotPricesInRange(ctx, *hours)
+	prices, err := repo.SnapshotPricesInRange(ctx, scope, *hours)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load snapshot prices: %v\n", err)
 		os.Exit(1)

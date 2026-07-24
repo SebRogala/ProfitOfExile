@@ -10,7 +10,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"profitofexile/internal/league"
 )
+
+// testScope pins collector integration writes/reads to the seeded Mirage league.
+// The league-control migration registers Mirage, satisfying the FK on the scoped
+// snapshot tables. Cleanups are scoped to it so they never touch another league's
+// rows that happen to share a timestamp.
+var testScope = league.Historical("Mirage")
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -62,13 +70,13 @@ func TestInsertGemSnapshots_roundTrip(t *testing.T) {
 	// Register cleanup before assertions so it runs even on failure.
 	t.Cleanup(func() {
 		_, err := pool.Exec(context.Background(),
-			"DELETE FROM gem_snapshots WHERE time = $1", snapTime)
+			"DELETE FROM gem_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime)
 		if err != nil {
 			t.Logf("cleanup warning: failed to delete test rows: %v", err)
 		}
 	})
 
-	inserted, err := repo.InsertGemSnapshots(ctx, snapTime, gems)
+	inserted, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, gems)
 	if err != nil {
 		t.Fatalf("InsertGemSnapshots: %v", err)
 	}
@@ -152,13 +160,13 @@ func TestInsertCurrencySnapshots_roundTrip(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, err := pool.Exec(context.Background(),
-			"DELETE FROM currency_snapshots WHERE time = $1", snapTime)
+			"DELETE FROM currency_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime)
 		if err != nil {
 			t.Logf("cleanup warning: failed to delete test rows: %v", err)
 		}
 	})
 
-	inserted, err := repo.InsertCurrencySnapshots(ctx, snapTime, currencies)
+	inserted, err := repo.InsertCurrencySnapshots(ctx, testScope, snapTime, currencies)
 	if err != nil {
 		t.Fatalf("InsertCurrencySnapshots: %v", err)
 	}
@@ -231,18 +239,18 @@ func TestLastGemSnapshotTime_afterInsert(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, err := pool.Exec(context.Background(),
-			"DELETE FROM gem_snapshots WHERE time = $1", snapTime)
+			"DELETE FROM gem_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime)
 		if err != nil {
 			t.Logf("cleanup warning: failed to delete test rows: %v", err)
 		}
 	})
 
-	_, err := repo.InsertGemSnapshots(ctx, snapTime, gems)
+	_, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, gems)
 	if err != nil {
 		t.Fatalf("InsertGemSnapshots: %v", err)
 	}
 
-	lastTime, err := repo.LastGemSnapshotTime(ctx)
+	lastTime, err := repo.LastGemSnapshotTime(ctx, testScope)
 	if err != nil {
 		t.Fatalf("LastGemSnapshotTime: %v", err)
 	}
@@ -266,14 +274,14 @@ func TestInsertGemSnapshots_onConflictDoNothing(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, err := pool.Exec(context.Background(),
-			"DELETE FROM gem_snapshots WHERE time = $1", snapTime)
+			"DELETE FROM gem_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime)
 		if err != nil {
 			t.Logf("cleanup warning: failed to delete test rows: %v", err)
 		}
 	})
 
 	// First insert should succeed.
-	inserted1, err := repo.InsertGemSnapshots(ctx, snapTime, gems)
+	inserted1, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, gems)
 	if err != nil {
 		t.Fatalf("first InsertGemSnapshots: %v", err)
 	}
@@ -282,7 +290,7 @@ func TestInsertGemSnapshots_onConflictDoNothing(t *testing.T) {
 	}
 
 	// Second insert with same PK (time, name, variant) should conflict silently.
-	inserted2, err := repo.InsertGemSnapshots(ctx, snapTime, gems)
+	inserted2, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, gems)
 	if err != nil {
 		t.Fatalf("second InsertGemSnapshots: %v", err)
 	}
@@ -316,13 +324,13 @@ func TestInsertCurrencySnapshots_onConflictDoNothing(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, err := pool.Exec(context.Background(),
-			"DELETE FROM currency_snapshots WHERE time = $1", snapTime)
+			"DELETE FROM currency_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime)
 		if err != nil {
 			t.Logf("cleanup warning: failed to delete test rows: %v", err)
 		}
 	})
 
-	inserted1, err := repo.InsertCurrencySnapshots(ctx, snapTime, currencies)
+	inserted1, err := repo.InsertCurrencySnapshots(ctx, testScope, snapTime, currencies)
 	if err != nil {
 		t.Fatalf("first InsertCurrencySnapshots: %v", err)
 	}
@@ -330,7 +338,7 @@ func TestInsertCurrencySnapshots_onConflictDoNothing(t *testing.T) {
 		t.Errorf("first insert count = %d, want 1", inserted1)
 	}
 
-	inserted2, err := repo.InsertCurrencySnapshots(ctx, snapTime, currencies)
+	inserted2, err := repo.InsertCurrencySnapshots(ctx, testScope, snapTime, currencies)
 	if err != nil {
 		t.Fatalf("second InsertCurrencySnapshots: %v", err)
 	}
@@ -360,7 +368,7 @@ func TestLatestSnapshot_emptyTables(t *testing.T) {
 	// The LatestSnapshot method uses COALESCE(MAX(time), '1970-01-01'::timestamptz),
 	// which should return the epoch time when no rows exist at all (or at least
 	// not fail with an error).
-	summary, err := repo.LatestSnapshot(ctx)
+	summary, err := repo.LatestSnapshot(ctx, testScope)
 	if err != nil {
 		t.Fatalf("LatestSnapshot on potentially empty tables: %v", err)
 	}
@@ -394,19 +402,19 @@ func TestQueryGemSnapshots_roundTrip(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, err := pool.Exec(context.Background(),
-			"DELETE FROM gem_snapshots WHERE time = $1", snapTime)
+			"DELETE FROM gem_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime)
 		if err != nil {
 			t.Logf("cleanup warning: failed to delete test rows: %v", err)
 		}
 	})
 
-	_, err := repo.InsertGemSnapshots(ctx, snapTime, gems)
+	_, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, gems)
 	if err != nil {
 		t.Fatalf("InsertGemSnapshots: %v", err)
 	}
 
 	// Query with a 1-hour window -- our snapTime is "now" so it should be included.
-	snapshots, err := repo.QueryGemSnapshots(ctx, 1)
+	snapshots, err := repo.QueryGemSnapshots(ctx, testScope, 1)
 	if err != nil {
 		t.Fatalf("QueryGemSnapshots: %v", err)
 	}
@@ -482,22 +490,22 @@ func TestLatestSnapshot_afterInserts(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		if _, err := pool.Exec(context.Background(), "DELETE FROM gem_snapshots WHERE time = $1", snapTime); err != nil {
+		if _, err := pool.Exec(context.Background(), "DELETE FROM gem_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime); err != nil {
 			t.Logf("cleanup warning: failed to delete gem_snapshots test rows: %v", err)
 		}
-		if _, err := pool.Exec(context.Background(), "DELETE FROM currency_snapshots WHERE time = $1", snapTime); err != nil {
+		if _, err := pool.Exec(context.Background(), "DELETE FROM currency_snapshots WHERE league = $1 AND time = $2", testScope.ID(), snapTime); err != nil {
 			t.Logf("cleanup warning: failed to delete currency_snapshots test rows: %v", err)
 		}
 	})
 
-	if _, err := repo.InsertGemSnapshots(ctx, snapTime, gems); err != nil {
+	if _, err := repo.InsertGemSnapshots(ctx, testScope, snapTime, gems); err != nil {
 		t.Fatalf("InsertGemSnapshots: %v", err)
 	}
-	if _, err := repo.InsertCurrencySnapshots(ctx, snapTime, currencies); err != nil {
+	if _, err := repo.InsertCurrencySnapshots(ctx, testScope, snapTime, currencies); err != nil {
 		t.Fatalf("InsertCurrencySnapshots: %v", err)
 	}
 
-	summary, err := repo.LatestSnapshot(ctx)
+	summary, err := repo.LatestSnapshot(ctx, testScope)
 	if err != nil {
 		t.Fatalf("LatestSnapshot: %v", err)
 	}

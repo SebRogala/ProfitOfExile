@@ -7,19 +7,21 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"profitofexile/internal/league"
 )
 
 // SnapshotStore defines the persistence interface for snapshot data. Used for
 // compile-time conformance checks on Repository and for future integration
 // test mocks. Main.go wires endpoint closures directly via Repository methods.
 type SnapshotStore interface {
-	LastGemSnapshotTime(ctx context.Context) (time.Time, error)
-	LastCurrencySnapshotTime(ctx context.Context) (time.Time, error)
-	LastFragmentSnapshotTime(ctx context.Context) (time.Time, error)
-	InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error)
-	InsertCurrencySnapshots(ctx context.Context, snapTime time.Time, snapshots []CurrencySnapshot) (int, error)
-	InsertFragmentSnapshots(ctx context.Context, snapTime time.Time, snapshots []FragmentSnapshot) (int, error)
-	LatestSnapshot(ctx context.Context) (*SnapshotSummary, error)
+	LastGemSnapshotTime(ctx context.Context, scope league.Scope) (time.Time, error)
+	LastCurrencySnapshotTime(ctx context.Context, scope league.Scope) (time.Time, error)
+	LastFragmentSnapshotTime(ctx context.Context, scope league.Scope) (time.Time, error)
+	InsertGemSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []GemSnapshot) (int, error)
+	InsertCurrencySnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []CurrencySnapshot) (int, error)
+	InsertFragmentSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []FragmentSnapshot) (int, error)
+	LatestSnapshot(ctx context.Context, scope league.Scope) (*SnapshotSummary, error)
 }
 
 // Repository handles snapshot persistence in TimescaleDB.
@@ -34,9 +36,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // LastGemSnapshotTime returns the most recent gem snapshot timestamp.
 // Returns the zero time if no snapshots exist.
-func (r *Repository) LastGemSnapshotTime(ctx context.Context) (time.Time, error) {
+func (r *Repository) LastGemSnapshotTime(ctx context.Context, scope league.Scope) (time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return time.Time{}, fmt.Errorf("repo: last gem snapshot time: %w", err)
+	}
 	var t *time.Time
-	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM gem_snapshots").Scan(&t)
+	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM gem_snapshots WHERE league = $1", scope.ID()).Scan(&t)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("repo: last gem snapshot time: %w", err)
 	}
@@ -48,9 +53,12 @@ func (r *Repository) LastGemSnapshotTime(ctx context.Context) (time.Time, error)
 
 // LastCurrencySnapshotTime returns the most recent currency snapshot timestamp.
 // Returns the zero time if no snapshots exist.
-func (r *Repository) LastCurrencySnapshotTime(ctx context.Context) (time.Time, error) {
+func (r *Repository) LastCurrencySnapshotTime(ctx context.Context, scope league.Scope) (time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return time.Time{}, fmt.Errorf("repo: last currency snapshot time: %w", err)
+	}
 	var t *time.Time
-	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM currency_snapshots").Scan(&t)
+	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM currency_snapshots WHERE league = $1", scope.ID()).Scan(&t)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("repo: last currency snapshot time: %w", err)
 	}
@@ -62,9 +70,12 @@ func (r *Repository) LastCurrencySnapshotTime(ctx context.Context) (time.Time, e
 
 // LastFragmentSnapshotTime returns the most recent fragment snapshot timestamp.
 // Returns the zero time if no snapshots exist.
-func (r *Repository) LastFragmentSnapshotTime(ctx context.Context) (time.Time, error) {
+func (r *Repository) LastFragmentSnapshotTime(ctx context.Context, scope league.Scope) (time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return time.Time{}, fmt.Errorf("repo: last fragment snapshot time: %w", err)
+	}
 	var t *time.Time
-	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM fragment_snapshots").Scan(&t)
+	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM fragment_snapshots WHERE league = $1", scope.ID()).Scan(&t)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("repo: last fragment snapshot time: %w", err)
 	}
@@ -76,7 +87,10 @@ func (r *Repository) LastFragmentSnapshotTime(ctx context.Context) (time.Time, e
 
 // InsertFragmentSnapshots batch-inserts fragment snapshots using a pipelined batch
 // within a single transaction. Returns the number of rows actually inserted.
-func (r *Repository) InsertFragmentSnapshots(ctx context.Context, snapTime time.Time, snapshots []FragmentSnapshot) (int, error) {
+func (r *Repository) InsertFragmentSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []FragmentSnapshot) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("repo: insert fragment snapshots: %w", err)
+	}
 	if len(snapshots) == 0 {
 		return 0, nil
 	}
@@ -90,10 +104,10 @@ func (r *Repository) InsertFragmentSnapshots(ctx context.Context, snapTime time.
 	batch := &pgx.Batch{}
 	for _, s := range snapshots {
 		batch.Queue(
-			`INSERT INTO fragment_snapshots (time, fragment_id, chaos, sparkline_change)
-			 VALUES ($1, $2, $3, $4)
+			`INSERT INTO fragment_snapshots (league, time, fragment_id, chaos, sparkline_change)
+			 VALUES ($1, $2, $3, $4, $5)
 			 ON CONFLICT DO NOTHING`,
-			snapTime, s.FragmentID, s.Chaos, s.SparklineChange,
+			scope.ID(), snapTime, s.FragmentID, s.Chaos, s.SparklineChange,
 		)
 	}
 
@@ -121,7 +135,10 @@ func (r *Repository) InsertFragmentSnapshots(ctx context.Context, snapTime time.
 // InsertGemSnapshots batch-inserts gem snapshots using a pipelined batch within a
 // single transaction. All rows share the provided timestamp for snapshot coherence.
 // Returns the number of rows actually inserted (excludes conflicts).
-func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time, snapshots []GemSnapshot) (int, error) {
+func (r *Repository) InsertGemSnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []GemSnapshot) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("repo: insert gem snapshots: %w", err)
+	}
 	if len(snapshots) == 0 {
 		return 0, nil
 	}
@@ -132,8 +149,8 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	const query = `INSERT INTO gem_snapshots (time, name, variant, chaos, listings, is_transfigured, is_corrupted, gem_color)
-	               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	const query = `INSERT INTO gem_snapshots (league, time, name, variant, chaos, listings, is_transfigured, is_corrupted, gem_color)
+	               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	               ON CONFLICT DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -142,7 +159,7 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 		if s.GemColor != "" {
 			gemColor = &s.GemColor
 		}
-		batch.Queue(query, snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, s.IsCorrupted, gemColor)
+		batch.Queue(query, scope.ID(), snapTime, s.Name, s.Variant, s.Chaos, s.Listings, s.IsTransfigured, s.IsCorrupted, gemColor)
 	}
 
 	results := tx.SendBatch(ctx, batch)
@@ -169,7 +186,10 @@ func (r *Repository) InsertGemSnapshots(ctx context.Context, snapTime time.Time,
 // InsertCurrencySnapshots batch-inserts currency snapshots using a pipelined batch
 // within a single transaction. All rows share the provided timestamp for snapshot
 // coherence. Returns the number of rows actually inserted (excludes conflicts).
-func (r *Repository) InsertCurrencySnapshots(ctx context.Context, snapTime time.Time, snapshots []CurrencySnapshot) (int, error) {
+func (r *Repository) InsertCurrencySnapshots(ctx context.Context, scope league.Scope, snapTime time.Time, snapshots []CurrencySnapshot) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("repo: insert currency snapshots: %w", err)
+	}
 	if len(snapshots) == 0 {
 		return 0, nil
 	}
@@ -180,13 +200,13 @@ func (r *Repository) InsertCurrencySnapshots(ctx context.Context, snapTime time.
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	const query = `INSERT INTO currency_snapshots (time, currency_id, chaos, sparkline_change)
-	               VALUES ($1, $2, $3, $4)
+	const query = `INSERT INTO currency_snapshots (league, time, currency_id, chaos, sparkline_change)
+	               VALUES ($1, $2, $3, $4, $5)
 	               ON CONFLICT DO NOTHING`
 
 	batch := &pgx.Batch{}
 	for _, s := range snapshots {
-		batch.Queue(query, snapTime, s.CurrencyID, s.Chaos, s.SparklineChange)
+		batch.Queue(query, scope.ID(), snapTime, s.CurrencyID, s.Chaos, s.SparklineChange)
 	}
 
 	results := tx.SendBatch(ctx, batch)
@@ -212,14 +232,19 @@ func (r *Repository) InsertCurrencySnapshots(ctx context.Context, snapTime time.
 
 // LatestSnapshot returns a summary of the most recent snapshot data across
 // both gem and currency tables. Used by debug/health endpoints.
-func (r *Repository) LatestSnapshot(ctx context.Context) (*SnapshotSummary, error) {
+func (r *Repository) LatestSnapshot(ctx context.Context, scope league.Scope) (*SnapshotSummary, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("repo: latest snapshot: %w", err)
+	}
 	summary := &SnapshotSummary{}
 
 	// Gem stats.
 	err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(MAX(time), '1970-01-01'::timestamptz), COUNT(*)
 		 FROM gem_snapshots
-		 WHERE time = (SELECT MAX(time) FROM gem_snapshots)`,
+		 WHERE league = $1
+		   AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)`,
+		scope.ID(),
 	).Scan(&summary.LastGemTime, &summary.GemCount)
 	if err != nil {
 		return nil, fmt.Errorf("repo: latest snapshot gems: %w", err)
@@ -229,7 +254,9 @@ func (r *Repository) LatestSnapshot(ctx context.Context) (*SnapshotSummary, erro
 	err = r.pool.QueryRow(ctx,
 		`SELECT COALESCE(MAX(time), '1970-01-01'::timestamptz), COUNT(*)
 		 FROM currency_snapshots
-		 WHERE time = (SELECT MAX(time) FROM currency_snapshots)`,
+		 WHERE league = $1
+		   AND time = (SELECT MAX(time) FROM currency_snapshots WHERE league = $1)`,
+		scope.ID(),
 	).Scan(&summary.LastCurrencyTime, &summary.CurrencyCount)
 	if err != nil {
 		return nil, fmt.Errorf("repo: latest snapshot currency: %w", err)
@@ -258,7 +285,10 @@ type CollectionStats struct {
 }
 
 // GetCollectionStats returns aggregate statistics about the collected data.
-func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, error) {
+func (r *Repository) GetCollectionStats(ctx context.Context, scope league.Scope) (*CollectionStats, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("repo: collection stats: %w", err)
+	}
 	stats := &CollectionStats{}
 
 	err := r.pool.QueryRow(ctx, `
@@ -267,7 +297,8 @@ func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, 
 		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
 		       COUNT(DISTINCT (name, variant, is_corrupted))
-		FROM gem_snapshots`,
+		FROM gem_snapshots
+		WHERE league = $1`, scope.ID(),
 	).Scan(&stats.GemTotalRows, &stats.GemSnapshotCount, &stats.GemFirstSnapshot, &stats.GemLastSnapshot, &stats.GemUniqueItems)
 	if err != nil {
 		return nil, fmt.Errorf("repo: gem collection stats: %w", err)
@@ -279,7 +310,8 @@ func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, 
 		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
 		       COUNT(DISTINCT currency_id)
-		FROM currency_snapshots`,
+		FROM currency_snapshots
+		WHERE league = $1`, scope.ID(),
 	).Scan(&stats.CurrTotalRows, &stats.CurrSnapshotCount, &stats.CurrFirstSnapshot, &stats.CurrLastSnapshot, &stats.CurrUniqueItems)
 	if err != nil {
 		return nil, fmt.Errorf("repo: currency collection stats: %w", err)
@@ -291,7 +323,8 @@ func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, 
 		       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 		       COALESCE(MAX(time), '1970-01-01'::timestamptz),
 		       COUNT(DISTINCT fragment_id)
-		FROM fragment_snapshots`,
+		FROM fragment_snapshots
+		WHERE league = $1`, scope.ID(),
 	).Scan(&stats.FragTotalRows, &stats.FragSnapshotCount, &stats.FragFirstSnapshot, &stats.FragLastSnapshot, &stats.FragUniqueItems)
 	if err != nil {
 		return nil, fmt.Errorf("repo: fragment collection stats: %w", err)
@@ -302,14 +335,18 @@ func (r *Repository) GetCollectionStats(ctx context.Context) (*CollectionStats, 
 
 // QueryGemSnapshots returns gem snapshots from the last N hours, ordered by time
 // descending. Used by debug endpoints.
-func (r *Repository) QueryGemSnapshots(ctx context.Context, hours int) ([]GemSnapshot, error) {
+func (r *Repository) QueryGemSnapshots(ctx context.Context, scope league.Scope, hours int) ([]GemSnapshot, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("repo: query gem snapshots: %w", err)
+	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT time, name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
 		        is_transfigured, is_corrupted, COALESCE(gem_color, '')
 		 FROM gem_snapshots
-		 WHERE time > NOW() - make_interval(hours => $1)
+		 WHERE league = $1
+		   AND time > NOW() - make_interval(hours => $2)
 		 ORDER BY time DESC, name, variant`,
-		hours,
+		scope.ID(), hours,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("repo: query gem snapshots: %w", err)

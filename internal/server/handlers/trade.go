@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -16,7 +17,7 @@ import (
 // from the desktop app (which queries GGG directly), stores it in the shared
 // LRU cache so CompareAnalysis can enrich responses, and optionally persists
 // to the database for historical tracking.
-func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFunc {
+func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 65536)
 
@@ -59,7 +60,7 @@ func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository) http.HandlerFu
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				if err := repo.InsertTradeLookup(ctx, &result, "desktop"); err != nil {
+				if err := repo.InsertTradeLookup(ctx, scope, &result, "desktop"); err != nil {
 					slog.Warn("trade submit: persist lookup failed", "gem", result.Gem, "variant", result.Variant, "error", err)
 				}
 			}()

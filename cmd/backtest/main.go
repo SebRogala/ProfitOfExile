@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/db"
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -45,6 +46,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	scope, err := league.Resolve(ctx, pool)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Resolve league: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Determine time range.
 	var startTime time.Time
@@ -71,7 +78,7 @@ func main() {
 		startTime.Format("2006-01-02 15:04"), endTime.Format("2006-01-02 15:04"), *sample)
 
 	// 1. Load distinct snapshot times in range.
-	snapTimes, err := loadSnapshotTimes(ctx, pool, startTime, endTime)
+	snapTimes, err := loadSnapshotTimes(ctx, pool, scope, startTime, endTime)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load snapshot times: %v\n", err)
 		os.Exit(1)
@@ -102,7 +109,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "  Progress: %d/%d (%.0f%%)\n", i, len(snapTimes), float64(i)/float64(len(snapTimes))*100)
 		}
 
-		res, err := processSnapshot(ctx, pool, snapTime)
+		res, err := processSnapshot(ctx, pool, scope, snapTime)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Skip %s: %v\n", snapTime.Format("2006-01-02 15:04"), err)
 			continue
@@ -133,11 +140,11 @@ func main() {
 // Data loading
 // ---------------------------------------------------------------------------
 
-func loadSnapshotTimes(ctx context.Context, pool *pgxpool.Pool, start, end time.Time) ([]time.Time, error) {
+func loadSnapshotTimes(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, start, end time.Time) ([]time.Time, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT DISTINCT time FROM gem_snapshots
-		 WHERE time >= $1 AND time <= $2
-		 ORDER BY time`, start, end)
+		 WHERE league = $1 AND time >= $2 AND time <= $3
+		 ORDER BY time`, scope.ID(), start, end)
 	if err != nil {
 		return nil, fmt.Errorf("query snapshot times: %w", err)
 	}
@@ -154,10 +161,10 @@ func loadSnapshotTimes(ctx context.Context, pool *pgxpool.Pool, start, end time.
 	return times, rows.Err()
 }
 
-func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, t time.Time) ([]lab.GemPrice, error) {
+func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, t time.Time) ([]lab.GemPrice, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT name, variant, chaos, listings, is_transfigured, COALESCE(gem_color, '') as gem_color, is_corrupted
-		 FROM gem_snapshots WHERE time = $1`, t)
+		 FROM gem_snapshots WHERE league = $1 AND time = $2`, scope.ID(), t)
 	if err != nil {
 		return nil, err
 	}
@@ -174,16 +181,16 @@ func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, t time.Time) ([]lab
 	return gems, rows.Err()
 }
 
-func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
+func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	rows, err := pool.Query(ctx,
 		`SELECT name, variant, COALESCE(gem_color, '') as gem_color, time, chaos, listings
 		 FROM gem_snapshots
-		 WHERE is_transfigured = true AND NOT is_corrupted AND chaos > 5
-		   AND time >= $1 AND time <= $2
+		 WHERE league = $1 AND is_transfigured = true AND NOT is_corrupted AND chaos > 5
+		   AND time >= $2 AND time <= $3
 		   AND name NOT LIKE '%Trarthus%'
 		 ORDER BY name, variant, time
-		 LIMIT 500000`, cutoff, upTo)
+		 LIMIT 500000`, scope.ID(), cutoff, upTo)
 	if err != nil {
 		return nil, err
 	}
@@ -214,16 +221,16 @@ func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time, ho
 	return result, rows.Err()
 }
 
-func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time, hours int) map[string][]lab.PricePoint {
+func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) map[string][]lab.PricePoint {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	rows, err := pool.Query(ctx,
 		`SELECT name, time, listings
 		 FROM gem_snapshots
-		 WHERE NOT is_transfigured AND NOT is_corrupted AND chaos > 0
-		   AND time >= $1 AND time <= $2
+		 WHERE league = $1 AND NOT is_transfigured AND NOT is_corrupted AND chaos > 0
+		   AND time >= $2 AND time <= $3
 		   AND name NOT LIKE '%Trarthus%'
 		 ORDER BY name, time
-		 LIMIT 500000`, cutoff, upTo)
+		 LIMIT 500000`, scope.ID(), cutoff, upTo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  loadBaseHistoryUpTo: query error: %v\n", err)
 		return nil
@@ -248,7 +255,7 @@ func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time
 
 // loadTradeDataNear loads the nearest trade_lookups row per gem+variant within
 // a +-90min window of the target time. Returns a populated TradeCache.
-func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, target time.Time) *trade.TradeCache {
+func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, target time.Time) *trade.TradeCache {
 	lo := target.Add(-90 * time.Minute)
 	hi := target.Add(90 * time.Minute)
 
@@ -262,9 +269,9 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, target time.Time
 		        COALESCE(divine_rate, 0),
 		        COALESCE(listings, '[]'::jsonb)
 		 FROM trade_lookups
-		 WHERE time >= $1 AND time <= $2
-		 ORDER BY gem, variant, ABS(EXTRACT(EPOCH FROM time - $3)) ASC`,
-		lo, hi, target)
+		 WHERE league = $1 AND time >= $2 AND time <= $3
+		 ORDER BY gem, variant, ABS(EXTRACT(EPOCH FROM time - $4)) ASC`,
+		scope.ID(), lo, hi, target)
 	if err != nil {
 		return nil
 	}
@@ -307,7 +314,7 @@ func loadTradeDataNear(ctx context.Context, pool *pgxpool.Pool, target time.Time
 // following the target time. For each duration, finds the nearest snapshot within
 // a 15-minute tolerance window. Returns a map from offset index to gem prices.
 // durations maps an arbitrary key to a time offset (e.g., 0 → 1h, 1 → 4h).
-func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, after time.Time, durations map[int]time.Duration) (map[int][]lab.GemPrice, error) {
+func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, after time.Time, durations map[int]time.Duration) (map[int][]lab.GemPrice, error) {
 	// Find the nearest snapshot time to each target time.
 	const tolerance = 15 * time.Minute
 
@@ -318,10 +325,10 @@ func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, after time.Tim
 		rows, err := pool.Query(ctx,
 			`SELECT time FROM (
 			   SELECT DISTINCT time FROM gem_snapshots
-			   WHERE time BETWEEN $1 AND $2
+			   WHERE league = $1 AND time BETWEEN $2 AND $3
 			 ) t
-			 ORDER BY ABS(EXTRACT(EPOCH FROM time - $3))
-			 LIMIT 1`, target.Add(-tolerance), target.Add(tolerance), target)
+			 ORDER BY ABS(EXTRACT(EPOCH FROM time - $4))
+			 LIMIT 1`, scope.ID(), target.Add(-tolerance), target.Add(tolerance), target)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  WARN: future snapshot query failed for offset %v: %v\n", dur, err)
 			continue
@@ -339,7 +346,7 @@ func loadFutureSnapshots(ctx context.Context, pool *pgxpool.Pool, after time.Tim
 		if !found {
 			continue
 		}
-		gems, err := loadGemsAtTime(ctx, pool, snapTime)
+		gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  WARN: load gems at %v failed: %v\n", snapTime, err)
 			continue
@@ -397,20 +404,20 @@ type snapshotResult struct {
 	tradeCount int // gems with trade data
 }
 
-func processSnapshot(ctx context.Context, pool *pgxpool.Pool, snapTime time.Time) (*snapshotResult, error) {
+func processSnapshot(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, snapTime time.Time) (*snapshotResult, error) {
 	// Load data at T.
-	gems, err := loadGemsAtTime(ctx, pool, snapTime)
+	gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
 	if err != nil || len(gems) == 0 {
 		return nil, fmt.Errorf("no gems at %s", snapTime)
 	}
 
-	history, err := loadHistoryUpTo(ctx, pool, snapTime, 168)
+	history, err := loadHistoryUpTo(ctx, pool, scope, snapTime, 168)
 	if err != nil {
 		return nil, fmt.Errorf("load history: %w", err)
 	}
 
 	// Load future snapshots for scoring: short-term (T+1h) and medium-term (T+4h).
-	futureGems, err := loadFutureSnapshots(ctx, pool, snapTime, map[int]time.Duration{
+	futureGems, err := loadFutureSnapshots(ctx, pool, scope, snapTime, map[int]time.Duration{
 		0: 1 * time.Hour, // short-term
 		1: 4 * time.Hour, // medium-term
 	})
@@ -430,7 +437,7 @@ func processSnapshot(ctx context.Context, pool *pgxpool.Pool, snapTime time.Time
 	depthMap := lab.PrecomputeMarketDepth(gems, mc)
 	normalizedHistory := lab.NormalizeHistoryDepthGated(history, mc, depthMap)
 
-	baseHistory := loadBaseHistoryUpTo(ctx, pool, snapTime, 24)
+	baseHistory := loadBaseHistoryUpTo(ctx, pool, scope, snapTime, 24)
 	marketAvgBaseLst := computeMarketAvgBase(gems)
 
 	// === V2 signals (no trade) ===
@@ -438,7 +445,7 @@ func processSnapshot(ctx context.Context, pool *pgxpool.Pool, snapTime time.Time
 	v2Signals := lab.ComputeGemSignals(snapTime, v2Features, mc, gems, baseHistory, marketAvgBaseLst)
 
 	// === V3 signals (with trade) ===
-	tradeCache := loadTradeDataNear(ctx, pool, snapTime)
+	tradeCache := loadTradeDataNear(ctx, pool, scope, snapTime)
 	v3Features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, tradeCache)
 	v3Signals := lab.ComputeGemSignals(snapTime, v3Features, mc, gems, baseHistory, marketAvgBaseLst)
 
