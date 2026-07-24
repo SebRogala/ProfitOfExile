@@ -787,3 +787,34 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 
 	}
 }
+
+// GemDictionary returns known gem names from static game data (gem_colors),
+// independent of league, prices and market activity.
+//
+// The desktop OCR matcher consumes this: recognising the gem under the cursor
+// must not depend on whether the market prices it. GemNamesAutocomplete stays
+// market-scoped — it drives search over gems that actually have analysis data.
+//
+// Query params: transfigured (default true; "false" returns skill gems).
+func GemDictionary(repo *lab.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		transfigured := r.URL.Query().Get("transfigured") != "false" // default true
+
+		names, err := repo.GemNameDictionary(r.Context(), transfigured)
+		if err != nil {
+			slog.Error("gem dictionary: query failed", "error", err, "transfigured", transfigured)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		if names == nil {
+			names = []string{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		// Static game data — safe to cache far longer than the market endpoints.
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		if err := json.NewEncoder(w).Encode(map[string]any{"names": names}); err != nil {
+			slog.Error("gem dictionary: encode response", "error", err)
+		}
+	}
+}
