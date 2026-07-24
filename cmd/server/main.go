@@ -90,11 +90,18 @@ const delayedRecomputeLockTimeout = 5 * time.Second
 // The 15-minute timer captures a scope at schedule time and fires much later on
 // context.Background(), guarded only by an in-process mutex. That guard cannot
 // see two hazards this function closes:
-//   - cross-process: a second server's timer (or its immediate recompute chain)
-//     may already be writing the same league; DataLockKey serialises them.
+//   - concurrent delayed recompute: another delayed-recompute run may already be
+//     writing the same league. DataLockKey serialises THIS delayed run against
+//     that one (and against a second server's delayed run once >1 server is
+//     permitted — today the ServerLockKey boot fence makes that cross-process
+//     case vacuous). The IMMEDIATE recompute chain (the Mercure gem-event RunV2)
+//     does NOT take this lock, so it is not serialised against — see POE-118.
 //   - wrong-league: the active league (id or revision) may have changed while
 //     the timer was in flight; committing RunV2 under the captured scope would
 //     write and cache the previous league's data as if it were current.
+//
+// TODO(POE-118): bring the immediate RunV2 paths under DataLockKey so all writers
+// of one league's computed data are serialised, not just the delayed timer.
 //
 // Return contract:
 //   - lock != nil, skip == "": proceed; caller runs RunV2 then Release()s lock.
@@ -225,12 +232,16 @@ func main() {
 	// deadlock on a shared key. On contention the peer is the legitimate owner:
 	// refuse readiness and exit non-zero before binding routes or subscribing.
 	//
-	// The fence parks one pooled connection for the process lifetime. With
-	// POE_DB_MAX_CONNS=1 that starves every other query, so require at least two
-	// connections before taking the lock.
-	if maxConns := pool.Config().MaxConns; maxConns < 2 {
-		slog.Error("server fence requires at least 2 DB connections", "max_conns", maxConns)
-		fmt.Fprintf(os.Stderr, "POE_DB_MAX_CONNS must be >= 2: the server fence holds one connection for the process lifetime (max_conns=%d).\n", maxConns)
+	// The server needs at least THREE connections, not two. The fence parks one
+	// for the process lifetime. The delayed-recompute path then nests: it holds
+	// the DataLockKey connection AND, while holding it, runs RunV2 on an unbounded
+	// background context — RunV2's pool.Acquire needs a working connection. At
+	// max_conns=2 the fence takes #1 and the data lock takes #2, so RunV2 blocks
+	// forever waiting for a third that never frees, wedging the pool and never
+	// releasing the lock. Three is the floor: fence + data-lock + ≥1 working conn.
+	if maxConns := pool.Config().MaxConns; maxConns < 3 {
+		slog.Error("server fence requires at least 3 DB connections", "max_conns", maxConns)
+		fmt.Fprintf(os.Stderr, "POE_DB_MAX_CONNS must be >= 3: the server parks one connection for the process-lifetime fence and the delayed recompute holds a second (DataLockKey) while RunV2 needs a third to make progress (max_conns=%d).\n", maxConns)
 		os.Exit(1)
 	}
 

@@ -373,13 +373,11 @@ func checkExpectedLeague(expected, resolved string) error {
 // layout reset event on the Mercure hub. Desktop clients listen for this
 // and clear their cached lab layout so they fetch the new daily layout.
 func runLayoutResetTicker(ctx context.Context, scope league.Scope, mercureURL, mercureSecret string) {
-	payloadBytes, err := json.Marshal(map[string]any{
-		"topic":          "poe/lab/layout",
-		"action":         "reset",
-		"source":         "collector",
-		"league":         scope.ID(),
-		"leagueRevision": scope.Revision(),
-	})
+	payloadBytes, err := json.Marshal(collector.StampScope(map[string]any{
+		"topic":  "poe/lab/layout",
+		"action": "reset",
+		"source": "collector",
+	}, scope))
 	if err != nil {
 		slog.Error("layout reset: marshal payload failed, ticker disabled", "error", err)
 		return
@@ -424,25 +422,21 @@ func runTradeRefresher(ctx context.Context, scope league.Scope, mercureURL, merc
 	// Precompute both payload variants — scope is constant for the process, so
 	// stamp league + leagueRevision once. The server validates these against its
 	// own resolved scope and rejects cross-league ticks (POE-121 Chunk 3).
-	tierPayloadBytes, err := json.Marshal(map[string]any{
-		"topic":          "poe/collector/trade-tick",
-		"variant":        "20/20",
-		"minTier":        "MID",
-		"minAge":         "5m",
-		"league":         scope.ID(),
-		"leagueRevision": scope.Revision(),
-	})
+	tierPayloadBytes, err := json.Marshal(collector.StampScope(map[string]any{
+		"topic":   "poe/collector/trade-tick",
+		"variant": "20/20",
+		"minTier": "MID",
+		"minAge":  "5m",
+	}, scope))
 	if err != nil {
 		slog.Error("trade tick: marshal tier payload failed, refresher disabled", "error", err)
 		return
 	}
-	anyPayloadBytes, err := json.Marshal(map[string]any{
-		"topic":          "poe/collector/trade-tick",
-		"variant":        "20/20",
-		"minAge":         "5m",
-		"league":         scope.ID(),
-		"leagueRevision": scope.Revision(),
-	})
+	anyPayloadBytes, err := json.Marshal(collector.StampScope(map[string]any{
+		"topic":   "poe/collector/trade-tick",
+		"variant": "20/20",
+		"minAge":  "5m",
+	}, scope))
 	if err != nil {
 		slog.Error("trade tick: marshal any payload failed, refresher disabled", "error", err)
 		return

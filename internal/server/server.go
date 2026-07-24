@@ -61,8 +61,16 @@ type RouterConfig struct {
 	DeviceRepo *device.Repository
 	// FenceChecker reports the liveness of the server's process fence (the held
 	// advisory-lock connection). May be nil — health then reflects the DB ping
-	// alone. When set, a dropped fence degrades /api/health so the server sheds
-	// traffic instead of double-writing behind a peer that grabbed the lock.
+	// alone. The fence's actual guarantee is boot-time exclusion: a second server
+	// cannot acquire ServerLockKey and refuses readiness, so only one writer boots.
+	// When set, a mid-life fence loss is DETECTED here (CheckHeld) and degrades
+	// /api/health to 503 — but that only sheds HTTP traffic. It does NOT stop the
+	// writers, which run off Mercure events and timers (recompute) and GGG trade
+	// calls, not off HTTP requests; those keep writing until the process exits.
+	// Quiescing behind a peer that grabbed the lock therefore depends on an
+	// external liveness probe restarting this process on the sustained 503.
+	// TODO(POE-118): cancel the writer lifecycle on fence loss so a demoted server
+	// stops writing without waiting for an external restart.
 	FenceChecker handlers.LivenessChecker
 }
 

@@ -114,11 +114,18 @@ func TestLockKeysAreStableAndPurposeSeparated(t *testing.T) {
 
 	keys := map[string]int64{
 		"runtime":        RuntimeLockKey(),
+		"server":         ServerLockKey(),
 		"data":           DataLockKey(scope),
 		"administration": AdministrationLockKey(),
 	}
 	if got, want := RuntimeLockKey(), keys["runtime"]; got != want {
 		t.Errorf("runtime lock key changed between calls: got %d, want %d", got, want)
+	}
+	// ServerLockKey and RuntimeLockKey fence a co-located server and collector
+	// independently; if ServerLockKey aliased RuntimeLockKey (or any other key)
+	// they would deadlock on a shared key at boot. Assert stable and distinct.
+	if got, want := ServerLockKey(), keys["server"]; got != want {
+		t.Errorf("server lock key changed between calls: got %d, want %d", got, want)
 	}
 	if got, want := DataLockKey(scope), keys["data"]; got != want {
 		t.Errorf("data lock key changed between calls: got %d, want %d", got, want)
