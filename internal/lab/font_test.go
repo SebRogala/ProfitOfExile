@@ -573,3 +573,43 @@ func TestAnalyzeFont_LowConfidenceExcludedFromEV(t *testing.T) {
 		t.Errorf("LowConfidenceGems = %d, want 1", len(found.LowConfidenceGems))
 	}
 }
+
+func TestAnalyzeFont_PricedGemsCountsOnlyThisVariantWhilePoolStaysWhole(t *testing.T) {
+	now := time.Now()
+	// League-start shape: both RED gems trade at 1/0, only one of them at 20/20.
+	// The Font can still roll either gem at 20/20 — that outcome just has no price.
+	features := []GemFeature{
+		makeFeature("Cleave of Rage", "1", 30, 12, "TOP", 0.9, 0.95),
+		makeFeature("Slam of Force", "1", 8, 9, "LOW", 0.8, 0.9),
+		makeFeature("Cleave of Rage", "20/20", 250, 15, "TOP", 0.9, 0.95),
+	}
+
+	analysis := AnalyzeFont(now, features)
+
+	byVariant := make(map[string]FontResult, len(analysis.Safe))
+	for _, r := range analysis.Safe {
+		if r.Color == "RED" {
+			byVariant[r.Variant] = r
+		}
+	}
+
+	sparse, ok := byVariant["20/20"]
+	if !ok {
+		t.Fatalf("no RED 20/20 result; got variants %v", byVariant)
+	}
+	if sparse.Pool != 2 {
+		t.Errorf("20/20 Pool = %d, want 2 — both gems remain possible outcomes", sparse.Pool)
+	}
+	if sparse.PricedGems != 1 {
+		t.Errorf("20/20 PricedGems = %d, want 1 — only one gem is listed at this variant", sparse.PricedGems)
+	}
+
+	full, ok := byVariant["1"]
+	if !ok {
+		t.Fatalf("no RED 1 result; got variants %v", byVariant)
+	}
+	if full.PricedGems != full.Pool {
+		t.Errorf("1: PricedGems = %d, Pool = %d — want equal so the UI keeps the plain count",
+			full.PricedGems, full.Pool)
+	}
+}

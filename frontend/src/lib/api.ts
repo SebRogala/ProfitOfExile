@@ -72,6 +72,8 @@ export interface FontColor {
 	color: 'RED' | 'GREEN' | 'BLUE';
 	ev: number;
 	pool: number;
+	/** How many of `pool` carry a price at this variant. Below `pool` means missing prices, not a smaller pool. */
+	pricedGems: number;
 	winners: number;
 	pWin: number;
 	profit: number;
@@ -368,6 +370,7 @@ function mapFontRows(rows: any[]): FontColor[] {
 		color: r.color || '',
 		ev: Math.round(r.ev || 0),
 		pool: r.pool || 0,
+		pricedGems: r.pricedGems ?? (r.pool || 0),
 		winners: r.winners || 0,
 		pWin: Math.round((r.pWin || 0) * 10000) / 100,
 		profit: Math.round(r.profit || 0),

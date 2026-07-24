@@ -12,6 +12,7 @@ type FontResult struct {
 	Color             string  // RED, GREEN, BLUE
 	Variant           string  // "1", "1/20", "20", "20/20"
 	Pool              int     // total unique transfigured gem names of that color
+	PricedGems        int     // how many of Pool carry a price at THIS variant (Pool counts every possible outcome, priced or not)
 	Winners           int     // count of tier-qualifying gems (LOW+ for safe, MID-HIGH+ for premium, TOP for jackpot)
 	PWin              float64 // probability of seeing at least 1 winner in 3 picks
 	AvgWin            float64 // average risk-adjusted value when you hit (secondary info)
@@ -19,12 +20,12 @@ type FontResult struct {
 	EV                float64 // expected income per font (risk-adjusted, internal use)
 	EVRaw             float64 // expected income per font using raw listed prices (primary display)
 	InputCost         float64
-	Profit            float64 // EVRaw - InputCost
-	FontsToHit        float64          // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
-	JackpotGems       []JackpotGemInfo // TOP gem names+prices (only for jackpot mode, 1-3 gems)
-	Mode              string  // "safe", "premium", or "jackpot"
-	ThinPoolGems      int     // count of winners with < 5 listings
-	LiquidityRisk     string  // "LOW", "MEDIUM", "HIGH"
+	Profit            float64                // EVRaw - InputCost
+	FontsToHit        float64                // expected fonts until hitting a winner (1/pWin), 0 if pWin=0
+	JackpotGems       []JackpotGemInfo       // TOP gem names+prices (only for jackpot mode, 1-3 gems)
+	Mode              string                 // "safe", "premium", or "jackpot"
+	ThinPoolGems      int                    // count of winners with < 5 listings
+	LiquidityRisk     string                 // "LOW", "MEDIUM", "HIGH"
 	PoolBreakdown     []TierPoolInfo         `json:"poolBreakdown,omitempty"`     // per-tier gem counts and price ranges
 	LowConfidenceGems []LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"` // gems excluded from EV due to thin market
 }
@@ -241,6 +242,17 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
+			// How much of the pool the market actually prices at this variant. Pool
+			// stays variant-independent — every transfigured gem of the colour is a
+			// possible font outcome whether or not poe.ninja lists it at this
+			// level/quality — so a low priced count means "we can't value most
+			// outcomes here", not "the pool is small". The UI shows the two together
+			// so an EV of 0 is readable as missing prices rather than worthless gems.
+			pricedGems := len(entries)
+			if pricedGems > pool {
+				pricedGems = pool
+			}
+
 			// Count winners and thin-market gems for each mode.
 			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int
 			var safeThinCount, premiumThinCount, jackpotThinCount int
@@ -400,6 +412,7 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 				Color:             color,
 				Variant:           variant,
 				Pool:              pool,
+				PricedGems:        pricedGems,
 				Winners:           safeWinnerCount,
 				PWin:              safePWin,
 				AvgWin:            safeAvgWin,
@@ -432,6 +445,7 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 				Color:         color,
 				Variant:       variant,
 				Pool:          pool,
+				PricedGems:    pricedGems,
 				Winners:       premiumWinnerCount,
 				PWin:          premiumPWin,
 				AvgWin:        premiumAvgWin,
@@ -462,6 +476,7 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 				Color:         color,
 				Variant:       variant,
 				Pool:          pool,
+				PricedGems:    pricedGems,
 				Winners:       jackpotWinnerCount,
 				PWin:          jackpotPWin,
 				AvgWin:        jackpotAvgWin,
