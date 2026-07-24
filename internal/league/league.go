@@ -64,6 +64,11 @@ func Historical(id string) Scope {
 // RuntimeLockKey serializes process ownership of the runtime configuration.
 func RuntimeLockKey() int64 { return lockKey("runtime") }
 
+// ServerLockKey serializes process ownership of the server's league-scoped
+// writes. It is distinct from RuntimeLockKey so a co-located server and
+// collector fence independently instead of deadlocking on a shared key.
+func ServerLockKey() int64 { return lockKey("server") }
+
 // DataLockKey serializes work against one scoped dataset.
 func DataLockKey(scope Scope) int64 { return lockKey("data", scope.id) }
 
