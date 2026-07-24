@@ -11,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"profitofexile/internal/league"
 )
 
 // Repository handles analysis data persistence.
@@ -25,9 +27,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // LatestGemPrices returns all gem prices from the most recent snapshot.
 // Returns (nil, zero-time, nil) when no snapshots exist yet.
-func (r *Repository) LatestGemPrices(ctx context.Context) ([]GemPrice, time.Time, error) {
+func (r *Repository) LatestGemPrices(ctx context.Context, scope league.Scope) ([]GemPrice, time.Time, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, time.Time{}, fmt.Errorf("lab repo: latest gem prices: %w", err)
+	}
 	var snapTime *time.Time
-	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM gem_snapshots").Scan(&snapTime)
+	err := r.pool.QueryRow(ctx, "SELECT MAX(time) FROM gem_snapshots WHERE league = $1", scope.ID()).Scan(&snapTime)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("lab repo: latest snapshot time: %w", err)
 	}
@@ -39,7 +44,7 @@ func (r *Repository) LatestGemPrices(ctx context.Context) ([]GemPrice, time.Time
 		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
 		       is_transfigured, is_corrupted, COALESCE(gem_color, '')
 		FROM gem_snapshots
-		WHERE time = $1`, *snapTime)
+		WHERE league = $1 AND time = $2`, scope.ID(), *snapTime)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("lab repo: query latest gems: %w", err)
 	}
@@ -62,7 +67,10 @@ func (r *Repository) LatestGemPrices(ctx context.Context) ([]GemPrice, time.Time
 }
 
 // SaveTransfigureResults batch-inserts transfigure analysis results.
-func (r *Repository) SaveTransfigureResults(ctx context.Context, results []TransfigureResult) (int, error) {
+func (r *Repository) SaveTransfigureResults(ctx context.Context, scope league.Scope, results []TransfigureResult) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save transfigure results: %w", err)
+	}
 	if len(results) == 0 {
 		return 0, nil
 	}
@@ -77,11 +85,11 @@ func (r *Repository) SaveTransfigureResults(ctx context.Context, results []Trans
 	for _, r := range results {
 		batch.Queue(
 			`INSERT INTO transfigure_results
-			 (time, base_name, transfigured_name, variant, base_price, transfigured_price,
+			 (league, time, base_name, transfigured_name, variant, base_price, transfigured_price,
 			  roi, roi_pct, base_listings, transfigured_listings, gem_color, confidence)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			 ON CONFLICT DO NOTHING`,
-			r.Time, r.BaseName, r.TransfiguredName, r.Variant,
+			scope.ID(), r.Time, r.BaseName, r.TransfiguredName, r.Variant,
 			r.BasePrice, r.TransfiguredPrice, r.ROI, r.ROIPct,
 			r.BaseListings, r.TransfiguredListings, r.GemColor, r.Confidence,
 		)
@@ -110,12 +118,15 @@ func (r *Repository) SaveTransfigureResults(ctx context.Context, results []Trans
 
 // LatestGCPPrice returns the most recent GCP (Gemcutter's Prism) price from currency_snapshots.
 // Returns an error when no data is available; the caller decides the fallback.
-func (r *Repository) LatestGCPPrice(ctx context.Context) (float64, error) {
+func (r *Repository) LatestGCPPrice(ctx context.Context, scope league.Scope) (float64, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: latest GCP price: %w", err)
+	}
 	var chaos *float64
 	err := r.pool.QueryRow(ctx, `
 		SELECT chaos FROM currency_snapshots
-		WHERE currency_id = 'gcp'
-		ORDER BY time DESC LIMIT 1`).Scan(&chaos)
+		WHERE league = $1 AND currency_id = 'gcp'
+		ORDER BY time DESC LIMIT 1`, scope.ID()).Scan(&chaos)
 	if err != nil {
 		return 0, fmt.Errorf("lab repo: latest GCP price: %w", err)
 	}
@@ -126,7 +137,10 @@ func (r *Repository) LatestGCPPrice(ctx context.Context) (float64, error) {
 }
 
 // SaveFontResults batch-inserts Font of Divine Skill analysis results.
-func (r *Repository) SaveFontResults(ctx context.Context, results []FontResult) (int, error) {
+func (r *Repository) SaveFontResults(ctx context.Context, scope league.Scope, results []FontResult) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save font results: %w", err)
+	}
 	if len(results) == 0 {
 		return 0, nil
 	}
@@ -141,11 +155,11 @@ func (r *Repository) SaveFontResults(ctx context.Context, results []FontResult) 
 	for _, r := range results {
 		batch.Queue(
 			`INSERT INTO font_snapshots
-			 (time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
+			 (league, time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
 			  mode, thin_pool_gems, liquidity_risk)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 ON CONFLICT DO NOTHING`,
-			r.Time, r.Color, r.Variant, r.Pool, r.Winners,
+			scope.ID(), r.Time, r.Color, r.Variant, r.Pool, r.Winners,
 			r.PWin, r.AvgWin, r.EV, r.InputCost, r.Profit,
 			r.Mode, r.ThinPoolGems, r.LiquidityRisk,
 		)
@@ -173,7 +187,10 @@ func (r *Repository) SaveFontResults(ctx context.Context, results []FontResult) 
 }
 
 // SaveQualityResults batch-inserts quality-roll analysis results.
-func (r *Repository) SaveQualityResults(ctx context.Context, results []QualityResult) (int, error) {
+func (r *Repository) SaveQualityResults(ctx context.Context, scope league.Scope, results []QualityResult) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save quality results: %w", err)
+	}
 	if len(results) == 0 {
 		return 0, nil
 	}
@@ -188,11 +205,11 @@ func (r *Repository) SaveQualityResults(ctx context.Context, results []QualityRe
 	for _, r := range results {
 		batch.Queue(
 			`INSERT INTO quality_results
-			 (time, name, level, buy_price, price_q20, roi_4, roi_6, roi_10, roi_15,
+			 (league, time, name, level, buy_price, price_q20, roi_4, roi_6, roi_10, roi_15,
 			  avg_roi, gcp_price, listings_0, listings_20, gem_color, confidence)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			 ON CONFLICT DO NOTHING`,
-			r.Time, r.Name, r.Level, r.BuyPrice, r.PriceQ20,
+			scope.ID(), r.Time, r.Name, r.Level, r.BuyPrice, r.PriceQ20,
 			r.ROI4, r.ROI6, r.ROI10, r.ROI15, r.AvgROI,
 			r.GCPPrice, r.Listings0, r.Listings20, r.GemColor, r.Confidence,
 		)
@@ -220,14 +237,17 @@ func (r *Repository) SaveQualityResults(ctx context.Context, results []QualityRe
 }
 
 // LatestFontResults returns the most recent Font analysis results, optionally filtered by variant and/or mode.
-func (r *Repository) LatestFontResults(ctx context.Context, variant, mode string, limit int) ([]FontResult, error) {
+func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, variant, mode string, limit int) ([]FontResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest font results: %w", err)
+	}
 	query := `
 		SELECT time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
 		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW')
 		FROM font_snapshots
-		WHERE time = (SELECT MAX(time) FROM font_snapshots)`
-	args := []any{}
-	argIdx := 1
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM font_snapshots WHERE league = $1)`
+	args := []any{scope.ID()}
+	argIdx := 2
 
 	if variant != "" {
 		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
@@ -271,24 +291,27 @@ func (r *Repository) LatestFontResults(ctx context.Context, variant, mode string
 }
 
 // LatestQualityResults returns the most recent quality-roll analysis results, optionally filtered by variant.
-func (r *Repository) LatestQualityResults(ctx context.Context, variant string, limit int) ([]QualityResult, error) {
+func (r *Repository) LatestQualityResults(ctx context.Context, scope league.Scope, variant string, limit int) ([]QualityResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest quality results: %w", err)
+	}
 	query := `
 		SELECT time, name, level, buy_price, price_q20, roi_4, roi_6, roi_10, roi_15,
 		       avg_roi, gcp_price, listings_0, listings_20, COALESCE(gem_color, ''), confidence
 		FROM quality_results
-		WHERE time = (SELECT MAX(time) FROM quality_results)`
-	args := []any{}
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM quality_results WHERE league = $1)`
+	args := []any{scope.ID()}
 
 	if variant != "" {
 		// variant here maps to level: "1" or "1/20" → level 1, "20" or "20/20" → level 20
-		query += ` AND level = $1 ORDER BY avg_roi DESC LIMIT $2`
+		query += ` AND level = $2 ORDER BY avg_roi DESC LIMIT $3`
 		level := 20
 		if variant == "1" || variant == "1/20" {
 			level = 1
 		}
 		args = append(args, level, limit)
 	} else {
-		query += ` ORDER BY avg_roi DESC LIMIT $1`
+		query += ` ORDER BY avg_roi DESC LIMIT $2`
 		args = append(args, limit)
 	}
 
@@ -318,19 +341,23 @@ func (r *Repository) LatestQualityResults(ctx context.Context, variant string, l
 // BasePriceHistory returns time-series data for base (non-transfigured, non-corrupted) gems
 // within the given number of hours. Returns a map of baseName → []PricePoint.
 // Only includes analysis variants and excludes Trarthus.
-func (r *Repository) BasePriceHistory(ctx context.Context, variant string, hours int) (map[string][]PricePoint, error) {
+func (r *Repository) BasePriceHistory(ctx context.Context, scope league.Scope, variant string, hours int) (map[string][]PricePoint, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: base price history: %w", err)
+	}
 	query := `
 		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
 		FROM gem_snapshots
-		WHERE time > NOW() - make_interval(hours => $1)
+		WHERE league = $1
+		  AND time > NOW() - make_interval(hours => $2)
 		  AND is_transfigured = false
 		  AND is_corrupted = false
 		  AND name NOT LIKE '%Trarthus%'
-		  AND variant = ANY($2)`
-	args := []any{hours, []string{"1", "1/20", "20", "20/20"}}
+		  AND variant = ANY($3)`
+	args := []any{scope.ID(), hours, []string{"1", "1/20", "20", "20/20"}}
 
 	if variant != "" {
-		query += ` AND variant = $3`
+		query += ` AND variant = $4`
 		args = append(args, variant)
 	}
 
@@ -363,27 +390,32 @@ func (r *Repository) BasePriceHistory(ctx context.Context, variant string, hours
 // MarketAvgBaseListings computes the average listings across all base gems at the latest snapshot.
 // This is the denominator for relative liquidity — it naturally adjusts for weekend/weekday,
 // league phase, and time of day.
-func (r *Repository) MarketAvgBaseListings(ctx context.Context, variant string) (float64, error) {
+func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Scope, variant string) (float64, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: market avg base listings: %w", err)
+	}
 	query := `
 		SELECT COALESCE(AVG(COALESCE(listings, 0)), 0)
 		FROM gem_snapshots
-		WHERE time = (SELECT MAX(time) FROM gem_snapshots)
+		WHERE league = $1
+		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
 		  AND is_transfigured = false
 		  AND is_corrupted = false
 		  AND name NOT LIKE '%Trarthus%'
-		  AND variant = ANY($1)`
-	args := []any{[]string{"1", "1/20", "20", "20/20"}}
+		  AND variant = ANY($2)`
+	args := []any{scope.ID(), []string{"1", "1/20", "20", "20/20"}}
 
 	if variant != "" {
 		query = `
 		SELECT COALESCE(AVG(COALESCE(listings, 0)), 0)
 		FROM gem_snapshots
-		WHERE time = (SELECT MAX(time) FROM gem_snapshots)
+		WHERE league = $1
+		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
 		  AND is_transfigured = false
 		  AND is_corrupted = false
 		  AND name NOT LIKE '%Trarthus%'
-		  AND variant = $1`
-		args = []any{variant}
+		  AND variant = $2`
+		args = []any{scope.ID(), variant}
 	}
 
 	var avg float64
@@ -397,20 +429,24 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, variant string) 
 // GemPriceHistoryByVariant returns time-series gem data for transfigured, non-corrupted gems
 // within the given number of hours, grouped by (name, variant).
 // Only includes variants "1", "1/20", "20", "20/20", chaos > 5, and excludes Trarthus.
-func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, variant string, hours int) ([]GemPriceHistory, error) {
+func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.Scope, variant string, hours int) ([]GemPriceHistory, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem price history by variant: %w", err)
+	}
 	query := `
 		SELECT name, variant, COALESCE(gem_color, ''), time, COALESCE(chaos, 0), COALESCE(listings, 0)
 		FROM gem_snapshots
-		WHERE time > NOW() - make_interval(hours => $1)
+		WHERE league = $1
+		  AND time > NOW() - make_interval(hours => $2)
 		  AND is_transfigured = true
 		  AND is_corrupted = false
 		  AND name NOT LIKE '%Trarthus%'
 		  AND COALESCE(chaos, 0) > 5
-		  AND variant = ANY($2)`
-	args := []any{hours, []string{"1", "1/20", "20", "20/20"}}
+		  AND variant = ANY($3)`
+	args := []any{scope.ID(), hours, []string{"1", "1/20", "20", "20/20"}}
 
 	if variant != "" {
-		query += ` AND variant = $3`
+		query += ` AND variant = $4`
 		args = append(args, variant)
 	}
 
@@ -456,19 +492,22 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, variant strin
 }
 
 // LatestTransfigureResults returns the most recent analysis results, optionally filtered by variant.
-func (r *Repository) LatestTransfigureResults(ctx context.Context, variant string, limit int) ([]TransfigureResult, error) {
+func (r *Repository) LatestTransfigureResults(ctx context.Context, scope league.Scope, variant string, limit int) ([]TransfigureResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest transfigure results: %w", err)
+	}
 	query := `
 		SELECT time, base_name, transfigured_name, variant, base_price, transfigured_price,
 		       roi, roi_pct, base_listings, transfigured_listings, COALESCE(gem_color, ''), confidence
 		FROM transfigure_results
-		WHERE time = (SELECT MAX(time) FROM transfigure_results)`
-	args := []any{}
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM transfigure_results WHERE league = $1)`
+	args := []any{scope.ID()}
 
 	if variant != "" {
-		query += ` AND variant = $1 ORDER BY roi DESC LIMIT $2`
+		query += ` AND variant = $2 ORDER BY roi DESC LIMIT $3`
 		args = append(args, variant, limit)
 	} else {
-		query += ` ORDER BY roi DESC LIMIT $1`
+		query += ` ORDER BY roi DESC LIMIT $2`
 		args = append(args, limit)
 	}
 
@@ -497,7 +536,10 @@ func (r *Repository) LatestTransfigureResults(ctx context.Context, variant strin
 
 // SparklineData returns raw price points for specific transfigured gems over the given hours.
 // Used for sparkline charts in the gem comparator.
-func (r *Repository) SparklineData(ctx context.Context, names []string, variant string, hours int) (map[string][]SparklinePoint, error) {
+func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, names []string, variant string, hours int) (map[string][]SparklinePoint, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: sparkline data: %w", err)
+	}
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -505,12 +547,12 @@ func (r *Repository) SparklineData(ctx context.Context, names []string, variant 
 	query := `
 		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
 		FROM gem_snapshots
-		WHERE name = ANY($1) AND is_corrupted = false
-		  AND time > NOW() - make_interval(hours => $2)`
-	args := []any{names, hours}
+		WHERE league = $1 AND name = ANY($2) AND is_corrupted = false
+		  AND time > NOW() - make_interval(hours => $3)`
+	args := []any{scope.ID(), names, hours}
 
 	if variant != "" {
-		query += ` AND variant = $3`
+		query += ` AND variant = $4`
 		args = append(args, variant)
 	}
 
@@ -545,24 +587,29 @@ func (r *Repository) SparklineData(ctx context.Context, names []string, variant 
 }
 
 // GemNamesAutocomplete returns distinct transfigured gem names matching all query words (in any order).
-func (r *Repository) GemNamesAutocomplete(ctx context.Context, query string, limit int) ([]string, error) {
+func (r *Repository) GemNamesAutocomplete(ctx context.Context, scope league.Scope, query string, limit int) ([]string, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem names autocomplete: %w", err)
+	}
 	if query == "" {
 		return nil, nil
 	}
 
 	escaper := strings.NewReplacer(`%`, `\%`, `_`, `\_`)
 	words := strings.Fields(query)
+	// $1 is the league; ILIKE conditions start at $2, LIMIT is the final arg.
 	conditions := make([]string, len(words))
-	args := make([]any, len(words))
+	args := make([]any, 0, len(words)+2)
+	args = append(args, scope.ID())
 	for i, w := range words {
-		args[i] = "%" + escaper.Replace(w) + "%"
-		conditions[i] = fmt.Sprintf("name ILIKE $%d", i+1)
+		args = append(args, "%"+escaper.Replace(w)+"%")
+		conditions[i] = fmt.Sprintf("name ILIKE $%d", i+2)
 	}
 	args = append(args, limit)
 
 	sql := fmt.Sprintf(`
 		SELECT DISTINCT name FROM gem_snapshots
-		WHERE is_transfigured = true AND %s
+		WHERE league = $1 AND is_transfigured = true AND %s
 		ORDER BY name LIMIT $%d`,
 		strings.Join(conditions, " AND "), len(args))
 
@@ -601,16 +648,19 @@ type SignalChange struct {
 
 // SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
 // Queries gem_signals joined with gem_features for velocity and price data.
-func (r *Repository) SignalHistory(ctx context.Context, name, variant string, limit int) ([]SignalChange, error) {
+func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name, variant string, limit int) ([]SignalChange, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: signal history: %w", err)
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT s.time, s.signal, s.window_signal, COALESCE(s.advanced_signal, ''),
 		       COALESCE(f.vel_long_price, 0), COALESCE(f.vel_long_listing, 0),
 		       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
 		FROM gem_signals s
-		LEFT JOIN gem_features f ON f.time = s.time AND f.name = s.name AND f.variant = s.variant
-		WHERE s.name = $1 AND s.variant = $2
+		LEFT JOIN gem_features f ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
+		WHERE s.league = $1 AND s.name = $2 AND s.variant = $3
 		ORDER BY s.time DESC
-		LIMIT $3`, name, variant, limit)
+		LIMIT $4`, scope.ID(), name, variant, limit)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: signal history: %w", err)
 	}
@@ -638,7 +688,10 @@ func (r *Repository) SignalHistory(ctx context.Context, name, variant string, li
 
 // SaveMarketContext persists a single market context snapshot.
 // Uses ON CONFLICT DO NOTHING so re-runs for the same time are idempotent.
-func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) error {
+func (r *Repository) SaveMarketContext(ctx context.Context, scope league.Scope, mc MarketContext) error {
+	if err := scope.Validate(); err != nil {
+		return fmt.Errorf("lab repo: save market context: %w", err)
+	}
 	if err := mc.ValidateTemporalSlices(); err != nil {
 		return fmt.Errorf("lab repo: save market context: %w", err)
 	}
@@ -685,23 +738,31 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 		return fmt.Errorf("lab repo: marshal variant stats: %w", err)
 	}
 
+	// temporal_buckets is JSONB NOT NULL DEFAULT '{}'. A context with no computed
+	// buckets (e.g. temporal mode "none") carries a nil slice; bind '{}' so it
+	// matches the column default instead of violating the NOT NULL constraint.
+	temporalBuckets := mc.TemporalBuckets
+	if len(temporalBuckets) == 0 {
+		temporalBuckets = []byte("{}")
+	}
+
 	_, err = r.pool.Exec(ctx, `
 		INSERT INTO market_context
-		 (time, price_percentiles, listing_percentiles,
+		 (league, time, price_percentiles, listing_percentiles,
 		  velocity_mean, velocity_sigma, listing_vel_mean, listing_vel_sigma,
 		  total_gems, total_listings, tier_boundaries,
 		  hourly_bias, hourly_volatility, hourly_activity,
 		  weekday_bias, weekday_volatility, weekday_activity,
 		  temporal_coefficient, temporal_mode, temporal_buckets,
 		  variant_stats)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		ON CONFLICT DO NOTHING`,
-		mc.Time, pricePerc, listPerc,
+		scope.ID(), mc.Time, pricePerc, listPerc,
 		mc.VelocityMean, mc.VelocitySigma, mc.ListingVelMean, mc.ListingVelSigma,
 		mc.TotalGems, mc.TotalListings, tierBounds,
 		hourly, hourlyVol, hourlyAct,
 		weekday, weekdayVol, weekdayAct,
-		mc.TemporalCoefficient, mc.TemporalMode, mc.TemporalBuckets,
+		mc.TemporalCoefficient, mc.TemporalMode, temporalBuckets,
 		variantStats,
 	)
 	if err != nil {
@@ -712,7 +773,10 @@ func (r *Repository) SaveMarketContext(ctx context.Context, mc MarketContext) er
 
 // LatestMarketContext returns the most recent market context snapshot.
 // Returns (nil, nil) when no rows exist.
-func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, error) {
+func (r *Repository) LatestMarketContext(ctx context.Context, scope league.Scope) (*MarketContext, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest market context: %w", err)
+	}
 	var mc MarketContext
 	var pricePerc, listPerc, tierBounds []byte
 	var hourly, hourlyVol, hourlyAct []byte
@@ -728,7 +792,7 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 		       temporal_coefficient, temporal_mode, temporal_buckets,
 		       variant_stats
 		FROM market_context
-		WHERE time = (SELECT MAX(time) FROM market_context)`).
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM market_context WHERE league = $1)`, scope.ID()).
 		Scan(&mc.Time, &pricePerc, &listPerc,
 			&mc.VelocityMean, &mc.VelocitySigma, &mc.ListingVelMean, &mc.ListingVelSigma,
 			&mc.TotalGems, &mc.TotalListings, &tierBounds,
@@ -784,7 +848,10 @@ func (r *Repository) LatestMarketContext(ctx context.Context) (*MarketContext, e
 }
 
 // SaveGemFeatures batch-inserts pre-computed gem feature rows.
-func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature) (int, error) {
+func (r *Repository) SaveGemFeatures(ctx context.Context, scope league.Scope, features []GemFeature) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save gem features: %w", err)
+	}
 	if len(features) == 0 {
 		return 0, nil
 	}
@@ -799,7 +866,7 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 	for _, f := range features {
 		batch.Queue(
 			`INSERT INTO gem_features
-			 (time, name, variant, chaos, listings, tier, global_tier,
+			 (league, time, name, variant, chaos, listings, tier, global_tier,
 			  vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
 			  vel_long_price, vel_long_listing,
 			  cv, hist_position, high_7d, low_7d,
@@ -807,11 +874,11 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 			  relative_price, relative_listings,
 			  sell_probability_factor, stability_discount,
 			  market_depth, market_regime, low_confidence, gem_color)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			         $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
-			         $25, $26, $27, $28)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+			         $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
+			         $26, $27, $28, $29)
 			 ON CONFLICT DO NOTHING`,
-			f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.Tier,
+			scope.ID(), f.Time, f.Name, f.Variant, f.Chaos, f.Listings, f.Tier, f.Tier,
 			f.VelShortPrice, f.VelShortListing, f.VelMedPrice, f.VelMedListing,
 			f.VelLongPrice, f.VelLongListing,
 			f.CV, f.HistPosition, f.High7Days, f.Low7Days,
@@ -844,7 +911,10 @@ func (r *Repository) SaveGemFeatures(ctx context.Context, features []GemFeature)
 }
 
 // LatestGemFeatures returns the most recent gem feature rows, optionally filtered by variant and/or tier.
-func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string, limit int) ([]GemFeature, error) {
+func (r *Repository) LatestGemFeatures(ctx context.Context, scope league.Scope, variant, tier string, limit int) ([]GemFeature, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest gem features: %w", err)
+	}
 	query := `
 		SELECT time, name, variant, chaos, listings, tier, COALESCE(global_tier, ''),
 		       vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
@@ -856,9 +926,9 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 		       COALESCE(market_depth, 0), COALESCE(market_regime, 'TEMPORAL'),
 		       COALESCE(low_confidence, false), COALESCE(gem_color, '')
 		FROM gem_features
-		WHERE time = (SELECT MAX(time) FROM gem_features)`
-	args := []any{}
-	argIdx := 1
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM gem_features WHERE league = $1)`
+	args := []any{scope.ID()}
+	argIdx := 2
 
 	if variant != "" {
 		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
@@ -907,10 +977,20 @@ func (r *Repository) LatestGemFeatures(ctx context.Context, variant, tier string
 // gem_signals, font_snapshots) for a specific snapshot time. Raw collector data
 // (gem_snapshots, currency_snapshots, fragment_snapshots) is NOT touched.
 // Used on startup to force recomputation with the latest code after a deploy.
-func (r *Repository) DeleteV2ForSnapshot(ctx context.Context, snapTime time.Time) error {
+func (r *Repository) DeleteV2ForSnapshot(ctx context.Context, scope league.Scope, snapTime time.Time) error {
+	if err := scope.Validate(); err != nil {
+		return fmt.Errorf("lab repo: delete v2 for snapshot: %w", err)
+	}
+	// TODO(POE-120): the analyzer writes 7 result tables but only 4 are cleaned
+	// on recompute. transfigure_results, quality_results, and dedication_snapshots
+	// accumulate stale rows across deploys behind ON CONFLICT DO NOTHING. They are
+	// NOT added here because RecomputeLatestV2 re-runs only RunV2; RunTransfigure
+	// and RunQuality execute in separate, uncoordinated startup goroutines, so
+	// deleting their tables here would race a concurrent write or leave them empty.
+	// The real fix is to coordinate the recompute flow — out of scope for POE-120.
 	tables := []string{"gem_features", "gem_signals", "market_context", "font_snapshots"}
 	for _, table := range tables {
-		if _, err := r.pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE time = $1", table), snapTime); err != nil {
+		if _, err := r.pool.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE league = $1 AND time = $2", table), scope.ID(), snapTime); err != nil {
 			return fmt.Errorf("lab repo: delete %s at %v: %w", table, snapTime, err)
 		}
 	}
@@ -918,7 +998,10 @@ func (r *Repository) DeleteV2ForSnapshot(ctx context.Context, snapTime time.Time
 }
 
 // SaveGemSignals batch-inserts pre-computed gem signal rows.
-func (r *Repository) SaveGemSignals(ctx context.Context, signals []GemSignal) (int, error) {
+func (r *Repository) SaveGemSignals(ctx context.Context, scope league.Scope, signals []GemSignal) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save gem signals: %w", err)
+	}
 	if len(signals) == 0 {
 		return 0, nil
 	}
@@ -933,15 +1016,15 @@ func (r *Repository) SaveGemSignals(ctx context.Context, signals []GemSignal) (i
 	for _, s := range signals {
 		batch.Queue(
 			`INSERT INTO gem_signals
-			 (time, name, variant, signal, confidence,
+			 (league, time, name, variant, signal, confidence,
 			  sell_urgency, sell_reason, sellability, sellability_label,
 			  window_signal, advanced_signal, phase_modifier,
 			  recommendation, tier,
 			  risk_adjusted_value, quick_sell_price, sell_confidence)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-			         $15, $16, $17)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+			         $16, $17, $18)
 			 ON CONFLICT DO NOTHING`,
-			s.Time, s.Name, s.Variant, s.Signal, s.Confidence,
+			scope.ID(), s.Time, s.Name, s.Variant, s.Signal, s.Confidence,
 			s.SellUrgency, s.SellReason, s.Sellability, s.SellabilityLabel,
 			s.WindowSignal, s.AdvancedSignal, s.PhaseModifier,
 			s.Recommendation, s.Tier,
@@ -971,7 +1054,10 @@ func (r *Repository) SaveGemSignals(ctx context.Context, signals []GemSignal) (i
 }
 
 // LatestGemSignals returns the most recent gem signal rows, optionally filtered by variant and/or tier.
-func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string, limit int) ([]GemSignal, error) {
+func (r *Repository) LatestGemSignals(ctx context.Context, scope league.Scope, variant, tier string, limit int) ([]GemSignal, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest gem signals: %w", err)
+	}
 	query := `
 		SELECT time, name, variant, signal, confidence,
 		       sell_urgency, sell_reason, sellability, sellability_label,
@@ -979,9 +1065,9 @@ func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string,
 		       recommendation, tier,
 		       risk_adjusted_value, quick_sell_price, sell_confidence
 		FROM gem_signals
-		WHERE time = (SELECT MAX(time) FROM gem_signals)`
-	args := []any{}
-	argIdx := 1
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM gem_signals WHERE league = $1)`
+	args := []any{scope.ID()}
+	argIdx := 2
 
 	if variant != "" {
 		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
@@ -1024,7 +1110,10 @@ func (r *Repository) LatestGemSignals(ctx context.Context, variant, tier string,
 
 // AllGemFeaturesInRange returns all gem feature rows within the given time range (hours ago to now).
 // No variant/tier filters, no limit. Ordered by time, name, variant.
-func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]GemFeature, error) {
+func (r *Repository) AllGemFeaturesInRange(ctx context.Context, scope league.Scope, hours int) ([]GemFeature, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: all gem features in range: %w", err)
+	}
 	query := `
 		SELECT time, name, variant, chaos, listings, tier, COALESCE(global_tier, ''),
 		       vel_short_price, vel_short_listing, vel_med_price, vel_med_listing,
@@ -1036,10 +1125,11 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 		       COALESCE(market_depth, 0), COALESCE(market_regime, 'TEMPORAL'),
 		       COALESCE(low_confidence, false), COALESCE(gem_color, '')
 		FROM gem_features
-		WHERE time > NOW() - make_interval(hours => $1)
+		WHERE league = $1
+		  AND time > NOW() - make_interval(hours => $2)
 		ORDER BY time, name, variant`
 
-	rows, err := r.pool.Query(ctx, query, hours)
+	rows, err := r.pool.Query(ctx, query, scope.ID(), hours)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query all gem features in range: %w", err)
 	}
@@ -1070,17 +1160,21 @@ func (r *Repository) AllGemFeaturesInRange(ctx context.Context, hours int) ([]Ge
 
 // SnapshotPricesInRange returns lightweight price observations for transfigured,
 // non-corrupted gems with chaos > 5, within the given time range (hours ago to now).
-func (r *Repository) SnapshotPricesInRange(ctx context.Context, hours int) ([]SnapshotPrice, error) {
+func (r *Repository) SnapshotPricesInRange(ctx context.Context, scope league.Scope, hours int) ([]SnapshotPrice, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: snapshot prices in range: %w", err)
+	}
 	query := `
 		SELECT time, name, variant, COALESCE(chaos, 0)
 		FROM gem_snapshots
-		WHERE time > NOW() - make_interval(hours => $1)
+		WHERE league = $1
+		  AND time > NOW() - make_interval(hours => $2)
 		  AND is_transfigured = true
 		  AND is_corrupted = false
 		  AND chaos > 5
 		ORDER BY time, name, variant`
 
-	rows, err := r.pool.Query(ctx, query, hours)
+	rows, err := r.pool.Query(ctx, query, scope.ID(), hours)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query snapshot prices in range: %w", err)
 	}
@@ -1106,7 +1200,10 @@ func (r *Repository) SnapshotPricesInRange(ctx context.Context, hours int) ([]Sn
 // ---------------------------------------------------------------------------
 
 // SaveDedicationResults batch-inserts Dedication lab analysis results.
-func (r *Repository) SaveDedicationResults(ctx context.Context, results []DedicationResult) (int, error) {
+func (r *Repository) SaveDedicationResults(ctx context.Context, scope league.Scope, results []DedicationResult) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save dedication results: %w", err)
+	}
 	if len(results) == 0 {
 		return 0, nil
 	}
@@ -1132,12 +1229,12 @@ func (r *Repository) SaveDedicationResults(ctx context.Context, results []Dedica
 
 		batch.Queue(
 			`INSERT INTO dedication_snapshots
-			 (time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+			 (league, time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
 			  input_cost, profit, fonts_to_hit, mode, thin_pool_gems, liquidity_risk,
 			  pool_breakdown, low_confidence_gems)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 			 ON CONFLICT DO NOTHING`,
-			dr.Time, dr.Color, dr.GemType, dr.Pool, dr.Winners,
+			scope.ID(), dr.Time, dr.Color, dr.GemType, dr.Pool, dr.Winners,
 			dr.PWin, dr.AvgWinRaw, dr.EVRaw,
 			dr.InputCost, dr.Profit, dr.FontsToHit,
 			dr.Mode, dr.ThinPoolGems, dr.LiquidityRisk,
@@ -1168,16 +1265,19 @@ func (r *Repository) SaveDedicationResults(ctx context.Context, results []Dedica
 
 // LatestDedicationResults returns the most recent Dedication analysis results,
 // optionally filtered by gemType and/or mode.
-func (r *Repository) LatestDedicationResults(ctx context.Context, gemType, mode string, limit int) ([]DedicationResult, error) {
+func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.Scope, gemType, mode string, limit int) ([]DedicationResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest dedication results: %w", err)
+	}
 	query := `
 		SELECT time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
 		       input_cost, profit, fonts_to_hit,
 		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW'),
 		       COALESCE(pool_breakdown, '[]'::jsonb), COALESCE(low_confidence_gems, '[]'::jsonb)
 		FROM dedication_snapshots
-		WHERE time = (SELECT MAX(time) FROM dedication_snapshots)`
-	args := []any{}
-	argIdx := 1
+		WHERE league = $1 AND time = (SELECT MAX(time) FROM dedication_snapshots WHERE league = $1)`
+	args := []any{scope.ID()}
+	argIdx := 2
 
 	if gemType != "" {
 		query += fmt.Sprintf(` AND gem_type = $%d`, argIdx)
@@ -1233,16 +1333,20 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, gemType, mode 
 // When isTransfigured is true, returns only transfigured corrupted gems; when false,
 // returns only non-transfigured corrupted gems. Excludes support gems.
 // Restricts to the last 2 hours to avoid full hypertable scans.
-func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, isTransfigured bool, limit int) ([]string, error) {
+func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, scope league.Scope, isTransfigured bool, limit int) ([]string, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: corrupted gem names autocomplete: %w", err)
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT name FROM gem_snapshots
-		WHERE is_corrupted = true
-		  AND is_transfigured = $1
+		WHERE league = $1
+		  AND is_corrupted = true
+		  AND is_transfigured = $2
 		  AND name NOT LIKE '%Support%'
 		  AND name NOT LIKE '%Trarthus%'
 		  AND time > NOW() - INTERVAL '2 hours'
 		ORDER BY name
-		LIMIT $2`, isTransfigured, limit)
+		LIMIT $3`, scope.ID(), isTransfigured, limit)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: corrupted gem names autocomplete: %w", err)
 	}
@@ -1265,7 +1369,10 @@ func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, isTransf
 
 // CorruptedGemPricesByNames returns the latest snapshot prices for specific corrupted gems.
 // Only returns gems matching variant "21/23c". Used by the Dedication compare endpoint.
-func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, names []string) ([]GemPrice, error) {
+func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league.Scope, names []string) ([]GemPrice, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: corrupted gem prices by names: %w", err)
+	}
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -1274,10 +1381,11 @@ func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, names []stri
 		SELECT name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
 		       is_transfigured, is_corrupted, COALESCE(gem_color, '')
 		FROM gem_snapshots
-		WHERE time = (SELECT MAX(time) FROM gem_snapshots)
+		WHERE league = $1
+		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
 		  AND is_corrupted = true
 		  AND variant = '21/23c'
-		  AND name = ANY($1)`, names)
+		  AND name = ANY($2)`, scope.ID(), names)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query corrupted gem prices by names: %w", err)
 	}
@@ -1301,7 +1409,10 @@ func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, names []stri
 
 // SparklineDataCorrupted returns sparkline data for corrupted gems (is_corrupted = true).
 // Same shape as SparklineData but filters for corrupted gems instead.
-func (r *Repository) SparklineDataCorrupted(ctx context.Context, names []string, variant string, hours int) (map[string][]SparklinePoint, error) {
+func (r *Repository) SparklineDataCorrupted(ctx context.Context, scope league.Scope, names []string, variant string, hours int) (map[string][]SparklinePoint, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: sparkline data corrupted: %w", err)
+	}
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -1309,12 +1420,12 @@ func (r *Repository) SparklineDataCorrupted(ctx context.Context, names []string,
 	query := `
 		SELECT name, time, COALESCE(chaos, 0), COALESCE(listings, 0)
 		FROM gem_snapshots
-		WHERE name = ANY($1) AND is_corrupted = true
-		  AND time > NOW() - make_interval(hours => $2)`
-	args := []any{names, hours}
+		WHERE league = $1 AND name = ANY($2) AND is_corrupted = true
+		  AND time > NOW() - make_interval(hours => $3)`
+	args := []any{scope.ID(), names, hours}
 
 	if variant != "" {
-		query += ` AND variant = $3`
+		query += ` AND variant = $4`
 		args = append(args, variant)
 	}
 

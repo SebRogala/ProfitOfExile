@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 )
 
 // DedicationAnalysis returns pre-computed Dedication lab EV for corrupted 21/23 gems.
 // Response splits results into skills (non-transfigured) and transfigured pools,
 // each with safe/premium/jackpot modes. Includes entryFee from offering timing cache.
 // GET /api/analysis/dedication
-func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		limit, ok := parseLimit(w, r, 50, 500)
 		if !ok {
@@ -37,13 +38,13 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		// Slow path: fall back to DB query.
 		if !cacheHit {
 			var err error
-			skillResults, err = repo.LatestDedicationResults(r.Context(), "skill", "", limit)
+			skillResults, err = repo.LatestDedicationResults(r.Context(), scope, "skill", "", limit)
 			if err != nil {
 				slog.Error("dedication analysis: query skills failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
-			transfiguredResults, err = repo.LatestDedicationResults(r.Context(), "transfigured", "", limit)
+			transfiguredResults, err = repo.LatestDedicationResults(r.Context(), scope, "transfigured", "", limit)
 			if err != nil {
 				slog.Error("dedication analysis: query transfigured failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)

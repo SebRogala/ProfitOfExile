@@ -20,6 +20,7 @@ import (
 	"profitofexile/internal/db"
 	"profitofexile/internal/device"
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
 	"profitofexile/internal/server/handlers"
@@ -36,7 +37,7 @@ var frontendEmbed embed.FS
 // and the next step still runs (matches the pre-Mercure handler's behavior).
 //
 // Triggered by the poe/admin/recompute Mercure event from cmd/recalculate.
-func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer) {
+func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer, scope league.Scope) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("admin recompute panicked", "recover", r)
@@ -44,23 +45,23 @@ func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer) {
 	}()
 	slog.Info("admin recompute: started")
 	failures := 0
-	if err := analyzer.RunTransfigure(ctx); err != nil {
+	if err := analyzer.RunTransfigure(ctx, scope); err != nil {
 		slog.Error("admin recompute: transfigure failed", "error", err)
 		failures++
 	}
-	if err := analyzer.RunQuality(ctx); err != nil {
+	if err := analyzer.RunQuality(ctx, scope); err != nil {
 		slog.Error("admin recompute: quality failed", "error", err)
 		failures++
 	}
-	if err := analyzer.RecomputeLatestV2(ctx); err != nil {
+	if err := analyzer.RecomputeLatestV2(ctx, scope); err != nil {
 		slog.Error("admin recompute: v2 failed", "error", err)
 		failures++
 	}
-	if err := analyzer.RunFont(ctx); err != nil {
+	if err := analyzer.RunFont(ctx, scope); err != nil {
 		slog.Error("admin recompute: font failed", "error", err)
 		failures++
 	}
-	if err := analyzer.RunDedication(ctx); err != nil {
+	if err := analyzer.RunDedication(ctx, scope); err != nil {
 		slog.Error("admin recompute: dedication failed", "error", err)
 		failures++
 	}
@@ -127,6 +128,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolve the process-active league scope once from the runtime SSOT. Every
+	// scoped repository read/write and analysis run uses this single value for the
+	// process lifetime (per-request selection is POE-121).
+	scope, err := league.Resolve(ctx, pool)
+	if err != nil {
+		slog.Error("failed to resolve active league scope", "error", err)
+		fmt.Fprintln(os.Stderr, "Failed to resolve active league from runtime_config. Ensure league control migrations ran and runtime_config is seeded.")
+		os.Exit(1)
+	}
+	slog.Info("active league resolved", "league", scope.ID(), "revision", scope.Revision())
+
 	frontendFS, err := fs.Sub(frontendEmbed, "frontend_build")
 	if err != nil {
 		slog.Error("failed to load embedded frontend", "error", err)
@@ -163,7 +175,7 @@ func main() {
 
 		// Warm trade cache from DB — load latest lookup per gem+variant (last 24h).
 		warmCtx, warmCancel := context.WithTimeout(ctx, 10*time.Second)
-		results, err := tradeRepo.LatestLookups(warmCtx, 24)
+		results, err := tradeRepo.LatestLookups(warmCtx, scope, 24)
 		warmCancel()
 		if err != nil {
 			slog.Warn("trade cache warm failed", "error", err)
@@ -205,7 +217,7 @@ func main() {
 
 		tradeCfg := trade.TradeConfig{
 			Enabled:           true,
-			LeagueName:        os.Getenv("LEAGUE"),
+			LeagueName:        scope.ID(),
 			CeilingFactor:     tradeCeiling,
 			LatencyPadding:    tradeLatencyPad,
 			DefaultSearchRate: 1,
@@ -227,7 +239,8 @@ func main() {
 			defer cancel()
 			var rate float64
 			err := pool.QueryRow(qCtx,
-				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+				`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+				scope.ID(),
 			).Scan(&rate)
 			if err != nil {
 				slog.Warn("trade: failed to get divine rate, using 0", "error", err)
@@ -236,7 +249,7 @@ func main() {
 			return rate
 		}
 
-		tradeGate = trade.NewGate(tradeCfg, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
+		tradeGate = trade.NewGate(tradeCfg, scope, tradeLimiter, tradeClient, tradePub, tradeCache, divineRateFn, tradeRepo)
 
 		go tradeGate.Run(ctx)
 		slog.Info("trade gate started", "league", tradeCfg.LeagueName, "cacheMax", tradeCacheMax)
@@ -260,7 +273,7 @@ func main() {
 		TradeCache:           tradeCache,
 		TradeRepo:            tradeRepo,
 		TradeSyncTimeout:     tradeSyncTimeout,
-		League:               os.Getenv("LEAGUE"),
+		League:               scope,
 		Analyzer:             analyzer,
 		AllowedOrigins:       corsOrigins(),
 		DeviceRepo:           deviceRepo,
@@ -276,11 +289,11 @@ func main() {
 		// Estimate next fetch from the interval between last two gem snapshots.
 		var lastSnap, prevSnap time.Time
 		if err := pool.QueryRow(qCtx,
-			`SELECT time FROM gem_snapshots ORDER BY time DESC LIMIT 1`,
+			`SELECT time FROM gem_snapshots WHERE league = $1 ORDER BY time DESC LIMIT 1`, scope.ID(),
 		).Scan(&lastSnap); err == nil && !lastSnap.IsZero() {
 			// Find the previous distinct snapshot time.
 			_ = pool.QueryRow(qCtx,
-				`SELECT time FROM gem_snapshots WHERE time < $1 ORDER BY time DESC LIMIT 1`, lastSnap,
+				`SELECT time FROM gem_snapshots WHERE league = $1 AND time < $2 ORDER BY time DESC LIMIT 1`, scope.ID(), lastSnap,
 			).Scan(&prevSnap)
 
 			var interval time.Duration
@@ -298,7 +311,8 @@ func main() {
 		// Seed divine rate.
 		var divRate float64
 		if err := pool.QueryRow(qCtx,
-			`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+			`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+			scope.ID(),
 		).Scan(&divRate); err == nil && divRate > 0 {
 			labCache.SetDivineRate(divRate)
 			slog.Info("startup: seeded divine rate", "rate", divRate)
@@ -315,15 +329,15 @@ func main() {
 			}
 		}()
 		// Recompute V2: deletes latest computed data, then re-runs full pipeline.
-		if err := analyzer.RecomputeLatestV2(ctx); err != nil {
+		if err := analyzer.RecomputeLatestV2(ctx, scope); err != nil {
 			slog.Warn("startup v2 recompute failed (non-fatal)", "error", err)
 		}
 		// Font analysis second — needs GemFeatures from V2.
-		if err := analyzer.RunFont(ctx); err != nil {
+		if err := analyzer.RunFont(ctx, scope); err != nil {
 			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
 		}
 		// Dedication runs after V2 for risk-adjustment features.
-		if err := analyzer.RunDedication(ctx); err != nil {
+		if err := analyzer.RunDedication(ctx, scope); err != nil {
 			slog.Warn("startup dedication analysis failed (non-fatal)", "error", err)
 		}
 	}()
@@ -333,7 +347,7 @@ func main() {
 				slog.Error("transfigure analysis panicked on startup", "recover", r)
 			}
 		}()
-		if err := analyzer.RunTransfigure(ctx); err != nil {
+		if err := analyzer.RunTransfigure(ctx, scope); err != nil {
 			slog.Warn("startup transfigure analysis failed (non-fatal)", "error", err)
 		}
 	}()
@@ -343,7 +357,7 @@ func main() {
 				slog.Error("quality analysis panicked on startup", "recover", r)
 			}
 		}()
-		if err := analyzer.RunQuality(ctx); err != nil {
+		if err := analyzer.RunQuality(ctx, scope); err != nil {
 			slog.Warn("startup quality analysis failed (non-fatal)", "error", err)
 		}
 	}()
@@ -385,7 +399,7 @@ func main() {
 			// ctx so the pipeline survives a subscriber reconnect mid-run.
 			if ev.Topic == "poe/admin/recompute" {
 				slog.Info("mercure: admin recompute requested")
-				go runFullRecompute(ctx, analyzer)
+				go runFullRecompute(ctx, analyzer, scope)
 				return
 			}
 
@@ -437,7 +451,8 @@ func main() {
 					defer cancel()
 					var rate float64
 					if err := pool.QueryRow(qCtx,
-						`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+						`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+						scope.ID(),
 					).Scan(&rate); err != nil {
 						slog.Warn("currency event: divine rate query failed", "error", err)
 						return
@@ -451,7 +466,7 @@ func main() {
 				go func() {
 					qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					offerings := handlers.ComputeOfferingTimings(qCtx, pool)
+					offerings := handlers.ComputeOfferingTimings(qCtx, pool, scope)
 					if len(offerings) > 0 {
 						if data, err := json.Marshal(offerings); err == nil {
 							labCache.SetOfferingTiming(data)
@@ -470,7 +485,7 @@ func main() {
 							slog.Error("transfigure analysis panicked", "recover", r)
 						}
 					}()
-					if err := analyzer.RunTransfigure(subCtx); err != nil {
+					if err := analyzer.RunTransfigure(subCtx, scope); err != nil {
 						slog.Warn("transfigure analysis failed", "error", err)
 					}
 				}()
@@ -480,7 +495,7 @@ func main() {
 							slog.Error("quality analysis panicked", "recover", r)
 						}
 					}()
-					if err := analyzer.RunQuality(subCtx); err != nil {
+					if err := analyzer.RunQuality(subCtx, scope); err != nil {
 						slog.Warn("quality analysis failed", "error", err)
 					}
 				}()
@@ -493,16 +508,16 @@ func main() {
 							slog.Error("v2/font analysis panicked", "recover", r)
 						}
 					}()
-					if err := analyzer.RunV2(subCtx); err != nil {
+					if err := analyzer.RunV2(subCtx, scope); err != nil {
 						slog.Warn("v2 analysis failed", "error", err)
 						return
 					}
 					// Font runs after V2 so it reads fresh GemFeatures with current tier classification.
-					if err := analyzer.RunFont(subCtx); err != nil {
+					if err := analyzer.RunFont(subCtx, scope); err != nil {
 						slog.Warn("font analysis failed", "error", err)
 					}
 					// Dedication runs after V2 for risk-adjustment features.
-					if err := analyzer.RunDedication(subCtx); err != nil {
+					if err := analyzer.RunDedication(subCtx, scope); err != nil {
 						slog.Warn("dedication analysis failed", "error", err)
 					}
 				}()
@@ -521,7 +536,7 @@ func main() {
 						}
 					}()
 					slog.Info("delayed recompute: running v2 with accumulated trade data")
-					if err := analyzer.RunV2(context.Background()); err != nil {
+					if err := analyzer.RunV2(context.Background(), scope); err != nil {
 						slog.Warn("delayed v2 recompute failed", "error", err)
 					}
 				})

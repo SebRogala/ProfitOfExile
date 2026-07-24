@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"profitofexile/internal/db"
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 )
 
 func main() {
@@ -31,33 +32,39 @@ func main() {
 	}
 	defer pool.Close()
 
+	scope, err := league.Resolve(ctx, pool)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Resolve league: %v\n", err)
+		os.Exit(1)
+	}
+
 	repo := lab.NewRepository(pool)
 	cache := lab.NewCache()
 	throttler := lab.NewThrottler("", "", 1*time.Second, cache)
 	analyzer := lab.NewAnalyzer(repo, throttler, cache, nil)
 
 	if *backfill {
-		runBackfill(ctx, pool, repo, analyzer, *hours)
+		runBackfill(ctx, pool, repo, analyzer, scope, *hours)
 	} else {
 		fmt.Println("Running v2 analysis pipeline (latest snapshot)...")
-		if err := analyzer.RunV2(ctx); err != nil {
+		if err := analyzer.RunV2(ctx, scope); err != nil {
 			fmt.Fprintf(os.Stderr, "RunV2 failed: %v\n", err)
 			os.Exit(1)
 		}
 		// Font analysis needs features from RunV2.
-		if err := analyzer.RunFont(ctx); err != nil {
+		if err := analyzer.RunFont(ctx, scope); err != nil {
 			fmt.Fprintf(os.Stderr, "RunFont failed: %v\n", err)
 		}
 		fmt.Println("Done!")
 	}
 }
 
-func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, analyzer *lab.Analyzer, hours int) {
+func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, analyzer *lab.Analyzer, scope league.Scope, hours int) {
 	// Get distinct snapshot times.
 	q := fmt.Sprintf(`SELECT DISTINCT time FROM gem_snapshots
-		WHERE time > NOW() - make_interval(hours => %d)
+		WHERE league = $1 AND time > NOW() - make_interval(hours => %d)
 		ORDER BY time`, hours)
-	rows, err := pool.Query(ctx, q)
+	rows, err := pool.Query(ctx, q, scope.ID())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Query snapshot times: %v\n", err)
 		os.Exit(1)
@@ -82,13 +89,13 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		}
 
 		// Load gems at this exact snapshot time.
-		gems, err := loadGemsAtTime(ctx, pool, snapTime)
+		gems, err := loadGemsAtTime(ctx, pool, scope, snapTime)
 		if err != nil || len(gems) == 0 {
 			continue
 		}
 
 		// Load history up to this snapshot time (168h lookback from this point).
-		history, err := loadHistoryUpTo(ctx, pool, snapTime, 168)
+		history, err := loadHistoryUpTo(ctx, pool, scope, snapTime, 168)
 		if err != nil {
 			continue
 		}
@@ -98,7 +105,7 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 
 		// Compute market context.
 		mc := lab.ComputeMarketContext(snapTime, gems, history, classification)
-		if err := repo.SaveMarketContext(ctx, mc); err != nil {
+		if err := repo.SaveMarketContext(ctx, scope, mc); err != nil {
 			continue // skip on conflict
 		}
 
@@ -108,13 +115,13 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 
 		// Compute gem features.
 		features := lab.ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, nil)
-		repo.SaveGemFeatures(ctx, features)
+		repo.SaveGemFeatures(ctx, scope, features)
 
 		// Compute gem signals (need base history).
-		baseHistory := loadBaseHistoryUpTo(ctx, pool, snapTime, 24)
+		baseHistory := loadBaseHistoryUpTo(ctx, pool, scope, snapTime, 24)
 		marketAvgBaseLst := computeMarketAvgBase(gems)
 		signals := lab.ComputeGemSignals(snapTime, features, mc, gems, baseHistory, marketAvgBaseLst)
-		repo.SaveGemSignals(ctx, signals)
+		repo.SaveGemSignals(ctx, scope, signals)
 
 		// Compute font analysis (needs features for tier-based modes).
 		fontAnalysis := lab.AnalyzeFont(snapTime, features)
@@ -123,17 +130,17 @@ func runBackfill(ctx context.Context, pool *pgxpool.Pool, repo *lab.Repository, 
 		allFontResults = append(allFontResults, fontAnalysis.Premium...)
 		allFontResults = append(allFontResults, fontAnalysis.Jackpot...)
 		if len(allFontResults) > 0 {
-			repo.SaveFontResults(ctx, allFontResults)
+			repo.SaveFontResults(ctx, scope, allFontResults)
 		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Backfill complete: %d snapshots processed\n", len(times))
 }
 
-func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, t time.Time) ([]lab.GemPrice, error) {
+func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, t time.Time) ([]lab.GemPrice, error) {
 	q := `SELECT name, variant, chaos, listings, is_transfigured, COALESCE(gem_color, '') as gem_color, is_corrupted
-	      FROM gem_snapshots WHERE time = $1`
-	rows, err := pool.Query(ctx, q, t)
+	      FROM gem_snapshots WHERE league = $1 AND time = $2`
+	rows, err := pool.Query(ctx, q, scope.ID(), t)
 	if err != nil {
 		return nil, err
 	}
@@ -150,16 +157,16 @@ func loadGemsAtTime(ctx context.Context, pool *pgxpool.Pool, t time.Time) ([]lab
 	return gems, nil
 }
 
-func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
+func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) ([]lab.GemPriceHistory, error) {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	q := `SELECT name, variant, COALESCE(gem_color, '') as gem_color, time, chaos, listings
 	      FROM gem_snapshots
-	      WHERE is_transfigured = true AND NOT is_corrupted AND chaos > 5
-	        AND time >= $1 AND time <= $2
+	      WHERE league = $1 AND is_transfigured = true AND NOT is_corrupted AND chaos > 5
+	        AND time >= $2 AND time <= $3
 	        AND name NOT LIKE '%Trarthus%'
 	      ORDER BY name, variant, time
 	      LIMIT 500000`
-	rows, err := pool.Query(ctx, q, cutoff, upTo)
+	rows, err := pool.Query(ctx, q, scope.ID(), cutoff, upTo)
 	if err != nil {
 		return nil, err
 	}
@@ -190,16 +197,16 @@ func loadHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time, ho
 	return result, nil
 }
 
-func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, upTo time.Time, hours int) map[string][]lab.PricePoint {
+func loadBaseHistoryUpTo(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, upTo time.Time, hours int) map[string][]lab.PricePoint {
 	cutoff := upTo.Add(-time.Duration(hours) * time.Hour)
 	q := `SELECT name, time, listings
 	      FROM gem_snapshots
-	      WHERE NOT is_transfigured AND NOT is_corrupted AND chaos > 0
-	        AND time >= $1 AND time <= $2
+	      WHERE league = $1 AND NOT is_transfigured AND NOT is_corrupted AND chaos > 0
+	        AND time >= $2 AND time <= $3
 	        AND name NOT LIKE '%Trarthus%'
 	      ORDER BY name, time
 	      LIMIT 500000`
-	rows, err := pool.Query(ctx, q, cutoff, upTo)
+	rows, err := pool.Query(ctx, q, scope.ID(), cutoff, upTo)
 	if err != nil {
 		return nil
 	}

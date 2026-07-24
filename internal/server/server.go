@@ -12,6 +12,7 @@ import (
 
 	"profitofexile/internal/device"
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server/handlers"
 	devmw "profitofexile/internal/server/middleware"
@@ -45,8 +46,9 @@ type RouterConfig struct {
 	TradeRepo *trade.Repository
 	// TradeSyncTimeout is the max time the handler blocks waiting for a fast-path response.
 	TradeSyncTimeout time.Duration
-	// League is the current PoE league name (e.g. "Mirage").
-	League string
+	// League is the resolved scope for the process-active league. Fixed at boot;
+	// every scoped handler reads and writes under it (per-request selection is POE-121).
+	League league.Scope
 	// Analyzer is the lab analysis engine for admin recalculation endpoint.
 	Analyzer *lab.Analyzer
 	// LayoutRepo is the repository for daily lab layout data.
@@ -86,30 +88,30 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	r.Get("/api/health", handlers.Health(pinger))
 
 	if cfg.Pool != nil {
-		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool))
-		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool))
-		r.Get("/api/snapshots/fragments", handlers.FragmentSnapshots(cfg.Pool))
-		r.Get("/api/snapshots/stats", handlers.SnapshotStats(cfg.Pool))
+		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool, cfg.League))
+		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool, cfg.League))
+		r.Get("/api/snapshots/fragments", handlers.FragmentSnapshots(cfg.Pool, cfg.League))
+		r.Get("/api/snapshots/stats", handlers.SnapshotStats(cfg.Pool, cfg.League))
 	}
 
 	if cfg.LabRepo != nil {
-		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/font", handlers.FontAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/dedication", handlers.DedicationAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/trends", handlers.TrendAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache, cfg.TradeCache))
-		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/font", handlers.FontAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/dedication", handlers.DedicationAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/trends", handlers.TrendAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache, cfg.TradeCache, cfg.League))
+		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool, cfg.League))
-		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo))
+		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo, cfg.League))
 
-		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.Pool))
+		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.Pool, cfg.League))
 
 		// V2 pre-computed analysis endpoints
-		r.Get("/api/analysis/market-context", handlers.MarketContextAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/gem-features", handlers.GemFeaturesAnalysis(cfg.LabRepo, cfg.LabCache))
-		r.Get("/api/analysis/gem-signals", handlers.GemSignalsAnalysis(cfg.LabRepo, cfg.LabCache))
+		r.Get("/api/analysis/market-context", handlers.MarketContextAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/gem-features", handlers.GemFeaturesAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/gem-signals", handlers.GemSignalsAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 
 		// Admin operations (recalculation, etc.) are intentionally NOT exposed
 		// over HTTP. Operator triggers run as CLI binaries inside the server
@@ -130,7 +132,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// Trade submit: available whenever trade cache exists (desktop can submit
 	// even when the server-side gate is disabled).
 	if cfg.TradeCache != nil {
-		r.Post("/api/trade/submit", handlers.TradeSubmit(cfg.TradeCache, cfg.TradeRepo))
+		r.Post("/api/trade/submit", handlers.TradeSubmit(cfg.TradeCache, cfg.TradeRepo, cfg.League))
 	}
 
 	r.Get("/api/mercure/token", handlers.MercureToken(cfg.MercureSubscriberKey, cfg.MercurePublicURL))

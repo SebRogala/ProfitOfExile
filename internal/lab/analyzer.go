@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -40,11 +41,11 @@ func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache, tradeCach
 
 // RunTransfigure fetches the latest gem snapshot and computes transfigure ROI.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
-func (a *Analyzer) RunTransfigure(ctx context.Context) error {
+func (a *Analyzer) RunTransfigure(ctx context.Context, scope league.Scope) error {
 	a.muTransfigure.Lock()
 	defer a.muTransfigure.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("transfigure: failed to load gem prices", "error", err)
 		return err
@@ -56,7 +57,7 @@ func (a *Analyzer) RunTransfigure(ctx context.Context) error {
 
 	results := AnalyzeTransfigure(snapTime, gems)
 
-	inserted, err := a.repo.SaveTransfigureResults(ctx, results)
+	inserted, err := a.repo.SaveTransfigureResults(ctx, scope, results)
 	if err != nil {
 		a.logger.Error("transfigure: failed to save results", "error", err)
 		return err
@@ -79,11 +80,11 @@ func (a *Analyzer) RunTransfigure(ctx context.Context) error {
 // It requires GemFeature data for tier-based winner classification.
 // Features are loaded from cache first, then DB fallback.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
-func (a *Analyzer) RunFont(ctx context.Context) error {
+func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 	a.muFont.Lock()
 	defer a.muFont.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("font: failed to load gem prices", "error", err)
 		return err
@@ -99,7 +100,7 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 		features = a.cache.GemFeatures()
 	}
 	if len(features) == 0 {
-		features, err = a.repo.LatestGemFeatures(ctx, "", "", 50000)
+		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
 		if err != nil {
 			a.logger.Error("font: failed to load gem features", "error", err)
 			return err
@@ -118,7 +119,7 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 	allResults = append(allResults, analysis.Premium...)
 	allResults = append(allResults, analysis.Jackpot...)
 
-	inserted, err := a.repo.SaveFontResults(ctx, allResults)
+	inserted, err := a.repo.SaveFontResults(ctx, scope, allResults)
 	if err != nil {
 		a.logger.Error("font: failed to save results", "error", err)
 		return err
@@ -143,11 +144,11 @@ func (a *Analyzer) RunFont(ctx context.Context) error {
 // for corrupted 21/23 gems (both skills and transfigured pools).
 // It requires GemFeature data for risk-adjustment (sell probability, stability discount).
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
-func (a *Analyzer) RunDedication(ctx context.Context) error {
+func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error {
 	a.muDedication.Lock()
 	defer a.muDedication.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("dedication: failed to load gem prices", "error", err)
 		return err
@@ -163,7 +164,7 @@ func (a *Analyzer) RunDedication(ctx context.Context) error {
 		features = a.cache.GemFeatures()
 	}
 	if len(features) == 0 {
-		features, err = a.repo.LatestGemFeatures(ctx, "", "", 50000)
+		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
 		if err != nil {
 			a.logger.Error("dedication: failed to load gem features", "error", err)
 			return err
@@ -178,7 +179,7 @@ func (a *Analyzer) RunDedication(ctx context.Context) error {
 	allResults = append(allResults, analysis.Skills...)
 	allResults = append(allResults, analysis.Transfigured...)
 
-	inserted, err := a.repo.SaveDedicationResults(ctx, allResults)
+	inserted, err := a.repo.SaveDedicationResults(ctx, scope, allResults)
 	if err != nil {
 		a.logger.Error("dedication: failed to save results", "error", err)
 		return err
@@ -190,12 +191,12 @@ func (a *Analyzer) RunDedication(ctx context.Context) error {
 		// Also populate corrupted gem name caches for autocomplete.
 		// Preserve the existing cached slice for any pool whose query fails — a
 		// transient DB error must not wipe a previously valid cache entry.
-		skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, false, 1000)
+		skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, false, 1000)
 		if err != nil {
 			a.logger.Warn("dedication: failed to load corrupted skill gem names", "error", err)
 			skillNames = a.cache.CorruptedGemNames(false)
 		}
-		transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, true, 1000)
+		transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, true, 1000)
 		if err != nil {
 			a.logger.Warn("dedication: failed to load corrupted transfigured gem names", "error", err)
 			transfiguredNames = a.cache.CorruptedGemNames(true)
@@ -215,11 +216,11 @@ func (a *Analyzer) RunDedication(ctx context.Context) error {
 
 // RunQuality fetches the latest gem snapshot and computes quality-roll ROI.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
-func (a *Analyzer) RunQuality(ctx context.Context) error {
+func (a *Analyzer) RunQuality(ctx context.Context, scope league.Scope) error {
 	a.muQuality.Lock()
 	defer a.muQuality.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("quality: failed to load gem prices", "error", err)
 		return err
@@ -229,7 +230,7 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 		return nil
 	}
 
-	gcpPrice, err := a.repo.LatestGCPPrice(ctx)
+	gcpPrice, err := a.repo.LatestGCPPrice(ctx, scope)
 	if err != nil {
 		gcpPrice = 4.0
 		a.logger.Warn("quality: using default GCP price", "default", gcpPrice, "error", err)
@@ -237,7 +238,7 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 
 	results := AnalyzeQuality(snapTime, gems, gcpPrice)
 
-	inserted, err := a.repo.SaveQualityResults(ctx, results)
+	inserted, err := a.repo.SaveQualityResults(ctx, scope, results)
 	if err != nil {
 		a.logger.Error("quality: failed to save results", "error", err)
 		return err
@@ -261,11 +262,11 @@ func (a *Analyzer) RunQuality(ctx context.Context) error {
 // RunV2 is the entry point for the v2 pre-computed analysis pipeline.
 // Computes and persists MarketContext, GemFeatures, and GemSignals per snapshot.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
-func (a *Analyzer) RunV2(ctx context.Context) error {
+func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 	a.muV2.Lock()
 	defer a.muV2.Unlock()
 
-	gems, snapTime, err := a.repo.LatestGemPrices(ctx)
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
 	if err != nil {
 		a.logger.Error("v2: failed to load gem prices", "error", err)
 		return err
@@ -276,7 +277,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	}
 
 	// Fetch history for velocity computation.
-	history, err := a.repo.GemPriceHistoryByVariant(ctx, "", 168)
+	history, err := a.repo.GemPriceHistoryByVariant(ctx, scope, "", 168)
 	if err != nil {
 		a.logger.Error("v2: failed to load gem price history", "error", err)
 		return err
@@ -286,7 +287,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	classification := ComputeGemClassification(gems)
 
 	mc := ComputeMarketContext(snapTime, gems, history, classification)
-	if err := a.repo.SaveMarketContext(ctx, mc); err != nil {
+	if err := a.repo.SaveMarketContext(ctx, scope, mc); err != nil {
 		a.logger.Error("v2: failed to save market context", "error", err)
 		return err
 	}
@@ -299,7 +300,7 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	normalizedHistory := NormalizeHistoryDepthGated(history, mc, depthMap)
 
 	features := ComputeGemFeatures(snapTime, gems, normalizedHistory, mc, classification.Gems, a.tradeCache)
-	inserted, err := a.repo.SaveGemFeatures(ctx, features)
+	inserted, err := a.repo.SaveGemFeatures(ctx, scope, features)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem features", "error", err)
 		return err
@@ -314,19 +315,19 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 	)
 
 	// Load base-side data needed for sellUrgency and windowSignal classifiers.
-	baseHistory, err := a.repo.BasePriceHistory(ctx, "", 24)
+	baseHistory, err := a.repo.BasePriceHistory(ctx, scope, "", 24)
 	if err != nil {
 		a.logger.Error("v2: failed to load base price history", "error", err)
 		return err
 	}
-	marketAvgBaseLst, err := a.repo.MarketAvgBaseListings(ctx, "")
+	marketAvgBaseLst, err := a.repo.MarketAvgBaseListings(ctx, scope, "")
 	if err != nil {
 		a.logger.Warn("v2: failed to compute market avg base listings, using 0", "error", err)
 		marketAvgBaseLst = 0
 	}
 
 	signals := ComputeGemSignals(snapTime, features, mc, gems, baseHistory, marketAvgBaseLst)
-	insertedSig, err := a.repo.SaveGemSignals(ctx, signals)
+	insertedSig, err := a.repo.SaveGemSignals(ctx, scope, signals)
 	if err != nil {
 		a.logger.Error("v2: failed to save gem signals", "error", err)
 		return err
@@ -348,8 +349,8 @@ func (a *Analyzer) RunV2(ctx context.Context) error {
 // RecomputeLatestV2 deletes the latest snapshot's computed v2 data and re-runs
 // the full pipeline. Use on startup to force recomputation after a deploy with
 // new scoring logic — otherwise ON CONFLICT DO NOTHING would keep stale data.
-func (a *Analyzer) RecomputeLatestV2(ctx context.Context) error {
-	_, snapTime, err := a.repo.LatestGemPrices(ctx)
+func (a *Analyzer) RecomputeLatestV2(ctx context.Context, scope league.Scope) error {
+	_, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
 	if err != nil {
 		return err
 	}
@@ -357,8 +358,8 @@ func (a *Analyzer) RecomputeLatestV2(ctx context.Context) error {
 		return nil
 	}
 	a.logger.Info("recomputing latest v2 snapshot", "snapTime", snapTime)
-	if err := a.repo.DeleteV2ForSnapshot(ctx, snapTime); err != nil {
+	if err := a.repo.DeleteV2ForSnapshot(ctx, scope, snapTime); err != nil {
 		return fmt.Errorf("recompute: delete old data: %w", err)
 	}
-	return a.RunV2(ctx)
+	return a.RunV2(ctx, scope)
 }

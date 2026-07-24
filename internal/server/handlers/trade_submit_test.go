@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
 )
 
@@ -19,7 +20,7 @@ import (
 func submitRouter(cache *trade.TradeCache, repo *trade.Repository) http.Handler {
 	r := chi.NewRouter()
 	if cache != nil {
-		r.Post("/api/trade/submit", TradeSubmit(cache, repo))
+		r.Post("/api/trade/submit", TradeSubmit(cache, repo, league.Historical("Mirage")))
 	}
 	return r
 }

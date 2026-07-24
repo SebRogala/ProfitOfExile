@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/lab"
+	"profitofexile/internal/league"
 )
 
 // normalizeVariant converts frontend variant format ("1/0", "20/0") to DB format
@@ -72,7 +73,7 @@ func validateTier(w http.ResponseWriter, tier string) bool {
 // TransfigureAnalysis returns the latest transfigure ROI results.
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
-func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
@@ -93,7 +94,7 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 		// Slow path: fall back to DB query.
 		if results == nil {
 			var err error
-			results, err = repo.LatestTransfigureResults(r.Context(), variant, limit)
+			results, err = repo.LatestTransfigureResults(r.Context(), scope, variant, limit)
 			if err != nil {
 				slog.Error("transfigure analysis: query failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -169,7 +170,7 @@ func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) [
 // Safe (LOW+ tier winners), Premium (MID-HIGH+ tier winners), and Jackpot (TOP only).
 // Query params: variant (optional, e.g. "20/20"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
-func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
@@ -195,19 +196,19 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		// Slow path: fall back to DB query.
 		if !cacheHit {
 			var err error
-			safeResults, err = repo.LatestFontResults(r.Context(), variant, "safe", limit)
+			safeResults, err = repo.LatestFontResults(r.Context(), scope, variant, "safe", limit)
 			if err != nil {
 				slog.Error("font analysis: query safe failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
-			premiumResults, err = repo.LatestFontResults(r.Context(), variant, "premium", limit)
+			premiumResults, err = repo.LatestFontResults(r.Context(), scope, variant, "premium", limit)
 			if err != nil {
 				slog.Error("font analysis: query premium failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
-			jackpotResults, err = repo.LatestFontResults(r.Context(), variant, "jackpot", limit)
+			jackpotResults, err = repo.LatestFontResults(r.Context(), scope, variant, "jackpot", limit)
 			if err != nil {
 				slog.Error("font analysis: query jackpot failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -358,7 +359,7 @@ func filterFont(all []lab.FontResult, variant string, limit int) []lab.FontResul
 // Query params: variant (optional, e.g. "20/20"), signal (optional, e.g. "TRAP"), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
 // Response shape matches the original v1 endpoint for frontend compatibility.
-func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		signal := r.URL.Query().Get("signal")
@@ -388,13 +389,13 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 
 		if !usedCache {
 			var err error
-			signals, err = repo.LatestGemSignals(r.Context(), variant, tier, 50000)
+			signals, err = repo.LatestGemSignals(r.Context(), scope, variant, tier, 50000)
 			if err != nil {
 				slog.Error("trend analysis: gem signals query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
-			features, err = repo.LatestGemFeatures(r.Context(), variant, tier, 50000)
+			features, err = repo.LatestGemFeatures(r.Context(), scope, variant, tier, 50000)
 			if err != nil {
 				slog.Error("trend analysis: gem features query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -498,7 +499,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			trendMC = cache.MarketContext()
 		}
 		if trendMC == nil {
-			trendMC, _ = repo.LatestMarketContext(r.Context())
+			trendMC, _ = repo.LatestMarketContext(r.Context(), scope)
 		}
 
 		// Batch fetch sparkline data grouped by variant.
@@ -540,7 +541,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 			}
 
 			for v, g := range groups {
-				transSparklines, err := repo.SparklineData(r.Context(), g.transNames, v, 24*7)
+				transSparklines, err := repo.SparklineData(r.Context(), scope, g.transNames, v, 24*7)
 				if err != nil {
 					slog.Warn("trend analysis: trans sparkline batch failed", "variant", v, "error", err)
 					transSparklines = make(map[string][]lab.SparklinePoint)
@@ -548,7 +549,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 				// Normalize trans sparkline prices with temporal coefficients.
 				// Raw prices — normalization creates edge artifacts
 
-				baseSparklines, err := repo.SparklineData(r.Context(), g.baseNames, v, 24*7)
+				baseSparklines, err := repo.SparklineData(r.Context(), scope, g.baseNames, v, 24*7)
 				if err != nil {
 					slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
 					baseSparklines = make(map[string][]lab.SparklinePoint)
@@ -630,7 +631,7 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 // QualityAnalysis returns the latest quality-roll ROI results.
 // Query params: variant (optional, maps to level: "1"/"1/20" -> level 1, "20"/"20/20" -> level 20), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
-func QualityAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func QualityAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 
@@ -651,7 +652,7 @@ func QualityAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
 		// Slow path: fall back to DB query.
 		if results == nil {
 			var err error
-			results, err = repo.LatestQualityResults(r.Context(), variant, limit)
+			results, err = repo.LatestQualityResults(r.Context(), scope, variant, limit)
 			if err != nil {
 				slog.Error("quality analysis: query failed", "error", err, "variant", variant)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -743,7 +744,7 @@ func filterQuality(all []lab.QualityResult, variant string, limit int) []lab.Qua
 }
 
 // AnalysisStatus returns cache health information.
-func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.HandlerFunc {
+func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -768,7 +769,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 		fontAnalysis := cache.Font()
 		resp := map[string]any{
 			"cached":      cached,
-			"league":      league,
+			"league":      scope.ID(),
 			"transfigure": len(cache.Transfigure()),
 			"fontSafe":    len(fontAnalysis.Safe),
 			"fontPremium": len(fontAnalysis.Premium),
@@ -790,7 +791,8 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 			// Fallback to DB query if cache not yet populated.
 			var divRate float64
 			if err := pool.QueryRow(r.Context(),
-				`SELECT chaos FROM currency_snapshots WHERE currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+				`SELECT chaos FROM currency_snapshots WHERE league = $1 AND currency_id = 'divine' ORDER BY time DESC LIMIT 1`,
+				scope.ID(),
 			).Scan(&divRate); err != nil {
 				slog.Warn("analysis status: divine rate query failed", "error", err)
 			} else {
@@ -807,7 +809,7 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, league string) http.Ha
 
 // SignalHistory returns the last N signal snapshots for a specific gem.
 // GET /api/analysis/history?name=Spark+of+Nova&variant=20/20&limit=4
-func SignalHistory(repo *lab.Repository) http.HandlerFunc {
+func SignalHistory(repo *lab.Repository, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
@@ -833,7 +835,7 @@ func SignalHistory(repo *lab.Repository) http.HandlerFunc {
 			limit = n
 		}
 
-		changes, err := repo.SignalHistory(r.Context(), name, variant, limit)
+		changes, err := repo.SignalHistory(r.Context(), scope, name, variant, limit)
 		if err != nil {
 			slog.Error("signal history: query failed", "error", err, "name", name, "variant", variant)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -859,7 +861,7 @@ func SignalHistory(repo *lab.Repository) http.HandlerFunc {
 // MarketContextAnalysis returns the latest market context snapshot.
 // No query params — returns a single object.
 // Uses in-memory cache when available, falls back to DB query.
-func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var mc *lab.MarketContext
 
@@ -871,7 +873,7 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerF
 		// Slow path: fall back to DB query.
 		if mc == nil {
 			var err error
-			mc, err = repo.LatestMarketContext(r.Context())
+			mc, err = repo.LatestMarketContext(r.Context(), scope)
 			if err != nil {
 				slog.Error("market context: query failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -961,7 +963,7 @@ func MarketContextAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerF
 // GemFeaturesAnalysis returns the latest pre-computed gem feature metrics.
 // Query params: variant (optional), tier (optional), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
-func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		tier := r.URL.Query().Get("tier")
@@ -988,7 +990,7 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFun
 		// Slow path: fall back to DB query when cache was not consulted.
 		if !cacheHit {
 			var err error
-			results, err = repo.LatestGemFeatures(r.Context(), variant, tier, limit)
+			results, err = repo.LatestGemFeatures(r.Context(), scope, variant, tier, limit)
 			if err != nil {
 				slog.Error("gem features: query failed", "error", err, "variant", variant, "tier", tier)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -1088,7 +1090,7 @@ func filterGemFeatures(all []lab.GemFeature, variant, tier string, limit int) []
 // GemSignalsAnalysis returns the latest pre-computed gem signals.
 // Query params: variant (optional), tier (optional), limit (default 50, max 500).
 // Uses in-memory cache when available, falls back to DB query.
-func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc {
+func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
 		tier := r.URL.Query().Get("tier")
@@ -1115,7 +1117,7 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache) http.HandlerFunc
 		// Slow path: fall back to DB query when cache was not consulted.
 		if !cacheHit {
 			var err error
-			results, err = repo.LatestGemSignals(r.Context(), variant, tier, limit)
+			results, err = repo.LatestGemSignals(r.Context(), scope, variant, tier, limit)
 			if err != nil {
 				slog.Error("gem signals: query failed", "error", err, "variant", variant, "tier", tier)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -1215,7 +1217,7 @@ func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.Mar
 // MarketOverview returns an aggregated market overview built from cached data.
 // No query params — returns a single object with market stats, sell confidence
 // spread, signal distribution, temporal mode, and divine rate.
-func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
+func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -1318,7 +1320,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 		if len(resp.Offerings) == 0 && pool != nil {
-			resp.Offerings = ComputeOfferingTimings(r.Context(), pool)
+			resp.Offerings = ComputeOfferingTimings(r.Context(), pool, scope)
 			// Populate cache for next request.
 			if cache != nil && len(resp.Offerings) > 0 {
 				if data, err := json.Marshal(resp.Offerings); err == nil {
@@ -1372,7 +1374,7 @@ type giftDayEntry struct {
 }
 
 // ComputeOfferingTimings computes timing analysis for all lab offerings.
-func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool) []offeringTiming {
+func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool, scope league.Scope) []offeringTiming {
 	offerings := []struct {
 		name       string
 		fragmentID string
@@ -1384,7 +1386,7 @@ func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool) []offeringT
 
 	var result []offeringTiming
 	for _, off := range offerings {
-		ot := computeOfferingTiming(ctx, pool, off.name, off.fragmentID, dayNames)
+		ot := computeOfferingTiming(ctx, pool, scope, off.name, off.fragmentID, dayNames)
 		if ot != nil {
 			result = append(result, *ot)
 		}
@@ -1394,15 +1396,15 @@ func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool) []offeringT
 
 // computeOfferingTiming queries fragment_snapshots for a single offering's
 // price patterns and returns structured timing data. Returns nil if no data.
-func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragmentID string, dayNames []string) *offeringTiming {
+func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, scope league.Scope, name, fragmentID string, dayNames []string) *offeringTiming {
 	ot := offeringTiming{Name: name, FragmentID: fragmentID}
 
 	// Current price.
 	var currentPrice *float64
 	if err := pool.QueryRow(ctx, `
 		SELECT chaos FROM fragment_snapshots
-		WHERE fragment_id = $1
-		ORDER BY time DESC LIMIT 1`, fragmentID).Scan(&currentPrice); err != nil {
+		WHERE league = $1 AND fragment_id = $2
+		ORDER BY time DESC LIMIT 1`, scope.ID(), fragmentID).Scan(&currentPrice); err != nil {
 		slog.Warn("offering timing: current price query failed", "fragment", fragmentID, "error", err)
 		return nil
 	}
@@ -1416,9 +1418,9 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 		SELECT EXTRACT(HOUR FROM time)::int AS h,
 		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
 		FROM fragment_snapshots
-		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
+		WHERE league = $1 AND fragment_id = $2 AND time > NOW() - INTERVAL '14 days'
 		GROUP BY 1 HAVING COUNT(*) >= 3
-		ORDER BY median`, fragmentID)
+		ORDER BY median`, scope.ID(), fragmentID)
 	if err != nil {
 		slog.Warn("offering timing: hourly query failed", "fragment", fragmentID, "error", err)
 	} else {
@@ -1460,10 +1462,10 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 		SELECT EXTRACT(HOUR FROM time)::int AS h,
 		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
 		FROM fragment_snapshots
-		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
-		  AND EXTRACT(DOW FROM time)::int = $2
+		WHERE league = $1 AND fragment_id = $2 AND time > NOW() - INTERVAL '14 days'
+		  AND EXTRACT(DOW FROM time)::int = $3
 		GROUP BY 1 HAVING COUNT(*) >= 1
-		ORDER BY h`, fragmentID, todayDOW)
+		ORDER BY h`, scope.ID(), fragmentID, todayDOW)
 	if err != nil {
 		slog.Warn("offering timing: today hourly query failed", "fragment", fragmentID, "error", err)
 	} else {
@@ -1490,9 +1492,9 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 		SELECT EXTRACT(DOW FROM time)::int AS d,
 		       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY chaos) AS median
 		FROM fragment_snapshots
-		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '14 days'
+		WHERE league = $1 AND fragment_id = $2 AND time > NOW() - INTERVAL '14 days'
 		GROUP BY 1 HAVING COUNT(*) >= 5
-		ORDER BY median`, fragmentID)
+		ORDER BY median`, scope.ID(), fragmentID)
 	if err != nil {
 		slog.Warn("offering timing: weekday query failed", "fragment", fragmentID, "error", err)
 	} else {
@@ -1533,8 +1535,8 @@ func computeOfferingTiming(ctx context.Context, pool *pgxpool.Pool, name, fragme
 	sparkRows, err := pool.Query(ctx, `
 		SELECT time_bucket('1 hour', time) AS bucket, AVG(chaos) AS avg_price
 		FROM fragment_snapshots
-		WHERE fragment_id = $1 AND time > NOW() - INTERVAL '3 days'
-		GROUP BY 1 ORDER BY 1`, fragmentID)
+		WHERE league = $1 AND fragment_id = $2 AND time > NOW() - INTERVAL '3 days'
+		GROUP BY 1 ORDER BY 1`, scope.ID(), fragmentID)
 	if err != nil {
 		slog.Warn("offering timing: sparkline query failed", "fragment", fragmentID, "error", err)
 	} else {

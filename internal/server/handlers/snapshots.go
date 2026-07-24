@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"profitofexile/internal/league"
 )
 
 // SnapshotQuery holds parsed query parameters for snapshot endpoints.
@@ -78,7 +80,7 @@ func writeQueryError(w http.ResponseWriter, msg string, err error) {
 }
 
 // GemSnapshots returns gem snapshot data filtered by time range, name, with pagination.
-func GemSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
+func GemSnapshots(pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseSnapshotQuery(r)
 		if err != nil {
@@ -89,16 +91,16 @@ func GemSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 		query := `SELECT time, name, variant, COALESCE(chaos, 0), COALESCE(listings, 0),
 		                 is_transfigured, is_corrupted, COALESCE(gem_color, '')
 		          FROM gem_snapshots
-		          WHERE time >= $1 AND time <= $2`
-		args := []any{q.From, q.To}
+		          WHERE league = $1 AND time >= $2 AND time <= $3`
+		args := []any{scope.ID(), q.From, q.To}
 
 		if q.Name != "" {
-			query += ` AND name = $3`
+			query += ` AND name = $4`
 			args = append(args, q.Name)
-			query += ` ORDER BY time DESC, variant LIMIT $4 OFFSET $5`
+			query += ` ORDER BY time DESC, variant LIMIT $5 OFFSET $6`
 			args = append(args, q.Limit, q.Offset)
 		} else {
-			query += ` ORDER BY time DESC, name, variant LIMIT $3 OFFSET $4`
+			query += ` ORDER BY time DESC, name, variant LIMIT $4 OFFSET $5`
 			args = append(args, q.Limit, q.Offset)
 		}
 
@@ -149,7 +151,7 @@ func GemSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 }
 
 // CurrencySnapshots returns currency snapshot data filtered by time range with pagination.
-func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
+func CurrencySnapshots(pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseSnapshotQuery(r)
 		if err != nil {
@@ -159,16 +161,16 @@ func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 
 		query := `SELECT time, currency_id, COALESCE(chaos, 0), COALESCE(sparkline_change, 0)
 		          FROM currency_snapshots
-		          WHERE time >= $1 AND time <= $2`
-		args := []any{q.From, q.To}
+		          WHERE league = $1 AND time >= $2 AND time <= $3`
+		args := []any{scope.ID(), q.From, q.To}
 
 		if q.Name != "" {
-			query += ` AND currency_id = $3`
+			query += ` AND currency_id = $4`
 			args = append(args, q.Name)
-			query += ` ORDER BY time DESC LIMIT $4 OFFSET $5`
+			query += ` ORDER BY time DESC LIMIT $5 OFFSET $6`
 			args = append(args, q.Limit, q.Offset)
 		} else {
-			query += ` ORDER BY time DESC, currency_id LIMIT $3 OFFSET $4`
+			query += ` ORDER BY time DESC, currency_id LIMIT $4 OFFSET $5`
 			args = append(args, q.Limit, q.Offset)
 		}
 
@@ -214,7 +216,7 @@ func CurrencySnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 }
 
 // FragmentSnapshots returns fragment snapshot data filtered by time range with pagination.
-func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
+func FragmentSnapshots(pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseSnapshotQuery(r)
 		if err != nil {
@@ -224,16 +226,16 @@ func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 
 		query := `SELECT time, fragment_id, COALESCE(chaos, 0), COALESCE(sparkline_change, 0)
 		          FROM fragment_snapshots
-		          WHERE time >= $1 AND time <= $2`
-		args := []any{q.From, q.To}
+		          WHERE league = $1 AND time >= $2 AND time <= $3`
+		args := []any{scope.ID(), q.From, q.To}
 
 		if q.Name != "" {
-			query += ` AND fragment_id = $3`
+			query += ` AND fragment_id = $4`
 			args = append(args, q.Name)
-			query += ` ORDER BY time DESC LIMIT $4 OFFSET $5`
+			query += ` ORDER BY time DESC LIMIT $5 OFFSET $6`
 			args = append(args, q.Limit, q.Offset)
 		} else {
-			query += ` ORDER BY time DESC, fragment_id LIMIT $3 OFFSET $4`
+			query += ` ORDER BY time DESC, fragment_id LIMIT $4 OFFSET $5`
 			args = append(args, q.Limit, q.Offset)
 		}
 
@@ -279,7 +281,7 @@ func FragmentSnapshots(pool *pgxpool.Pool) http.HandlerFunc {
 }
 
 // SnapshotStats returns aggregate statistics about collected data.
-func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
+func SnapshotStats(pool *pgxpool.Pool, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type stats struct {
 			GemTotalRows      int       `json:"gemTotalRows"`
@@ -305,7 +307,8 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 			       COALESCE(MAX(time), '1970-01-01'::timestamptz),
 			       COUNT(DISTINCT (name, variant, is_corrupted))
-			FROM gem_snapshots`,
+			FROM gem_snapshots
+			WHERE league = $1`, scope.ID(),
 		).Scan(&s.GemTotalRows, &s.GemSnapshotCount, &s.GemFirstSnapshot, &s.GemLastSnapshot, &s.GemUniqueItems)
 		if err != nil {
 			slog.Error("snapshot stats: gem query failed", "error", err)
@@ -318,7 +321,8 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 			       COALESCE(MAX(time), '1970-01-01'::timestamptz),
 			       COUNT(DISTINCT currency_id)
-			FROM currency_snapshots`,
+			FROM currency_snapshots
+			WHERE league = $1`, scope.ID(),
 		).Scan(&s.CurrTotalRows, &s.CurrSnapshotCount, &s.CurrFirstSnapshot, &s.CurrLastSnapshot, &s.CurrUniqueItems)
 		if err != nil {
 			slog.Error("snapshot stats: currency query failed", "error", err)
@@ -331,7 +335,8 @@ func SnapshotStats(pool *pgxpool.Pool) http.HandlerFunc {
 			       COALESCE(MIN(time), '1970-01-01'::timestamptz),
 			       COALESCE(MAX(time), '1970-01-01'::timestamptz),
 			       COUNT(DISTINCT fragment_id)
-			FROM fragment_snapshots`,
+			FROM fragment_snapshots
+			WHERE league = $1`, scope.ID(),
 		).Scan(&s.FragTotalRows, &s.FragSnapshotCount, &s.FragFirstSnapshot, &s.FragLastSnapshot, &s.FragUniqueItems)
 		if err != nil {
 			slog.Error("snapshot stats: fragment query failed", "error", err)

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
 )
 
@@ -29,14 +30,16 @@ type Gate struct {
 	mercure     mercure.Publisher
 	cache       *TradeCache
 	repo        *Repository
+	scope       league.Scope
 	inflight    map[string][]*GateRequest
 	mu          sync.Mutex
 	maxWait     time.Duration
 	divineRate  DivineRateFunc
 }
 
-// NewGate creates a Gate wired to the given dependencies.
-func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.Publisher, cache *TradeCache, divRate DivineRateFunc, repo *Repository) *Gate {
+// NewGate creates a Gate wired to the given dependencies. The scope is fixed at
+// construction: the gate's background persistence writes every lookup under it.
+func NewGate(cfg TradeConfig, scope league.Scope, limiter *RateLimiter, client *Client, pub mercure.Publisher, cache *TradeCache, divRate DivineRateFunc, repo *Repository) *Gate {
 	return &Gate{
 		high:       make(chan *GateRequest, 10),
 		low:        make(chan *GateRequest, 50),
@@ -45,6 +48,7 @@ func NewGate(cfg TradeConfig, limiter *RateLimiter, client *Client, pub mercure.
 		mercure:    pub,
 		cache:      cache,
 		repo:       repo,
+		scope:      scope,
 		inflight:   make(map[string][]*GateRequest),
 		maxWait:    cfg.MaxQueueWait,
 		divineRate: divRate,
@@ -196,7 +200,7 @@ func (g *Gate) process(ctx context.Context, req *GateRequest) {
 	g.cache.Set(key, result)
 	if g.repo != nil {
 		go func() {
-			if err := g.repo.InsertTradeLookup(context.Background(), result, "user"); err != nil {
+			if err := g.repo.InsertTradeLookup(context.Background(), g.scope, result, "user"); err != nil {
 				slog.Warn("trade gate: persist lookup failed", "gem", req.Gem, "error", err)
 			}
 		}()
