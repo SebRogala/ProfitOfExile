@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"profitofexile/internal/collector"
+	"profitofexile/internal/league"
 )
 
 // DebugTrigger returns a handler that publishes a fake Mercure event for
 // testing the event pipeline locally. Only mount this in dev mode.
-func DebugTrigger(mercureURL, mercureSecret string) http.HandlerFunc {
+func DebugTrigger(mercureURL, mercureSecret string, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		endpoint := r.URL.Query().Get("endpoint")
 		if endpoint == "" {
@@ -24,7 +25,7 @@ func DebugTrigger(mercureURL, mercureSecret string) http.HandlerFunc {
 
 		topic := "poe/collector/" + endpoint
 		payload, err := json.Marshal(map[string]any{
-			"league":    "Mirage",
+			"league":    scope.ID(),
 			"endpoint":  "ninja_" + endpoint,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 			"inserted":  42,

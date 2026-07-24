@@ -6,16 +6,19 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"profitofexile/internal/server/middleware"
 )
 
 // fontSessionRequest is the expected JSON body for POST /api/desktop/font-session.
+// The submitting device is taken from the authenticated request context, not the
+// body — a client cannot attribute crowd-sourced font data to an arbitrary device.
 type fontSessionRequest struct {
-	LabType     string       `json:"lab_type"`
-	TotalCrafts int          `json:"total_crafts"`
-	Variant     string       `json:"variant"`
-	DeviceID    string       `json:"device_id"`
-	PairCode    string       `json:"pair_code"`
-	Rounds      []fontRound  `json:"rounds"`
+	LabType     string      `json:"lab_type"`
+	TotalCrafts int         `json:"total_crafts"`
+	Variant     string      `json:"variant"`
+	PairCode    string      `json:"pair_code"`
+	Rounds      []fontRound `json:"rounds"`
 }
 
 type fontRound struct {
@@ -68,6 +71,13 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		dev := middleware.DeviceFromContext(r.Context())
+		if dev == nil {
+			jsonError(w, http.StatusUnauthorized, "device identification required")
+			return
+		}
+		deviceID := dev.Fingerprint
+
 		ctx := r.Context()
 
 		// Use transaction — all rounds succeed or none do (prevents partial data)
@@ -88,7 +98,7 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 			body.LabType,
 			body.TotalCrafts,
 			coalesce(body.Variant, "20/20"),
-			coalesce(body.DeviceID, "unknown"),
+			deviceID,
 			body.PairCode,
 		).Scan(&sessionID)
 		if err != nil {
@@ -134,7 +144,7 @@ func FontSession(pool *pgxpool.Pool) http.HandlerFunc {
 			"session_id", sessionID,
 			"lab_type", body.LabType,
 			"rounds", len(body.Rounds),
-			"device_id", body.DeviceID,
+			"device_id", deviceID,
 		)
 
 		w.Header().Set("Content-Type", "application/json")
