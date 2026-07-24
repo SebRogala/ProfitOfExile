@@ -139,48 +139,77 @@ manifest is complete only with all twelve rows:
 
 The active league lives in `runtime_config` in the database — there is no
 `LEAGUE` env var anymore (POE-121 removed it; `EXPECTED_LEAGUE` only *asserts*,
-it does not select). Until POE-127 delivers the rollover CLI, changing leagues is
-the manual procedure below. Activation is **restart-to-activate**: the running
+it does not select). Until POE-127 delivers the rollover CLI, change leagues with
+the two-phase checklist below. Activation is **restart-to-activate**: the
 collector and server hold their resolved league for the process lifetime, so the
 DB change takes effect only after a restart.
 
-Run this while the **collector is stopped** (so no writes land under the old
-league and the runtime advisory lock is free), then restart. All statements in
-one transaction:
+The split matters because you rarely get a long calm window right before league
+start. **Phase A (pre-register)** is safe to run hours or days ahead and does not
+touch the running league; **Phase B (activate)** is the short, restart-bearing
+flip you run at go-time. Do the steps in order, one at a time — each line is a
+single action or a single check.
 
-```sql
-BEGIN;
--- 1. Register the new league (starts_at optional; set collection_state directly to 'collecting').
-INSERT INTO leagues (id, display_name, collection_state, prepared_at, activated_at)
-VALUES ('<NewLeagueId>', '<Display Name>', 'collecting', NOW(), NOW());
+`<NewLeagueId>` / `<OldLeagueId>` are the exact upstream GGG league identifiers
+(the same string used in poe.ninja / trade requests), not display aliases.
 
--- 2. Point the runtime at it and bump the revision (the revision bump is what
---    lets a running process detect the change; do not skip it).
-UPDATE runtime_config
-SET active_league = '<NewLeagueId>', revision = revision + 1, updated_at = NOW()
-WHERE singleton = TRUE;
+### Phase A — pre-register the new league (any time before start; no restart)
 
--- 3. Archive the outgoing league. Its data is retained and stays queryable
---    (retention was removed, ADR-010); archiving is a state flip, not a delete.
-UPDATE leagues
-SET collection_state = 'archived', archived_at = NOW()
-WHERE id = '<OldLeagueId>' AND collection_state <> 'archived';
-COMMIT;
-```
+The new league's exact GGG id is known once GGG announces it, so do this ahead of
+time. It inserts an inert `'prepared'` row; the runtime keeps serving the current
+league until Phase B flips `runtime_config`.
 
-Then:
+1. Run this single statement against the production database, substituting the
+   placeholders (`starts_at` is informational — set the announced start or `NULL`):
 
-1. If `EXPECTED_LEAGUE` is set in the server/collector deploy config, update it to
+   ```sql
+   INSERT INTO leagues (id, display_name, collection_state, prepared_at, starts_at)
+   VALUES ('<NewLeagueId>', '<Display Name>', 'prepared', NOW(), '<StartsAt or NULL>');
+   ```
+
+2. Confirm the row exists with `collection_state = 'prepared'` and that
+   `runtime_config.active_league` is still the old league (unchanged).
+
+### Phase B — activate at league start (fast; restart-to-activate)
+
+3. Stop the collector (no new writes under the old league; frees the runtime
+   advisory lock before the flip).
+4. Confirm the collector process is stopped.
+5. Run this single transaction against the production database (if you skipped
+   Phase A, replace the first `UPDATE` with the `INSERT` from step 1 but with
+   `collection_state = 'collecting'` and `activated_at = NOW()`):
+
+   ```sql
+   BEGIN;
+   -- Promote the pre-registered league to active.
+   UPDATE leagues
+   SET collection_state = 'collecting', activated_at = NOW()
+   WHERE id = '<NewLeagueId>';
+   -- Point the runtime at it and bump the revision (the bump is what lets a
+   -- running process detect the change; do not skip it).
+   UPDATE runtime_config
+   SET active_league = '<NewLeagueId>', revision = revision + 1, updated_at = NOW()
+   WHERE singleton = TRUE;
+   -- Archive the outgoing league (state flip, not a delete; data stays queryable
+   -- per ADR-010).
+   UPDATE leagues
+   SET collection_state = 'archived', archived_at = NOW()
+   WHERE id = '<OldLeagueId>' AND collection_state <> 'archived';
+   COMMIT;
+   ```
+
+6. If `EXPECTED_LEAGUE` is set in the server/collector deploy config, set it to
    `<NewLeagueId>` (or unset it) — a stale value makes both services refuse
-   readiness.
-2. Restart the server, then the collector (server applies migrations and binds
-   first; the collector must not start before the server is healthy). Each
-   resolves the new league at boot and re-acquires its fence.
-3. Verify: `/health` and `/latest` report `<NewLeagueId>`; a scoped write/read
-   lands under the new league; the server rejects any lingering old-league event.
-
-`<NewLeagueId>` is the exact upstream league identifier (the GGG league name), the
-same string used in the poe.ninja / trade requests — not a display alias.
+   readiness. Skip only if it is not set.
+7. Restart the server.
+8. Wait for the server to report healthy (it applies migrations and binds before
+   it is ready).
+9. Restart the collector — only after step 8 (it must not start before the
+   server is healthy).
+10. Check that `/health` reports `<NewLeagueId>`.
+11. Check that `/latest` reports `<NewLeagueId>`.
+12. Confirm a scoped write/read lands under `<NewLeagueId>`.
+13. Confirm the server rejects a lingering old-league event.
 
 ## Evidence to retain
 
