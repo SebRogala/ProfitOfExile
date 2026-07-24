@@ -504,8 +504,15 @@
 						{@const breakdown = getPoolBreakdown(poolVariant, color)}
 						{@const safe = getColorData(poolVariant, color, 'safe')}
 						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
+						{@const pricedGems = safe?.pricedGems ?? totalGems}
 						<div class="pool-color-card">
-							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
+							<div class="pool-color-header c-{color.toLowerCase()}">{color}
+								{#if pricedGems < totalGems}
+									<Tooltip text="Only {pricedGems} of the {totalGems} {color} gems this Font can roll are priced at {poolVariant}. The rest count as outcomes worth 0c, so the EV here is a floor — missing prices, not worthless gems."><span class="pool-count pool-count-partial">{pricedGems} / {totalGems} priced</span></Tooltip>
+								{:else}
+									<span class="pool-count">{totalGems} gems</span>
+								{/if}
+							</div>
 							{#each ALL_TIERS as tierName}
 								{@const tier = breakdown.find(t => t.tier === tierName)}
 								{@const tierPWin = tier ? Math.round(pWin3(tier.count, totalGems) * 100) : 0}
@@ -731,6 +738,10 @@
 		font-size: 0.8125rem;
 		color: var(--color-lab-text-secondary);
 		margin-left: 6px;
+	}
+	.pool-count-partial {
+		border-bottom: 1px dotted var(--color-lab-text-secondary);
+		cursor: help;
 	}
 	.pool-tier-row {
 		display: flex;
