@@ -35,6 +35,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-008: Current Go package architecture](adr/008-current-go-package-architecture.md)
 - [ADR-009: League-scoped repository convention](adr/009-league-scope-repository-convention.md)
 - [ADR-010: Archived league history is retained indefinitely](adr/010-retain-archived-league-history.md)
+- [ADR-011: Wipe the outgoing league at rollover; preserve it as a dump](adr/011-wipe-outgoing-league-at-rollover.md)
 
 Superseded:
 

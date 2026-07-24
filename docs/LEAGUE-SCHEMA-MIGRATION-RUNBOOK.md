@@ -120,20 +120,59 @@ manifest is complete only with all twelve rows:
 | `trade_lookups` |  |  |  |
 | `market_context` |  |  |  |
 
-## Production execution
+## Production execution (wipe-first — the chosen rollover)
 
-1. Reconfirm the gate, backup, server/collector revision, operator-confirmed
-   stops, and successful rehearsal. Record the intended start time.
-2. Keep the collector stopped. Start the staged server revision and wait for
-   migration completion, migration state, and server health. Record duration.
-3. Verify the twelve-table counts and zero-null-league result, the recreated
-   continuous aggregates and indexes, and retain the completed-window
-   league-isolation proof from rehearsal with the production change record.
-4. Start the collector from the same revision only after those checks pass.
-   Verify collector health and a scoped write/read path.
-5. If any gate or check fails, keep both services stopped and restore the
-   pre-deploy backup. Do not attempt a generic down migration on production
-   data.
+Rehearsed end-to-end on the real ~27M-row prod backup, 2026-07-24.
+
+**Why wipe-first:** running the migration in place on ~27M `gem_snapshots` rows
+materializes two continuous aggregates and builds primary keys — locally it peaked
+at ~4.7 GB, more than the whole prod box (3.7 GiB RAM, shared; `shared_buffers`
+384 MB), and continuous-aggregate creation cannot run in a transaction, so a
+mid-migration OOM/failure leaves a **dirty, half-applied forward-only** state
+(recover only by restoring the pre-migration backup). Truncating the observation
+data first makes the migration run on **empty** tables — instant, no aggregate
+build, no memory pressure. Prior-league data is preserved as a separate dump
+(supersedes ADR-010's retain-history-live intent — see ADR-011).
+
+**Ordering is load-bearing:** the server applies migrations **on boot**, so the
+`TRUNCATE` MUST happen *before* the new revision deploys — deploy first and the
+migration runs against the full 27M rows, which is the exact hazard above. Do the
+steps in order; each line is one action or one check.
+
+1. Reconfirm the gate, the staged server/collector revision, and the intended
+   start time.
+2. Take a dedicated final backup of the outgoing league and store it in a
+   non-rotating archive on the backup store (separate from the nightly rotation so
+   it can't be overwritten) — this is the only way the old data stays reachable
+   after the wipe (restore it to a scratch DB for analysis). Follow the private
+   backup/restore guide kept outside this repository; do not record concrete
+   backup locations here (public repo).
+3. Stop the collector.
+4. Stop the current (old) server revision.
+5. Confirm both are stopped and nothing is writing.
+6. On the production database (old schema, pre-migration), truncate the twelve
+   league-scoped tables in one statement:
+   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context;`
+   (Plain `TRUNCATE` works directly on the compressed hypertables — no decompress
+   step; ~3.5 s for 27M rows in rehearsal.)
+7. Confirm all twelve tables report zero rows.
+8. Deploy the staged 119–121 revision (the atomic merge). The server migrates on
+   boot against the now-empty tables — expect a near-instant apply.
+9. Verify migration state + server health: every table has a `NOT NULL` `league`
+   column with its `*_league_fkey`, the control tables (`leagues`,
+   `runtime_config`) exist, and the recreated continuous aggregates are present
+   (empty).
+10. The migration seeds `active_league = 'Mirage'`. Activate the new league via
+    the Phase A→B procedure below with `<NewLeagueId> = Allflame` (exact GGG
+    casing). After Phase B: `active_league = Allflame` (revision bumped), Mirage
+    archived, Allflame collecting.
+11. Set `EXPECTED_LEAGUE=Allflame` (or unset it) in the server/collector config.
+12. Restart the server; wait for healthy.
+13. Start the collector from the same revision; verify health.
+14. Verify a scoped write/read lands under `Allflame` and the server rejects a
+    lingering old-league event.
+15. If any check fails, keep both services stopped and restore the pre-deploy
+    backup. Do not attempt a generic down migration on production data.
 
 ## Interim: changing the active league (until POE-127)
 
