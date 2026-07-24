@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"profitofexile/internal/db"
 	"profitofexile/internal/device"
 	"profitofexile/internal/lab"
@@ -70,6 +72,70 @@ func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer, scope league.
 	} else {
 		slog.Warn("admin recompute: finished with failures", "failed_steps", failures, "total_steps", 5)
 	}
+}
+
+// delayedRecomputeLockTimeout bounds the delayed-recompute timer's attempt to
+// take the league data lock and re-resolve the active league. The timer fires
+// on context.Background(), and both pool.Acquire (advisory-lock connection) and
+// league.Resolve block on pool exhaustion, so without an independent deadline a
+// stuck decision would leak a goroutine every timer cycle. It is deliberately
+// separate from the context passed to RunV2, which keeps the pre-existing
+// unbounded background context so a long recompute is not truncated.
+const delayedRecomputeLockTimeout = 5 * time.Second
+
+// prepareDelayedRecompute decides whether a fired delayed-recompute timer may
+// run RunV2 for the league it was scheduled under, and if so returns the held
+// league data lock the caller must Release.
+//
+// The 15-minute timer captures a scope at schedule time and fires much later on
+// context.Background(), guarded only by an in-process mutex. That guard cannot
+// see two hazards this function closes:
+//   - cross-process: a second server's timer (or its immediate recompute chain)
+//     may already be writing the same league; DataLockKey serialises them.
+//   - wrong-league: the active league (id or revision) may have changed while
+//     the timer was in flight; committing RunV2 under the captured scope would
+//     write and cache the previous league's data as if it were current.
+//
+// Return contract:
+//   - lock != nil, skip == "": proceed; caller runs RunV2 then Release()s lock.
+//   - lock == nil, skip != "": do not run; skip explains why (expected, log info).
+//   - err  != nil:            an unexpected failure while deciding; do not run.
+func prepareDelayedRecompute(ctx context.Context, pool *pgxpool.Pool, captured league.Scope) (lock *league.ProcessLock, skip string, err error) {
+	// Bound the whole decision independently of the recompute context: the timer
+	// fires on context.Background(), and both the lock acquire and the re-resolve
+	// hit the pool, which blocks on exhaustion. An unbounded decision would leak
+	// a goroutine per 15-minute cycle.
+	decCtx, cancel := context.WithTimeout(ctx, delayedRecomputeLockTimeout)
+	defer cancel()
+
+	lock, err = league.AcquireProcessLock(decCtx, pool, league.DataLockKey(captured))
+	if err != nil {
+		switch {
+		case errors.Is(err, league.ErrLockHeld):
+			return nil, "league data lock held by another recompute", nil
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+			return nil, "timed out acquiring league data lock", nil
+		default:
+			return nil, "", err
+		}
+	}
+
+	// Lock held: re-resolve the active league and refuse if it drifted (id OR
+	// revision) since the timer was scheduled. Revision alone catches a same-name
+	// league bumped mid rolling deploy (ADR-009), which is exactly what the
+	// captured scope must not silently overwrite.
+	active, rerr := league.Resolve(decCtx, pool)
+	if rerr != nil {
+		lock.Release()
+		return nil, "", fmt.Errorf("re-resolve active league: %w", rerr)
+	}
+	if active.ID() != captured.ID() || active.Revision() != captured.Revision() {
+		lock.Release()
+		return nil, fmt.Sprintf("active league changed since timer was scheduled (was %s@%d, now %s@%d)",
+			captured.ID(), captured.Revision(), active.ID(), active.Revision()), nil
+	}
+
+	return lock, "", nil
 }
 
 // corsOrigins returns allowed CORS origins from the CORS_ORIGINS env var.
@@ -592,6 +658,23 @@ func main() {
 							slog.Error("delayed v2 recompute panicked", "recover", r)
 						}
 					}()
+
+					// Take the league data lock and confirm the active league has
+					// not changed since this timer was scheduled. Without this the
+					// callback would commit/cache RunV2 output under a league that
+					// may have drifted while the timer was in flight, and could
+					// race a second server's recompute of the same dataset.
+					lock, skip, err := prepareDelayedRecompute(context.Background(), pool, scope)
+					if err != nil {
+						slog.Warn("delayed recompute: skipped", "reason", "lock/league check failed", "error", err)
+						return
+					}
+					if lock == nil {
+						slog.Info("delayed recompute: skipped", "reason", skip)
+						return
+					}
+					defer lock.Release()
+
 					slog.Info("delayed recompute: running v2 with accumulated trade data")
 					if err := analyzer.RunV2(context.Background(), scope); err != nil {
 						slog.Warn("delayed v2 recompute failed", "error", err)
