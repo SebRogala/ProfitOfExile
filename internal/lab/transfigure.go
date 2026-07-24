@@ -20,8 +20,16 @@ type TransfigureResult struct {
 	BaseListings         int
 	TransfiguredListings int
 	GemColor             string
-	Confidence           string // "OK" or "LOW"
+	Confidence           string // "OK", "LOW", or ConfidenceNoBase
 }
+
+// ConfidenceNoBase marks a transfigured gem the market prices but whose base gem
+// is absent from the snapshot, so ROI cannot be computed. Such rows carry
+// BasePrice/ROI/ROIPct of 0 — that is "unknown", not "breaks even". They exist so
+// a gem the Font EV analyzer can already price does not vanish from the rankings
+// (common right after a league start, when poe.ninja lists transfigured gems
+// before their bases).
+const ConfidenceNoBase = "NO_BASE"
 
 // GemPrice is the minimal price data needed for analysis. Shared across analyzers.
 type GemPrice struct {
@@ -82,15 +90,28 @@ func AnalyzeTransfigure(snapTime time.Time, gems []GemPrice) []TransfigureResult
 
 	for transName, transVariants := range transGems {
 		baseName := extractBaseName(transName)
-		baseVariants, ok := baseGems[baseName]
-		if !ok {
-			continue
-		}
+		baseVariants := baseGems[baseName] // nil when the base gem is unpriced
 
 		for _, variant := range variants {
 			trans, hasTransVar := transVariants[variant]
+			if !hasTransVar {
+				continue
+			}
+
 			base, hasBaseVar := baseVariants[variant]
-			if !hasTransVar || !hasBaseVar {
+			if !hasBaseVar {
+				// No base price: emit the gem with ROI unknown rather than
+				// dropping it. See ConfidenceNoBase.
+				results = append(results, TransfigureResult{
+					Time:                 snapTime,
+					BaseName:             baseName,
+					TransfiguredName:     transName,
+					Variant:              variant,
+					TransfiguredPrice:    trans.chaos,
+					TransfiguredListings: trans.listings,
+					GemColor:             trans.color,
+					Confidence:           ConfidenceNoBase,
+				})
 				continue
 			}
 
