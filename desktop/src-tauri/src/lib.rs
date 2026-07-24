@@ -2371,6 +2371,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             ssot::get_ssot,
+            ssot::set_league,
+            ssot::refresh_league,
             get_pair_code,
             get_device_id,
             regenerate_pair_code,
@@ -2488,6 +2490,10 @@ pub fn run() {
 
             spawn_log_watcher(handle.clone());
             spawn_focus_poller(handle.clone());
+            // Resolve the active league from the server (start-only, bounded
+            // retry). Until it succeeds the SSOT stays unresolved and every
+            // trade lookup fails closed — by design (POE-128 chunk 3).
+            ssot::spawn_league_fetch(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
             Ok(())
