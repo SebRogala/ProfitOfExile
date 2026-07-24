@@ -158,7 +158,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	}
 
 	if cfg.DevMode {
-		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret))
+		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret, cfg.League))
 	}
 
 	// Serve static frontend files with SPA fallback. The wildcard pattern never
