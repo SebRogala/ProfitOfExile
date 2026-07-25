@@ -613,3 +613,35 @@ func TestAnalyzeFont_PricedGemsCountsOnlyThisVariantWhilePoolStaysWhole(t *testi
 			full.PricedGems, full.Pool)
 	}
 }
+
+func TestAnalyzeFont_PricedGemsExcludesLowConfidenceGems(t *testing.T) {
+	now := time.Now()
+	// Both gems are listed at 20/20, but the thin-market one is excluded from the
+	// EV and contributes 0. Counting it as "priced" would tell the UI the pool is
+	// fully valued while the EV is quietly depressed by a zero-valued outcome.
+	lowConf := makeFeature("Slam of Force", "20/20", 120, 1, "HIGH", 0.8, 0.9)
+	lowConf.LowConfidence = true
+	features := []GemFeature{
+		makeFeature("Cleave of Rage", "20/20", 250, 15, "TOP", 0.9, 0.95),
+		lowConf,
+	}
+
+	analysis := AnalyzeFont(now, features)
+
+	var got *FontResult
+	for i := range analysis.Safe {
+		if analysis.Safe[i].Color == "RED" && analysis.Safe[i].Variant == "20/20" {
+			got = &analysis.Safe[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("no RED 20/20 safe result")
+	}
+	if got.Pool != 2 {
+		t.Fatalf("Pool = %d, want 2 (both gems are possible outcomes)", got.Pool)
+	}
+	if got.PricedGems != 1 {
+		t.Errorf("PricedGems = %d, want 1 — the low-confidence gem enters the EV as 0, so it is not a valued outcome",
+			got.PricedGems)
+	}
+}

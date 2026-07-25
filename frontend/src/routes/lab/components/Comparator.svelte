@@ -474,6 +474,7 @@
 	{#if results.length > 0}
 		<div class="cards-row">
 			{#each results as gem}
+				{@const noData = gem.confidence === 'NO_DATA' || (gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div class="compare-card" class:queue-selected={selectedForQueue === gem.name} onclick={() => { selectedForQueue = gem.name; }}>
@@ -484,7 +485,8 @@
 					</div>
 					<div class="card-row price-line">
 						<span class="price-display" title="Ninja price vs risk-adjusted (sell probability × stability)">
-							<span class="price-raw">{gem.transPrice}c</span>
+							<!-- An unpriced gem's 0 is unknown, not a 0c valuation. -->
+							<span class="price-raw">{noData ? '—' : `${gem.transPrice}c`}</span>
 							{#if gem.riskAdjustedPrice > 0}
 								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c)</span>
 							{/if}
@@ -506,7 +508,7 @@
 					</div>
 					<div class="price-context">
 						<div class="price-row">
-							<span>Listed: {gem.transPrice}c</span>
+							<span>Listed: {noData ? '—' : `${gem.transPrice}c`}</span>
 							{#if gem.quickSellPrice > 0}
 								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
 							{/if}
