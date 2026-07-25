@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,11 +156,11 @@ func (r *Repository) SaveFontResults(ctx context.Context, scope league.Scope, re
 	for _, r := range results {
 		batch.Queue(
 			`INSERT INTO font_snapshots
-			 (league, time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
+			 (league, time, color, variant, pool, priced_gems, winners, p_win, avg_win, ev, input_cost, profit,
 			  mode, thin_pool_gems, liquidity_risk)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 			 ON CONFLICT DO NOTHING`,
-			scope.ID(), r.Time, r.Color, r.Variant, r.Pool, r.Winners,
+			scope.ID(), r.Time, r.Color, r.Variant, r.Pool, r.PricedGems, r.Winners,
 			r.PWin, r.AvgWin, r.EV, r.InputCost, r.Profit,
 			r.Mode, r.ThinPoolGems, r.LiquidityRisk,
 		)
@@ -242,7 +243,7 @@ func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, 
 		return nil, fmt.Errorf("lab repo: latest font results: %w", err)
 	}
 	query := `
-		SELECT time, color, variant, pool, winners, p_win, avg_win, ev, input_cost, profit,
+		SELECT time, color, variant, pool, COALESCE(priced_gems, pool), winners, p_win, avg_win, ev, input_cost, profit,
 		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW')
 		FROM font_snapshots
 		WHERE league = $1 AND time = (SELECT MAX(time) FROM font_snapshots WHERE league = $1)`
@@ -272,7 +273,7 @@ func (r *Repository) LatestFontResults(ctx context.Context, scope league.Scope, 
 	var results []FontResult
 	for rows.Next() {
 		var fr FontResult
-		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.Winners,
+		if err := rows.Scan(&fr.Time, &fr.Color, &fr.Variant, &fr.Pool, &fr.PricedGems, &fr.Winners,
 			&fr.PWin, &fr.AvgWin, &fr.EV, &fr.InputCost, &fr.Profit,
 			&fr.Mode, &fr.ThinPoolGems, &fr.LiquidityRisk); err != nil {
 			return nil, fmt.Errorf("lab repo: scan font result: %w", err)
@@ -1467,23 +1468,36 @@ func (r *Repository) SparklineDataCorrupted(ctx context.Context, scope league.Sc
 	return result, nil
 }
 
-// GemNameDictionary returns known gem names from gem_colors, the static game-data
-// table — no league, no prices, no market activity required.
+// GemNameDictionary returns known gem names for OCR matching: every name in
+// gem_colors, plus every transfigured name the scoped league has ever had a
+// snapshot for.
 //
-// It exists for OCR: recognising the gem under the cursor must not depend on
-// whether poe.ninja happens to price it. The market-derived sources (transfigure
-// results, gem_snapshots) collapse to a handful of names at league start, which
-// silently blinds the desktop matcher exactly when players are running the most
-// labs.
+// It exists because recognising the gem under the cursor must not depend on
+// whether the market prices it. The previous source (transfigure results) needed
+// BOTH the gem and its base priced, collapsing to a handful of names at league
+// start — silently blinding the desktop matcher exactly when players run the
+// most labs.
 //
-// transfigured selects between the two halves of the table:
+// gem_colors carries no league and no prices, but it is not pure game data: the
+// collector's gemcolor.Resolver upserts names into it as it sees them (ADR-006),
+// so a brand-new transfigured gem lands there only once it has been priced at
+// least once. Unioning the league's snapshot names keeps this a strict superset
+// of the market-scoped endpoint it replaced, so the swap can never lose a name
+// the old path would have returned.
+//
+// transfigured selects between the two halves:
 //   - true  — names whose base gem is itself a known gem ("Rain of Arrows of
 //     Saturation" has base "Rain of Arrows"). This is what distinguishes a
 //     transfigured gem from a base gem that merely contains " of "
-//     ("Herald of Ash" has no base gem "Herald").
+//     ("Herald of Ash" has no base gem "Herald"). Names flagged transfigured in
+//     the league's snapshots are trusted directly — the market already told us.
 //   - false — everything else, minus support gems, which never appear in the
 //     Font or Dedication pools.
-func (r *Repository) GemNameDictionary(ctx context.Context, transfigured bool) ([]string, error) {
+func (r *Repository) GemNameDictionary(ctx context.Context, scope league.Scope, transfigured bool) ([]string, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem name dictionary: %w", err)
+	}
+
 	rows, err := r.pool.Query(ctx, "SELECT name FROM gem_colors ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query gem name dictionary: %w", err)
@@ -1501,8 +1515,48 @@ func (r *Repository) GemNameDictionary(ctx context.Context, transfigured bool) (
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("lab repo: gem dictionary rows iteration: %w", err)
 	}
+	rows.Close()
 
-	return FilterGemDictionary(all, transfigured), nil
+	// Names the market has shown this league, with is_transfigured straight from
+	// the source rather than inferred from the base-name rule.
+	seen, err := r.pool.Query(ctx,
+		`SELECT DISTINCT name FROM gem_snapshots WHERE league = $1 AND is_transfigured = $2`,
+		scope.ID(), transfigured)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query gem dictionary snapshots: %w", err)
+	}
+	defer seen.Close()
+
+	var fromSnapshots []string
+	for seen.Next() {
+		var name string
+		if err := seen.Scan(&name); err != nil {
+			return nil, fmt.Errorf("lab repo: scan gem dictionary snapshot name: %w", err)
+		}
+		fromSnapshots = append(fromSnapshots, name)
+	}
+	if err := seen.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: gem dictionary snapshot rows iteration: %w", err)
+	}
+
+	return MergeGemDictionary(FilterGemDictionary(all, transfigured), fromSnapshots), nil
+}
+
+// MergeGemDictionary unions two name lists into one sorted, de-duplicated list.
+func MergeGemDictionary(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	merged := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, n := range list {
+			if _, dup := seen[n]; dup {
+				continue
+			}
+			seen[n] = struct{}{}
+			merged = append(merged, n)
+		}
+	}
+	sort.Strings(merged)
+	return merged
 }
 
 // FilterGemDictionary splits a full gem-name list into transfigured and

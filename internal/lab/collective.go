@@ -332,10 +332,26 @@ func BuildCompareResults(
 		found := false
 		var bestTr *TransfigureResult
 		for k, tr := range trIndex {
-			if k.name == name {
-				if bestTr == nil || tr.ROI > bestTr.ROI {
+			if k.name != name {
+				continue
+			}
+			// A NO_BASE row's ROI is 0 meaning "unknown", so it must never win this
+			// comparison against a row with a real (possibly negative) ROI — that
+			// would pick the variant with no data over the one that has it.
+			if bestTr == nil {
+				bestTr = tr
+				continue
+			}
+			bestIsNoBase := bestTr.Confidence == ConfidenceNoBase
+			trIsNoBase := tr.Confidence == ConfidenceNoBase
+			if bestIsNoBase != trIsNoBase {
+				if bestIsNoBase {
 					bestTr = tr
 				}
+				continue
+			}
+			if tr.ROI > bestTr.ROI {
+				bestTr = tr
 			}
 		}
 		if bestTr != nil {
@@ -352,6 +368,12 @@ func BuildCompareResults(
 				cr.ROI = bestTr.TransfiguredPrice - colorBase
 				if colorBase > 0 {
 					cr.ROIPct = (cr.ROI / colorBase) * 100
+				}
+				// The lab cost basis is any base gem of this colour, not this gem's own
+				// base — so a NO_BASE row that gets one is no longer missing its cost
+				// basis. Keeping the label here would tell the UI to hide real numbers.
+				if cr.Confidence == ConfidenceNoBase {
+					cr.Confidence = "LOW"
 				}
 			} else {
 				cr.BasePrice = bestTr.BasePrice

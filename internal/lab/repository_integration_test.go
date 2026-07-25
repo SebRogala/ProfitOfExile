@@ -290,6 +290,9 @@ func TestGemNameDictionary_ignoresLeagueAndMarketData(t *testing.T) {
 	ctx := context.Background()
 	repo := NewRepository(pool)
 
+	leagueID := "POE-128-dictionary"
+	registerLeague(t, pool, leagueID)
+
 	// gem_colors is static game data: no league column, no prices. Seed a
 	// transfigured/base pair that appears in NO snapshot, so a dictionary built
 	// from market tables could not return it.
@@ -307,7 +310,7 @@ func TestGemNameDictionary_ignoresLeagueAndMarketData(t *testing.T) {
 		t.Fatalf("seed gem_colors: %v", err)
 	}
 
-	names, err := repo.GemNameDictionary(ctx, true)
+	names, err := repo.GemNameDictionary(ctx, league.Historical(leagueID), true)
 	if err != nil {
 		t.Fatalf("GemNameDictionary: %v", err)
 	}
@@ -327,6 +330,46 @@ func TestGemNameDictionary_ignoresLeagueAndMarketData(t *testing.T) {
 	if sawBase {
 		t.Errorf("%q returned as transfigured — it is the base gem", base)
 	}
+}
+
+func TestGemNameDictionary_includesLeagueNamesMissingFromGemColors(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-128-dict-superset"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(7)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// gem_colors is collector-fed (gemcolor.Resolver upserts what it prices), so a
+	// gem can be listed on the market before it lands there. The dictionary must
+	// stay a superset of the market-scoped endpoint it replaced, or swapping the
+	// desktop over to it loses names OCR could previously match.
+	const onlyInSnapshots = "POE128 Snapshot Only of Testing"
+	seedGemSnapshot(t, pool, leagueID, tm, onlyInSnapshots, "20/20", true, false, 100, 5, "BLUE")
+
+	var inColors bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM gem_colors WHERE name = $1)`, onlyInSnapshots).Scan(&inColors); err != nil {
+		t.Fatalf("check gem_colors: %v", err)
+	}
+	if inColors {
+		t.Fatalf("%q unexpectedly present in gem_colors — the test cannot prove the union", onlyInSnapshots)
+	}
+
+	names, err := repo.GemNameDictionary(ctx, league.Historical(leagueID), true)
+	if err != nil {
+		t.Fatalf("GemNameDictionary: %v", err)
+	}
+
+	for _, n := range names {
+		if n == onlyInSnapshots {
+			return
+		}
+	}
+	t.Errorf("%q missing — a gem the market lists but gem_colors has not recorded is unmatchable by OCR", onlyInSnapshots)
 }
 
 // ---------------------------------------------------------------------------
