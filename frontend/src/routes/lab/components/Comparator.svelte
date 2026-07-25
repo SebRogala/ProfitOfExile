@@ -522,6 +522,8 @@
 									<div class="range-fill" style="width: {Math.min(100, Math.max(0, gem.histPosition))}%"></div>
 								</div>
 							</div>
+						{:else if noData}
+							<div class="anomaly-banner">No poe.ninja data — check trade listings</div>
 						{/if}
 					</div>
 					{#if gem.signal === 'DUMPING'}
@@ -1405,6 +1407,12 @@
 	.range-sep {
 		margin: 0 4px;
 		opacity: 0.5;
+	}
+	.anomaly-banner {
+		color: var(--color-lab-yellow, #eab308);
+		font-size: 0.75rem;
+		font-style: italic;
+		margin-top: 4px;
 	}
 	.range-bar {
 		width: 100%;
