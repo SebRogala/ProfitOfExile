@@ -242,17 +242,6 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 			inputCost := InputCostForVariant(variant)
 			entries := byColor[color][variant]
 
-			// How much of the pool the market actually prices at this variant. Pool
-			// stays variant-independent — every transfigured gem of the colour is a
-			// possible font outcome whether or not poe.ninja lists it at this
-			// level/quality — so a low priced count means "we can't value most
-			// outcomes here", not "the pool is small". The UI shows the two together
-			// so an EV of 0 is readable as missing prices rather than worthless gems.
-			pricedGems := len(entries)
-			if pricedGems > pool {
-				pricedGems = pool
-			}
-
 			// Count winners and thin-market gems for each mode.
 			var safeWinnerCount, premiumWinnerCount, jackpotWinnerCount int
 			var safeThinCount, premiumThinCount, jackpotThinCount int
@@ -328,6 +317,19 @@ func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 						jackpotThinCount++
 					}
 				}
+			}
+
+			// How much of the pool carries a usable price at this variant. Pool stays
+			// variant-independent — every transfigured gem of the colour is a possible
+			// font outcome whether or not poe.ninja lists it at this level/quality — so
+			// a low count means "we can't value most outcomes here", not "the pool is
+			// small". Counted off gemAdjustedPrice, the same map that feeds poolValues,
+			// so it names exactly the gems contributing value: a low-confidence gem is
+			// listed but enters the EV as 0, and counting it as priced would understate
+			// the zero-valued set the UI is explaining.
+			pricedGems := len(gemAdjustedPrice)
+			if pricedGems > pool {
+				pricedGems = pool
 			}
 
 			// Build the full pool value array — one value per pool gem name.

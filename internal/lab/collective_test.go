@@ -664,3 +664,50 @@ func TestBuildCompareResults_NoBaseRowDoesNotBecomeTheCheapestBase(t *testing.T)
 			results[0].ROI)
 	}
 }
+
+func TestBuildCompareResults_PrefersAVariantWithRealDataOverNoBase(t *testing.T) {
+	// The 20/20 row is genuinely priced but currently sells below its base — a real
+	// league-start shape. Its negative ROI must still beat the NO_BASE row's 0,
+	// which means "unknown", or the comparison shows the variant we know nothing about.
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20", GemColor: "BLUE",
+			BasePrice: 300, TransfiguredPrice: 100, ROI: -200, ROIPct: -66, Confidence: "OK"},
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "1", GemColor: "BLUE",
+			TransfiguredPrice: 12, Confidence: ConfidenceNoBase},
+	}
+
+	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, nil, nil, nil, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Variant != "20/20" {
+		t.Errorf("variant = %q, want 20/20 — the only variant with a known cost basis", results[0].Variant)
+	}
+}
+
+func TestBuildCompareResults_NoBaseGemWithAColorBaseIsNoLongerLabelledNoBase(t *testing.T) {
+	// The lab cost basis is the cheapest base of that colour/variant, not this
+	// gem's own base — so once one is found the ROI is real and the row must stop
+	// claiming its cost basis is unknown, or the UI hides valid numbers.
+	transfigure := []TransfigureResult{
+		{TransfiguredName: "Spark of Nova", BaseName: "Spark", Variant: "20/20", GemColor: "BLUE",
+			TransfiguredPrice: 200, Confidence: ConfidenceNoBase},
+		{TransfiguredName: "Arc of Surging", BaseName: "Arc", Variant: "20/20", GemColor: "BLUE",
+			BasePrice: 20, TransfiguredPrice: 90, ROI: 70, ROIPct: 350, Confidence: "OK"},
+	}
+
+	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, nil, nil, nil, "20/20")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Confidence == ConfidenceNoBase {
+		t.Errorf("confidence = %s with BasePrice %.0f and ROI %.0f — a substituted colour base is a known cost basis",
+			results[0].Confidence, results[0].BasePrice, results[0].ROI)
+	}
+	if results[0].BasePrice != 20 || results[0].ROI != 180 {
+		t.Errorf("BasePrice/ROI = %.0f/%.0f, want 20/180 (cheapest BLUE 20/20 base)",
+			results[0].BasePrice, results[0].ROI)
+	}
+}

@@ -796,11 +796,11 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 // market-scoped — it drives search over gems that actually have analysis data.
 //
 // Query params: transfigured (default true; "false" returns skill gems).
-func GemDictionary(repo *lab.Repository) http.HandlerFunc {
+func GemDictionary(repo *lab.Repository, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		transfigured := r.URL.Query().Get("transfigured") != "false" // default true
 
-		names, err := repo.GemNameDictionary(r.Context(), transfigured)
+		names, err := repo.GemNameDictionary(r.Context(), scope, transfigured)
 		if err != nil {
 			slog.Error("gem dictionary: query failed", "error", err, "transfigured", transfigured)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
