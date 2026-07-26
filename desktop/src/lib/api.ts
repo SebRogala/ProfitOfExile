@@ -253,6 +253,13 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 // --- Mapping helpers ---
 
 /**
+ * The four non-corrupted gem variants, in display format. Shared so the dashboard's
+ * per-variant fetch and the By Variant tabs cannot drift apart. Dedication mode does
+ * not use these — it pools by skill/transfigured at a single 21/23 variant.
+ */
+export const VARIANTS = ['1/0', '1/20', '20/0', '20/20'] as const;
+
+/**
  * Convert a backend variant ("1", "20") to the UI's display format ("1/0", "20/0").
  * The backend stores zero-quality variants without the quality suffix and normalizes
  * "/0" away on inbound query params, but never restores it on responses — so UI code

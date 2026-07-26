@@ -5,6 +5,7 @@
 	import {
 		fetchStatus,
 		fetchBestPlays,
+		VARIANTS,
 		fetchMarketOverview,
 		connectMercure,
 		type StatusData,
@@ -44,11 +45,28 @@
 		}).catch(e => console.warn('[LabPage] get_lab_mode failed:', e));
 	});
 
+	// Rankings are fetched per variant, not as one global top-100. The server ranks
+	// across all variants, so a single capped list let the best-ranking variants
+	// crowd the others out and By Variant showed a starved slice (POE-132). The
+	// merged result is a superset of the old global list.
+	//
+	// Dedication mode is excluded: it has a single 21/23 variant and pools by
+	// skill/transfigured instead, so the per-variant split does not apply.
+	async function loadBestPlays(dedication: boolean): Promise<GemPlay[]> {
+		if (dedication) {
+			return fetchBestPlays(undefined, undefined, undefined, 100, undefined, 'dedication');
+		}
+		const perVariant = await Promise.all(
+			VARIANTS.map(v => fetchBestPlays(v, undefined, undefined, 100)),
+		);
+		return perVariant.flat();
+	}
+
 	function handleLabModeChange(mode: LabMode) {
 		labMode = mode;
 		invoke('set_lab_mode', { mode }).catch(e => console.warn('[LabPage] set_lab_mode failed:', e));
 		// Re-fetch rankings for the new mode.
-		fetchBestPlays(undefined, undefined, undefined, 100, undefined, mode === 'Dedication' ? 'dedication' : undefined)
+		loadBestPlays(mode === 'Dedication')
 			.then(bp => { bestPlays = bp; })
 			.catch(e => console.warn('[LabPage] re-fetch bestPlays failed:', e));
 	}
@@ -186,7 +204,7 @@
 			error = '';
 			const [s, bp, mo] = await Promise.all([
 				fetchStatus(),
-				fetchBestPlays(undefined, undefined, undefined, 100, undefined, isDedication ? 'dedication' : undefined),
+				loadBestPlays(isDedication),
 				fetchMarketOverview(),
 			]);
 			status = s;

@@ -1,12 +1,11 @@
 <script lang="ts">
-	import type { GemPlay } from '$lib/api';
+	import { VARIANTS, type GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
 	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
 
-	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const TABS = ['ALL', ...VARIANTS];
 	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [

@@ -4,6 +4,7 @@
 		fetchBestPlays,
 		fetchMarketOverview,
 		connectMercure,
+		VARIANTS,
 		type StatusData,
 		type GemPlay,
 		type MarketOverviewData,
@@ -126,13 +127,24 @@
 	async function loadAll() {
 		try {
 			error = '';
-			const [s, bp, mo] = await Promise.all([
+			// Fetch per variant rather than one global top-100. The server ranks
+			// across all variants, so a single capped list let the best-ranking
+			// variants crowd the others out — By Variant then showed 23 of 88
+			// available rows for 1/0 while 1/20 took 60 slots (POE-132). Merging
+			// four per-variant lists is a superset of the old global list, so the
+			// Best Plays section is unaffected beyond seeing more candidates.
+			//
+			// Four requests, not one per tab: this replaces the global fetch rather
+			// than adding to it, so page load goes from 3 concurrent requests to 6.
+			// Commit 3e2f28d removed a 10+ request fan-out that caused
+			// ERR_INSUFFICIENT_RESOURCES; six stays well under that.
+			const [s, mo, ...perVariant] = await Promise.all([
 				fetchStatus(),
-				fetchBestPlays(undefined, undefined, undefined, 100),
 				fetchMarketOverview(),
+				...VARIANTS.map((v) => fetchBestPlays(v, undefined, undefined, 100)),
 			]);
 			status = s;
-			bestPlays = bp;
+			bestPlays = perVariant.flat();
 			marketOverview = mo;
 
 			// Update connection status from Mercure
