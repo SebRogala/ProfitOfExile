@@ -89,7 +89,9 @@
 			searchResults = null;
 		}
 	}
-	let showLowConf = $state(false);
+	// Default ON to match the Rust-side setting default; the stored value below
+	// overwrites it on mount. Starting false would flash a filtered list first.
+	let showLowConf = $state(true);
 	// Load from Tauri settings on mount
 	$effect(() => {
 		invoke<boolean>('get_show_low_confidence').then(v => { showLowConf = v; })

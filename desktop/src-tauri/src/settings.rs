@@ -125,7 +125,10 @@ impl Default for Settings {
             lab_mode: default_lab_mode(),
             autoclear_minutes: default_autoclear_minutes(),
             dedication_pool: default_dedication_pool(),
-            show_low_confidence: false,
+            // Default ON — see the note in the web BestPlays component: at
+            // 20-level variants a thin market is normal, so hiding flagged gems
+            // by default reproduces the POE-131 ranking gap.
+            show_low_confidence: true,
         }
     }
 }

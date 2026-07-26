@@ -161,7 +161,7 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 			if tr.TransfiguredPrice <= 0 {
 				continue
 			}
-		} else if tr.ROI <= 0 || tr.Confidence != "OK" {
+		} else if tr.ROI <= 0 {
 			continue
 		}
 
@@ -211,6 +211,18 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 			cr.High7Days = f.High7Days
 			cr.LowConfidence = f.LowConfidence
 			cr.LiquidityTier = liquidityTier(f.MarketDepth)
+		}
+
+		// A thin transfigure market marks the row low-confidence rather than
+		// removing it. AnalyzeTransfigure gates Confidence on an absolute
+		// listings >= 5 on both sides, which is a mature-market assumption: at
+		// 20/20 the transfigured side averages 2 listings, so dropping LOW rows
+		// hid 78 of 93 positive-ROI gems from the ranking entirely.
+		//
+		// Set after the feature join, which assigns LowConfidence rather than
+		// OR-ing it — the join would otherwise clobber this.
+		if tr.Confidence == "LOW" {
+			cr.LowConfidence = true
 		}
 
 		// Exclude TRAP gems entirely — no actionable signal.

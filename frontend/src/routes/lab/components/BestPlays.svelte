@@ -90,7 +90,11 @@
 			searchResults = null;
 		}
 	}
-	let showLowConf = $state(typeof localStorage !== 'undefined' && localStorage.getItem('poe-show-low-conf') === 'true');
+	// Default ON. At 20-level variants a thin transfigured market is normal, not
+	// anomalous, so the flag covers most of the pool there — a default that hid it
+	// would reproduce the ranking gap this toggle exists to make visible (POE-131).
+	// An explicit opt-out is still respected; only an unset value defaults on.
+	let showLowConf = $state(typeof localStorage === 'undefined' || localStorage.getItem('poe-show-low-conf') !== 'false');
 	$effect(() => {
 		localStorage.setItem('poe-show-low-conf', String(showLowConf));
 	});

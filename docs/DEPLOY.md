@@ -67,12 +67,16 @@ project's release cadence. **If a deploy matters, verify it by hand.**
 
 ## Verifying a deploy landed
 
-`<prod-host>` and `<server-service-id>` are placeholders — this is a public
+`PROD_HOST` and `SERVER_SERVICE_ID` are placeholders — this is a public
 repository, so the real host alias and Coolify service ids live in the private
-ops notes, not here.
+ops notes, not here. Set them once, then the commands below paste as-is (angle
+brackets would be read by the shell as redirects):
 
 ```
-ssh <prod-host> 'docker ps --format "{{.Status}} | {{.Image}}" -f name=<server-service-id>'
+PROD_HOST=...           # see private ops notes
+SERVER_SERVICE_ID=...
+
+ssh "$PROD_HOST" "docker ps --format '{{.Status}} | {{.Image}}' -f name=$SERVER_SERVICE_ID"
 ```
 
 Look the service up by its stable id prefix, never by a full container name:
