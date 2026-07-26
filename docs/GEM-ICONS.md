@@ -41,22 +41,28 @@ name, cannot fetch it, and returns `502`.
 
    To pull only new entries, hand it a JSON file containing just those keys.
 
-4. **Seed the production volume** — from a machine poewiki does not block:
+4. **Seed the production volume** — from a machine poewiki does not block.
+   `<prod-host>` and `<server-service-id>` are placeholders; this repository is
+   public, so the real values live in the private ops notes. See
+   [Deployment](DEPLOY.md).
 
    ```
    tar czf new-icons.tgz -C gem-icons-cache .
-   scp new-icons.tgz profitofexile.top:/tmp/
-   ssh profitofexile.top 'C=$(docker ps -q -f name=vo7t5tzxr9sl3s1025f32wgy); \
+   scp new-icons.tgz <prod-host>:/tmp/
+   ssh <prod-host> 'C=$(docker ps -q -f name=<server-service-id>); \
      mkdir -p /tmp/ni && tar xzf /tmp/new-icons.tgz -C /tmp/ni && \
      for f in /tmp/ni/*.png; do docker cp "$f" "$C:/data/gem-icons-cache/"; done'
    ```
 
    The server image has no shell, so `docker cp` is the way in. The volume is
-   `vo7t5tzxr9sl3s1025f32wgy-profitofexile-gem-icons` mounted at
+   `<server-service-id>-profitofexile-gem-icons` mounted at
    `/data/gem-icons-cache`.
 
 5. **Deploy** — the map is embedded, so the icon only resolves once the new binary
-   is running. Merging to `main` auto-deploys.
+   is running. Merging to `main` deploys when the change touches a filtered path;
+   `internal/gemicon/**` does, so a map edit is enough. See
+   [Deployment](DEPLOY.md) for why a green pipeline is not proof the deploy
+   landed.
 
 6. **Verify:**
 

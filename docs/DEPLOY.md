@@ -67,9 +67,17 @@ project's release cadence. **If a deploy matters, verify it by hand.**
 
 ## Verifying a deploy landed
 
+`<prod-host>` and `<server-service-id>` are placeholders — this is a public
+repository, so the real host alias and Coolify service ids live in the private
+ops notes, not here.
+
 ```
-ssh profitofexile.top 'docker ps --format "{{.Status}} | {{.Image}}" -f name=vo7t5tzxr9sl3s1025f32wgy'
+ssh <prod-host> 'docker ps --format "{{.Status}} | {{.Image}}" -f name=<server-service-id>'
 ```
+
+Look the service up by its stable id prefix, never by a full container name:
+Coolify appends a deploy suffix that rotates on every rebuild, so a pasted
+full name goes stale immediately.
 
 The image tag is the deployed commit SHA. Compare it against `git rev-parse
 origin/main`. `Up <n> minutes` should be small if the deploy just ran.
