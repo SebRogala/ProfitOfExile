@@ -587,6 +587,88 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 	return result, nil
 }
 
+// sparklineVariants are the non-corrupted variants sparkline consumers ask for.
+// Prices for different variants are different markets, so the variant is part
+// of the series identity rather than something merged away.
+var sparklineVariants = []string{"1", "1/20", "20", "20/20"}
+
+// sparklineCorruptedVariant is the only corrupted variant sparklines are served
+// for — the Dedication (21/23c) pool.
+const sparklineCorruptedVariant = "21/23c"
+
+// SparklineWindow returns raw price points for every gem/variant series the
+// sparkline cache serves, in one pass. The first map holds the non-corrupted
+// series, the second the corrupted (Dedication) series.
+//
+// hours bounds the window read from the snapshot table. since drives the
+// incremental path: pass a non-zero value to read only rows newer than the
+// caller's high-water mark, or the zero time for a full window read.
+//
+// Deliberately unlike GemPriceHistoryByVariant, this applies no chaos floor and
+// no Trarthus exclusion — SparklineData has never applied either, and the chaos
+// floor is tracked separately as POE-134. It also does not filter
+// is_transfigured, because TrendAnalysis charts base gems too.
+func (r *Repository) SparklineWindow(ctx context.Context, scope league.Scope, since time.Time, hours int) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("lab repo: sparkline window: %w", err)
+	}
+
+	query := `
+		SELECT name, variant, time, COALESCE(chaos, 0), COALESCE(listings, 0), is_corrupted
+		FROM gem_snapshots
+		WHERE league = $1
+		  AND time > NOW() - make_interval(hours => $2)
+		  AND ((is_corrupted = false AND variant = ANY($3))
+		    OR (is_corrupted = true AND variant = $4))`
+	args := []any{scope.ID(), hours, sparklineVariants, sparklineCorruptedVariant}
+
+	if !since.IsZero() {
+		query += ` AND time > $5`
+		args = append(args, since)
+	}
+
+	// No row limit: the variant filters close the key space, and the time
+	// window bounds the rows per series.
+	query += ` ORDER BY name, variant, time ASC`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("lab repo: query sparkline window: %w", err)
+	}
+	defer rows.Close()
+
+	series := make(map[sparklineKey][]SparklinePoint)
+	corrupted := make(map[sparklineKey][]SparklinePoint)
+
+	for rows.Next() {
+		var name, variant string
+		var t time.Time
+		var chaos float64
+		var listings int
+		var isCorrupted bool
+		if err := rows.Scan(&name, &variant, &t, &chaos, &listings, &isCorrupted); err != nil {
+			return nil, nil, fmt.Errorf("lab repo: scan sparkline window point: %w", err)
+		}
+
+		k := sparklineKey{name: name, variant: variant}
+		pt := SparklinePoint{
+			Time:     t.UTC().Format(time.RFC3339),
+			Price:    chaos,
+			Listings: listings,
+		}
+		if isCorrupted {
+			corrupted[k] = append(corrupted[k], pt)
+			continue
+		}
+		series[k] = append(series[k], pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("lab repo: sparkline window rows iteration: %w", err)
+	}
+
+	return series, corrupted, nil
+}
+
 // GemNamesAutocomplete returns distinct transfigured gem names matching all query words (in any order).
 func (r *Repository) GemNamesAutocomplete(ctx context.Context, scope league.Scope, query string, limit int) ([]string, error) {
 	if err := scope.Validate(); err != nil {
