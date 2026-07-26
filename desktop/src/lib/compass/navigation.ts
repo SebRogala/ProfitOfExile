@@ -103,21 +103,44 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 		if (!adjacency.has(room.id)) adjacency.set(room.id, []);
 	}
 
-	// Build adjacency from exits. Normal exits are bidirectional; SECRET
-	// PASSAGES ('C') are one-way only.
+	// Rooms opening a new section — the first room past each Aspirant's Trial.
+	// Needed before the adjacency build, to keep the trial gate one-way (below).
+	const sectionFirstRooms = new Set<string>();
+	let previousWasTrial = false;
+	for (const room of layout.rooms) {
+		const isTrial = room.name.toLowerCase() === "aspirant's trial";
+		if (previousWasTrial && !isTrial) sectionFirstRooms.add(room.id);
+		previousWasTrial = isTrial;
+	}
+
+	// Build adjacency from exits. Normal exits are bidirectional, with two
+	// one-way exceptions — both of them doors the game only opens from one side.
 	//
-	// A secret passage is a hidden door openable from one side. Walking into
+	// SECRET PASSAGES ('C'): a hidden door openable from one side. Walking into
 	// the destination room does not let you walk back out through it, so adding
 	// the reverse edge invents a traversal the game does not allow — the router
-	// would then hand the player a route that dead-ends. LabCompass guards its
-	// reverse-edge pass with the same condition (labyrinthdata.cpp:271,
-	// `direction != "C"`). If a layout declares 'C' from BOTH sides, both
-	// forward edges are added and the pair ends up connected anyway.
+	// would then hand the player a route that dead-ends.
+	//
+	// TRIAL GATES: once Izaro is beaten and the player steps into the next
+	// section, they cannot walk back into the trial room. Without this, the
+	// already-beaten trial behind the player counts as adjacent to the room they
+	// are standing in — and since all three Izaro rooms share the name
+	// "Aspirant's Trial", the RoomChanged handler resolves that name by
+	// adjacency. On a zig-zag layout (where the x-coordinate fallback cannot
+	// break the tie either) it goes ambiguous and drops the tracked position.
+	//
+	// LabCompass gates its reverse-edge pass on both conditions in one
+	// expression (labyrinthdata.cpp:271).
 	for (const room of layout.rooms) {
 		for (const [direction, targetId] of Object.entries(room.exits)) {
 			const neighbors = adjacency.get(room.id)!;
 			if (!neighbors.includes(targetId)) neighbors.push(targetId);
+
 			if (direction === 'C') continue;
+			const isTrialGate =
+				room.name.toLowerCase() === "aspirant's trial" && sectionFirstRooms.has(targetId);
+			if (isTrialGate) continue;
+
 			const reverseNeighbors = adjacency.get(targetId);
 			if (reverseNeighbors && !reverseNeighbors.includes(room.id)) {
 				reverseNeighbors.push(room.id);
