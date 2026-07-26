@@ -4,7 +4,10 @@ import {
 	loadLayout,
 	handleNavEvent,
 	setStrategy,
+	roomCost,
+	routeCost,
 	type LabLayout,
+	type RouteStrategy,
 	type NavState,
 } from './navigation';
 
@@ -28,8 +31,13 @@ function makeLayout(rooms: { id: string; name: string; x: string; exits: Record<
 }
 
 /** Helper: process a sequence of events starting from a loaded layout. */
-function processEvents(layout: LabLayout, events: { type: string; name?: string }[]): NavState {
+function processEvents(
+	layout: LabLayout,
+	events: { type: string; name?: string }[],
+	strategy?: RouteStrategy,
+): NavState {
 	let state = loadLayout(createNavState(), layout);
+	if (strategy) state = setStrategy(state, strategy);
 	for (const event of events) {
 		state = handleNavEvent(state, event as any);
 	}
@@ -184,6 +192,38 @@ describe('Golden door routing', () => {
 		{ id: 'trial', name: "Aspirant's Trial", x: '244', exits: {} },
 	]);
 
+	// The key room's only edge is a secret passage OUT of it, so nothing can
+	// enter it and the golden door can never be opened. There is no legal route.
+	//
+	// The one answer that must never be produced is a route through the locked
+	// door: the planner would be sending the player somewhere they cannot go,
+	// while `lockedDoors` still records the door as shut.
+	const unreachableKeyLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'door' } },
+		{ id: 'door', name: 'Mansion Atrium', x: '1', exits: { E: 'trial' }, contents: ['golden-door'] },
+		{ id: 'key', name: 'Basilica Annex', x: '0.5', exits: { C: 'door' }, contents: ['golden-key'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should refuse to route through a locked door when the key is unreachable', () => {
+		const state = loadLayout(createNavState(), unreachableKeyLayout);
+		expect(state.lockedDoors).toEqual([['door', 'trial']]);
+		expect(state.plannedRoute).toEqual([]);
+	});
+
+	// A golden door with no golden key anywhere in the section — malformed data.
+	// Fails closed for the same reason: crossing it is not an option we may offer.
+	const missingKeyLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'door' } },
+		{ id: 'door', name: 'Mansion Atrium', x: '1', exits: { E: 'trial' }, contents: ['golden-door'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should refuse to route through a locked door when the section has no key', () => {
+		const state = loadLayout(createNavState(), missingKeyLayout);
+		expect(state.plannedRoute).toEqual([]);
+	});
+
 	it('should route through key room on zig-zag layouts where entry x > door x', () => {
 		const state = loadLayout(createNavState(), zigzagGoldenDoorLayout);
 		// Rule: key room MUST be visited when the door blocks the trial.
@@ -207,9 +247,9 @@ describe('Route strategy', () => {
 
 	// Regression: "Shortest" strategy visibly detoured through content rooms.
 	//
-	// r1 has a DIRECT 1-hop edge to the trial, plus a 2-hop branch through a
-	// darkshrine room. The darkshrine tiebreaker is only ever allowed to choose
-	// between paths of EQUAL hop count — here the branch is strictly longer, so
+	// r1 has a direct edge to the trial (cost 5), plus a branch through a
+	// darkshrine room (cost 27). The darkshrine tiebreaker may only choose
+	// between routes of EQUAL cost — this branch is strictly more expensive, so
 	// it must be discarded before content is even considered.
 	//
 	//   r1 ─────────────── trial
@@ -324,18 +364,34 @@ describe('Route strategy', () => {
 	]);
 
 	it('should resolve the trial ahead rather than the beaten one behind', () => {
-		let state = loadLayout(createNavState(), zigzagTrialGateLayout);
-		state = setStrategy(state, 'darkshrines');
-		for (const event of [
+		const state = processEvents(zigzagTrialGateLayout, [
 			{ type: 'PlazaEntered' },
 			{ type: 'RoomChanged', name: 'Estate Path' },        // → r1
 			{ type: 'RoomChanged', name: "Aspirant's Trial" },   // → trial1
 			{ type: 'RoomChanged', name: 'Estate Path' },        // → r2
 			{ type: 'RoomChanged', name: "Aspirant's Trial" },   // → trial2, not trial1
-		]) {
-			state = handleNavEvent(state, event as any);
-		}
+		], 'darkshrines');
 		expect(state.currentRoom).toBe('trial2');
+	});
+
+	// Two darkshrine targets, so the router compares whole candidate ROUTES (one
+	// per target ordering) rather than single paths. Visiting b then a forces a
+	// re-crossing of b, which scores HIGHER (b counted twice) while costing more.
+	// Cost must win: this is what pins the minimum-cost filter in the tiebreaker
+	// chokepoint, the one place a pricier-but-shrine-richer route could sneak in.
+	//
+	//   r1 → a[darkshrine] → b[darkshrine] → trial
+	const twoTargetOrderingLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'a', SE: 'b' } },
+		{ id: 'a', name: 'Sepulchre Path', x: '1', exits: { E: 'b' }, contents: ['darkshrine'] },
+		{ id: 'b', name: 'Sepulchre Path', x: '2', exits: { E: 'trial' }, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '3', exits: {} },
+	]);
+
+	it('should not pick a pricier route just because it re-crosses a darkshrine', () => {
+		let state = loadLayout(createNavState(), twoTargetOrderingLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toEqual(['r1', 'a', 'b', 'trial']);
 	});
 
 	it('should preserve strategy when reloading layout', () => {
@@ -344,5 +400,47 @@ describe('Route strategy', () => {
 		// Reload layout — strategy must survive
 		state = loadLayout(state, simpleLayout);
 		expect(state.strategy).toBe('darkshrines');
+	});
+});
+
+describe('roomCost', () => {
+	it.each([
+		['Estate Path', 11],
+		['Domain Atrium', 22],
+		['Sepulchre Path', 9],
+		["Aspirant's Trial", 5],
+		['Voidborn Terrace', 16],  // neither affix known
+		['Sepulchre', 16],         // one word — no suffix to price
+		['estate path', 16],       // affix tables are case-sensitive
+	])('should charge %s as %i', (name, expected) => {
+		expect(roomCost({ name: name as string, contents: [] })).toBe(expected);
+	});
+
+	// The point of the unknown-room fallback is that it must never look like a
+	// bargain. Pinning the exact constant alone would let 10 (cheaper than the
+	// cheapest real room) pass; this states the property the fallback exists for.
+	it('should charge an unknown room more than the cheapest known room', () => {
+		expect(roomCost({ name: 'Voidborn Terrace', contents: [] }))
+			.toBeGreaterThan(roomCost({ name: 'Sepulchre Path', contents: [] }));
+	});
+
+	it('should charge a missing room the unknown-room cost rather than nothing', () => {
+		expect(roomCost(undefined)).toBe(16);
+	});
+});
+
+describe('routeCost', () => {
+	const rooms = new Map([
+		['start', { name: 'Domain Atrium', contents: [] }],   // 22 — must NOT be charged
+		['next', { name: 'Sepulchre Path', contents: [] }],   // 9
+		['trial', { name: "Aspirant's Trial", contents: [] }], // 5
+	]);
+
+	it('should charge every room entered', () => {
+		expect(routeCost(['start', 'next', 'trial'], rooms)).toBe(14);
+	});
+
+	it('should not charge the room the player already stands in', () => {
+		expect(routeCost(['start'], rooms)).toBe(0);
 	});
 });
