@@ -37,7 +37,7 @@ jobs:
               # individually silently skipped the deploy for gemicon, device,
               # league, mercure, price and trade — a green run that shipped
               # nothing. Over-deploying on a collector-only change is the safe
-              # direction; under-deploying is not.
+              # direction; under-deploying is not. See docs/DEPLOY.md.
               - 'internal/**'
               - 'cmd/server/**'
               - 'frontend/**'
@@ -45,9 +45,14 @@ jobs:
               - 'go.sum'
               - 'Dockerfile'
             collector:
+              # Matches `go list -deps ./cmd/collector`. Re-derive when the
+              # collector gains an import; see docs/DEPLOY.md.
               - 'cmd/collector/**'
               - 'internal/collector/**'
-              - 'internal/db/*.go'
+              - 'internal/db/**'
+              - 'internal/league/**'
+              - 'internal/mercure/**'
+              - 'internal/price/**'
               - 'go.mod'
               - 'go.sum'
               - 'Dockerfile'
