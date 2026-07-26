@@ -394,6 +394,29 @@ func (c *Cache) SetSparklines(series, corrupted map[sparklineKey][]SparklinePoin
 	c.sparklineHighWater = highWater
 }
 
+// SetSparklinesByName replaces both sparkline maps from name-then-variant keyed
+// input. sparklineKey is unexported, so callers outside this package cannot
+// build the maps SetSparklines takes; this is their entry point.
+//
+// Both maps are converted before the lock is taken, keeping the write lock down
+// to the three assignments SetSparklines performs.
+func (c *Cache) SetSparklinesByName(series, corrupted map[string]map[string][]SparklinePoint, highWater time.Time) {
+	c.SetSparklines(keyBySparklineName(series), keyBySparklineName(corrupted), highWater)
+}
+
+// keyBySparklineName flattens name-then-variant nesting into sparklineKey keys.
+// A nil input yields an empty map, so a caller warming only one of the two
+// corpora still leaves the other addressable rather than nil.
+func keyBySparklineName(byName map[string]map[string][]SparklinePoint) map[sparklineKey][]SparklinePoint {
+	out := make(map[sparklineKey][]SparklinePoint, len(byName))
+	for name, byVariant := range byName {
+		for variant, points := range byVariant {
+			out[sparklineKey{name: name, variant: variant}] = points
+		}
+	}
+	return out
+}
+
 // Sparklines returns the cached non-corrupted series for a gem name and
 // variant (nil when absent).
 func (c *Cache) Sparklines(name, variant string) []SparklinePoint {
