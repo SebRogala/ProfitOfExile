@@ -495,15 +495,6 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 			}
 		}
 
-		// Load MarketContext for sparkline normalization.
-		var trendMC *lab.MarketContext
-		if cache != nil {
-			trendMC = cache.For(scope).MarketContext()
-		}
-		if trendMC == nil {
-			trendMC, _ = repo.LatestMarketContext(r.Context(), scope)
-		}
-
 		// Batch fetch sparkline data grouped by variant.
 		type trendData struct {
 			prices, listings, baseListings []int
@@ -542,22 +533,32 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 				return pts
 			}
 
-			for v, g := range groups {
-				transSparklines, err := repo.SparklineData(r.Context(), scope, g.transNames, v, 24*7)
-				if err != nil {
-					slog.Warn("trend analysis: trans sparkline batch failed", "variant", v, "error", err)
-					transSparklines = make(map[string][]lab.SparklinePoint)
-				}
-				// Normalize trans sparkline prices with temporal coefficients.
-				// Raw prices — normalization creates edge artifacts
+			// A warm cache holds the full series each group needs, so no
+			// gem_snapshots query is issued; last4 trims to the points the row
+			// actually shows. Raw prices either way — normalization creates
+			// edge artifacts.
+			warmSparklines := cache != nil && cache.For(scope).HasSparklines()
 
-				baseSparklines, err := repo.SparklineData(r.Context(), scope, g.baseNames, v, 24*7)
-				if err != nil {
-					slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
-					baseSparklines = make(map[string][]lab.SparklinePoint)
+			for v, g := range groups {
+				var transSparklines, baseSparklines map[string][]lab.SparklinePoint
+
+				if warmSparklines {
+					transSparklines = cachedSparklines(cache, scope, g.transNames, v, 0)
+					baseSparklines = cachedSparklines(cache, scope, g.baseNames, v, 0)
+				} else {
+					var err error
+					transSparklines, err = repo.SparklineData(r.Context(), scope, g.transNames, v, 24*7)
+					if err != nil {
+						slog.Warn("trend analysis: trans sparkline batch failed", "variant", v, "error", err)
+						transSparklines = make(map[string][]lab.SparklinePoint)
+					}
+
+					baseSparklines, err = repo.SparklineData(r.Context(), scope, g.baseNames, v, 24*7)
+					if err != nil {
+						slog.Warn("trend analysis: base sparkline batch failed", "variant", v, "error", err)
+						baseSparklines = make(map[string][]lab.SparklinePoint)
+					}
 				}
-				// Normalize base sparklines consistently with trans sparklines.
-				// Raw prices — normalization creates edge artifacts
 
 				for idx, key := range g.gems {
 					td := trendData{}
@@ -1179,42 +1180,6 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			slog.Error("gem signals: encode response", "error", err)
 		}
 	}
-}
-
-// normalizeSparklines applies temporal normalization to sparkline price data
-// so the sparkline visually matches what the signal classifier sees.
-// The repository returns raw prices; this function divides each price by
-// the temporal coefficient for that point's timestamp and variant.
-// mc may be nil — in that case the data is returned unchanged.
-func normalizeSparklines(sparklines map[string][]lab.SparklinePoint, mc *lab.MarketContext, variant string) map[string][]lab.SparklinePoint {
-	if mc == nil || mc.TemporalMode == "none" || mc.TemporalMode == "" || len(mc.TemporalBuckets) == 0 {
-		return sparklines
-	}
-
-	// Parse bucket data ONCE — CoefficientAt parses JSON on every call which is
-	// too expensive when iterating thousands of sparkline points.
-	var bucketData map[string][]lab.TemporalBucket
-	if err := json.Unmarshal(mc.TemporalBuckets, &bucketData); err != nil {
-		return sparklines
-	}
-
-	result := make(map[string][]lab.SparklinePoint, len(sparklines))
-	for name, pts := range sparklines {
-		normalized := make([]lab.SparklinePoint, len(pts))
-		for i, p := range pts {
-			normalized[i] = p
-			t, err := time.Parse(time.RFC3339, p.Time)
-			if err != nil {
-				continue // keep raw price on parse error
-			}
-			coeff := lab.LookupCoefficient(bucketData, mc.TemporalMode, t, variant)
-			if coeff > 0 {
-				normalized[i].Price = p.Price / coeff
-			}
-		}
-		result[name] = normalized
-	}
-	return result
 }
 
 // MarketOverview returns an aggregated market overview built from cached data.
