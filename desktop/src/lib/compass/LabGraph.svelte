@@ -118,7 +118,10 @@
 		onRoute: boolean;
 		isVisited: boolean;
 		isSecret: boolean;
+		/** Unique per rendered line: pairKey + flavor. NOT a room-pair identity. */
 		key: string;
+		/** Sorted room-pair identity, shared by the natural and secret flavors. */
+		pairKey: string;
 	}
 
 	let connections = $derived.by<Connection[]>(() => {
@@ -194,6 +197,7 @@
 					isVisited: visitedEdges.has(pairKey),
 					isSecret,
 					key: dedupKey,
+					pairKey,
 				});
 			}
 		}
@@ -369,7 +373,10 @@
 				{#if dir !== 'C'}
 					{@const dot = exitDotPos(node.cx, node.cy, dir, nr)}
 					{@const pairKey = [node.room.id, targetId].sort().join('|')}
-					{@const isRouteExit = connections.some(c => c.key === pairKey && c.onRoute)}
+					<!-- Match on pairKey, NOT key: key carries a ':natural'/':secret'
+					     suffix for line dedup, so comparing it to a bare pairKey
+					     never matches and every dot silently rendered grey. -->
+					{@const isRouteExit = connections.some(c => c.pairKey === pairKey && c.onRoute)}
 					<circle cx={dot.x} cy={dot.y} r={compact ? 2 : (isRouteExit ? 5 : 4.5)}
 						fill={isRouteExit ? '#10b981' : '#94a3b8'}
 						stroke={isRouteExit ? '#059669' : '#64748b'}
