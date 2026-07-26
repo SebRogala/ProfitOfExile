@@ -138,6 +138,40 @@ func TestCache_HasSparklines_TrueAfterPopulation(t *testing.T) {
 	}
 }
 
+// The two corpora report separately. Reading the non-corrupted map off a cache
+// where only the corrupted one was filled serves an empty series for every gem,
+// with no fallback and no log — so a corrupted-only write must still read cold.
+func TestCache_HasSparklines_FalseWhenOnlyTheCorruptedMapIsPopulated(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	c.For(scope).SetSparklines(nil, map[sparklineKey][]SparklinePoint{
+		{name: "Vaal Grace", variant: "21/23c"}: {{Time: "2026-07-20T11:00:00Z", Price: 900}},
+	}, time.Time{})
+
+	if c.For(scope).HasSparklines() {
+		t.Errorf("HasSparklines with only the corrupted map populated: got true, want false")
+	}
+	if !c.For(scope).HasSparklinesCorrupted() {
+		t.Errorf("HasSparklinesCorrupted after a corrupted write: got false, want true")
+	}
+}
+
+// The mirror case: a non-corrupted-only population must not tell the Dedication
+// reader its corpus is warm.
+func TestCache_HasSparklinesCorrupted_FalseWhenOnlyTheMainMapIsPopulated(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	c.For(scope).SetSparklines(map[sparklineKey][]SparklinePoint{
+		{name: "Spark of Nova", variant: "20/20"}: {{Time: "2026-07-20T11:00:00Z", Price: 120}},
+	}, nil, time.Time{})
+
+	if c.For(scope).HasSparklinesCorrupted() {
+		t.Errorf("HasSparklinesCorrupted with only the main map populated: got true, want false")
+	}
+}
+
 // The mark drives the next incremental read, so it must come back exactly as
 // stored rather than as the write's wall-clock time.
 func TestCache_SparklineHighWater_ReturnsStoredMark(t *testing.T) {

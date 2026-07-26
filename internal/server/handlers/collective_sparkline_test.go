@@ -441,6 +441,21 @@ func TestCachedCorruptedSparklines_NonDedicationVariantDefersToTheQuery(t *testi
 	}
 }
 
+// The corrupted map is the one this call reads. A cache warmed only on the
+// non-corrupted side is cold for this request, and reporting it warm would hand
+// back an empty series for every Dedication gem with no fallback and no log.
+func TestCachedCorruptedSparklines_NonCorruptedOnlyCacheDefersToTheQuery(t *testing.T) {
+	now := time.Now()
+	cache := lab.NewCache(sparklineScope)
+	warmSparklines(t, cache, map[string]map[string][]lab.SparklinePoint{
+		"Spark of Nova": {"20/20": {sparkAt(now, time.Hour, 125, 26)}},
+	}, nil)
+
+	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours); cached {
+		t.Error("cached = true with only the non-corrupted map populated, want the query")
+	}
+}
+
 func TestCachedCorruptedSparklines_ColdCacheDefersToTheQuery(t *testing.T) {
 	cache := lab.NewCache(sparklineScope)
 
@@ -452,6 +467,29 @@ func TestCachedCorruptedSparklines_ColdCacheDefersToTheQuery(t *testing.T) {
 func TestCachedCorruptedSparklines_NilCacheDefersToTheQuery(t *testing.T) {
 	if _, cached := cachedCorruptedSparklines(nil, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours); cached {
 		t.Error("cached = true with no cache, want the query")
+	}
+}
+
+// collectiveRow.Sparkline carries no omitempty, so a row left with a nil series
+// marshals as `null` while a populated one marshals as an array. Both collective
+// modes share this row type, and the Dedication mode never populates the field —
+// leaving it unset there makes the two endpoints disagree on response shape.
+func TestCollectiveRow_SparklineWithoutPointsMarshalsAsEmptyArray(t *testing.T) {
+	encoded, err := json.Marshal(collectiveRow{Sparkline: nonNilSparkline(nil)})
+	if err != nil {
+		t.Fatalf("marshal collectiveRow: %v", err)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("unmarshal collectiveRow: %v", err)
+	}
+	got, ok := fields["sparkline"]
+	if !ok {
+		t.Fatalf("response has no sparkline field: %s", encoded)
+	}
+	if string(got) != "[]" {
+		t.Errorf("sparkline = %s, want []", got)
 	}
 }
 

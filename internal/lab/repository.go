@@ -596,40 +596,114 @@ var sparklineVariants = []string{"1", "1/20", "20", "20/20"}
 // for — the Dedication (21/23c) pool.
 const sparklineCorruptedVariant = "21/23c"
 
+// sparklineRowFilter is the row predicate every sparkline read shares: the
+// scoped league, an upper bound on row age, and the served-variant allowlist
+// split by corruption. hoursParam names the placeholder carrying the age bound,
+// so the same predicate can be reused at a different bound.
+//
+// Kept in one place because the cold read applies it three times at two
+// different bounds. The variant allowlist and corruption split must be identical
+// in all three: the tail half and the window half would otherwise cover
+// different key spaces, and their union would no longer be one coherent corpus.
+func sparklineRowFilter(hoursParam string) string {
+	return `league = $1
+		  AND time > NOW() - make_interval(hours => ` + hoursParam + `)
+		  AND ((is_corrupted = false AND variant = ANY($3))
+		    OR (is_corrupted = true AND variant = $4))`
+}
+
+// sparklineIncrementalQuery reads only rows strictly newer than the caller's
+// high-water mark ($5). On a running server that mark is one tick old, so the
+// result is a single snapshot's worth of rows and needs no further bound.
+var sparklineIncrementalQuery = `
+	SELECT name, variant, time, COALESCE(chaos, 0), COALESCE(listings, 0), is_corrupted
+	FROM gem_snapshots
+	WHERE ` + sparklineRowFilter("$2") + `
+	  AND time > $5
+	ORDER BY name, variant, time ASC`
+
+// sparklineColdQuery reads exactly what a cold cache retains and nothing more:
+// every row inside the served window ($6 hours), plus the newest $5 rows per
+// series within the $2-hour lookback.
+//
+// That union is a superset of what mergeSparklineSeries keeps. The merge keeps
+// every in-window point, and extends backwards only far enough to reach
+// SparklineTailPoints — points that are, by construction, among the newest $5
+// rows of the series. Reading the flat $2-hour window instead pulls roughly
+// fourteen times the rows for the same result, and holds them live for the whole
+// merge at the one moment (process start) the analysis pass is also loading its
+// own history.
+//
+// The two halves overlap for any series still trading; UNION collapses the
+// duplicates so each timestamp arrives once.
+var sparklineColdQuery = `
+	WITH keys AS (
+		SELECT DISTINCT name, variant, is_corrupted
+		FROM gem_snapshots
+		WHERE ` + sparklineRowFilter("$2") + `
+	),
+	tail AS (
+		SELECT t.name, t.variant, t.time, t.chaos, t.listings, t.is_corrupted
+		FROM keys k
+		CROSS JOIN LATERAL (
+			SELECT g.name, g.variant, g.time,
+			       COALESCE(g.chaos, 0) AS chaos,
+			       COALESCE(g.listings, 0) AS listings,
+			       g.is_corrupted
+			FROM gem_snapshots g
+			WHERE g.league = $1
+			  AND g.name = k.name
+			  AND g.variant = k.variant
+			  AND g.is_corrupted = k.is_corrupted
+			  AND g.time > NOW() - make_interval(hours => $2)
+			ORDER BY g.time DESC
+			LIMIT $5
+		) t
+	),
+	win AS (
+		SELECT name, variant, time,
+		       COALESCE(chaos, 0) AS chaos,
+		       COALESCE(listings, 0) AS listings,
+		       is_corrupted
+		FROM gem_snapshots
+		WHERE ` + sparklineRowFilter("$6") + `
+	)
+	SELECT name, variant, time, chaos, listings, is_corrupted
+	FROM (SELECT * FROM win UNION SELECT * FROM tail) u
+	ORDER BY name, variant, time ASC`
+
 // SparklineWindow returns raw price points for every gem/variant series the
 // sparkline cache serves, in one pass. The first map holds the non-corrupted
 // series, the second the corrupted (Dedication) series.
 //
-// hours bounds the window read from the snapshot table. since drives the
-// incremental path: pass a non-zero value to read only rows newer than the
-// caller's high-water mark, or the zero time for a full window read.
+// since selects the read shape. A non-zero value takes the incremental path and
+// returns only rows newer than the caller's high-water mark. The zero time takes
+// the cold path, which is bounded by every field of bounds — see
+// sparklineColdQuery for why a flat LookbackHours read is not used there.
+//
+// The window bound is evaluated against the database clock while the caller
+// windows against its own. Skew of a few minutes only shifts which
+// about-to-expire points arrive; the per-series tail is unconditional, so every
+// series still gets its newest TailPoints rows regardless.
 //
 // Deliberately unlike GemPriceHistoryByVariant, this applies no chaos floor and
 // no Trarthus exclusion — SparklineData has never applied either, and the chaos
 // floor is tracked separately as POE-134. It also does not filter
 // is_transfigured, because TrendAnalysis charts base gems too.
-func (r *Repository) SparklineWindow(ctx context.Context, scope league.Scope, since time.Time, hours int) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error) {
+func (r *Repository) SparklineWindow(ctx context.Context, scope league.Scope, since time.Time, bounds SparklineBounds) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("lab repo: sparkline window: %w", err)
 	}
 
-	query := `
-		SELECT name, variant, time, COALESCE(chaos, 0), COALESCE(listings, 0), is_corrupted
-		FROM gem_snapshots
-		WHERE league = $1
-		  AND time > NOW() - make_interval(hours => $2)
-		  AND ((is_corrupted = false AND variant = ANY($3))
-		    OR (is_corrupted = true AND variant = $4))`
-	args := []any{scope.ID(), hours, sparklineVariants, sparklineCorruptedVariant}
-
-	if !since.IsZero() {
-		query += ` AND time > $5`
-		args = append(args, since)
+	query := sparklineIncrementalQuery
+	args := []any{scope.ID(), bounds.LookbackHours, sparklineVariants, sparklineCorruptedVariant, since}
+	if since.IsZero() {
+		query = sparklineColdQuery
+		args = []any{
+			scope.ID(), bounds.LookbackHours, sparklineVariants, sparklineCorruptedVariant,
+			bounds.TailPoints, bounds.WindowHours,
+		}
 	}
-
-	// No row limit: the variant filters close the key space, and the time
-	// window bounds the rows per series.
-	query += ` ORDER BY name, variant, time ASC`
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {

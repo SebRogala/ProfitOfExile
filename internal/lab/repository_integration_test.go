@@ -237,6 +237,14 @@ func TestSparklineData_returnsOnlyScopedLeague(t *testing.T) {
 // map, and the corrupted split.
 // ---------------------------------------------------------------------------
 
+// spwBounds is the read bound for the filter tests: a window wide enough that
+// every seeded row lands in the window half, so those tests observe the filters
+// alone rather than the window/tail split. The bounded-cold-read tests below set
+// their own bounds.
+func spwBounds(hours int) SparklineBounds {
+	return SparklineBounds{WindowHours: hours, TailPoints: SparklineTailPoints, LookbackHours: hours}
+}
+
 func TestSparklineWindow_returnsBaseGems(t *testing.T) {
 	pool := labIntegrationPool(t)
 	ctx := context.Background()
@@ -253,7 +261,7 @@ func TestSparklineWindow_returnsBaseGems(t *testing.T) {
 	const name = "POE133 Base Only Gem"
 	seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", false, false, 111, 10, "BLUE")
 
-	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -285,7 +293,7 @@ func TestSparklineWindow_returnsGemsBelowTheChaosFloor(t *testing.T) {
 	const name = "POE133 Cheap Gem"
 	seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", true, false, 3, 10, "BLUE")
 
-	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -314,7 +322,7 @@ func TestSparklineWindow_returnsTrarthusGems(t *testing.T) {
 	const name = "POE133 Trarthus Gem"
 	seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", true, false, 111, 10, "BLUE")
 
-	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -339,7 +347,7 @@ func TestSparklineWindow_putsCorruptedRowsInTheCorruptedMap(t *testing.T) {
 	const name = "POE133 Corrupted Gem"
 	seedGemSnapshot(t, pool, leagueID, tm, name, "21/23c", true, true, 111, 10, "BLUE")
 
-	series, corrupted, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	series, corrupted, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -373,7 +381,7 @@ func TestSparklineWindow_excludesVariantsOutsideTheServedSet(t *testing.T) {
 	seedGemSnapshot(t, pool, leagueID, tm, name, "default", true, false, 111, 10, "BLUE")
 	seedGemSnapshot(t, pool, leagueID, tm, name, "20", true, false, 222, 20, "BLUE")
 
-	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -404,7 +412,7 @@ func TestSparklineWindow_returnsOnlyRowsNewerThanSince(t *testing.T) {
 	seedGemSnapshot(t, pool, leagueID, older, name, "20/20", true, false, 111, 10, "BLUE")
 	seedGemSnapshot(t, pool, leagueID, newer, name, "20/20", true, false, 222, 20, "BLUE")
 
-	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), older, 24)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), older, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -433,7 +441,7 @@ func TestSparklineWindow_returnsOnlyScopedLeague(t *testing.T) {
 	seedGemSnapshot(t, pool, leagueA, tm, name, "20/20", true, false, 111, 10, "BLUE")
 	seedGemSnapshot(t, pool, leagueB, tm, name, "20/20", true, false, 222, 20, "BLUE")
 
-	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueA), time.Time{}, 24)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueA), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow: %v", err)
 	}
@@ -458,7 +466,7 @@ func TestSparklineWindow_returnsEmptyMapsWhenNothingMatches(t *testing.T) {
 	leagueID := "POE-133-spw-empty"
 	registerLeague(t, pool, leagueID)
 
-	series, corrupted, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	series, corrupted, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, spwBounds(24))
 	if err != nil {
 		t.Fatalf("SparklineWindow on an empty league: %v", err)
 	}
@@ -467,6 +475,153 @@ func TestSparklineWindow_returnsEmptyMapsWhenNothingMatches(t *testing.T) {
 	}
 	if len(series) != 0 || len(corrupted) != 0 {
 		t.Errorf("series/corrupted sizes = %d/%d, want 0/0 for a league with no snapshots", len(series), len(corrupted))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SparklineWindow — the bounded cold read.
+//
+// The tests above seed far-future instants so every row lands inside any window;
+// these seed relative to NOW() so the window/tail split is observable. A cold
+// read must return the served window in full plus only a short per-series tail
+// beyond it, never the flat lookback: that read is roughly fourteen times the
+// rows for the same cache contents, held live for the whole merge, at the one
+// moment the analysis pass is loading its own history.
+// ---------------------------------------------------------------------------
+
+// cleanupLeagueSnapshots deletes every gem_snapshots row for one league.
+// cleanupAtTime keys on an exact instant across ALL leagues, which is safe for
+// year-2099 seeds but not for seeds relative to NOW().
+func cleanupLeagueSnapshots(t *testing.T, pool *pgxpool.Pool, leagueID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM gem_snapshots WHERE league = $1`, leagueID); err != nil {
+			t.Logf("cleanup warning: delete gem_snapshots for league %q: %v", leagueID, err)
+		}
+	})
+}
+
+// sparkAges returns how many hours before now each returned point sits, rounded
+// to the nearest hour, so an assertion names ages rather than instants.
+func sparkAges(t *testing.T, now time.Time, points []SparklinePoint) []int {
+	t.Helper()
+	out := make([]int, len(points))
+	for i, p := range points {
+		at, err := time.Parse(time.RFC3339, p.Time)
+		if err != nil {
+			t.Fatalf("point %d has unparsable time %q: %v", i, p.Time, err)
+		}
+		out[i] = int(now.Sub(at).Round(time.Hour) / time.Hour)
+	}
+	return out
+}
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestSparklineWindow_coldReadKeepsTheWindowAndOnlyATailBeyondIt(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-cold-bounded"
+	registerLeague(t, pool, leagueID)
+	cleanupLeagueSnapshots(t, pool, leagueID)
+
+	const name = "POE133 Bounded Gem"
+	now := time.Now().UTC().Truncate(time.Second)
+	// Three rows inside the 12-hour window, five older ones inside the lookback.
+	for _, ago := range []int{1, 5, 11, 20, 30, 40, 50, 60} {
+		seedGemSnapshot(t, pool, leagueID, now.Add(-time.Duration(ago)*time.Hour),
+			name, "20/20", true, false, float64(100+ago), 10, "BLUE")
+	}
+
+	bounds := SparklineBounds{WindowHours: 12, TailPoints: 4, LookbackHours: 72}
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, bounds)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+
+	// The three in-window rows, plus the tail extension to four points: the 20h
+	// row is the fourth-newest. 30h and older are what an unbounded read adds.
+	want := []int{20, 11, 5, 1}
+	got := sparkAges(t, now, series[sparklineKey{name: name, variant: "20/20"}])
+	if !sameInts(got, want) {
+		t.Fatalf("point ages (hours before now) = %v, want %v; the extra rows mean the cold read fetched the flat %d-hour lookback",
+			got, want, bounds.LookbackHours)
+	}
+}
+
+func TestSparklineWindow_coldReadStillReturnsATailForASeriesWithNoInWindowRows(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-cold-tail"
+	registerLeague(t, pool, leagueID)
+	cleanupLeagueSnapshots(t, pool, leagueID)
+
+	// A gem that stopped appearing in snapshots: nothing inside the window, so a
+	// window-only read blanks its sparkline instead of showing its last shape.
+	const name = "POE133 Delisted Gem"
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, ago := range []int{20, 24, 28, 32, 36} {
+		seedGemSnapshot(t, pool, leagueID, now.Add(-time.Duration(ago)*time.Hour),
+			name, "20/20", true, false, float64(100+ago), 10, "BLUE")
+	}
+
+	bounds := SparklineBounds{WindowHours: 12, TailPoints: 4, LookbackHours: 72}
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, bounds)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+
+	want := []int{32, 28, 24, 20}
+	got := sparkAges(t, now, series[sparklineKey{name: name, variant: "20/20"}])
+	if !sameInts(got, want) {
+		t.Fatalf("point ages (hours before now) = %v, want the newest %d rows %v",
+			got, bounds.TailPoints, want)
+	}
+}
+
+func TestSparklineWindow_coldReadDropsSeriesOlderThanTheLookback(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-cold-lookback"
+	registerLeague(t, pool, leagueID)
+	cleanupLeagueSnapshots(t, pool, leagueID)
+
+	// Past the lookback a flat line from last week is worse than nothing, so the
+	// tail must not reach these rows even though the series has fewer than
+	// TailPoints inside it.
+	const name = "POE133 Ancient Gem"
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, ago := range []int{80, 100} {
+		seedGemSnapshot(t, pool, leagueID, now.Add(-time.Duration(ago)*time.Hour),
+			name, "20/20", true, false, float64(100+ago), 10, "BLUE")
+	}
+
+	bounds := SparklineBounds{WindowHours: 12, TailPoints: 4, LookbackHours: 72}
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, bounds)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+
+	if points, ok := series[sparklineKey{name: name, variant: "20/20"}]; ok {
+		t.Errorf("series has %d points %v, want no series at all — every row is older than the %d-hour lookback",
+			len(points), sparkAges(t, now, points), bounds.LookbackHours)
 	}
 }
 

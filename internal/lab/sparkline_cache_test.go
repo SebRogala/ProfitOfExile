@@ -317,14 +317,16 @@ func TestMergeSparklineSeries_DuplicateTimestampCollapsesToStoredPoint(t *testin
 // canned series, so the incremental-read and high-water logic can be exercised
 // without a database.
 type fakeSparklineSource struct {
-	sinceCalls []time.Time
-	series     map[sparklineKey][]SparklinePoint
-	corrupted  map[sparklineKey][]SparklinePoint
-	err        error
+	sinceCalls  []time.Time
+	boundsCalls []SparklineBounds
+	series      map[sparklineKey][]SparklinePoint
+	corrupted   map[sparklineKey][]SparklinePoint
+	err         error
 }
 
-func (f *fakeSparklineSource) SparklineWindow(_ context.Context, _ league.Scope, since time.Time, _ int) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error) {
+func (f *fakeSparklineSource) SparklineWindow(_ context.Context, _ league.Scope, since time.Time, bounds SparklineBounds) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error) {
 	f.sinceCalls = append(f.sinceCalls, since)
+	f.boundsCalls = append(f.boundsCalls, bounds)
 	if f.err != nil {
 		return nil, nil, f.err
 	}
@@ -497,6 +499,39 @@ func TestPopulateSparklineCache_ColdCacheRequestsZeroSince(t *testing.T) {
 	}
 	if !src.sinceCalls[0].IsZero() {
 		t.Fatalf("cold-cache read `since`: got %s, want the zero time (full window)", src.sinceCalls[0])
+	}
+}
+
+// The cold read happens at process start, alongside the analysis pass loading
+// its own history, and every returned point stays live for the whole merge. So
+// it must ask only for what the merge keeps — the rolling window plus a
+// per-series tail — not the flat lookback, which is fourteen times the rows for
+// the same cache contents.
+func TestPopulateSparklineCache_RequestsOnlyTheBoundsTheMergeRetains(t *testing.T) {
+	now := sparklineNow()
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	src := &fakeSparklineSource{
+		series: map[sparklineKey][]SparklinePoint{
+			{name: "Spark of Nova", variant: "20/20"}: {sparkPoint(now, time.Hour, 12)},
+		},
+	}
+	if err := populateSparklineCache(context.Background(), src, c, scope, now); err != nil {
+		t.Fatalf("populate: %v", err)
+	}
+
+	if len(src.boundsCalls) != 1 {
+		t.Fatalf("source calls: got %d, want 1", len(src.boundsCalls))
+	}
+	want := SparklineBounds{
+		WindowHours:   SparklineWindowHours,
+		TailPoints:    SparklineTailPoints,
+		LookbackHours: sparklineMaxLookbackHours,
+	}
+	if src.boundsCalls[0] != want {
+		t.Fatalf("cold read bounds: got %+v, want %+v — the read must match what mergeSparklineSeries keeps",
+			src.boundsCalls[0], want)
 	}
 }
 

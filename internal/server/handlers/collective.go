@@ -97,6 +97,18 @@ func cachedSparklines(cache *lab.Cache, scope league.Scope, names []string, vari
 	return out
 }
 
+// nonNilSparkline returns pts, or an empty slice when pts is nil.
+//
+// collectiveRow.Sparkline carries no omitempty, so a nil slice marshals as
+// `null` while an empty one marshals as `[]`. Both collective modes must emit
+// the same shape, so every row literal runs its series through this.
+func nonNilSparkline(pts []lab.SparklinePoint) []lab.SparklinePoint {
+	if pts == nil {
+		return []lab.SparklinePoint{}
+	}
+	return pts
+}
+
 // cachedCorruptedVariant is the only corrupted variant the lab cache stores
 // series for — the Dedication (21/23c) pool. It mirrors the population query's
 // filter in internal/lab.
@@ -111,7 +123,9 @@ func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []str
 		return nil, false
 	}
 	c := cache.For(scope)
-	if !c.HasSparklines() {
+	// The corrupted corpus specifically: a populated non-corrupted map says
+	// nothing about whether this one can serve the request.
+	if !c.HasSparklinesCorrupted() {
 		return nil, false
 	}
 	out := make(map[string][]lab.SparklinePoint, len(names))
@@ -332,7 +346,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 				SellReason:           cr.SellReason,
 				Sellability:          cr.Sellability,
 				SellabilityLabel:     cr.SellabilityLabel,
-				Sparkline:            sparklines[cr.TransfiguredName],
+				Sparkline:            nonNilSparkline(sparklines[cr.TransfiguredName]),
 				Low7Days:             cr.Low7Days,
 				High7Days:            cr.High7Days,
 				SellConfidence:       cr.SellConfidence,
@@ -352,9 +366,6 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			}
 
 			rows = append(rows, r)
-			if rows[len(rows)-1].Sparkline == nil {
-				rows[len(rows)-1].Sparkline = []lab.SparklinePoint{}
-			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -419,6 +430,10 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 			Confidence:           cr.Confidence,
 			SellConfidence:       cr.SellConfidence,
 			LowConfidence:        cr.LowConfidence,
+			// Dedication rows carry no series, but the field has no omitempty:
+			// without this the endpoint emits `null` where the Normal mode
+			// emits `[]`.
+			Sparkline: nonNilSparkline(nil),
 		})
 	}
 
