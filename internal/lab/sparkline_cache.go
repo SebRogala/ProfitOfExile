@@ -1,8 +1,12 @@
 package lab
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"time"
+
+	"profitofexile/internal/league"
 )
 
 // SparklineWindowHours is the rolling window served to sparkline consumers.
@@ -106,6 +110,102 @@ func mergeSparklineSeries(existing, incoming []SparklinePoint, now time.Time) []
 		out[i] = p.pt
 	}
 	return out
+}
+
+// sparklineSource is the population-time read the sparkline cache needs. The
+// repository satisfies it; tests substitute a fake so the merge and high-water
+// logic can be exercised without a database or a live tick loop.
+type sparklineSource interface {
+	SparklineWindow(ctx context.Context, scope league.Scope, since time.Time, hours int) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error)
+}
+
+// populateSparklineCache reads the sparkline window and folds it into the
+// cache, replacing both maps and the high-water mark in one assignment.
+//
+// The read is incremental: only rows newer than the cached high-water mark are
+// fetched, except on a cold cache where the full window is loaded. Series that
+// receive no incoming points are still re-merged so points aging out of the
+// rolling window are trimmed.
+//
+// The call is idempotent by construction, which RunV2 requires — it runs twice
+// per snapshot (the gem tick and the T+15-minute delayed recompute). A second
+// pass over an unchanged snapshot reads no rows, merges nothing new (and the
+// merge dedupes on timestamp regardless), observes no time past the mark, and
+// so leaves the mark where it was.
+func populateSparklineCache(ctx context.Context, src sparklineSource, cache *Cache, scope league.Scope, now time.Time) error {
+	c := cache.For(scope)
+
+	existing, existingCorrupted, highWater := c.sparklineSnapshot()
+	since := highWater
+	if len(existing) == 0 && len(existingCorrupted) == 0 {
+		// Cold cache: load the whole window rather than trusting a mark that
+		// no series backs.
+		since = time.Time{}
+	}
+
+	incoming, incomingCorrupted, err := src.SparklineWindow(ctx, scope, since, sparklineMaxLookbackHours)
+	if err != nil {
+		return fmt.Errorf("populate sparkline cache: %w", err)
+	}
+
+	merged, observed := mergeSparklineMaps(existing, incoming, now)
+	mergedCorrupted, observedCorrupted := mergeSparklineMaps(existingCorrupted, incomingCorrupted, now)
+
+	if observedCorrupted.After(observed) {
+		observed = observedCorrupted
+	}
+	// Advance only to what was actually seen; an empty read leaves the mark.
+	if observed.After(highWater) {
+		highWater = observed
+	}
+
+	c.SetSparklines(merged, mergedCorrupted, highWater)
+	return nil
+}
+
+// mergeSparklineMaps folds incoming into existing key by key, returning a fresh
+// map and the newest timestamp observed among the incoming points.
+//
+// Keys present only in existing are re-merged with no incoming points so the
+// rolling window still trims them. Keys whose merge leaves nothing are dropped
+// rather than kept as empty series.
+func mergeSparklineMaps(existing, incoming map[sparklineKey][]SparklinePoint, now time.Time) (map[sparklineKey][]SparklinePoint, time.Time) {
+	out := make(map[sparklineKey][]SparklinePoint, len(existing)+len(incoming))
+	var newest time.Time
+
+	for k, pts := range existing {
+		if merged := mergeSparklineSeries(pts, incoming[k], now); len(merged) > 0 {
+			out[k] = merged
+		}
+	}
+	for k, pts := range incoming {
+		if _, done := existing[k]; !done {
+			if merged := mergeSparklineSeries(nil, pts, now); len(merged) > 0 {
+				out[k] = merged
+			}
+		}
+		for _, p := range pts {
+			at, err := time.Parse(time.RFC3339, p.Time)
+			if err != nil {
+				continue
+			}
+			if at.After(newest) {
+				newest = at
+			}
+		}
+	}
+
+	return out, newest
+}
+
+// sparklineSnapshot returns both cached maps and the high-water mark in one
+// lock acquisition. The maps are the stored ones: callers read them and build
+// replacements, never mutate them in place — the Cache contract is that stored
+// data is immutable once assigned.
+func (c *Cache) sparklineSnapshot() (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sparklines, c.sparklinesCorrupted, c.sparklineHighWater
 }
 
 // appendParsedSparklinePoints appends pts to dst, dropping any point whose Time

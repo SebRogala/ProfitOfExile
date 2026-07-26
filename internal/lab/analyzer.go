@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"profitofexile/internal/league"
 	"profitofexile/internal/trade"
@@ -346,6 +347,15 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 		"signals", len(signals),
 		"inserted", insertedSig,
 	)
+
+	if a.cache != nil {
+		// Serving-path optimisation only: a failure here leaves handlers on
+		// their existing gem_snapshots fallback, so it is logged rather than
+		// failing a run whose analysis output is already persisted.
+		if err := populateSparklineCache(ctx, a.repo, a.cache, scope, time.Now()); err != nil {
+			a.logger.Error("v2: failed to populate sparkline cache", "error", err)
+		}
+	}
 
 	a.logger.Info("v2 analysis complete", "snapTime", snapTime, "gems", len(gems))
 	a.throttler.Signal()
