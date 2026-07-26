@@ -16,6 +16,8 @@ specialized agent profiles.
   data-flow behavior, explicitly labelled.
 - [Overlay guide](docs/OVERLAY-GUIDE.md) — specialized Tauri/Windows knowledge;
   observe its status caveat.
+- [Analysis cache guide](docs/ANALYSIS-CACHE.md) — how `lab.Cache` is populated
+  and served, and the concurrency rules any new cache field must follow.
 
 Current code, migrations, tests, and deployment configuration are authoritative
 for implemented behavior. Document status matters: do not treat product vision,
