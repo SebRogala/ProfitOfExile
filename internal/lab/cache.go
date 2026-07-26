@@ -441,12 +441,26 @@ func (c *Cache) SparklineHighWater() time.Time {
 	return c.sparklineHighWater
 }
 
-// HasSparklines reports whether the sparkline cache has been populated at all.
-// Handlers need this to tell a cold cache — where falling back to the database
-// is correct — from a warm cache where a missing key genuinely means the gem
-// has no recent points.
+// HasSparklines reports whether the NON-corrupted sparkline map has been
+// populated. Handlers need this to tell a cold cache — where falling back to the
+// database is correct — from a warm cache where a missing key genuinely means
+// the gem has no recent points.
+//
+// It reports on one corpus only. A caller reading the non-corrupted map must not
+// be told the cache is warm because the corrupted map was filled: it would serve
+// empty series with no fallback and no log. HasSparklinesCorrupted is the same
+// signal for the other corpus.
 func (c *Cache) HasSparklines() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.sparklines) > 0 || len(c.sparklinesCorrupted) > 0
+	return len(c.sparklines) > 0
+}
+
+// HasSparklinesCorrupted reports whether the corrupted (Dedication) sparkline
+// map has been populated. See HasSparklines for why the two corpora report
+// separately.
+func (c *Cache) HasSparklinesCorrupted() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.sparklinesCorrupted) > 0
 }

@@ -24,6 +24,32 @@ const SparklineTailPoints = 4
 // from last week.
 const sparklineMaxLookbackHours = 168
 
+// SparklineBounds bounds a sparkline read so the rows fetched match the rows the
+// merge would retain. The cold read is the only caller that needs all three: it
+// pulls WindowHours in full, then the newest TailPoints rows per series within
+// LookbackHours. Reading LookbackHours flat instead costs roughly fourteen times
+// the rows for the same cache contents.
+type SparklineBounds struct {
+	// WindowHours is the rolling window every series keeps in full.
+	WindowHours int
+	// TailPoints is the number of trailing rows a series keeps beyond the
+	// window, so a delisted gem still renders its last known shape.
+	TailPoints int
+	// LookbackHours is how far back the tail may reach.
+	LookbackHours int
+}
+
+// sparklineCacheBounds is what the cache asks the source for. It mirrors the
+// retention mergeSparklineSeries applies, so the read and the merge cannot drift
+// into fetching rows nothing keeps.
+func sparklineCacheBounds() SparklineBounds {
+	return SparklineBounds{
+		WindowHours:   SparklineWindowHours,
+		TailPoints:    SparklineTailPoints,
+		LookbackHours: sparklineMaxLookbackHours,
+	}
+}
+
 // sparklineKey identifies one cached price series: a gem name paired with the
 // variant it was priced at. Prices for different variants are different markets
 // and are never merged into one series.
@@ -116,16 +142,17 @@ func mergeSparklineSeries(existing, incoming []SparklinePoint, now time.Time) []
 // repository satisfies it; tests substitute a fake so the merge and high-water
 // logic can be exercised without a database or a live tick loop.
 type sparklineSource interface {
-	SparklineWindow(ctx context.Context, scope league.Scope, since time.Time, hours int) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error)
+	SparklineWindow(ctx context.Context, scope league.Scope, since time.Time, bounds SparklineBounds) (map[sparklineKey][]SparklinePoint, map[sparklineKey][]SparklinePoint, error)
 }
 
 // populateSparklineCache reads the sparkline window and folds it into the
 // cache, replacing both maps and the high-water mark in one assignment.
 //
 // The read is incremental: only rows newer than the cached high-water mark are
-// fetched, except on a cold cache where the full window is loaded. Series that
-// receive no incoming points are still re-merged so points aging out of the
-// rolling window are trimmed.
+// fetched. A cold cache instead reads from scratch, bounded by
+// sparklineCacheBounds to the window plus a per-series tail rather than the flat
+// lookback — see SparklineBounds. Series that receive no incoming points are
+// still re-merged so points aging out of the rolling window are trimmed.
 //
 // The call is idempotent by construction, which RunV2 requires — it runs twice
 // per snapshot (the gem tick and the T+15-minute delayed recompute). A second
@@ -143,7 +170,7 @@ func populateSparklineCache(ctx context.Context, src sparklineSource, cache *Cac
 		since = time.Time{}
 	}
 
-	incoming, incomingCorrupted, err := src.SparklineWindow(ctx, scope, since, sparklineMaxLookbackHours)
+	incoming, incomingCorrupted, err := src.SparklineWindow(ctx, scope, since, sparklineCacheBounds())
 	if err != nil {
 		return fmt.Errorf("populate sparkline cache: %w", err)
 	}
