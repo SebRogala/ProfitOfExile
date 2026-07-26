@@ -531,7 +531,17 @@ function routeWithGoldenDoor(
 	// Check if a route through all targets to the end exists WITHOUT crossing locked doors.
 	// If so, use it directly — don't return null, because the caller would use full adjacency
 	// which might find a "shorter" path through the locked door the player can't open.
-	const bypassRoute = bestRouteThroughTargets(unlockedAdj, start, end, targets, state.roomById);
+	//
+	// The bypass is only viable if EVERY target is reachable without the door.
+	// bestRouteThroughTargets drops targets it cannot reach, so calling it blind
+	// here would report success for a route that skipped a target sitting behind
+	// the door — abandoning both the target and the key it needed.
+	const bypassSkipsATarget = targets.some(
+		(t) => cheapestPath(unlockedAdj, start, t, state.roomById).length === 0,
+	);
+	const bypassRoute = bypassSkipsATarget
+		? []
+		: bestRouteThroughTargets(unlockedAdj, start, end, targets, state.roomById);
 	if (bypassRoute.length > 0) {
 		return bypassRoute;
 	}
@@ -600,12 +610,23 @@ type RoutingRoom = { name: string; contents: string[] };
 // trek and a Sepulchre Path is a few steps, so counting hops equally understates
 // the cost of big rooms. Cost is charged on ENTERING a room, so the room the
 // player already stands in is free — matching upstream's `length += roomCost(dest)`.
-const ROOM_PREFIX_COST: Record<string, number> = {
-	Sepulchre: 3, Estate: 5, Basilica: 7, Sanitorium: 8, Mansion: 9, Domain: 10,
-};
-const ROOM_SUFFIX_COST: Record<string, number> = {
-	Path: 6, Passage: 6, Walkways: 8, Halls: 8, Annex: 10, Enclosure: 10, Crossing: 12, Atrium: 12,
-};
+//
+// Keys are lowercase and lookups fold case, because poelab ships room names
+// lowercase ("estate walkways") while Client.txt reports them title-cased
+// ("Estate Walkways") — and the planner imports poelab JSON verbatim. Upstream
+// sidesteps this by capitalizing every name on load (labyrinthdata.cpp:196-199);
+// we normalise at lookup instead. A case-sensitive table silently prices every
+// real imported room as UNKNOWN, which is indistinguishable from hop counting.
+// Maps, not object literals: a room named "constructor Path" would otherwise
+// find Object.prototype.constructor and slip past an `=== undefined` guard.
+const ROOM_PREFIX_COST = new Map<string, number>([
+	['sepulchre', 3], ['estate', 5], ['basilica', 7],
+	['sanitorium', 8], ['mansion', 9], ['domain', 10],
+]);
+const ROOM_SUFFIX_COST = new Map<string, number>([
+	['path', 6], ['passage', 6], ['walkways', 8], ['halls', 8],
+	['annex', 10], ['enclosure', 10], ['crossing', 12], ['atrium', 12],
+]);
 const TRIAL_ROOM_COST = 5;
 
 // Fallback for a name absent from the tables above (new league room types, or a
@@ -614,16 +635,33 @@ const TRIAL_ROOM_COST = 5;
 // QHash returns 0 here — we diverge on purpose.
 const UNKNOWN_ROOM_COST = 16;
 
+/**
+ * Table cost of a room name, or undefined when the name is not in the tables.
+ *
+ * Kept separate from `roomCost` because UNKNOWN_ROOM_COST is not a distinguishable
+ * value: "sanitorium halls" legitimately costs 8+8 = 16, so a caller cannot tell a
+ * priced room from an unpriced one by the number alone. Anything that needs to know
+ * whether a name is recognised must ask `isRoomNamePriced`, not compare against 16.
+ */
+function lookupRoomCost(name: string): number | undefined {
+	const normalised = name.trim().toLowerCase();
+	if (normalised === "aspirant's trial") return TRIAL_ROOM_COST;
+	const [prefix, suffix] = normalised.split(/\s+/);
+	const prefixCost = ROOM_PREFIX_COST.get(prefix);
+	const suffixCost = ROOM_SUFFIX_COST.get(suffix);
+	if (prefixCost === undefined || suffixCost === undefined) return undefined;
+	return prefixCost + suffixCost;
+}
+
+/** Whether the cost tables recognise this room name. */
+export function isRoomNamePriced(name: string): boolean {
+	return lookupRoomCost(name) !== undefined;
+}
+
 /** Traversal cost of entering a room. */
 export function roomCost(room: RoutingRoom | undefined): number {
 	if (!room) return UNKNOWN_ROOM_COST;
-	const name = room.name.trim();
-	if (name.toLowerCase() === "aspirant's trial") return TRIAL_ROOM_COST;
-	const [prefix, suffix] = name.split(/\s+/);
-	const prefixCost = ROOM_PREFIX_COST[prefix];
-	const suffixCost = ROOM_SUFFIX_COST[suffix];
-	if (prefixCost === undefined || suffixCost === undefined) return UNKNOWN_ROOM_COST;
-	return prefixCost + suffixCost;
+	return lookupRoomCost(room.name) ?? UNKNOWN_ROOM_COST;
 }
 
 /**
@@ -654,7 +692,14 @@ function bestRouteThroughTargets(
 	// secret passage into it) discards EVERY candidate and the section route
 	// collapses to empty — the planner then shows no route at all rather than
 	// the route minus the room it can't reach.
-	const reachable = targets.filter((t) => cheapestPath(adjacency, start, t, roomById).length > 0);
+	// Both legs matter: a target you can walk INTO but not back OUT of toward the
+	// trial (a one-way secret-passage pocket) is just as unusable as an
+	// unreachable one, and dropping only it keeps the other targets on the route.
+	const reachable = targets.filter(
+		(t) =>
+			cheapestPath(adjacency, start, t, roomById).length > 0 &&
+			cheapestPath(adjacency, t, end, roomById).length > 0,
+	);
 
 	if (reachable.length === 0) {
 		return cheapestPath(adjacency, start, end, roomById);

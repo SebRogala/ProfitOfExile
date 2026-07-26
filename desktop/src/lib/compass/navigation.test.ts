@@ -5,6 +5,7 @@ import {
 	handleNavEvent,
 	setStrategy,
 	roomCost,
+	isRoomNamePriced,
 	routeCost,
 	type LabLayout,
 	type RouteStrategy,
@@ -224,6 +225,48 @@ describe('Golden door routing', () => {
 		expect(state.plannedRoute).toEqual([]);
 	});
 
+	// A darkshrine target sits BEHIND the golden door, and a bypass to the trial
+	// exists. The bypass is shorter, but taking it abandons the target — and the
+	// key that would have opened the way to it. Wanting the vault means the door
+	// route wins despite the bypass.
+	//
+	//   s ─── door[golden-door] ─── vault[darkshrine]
+	//   ├── key[golden-key]
+	//   └── byp ─── trial
+	const targetBehindDoorLayout = makeLayout([
+		{ id: 's', name: 'Estate Path', x: '0', exits: { E: 'door', NE: 'key', SE: 'byp' } },
+		{ id: 'key', name: 'Sepulchre Path', x: '0.5', exits: {}, contents: ['golden-key'] },
+		{ id: 'door', name: 'Estate Path', x: '1', exits: { E: 'vault' }, contents: ['golden-door'] },
+		{ id: 'vault', name: 'Sepulchre Path', x: '2', exits: {}, contents: ['darkshrine'] },
+		{ id: 'byp', name: 'Sepulchre Path', x: '1', exits: { NE: 'trial' } },
+		{ id: 'trial', name: "Aspirant's Trial", x: '3', exits: {} },
+	]);
+
+	it('should not take a bypass that abandons a target behind the golden door', () => {
+		let state = loadLayout(createNavState(), targetBehindDoorLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toContain('vault');
+		expect(state.plannedRoute).toContain('key');
+	});
+
+	// `pocket` is a darkshrine you can walk into but never walk out of toward the
+	// trial. It must be dropped ALONE — the reachable darkshrine `far` stays on
+	// the route rather than being discarded along with it.
+	const unsequenceableTargetLayout = makeLayout([
+		{ id: 's', name: 'Estate Path', x: '0', exits: { E: 'd', SE: 'far', C: 'pocket' } },
+		{ id: 'd', name: 'Sepulchre Path', x: '1', exits: { E: 'trial' } },
+		{ id: 'far', name: 'Domain Atrium', x: '1', exits: { NE: 'trial' }, contents: ['darkshrine'] },
+		{ id: 'pocket', name: 'Sepulchre Path', x: '0.5', exits: {}, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should drop only the unusable target, keeping the reachable ones', () => {
+		let state = loadLayout(createNavState(), unsequenceableTargetLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toContain('far');
+		expect(state.plannedRoute).not.toContain('pocket');
+	});
+
 	it('should route through key room on zig-zag layouts where entry x > door x', () => {
 		const state = loadLayout(createNavState(), zigzagGoldenDoorLayout);
 		// Rule: key room MUST be visited when the door blocks the trial.
@@ -411,7 +454,10 @@ describe('roomCost', () => {
 		["Aspirant's Trial", 5],
 		['Voidborn Terrace', 16],  // neither affix known
 		['Sepulchre', 16],         // one word — no suffix to price
-		['estate path', 16],       // affix tables are case-sensitive
+		// poelab ships lowercase, Client.txt title-cases — both must price alike.
+		['estate path', 11],
+		['ESTATE PATH', 11],
+		['Domain atrium', 22],
 	])('should charge %s as %i', (name, expected) => {
 		expect(roomCost({ name: name as string, contents: [] })).toBe(expected);
 	});
@@ -443,4 +489,42 @@ describe('routeCost', () => {
 	it('should not charge the room the player already stands in', () => {
 		expect(routeCost(['start'], rooms)).toBe(0);
 	});
+});
+
+// Real poelab exports, vendored from LabCompass's test data (GPL-3.0). The
+// planner feeds imported poelab JSON to loadLayout verbatim, so these are the
+// only fixtures that exercise the shape production actually sees — including
+// lowercase room names, which a hand-written TitleCase fixture cannot catch.
+describe('real poelab layouts', () => {
+	const layouts = import.meta.glob('./__fixtures__/poelab-*.json', {
+		eager: true,
+		import: 'default',
+	}) as Record<string, LabLayout>;
+
+	it('should load at least one vendored layout', () => {
+		expect(Object.keys(layouts).length).toBeGreaterThan(0);
+	});
+
+	for (const [path, layout] of Object.entries(layouts)) {
+		const name = path.split('/').pop();
+
+		it(`should price every room in ${name} from the cost tables`, () => {
+			// An unrecognised name falls back to UNKNOWN_ROOM_COST, which flattens
+			// the cost model toward hop counting. Real layouts must never do that.
+			// Asked via isRoomNamePriced, not `=== 16`: "sanitorium halls" really
+			// does cost 16, so the number cannot distinguish the two.
+			const unpriced = layout.rooms
+				.filter((room) => !isRoomNamePriced(room.name))
+				.map((room) => room.name);
+			expect(unpriced).toEqual([]);
+		});
+
+		it(`should reach the final trial in ${name}`, () => {
+			const state = loadLayout(createNavState(), layout);
+			const lastTrial = [...layout.rooms]
+				.reverse()
+				.find((r) => r.name.toLowerCase() === "aspirant's trial");
+			expect(state.plannedRoute.at(-1)).toBe(lastTrial!.id);
+		});
+	}
 });
