@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import type { GemPlay } from '$lib/api';
+	import { VARIANTS, type GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
@@ -9,7 +9,6 @@
 
 	const isDedication = $derived(labMode === 'dedication');
 
-	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const NORMAL_TABS = ['ALL', ...VARIANTS];
 	const DEDICATION_POOLS = ['skill', 'transfigured'];
 	const DEDICATION_POOL_LABELS: Record<string, string> = { skill: 'Skills', transfigured: 'Transfigured' };
