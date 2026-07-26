@@ -302,6 +302,42 @@ describe('Route strategy', () => {
 		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
 	});
 
+	// Once Izaro is beaten you cannot walk back into the trial room. All three
+	// Izaro rooms share the name "Aspirant's Trial", so RoomChanged for that name
+	// is resolved by adjacency to where the player stands — and if the beaten
+	// trial behind them counts as adjacent, there are two candidates.
+	//
+	// This layout defeats both fallbacks that would otherwise rescue it: the
+	// player walks straight into trial2 while the planned route points at the
+	// darkshrine first (so the on-route shortcut does not apply), and trial2 sits
+	// at a LOWER x than r2 (zig-zag), so "prefer forward" finds no single
+	// candidate either. With a bidirectional trial gate the position is dropped.
+	//
+	//   r1 → trial1 → r2 ─── trial2 (x=1.5, behind r2)
+	//                  └── shrine[darkshrine] ──┘
+	const zigzagTrialGateLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'trial1' } },
+		{ id: 'trial1', name: "Aspirant's Trial", x: '1', exits: { E: 'r2' } },
+		{ id: 'r2', name: 'Estate Path', x: '2', exits: { NE: 'shrine', E: 'trial2' } },
+		{ id: 'shrine', name: 'Sepulchre Path', x: '2.5', exits: { SE: 'trial2' }, contents: ['darkshrine'] },
+		{ id: 'trial2', name: "Aspirant's Trial", x: '1.5', exits: {} },
+	]);
+
+	it('should resolve the trial ahead rather than the beaten one behind', () => {
+		let state = loadLayout(createNavState(), zigzagTrialGateLayout);
+		state = setStrategy(state, 'darkshrines');
+		for (const event of [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Path' },        // → r1
+			{ type: 'RoomChanged', name: "Aspirant's Trial" },   // → trial1
+			{ type: 'RoomChanged', name: 'Estate Path' },        // → r2
+			{ type: 'RoomChanged', name: "Aspirant's Trial" },   // → trial2, not trial1
+		]) {
+			state = handleNavEvent(state, event as any);
+		}
+		expect(state.currentRoom).toBe('trial2');
+	});
+
 	it('should preserve strategy when reloading layout', () => {
 		let state = loadLayout(createNavState(), simpleLayout);
 		state = setStrategy(state, 'darkshrines');
