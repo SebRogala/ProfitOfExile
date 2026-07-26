@@ -103,11 +103,21 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 		if (!adjacency.has(room.id)) adjacency.set(room.id, []);
 	}
 
-	// Build bidirectional adjacency from exits
+	// Build adjacency from exits. Normal exits are bidirectional; SECRET
+	// PASSAGES ('C') are one-way only.
+	//
+	// A secret passage is a hidden door openable from one side. Walking into
+	// the destination room does not let you walk back out through it, so adding
+	// the reverse edge invents a traversal the game does not allow — the router
+	// would then hand the player a route that dead-ends. LabCompass guards its
+	// reverse-edge pass with the same condition (labyrinthdata.cpp:271,
+	// `direction != "C"`). If a layout declares 'C' from BOTH sides, both
+	// forward edges are added and the pair ends up connected anyway.
 	for (const room of layout.rooms) {
-		for (const targetId of Object.values(room.exits)) {
+		for (const [direction, targetId] of Object.entries(room.exits)) {
 			const neighbors = adjacency.get(room.id)!;
 			if (!neighbors.includes(targetId)) neighbors.push(targetId);
+			if (direction === 'C') continue;
 			const reverseNeighbors = adjacency.get(targetId);
 			if (reverseNeighbors && !reverseNeighbors.includes(room.id)) {
 				reverseNeighbors.push(room.id);
@@ -146,8 +156,8 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 	//   (Zig-zag layouts — like uber-2026-04-17 "mansion halls" — can place
 	//   the entry room at a higher x than the door room. A pure x-coordinate
 	//   heuristic mis-locks the entry edge, strands the key room behind the
-	//   "locked" entry, and the router silently falls back to a straight BFS
-	//   that waltzes through the door without picking up the key. The test
+	//   "locked" entry, and the router silently falls back to a plain cheapest
+	//   path that waltzes through the door without picking up the key. The test
 	//   `should route through key room on zig-zag layouts ...` guards this.)
 	const startRoomId = layout.rooms[0]?.id;
 	const distFromStart = startRoomId ? bfsDistances(adjacency, startRoomId) : new Map<string, number>();
@@ -420,7 +430,7 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 		// Golden door handling: if route must cross a locked door, split into
 		// pre-key (unlocked adjacency) and post-key (full adjacency) phases.
 		const goldenRoute = routeWithGoldenDoor(state, section, start, end, sectionTargets);
-		const sectionRoute = goldenRoute ?? shortestPathThroughTargets(
+		const sectionRoute = goldenRoute ?? bestRouteThroughTargets(
 			state.adjacency,
 			start,
 			end,
@@ -453,6 +463,12 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
  *  4. If the door room and key room are different, Phase 2 includes the door
  *     room as a mandatory waypoint so the player backtracks through it.
  *
+ * GAME INVARIANT: a lab run contains AT MOST ONE golden door — not one per
+ * section, one in total. Taking the first matching key room and door room and
+ * hardcoding a single two-phase route is therefore complete, not a simplifying
+ * assumption to be generalised later. (LabCompass solves N doors generically by
+ * folding key state into its search; that generality is unreachable in practice.)
+ *
  * Returns null when no golden door exists in the section (caller uses normal routing).
  */
 function routeWithGoldenDoor(
@@ -484,7 +500,7 @@ function routeWithGoldenDoor(
 	// Check if a route through all targets to the end exists WITHOUT crossing locked doors.
 	// If so, use it directly — don't return null, because the caller would use full adjacency
 	// which might find a "shorter" path through the locked door the player can't open.
-	const bypassRoute = shortestPathThroughTargets(unlockedAdj, start, end, targets, state.roomById);
+	const bypassRoute = bestRouteThroughTargets(unlockedAdj, start, end, targets, state.roomById);
 	if (bypassRoute.length > 0) {
 		return bypassRoute;
 	}
@@ -504,11 +520,11 @@ function routeWithGoldenDoor(
 	// Phase 1: start → key room, using unlocked adjacency (can't cross door yet).
 	// Visit any targets reachable before the door.
 	const preKeyTargets = targets.filter((t) => {
-		const path = bfs(unlockedAdj, start, t);
+		const path = cheapestPath(unlockedAdj, start, t, state.roomById);
 		return path.length > 0;
 	});
 	const keyTargets = preKeyTargets.includes(keyRoom) ? preKeyTargets : [...preKeyTargets, keyRoom];
-	const phase1 = shortestPathThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom), state.roomById);
+	const phase1 = bestRouteThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom), state.roomById);
 
 	// Phase 2: key room → end, using full adjacency (door now open).
 	// Visit remaining targets. If key room != door room, the player must
@@ -530,7 +546,7 @@ function routeWithGoldenDoor(
 		postKeyTargets.push(doorRoom);
 	}
 
-	const phase2 = shortestPathThroughTargets(state.adjacency, keyRoom, end, postKeyTargets, state.roomById);
+	const phase2 = bestRouteThroughTargets(state.adjacency, keyRoom, end, postKeyTargets, state.roomById);
 
 	if (phase1.length === 0 || phase2.length === 0) return null; // fallback to normal routing
 
@@ -538,22 +554,71 @@ function routeWithGoldenDoor(
 	return [...phase1, ...phase2.slice(1)];
 }
 
-function shortestPathThroughTargets(
+/** Room shape the router needs: name drives cost, contents drive the tiebreak. */
+type RoutingRoom = { name: string; contents: string[] };
+
+// --- Room traversal cost ---
+//
+// Ported from LabCompass (labyrinthdata.cpp:8-26, roomCost() at :172-178).
+// "Shortest" means fastest to walk, NOT fewest rooms: a Domain Atrium is a long
+// trek and a Sepulchre Path is a few steps, so counting hops equally understates
+// the cost of big rooms. Cost is charged on ENTERING a room, so the room the
+// player already stands in is free — matching upstream's `length += roomCost(dest)`.
+const ROOM_PREFIX_COST: Record<string, number> = {
+	Sepulchre: 3, Estate: 5, Basilica: 7, Sanitorium: 8, Mansion: 9, Domain: 10,
+};
+const ROOM_SUFFIX_COST: Record<string, number> = {
+	Path: 6, Passage: 6, Walkways: 8, Halls: 8, Annex: 10, Enclosure: 10, Crossing: 12, Atrium: 12,
+};
+const TRIAL_ROOM_COST = 5;
+
+// Fallback for a name absent from the tables above (new league room types, or a
+// malformed import). Deliberately mid-range rather than 0: a free unknown room
+// would ATTRACT every route through it, which is the worse failure. Upstream's
+// QHash returns 0 here — we diverge on purpose.
+const UNKNOWN_ROOM_COST = 16;
+
+/** Traversal cost of entering a room. */
+export function roomCost(room: RoutingRoom | undefined): number {
+	if (!room) return UNKNOWN_ROOM_COST;
+	const name = room.name.trim();
+	if (name.toLowerCase() === "aspirant's trial") return TRIAL_ROOM_COST;
+	const [prefix, suffix] = name.split(/\s+/);
+	const prefixCost = ROOM_PREFIX_COST[prefix];
+	const suffixCost = ROOM_SUFFIX_COST[suffix];
+	if (prefixCost === undefined || suffixCost === undefined) return UNKNOWN_ROOM_COST;
+	return prefixCost + suffixCost;
+}
+
+/** Total cost of walking a route. The starting room is already occupied, so it is free. */
+function routeCost(route: string[], roomById: Map<string, RoutingRoom>): number {
+	let total = 0;
+	for (const roomId of route.slice(1)) total += roomCost(roomById.get(roomId));
+	return total;
+}
+
+function bestRouteThroughTargets(
 	adjacency: Map<string, string[]>,
 	start: string,
 	end: string,
 	targets: string[],
-	roomById?: Map<string, { contents: string[] }>,
+	roomById: Map<string, RoutingRoom>,
 ): string[] {
-	if (targets.length === 0) {
-		return bfs(adjacency, start, end, roomById);
+	// Drop targets the player cannot actually walk to. Every permutation
+	// containing an unreachable target is invalid, so without this filter a
+	// single stranded target (e.g. a darkshrine whose only link is a one-way
+	// secret passage into it) discards EVERY candidate and the section route
+	// collapses to empty — the planner then shows no route at all rather than
+	// the route minus the room it can't reach.
+	const reachable = targets.filter((t) => cheapestPath(adjacency, start, t, roomById).length > 0);
+
+	if (reachable.length === 0) {
+		return cheapestPath(adjacency, start, end, roomById);
 	}
 
 	// For small target sets (typically 1-4 per section), try all permutations
-	const perms = permutations(targets);
-	let bestRoute: string[] = [];
-	let bestLength = Infinity;
-	let bestContentScore = -1;
+	const perms = permutations(reachable);
+	const candidates: string[][] = [];
 
 	for (const perm of perms) {
 		const waypoints = [start, ...perm, end];
@@ -561,7 +626,7 @@ function shortestPathThroughTargets(
 		let valid = true;
 
 		for (let i = 0; i < waypoints.length - 1; i++) {
-			const segment = bfs(adjacency, waypoints[i], waypoints[i + 1], roomById);
+			const segment = cheapestPath(adjacency, waypoints[i], waypoints[i + 1], roomById);
 			if (segment.length === 0) {
 				valid = false;
 				break;
@@ -574,26 +639,54 @@ function shortestPathThroughTargets(
 		}
 
 		if (!valid) continue;
-
-		if (route.length < bestLength) {
-			bestLength = route.length;
-			bestRoute = route;
-			bestContentScore = roomById ? routeContentScore(route, roomById) : 0;
-		} else if (route.length === bestLength && roomById) {
-			// Tiebreaker: prefer route passing through more content rooms (darkshrines > other)
-			const score = routeContentScore(route, roomById);
-			if (score > bestContentScore) {
-				bestRoute = route;
-				bestContentScore = score;
-			}
-		}
+		candidates.push(route);
 	}
 
-	return bestRoute;
+	// Last resort: a reachable target that still can't be sequenced into a route
+	// to `end` must not cost the player the route to the trial.
+	if (candidates.length === 0) return cheapestPath(adjacency, start, end, roomById);
+
+	return pickCheapestPreferringDarkshrines(candidates, roomById);
+}
+
+/**
+ * THE tiebreaker chokepoint. Every content-based route preference goes through here.
+ *
+ * It filters candidates to the MINIMUM cost FIRST, then prefers the one passing
+ * through the most darkshrines. Cost always wins; content only ever breaks an
+ * exact tie. A caller that hands in mixed-cost candidates therefore cannot cause
+ * a detour — the pricier ones are discarded before any score is read.
+ *
+ * This is deliberately defensive: "shortest strategy points around" has regressed
+ * twice, both times because a caller leaked a longer path into a content
+ * comparison. Keeping the cost filter here rather than in each caller means a new
+ * caller cannot reintroduce it.
+ */
+function pickCheapestPreferringDarkshrines(
+	candidates: string[][],
+	roomById: Map<string, RoutingRoom>,
+): string[] {
+	if (candidates.length === 0) return [];
+
+	const costs = candidates.map((c) => routeCost(c, roomById));
+	const minCost = Math.min(...costs);
+	const cheapest = candidates.filter((_, i) => costs[i] === minCost);
+	if (cheapest.length === 1) return cheapest[0];
+
+	let best = cheapest[0];
+	let bestScore = routeContentScore(best, roomById);
+	for (const candidate of cheapest.slice(1)) {
+		const score = routeContentScore(candidate, roomById);
+		if (score > bestScore) {
+			best = candidate;
+			bestScore = score;
+		}
+	}
+	return best;
 }
 
 /** Score a route by darkshrines it passes through. Only darkshrines matter for tiebreaking. */
-function routeContentScore(route: string[], roomById: Map<string, { contents: string[] }>): number {
+function routeContentScore(route: string[], roomById: Map<string, RoutingRoom>): number {
 	let score = 0;
 	for (const roomId of route) {
 		const room = roomById.get(roomId);
@@ -605,7 +698,13 @@ function routeContentScore(route: string[], roomById: Map<string, { contents: st
 	return score;
 }
 
-/** BFS from `start`, returning shortest-hop distance to every reachable room. */
+/**
+ * BFS from `start`, returning shortest-HOP distance to every reachable room.
+ *
+ * Intentionally unweighted: its only caller measures topological depth to decide
+ * which side of a golden door is "forward". That is a graph-structure question,
+ * so room traversal cost is irrelevant and would distort it.
+ */
 function bfsDistances(adjacency: Map<string, string[]>, start: string): Map<string, number> {
 	const dist = new Map<string, number>([[start, 0]]);
 	const queue: string[] = [start];
@@ -621,72 +720,62 @@ function bfsDistances(adjacency: Map<string, string[]>, start: string): Map<stri
 	return dist;
 }
 
-function bfs(
+/**
+ * Cheapest path from `start` to `end` by summed room cost (uniform-cost search).
+ *
+ * Ties are broken toward darkshrines, and that preference is expressed IN the
+ * search comparator rather than by post-filtering finished paths: pop order is
+ * (cost ascending, darkshrine count descending), so the first arrival at a room
+ * is already the best-scoring of its cheapest prefixes. A strictly cheaper path
+ * always outranks a darkshrine-richer one, which is what makes a content-driven
+ * detour structurally impossible here.
+ *
+ * Returns [] when `end` is unreachable.
+ */
+function cheapestPath(
 	adjacency: Map<string, string[]>,
 	start: string,
 	end: string,
-	roomById?: Map<string, { contents: string[] }>,
+	roomById: Map<string, RoutingRoom>,
 ): string[] {
 	if (start === end) return [start];
 
-	// BFS with depth tracking. When we find the target, finish the current
-	// depth level to collect ALL shortest paths, then pick the one with
-	// the highest darkshrine score.
-	const visited = new Set<string>([start]);
-	const parent = new Map<string, string>();
-	const queue: { id: string; depth: number }[] = [{ id: start, depth: 0 }];
-	let foundDepth = -1;
-	const endParents: string[] = []; // all parents that reach `end` at shortest depth
+	interface Reached { cost: number; score: number; path: string[] }
+	const best = new Map<string, Reached>([[start, { cost: 0, score: 0, path: [start] }]]);
+	const settled = new Set<string>();
+	const frontier: string[] = [start];
 
-	while (queue.length > 0) {
-		const { id: current, depth } = queue.shift()!;
+	while (frontier.length > 0) {
+		// Lab sections are tiny (tens of rooms), so a linear scan for the minimum
+		// beats the complexity of a real heap.
+		let pickIdx = 0;
+		for (let i = 1; i < frontier.length; i++) {
+			const a = best.get(frontier[i])!;
+			const b = best.get(frontier[pickIdx])!;
+			if (a.cost < b.cost || (a.cost === b.cost && a.score > b.score)) pickIdx = i;
+		}
+		const current = frontier.splice(pickIdx, 1)[0];
+		if (settled.has(current)) continue;
+		settled.add(current);
 
-		// Stop expanding beyond the depth where we found the target
-		if (foundDepth >= 0 && depth > foundDepth) break;
+		const reached = best.get(current)!;
+		if (current === end) return reached.path;
 
 		for (const neighbor of adjacency.get(current) ?? []) {
-			if (neighbor === end) {
-				if (foundDepth < 0) foundDepth = depth + 1;
-				endParents.push(current);
-				continue; // don't mark end as visited — collect all arrivals
-			}
-			if (visited.has(neighbor)) continue;
-			visited.add(neighbor);
-			parent.set(neighbor, current);
-			queue.push({ id: neighbor, depth: depth + 1 });
+			if (settled.has(neighbor)) continue;
+			const room = roomById.get(neighbor);
+			const cost = reached.cost + roomCost(room);
+			const score = reached.score
+				+ (room?.contents.some((c) => c.toLowerCase().includes('darkshrine')) ? 1 : 0);
+			const known = best.get(neighbor);
+			// Cheaper wins outright; at equal cost, more darkshrines wins.
+			if (known && !(cost < known.cost || (cost === known.cost && score > known.score))) continue;
+			best.set(neighbor, { cost, score, path: [...reached.path, neighbor] });
+			if (!known) frontier.push(neighbor);
 		}
 	}
 
-	if (endParents.length === 0) return []; // No path found
-
-	if (endParents.length === 1 || !roomById) {
-		// Single path or no scoring — reconstruct from the first parent
-		const path: string[] = [end];
-		let node: string | undefined = endParents[0];
-		while (node !== undefined) {
-			path.unshift(node);
-			node = parent.get(node);
-		}
-		return path;
-	}
-
-	// Multiple shortest paths — score each by darkshrine content
-	let bestPath: string[] = [];
-	let bestScore = -1;
-	for (const ep of endParents) {
-		const path: string[] = [end];
-		let node: string | undefined = ep;
-		while (node !== undefined) {
-			path.unshift(node);
-			node = parent.get(node);
-		}
-		const score = routeContentScore(path, roomById);
-		if (score > bestScore) {
-			bestScore = score;
-			bestPath = path;
-		}
-	}
-	return bestPath;
+	return []; // No path found
 }
 
 function permutations<T>(arr: T[]): T[][] {
