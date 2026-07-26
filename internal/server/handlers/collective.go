@@ -43,8 +43,7 @@ type collectiveRow struct {
 	SellReason           string               `json:"sellReason"`
 	Sellability          int                  `json:"sellability"`
 	SellabilityLabel     string               `json:"sellabilityLabel"`
-	Sparkline            []lab.SparklinePoint  `json:"sparkline"`
-	SparklineListings    []lab.SparklinePoint  `json:"sparklineListings,omitempty"`
+	Sparkline            []lab.SparklinePoint `json:"sparkline"`
 	Low7Days             float64              `json:"low7d"`
 	High7Days            float64              `json:"high7d"`
 	SellConfidence       string               `json:"sellConfidence"`
@@ -53,6 +52,71 @@ type collectiveRow struct {
 	GCPRecipeCost        float64              `json:"gcpRecipeCost,omitempty"`
 	GCPRecipeBase        float64              `json:"gcpRecipeBase,omitempty"`
 	GCPRecipeSaves       float64              `json:"gcpRecipeSaves,omitempty"`
+}
+
+// sparklineWindowHours is the window sparkline responses have always covered.
+// The lab cache stores a longer series than this — up to a 168-hour tail for
+// gems that stopped appearing in snapshots — so the window is applied when the
+// response is built, not when the cache is filled.
+const sparklineWindowHours = 12
+
+// trimSparkline returns the suffix of pts newer than hours ago. Points are
+// stored ascending by time, so the first point inside the window starts the
+// suffix. hours <= 0 means "no trim" (the caller serves the full cached series).
+func trimSparkline(pts []lab.SparklinePoint, hours int) []lab.SparklinePoint {
+	if hours <= 0 || len(pts) == 0 {
+		return pts
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	for i, p := range pts {
+		t, err := time.Parse(time.RFC3339, p.Time)
+		if err != nil {
+			continue
+		}
+		if t.After(cutoff) {
+			return pts[i:]
+		}
+	}
+	return nil
+}
+
+// cachedSparklines collects the cached non-corrupted series for names at a
+// single variant, keyed by name so the result is a drop-in for what
+// Repository.SparklineData returns. Names with no cached points are omitted:
+// on a warm cache that means the gem genuinely has no recent points, which is
+// the same empty series the query would have produced.
+func cachedSparklines(cache *lab.Cache, scope league.Scope, names []string, variant string, hours int) map[string][]lab.SparklinePoint {
+	c := cache.For(scope)
+	out := make(map[string][]lab.SparklinePoint, len(names))
+	for _, n := range names {
+		if pts := trimSparkline(c.Sparklines(n, variant), hours); len(pts) > 0 {
+			out[n] = pts
+		}
+	}
+	return out
+}
+
+// cachedCorruptedVariant is the only corrupted variant the lab cache stores
+// series for — the Dedication (21/23c) pool. It mirrors the population query's
+// filter in internal/lab.
+const cachedCorruptedVariant = "21/23c"
+
+// cachedCorruptedSparklines collects cached corrupted series for names, keyed
+// by name. The second return reports whether the cache could serve the request
+// at all: a cold cache, or a variant the cache never populates, must go to the
+// database rather than hand back an empty series.
+func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []string, variant string, hours int) (map[string][]lab.SparklinePoint, bool) {
+	if cache == nil || variant != cachedCorruptedVariant || !cache.For(scope).HasSparklines() {
+		return nil, false
+	}
+	c := cache.For(scope)
+	out := make(map[string][]lab.SparklinePoint, len(names))
+	for _, n := range names {
+		if pts := trimSparkline(c.SparklinesCorrupted(n, variant), hours); len(pts) > 0 {
+			out[n] = pts
+		}
+	}
+	return out, true
 }
 
 // CollectiveAnalysis returns a ranked "what to farm now" list combining
@@ -182,29 +246,35 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 			slog.Warn("collective: GCP price not cached, using fallback", "fallback", gcpPrice)
 		}
 
-		// Fetch sparkline data for the result gems.
-		// When a specific variant is selected, one query suffices. When "ALL
-		// variants", group gems by their own variant and query per group so
-		// sparklines don't mix different variant prices.
+		// Sparkline data for the result gems.
+		// Warm cache: every gem/variant series the pipeline populates is in
+		// memory, so no gem_snapshots query is issued — not even for a gem the
+		// cache has no series for, which genuinely has no recent points.
+		// Cold cache: fall back to the queries. When a specific variant is
+		// selected one query suffices; when "ALL variants", group gems by their
+		// own variant and query per group so sparklines don't mix variant prices.
 		sparkVariant := r.URL.Query().Get("variant")
 		sparklines := make(map[string][]lab.SparklinePoint)
 
-		// Load MarketContext for sparkline normalization.
-		var mc *lab.MarketContext
-		if cache != nil {
-			mc = cache.For(scope).MarketContext()
-		}
-		if mc == nil {
-			mc, _ = repo.LatestMarketContext(r.Context(), scope)
-		}
-
-		if sparkVariant != "" {
+		if cache != nil && cache.For(scope).HasSparklines() {
+			c := cache.For(scope)
+			for _, cr := range results {
+				v := sparkVariant
+				if v == "" {
+					v = cr.Variant
+				}
+				// Raw prices — normalization creates edge artifacts
+				if pts := trimSparkline(c.Sparklines(cr.TransfiguredName, v), sparklineWindowHours); len(pts) > 0 {
+					sparklines[cr.TransfiguredName] = pts
+				}
+			}
+		} else if sparkVariant != "" {
 			// Single variant — one query for all gems.
 			sparkNames := make([]string, 0, len(results))
 			for _, cr := range results {
 				sparkNames = append(sparkNames, cr.TransfiguredName)
 			}
-			sp, err := repo.SparklineData(r.Context(), scope, sparkNames, sparkVariant, 12)
+			sp, err := repo.SparklineData(r.Context(), scope, sparkNames, sparkVariant, sparklineWindowHours)
 			if err != nil {
 				slog.Error("collective analysis: sparkline query failed", "error", err)
 			} else {
@@ -217,7 +287,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 				byVariant[cr.Variant] = append(byVariant[cr.Variant], cr.TransfiguredName)
 			}
 			for v, names := range byVariant {
-				sp, err := repo.SparklineData(r.Context(), scope, names, v, 12)
+				sp, err := repo.SparklineData(r.Context(), scope, names, v, sparklineWindowHours)
 				if err != nil {
 					slog.Error("collective analysis: sparkline query failed", "variant", v, "error", err)
 					continue
@@ -345,8 +415,6 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 			Confidence:           cr.Confidence,
 			SellConfidence:       cr.SellConfidence,
 			LowConfidence:        cr.LowConfidence,
-			Sparkline:            []lab.SparklinePoint{},
-			SparklineListings:    []lab.SparklinePoint{},
 		})
 	}
 
@@ -494,18 +562,27 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 			}
 		}
 
-		// Load sparkline data (last 12 hours) and normalize with temporal coefficients.
+		// Load sparkline data (last 12 hours).
 		var warnings []string
 		// NOTE: sparkline failure logs + appends a warning then CONTINUES (no early return),
 		// so spMs reflects the actual query duration even on error (not zero).
 		spStart := time.Now()
-		sparklines, err := repo.SparklineData(r.Context(), scope, names, variant, 12)
-		spMs = time.Since(spStart).Milliseconds()
-		if err != nil {
-			slog.Error("compare analysis: sparkline query failed", "error", err)
-			sparklines = make(map[string][]lab.SparklinePoint)
-			warnings = append(warnings, "Sparkline data temporarily unavailable")
+		var sparklines map[string][]lab.SparklinePoint
+		// The cache keys a series by name AND variant, so it cannot reproduce
+		// the mixed-variant series an empty variant returns today — that case
+		// stays on the query.
+		if variant != "" && cache != nil && cache.For(scope).HasSparklines() {
+			sparklines = cachedSparklines(cache, scope, names, variant, sparklineWindowHours)
+		} else {
+			sp, err := repo.SparklineData(r.Context(), scope, names, variant, sparklineWindowHours)
+			if err != nil {
+				slog.Error("compare analysis: sparkline query failed", "error", err)
+				sp = make(map[string][]lab.SparklinePoint)
+				warnings = append(warnings, "Sparkline data temporarily unavailable")
+			}
+			sparklines = sp
 		}
+		spMs = time.Since(spStart).Milliseconds()
 
 		// Sparkline normalization removed — temporal coefficients create edge artifacts
 
@@ -570,12 +647,20 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 	}
 
 	// Load sparkline data for corrupted gems (last 12 hours).
+	// The cache populates corrupted series for the Dedication variant only, so
+	// the read is guarded on it: any other variant has no cached series and must
+	// go to the query rather than read an empty series out of a warm cache.
+	const dedicationSparklineVariant = "21/23c"
 	var warnings []string
-	sparklines, err := repo.SparklineDataCorrupted(r.Context(), scope, names, "21/23c", 12)
-	if err != nil {
-		slog.Error("compare analysis (dedication): sparkline query failed", "error", err)
-		sparklines = make(map[string][]lab.SparklinePoint)
-		warnings = append(warnings, "Sparkline data temporarily unavailable")
+	sparklines, cached := cachedCorruptedSparklines(cache, scope, names, dedicationSparklineVariant, sparklineWindowHours)
+	if !cached {
+		sp, err := repo.SparklineDataCorrupted(r.Context(), scope, names, dedicationSparklineVariant, sparklineWindowHours)
+		if err != nil {
+			slog.Error("compare analysis (dedication): sparkline query failed", "error", err)
+			sp = make(map[string][]lab.SparklinePoint)
+			warnings = append(warnings, "Sparkline data temporarily unavailable")
+		}
+		sparklines = sp
 	}
 
 	results := lab.BuildDedicationCompareResults(names, gemPrices, dedicationResults, sparklines)
