@@ -57,8 +57,9 @@ type collectiveRow struct {
 // sparklineWindowHours is the window sparkline responses have always covered.
 // The lab cache stores a longer series than this — up to a 168-hour tail for
 // gems that stopped appearing in snapshots — so the window is applied when the
-// response is built, not when the cache is filled.
-const sparklineWindowHours = 12
+// response is built, not when the cache is filled. Aliased from the lab
+// constant so the served window and the populated window cannot drift apart.
+const sparklineWindowHours = lab.SparklineWindowHours
 
 // trimSparkline returns the suffix of pts newer than hours ago. Points are
 // stored ascending by time, so the first point inside the window starts the
@@ -106,10 +107,13 @@ const cachedCorruptedVariant = "21/23c"
 // at all: a cold cache, or a variant the cache never populates, must go to the
 // database rather than hand back an empty series.
 func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []string, variant string, hours int) (map[string][]lab.SparklinePoint, bool) {
-	if cache == nil || variant != cachedCorruptedVariant || !cache.For(scope).HasSparklines() {
+	if cache == nil || variant != cachedCorruptedVariant {
 		return nil, false
 	}
 	c := cache.For(scope)
+	if !c.HasSparklines() {
+		return nil, false
+	}
 	out := make(map[string][]lab.SparklinePoint, len(names))
 	for _, n := range names {
 		if pts := trimSparkline(c.SparklinesCorrupted(n, variant), hours); len(pts) > 0 {
@@ -650,11 +654,10 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 	// The cache populates corrupted series for the Dedication variant only, so
 	// the read is guarded on it: any other variant has no cached series and must
 	// go to the query rather than read an empty series out of a warm cache.
-	const dedicationSparklineVariant = "21/23c"
 	var warnings []string
-	sparklines, cached := cachedCorruptedSparklines(cache, scope, names, dedicationSparklineVariant, sparklineWindowHours)
+	sparklines, cached := cachedCorruptedSparklines(cache, scope, names, cachedCorruptedVariant, sparklineWindowHours)
 	if !cached {
-		sp, err := repo.SparklineDataCorrupted(r.Context(), scope, names, dedicationSparklineVariant, sparklineWindowHours)
+		sp, err := repo.SparklineDataCorrupted(r.Context(), scope, names, cachedCorruptedVariant, sparklineWindowHours)
 		if err != nil {
 			slog.Error("compare analysis (dedication): sparkline query failed", "error", err)
 			sp = make(map[string][]lab.SparklinePoint)
