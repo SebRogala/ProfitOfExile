@@ -205,6 +205,103 @@ describe('Route strategy', () => {
 		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: { W: 'r2', W2: 'r3' } },
 	]);
 
+	// Regression: "Shortest" strategy visibly detoured through content rooms.
+	//
+	// r1 has a DIRECT 1-hop edge to the trial, plus a 2-hop branch through a
+	// darkshrine room. The darkshrine tiebreaker is only ever allowed to choose
+	// between paths of EQUAL hop count — here the branch is strictly longer, so
+	// it must be discarded before content is even considered.
+	//
+	//   r1 ─────────────── trial
+	//    └── r2[darkshrine] ──┘
+	const darkshrineDetourLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'trial', SE: 'r2' } },
+		{ id: 'r2', name: 'Domain Crossing', x: '1', exits: { NE: 'trial' }, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should take the direct edge under shortest even when a darkshrine detour exists', () => {
+		const state = loadLayout(createNavState(), darkshrineDetourLayout);
+		expect(state.plannedRoute).toEqual(['r1', 'trial']);
+	});
+
+	it('should still visit the darkshrine under the darkshrines strategy', () => {
+		let state = loadLayout(createNavState(), darkshrineDetourLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
+	});
+
+	// Two branches of EQUAL cost (Estate Path and Estate Passage both cost 11),
+	// only one holding a darkshrine. The non-darkshrine branch is listed first in
+	// `exits` so the search reaches it first — picking the first arrival would
+	// yield r3, so this fails if the tiebreaker is removed rather than reordered.
+	//
+	//   r1 ─── r3 ─────────── trial
+	//    └── r2[darkshrine] ────┘
+	const equalCostTieLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'r3', SE: 'r2' } },
+		{ id: 'r3', name: 'Estate Path', x: '1', exits: { E: 'trial' } },
+		{ id: 'r2', name: 'Estate Passage', x: '1', exits: { NE: 'trial' }, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should prefer the darkshrine branch when both branches cost the same', () => {
+		const state = loadLayout(createNavState(), equalCostTieLayout);
+		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
+	});
+
+	// Room traversal cost, not hop count, decides the route (LabCompass parity).
+	//
+	//   r1 ─── big[Domain Atrium, 22] ──────────── trial     2 hops, cost 27
+	//    └──── s1[Sepulchre Path, 9] ─ s2[9] ───── trial     3 hops, cost 23
+	const weightedCostLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'big', SE: 's1' } },
+		{ id: 'big', name: 'Domain Atrium', x: '1', exits: { E: 'trial' } },
+		{ id: 's1', name: 'Sepulchre Path', x: '1', exits: { E: 's2' } },
+		{ id: 's2', name: 'Sepulchre Path', x: '2', exits: { NE: 'trial' } },
+		{ id: 'trial', name: "Aspirant's Trial", x: '3', exits: {} },
+	]);
+
+	it('should take more small rooms over fewer expensive ones', () => {
+		const state = loadLayout(createNavState(), weightedCostLayout);
+		expect(state.plannedRoute).toEqual(['r1', 's1', 's2', 'trial']);
+	});
+
+	// A room name absent from the cost tables must not be treated as free —
+	// a zero-cost unknown would attract every route through it.
+	//
+	//   r1 ─── mystery[unknown name] ───── trial
+	//    └──── cheap[Sepulchre Path, 9] ────┘
+	const unknownRoomNameLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'mystery', SE: 'cheap' } },
+		{ id: 'mystery', name: 'Voidborn Terrace', x: '1', exits: { E: 'trial' } },
+		{ id: 'cheap', name: 'Sepulchre Path', x: '1', exits: { NE: 'trial' } },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should not route through an unknown room name as if it were free', () => {
+		const state = loadLayout(createNavState(), unknownRoomNameLayout);
+		expect(state.plannedRoute).toEqual(['r1', 'cheap', 'trial']);
+	});
+
+	// Secret passages ('C' exits) are one-way — openable from one side only.
+	// `shrine`'s ONLY connection is a secret passage OUT of it into r2, so the
+	// player can never enter it. Treating that edge as bidirectional would make
+	// the router send them r1 → r2 → shrine → r2 → trial, through a door that
+	// does not open from r2's side.
+	const oneWaySecretPassageLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'r2' } },
+		{ id: 'r2', name: 'Estate Path', x: '1', exits: { E: 'trial' } },
+		{ id: 'shrine', name: 'Sepulchre Path', x: '1.5', exits: { C: 'r2' }, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should not enter a room reachable only backwards through a secret passage', () => {
+		let state = loadLayout(createNavState(), oneWaySecretPassageLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
+	});
+
 	it('should preserve strategy when reloading layout', () => {
 		let state = loadLayout(createNavState(), simpleLayout);
 		state = setStrategy(state, 'darkshrines');
