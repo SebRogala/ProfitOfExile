@@ -180,6 +180,54 @@ func TestMergeSparklineSeries_ResultDoesNotAliasExistingInput(t *testing.T) {
 	}
 }
 
+// The trim/tail path is where the alias would actually happen: once the window
+// drops the head, returning the retained tail as-is is the cheap implementation,
+// and it pins the whole history backing array for a gem that never appends
+// again. The all-in-window case above never trims, so it cannot see that.
+func TestMergeSparklineSeries_TrimmedTailDoesNotAliasExistingInput(t *testing.T) {
+	now := sparklineNow()
+
+	// 40 ascending points: 39 spaced 4h apart from 166h down to 14h, then one at
+	// 2h — the only point inside the 12h window. The trim keeps that one point
+	// and the tail extension reaches back over 14h/18h/22h to satisfy
+	// SparklineTailPoints, so the result carries exactly the last 4 points of
+	// `existing`: the same content a reslice of the tail would hand back.
+	existing := make([]SparklinePoint, 0, 40)
+	for ago := 166; ago >= 14; ago -= 4 {
+		existing = append(existing, sparkPoint(now, time.Duration(ago)*time.Hour, float64(ago)))
+	}
+	existing = append(existing, sparkPoint(now, 2*time.Hour, 2))
+
+	got := mergeSparklineSeries(existing, nil, now)
+
+	// The arrangement has to actually reach the trim/tail path; if it stops doing
+	// so the mutation below proves nothing.
+	if len(got) != SparklineTailPoints {
+		t.Fatalf("merged length: got %d (%v), want the tail minimum %d — the trim/tail path did not run",
+			len(got), sparkTimes(got), SparklineTailPoints)
+	}
+	head := existing[:len(existing)-SparklineTailPoints]
+	tail := existing[len(existing)-SparklineTailPoints:]
+	if got[0].Time != tail[0].Time {
+		t.Fatalf("oldest kept point: got %s, want %s (22h — the 4th-newest)", got[0].Time, tail[0].Time)
+	}
+
+	before := append([]SparklinePoint(nil), got...)
+
+	// Both halves: the tail catches a reslice of the retained points, the head
+	// catches a result that kept any trimmed-away point by reference.
+	for i := range head {
+		head[i].Price = 999
+	}
+	for i := range tail {
+		tail[i].Price = 999
+	}
+
+	if !reflect.DeepEqual(got, before) {
+		t.Fatalf("mutating the existing input changed the merged series:\n before: %+v\n after:  %+v", before, got)
+	}
+}
+
 // Same contract on the other input: the repository reuses its result maps across
 // consumers, so the merged series must not track later edits to the batch.
 func TestMergeSparklineSeries_ResultDoesNotAliasIncomingInput(t *testing.T) {
