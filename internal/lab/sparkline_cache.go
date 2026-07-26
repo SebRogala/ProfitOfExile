@@ -184,18 +184,30 @@ func mergeSparklineMaps(existing, incoming map[sparklineKey][]SparklinePoint, no
 				out[k] = merged
 			}
 		}
-		for _, p := range pts {
-			at, err := time.Parse(time.RFC3339, p.Time)
-			if err != nil {
-				continue
-			}
-			if at.After(newest) {
-				newest = at
-			}
+		if at := newestSparklineTime(pts); at.After(newest) {
+			newest = at
 		}
 	}
 
 	return out, newest
+}
+
+// newestSparklineTime returns the newest parsable timestamp among pts (zero
+// when pts is empty or nothing parses). Unparsable points are skipped for the
+// same reason mergeSparklineSeries drops them: they cannot be positioned in
+// time, so they must not be allowed to move the high-water mark.
+func newestSparklineTime(pts []SparklinePoint) time.Time {
+	var newest time.Time
+	for _, p := range pts {
+		at, err := time.Parse(time.RFC3339, p.Time)
+		if err != nil {
+			continue
+		}
+		if at.After(newest) {
+			newest = at
+		}
+	}
+	return newest
 }
 
 // sparklineSnapshot returns both cached maps and the high-water mark in one
