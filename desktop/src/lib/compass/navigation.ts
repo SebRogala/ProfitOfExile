@@ -492,7 +492,15 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
  * assumption to be generalised later. (LabCompass solves N doors generically by
  * folding key state into its search; that generality is unreachable in practice.)
  *
- * Returns null when no golden door exists in the section (caller uses normal routing).
+ * RETURN CONTRACT — the two empty-ish returns mean opposite things:
+ *   null → no locked door blocks this section; the caller routes normally.
+ *   []   → a locked door DOES block it and no legal route exists. The caller
+ *          must treat this as final. It previously returned null here too, which
+ *          made the caller re-route on full adjacency — and full adjacency
+ *          ignores `lockedDoors`, so the planner confidently marched the player
+ *          through a golden door it knew was locked, with no key. Failing closed
+ *          matches upstream, where an unreachable key simply means no search
+ *          state ever reaches the trial (navigationdata.cpp:52-114).
  */
 function routeWithGoldenDoor(
 	state: NavState,
@@ -538,7 +546,9 @@ function routeWithGoldenDoor(
 		}
 	}
 
-	if (!keyRoom) return null; // no key room found — data issue, don't break
+	// No key room in a section a locked door blocks. There is no legal route, so
+	// FAIL CLOSED — see the return-contract note in this function's doc comment.
+	if (!keyRoom) return [];
 
 	// Phase 1: start → key room, using unlocked adjacency (can't cross door yet).
 	// Visit any targets reachable before the door.
@@ -571,7 +581,10 @@ function routeWithGoldenDoor(
 
 	const phase2 = bestRouteThroughTargets(state.adjacency, keyRoom, end, postKeyTargets, state.roomById);
 
-	if (phase1.length === 0 || phase2.length === 0) return null; // fallback to normal routing
+	// The key is unreachable, or the trial is unreachable even with it. Same as
+	// above: no legal route exists, so fail closed rather than let the caller
+	// route on full adjacency and march the player through the locked door.
+	if (phase1.length === 0 || phase2.length === 0) return [];
 
 	// Merge phases (avoid duplicate key room at boundary)
 	return [...phase1, ...phase2.slice(1)];
@@ -613,8 +626,16 @@ export function roomCost(room: RoutingRoom | undefined): number {
 	return prefixCost + suffixCost;
 }
 
-/** Total cost of walking a route. The starting room is already occupied, so it is free. */
-function routeCost(route: string[], roomById: Map<string, RoutingRoom>): number {
+/**
+ * Total cost of walking a route. The starting room is already occupied, so it is
+ * free — matching upstream's `length += roomCost(destination)`.
+ *
+ * Exported for tests only. Every candidate route in a comparison shares the same
+ * start room, so charging for it would add the same constant to all of them and
+ * could never change which one wins — the invariant has no observable effect on
+ * routing, and this is the only seam that can pin it.
+ */
+export function routeCost(route: string[], roomById: Map<string, RoutingRoom>): number {
 	let total = 0;
 	for (const roomId of route.slice(1)) total += roomCost(roomById.get(roomId));
 	return total;
