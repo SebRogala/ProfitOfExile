@@ -42,20 +42,20 @@ name, cannot fetch it, and returns `502`.
    To pull only new entries, hand it a JSON file containing just those keys.
 
 4. **Seed the production volume** — from a machine poewiki does not block.
-   `<prod-host>` and `<server-service-id>` are placeholders; this repository is
+   `PROD_HOST` and `SERVER_SERVICE_ID` are placeholders; this repository is
    public, so the real values live in the private ops notes. See
    [Deployment](DEPLOY.md).
 
    ```
    tar czf new-icons.tgz -C gem-icons-cache .
-   scp new-icons.tgz <prod-host>:/tmp/
-   ssh <prod-host> 'C=$(docker ps -q -f name=<server-service-id>); \
+   scp new-icons.tgz "$PROD_HOST":/tmp/
+   ssh "$PROD_HOST" "C=\$(docker ps -q -f name=$SERVER_SERVICE_ID); \
      mkdir -p /tmp/ni && tar xzf /tmp/new-icons.tgz -C /tmp/ni && \
-     for f in /tmp/ni/*.png; do docker cp "$f" "$C:/data/gem-icons-cache/"; done'
+     for f in /tmp/ni/*.png; do docker cp \"\$f\" \"\$C:/data/gem-icons-cache/\"; done"
    ```
 
    The server image has no shell, so `docker cp` is the way in. The volume is
-   `<server-service-id>-profitofexile-gem-icons` mounted at
+   `$SERVER_SERVICE_ID-profitofexile-gem-icons` mounted at
    `/data/gem-icons-cache`.
 
 5. **Deploy** — the map is embedded, so the icon only resolves once the new binary

@@ -77,12 +77,11 @@ func TestRankCollective_BudgetFilter(t *testing.T) {
 	}
 }
 
-func TestRankCollective_ExcludesNegativeROIAndLowConfidence(t *testing.T) {
+func TestRankCollective_ExcludesNegativeROI(t *testing.T) {
 	now := time.Now()
 	transfigure := []TransfigureResult{
 		{Time: now, TransfiguredName: "Good Gem", Variant: "20/20", ROI: 50, Confidence: "OK"},
 		{Time: now, TransfiguredName: "Negative ROI", Variant: "20/20", ROI: -10, Confidence: "OK"},
-		{Time: now, TransfiguredName: "Low Confidence", Variant: "20/20", ROI: 80, Confidence: "LOW"},
 	}
 
 	results := RankCollective(transfigure, nil, nil, 0, 50, "")
@@ -92,6 +91,61 @@ func TestRankCollective_ExcludesNegativeROIAndLowConfidence(t *testing.T) {
 	}
 	if results[0].TransfiguredName != "Good Gem" {
 		t.Errorf("got %s, want Good Gem", results[0].TransfiguredName)
+	}
+}
+
+func TestRankCollective_ThinMarketRankedAsLowConfidence(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Thick Market", Variant: "20/20", ROI: 50, Confidence: "OK"},
+		{Time: now, TransfiguredName: "Thin Market", Variant: "20/20", ROI: 80, Confidence: "LOW"},
+	}
+
+	results := RankCollective(transfigure, nil, nil, 0, 50, "")
+
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2 — a thin market is flagged, not dropped", len(results))
+	}
+
+	byName := make(map[string]CollectiveResult, len(results))
+	for _, r := range results {
+		byName[r.TransfiguredName] = r
+	}
+
+	thin, ok := byName["Thin Market"]
+	if !ok {
+		t.Fatal("thin-market gem missing from the ranking")
+	}
+	if !thin.LowConfidence {
+		t.Error("thin-market gem is not flagged LowConfidence, so the UI toggle cannot hide it")
+	}
+	if thin.Confidence != "LOW" {
+		t.Errorf("thin-market gem Confidence = %q, want LOW preserved for callers that distinguish", thin.Confidence)
+	}
+
+	if thick := byName["Thick Market"]; thick.LowConfidence {
+		t.Error("liquid gem wrongly flagged LowConfidence")
+	}
+}
+
+// A LOW transfigure confidence must survive the gem-feature join, which assigns
+// LowConfidence rather than OR-ing it.
+func TestRankCollective_ThinMarketFlagSurvivesFeatureJoin(t *testing.T) {
+	now := time.Now()
+	transfigure := []TransfigureResult{
+		{Time: now, TransfiguredName: "Thin Market", Variant: "20/20", ROI: 80, Confidence: "LOW"},
+	}
+	features := []GemFeature{
+		{Name: "Thin Market", Variant: "20/20", LowConfidence: false},
+	}
+
+	results := RankCollective(transfigure, nil, features, 0, 50, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if !results[0].LowConfidence {
+		t.Error("feature join cleared the thin-market flag")
 	}
 }
 
