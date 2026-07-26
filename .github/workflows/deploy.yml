@@ -1,6 +1,7 @@
 name: Test & Deploy
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -30,10 +31,15 @@ jobs:
               - 'go.mod'
               - 'go.sum'
             server:
+              # The server binary imports across internal/ and go:embeds data
+              # files there (e.g. internal/gemicon/gem-icon-urls.json), so any
+              # internal/ change can change what it serves. Listing packages
+              # individually silently skipped the deploy for gemicon, device,
+              # league, mercure, price and trade — a green run that shipped
+              # nothing. Over-deploying on a collector-only change is the safe
+              # direction; under-deploying is not.
+              - 'internal/**'
               - 'cmd/server/**'
-              - 'internal/server/**'
-              - 'internal/db/**'
-              - 'internal/lab/**'
               - 'frontend/**'
               - 'go.mod'
               - 'go.sum'
