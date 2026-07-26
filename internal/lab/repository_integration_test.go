@@ -227,6 +227,249 @@ func TestSparklineData_returnsOnlyScopedLeague(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// SparklineWindow — the population query behind the sparkline cache (POE-133).
+//
+// It must NOT inherit the filters GemPriceHistoryByVariant applies (chaos floor,
+// Trarthus exclusion, transfigured-only), because SparklineData never applied
+// them and the cache has to reproduce the served content exactly. It must apply
+// the filters that DO exist: league, the four-variant allowlist for the main
+// map, and the corrupted split.
+// ---------------------------------------------------------------------------
+
+func TestSparklineWindow_returnsBaseGems(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-base"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(30)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// is_transfigured = false: TrendAnalysis charts base gems, so a query that
+	// filters on is_transfigured (as GemPriceHistoryByVariant does) loses them.
+	const name = "POE133 Base Only Gem"
+	seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", false, false, 111, 10, "BLUE")
+
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	points, ok := series[sparklineKey{name: name, variant: "20/20"}]
+	if !ok {
+		t.Fatalf("no series for base gem %q — an is_transfigured = true filter drops it and blanks the TrendAnalysis base sparkline", name)
+	}
+	if len(points) != 1 {
+		t.Fatalf("point count = %d, want 1", len(points))
+	}
+	if !valuesClose(points[0].Price, 111) {
+		t.Errorf("price = %v, want 111", points[0].Price)
+	}
+}
+
+func TestSparklineWindow_returnsGemsBelowTheChaosFloor(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-cheap"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(31)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// 3 chaos is under GemPriceHistoryByVariant's `chaos > 5` floor (POE-134).
+	// SparklineData has never applied it, so the cache must not either.
+	const name = "POE133 Cheap Gem"
+	seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", true, false, 3, 10, "BLUE")
+
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	points, ok := series[sparklineKey{name: name, variant: "20/20"}]
+	if !ok {
+		t.Fatalf("no series for %q priced at 3 chaos — the query inherited the `chaos > 5` floor", name)
+	}
+	if !valuesClose(points[0].Price, 3) {
+		t.Errorf("price = %v, want 3", points[0].Price)
+	}
+}
+
+func TestSparklineWindow_returnsTrarthusGems(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-trarthus"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(32)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// GemPriceHistoryByVariant excludes `name NOT LIKE '%Trarthus%'`;
+	// SparklineData does not, so these gems keep their sparklines.
+	const name = "POE133 Trarthus Gem"
+	seedGemSnapshot(t, pool, leagueID, tm, name, "20/20", true, false, 111, 10, "BLUE")
+
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	if _, ok := series[sparklineKey{name: name, variant: "20/20"}]; !ok {
+		t.Fatalf("no series for %q — the query inherited the Trarthus exclusion", name)
+	}
+}
+
+func TestSparklineWindow_putsCorruptedRowsInTheCorruptedMap(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-corrupt"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(33)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// Dedication serves corrupted 21/23c series from a separate map; mixing them
+	// into the main map would show corrupted prices on the collective sparkline.
+	const name = "POE133 Corrupted Gem"
+	seedGemSnapshot(t, pool, leagueID, tm, name, "21/23c", true, true, 111, 10, "BLUE")
+
+	series, corrupted, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	key := sparklineKey{name: name, variant: "21/23c"}
+	points, ok := corrupted[key]
+	if !ok {
+		t.Fatalf("no corrupted series for %q at 21/23c", name)
+	}
+	if !valuesClose(points[0].Price, 111) {
+		t.Errorf("corrupted price = %v, want 111", points[0].Price)
+	}
+	if _, leaked := series[key]; leaked {
+		t.Errorf("corrupted row also landed in the non-corrupted map — the is_corrupted split is not applied")
+	}
+}
+
+func TestSparklineWindow_excludesVariantsOutsideTheServedSet(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-variant"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(34)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// The collector writes poe.ninja's variant verbatim ("default" when empty),
+	// so an unfiltered query opens the key space to variants nothing serves.
+	const name = "POE133 Variant Gem"
+	seedGemSnapshot(t, pool, leagueID, tm, name, "default", true, false, 111, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueID, tm, name, "20", true, false, 222, 20, "BLUE")
+
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	if _, ok := series[sparklineKey{name: name, variant: "default"}]; ok {
+		t.Errorf("variant %q is outside the served set {1, 1/20, 20, 20/20} but was cached", "default")
+	}
+	if _, ok := series[sparklineKey{name: name, variant: "20"}]; !ok {
+		t.Errorf("variant %q is in the served set but is missing", "20")
+	}
+}
+
+func TestSparklineWindow_returnsOnlyRowsNewerThanSince(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-133-spw-since"
+	registerLeague(t, pool, leagueID)
+
+	older := futureTime(35)
+	newer := older.Add(time.Hour)
+	cleanupAtTime(t, pool, older, "gem_snapshots")
+	cleanupAtTime(t, pool, newer, "gem_snapshots")
+
+	// The incremental population path passes its high-water mark as `since`;
+	// re-reading already-merged rows would duplicate points on every tick.
+	const name = "POE133 Since Gem"
+	seedGemSnapshot(t, pool, leagueID, older, name, "20/20", true, false, 111, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueID, newer, name, "20/20", true, false, 222, 20, "BLUE")
+
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), older, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	points := series[sparklineKey{name: name, variant: "20/20"}]
+	if len(points) != 1 {
+		t.Fatalf("point count = %d, want 1 (only the row after `since`); 2 means `since` was ignored", len(points))
+	}
+	if !valuesClose(points[0].Price, 222) {
+		t.Errorf("price = %v, want 222 (the newer row); 111 is the row at `since`, which is not strictly newer", points[0].Price)
+	}
+}
+
+func TestSparklineWindow_returnsOnlyScopedLeague(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueA, leagueB := "POE-133-spw-A", "POE-133-spw-B"
+	registerLeague(t, pool, leagueA)
+	registerLeague(t, pool, leagueB)
+
+	tm := futureTime(36)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	const name = "POE133 Scoped Gem"
+	seedGemSnapshot(t, pool, leagueA, tm, name, "20/20", true, false, 111, 10, "BLUE")
+	seedGemSnapshot(t, pool, leagueB, tm, name, "20/20", true, false, 222, 20, "BLUE")
+
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueA), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+	// The map keys on (name, variant), not league, so an unscoped query folds
+	// both leagues' points into this one series.
+	points := series[sparklineKey{name: name, variant: "20/20"}]
+	if len(points) != 1 {
+		t.Fatalf("point count = %d, want 1 (only league %q)", len(points), leagueA)
+	}
+	if !valuesClose(points[0].Price, 111) {
+		t.Errorf("price = %v, want 111 (league %q); 222 means the query read league %q", points[0].Price, leagueA, leagueB)
+	}
+}
+
+func TestSparklineWindow_returnsEmptyMapsWhenNothingMatches(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	// A league registered but never collected — the shape a fresh league has for
+	// its first tick. Population must treat it as "nothing yet", not an error.
+	leagueID := "POE-133-spw-empty"
+	registerLeague(t, pool, leagueID)
+
+	series, corrupted, err := repo.SparklineWindow(ctx, league.Historical(leagueID), time.Time{}, 24)
+	if err != nil {
+		t.Fatalf("SparklineWindow on an empty league: %v", err)
+	}
+	if series == nil || corrupted == nil {
+		t.Fatalf("maps = (%v, %v), want non-nil empties; a nil map forces every caller to nil-check", series == nil, corrupted == nil)
+	}
+	if len(series) != 0 || len(corrupted) != 0 {
+		t.Errorf("series/corrupted sizes = %d/%d, want 0/0 for a league with no snapshots", len(series), len(corrupted))
+	}
+}
+
 func TestGemNamesAutocomplete_returnsOnlyScopedLeague(t *testing.T) {
 	pool := labIntegrationPool(t)
 	ctx := context.Background()
