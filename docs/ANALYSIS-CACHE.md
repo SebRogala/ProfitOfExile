@@ -158,9 +158,13 @@ are never merged into one series.
   appearing in snapshots would otherwise decay to an empty sparkline inside the
   window; the tail leaves its last known shape visible.
 - `sparklineMaxLookbackHours = 168` — how far back the tail may reach. Past that
-  age, showing nothing beats showing a flat line from last week. This is also
-  the span `SparklineWindow` queries, so the 168-hour trend consumer is served
-  from the same cache and each consumer trims at request time.
+  age, showing nothing beats showing a flat line from last week. The 168-hour
+  trend consumer is served from the same cache, and each consumer trims at
+  request time.
+
+These three travel together as `SparklineBounds`, built by `sparklineCacheBounds()`
+and passed to the read. Binding them into one struct is what keeps the rows
+fetched matched to the rows retained — see the cold read below.
 
 ### Population and the high-water mark
 
@@ -168,11 +172,19 @@ are never merged into one series.
 guarded by `a.cache != nil`. A failure is **logged, not fatal**: handlers fall
 back to `gem_snapshots`, and the analysis output is already persisted.
 
-The read is incremental. `SparklineWindow(ctx, scope, since, hours)` fetches only
-rows newer than the cached high-water mark, except on a cold cache (both maps
-empty), where `since` is zero and the full window loads. Series that received no
-incoming points are still re-merged, so points aging out of the rolling window
-are trimmed.
+The read is incremental. `SparklineWindow(ctx, scope, since, bounds)` fetches only
+rows newer than the cached high-water mark. Series that received no incoming
+points are still re-merged, so points aging out of the rolling window are
+trimmed.
+
+A cold cache (both maps empty) passes a zero `since`. That path does **not** read
+the full 168-hour lookback — doing so would materialise roughly fourteen times
+the rows the merge retains, at process start, exactly when `RunV2` is already
+holding its own history load. Instead it runs a bounded union: the full
+12-hour window, plus a `DISTINCT ON (name, variant)` tail query taking the last
+`SparklineTailPoints` rows per series within the lookback. Both halves share one
+row predicate, so the variant allowlist and the corruption split cannot drift
+apart between them.
 
 The mark advances **only to the newest timestamp actually observed among incoming
 points**, never to `now`. An empty read leaves it where it was.
