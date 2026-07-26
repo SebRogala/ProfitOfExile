@@ -16,6 +16,11 @@ import (
 // Readers get a snapshot of the slice header; the underlying data is treated as
 // immutable once stored.
 //
+// The sparkline maps follow the same contract: a writer builds replacement maps
+// and series outside the lock and assigns them whole, so a reader holding a
+// series it read earlier keeps a valid, unchanging view. Series are never
+// mutated or compacted in place.
+//
 // A Cache is bound to exactly one league for its whole lifetime. scope is set
 // at construction from the process-active league and never changes (scope is
 // process-fixed until POE-121). Every read and write must go through For, which
@@ -49,6 +54,14 @@ type Cache struct {
 	marketContext *MarketContext
 	gemFeatures   []GemFeature
 	gemSignals    []GemSignal
+
+	// Rolling per-gem/variant price series, kept warm so sparkline requests do
+	// not hit gem_snapshots. sparklineHighWater is the newest snapshot time
+	// already folded in, so a repeated pass over the same snapshot only has to
+	// query newer rows.
+	sparklines          map[sparklineKey][]SparklinePoint
+	sparklinesCorrupted map[sparklineKey][]SparklinePoint
+	sparklineHighWater  time.Time
 }
 
 // NewCache creates an empty analysis cache bound to scope. The cache serves and
@@ -363,4 +376,54 @@ func (c *Cache) GemSignals() []GemSignal {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.gemSignals
+}
+
+// SetSparklines replaces both sparkline maps and the high-water mark.
+//
+// Callers build the replacement maps outside the lock (see
+// mergeSparklineSeries) and hand them over whole — this method assigns and
+// nothing more, so the write lock is held for three assignments rather than for
+// a corpus-wide merge. highWater is the newest snapshot time folded into the
+// maps; pass the max time actually observed, so a repeated pass over an
+// unchanged snapshot leaves it where it was.
+func (c *Cache) SetSparklines(series, corrupted map[sparklineKey][]SparklinePoint, highWater time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sparklines = series
+	c.sparklinesCorrupted = corrupted
+	c.sparklineHighWater = highWater
+}
+
+// Sparklines returns the cached non-corrupted series for a gem name and
+// variant (nil when absent).
+func (c *Cache) Sparklines(name, variant string) []SparklinePoint {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sparklines[sparklineKey{name: name, variant: variant}]
+}
+
+// SparklinesCorrupted returns the cached corrupted series for a gem name and
+// variant (nil when absent).
+func (c *Cache) SparklinesCorrupted(name, variant string) []SparklinePoint {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sparklinesCorrupted[sparklineKey{name: name, variant: variant}]
+}
+
+// SparklineHighWater returns the newest snapshot time folded into the sparkline
+// maps (zero when never populated).
+func (c *Cache) SparklineHighWater() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sparklineHighWater
+}
+
+// HasSparklines reports whether the sparkline cache has been populated at all.
+// Handlers need this to tell a cold cache — where falling back to the database
+// is correct — from a warm cache where a missing key genuinely means the gem
+// has no recent points.
+func (c *Cache) HasSparklines() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.sparklines) > 0 || len(c.sparklinesCorrupted) > 0
 }
