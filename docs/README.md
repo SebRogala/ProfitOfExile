@@ -9,6 +9,7 @@ This is the documentation entry point. Documents are classified so historical pl
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — current workflows plus clearly labeled reliability targets for collection, native trade, contributions, optional server trading, pairing, and Mercure.
 - [Overlay Guide](OVERLAY-GUIDE.md) — maintained Windows/Tauri overlay mechanics and regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current cross-layer recipe for adding a market-data source.
+- [Gem and Item Icons](GEM-ICONS.md) — current procedure for adding or changing an icon, and why seeding precedes deploy.
 - [League Schema Migration Runbook](LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md) — current production gate and rehearsal procedure for POE-119; requires the matching POE-120/POE-121 application revision.
 - [Architecture decisions](adr/) — accepted and superseded architecture decisions.
 
@@ -36,6 +37,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-009: League-scoped repository convention](adr/009-league-scope-repository-convention.md)
 - [ADR-010: Archived league history is retained indefinitely](adr/010-retain-archived-league-history.md)
 - [ADR-011: Wipe the outgoing league at rollover; preserve it as a dump](adr/011-wipe-outgoing-league-at-rollover.md)
+- [ADR-012: Icons are pre-seeded from an allowed IP and content-addressed](adr/012-icon-cache-preseeded-and-content-addressed.md)
 
 Superseded:
 
@@ -48,6 +50,7 @@ ADRs record decisions at a point in time. If implementation later supersedes a d
 - [Trade and Market Data Lifecycles](TRADE-LIFECYCLE.md) — mixed current/target guide with per-section labels.
 - [Overlay Guide](OVERLAY-GUIDE.md) — current click-through, positioning, lifecycle distinctions, and Windows regression guards.
 - [Collector Endpoint Guide](COLLECTOR-ENDPOINTS.md) — current endpoint extension procedure, verified against the fragments implementation.
+- [Gem and Item Icons](GEM-ICONS.md) — current icon map, cache-seeding order, and the puller/repopulate steps.
 - [Analysis Cache Guide](ANALYSIS-CACHE.md) — current `lab.Cache` topology, tick chain, tenancy and concurrency contract, cold start, and the sparkline series cache.
 - [Historical overlay debugging notes](history/overlay-debugging-notes.md) — preserved runtime discoveries and obsolete implementation generations; not a current recipe.
 - [AI-Native Case Study](AI-NATIVE-CASE-STUDY.md) — public project/portfolio narrative, not an implementation contract.
