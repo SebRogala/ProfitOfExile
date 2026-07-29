@@ -103,15 +103,9 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 		if (!adjacency.has(room.id)) adjacency.set(room.id, []);
 	}
 
-	// Rooms opening a new section — the first room past each Aspirant's Trial.
-	// Needed before the adjacency build, to keep the trial gate one-way (below).
-	const sectionFirstRooms = new Set<string>();
-	let previousWasTrial = false;
-	for (const room of layout.rooms) {
-		const isTrial = room.name.toLowerCase() === "aspirant's trial";
-		if (previousWasTrial && !isTrial) sectionFirstRooms.add(room.id);
-		previousWasTrial = isTrial;
-	}
+	// Rooms opening a new section. Needed before the adjacency build, to keep the
+	// trial gate one-way (below).
+	const sectionFirstRooms = computeSectionFirstRooms(layout.rooms);
 
 	// Build adjacency from exits. Normal exits are bidirectional, with two
 	// one-way exceptions — both of them doors the game only opens from one side.
@@ -149,7 +143,7 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 	}
 
 	// Detect sections: split at Aspirant's Trial rooms
-	const sections = detectSections(layout.rooms, adjacency);
+	const sections = detectSections(layout.rooms, sectionFirstRooms);
 
 	// --- Golden door / golden key locking ---
 	//
@@ -232,32 +226,92 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 	return newState;
 }
 
-function detectSections(rooms: LabLayoutRoom[], adjacency: Map<string, string[]>): LabSection[] {
-	const sections: LabSection[] = [];
-	let currentSection: string[] = [];
-	const trialRooms: string[] = [];
+const isTrialRoom = (room: LabLayoutRoom) => room.name.toLowerCase() === "aspirant's trial";
 
-	// Rooms are ordered in the poelab JSON — trials separate sections
+/**
+ * Rooms that open a section: the lab entrance, plus each trial's forward exit.
+ *
+ * NOT "the next room in the array after a trial" — poelab regularly lists a
+ * side room of the CURRENT section after that section's trial, and taking it as
+ * the next section's start misfiles rooms. The damage is real: on
+ * 2018-01-09_merciless the planner routed 6>8>7>8>7>9, walking back into a
+ * beaten Izaro, and on 2018-01-09_uber a misfiled room dropped a golden-door
+ * lock from `sectionLocks` and sent the player through the door with no key.
+ * Array order disagreed with the trials' own exits on all 8 sample layouts.
+ *
+ * LabCompass reads the boundary the same way (labyrinthdata.cpp:292-322) and
+ * likewise keeps sections as contiguous index ranges — only the cut points come
+ * from exits.
+ */
+function computeSectionFirstRooms(rooms: LabLayoutRoom[]): Set<string> {
+	const indexOf = new Map(rooms.map((r, i) => [r.id, i]));
+	const first = new Set<string>();
+
+	// Seed with the lab entrance. Skip a leading trial: some layouts (and our
+	// test fixtures) model the Aspirant's Plaza as a trial-named room, and the
+	// plaza opens nothing.
+	const entrance = rooms.find((r) => !isTrialRoom(r));
+	if (entrance) first.add(entrance.id);
+
 	for (const room of rooms) {
-		if (room.name.toLowerCase() === "aspirant's trial") {
-			trialRooms.push(room.id);
-			if (currentSection.length > 0) {
-				sections.push({
-					roomIds: currentSection,
-					startRoom: currentSection[0],
-					endRoom: room.id,
-				});
-				currentSection = [];
-			}
-		} else {
-			currentSection.push(room.id);
+		if (!isTrialRoom(room)) continue;
+		const trialIdx = indexOf.get(room.id)!;
+
+		// Only a FORWARD exit opens a section. Sections are contiguous index
+		// ranges, so an exit pointing back up the array cannot start one —
+		// treating it as a boundary would carve a non-contiguous section.
+		//
+		// A trial with two forward exits has two doors into ONE next section, not
+		// two sections, so only the earliest opens it. (Upstream rejects such a
+		// layout outright, requiring exactly three first rooms —
+		// labyrinthdata.cpp:310. No sample poelab layout has one.)
+		let opener = Infinity;
+		for (const [direction, targetId] of Object.entries(room.exits)) {
+			if (direction === 'C') continue;
+			const targetIdx = indexOf.get(targetId);
+			if (targetIdx === undefined || targetIdx <= trialIdx) continue;
+			opener = Math.min(opener, targetIdx);
 		}
+		if (opener !== Infinity) first.add(rooms[opener].id);
 	}
 
-	// Rooms after the last trial are side rooms of the final section — absorb them.
-	// Don't create a phantom section that routes back to the last trial.
-	if (currentSection.length > 0 && sections.length > 0) {
-		sections[sections.length - 1].roomIds.push(...currentSection);
+	return first;
+}
+
+function detectSections(rooms: LabLayoutRoom[], sectionFirstRooms: Set<string>): LabSection[] {
+	// A section spans the array from its first room up to the next section's
+	// first room. Within that window the trial is the section end WHEREVER it
+	// sits — it is not always last (2018-01-09_merciless: window 5..8, trial 7,
+	// side room 8 trailing it).
+	const starts: number[] = [];
+	for (let i = 0; i < rooms.length; i++) {
+		if (sectionFirstRooms.has(rooms[i].id)) starts.push(i);
+	}
+	if (starts.length === 0) return [];
+
+	const sections: LabSection[] = [];
+	for (let s = 0; s < starts.length; s++) {
+		const from = starts[s];
+		const to = s + 1 < starts.length ? starts[s + 1] : rooms.length;
+		const window = rooms.slice(from, to);
+
+		// A window with no trial is the tail after the final Izaro (or a malformed
+		// import). Absorb it into the previous section rather than inventing a
+		// section with no end — a phantom section would route back to a trial the
+		// player has already beaten.
+		const trial = window.find(isTrialRoom);
+		if (!trial) {
+			if (sections.length > 0) {
+				sections[sections.length - 1].roomIds.push(...window.map((r) => r.id));
+			}
+			continue;
+		}
+
+		sections.push({
+			roomIds: window.filter((r) => !isTrialRoom(r)).map((r) => r.id),
+			startRoom: rooms[from].id,
+			endRoom: trial.id,
+		});
 	}
 
 	return sections;
@@ -434,6 +488,27 @@ export function computeRoute(state: NavState, strategy: RouteStrategy): string[]
 	return computeRouteFrom(state, firstRoom.id, strategy);
 }
 
+/**
+ * Adjacency with the section's trial as a SINK: it keeps its inbound edges but
+ * has no outbound ones, so a route can END there and never pass THROUGH it.
+ *
+ * Entering Izaro's room starts the fight; the router must not treat it as a
+ * corridor. It otherwise does: the trial costs 5 against 9-22 for a real room,
+ * making it the cheapest node in the lab and an attractive shortcut between any
+ * two rooms that both touch it. 2018-01-09_uber routed 14>15>16>15 — into
+ * Izaro, out to a darkshrine, back into Izaro.
+ *
+ * This alone confines routing to the section: sections meet only at trials, so
+ * making the trial a sink removes the only way out. An explicit
+ * restrict-to-section-rooms filter was tried and dropped — nothing could reach
+ * past it, so no test could tell it was there.
+ */
+function sectionAdjacency(state: NavState, section: LabSection): Map<string, string[]> {
+	const scoped = new Map(state.adjacency);
+	scoped.set(section.endRoom, []);
+	return scoped;
+}
+
 function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStrategy): string[] {
 	if (!state.layout || state.sections.length === 0) return [];
 
@@ -455,11 +530,13 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 		const end = section.endRoom;
 		const sectionTargets = targets.filter((t) => section.roomIds.includes(t));
 
+		const sectionAdj = sectionAdjacency(state, section);
+
 		// Golden door handling: if route must cross a locked door, split into
-		// pre-key (unlocked adjacency) and post-key (full adjacency) phases.
-		const goldenRoute = routeWithGoldenDoor(state, section, start, end, sectionTargets);
+		// pre-key (unlocked adjacency) and post-key (door open) phases.
+		const goldenRoute = routeWithGoldenDoor(state, section, start, end, sectionTargets, sectionAdj);
 		const sectionRoute = goldenRoute ?? bestRouteThroughTargets(
-			state.adjacency,
+			sectionAdj,
 			start,
 			end,
 			sectionTargets,
@@ -513,6 +590,7 @@ function routeWithGoldenDoor(
 	start: string,
 	end: string,
 	targets: string[],
+	sectionAdj: Map<string, string[]>,
 ): string[] | null {
 	if (state.lockedDoors.length === 0) return null;
 
@@ -526,7 +604,7 @@ function routeWithGoldenDoor(
 
 	// Build adjacency without golden door edges
 	const unlockedAdj = new Map<string, string[]>();
-	for (const [roomId, neighbors] of state.adjacency) {
+	for (const [roomId, neighbors] of sectionAdj) {
 		unlockedAdj.set(roomId, neighbors.filter((n) => {
 			const pair = [roomId, n].sort();
 			return !sectionLocks.some(([a, b]) => a === pair[0] && b === pair[1]);
@@ -594,7 +672,7 @@ function routeWithGoldenDoor(
 		postKeyTargets.push(doorRoom);
 	}
 
-	const phase2 = bestRouteThroughTargets(state.adjacency, keyRoom, end, postKeyTargets, state.roomById);
+	const phase2 = bestRouteThroughTargets(sectionAdj, keyRoom, end, postKeyTargets, state.roomById);
 
 	// The key is unreachable, or the trial is unreachable even with it. Same as
 	// above: no legal route exists, so fail closed rather than let the caller
