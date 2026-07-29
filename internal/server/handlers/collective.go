@@ -109,23 +109,22 @@ func nonNilSparkline(pts []lab.SparklinePoint) []lab.SparklinePoint {
 	return pts
 }
 
-// cachedCorruptedVariant is the only corrupted variant the lab cache stores
-// series for — the Dedication (21/23c) pool. It mirrors the population query's
-// filter in internal/lab.
-const cachedCorruptedVariant = "21/23c"
-
 // cachedCorruptedSparklines collects cached corrupted series for names, keyed
 // by name. The second return reports whether the cache could serve the request
 // at all: a cold cache, or a variant the cache never populates, must go to the
 // database rather than hand back an empty series.
+//
+// The cache stores series for the Dedication variants only — lab.DedicationVariants
+// is the population query's filter, so it is also the membership test here.
 func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []string, variant string, hours int) (map[string][]lab.SparklinePoint, bool) {
-	if cache == nil || variant != cachedCorruptedVariant {
+	if cache == nil || !lab.IsDedicationVariant(variant) {
 		return nil, false
 	}
 	c := cache.For(scope)
-	// The corrupted corpus specifically: a populated non-corrupted map says
-	// nothing about whether this one can serve the request.
-	if !c.HasSparklinesCorrupted() {
+	// This variant specifically: a populated corpus says nothing about whether
+	// the requested variant is in it, and a non-corrupted map says nothing about
+	// either.
+	if !c.HasSparklinesCorruptedVariant(variant) {
 		return nil, false
 	}
 	out := make(map[string][]lab.SparklinePoint, len(names))
@@ -379,9 +378,15 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 }
 
 // serveDedicationCollective handles ?mode=dedication on the collective endpoint.
-// Returns corrupted 21/23 gems ranked by price, mapped to the same response shape
-// as the Normal collective so the frontend ByVariant/BestPlays components work unchanged.
+// Returns the corrupted gems of one Dedication variant (?variant=, default
+// 21/23c) ranked by price, mapped to the same response shape as the Normal
+// collective so the frontend ByVariant/BestPlays components work unchanged.
 func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, scope league.Scope) {
+	variant, ok := parseDedicationVariant(w, r)
+	if !ok {
+		return
+	}
+
 	limit := 100
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -401,15 +406,30 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 		return
 	}
 
-	// Load Dedication results for input costs.
+	// Load Dedication results for input costs — this variant's, since input cost
+	// is what the ranking's ROI is measured against.
 	var dedicationResults []lab.DedicationResult
 	if cache != nil {
 		ded := cache.For(scope).Dedication()
-		dedicationResults = append(dedicationResults, ded.Skills...)
-		dedicationResults = append(dedicationResults, ded.Transfigured...)
+		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Skills, variant)...)
+		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Transfigured, variant)...)
 	}
 
-	results := lab.RankDedicationCollective(gems, dedicationResults, limit, searchName)
+	// Fall back to the database when the cache holds nothing for this variant,
+	// as the compare path beside this one already does. Without it a warm cache
+	// that has never seen the selected variant yields no input cost at all, and
+	// every row's ROI silently becomes the gem's full listed price.
+	if len(dedicationResults) == 0 {
+		fromDB, err := repo.LatestDedicationResults(r.Context(), scope, variant, "", "", 500)
+		if err != nil {
+			slog.Error("dedication collective: dedication results query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		dedicationResults = fromDB
+	}
+
+	results := lab.RankDedicationCollective(gems, dedicationResults, limit, searchName, variant)
 
 	// Map to the same row shape as Normal collective.
 	rows := make([]collectiveRow, 0, len(results))
@@ -628,11 +648,17 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 }
 
 // serveDedicationCompare handles the Dedication lab compare path.
-// Queries corrupted 21/23c gem prices, loads Dedication analysis for input costs,
-// and auto-detects pool (skill vs transfigured) from gem names.
+// Queries one variant's corrupted gem prices (?variant=, default 21/23c), loads
+// the matching Dedication analysis for input costs, and auto-detects pool
+// (skill vs transfigured) from gem names.
 func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Repository, cache *lab.Cache, scope league.Scope, names []string) {
+	variant, ok := parseDedicationVariant(w, r)
+	if !ok {
+		return
+	}
+
 	// Load corrupted gem prices for the requested names.
-	gemPrices, err := repo.CorruptedGemPricesByNames(r.Context(), scope, names)
+	gemPrices, err := repo.CorruptedGemPricesByNames(r.Context(), scope, names, variant)
 	if err != nil {
 		slog.Error("compare analysis (dedication): corrupted gem prices query failed", "error", err)
 		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -644,19 +670,19 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 	var dedicationResults []lab.DedicationResult
 	if cache != nil {
 		ded := cache.For(scope).Dedication()
-		dedicationResults = append(dedicationResults, ded.Skills...)
-		dedicationResults = append(dedicationResults, ded.Transfigured...)
+		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Skills, variant)...)
+		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Transfigured, variant)...)
 	}
 
 	// Slow path: fall back to DB if cache is empty.
 	if len(dedicationResults) == 0 {
-		skills, err := repo.LatestDedicationResults(r.Context(), scope, "skill", "", 100)
+		skills, err := repo.LatestDedicationResults(r.Context(), scope, variant, "skill", "", 100)
 		if err != nil {
 			slog.Error("compare analysis (dedication): dedication skills query failed", "error", err)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
-		trans, err := repo.LatestDedicationResults(r.Context(), scope, "transfigured", "", 100)
+		trans, err := repo.LatestDedicationResults(r.Context(), scope, variant, "transfigured", "", 100)
 		if err != nil {
 			slog.Error("compare analysis (dedication): dedication transfigured query failed", "error", err)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -666,13 +692,13 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 	}
 
 	// Load sparkline data for corrupted gems (last 12 hours).
-	// The cache populates corrupted series for the Dedication variant only, so
+	// The cache populates corrupted series for the Dedication variants only, so
 	// the read is guarded on it: any other variant has no cached series and must
 	// go to the query rather than read an empty series out of a warm cache.
 	var warnings []string
-	sparklines, cached := cachedCorruptedSparklines(cache, scope, names, cachedCorruptedVariant, sparklineWindowHours)
+	sparklines, cached := cachedCorruptedSparklines(cache, scope, names, variant, sparklineWindowHours)
 	if !cached {
-		sp, err := repo.SparklineDataCorrupted(r.Context(), scope, names, cachedCorruptedVariant, sparklineWindowHours)
+		sp, err := repo.SparklineDataCorrupted(r.Context(), scope, names, variant, sparklineWindowHours)
 		if err != nil {
 			slog.Error("compare analysis (dedication): sparkline query failed", "error", err)
 			sp = make(map[string][]lab.SparklinePoint)
@@ -681,14 +707,15 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 		sparklines = sp
 	}
 
-	results := lab.BuildDedicationCompareResults(names, gemPrices, dedicationResults, sparklines)
+	results := lab.BuildDedicationCompareResults(names, gemPrices, dedicationResults, sparklines, variant)
 
 	rows := buildCompareRows(results, nil, scope) // no trade enrichment for Dedication mode
 
 	resp := map[string]any{
-		"count": len(rows),
-		"data":  rows,
-		"mode":  "dedication",
+		"count":   len(rows),
+		"data":    rows,
+		"mode":    "dedication",
+		"variant": variant,
 	}
 	if len(warnings) > 0 {
 		resp["warnings"] = warnings

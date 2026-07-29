@@ -592,9 +592,10 @@ func (r *Repository) SparklineData(ctx context.Context, scope league.Scope, name
 // of the series identity rather than something merged away.
 var sparklineVariants = []string{"1", "1/20", "20", "20/20"}
 
-// sparklineCorruptedVariant is the only corrupted variant sparklines are served
-// for — the Dedication (21/23c) pool.
-const sparklineCorruptedVariant = "21/23c"
+// sparklineCorruptedVariants are the corrupted variants sparklines are served
+// for — the Dedication pools. Same identity rule as sparklineVariants: each
+// variant is its own series, so both selectable Dedication pools are populated.
+var sparklineCorruptedVariants = DedicationVariants
 
 // sparklineRowFilter is the row predicate every sparkline read shares: the
 // scoped league, an upper bound on row age, and the served-variant allowlist
@@ -609,7 +610,7 @@ func sparklineRowFilter(hoursParam string) string {
 	return `league = $1
 		  AND time > NOW() - make_interval(hours => ` + hoursParam + `)
 		  AND ((is_corrupted = false AND variant = ANY($3))
-		    OR (is_corrupted = true AND variant = $4))`
+		    OR (is_corrupted = true AND variant = ANY($4)))`
 }
 
 // sparklineIncrementalQuery reads only rows strictly newer than the caller's
@@ -696,11 +697,11 @@ func (r *Repository) SparklineWindow(ctx context.Context, scope league.Scope, si
 	}
 
 	query := sparklineIncrementalQuery
-	args := []any{scope.ID(), bounds.LookbackHours, sparklineVariants, sparklineCorruptedVariant, since}
+	args := []any{scope.ID(), bounds.LookbackHours, sparklineVariants, sparklineCorruptedVariants, since}
 	if since.IsZero() {
 		query = sparklineColdQuery
 		args = []any{
-			scope.ID(), bounds.LookbackHours, sparklineVariants, sparklineCorruptedVariant,
+			scope.ID(), bounds.LookbackHours, sparklineVariants, sparklineCorruptedVariants,
 			bounds.TailPoints, bounds.WindowHours,
 		}
 	}
@@ -1392,14 +1393,19 @@ func (r *Repository) SaveDedicationResults(ctx context.Context, scope league.Sco
 			lowConfJSON = []byte("[]")
 		}
 
+		variant := dr.Variant
+		if variant == "" {
+			variant = DefaultDedicationVariant
+		}
+
 		batch.Queue(
 			`INSERT INTO dedication_snapshots
-			 (league, time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+			 (league, time, variant, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
 			  input_cost, profit, fonts_to_hit, mode, thin_pool_gems, liquidity_risk,
 			  pool_breakdown, low_confidence_gems)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 			 ON CONFLICT DO NOTHING`,
-			scope.ID(), dr.Time, dr.Color, dr.GemType, dr.Pool, dr.Winners,
+			scope.ID(), dr.Time, variant, dr.Color, dr.GemType, dr.Pool, dr.Winners,
 			dr.PWin, dr.AvgWinRaw, dr.EVRaw,
 			dr.InputCost, dr.Profit, dr.FontsToHit,
 			dr.Mode, dr.ThinPoolGems, dr.LiquidityRisk,
@@ -1429,13 +1435,14 @@ func (r *Repository) SaveDedicationResults(ctx context.Context, scope league.Sco
 }
 
 // LatestDedicationResults returns the most recent Dedication analysis results,
-// optionally filtered by gemType and/or mode.
-func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.Scope, gemType, mode string, limit int) ([]DedicationResult, error) {
+// optionally filtered by variant, gemType and/or mode. An empty variant returns
+// every analyzed variant.
+func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.Scope, variant, gemType, mode string, limit int) ([]DedicationResult, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: latest dedication results: %w", err)
 	}
 	query := `
-		SELECT time, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
+		SELECT time, variant, color, gem_type, pool, winners, p_win, avg_win_raw, ev_raw,
 		       input_cost, profit, fonts_to_hit,
 		       COALESCE(mode, 'safe'), COALESCE(thin_pool_gems, 0), COALESCE(liquidity_risk, 'LOW'),
 		       COALESCE(pool_breakdown, '[]'::jsonb), COALESCE(low_confidence_gems, '[]'::jsonb)
@@ -1444,6 +1451,11 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 	args := []any{scope.ID()}
 	argIdx := 2
 
+	if variant != "" {
+		query += fmt.Sprintf(` AND variant = $%d`, argIdx)
+		args = append(args, variant)
+		argIdx++
+	}
 	if gemType != "" {
 		query += fmt.Sprintf(` AND gem_type = $%d`, argIdx)
 		args = append(args, gemType)
@@ -1468,7 +1480,7 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 	for rows.Next() {
 		var dr DedicationResult
 		var poolBreakdownJSON, lowConfJSON []byte
-		if err := rows.Scan(&dr.Time, &dr.Color, &dr.GemType, &dr.Pool, &dr.Winners,
+		if err := rows.Scan(&dr.Time, &dr.Variant, &dr.Color, &dr.GemType, &dr.Pool, &dr.Winners,
 			&dr.PWin, &dr.AvgWinRaw, &dr.EVRaw,
 			&dr.InputCost, &dr.Profit, &dr.FontsToHit,
 			&dr.Mode, &dr.ThinPoolGems, &dr.LiquidityRisk,
@@ -1532,14 +1544,17 @@ func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, scope le
 	return names, nil
 }
 
-// CorruptedGemPricesByNames returns the latest snapshot prices for specific corrupted gems.
-// Only returns gems matching variant "21/23c". Used by the Dedication compare endpoint.
-func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league.Scope, names []string) ([]GemPrice, error) {
+// CorruptedGemPricesByNames returns the latest snapshot prices for specific corrupted gems
+// at one Dedication variant. Used by the Dedication compare endpoint.
+func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league.Scope, names []string, variant string) ([]GemPrice, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: corrupted gem prices by names: %w", err)
 	}
 	if len(names) == 0 {
 		return nil, nil
+	}
+	if variant == "" {
+		variant = DefaultDedicationVariant
 	}
 
 	rows, err := r.pool.Query(ctx, `
@@ -1549,8 +1564,8 @@ func (r *Repository) CorruptedGemPricesByNames(ctx context.Context, scope league
 		WHERE league = $1
 		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
 		  AND is_corrupted = true
-		  AND variant = '21/23c'
-		  AND name = ANY($2)`, scope.ID(), names)
+		  AND variant = $3
+		  AND name = ANY($2)`, scope.ID(), names, variant)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query corrupted gem prices by names: %w", err)
 	}

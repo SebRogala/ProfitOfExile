@@ -494,14 +494,17 @@ func BuildCompareResults(
 // transfigured) is auto-detected from the gem name: names containing " of " are
 // transfigured, others are non-transfigured skills.
 // dedicationResults provides per-color input costs and pool context.
-// RankDedicationCollective returns corrupted 21/23 gems ranked by price for the
-// Dedication lab rankings table. Maps gems into CollectiveResult shape so the
-// existing ByVariant/BestPlays frontend components can render them.
+// RankDedicationCollective returns the corrupted gems of one Dedication variant
+// ranked by price for the Dedication lab rankings table. Maps gems into
+// CollectiveResult shape so the existing ByVariant/BestPlays frontend
+// components can render them. dedicationResults must be the same variant's —
+// its input costs are what each gem's ROI is measured against.
 func RankDedicationCollective(
 	gems []GemPrice,
 	dedicationResults []DedicationResult,
 	limit int,
 	searchName string,
+	variant string,
 ) []CollectiveResult {
 	// Index Dedication results by (color, gemType) for input cost + tier lookup.
 	type dedKey struct{ color, gemType string }
@@ -513,13 +516,13 @@ func RankDedicationCollective(
 		}
 	}
 
-	// Filter to corrupted 21/23c skill gems (no supports, no Trarthus).
+	// Filter to this variant's corrupted gems (no supports, no Trarthus).
 	var pool []GemPrice
 	for _, g := range gems {
 		if !isDedicationGem(g) {
 			continue
 		}
-		if g.Variant != "21/23c" {
+		if g.Variant != variant {
 			continue
 		}
 		pool = append(pool, g)
@@ -556,10 +559,30 @@ func RankDedicationCollective(
 		inputCost := inputCosts[dedKey{g.GemColor, gemType}]
 		roi := g.Chaos - inputCost
 
+		// No input cost for this (color, pool) means the analysis has nothing for
+		// the market being ranked — not that the gems are free. Reporting
+		// `roi = full listed price` there is a fabricated number that reads
+		// exactly like a real one, so the row is marked no-base instead and the
+		// ROI columns are left at zero. ConfidenceNoBase is what BestPlays
+		// already renders as "—".
+		if inputCost <= 0 {
+			results = append(results, CollectiveResult{
+				TransfiguredName:     g.Name,
+				BaseName:             gemType,
+				Variant:              strings.TrimSuffix(variant, "c"),
+				GemColor:             g.GemColor,
+				TransfiguredPrice:    g.Chaos,
+				TransfiguredListings: g.Listings,
+				Confidence:           ConfidenceNoBase,
+				LowConfidence:        true,
+			})
+			continue
+		}
+
 		cr := CollectiveResult{
 			TransfiguredName:     g.Name,
 			BaseName:             gemType,
-			Variant:              "21/23",
+			Variant:              strings.TrimSuffix(variant, "c"),
 			GemColor:             g.GemColor,
 			TransfiguredPrice:    g.Chaos,
 			TransfiguredListings: g.Listings,
@@ -594,12 +617,21 @@ func BuildDedicationCompareResults(
 	gemPrices []GemPrice,
 	dedicationResults []DedicationResult,
 	sparklines map[string][]SparklinePoint,
+	variant string,
 ) []CompareResult {
-	// Index gem prices by name. For corrupted 21/23c there should be at most one
-	// entry per name, but if duplicates exist we keep the last (highest chaos).
+	// Index gem prices by name. Within one corrupted variant there should be at
+	// most one entry per name, but if duplicates exist we keep the last (highest chaos).
+	// Only this variant's prices are indexed. Every row is labelled with the
+	// caller's variant, so admitting a price from another one would put a
+	// 21/23c number under a 21/20c label with nothing left to detect it — the
+	// query that feeds this already filters, and this keeps the function honest
+	// on its own terms rather than by its caller's discipline.
 	priceIndex := make(map[string]*GemPrice, len(gemPrices))
 	for i := range gemPrices {
 		g := &gemPrices[i]
+		if g.Variant != variant {
+			continue
+		}
 		priceIndex[g.Name] = g
 	}
 
@@ -620,7 +652,7 @@ func BuildDedicationCompareResults(
 	for _, name := range names {
 		cr := CompareResult{
 			TransfiguredName: name,
-			Variant:          "21/23c",
+			Variant:          variant,
 			Signal:           "STABLE",
 			Confidence:       "LOW",
 		}

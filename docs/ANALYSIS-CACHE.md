@@ -194,7 +194,8 @@ Population deliberately does **not** reuse the history `RunV2` already holds:
 applies its own variant allowlist, none of which the previous sparkline path
 applied. Reusing it would silently drop points the database path returned.
 `SparklineWindow` filters only on the variant allowlist (`1`, `1/20`, `20`,
-`20/20` for non-corrupted; `21/23c` for corrupted) and `is_corrupted`, which
+`20/20` for non-corrupted; the Dedication variants `21/23c` and `21/20c` for
+corrupted) and `is_corrupted`, which
 closes the key space without changing series content. POE-134 may change that
 `chaos > 5` floor; the sparkline path is unaffected either way.
 

@@ -11,7 +11,8 @@ import (
 	"profitofexile/internal/league"
 )
 
-// DedicationAnalysis returns pre-computed Dedication lab EV for corrupted 21/23 gems.
+// DedicationAnalysis returns pre-computed Dedication lab EV for one corrupted
+// gem pool (?variant=, default 21/23c).
 // Response splits results into skills (non-transfigured) and transfigured pools,
 // each with safe/premium/jackpot modes. Includes entryFee from offering timing cache.
 // GET /api/analysis/dedication
@@ -21,16 +22,23 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		if !ok {
 			return
 		}
+		variant, ok := parseDedicationVariant(w, r)
+		if !ok {
+			return
+		}
 
 		var skillResults, transfiguredResults []lab.DedicationResult
 		cacheHit := false
 
-		// Fast path: serve from cache.
+		// Fast path: serve from cache. The cache holds every analyzed variant,
+		// so the requested one is selected out of it here.
 		if cache != nil {
 			analysis := cache.For(scope).Dedication()
-			if len(analysis.Skills) > 0 || len(analysis.Transfigured) > 0 {
-				skillResults = analysis.Skills
-				transfiguredResults = analysis.Transfigured
+			skills := lab.FilterDedicationVariant(analysis.Skills, variant)
+			transfigured := lab.FilterDedicationVariant(analysis.Transfigured, variant)
+			if len(skills) > 0 || len(transfigured) > 0 {
+				skillResults = skills
+				transfiguredResults = transfigured
 				cacheHit = true
 			}
 		}
@@ -38,13 +46,13 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		// Slow path: fall back to DB query.
 		if !cacheHit {
 			var err error
-			skillResults, err = repo.LatestDedicationResults(r.Context(), scope, "skill", "", limit)
+			skillResults, err = repo.LatestDedicationResults(r.Context(), scope, variant, "skill", "", limit)
 			if err != nil {
 				slog.Error("dedication analysis: query skills failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 				return
 			}
-			transfiguredResults, err = repo.LatestDedicationResults(r.Context(), scope, "transfigured", "", limit)
+			transfiguredResults, err = repo.LatestDedicationResults(r.Context(), scope, variant, "transfigured", "", limit)
 			if err != nil {
 				slog.Error("dedication analysis: query transfigured failed", "error", err)
 				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
@@ -115,8 +123,10 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 				Premium []dedicationRow `json:"premium"`
 				Jackpot []dedicationRow `json:"jackpot"`
 			} `json:"transfigured"`
+			Variant  string  `json:"variant"`
 			EntryFee float64 `json:"entryFee"`
 		}{
+			Variant:  variant,
 			EntryFee: entryFee,
 		}
 
@@ -138,6 +148,7 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 // dedicationRow is the JSON response shape for a single Dedication result.
 type dedicationRow struct {
 	Time              string                    `json:"time"`
+	Variant           string                    `json:"variant"`
 	Color             string                    `json:"color"`
 	GemType           string                    `json:"gemType"`
 	Pool              int                       `json:"pool"`
@@ -158,6 +169,7 @@ type dedicationRow struct {
 func toDedicationRow(dr lab.DedicationResult) dedicationRow {
 	return dedicationRow{
 		Time:              dr.Time.UTC().Format(time.RFC3339),
+		Variant:           dr.Variant,
 		Color:             dr.Color,
 		GemType:           dr.GemType,
 		Pool:              dr.Pool,

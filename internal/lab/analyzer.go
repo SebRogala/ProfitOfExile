@@ -142,7 +142,7 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 }
 
 // RunDedication fetches the latest gem snapshot and computes Dedication lab EV
-// for corrupted 21/23 gems (both skills and transfigured pools).
+// for every variant in DedicationVariants (both skills and transfigured pools).
 // It requires GemFeature data for risk-adjustment (sell probability, stability discount).
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
 func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error {

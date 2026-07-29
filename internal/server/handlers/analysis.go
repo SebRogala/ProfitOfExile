@@ -28,6 +28,32 @@ func normalizeVariant(v string) string {
 	return v
 }
 
+// parseDedicationVariant reads the Dedication pool variant from the request.
+// Clients may send it with or without the corrupted suffix ("21/20" or
+// "21/20c"). An absent variant means the default pool, which keeps clients
+// built before the pool became selectable on their original behaviour. An
+// unrecognised one is a client error rather than a silent fallback: serving
+// 21/23c numbers under a 21/20 heading is worse than an error.
+// Returns the DB-format variant and true, or writes the error and returns false.
+func parseDedicationVariant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	v := r.URL.Query().Get("variant")
+	if v == "" {
+		return lab.DefaultDedicationVariant, true
+	}
+	if !strings.HasSuffix(v, "c") {
+		v += "c"
+	}
+	if !lab.IsDedicationVariant(v) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "variant must be one of " + strings.Join(lab.DedicationVariants, ", "),
+		})
+		return "", false
+	}
+	return v, true
+}
+
 // parseLimit extracts and validates the limit query parameter.
 // Returns the parsed limit and true, or writes an error response and returns 0, false.
 func parseLimit(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit int) (int, bool) {

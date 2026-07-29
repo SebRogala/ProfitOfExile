@@ -7,37 +7,70 @@ import (
 	"time"
 )
 
-// DedicationResult holds the computed EV for a single (color, gemType) Dedication lab analysis.
-// GemType is "skill" (non-transfigured corrupted 21/23) or "transfigured" (transfigured corrupted 21/23).
+// DedicationVariants are the corrupted gem variants the Dedication font pool is
+// analyzed for. Each is a separate market with its own pool, tiers and input
+// cost — they are never merged into one pool.
+var DedicationVariants = []string{"21/23c", "21/20c"}
+
+// DefaultDedicationVariant is the variant served when a caller names none.
+const DefaultDedicationVariant = "21/23c"
+
+// IsDedicationVariant reports whether variant is one of the analyzed corrupted
+// Dedication variants.
+func IsDedicationVariant(variant string) bool {
+	for _, v := range DedicationVariants {
+		if v == variant {
+			return true
+		}
+	}
+	return false
+}
+
+// DedicationResult holds the computed EV for a single (variant, color, gemType) Dedication lab analysis.
+// GemType is "skill" (non-transfigured corrupted gem) or "transfigured" (transfigured corrupted gem).
 type DedicationResult struct {
 	Time              time.Time
-	Color             string  // RED, GREEN, BLUE
-	GemType           string  // "skill" or "transfigured"
-	Pool              int     // total unique gem names of that color in the pool
-	Winners           int     // count of tier-qualifying gems
-	PWin              float64 // probability of seeing at least 1 winner in 3 picks
-	AvgWin            float64 // average risk-adjusted value when you hit
-	AvgWinRaw         float64 // average RAW listed price when you hit
-	EV                float64 // expected income per font (risk-adjusted)
-	EVRaw             float64 // expected income per font using raw listed prices
-	InputCost         float64 // avg of 10 cheapest per color per pool
-	Profit            float64 // EVRaw - InputCost
-	FontsToHit        float64          // expected fonts until hitting a winner (1/pWin)
-	JackpotGems       []JackpotGemInfo // TOP gem names+prices (only for jackpot mode)
-	Mode              string           // "safe", "premium", or "jackpot"
-	ThinPoolGems      int              // count of winners with < 5 listings
-	LiquidityRisk     string           // "LOW", "MEDIUM", "HIGH"
+	Variant           string                 // corrupted variant the pool was computed over, e.g. "21/23c"
+	Color             string                 // RED, GREEN, BLUE
+	GemType           string                 // "skill" or "transfigured"
+	Pool              int                    // total unique gem names of that color in the pool
+	Winners           int                    // count of tier-qualifying gems
+	PWin              float64                // probability of seeing at least 1 winner in 3 picks
+	AvgWin            float64                // average risk-adjusted value when you hit
+	AvgWinRaw         float64                // average RAW listed price when you hit
+	EV                float64                // expected income per font (risk-adjusted)
+	EVRaw             float64                // expected income per font using raw listed prices
+	InputCost         float64                // avg of 10 cheapest per color per pool
+	Profit            float64                // EVRaw - InputCost
+	FontsToHit        float64                // expected fonts until hitting a winner (1/pWin)
+	JackpotGems       []JackpotGemInfo       // TOP gem names+prices (only for jackpot mode)
+	Mode              string                 // "safe", "premium", or "jackpot"
+	ThinPoolGems      int                    // count of winners with < 5 listings
+	LiquidityRisk     string                 // "LOW", "MEDIUM", "HIGH"
 	PoolBreakdown     []TierPoolInfo         `json:"poolBreakdown,omitempty"`
 	LowConfidenceGems []LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"`
 }
 
 // DedicationAnalysis holds the results of Dedication lab analysis for both pools.
+// Each slice carries the results of every variant in DedicationVariants; read
+// them through FilterDedicationVariant rather than assuming a single variant.
 type DedicationAnalysis struct {
 	Skills       []DedicationResult
 	Transfigured []DedicationResult
 }
 
-// isDedicationGem returns true if the gem belongs to the Dedication corrupted 21/23 pool:
+// FilterDedicationVariant returns the subset of results computed for variant.
+func FilterDedicationVariant(results []DedicationResult, variant string) []DedicationResult {
+	out := make([]DedicationResult, 0, len(results))
+	for _, dr := range results {
+		if dr.Variant == variant {
+			out = append(out, dr)
+		}
+	}
+	return out
+}
+
+// isDedicationGem returns true if the gem belongs to a Dedication corrupted pool:
 // corrupted, not a support gem, not Trarthus.
 func isDedicationGem(g GemPrice) bool {
 	return g.IsCorrupted && !strings.Contains(g.Name, "Support") && !strings.Contains(g.Name, "Trarthus")
@@ -64,9 +97,21 @@ func dedicationInputCostFromPrices(prices []float64) float64 {
 	return sum / float64(n)
 }
 
-// AnalyzeDedication computes Dedication lab EV per (color, gemType) in three modes.
-// The gems slice must be the full latest snapshot. Features are used for risk-adjustment.
+// AnalyzeDedication computes Dedication lab EV for every variant in
+// DedicationVariants, per (color, gemType) in three modes. The gems slice must
+// be the full latest snapshot. Features are used for risk-adjustment.
 func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeature) DedicationAnalysis {
+	var combined DedicationAnalysis
+	for _, variant := range DedicationVariants {
+		a := analyzeDedicationVariant(snapTime, gems, features, variant)
+		combined.Skills = append(combined.Skills, a.Skills...)
+		combined.Transfigured = append(combined.Transfigured, a.Transfigured...)
+	}
+	return combined
+}
+
+// analyzeDedicationVariant computes the analysis for a single corrupted variant.
+func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []GemFeature, variant string) DedicationAnalysis {
 	// Build feature lookup: "name|variant" -> *GemFeature
 	type featureKey struct{ name, variant string }
 	featureLookup := make(map[featureKey]*GemFeature, len(features))
@@ -104,7 +149,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 		if !isDedicationGem(g) {
 			continue
 		}
-		if g.Variant != "21/23c" {
+		if g.Variant != variant {
 			continue
 		}
 		color := g.GemColor
@@ -128,8 +173,8 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 
 	// Precompute classification once per pool type (not once per color).
 	classificationByType := map[string]ClassificationResult{
-		"skill":        ComputeDedicationClassification(gems, false),
-		"transfigured": ComputeDedicationClassification(gems, true),
+		"skill":        ComputeDedicationClassification(gems, false, variant),
+		"transfigured": ComputeDedicationClassification(gems, true, variant),
 	}
 
 	var analysis DedicationAnalysis
@@ -164,10 +209,10 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			gemRawPrice := make(map[string]float64)
 
 			for _, e := range entries {
-				feat := featureLookup[featureKey{e.name, "21/23c"}]
+				feat := featureLookup[featureKey{e.name, variant}]
 
 				// Get classification from the dedication-specific classification.
-				classKey := GemClassificationKey{e.name, "21/23c"}
+				classKey := GemClassificationKey{e.name, variant}
 				gc, hasClass := classification.Gems[classKey]
 
 				if gc.LowConfidence {
@@ -270,13 +315,13 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			var safeWinnerSum, premiumWinnerSum, jackpotWinnerSum float64
 			var safeWinnerRawSum, premiumWinnerRawSum, jackpotWinnerRawSum float64
 			for _, e := range entries {
-				classKey := GemClassificationKey{e.name, "21/23c"}
+				classKey := GemClassificationKey{e.name, variant}
 				gc := classification.Gems[classKey]
 				if gc.LowConfidence {
 					continue
 				}
 
-				feat := featureLookup[featureKey{e.name, "21/23c"}]
+				feat := featureLookup[featureKey{e.name, variant}]
 				var sellProb, stabDisc float64
 				if feat != nil {
 					sellProb = sellProbabilityFactor(e.listings, feat.Low7Days, e.chaos)
@@ -326,6 +371,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			}
 			safeResult := DedicationResult{
 				Time:              snapTime,
+				Variant:           variant,
 				Color:             color,
 				GemType:           gemType,
 				Pool:              pool,
@@ -358,6 +404,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			}
 			premiumResult := DedicationResult{
 				Time:          snapTime,
+				Variant:       variant,
 				Color:         color,
 				GemType:       gemType,
 				Pool:          pool,
@@ -388,6 +435,7 @@ func AnalyzeDedication(snapTime time.Time, gems []GemPrice, features []GemFeatur
 			}
 			jackpotResult := DedicationResult{
 				Time:          snapTime,
+				Variant:       variant,
 				Color:         color,
 				GemType:       gemType,
 				Pool:          pool,

@@ -464,3 +464,22 @@ func (c *Cache) HasSparklinesCorrupted() bool {
 	defer c.mu.RUnlock()
 	return len(c.sparklinesCorrupted) > 0
 }
+
+// HasSparklinesCorruptedVariant reports whether the corrupted map holds any
+// series for one variant specifically.
+//
+// The corpus-wide answer stopped being usable once the Dedication pool became
+// selectable: with 21/23c series in memory and no 21/20c ones, a corpus-level
+// "warm" makes a 21/20c read return empty series with no database fallback and
+// no warning — the caller cannot tell "this gem has no recent points" from "this
+// whole variant was never populated".
+func (c *Cache) HasSparklinesCorruptedVariant(variant string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for k := range c.sparklinesCorrupted {
+		if k.variant == variant {
+			return true
+		}
+	}
+	return false
+}
