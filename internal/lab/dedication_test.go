@@ -678,3 +678,95 @@ func TestAnalyzeDedication_LowConfidenceGemsInSafeMode(t *testing.T) {
 	}
 	t.Error("expected RED skill safe result")
 }
+
+// makeDedicationGemVariant is makeDedicationGem at an explicit corrupted variant.
+func makeDedicationGemVariant(name, variant, color string, chaos float64, listings int) GemPrice {
+	g := makeDedicationGem(name, color, chaos, listings, false)
+	g.Variant = variant
+	return g
+}
+
+// 21/23c and 21/20c are different markets: a font draws from one of them, never
+// from their union, so each variant's pool size, input cost and EV must be
+// computed over its own gems alone.
+func TestAnalyzeDedication_VariantPoolsDoNotMix(t *testing.T) {
+	now := time.Now()
+	gems := []GemPrice{
+		// 21/23c BLUE skills: 3 gems, 100c each.
+		makeDedicationGemVariant("Arc", "21/23c", "BLUE", 100, 30),
+		makeDedicationGemVariant("Spark", "21/23c", "BLUE", 100, 30),
+		makeDedicationGemVariant("Ball Lightning", "21/23c", "BLUE", 100, 30),
+		// 21/20c BLUE skills: 4 gems, 10c each.
+		makeDedicationGemVariant("Arc", "21/20c", "BLUE", 10, 30),
+		makeDedicationGemVariant("Spark", "21/20c", "BLUE", 10, 30),
+		makeDedicationGemVariant("Ball Lightning", "21/20c", "BLUE", 10, 30),
+		makeDedicationGemVariant("Freezing Pulse", "21/20c", "BLUE", 10, 30),
+	}
+
+	analysis := AnalyzeDedication(now, gems, nil)
+
+	byVariant := make(map[string]DedicationResult)
+	for _, r := range analysis.Skills {
+		if r.Color == "BLUE" && r.Mode == "safe" {
+			if prev, dup := byVariant[r.Variant]; dup {
+				t.Fatalf("two BLUE/skill/safe results for variant %q (%+v and %+v)", r.Variant, prev, r)
+			}
+			byVariant[r.Variant] = r
+		}
+	}
+
+	for _, tc := range []struct {
+		variant   string
+		pool      int
+		inputCost float64
+	}{
+		{"21/23c", 3, 100},
+		{"21/20c", 4, 10},
+	} {
+		got, ok := byVariant[tc.variant]
+		if !ok {
+			t.Fatalf("no BLUE skill safe result for variant %q", tc.variant)
+		}
+		if got.Pool != tc.pool {
+			t.Errorf("variant %s: Pool = %d, want %d (only its own variant's gems)", tc.variant, got.Pool, tc.pool)
+		}
+		if got.InputCost != tc.inputCost {
+			t.Errorf("variant %s: InputCost = %.1f, want %.1f (only its own variant's prices)", tc.variant, got.InputCost, tc.inputCost)
+		}
+	}
+
+	// The cheap pool cannot be worth as much as the expensive one: a merged pool
+	// would hand both the same EV.
+	if byVariant["21/20c"].EVRaw >= byVariant["21/23c"].EVRaw {
+		t.Errorf("EVRaw 21/20c = %.1f, 21/23c = %.1f — the 10c pool must be worth less than the 100c pool",
+			byVariant["21/20c"].EVRaw, byVariant["21/23c"].EVRaw)
+	}
+}
+
+func TestFilterDedicationVariant_KeepsOnlyTheRequestedVariant(t *testing.T) {
+	results := []DedicationResult{
+		{Variant: "21/23c", Color: "RED", Mode: "safe"},
+		{Variant: "21/20c", Color: "RED", Mode: "safe"},
+		{Variant: "21/20c", Color: "GREEN", Mode: "premium"},
+	}
+
+	got := FilterDedicationVariant(results, "21/20c")
+
+	if len(got) != 2 {
+		t.Fatalf("got %d results, want 2", len(got))
+	}
+	for _, r := range got {
+		if r.Variant != "21/20c" {
+			t.Errorf("result %+v leaked from another variant", r)
+		}
+	}
+}
+
+func TestIsDedicationVariant_RejectsANonDedicationVariant(t *testing.T) {
+	if IsDedicationVariant("20/20") {
+		t.Error("IsDedicationVariant(\"20/20\") = true, want false — it is not a corrupted Dedication pool")
+	}
+	if !IsDedicationVariant("21/20c") {
+		t.Error("IsDedicationVariant(\"21/20c\") = false, want true")
+	}
+}

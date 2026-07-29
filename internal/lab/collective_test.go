@@ -765,3 +765,91 @@ func TestBuildCompareResults_NoBaseGemWithAColorBaseIsNoLongerLabelledNoBase(t *
 			results[0].BasePrice, results[0].ROI)
 	}
 }
+
+// The rankings table below the Dedication EV grid shows one variant's pool. A
+// gem of the other variant appearing there would be priced against an input
+// cost that never bought it.
+func TestRankDedicationCollective_RanksOnlyTheRequestedVariant(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Arc", Variant: "21/23c", Chaos: 500, Listings: 20, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Spark", Variant: "21/20c", Chaos: 40, Listings: 20, IsCorrupted: true, GemColor: "BLUE"},
+	}
+	dedication := []DedicationResult{
+		{Variant: "21/20c", Color: "BLUE", GemType: "skill", Mode: "safe", InputCost: 10},
+	}
+
+	results := RankDedicationCollective(gems, dedication, 100, "", "21/20c")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results %+v, want only the 21/20c gem", len(results), results)
+	}
+	if results[0].TransfiguredName != "Spark" {
+		t.Errorf("ranked %q, want Spark — Arc is a 21/23c gem", results[0].TransfiguredName)
+	}
+	if results[0].Variant != "21/20" {
+		t.Errorf("Variant = %q, want %q (the requested pool, displayed without the corrupted suffix)", results[0].Variant, "21/20")
+	}
+	if results[0].ROI != 30 {
+		t.Errorf("ROI = %.0f, want 30 (40c gem against the 21/20c input cost of 10c)", results[0].ROI)
+	}
+}
+
+func TestBuildDedicationCompareResults_ReportsTheRequestedVariant(t *testing.T) {
+	gemPrices := []GemPrice{
+		{Name: "Vaal Arc", Variant: "21/20c", Chaos: 60, Listings: 12, IsCorrupted: true, GemColor: "BLUE"},
+	}
+
+	results := BuildDedicationCompareResults([]string{"Vaal Arc"}, gemPrices, nil, nil, "21/20c")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Variant != "21/20c" {
+		t.Errorf("Variant = %q, want %q", results[0].Variant, "21/20c")
+	}
+	if results[0].TransfiguredPrice != 60 {
+		t.Errorf("TransfiguredPrice = %.0f, want 60", results[0].TransfiguredPrice)
+	}
+}
+
+// A gem that does not trade at the requested variant must not come back priced
+// from a different one. The label is the caller's, so the price has to be the
+// only thing proving which market answered.
+func TestBuildDedicationCompareResults_DoesNotPriceAGemFromAnotherVariant(t *testing.T) {
+	gemPrices := []GemPrice{
+		{Name: "Vaal Arc", Variant: "21/23c", Chaos: 4000, Listings: 12, IsCorrupted: true, GemColor: "BLUE"},
+	}
+
+	results := BuildDedicationCompareResults([]string{"Vaal Arc"}, gemPrices, nil, nil, "21/20c")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].TransfiguredPrice == 4000 {
+		t.Error("the 21/23c price answered a 21/20c comparison")
+	}
+}
+
+// Without an input cost there is no cost basis, so a row must not report the
+// gem's whole listed price as profit — that reads exactly like a real ROI.
+func TestRankDedicationCollective_MarksRowsNoBaseWhenTheMarketHasNoInputCost(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Spark", Variant: "21/20c", Chaos: 400, Listings: 20, IsCorrupted: true, GemColor: "BLUE"},
+	}
+
+	results := RankDedicationCollective(gems, nil, 100, "", "21/20c")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].ROI != 0 || results[0].ROIPct != 0 {
+		t.Errorf("ROI/ROIPct = %.0f/%.0f, want 0/0 — an unknown cost basis is not free",
+			results[0].ROI, results[0].ROIPct)
+	}
+	if results[0].Confidence != ConfidenceNoBase {
+		t.Errorf("Confidence = %q, want %q so the UI renders it as no-data", results[0].Confidence, ConfidenceNoBase)
+	}
+	if results[0].TransfiguredPrice != 400 {
+		t.Errorf("TransfiguredPrice = %.0f, want 400 — the listed price is still known", results[0].TransfiguredPrice)
+	}
+}

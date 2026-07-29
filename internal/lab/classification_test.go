@@ -535,3 +535,52 @@ func TestComputeDedicationClassification_TierDistribution(t *testing.T) {
 		t.Errorf("expected at least 3 distinct tiers, got %d: %v", len(tierCounts), tierCounts)
 	}
 }
+
+// Tiers are relative to the pool they are computed over. 21/20c is the cheaper,
+// deeper market, so classifying it against 21/23c prices would push its whole
+// pool into the bottom tiers.
+//
+// Every 21/20c gem is priced above the classifier's 5c floor and the pool is
+// large enough for real boundaries: a degenerate pool tiers everything TOP by
+// fallback, which would pass whether or not the variants were kept apart.
+func TestComputeDedicationClassification_ClassifiesEachVariantAgainstItsOwnPool(t *testing.T) {
+	gems := []GemPrice{
+		{Name: "Arc", Variant: "21/23c", Chaos: 5000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Spark", Variant: "21/23c", Chaos: 4000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Ball Lightning", Variant: "21/23c", Chaos: 3000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Firestorm", Variant: "21/23c", Chaos: 2000, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Arc", Variant: "21/20c", Chaos: 200, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Spark", Variant: "21/20c", Chaos: 120, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Ball Lightning", Variant: "21/20c", Chaos: 60, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Firestorm", Variant: "21/20c", Chaos: 30, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Freezing Pulse", Variant: "21/20c", Chaos: 12, Listings: 30, IsCorrupted: true, GemColor: "BLUE"},
+	}
+
+	cls := ComputeDedicationClassification(gems, false, "21/20c")
+
+	if _, ok := cls.Gems[GemClassificationKey{"Arc", "21/23c"}]; ok {
+		t.Error("21/23c gems were classified into the 21/20c pool")
+	}
+	arc, ok := cls.Gems[GemClassificationKey{"Arc", "21/20c"}]
+	if !ok {
+		t.Fatal("no classification for Arc at 21/20c")
+	}
+	cheapest, ok := cls.Gems[GemClassificationKey{"Freezing Pulse", "21/20c"}]
+	if !ok {
+		t.Fatal("no classification for Freezing Pulse at 21/20c")
+	}
+
+	// The load-bearing assertion: the 21/20c pool is spread across real tiers on
+	// its own price range. Against the 21/23c prices every one of these gems is
+	// bottom-tier, so a merged pool cannot produce a spread — and a degenerate
+	// pool tiers everything identically via the fallback.
+	rank := map[string]int{"TOP": 0, "HIGH": 1, "MID-HIGH": 2, "MID": 3, "LOW": 4, "FLOOR": 5}
+	arcRank, cheapRank := rank[arc.Tier], rank[cheapest.Tier]
+	if arcRank >= cheapRank {
+		t.Errorf("tiers did not separate within the 21/20c pool: Arc (200c) = %q, Freezing Pulse (12c) = %q",
+			arc.Tier, cheapest.Tier)
+	}
+	if arc.LowConfidence {
+		t.Error("Arc 21/20c came back low-confidence — it is the top of a fully priced pool")
+	}
+}
