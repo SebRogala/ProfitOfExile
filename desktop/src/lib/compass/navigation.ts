@@ -40,7 +40,25 @@ export interface LabSection {
 	endRoom: string; // Aspirant's Trial that ends this section
 }
 
-export type RouteStrategy = 'shortest' | 'darkshrines' | 'darkshrines-argus' | 'everything';
+export type RouteStrategy =
+	| 'shortest'
+	| 'darkshrines-on-route'
+	| 'darkshrines'
+	| 'darkshrines-argus'
+	| 'everything';
+
+/**
+ * Whether a strategy may let a darkshrine decide between two EQUAL-cost routes.
+ *
+ * 'shortest' means shortest, full stop — no content steers it, not even for
+ * free. 'darkshrines-on-route' is the same search with the tiebreak switched
+ * on: it never lengthens a route, it only picks the shrine-richer of two routes
+ * that cost the same. The strategies that make shrines mandatory targets keep
+ * the tiebreak too, for shrines that are not themselves targets.
+ */
+function prefersDarkshrines(strategy: RouteStrategy): boolean {
+	return strategy !== 'shortest';
+}
 
 export interface NavState {
 	layout: LabLayout | null;
@@ -82,7 +100,7 @@ export function createNavState(): NavState {
 		previousRoom: null,
 		plannedRoute: [],
 		targetRooms: [],
-		strategy: 'shortest',
+		strategy: 'darkshrines-on-route',
 		goldenKeys: 0,
 		lockedDoors: [],
 		portalRooms: new Set(),
@@ -467,6 +485,9 @@ function getTargetRooms(state: NavState, strategy: RouteStrategy): string[] {
 		const contentsLower = room.contents.map((c) => c.toLowerCase());
 		switch (strategy) {
 			case 'shortest':
+			case 'darkshrines-on-route':
+				// Neither takes mandatory targets: both walk the cheapest route and
+				// differ only in whether a darkshrine breaks an exact tie.
 				break;
 			case 'darkshrines':
 				if (contentsLower.includes('darkshrine')) targets.push(room.id);
@@ -478,6 +499,14 @@ function getTargetRooms(state: NavState, strategy: RouteStrategy): string[] {
 			case 'everything':
 				if (room.contents.length > 0) targets.push(room.id);
 				break;
+			default: {
+				// Exhaustiveness guard: a new RouteStrategy without a case here
+				// would otherwise fall through to "no targets" silently, which is a
+				// plausible behaviour and so invisible to tests. This makes it a
+				// compile error instead.
+				const unhandled: never = strategy;
+				throw new Error(`unhandled route strategy: ${unhandled}`);
+			}
 		}
 	}
 	return targets;
@@ -518,6 +547,7 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 
 	const route: string[] = [];
 	const targets = state.targetRooms;
+	const preferShrines = prefersDarkshrines(strategy);
 
 	// Find which section the fromRoom belongs to.
 	//
@@ -552,13 +582,14 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 
 		// Golden door handling: if route must cross a locked door, split into
 		// pre-key (unlocked adjacency) and post-key (door open) phases.
-		const goldenRoute = routeWithGoldenDoor(state, section, start, end, sectionTargets, sectionAdj);
+		const goldenRoute = routeWithGoldenDoor(state, section, start, end, sectionTargets, sectionAdj, preferShrines);
 		const sectionRoute = goldenRoute ?? bestRouteThroughTargets(
 			sectionAdj,
 			start,
 			end,
 			sectionTargets,
 			state.roomById,
+			preferShrines,
 		);
 		// Avoid duplicate room at section boundaries
 		if (route.length > 0 && sectionRoute.length > 0 && route[route.length - 1] === sectionRoute[0]) {
@@ -609,6 +640,7 @@ function routeWithGoldenDoor(
 	end: string,
 	targets: string[],
 	sectionAdj: Map<string, string[]>,
+	preferShrines: boolean,
 ): string[] | null {
 	if (state.lockedDoors.length === 0) return null;
 
@@ -638,11 +670,11 @@ function routeWithGoldenDoor(
 	// here would report success for a route that skipped a target sitting behind
 	// the door — abandoning both the target and the key it needed.
 	const bypassSkipsATarget = targets.some(
-		(t) => cheapestPath(unlockedAdj, start, t, state.roomById).length === 0,
+		(t) => cheapestPath(unlockedAdj, start, t, state.roomById, preferShrines).length === 0,
 	);
 	const bypassRoute = bypassSkipsATarget
 		? []
-		: bestRouteThroughTargets(unlockedAdj, start, end, targets, state.roomById);
+		: bestRouteThroughTargets(unlockedAdj, start, end, targets, state.roomById, preferShrines);
 	if (bypassRoute.length > 0) {
 		return bypassRoute;
 	}
@@ -664,11 +696,11 @@ function routeWithGoldenDoor(
 	// Phase 1: start → key room, using unlocked adjacency (can't cross door yet).
 	// Visit any targets reachable before the door.
 	const preKeyTargets = targets.filter((t) => {
-		const path = cheapestPath(unlockedAdj, start, t, state.roomById);
+		const path = cheapestPath(unlockedAdj, start, t, state.roomById, preferShrines);
 		return path.length > 0;
 	});
 	const keyTargets = preKeyTargets.includes(keyRoom) ? preKeyTargets : [...preKeyTargets, keyRoom];
-	const phase1 = bestRouteThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom), state.roomById);
+	const phase1 = bestRouteThroughTargets(unlockedAdj, start, keyRoom, keyTargets.filter(t => t !== keyRoom), state.roomById, preferShrines);
 
 	// Phase 2: key room → end, using full adjacency (door now open).
 	// Visit remaining targets. If key room != door room, the player must
@@ -693,7 +725,7 @@ function routeWithGoldenDoor(
 		postKeyTargets.push(doorRoom);
 	}
 
-	const phase2 = bestRouteThroughTargets(sectionAdj, keyRoom, end, postKeyTargets, state.roomById);
+	const phase2 = bestRouteThroughTargets(sectionAdj, keyRoom, end, postKeyTargets, state.roomById, preferShrines);
 
 	// The key is unreachable, or the trial is unreachable even with it. Same as
 	// above: no legal route exists, so fail closed rather than let the caller
@@ -789,6 +821,7 @@ function bestRouteThroughTargets(
 	end: string,
 	targets: string[],
 	roomById: Map<string, RoutingRoom>,
+	preferShrines: boolean,
 ): string[] {
 	// Drop targets the player cannot actually walk to. Every permutation
 	// containing an unreachable target is invalid, so without this filter a
@@ -801,12 +834,12 @@ function bestRouteThroughTargets(
 	// unreachable one, and dropping only it keeps the other targets on the route.
 	const reachable = targets.filter(
 		(t) =>
-			cheapestPath(adjacency, start, t, roomById).length > 0 &&
-			cheapestPath(adjacency, t, end, roomById).length > 0,
+			cheapestPath(adjacency, start, t, roomById, preferShrines).length > 0 &&
+			cheapestPath(adjacency, t, end, roomById, preferShrines).length > 0,
 	);
 
 	if (reachable.length === 0) {
-		return cheapestPath(adjacency, start, end, roomById);
+		return cheapestPath(adjacency, start, end, roomById, preferShrines);
 	}
 
 	// For small target sets (typically 1-4 per section), try all permutations
@@ -819,7 +852,7 @@ function bestRouteThroughTargets(
 		let valid = true;
 
 		for (let i = 0; i < waypoints.length - 1; i++) {
-			const segment = cheapestPath(adjacency, waypoints[i], waypoints[i + 1], roomById);
+			const segment = cheapestPath(adjacency, waypoints[i], waypoints[i + 1], roomById, preferShrines);
 			if (segment.length === 0) {
 				valid = false;
 				break;
@@ -837,9 +870,9 @@ function bestRouteThroughTargets(
 
 	// Last resort: a reachable target that still can't be sequenced into a route
 	// to `end` must not cost the player the route to the trial.
-	if (candidates.length === 0) return cheapestPath(adjacency, start, end, roomById);
+	if (candidates.length === 0) return cheapestPath(adjacency, start, end, roomById, preferShrines);
 
-	return pickCheapestPreferringDarkshrines(candidates, roomById);
+	return pickCheapestPreferringDarkshrines(candidates, roomById, preferShrines);
 }
 
 /**
@@ -858,13 +891,14 @@ function bestRouteThroughTargets(
 function pickCheapestPreferringDarkshrines(
 	candidates: string[][],
 	roomById: Map<string, RoutingRoom>,
+	preferShrines: boolean,
 ): string[] {
 	if (candidates.length === 0) return [];
 
 	const costs = candidates.map((c) => routeCost(c, roomById));
 	const minCost = Math.min(...costs);
 	const cheapest = candidates.filter((_, i) => costs[i] === minCost);
-	if (cheapest.length === 1) return cheapest[0];
+	if (cheapest.length === 1 || !preferShrines) return cheapest[0];
 
 	let best = cheapest[0];
 	let bestScore = routeContentScore(best, roomById);
@@ -930,6 +964,7 @@ function cheapestPath(
 	start: string,
 	end: string,
 	roomById: Map<string, RoutingRoom>,
+	preferShrines: boolean,
 ): string[] {
 	if (start === end) return [start];
 
@@ -958,8 +993,9 @@ function cheapestPath(
 			if (settled.has(neighbor)) continue;
 			const room = roomById.get(neighbor);
 			const cost = reached.cost + roomCost(room);
-			const score = reached.score
-				+ (room?.contents.some((c) => c.toLowerCase().includes('darkshrine')) ? 1 : 0);
+			const isShrine =
+				preferShrines && !!room?.contents.some((c) => c.toLowerCase().includes('darkshrine'));
+			const score = reached.score + (isShrine ? 1 : 0);
 			const known = best.get(neighbor);
 			// Cheaper wins outright; at equal cost, more darkshrines wins.
 			if (known && !(cost < known.cost || (cost === known.cost && score > known.score))) continue;

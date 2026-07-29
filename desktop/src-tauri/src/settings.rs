@@ -114,7 +114,7 @@ impl Default for Settings {
             trade_auto_refresh_secs: DEFAULT_TRADE_AUTO_REFRESH_SECS,
             auto_trade_enabled: false,
             compass_mode: String::from("minimap"),
-            compass_strategy: String::from("shortest"),
+            compass_strategy: String::from("darkshrines-on-route"),
             compass_difficulty: String::from("Uber"),
             shrine_warn_enabled: true,
             shrine_warn_size: String::from("medium"),
