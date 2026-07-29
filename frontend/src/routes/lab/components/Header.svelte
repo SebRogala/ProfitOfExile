@@ -1,14 +1,18 @@
 <script lang="ts">
-	import type { StatusData } from '$lib/api';
+	import { DEDICATION_VARIANTS, type StatusData } from '$lib/api';
 
 	let {
 		status,
 		selectedLab,
 		onLabChange,
+		dedicationVariant = '21/23',
+		onDedicationVariantChange,
 	}: {
 		status: StatusData;
 		selectedLab: string;
 		onLabChange: (lab: string) => void;
+		dedicationVariant?: string;
+		onDedicationVariantChange?: (variant: string) => void;
 	} = $props();
 
 	const LABS = ['Normal', 'Dedication'];
@@ -62,6 +66,19 @@
 				</button>
 			{/each}
 		</div>
+		{#if selectedLab === 'Dedication'}
+			<div class="lab-selector" title="Corrupted gem market to analyse">
+				{#each DEDICATION_VARIANTS as variant}
+					<button
+						class="lab-btn"
+						class:active={dedicationVariant === variant}
+						onclick={() => onDedicationVariantChange?.(variant)}
+					>
+						{variant}
+					</button>
+				{/each}
+			</div>
+		{/if}
 		<div class="meta-row">
 			{#if status.divinePrice > 0}
 				<span class="meta divine-rate" title="Current Divine Orb price">1 div = {Math.round(status.divinePrice)}c</span>

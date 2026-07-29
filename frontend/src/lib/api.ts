@@ -110,6 +110,8 @@ export interface FontEVResponse {
 
 export interface DedicationColor {
 	color: 'RED' | 'GREEN' | 'BLUE';
+	/** Corrupted variant this row was computed over, e.g. "21/23c". */
+	variant: string;
 	gemType: string;
 	pool: number;
 	winners: number;
@@ -135,8 +137,18 @@ export interface DedicationPoolResponse {
 export interface DedicationEVResponse {
 	skills: DedicationPoolResponse;
 	transfigured: DedicationPoolResponse;
+	/** Corrupted variant these pools were computed over, e.g. "21/23c". */
+	variant: string;
 	entryFee: number;
 }
+
+/**
+ * The corrupted variants the Dedication views can be shown for, in display
+ * format. Each is its own market: pool, tiers, input cost and EV are computed
+ * per variant and never merged.
+ */
+export const DEDICATION_VARIANTS = ['21/23', '21/20'] as const;
+export type DedicationVariant = typeof DEDICATION_VARIANTS[number];
 
 export interface MarketOverviewData {
 	avgTransPrice: number;
@@ -424,6 +436,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 function mapDedicationRows(rows: any[]): DedicationColor[] {
 	return rows.map((r: any) => ({
 		color: r.color ?? '',
+		variant: r.variant ?? '',
 		gemType: r.gemType ?? '',
 		pool: r.pool ?? 0,
 		winners: r.winners ?? 0,
@@ -449,16 +462,18 @@ function mapDedicationPool(pool: any): DedicationPoolResponse {
 	};
 }
 
-export async function fetchDedicationEV(): Promise<DedicationEVResponse> {
+export async function fetchDedicationEV(variant?: string): Promise<DedicationEVResponse> {
 	const resp = await get<{
 		skills: any;
 		transfigured: any;
+		variant: string;
 		entryFee: number;
-	}>('/analysis/dedication');
+	}>('/analysis/dedication', variant ? { variant } : undefined);
 
 	return {
 		skills: mapDedicationPool(resp.skills),
 		transfigured: mapDedicationPool(resp.transfigured),
+		variant: resp.variant || '',
 		entryFee: Math.round(resp.entryFee || 0),
 	};
 }

@@ -32,6 +32,15 @@
 		return saved;
 	}
 	let selectedLab = $state(restoreLabMode());
+
+	// 21/23 and 21/20 are separate corrupted markets. The selection drives the
+	// Dedication EV table and the comparator together.
+	function restoreDedicationVariant(): string {
+		if (typeof window === 'undefined') return '21/23';
+		const saved = localStorage.getItem('poe-dedication-variant');
+		return saved === '21/20' ? saved : '21/23';
+	}
+	let dedicationVariant = $state(restoreDedicationVariant());
 	let status = $state<StatusData | null>(null);
 	let bestPlays = $state<GemPlay[]>([]);
 	let marketOverview = $state<MarketOverviewData | null>(null);
@@ -165,6 +174,13 @@
 		}
 	}
 
+	function handleDedicationVariantChange(variant: string) {
+		dedicationVariant = variant;
+		if (typeof window !== 'undefined') {
+			localStorage.setItem('poe-dedication-variant', variant);
+		}
+	}
+
 	$effect(() => {
 		loadAll();
 
@@ -191,7 +207,7 @@
 
 <div class="dashboard">
 	{#if status}
-		<Header {status} {selectedLab} onLabChange={handleLabChange} />
+		<Header {status} {selectedLab} onLabChange={handleLabChange} {dedicationVariant} onDedicationVariantChange={handleDedicationVariantChange} />
 	{/if}
 
 	{#if loading}
@@ -207,8 +223,8 @@
 	{/if}
 
 	{#if isDedication}
-		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" divineRate={status?.divinePrice || 0} />
-		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
+		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" divineRate={status?.divinePrice || 0} {dedicationVariant} />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" {dedicationVariant} />
 		<SessionQueue
 			queue={sessionQueue}
 			onRemove={handleRemoveFromQueue}

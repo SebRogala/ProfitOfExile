@@ -112,6 +112,8 @@ export interface FontEVResponse {
 
 export interface DedicationColor {
 	color: 'RED' | 'GREEN' | 'BLUE';
+	/** Corrupted variant this row was computed over, e.g. "21/23c". */
+	variant: string;
 	gemType: string;
 	pool: number;
 	winners: number;
@@ -137,8 +139,18 @@ export interface DedicationPoolResponse {
 export interface DedicationEVResponse {
 	skills: DedicationPoolResponse;
 	transfigured: DedicationPoolResponse;
+	/** Corrupted variant these pools were computed over, e.g. "21/23c". */
+	variant: string;
 	entryFee: number;
 }
+
+/**
+ * The corrupted variants the Dedication views can be shown for, in display
+ * format. Each is its own market: pool, tiers, input cost and EV are computed
+ * per variant and never merged.
+ */
+export const DEDICATION_VARIANTS = ['21/23', '21/20'] as const;
+export type DedicationVariant = typeof DEDICATION_VARIANTS[number];
 
 export interface MarketOverviewData {
 	avgTransPrice: number;
@@ -255,7 +267,8 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 /**
  * The four non-corrupted gem variants, in display format. Shared so the dashboard's
  * per-variant fetch and the By Variant tabs cannot drift apart. Dedication mode does
- * not use these — it pools by skill/transfigured at a single 21/23 variant.
+ * not use these — it pools by skill/transfigured at the selected corrupted
+ * variant (DEDICATION_VARIANTS).
  */
 export const VARIANTS = ['1/0', '1/20', '20/0', '20/20'] as const;
 
@@ -455,6 +468,7 @@ export async function fetchFontEV(variant: string): Promise<FontEVResponse> {
 function mapDedicationRows(rows: any[]): DedicationColor[] {
 	return rows.map((r: any) => ({
 		color: r.color ?? '',
+		variant: r.variant ?? '',
 		gemType: r.gemType ?? '',
 		pool: r.pool ?? 0,
 		winners: r.winners ?? 0,
@@ -480,16 +494,18 @@ function mapDedicationPool(pool: any): DedicationPoolResponse {
 	};
 }
 
-export async function fetchDedicationEV(): Promise<DedicationEVResponse> {
+export async function fetchDedicationEV(variant?: string): Promise<DedicationEVResponse> {
 	const resp = await get<{
 		skills: any;
 		transfigured: any;
+		variant: string;
 		entryFee: number;
-	}>('/analysis/dedication');
+	}>('/analysis/dedication', variant ? { variant } : undefined);
 
 	return {
 		skills: mapDedicationPool(resp.skills),
 		transfigured: mapDedicationPool(resp.transfigured),
+		variant: resp.variant || '',
 		entryFee: Math.round(resp.entryFee || 0),
 	};
 }

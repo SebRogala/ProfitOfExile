@@ -45,18 +45,22 @@ export function baseGemTradeUrl(name: string, variant: string, league: string): 
 }
 
 /**
- * Build trade URL for cheapest corrupted 21/23 gems of a color, for Dedication lab input cost.
+ * Build trade URL for the cheapest corrupted gems of a color at one Dedication
+ * variant ("21/23" or "21/20"), for Dedication lab input cost.
  * `league` MUST be a resolved league (callers fail closed on the SSOT `null` first).
  */
-export function cheapestCorrupted2123TradeUrl(color: string, isTransfigured: boolean, league: string): string {
+export function cheapestCorruptedTradeUrl(color: string, isTransfigured: boolean, league: string, variant = '21/23'): string {
 	const reqFilters: Record<string, any> = {};
 	if (color === 'RED')   { reqFilters.dex = { max: 97 }; reqFilters.int = { max: 97 }; }
 	if (color === 'GREEN') { reqFilters.str = { max: 97 }; reqFilters.int = { max: 97 }; }
 	if (color === 'BLUE')  { reqFilters.str = { max: 97 }; reqFilters.dex = { max: 97 }; }
 
+	// Quality is pinned exactly: 21/20 and 21/23 are separate markets, and a
+	// quality minimum would list the dearer 23s against the 20-quality pool.
+	const [levelPart, qualityPart] = variant.split('/');
 	const miscFilters: Record<string, any> = {
-		gem_level: { min: 21 },
-		quality: { min: 23 },
+		gem_level: { min: parseInt(levelPart) || 21 },
+		quality: { min: parseInt(qualityPart) || 0, max: parseInt(qualityPart) || 0 },
 		corrupted: { option: 'true' },
 	};
 

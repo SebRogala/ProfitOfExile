@@ -8,19 +8,22 @@ fn build_search_query(gem: &str, variant: &str) -> serde_json::Value {
 /// Mirrors Go's buildSearchQuery in client.go. See that file for detailed
 /// field reference (type vs term, securable, collapse, etc.).
 ///
-/// When `dedication` is true, the query targets corrupted 21/23 gems:
-/// - Removes `corrupted: false` (21/23 implies corrupted)
-/// - Sets `gem_level: min 21`, `quality: min 23`
+/// When `dedication` is true, the query targets the corrupted gems of the
+/// requested variant (21/23 or 21/20):
+/// - Removes `corrupted: false` (both variants imply corrupted)
+/// - Sets `gem_level` from the variant's level and pins `quality` to it exactly.
+///   Quality is exact rather than a minimum because 21/20 and 21/23 are separate
+///   markets: a minimum would price the cheaper pool off the dearer one's listings.
 /// - Uses `gem.activegem` category (skills only, no supports)
 pub fn build_search_query_with_mode(gem: &str, variant: &str, dedication: bool) -> serde_json::Value {
     let (gem_level, gem_quality) = parse_variant(variant);
 
     let misc_filters = if dedication {
-        // Dedication mode: no corrupted:false filter (21/23c are corrupted by definition),
-        // set min level 21 and min quality 23.
+        // Dedication mode: no corrupted:false filter (these variants are corrupted
+        // by definition), level from the variant and its exact quality.
         serde_json::json!({
-            "gem_level": {"min": 21},
-            "quality": {"min": 23}
+            "gem_level": {"min": gem_level},
+            "quality": {"min": gem_quality, "max": gem_quality}
         })
     } else {
         let mut filters = serde_json::json!({
@@ -81,14 +84,19 @@ pub fn build_search_query_with_mode(gem: &str, variant: &str, dedication: bool) 
 }
 
 /// Parse variant "20/20" → (level, quality). "20" → (20, 0).
+///
+/// The corrupted suffix is tolerated: the API and the analysis rows speak the DB
+/// form ("21/20c"), the UI speaks the display form ("21/20"), and both reach this
+/// function. Without stripping it, `"20c".parse()` fails to 0 and the caller
+/// builds a `quality {min:0, max:0}` search — a silently empty market rather than
+/// a parse error.
 pub fn parse_variant(variant: &str) -> (i32, i32) {
+    fn number(part: &str) -> i32 {
+        part.trim_end_matches('c').parse().unwrap_or(0)
+    }
     let parts: Vec<&str> = variant.splitn(2, '/').collect();
-    let level = parts[0].parse().unwrap_or(0);
-    let quality = if parts.len() == 2 {
-        parts[1].parse().unwrap_or(0)
-    } else {
-        0
-    };
+    let level = number(parts[0]);
+    let quality = if parts.len() == 2 { number(parts[1]) } else { 0 };
     (level, quality)
 }
 
@@ -153,6 +161,33 @@ mod tests {
         let filters = &q["query"]["filters"]["misc_filters"]["filters"];
         assert_eq!(filters["gem_level"]["min"], 21);
         assert_eq!(filters["quality"]["min"], 23);
+    }
+
+    // 21/20 and 21/23 are separate markets. A quality minimum would let the
+    // dearer 23-quality listings set the price of the 20-quality pool.
+    #[test]
+    fn dedication_query_pins_quality_to_the_requested_variant() {
+        let q = build_search_query_with_mode("Earthquake of Fragility", "21/20", true);
+        let filters = &q["query"]["filters"]["misc_filters"]["filters"];
+        assert_eq!(filters["gem_level"]["min"], 21);
+        assert_eq!(filters["quality"]["min"], 20);
+        assert_eq!(filters["quality"]["max"], 20, "21/23 listings must not answer a 21/20 lookup");
+    }
+
+    // The DB form reaches this function from the API and from analysis rows; a
+    // dropped suffix used to parse as quality 0, i.e. an empty market.
+    #[test]
+    fn parse_variant_tolerates_the_corrupted_suffix() {
+        assert_eq!(parse_variant("21/20c"), (21, 20));
+        assert_eq!(parse_variant("21/23c"), (21, 23));
+        assert_eq!(parse_variant("21c"), (21, 0));
+    }
+
+    #[test]
+    fn dedication_query_from_db_form_variant_matches_display_form() {
+        let db = build_search_query_with_mode("Earthquake of Fragility", "21/20c", true);
+        let display = build_search_query_with_mode("Earthquake of Fragility", "21/20", true);
+        assert_eq!(db, display, "the two spellings of one market must query the same market");
     }
 
     #[test]
