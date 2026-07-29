@@ -62,7 +62,12 @@
 			if ((DEDICATION_VARIANTS as readonly string[]).includes(v)) {
 				dedVariant = v as DedicationVariant;
 			} else if (v) {
+				// Correct the stored value too. The UI refuses to display it, but
+				// Rust keeps stamping it onto every uploaded font session, which
+				// would attribute recorded runs to a market nobody was shown.
 				console.warn('[LabPage] ignoring unknown persisted dedication variant:', v);
+				invoke('set_dedication_variant', { variant: dedVariant })
+					.catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
 			}
 		})
 		.catch(e => console.warn('[LabPage] get_dedication_variant failed:', e));
@@ -199,40 +204,45 @@
 		sessionQueue = sessionQueue.map((item) => ({ ...item, refreshing: true }));
 
 		await Promise.allSettled(
-			sessionQueue.map(async (item, idx) => {
+			sessionQueue.map(async (item) => {
+				// Rows are addressed by (gem, variant), the same key handleQueueGem
+				// dedupes on — not by index. A row removed mid-refresh shifts every
+				// index after it, and a session can hold both markets at once, so an
+				// index write lands on a different gem in a different market.
+				const patch = (fn: (q: QueueItem) => QueueItem) => {
+					sessionQueue = sessionQueue.map((q) =>
+						q.gem === item.gem && q.variant === item.variant ? fn(q) : q
+					);
+				};
 				try {
 					// Mode comes from the queued item's own variant, not from the
 					// current lab mode: the snapshot floor was taken against a
 					// corrupted market, so a refresh without it would search
 					// uncorrupted listings and difference two different markets.
+					// The divine rate must match too — without it Rust leaves
+					// divine-priced listings unnormalized, so the refreshed floor
+					// and the snapshot are quoted in different currencies.
 					const result = await invoke<TradeLookupResult>('trade_lookup', {
 						gem: item.gem,
 						variant: item.variant,
+						divineRate: status?.divinePrice || undefined,
 						mode: (DEDICATION_VARIANTS as readonly string[]).includes(item.variant) ? 'dedication' : undefined,
 					});
 
 					if (result) {
-						sessionQueue = sessionQueue.map((q, i) =>
-							i === idx
-								? {
-										...q,
-										currentFloor: result.priceFloor,
-										currentFloorOriginal: result.listings[0]?.price ?? result.priceFloor,
-										currentCurrency: result.listings[0]?.currency ?? 'chaos',
-										priceDelta: result.priceFloor - q.snapshotFloor,
-										refreshing: false,
-									}
-								: q
-						);
+						patch(q => ({
+							...q,
+							currentFloor: result.priceFloor,
+							currentFloorOriginal: result.listings[0]?.price ?? result.priceFloor,
+							currentCurrency: result.listings[0]?.currency ?? 'chaos',
+							priceDelta: result.priceFloor - q.snapshotFloor,
+							refreshing: false,
+						}));
 					} else {
-						sessionQueue = sessionQueue.map((q, i) =>
-							i === idx ? { ...q, refreshing: false } : q
-						);
+						patch(q => ({ ...q, refreshing: false }));
 					}
 				} catch {
-					sessionQueue = sessionQueue.map((q, i) =>
-						i === idx ? { ...q, refreshing: false } : q
-					);
+					patch(q => ({ ...q, refreshing: false }));
 				}
 			})
 		);

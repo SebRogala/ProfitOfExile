@@ -74,10 +74,10 @@
 
 	$effect(() => {
 		// Auto-select: most expensive gem, with signal-based tiebreaker within 10%
-		if (results.length > 0) {
-			let best = results[0];
+		if (visibleResults.length > 0) {
+			let best = visibleResults[0];
 			let bestPrice = best.transPrice;
-			for (const g of results) {
+			for (const g of visibleResults) {
 				if (g.transPrice > bestPrice) {
 					best = g;
 					bestPrice = g.transPrice;
@@ -86,7 +86,7 @@
 			// Check if any other gem within 10% scores higher
 			const threshold = bestPrice * 0.90;
 			let bestScore = gemPickScore(best);
-			for (const g of results) {
+			for (const g of visibleResults) {
 				if (g.name === best.name) continue;
 				if (g.transPrice < threshold) continue; // too cheap, price wins
 				const score = gemPickScore(g);
@@ -104,7 +104,7 @@
 	// Push results + trade data + loading state to Rust for overlay to poll
 	$effect(() => {
 		invoke('set_comparator_data', {
-			payload: { results, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading }, tradeError: { ...tradeError }, divineRate, labMode },
+			payload: { results: visibleResults, tradeData: { ...tradeData }, tradeLoading: { ...tradeLoading }, tradeError: { ...tradeError }, divineRate, labMode },
 		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
@@ -242,6 +242,15 @@
 	let suggestions = $state<string[]>([]);
 	let selectedGems = $state<string[]>([]);
 	let results = $state<CompareGem[]>([]);
+
+	// Rows carry the market they were computed for. The header label follows the
+	// selection immediately while the refetch is in flight, so everything that
+	// renders or scores a gem reads this list instead of `results`: an empty grid
+	// for one round trip beats a grid of the previous market's prices under the
+	// new label — and those prices otherwise feed the BEST pick and the queue
+	// snapshot. Row variants arrive in DB form ("21/20c") while the selector
+	// holds display form ("21/20").
+	const visibleResults = $derived(results.filter(r => r.variant.replace(/c$/, '') === variant));
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
 	let inputRef = $state<HTMLInputElement | null>(null);
@@ -410,7 +419,7 @@
 	function clearAll(autoQueue = true) {
 		// Auto-add selected gem to session queue before clearing
 		if (autoQueue && selectedForQueue && onQueueGem) {
-			const selected = results.find((g) => g.name === selectedForQueue);
+			const selected = visibleResults.find((g) => g.name === selectedForQueue);
 			if (selected) {
 				const trade = tradeData[selectedForQueue] ?? null;
 				onQueueGem(selectedForQueue, variant, selected.roi, trade);
@@ -547,7 +556,7 @@
 
 	function handleNext() {
 		if (!selectedForQueue || !onQueueGem) return;
-		const selected = results.find((g) => g.name === selectedForQueue);
+		const selected = visibleResults.find((g) => g.name === selectedForQueue);
 		if (!selected) return;
 		const trade = tradeData[selectedForQueue] ?? null;
 		onQueueGem(selectedForQueue, variant, selected.roi, trade);
@@ -636,9 +645,9 @@
 		{/if}
 	</div>
 
-	{#if results.length > 0}
+	{#if visibleResults.length > 0}
 		<div class="cards-row">
-			{#each results as gem}
+			{#each visibleResults as gem}
 				{@const noData = gem.confidence === 'NO_DATA' || (gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
