@@ -267,6 +267,46 @@ describe('Golden door routing', () => {
 		expect(state.plannedRoute).not.toContain('pocket');
 	});
 
+	// The golden KEY and golden DOOR can occupy the SAME room. Rare, but real:
+	// it occurs twice in the vendored poelab layouts (2018-01-09_merciless room
+	// 6, and 2018-01-10_merciless room 1, which is also the lab entrance).
+	// No backtrack waypoint is needed here — you pick the key up standing in the
+	// doorway — which is what the doorRoom !== keyRoom condition exists for.
+	const sameRoomKeyAndDoorLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'kd' } },
+		{
+			id: 'kd',
+			name: 'Mansion Atrium',
+			x: '1',
+			exits: { E: 'trial' },
+			contents: ['golden-key', 'golden-door'],
+		},
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should route straight through a room holding both the key and the door', () => {
+		const state = loadLayout(createNavState(), sameRoomKeyAndDoorLayout);
+		expect(state.plannedRoute).toEqual(['r1', 'kd', 'trial']);
+	});
+
+	// Same, but the entrance itself holds both — the 2018-01-10_merciless shape.
+	const entranceKeyAndDoorLayout = makeLayout([
+		{
+			id: 'kd',
+			name: 'Mansion Atrium',
+			x: '0',
+			exits: { E: 'mid' },
+			contents: ['golden-key', 'golden-door'],
+		},
+		{ id: 'mid', name: 'Estate Path', x: '1', exits: { E: 'trial' } },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should route from an entrance that holds both the key and the door', () => {
+		const state = loadLayout(createNavState(), entranceKeyAndDoorLayout);
+		expect(state.plannedRoute).toEqual(['kd', 'mid', 'trial']);
+	});
+
 	it('should route through key room on zig-zag layouts where entry x > door x', () => {
 		const state = loadLayout(createNavState(), zigzagGoldenDoorLayout);
 		// Rule: key room MUST be visited when the door blocks the trial.
@@ -509,6 +549,8 @@ describe('routeCost', () => {
 // only fixtures that exercise the shape production actually sees — including
 // lowercase room names, which a hand-written TitleCase fixture cannot catch.
 describe('real poelab layouts', () => {
+	const STRATEGIES: RouteStrategy[] = ['shortest', 'darkshrines', 'darkshrines-argus', 'everything'];
+
 	const layouts = import.meta.glob('./__fixtures__/poelab-*.json', {
 		eager: true,
 		import: 'default',
@@ -530,6 +572,48 @@ describe('real poelab layouts', () => {
 				.filter((room) => !isRoomNamePriced(room.name))
 				.map((room) => room.name);
 			expect(unpriced).toEqual([]);
+		});
+
+		// A beaten Izaro cannot be re-entered. A route naming the same trial twice
+		// is unwalkable — it was the visible symptom of sections being cut on
+		// array order instead of on the trials' own exits.
+		it(`should never re-enter a beaten trial in ${name}`, () => {
+			const trialIds = new Set(
+				layout.rooms.filter((r) => r.name.toLowerCase() === "aspirant's trial").map((r) => r.id),
+			);
+			for (const strategy of STRATEGIES) {
+				let state = loadLayout(createNavState(), layout);
+				state = setStrategy(state, strategy);
+				const revisited = state.plannedRoute.filter(
+					(id, i) => trialIds.has(id) && state.plannedRoute.indexOf(id) !== i,
+				);
+				expect(revisited, `${strategy}: ${state.plannedRoute.join('>')}`).toEqual([]);
+			}
+		});
+
+		// Walk the route the way the player would and check the door rule holds:
+		// crossing a locked pair requires a key picked up earlier on the route.
+		it(`should never cross a golden door without a key in ${name}`, () => {
+			for (const strategy of STRATEGIES) {
+				let state = loadLayout(createNavState(), layout);
+				state = setStrategy(state, strategy);
+
+				const locked = state.lockedDoors.map(([a, b]) => `${a}|${b}`);
+				let keys = 0;
+				const crossings: string[] = [];
+
+				state.plannedRoute.forEach((id, i) => {
+					const room = state.roomById.get(id);
+					if (room?.contents.some((c) => c.toLowerCase().includes('golden-key'))) keys += 1;
+					if (i === 0) return;
+					const pair = [state.plannedRoute[i - 1], id].sort().join('|');
+					if (!locked.includes(pair)) return;
+					if (keys < 1) crossings.push(pair);
+					else keys -= 1;
+				});
+
+				expect(crossings, `${strategy}: ${state.plannedRoute.join('>')}`).toEqual([]);
+			}
 		});
 
 		it(`should reach the final trial in ${name}`, () => {
