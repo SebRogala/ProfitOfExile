@@ -437,6 +437,19 @@ describe('Route strategy', () => {
 		expect(state.plannedRoute).toEqual(['r1', 'a', 'b', 'trial']);
 	});
 
+	it('should route to the new layout targets when a layout is loaded', () => {
+		// Reproduces importing a poelab file while a content strategy is active:
+		// loadLayout must route against THIS layout's targets, not the last one's.
+		// The two layouts name their darkshrines differently on purpose — with
+		// matching ids the stale targets coincide and the bug hides.
+		let state = loadLayout(createNavState(), twoTargetOrderingLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.targetRooms).toEqual(['a', 'b']);
+
+		state = loadLayout(state, darkshrineDetourLayout);
+		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
+	});
+
 	it('should preserve strategy when reloading layout', () => {
 		let state = loadLayout(createNavState(), simpleLayout);
 		state = setStrategy(state, 'darkshrines');

@@ -221,8 +221,13 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 		portalRooms: new Set(),
 	};
 
-	newState.plannedRoute = computeRoute(newState, state.strategy);
+	// Targets FIRST: computeRoute reads newState.targetRooms, so computing the
+	// route before them routes against the previous layout's targets. Callers
+	// that call setStrategy right afterwards mask it; importing a poelab file
+	// (PlannerPage.svelte) does not, and renders a wrong route until the
+	// strategy dropdown is touched.
 	newState.targetRooms = getTargetRooms(newState, state.strategy);
+	newState.plannedRoute = computeRoute(newState, state.strategy);
 
 	return newState;
 }
