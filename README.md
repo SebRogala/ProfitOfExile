@@ -80,4 +80,24 @@ Proposed and not yet implemented, specified in the tracker: `POE-118` (Mercure l
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0 — see [LICENSE](LICENSE).
+
+This project was MIT-licensed until July 2026. It is GPL-3.0 because it
+incorporates material from [yznpku/LabCompass](https://github.com/yznpku/LabCompass),
+itself GPL-3.0, and the GPL requires derivative works to carry the same license.
+
+### Third-party attribution
+
+From [yznpku/LabCompass](https://github.com/yznpku/LabCompass) (GPL-3.0):
+
+- `desktop/static/compass/presets/*.svg` — the 54 labyrinth room-preset drawings,
+  copied verbatim from `app/resources/images/room-preset/`.
+- `desktop/src/lib/compass/room-presets.ts` — room preset door-layout data,
+  ported from the same project.
+- `desktop/src-tauri/src/lab_navigation.rs` — Izaro voiceline strings used to
+  detect lab events from `Client.txt`.
+- `desktop/src/lib/compass/__fixtures__/poelab-*.json` — two real poelab layout
+  exports, used as test fixtures.
+
+The route-cost model in `desktop/src/lib/compass/navigation.ts` reimplements
+LabCompass's room-cost weighting; the surrounding routing engine is our own.
