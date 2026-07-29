@@ -1,0 +1,1 @@
+DO $$ BEGIN RAISE EXCEPTION '20260729120000_dedication_variant is forward-only: reversing it would have to delete every non-21/23c row to restore the old primary key; restore from a pre-migration backup'; END $$;

@@ -339,7 +339,7 @@ func TestComputeDedicationClassification_SkillPool(t *testing.T) {
 		{Name: "Floor Gem 2", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
 	}
 
-	cls := ComputeDedicationClassification(gems, false)
+	cls := ComputeDedicationClassification(gems, false, "21/23c")
 
 	// All gems that pass isDedicationGem + are not transfigured + chaos > 5 should be classified.
 	for _, g := range gems {
@@ -368,7 +368,7 @@ func TestComputeDedicationClassification_TransfiguredPool(t *testing.T) {
 		{Name: "Trans Floor", Variant: "21/23c", Chaos: 10, Listings: 100, IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"},
 	}
 
-	cls := ComputeDedicationClassification(gems, true)
+	cls := ComputeDedicationClassification(gems, true, "21/23c")
 
 	for _, g := range gems {
 		if g.Chaos <= 5 {
@@ -398,7 +398,7 @@ func TestComputeDedicationClassification_ExcludesNonCorrupted(t *testing.T) {
 		{Name: "Valid Gem 4", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
 	}
 
-	cls := ComputeDedicationClassification(gems, false)
+	cls := ComputeDedicationClassification(gems, false, "21/23c")
 
 	// Non-corrupted gem should NOT be in classification.
 	key := GemClassificationKey{"Non Corrupted", "21/23c"}
@@ -417,7 +417,7 @@ func TestComputeDedicationClassification_ExcludesSupports(t *testing.T) {
 		{Name: "Slam", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
 	}
 
-	cls := ComputeDedicationClassification(gems, false)
+	cls := ComputeDedicationClassification(gems, false, "21/23c")
 
 	// Support gems should NOT be in classification.
 	for _, name := range []string{"Lifetap Support", "Empower Support"} {
@@ -445,7 +445,7 @@ func TestComputeDedicationClassification_ExcludesTrarthus(t *testing.T) {
 		{Name: "Slam", Variant: "21/23c", Chaos: 50, Listings: 90, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
 	}
 
-	cls := ComputeDedicationClassification(gems, false)
+	cls := ComputeDedicationClassification(gems, false, "21/23c")
 
 	key := GemClassificationKey{"Trarthus Ire", "21/23c"}
 	if _, ok := cls.Gems[key]; ok {
@@ -469,8 +469,8 @@ func TestComputeDedicationClassification_PoolIsolation(t *testing.T) {
 		{Name: "Slam of Magnitude", Variant: "21/23c", Chaos: 250, Listings: 65, IsCorrupted: true, IsTransfigured: true, GemColor: "RED"},
 	}
 
-	skillCls := ComputeDedicationClassification(gems, false)
-	transCls := ComputeDedicationClassification(gems, true)
+	skillCls := ComputeDedicationClassification(gems, false, "21/23c")
+	transCls := ComputeDedicationClassification(gems, true, "21/23c")
 
 	// Skills classification should contain only non-transfigured gems.
 	for _, name := range []string{"Arc of Surging", "Fireball of Volatility", "Cleave of Rage", "Slam of Magnitude"} {
@@ -506,7 +506,7 @@ func TestComputeDedicationClassification_TierDistribution(t *testing.T) {
 		{Name: "Floor 3", Variant: "21/23c", Chaos: 10, Listings: 120, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},
 	}
 
-	cls := ComputeDedicationClassification(gems, false)
+	cls := ComputeDedicationClassification(gems, false, "21/23c")
 
 	// Verify valid tiers are assigned.
 	validTiers := map[string]bool{

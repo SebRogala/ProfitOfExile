@@ -389,15 +389,19 @@ func computeCleanTierBoundaries(gems []GemPrice, lowConf map[string]bool, tops m
 	return result
 }
 
-// ComputeDedicationClassification runs the tier pipeline for Dedication
-// corrupted 21/23 gems. It uses isDedicationGem as its filter (instead of
-// isAnalyzableGem) and further constrains to the given pool type.
+// ComputeDedicationClassification runs the tier pipeline for one Dedication
+// corrupted pool. It uses isDedicationGem as its filter (instead of
+// isAnalyzableGem) and further constrains to the given variant and pool type.
 // isTransfigured = false → skills pool, true → transfigured pool.
-func ComputeDedicationClassification(gems []GemPrice, isTransfigured bool) ClassificationResult {
+//
+// Tiers are relative to the pool they are computed over, so each variant is
+// classified on its own: 21/20c is a deeper and cheaper market than 21/23c, and
+// a gem that is TOP in one is not necessarily TOP in the other.
+func ComputeDedicationClassification(gems []GemPrice, isTransfigured bool, variant string) ClassificationResult {
 	// Pre-filter to only the relevant Dedication pool.
 	var filtered []GemPrice
 	for _, g := range gems {
-		if isDedicationGem(g) && g.Variant == "21/23c" && g.IsTransfigured == isTransfigured {
+		if isDedicationGem(g) && g.Variant == variant && g.IsTransfigured == isTransfigured {
 			filtered = append(filtered, g)
 		}
 	}

@@ -216,7 +216,7 @@ func TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys(t *testing.T) {
 
 	relations := map[string][]string{
 		"currency_snapshots":   {"league", "time", "currency_id"},
-		"dedication_snapshots": {"league", "time", "color", "gem_type", "mode"},
+		"dedication_snapshots": {"league", "time", "variant", "color", "gem_type", "mode"},
 		"font_snapshots":       {"league", "time", "color", "variant", "mode"},
 		"fragment_snapshots":   {"league", "time", "fragment_id"},
 		"gem_features":         {"league", "time", "name", "variant"},

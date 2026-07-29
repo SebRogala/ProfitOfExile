@@ -945,7 +945,7 @@ func TestLatestDedicationResults_returnsOnlyScopedLeague(t *testing.T) {
 		t.Fatalf("SaveDedicationResults league B: %v", err)
 	}
 
-	res, err := repo.LatestDedicationResults(ctx, league.Historical(leagueA), "", "", 100)
+	res, err := repo.LatestDedicationResults(ctx, league.Historical(leagueA), "", "", "", 100)
 	if err != nil {
 		t.Fatalf("LatestDedicationResults: %v", err)
 	}
