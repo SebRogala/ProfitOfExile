@@ -17,7 +17,7 @@
 	// --- State ---
 	let navState = $state<NavState>(createNavState());
 	let difficulty = $state('Uber');
-	let strategyValue = $state<string>('shortest');
+	let strategyValue = $state<string>('darkshrines-on-route');
 	let compassMode = $state('minimap');
 	let shrineEnabled = $state(true);
 	let shrineSize = $state('medium');
@@ -37,6 +37,7 @@
 
 	const strategyOptions = [
 		{ value: 'shortest', label: 'Shortest' },
+		{ value: 'darkshrines-on-route', label: 'Darkshrines On Route' },
 		{ value: 'darkshrines', label: 'All Darkshrines' },
 		{ value: 'darkshrines-argus', label: 'Darkshrines + Argus' },
 		{ value: 'everything', label: 'Everything' },

@@ -388,7 +388,8 @@ describe('Route strategy', () => {
 	]);
 
 	it('should prefer the darkshrine branch when both branches cost the same', () => {
-		const state = loadLayout(createNavState(), equalCostTieLayout);
+		let state = loadLayout(createNavState(), equalCostTieLayout);
+		state = setStrategy(state, 'darkshrines-on-route');
 		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
 	});
 
@@ -601,10 +602,39 @@ describe('Route strategy', () => {
 
 	it('should prefer the target order whose connecting leg passes a darkshrine', () => {
 		let state = loadLayout(createNavState(), asymmetricRingLayout);
+		state = setStrategy(state, 'darkshrines-on-route');
 		state = toggleTargetRoom(state, 'p');
 		state = toggleTargetRoom(state, 'q');
 		// p→y→q and q→x→p both cost 32; only the second passes the shrine.
 		expect(state.plannedRoute).toEqual(['s', 'q', 'x', 'p', 'trial']);
+	});
+
+	// The two cheapest-route strategies differ ONLY here: a tie. Both branches
+	// cost 11, one holds a darkshrine. 'shortest' means shortest with nothing
+	// else steering it; 'darkshrines-on-route' takes the shrine when it is free.
+	// Neither may ever lengthen the route to reach one — that is what the
+	// 'darkshrines' strategy is for.
+	it('should ignore a free darkshrine under shortest', () => {
+		let state = loadLayout(createNavState(), equalCostTieLayout);
+		state = setStrategy(state, 'shortest');
+		expect(state.plannedRoute).toEqual(['r1', 'r3', 'trial']);
+	});
+
+	it('should take a free darkshrine under darkshrines-on-route', () => {
+		let state = loadLayout(createNavState(), equalCostTieLayout);
+		state = setStrategy(state, 'darkshrines-on-route');
+		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
+	});
+
+	it('should not detour for a darkshrine under darkshrines-on-route', () => {
+		let state = loadLayout(createNavState(), darkshrineDetourLayout);
+		state = setStrategy(state, 'darkshrines-on-route');
+		// The shrine branch costs 27 against 5 direct — free means free.
+		expect(state.plannedRoute).toEqual(['r1', 'trial']);
+	});
+
+	it('should default to taking free darkshrines', () => {
+		expect(createNavState().strategy).toBe('darkshrines-on-route');
 	});
 
 	it('should preserve strategy when reloading layout', () => {
@@ -666,7 +696,13 @@ describe('routeCost', () => {
 // only fixtures that exercise the shape production actually sees — including
 // lowercase room names, which a hand-written TitleCase fixture cannot catch.
 describe('real poelab layouts', () => {
-	const STRATEGIES: RouteStrategy[] = ['shortest', 'darkshrines', 'darkshrines-argus', 'everything'];
+	const STRATEGIES: RouteStrategy[] = [
+		'shortest',
+		'darkshrines-on-route',
+		'darkshrines',
+		'darkshrines-argus',
+		'everything',
+	];
 
 	const layouts = import.meta.glob('./__fixtures__/poelab-*.json', {
 		eager: true,
