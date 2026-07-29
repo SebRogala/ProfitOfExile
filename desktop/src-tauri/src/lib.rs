@@ -142,6 +142,9 @@ pub struct AppState {
     pub lab_mode: Mutex<String>,
     pub autoclear_minutes: Mutex<u32>,
     pub dedication_pool: Mutex<String>,
+    /// Dedication corrupted variant: "21/23" or "21/20". Selects which corrupted
+    /// market the Dedication views read. Persisted to settings.
+    pub dedication_variant: Mutex<String>,
     pub show_low_confidence: Mutex<bool>,
     /// App-wide cross-window state SSOT (POE-128). Rust-owned; overlays read it
     /// by polling the `get_ssot` command. See src/ssot.rs.
@@ -1236,6 +1239,20 @@ fn set_dedication_pool(pool: String, app: AppHandle) {
 }
 
 #[tauri::command]
+fn get_dedication_variant(app: AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let value = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    value
+}
+
+#[tauri::command]
+fn set_dedication_variant(variant: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = variant;
+    persist_settings(&app);
+}
+
+#[tauri::command]
 fn get_show_low_confidence(app: AppHandle) -> bool {
     let state = app.state::<AppState>();
     let value = *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner());
@@ -1748,12 +1765,15 @@ fn send_font_session_data(app: &AppHandle) {
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let dedication_variant = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
     let device_id = state.device_id.clone();
 
-    // Map lab mode to session metadata.
+    // Map lab mode to session metadata. In Dedication the run is against the
+    // selected corrupted market, so the session records that variant, not a
+    // fixed one.
     let (lab_type, variant) = if lab_mode == "Dedication" {
-        ("Dedication", "21/23")
+        ("Dedication", dedication_variant.as_str())
     } else {
         ("Unknown", "20/20")
     };
@@ -2361,6 +2381,7 @@ pub fn run() {
         lab_mode: Mutex::new(String::from("Normal")),
         autoclear_minutes: Mutex::new(2),
         dedication_pool: Mutex::new(String::from("skill")),
+        dedication_variant: Mutex::new(String::from("21/23")),
         show_low_confidence: Mutex::new(false),
         ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
     };
@@ -2433,6 +2454,8 @@ pub fn run() {
             set_autoclear_minutes,
             get_dedication_pool,
             set_dedication_pool,
+            get_dedication_variant,
+            set_dedication_variant,
             get_show_low_confidence,
             set_show_low_confidence,
         ])

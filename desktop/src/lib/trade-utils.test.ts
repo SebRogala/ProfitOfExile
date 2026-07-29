@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseGemTradeUrl, cheapestCorrupted2123TradeUrl } from './trade-utils';
+import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from './trade-utils';
 
 /**
  * Decode the league from the `/trade/search/<league>` path segment of a built
@@ -31,16 +31,32 @@ describe('baseGemTradeUrl', () => {
 	});
 });
 
-describe('cheapestCorrupted2123TradeUrl', () => {
+describe('cheapestCorruptedTradeUrl', () => {
 	it('puts the caller-supplied league in the trade search path', () => {
-		const url = cheapestCorrupted2123TradeUrl('RED', false, 'Settlers');
+		const url = cheapestCorruptedTradeUrl('RED', false, 'Settlers');
 		expect(leaguePathSegment(url)).toBe('Settlers');
 	});
 
 	it('emits an empty league segment (not the removed Mirage fallback) for an empty league', () => {
-		const url = cheapestCorrupted2123TradeUrl('RED', false, '');
+		const url = cheapestCorruptedTradeUrl('RED', false, '');
 		const segment = leaguePathSegment(url);
 		expect(segment).toBe('');
 		expect(segment).not.toBe('Mirage');
+	});
+
+	// 21/20 and 21/23 are separate markets: a quality minimum would price the
+	// cheaper pool off the dearer one's listings.
+	it('pins quality to the requested variant instead of taking it as a minimum', () => {
+		const url = cheapestCorruptedTradeUrl('RED', false, 'Mirage', '21/20');
+		const q = JSON.parse(decodeURIComponent(url.split('?q=')[1]));
+		const misc = q.query.filters.misc_filters.filters;
+		expect(misc.gem_level).toEqual({ min: 21 });
+		expect(misc.quality).toEqual({ min: 20, max: 20 });
+	});
+
+	it('defaults to the 21/23 pool when no variant is given', () => {
+		const url = cheapestCorruptedTradeUrl('RED', false, 'Mirage');
+		const q = JSON.parse(decodeURIComponent(url.split('?q=')[1]));
+		expect(q.query.filters.misc_filters.filters.quality).toEqual({ min: 23, max: 23 });
 	});
 });

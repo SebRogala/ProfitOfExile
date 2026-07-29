@@ -33,10 +33,12 @@
 		divineRate = 0,
 		onQueueGem,
 		labMode = 'normal',
+		dedicationVariant = '21/23',
 	}: {
 		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		labMode?: 'normal' | 'dedication';
+		dedicationVariant?: string;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -107,20 +109,31 @@
 	});
 
 	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	const DEDICATION_VARIANTS = ['21/23'];
-	let activeVariants = $derived(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
+	let activeVariants = $derived(isDedication ? [dedicationVariant] : NORMAL_VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
-	// Lock variant to 21/23 in dedication mode, restore to 20/20 in normal mode.
+	// The variant is picked in the Dedication header, not here: the comparator
+	// follows it, and returns to 20/20 when Dedication is left. Comparing a gem
+	// at a variant the rest of the view is not showing would price it against
+	// the wrong market.
 	$effect(() => {
-		if (isDedication && variant !== '21/23') {
-			variant = '21/23';
+		if (isDedication && variant !== dedicationVariant) {
+			variant = dedicationVariant;
+			dropTradeData();
 			loadResults();
-		} else if (!isDedication && variant === '21/23') {
+		} else if (!isDedication && !NORMAL_VARIANTS.includes(variant)) {
 			variant = '20/20';
+			dropTradeData();
 			loadResults();
 		}
 	});
+
+	// Trade lookups are keyed by gem name alone and Dedication rows carry no
+	// server-side trade enrichment, so nothing overwrites them when the market
+	// changes: the listing prices, floor and cache age would keep describing the
+	// market the player just left, while the labels moved. Those figures feed
+	// the pick score and the session-queue snapshot, so they are dropped rather
+	// than shown stale.
 
 	// Listen for gem-detected events from Rust OCR.
 	// Rust emits one gem at a time as a string. Accumulate up to 3, then auto-compare.
@@ -406,7 +419,18 @@
 		setTimeout(() => inputRef?.focus(), 0);
 	}
 
+	// Drops every trade figure without touching the gem selection: the gems are
+	// still the ones on screen, only their prices belong to the previous market.
+	function dropTradeData() {
+		tradeData = {};
+		tradeLoading = {};
+		tradeError = {};
+		tradeErrorMsg = {};
+		tradeExpanded = {};
+	}
+
 	function handleVariantChange() {
+		dropTradeData();
 		loadResults();
 	}
 

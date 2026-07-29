@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { fetchFontEV, fetchDedicationEV, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
-	import { baseGemTradeUrl, cheapestCorrupted2123TradeUrl } from '$lib/trade-utils';
+	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { refreshKey = 0, league = '', labMode = 'normal', divineRate = 0 }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication'; divineRate?: number } = $props();
+	let { refreshKey = 0, league = '', labMode = 'normal', divineRate = 0, dedicationVariant = '21/23' }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication'; divineRate?: number; dedicationVariant?: string } = $props();
 
 	/** Format chaos value — show as divine if >= 1 div and in Dedication mode. */
 	function fmtChaos(chaos: number): string {
@@ -29,17 +29,17 @@
 	const isDedication = $derived(labMode === 'dedication');
 
 	// --- Dedication row definitions ---
-	const DEDICATION_ROWS = [
-		{ label: '21/23 Skill Gems', poolKey: 'skills' as const },
-		{ label: '21/23 Transfigured', poolKey: 'transfigured' as const },
-	];
+	const DEDICATION_ROWS = $derived([
+		{ label: `${dedicationVariant} Skill Gems`, poolKey: 'skills' as const },
+		{ label: `${dedicationVariant} Transfigured`, poolKey: 'transfigured' as const },
+	]);
 
 	async function loadAll() {
 		loading = true;
 		loadError = false;
 		try {
 			if (isDedication) {
-				dedicationData = await fetchDedicationEV();
+				dedicationData = await fetchDedicationEV(dedicationVariant);
 			} else {
 				const results = await Promise.all(
 					VARIANTS.map(async (v) => {
@@ -232,7 +232,9 @@
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
 	};
 
-	$effect(() => { refreshKey; labMode; loadAll(); });
+	// The variant is a different market, not a filter over the loaded one, so a
+	// change re-fetches.
+	$effect(() => { refreshKey; labMode; dedicationVariant; loadAll(); });
 </script>
 
 <section class="section">
@@ -244,7 +246,7 @@
 		{@const best = dedWinner()}
 		{#if dedicationData.entryFee > 0}
 			<div class="dedication-header">
-				<span class="dedication-title">Dedication Lab — Corrupted 21/23 Gem Exchange</span>
+				<span class="dedication-title">Dedication Lab — Corrupted {dedicationVariant} Gem Exchange</span>
 				<span class="entry-fee">
 					Entry fee: <strong>{fmtChaos(dedicationData.entryFee)}</strong>
 					<InfoTooltip text="<b>Dedication to the Goddess offering price</b><br><br>This is the cost of the offering required to open a Dedication Lab run. It is displayed for reference but <b>NOT included</b> in the profit calculation — profit shows pure gem exchange value minus input gem cost." />
@@ -254,7 +256,7 @@
 		<table class="ft">
 			<thead>
 				<tr>
-					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options available per run:<br>• <b>21/23 Skill Gems</b>: Non-transfigured corrupted skill gems<br>• <b>21/23 Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted 21/23 gems in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
+					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options available per run, at the selected corrupted variant ({dedicationVariant}):<br>• <b>Skill Gems</b>: Non-transfigured corrupted skill gems<br>• <b>Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted {dedicationVariant} gems in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>21/23 and 21/20 are separate markets: pool, tiers and input cost are computed per variant.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -310,12 +312,12 @@
 						<td class="buy-col">
 							<div class="buy-buttons">
 								{#each COLORS as color}
-									{@const url = cheapestCorrupted2123TradeUrl(color, row.poolKey === 'transfigured', league || '')}
+									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', league || '', dedicationVariant)}
 									<a
 										class="buy-btn buy-{color.toLowerCase()}"
 										href={url}
 										target="_blank"
-										title="Buy cheapest corrupted 21/23 {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
+										title="Buy cheapest corrupted {dedicationVariant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
 									>{color}</a>
 								{/each}
 							</div>

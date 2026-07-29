@@ -56,6 +56,11 @@ pub struct Settings {
     /// Dedication rankings pool selector: "skill" (default) or "transfigured".
     #[serde(default = "default_dedication_pool")]
     pub dedication_pool: String,
+    /// Dedication corrupted variant selector: "21/23" (default) or "21/20".
+    /// Each variant is its own market, so it selects the EV table, the rankings
+    /// and the comparator together.
+    #[serde(default = "default_dedication_variant")]
+    pub dedication_variant: String,
     /// Show low-confidence gems in rankings (default: false).
     #[serde(default)]
     pub show_low_confidence: bool,
@@ -71,6 +76,10 @@ fn default_autoclear_minutes() -> u32 {
 
 fn default_dedication_pool() -> String {
     "skill".to_string()
+}
+
+fn default_dedication_variant() -> String {
+    "21/23".to_string()
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -125,6 +134,7 @@ impl Default for Settings {
             lab_mode: default_lab_mode(),
             autoclear_minutes: default_autoclear_minutes(),
             dedication_pool: default_dedication_pool(),
+            dedication_variant: default_dedication_variant(),
             // Default ON — see the note in the web BestPlays component: at
             // 20-level variants a thin market is normal, so hiding flagged gems
             // by default reproduces the POE-131 ranking gap.
@@ -231,6 +241,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         lab_mode: state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         autoclear_minutes: *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()),
         dedication_pool: state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        dedication_variant: state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         show_low_confidence: *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
@@ -344,5 +355,6 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = settings.lab_mode.clone();
     *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = settings.autoclear_minutes;
     *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_pool.clone();
+    *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_variant.clone();
     *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
 }

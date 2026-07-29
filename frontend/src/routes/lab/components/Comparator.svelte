@@ -16,6 +16,7 @@
 		desktopPair = null,
 		onDesktopDisconnect,
 		labMode = 'normal',
+		dedicationVariant = '21/23',
 	}: {
 		league?: string;
 		refreshKey?: number;
@@ -23,6 +24,7 @@
 		desktopPair?: string | null;
 		onDesktopDisconnect?: () => void;
 		labMode?: 'normal' | 'dedication';
+		dedicationVariant?: string;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -40,20 +42,34 @@
 	});
 
 	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	const DEDICATION_VARIANTS = ['21/23'];
-	let activeVariants = $derived(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
+	let activeVariants = $derived(isDedication ? [dedicationVariant] : NORMAL_VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
-	// Lock variant to 21/23 in dedication mode, restore to 20/20 in normal mode.
+	// The variant is picked in the header, not here: the comparator follows it,
+	// and returns to 20/20 when Dedication is left. Comparing a gem at a variant
+	// the rest of the view is not showing would price it against the wrong market.
 	$effect(() => {
-		if (isDedication && variant !== '21/23') {
-			variant = '21/23';
+		if (isDedication && variant !== dedicationVariant) {
+			variant = dedicationVariant;
+			dropTradeData();
 			loadResults();
-		} else if (!isDedication && variant === '21/23') {
+		} else if (!isDedication && !NORMAL_VARIANTS.includes(variant)) {
 			variant = '20/20';
+			dropTradeData();
 			loadResults();
 		}
 	});
+
+	// Trade lookups are keyed by gem name alone and Dedication rows carry no
+	// server-side trade enrichment, so nothing overwrites them when the market
+	// changes — the prices would keep describing the market just left while the
+	// labels moved.
+	function dropTradeData() {
+		tradeData = {};
+		tradeLoading = {};
+		tradeExpanded = {};
+		tradeGeneration = {};
+	}
 
 	// --- Desktop pairing state ---
 	let desktopConnected = $state(false);

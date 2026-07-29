@@ -5,7 +5,7 @@
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { allPlays = [], labMode = 'normal' }: { allPlays?: GemPlay[]; labMode?: 'normal' | 'dedication' } = $props();
+	let { allPlays = [], labMode = 'normal', dedicationVariant = '21/23' }: { allPlays?: GemPlay[]; labMode?: 'normal' | 'dedication'; dedicationVariant?: string } = $props();
 
 	const isDedication = $derived(labMode === 'dedication');
 
@@ -106,7 +106,7 @@
 		{#each visibleDedPools as pool}
 			{@const vd = playsForPool(pool)}
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[pool] || pool})" showVariantColumn={false} />
+				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[pool] || pool}) — {dedicationVariant}" showVariantColumn={false} />
 			{:else}
 				<div class="loading">No data for this pool</div>
 			{/if}
