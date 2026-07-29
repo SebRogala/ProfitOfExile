@@ -5,6 +5,7 @@ import {
 	handleNavEvent,
 	setStrategy,
 	roomCost,
+	toggleTargetRoom,
 	isRoomNamePriced,
 	routeCost,
 	type LabLayout,
@@ -267,11 +268,29 @@ describe('Golden door routing', () => {
 		expect(state.plannedRoute).not.toContain('pocket');
 	});
 
+	// Walking through a golden door consumes the key and unlocks that door. The
+	// pair crossed is (room we just left, room we entered) — tracked from
+	// currentRoom, not previousRoom, which is already a room further back.
+	it('should unlock the door the player actually walked through', () => {
+		const state = processEvents(goldenDoorToTrialLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },  // r1
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // door
+			{ type: 'RoomChanged', name: 'Basilica Annex' },   // key — pick it up
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door
+			{ type: 'RoomChanged', name: "Aspirant's Trial" }, // cross the door
+		]);
+		expect(state.currentRoom).toBe('trial');
+		expect(state.lockedDoors).toEqual([]);
+		expect(state.goldenKeys).toBe(0);
+	});
+
 	// The golden KEY and golden DOOR can occupy the SAME room. Rare, but real:
 	// it occurs twice in the vendored poelab layouts (2018-01-09_merciless room
 	// 6, and 2018-01-10_merciless room 1, which is also the lab entrance).
-	// No backtrack waypoint is needed here — you pick the key up standing in the
-	// doorway — which is what the doorRoom !== keyRoom condition exists for.
+	// No backtrack waypoint is needed — you pick the key up standing in the
+	// doorway. That falls out of the structure, not a special case: phase 2
+	// already starts at this room, so naming it a waypoint is the identity.
 	const sameRoomKeyAndDoorLayout = makeLayout([
 		{ id: 'r1', name: 'Estate Path', x: '0', exits: { E: 'kd' } },
 		{
@@ -490,6 +509,104 @@ describe('Route strategy', () => {
 		expect(state.plannedRoute).toEqual(['r1', 'r2', 'trial']);
 	});
 
+	// A truncated or hand-edited export can point an exit at an id that is not in
+	// `rooms`. Section detection must skip it rather than compute rooms[NaN].
+	const danglingExitLayout = makeLayout([
+		{ id: 'a', name: 'Estate Path', x: '0', exits: { E: 't1' } },
+		{ id: 't1', name: "Aspirant's Trial", x: '1', exits: { NE: 'ghost', N: 'b' } },
+		{ id: 'b', name: 'Estate Path', x: '2', exits: { E: 't2' } },
+		{ id: 't2', name: "Aspirant's Trial", x: '3', exits: {} },
+	]);
+
+	it('should ignore a trial exit pointing at a room that does not exist', () => {
+		const state = loadLayout(createNavState(), danglingExitLayout);
+		expect(state.plannedRoute).toEqual(['a', 't1', 'b', 't2']);
+	});
+
+	// A trial exit pointing BACK up the array cannot open a section — sections are
+	// contiguous windows, so honouring it would carve a non-contiguous one and
+	// swallow the following section.
+	const backwardTrialExitLayout = makeLayout([
+		{ id: 'a', name: 'Estate Path', x: '0', exits: { E: 't1' } },
+		{ id: 't1', name: "Aspirant's Trial", x: '1', exits: { E: 'b' } },
+		{ id: 'b', name: 'Estate Path', x: '2', exits: { E: 't2' } },
+		{ id: 't2', name: "Aspirant's Trial", x: '3', exits: { W: 'b', NE: 'c' } },
+		{ id: 'c', name: 'Estate Path', x: '4', exits: { E: 't3' } },
+		{ id: 't3', name: "Aspirant's Trial", x: '5', exits: {} },
+	]);
+
+	it('should not open a section on a trial exit pointing backwards', () => {
+		const state = loadLayout(createNavState(), backwardTrialExitLayout);
+		expect(state.plannedRoute.at(-1)).toBe('t3');
+	});
+
+	// A trial with two forward exits has two doors into ONE section, not two
+	// sections. Taking the later one misfiles the earlier room into the section
+	// already beaten, where the trial sink puts it out of reach.
+	const twoForwardExitsLayout = makeLayout([
+		{ id: 'a', name: 'Estate Path', x: '0', exits: { E: 't1' } },
+		{ id: 't1', name: "Aspirant's Trial", x: '1', exits: { NE: 'b', N: 'c' } },
+		{ id: 'b', name: 'Estate Path', x: '2', exits: { E: 'c' }, contents: ['darkshrine'] },
+		{ id: 'c', name: 'Estate Path', x: '3', exits: { E: 't2' } },
+		{ id: 't2', name: "Aspirant's Trial", x: '4', exits: {} },
+	]);
+
+	it('should open one section from the earliest of two forward trial exits', () => {
+		let state = loadLayout(createNavState(), twoForwardExitsLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toEqual(['a', 't1', 'b', 'c', 't2']);
+	});
+
+	// Rooms listed after the final trial belong to the last section. If they are
+	// not absorbed they land in no section, so they can never become targets.
+	// `tail` is listed after the final trial AND that trial has a forward exit to
+	// it, so it opens a window of its own — one containing no trial. Absorbing it
+	// into the previous section is what keeps it eligible as a target; otherwise
+	// it belongs to no section and can never be routed to. It is also reachable
+	// from `b`, as real tail rooms are — reachable only through the trial would
+	// make it unreachable anyway, since the trial is a sink.
+	const tailAfterFinalTrialLayout = makeLayout([
+		{ id: 'a', name: 'Estate Path', x: '0', exits: { E: 't1' } },
+		{ id: 't1', name: "Aspirant's Trial", x: '1', exits: { E: 'b' } },
+		{ id: 'b', name: 'Estate Path', x: '2', exits: { E: 't2', NE: 'tail' } },
+		{ id: 't2', name: "Aspirant's Trial", x: '3', exits: { NE: 'tail' } },
+		{ id: 'tail', name: 'Sepulchre Path', x: '2.5', exits: {}, contents: ['darkshrine'] },
+	]);
+
+	it('should still target a darkshrine listed after the final trial', () => {
+		let state = loadLayout(createNavState(), tailAfterFinalTrialLayout);
+		state = setStrategy(state, 'darkshrines');
+		expect(state.plannedRoute).toContain('tail');
+		expect(state.plannedRoute.at(-1)).toBe('t2');
+	});
+
+	// Closes a gap I had written off as unconstructible: two candidate ROUTES of
+	// equal cost but different darkshrine count, which is what the tiebreaker in
+	// pickCheapestPreferringDarkshrines exists to decide. One-way secret passages
+	// make it possible — the p→q leg and the q→p leg are different rooms, so the
+	// ring is cost-symmetric but shrine-asymmetric.
+	//
+	// Targets are set manually: under the darkshrines strategy `x` would itself
+	// become a target and collapse the case. permutations() yields ['p','q']
+	// first, so the shrine-free route is the one a naive "take the first
+	// cheapest" would return.
+	const asymmetricRingLayout = makeLayout([
+		{ id: 's', name: 'Estate Walkways', x: '0', exits: { E: 'p', SE: 'q' } },
+		{ id: 'p', name: 'Sepulchre Path', x: '1', exits: { C: 'y', NE: 'trial' } },
+		{ id: 'q', name: 'Sepulchre Path', x: '1', exits: { C: 'x', NE: 'trial' } },
+		{ id: 'y', name: 'Sepulchre Path', x: '1.5', exits: { C: 'q' } },
+		{ id: 'x', name: 'Sepulchre Path', x: '1.5', exits: { C: 'p' }, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should prefer the target order whose connecting leg passes a darkshrine', () => {
+		let state = loadLayout(createNavState(), asymmetricRingLayout);
+		state = toggleTargetRoom(state, 'p');
+		state = toggleTargetRoom(state, 'q');
+		// p→y→q and q→x→p both cost 32; only the second passes the shrine.
+		expect(state.plannedRoute).toEqual(['s', 'q', 'x', 'p', 'trial']);
+	});
+
 	it('should preserve strategy when reloading layout', () => {
 		let state = loadLayout(createNavState(), simpleLayout);
 		state = setStrategy(state, 'darkshrines');
@@ -602,9 +719,19 @@ describe('real poelab layouts', () => {
 				let keys = 0;
 				const crossings: string[] = [];
 
+				const collected = new Set<string>();
 				state.plannedRoute.forEach((id, i) => {
 					const room = state.roomById.get(id);
-					if (room?.contents.some((c) => c.toLowerCase().includes('golden-key'))) keys += 1;
+					// Only the FIRST visit yields the key — a route that passes back
+					// through the key room must not bank a phantom second one, which
+					// would let a keyless crossing slip past this check.
+					if (
+						room?.contents.some((c) => c.toLowerCase().includes('golden-key')) &&
+						!collected.has(id)
+					) {
+						collected.add(id);
+						keys += 1;
+					}
 					if (i === 0) return;
 					const pair = [state.plannedRoute[i - 1], id].sort().join('|');
 					if (!locked.includes(pair)) return;
@@ -616,12 +743,42 @@ describe('real poelab layouts', () => {
 			}
 		});
 
-		it(`should reach the final trial in ${name}`, () => {
-			const state = loadLayout(createNavState(), layout);
+		it.each(STRATEGIES)(`should reach the final trial in ${name} (%s)`, (strategy) => {
+			let state = loadLayout(createNavState(), layout);
+			state = setStrategy(state, strategy);
 			const lastTrial = [...layout.rooms]
 				.reverse()
 				.find((r) => r.name.toLowerCase() === "aspirant's trial");
+			// Also the guard that keeps the two invariants above honest: they
+			// assert on an empty array, so an empty route would satisfy them.
 			expect(state.plannedRoute.at(-1)).toBe(lastTrial!.id);
+		});
+
+		// The invariants above check the route as PLANNED. This walks it the way
+		// the player does, re-planning after every room, because that is the state
+		// the overlay is actually in — and it is where re-entry survived: standing
+		// IN a trial matched no section (roomIds excludes trials), so the router
+		// fell back to section 0 and pointed the player back through the Izaro
+		// they had just beaten.
+		it(`should never plan a route back into a trial already beaten in ${name}`, () => {
+			let state = loadLayout(createNavState(), layout);
+			state = handleNavEvent(state, { type: 'PlazaEntered' });
+
+			const trialIds = new Set(
+				layout.rooms.filter((r) => r.name.toLowerCase() === "aspirant's trial").map((r) => r.id),
+			);
+			const beaten = new Set<string>();
+			const walked: string[] = [];
+
+			for (const roomId of [...state.plannedRoute]) {
+				const room = state.roomById.get(roomId)!;
+				state = handleNavEvent(state, { type: 'RoomChanged', name: room.name });
+				walked.push(state.currentRoom ?? '?');
+				if (state.currentRoom && trialIds.has(state.currentRoom)) beaten.add(state.currentRoom);
+
+				const replanned = state.plannedRoute.filter((id) => beaten.has(id) && id !== state.currentRoom);
+				expect(replanned, `at ${walked.join('>')} | route ${state.plannedRoute.join('>')}`).toEqual([]);
+			}
 		});
 	}
 });

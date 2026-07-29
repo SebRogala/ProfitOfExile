@@ -287,8 +287,6 @@ function detectSections(rooms: LabLayoutRoom[], sectionFirstRooms: Set<string>):
 	for (let i = 0; i < rooms.length; i++) {
 		if (sectionFirstRooms.has(rooms[i].id)) starts.push(i);
 	}
-	if (starts.length === 0) return [];
-
 	const sections: LabSection[] = [];
 	for (let s = 0; s < starts.length; s++) {
 		const from = starts[s];
@@ -403,9 +401,13 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 					newState.goldenKeys = state.goldenKeys + 1;
 				}
 
-				// Golden door unlock (crossing between locked pair)
-				if (state.previousRoom) {
-					const pair = [state.previousRoom, confirmedId].sort() as [string, string];
+				// Golden door unlock (crossing between locked pair).
+				// The pair is (room we just left, room we entered) — that is
+				// state.currentRoom, NOT state.previousRoom, which is already one
+				// room further back and would clear a door we never walked through
+				// while leaving the one we did still locked.
+				if (state.currentRoom) {
+					const pair = [state.currentRoom, confirmedId].sort() as [string, string];
 					const doorIdx = state.lockedDoors.findIndex(
 						([a, b]) => a === pair[0] && b === pair[1],
 					);
@@ -498,10 +500,12 @@ export function computeRoute(state: NavState, strategy: RouteStrategy): string[]
  * two rooms that both touch it. 2018-01-09_uber routed 14>15>16>15 — into
  * Izaro, out to a darkshrine, back into Izaro.
  *
- * This alone confines routing to the section: sections meet only at trials, so
- * making the trial a sink removes the only way out. An explicit
- * restrict-to-section-rooms filter was tried and dropped — nothing could reach
- * past it, so no test could tell it was there.
+ * Only the CURRENT section's trial is sunk; earlier trials keep their edges and
+ * stay walkable. That is enough for real layouts — none has a room-to-room edge
+ * across sections, and none has a section-start room declaring an exit back into
+ * the previous trial — so an explicit restrict-to-section-rooms filter was tried
+ * and dropped as unreachable. A hand-edited layout with either shape could still
+ * route back through an earlier trial.
  */
 function sectionAdjacency(state: NavState, section: LabSection): Map<string, string[]> {
 	const scoped = new Map(state.adjacency);
@@ -515,11 +519,25 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
 	const route: string[] = [];
 	const targets = state.targetRooms;
 
-	// Find which section the fromRoom belongs to
+	// Find which section the fromRoom belongs to.
+	//
+	// `roomIds` excludes trials, so a player standing IN a trial room matches no
+	// section. Left to fall back to section 0, that routed them from the trial
+	// they had just beaten all the way back to an earlier section's start and in
+	// through the SAME trial again — and because RoomChanged trusts
+	// plannedRoute[1] first, the next room they walked into was then
+	// misidentified. Beating Izaro puts the player at the START of the next
+	// section, so match the trial as an end room and continue past it.
 	let startSectionIdx = 0;
 	for (let i = 0; i < state.sections.length; i++) {
 		if (state.sections[i].roomIds.includes(fromRoom)) {
 			startSectionIdx = i;
+			break;
+		}
+		if (state.sections[i].endRoom === fromRoom) {
+			// Standing in the final trial means the lab is done: startSectionIdx
+			// runs past the last section and the loop below yields no route.
+			startSectionIdx = i + 1;
 			break;
 		}
 	}
@@ -668,7 +686,10 @@ function routeWithGoldenDoor(
 			break;
 		}
 	}
-	if (doorRoom && doorRoom !== keyRoom && !postKeyTargets.includes(doorRoom)) {
+	// No `doorRoom !== keyRoom` guard: when they are the same room, phase 2 already
+	// STARTS there, so naming it a waypoint is the identity. Two reviews confirmed
+	// removing the condition changes no route on any fixture or real layout.
+	if (doorRoom && !postKeyTargets.includes(doorRoom)) {
 		postKeyTargets.push(doorRoom);
 	}
 
