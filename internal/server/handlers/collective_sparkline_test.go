@@ -501,3 +501,20 @@ func TestCollectiveRow_SparklineWithoutPointsMarshalsAsEmptyArray(t *testing.T) 
 // path share the defect, because both fill the same name-keyed map. Fixing it
 // means keying that map by name and variant; no test here asserts the current
 // behaviour, so a fix will not have to break one.
+
+// Warmth is per variant, not per corpus. Once the Dedication pool became
+// selectable, a cache holding only 21/23c series would otherwise report itself
+// able to serve a 21/20c request and hand back empty series with no query and
+// no warning — the same silent-empty-market failure the 20/20 case above exists
+// to prevent, one level down.
+func TestCachedCorruptedSparklines_UnpopulatedDedicationVariantDefersToTheQuery(t *testing.T) {
+	now := time.Now()
+	cache := lab.NewCache(sparklineScope)
+	warmSparklines(t, cache, nil, map[string]map[string][]lab.SparklinePoint{
+		"Vaal Grace": {"21/23c": {sparkAt(now, time.Hour, 900, 5)}},
+	})
+
+	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/20c", sparklineWindowHours); cached {
+		t.Error("cached = true for 21/20c against a cache warmed only on 21/23c, want the query")
+	}
+}
