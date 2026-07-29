@@ -709,34 +709,28 @@ describe('real poelab layouts', () => {
 		});
 
 		// Walk the route the way the player would and check the door rule holds:
-		// crossing a locked pair requires a key picked up earlier on the route.
+		// a locked pair is only crossed after the key has been picked up.
+		//
+		// Not "one key per locked edge": poelab leaves content_directions empty,
+		// so we cannot tell WHICH exit of a golden-door room is the door and lock
+		// every forward exit of it. A room holding both the key and the door with
+		// two onward exits — which real data does contain, see the 2026-04-06
+		// fixture — then shows two locked pairs against one key, legitimately.
 		it(`should never cross a golden door without a key in ${name}`, () => {
 			for (const strategy of STRATEGIES) {
 				let state = loadLayout(createNavState(), layout);
 				state = setStrategy(state, strategy);
 
 				const locked = state.lockedDoors.map(([a, b]) => `${a}|${b}`);
-				let keys = 0;
+				let hasKey = false;
 				const crossings: string[] = [];
 
-				const collected = new Set<string>();
 				state.plannedRoute.forEach((id, i) => {
 					const room = state.roomById.get(id);
-					// Only the FIRST visit yields the key — a route that passes back
-					// through the key room must not bank a phantom second one, which
-					// would let a keyless crossing slip past this check.
-					if (
-						room?.contents.some((c) => c.toLowerCase().includes('golden-key')) &&
-						!collected.has(id)
-					) {
-						collected.add(id);
-						keys += 1;
-					}
+					if (room?.contents.some((c) => c.toLowerCase().includes('golden-key'))) hasKey = true;
 					if (i === 0) return;
 					const pair = [state.plannedRoute[i - 1], id].sort().join('|');
-					if (!locked.includes(pair)) return;
-					if (keys < 1) crossings.push(pair);
-					else keys -= 1;
+					if (locked.includes(pair) && !hasKey) crossings.push(pair);
 				});
 
 				expect(crossings, `${strategy}: ${state.plannedRoute.join('>')}`).toEqual([]);
