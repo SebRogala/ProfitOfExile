@@ -44,8 +44,12 @@
 	}
 
 	function playsForPool(poolType: string): GemPlay[] {
-		// baseName holds "skill" or "transfigured" for Dedication gems.
-		let filtered = allPlays.filter(g => g.baseName === poolType);
+		// baseName holds "skill" or "transfigured" for Dedication gems, and the
+		// server stamps each row with the market it was ranked in. Filtering on
+		// both means a heading that has moved ahead of its rows shows an empty
+		// table rather than the previous market's numbers — the rows themselves
+		// are the only thing here that knows which market they describe.
+		let filtered = allPlays.filter(g => g.baseName === poolType && g.variant === dedicationVariant);
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}

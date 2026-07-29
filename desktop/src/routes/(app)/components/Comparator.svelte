@@ -327,21 +327,34 @@
 
 	/** Invoke Rust-side trade lookup (hits GGG directly, Rust handles server submit). */
 	async function invokeRustTrade(gem: string) {
+		const requestedVariant = variant;
 		tradeLoading[gem] = true;
 		tradeError[gem] = false;
 		delete tradeErrorMsg[gem];
 		try {
 			const result = await invoke<TradeLookupResult>('trade_lookup', {
-				gem, variant, divineRate: divineRate || undefined,
+				gem, variant: requestedVariant, divineRate: divineRate || undefined,
 				mode: isDedication ? 'dedication' : undefined,
 			});
+			// Lookups are serialized behind a mutex and sleep for rate-limit
+			// capacity, so this can land tens of seconds after a market switch —
+			// long after dropTradeData() cleared the maps. The result carries the
+			// market it was fetched for, so it answers for itself rather than
+			// relying on the request having been cancelled.
+			if (result.variant !== variant) {
+				console.warn(`[Trade] discarding ${gem} lookup for ${result.variant}: market is now ${variant}`);
+				return;
+			}
 			tradeData[gem] = result;
 		} catch (err: any) {
 			if (typeof err === 'string' && err === 'cancelled') return; // queue cancelled, not an error
 			console.warn(`[Trade] Rust lookup failed for ${gem}:`, err);
+			if (requestedVariant !== variant) return;
 			tradeError[gem] = true;
 		} finally {
-			tradeLoading[gem] = false;
+			// Only the current market's spinner is ours to clear: a superseded
+			// lookup finishing would otherwise kill the new one's.
+			if (requestedVariant === variant) tradeLoading[gem] = false;
 		}
 	}
 

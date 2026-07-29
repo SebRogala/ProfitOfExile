@@ -259,6 +259,12 @@
 	}
 
 	async function loadAll() {
+		// Rankings go through the same generation counter as a manual refresh.
+		// This path awaits three requests where refreshBestPlays awaits one, so it
+		// is systematically the slower of the two: without sharing the counter, a
+		// Mercure reload started before a market switch lands after it and puts
+		// the old market's rows back under the new heading.
+		const generation = ++bestPlaysGeneration;
 		try {
 			error = '';
 			const [s, bp, mo] = await Promise.all([
@@ -267,7 +273,10 @@
 				fetchMarketOverview(),
 			]);
 			status = s;
-			bestPlays = bp;
+			if (generation === bestPlaysGeneration) {
+				bestPlays = bp;
+				bestPlaysError = '';
+			}
 			marketOverview = mo;
 
 			// Update connection status from Mercure

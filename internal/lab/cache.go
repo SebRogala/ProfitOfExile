@@ -456,23 +456,16 @@ func (c *Cache) HasSparklines() bool {
 	return len(c.sparklines) > 0
 }
 
-// HasSparklinesCorrupted reports whether the corrupted (Dedication) sparkline
-// map has been populated. See HasSparklines for why the two corpora report
-// separately.
-func (c *Cache) HasSparklinesCorrupted() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return len(c.sparklinesCorrupted) > 0
-}
-
-// HasSparklinesCorruptedVariant reports whether the corrupted map holds any
-// series for one variant specifically.
+// HasSparklinesCorruptedVariant reports whether the corrupted (Dedication)
+// sparkline map holds any series for one variant. See HasSparklines for why the
+// corrupted and non-corrupted corpora report separately.
 //
-// The corpus-wide answer stopped being usable once the Dedication pool became
-// selectable: with 21/23c series in memory and no 21/20c ones, a corpus-level
-// "warm" makes a 21/20c read return empty series with no database fallback and
-// no warning — the caller cannot tell "this gem has no recent points" from "this
-// whole variant was never populated".
+// There is deliberately no corpus-wide counterpart. Once the Dedication pool
+// became selectable, "the corrupted map has something in it" stopped being an
+// answer to "can I serve this request": with 21/23c series in memory and no
+// 21/20c ones, a corpus-level "warm" makes a 21/20c read return empty series
+// with no database fallback and no warning — the caller cannot tell "this gem
+// has no recent points" from "this whole variant was never populated".
 func (c *Cache) HasSparklinesCorruptedVariant(variant string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

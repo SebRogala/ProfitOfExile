@@ -409,17 +409,24 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 	// Load Dedication results for input costs — this variant's, since input cost
 	// is what the ranking's ROI is measured against.
 	var dedicationResults []lab.DedicationResult
+	cacheWarm := false
 	if cache != nil {
 		ded := cache.For(scope).Dedication()
+		// Warmth is judged on the whole cached analysis, not on this variant's
+		// slice of it. The analyzer computes every variant in one pass, so a warm
+		// cache with nothing for this variant is authoritative — the database has
+		// nothing either, and re-asking it on every poll of a dashboard endpoint
+		// would run a MAX() subquery forever for a permanently empty answer.
+		cacheWarm = len(ded.Skills) > 0 || len(ded.Transfigured) > 0
 		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Skills, variant)...)
 		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Transfigured, variant)...)
 	}
 
-	// Fall back to the database when the cache holds nothing for this variant,
-	// as the compare path beside this one already does. Without it a warm cache
-	// that has never seen the selected variant yields no input cost at all, and
-	// every row's ROI silently becomes the gem's full listed price.
-	if len(dedicationResults) == 0 {
+	// Fall back to the database only from a cold cache, as the compare path
+	// beside this one already does. Without any fallback, a restart leaves no
+	// input cost at all and every row's ROI silently becomes the gem's full
+	// listed price.
+	if !cacheWarm {
 		fromDB, err := repo.LatestDedicationResults(r.Context(), scope, variant, "", "", 500)
 		if err != nil {
 			slog.Error("dedication collective: dedication results query failed", "error", err)
