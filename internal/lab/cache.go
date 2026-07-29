@@ -448,8 +448,8 @@ func (c *Cache) SparklineHighWater() time.Time {
 //
 // It reports on one corpus only. A caller reading the non-corrupted map must not
 // be told the cache is warm because the corrupted map was filled: it would serve
-// empty series with no fallback and no log. HasSparklinesCorrupted is the same
-// signal for the other corpus.
+// empty series with no fallback and no log. HasSparklinesCorruptedVariant is the
+// same signal for the other corpus, asked per variant.
 func (c *Cache) HasSparklines() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

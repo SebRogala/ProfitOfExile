@@ -48,6 +48,19 @@
 			if (isDedication) {
 				const resp = await fetchDedicationEV(requestedVariant);
 				if (generation !== loadGeneration) return;
+				// The response states the market it was computed over. A server
+				// older than this client ignores ?variant= and answers with the
+				// default pool, which would otherwise render under the requested
+				// market's heading — desktop builds ship independently of the
+				// server, so that skew is a real deployment state, not a
+				// hypothetical.
+				if (resp.variant && resp.variant.replace(/c$/, '') !== requestedVariant) {
+					console.error(`[FontEV] server returned ${resp.variant} for a ${requestedVariant} request`);
+					dedicationData = null;
+					loadError = true;
+					loading = false;
+					return;
+				}
 				dedicationData = resp;
 			} else {
 				const results = await Promise.all(

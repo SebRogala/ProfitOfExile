@@ -33,8 +33,8 @@
 
 	$effect(() => {
 		// Auto-select the BEST gem when results change
-		if (results.length > 0) {
-			const best = results.find((g) => g.recommendation === 'BEST');
+		if (visibleResults.length > 0) {
+			const best = visibleResults.find((g) => g.recommendation === 'BEST');
 			selectedForQueue = best?.name ?? null;
 		} else {
 			selectedForQueue = null;
@@ -68,7 +68,14 @@
 		tradeData = {};
 		tradeLoading = {};
 		tradeExpanded = {};
-		tradeGeneration = {};
+		// Bump, never clear: fetchTradeData derives a per-gem generation from this
+		// map and rejects its own result when the number has moved on. Resetting
+		// to zero restarts the count, so an in-flight lookup and the replacement
+		// issued right after would share a generation and the old market's
+		// listings would pass the staleness check.
+		for (const gem of Object.keys(tradeGeneration)) {
+			tradeGeneration[gem] = (tradeGeneration[gem] || 0) + 1;
+		}
 	}
 
 	// --- Desktop pairing state ---
@@ -112,6 +119,13 @@
 	let suggestions = $state<string[]>([]);
 	let selectedGems = $state<string[]>([]);
 	let results = $state<CompareGem[]>([]);
+
+	// Rows carry the market they were computed for, and the label above them
+	// follows the selection immediately while the refetch is in flight. Render
+	// and score from this list so a switch shows an empty grid for one round trip
+	// rather than the previous market's prices under the new label. Row variants
+	// arrive in DB form ("21/20c"); the selector holds display form.
+	const visibleResults = $derived(results.filter(r => r.variant.replace(/c$/, '') === variant));
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
 	let inputRef = $state<HTMLInputElement | null>(null);
@@ -412,7 +426,7 @@
 
 	function handleNext() {
 		if (!selectedForQueue || !onQueueGem) return;
-		const selected = results.find((g) => g.name === selectedForQueue);
+		const selected = visibleResults.find((g) => g.name === selectedForQueue);
 		if (!selected) return;
 		const trade = tradeData[selectedForQueue] ?? null;
 		onQueueGem(selectedForQueue, variant, selected.roi, trade);
@@ -491,9 +505,9 @@
 		{/if}
 	</div>
 
-	{#if results.length > 0}
+	{#if visibleResults.length > 0}
 		<div class="cards-row">
-			{#each results as gem}
+			{#each visibleResults as gem}
 				{@const noData = gem.confidence === 'NO_DATA' || (gem.transPrice === 0 && gem.low7d === 0 && gem.high7d === 0)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
