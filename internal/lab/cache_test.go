@@ -152,14 +152,14 @@ func TestCache_HasSparklines_FalseWhenOnlyTheCorruptedMapIsPopulated(t *testing.
 	if c.For(scope).HasSparklines() {
 		t.Errorf("HasSparklines with only the corrupted map populated: got true, want false")
 	}
-	if !c.For(scope).HasSparklinesCorrupted() {
-		t.Errorf("HasSparklinesCorrupted after a corrupted write: got false, want true")
+	if !c.For(scope).HasSparklinesCorruptedVariant("21/23c") {
+		t.Errorf("HasSparklinesCorruptedVariant after a corrupted write: got false, want true")
 	}
 }
 
 // The mirror case: a non-corrupted-only population must not tell the Dedication
 // reader its corpus is warm.
-func TestCache_HasSparklinesCorrupted_FalseWhenOnlyTheMainMapIsPopulated(t *testing.T) {
+func TestCache_HasSparklinesCorruptedVariant_FalseWhenOnlyTheMainMapIsPopulated(t *testing.T) {
 	scope := league.Historical("LeagueA")
 	c := NewCache(scope)
 
@@ -167,8 +167,8 @@ func TestCache_HasSparklinesCorrupted_FalseWhenOnlyTheMainMapIsPopulated(t *test
 		{name: "Spark of Nova", variant: "20/20"}: {{Time: "2026-07-20T11:00:00Z", Price: 120}},
 	}, nil, time.Time{})
 
-	if c.For(scope).HasSparklinesCorrupted() {
-		t.Errorf("HasSparklinesCorrupted with only the main map populated: got true, want false")
+	if c.For(scope).HasSparklinesCorruptedVariant("21/23c") {
+		t.Errorf("HasSparklinesCorruptedVariant with only the main map populated: got true, want false")
 	}
 }
 

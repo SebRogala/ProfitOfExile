@@ -34,12 +34,21 @@
 		{ label: `${dedicationVariant} Transfigured`, poolKey: 'transfigured' as const },
 	]);
 
+	// Generation guard: a market switch starts a new load and only the newest one
+	// may assign. Both responses match their own request, so without this the
+	// slower (older) market wins and nothing downstream can detect it.
+	let loadGeneration = 0;
+
 	async function loadAll() {
+		const generation = ++loadGeneration;
+		const requestedVariant = dedicationVariant;
 		loading = true;
 		loadError = false;
 		try {
 			if (isDedication) {
-				dedicationData = await fetchDedicationEV(dedicationVariant);
+				const resp = await fetchDedicationEV(requestedVariant);
+				if (generation !== loadGeneration) return;
+				dedicationData = resp;
 			} else {
 				const results = await Promise.all(
 					VARIANTS.map(async (v) => {
@@ -47,15 +56,17 @@
 						return [v, d] as const;
 					})
 				);
+				if (generation !== loadGeneration) return;
 				for (const [v, d] of results) {
 					data[v] = d;
 				}
 			}
 		} catch (err) {
+			if (generation !== loadGeneration) return;
 			console.error('[FontEV] Failed to load:', err);
 			loadError = true;
 		}
-		loading = false;
+		if (generation === loadGeneration) loading = false;
 	}
 
 	// --- Normal mode helpers ---

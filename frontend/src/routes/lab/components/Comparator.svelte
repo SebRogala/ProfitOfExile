@@ -304,6 +304,10 @@
 	}
 
 	function handleVariantChange() {
+		// Same reason as the market switch: 20/20 and 1/0 are different markets,
+		// so the previous variant's listing prices must not sit beside the new
+		// variant's label while the refetch is in flight.
+		dropTradeData();
 		loadResults();
 		fetchTradeDataForAll();
 	}
