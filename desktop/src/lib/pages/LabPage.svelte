@@ -48,16 +48,16 @@
 	});
 
 	// --- Dedication variant ---
-	// 21/23 and 21/20 are separate corrupted markets. The selection drives the
-	// EV table, the rankings and the comparator together, so it lives here and
-	// is persisted in Rust alongside the lab mode.
+	// 21/23 and 21/20 are separate corrupted markets, and every analysis surface
+	// now shows both at once. This selection is what Rust stamps onto uploaded
+	// font sessions (lib.rs send_font_session), so it records which market the
+	// player is actually feeding the font — it is not a view filter.
 	let dedVariant = $state<DedicationVariant>('21/23');
 
-	// The persisted market arrives asynchronously, so the first fetch must wait
-	// for it: firing on the initial '21/23' and repainting later would put one
-	// market's rankings under the other's heading for as long as the request
-	// takes. `settled` resolves once, whether the read succeeds or fails.
-	const dedVariantRestored = invoke<string>('get_dedication_variant')
+	// Restore the persisted market. Nothing waits on this any more — it only has
+	// to land before the player finishes a run, since its one consumer is the
+	// session upload in Rust.
+	invoke<string>('get_dedication_variant')
 		.then((v) => {
 			if ((DEDICATION_VARIANTS as readonly string[]).includes(v)) {
 				dedVariant = v as DedicationVariant;
@@ -76,15 +76,12 @@
 		if (variant === dedVariant) return;
 		dedVariant = variant;
 		invoke('set_dedication_variant', { variant }).catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
-		// Rankings are per-variant: the old pool's rows would be priced against
-		// an input cost from a market the player is no longer farming.
-		refreshBestPlays();
+		// No re-fetch: the rankings hold both markets and filter locally now.
 	}
 
-	// Rankings generation guard + failure surfacing. The heading follows the
-	// selection immediately, so a re-fetch that loses a race or fails silently
-	// leaves the previous market's rows under the new label — ByVariant filters
-	// rows by pool, not by market, and cannot detect the mismatch itself.
+	// Rankings generation guard + failure surfacing. A re-fetch that loses a race
+	// or fails silently would leave the previous mode's rows on screen, and the
+	// error banner is the only thing that says the numbers are not current.
 	let bestPlaysGeneration = 0;
 	let bestPlaysError = $state('');
 
@@ -109,12 +106,14 @@
 	// crowd the others out and By Variant showed a starved slice (POE-132). The
 	// merged result is a superset of the old global list.
 	//
-	// Dedication mode is excluded: it fetches the one selected corrupted variant
-	// and pools by skill/transfigured instead, so the per-variant split does not
-	// apply.
+	// Dedication mode splits the same way, over its two corrupted markets: the
+	// rankings show both, filtered client-side by market and pool.
 	async function loadBestPlays(dedication: boolean): Promise<GemPlay[]> {
 		if (dedication) {
-			return fetchBestPlays(dedVariant, undefined, undefined, 100, undefined, 'dedication');
+			const perVariant = await Promise.all(
+				DEDICATION_VARIANTS.map(v => fetchBestPlays(v, undefined, undefined, 100, undefined, 'dedication')),
+			);
+			return perVariant.flat();
 		}
 		const perVariant = await Promise.all(
 			VARIANTS.map(v => fetchBestPlays(v, undefined, undefined, 100)),
@@ -317,10 +316,9 @@
 	// status.connected, causing a disconnect flash.
 	$effect(() => {
 		if (!statusReady) return;
-		// Wait for the persisted market before the first fetch — see
-		// dedVariantRestored. Everything loadAll reads is untracked so this
-		// still runs exactly once.
-		untrack(() => { dedVariantRestored.then(() => loadAll()); });
+		// No longer waits on the persisted market: the rankings fetch both, so
+		// nothing the first load reads depends on the restore finishing.
+		untrack(() => loadAll());
 	});
 
 	// Mercure connection — connects once when status is ready.
@@ -369,7 +367,7 @@
 				{/each}
 			</div>
 			{#if isDedication}
-				<div class="lab-mode-selector" title="Corrupted gem market to analyse">
+				<div class="lab-mode-selector" title="Market you are farming — recorded on uploaded runs. Every analysis surface shows both markets regardless.">
 					{#each DEDICATION_VARIANTS as variant}
 						<button class="lab-mode-btn" class:active={dedVariant === variant} onclick={() => handleDedVariantChange(variant)}>
 							{variant}
@@ -406,7 +404,7 @@
 		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
 		<div class:tab-hidden={activeTab !== 'Session'}>
-			<Comparator divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} dedicationVariant={dedVariant} />
+			<Comparator divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} />
 			<SessionQueue
 				queue={sessionQueue}
 				onRemove={handleRemoveFromQueue}
@@ -421,9 +419,9 @@
 					<button class="retry-btn" onclick={refreshBestPlays}>Retry</button>
 				</div>
 			{/if}
-			<ByVariant allPlays={bestPlays} labMode={labModeForChild} dedicationVariant={dedVariant} />
+			<ByVariant allPlays={bestPlays} labMode={labModeForChild} />
 		{:else if activeTab === 'Font EV'}
-			<FontEVCompare {refreshKey} labMode={labModeForChild} divineRate={status?.divinePrice || 0} dedicationVariant={dedVariant} />
+			<FontEVCompare {refreshKey} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
 		{:else if activeTab === 'Market'}
 			{#if marketOverview}
 				<MarketOverview data={marketOverview} />

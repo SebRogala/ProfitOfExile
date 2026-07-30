@@ -22,6 +22,8 @@ export type SellabilityLabel = 'FAST SELL' | 'GOOD' | 'MODERATE' | 'SLOW' | 'UNL
 
 export interface GemPlay {
 	name: string;
+	/** Dedication rows carry "skill" or "transfigured" here — the pool the row was ranked in. Empty for normal-mode rows. */
+	baseName: string;
 	variant: string;
 	color: 'RED' | 'GREEN' | 'BLUE';
 	/** 'OK' | 'LOW' | 'NO_BASE'. NO_BASE means the base gem is unpriced, so roi/basePrice are unknown — not zero. */
@@ -145,9 +147,10 @@ export interface DedicationEVResponse {
 /**
  * The corrupted variants the Dedication views can be shown for, in display
  * format. Each is its own market: pool, tiers, input cost and EV are computed
- * per variant and never merged.
+ * per variant and never merged. Order is display order — 21/20 first, since
+ * that is the cheaper input and the more common play.
  */
-export const DEDICATION_VARIANTS = ['21/23', '21/20'] as const;
+export const DEDICATION_VARIANTS = ['21/20', '21/23'] as const;
 export type DedicationVariant = typeof DEDICATION_VARIANTS[number];
 
 export interface MarketOverviewData {
@@ -257,6 +260,7 @@ export function displayVariant(v: string): string {
 function mapCollectiveRow(r: any): GemPlay {
 	return {
 		name: r.transfiguredName || r.name || '',
+		baseName: r.baseName || '',
 		variant: displayVariant(r.variant || ''),
 		color: r.gemColor || '',
 		confidence: r.confidence || '',
@@ -371,6 +375,7 @@ export async function fetchBestPlays(
 	sort?: 'roi' | 'roiPercent',
 	limit?: number,
 	search?: string,
+	mode?: string,
 ): Promise<GemPlay[]> {
 	const params: Record<string, string> = {};
 	if (variant) params.variant = variant;
@@ -378,6 +383,7 @@ export async function fetchBestPlays(
 	if (sort === 'roiPercent') params.sort = 'pct';
 	if (limit) params.limit = String(limit);
 	if (search) params.search = search;
+	if (mode) params.mode = mode;
 
 	const resp = await get<{ count: number; data: any[] }>('/analysis/collective', params);
 	return (resp.data || []).map(mapCollectiveRow);

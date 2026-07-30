@@ -147,9 +147,10 @@ export interface DedicationEVResponse {
 /**
  * The corrupted variants the Dedication views can be shown for, in display
  * format. Each is its own market: pool, tiers, input cost and EV are computed
- * per variant and never merged.
+ * per variant and never merged. Order is display order — 21/20 first, since
+ * that is the cheaper input and the more common play.
  */
-export const DEDICATION_VARIANTS = ['21/23', '21/20'] as const;
+export const DEDICATION_VARIANTS = ['21/20', '21/23'] as const;
 export type DedicationVariant = typeof DEDICATION_VARIANTS[number];
 
 export interface MarketOverviewData {
