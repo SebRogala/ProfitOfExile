@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
-	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
+	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
@@ -172,7 +172,7 @@
 
 	// --- Shared helpers ---
 
-	function tierLine(fc: { winners: number; fontsToHit?: number; pWin: number; avgWinRaw?: number; avgWin?: number } | null): string {
+	function tierLine(fc: { winners: number; fontsToHit?: number; pWin: number; avgWinRaw?: number; avgWin?: number } | null, unit: PriceUnit = 'auto'): string {
 		if (!fc || fc.winners === 0 || !fc.fontsToHit) return '\u2014 none';
 		const raw = fc.avgWinRaw || fc.avgWin || 0;
 		const fth = fc.fontsToHit;
@@ -190,7 +190,7 @@
 			ratio = `1 in ${Math.round(fth)}`;
 		}
 		const pct = Math.round(fc.pWin);
-		return `${ratio} (${pct}%)  ~${formatPrice(raw)}`;
+		return `${ratio} (${pct}%)  ~${formatPrice(raw, unit)}`;
 	}
 
 	/**
@@ -303,7 +303,7 @@
 			<div class="dedication-header">
 				<span class="dedication-title">Dedication Lab — Corrupted Gem Exchange</span>
 				<span class="entry-fee">
-					Entry fee: <strong>{formatPrice(entryFee)}</strong>
+					Entry fee: <strong>{formatPrice(entryFee, 'divine')}</strong>
 					<InfoTooltip text="<b>Dedication to the Goddess offering price</b><br><br>This is the cost of the offering required to open a Dedication Lab run. It is displayed for reference but <b>NOT included</b> in the profit calculation — profit shows pure gem exchange value minus input gem cost." />
 				</span>
 			</div>
@@ -339,28 +339,28 @@
 									<!-- Headline is gain, not gross: the base gem has to be bought,
 									     so EV alone reads as income that nobody actually keeps. -->
 									<span class="ev" class:ev-loss={profit <= 0} class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>
-										{formatPriceSigned(profit)} <span class="ev-unit">gain</span>
+										{formatPriceSigned(profit, 'divine')} <span class="ev-unit">gain</span>
 									</span>
 									<div class="ded-cost-line">
-										<span class="ded-input">base gem: {formatPrice(inputCost)}</span>
-										<Tooltip text="Gross font value — what a usage returns before the base gem is paid for. This is your gain only if the base was self-farmed."><span class="ded-gross">{formatPrice(ev)}/font gross</span></Tooltip>
+										<span class="ded-input">base gem: {formatPrice(inputCost, 'divine')}</span>
+										<Tooltip text="Gross font value — what a usage returns before the base gem is paid for. This is your gain only if the base was self-farmed."><span class="ded-gross">{formatPrice(ev, 'divine')}/font gross</span></Tooltip>
 									</div>
 									<div class="tier-lines">
 										<div class="tier-row">
 											<span class="tier-label t-safe">Safe</span>
-											<span class="tier-val t-safe">{tierLine(safe)}</span>
+											<span class="tier-val t-safe">{tierLine(safe, 'divine')}</span>
 										</div>
 										<div class="tier-row">
 											<span class="tier-label t-premium">Premium</span>
-											<span class="tier-val t-premium">{tierLine(premium)}</span>
+											<span class="tier-val t-premium">{tierLine(premium, 'divine')}</span>
 										</div>
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g => {
-											return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos)}</div>`;
+											return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos, 'divine')}</div>`;
 										}).join('')}
 										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>
-											<span class="tier-val t-jackpot">{tierLine(jackpot)}</span>
+											<span class="tier-val t-jackpot">{tierLine(jackpot, 'divine')}</span>
 											<InfoTooltip text={gemList} />
 										</div>
 										{/if}
@@ -419,7 +419,7 @@
 											{#if tier.minPrice === tier.maxPrice}
 												{formatPrice(tier.minPrice)}
 											{:else}
-												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
+												{formatPrice(tier.minPrice, 'divine')} — {formatPrice(tier.maxPrice, 'divine')}
 											{/if}
 										</span>
 										<span class="pool-tier-bar">
@@ -436,7 +436,7 @@
 							{/each}
 							{#if safe?.lowConfidenceGems?.length}
 								{@const lcGems = safe.lowConfidenceGems}
-								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${formatPrice(g.chaos)} (${g.listings} listings)`).join('<br>')}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${formatPrice(g.chaos, 'divine')} (${g.listings} listings)`).join('<br>')}
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
