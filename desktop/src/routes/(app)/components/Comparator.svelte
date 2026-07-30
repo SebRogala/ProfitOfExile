@@ -3,6 +3,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
+	import { formatPrice } from '$lib/price.svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { listen } from '@tauri-apps/api/event';
@@ -41,11 +42,6 @@
 
 	let isDedication = $derived(labMode === 'dedication');
 
-	/** In Dedication mode, append divine equivalent in parentheses when price >= 1 div. */
-	function divSuffix(chaos: number): string {
-		if (!isDedication || !divineRate || chaos < divineRate) return '';
-		return ` (${(chaos / divineRate).toFixed(1)} div)`;
-	}
 
 	let selectedForQueue = $state<string | null>(null);
 
@@ -658,9 +654,9 @@
 					<div class="card-row price-line">
 						<Tooltip text="Ninja price vs risk-adjusted (sell probability × stability)"><span class="price-display">
 							<!-- An unpriced gem's 0 is unknown, not a 0c valuation. -->
-							<span class="price-raw">{noData ? '—' : `${gem.transPrice}c${divSuffix(gem.transPrice)}`}</span>
+							<span class="price-raw">{noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.riskAdjustedPrice > 0}
-								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c{divSuffix(gem.riskAdjustedPrice)})</span>
+								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {formatPrice(gem.riskAdjustedPrice)})</span>
 							{/if}
 						</span></Tooltip>
 					</div>
@@ -680,7 +676,7 @@
 					</div>
 					<div class="price-context">
 						<div class="price-row">
-							<span>Listed: {noData ? '—' : `${gem.transPrice}c${divSuffix(gem.transPrice)}`}</span>
+							<span>Listed: {noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.quickSellPrice > 0}
 								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
 							{/if}

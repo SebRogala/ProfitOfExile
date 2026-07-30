@@ -14,6 +14,7 @@
 	} from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
 	import { getPairCode, setPairCode } from '$lib/desktopBridge';
+	import { setDivineRate } from '$lib/price.svelte';
 
 	import Header from './components/Header.svelte';
 	import Comparator from './components/Comparator.svelte';
@@ -154,6 +155,8 @@
 				...rankingRequests,
 			]);
 			status = s;
+			// One rate for every price on screen — see $lib/price.svelte.
+			setDivineRate(s?.divinePrice ?? 0);
 			bestPlays = perVariant.flat();
 			marketOverview = mo;
 
@@ -224,7 +227,7 @@
 	{/if}
 
 	{#if isDedication}
-		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" divineRate={status?.divinePrice || 0} />
+		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
 		<SessionQueue
 			queue={sessionQueue}
@@ -246,7 +249,7 @@
 
 		<ByVariant allPlays={bestPlays} league={status?.league || ''} />
 
-		<FontEVCompare {refreshKey} league={status?.league || ''} divineRate={status?.divinePrice || 0} />
+		<FontEVCompare {refreshKey} league={status?.league || ''} />
 
 		{#if marketOverview}
 			<MarketOverview data={marketOverview} />

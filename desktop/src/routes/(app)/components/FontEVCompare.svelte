@@ -1,20 +1,13 @@
 <script lang="ts">
 	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
+	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import Select from '$lib/components/Select.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 
-	let { refreshKey = 0, labMode = 'normal', divineRate = 0 }: { refreshKey?: number; labMode?: 'normal' | 'dedication'; divineRate?: number } = $props();
-
-	/** Format chaos value — show as divine if >= 1 div and in Dedication mode. */
-	function fmtChaos(chaos: number): string {
-		if (isDedication && divineRate > 0 && chaos >= divineRate) {
-			return `${(chaos / divineRate).toFixed(1)} div`;
-		}
-		return `${Math.round(chaos)}c`;
-	}
+	let { refreshKey = 0, labMode = 'normal' }: { refreshKey?: number; labMode?: 'normal' | 'dedication' } = $props();
 
 	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
@@ -197,7 +190,7 @@
 			ratio = `1 in ${Math.round(fth)}`;
 		}
 		const pct = Math.round(fc.pWin);
-		return `${ratio} (${pct}%)  ~${fmtChaos(raw)}`;
+		return `${ratio} (${pct}%)  ~${formatPrice(raw)}`;
 	}
 
 	/**
@@ -310,7 +303,7 @@
 			<div class="dedication-header">
 				<span class="dedication-title">Dedication Lab — Corrupted Gem Exchange</span>
 				<span class="entry-fee">
-					Entry fee: <strong>{fmtChaos(entryFee)}</strong>
+					Entry fee: <strong>{formatPrice(entryFee)}</strong>
 					<InfoTooltip text="<b>Dedication to the Goddess offering price</b><br><br>This is the cost of the offering required to open a Dedication Lab run. It is displayed for reference but <b>NOT included</b> in the profit calculation — profit shows pure gem exchange value minus input gem cost." />
 				</span>
 			</div>
@@ -346,11 +339,11 @@
 									<!-- Headline is gain, not gross: the base gem has to be bought,
 									     so EV alone reads as income that nobody actually keeps. -->
 									<span class="ev" class:ev-loss={profit <= 0} class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>
-										{profit > 0 ? '+' : '−'}{fmtChaos(Math.abs(profit))} <span class="ev-unit">gain</span>
+										{formatPriceSigned(profit)} <span class="ev-unit">gain</span>
 									</span>
 									<div class="ded-cost-line">
-										<span class="ded-input">base gem: {fmtChaos(inputCost)}</span>
-										<Tooltip text="Gross font value — what a usage returns before the base gem is paid for. This is your gain only if the base was self-farmed."><span class="ded-gross">{fmtChaos(ev)}/font gross</span></Tooltip>
+										<span class="ded-input">base gem: {formatPrice(inputCost)}</span>
+										<Tooltip text="Gross font value — what a usage returns before the base gem is paid for. This is your gain only if the base was self-farmed."><span class="ded-gross">{formatPrice(ev)}/font gross</span></Tooltip>
 									</div>
 									<div class="tier-lines">
 										<div class="tier-row">
@@ -363,7 +356,7 @@
 										</div>
 										{#if jackpot && jackpot.winners > 0}
 										{@const gemList = (jackpot.jackpotGems || []).map(g => {
-											return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${Math.round(g.chaos)}c</div>`;
+											return `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos)}</div>`;
 										}).join('')}
 										<div class="tier-row">
 											<span class="tier-label t-jackpot">Jackpot</span>
@@ -426,7 +419,7 @@
 											{#if tier.minPrice === tier.maxPrice}
 												{tier.minPrice}c
 											{:else}
-												{tier.minPrice}c — {tier.maxPrice}c
+												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
 											{/if}
 										</span>
 										<span class="pool-tier-bar">
@@ -443,7 +436,7 @@
 							{/each}
 							{#if safe?.lowConfidenceGems?.length}
 								{@const lcGems = safe.lowConfidenceGems}
-								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${fmtChaos(g.chaos)} (${g.listings} listings)`).join('<br>')}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${formatPrice(g.chaos)} (${g.listings} listings)`).join('<br>')}
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
@@ -479,7 +472,7 @@
 							{@const isW = best.variant === variant && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
 								{#if ev > 0}
-									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{ev}c/font</span>
+									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{formatPrice(ev)}/font</span>
 									<div class="tier-lines">
 										<div class="tier-row">
 											<span class="tier-label t-safe">Safe</span>
@@ -496,16 +489,16 @@
 											const buyBase = lg
 												? ` &nbsp;&nbsp;<a href="${baseGemTradeUrl(g.name, variant, lg)}" target="_blank" style="padding:1px 8px;font-size:0.75rem;font-weight:600;color:#5eead4;border:1px solid rgba(94,234,212,0.4);text-decoration:none;letter-spacing:0.03em">Buy Base</a>`
 												: '';
-											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${Math.round(g.chaos)}c${buyBase}`;
+											let html = `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>${g.name}</b>: ${formatPrice(g.chaos)}${buyBase}`;
 											if (g.gcpRecipeCost > 0) {
 												const saves = Math.round(g.gcpRecipeSaves);
 												const savesColor = saves >= 0 ? '#22c55e' : '#ef4444';
-												const savesText = saves >= 0 ? `saves ${saves}c` : `costs ${Math.abs(saves)}c more`;
+												const savesText = saves >= 0 ? `saves ${formatPrice(saves)}` : `costs ${formatPrice(Math.abs(saves))} more`;
 												const noQualUrl = baseGemNoQualityUrl(g.name);
 												const buy20 = noQualUrl
 													? ` &nbsp;<a href="${noQualUrl}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a>`
 													: '';
-												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${Math.round(g.gcpRecipeBase)}c</b> base + ${Math.round(g.gcpRecipeCost - g.gcpRecipeBase)}c GCPs = <b>${Math.round(g.gcpRecipeCost)}c</b> <span style="color:${savesColor}">(${savesText})</span>${buy20}</div>`;
+												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${formatPrice(g.gcpRecipeBase)}</b> base + ${formatPrice(g.gcpRecipeCost - g.gcpRecipeBase)} GCPs = <b>${formatPrice(g.gcpRecipeCost)}</b> <span style="color:${savesColor}">(${savesText})</span>${buy20}</div>`;
 											}
 											html += `</div>`;
 											return html;
@@ -582,7 +575,7 @@
 											{#if tier.minPrice === tier.maxPrice}
 												{tier.minPrice}c
 											{:else}
-												{tier.minPrice}c — {tier.maxPrice}c
+												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
 											{/if}
 										</span>
 										<span class="pool-tier-bar">
@@ -599,7 +592,7 @@
 							{/each}
 							{#if safe?.lowConfidenceGems?.length}
 								{@const lcGems = safe.lowConfidenceGems}
-								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${fmtChaos(g.chaos)} (${g.listings} listings)`).join('<br>')}
+								{@const lcTooltip = lcGems.map(g => `<b>${g.name}</b>: ${formatPrice(g.chaos)} (${g.listings} listings)`).join('<br>')}
 								<div class="pool-tier-row pool-risky-row">
 									<span class="pool-tier-name pool-risky-name">RISKY</span>
 									<span class="pool-tier-count">{lcGems.length}</span>
