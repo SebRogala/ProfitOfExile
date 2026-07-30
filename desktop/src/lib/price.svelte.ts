@@ -43,7 +43,9 @@ export function getDivineRate(): number {
  * above it. Fractions of a chaos are not meaningful, so chaos is rounded.
  */
 export function formatPrice(chaos: number): string {
-	if (!Number.isFinite(chaos)) return `0${CHAOS_SUFFIX}`;
+	// An em dash, not "0c": the rest of the UI renders unknown that way, and a
+	// zero here reads as a real valuation of nothing.
+	if (!Number.isFinite(chaos)) return '\u2014';
 	if (divineRate > 0 && Math.abs(chaos) >= DIVINE_DISPLAY_FLOOR * divineRate) {
 		return `${(chaos / divineRate).toFixed(1)}${DIVINE_SUFFIX}`;
 	}

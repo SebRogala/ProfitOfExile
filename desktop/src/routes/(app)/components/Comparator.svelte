@@ -678,14 +678,14 @@
 						<div class="price-row">
 							<span>Listed: {noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.quickSellPrice > 0}
-								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
+								<span class="quick-sell">Quick-sell: ~{formatPrice(gem.quickSellPrice)}</span>
 							{/if}
 						</div>
 						{#if gem.low7d > 0 || gem.high7d > 0}
 							<div class="range-context">
-								<span class="range-label">7 days lowest: {gem.low7d}c</span>
+								<span class="range-label">7 days lowest: {formatPrice(gem.low7d)}</span>
 								<span class="range-sep">&middot;</span>
-								<span class="range-label">7 days highest: {gem.high7d}c</span>
+								<span class="range-label">7 days highest: {formatPrice(gem.high7d)}</span>
 							</div>
 						{:else if noData}
 							<div class="anomaly-banner">No poe.ninja data — check trade listings</div>

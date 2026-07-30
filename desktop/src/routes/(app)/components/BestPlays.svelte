@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { fetchSignalHistory, fetchGemNames, fetchBestPlays, type GemPlay, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
+	import { formatPrice } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
@@ -232,7 +233,7 @@
 				<td class="col-tier">
 					<span class="tier-badge tier-{gem.priceTier.toLowerCase()}" class:low-conf={gem.lowConfidence}>{gem.priceTier}</span>
 				</td>
-				<td class="col-num price-val">{gem.transPrice}c</td>
+				<td class="col-num price-val">{formatPrice(gem.transPrice)}</td>
 				<td class="col-num roi-val">
 					{#if gem.confidence === 'NO_BASE'}
 						<Tooltip text="Base gem is not listed on poe.ninja yet, so ROI can't be computed. The gem's own price is real — common right after a league start."><span class="roi-unknown">—</span></Tooltip>
@@ -270,7 +271,7 @@
 					<td colspan={showVariantColumn ? 10 : 9} class="expanded-cell">
 						<div class="expanded-content">
 							<span class="expanded-meta">
-								Base: {gem.confidence === 'NO_BASE' ? 'not listed' : `${gem.basePrice}c`} | Trans: {gem.transPrice}c |
+								Base: {gem.confidence === 'NO_BASE' ? 'not listed' : formatPrice(gem.basePrice)} | Trans: {formatPrice(gem.transPrice)} |
 								Liq: {gem.liquidityTier} |
 								Color: <span class="color-{gem.color.toLowerCase()}">{gem.color}</span> |
 								Sellability: {gem.sellabilityLabel} ({gem.sellability})
@@ -286,11 +287,11 @@
 							{#if gem.gcpRecipeCost > 0}
 								<div class="gcp-recipe">
 									<span class="gcp-label">GCP recipe:</span>
-									<span class="gcp-detail">{gem.gcpRecipeBase}c base + {Math.round(gem.gcpRecipeCost - gem.gcpRecipeBase)}c GCPs = <b>{gem.gcpRecipeCost}c</b></span>
+									<span class="gcp-detail">{formatPrice(gem.gcpRecipeBase)} base + {formatPrice(gem.gcpRecipeCost - gem.gcpRecipeBase)} GCPs = <b>{formatPrice(gem.gcpRecipeCost)}</b></span>
 									{#if gem.gcpRecipeSaves >= 0}
-										<span class="gcp-saves">(saves {gem.gcpRecipeSaves}c)</span>
+										<span class="gcp-saves">(saves {formatPrice(gem.gcpRecipeSaves)})</span>
 									{:else}
-										<span class="gcp-more-expensive">(costs {Math.abs(gem.gcpRecipeSaves)}c more)</span>
+										<span class="gcp-more-expensive">(costs {formatPrice(Math.abs(gem.gcpRecipeSaves))} more)</span>
 									{/if}
 									{#if gem.name.includes(' of ')}
 										{@const lg = ssot.league}

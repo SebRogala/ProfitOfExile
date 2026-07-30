@@ -36,6 +36,11 @@ describe('formatPrice', () => {
 		expect(formatPrice(justBelow)).toBe(`${(justBelow / (RATE / 2)).toFixed(1)}d`);
 	});
 
+	it('renders an unknown amount as a dash, not a zero valuation', () => {
+		setDivineRate(RATE);
+		expect(formatPrice(NaN)).toBe('\u2014');
+	});
+
 	it('rounds chaos to whole units', () => {
 		setDivineRate(RATE);
 		expect(formatPrice(12.4)).toBe('12c');

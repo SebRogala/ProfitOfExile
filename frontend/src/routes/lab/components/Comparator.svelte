@@ -522,7 +522,7 @@
 							<!-- An unpriced gem's 0 is unknown, not a 0c valuation. -->
 							<span class="price-raw">{noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.riskAdjustedPrice > 0}
-								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c)</span>
+								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {formatPrice(gem.riskAdjustedPrice)})</span>
 							{/if}
 						</span>
 						<span class="cv" title={METRIC_TOOLTIPS.CV}>CV: {gem.cv}%</span>
@@ -544,14 +544,14 @@
 						<div class="price-row">
 							<span>Listed: {noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.quickSellPrice > 0}
-								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
+								<span class="quick-sell">Quick-sell: ~{formatPrice(gem.quickSellPrice)}</span>
 							{/if}
 						</div>
 						{#if gem.low7d > 0 || gem.high7d > 0}
 							<div class="range-context">
-								<span class="range-label">7d floor: {gem.low7d}c</span>
+								<span class="range-label">7d floor: {formatPrice(gem.low7d)}</span>
 								<span class="range-sep">&middot;</span>
-								<span class="range-label">7d high: {gem.high7d}c</span>
+								<span class="range-label">7d high: {formatPrice(gem.high7d)}</span>
 								<div class="range-bar">
 									<div class="range-fill" style="width: {Math.min(100, Math.max(0, gem.histPosition))}%"></div>
 								</div>
