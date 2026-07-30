@@ -400,7 +400,7 @@
 										<span class="pool-tier-count">{tier.count}</span>
 										<span class="pool-tier-range">
 											{#if tier.minPrice === tier.maxPrice}
-												{tier.minPrice}c
+												{formatPrice(tier.minPrice)}
 											{:else}
 												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
 											{/if}
@@ -473,7 +473,7 @@
 												const saves = Math.round(g.gcpRecipeSaves || 0);
 												const savesColor = saves >= 0 ? '#22c55e' : '#ef4444';
 												const savesText = saves >= 0 ? `saves ${formatPrice(saves)}` : `costs ${formatPrice(Math.abs(saves))} more`;
-												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${Math.round(g.gcpRecipeBase || 0)}c</b> base + ${Math.round((g.gcpRecipeCost || 0) - (g.gcpRecipeBase || 0))}c GCPs = <b>${Math.round(g.gcpRecipeCost || 0)}c</b> <span style="color:${savesColor}">(${savesText})</span> &nbsp;<a href="${baseGemNoQualityUrl(g.name)}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a></div>`;
+												html += `<div style="margin-top:3px;font-size:0.75rem;color:#94a3b8">GCP recipe: <b>${formatPrice(g.gcpRecipeBase || 0)}</b> base + ${formatPrice((g.gcpRecipeCost || 0) - (g.gcpRecipeBase || 0))} GCPs = <b>${formatPrice(g.gcpRecipeCost || 0)}</b> <span style="color:${savesColor}">(${savesText})</span> &nbsp;<a href="${baseGemNoQualityUrl(g.name)}" target="_blank" style="padding:1px 6px;font-size:0.6875rem;font-weight:600;color:#fbbf24;border:1px solid rgba(251,191,36,0.4);text-decoration:none">Buy 20/0</a></div>`;
 											}
 											html += `</div>`;
 											return html;
@@ -545,7 +545,7 @@
 										<span class="pool-tier-count">{tier.count}</span>
 										<span class="pool-tier-range">
 											{#if tier.minPrice === tier.maxPrice}
-												{tier.minPrice}c
+												{formatPrice(tier.minPrice)}
 											{:else}
 												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
 											{/if}

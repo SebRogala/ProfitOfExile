@@ -417,7 +417,7 @@
 										<span class="pool-tier-count">{tier.count}</span>
 										<span class="pool-tier-range">
 											{#if tier.minPrice === tier.maxPrice}
-												{tier.minPrice}c
+												{formatPrice(tier.minPrice)}
 											{:else}
 												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
 											{/if}
@@ -573,7 +573,7 @@
 										<span class="pool-tier-count">{tier.count}</span>
 										<span class="pool-tier-range">
 											{#if tier.minPrice === tier.maxPrice}
-												{tier.minPrice}c
+												{formatPrice(tier.minPrice)}
 											{:else}
 												{formatPrice(tier.minPrice)} — {formatPrice(tier.maxPrice)}
 											{/if}

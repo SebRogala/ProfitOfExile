@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 	import { invoke } from '@tauri-apps/api/core';
+	import { formatPrice, setDivineRate } from '$lib/price.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
 	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
@@ -46,12 +47,6 @@
 	let overlayDivineRate = $state(0);
 	let overlayLabMode = $state('normal');
 
-	/** In Dedication mode, append divine equivalent in parentheses when price >= 1 div. */
-	function divSuffix(chaos: number): string {
-		if (overlayLabMode !== 'dedication' || !overlayDivineRate || chaos < overlayDivineRate) return '';
-		return ` (${(chaos / overlayDivineRate).toFixed(1)} div)`;
-	}
-
 	$effect(() => {
 		if (results.length > 0 && !selectedGem) {
 			// Default to most expensive — Comparator handles signal-aware scoring
@@ -65,11 +60,6 @@
 		invoke('set_overlay_has_content', { hasContent: results.length > 0 })
 			.catch(e => console.warn('[overlay] set_overlay_has_content failed:', e));
 	});
-
-	function formatPrice(chaos: number): string {
-		if (chaos >= 1000) return `${(chaos / 1000).toFixed(1)}k`;
-		return `${Math.round(chaos)}c`;
-	}
 
 	function tradeCacheAge(trade: TradeLookupResult): string {
 		if (!trade.fetchedAt) return '';
@@ -235,6 +225,9 @@
 				tradeLoading = data.tradeLoading ?? {};
 				tradeError = data.tradeError ?? {};
 				overlayDivineRate = data.divineRate ?? 0;
+				// Separate WebView, so module state cannot cross from the main window:
+				// the rate rides the polled payload and is fed in here instead.
+				setDivineRate(overlayDivineRate);
 				overlayLabMode = data.labMode ?? 'normal';
 
 				const gemsJson = JSON.stringify(data.results?.map((r: any) => r.name) ?? []);
@@ -292,7 +285,7 @@
 							<span class="price-col">
 								<span class="price-label">ninja</span>
 								<!-- A NO_DATA gem's 0 means unpriced, not worth 0c — never print it as a price. -->
-								<span class="price">{noData ? '—' : `${formatPrice(gem.transPrice)}${divSuffix(gem.transPrice)}`}</span>
+								<span class="price">{noData ? '—' : formatPrice(gem.transPrice)}</span>
 							</span>
 							{#if trade}
 								{#if trade.signals.sellerConcentration !== 'NORMAL'}
