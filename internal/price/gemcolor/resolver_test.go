@@ -85,6 +85,10 @@ func TestResolve_heuristics(t *testing.T) {
 		{"greater prefix", "Greater Multiple Projectiles Support", ColorGreen, true},
 		{"transfigured suffix", "Arc of Surging", ColorBlue, true},
 		{"vaal + transfigured", "Vaal Rain of Arrows of Saturation", ColorGreen, true},
+		// poe.ninja's shape for a transfigured Vaal gem — the colour is the
+		// base gem's, and no suffix rule can reach it past the bracket.
+		{"vaal transfigured in brackets", "Vaal Arc (Arc of Surging)", ColorBlue, true},
+		{"vaal transfigured in brackets, multiword base", "Vaal Rain of Arrows (Rain of Arrows of Saturation)", ColorGreen, true},
 		{"greater + transfigured", "Greater Multiple Projectiles Support of Spreading", ColorGreen, true},
 		{"unknown gem", "Sparkle Beam", "", false},
 	}

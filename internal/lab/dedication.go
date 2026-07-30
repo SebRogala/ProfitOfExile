@@ -70,10 +70,50 @@ func FilterDedicationVariant(results []DedicationResult, variant string) []Dedic
 	return out
 }
 
-// isDedicationGem returns true if the gem belongs to a Dedication corrupted pool:
-// corrupted, not a support gem, not Trarthus.
+// isDedicationFeed returns true if the gem can be fed INTO the Dedication craft:
+// corrupted, one of the three gem colours, not a support gem, not Trarthus.
+//
+// The colour requirement carries the rule for anything the colour resolver
+// cannot place. The craft transforms a corrupted gem into another "of the same
+// colour", so a colourless item is neither a legal input nor a possible
+// outcome — the 3.29 Pact gems (Beidat, Ghorr, K'Tash, Lycia) are Exceptional
+// skill gems with no attribute requirement and belong out of the pool.
+//
+// It is a blunt instrument: a gem missing from the gem_colors seed resolves the
+// same way and is dropped for a reason that is not true of it. Dark Bargain and
+// Mana-Infused Staff are exactly that today — real coloured skill gems (3.29
+// renamed Dark Pact and added Mana-Infused Staff as an Intelligence/Strength
+// skill) that we cannot colour, so they leave the pool silently.
+func isDedicationFeed(g GemPrice) bool {
+	switch g.GemColor {
+	case "RED", "GREEN", "BLUE":
+	default:
+		return false
+	}
+	// A Vaal gem at 21/23 cannot exist: it would take three corruption outcomes
+	// — the Vaal transform, the extra level and the extra quality — and the
+	// Temple's double corrupt grants two. At 21/20 it is two outcomes and does
+	// exist (25 such listings on 2026-07-30), so it stays a legal feed there.
+	// The price feed carries none today; this keeps a bad listing from pricing
+	// into what a run costs.
+	if strings.HasPrefix(g.Name, "Vaal ") && g.Variant == "21/23c" {
+		return false
+	}
+	return g.IsCorrupted &&
+		!strings.Contains(g.Name, "Support") &&
+		!strings.Contains(g.Name, "Trarthus")
+}
+
+// isDedicationGem returns true if the gem can come OUT of the Dedication craft.
+// That is every feed gem except a Vaal gem: a Vaal gem is a legal input but is
+// never an outcome (measured in game, 2026-07-30), so it prices into what the
+// run costs but never into what it returns.
+//
+// The distinction has to live in the predicate rather than in the pool loop:
+// tier classification and the rankings read this directly, and a colourless 36k
+// listing was setting the TOP boundary for every colour before it did.
 func isDedicationGem(g GemPrice) bool {
-	return g.IsCorrupted && !strings.Contains(g.Name, "Support") && !strings.Contains(g.Name, "Trarthus")
+	return isDedicationFeed(g) && !strings.HasPrefix(g.Name, "Vaal ")
 }
 
 // dedicationInputCostFromPrices computes the average of the 10 cheapest prices in the pool.
@@ -134,6 +174,10 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 	}
 	poolNames := make(map[poolKey]map[string]struct{})
 	poolGems := make(map[poolKey][]gemEntry)
+	// Feed prices are a superset of the outcome pool: a Vaal gem is something you
+	// can buy and put into the font, it is just never what comes back out. Input
+	// cost is what the run costs, so it is priced over what you may feed.
+	feedPrices := make(map[poolKey][]float64)
 
 	colors := []string{"RED", "GREEN", "BLUE"}
 	gemTypes := []string{"skill", "transfigured"}
@@ -146,14 +190,7 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 	}
 
 	for _, g := range gems {
-		if !isDedicationGem(g) {
-			continue
-		}
-		if g.Variant != variant {
-			continue
-		}
-		color := g.GemColor
-		if color != "RED" && color != "GREEN" && color != "BLUE" {
+		if !isDedicationFeed(g) || g.Variant != variant {
 			continue
 		}
 
@@ -161,8 +198,13 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 		if g.IsTransfigured {
 			gt = "transfigured"
 		}
-		k := poolKey{color, gt}
+		k := poolKey{g.GemColor, gt}
 
+		feedPrices[k] = append(feedPrices[k], g.Chaos)
+
+		if !isDedicationGem(g) {
+			continue
+		}
 		poolNames[k][g.Name] = struct{}{}
 		poolGems[k] = append(poolGems[k], gemEntry{
 			name:     g.Name,
@@ -189,11 +231,9 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 				continue
 			}
 
-			poolPrices := make([]float64, len(entries))
-			for i, e := range entries {
-				poolPrices[i] = e.chaos
-			}
-			inputCost := dedicationInputCostFromPrices(poolPrices)
+			// Priced over what may be fed, not over what may come out — the two
+			// differ by the Vaal gems, which are buyable inputs and never outputs.
+			inputCost := dedicationInputCostFromPrices(feedPrices[k])
 
 			// Use precomputed classification for this pool type.
 			classification := classificationByType[gemType]
