@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { formatPrice } from '$lib/price.svelte';
 	let {
 		data,
 		hourlyMedians,
@@ -61,7 +62,7 @@
 		const ticks: { y: number; text: string }[] = [];
 		let v = Math.ceil(minP / step) * step;
 		while (v <= maxP) {
-			ticks.push({ y: yFromPrice(v), text: `${Math.round(v)}c` });
+			ticks.push({ y: yFromPrice(v), text: formatPrice(v) });
 			v += step;
 		}
 		return ticks;

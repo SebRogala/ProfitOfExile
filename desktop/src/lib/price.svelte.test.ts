@@ -41,6 +41,30 @@ describe('formatPrice', () => {
 		expect(formatPrice(NaN)).toBe('\u2014');
 	});
 
+	it("writes divines below the floor when the caller asks for that unit", () => {
+		setDivineRate(RATE);
+		// A table that must not mix units down a column asks for 'divine'; the
+		// floor is what an isolated figure uses, not a column.
+		expect(formatPrice(300, 'divine')).toBe('1.5d');
+	});
+
+	it('keeps two decimals for a sub-divine amount so it does not round to nothing', () => {
+		setDivineRate(RATE);
+		// 12c is 0.06 divines: one decimal would print "0.1d", and a cheap input
+		// cost would read as a real fraction of a divine it is not.
+		expect(formatPrice(12, 'divine')).toBe('0.06d');
+	});
+
+	it('falls back to chaos for the divine unit when the rate is unknown', () => {
+		setDivineRate(0);
+		expect(formatPrice(300, 'divine')).toBe('300c');
+	});
+
+	it('never converts when the caller asks for chaos', () => {
+		setDivineRate(RATE);
+		expect(formatPrice(4385, 'chaos')).toBe('4385c');
+	});
+
 	it('rounds chaos to whole units', () => {
 		setDivineRate(RATE);
 		expect(formatPrice(12.4)).toBe('12c');
@@ -56,6 +80,11 @@ describe('formatPriceSigned', () => {
 	it('marks a loss with a minus and no double sign', () => {
 		setDivineRate(RATE);
 		expect(formatPriceSigned(-150)).toBe('−150c');
+	});
+
+	it('passes the unit through to the magnitude', () => {
+		setDivineRate(RATE);
+		expect(formatPriceSigned(-300, 'divine')).toBe('−1.5d');
 	});
 
 	it('applies the divine floor to the magnitude, not the signed value', () => {

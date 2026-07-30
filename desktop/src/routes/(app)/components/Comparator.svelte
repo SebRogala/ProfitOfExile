@@ -3,7 +3,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
-	import { formatPrice } from '$lib/price.svelte';
+	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { listen } from '@tauri-apps/api/event';
@@ -662,7 +662,7 @@
 					</div>
 					<div class="card-row small listings-line">
 						<span>{gem.transListings} listings</span>
-						<Tooltip text="Price change over last 12 hours"><span class="velocity-inline">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12}c /12h)</span></Tooltip>
+						<Tooltip text="Price change over last 12 hours"><span class="velocity-inline">({formatPriceSigned(gem.transVelocity * 12)} /12h)</span></Tooltip>
 						<Tooltip text="Liquidity tier"><span class="liq">{gem.liquidityTier}</span></Tooltip>
 					</div>
 					<div class="card-row small signals-line">

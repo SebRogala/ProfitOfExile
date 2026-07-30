@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { MarketOverviewData } from '$lib/api';
 	import { getGemIconUrl } from '$lib/gem-icons';
+	import { formatPrice } from '$lib/price.svelte';
 	import OfferingChart from './OfferingChart.svelte';
 
 	let { data }: { data: MarketOverviewData } = $props();
@@ -71,7 +72,7 @@
 	<div class="overview-grid">
 		<div class="stat-item">
 			<span class="stat-label">Market avg price (transfigured):</span>
-			<span class="stat-value">{data.avgTransPrice}c{#if data.avgTransPriceDelta !== 0} <span class="delta">{deltaStr(data.avgTransPriceDelta)}/12h</span>{/if}</span>
+			<span class="stat-value">{formatPrice(data.avgTransPrice)}{#if data.avgTransPriceDelta !== 0} <span class="delta">{deltaStr(data.avgTransPriceDelta)}/12h</span>{/if}</span>
 		</div>
 		<div class="stat-item">
 			<span class="stat-label">Active gems:</span>
@@ -128,21 +129,21 @@
 							<div class="off-identity">
 								<img src={getGemIconUrl(off.name)} alt={off.name} width="36" height="36" class="off-icon" />
 								<span class="off-name">{off.name}</span>
-								<span class="off-price">{off.currentPrice}c</span>
+								<span class="off-price">{formatPrice(off.currentPrice)}</span>
 							</div>
 							<div class="off-timers">
 								{#if cheapNext}
 									<div class="off-timer">
 										<span class="off-timer-label">Buy in</span>
 										<span class="off-timer-val off-cheap-val">{timeUntilUTCHour(cheapNext.hour)}</span>
-										<span class="off-timer-at">{String(cheapNext.hour).padStart(2, '0')}:00 ~{cheapNext.median}c</span>
+										<span class="off-timer-at">{String(cheapNext.hour).padStart(2, '0')}:00 ~{formatPrice(cheapNext.median)}</span>
 									</div>
 								{/if}
 								{#if expNext}
 									<div class="off-timer">
 										<span class="off-timer-label">Sell in</span>
 										<span class="off-timer-val off-exp-val">{timeUntilUTCHour(expNext.hour)}</span>
-										<span class="off-timer-at">{String(expNext.hour).padStart(2, '0')}:00 ~{expNext.median}c</span>
+										<span class="off-timer-at">{String(expNext.hour).padStart(2, '0')}:00 ~{formatPrice(expNext.median)}</span>
 									</div>
 								{/if}
 							</div>
@@ -159,7 +160,7 @@
 								<div class="off-detail-col">
 									<span class="off-detail-label">Cheap hours</span>
 									{#each off.cheapHours as h}
-										<span class="off-hour off-cheap-text">{String(h.hour).padStart(2, '0')}:00 <span class="off-median">~{h.median}c</span></span>
+										<span class="off-hour off-cheap-text">{String(h.hour).padStart(2, '0')}:00 <span class="off-median">~{formatPrice(h.median)}</span></span>
 									{/each}
 								</div>
 							{/if}
@@ -167,7 +168,7 @@
 								<div class="off-detail-col">
 									<span class="off-detail-label">Expensive hours</span>
 									{#each off.expensiveHours as h}
-										<span class="off-hour off-exp-text">{String(h.hour).padStart(2, '0')}:00 <span class="off-median">~{h.median}c</span></span>
+										<span class="off-hour off-exp-text">{String(h.hour).padStart(2, '0')}:00 <span class="off-median">~{formatPrice(h.median)}</span></span>
 									{/each}
 								</div>
 							{/if}
@@ -175,7 +176,7 @@
 								<div class="off-detail-col">
 									<span class="off-detail-label">Cheap days</span>
 									{#each off.cheapDays as d}
-										<span class="off-hour off-cheap-text">{d.day} <span class="off-median">~{d.median}c</span></span>
+										<span class="off-hour off-cheap-text">{d.day} <span class="off-median">~{formatPrice(d.median)}</span></span>
 									{/each}
 								</div>
 							{/if}
@@ -183,7 +184,7 @@
 								<div class="off-detail-col">
 									<span class="off-detail-label">Expensive days</span>
 									{#each off.expensiveDays as d}
-										<span class="off-hour off-exp-text">{d.day} <span class="off-median">~{d.median}c</span></span>
+										<span class="off-hour off-exp-text">{d.day} <span class="off-median">~{formatPrice(d.median)}</span></span>
 									{/each}
 								</div>
 							{/if}

@@ -3,7 +3,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
-	import { formatPrice } from '$lib/price.svelte';
+	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { getPairCode, clearPairCode, subscribeToDesktopGems } from '$lib/desktopBridge';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -529,7 +529,7 @@
 					</div>
 					<div class="card-row small listings-line">
 						<span>{gem.transListings} listings</span>
-						<span class="velocity-inline" title="Price change over last 12 hours">({gem.transVelocity > 0 ? '+' : ''}{gem.transVelocity * 12}c /12h)</span>
+						<span class="velocity-inline" title="Price change over last 12 hours">({formatPriceSigned(gem.transVelocity * 12)} /12h)</span>
 						<span class="liq" title="Liquidity tier">{gem.liquidityTier}</span>
 						<span class="signals-right">
 							<SignalBadge signal={gem.signal} />
