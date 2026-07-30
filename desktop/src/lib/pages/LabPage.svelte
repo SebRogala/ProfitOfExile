@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
+	import { setDivineRate } from '$lib/price.svelte';
 	import {
 		fetchStatus,
 		fetchBestPlays,
@@ -282,6 +283,8 @@
 				fetchMarketOverview(),
 			]);
 			status = s;
+			// One rate for every price on screen — see $lib/price.svelte.
+			setDivineRate(s?.divinePrice ?? 0);
 			if (generation === bestPlaysGeneration) {
 				bestPlays = bp;
 				bestPlaysError = '';
@@ -421,7 +424,7 @@
 			{/if}
 			<ByVariant allPlays={bestPlays} labMode={labModeForChild} />
 		{:else if activeTab === 'Font EV'}
-			<FontEVCompare {refreshKey} labMode={labModeForChild} divineRate={status?.divinePrice || 0} />
+			<FontEVCompare {refreshKey} labMode={labModeForChild} />
 		{:else if activeTab === 'Market'}
 			{#if marketOverview}
 				<MarketOverview data={marketOverview} />

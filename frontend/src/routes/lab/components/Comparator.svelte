@@ -3,6 +3,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
+	import { formatPrice } from '$lib/price.svelte';
 	import { getPairCode, clearPairCode, subscribeToDesktopGems } from '$lib/desktopBridge';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -519,7 +520,7 @@
 					<div class="card-row price-line">
 						<span class="price-display" title="Ninja price vs risk-adjusted (sell probability × stability)">
 							<!-- An unpriced gem's 0 is unknown, not a 0c valuation. -->
-							<span class="price-raw">{noData ? '—' : `${gem.transPrice}c`}</span>
+							<span class="price-raw">{noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.riskAdjustedPrice > 0}
 								<span class="price-risk-adj">(<span class="price-risk-label">Risk-adjusted:</span> {gem.riskAdjustedPrice}c)</span>
 							{/if}
@@ -541,7 +542,7 @@
 					</div>
 					<div class="price-context">
 						<div class="price-row">
-							<span>Listed: {noData ? '—' : `${gem.transPrice}c`}</span>
+							<span>Listed: {noData ? '—' : formatPrice(gem.transPrice)}</span>
 							{#if gem.quickSellPrice > 0}
 								<span class="quick-sell">Quick-sell: ~{gem.quickSellPrice}c</span>
 							{/if}
