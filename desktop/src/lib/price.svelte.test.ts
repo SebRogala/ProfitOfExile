@@ -4,15 +4,15 @@ import { setDivineRate, formatPrice, formatPriceSigned, DIVINE_DISPLAY_FLOOR } f
 const RATE = 200;
 
 describe('formatPrice', () => {
-	it('writes chaos below the divine floor', () => {
+	it('writes chaos just below the divine floor', () => {
 		setDivineRate(RATE);
-		// 4 divines' worth — still the number a player types into a trade.
-		expect(formatPrice(800)).toBe('800c');
+		const justBelow = DIVINE_DISPLAY_FLOOR * RATE - 1;
+		expect(formatPrice(justBelow)).toBe(`${justBelow}c`);
 	});
 
 	it('writes divines at the floor', () => {
 		setDivineRate(RATE);
-		expect(formatPrice(DIVINE_DISPLAY_FLOOR * RATE)).toBe('5.0d');
+		expect(formatPrice(DIVINE_DISPLAY_FLOOR * RATE)).toBe(`${DIVINE_DISPLAY_FLOOR.toFixed(1)}d`);
 	});
 
 	it('writes divines above the floor to one decimal', () => {
@@ -27,11 +27,13 @@ describe('formatPrice', () => {
 	});
 
 	it('follows a rate change without any other input changing', () => {
+		const justBelow = DIVINE_DISPLAY_FLOOR * RATE - 1;
 		setDivineRate(RATE);
-		expect(formatPrice(800)).toBe('800c');
-		// Same amount, cheaper divine: 800c is now 8 divines, past the floor.
-		setDivineRate(100);
-		expect(formatPrice(800)).toBe('8.0d');
+		expect(formatPrice(justBelow)).toBe(`${justBelow}c`);
+		// Same amount, divine now half the price: the same chaos figure is worth
+		// twice as many divines and crosses the floor.
+		setDivineRate(RATE / 2);
+		expect(formatPrice(justBelow)).toBe(`${(justBelow / (RATE / 2)).toFixed(1)}d`);
 	});
 
 	it('rounds chaos to whole units', () => {
