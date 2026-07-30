@@ -12,11 +12,11 @@
 
 /**
  * Below this many divines a price stays in chaos. Chaos is the number you type
- * into a trade, so it stays useful while it is small; past a few divines the
- * digits stop carrying meaning and the divine figure is what a player compares.
- * This is the tuning knob — every surface follows it.
+ * into a trade, so it stays useful while it is small; past a couple of divines
+ * the digits stop carrying meaning and the divine figure is what a player
+ * compares. This is the tuning knob — every surface follows it.
  */
-export const DIVINE_DISPLAY_FLOOR = 5;
+export const DIVINE_DISPLAY_FLOOR = 2;
 
 /** Suffixes. Chaos is "c" and divine is "d", matching in-game shorthand. */
 const CHAOS_SUFFIX = 'c';
