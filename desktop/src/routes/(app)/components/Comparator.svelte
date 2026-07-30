@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
+	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
@@ -33,12 +33,10 @@
 		divineRate = 0,
 		onQueueGem,
 		labMode = 'normal',
-		dedicationVariant = '21/23',
 	}: {
 		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		labMode?: 'normal' | 'dedication';
-		dedicationVariant?: string;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -109,16 +107,16 @@
 	});
 
 	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	let activeVariants = $derived(isDedication ? [dedicationVariant] : NORMAL_VARIANTS);
+	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
-	// The variant is picked in the Dedication header, not here: the comparator
-	// follows it, and returns to 20/20 when Dedication is left. Comparing a gem
-	// at a variant the rest of the view is not showing would price it against
-	// the wrong market.
+	// The comparator owns its own market, the same way it owns the variant in
+	// Normal mode. Switching modes resets it to that mode's first market: a
+	// variant the current mode cannot show would price gems against a market
+	// nothing else on screen describes.
 	$effect(() => {
-		if (isDedication && variant !== dedicationVariant) {
-			variant = dedicationVariant;
+		if (isDedication && !(DEDICATION_VARIANTS as readonly string[]).includes(variant)) {
+			variant = DEDICATION_VARIANTS[0];
 			dropTradeData();
 			loadResults();
 		} else if (!isDedication && !NORMAL_VARIANTS.includes(variant)) {

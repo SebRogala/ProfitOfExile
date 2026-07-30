@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { fetchFontEV, fetchDedicationEV, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
+	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { refreshKey = 0, league = '', labMode = 'normal', divineRate = 0, dedicationVariant = '21/23' }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication'; divineRate?: number; dedicationVariant?: string } = $props();
+	let { refreshKey = 0, league = '', labMode = 'normal', divineRate = 0 }: { refreshKey?: number; league?: string; labMode?: 'normal' | 'dedication'; divineRate?: number } = $props();
 
 	/** Format chaos value — show as divine if >= 1 div and in Dedication mode. */
 	function fmtChaos(chaos: number): string {
@@ -21,7 +21,9 @@
 	let data = $state<Record<string, FontEVResponse>>({});
 
 	// --- Dedication mode state ---
-	let dedicationData = $state<DedicationEVResponse | null>(null);
+	// Keyed by variant: 21/23 and 21/20 are separate markets, shown as separate
+	// rows of one table rather than one table per selected market.
+	let dedicationData = $state<Record<string, DedicationEVResponse>>({});
 
 	let loading = $state(true);
 	let loadError = $state(false);
@@ -29,39 +31,51 @@
 	const isDedication = $derived(labMode === 'dedication');
 
 	// --- Dedication row definitions ---
-	const DEDICATION_ROWS = $derived([
-		{ label: `${dedicationVariant} Skill Gems`, poolKey: 'skills' as const },
-		{ label: `${dedicationVariant} Transfigured`, poolKey: 'transfigured' as const },
+	const DEDICATION_ROWS = DEDICATION_VARIANTS.flatMap((variant) => [
+		{ variant, poolKey: 'skills' as const, label: `${variant} Skill Gems` },
+		{ variant, poolKey: 'transfigured' as const, label: `${variant} Transfigured` },
 	]);
 
-	// Generation guard: a market switch starts a new load and only the newest one
+	// Entry fee is a property of the Dedication offering, not of a gem market —
+	// every variant response carries the same number, so the first one answers.
+	const entryFee = $derived(
+		DEDICATION_VARIANTS.map((v) => dedicationData[v]?.entryFee ?? 0).find((f) => f > 0) ?? 0
+	);
+
+	const hasDedicationData = $derived(DEDICATION_VARIANTS.some((v) => dedicationData[v]));
+
+	// Generation guard: a mode switch starts a new load and only the newest one
 	// may assign. Both responses match their own request, so without this the
-	// slower (older) market wins and nothing downstream can detect it.
+	// slower (older) load wins and nothing downstream can detect it.
 	let loadGeneration = 0;
 
 	async function loadAll() {
 		const generation = ++loadGeneration;
-		const requestedVariant = dedicationVariant;
 		loading = true;
 		loadError = false;
 		try {
 			if (isDedication) {
-				const resp = await fetchDedicationEV(requestedVariant);
+				const results = await Promise.all(
+					DEDICATION_VARIANTS.map(async (v) => [v, await fetchDedicationEV(v)] as const)
+				);
 				if (generation !== loadGeneration) return;
 				// The response states the market it was computed over. A server
 				// older than this client ignores ?variant= and answers with the
-				// default pool, which would otherwise render under the requested
-				// market's heading — desktop builds ship independently of the
-				// server, so that skew is a real deployment state, not a
-				// hypothetical.
-				if (resp.variant && resp.variant.replace(/c$/, '') !== requestedVariant) {
-					console.error(`[FontEV] server returned ${resp.variant} for a ${requestedVariant} request`);
-					dedicationData = null;
+				// default pool, which would otherwise render under the other
+				// market's row label.
+				const mismatch = results.find(([v, resp]) => resp.variant && resp.variant.replace(/c$/, '') !== v);
+				if (mismatch) {
+					console.error(`[FontEV] server returned ${mismatch[1].variant} for a ${mismatch[0]} request`);
+					dedicationData = {};
 					loadError = true;
 					loading = false;
 					return;
 				}
-				dedicationData = resp;
+				const next: Record<string, DedicationEVResponse> = {};
+				for (const [v, resp] of results) {
+					next[v] = resp;
+				}
+				dedicationData = next;
 			} else {
 				const results = await Promise.all(
 					VARIANTS.map(async (v) => {
@@ -112,36 +126,44 @@
 
 	// --- Dedication mode helpers ---
 
-	function getDedColorData(poolKey: 'skills' | 'transfigured', color: string, mode: 'safe' | 'premium' | 'jackpot'): DedicationColor | null {
-		if (!dedicationData) return null;
-		const pool = dedicationData[poolKey];
+	function getDedColorData(variant: string, poolKey: 'skills' | 'transfigured', color: string, mode: 'safe' | 'premium' | 'jackpot'): DedicationColor | null {
+		const vd = dedicationData[variant];
+		if (!vd) return null;
+		const pool = vd[poolKey];
 		if (!pool) return null;
 		const rows = pool[mode];
 		return rows?.find((c) => c.color === color) || null;
 	}
 
-	function getDedEV(poolKey: 'skills' | 'transfigured', color: string): number {
-		const dc = getDedColorData(poolKey, color, 'safe');
+	function getDedEV(variant: string, poolKey: 'skills' | 'transfigured', color: string): number {
+		const dc = getDedColorData(variant, poolKey, color, 'safe');
 		return dc?.evRaw ?? 0;
 	}
 
-	function getDedInputCost(poolKey: 'skills' | 'transfigured', color: string): number {
-		const dc = getDedColorData(poolKey, color, 'safe');
+	function getDedInputCost(variant: string, poolKey: 'skills' | 'transfigured', color: string): number {
+		const dc = getDedColorData(variant, poolKey, color, 'safe');
 		return dc?.inputCost ?? 0;
 	}
 
-	function getDedProfit(poolKey: 'skills' | 'transfigured', color: string): number {
-		const dc = getDedColorData(poolKey, color, 'safe');
+	function getDedProfit(variant: string, poolKey: 'skills' | 'transfigured', color: string): number {
+		const dc = getDedColorData(variant, poolKey, color, 'safe');
 		return dc?.profit ?? 0;
 	}
 
-	function dedWinner(): { poolKey: string; color: string; profit: number } {
-		let best = { poolKey: '', color: '', profit: -Infinity };
+	// Best cell across both markets — profit, not EV, since input cost differs
+	// per variant and a higher-EV market can still be the worse play.
+	//
+	// Cells with no analysis row are skipped rather than scored: they read as a
+	// profit of 0, which would outrank every real but loss-making cell and put
+	// the winner ring on a cell rendering "—".
+	function dedWinner(): { variant: string; poolKey: string; color: string; profit: number } {
+		let best = { variant: '', poolKey: '', color: '', profit: -Infinity };
 		for (const row of DEDICATION_ROWS) {
 			for (const color of COLORS) {
-				const profit = getDedProfit(row.poolKey, color);
+				if (getDedEV(row.variant, row.poolKey, color) <= 0) continue;
+				const profit = getDedProfit(row.variant, row.poolKey, color);
 				if (profit > best.profit) {
-					best = { poolKey: row.poolKey, color, profit };
+					best = { variant: row.variant, poolKey: row.poolKey, color, profit };
 				}
 			}
 		}
@@ -238,15 +260,20 @@
 
 	let showPool = $state(false);
 	let poolVariant = $state('20/20');
-	let dedPoolKey = $state<'skills' | 'transfigured'>('skills');
+	// One selector over the four (market, pool) combinations — "21/23:skills".
+	let dedPoolSel = $state(`${DEDICATION_ROWS[0].variant}:${DEDICATION_ROWS[0].poolKey}`);
+	const dedPool = $derived.by(() => {
+		const [variant, poolKey] = dedPoolSel.split(':');
+		return { variant, poolKey: poolKey as 'skills' | 'transfigured' };
+	});
 
 	function getPoolBreakdown(variant: string, color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
 		const safe = getColorData(variant, color, 'safe');
 		return safe?.poolBreakdown || [];
 	}
 
-	function getDedPoolBreakdown(poolKey: 'skills' | 'transfigured', color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
-		const dc = getDedColorData(poolKey, color, 'safe');
+	function getDedPoolBreakdown(variant: string, poolKey: 'skills' | 'transfigured', color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
+		const dc = getDedColorData(variant, poolKey, color, 'safe');
 		return dc?.poolBreakdown || [];
 	}
 
@@ -256,9 +283,7 @@
 		MID: '#94a3b8', LOW: '#64748b', FLOOR: '#475569',
 	};
 
-	// The variant is a different market, not a filter over the loaded one, so a
-	// change re-fetches.
-	$effect(() => { refreshKey; labMode; dedicationVariant; loadAll(); });
+	$effect(() => { refreshKey; labMode; loadAll(); });
 </script>
 
 <section class="section">
@@ -266,21 +291,21 @@
 		<span class="loading">Loading...</span>
 	{:else if loadError}
 		<span class="loading">Failed to load data — check connection and refresh.</span>
-	{:else if isDedication && dedicationData}
+	{:else if isDedication && hasDedicationData}
 		{@const best = dedWinner()}
-		{#if dedicationData.entryFee > 0}
+		{#if entryFee > 0}
 			<div class="dedication-header">
-				<span class="dedication-title">Dedication Lab — Corrupted {dedicationVariant} Gem Exchange</span>
+				<span class="dedication-title">Dedication Lab — Corrupted Gem Exchange</span>
 				<span class="entry-fee">
-					Entry fee: <strong>{fmtChaos(dedicationData.entryFee)}</strong>
+					Entry fee: <strong>{fmtChaos(entryFee)}</strong>
 					<InfoTooltip text="<b>Dedication to the Goddess offering price</b><br><br>This is the cost of the offering required to open a Dedication Lab run. It is displayed for reference but <b>NOT included</b> in the profit calculation — profit shows pure gem exchange value minus input gem cost." />
 				</span>
 			</div>
 		{/if}
-		<table class="ft">
+		<table class="ft ded">
 			<thead>
 				<tr>
-					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options available per run, at the selected corrupted variant ({dedicationVariant}):<br>• <b>Skill Gems</b>: Non-transfigured corrupted skill gems<br>• <b>Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted {dedicationVariant} gems in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>21/23 and 21/20 are separate markets: pool, tiers and input cost are computed per variant.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
+					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options per run, each at either corrupted variant:<br>• <b>Skill Gems</b>: Non-transfigured corrupted skill gems<br>• <b>Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted gems of that variant in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>21/23 and 21/20 are separate markets: pool, tiers and input cost are computed per variant, and the highlighted cell is the best <b>profit</b> across both.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}
@@ -288,25 +313,30 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each DEDICATION_ROWS as row}
+				{#each DEDICATION_ROWS as row, i}
+					{#if i > 0 && DEDICATION_ROWS[i - 1].variant !== row.variant}
+						<tr class="ded-sep"><td colspan={COLORS.length + 2}></td></tr>
+					{/if}
 					<tr>
 						<td class="var">{row.label}</td>
 						{#each COLORS as color}
-							{@const ev = getDedEV(row.poolKey, color)}
-							{@const inputCost = getDedInputCost(row.poolKey, color)}
-							{@const profit = getDedProfit(row.poolKey, color)}
-							{@const safe = getDedColorData(row.poolKey, color, 'safe')}
-							{@const premium = getDedColorData(row.poolKey, color, 'premium')}
-							{@const jackpot = getDedColorData(row.poolKey, color, 'jackpot')}
-							{@const isW = best.poolKey === row.poolKey && best.color === color}
+							{@const ev = getDedEV(row.variant, row.poolKey, color)}
+							{@const inputCost = getDedInputCost(row.variant, row.poolKey, color)}
+							{@const profit = getDedProfit(row.variant, row.poolKey, color)}
+							{@const safe = getDedColorData(row.variant, row.poolKey, color, 'safe')}
+							{@const premium = getDedColorData(row.variant, row.poolKey, color, 'premium')}
+							{@const jackpot = getDedColorData(row.variant, row.poolKey, color, 'jackpot')}
+							{@const isW = best.variant === row.variant && best.poolKey === row.poolKey && best.color === color}
 							<td class:w-red={isW && color === 'RED'} class:w-green={isW && color === 'GREEN'} class:w-blue={isW && color === 'BLUE'}>
 								{#if ev > 0}
-									<span class="ev" class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>{fmtChaos(ev)}/font</span>
+									<!-- Headline is gain, not gross: the base gem has to be bought,
+									     so EV alone reads as income that nobody actually keeps. -->
+									<span class="ev" class:ev-loss={profit <= 0} class:best-red={isW && color === 'RED'} class:best-green={isW && color === 'GREEN'} class:best-blue={isW && color === 'BLUE'}>
+										{profit > 0 ? '+' : '−'}{fmtChaos(Math.abs(profit))} <span class="ev-unit">gain</span>
+									</span>
 									<div class="ded-cost-line">
 										<span class="ded-input">base gem: {fmtChaos(inputCost)}</span>
-										<span class="ded-profit" class:ded-profit-positive={profit > 0} class:ded-profit-negative={profit <= 0}>
-											{profit > 0 ? '+' : ''}{fmtChaos(Math.abs(profit))}
-										</span>
+										<span class="ded-gross" title="Gross font value — what a usage returns before the base gem is paid for. This is your gain only if the base was self-farmed.">{fmtChaos(ev)}/font gross</span>
 									</div>
 									<div class="tier-lines">
 										<div class="tier-row">
@@ -336,12 +366,12 @@
 						<td class="buy-col">
 							<div class="buy-buttons">
 								{#each COLORS as color}
-									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', league || '', dedicationVariant)}
+									{@const url = cheapestCorruptedTradeUrl(color, row.poolKey === 'transfigured', league || '', row.variant)}
 									<a
 										class="buy-btn buy-{color.toLowerCase()}"
 										href={url}
 										target="_blank"
-										title="Buy cheapest corrupted {dedicationVariant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
+										title="Buy cheapest corrupted {row.variant} {color} {row.poolKey === 'transfigured' ? 'transfigured ' : ''}gems"
 									>{color}</a>
 								{/each}
 							</div>
@@ -359,12 +389,12 @@
 			<div class="pool-section">
 				<div class="pool-variant-select">
 					<span class="pool-select-label">Pool:</span>
-					<Select bind:value={dedPoolKey} options={DEDICATION_ROWS.map(r => ({ value: r.poolKey, label: r.label }))} />
+					<Select bind:value={dedPoolSel} options={DEDICATION_ROWS.map(r => ({ value: `${r.variant}:${r.poolKey}`, label: r.label }))} />
 				</div>
 				<div class="pool-grid">
 					{#each COLORS as color}
-						{@const breakdown = getDedPoolBreakdown(dedPoolKey, color)}
-						{@const safe = getDedColorData(dedPoolKey, color, 'safe')}
+						{@const breakdown = getDedPoolBreakdown(dedPool.variant, dedPool.poolKey, color)}
+						{@const safe = getDedColorData(dedPool.variant, dedPool.poolKey, color, 'safe')}
 						{@const totalGems = safe?.pool || breakdown.reduce((s, t) => s + t.count, 0)}
 						<div class="pool-color-card">
 							<div class="pool-color-header c-{color.toLowerCase()}">{color} <span class="pool-count">{totalGems} gems</span></div>
@@ -599,14 +629,32 @@
 	.ded-input {
 		color: var(--color-lab-text-secondary);
 	}
-	.ded-profit {
+	.ded-gross {
+		color: var(--color-lab-text-secondary);
+		border-bottom: 1px dotted var(--color-lab-text-secondary);
+		cursor: help;
+	}
+	.ev-unit {
+		font-size: 0.8125rem;
 		font-weight: 600;
+		color: var(--color-lab-text-secondary);
+		letter-spacing: 0.04em;
 	}
-	.ded-profit-positive {
-		color: var(--color-lab-green);
-	}
-	.ded-profit-negative {
-		color: var(--color-lab-red);
+	/* The Dedication table carries four rows of three stacked figures each, so it
+	   needs more room per cell than the Font table's single EV line. */
+	.ded td { padding: 18px 16px 20px; }
+	.ded .ev { margin-bottom: 8px; }
+	.ded .ded-cost-line { margin-bottom: 8px; gap: 12px; }
+	.ded .tier-lines { gap: 5px; }
+	.ded .var { font-size: 1.1875rem; line-height: 1.35; }
+
+	/* Separator between the two corrupted markets. A td border would be drawn
+	   per cell and the 4px border-spacing would break it into dashes, so the
+	   rule is a spanning row instead. */
+	.ded-sep td {
+		padding: 0;
+		height: 2px;
+		background: var(--color-lab-border);
 	}
 
 	.ft { width: 100%; border-collapse: separate; border-spacing: 4px; }
@@ -649,6 +697,8 @@
 	.ev.best-red { color: var(--color-lab-red); font-size: 1.4375rem; }
 	.ev.best-green { color: var(--color-lab-green); font-size: 1.4375rem; }
 	.ev.best-blue { color: var(--color-lab-blue); font-size: 1.4375rem; }
+	/* A losing cell reads red regardless of which color won the highlight. */
+	.ev.ev-loss { color: var(--color-lab-red); }
 	.nil { color: var(--color-lab-text-secondary); font-size: 1.125rem; }
 
 	.w-red { border: 2px solid var(--color-lab-red); background: rgba(239, 68, 68, 0.05); }

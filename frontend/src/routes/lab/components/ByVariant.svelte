@@ -1,12 +1,25 @@
 <script lang="ts">
-	import { VARIANTS, type GemPlay } from '$lib/api';
+	import { VARIANTS, DEDICATION_VARIANTS, type GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { allPlays = [], league = '' }: { allPlays?: GemPlay[]; league?: string } = $props();
+	let { allPlays = [], league = '', labMode = 'normal' }: { allPlays?: GemPlay[]; league?: string; labMode?: 'normal' | 'dedication' } = $props();
+
+	const isDedication = $derived(labMode === 'dedication');
 
 	const TABS = ['ALL', ...VARIANTS];
+	const DEDICATION_POOL_LABELS: Record<string, string> = { skill: 'Skills', transfigured: 'Transfigured' };
+	// One tab per (market, pool): the four rows of the Dedication EV table, in
+	// the same order.
+	const DEDICATION_TABS = DEDICATION_VARIANTS.flatMap((variant) =>
+		['skill', 'transfigured'].map((pool) => ({
+			key: `${variant}:${pool}`,
+			variant,
+			pool,
+			label: `${variant} ${DEDICATION_POOL_LABELS[pool]}`,
+		})),
+	);
 	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [
 		{ value: '10', label: '10' },
@@ -15,6 +28,7 @@
 	];
 
 	let activeTab = $state('20/20');
+	let activeDedTab = $state(DEDICATION_TABS[0].key);
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
@@ -22,9 +36,23 @@
 		activeTab === 'ALL' ? VARIANTS : [activeTab]
 	);
 
+	let activeDedTabInfo = $derived(
+		DEDICATION_TABS.find(t => t.key === activeDedTab) ?? DEDICATION_TABS[0]
+	);
+
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
 		let filtered = allPlays.filter(g => g.variant === variant);
+		if (activeColor !== 'ALL') {
+			filtered = filtered.filter(g => g.color === activeColor);
+		}
+		return filtered.slice(0, parseInt(itemLimit));
+	}
+
+	// baseName holds "skill" or "transfigured" for Dedication gems, and each row
+	// carries the market it was ranked in, so both halves of the tab filter.
+	function playsForPool(pool: string, variant: string): GemPlay[] {
+		let filtered = allPlays.filter(g => g.baseName === pool && g.variant === variant);
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -55,30 +83,56 @@
 			{/each}
 		</div>
 		<div class="tabs">
-			{#each TABS as tab}
-				<button
-					class="tab"
-					class:active={activeTab === tab}
-					onclick={() => { activeTab = tab; }}
-				>
-					{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
-					{tab}
-				</button>
-			{/each}
+			{#if isDedication}
+				{#each DEDICATION_TABS as tab}
+					<button
+						class="tab"
+						class:active={activeDedTab === tab.key}
+						onclick={() => { activeDedTab = tab.key; }}
+					>
+						{#if activeDedTab === tab.key}<span class="tab-dot">●</span>{/if}
+						{tab.label}
+					</button>
+				{/each}
+			{:else}
+				{#each TABS as tab}
+					<button
+						class="tab"
+						class:active={activeTab === tab}
+						onclick={() => { activeTab = tab; }}
+					>
+						{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
+						{tab}
+					</button>
+				{/each}
+			{/if}
 		</div>
 	</div>
 
-	{#each visibleVariants as variant}
-		{@const vd = playsForVariant(variant)}
+	{#if isDedication}
+		{@const tab = activeDedTabInfo}
+		{@const vd = playsForPool(tab.pool, tab.variant)}
 		<div class="variant-block">
-			<div class="variant-label">{variant}</div>
+			<div class="variant-label">{tab.label}</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} />
+				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} />
 			{:else}
-				<div class="loading">No data for this variant</div>
+				<div class="loading">No data for this pool</div>
 			{/if}
 		</div>
-	{/each}
+	{:else}
+		{#each visibleVariants as variant}
+			{@const vd = playsForVariant(variant)}
+			<div class="variant-block">
+				<div class="variant-label">{variant}</div>
+				{#if vd.length > 0}
+					<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} />
+				{:else}
+					<div class="loading">No data for this variant</div>
+				{/if}
+			</div>
+		{/each}
+	{/if}
 </section>
 
 <style>

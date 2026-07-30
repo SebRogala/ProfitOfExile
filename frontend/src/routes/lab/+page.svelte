@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import {
 		fetchStatus,
 		fetchBestPlays,
 		fetchMarketOverview,
 		connectMercure,
 		VARIANTS,
+		DEDICATION_VARIANTS,
 		type StatusData,
 		type GemPlay,
 		type MarketOverviewData,
@@ -33,14 +35,6 @@
 	}
 	let selectedLab = $state(restoreLabMode());
 
-	// 21/23 and 21/20 are separate corrupted markets. The selection drives the
-	// Dedication EV table and the comparator together.
-	function restoreDedicationVariant(): string {
-		if (typeof window === 'undefined') return '21/23';
-		const saved = localStorage.getItem('poe-dedication-variant');
-		return saved === '21/20' ? saved : '21/23';
-	}
-	let dedicationVariant = $state(restoreDedicationVariant());
 	let status = $state<StatusData | null>(null);
 	let bestPlays = $state<GemPlay[]>([]);
 	let marketOverview = $state<MarketOverviewData | null>(null);
@@ -147,10 +141,17 @@
 			// than adding to it, so page load goes from 3 concurrent requests to 6.
 			// Commit 3e2f28d removed a 10+ request fan-out that caused
 			// ERR_INSUFFICIENT_RESOURCES; six stays well under that.
+			// Dedication ranks its own two corrupted markets and pools them by
+			// skill/transfigured, so that mode fetches those instead of the four
+			// normal variants — the normal rows would price gems against a market
+			// the Dedication view never shows.
+			const rankingRequests = isDedication
+				? DEDICATION_VARIANTS.map((v) => fetchBestPlays(v, undefined, undefined, 100, undefined, 'dedication'))
+				: VARIANTS.map((v) => fetchBestPlays(v, undefined, undefined, 100));
 			const [s, mo, ...perVariant] = await Promise.all([
 				fetchStatus(),
 				fetchMarketOverview(),
-				...VARIANTS.map((v) => fetchBestPlays(v, undefined, undefined, 100)),
+				...rankingRequests,
 			]);
 			status = s;
 			bestPlays = perVariant.flat();
@@ -172,17 +173,17 @@
 		if (typeof window !== 'undefined') {
 			localStorage.setItem('poe-lab-mode', lab);
 		}
-	}
-
-	function handleDedicationVariantChange(variant: string) {
-		dedicationVariant = variant;
-		if (typeof window !== 'undefined') {
-			localStorage.setItem('poe-dedication-variant', variant);
-		}
+		// The two modes rank different markets, so the loaded rows do not carry
+		// over — re-fetch rather than showing the other mode's rankings.
+		loadAll();
 	}
 
 	$effect(() => {
-		loadAll();
+		// untracked: loadAll reads selectedLab (through isDedication) to choose
+		// which markets to rank, and a tracked read would make every lab-mode
+		// toggle re-run this effect — closing and reopening the SSE stream and
+		// firing the six-request fan-out a second time.
+		untrack(() => loadAll());
 
 		// Connect to Mercure SSE for live updates — reloads all data on event.
 		mercure = connectMercure(() => {
@@ -207,7 +208,7 @@
 
 <div class="dashboard">
 	{#if status}
-		<Header {status} {selectedLab} onLabChange={handleLabChange} {dedicationVariant} onDedicationVariantChange={handleDedicationVariantChange} />
+		<Header {status} {selectedLab} onLabChange={handleLabChange} />
 	{/if}
 
 	{#if loading}
@@ -223,14 +224,16 @@
 	{/if}
 
 	{#if isDedication}
-		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" divineRate={status?.divinePrice || 0} {dedicationVariant} />
-		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" {dedicationVariant} />
+		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" divineRate={status?.divinePrice || 0} />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
 		<SessionQueue
 			queue={sessionQueue}
 			onRemove={handleRemoveFromQueue}
 			onClear={handleClearQueue}
 			onRefresh={handleRefreshQueue}
 		/>
+
+		<ByVariant allPlays={bestPlays} league={status?.league || ''} labMode="dedication" />
 	{:else if !loading}
 		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
 

@@ -1,17 +1,27 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { VARIANTS, type GemPlay } from '$lib/api';
+	import { VARIANTS, DEDICATION_VARIANTS, type GemPlay } from '$lib/api';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
 
-	let { allPlays = [], labMode = 'normal', dedicationVariant = '21/23' }: { allPlays?: GemPlay[]; labMode?: 'normal' | 'dedication'; dedicationVariant?: string } = $props();
+	let { allPlays = [], labMode = 'normal' }: { allPlays?: GemPlay[]; labMode?: 'normal' | 'dedication' } = $props();
 
 	const isDedication = $derived(labMode === 'dedication');
 
 	const NORMAL_TABS = ['ALL', ...VARIANTS];
 	const DEDICATION_POOLS = ['skill', 'transfigured'];
 	const DEDICATION_POOL_LABELS: Record<string, string> = { skill: 'Skills', transfigured: 'Transfigured' };
+	// One tab per (market, pool): the four rows of the Dedication EV table, in
+	// the same order.
+	const DEDICATION_TABS = DEDICATION_VARIANTS.flatMap((variant) =>
+		DEDICATION_POOLS.map((pool) => ({
+			key: `${variant}:${pool}`,
+			variant,
+			pool,
+			label: `${variant} ${DEDICATION_POOL_LABELS[pool]}`,
+		})),
+	);
 	const COLORS = ['ALL', 'RED', 'GREEN', 'BLUE'];
 	const LIMIT_OPTIONS = [
 		{ value: '10', label: '10' },
@@ -20,10 +30,15 @@
 	];
 
 	let activeTab = $state('20/20');
-	let activeDedPool = $state<string>('skill');
+	let activeDedTab = $state(DEDICATION_TABS[0].key);
+	// Only the pool half is persisted in Rust (it also drives the overlay); the
+	// market shown here is a local view choice, unlike the farmed market in the
+	// top bar which is stamped onto recorded runs.
 	$effect(() => {
-		invoke<string>('get_dedication_pool').then(p => { if (p) activeDedPool = p; })
-			.catch(() => {});
+		invoke<string>('get_dedication_pool').then(p => {
+			const match = DEDICATION_TABS.find(t => t.pool === p);
+			if (match) activeDedTab = match.key;
+		}).catch(() => {});
 	});
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
@@ -32,7 +47,9 @@
 		activeTab === 'ALL' ? VARIANTS : [activeTab]
 	);
 
-	let visibleDedPools = $derived([activeDedPool]);
+	let activeDedTabInfo = $derived(
+		DEDICATION_TABS.find(t => t.key === activeDedTab) ?? DEDICATION_TABS[0]
+	);
 
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
@@ -43,13 +60,13 @@
 		return filtered.slice(0, parseInt(itemLimit));
 	}
 
-	function playsForPool(poolType: string): GemPlay[] {
+	function playsForPool(poolType: string, variant: string): GemPlay[] {
 		// baseName holds "skill" or "transfigured" for Dedication gems, and the
 		// server stamps each row with the market it was ranked in. Filtering on
 		// both means a heading that has moved ahead of its rows shows an empty
 		// table rather than the previous market's numbers — the rows themselves
 		// are the only thing here that knows which market they describe.
-		let filtered = allPlays.filter(g => g.baseName === poolType && g.variant === dedicationVariant);
+		let filtered = allPlays.filter(g => g.baseName === poolType && g.variant === variant);
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -81,14 +98,14 @@
 		</div>
 		<div class="tabs">
 			{#if isDedication}
-				{#each DEDICATION_POOLS as pool}
+				{#each DEDICATION_TABS as tab}
 					<button
 						class="tab"
-						class:active={activeDedPool === pool}
-						onclick={() => { activeDedPool = pool; invoke('set_dedication_pool', { pool }).catch(() => {}); }}
+						class:active={activeDedTab === tab.key}
+						onclick={() => { activeDedTab = tab.key; invoke('set_dedication_pool', { pool: tab.pool }).catch(() => {}); }}
 					>
-						{#if activeDedPool === pool}<span class="tab-dot">●</span>{/if}
-						{DEDICATION_POOL_LABELS[pool]}
+						{#if activeDedTab === tab.key}<span class="tab-dot">●</span>{/if}
+						{tab.label}
 					</button>
 				{/each}
 			{:else}
@@ -107,14 +124,13 @@
 	</div>
 
 	{#if isDedication}
-		{#each visibleDedPools as pool}
-			{@const vd = playsForPool(pool)}
-			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[pool] || pool}) — {dedicationVariant}" showVariantColumn={false} />
-			{:else}
-				<div class="loading">No data for this pool</div>
-			{/if}
-		{/each}
+		{@const tab = activeDedTabInfo}
+		{@const vd = playsForPool(tab.pool, tab.variant)}
+		{#if vd.length > 0}
+			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} />
+		{:else}
+			<div class="loading">No data for this pool</div>
+		{/if}
 	{:else}
 		{#each visibleVariants as variant}
 			{@const vd = playsForVariant(variant)}

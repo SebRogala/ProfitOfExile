@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchGemNames, fetchCompare, type CompareGem } from '$lib/api';
+	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { lookupTrade, pollTradeResult, registerTradeListener, type TradeLookupResult, type TradeSignals } from '$lib/tradeApi';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
@@ -16,7 +16,6 @@
 		desktopPair = null,
 		onDesktopDisconnect,
 		labMode = 'normal',
-		dedicationVariant = '21/23',
 	}: {
 		league?: string;
 		refreshKey?: number;
@@ -24,7 +23,6 @@
 		desktopPair?: string | null;
 		onDesktopDisconnect?: () => void;
 		labMode?: 'normal' | 'dedication';
-		dedicationVariant?: string;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -42,15 +40,16 @@
 	});
 
 	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	let activeVariants = $derived(isDedication ? [dedicationVariant] : NORMAL_VARIANTS);
+	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
-	// The variant is picked in the header, not here: the comparator follows it,
-	// and returns to 20/20 when Dedication is left. Comparing a gem at a variant
-	// the rest of the view is not showing would price it against the wrong market.
+	// The comparator owns its own market, the same way it owns the variant in
+	// Normal mode. Switching modes resets it to that mode's first market: a
+	// variant the current mode cannot show would price gems against a market
+	// nothing else on screen describes.
 	$effect(() => {
-		if (isDedication && variant !== dedicationVariant) {
-			variant = dedicationVariant;
+		if (isDedication && !(DEDICATION_VARIANTS as readonly string[]).includes(variant)) {
+			variant = DEDICATION_VARIANTS[0];
 			dropTradeData();
 			loadResults();
 		} else if (!isDedication && !NORMAL_VARIANTS.includes(variant)) {
