@@ -48,11 +48,16 @@ describe('formatPrice', () => {
 		expect(formatPrice(300, 'divine')).toBe('1.5d');
 	});
 
-	it('keeps two decimals for a sub-divine amount so it does not round to nothing', () => {
+	it('carries the chaos figure in brackets below a divine', () => {
 		setDivineRate(RATE);
-		// 12c is 0.06 divines: one decimal would print "0.1d", and a cheap input
-		// cost would read as a real fraction of a divine it is not.
-		expect(formatPrice(12, 'divine')).toBe('0.06d');
+		// 12c is 0.06 divines. Two decimals stop it rounding to "0.1d", and the
+		// chaos number is the one a player would actually pay down here.
+		expect(formatPrice(12, 'divine')).toBe('0.06d (12c)');
+	});
+
+	it('drops the bracket once a price reaches a divine', () => {
+		setDivineRate(RATE);
+		expect(formatPrice(RATE, 'divine')).toBe('1.0d');
 	});
 
 	it('falls back to chaos for the divine unit when the rate is unknown', () => {
@@ -85,6 +90,8 @@ describe('formatPriceSigned', () => {
 	it('passes the unit through to the magnitude', () => {
 		setDivineRate(RATE);
 		expect(formatPriceSigned(-300, 'divine')).toBe('−1.5d');
+		// The sign sits outside the whole figure, brackets included.
+		expect(formatPriceSigned(-12, 'divine')).toBe('−0.06d (12c)');
 	});
 
 	it('applies the divine floor to the magnitude, not the signed value', () => {

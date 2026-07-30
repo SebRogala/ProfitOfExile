@@ -55,9 +55,9 @@ export type PriceUnit = 'auto' | 'divine' | 'chaos';
 
 /**
  * Format a chaos amount for display: "412c", or "15.4d" once the unit says so.
- * Fractions of a chaos are not meaningful, so chaos is rounded. Divines keep one
- * decimal, or two below a single divine, where one decimal would round a real
- * price to "0.0d".
+ * Fractions of a chaos are not meaningful, so chaos is rounded. Below a single
+ * divine the chaos figure comes along in brackets — "0.06d (12c)" — since the
+ * divine number alone gives no sense of scale down there.
  */
 export function formatPrice(chaos: number, unit: PriceUnit = 'auto'): string {
 	// An em dash, not "0c": the rest of the UI renders unknown that way, and a
@@ -66,7 +66,13 @@ export function formatPrice(chaos: number, unit: PriceUnit = 'auto'): string {
 	if (divineRate > 0 && unit !== 'chaos') {
 		const divines = chaos / divineRate;
 		if (unit === 'divine' || Math.abs(chaos) >= DIVINE_DISPLAY_FLOOR * divineRate) {
-			return `${divines.toFixed(Math.abs(divines) >= 1 ? 1 : 2)}${DIVINE_SUFFIX}`;
+			if (Math.abs(divines) < 1) {
+				// A fraction of a divine is hard to size on its own — "0.06d" says
+				// little, and it is the chaos figure you would actually pay. Only
+				// reachable with a pinned unit: auto never converts this low.
+				return `${divines.toFixed(2)}${DIVINE_SUFFIX} (${Math.round(chaos)}${CHAOS_SUFFIX})`;
+			}
+			return `${divines.toFixed(1)}${DIVINE_SUFFIX}`;
 		}
 	}
 	return `${Math.round(chaos)}${CHAOS_SUFFIX}`;
