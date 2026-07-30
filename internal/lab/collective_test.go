@@ -830,6 +830,42 @@ func TestBuildDedicationCompareResults_DoesNotPriceAGemFromAnotherVariant(t *tes
 	}
 }
 
+// The font never hands out a Vaal gem, so pricing one against the pool's input
+// cost describes a trade nobody can make — and the ranking would otherwise call
+// the most expensive such gem the BEST play.
+func TestBuildDedicationCompareResults_GivesNoROIToAGemTheFontCannotProduce(t *testing.T) {
+	gemPrices := []GemPrice{
+		{Name: "Vaal Arc", Variant: "21/20c", Chaos: 4000, Listings: 12, IsCorrupted: true, GemColor: "BLUE"},
+		{Name: "Arc", Variant: "21/20c", Chaos: 300, Listings: 12, IsCorrupted: true, GemColor: "BLUE"},
+	}
+	dedication := []DedicationResult{
+		{Color: "BLUE", GemType: "skill", Mode: "safe", InputCost: 100},
+	}
+
+	results := BuildDedicationCompareResults([]string{"Vaal Arc", "Arc"}, gemPrices, dedication, nil, "21/20c")
+
+	byName := make(map[string]CompareResult, len(results))
+	for _, r := range results {
+		byName[r.TransfiguredName] = r
+	}
+
+	vaal, ok := byName["Vaal Arc"]
+	if !ok {
+		t.Fatal("the requested Vaal Arc row is missing — it should be returned, just not scored")
+	}
+	if vaal.ROI != 0 || vaal.ROIPct != 0 {
+		t.Errorf("Vaal Arc ROI/ROIPct = %.0f/%.0f, want 0/0 — the font cannot produce it",
+			vaal.ROI, vaal.ROIPct)
+	}
+	if vaal.Recommendation != "AVOID" {
+		t.Errorf("Vaal Arc Recommendation = %q, want AVOID", vaal.Recommendation)
+	}
+	if byName["Arc"].Recommendation != "BEST" {
+		t.Errorf("Arc Recommendation = %q, want BEST — it is the only real outcome here",
+			byName["Arc"].Recommendation)
+	}
+}
+
 // Without an input cost there is no cost basis, so a row must not report the
 // gem's whole listed price as profit — that reads exactly like a real ROI.
 func TestRankDedicationCollective_MarksRowsNoBaseWhenTheMarketHasNoInputCost(t *testing.T) {

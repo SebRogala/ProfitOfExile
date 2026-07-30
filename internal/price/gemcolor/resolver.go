@@ -164,6 +164,21 @@ func (r *Resolver) Resolve(name string) (Color, bool) {
 
 // resolve applies heuristic stripping rules to find the base gem color.
 func (r *Resolver) resolve(name string) (Color, bool) {
+	// 0. Parenthesised transfigured form: "Vaal Arc (Arc of Surging)" -> "Vaal Arc".
+	// poe.ninja names a transfigured Vaal gem as its Vaal base followed by the
+	// transfigured name in brackets, which no suffix rule below can strip. The
+	// colour is the base gem's, so resolve the part before the bracket through
+	// the same rules. The remainder is strictly shorter, so this terminates.
+	if open := strings.LastIndex(name, " ("); open > 0 && strings.HasSuffix(name, ")") {
+		base := name[:open]
+		if color, ok := r.colors[base]; ok {
+			return color, true
+		}
+		if color, ok := r.resolve(base); ok {
+			return color, true
+		}
+	}
+
 	// 1. Vaal prefix: "Vaal Cleave" -> "Cleave"
 	if strings.HasPrefix(name, "Vaal ") {
 		base := name[5:]

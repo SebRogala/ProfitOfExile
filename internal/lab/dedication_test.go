@@ -20,14 +20,14 @@ func makeDedicationGem(name, color string, chaos float64, listings int, isTransf
 }
 
 func TestIsDedicationGem_IncludesCorruptedSkills(t *testing.T) {
-	g := GemPrice{Name: "Arc", IsCorrupted: true}
+	g := GemPrice{Name: "Arc", IsCorrupted: true, GemColor: "BLUE"}
 	if !isDedicationGem(g) {
 		t.Error("corrupted skill gem 'Arc' should pass isDedicationGem")
 	}
 }
 
 func TestIsDedicationGem_ExcludesNonCorrupted(t *testing.T) {
-	g := GemPrice{Name: "Arc", IsCorrupted: false}
+	g := GemPrice{Name: "Arc", IsCorrupted: false, GemColor: "BLUE"}
 	if isDedicationGem(g) {
 		t.Error("non-corrupted gem should NOT pass isDedicationGem")
 	}
@@ -38,9 +38,9 @@ func TestIsDedicationGem_ExcludesSupports(t *testing.T) {
 		name string
 		gem  GemPrice
 	}{
-		{"Lifetap Support", GemPrice{Name: "Lifetap Support", IsCorrupted: true}},
-		{"Added Fire Support", GemPrice{Name: "Added Fire Damage Support", IsCorrupted: true}},
-		{"Empower Support", GemPrice{Name: "Empower Support", IsCorrupted: true}},
+		{"Lifetap Support", GemPrice{Name: "Lifetap Support", IsCorrupted: true, GemColor: "RED"}},
+		{"Added Fire Support", GemPrice{Name: "Added Fire Damage Support", IsCorrupted: true, GemColor: "RED"}},
+		{"Empower Support", GemPrice{Name: "Empower Support", IsCorrupted: true, GemColor: "RED"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -51,8 +51,73 @@ func TestIsDedicationGem_ExcludesSupports(t *testing.T) {
 	}
 }
 
+func TestIsDedicationGem_ExcludesVaalGems(t *testing.T) {
+	tests := []struct {
+		name string
+		gem  GemPrice
+	}{
+		{"plain Vaal gem", GemPrice{Name: "Vaal Blade Vortex", IsCorrupted: true, GemColor: "GREEN"}},
+		{"transfigured Vaal gem", GemPrice{Name: "Vaal Arc (Arc of Surging)", IsCorrupted: true, IsTransfigured: true, GemColor: "BLUE"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if isDedicationGem(tt.gem) {
+				t.Errorf("Vaal gem %q should NOT pass isDedicationGem — the Labyrinth cannot hand one out", tt.gem.Name)
+			}
+		})
+	}
+}
+
+func TestIsDedicationFeed_IncludesVaalGemsAt2120(t *testing.T) {
+	g := GemPrice{Name: "Vaal Blade Vortex", Variant: "21/20c", IsCorrupted: true, GemColor: "GREEN"}
+	if !isDedicationFeed(g) {
+		t.Error("a 21/20 Vaal gem is two corruption outcomes, exists, and is a legal input")
+	}
+}
+
+func TestIsDedicationFeed_ExcludesVaalGemsAt2123(t *testing.T) {
+	g := GemPrice{Name: "Vaal Blade Vortex", Variant: "21/23c", IsCorrupted: true, GemColor: "GREEN"}
+	if isDedicationFeed(g) {
+		t.Error("a 21/23 Vaal gem would take three corruption outcomes and cannot exist, so it is not a legal input")
+	}
+}
+
+// A Vaal gem can be bought and fed to the font but never comes back out of it,
+// so it must move what the run costs without joining the pool it is priced
+// against. 21/20 is the market where one can exist at all.
+func TestAnalyzeDedication_VaalGemPricesTheInputButNotThePool(t *testing.T) {
+	now := time.Now()
+	pool := []GemPrice{
+		makeDedicationGemVariant("Arc", "21/20c", "RED", 100, 20),
+		makeDedicationGemVariant("Fireball", "21/20c", "RED", 200, 30),
+		makeDedicationGemVariant("Cleave", "21/20c", "RED", 300, 25),
+	}
+	withVaal := append(append([]GemPrice{}, pool...), makeDedicationGemVariant("Vaal Arc", "21/20c", "RED", 10, 5))
+
+	before := redSkillSafeResult(t, AnalyzeDedication(now, pool, nil))
+	after := redSkillSafeResult(t, AnalyzeDedication(now, withVaal, nil))
+
+	if after.Pool != before.Pool {
+		t.Errorf("Pool = %d once a Vaal gem is listed, want %d — a Vaal gem is never an outcome", after.Pool, before.Pool)
+	}
+	if after.InputCost >= before.InputCost {
+		t.Errorf("InputCost = %.1f once a 10c Vaal gem is listed, want below %.1f — a Vaal gem is a legal feed", after.InputCost, before.InputCost)
+	}
+}
+
+func redSkillSafeResult(t *testing.T, analysis DedicationAnalysis) DedicationResult {
+	t.Helper()
+	for _, r := range analysis.Skills {
+		if r.Color == "RED" && r.Mode == "safe" {
+			return r
+		}
+	}
+	t.Fatal("expected a RED skill safe result")
+	return DedicationResult{}
+}
+
 func TestIsDedicationGem_ExcludesTrarthus(t *testing.T) {
-	g := GemPrice{Name: "Trarthus Ire", IsCorrupted: true}
+	g := GemPrice{Name: "Trarthus Ire", IsCorrupted: true, GemColor: "RED"}
 	if isDedicationGem(g) {
 		t.Error("Trarthus should NOT pass isDedicationGem")
 	}

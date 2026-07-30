@@ -648,6 +648,9 @@ func BuildDedicationCompareResults(
 	}
 
 	var results []CompareResult
+	// Rows the font cannot produce. They are still returned — the caller asked
+	// for these names — but they carry no font ROI and cannot be recommended.
+	notAnOutcome := make(map[int]bool)
 
 	for _, name := range names {
 		cr := CompareResult{
@@ -691,6 +694,16 @@ func BuildDedicationCompareResults(
 			} else {
 				cr.ROI = g.Chaos
 			}
+
+			// ROI here means "what the font returns, less what feeding it costs".
+			// For a gem the craft can never hand out — a Vaal gem above all —
+			// that subtraction describes a trade nobody can make, and the
+			// ranking below would happily call it the BEST play.
+			if !isDedicationGem(*g) {
+				notAnOutcome[len(results)] = true
+				cr.ROI = 0
+				cr.ROIPct = 0
+			}
 		}
 
 		// Attach sparkline.
@@ -731,7 +744,9 @@ func BuildDedicationCompareResults(
 
 		for pos, r := range ranks {
 			cr := results[r.idx]
-			if cr.Confidence == "LOW" && cr.TransListings < 2 {
+			if notAnOutcome[r.idx] {
+				results[r.idx].Recommendation = "AVOID"
+			} else if cr.Confidence == "LOW" && cr.TransListings < 2 {
 				results[r.idx].Recommendation = "AVOID"
 			} else if cr.ROI < 0 {
 				results[r.idx].Recommendation = "AVOID"
