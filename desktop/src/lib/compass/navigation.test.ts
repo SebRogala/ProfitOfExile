@@ -285,6 +285,168 @@ describe('Golden door routing', () => {
 		expect(state.goldenKeys).toBe(0);
 	});
 
+	// Re-planning happens after every room, so the plan the player sees while
+	// standing in the door room is computed with the key already in their pack.
+	// The key-fetching phases must not run again — the pocket is empty now.
+	it('should route onward from the door room once the key is in hand', () => {
+		const state = processEvents(goldenDoorToTrialLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },  // r1
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // door
+			{ type: 'RoomChanged', name: 'Basilica Annex' },   // key — pick it up
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door
+		]);
+		expect(state.goldenKeys).toBe(1);
+		expect(state.plannedRoute).toEqual(['door', 'trial']);
+	});
+
+	// The same door room, before the key is picked up: the fetch must still be
+	// planned. Guards the boundary the rule above turns on.
+	it('should still plan the key fetch from the door room while the key is unheld', () => {
+		const state = processEvents(goldenDoorToTrialLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },  // r1
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // door
+		]);
+		expect(state.goldenKeys).toBe(0);
+		expect(state.plannedRoute).toEqual(['door', 'key', 'door', 'trial']);
+	});
+
+	// A door room with two forward exits produces two locked pairs against one
+	// key — poelab never says which exit is the door, so both are locked. One
+	// key opens the one door, so walking either pair opens both: the player who
+	// steps out to `side` and comes back must not be sent for the key again.
+	//
+	//   r1 ─── door[golden-door] ─┬─ trial
+	//            │                └─ side
+	//          key[golden-key]
+	const twoLockedExitsLayout = makeLayout([
+		{ id: 'r1', name: 'Estate Walkways', x: '0', exits: { E: 'door' } },
+		{
+			id: 'door',
+			name: 'Mansion Atrium',
+			x: '1',
+			exits: { N: 'key', NE: 'side', E: 'trial' },
+			contents: ['golden-door'],
+		},
+		{ id: 'key', name: 'Basilica Annex', x: '1.5', exits: {}, contents: ['golden-key'] },
+		{ id: 'side', name: 'Sepulchre Path', x: '2', exits: {} },
+		{ id: 'trial', name: "Aspirant's Trial", x: '3', exits: {} },
+	]);
+
+	// The premise the test below rests on: poelab never says which exit is the
+	// door, so BOTH forward exits of the door room lock. Asserted here rather
+	// than assumed — narrow this to one pair per door room and the sibling-exit
+	// test would keep passing while its scenario quietly stopped existing.
+	it('should lock both forward exits of a door room that has two', () => {
+		const state = loadLayout(createNavState(), twoLockedExitsLayout);
+		expect(state.lockedDoors).toEqual([
+			['door', 'side'],
+			['door', 'trial'],
+		]);
+	});
+
+	it('should leave the door open after the key is spent on a sibling exit', () => {
+		const state = processEvents(twoLockedExitsLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },  // r1
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // door
+			{ type: 'RoomChanged', name: 'Basilica Annex' },   // key — pick it up
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door
+			{ type: 'RoomChanged', name: 'Sepulchre Path' },   // cross the door to side
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door again
+		]);
+		expect(state.lockedDoors).toEqual([]);
+		expect(state.goldenKeys).toBe(0);
+		expect(state.plannedRoute).toEqual(['door', 'trial']);
+	});
+
+	// Only ONE of a door room's exits is really the door, so walking one of them
+	// without a key proves that exit was not it. The crossing narrows the
+	// candidate set; it must not empty it. Clearing all of them here sent
+	// 2026-04-05 Uber through the real door with no key.
+	it('should keep the sibling exits locked when one is crossed without a key', () => {
+		const state = processEvents(twoLockedExitsLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },  // r1
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // door
+			{ type: 'RoomChanged', name: 'Sepulchre Path' },   // side — no key held
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door
+		]);
+		expect(state.goldenKeys).toBe(0);
+		expect(state.lockedDoors).toEqual([['door', 'trial']]);
+		expect(state.plannedRoute).toEqual(['door', 'key', 'door', 'trial']);
+	});
+
+	// A lab tool runs the same daily layout over and over, and each run consumes
+	// the locks it walks through. Run 2 must start with the door shut again.
+	it('should re-arm the doors when a new run enters the plaza', () => {
+		const finished = processEvents(goldenDoorToTrialLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },
+			{ type: 'RoomChanged', name: 'Basilica Annex' },
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },
+			{ type: 'RoomChanged', name: "Aspirant's Trial" },  // door spent
+		]);
+		expect(finished.lockedDoors).toEqual([]);
+
+		const nextRun = handleNavEvent(
+			handleNavEvent(finished, { type: 'LabExited' }),
+			{ type: 'PlazaEntered' },
+		);
+		expect(nextRun.lockedDoors).toEqual([['door', 'trial']]);
+		expect(nextRun.plannedRoute).toEqual(['r1', 'door', 'key', 'door', 'trial']);
+	});
+
+	// The counter is a key count, not a visit count: the pocket is empty the
+	// second time. An inflated count survives the spend at the door and leaves
+	// routing believing a door it never opened is open.
+	it('should count at most one golden key when the pocket is re-entered', () => {
+		const state = processEvents(goldenDoorToTrialLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Walkways' },  // r1
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // door
+			{ type: 'RoomChanged', name: 'Basilica Annex' },   // key
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door
+			{ type: 'RoomChanged', name: 'Basilica Annex' },   // key pocket again
+			{ type: 'RoomChanged', name: 'Mansion Atrium' },   // back to door
+			{ type: 'RoomChanged', name: "Aspirant's Trial" }, // spend it
+		]);
+		expect(state.goldenKeys).toBe(0);
+	});
+
+	// Holding the key opens the door; it does not excuse the router from the
+	// targets sitting behind it. `vault` is a detour off the door room, so a
+	// re-plan that degraded to a plain cheapest path once the key was in hand
+	// would walk straight past it to the trial.
+	//
+	//   s ─── door[golden-door] ─┬─ trial
+	//   └── key[golden-key]      └─ vault[darkshrine]
+	const targetBehindOpenedDoorLayout = makeLayout([
+		{ id: 's', name: 'Estate Path', x: '0', exits: { E: 'door', NE: 'key' } },
+		{ id: 'key', name: 'Sepulchre Annex', x: '0.5', exits: {}, contents: ['golden-key'] },
+		{
+			id: 'door',
+			name: 'Mansion Atrium',
+			x: '1',
+			exits: { N: 'vault', E: 'trial' },
+			contents: ['golden-door'],
+		},
+		{ id: 'vault', name: 'Basilica Halls', x: '1.5', exits: {}, contents: ['darkshrine'] },
+		{ id: 'trial', name: "Aspirant's Trial", x: '2', exits: {} },
+	]);
+
+	it('should still collect a target behind the door once the key is in hand', () => {
+		let state = loadLayout(createNavState(), targetBehindOpenedDoorLayout);
+		state = setStrategy(state, 'darkshrines');
+		for (const name of ['Estate Path', 'Sepulchre Annex', 'Estate Path']) {
+			state = handleNavEvent(state, { type: 'RoomChanged', name });
+		}
+		expect(state.currentRoom).toBe('s');
+		expect(state.plannedRoute).toEqual(['s', 'door', 'vault', 'door', 'trial']);
+	});
+
 	// The golden KEY and golden DOOR can occupy the SAME room. Rare, but real:
 	// it occurs twice in the vendored poelab layouts (2018-01-09_merciless room
 	// 6, and 2018-01-10_merciless room 1, which is also the lab entrance).

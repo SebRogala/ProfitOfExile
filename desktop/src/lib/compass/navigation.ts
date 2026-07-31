@@ -194,11 +194,55 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 	//   "locked" entry, and the router silently falls back to a plain cheapest
 	//   path that waltzes through the door without picking up the key. The test
 	//   `should route through key room on zig-zag layouts ...` guards this.)
-	const startRoomId = layout.rooms[0]?.id;
-	const distFromStart = startRoomId ? bfsDistances(adjacency, startRoomId) : new Map<string, number>();
+	const lockedDoors = deriveLockedDoors(layout.rooms, adjacency, roomById);
+
+	const newState: NavState = {
+		...state,
+		layout,
+		roomById,
+		adjacency,
+		sections,
+		lockedDoors,
+		goldenKeys: 0,
+		portalRooms: new Set(),
+	};
+
+	// Targets FIRST: computeRoute reads newState.targetRooms, so computing the
+	// route before them routes against the previous layout's targets. Callers
+	// that call setStrategy right afterwards mask it; importing a poelab file
+	// (PlannerPage.svelte) does not, and renders a wrong route until the
+	// strategy dropdown is touched.
+	newState.targetRooms = getTargetRooms(newState, state.strategy);
+	newState.plannedRoute = computeRoute(newState, state.strategy);
+
+	return newState;
+}
+
+/**
+ * The locked forward edges of every golden-door room — see the golden-door note
+ * in `loadLayout` for what "forward" means and why the door's key-holding
+ * neighbour is exempt.
+ *
+ * Derived, never accumulated, so that entering the plaza can rebuild it from
+ * scratch. A lab tool is used for run after run against the SAME daily layout,
+ * and the locks are consumed as the player walks: leaving them to `loadLayout`
+ * alone (called once when the layout is fetched, then only at the midnight
+ * rollover) meant run 2 onward routed with an empty lock set and no golden-door
+ * awareness at all — straight to the trial, no key fetch. The timer overlay's
+ * `has_golden_door` flag reads the same field and went false with it.
+ */
+function deriveLockedDoors(
+	rooms: LabLayoutRoom[],
+	adjacency: Map<string, string[]>,
+	roomById: Map<string, LabLayoutRoom>,
+): [string, string][] {
+	const startRoomId = rooms[0]?.id;
+	const distFromStart = startRoomId
+		? bfsDistances(adjacency, startRoomId)
+		: new Map<string, number>();
 
 	const lockedDoors: [string, string][] = [];
-	for (const room of layout.rooms) {
+	for (const room of rooms) {
 		if (!room.contents.some((c) => c.toLowerCase().includes('golden-door'))) continue;
 
 		const doorDist = distFromStart.get(room.id) ?? 0;
@@ -221,27 +265,7 @@ export function loadLayout(state: NavState, layout: LabLayout): NavState {
 			}
 		}
 	}
-
-	const newState: NavState = {
-		...state,
-		layout,
-		roomById,
-		adjacency,
-		sections,
-		lockedDoors,
-		goldenKeys: 0,
-		portalRooms: new Set(),
-	};
-
-	// Targets FIRST: computeRoute reads newState.targetRooms, so computing the
-	// route before them routes against the previous layout's targets. Callers
-	// that call setStrategy right afterwards mask it; importing a poelab file
-	// (PlannerPage.svelte) does not, and renders a wrong route until the
-	// strategy dropdown is touched.
-	newState.targetRooms = getTargetRooms(newState, state.strategy);
-	newState.plannedRoute = computeRoute(newState, state.strategy);
-
-	return newState;
+	return lockedDoors;
 }
 
 const isTrialRoom = (room: LabLayoutRoom) => room.name.toLowerCase() === "aspirant's trial";
@@ -337,8 +361,10 @@ function detectSections(rooms: LabLayoutRoom[], sectionFirstRooms: Set<string>):
 
 export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 	switch (event.type) {
-		case 'PlazaEntered':
-			return {
+		case 'PlazaEntered': {
+			// Re-arm the doors: this is a NEW run against the same daily layout, and
+			// the previous run consumed the locks it walked through.
+			const rearmed: NavState = {
 				...state,
 				inLab: true,
 				finished: false,
@@ -347,9 +373,14 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 				previousRoom: null,
 				goldenKeys: 0,
 				portalRooms: new Set(),
-				targetRooms: getTargetRooms(state, state.strategy),
-				plannedRoute: computeRoute(state, state.strategy),
+				lockedDoors: state.layout
+					? deriveLockedDoors(state.layout.rooms, state.adjacency, state.roomById)
+					: state.lockedDoors,
 			};
+			rearmed.targetRooms = getTargetRooms(rearmed, state.strategy);
+			rearmed.plannedRoute = computeRoute(rearmed, state.strategy);
+			return rearmed;
+		}
 
 		case 'RoomChanged': {
 			if (!state.layout) return state;
@@ -413,10 +444,14 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 				newState.previousRoom = state.currentRoom;
 				newState.currentRoom = confirmedId;
 
-				// Golden key pickup
+				// Golden key pickup. Capped at one: a run holds at most one golden
+				// key, so re-entering the pocket must not count a second. Routing
+				// reads this counter now, and the crossing below decides what to
+				// unlock by it, so an inflated count would survive the spend and
+				// leave routing believing a door it never opened is open.
 				const room = state.roomById.get(confirmedId);
 				if (room?.contents.some((c) => c.toLowerCase().includes('golden-key'))) {
-					newState.goldenKeys = state.goldenKeys + 1;
+					newState.goldenKeys = Math.min(1, state.goldenKeys + 1);
 				}
 
 				// Golden door unlock (crossing between locked pair).
@@ -424,14 +459,41 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 				// state.currentRoom, NOT state.previousRoom, which is already one
 				// room further back and would clear a door we never walked through
 				// while leaving the one we did still locked.
+				//
+				// What gets unlocked depends on whether a key was actually spent.
+				//
+				// `lockedDoors` is not a set of doors. It is an over-approximation of
+				// WHICH ONE exit of the door room is the door — poelab leaves
+				// content_directions empty, so every forward exit is locked and only
+				// one of them is real.
+				//
+				//   KEY IN HAND: the run's one door is now open, so every pair of that
+				//   door room is moot. Clearing only the pair walked left the siblings
+				//   armed against a spent key, and stepping back into the door room
+				//   re-planned a trip to the already-looted key pocket.
+				//
+				//   NO KEY: the player just walked through it, so that pair was never
+				//   the door. Drop it and leave the siblings armed — this crossing is
+				//   evidence that NARROWS the candidate set. Clearing the lot here
+				//   instead routed 2026-04-05 Uber through the real golden door with no
+				//   key, after a keyless step from room 1 to room 3.
 				if (state.currentRoom) {
 					const pair = [state.currentRoom, confirmedId].sort() as [string, string];
 					const doorIdx = state.lockedDoors.findIndex(
 						([a, b]) => a === pair[0] && b === pair[1],
 					);
 					if (doorIdx >= 0) {
-						newState.lockedDoors = [...state.lockedDoors];
-						newState.lockedDoors.splice(doorIdx, 1);
+						const doorRoom =
+							state.goldenKeys > 0
+								? pair.find((id) =>
+										state.roomById
+											.get(id)
+											?.contents.some((c) => c.toLowerCase().includes('golden-door')),
+									)
+								: undefined;
+						newState.lockedDoors = doorRoom
+							? state.lockedDoors.filter(([a, b]) => a !== doorRoom && b !== doorRoom)
+							: state.lockedDoors.filter((_, i) => i !== doorIdx);
 						newState.goldenKeys = Math.max(0, newState.goldenKeys - 1);
 					}
 				}
@@ -623,6 +685,17 @@ function computeRouteFrom(state: NavState, fromRoom: string, strategy: RouteStra
  * assumption to be generalised later. (LabCompass solves N doors generically by
  * folding key state into its search; that generality is unreachable in practice.)
  *
+ * A KEY ALREADY IN HAND ends all of this. The rules above answer "how do I get
+ * through a door I cannot open yet" — once the key is picked up there is no such
+ * door, so the section routes normally. Deriving the answer from `lockedDoors`
+ * alone and ignoring `goldenKeys` meant every re-plan re-derived "go fetch the
+ * key": stepping back into the door room out of a dead-end key pocket pointed
+ * the player straight back into the pocket they had just emptied, and kept
+ * pointing there until they ignored the compass. Measured on 61 of the 203
+ * layouts in production — every one whose key sits in a pocket off the door
+ * room. (2026-07-31 Merciless is not among them: its key and door share a room,
+ * so there is no pocket to send anyone back into.)
+ *
  * RETURN CONTRACT — the two empty-ish returns mean opposite things:
  *   null → no locked door blocks this section; the caller routes normally.
  *   []   → a locked door DOES block it and no legal route exists. The caller
@@ -643,6 +716,7 @@ function routeWithGoldenDoor(
 	preferShrines: boolean,
 ): string[] | null {
 	if (state.lockedDoors.length === 0) return null;
+	if (state.goldenKeys > 0) return null;
 
 	// Find locked doors in this section. Include endRoom (trial) — a golden
 	// door can connect directly to the trial, and endRoom is not in roomIds.
