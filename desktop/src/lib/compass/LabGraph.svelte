@@ -260,8 +260,13 @@
 			{/if}
 
 			<!-- Room ID inside circle -->
+			<!-- Every glyph in this graph is vertically centred with dy="0.35em" —
+			     half a cap height below the baseline, in units of the glyph's own
+			     font-size. Offsetting by a fraction of the RADIUS instead (what this
+			     did) only lands centred when radius and font-size happen to agree,
+			     and sat visibly low on the trial "I" at font-size nr * 0.6. -->
 			{#if !compact && !node.isTrial}
-				<text x={node.cx} y={node.cy + nr * 0.3} class="room-id"
+				<text x={node.cx} y={node.cy} dy="0.35em" class="room-id"
 					font-size={nr * 0.55}>{node.room.id}</text>
 			{/if}
 
@@ -269,7 +274,7 @@
 
 			<!-- Izaro trial label -->
 			{#if node.isTrial}
-				<text x={node.cx} y={node.cy + nr * 0.35} class="trial-label" font-size={nr * 0.6}>I</text>
+				<text x={node.cx} y={node.cy} dy="0.35em" class="trial-label" font-size={nr * 0.6}>I</text>
 			{/if}
 
 			<!-- Golden key/door/argus inside circle -->
@@ -292,26 +297,26 @@
 					<circle cx={node.cx} cy={node.cy} r={nr - 3}
 						fill="#d97706" opacity="0.9" clip-path="url(#clip-r-{node.room.id})" />
 					{#if !compact}
-						<text x={node.cx - nr * 0.25} y={node.cy + nr * 0.25} fill="#1c1917"
+						<text x={node.cx - nr * 0.25} y={node.cy} dy="0.35em" fill="#1c1917"
 							font-size={nr * 0.5} text-anchor="middle" font-weight="900"
 							pointer-events="none">K</text>
-						<text x={node.cx + nr * 0.25} y={node.cy + nr * 0.25} fill="#1c1917"
+						<text x={node.cx + nr * 0.25} y={node.cy} dy="0.35em" fill="#1c1917"
 							font-size={nr * 0.5} text-anchor="middle" font-weight="900"
 							pointer-events="none">D</text>
 					{/if}
 				{:else if hasKey}
 					<circle cx={node.cx} cy={node.cy} r={nr - 3} fill="#fbbf24" opacity="0.9" />
-					<text x={node.cx} y={node.cy + nr * 0.25} fill="#1c1917"
+					<text x={node.cx} y={node.cy} dy="0.35em" fill="#1c1917"
 						font-size={nr * 0.7} text-anchor="middle" font-weight="900"
 						pointer-events="none">K</text>
 				{:else if hasDoor}
 					<circle cx={node.cx} cy={node.cy} r={nr - 3} fill="#d97706" opacity="0.9" />
-					<text x={node.cx} y={node.cy + nr * 0.25} fill="#1c1917"
+					<text x={node.cx} y={node.cy} dy="0.35em" fill="#1c1917"
 						font-size={nr * 0.7} text-anchor="middle" font-weight="900"
 						pointer-events="none">D</text>
 				{:else if hasArgus}
 					<circle cx={node.cx} cy={node.cy} r={nr - 3} fill="#ea580c" opacity="0.9" />
-					<text x={node.cx} y={node.cy + nr * 0.25} fill="#fff"
+					<text x={node.cx} y={node.cy} dy="0.35em" fill="#fff"
 						font-size={nr * 0.7} text-anchor="middle" font-weight="900"
 						pointer-events="none">A</text>
 				{/if}
@@ -334,7 +339,7 @@
 							fill={ci.color}
 						/>
 						{#if !compact}
-							<text x={bx} y={by + badgeH * 0.25} fill="#fff"
+							<text x={bx} y={by} dy="0.35em" fill="#fff"
 								font-size={badgeH * 0.8} text-anchor="middle"
 								font-weight="800" pointer-events="none">{ci.symbol}</text>
 						{/if}
