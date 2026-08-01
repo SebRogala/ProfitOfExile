@@ -12,6 +12,7 @@ import {
 	type RouteStrategy,
 	type NavState,
 } from './navigation';
+import cruel20260801 from './__fixtures__/poelab-prod-2026-08-01-cruel.json';
 
 /** Build a minimal lab layout for testing. */
 function makeLayout(rooms: { id: string; name: string; x: string; exits: Record<string, string>; contents?: string[] }[]): LabLayout {
@@ -67,7 +68,7 @@ describe('RoomChanged disambiguation', () => {
 		expect(state.currentRoom).toBe('room1');
 	});
 
-	it('should resolve consecutive same-named rooms by excluding current room', () => {
+	it('should follow the planned route to the next same-named room', () => {
 		const state = processEvents(duplicateNameLayout, [
 			{ type: 'PlazaEntered' },
 			{ type: 'RoomChanged', name: 'Basilica Halls' },  // → room1
@@ -106,6 +107,91 @@ describe('RoomChanged disambiguation', () => {
 			{ type: 'RoomChanged', name: 'Estate Walkways' },  // → c (connected to b, not a)
 		]);
 		expect(state.currentRoom).toBe('c');
+	});
+
+	// 2026-08-01 Cruel, the layout that produced the bug: rooms 6 (section 2) and
+	// 8 (section 3) are both "sepulchre halls", one beaten Izaro apart, and 8's
+	// neighbours (9 "sepulchre passage", 10 "domain crossing") share neither name.
+	const sameNameAcrossTrialLayout = cruel20260801 as LabLayout;
+
+	/** Walk the real layout from the plaza to room 8, the first room past Izaro 2. */
+	function walkToRoom8(): NavState {
+		return processEvents(sameNameAcrossTrialLayout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'estate walkways' },   // → 1
+			{ type: 'RoomChanged', name: 'sepulchre passage' }, // → 2
+			{ type: 'RoomChanged', name: "aspirant's trial" },  // → 3  (Izaro 1)
+			{ type: 'RoomChanged', name: 'domain walkways' },   // → 4
+			{ type: 'RoomChanged', name: 'sepulchre halls' },   // → 6
+			{ type: 'RoomChanged', name: "aspirant's trial" },  // → 7  (Izaro 2)
+			{ type: 'RoomChanged', name: 'sepulchre halls' },   // → 8
+		]);
+	}
+
+	it('should leave Izaro for the same-named room ahead, not the one behind', () => {
+		const state = walkToRoom8();
+		expect(state.currentRoom).toBe('8');
+	});
+
+	it('should stay put when the current room re-announces its own name', () => {
+		const inRoom8 = walkToRoom8();
+		expect(inRoom8.currentRoom, 'arrange: expected to be standing in room 8').toBe('8');
+
+		const reannounced = handleNavEvent(inRoom8, {
+			type: 'RoomChanged',
+			name: 'sepulchre halls',
+		});
+
+		// Was: the marker jumped back to room 6, across a beaten Izaro, and the
+		// route was re-planned from section 2.
+		expect(reannounced.currentRoom).toBe('8');
+		expect(reannounced.plannedRoute).toEqual(inRoom8.plannedRoute);
+	});
+
+	it('should drop the position when the announced room is neither a neighbour nor the current one', () => {
+		const inRoom8 = walkToRoom8();
+
+		// "domain walkways" is room 4, two sections back and not adjacent to 8.
+		// Was: taken as confirmed because it was the only match, teleporting the
+		// marker across two beaten Izaros.
+		const stray = handleNavEvent(inRoom8, { type: 'RoomChanged', name: 'domain walkways' });
+
+		expect(stray.currentRoom).toBeNull();
+		expect([...stray.possibleRooms]).toEqual(['4']);
+	});
+
+	it('should re-acquire an ambiguous name from the route that survived the drop', () => {
+		const lost = handleNavEvent(walkToRoom8(), { type: 'RoomChanged', name: 'domain walkways' });
+		expect(lost.plannedRoute[0], 'arrange: route should still start at room 8').toBe('8');
+
+		const reacquired = handleNavEvent(lost, { type: 'RoomChanged', name: 'sepulchre halls' });
+
+		// Both 6 and 8 carry the name and 6 is listed first, so first-match would
+		// answer 6. Only the surviving route picks the room we are actually in.
+		expect(reacquired.currentRoom).toBe('8');
+	});
+
+	it('should stay lost when the announced name is ambiguous and off-route', () => {
+		const lost = handleNavEvent(walkToRoom8(), { type: 'RoomChanged', name: 'domain walkways' });
+
+		// "sepulchre passage" is rooms 2 and 9; neither is on the route [8,10,12],
+		// and with no tracked position there is nothing to break the tie.
+		const stillLost = handleNavEvent(lost, { type: 'RoomChanged', name: 'sepulchre passage' });
+
+		expect(stillLost.currentRoom).toBeNull();
+		expect([...stillLost.possibleRooms].sort()).toEqual(['2', '9']);
+	});
+
+	it('should keep re-planning anchored to the route while the position is lost', () => {
+		const lost = handleNavEvent(walkToRoom8(), { type: 'RoomChanged', name: 'domain walkways' });
+
+		// The overlays poll compass settings every 2s and re-apply the strategy.
+		// Was: with no current room this re-planned from the lab entrance, and the
+		// next "sepulchre halls" then re-acquired at room 6 — back across Izaro 2.
+		const repolled = setStrategy(lost, 'shortest');
+
+		expect(repolled.plannedRoute[0]).toBe('8');
+		expect(handleNavEvent(repolled, { type: 'RoomChanged', name: 'sepulchre halls' }).currentRoom).toBe('8');
 	});
 });
 

@@ -405,23 +405,42 @@ export function handleNavEvent(state: NavState, event: NavEvent): NavState {
 			else if (state.currentRoom) {
 				const connected = state.adjacency.get(state.currentRoom) ?? [];
 				candidates = matchingRooms.filter((id) => connected.includes(id));
-				if (candidates.length === 0) candidates = matchingRooms;
+				if (candidates.length === 0) {
+					// No NEIGHBOUR carries this name. If the room we are standing in
+					// does, the event is a re-entry announcement for that same room —
+					// the player has not moved, so neither does the tracker.
+					//
+					// Falling through to the whole-layout fallback made this actively
+					// wrong: 2026-08-01 Cruel names both room 6 (section 2) and room 8
+					// (section 3) "sepulchre halls", and neither of 8's neighbours (9,
+					// 10) shares the name. A repeat announcement while standing in 8
+					// therefore reached the fallback, and the since-removed
+					// "exclude the current room" rule then left room 6 as the only
+					// candidate — teleporting the marker back across a beaten Izaro
+					// and re-planning the route from the wrong section.
+					if (matchingRooms.includes(state.currentRoom)) return state;
+
+					// Neither a neighbour nor where we stand: the tracked position and
+					// the game disagree, and nothing in the event says which of the
+					// same-named rooms is meant. Say so — drop to "lost" with the
+					// matches as possibilities, and let the next event re-acquire via
+					// the planned route (Priority 3).
+					//
+					// Guessing from the whole layout is what teleported the marker
+					// across beaten Izaros: a single distant match was taken as
+					// confirmed, and the route was then re-planned from that section.
+					return { ...state, currentRoom: null, possibleRooms: new Set(matchingRooms) };
+				}
 			}
-			// Priority 3: first room (entering from plaza) — pick the earliest
+			// Priority 3: no tracked position — entering from the plaza, or
+			// re-acquiring after the position was dropped. Pick the earliest
 			// matching room on the planned route to disambiguate duplicate names.
 			else {
 				const firstOnRoute = state.plannedRoute.find((id) => matchingRooms.includes(id));
 				candidates = firstOnRoute ? [firstOnRoute] : matchingRooms;
 			}
 
-			// Priority 4: exclude current room — if we're already in a room with
-			// this name, the event must be for a different room with the same name.
-			if (candidates.length > 1 && state.currentRoom) {
-				const filtered = candidates.filter((id) => id !== state.currentRoom);
-				if (filtered.length > 0) candidates = filtered;
-			}
-
-			// Priority 5: prefer forward movement — if exactly one candidate has a
+			// Priority 4: prefer forward movement — if exactly one candidate has a
 			// higher x than current room, pick it. Multiple forward candidates
 			// remain ambiguous.
 			if (candidates.length > 1) {
@@ -1161,11 +1180,7 @@ export function toggleTargetRoom(state: NavState, roomId: string): NavState {
 	} else {
 		newState.targetRooms = [...state.targetRooms, roomId];
 	}
-	if (state.currentRoom) {
-		newState.plannedRoute = computeRouteFrom(newState, state.currentRoom, state.strategy);
-	} else {
-		newState.plannedRoute = computeRoute(newState, state.strategy);
-	}
+	newState.plannedRoute = replanFrom(newState, state, state.strategy);
 	return newState;
 }
 
@@ -1173,10 +1188,27 @@ export function toggleTargetRoom(state: NavState, roomId: string): NavState {
 export function setStrategy(state: NavState, strategy: RouteStrategy): NavState {
 	const newState = { ...state, strategy };
 	newState.targetRooms = getTargetRooms(newState, strategy);
-	if (state.currentRoom) {
-		newState.plannedRoute = computeRouteFrom(newState, state.currentRoom, strategy);
-	} else {
-		newState.plannedRoute = computeRoute(newState, strategy);
-	}
+	newState.plannedRoute = replanFrom(newState, state, strategy);
 	return newState;
+}
+
+/**
+ * Where a re-plan starts when the player's position is not confirmed.
+ *
+ * Tracked position first, then the head of the route we already had. Falling
+ * straight back to the lab entrance is wrong mid-run: RoomChanged re-acquires a
+ * dropped position by taking the FIRST route entry matching the announced name
+ * (Priority 3), so an entrance-anchored route hands it the earliest same-named
+ * room in the lab. On 2026-08-01 Cruel — rooms 6 and 8 both "sepulchre halls" —
+ * a strategy poll firing while lost in section 3 would re-acquire at room 6,
+ * back across a beaten Izaro. That is the bug the lost state exists to prevent,
+ * through a second door.
+ *
+ * Before the run starts there is nothing to preserve: `plannedRoute` is itself
+ * the entrance-anchored route, so its head IS `rooms[0]` and this reduces to the
+ * plain re-plan.
+ */
+function replanFrom(newState: NavState, state: NavState, strategy: RouteStrategy): string[] {
+	const anchor = state.currentRoom ?? state.plannedRoute[0];
+	return anchor ? computeRouteFrom(newState, anchor, strategy) : computeRoute(newState, strategy);
 }

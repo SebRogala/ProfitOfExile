@@ -1,0 +1,194 @@
+{
+  "date": "2026-08-01",
+  "rooms": [
+    {
+      "x": "106",
+      "y": "128",
+      "id": "1",
+      "name": "estate walkways",
+      "exits": {
+        "NE": "2",
+        "NW": "3"
+      },
+      "areacode": "",
+      "contents": [
+        "Escort gauntlet"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "175",
+      "y": "172",
+      "id": "2",
+      "name": "sepulchre passage",
+      "exits": {
+        "NE": "3"
+      },
+      "areacode": "",
+      "contents": [
+        "Trap gauntlet",
+        "darkshrine"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "244",
+      "y": "128",
+      "id": "3",
+      "name": "aspirant's trial",
+      "exits": {
+        "NW": "4"
+      },
+      "areacode": "",
+      "contents": [],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "311",
+      "y": "128",
+      "id": "4",
+      "name": "domain walkways",
+      "exits": {
+        "NE": "5",
+        "NW": "6"
+      },
+      "areacode": "",
+      "contents": [],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "379",
+      "y": "40",
+      "id": "5",
+      "name": "basilica passage",
+      "exits": {
+        "NE": "6"
+      },
+      "areacode": "",
+      "contents": [
+        "Switch puzzle",
+        "darkshrine"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "450",
+      "y": "128",
+      "id": "6",
+      "name": "sepulchre halls",
+      "exits": {
+        "NE": "7",
+        "NW": "5"
+      },
+      "areacode": "",
+      "contents": [
+        "Trap gauntlet"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "518",
+      "y": "128",
+      "id": "7",
+      "name": "aspirant's trial",
+      "exits": {
+        "NW": "8"
+      },
+      "areacode": "",
+      "contents": [],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "587",
+      "y": "128",
+      "id": "8",
+      "name": "sepulchre halls",
+      "exits": {
+        "NE": "10",
+        "NW": "9"
+      },
+      "areacode": "",
+      "contents": [
+        "darkshrine"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "655",
+      "y": "40",
+      "id": "9",
+      "name": "sepulchre passage",
+      "exits": {
+        "NE": "10"
+      },
+      "areacode": "",
+      "contents": [
+        "silver-key",
+        "silver-door"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "691",
+      "y": "128",
+      "id": "10",
+      "name": "domain crossing",
+      "exits": {
+        "E": "11",
+        "NE": "12",
+        "NW": "9"
+      },
+      "areacode": "",
+      "contents": [
+        "darkshrine"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "726",
+      "y": "216",
+      "id": "11",
+      "name": "estate path",
+      "exits": {
+        "NE": "12"
+      },
+      "areacode": "",
+      "contents": [
+        "silver-key",
+        "silver-door"
+      ],
+      "dangerous": "false",
+      "content_directions": []
+    },
+    {
+      "x": "793",
+      "y": "128",
+      "id": "12",
+      "name": "aspirant's trial",
+      "exits": {},
+      "areacode": "",
+      "contents": [],
+      "dangerous": "false",
+      "content_directions": []
+    }
+  ],
+  "trap1": "Saws",
+  "trap2": "Spikes",
+  "phase1": "Portals",
+  "phase2": "Gargoyles",
+  "weapon": "TwoHandedMace",
+  "difficulty": "Cruel",
+  "section1layout": "cruel_double_down",
+  "section2layout": "triangle",
+  "section3layout": "plane"
+}
