@@ -34,10 +34,18 @@
 		divineRate = 0,
 		onQueueGem,
 		labMode = 'normal',
+		dedicationVariant,
+		onDedicationVariantChange,
+		normalVariant,
+		onNormalVariantChange,
 	}: {
 		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		labMode?: 'normal' | 'dedication';
+		dedicationVariant?: string;
+		onDedicationVariantChange?: (variant: string) => void;
+		normalVariant?: string;
+		onNormalVariantChange?: (variant: string) => void;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -106,20 +114,41 @@
 	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
 
-	// The comparator owns its own market, the same way it owns the variant in
-	// Normal mode. Switching modes resets it to that mode's first market: a
-	// variant the current mode cannot show would price gems against a market
-	// nothing else on screen describes.
+	// The market is NOT the comparator's to own. It is what Rust stamps onto the
+	// uploaded font session and onto every OCR push to a paired web view, so a
+	// locally-held copy made the recorded run and the comparison disagree — a
+	// 21/23 session priced and trade-searched at 21/20. The owner supplies it per
+	// mode and receives changes back (handleVariantChange), so this picker, the
+	// header, the persisted setting and the web view cannot drift apart.
+	//
+	// Without the prop the comparator falls back to owning it, and then only
+	// corrects a market the current mode cannot show: snapping to a market no
+	// caller tracks would rubber-band the picker on every click.
+	let ownerVariant = $derived.by(() => {
+		const supplied = isDedication ? dedicationVariant : normalVariant;
+		if (supplied === undefined) return null; // no owner — see below
+		if (activeVariants.includes(supplied)) return supplied;
+		// Supplied but unusable. Self-owning silently would leave this picker
+		// working while Rust and the paired web view keep using the bad market,
+		// which is the drift this arrangement exists to remove.
+		console.warn('[comparator] owner supplied a market this mode cannot show:', supplied);
+		return null;
+	});
+
+	// Rows are fetched per market AND per mode (loadResults sends the mode), so
+	// the mode has to trigger a refetch in its own right. Keying only on the
+	// market string works today solely because the two market lists are
+	// disjoint — one shared string and a mode flip would leave the previous
+	// mode's rows on screen, priced and unrefetched.
+	let loadedForMode: string | null = null;
+
 	$effect(() => {
-		if (isDedication && !(DEDICATION_VARIANTS as readonly string[]).includes(variant)) {
-			variant = DEDICATION_VARIANTS[0];
-			dropTradeData();
-			loadResults();
-		} else if (!isDedication && !NORMAL_VARIANTS.includes(variant)) {
-			variant = '20/20';
-			dropTradeData();
-			loadResults();
-		}
+		const target = ownerVariant ?? (activeVariants.includes(variant) ? variant : (isDedication ? DEDICATION_VARIANTS[0] : '20/20'));
+		if (variant === target && loadedForMode === labMode) return;
+		variant = target;
+		loadedForMode = labMode;
+		dropTradeData();
+		loadResults();
 	});
 
 	// Trade lookups are keyed by gem name alone and Dedication rows carry no
@@ -446,6 +475,10 @@
 	}
 
 	function handleVariantChange() {
+		// Push the pick up to the owner: the header, the persisted setting, the
+		// run upload and the paired web view all read it from there.
+		if (isDedication) onDedicationVariantChange?.(variant);
+		else onNormalVariantChange?.(variant);
 		dropTradeData();
 		loadResults();
 	}

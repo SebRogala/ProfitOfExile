@@ -61,6 +61,12 @@ pub struct Settings {
     /// and the comparator together.
     #[serde(default = "default_dedication_variant")]
     pub dedication_variant: String,
+    /// Normal-mode market selector: "20/20" (default), "20/0", "1/20" or "1/0".
+    /// The Normal counterpart of `dedication_variant`, and read for the same
+    /// reason: it is the market OCR'd gems are priced against, on this window
+    /// and on any paired web view.
+    #[serde(default = "default_normal_variant")]
+    pub normal_variant: String,
     /// Show low-confidence gems in rankings (default: false).
     #[serde(default)]
     pub show_low_confidence: bool,
@@ -80,6 +86,10 @@ fn default_dedication_pool() -> String {
 
 fn default_dedication_variant() -> String {
     "21/23".to_string()
+}
+
+fn default_normal_variant() -> String {
+    "20/20".to_string()
 }
 
 pub const DEFAULT_TRADE_STALE_WARN_SECS: u32 = 120;
@@ -135,6 +145,7 @@ impl Default for Settings {
             autoclear_minutes: default_autoclear_minutes(),
             dedication_pool: default_dedication_pool(),
             dedication_variant: default_dedication_variant(),
+            normal_variant: default_normal_variant(),
             // Default ON — see the note in the web BestPlays component: at
             // 20-level variants a thin market is normal, so hiding flagged gems
             // by default reproduces the POE-131 ranking gap.
@@ -242,6 +253,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         autoclear_minutes: *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()),
         dedication_pool: state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         dedication_variant: state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        normal_variant: state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         show_low_confidence: *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
@@ -356,5 +368,6 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.autoclear_minutes.lock().unwrap_or_else(|e| e.into_inner()) = settings.autoclear_minutes;
     *state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_pool.clone();
     *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_variant.clone();
+    *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
     *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
 }

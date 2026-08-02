@@ -145,6 +145,7 @@ pub struct AppState {
     /// Dedication corrupted variant: "21/23" or "21/20". Selects which corrupted
     /// market the Dedication views read. Persisted to settings.
     pub dedication_variant: Mutex<String>,
+    pub normal_variant: Mutex<String>,
     pub show_low_confidence: Mutex<bool>,
     /// App-wide cross-window state SSOT (POE-128). Rust-owned; overlays read it
     /// by polling the `get_ssot` command. See src/ssot.rs.
@@ -401,6 +402,13 @@ fn reset_all_settings(app: AppHandle) {
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
     // Save fresh settings
     persist_settings(&app);
+    // Tell the windows. Lab mode and both markets live in AppState and are
+    // mirrored by LabPage, which reads them once at mount — without this the
+    // mirror keeps showing the pre-reset market while every scan is stamped
+    // with the reset one, and the paired web view follows Rust, not the mirror.
+    if let Err(e) = app.emit("settings-reset", ()) {
+        log::warn!("emit settings-reset failed: {}", e);
+    }
     app_log(&app, "All settings reset to defaults".to_string());
     emit_status(&app);
     restart_log_watcher(app);
@@ -1205,8 +1213,19 @@ fn get_lab_mode(app: AppHandle) -> String {
 
 #[tauri::command]
 fn set_lab_mode(mode: String, app: AppHandle) {
+    // Every consumer compares against "Dedication" exactly, and the wire format
+    // toward the web view is lowercase — so an unnormalised "dedication" would
+    // fall through every check to Normal, silently and consistently.
+    let normalized = match mode.to_ascii_lowercase().as_str() {
+        "dedication" => "Dedication",
+        "normal" => "Normal",
+        _ => {
+            app_log(&app, format!("Ignoring unknown lab mode: {}", mode));
+            return;
+        }
+    };
     let state = app.state::<AppState>();
-    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
+    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = String::from(normalized);
     persist_settings(&app);
 }
 
@@ -1249,6 +1268,20 @@ fn get_dedication_variant(app: AppHandle) -> String {
 fn set_dedication_variant(variant: String, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = variant;
+    persist_settings(&app);
+}
+
+#[tauri::command]
+fn get_normal_variant(app: AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let value = state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    value
+}
+
+#[tauri::command]
+fn set_normal_variant(variant: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = variant;
     persist_settings(&app);
 }
 
@@ -1302,12 +1335,19 @@ async fn send_test_gems(app: AppHandle) -> Result<String, String> {
 
     let http = state.server_http.clone();
 
+    // Same wire format and same receiver as the real scan, so it has to carry
+    // the same market — otherwise "test the pairing pipe" tests a shape the pipe
+    // never sends in Dedication.
+    let variant = current_gem_variant(&state);
+    let mode = current_lab_mode_tag(&state);
+
     let res = http
         .post(&url)
         .json(&serde_json::json!({
             "pair": pair,
             "gems": gems,
-            "variant": "20/20"
+            "variant": variant,
+            "mode": mode
         }))
         .send()
         .await
@@ -1333,12 +1373,44 @@ async fn send_test_gems(app: AppHandle) -> Result<String, String> {
     }
 }
 
+/// The mode those gems were scanned in, in the web view's own vocabulary. Sent
+/// alongside the market because a market alone cannot be validated: the paired
+/// view only knows its OWN mode's markets, so a market from the other mode fails
+/// its check and — before this — was dropped without a word.
+fn current_lab_mode_tag(state: &tauri::State<'_, AppState>) -> &'static str {
+    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if lab_mode == "Dedication" { "dedication" } else { "normal" }
+}
+
+/// The market OCR'd gems are priced against, and the single source of truth for
+/// it: the selected corrupted market in Dedication, the selected plain market
+/// otherwise. Both live here rather than in a window, because two windows and
+/// the paired web view all have to agree on which market they are describing.
+///
+/// It used to be a hardcoded "20/20", which is not even one of the Dedication
+/// markets — the web view took it, failed to match it, and silently priced
+/// corrupted gems against the uncorrupted market.
+fn current_gem_variant(state: &tauri::State<'_, AppState>) -> String {
+    let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if lab_mode == "Dedication" {
+        state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    } else {
+        state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
     let state = app.state::<AppState>();
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let url = format!("{}/api/desktop/gems", server);
     let http = state.server_http.clone();
+
+    // The web view picks its market from this field. A hardcoded 20/20 does not
+    // exist in Dedication mode, so its comparator silently fell back to the
+    // first Dedication market (21/20) whatever the player had selected.
+    let variant = current_gem_variant(&state);
+    let mode = current_lab_mode_tag(&state);
 
     app_log(app, format!("Sending {} gems to server", gems.len()));
 
@@ -1347,7 +1419,8 @@ async fn send_gems_to_server(app: &AppHandle, gems: Vec<String>) {
         .json(&serde_json::json!({
             "pair": pair,
             "gems": gems,
-            "variant": "20/20"
+            "variant": variant,
+            "mode": mode
         }))
         .send()
         .await
@@ -1765,23 +1838,20 @@ fn send_font_session_data(app: &AppHandle) {
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let dedication_variant = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
     let device_id = state.device_id.clone();
 
-    // Map lab mode to session metadata. In Dedication the run is against the
-    // selected corrupted market, so the session records that variant, not a
-    // fixed one.
-    let (lab_type, variant) = if lab_mode == "Dedication" {
-        ("Dedication", dedication_variant.as_str())
-    } else {
-        ("Unknown", "20/20")
-    };
+    // Map lab mode to session metadata. The run is against the selected market
+    // whichever mode it is in, so the session records that one — a fixed
+    // "20/20" attributed every Normal run to a market the player may not have
+    // been farming, and font_sessions.variant is crowd-sourced data.
+    let lab_type = if lab_mode == "Dedication" { "Dedication" } else { "Unknown" };
+    let variant = current_gem_variant(&state);
 
     let session_data = serde_json::json!({
         "lab_type": lab_type,
         "total_crafts": session.rounds.len(),
-        "variant": variant,
+        "variant": variant.as_str(),
         "device_id": device_id,
         "pair_code": pair,
         "rounds": session.rounds.iter().map(|r| serde_json::json!({
@@ -2382,6 +2452,7 @@ pub fn run() {
         autoclear_minutes: Mutex::new(2),
         dedication_pool: Mutex::new(String::from("skill")),
         dedication_variant: Mutex::new(String::from("21/23")),
+        normal_variant: Mutex::new(String::from("20/20")),
         show_low_confidence: Mutex::new(false),
         ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
     };
@@ -2456,6 +2527,8 @@ pub fn run() {
             set_dedication_pool,
             get_dedication_variant,
             set_dedication_variant,
+            get_normal_variant,
+            set_normal_variant,
             get_show_low_confidence,
             set_show_low_confidence,
         ])
