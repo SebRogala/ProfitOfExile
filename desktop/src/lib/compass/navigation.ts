@@ -1142,10 +1142,57 @@ export function getNextDirection(state: NavState): string | null {
 	return null;
 }
 
-const OPPOSITE_DIR: Record<string, string> = {
+export const OPPOSITE_DIR: Record<string, string> = {
 	N: 'S', S: 'N', E: 'W', W: 'E',
 	NE: 'SW', SW: 'NE', NW: 'SE', SE: 'NW',
 };
+
+/**
+ * Every door of every room, keyed by room id — the drawable counterpart of the
+ * adjacency built in `loadLayout`, and gated by the same two one-way rules.
+ *
+ * poelab exits are DIRECTED and forward-only, so a dead-end branch room carries
+ * `exits: {}` — room 3 of the 2026-08-02 Uber layout, for one. Rendering only
+ * the listed exits left those rooms with no door marker at all, though the
+ * player walks in and back out through a real one.
+ *
+ * A reverse door is added only when the target room does not already describe
+ * that connection itself, and only when the direction is still free: two doors
+ * on one direction land on the exact same point of the circle (the angle is a
+ * pure function of the direction), so the second would silently cover the
+ * first — and covering an on-route door with an off-route one is the very
+ * confusion the marker exists to prevent.
+ *
+ * Secret passages ('C') and beaten trial gates get no reverse door: the game
+ * does not open either from the far side, so drawing one would advertise a way
+ * back that does not exist.
+ */
+export function deriveRoomDoors(rooms: LabLayoutRoom[]): Map<string, [string, string][]> {
+	const doors = new Map<string, [string, string][]>();
+	for (const room of rooms) {
+		doors.set(room.id, Object.entries(room.exits) as [string, string][]);
+	}
+
+	const sectionFirstRooms = computeSectionFirstRooms(rooms);
+
+	for (const room of rooms) {
+		for (const [direction, targetId] of Object.entries(room.exits)) {
+			if (direction === 'C') continue;
+			if (room.name.toLowerCase() === "aspirant's trial" && sectionFirstRooms.has(targetId)) {
+				continue;
+			}
+
+			const back = OPPOSITE_DIR[direction];
+			const targetDoors = doors.get(targetId);
+			if (!back || !targetDoors) continue;
+			if (targetDoors.some(([dir, id]) => id === room.id || dir === back)) continue;
+
+			targetDoors.push([back, room.id]);
+		}
+	}
+
+	return doors;
+}
 
 /** Get the exit text description (e.g., "Northwest Exit To Estate Path"). */
 export function getNextExitText(state: NavState): string | null {
