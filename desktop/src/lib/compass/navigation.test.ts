@@ -7,12 +7,14 @@ import {
 	roomCost,
 	toggleTargetRoom,
 	isRoomNamePriced,
+	deriveRoomDoors,
 	routeCost,
 	type LabLayout,
 	type RouteStrategy,
 	type NavState,
 } from './navigation';
 import cruel20260801 from './__fixtures__/poelab-prod-2026-08-01-cruel.json';
+import uber20260802 from './__fixtures__/poelab-prod-2026-08-02-uber.json';
 
 /** Build a minimal lab layout for testing. */
 function makeLayout(rooms: { id: string; name: string; x: string; exits: Record<string, string>; contents?: string[] }[]): LabLayout {
@@ -1058,5 +1060,89 @@ describe('real poelab layouts', () => {
 				expect(replanned, `at ${walked.join('>')} | route ${state.plannedRoute.join('>')}`).toEqual([]);
 			}
 		});
+
+		// The overlay marks each door on the room circle at the angle of its
+		// direction, so two doors sharing a direction land on the same point and
+		// the second hides the first — including hiding an on-route door behind
+		// an off-route one.
+		it(`should give every room at most one door per direction in ${name}`, () => {
+			for (const [roomId, doors] of deriveRoomDoors(layout.rooms)) {
+				const dirs = doors.map(([dir]) => dir);
+				expect(new Set(dirs).size, `${roomId}: ${dirs.join(',')}`).toBe(dirs.length);
+			}
+		});
+
+		// A room the player can walk into has a door they can walk back out of.
+		// poelab lists exits forward-only, so a dead-end branch room describes
+		// none of its own and rendered no door marker at all.
+		it(`should give every reachable room a door in ${name}`, () => {
+			const doors = deriveRoomDoors(layout.rooms);
+			const reachable = new Set(
+				layout.rooms.flatMap((room) => Object.values(room.exits) as string[]),
+			);
+			for (const roomId of reachable) {
+				expect(doors.get(roomId)?.length, `room ${roomId}`).toBeGreaterThan(0);
+			}
+		});
+
+		// Doors are what the player can still use. A beaten trial cannot be
+		// re-entered and a secret passage does not open from the far side, so
+		// neither may earn a reverse door — the same two exceptions the adjacency
+		// build makes.
+		it(`should not invent a door back through a trial or secret passage in ${name}`, () => {
+			const doors = deriveRoomDoors(layout.rooms);
+			const roomById = new Map(layout.rooms.map((r) => [r.id, r]));
+
+			for (const [roomId, roomDoors] of doors) {
+				for (const [, targetId] of roomDoors) {
+					const target = roomById.get(targetId);
+					if (!target) continue;
+					// Own exits are always legitimate; only added reverses are checked.
+					if (Object.values(roomById.get(roomId)!.exits).includes(targetId)) continue;
+
+					expect(
+						target.name.toLowerCase() === "aspirant's trial",
+						`${roomId} got a door back into trial ${targetId}`,
+					).toBe(false);
+					expect(
+						Object.entries(target.exits).some(([d, id]) => id === roomId && d === 'C'),
+						`${roomId} got a door back through secret passage from ${targetId}`,
+					).toBe(false);
+				}
+			}
+		});
 	}
+});
+
+// The 2026-08-02 Uber layout is the one the 0.7.3 overlay mis-tracked: rooms 3
+// and 7 are both "sepulchre annex", 7 holds the golden key, and Client.txt
+// announced the name twice on entry.
+describe('2026-08-02 Uber layout', () => {
+	const layout = uber20260802 as unknown as LabLayout;
+
+	it('should stay in the golden-key room when its name is announced twice', () => {
+		const state = processEvents(layout, [
+			{ type: 'PlazaEntered' },
+			{ type: 'RoomChanged', name: 'Estate Path' },
+			{ type: 'RoomChanged', name: 'Estate Crossing' },
+			{ type: 'RoomChanged', name: "Aspirant's Trial" },
+			{ type: 'RoomChanged', name: 'Sepulchre Atrium' },
+			{ type: 'RoomChanged', name: 'Sepulchre Annex' },
+			{ type: 'RoomChanged', name: 'Sepulchre Annex' },
+		]);
+
+		// Room 3 is the other "sepulchre annex" — a dead end back in section 1,
+		// behind a beaten Izaro. Landing there re-planned the run from scratch.
+		expect(state.currentRoom).toBe('7');
+		expect(state.plannedRoute[0]).toBe('7');
+	});
+
+	it('should mark the dead-end branch rooms with the door they were entered by', () => {
+		const doors = deriveRoomDoors(layout.rooms);
+
+		// Rooms 3, 4 and 7 carry `exits: {}` in the payload.
+		expect(doors.get('3')).toEqual([['NE', '2']]);
+		expect(doors.get('4')).toEqual([['SW', '2']]);
+		expect(doors.get('7')).toEqual([['SE', '6']]);
+	});
 });

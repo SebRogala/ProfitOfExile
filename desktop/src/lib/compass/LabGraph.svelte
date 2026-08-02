@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { deriveRoomDoors } from './navigation';
 	import type { NavState } from './navigation';
 	import type { LabLayoutRoom } from './navigation';
 
@@ -108,6 +109,13 @@
 			};
 		});
 	});
+
+	// Doors to mark, including the reverse ones poelab's forward-only exits omit.
+	// Only the dots use this — `connections` still iterates the raw exits, so
+	// every line keeps its single forward start point.
+	let doorsByRoom = $derived(
+		navState.layout ? deriveRoomDoors(navState.layout.rooms) : new Map<string, [string, string][]>(),
+	);
 
 	// Directed connections: from exit dot on source room → target room perimeter
 	interface Connection {
@@ -374,7 +382,7 @@
 	{#each roomNodes as node (node.room.id + '-dots')}
 		{@const nr = nodeR(node)}
 		{#if !node.isTrial}
-			{#each Object.entries(node.room.exits) as [dir, targetId]}
+			{#each doorsByRoom.get(node.room.id) ?? [] as [dir, targetId]}
 				{#if dir !== 'C'}
 					{@const dot = exitDotPos(node.cx, node.cy, dir, nr)}
 					{@const pairKey = [node.room.id, targetId].sort().join('|')}
@@ -382,11 +390,15 @@
 					     suffix for line dedup, so comparing it to a bare pairKey
 					     never matches and every dot silently rendered grey. -->
 					{@const isRouteExit = connections.some(c => c.pairKey === pairKey && c.onRoute)}
+					<!-- The room you are STANDING IN is the one whose doors you need:
+					     its dots get a dark rim so the current-room fill and glow
+					     cannot swallow them. Visited rooms dim, but stay readable —
+					     at 0.2 they were invisible on a transparent overlay. -->
 					<circle cx={dot.x} cy={dot.y} r={compact ? 2 : (isRouteExit ? 5 : 4.5)}
 						fill={isRouteExit ? '#10b981' : '#94a3b8'}
-						stroke={isRouteExit ? '#059669' : '#64748b'}
-						stroke-width={compact ? 0.5 : 1}
-						opacity={node.isVisited ? 0.2 : 1} />
+						stroke={node.isCurrent ? '#0f172a' : (isRouteExit ? '#059669' : '#64748b')}
+						stroke-width={compact ? 0.5 : (node.isCurrent ? 1.5 : 1)}
+						opacity={node.isVisited ? 0.5 : 1} />
 				{/if}
 			{/each}
 		{/if}
