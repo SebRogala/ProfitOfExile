@@ -171,6 +171,24 @@
 		}
 	}
 
+	// A desktop scan that belongs to the other mode. The desktop is the source of
+	// truth for which market it scanned, so the page follows it rather than
+	// letting the wrong comparator price the gems — and carries the scan across
+	// the switch, since the comparator for the new mode mounts empty.
+	let pendingDesktopGems = $state<{ gems: string[]; variant?: string } | null>(null);
+
+	function handleDesktopModeMismatch(mode: 'normal' | 'dedication', gems: string[], variant?: string) {
+		pendingDesktopGems = { gems, variant };
+		handleLabChange(mode === 'dedication' ? 'Dedication' : 'Normal');
+	}
+
+	// Dropped as soon as it has been applied. Held any longer, the next manual
+	// mode toggle mounts a comparator that replays the same scan — into the mode
+	// it was NOT scanned in.
+	function handleDesktopHandoverConsumed() {
+		pendingDesktopGems = null;
+	}
+
 	function handleLabChange(lab: string) {
 		selectedLab = lab;
 		if (typeof window !== 'undefined') {
@@ -228,7 +246,7 @@
 
 	{#if isDedication}
 		<FontEVCompare {refreshKey} league={status?.league || ''} labMode="dedication" />
-		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} labMode="dedication" />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} onDesktopModeMismatch={handleDesktopModeMismatch} onDesktopHandoverConsumed={handleDesktopHandoverConsumed} {pendingDesktopGems} labMode="dedication" />
 		<SessionQueue
 			queue={sessionQueue}
 			onRemove={handleRemoveFromQueue}
@@ -238,7 +256,7 @@
 
 		<ByVariant allPlays={bestPlays} league={status?.league || ''} labMode="dedication" />
 	{:else if !loading}
-		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} />
+		<Comparator league={status?.league || ''} {refreshKey} onQueueGem={handleQueueGem} {desktopPair} onDesktopDisconnect={() => { desktopPair = null; }} onDesktopModeMismatch={handleDesktopModeMismatch} onDesktopHandoverConsumed={handleDesktopHandoverConsumed} {pendingDesktopGems} />
 
 		<SessionQueue
 			queue={sessionQueue}

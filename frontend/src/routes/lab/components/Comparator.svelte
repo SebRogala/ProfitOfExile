@@ -16,14 +16,22 @@
 		onQueueGem,
 		desktopPair = null,
 		onDesktopDisconnect,
+		onDesktopModeMismatch,
+		onDesktopHandoverConsumed,
 		labMode = 'normal',
+		pendingDesktopGems = null,
 	}: {
 		league?: string;
 		refreshKey?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		desktopPair?: string | null;
 		onDesktopDisconnect?: () => void;
+		onDesktopModeMismatch?: (mode: 'normal' | 'dedication', gems: string[], variant?: string) => void;
+		/** Called once the handed-over scan has been applied, so the page can drop it. */
+		onDesktopHandoverConsumed?: () => void;
 		labMode?: 'normal' | 'dedication';
+		/** A scan handed over from the other mode's comparator, replayed on mount. */
+		pendingDesktopGems?: { gems: string[]; variant?: string } | null;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -80,6 +88,8 @@
 
 	// --- Desktop pairing state ---
 	let desktopConnected = $state(false);
+	/** Set when a scan arrived for a market this view cannot show. */
+	let scanMarketWarning = $state('');
 	let activePairCode = $derived(desktopPair || getPairCode());
 
 	$effect(() => {
@@ -87,15 +97,18 @@
 		if (!code) return;
 
 		const unsub = subscribeToDesktopGems(
-			(gems, detectedVariant) => {
-				// Set variant if different
-				if (activeVariants.includes(detectedVariant) && detectedVariant !== variant) {
-					variant = detectedVariant;
+			(gems, detectedVariant, detectedMode) => {
+				// The desktop owns the market its scan belongs to. When that scan
+				// came from the other lab mode, this view cannot price it — the
+				// gems would land on whatever market happened to be selected,
+				// corrupted against uncorrupted. Hand it up to the page, which
+				// switches modes and replays it.
+				const mode = scanMode(detectedVariant, detectedMode);
+				if (mode !== labMode) {
+					onDesktopModeMismatch?.(mode, gems, detectedVariant);
+					return;
 				}
-				// Replace selected gems with detected ones (up to 3)
-				selectedGems = gems.slice(0, 3);
-				loadResults();
-				fetchTradeDataForAll();
+				applyDesktopScan(gems, detectedVariant);
 			},
 			(connected) => {
 				desktopConnected = connected;
@@ -106,6 +119,49 @@
 			unsub();
 			desktopConnected = false;
 		};
+	});
+
+	/**
+	 * The mode a scan belongs to. Desktop builds before the mode field sent none,
+	 * but the two markets sets are disjoint, so the market itself answers it —
+	 * and it answers it for a server too old to relay the field as well.
+	 */
+	function scanMode(scanVariant?: string, sentMode?: 'normal' | 'dedication'): 'normal' | 'dedication' {
+		if (sentMode) return sentMode;
+		return scanVariant && (DEDICATION_VARIANTS as readonly string[]).includes(scanVariant)
+			? 'dedication'
+			: 'normal';
+	}
+
+	/**
+	 * Apply a scan this mode CAN price. A market this view cannot show is said
+	 * out loud rather than quietly ignored: the cards render fully priced either
+	 * way, so a console warning is indistinguishable from a correct comparison.
+	 */
+	function applyDesktopScan(gems: string[], scanVariant?: string) {
+		if (scanVariant && activeVariants.includes(scanVariant)) {
+			if (scanVariant !== variant) variant = scanVariant;
+			scanMarketWarning = '';
+		} else {
+			scanMarketWarning = `Desktop scanned the ${scanVariant ?? 'unknown'} market; showing ${variant}.`;
+		}
+		selectedGems = gems.slice(0, 3);
+		loadResults();
+		fetchTradeDataForAll();
+	}
+
+	// A scan that arrived while the other mode was on screen, replayed into the
+	// instance the switch mounted. Consuming it clears it at the page: the guard
+	// below only covers this instance, and a mode toggle mounts a fresh one that
+	// would otherwise replay the same stale scan — into the mode it was NOT
+	// scanned in, which is the mispricing this whole path exists to prevent.
+	let replayedHandover = false;
+	$effect(() => {
+		if (!pendingDesktopGems || replayedHandover) return;
+		replayedHandover = true;
+		const { gems, variant: handedVariant } = pendingDesktopGems;
+		applyDesktopScan(gems, handedVariant);
+		onDesktopHandoverConsumed?.();
 	});
 
 	function disconnectDesktop() {
@@ -461,6 +517,10 @@
 		</div>
 	</div>
 
+	{#if scanMarketWarning}
+		<p class="scan-market-warning">{scanMarketWarning}</p>
+	{/if}
+
 	<div class="comparator-input">
 		<div class="tags-row">
 			{#each selectedGems as gem, i}
@@ -813,6 +873,15 @@
 	}
 	.select-label {
 		color: var(--color-lab-text-secondary);
+		font-size: 0.9375rem;
+	}
+	.scan-market-warning {
+		margin: 8px 0 0;
+		padding: 8px 12px;
+		border-radius: 6px;
+		background: rgba(234, 179, 8, 0.12);
+		border: 1px solid rgba(234, 179, 8, 0.35);
+		color: #eab308;
 		font-size: 0.9375rem;
 	}
 

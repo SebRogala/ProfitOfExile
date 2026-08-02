@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { setDivineRate } from '$lib/price.svelte';
@@ -39,15 +40,6 @@
 	let isDedication = $derived(labMode === 'Dedication');
 	let labModeForChild = $derived<'normal' | 'dedication'>(isDedication ? 'dedication' : 'normal');
 
-	// Load persisted lab mode from Rust on mount
-	$effect(() => {
-		invoke<string>('get_lab_mode').then((mode) => {
-			if (mode === 'Normal' || mode === 'Dedication') {
-				labMode = mode;
-			}
-		}).catch(e => console.warn('[LabPage] get_lab_mode failed:', e));
-	});
-
 	// --- Dedication variant ---
 	// 21/23 and 21/20 are separate corrupted markets, and every analysis surface
 	// now shows both at once. This selection is what Rust stamps onto uploaded
@@ -55,25 +47,92 @@
 	// player is actually feeding the font — it is not a view filter.
 	let dedVariant = $state<DedicationVariant>('21/23');
 
-	// Restore the persisted market. Nothing waits on this any more — it only has
-	// to land before the player finishes a run, since its one consumer is the
-	// session upload in Rust.
-	invoke<string>('get_dedication_variant')
-		.then((v) => {
-			if ((DEDICATION_VARIANTS as readonly string[]).includes(v)) {
-				dedVariant = v as DedicationVariant;
-			} else if (v) {
-				// Correct the stored value too. The UI refuses to display it, but
-				// Rust keeps stamping it onto every uploaded font session, which
-				// would attribute recorded runs to a market nobody was shown.
-				console.warn('[LabPage] ignoring unknown persisted dedication variant:', v);
-				invoke('set_dedication_variant', { variant: dedVariant })
-					.catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
-			}
-		})
-		.catch(e => console.warn('[LabPage] get_dedication_variant failed:', e));
+	// --- Normal-mode market ---
+	// The Normal counterpart of dedVariant, and Rust-owned for the same reason:
+	// it is the market OCR'd gems are priced against, so the paired web view has
+	// to be able to read it. It used to live only inside the comparator, which
+	// left the web view pricing at a hardcoded 20/20 whatever was selected here.
+	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
+	let normalVariant = $state('20/20');
+
+	// Rust is the owner; these are its mirror. A pick made before the restore
+	// resolves is the newer truth — applying the restore over it would leave the
+	// picker showing one market while Rust stamps scans with another, with no way
+	// back short of picking a different market and returning.
+	let pickedDedVariant = false;
+	let pickedNormalVariant = false;
+
+	/**
+	 * Pull mode and both markets from Rust into the mirror.
+	 *
+	 * `authoritative` is for a reset, which replaces what the player picked:
+	 * the ordinary mount-time restore defers to a pick that already happened.
+	 */
+	function restoreFromRust(authoritative = false) {
+		invoke<string>('get_lab_mode')
+			.then((mode) => {
+				if (mode === 'Normal' || mode === 'Dedication') labMode = mode;
+			})
+			.catch(e => console.warn('[LabPage] get_lab_mode failed:', e));
+
+		invoke<string>('get_dedication_variant')
+			.then((v) => {
+				if (pickedDedVariant && !authoritative) return;
+				if ((DEDICATION_VARIANTS as readonly string[]).includes(v)) {
+					dedVariant = v as DedicationVariant;
+				} else if (v) {
+					// Correct the stored value too. The UI refuses to display it, but
+					// Rust keeps stamping it onto every uploaded font session, which
+					// would attribute recorded runs to a market nobody was shown.
+					console.warn('[LabPage] ignoring unknown persisted dedication variant:', v);
+					invoke('set_dedication_variant', { variant: dedVariant })
+						.catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
+				}
+			})
+			.catch(e => console.warn('[LabPage] get_dedication_variant failed:', e));
+
+		invoke<string>('get_normal_variant')
+			.then((v) => {
+				if (pickedNormalVariant && !authoritative) return;
+				if (NORMAL_VARIANTS.includes(v)) {
+					normalVariant = v;
+				} else if (v) {
+					console.warn('[LabPage] ignoring unknown persisted normal variant:', v);
+					invoke('set_normal_variant', { variant: normalVariant })
+						.catch(e => console.warn('[LabPage] set_normal_variant failed:', e));
+				}
+			})
+			.catch(e => console.warn('[LabPage] get_normal_variant failed:', e));
+	}
+
+	restoreFromRust();
+
+	// Reset Everything rewrites mode and both markets in Rust. This page reads
+	// them once, so without re-reading the mirror would keep showing the
+	// pre-reset market while every scan carried the reset one.
+	$effect(() => {
+		let cancelled = false;
+		const unlistenPromise = listen('settings-reset', () => {
+			if (cancelled) return;
+			pickedDedVariant = false;
+			pickedNormalVariant = false;
+			restoreFromRust(true);
+		});
+		return () => {
+			cancelled = true;
+			unlistenPromise.then(unlisten => unlisten());
+		};
+	});
+
+	function handleNormalVariantChange(variant: string) {
+		pickedNormalVariant = true;
+		if (variant === normalVariant) return;
+		normalVariant = variant;
+		invoke('set_normal_variant', { variant }).catch(e => console.warn('[LabPage] set_normal_variant failed:', e));
+	}
 
 	function handleDedVariantChange(variant: DedicationVariant) {
+		pickedDedVariant = true;
 		if (variant === dedVariant) return;
 		dedVariant = variant;
 		invoke('set_dedication_variant', { variant }).catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
@@ -407,7 +466,15 @@
 		<!-- Comparator + SessionQueue always mounted (event listeners must stay active).
 		     Hidden via CSS when not on Session tab to avoid unmount/remount. -->
 		<div class:tab-hidden={activeTab !== 'Session'}>
-			<Comparator divineRate={status?.divinePrice || 0} onQueueGem={handleQueueGem} labMode={labModeForChild} />
+			<Comparator
+				divineRate={status?.divinePrice || 0}
+				onQueueGem={handleQueueGem}
+				labMode={labModeForChild}
+				dedicationVariant={dedVariant}
+				onDedicationVariantChange={(v) => handleDedVariantChange(v as DedicationVariant)}
+				normalVariant={normalVariant}
+				onNormalVariantChange={handleNormalVariantChange}
+			/>
 			<SessionQueue
 				queue={sessionQueue}
 				onRemove={handleRemoveFromQueue}

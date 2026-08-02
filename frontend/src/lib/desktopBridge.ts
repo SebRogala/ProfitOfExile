@@ -28,7 +28,11 @@ export function clearPairCode(): void {
  * Returns an unsubscribe function that closes the EventSource.
  */
 export function subscribeToDesktopGems(
-	onGemsDetected: (gems: string[], variant: string) => void,
+	// `mode` is the lab mode the desktop scanned in, absent from older desktop
+	// builds. The market is only interpretable against it: "21/23" means nothing
+	// to a Normal-mode view, and "20/20" is a real market in Normal and no market
+	// at all in Dedication.
+	onGemsDetected: (gems: string[], variant: string, mode?: 'normal' | 'dedication') => void,
 	onConnectionChange?: (connected: boolean) => void
 ): () => void {
 	const pairCode = getPairCode();
@@ -68,7 +72,7 @@ export function subscribeToDesktopGems(
 				try {
 					const data = JSON.parse(msg.data);
 					if (data.type === 'gems-detected' && Array.isArray(data.gems)) {
-						onGemsDetected(data.gems, data.variant || '20/20');
+						onGemsDetected(data.gems, data.variant || '20/20', data.mode);
 					} else {
 						console.warn('[DesktopBridge] Unexpected message type:', data.type);
 					}

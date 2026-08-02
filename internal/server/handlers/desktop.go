@@ -14,6 +14,10 @@ type desktopGemsRequest struct {
 	Pair    string   `json:"pair"`
 	Gems    []string `json:"gems"`
 	Variant string   `json:"variant"`
+	// Mode is the lab mode the desktop scanned in ("normal" or "dedication").
+	// Relayed so the web comparator can tell an unknown market from one that
+	// belongs to the other mode — the markets alone do not say which.
+	Mode string `json:"mode"`
 }
 
 // pairPattern matches exactly 4 alphanumeric characters.
@@ -72,6 +76,9 @@ func DesktopGems(mercureURL, mercureSecret string) http.HandlerFunc {
 		}
 		if body.Variant != "" {
 			eventPayload["variant"] = body.Variant
+		}
+		if body.Mode == "normal" || body.Mode == "dedication" {
+			eventPayload["mode"] = body.Mode
 		}
 
 		payloadJSON, err := json.Marshal(eventPayload)
