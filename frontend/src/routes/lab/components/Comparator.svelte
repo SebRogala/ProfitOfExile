@@ -16,22 +16,14 @@
 		onQueueGem,
 		desktopPair = null,
 		onDesktopDisconnect,
-		onDesktopModeMismatch,
-		onDesktopHandoverConsumed,
 		labMode = 'normal',
-		pendingDesktopGems = null,
 	}: {
 		league?: string;
 		refreshKey?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		desktopPair?: string | null;
 		onDesktopDisconnect?: () => void;
-		onDesktopModeMismatch?: (mode: 'normal' | 'dedication', gems: string[], variant?: string) => void;
-		/** Called once the handed-over scan has been applied, so the page can drop it. */
-		onDesktopHandoverConsumed?: () => void;
 		labMode?: 'normal' | 'dedication';
-		/** A scan handed over from the other mode's comparator, replayed on mount. */
-		pendingDesktopGems?: { gems: string[]; variant?: string } | null;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -98,14 +90,12 @@
 
 		const unsub = subscribeToDesktopGems(
 			(gems, detectedVariant, detectedMode) => {
-				// The desktop owns the market its scan belongs to. When that scan
-				// came from the other lab mode, this view cannot price it — the
-				// gems would land on whatever market happened to be selected,
-				// corrupted against uncorrupted. Hand it up to the page, which
-				// switches modes and replays it.
-				const mode = scanMode(detectedVariant, detectedMode);
-				if (mode !== labMode) {
-					onDesktopModeMismatch?.(mode, gems, detectedVariant);
+				// A scan from the other lab mode cannot be priced here — its market
+				// is not one this view knows, so the gems would land on whatever
+				// market happened to be selected, corrupted against uncorrupted.
+				// Say so and change nothing: the player decides whether to switch.
+				if (detectedMode && detectedMode !== labMode) {
+					scanMarketWarning = `Desktop scanned in ${detectedMode} mode; switch to see those gems.`;
 					return;
 				}
 				applyDesktopScan(gems, detectedVariant);
@@ -120,18 +110,6 @@
 			desktopConnected = false;
 		};
 	});
-
-	/**
-	 * The mode a scan belongs to. Desktop builds before the mode field sent none,
-	 * but the two markets sets are disjoint, so the market itself answers it —
-	 * and it answers it for a server too old to relay the field as well.
-	 */
-	function scanMode(scanVariant?: string, sentMode?: 'normal' | 'dedication'): 'normal' | 'dedication' {
-		if (sentMode) return sentMode;
-		return scanVariant && (DEDICATION_VARIANTS as readonly string[]).includes(scanVariant)
-			? 'dedication'
-			: 'normal';
-	}
 
 	/**
 	 * Apply a scan this mode CAN price. A market this view cannot show is said
@@ -149,20 +127,6 @@
 		loadResults();
 		fetchTradeDataForAll();
 	}
-
-	// A scan that arrived while the other mode was on screen, replayed into the
-	// instance the switch mounted. Consuming it clears it at the page: the guard
-	// below only covers this instance, and a mode toggle mounts a fresh one that
-	// would otherwise replay the same stale scan — into the mode it was NOT
-	// scanned in, which is the mispricing this whole path exists to prevent.
-	let replayedHandover = false;
-	$effect(() => {
-		if (!pendingDesktopGems || replayedHandover) return;
-		replayedHandover = true;
-		const { gems, variant: handedVariant } = pendingDesktopGems;
-		applyDesktopScan(gems, handedVariant);
-		onDesktopHandoverConsumed?.();
-	});
 
 	function disconnectDesktop() {
 		clearPairCode();
@@ -374,6 +338,10 @@
 	}
 
 	function handleVariantChange() {
+		// The warning names the market these rows are being shown at, so a manual
+		// switch answers it — left standing it would keep contradicting the label
+		// the player just chose.
+		scanMarketWarning = '';
 		// Same reason as the market switch: 20/20 and 1/0 are different markets,
 		// so the previous variant's listing prices must not sit beside the new
 		// variant's label while the refetch is in flight.

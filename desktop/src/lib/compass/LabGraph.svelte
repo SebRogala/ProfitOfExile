@@ -192,11 +192,31 @@
 					startY = exitDot.y;
 				}
 
-				// End: clip to target room perimeter
-				const dx = toNode.cx - startX, dy = toNode.cy - startY;
-				const dist = Math.sqrt(dx * dx + dy * dy);
-				const endX = dist > 0 ? toNode.cx - (dx / dist) * (toR + 2) : toNode.cx;
-				const endY = dist > 0 ? toNode.cy - (dy / dist) * (toR + 2) : toNode.cy;
+				// End: clipped to the target's perimeter, as ever — EXCEPT for a
+				// room whose only door is the derived one, which lists no exits of
+				// its own. There the clip point and the marker sit at different
+				// places on the rim (poelab directions are the game's compass, not
+				// screen bearings), so the line would arrive at bare circle beside
+				// a dot marking nothing. Every line that had two rooms describing
+				// it keeps the geometry it always had.
+				const targetDoor =
+					toNode.isTrial || isSecret || Object.keys(toNode.room.exits).length > 0
+						? undefined
+						: (doorsByRoom.get(toNode.room.id) ?? []).find(
+								([d, id]) => id === room.id && d !== 'C',
+							);
+
+				let endX: number, endY: number;
+				if (targetDoor) {
+					const dot = exitDotPos(toNode.cx, toNode.cy, targetDoor[0], toR);
+					endX = dot.x;
+					endY = dot.y;
+				} else {
+					const dx = toNode.cx - startX, dy = toNode.cy - startY;
+					const dist = Math.sqrt(dx * dx + dy * dy);
+					endX = dist > 0 ? toNode.cx - (dx / dist) * (toR + 2) : toNode.cx;
+					endY = dist > 0 ? toNode.cy - (dy / dist) * (toR + 2) : toNode.cy;
+				}
 
 				result.push({
 					x1: startX, y1: startY,
@@ -390,15 +410,11 @@
 					     suffix for line dedup, so comparing it to a bare pairKey
 					     never matches and every dot silently rendered grey. -->
 					{@const isRouteExit = connections.some(c => c.pairKey === pairKey && c.onRoute)}
-					<!-- The room you are STANDING IN is the one whose doors you need:
-					     its dots get a dark rim so the current-room fill and glow
-					     cannot swallow them. Visited rooms dim, but stay readable —
-					     at 0.2 they were invisible on a transparent overlay. -->
 					<circle cx={dot.x} cy={dot.y} r={compact ? 2 : (isRouteExit ? 5 : 4.5)}
 						fill={isRouteExit ? '#10b981' : '#94a3b8'}
-						stroke={node.isCurrent ? '#0f172a' : (isRouteExit ? '#059669' : '#64748b')}
-						stroke-width={compact ? 0.5 : (node.isCurrent ? 1.5 : 1)}
-						opacity={node.isVisited ? 0.5 : 1} />
+						stroke={isRouteExit ? '#059669' : '#64748b'}
+						stroke-width={compact ? 0.5 : 1}
+						opacity={node.isVisited ? 0.2 : 1} />
 				{/if}
 			{/each}
 		{/if}
