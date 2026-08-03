@@ -1213,19 +1213,8 @@ fn get_lab_mode(app: AppHandle) -> String {
 
 #[tauri::command]
 fn set_lab_mode(mode: String, app: AppHandle) {
-    // Every consumer compares against "Dedication" exactly, and the wire format
-    // toward the web view is lowercase — so an unnormalised "dedication" would
-    // fall through every check to Normal, silently and consistently.
-    let normalized = match mode.to_ascii_lowercase().as_str() {
-        "dedication" => "Dedication",
-        "normal" => "Normal",
-        _ => {
-            app_log(&app, format!("Ignoring unknown lab mode: {}", mode));
-            return;
-        }
-    };
     let state = app.state::<AppState>();
-    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = String::from(normalized);
+    *state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()) = mode;
     persist_settings(&app);
 }
 
