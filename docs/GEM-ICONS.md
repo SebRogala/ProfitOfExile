@@ -95,23 +95,36 @@ A name absent from the map returns `404` and renders as `?`. Two ways this happe
 
 Currently missing: none. All 762 map entries resolve as of 2026-07-26.
 
-### 404s are cached for an hour
+### A cached 404 is why a `?` survives the deploy that fixes it
 
-A `404` carries `Cache-Control: public, max-age=3600`, so a client remembers the
-name is unknown instead of re-requesting it for every component instance that
-renders the `?`. The hour is the trade: adding a name is a deploy, but the deploy
-restarts the *server*, not the client's HTTP cache, so a browser or webview that
-already saw the `404` keeps rendering `?` until its copy expires.
+This bit clients on production. The `404` used to carry no caching headers at
+all — no `Cache-Control`, no `Expires`, no `Last-Modified` — which is *not* the
+same as "do not cache". A `404` with no freshness information is heuristically
+cacheable under RFC 7234, so browsers and webviews cached it on their own terms.
+The result: gems that had since been added to the map, and that the server was
+answering with `200`, still rendered `?`. `Ctrl+F5` "fixed" them, because a hard
+reload bypasses exactly that heuristic cache.
 
-Two practical consequences:
+The `404` now carries `Cache-Control: no-store`. Adding an icon is visible to
+existing clients on their next render, with no hard reload and no waiting.
 
-- **In dev**, adding an entry to `gem-icon-urls.json` and letting `air` rebuild is
-  not enough to make the icon appear — the page has the `404` cached. Hard-reload,
-  or use a DevTools "Disable cache" session, rather than concluding the map edit
-  did not take.
-- **In production**, an icon added for a name that was previously missing shows up
-  for existing clients within an hour of the deploy, with no user action.
+The trade is deliberate and cheap: `no-store` costs one map miss per render, and
+the handler returns the `404` before touching the disk, the upstream, or the ETag
+memo, so it is the least expensive response the endpoint produces. Any positive
+TTL would buy that back at the price of re-introducing a silent staleness window
+— a redeploy restarts the *server*, never the client's HTTP cache.
 
-`502`s (upstream fetch failure) are deliberately left uncacheable, so a retry
-still reaches the server — that is the same reason a failed fetch writes nothing
+`502`s (upstream fetch failure) carry no caching directive either, so a retry
+still reaches the server. That is the same reason a failed fetch writes nothing
 to disk.
+
+### Checking headers with curl
+
+Use `GET`, not `HEAD`. `curl -I` on this route returns `200` with
+`cache-control: no-cache` from the SPA static handler, because chi registers
+`GET` only and `HEAD` falls through — so `-I` measures a different response than
+the one an `<img>` gets:
+
+```
+curl -s -D- -o /dev/null "https://profitofexile.top/api/gem-icon/Absolution"
+```
