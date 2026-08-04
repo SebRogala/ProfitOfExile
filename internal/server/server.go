@@ -117,7 +117,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool, cfg.League))
 		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool, cfg.League))
 		r.Get("/api/snapshots/fragments", handlers.FragmentSnapshots(cfg.Pool, cfg.League))
-		r.Get("/api/snapshots/stats", handlers.SnapshotStats(cfg.Pool, cfg.League))
+		// /api/snapshots/stats was removed (POE-150): three unbounded
+		// full-relation aggregates, 14.7 s of DB time and 168 MB of temp spill
+		// per unauthenticated request, with no consumer. The market overview it
+		// once backed is served from cache by /api/analysis/market-overview.
 	}
 
 	if cfg.LabRepo != nil {
