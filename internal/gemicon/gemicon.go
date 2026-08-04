@@ -54,17 +54,26 @@ const maxImageBytes = 5 << 20 // 5 MiB
 // every app open.
 const cacheControl = "public, max-age=31536000, immutable"
 
-// notFoundCacheControl lets clients remember that a name is unknown instead of
-// re-requesting it for every component instance that renders the "?" fallback.
+// notFoundCacheControl stops clients from caching an unknown-gem 404 at all.
 //
-// The TTL is a deliberate trade against how a 404 stops being a 404. The name→URL
-// map is compiled into the binary (//go:embed above), so a name can only become
-// known by deploying a new binary — see ADR-012. An hour therefore costs at most
-// one hour of stale "?" after the deploy that adds an icon, while still
-// collapsing the whole re-request storm within any single app session. It is
-// deliberately neither `immutable` nor the year-long TTL used for hits: a 404 is
-// a fact about the current build, not about immutable content.
-const notFoundCacheControl = "public, max-age=3600"
+// This is an explicit "do not keep this" rather than an absence of headers. A
+// 404 with no freshness information is heuristically cacheable under RFC 7234,
+// so browsers were already caching it on their own terms — measured on
+// production, where the 404 for a then-missing gem carried no Cache-Control,
+// no Expires and no Last-Modified. The symptom that produced was gems stuck on
+// the "?" fallback until a hard reload, for names the server had since started
+// answering with 200.
+//
+// The trade is deliberately the opposite of aggressive caching. Adding an icon
+// requires a redeploy (the name→URL map is //go:embed-compiled; see ADR-012),
+// but the redeploy restarts the *server*, not the client's HTTP cache — so any
+// positive TTL here converts "icon added" into "icon added, invisible to
+// existing clients until their copy expires", with no signal that anything is
+// wrong. What that would buy back is one map miss per render, and the 404 path
+// returns above before touching the disk, the upstream, or the ETag memo. Paying
+// the cheapest request the handler serves to keep a silent, hard-to-diagnose
+// staleness bug off the table is the right side of that trade.
+const notFoundCacheControl = "no-store"
 
 // unsafeFileChars matches any run of characters that must not appear in a cache
 // filename. Gem names contain only letters, digits, spaces, apostrophes and
@@ -131,9 +140,9 @@ func (c *Cache) Handler() http.HandlerFunc {
 
 		srcURL, ok := c.urls[name]
 		if !ok {
-			// A 404 is a fact about the embedded map, so it is worth caching —
-			// without this header a name that renders the "?" fallback is
-			// re-requested by every fresh component instance.
+			// Set before NotFound: without an explicit directive a 404 is
+			// heuristically cacheable, and a client that cached one keeps
+			// rendering "?" after the deploy that adds the icon.
 			w.Header().Set("Cache-Control", notFoundCacheControl)
 			http.NotFound(w, r)
 			return

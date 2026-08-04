@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -370,10 +371,12 @@ func TestHandler_StaleValidatorServesBodyWith200(t *testing.T) {
 	}
 }
 
-// A 404 means "this name is not in the embedded map", which only a redeploy can
-// change, so clients are told to remember it for an hour instead of re-asking on
-// every component instance.
-func TestHandler_UnknownGem404IsNegativelyCacheable(t *testing.T) {
+// A 404 must carry an explicit no-store. Leaving it bare is not neutral: an
+// unknown-gem 404 with no freshness information is heuristically cacheable, and
+// production showed clients holding onto one across the deploy that added the
+// icon — the gem rendered "?" until a hard reload. Delete the header and this
+// fails; widen it to any positive TTL and the second assertion fails.
+func TestHandler_UnknownGem404IsNotCacheableByClients(t *testing.T) {
 	up := newStubUpstream()
 	defer up.close()
 	c := newCache(map[string]string{"Absolution": up.server.URL}, up.server.Client(), t.TempDir())
@@ -383,11 +386,11 @@ func TestHandler_UnknownGem404IsNegativelyCacheable(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
 	}
-	if got := w.Header().Get("Cache-Control"); got != notFoundCacheControl {
-		t.Errorf("404 Cache-Control = %q, want %q", got, notFoundCacheControl)
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("404 Cache-Control = %q, want %q — a bare 404 is heuristically cacheable", got, "no-store")
 	}
-	if got := w.Header().Get("Cache-Control"); got == cacheControl {
-		t.Errorf("404 must not reuse the immutable hit policy %q", got)
+	if got := w.Header().Get("Cache-Control"); strings.Contains(got, "max-age") {
+		t.Errorf("404 Cache-Control = %q, want no lifetime at all — any TTL outlives the deploy that adds the icon", got)
 	}
 }
 
