@@ -121,8 +121,10 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// ?from=1970-01-01&limit=10000 bypassed it. They existed so an agent could
 	// pull prod data without SSH; the real prod->local path is the SSH pipe,
 	// which authenticates with a key and can COPY a full dump. Do not re-add an
-	// HTTP export — write a CLI around SSH + psql instead. The market overview
-	// /stats once backed is served from cache by /api/analysis/market-overview.
+	// HTTP export — write a CLI around SSH + psql instead. Nothing replaces
+	// /stats: it returned row counts and snapshot timestamps, and the "Market
+	// overview" mapping in docs/FRONTEND-DESIGN.md:231 is a historical UI-section
+	// label, not a data equivalence.
 
 	if cfg.LabRepo != nil {
 		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
