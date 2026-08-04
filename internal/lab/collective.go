@@ -499,11 +499,72 @@ func BuildCompareResults(
 // CollectiveResult shape so the existing ByVariant/BestPlays frontend
 // components can render them. dedicationResults must be the same variant's —
 // its input costs are what each gem's ROI is measured against.
+//
+// It is the cold-cache path only. The tick pre-computes the same list unfiltered
+// (limit 0, no search) and the request narrows it with FilterDedicationRankings;
+// this composes the two so the served and pre-computed orderings cannot drift.
 func RankDedicationCollective(
 	gems []GemPrice,
 	dedicationResults []DedicationResult,
 	limit int,
 	searchName string,
+	variant string,
+) []CollectiveResult {
+	return FilterDedicationRankings(
+		rankDedicationCollectiveAll(gems, dedicationResults, variant),
+		searchName, limit,
+	)
+}
+
+// FilterDedicationRankings narrows an already-ranked Dedication list by gem-name
+// search and then by limit — in that order, so a search returns its top matches
+// rather than the matches within the top N.
+//
+// It runs entirely in memory over a list the tick built, and never mutates it:
+// the search allocates a new slice and the limit only reslices, so the cached
+// ranking is left exactly as stored.
+func FilterDedicationRankings(ranked []CollectiveResult, searchName string, limit int) []CollectiveResult {
+	if searchName != "" {
+		q := strings.ToLower(searchName)
+		matched := make([]CollectiveResult, 0, len(ranked))
+		for _, cr := range ranked {
+			if strings.Contains(strings.ToLower(cr.TransfiguredName), q) {
+				matched = append(matched, cr)
+			}
+		}
+		ranked = matched
+	}
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked
+}
+
+// SelectGemPricesByNames returns the entries of gems whose name is in names,
+// preserving the order of gems. It is the in-memory equivalent of
+// Repository.CorruptedGemPricesByNames' `name = ANY($2)` over a corpus the cache
+// already holds narrowed to one variant.
+func SelectGemPricesByNames(gems []GemPrice, names []string) []GemPrice {
+	if len(gems) == 0 || len(names) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		wanted[n] = struct{}{}
+	}
+	out := make([]GemPrice, 0, len(names))
+	for _, g := range gems {
+		if _, ok := wanted[g.Name]; ok {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// rankDedicationCollectiveAll ranks every gem of one variant, unfiltered.
+func rankDedicationCollectiveAll(
+	gems []GemPrice,
+	dedicationResults []DedicationResult,
 	variant string,
 ) []CollectiveResult {
 	// Index Dedication results by (color, gemType) for input cost + tier lookup.
@@ -532,22 +593,6 @@ func RankDedicationCollective(
 	sort.Slice(pool, func(i, j int) bool {
 		return pool[i].Chaos > pool[j].Chaos
 	})
-
-	// Optional name search filter.
-	if searchName != "" {
-		q := strings.ToLower(searchName)
-		var matched []GemPrice
-		for _, g := range pool {
-			if strings.Contains(strings.ToLower(g.Name), q) {
-				matched = append(matched, g)
-			}
-		}
-		pool = matched
-	}
-
-	if limit > 0 && len(pool) > limit {
-		pool = pool[:limit]
-	}
 
 	results := make([]CollectiveResult, 0, len(pool))
 	for _, g := range pool {

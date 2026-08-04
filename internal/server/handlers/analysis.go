@@ -847,7 +847,12 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 
 // SignalHistory returns the last N signal snapshots for a specific gem.
 // GET /api/analysis/history?name=Spark+of+Nova&variant=20/20&limit=4
-func SignalHistory(repo *lab.Repository, scope league.Scope) http.HandlerFunc {
+//
+// The highest-volume read on the analysis surface: the desktop calls it once per
+// gem inside fetchCompare, so three per gem scan. Cheap to execute (0.348 ms)
+// and expensive to plan (5.3 ms over 925 planning buffers, from chunk pruning on
+// the hypertable), which is why it is served from the tick's own output.
+func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		variant := normalizeVariant(r.URL.Query().Get("variant"))
@@ -873,11 +878,26 @@ func SignalHistory(repo *lab.Repository, scope league.Scope) http.HandlerFunc {
 			limit = n
 		}
 
-		changes, err := repo.SignalHistory(r.Context(), scope, name, variant, limit)
-		if err != nil {
-			slog.Error("signal history: query failed", "error", err, "name", name, "variant", variant)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Warmth is the cache's answer for the whole ring corpus, not this gem's
+		// ring: a gem with no cached transitions on a warm cache genuinely has
+		// none, and treating that as cold would put one query per gem back on
+		// every scan — the exact shape the keyed-read half of the cache-state
+		// contract exists to prevent.
+		var changes []lab.SignalChange
+		warm := cache != nil && cache.For(scope).HasSignalHistory()
+		if warm {
+			changes = cache.For(scope).SignalHistory(name, variant)
+			if len(changes) > limit {
+				changes = changes[:limit]
+			}
+		} else {
+			var err error
+			changes, err = repo.SignalHistory(r.Context(), scope, name, variant, limit)
+			if err != nil {
+				slog.Error("signal history: query failed", "error", err, "name", name, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
