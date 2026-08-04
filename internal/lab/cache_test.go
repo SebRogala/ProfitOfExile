@@ -141,10 +141,25 @@ func TestCache_HasSparklines_TrueAfterPopulation(t *testing.T) {
 	}
 }
 
-// The two corpora report separately. Reading the non-corrupted map off a cache
-// where only the corrupted one was filled serves an empty series for every gem,
-// with no fallback and no log — so a corrupted-only write must still read cold.
-func TestCache_HasSparklines_FalseWhenOnlyTheCorruptedMapIsPopulated(t *testing.T) {
+// WARM-AND-EMPTY. mergeSparklineMaps drops every key whose merged series came
+// out empty, so a tick that retained nothing stores two empty maps. Judging
+// warmth by map length reads that as never-populated and puts the gem_snapshots
+// query back on every request for the life of the process.
+func TestCache_HasSparklines_TrueAfterAPopulationThatRetainedNothing(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	c.For(scope).SetSparklines(nil, nil, time.Time{})
+
+	if !c.For(scope).HasSparklines() {
+		t.Errorf("HasSparklines after a population that retained no series: got false, want true")
+	}
+}
+
+// One SparklineWindow read fills both maps, so one write marks both warm. A
+// corrupted-only write is not a half-populated corpus — it is the corpus with
+// nothing on the non-corrupted side, which the database cannot improve on.
+func TestCache_HasSparklines_TrueWhenOnlyTheCorruptedMapIsPopulated(t *testing.T) {
 	scope := league.Historical("LeagueA")
 	c := NewCache(scope)
 
@@ -152,26 +167,8 @@ func TestCache_HasSparklines_FalseWhenOnlyTheCorruptedMapIsPopulated(t *testing.
 		{name: "Vaal Grace", variant: "21/23c"}: {{Time: "2026-07-20T11:00:00Z", Price: 900}},
 	}, time.Time{})
 
-	if c.For(scope).HasSparklines() {
-		t.Errorf("HasSparklines with only the corrupted map populated: got true, want false")
-	}
-	if !c.For(scope).HasSparklinesCorruptedVariant("21/23c") {
-		t.Errorf("HasSparklinesCorruptedVariant after a corrupted write: got false, want true")
-	}
-}
-
-// The mirror case: a non-corrupted-only population must not tell the Dedication
-// reader its corpus is warm.
-func TestCache_HasSparklinesCorruptedVariant_FalseWhenOnlyTheMainMapIsPopulated(t *testing.T) {
-	scope := league.Historical("LeagueA")
-	c := NewCache(scope)
-
-	c.For(scope).SetSparklines(map[sparklineKey][]SparklinePoint{
-		{name: "Spark of Nova", variant: "20/20"}: {{Time: "2026-07-20T11:00:00Z", Price: 120}},
-	}, nil, time.Time{})
-
-	if c.For(scope).HasSparklinesCorruptedVariant("21/23c") {
-		t.Errorf("HasSparklinesCorruptedVariant with only the main map populated: got true, want false")
+	if !c.For(scope).HasSparklines() {
+		t.Errorf("HasSparklines after a corrupted-only population: got false, want true")
 	}
 }
 

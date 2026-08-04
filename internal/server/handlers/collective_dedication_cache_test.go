@@ -18,9 +18,11 @@ import (
 // same whether the rows came from the cache or from a query — which is why every
 // case here asserts on whether the repository was reached.
 
-// dedicationCorpusCache warms the cache the way RunDedication does: one corpus
-// built from a snapshot and the analysis computed over it.
-func dedicationCorpusCache(t *testing.T) *lab.Cache {
+// dedicationCorpusOnlyCache warms the Dedication corpus the way RunDedication
+// does — one corpus built from a snapshot and the analysis computed over it —
+// and nothing else. The sparkline corpus is filled by a different tick stage and
+// reports its warmth separately, so this leaves it cold.
+func dedicationCorpusOnlyCache(t *testing.T) *lab.Cache {
 	t.Helper()
 	gems := []lab.GemPrice{
 		{Name: "Arc", Variant: "21/23c", Chaos: 500, Listings: 20, IsCorrupted: true, GemColor: "BLUE"},
@@ -33,9 +35,14 @@ func dedicationCorpusCache(t *testing.T) *lab.Cache {
 
 	cache := lab.NewCache(dedicationScope)
 	cache.For(dedicationScope).SetDedication(lab.BuildDedicationCorpus(gems, analysis))
-	// The corrupted sparkline corpus is filled by a different tick stage and
-	// reports warmth separately, so the compare path would still query for series
-	// without it. Warmed here so these cases isolate the Dedication corpus.
+	return cache
+}
+
+// dedicationCorpusCache adds the sparkline stage, so the cases below isolate the
+// Dedication corpus instead of tripping over the compare path's series read.
+func dedicationCorpusCache(t *testing.T) *lab.Cache {
+	t.Helper()
+	cache := dedicationCorpusOnlyCache(t)
 	now := time.Now().UTC().Format(time.RFC3339)
 	cache.For(dedicationScope).SetSparklinesByName(nil, map[string]map[string][]lab.SparklinePoint{
 		"Arc": {
@@ -198,6 +205,33 @@ func TestDedicationCompare_WarmCacheAnswersAnUnpricedGemWithoutQuerying(t *testi
 	}
 	if row.TransfiguredPrice != 0 {
 		t.Errorf("price = %.0f, want 0 — the corpus has no listing for this name", row.TransfiguredPrice)
+	}
+}
+
+// The sparkline stage is separate from the Dedication corpus, so its fallback
+// has to stay reachable on its own: a corpus warmed before the first sparkline
+// population must still query for series rather than serve none.
+func TestDedicationCompare_ColdSparklineCacheFallsBackToTheRepository(t *testing.T) {
+	if !queriedRepository(CompareAnalysis(nil, dedicationCorpusOnlyCache(t), nil, dedicationScope),
+		"/api/analysis/compare?mode=dedication&variant=21/23c&gems=Arc") {
+		t.Fatal("cold sparkline cache served without a repository query, want the database fallback")
+	}
+}
+
+// The other half of that decision. A sparkline population that retained no
+// corrupted series stores an empty map, and judging warmth by its contents sends
+// this path back to gem_snapshots on every request for the life of the process —
+// for series the tick already established do not exist.
+func TestDedicationCompare_SparklinePopulationThatRetainedNothingServesWithoutQuerying(t *testing.T) {
+	cache := dedicationCorpusOnlyCache(t)
+	cache.For(dedicationScope).SetSparklinesByName(nil, nil, time.Now())
+
+	w := serveWithoutRepository(t, CompareAnalysis(nil, cache, nil, dedicationScope),
+		"/api/analysis/compare?mode=dedication&variant=21/23c&gems=Arc")
+
+	rows := decodeCompareNames(t, w)
+	if row, ok := rows["Arc"]; !ok || row.TransfiguredPrice != 500 {
+		t.Errorf("row for Arc = %+v (present: %t), want the cached 500c price", row, ok)
 	}
 }
 

@@ -147,10 +147,16 @@ Files: `internal/lab/sparkline_cache.go` (merge and population),
 (`SparklineWindow`), `internal/server/handlers/collective.go` and
 `internal/server/handlers/analysis.go` (read paths).
 
-Three fields: `sparklines` and `sparklinesCorrupted`, both
-`map[sparklineKey][]SparklinePoint` keyed by gem name plus variant, and
-`sparklineHighWater`. Prices for different variants are different markets and
-are never merged into one series.
+Four fields: `sparklines` and `sparklinesCorrupted`, both
+`map[sparklineKey][]SparklinePoint` keyed by gem name plus variant,
+`sparklineHighWater`, and `sparklinesSet`. Prices for different variants are
+different markets and are never merged into one series.
+
+One `SparklineWindow` read fills both maps, so `sparklinesSet` is the COLD/WARM
+discriminator for the pair and `HasSparklines` is the single predicate over it —
+including per variant, because the read's own filter is the variant allowlist
+the handlers admit. The cache-state rule that predicate answers to lives at the
+top of `internal/lab/cache.go`.
 
 ### Window and tail
 

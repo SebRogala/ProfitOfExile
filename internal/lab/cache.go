@@ -76,9 +76,9 @@ import (
 // predicate the caller checks first — SignalHistory with HasSignalHistory is the
 // reference: one stored flag, checked before the keyed read.
 //
-// The two sparkline predicates are the exception, and the known gap in this
-// rule — they still answer from what the maps contain rather than from a stored
-// flag. See HasSparklines.
+// The sparkline pair is the other instance, and shows that a corpus is not
+// always one field: two maps, one predicate, because one SparklineWindow read
+// fills both — see HasSparklines.
 //
 // One exception, and only one: a single-value field whose writer never stores a
 // zero value carries the signal honestly by itself. MarketContext is a
@@ -178,9 +178,11 @@ type Cache struct {
 	gemSignals     []GemSignal
 
 	// Rolling per-gem/variant price series, kept warm so sparkline requests do
-	// not hit gem_snapshots. sparklineHighWater is the newest snapshot time
-	// already folded in, so a repeated pass over the same snapshot only has to
-	// query newer rows.
+	// not hit gem_snapshots. One SparklineWindow read fills both maps, so
+	// sparklinesSet is the COLD/WARM discriminator for both — see HasSparklines.
+	// sparklineHighWater is the newest snapshot time already folded in, so a
+	// repeated pass over the same snapshot only has to query newer rows.
+	sparklinesSet       bool
 	sparklines          map[sparklineKey][]SparklinePoint
 	sparklinesCorrupted map[sparklineKey][]SparklinePoint
 	sparklineHighWater  time.Time
@@ -651,17 +653,20 @@ func (c *Cache) GemSignals() ([]GemSignal, bool) {
 	return c.gemSignals, c.gemSignalsSet
 }
 
-// SetSparklines replaces both sparkline maps and the high-water mark.
+// SetSparklines replaces both sparkline maps and the high-water mark, and marks
+// the corpus warm. It stores the maps as they stand, empty ones included — see
+// the writer half of the cache-state contract at the top of this file.
 //
 // Callers build the replacement maps outside the lock (see
 // mergeSparklineSeries) and hand them over whole — this method assigns and
-// nothing more, so the write lock is held for three assignments rather than for
+// nothing more, so the write lock is held for four assignments rather than for
 // a corpus-wide merge. highWater is the newest snapshot time folded into the
 // maps; pass the max time actually observed, so a repeated pass over an
 // unchanged snapshot leaves it where it was.
 func (c *Cache) SetSparklines(series, corrupted map[sparklineKey][]SparklinePoint, highWater time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.sparklinesSet = true
 	c.sparklines = series
 	c.sparklinesCorrupted = corrupted
 	c.sparklineHighWater = highWater
@@ -672,7 +677,7 @@ func (c *Cache) SetSparklines(series, corrupted map[sparklineKey][]SparklinePoin
 // build the maps SetSparklines takes; this is their entry point.
 //
 // Both maps are converted before the lock is taken, keeping the write lock down
-// to the three assignments SetSparklines performs.
+// to the four assignments SetSparklines performs.
 func (c *Cache) SetSparklinesByName(series, corrupted map[string]map[string][]SparklinePoint, highWater time.Time) {
 	c.SetSparklines(keyBySparklineName(series), keyBySparklineName(corrupted), highWater)
 }
@@ -714,58 +719,32 @@ func (c *Cache) SparklineHighWater() time.Time {
 	return c.sparklineHighWater
 }
 
-// HasSparklines reports whether the NON-corrupted sparkline map has been
-// populated. Handlers need this to tell a cold cache — where falling back to the
-// database is correct — from a warm cache where a missing key genuinely means
-// the gem has no recent points.
+// HasSparklines reports whether the sparkline corpus has been populated — both
+// maps, non-corrupted and corrupted. Handlers need this to tell a cold cache —
+// where falling back to the database is correct — from a warm cache where a
+// missing key genuinely means the gem has no recent points.
 //
-// It reports on one corpus only. A caller reading the non-corrupted map must not
-// be told the cache is warm because the corrupted map was filled: it would serve
-// empty series with no fallback and no log. HasSparklinesCorruptedVariant is the
-// same signal for the other corpus, asked per variant.
+// One flag covers both maps because one SparklineWindow read fills both and one
+// SetSparklines stores them: there is no outcome where the non-corrupted map is
+// authoritative and the corrupted one was never computed.
 //
-// KNOWN GAP against the cache-state contract at the top of this file: this
-// answers from the size of the map, so a tick that retained no series at all —
-// mergeSparklineMaps drops any key whose merged series came out empty — reads as
-// COLD and puts the gem_snapshots query back on every collective, compare and
-// trend request until some series survives. A stored flag is the fix, and it is
-// deliberately not made here: SetSparklines is the one writer both maps share,
-// so the flag is one decision covering both corpora and it changes what
-// HasSparklinesCorruptedVariant should be — a question worth taking on its own
-// rather than riding in on the whole-corpus accessors.
+// It covers every variant either map is keyed at, for the same reason. The read
+// filters on sparklineVariants and sparklineCorruptedVariants — the latter is
+// DedicationVariants itself, the same list cachedCorruptedSparklines admits — so
+// after a population a variant with no keys has no series rather than no data.
+// The per-variant predicate this replaces asked the narrower question and sent
+// every Dedication request for such a variant back to gem_snapshots, scanning
+// the whole corrupted map under the read lock to do it.
+//
+// It answers from the stored flag rather than from map length deliberately:
+// mergeSparklineMaps drops any key whose merged series came out empty, so a tick
+// that retained nothing leaves both maps empty, and reading that as COLD would
+// put the query back on every collective, compare and trend request until some
+// series survived — the WARM-AND-EMPTY failure in the contract above.
 func (c *Cache) HasSparklines() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.sparklines) > 0
-}
-
-// HasSparklinesCorruptedVariant reports whether the corrupted (Dedication)
-// sparkline map holds any series for one variant. See HasSparklines for why the
-// corrupted and non-corrupted corpora report separately.
-//
-// There is deliberately no corpus-wide counterpart. Once the Dedication pool
-// became selectable, "the corrupted map has something in it" stopped being an
-// answer to "can I serve this request": with 21/23c series in memory and no
-// 21/20c ones, a corpus-level "warm" makes a 21/20c read return empty series
-// with no database fallback and no warning — the caller cannot tell "this gem
-// has no recent points" from "this whole variant was never populated".
-//
-// That rationale rests on a premise worth stating, because it is now false: one
-// SparklineWindow read fills both variants, since its filter is
-// sparklineCorruptedVariants, which is DedicationVariants itself — the same list
-// cachedCorruptedSparklines admits. So a variant with no keys after a successful
-// population genuinely has no series, and asking per variant sends the query
-// this cache exists to remove back to the database on every request for it. See
-// the known gap on HasSparklines: both predicates want the same stored flag.
-func (c *Cache) HasSparklinesCorruptedVariant(variant string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for k := range c.sparklinesCorrupted {
-		if k.variant == variant {
-			return true
-		}
-	}
-	return false
+	return c.sparklinesSet
 }
 
 // SetSignalHistory replaces the signal transition rings and marks them warm.
