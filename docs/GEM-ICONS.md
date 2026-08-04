@@ -94,3 +94,24 @@ A name absent from the map returns `404` and renders as `?`. Two ways this happe
   `<img>` has no `?` fallback and renders broken instead.
 
 Currently missing: none. All 762 map entries resolve as of 2026-07-26.
+
+### 404s are cached for an hour
+
+A `404` carries `Cache-Control: public, max-age=3600`, so a client remembers the
+name is unknown instead of re-requesting it for every component instance that
+renders the `?`. The hour is the trade: adding a name is a deploy, but the deploy
+restarts the *server*, not the client's HTTP cache, so a browser or webview that
+already saw the `404` keeps rendering `?` until its copy expires.
+
+Two practical consequences:
+
+- **In dev**, adding an entry to `gem-icon-urls.json` and letting `air` rebuild is
+  not enough to make the icon appear — the page has the `404` cached. Hard-reload,
+  or use a DevTools "Disable cache" session, rather than concluding the map edit
+  did not take.
+- **In production**, an icon added for a name that was previously missing shows up
+  for existing clients within an hour of the deploy, with no user action.
+
+`502`s (upstream fetch failure) are deliberately left uncacheable, so a retry
+still reaches the server — that is the same reason a failed fetch writes nothing
+to disk.

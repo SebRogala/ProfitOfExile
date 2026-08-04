@@ -13,11 +13,133 @@ import (
 	"profitofexile/internal/trade"
 )
 
+// tradeLookupPersister is the persistence seam TradeSubmit writes through.
+// *trade.Repository is the production implementation; the interface exists so
+// the bounded writer below can be exercised without a database.
+type tradeLookupPersister interface {
+	InsertTradeLookup(ctx context.Context, scope league.Scope, result *trade.TradeLookupResult, source string) error
+}
+
+// submitWriterConfig bounds the asynchronous persist path behind
+// POST /api/trade/submit.
+//
+// Before this bound, the handler fired one detached goroutine per request and
+// answered 204 immediately, so the HTTP layer had no way to shed load — it had
+// already replied. Submits arrive one per desktop trade lookup and up to three
+// per compare, so the write rate scales with the user count.
+//
+// The trade against a full queue is deliberate and is the point of the design:
+//
+//   - Not a silent drop. These rows feed the shared trade cache and the
+//     trade_lookups history other users read; losing one with no signal anywhere
+//     is the outcome worth avoiding.
+//   - Brief block first, then 503. A saturated queue holds the request for
+//     enqueueWait before giving up, which is real backpressure — the caller's
+//     connection stays occupied, so load propagates back instead of piling up in
+//     server memory. Only when that window expires does the request shed with a
+//     503 + Retry-After, which is a signal the client and the logs both see.
+//   - The 503 is honest but partial: the shared LRU cache was already updated
+//     synchronously before enqueueing, so a shed submit still enriches other
+//     users' responses. What is refused is the durable history row.
+//
+// Sizes: 4 workers is ~4,300 inserts/s at the measured 0.93 ms per INSERT, three
+// orders of magnitude above the expected rate, while taking at most 4 of the
+// pool's 50 connections so request-path queries can never be starved by writes.
+// A 256-slot queue absorbs a full simultaneous burst from ~50 users compared
+// three-at-a-time without ever reaching the shed path.
+type submitWriterConfig struct {
+	workers       int
+	queue         int
+	enqueueWait   time.Duration
+	insertTimeout time.Duration
+}
+
+var defaultSubmitWriterConfig = submitWriterConfig{
+	workers:       4,
+	queue:         256,
+	enqueueWait:   250 * time.Millisecond,
+	insertTimeout: 5 * time.Second,
+}
+
+// submitWriter persists trade lookups on a fixed pool of workers fed by a
+// bounded queue.
+type submitWriter struct {
+	jobs chan *trade.TradeLookupResult
+	cfg  submitWriterConfig
+}
+
+// newSubmitWriter starts cfg.workers goroutines. They run for the life of the
+// process, which is the same lifetime the detached goroutines they replace had;
+// the difference is that there are now a fixed number of them. In-flight queued
+// rows are still lost on shutdown, exactly as before.
+func newSubmitWriter(p tradeLookupPersister, scope league.Scope, cfg submitWriterConfig) *submitWriter {
+	sw := &submitWriter{
+		jobs: make(chan *trade.TradeLookupResult, cfg.queue),
+		cfg:  cfg,
+	}
+	for i := 0; i < cfg.workers; i++ {
+		go sw.run(p, scope)
+	}
+	return sw
+}
+
+// run drains the queue. Each insert gets its own timeout context derived from
+// Background, not from the request: the write deliberately outlives the 204.
+func (sw *submitWriter) run(p tradeLookupPersister, scope league.Scope) {
+	for result := range sw.jobs {
+		ctx, cancel := context.WithTimeout(context.Background(), sw.cfg.insertTimeout)
+		if err := p.InsertTradeLookup(ctx, scope, result, "desktop"); err != nil {
+			slog.Warn("trade submit: persist lookup failed", "gem", result.Gem, "variant", result.Variant, "error", err)
+		}
+		cancel()
+	}
+}
+
+// enqueue hands result to a worker, reporting false when the queue stayed full
+// for the whole enqueueWait window. The caller turns that into a 503 rather than
+// dropping the row unseen.
+func (sw *submitWriter) enqueue(ctx context.Context, result *trade.TradeLookupResult) bool {
+	select {
+	case sw.jobs <- result:
+		return true
+	default:
+	}
+
+	// Queue full: hold the request briefly so the pressure is felt upstream.
+	timer := time.NewTimer(sw.cfg.enqueueWait)
+	defer timer.Stop()
+	select {
+	case sw.jobs <- result:
+		return true
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // TradeSubmit handles POST /api/trade/submit. It accepts a TradeLookupResult
 // from the desktop app (which queries GGG directly), stores it in the shared
 // LRU cache so CompareAnalysis can enrich responses, and optionally persists
 // to the database for historical tracking.
 func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.Scope) http.HandlerFunc {
+	// The nil check has to happen on the concrete type: a typed-nil
+	// *trade.Repository stored in an interface produces a non-nil interface.
+	var persister tradeLookupPersister
+	if repo != nil {
+		persister = repo
+	}
+	return tradeSubmit(cache, persister, scope, defaultSubmitWriterConfig)
+}
+
+// tradeSubmit is the testable form of TradeSubmit, taking the persistence seam
+// and the writer bounds explicitly.
+func tradeSubmit(cache *trade.TradeCache, persister tradeLookupPersister, scope league.Scope, cfg submitWriterConfig) http.HandlerFunc {
+	var writer *submitWriter
+	if persister != nil {
+		writer = newSubmitWriter(persister, scope, cfg)
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 65536)
 
@@ -56,14 +178,17 @@ func TradeSubmit(cache *trade.TradeCache, repo *trade.Repository, scope league.S
 			cache.For(scope).Set(key, &result)
 		}
 
-		if repo != nil {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := repo.InsertTradeLookup(ctx, scope, &result, "desktop"); err != nil {
-					slog.Warn("trade submit: persist lookup failed", "gem", result.Gem, "variant", result.Variant, "error", err)
-				}
-			}()
+		// Queued after the cache Set, so a shed submit still enriches other
+		// users' responses — only the durable history row is refused.
+		if writer != nil && !writer.enqueue(r.Context(), &result) {
+			slog.Warn("trade submit: persist queue saturated, shedding load",
+				"gem", result.Gem, "variant", result.Variant,
+				"queue", cfg.queue, "workers", cfg.workers)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "trade persistence saturated, retry"})
+			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)

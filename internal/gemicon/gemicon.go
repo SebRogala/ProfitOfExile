@@ -54,6 +54,18 @@ const maxImageBytes = 5 << 20 // 5 MiB
 // every app open.
 const cacheControl = "public, max-age=31536000, immutable"
 
+// notFoundCacheControl lets clients remember that a name is unknown instead of
+// re-requesting it for every component instance that renders the "?" fallback.
+//
+// The TTL is a deliberate trade against how a 404 stops being a 404. The name→URL
+// map is compiled into the binary (//go:embed above), so a name can only become
+// known by deploying a new binary — see ADR-012. An hour therefore costs at most
+// one hour of stale "?" after the deploy that adds an icon, while still
+// collapsing the whole re-request storm within any single app session. It is
+// deliberately neither `immutable` nor the year-long TTL used for hits: a 404 is
+// a fact about the current build, not about immutable content.
+const notFoundCacheControl = "public, max-age=3600"
+
 // unsafeFileChars matches any run of characters that must not appear in a cache
 // filename. Gem names contain only letters, digits, spaces, apostrophes and
 // hyphens, so collapsing these runs to "_" is collision-free for the current
@@ -68,6 +80,11 @@ type Cache struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+
+	// etags memoises the strong ETag per gem name so a conditional request can
+	// be answered without reading the file or hashing it again. See etagOf.
+	etagMu sync.RWMutex
+	etags  map[string]string
 }
 
 // New builds a Cache from the embedded name→URL map and ensures cacheDir exists.
@@ -96,6 +113,7 @@ func newCache(urls map[string]string, client *http.Client, dir string) *Cache {
 		client: client,
 		dir:    dir,
 		locks:  make(map[string]*sync.Mutex),
+		etags:  make(map[string]string),
 	}
 }
 
@@ -113,29 +131,82 @@ func (c *Cache) Handler() http.HandlerFunc {
 
 		srcURL, ok := c.urls[name]
 		if !ok {
+			// A 404 is a fact about the embedded map, so it is worth caching —
+			// without this header a name that renders the "?" fallback is
+			// re-requested by every fresh component instance.
+			w.Header().Set("Cache-Control", notFoundCacheControl)
 			http.NotFound(w, r)
+			return
+		}
+
+		// A conditional request whose validator we already know is answered with
+		// no disk read and no hashing at all. This is the whole point of the
+		// memo: before it, a 304 cost exactly as much as a 200.
+		if etag, known := c.etagOf(name); known && r.Header.Get("If-None-Match") == etag {
+			writeIconHeaders(w, etag)
+			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 
 		body, err := c.load(r.Context(), name, srcURL)
 		if err != nil {
+			// Headers are deliberately set only after load succeeds. A 502 must
+			// stay uncacheable so a later request can retry (see load).
 			http.Error(w, "gem icon unavailable", http.StatusBadGateway)
 			return
 		}
 
-		etag := etagFor(body)
-		// Every source is a poewiki "*_inventory_icon.png" file and is persisted
-		// with a .png extension, so the content type is a constant. This avoids
-		// having to persist the upstream Content-Type across restarts.
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", cacheControl)
-		w.Header().Set("ETag", etag)
-		if r.Header.Get("If-None-Match") == etag {
-			w.WriteHeader(http.StatusNotModified)
-			return
+		// Hash once per gem per process. Subsequent 200s reuse the memo: the
+		// bytes still have to be read because they go on the wire, but the
+		// SHA-256 does not have to be recomputed.
+		etag, known := c.etagOf(name)
+		if !known {
+			etag = etagFor(body)
+			c.rememberETag(name, etag)
 		}
+		writeIconHeaders(w, etag)
 		_, _ = w.Write(body)
 	}
+}
+
+// writeIconHeaders sets the headers common to a 200 and a 304. Every source is a
+// poewiki "*_inventory_icon.png" file and is persisted with a .png extension, so
+// the content type is a constant. This avoids having to persist the upstream
+// Content-Type across restarts.
+func writeIconHeaders(w http.ResponseWriter, etag string) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", cacheControl)
+	w.Header().Set("ETag", etag)
+}
+
+// etagOf returns the memoised ETag for name and whether one is known.
+//
+// Memoising by gem name is safe because the bytes behind a name cannot change
+// while the process runs. The name→URL map is embedded in the binary, and
+// ADR-012 requires a redeploy — hence a restart, hence an empty memo — for any
+// icon addition or replacement. If the disk copy is deleted mid-process, load
+// refetches the same mapped URL and gets the same bytes back.
+//
+// The memo is only ever written for a name that resolved in the embedded map, so
+// it cannot grow past that map's size (762 entries, ~100 KB) no matter what a
+// client requests. That bound is why this is a name→ETag memo rather than a
+// name→bytes cache: caching the bodies too would remove the disk read as well,
+// but costs ~6 MB (measured: 8.2 KB mean over 116 cached icons × 762 entries) to
+// avoid a page-cache-warm read of bytes that are about to be written to the wire
+// anyway. The SHA-256 was the per-request cost worth removing; the read is not.
+func (c *Cache) etagOf(name string) (string, bool) {
+	c.etagMu.RLock()
+	defer c.etagMu.RUnlock()
+	etag, ok := c.etags[name]
+	return etag, ok
+}
+
+// rememberETag stores the computed ETag for name. Concurrent computations for
+// the same name produce the same value, so a last-write-wins race is harmless.
+func (c *Cache) rememberETag(name, etag string) {
+	c.etagMu.Lock()
+	defer c.etagMu.Unlock()
+	c.etags[name] = etag
 }
 
 // load returns the icon bytes for name, reading the persistent disk copy when it
