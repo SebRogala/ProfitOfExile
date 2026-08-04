@@ -398,45 +398,38 @@ func serveDedicationCollective(w http.ResponseWriter, r *http.Request, repo *lab
 	}
 	searchName := r.URL.Query().Get("search")
 
-	// Load latest gem prices (corrupted gems are in the same snapshot).
-	gems, _, err := repo.LatestGemPrices(r.Context(), scope)
-	if err != nil {
-		slog.Error("dedication collective: gem prices query failed", "error", err)
-		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Load Dedication results for input costs — this variant's, since input cost
-	// is what the ranking's ROI is measured against.
-	var dedicationResults []lab.DedicationResult
-	cacheWarm := false
-	if cache != nil {
-		ded := cache.For(scope).Dedication()
-		// Warmth is judged on the whole cached analysis, not on this variant's
-		// slice of it. The analyzer computes every variant in one pass, so a warm
-		// cache with nothing for this variant is authoritative — the database has
-		// nothing either, and re-asking it on every poll of a dashboard endpoint
-		// would run a MAX() subquery forever for a permanently empty answer.
-		cacheWarm = len(ded.Skills) > 0 || len(ded.Transfigured) > 0
-		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Skills, variant)...)
-		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Transfigured, variant)...)
-	}
-
-	// Fall back to the database only from a cold cache, as the compare path
-	// beside this one already does. Without any fallback, a restart leaves no
-	// input cost at all and every row's ROI silently becomes the gem's full
-	// listed price.
-	if !cacheWarm {
-		fromDB, err := repo.LatestDedicationResults(r.Context(), scope, variant, "", "", 500)
+	// Fast path: the tick already ranked this variant. search and limit are pure
+	// in-memory narrowings of that list, so a warm cache answers with no query at
+	// all — this used to materialise the whole 7,325-row snapshot per request
+	// (LatestGemPrices, two queries, ~90 ms) purely to re-derive a ranking whose
+	// only other input was already cached.
+	//
+	// Warmth is the cache's own answer, not the size of the ranking: the analyzer
+	// computes every variant in one pass, so a warm cache with nothing for this
+	// variant is authoritative and the database has nothing to add.
+	var results []lab.CollectiveResult
+	warm := cache != nil && cache.For(scope).HasDedication()
+	if warm {
+		results = lab.FilterDedicationRankings(
+			cache.For(scope).DedicationRankings(variant), searchName, limit)
+	} else {
+		// Cold cache: rebuild the ranking from the database. Without this a
+		// restart leaves no input cost at all and every row's ROI silently
+		// becomes the gem's full listed price.
+		gems, _, err := repo.LatestGemPrices(r.Context(), scope)
+		if err != nil {
+			slog.Error("dedication collective: gem prices query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
+		dedicationResults, err := repo.LatestDedicationResults(r.Context(), scope, variant, "", "", 500)
 		if err != nil {
 			slog.Error("dedication collective: dedication results query failed", "error", err)
 			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
 			return
 		}
-		dedicationResults = fromDB
+		results = lab.RankDedicationCollective(gems, dedicationResults, limit, searchName, variant)
 	}
-
-	results := lab.RankDedicationCollective(gems, dedicationResults, limit, searchName, variant)
 
 	// Map to the same row shape as Normal collective.
 	rows := make([]collectiveRow, 0, len(results))
@@ -664,32 +657,30 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 		return
 	}
 
-	// Load corrupted gem prices for the requested names.
-	gemPrices, err := repo.CorruptedGemPricesByNames(r.Context(), scope, names, variant)
-	if err != nil {
-		slog.Error("compare analysis (dedication): corrupted gem prices query failed", "error", err)
-		http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Load Dedication analysis results for input cost context.
-	// Fast path: cache.
+	// Both the prices and the input costs come out of the same cached corpus, so
+	// this is one warmth decision for the whole handler. The corpus carries every
+	// corrupted gem of the variant, not just the rankable ones, so the names this
+	// path answers for that the font can never hand out — a Vaal gem — still find
+	// their price and are still marked as not an outcome.
+	var gemPrices []lab.GemPrice
 	var dedicationResults []lab.DedicationResult
-	cacheWarm := false
-	if cache != nil {
-		ded := cache.For(scope).Dedication()
-		// Warmth is judged on the whole cached analysis, not on this variant's
-		// slice of it — the same rule the Dedication collective path above
-		// applies, and for the same reason: the analyzer computes every variant
-		// in one pass, so a warm cache with nothing for this variant is
-		// authoritative and the database has nothing either.
-		cacheWarm = len(ded.Skills) > 0 || len(ded.Transfigured) > 0
+	warm := cache != nil && cache.For(scope).HasDedication()
+
+	if warm {
+		c := cache.For(scope)
+		gemPrices = lab.SelectGemPricesByNames(c.CorruptedGemPrices(variant), names)
+		ded, _ := c.Dedication()
 		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Skills, variant)...)
 		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Transfigured, variant)...)
-	}
-
-	// Slow path: fall back to DB only from a cold cache.
-	if !cacheWarm {
+	} else {
+		// Cold cache: the three reads the corpus replaces.
+		var err error
+		gemPrices, err = repo.CorruptedGemPricesByNames(r.Context(), scope, names, variant)
+		if err != nil {
+			slog.Error("compare analysis (dedication): corrupted gem prices query failed", "error", err)
+			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+			return
+		}
 		skills, err := repo.LatestDedicationResults(r.Context(), scope, variant, "skill", "", 100)
 		if err != nil {
 			slog.Error("compare analysis (dedication): dedication skills query failed", "error", err)
@@ -937,30 +928,51 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 	}
 }
 
-// GemDictionary returns known gem names from static game data (gem_colors),
-// independent of league, prices and market activity.
+// GemDictionary returns known gem names for OCR matching: gem_colors unioned
+// with the names this league's market has shown.
 //
 // The desktop OCR matcher consumes this: recognising the gem under the cursor
-// must not depend on whether the market prices it. GemNamesAutocomplete stays
-// market-scoped — it drives search over gems that actually have analysis data.
+// must not depend on whether the market prices it *now*. GemNamesAutocomplete
+// stays market-scoped — it drives search over gems that actually have analysis
+// data.
+//
+// It is served from the cache because it sits on the critical path of an in-game
+// feature: the desktop blocks on it before the gem scan loop, and POE-149
+// measured this endpoint at 0.144 s → 3.0 s under DB contention, which lands as
+// OCR that does not start. Its HTTP Cache-Control does nothing for that caller —
+// the desktop fetches with reqwest, which has no HTTP cache.
 //
 // Query params: transfigured (default true; "false" returns skill gems).
-func GemDictionary(repo *lab.Repository, scope league.Scope) http.HandlerFunc {
+func GemDictionary(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		transfigured := r.URL.Query().Get("transfigured") != "false" // default true
 
-		names, err := repo.GemNameDictionary(r.Context(), scope, transfigured)
-		if err != nil {
-			slog.Error("gem dictionary: query failed", "error", err, "transfigured", transfigured)
-			http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
-			return
+		// Warmth comes from the cache, never from the size of the list: an empty
+		// dictionary is a legitimate answer for a league whose snapshots and
+		// gem_colors are both empty, and reading it as cold would query twice on
+		// every request forever.
+		var names []string
+		warm := false
+		if cache != nil {
+			names, warm = cache.For(scope).GemDictionary(transfigured)
+		}
+		if !warm {
+			var err error
+			names, err = repo.GemNameDictionary(r.Context(), scope, transfigured)
+			if err != nil {
+				slog.Error("gem dictionary: query failed", "error", err, "transfigured", transfigured)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
 		}
 		if names == nil {
 			names = []string{}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		// Static game data — safe to cache far longer than the market endpoints.
+		// The dictionary only ever grows, so an hour-stale copy is missing names
+		// rather than wrong about them. Inert for the desktop, which has no HTTP
+		// cache; kept for any browser or proxy in front of this.
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		if err := json.NewEncoder(w).Encode(map[string]any{"names": names}); err != nil {
 			slog.Error("gem dictionary: encode response", "error", err)

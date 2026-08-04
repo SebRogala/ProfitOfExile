@@ -203,6 +203,34 @@ closes the key space without changing series content. POE-134 may change that
 Sparklines always use raw prices. Never source them from normalized history —
 temporal normalization was removed from this path for creating edge artifacts.
 
+## The seed-once fields
+
+Two fields cannot be filled from one tick's output alone, so their population
+step reads the database on its **first pass only** and extends itself for free
+afterwards. Both live at the end of `RunV2` beside `populateSparklineCache` and
+follow its shape: warmth is checked first, and the read is skipped once warm.
+
+- **`signalHistory`** (`internal/lab/signal_history_cache.go`) — a bounded
+  per-`(name, variant)` ring of `SignalHistoryDepth` transitions, built from the
+  `signals` and `features` the tick already holds. Appending one point per tick
+  would take ~10 hours to fill a ring at the ~30-minute gem cadence, and a
+  partially filled ring is worse than an empty one: it answers short instead of
+  falling back. `SignalHistoryWindow` seeds it once, bounded to the newest
+  `depth` snapshot times and to `signalHistorySeedMaxDays`.
+- **`gemDictSkills` / `gemDictTransfigured`**
+  (`internal/lab/gem_dictionary_cache.go`) — the OCR name dictionary. The tick
+  sees only the current snapshot's names; the endpoint's answer is `gem_colors`
+  unioned with every name the league has ever shown. `GemNameDictionary` seeds
+  both halves once, then each tick unions its own names in. A failed seed leaves
+  the cache COLD deliberately: a snapshot-only dictionary is missing every gem
+  the market has not priced this league, the league-start blindness the union
+  exists to prevent.
+
+The Dedication corpus is not one of these. `BuildDedicationCorpus` derives the
+rankings and this snapshot's corrupted gem prices from the `gems` slice
+`RunDedication` already loaded, so it is complete after one tick like every
+other field.
+
 ### Idempotency
 
 `RunV2` runs twice per snapshot, so a repeated pass must change nothing. Three

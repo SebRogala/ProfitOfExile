@@ -1577,3 +1577,113 @@ func TestLatestGemSignals_innerMaxScopedToLeague(t *testing.T) {
 		t.Errorf("confidence = %d, want 111 (league %q's row); 222 means the read pulled league %q's later row", res[0].Confidence, leagueA, leagueB)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SignalHistoryWindow — the one-off seed for the signal-history ring cache.
+//
+// It replaces the per-request SignalHistory query for every gem at once, so it
+// carries the same cross-league hazard on a wider blast radius: an unscoped
+// feature JOIN would seed one league's rings with another league's prices, and
+// the endpoint would then serve them for hours without ever touching the
+// database again.
+// ---------------------------------------------------------------------------
+
+func TestSignalHistoryWindow_joinsScopedFeaturesOnly(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueA, leagueB := "POE-158-sigwin-A", "POE-158-sigwin-B"
+	registerLeague(t, pool, leagueA)
+	registerLeague(t, pool, leagueB)
+
+	tm := futureTime(21)
+	cleanupAtTime(t, pool, tm, "gem_signals", "gem_features")
+
+	const name = "POE158 SignalWindow Gem"
+	const variant = "20/20"
+
+	signal := GemSignal{
+		Time: tm, Name: name, Variant: variant,
+		Signal: "STABLE", WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+	}
+	for _, id := range []string{leagueA, leagueB} {
+		if _, err := repo.SaveGemSignals(ctx, league.Historical(id), []GemSignal{signal}); err != nil {
+			t.Fatalf("SaveGemSignals league %q: %v", id, err)
+		}
+	}
+
+	// Distinct feature values per league at the SAME key.
+	featureA := GemFeature{
+		Time: tm, Name: name, Variant: variant, Tier: "LOW", MarketRegime: "TEMPORAL",
+		VelLongPrice: 1.5, VelLongListing: 2.5, Chaos: 111, Listings: 11,
+	}
+	featureB := featureA
+	featureB.VelLongPrice, featureB.VelLongListing, featureB.Chaos, featureB.Listings = 9.5, 8.5, 222, 22
+	if _, err := repo.SaveGemFeatures(ctx, league.Historical(leagueA), []GemFeature{featureA}); err != nil {
+		t.Fatalf("SaveGemFeatures league A: %v", err)
+	}
+	if _, err := repo.SaveGemFeatures(ctx, league.Historical(leagueB), []GemFeature{featureB}); err != nil {
+		t.Fatalf("SaveGemFeatures league B: %v", err)
+	}
+
+	rings, err := repo.SignalHistoryWindow(ctx, league.Historical(leagueA), SignalHistoryDepth)
+	if err != nil {
+		t.Fatalf("SignalHistoryWindow: %v", err)
+	}
+
+	ring := rings[signalKey{name: name, variant: variant}]
+	if len(ring) != 1 {
+		t.Fatalf("ring has %d entries, want 1; >1 means the signal WHERE or the feature JOIN is unscoped and fanned out across leagues", len(ring))
+	}
+	c := ring[0]
+	if !valuesClose(c.Price, 111) {
+		t.Errorf("price = %v, want 111 (league %q features); 222 means the JOIN pulled league %q's gem_features row", c.Price, leagueA, leagueB)
+	}
+	if !valuesClose(c.PriceVel, 1.5) || !valuesClose(c.ListVel, 2.5) || c.Listings != 11 {
+		t.Errorf("entry = %+v, want league %q's feature values (1.5/2.5/11)", c, leagueA)
+	}
+}
+
+// The seed reads the newest `depth` snapshot times and no more. Without that cap
+// a cold start would materialise the league's whole signal history — the seed is
+// affordable precisely because it is bounded.
+func TestSignalHistoryWindow_readsOnlyTheNewestDepthSnapshotTimes(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-158-sigwin-depth"
+	registerLeague(t, pool, leagueID)
+
+	const name = "POE158 SignalWindow Depth Gem"
+	const variant = "20/20"
+
+	// Three distinct snapshot times, oldest first, each with its own signal.
+	times := []time.Time{futureTime(22), futureTime(23), futureTime(24)}
+	signals := []string{"oldest", "middle", "newest"}
+	for i, tm := range times {
+		cleanupAtTime(t, pool, tm, "gem_signals", "gem_features")
+		if _, err := repo.SaveGemSignals(ctx, league.Historical(leagueID), []GemSignal{{
+			Time: tm, Name: name, Variant: variant,
+			Signal: signals[i], WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+		}}); err != nil {
+			t.Fatalf("SaveGemSignals at %v: %v", tm, err)
+		}
+	}
+
+	rings, err := repo.SignalHistoryWindow(ctx, league.Historical(leagueID), 2)
+	if err != nil {
+		t.Fatalf("SignalHistoryWindow: %v", err)
+	}
+
+	ring := rings[signalKey{name: name, variant: variant}]
+	if len(ring) != 2 {
+		t.Fatalf("ring has %d entries %+v, want 2 — the newest-depth cap is not applied", len(ring), ring)
+	}
+	for _, c := range ring {
+		if c.Signal == "oldest" {
+			t.Errorf("ring = %+v, want the two newest snapshot times only", ring)
+		}
+	}
+}

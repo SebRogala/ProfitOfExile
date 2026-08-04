@@ -187,7 +187,10 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 	}
 
 	if a.cache != nil {
-		a.cache.For(scope).SetDedication(analysis)
+		// Store the corpus, not just the analysis: the collective and compare
+		// read paths need this snapshot's gem prices, and deriving them here
+		// costs one pass over gems that has already been loaded.
+		a.cache.For(scope).SetDedication(BuildDedicationCorpus(gems, analysis))
 
 		// Also populate corrupted gem name caches for autocomplete.
 		// Preserve the existing cached slice for any pool whose query fails — a
@@ -351,9 +354,22 @@ func (a *Analyzer) RunV2(ctx context.Context, scope league.Scope) error {
 	if a.cache != nil {
 		// Serving-path optimisation only: a failure here leaves handlers on
 		// their existing gem_snapshots fallback, so it is logged rather than
-		// failing a run whose analysis output is already persisted.
+		// failing a run whose analysis output is already persisted. The same
+		// applies to the two populations below, each of which leaves its
+		// endpoint on the repository until a later tick succeeds.
 		if err := populateSparklineCache(ctx, a.repo, a.cache, scope, time.Now()); err != nil {
 			a.logger.Error("v2: failed to populate sparkline cache", "error", err)
+		}
+
+		// Signals and features are the tick's own output, so the rings extend
+		// for free once seeded — see populateSignalHistory for why the seed is
+		// paid for rather than waiting ~10 hours for the rings to fill.
+		if err := populateSignalHistory(ctx, a.repo, a.cache, scope, signals, features); err != nil {
+			a.logger.Error("v2: failed to populate signal history cache", "error", err)
+		}
+
+		if err := populateGemDictionary(ctx, a.repo, a.cache, scope, gems); err != nil {
+			a.logger.Error("v2: failed to populate gem dictionary cache", "error", err)
 		}
 	}
 

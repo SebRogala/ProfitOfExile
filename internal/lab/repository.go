@@ -848,6 +848,68 @@ func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name
 	return changes, nil
 }
 
+// signalHistorySeedMaxDays bounds the seed read's scan so it prunes chunks
+// instead of walking the hypertable. SignalHistoryDepth snapshots at the ~30
+// minute gem cadence is about half a day; 14 leaves room for a stalled collector
+// without turning a startup read into a full-history scan. A league quieter than
+// that seeds a shorter ring, which is the honest answer — those rows are the
+// only ones that exist.
+const signalHistorySeedMaxDays = 14
+
+// SignalHistoryWindow returns the newest depth transitions per gem and variant,
+// keyed for the ring cache. It is the one-off seed populateSignalHistory takes
+// on a cold cache, replacing the per-request query for every gem at once.
+//
+// Bounded twice over: to the newest depth distinct snapshot times, and to
+// signalHistorySeedMaxDays so the time predicate can prune chunks.
+func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope, depth int) (map[signalKey][]SignalChange, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: signal history window: %w", err)
+	}
+	if depth <= 0 {
+		return nil, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		WITH recent AS (
+			SELECT DISTINCT time
+			FROM gem_signals
+			WHERE league = $1 AND time > NOW() - make_interval(days => $3)
+			ORDER BY time DESC
+			LIMIT $2
+		)
+		SELECT s.name, s.variant, s.time, s.signal, s.window_signal,
+		       COALESCE(s.advanced_signal, ''),
+		       COALESCE(f.vel_long_price, 0), COALESCE(f.vel_long_listing, 0),
+		       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
+		FROM gem_signals s
+		JOIN recent r ON r.time = s.time
+		LEFT JOIN gem_features f
+		  ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
+		WHERE s.league = $1 AND s.time > NOW() - make_interval(days => $3)
+		ORDER BY s.time DESC`, scope.ID(), depth, signalHistorySeedMaxDays)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query signal history window: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[signalKey][]SignalChange)
+	for rows.Next() {
+		var k signalKey
+		var c SignalChange
+		if err := rows.Scan(&k.name, &k.variant, &c.Time, &c.Signal, &c.Window, &c.Advanced,
+			&c.PriceVel, &c.ListVel, &c.Price, &c.Listings); err != nil {
+			return nil, fmt.Errorf("lab repo: scan signal history window: %w", err)
+		}
+		out[k] = append(out[k], c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: signal history window rows iteration: %w", err)
+	}
+
+	return out, nil
+}
+
 // ---------------------------------------------------------------------------
 // V2 Pre-computed Storage Layer
 // ---------------------------------------------------------------------------

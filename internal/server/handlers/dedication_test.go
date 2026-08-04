@@ -24,7 +24,7 @@ func warmDedicationCache(t *testing.T) *lab.Cache {
 	t.Helper()
 	now := time.Now()
 	cache := lab.NewCache(dedicationScope)
-	cache.For(dedicationScope).SetDedication(lab.DedicationAnalysis{
+	cache.For(dedicationScope).SetDedication(lab.DedicationCorpus{Analysis: lab.DedicationAnalysis{
 		Skills: []lab.DedicationResult{
 			{Time: now, Variant: "21/23c", Color: "BLUE", GemType: "skill", Mode: "safe", Pool: 3, EVRaw: 900, InputCost: 100, Profit: 800},
 			{Time: now, Variant: "21/20c", Color: "BLUE", GemType: "skill", Mode: "safe", Pool: 40, EVRaw: 90, InputCost: 10, Profit: 80},
@@ -35,7 +35,7 @@ func warmDedicationCache(t *testing.T) *lab.Cache {
 			{Time: now, Variant: "21/23c", Color: "BLUE", GemType: "transfigured", Mode: "safe", Pool: 2, EVRaw: 500, InputCost: 200, Profit: 300},
 			{Time: now, Variant: "21/20c", Color: "BLUE", GemType: "transfigured", Mode: "safe", Pool: 25, EVRaw: 50, InputCost: 20, Profit: 30},
 		},
-	})
+	}})
 	return cache
 }
 
@@ -149,11 +149,11 @@ func TestDedicationAnalysis_RejectsAVariantItDoesNotAnalyze(t *testing.T) {
 // present. The seam is this package's usual one, a nil *lab.Repository.
 func TestDedicationAnalysis_WarmCacheAnswersAnUnpopulatedVariantWithoutQuerying(t *testing.T) {
 	cache := lab.NewCache(dedicationScope)
-	cache.For(dedicationScope).SetDedication(lab.DedicationAnalysis{
+	cache.For(dedicationScope).SetDedication(lab.DedicationCorpus{Analysis: lab.DedicationAnalysis{
 		Skills: []lab.DedicationResult{
 			{Time: time.Now(), Variant: "21/23c", Color: "BLUE", GemType: "skill", Mode: "safe", Pool: 3, Profit: 800},
 		},
-	})
+	}})
 
 	w := serveWithoutRepository(t, DedicationAnalysis(nil, cache, dedicationScope),
 		"/api/analysis/dedication?variant=21/20")
@@ -188,11 +188,11 @@ func TestDedicationAnalysis_ColdCacheFallsBackToTheRepository(t *testing.T) {
 // pools come out of the same pass over the same snapshot.
 func TestDedicationAnalysis_WarmCacheWithOnlyTransfiguredRowsDoesNotQueryForTheSkillPool(t *testing.T) {
 	cache := lab.NewCache(dedicationScope)
-	cache.For(dedicationScope).SetDedication(lab.DedicationAnalysis{
+	cache.For(dedicationScope).SetDedication(lab.DedicationCorpus{Analysis: lab.DedicationAnalysis{
 		Transfigured: []lab.DedicationResult{
 			{Time: time.Now(), Variant: "21/23c", Color: "BLUE", GemType: "transfigured", Mode: "safe", Pool: 2, Profit: 300},
 		},
-	})
+	}})
 
 	w := serveWithoutRepository(t, DedicationAnalysis(nil, cache, dedicationScope),
 		"/api/analysis/dedication?variant=21/23c")
@@ -220,5 +220,29 @@ func TestDedicationAnalysis_AcceptsTheVariantWithItsCorruptedSuffix(t *testing.T
 	}
 	if body.Variant != "21/20c" {
 		t.Errorf("response variant = %q, want 21/20c", body.Variant)
+	}
+}
+
+// A league whose snapshot holds no corrupted gems produces an analysis with no
+// rows at all, and that is an answer: the tick computed it from the same data
+// the query would read. Judging warmth on the rows instead of on the cache would
+// run both LatestDedicationResults queries on every request, forever, for an
+// answer that cannot change before the next tick.
+func TestDedicationAnalysis_WarmCacheWithAnEmptyAnalysisDoesNotQuery(t *testing.T) {
+	cache := lab.NewCache(dedicationScope)
+	cache.For(dedicationScope).SetDedication(lab.BuildDedicationCorpus(nil, lab.DedicationAnalysis{}))
+
+	w := serveWithoutRepository(t, DedicationAnalysis(nil, cache, dedicationScope),
+		"/api/analysis/dedication?variant=21/23c")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	var body dedicationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, w.Body.String())
+	}
+	if len(body.Skills.Safe) != 0 || len(body.Transfigured.Safe) != 0 {
+		t.Errorf("got %d skill and %d transfigured rows, want none", len(body.Skills.Safe), len(body.Transfigured.Safe))
 	}
 }

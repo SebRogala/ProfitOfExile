@@ -118,9 +118,14 @@ type Cache struct {
 	gcpPrice        float64
 	offeringTiming  json.RawMessage // pre-computed offering timing JSON
 
-	// Dedication lab analysis results.
+	// Dedication lab analysis results, plus the two request-shaped corpora
+	// derived from the same pass. dedicationSet is the COLD/WARM discriminator
+	// for all four fields — see SetDedication.
+	dedicationSet          bool
 	dedicationSkills       []DedicationResult
 	dedicationTransfigured []DedicationResult
+	dedicationRankings     map[string][]CollectiveResult // variant -> price-ranked corrupted gems
+	dedicationGemPrices    map[string][]GemPrice         // variant -> that variant's corrupted gems
 	corruptedGemNames            []string // corrupted non-transfigured gem names, sorted
 	corruptedTransfiguredGemNames []string // corrupted transfigured gem names, sorted
 
@@ -138,6 +143,17 @@ type Cache struct {
 	sparklines          map[sparklineKey][]SparklinePoint
 	sparklinesCorrupted map[sparklineKey][]SparklinePoint
 	sparklineHighWater  time.Time
+
+	// Bounded per-gem/variant signal transition rings, kept warm so the desktop's
+	// three-per-scan history reads do not plan a hypertable query each time.
+	signalHistory    map[signalKey][]SignalChange
+	signalHistorySet bool
+
+	// OCR gem-name dictionary, per pool. Monotonically grows as the tick unions
+	// each snapshot's names into it — see populateGemDictionary.
+	gemDictSkills       []string
+	gemDictTransfigured []string
+	gemDictSet          bool
 }
 
 // NewCache creates an empty analysis cache bound to scope. The cache serves and
@@ -387,23 +403,104 @@ func (c *Cache) GemFeatures() []GemFeature {
 	return c.gemFeatures
 }
 
-// SetDedication replaces the cached Dedication analysis results for both pools.
-func (c *Cache) SetDedication(analysis DedicationAnalysis) {
+// DedicationCorpus is everything one Dedication tick fills as a unit: the EV
+// analysis both pools are served from, the price-ranked list behind
+// /api/analysis/collective?mode=dedication, and this snapshot's corrupted gem
+// prices behind /api/analysis/compare?mode=dedication.
+//
+// The three are one corpus, not three. All of them are derived in-process from
+// the single gem snapshot AnalyzeDedication was handed, so there is no partial
+// outcome where one is authoritative and another is not — which is why they
+// share one warmth flag. See BuildDedicationCorpus.
+//
+// Rankings and GemPrices are keyed by the DB-format variant ("21/23c"). Both
+// maps carry a key for every DedicationVariants entry, so a variant a caller may
+// legitimately ask for (parseDedicationVariant validates against that same list)
+// is always addressable, and an empty value under it means "this snapshot had no
+// such gems" rather than "not computed".
+type DedicationCorpus struct {
+	Analysis  DedicationAnalysis
+	Rankings  map[string][]CollectiveResult
+	GemPrices map[string][]GemPrice
+}
+
+// SetDedication replaces the whole cached Dedication corpus and marks it warm.
+//
+// It stores the tick's answer as it stands, including an analysis with no rows
+// and maps with no entries. That is the writer half of the cache-state contract:
+// skipping the store on an empty result would leave the cache COLD, and every
+// request would then take the database fallback forever for an answer the tick
+// already computed.
+func (c *Cache) SetDedication(corpus DedicationCorpus) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.dedicationSkills = analysis.Skills
-	c.dedicationTransfigured = analysis.Transfigured
+	c.dedicationSet = true
+	c.dedicationSkills = corpus.Analysis.Skills
+	c.dedicationTransfigured = corpus.Analysis.Transfigured
+	c.dedicationRankings = corpus.Rankings
+	c.dedicationGemPrices = corpus.GemPrices
 	c.lastUpdated = time.Now()
 }
 
-// Dedication returns the cached Dedication analysis (nil slices if empty).
-func (c *Cache) Dedication() DedicationAnalysis {
+// Dedication returns the cached Dedication analysis for every analyzed variant.
+//
+// ok reports whether a Dedication tick has stored a corpus, and is the caller's
+// cold-cache signal. It is deliberately not derived from the returned slices:
+// three handlers used to each compute `len(Skills) > 0 || len(Transfigured) > 0`
+// for themselves, which is the handler-infers-warmth failure this package's
+// contract names, and it also reads a genuinely empty analysis as COLD. When ok
+// is true the analysis is authoritative — including when it is empty — and the
+// caller must narrow it with FilterDedicationVariant rather than fall back; when
+// ok is false the slices are nil and the fallback is the only correct move.
+//
+// ok is the same signal HasDedication reports; the keyed reads over the other
+// two corpus fields take it from there, because comma-ok on a keyed read would
+// answer "this variant is present" instead.
+func (c *Cache) Dedication() (DedicationAnalysis, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return DedicationAnalysis{
 		Skills:       c.dedicationSkills,
 		Transfigured: c.dedicationTransfigured,
-	}
+	}, c.dedicationSet
+}
+
+// HasDedication reports whether a Dedication tick has stored a corpus. It is the
+// warmth predicate for the two keyed reads below — check it first, then read.
+//
+// It covers all of DedicationCorpus because one tick fills all of it from one
+// snapshot: unlike the corrupted autocomplete pools, which come from two
+// separate queries and so report warmth separately, there is no way for the
+// rankings to be authoritative while the prices are not.
+func (c *Cache) HasDedication() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dedicationSet
+}
+
+// DedicationRankings returns the pre-ranked corrupted gem list for one variant,
+// price-descending and unfiltered — apply search and limit with
+// FilterDedicationRankings, which is what RankDedicationCollective applies to
+// the same list.
+//
+// Keyed read: check HasDedication first. A nil result from a warm cache means
+// this snapshot held no rankable gems at variant, which the database would
+// answer identically.
+func (c *Cache) DedicationRankings(variant string) []CollectiveResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dedicationRankings[variant]
+}
+
+// CorruptedGemPrices returns the latest snapshot's corrupted gem prices at one
+// variant. It is the whole variant, not a name-narrowed slice: callers select
+// the names they asked about with SelectGemPricesByNames.
+//
+// Keyed read: check HasDedication first.
+func (c *Cache) CorruptedGemPrices(variant string) []GemPrice {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dedicationGemPrices[variant]
 }
 
 // SetCorruptedGemNames stores autocomplete names for corrupted gem pools.
@@ -562,4 +659,93 @@ func (c *Cache) HasSparklinesCorruptedVariant(variant string) bool {
 		}
 	}
 	return false
+}
+
+// SetSignalHistory replaces the signal transition rings and marks them warm.
+//
+// Callers build the replacement map outside the lock (see
+// populateSignalHistory) and hand it over whole; this method assigns and nothing
+// more. Rings are never appended to or compacted in place — a reader holding a
+// ring it read earlier keeps a valid, unchanging view.
+func (c *Cache) SetSignalHistory(history map[signalKey][]SignalChange) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.signalHistory = history
+	c.signalHistorySet = true
+}
+
+// SetSignalHistoryByName replaces the rings from name-then-variant keyed input.
+// signalKey is unexported, so callers outside this package cannot build the map
+// SetSignalHistory takes; this is their entry point, as SetSparklinesByName is
+// for the sparkline maps.
+func (c *Cache) SetSignalHistoryByName(byName map[string]map[string][]SignalChange) {
+	out := make(map[signalKey][]SignalChange, len(byName))
+	for name, byVariant := range byName {
+		for variant, changes := range byVariant {
+			out[signalKey{name: name, variant: variant}] = changes
+		}
+	}
+	c.SetSignalHistory(out)
+}
+
+// SignalHistory returns the cached transitions for one gem and variant, newest
+// first, or nil when the ring holds none.
+//
+// Keyed read: check HasSignalHistory first. On a warm cache a nil result means
+// this gem has produced no signal rows, which is what the query would return
+// too; reading nil as cold would send one query per gem on every scan.
+func (c *Cache) SignalHistory(name, variant string) []SignalChange {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.signalHistory[signalKey{name: name, variant: variant}]
+}
+
+// HasSignalHistory reports whether the signal rings have been populated. It is
+// the corpus-warmth predicate SignalHistory's callers check first.
+//
+// One corpus: the rings are filled for every gem the tick computed signals for,
+// in one assignment, so warmth cannot be true for one gem and false for another.
+func (c *Cache) HasSignalHistory() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.signalHistorySet
+}
+
+// SetGemDictionary replaces both OCR dictionary pools and marks them warm.
+//
+// Both pools are stored in one call because the population step commits both or
+// neither: its seed reads them with two queries and abandons the whole store if
+// either fails, so there is no state where one pool is authoritative and the
+// other was never filled. Contrast SetCorruptedGemNames, whose two pools each
+// keep the previous value when their own query fails and therefore have to be
+// able to report warmth apart.
+func (c *Cache) SetGemDictionary(skills, transfigured []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gemDictSkills = skills
+	c.gemDictTransfigured = transfigured
+	c.gemDictSet = true
+}
+
+// GemDictionary returns the OCR gem-name dictionary for one pool, sorted.
+//
+// ok reports whether the dictionary has been populated and is the caller's
+// cold-cache signal; the names alone cannot carry it, since a league whose
+// snapshots and gem_colors are both empty produces the same empty list as a
+// process that has not ticked yet. When ok is true the list is authoritative and
+// the caller must not fall back.
+//
+// The dictionary is league-scoped and market-derived, not static game data: it
+// is gem_colors unioned with the names this league's market has shown, so it
+// belongs to the league-bound cache and grows as the tick sees new names.
+func (c *Cache) GemDictionary(transfigured bool) (names []string, ok bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.gemDictSet {
+		return nil, false
+	}
+	if transfigured {
+		return c.gemDictTransfigured, true
+	}
+	return c.gemDictSkills, true
 }

@@ -152,9 +152,9 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/compare", handlers.CompareAnalysis(cfg.LabRepo, cfg.LabCache, cfg.TradeCache, cfg.League))
 		r.Get("/api/analysis/gems/names", handlers.GemNamesAutocomplete(cfg.LabRepo, cfg.LabCache, cfg.League))
-		r.Get("/api/analysis/gems/dictionary", handlers.GemDictionary(cfg.LabRepo, cfg.League))
+		r.Get("/api/analysis/gems/dictionary", handlers.GemDictionary(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/status", handlers.AnalysisStatus(cfg.LabCache, cfg.Pool, cfg.League))
-		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo, cfg.League))
+		r.Get("/api/analysis/history", handlers.SignalHistory(cfg.LabRepo, cfg.LabCache, cfg.League))
 
 		r.Get("/api/analysis/market-overview", handlers.MarketOverview(cfg.LabCache, cfg.Pool, cfg.League))
 
