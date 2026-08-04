@@ -115,17 +115,18 @@ func TestMigrationsApply(t *testing.T) {
 	requireTimescaleDB(t, pool)
 	migrateUp(t, m)
 
-	var strategies, index, trigger bool
+	var strategies, index, gemIndex, trigger bool
 	for name, dest := range map[string]*bool{
-		"strategies":                &strategies,
-		"idx_strategies_league":     &index,
-		"trg_strategies_updated_at": &trigger,
+		"strategies":            &strategies,
+		"idx_strategies_league": &index,
+		"idx_gem_snapshots_league_transfigured_name": &gemIndex,
+		"trg_strategies_updated_at":                  &trigger,
 	} {
 		var query string
 		switch name {
 		case "strategies":
 			query = "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)"
-		case "idx_strategies_league":
+		case "idx_strategies_league", "idx_gem_snapshots_league_transfigured_name":
 			query = "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = $1)"
 		default:
 			query = "SELECT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_name = $1)"
