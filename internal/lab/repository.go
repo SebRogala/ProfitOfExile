@@ -1710,6 +1710,22 @@ func (r *Repository) GemNameDictionary(ctx context.Context, scope league.Scope, 
 		return nil, fmt.Errorf("lab repo: gem dictionary snapshot rows iteration: %w", err)
 	}
 
+	// The snapshot half needs the support-gem strip too, but ONLY the strip.
+	// Running FilterGemDictionary here would classify each name by looking its
+	// base up in gem_colors, dropping exactly the names this union exists to
+	// rescue — the ones the market lists before gem_colors records them
+	// (TestGemNameDictionary_includesLeagueNamesMissingFromGemColors).
+	if !transfigured {
+		kept := fromSnapshots[:0]
+		for _, n := range fromSnapshots {
+			if isSupportGem(n) {
+				continue
+			}
+			kept = append(kept, n)
+		}
+		fromSnapshots = kept
+	}
+
 	return MergeGemDictionary(FilterGemDictionary(all, transfigured), fromSnapshots), nil
 }
 
@@ -1747,10 +1763,31 @@ func FilterGemDictionary(all []string, transfigured bool) []string {
 		if isTransfigured != transfigured {
 			continue
 		}
-		if !transfigured && strings.HasSuffix(n, " Support") {
+		if !transfigured && isSupportGem(n) {
 			continue
 		}
 		names = append(names, n)
 	}
 	return names
+}
+
+// isSupportGem reports whether a gem name is a support gem.
+//
+// Game rule: the Font of Enhancement and the Dedication to the Goddess hand out
+// skill gems only (confirmed with the domain owner), so a support gem is never a
+// possible outcome and never a valid OCR match candidate in either pool.
+//
+// Observed 2026-08-04 on prod: the transfigured=false dictionary carried 224
+// " Support"-suffixed names out of 571 — effectively the whole support roster —
+// because the gem_snapshots half of GemNameDictionary was merged unfiltered.
+//
+// The suffix test is exhaustive for both dictionary halves: gem_snapshots is
+// written only by the collector from poe.ninja's type=SkillGem endpoint
+// (internal/collector/ninja.go), whose only non-active-skill category is support
+// gems, and every support gem's name ends in " Support".
+//
+// POE-142 is expected to fold this into a gem-eligibility SSOT; it is one symbol
+// so there is one call site to relocate, not two string literals to hunt.
+func isSupportGem(name string) bool {
+	return strings.HasSuffix(name, " Support")
 }
