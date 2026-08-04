@@ -86,7 +86,24 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
+	// AccessLog replaces chi's middleware.Logger: one structured line per
+	// request with route, status and duration_ms, so a slow route is greppable
+	// instead of needing someone to suspect it and curl it (POE-155).
+	r.Use(devmw.AccessLog(slog.Default()))
+	// A request deadline is what turns pool exhaustion into a fast local
+	// failure. pgxpool.Acquire blocks on the caller's context and nothing else,
+	// so without a deadline a saturated pool (see internal/db/db.go on the
+	// pgbouncer ceiling) is an open-ended hang that the client eventually gives
+	// up on and nobody logs. With one, the waiter is cancelled, AccessLog
+	// records a 504 with its duration, and the pileup is visible in
+	// /debug/pprof/goroutine as goroutines parked in Acquire.
+	//
+	// 20s sits above every measured worst case (6.35s under the POE-152 burst;
+	// gemicon's upstream fetch caps itself at 10s) and below the server's 30s
+	// WriteTimeout, so the timeout fires while the connection can still carry
+	// the response. chi's Timeout only cancels the context and writes 504 after
+	// the handler returns, so it cannot race a handler's own writes.
+	r.Use(middleware.Timeout(20 * time.Second))
 	r.Use(handlers.SlogRecoverer)
 
 	if len(cfg.AllowedOrigins) > 0 {
@@ -193,6 +210,11 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	if cfg.DevMode {
 		r.Post("/debug/trigger", handlers.DebugTrigger(cfg.MercureURL, cfg.MercureSecret, cfg.League))
 	}
+
+	// Profiling: unauthenticated in dev, token-gated elsewhere, absent unless
+	// one of those holds. See mountPprof in pprof.go for why neither the
+	// DevMode gate nor the device middleware was used on its own.
+	mountPprof(r, cfg.DevMode)
 
 	// Serve static frontend files with SPA fallback. The wildcard pattern never
 	// shadows explicit API routes because chi's radix tree prefers exact matches.
