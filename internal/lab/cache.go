@@ -42,13 +42,21 @@ import (
 // THE RULE
 //
 //	The cache answers "am I warm". A handler never infers warmth from a value
-//	it filtered.
+//	it read.
 //
-// None of those defects was a bare cache read. Each was a handler deciding
-// warmth from a *narrowed* value — the rows left after selecting one variant,
-// the names left after matching a query. Those go to zero while the corpus
-// behind them is full. Warmth is a property of the corpus, so only the field's
-// owner can report it.
+// The instances found first were all a handler deciding warmth from a *narrowed*
+// value — the rows left after selecting one variant, the names left after
+// matching a query — which goes to zero while the corpus behind it is full.
+// Narrowing is what made those easy to hit, not what made them wrong. A bare
+// len(corpus) > 0 on an un-narrowed read is the same defect with a rarer
+// trigger: it needs a tick whose own answer was empty rather than a filter that
+// matched nothing, and when that happens it fails identically and permanently.
+//
+// This rule was first written down while eight accessors still returned a bare
+// value with no warmth signal at all, which left the nine handlers reading them
+// nothing but length to test — the rule was stated as settled before the type
+// could honour it. Every accessor here now reports its own warmth. Warmth is a
+// property of the corpus, and only the field's owner can report it.
 //
 // TWO ACCESSOR SHAPES, CHOSEN BY ADDRESSING MODE
 //
@@ -56,26 +64,38 @@ import (
 // Return (value, ok bool). ok is computed here from the stored corpus, before
 // any narrowing. When ok is true the value is authoritative *including when it
 // is empty* and the caller must not fall back; when ok is false the value is
-// empty and the fallback is the only correct move. GemNamesSearch and
-// CorruptedGemNamesSearch are the reference.
+// empty and the fallback is the only correct move. Transfigure, Font, Quality,
+// GemFeatures, GemSignals, Dedication, GemDictionary, GemNamesSearch and
+// CorruptedGemNamesSearch all take this shape.
 //
 // Keyed read — the caller asks for one key of a map. Comma-ok is wrong here.
 // ok would report "this key is present", a different question, and a caller
 // reading it as warmth falls back per missing key: one cold read becomes one
 // query per gem, and a warm cache with a genuinely absent gem re-queries for it
 // on every request. Pair a plain accessor with a separate corpus-warmth
-// predicate the caller checks first — Sparklines with HasSparklines is the
-// reference. HasSparklinesCorruptedVariant shows where the corpus boundary
-// sits: whatever the tick fills as a unit, which there is per variant, because
-// a warm 21/23c map says nothing about 21/20c.
+// predicate the caller checks first — SignalHistory with HasSignalHistory is the
+// reference: one stored flag, checked before the keyed read.
+//
+// The two sparkline predicates are the exception, and the known gap in this
+// rule — they still answer from what the maps contain rather than from a stored
+// flag. See HasSparklines.
+//
+// One exception, and only one: a single-value field whose writer never stores a
+// zero value carries the signal honestly by itself. MarketContext is a
+// *MarketContext the tick only ever sets to a real struct, so nil means COLD and
+// can mean nothing else. That is a property of the writer rather than of the
+// read, so it is stated at the accessor instead of left for a caller to work out.
 //
 // ADDING A FIELD
 //
 //  1. Name the corpus: what does one tick fill as a unit? Two corpora filled by
 //     two queries report warmth separately — one succeeding says nothing about
 //     the other (CorruptedGemNamesSearch reports per pool for exactly this
-//     reason).
-//  2. Pick the shape by addressing mode above, not by taste.
+//     reason). Fields one call fills together share one flag, as the Dedication
+//     corpus and the three Font modes do.
+//  2. Pick the shape by addressing mode above, not by taste. An accessor that
+//     returns a bare value is not a lighter version of this contract, it is a
+//     handler with no way to follow it.
 //  3. Store the tick's answer even when it is empty. A writer that skips Set on
 //     an empty result leaves the cache COLD, and then no reader discipline can
 //     help: every request takes the fallback until the data happens to be
@@ -105,18 +125,30 @@ import (
 type Cache struct {
 	scope league.Scope
 
-	mu          sync.RWMutex
-	transfigure  []TransfigureResult
-	fontSafe     []FontResult
-	fontPremium  []FontResult
-	fontJackpot  []FontResult
-	quality      []QualityResult
-	gemNames    []string // unique transfigured gem names, sorted
-	lastUpdated time.Time
-	nextFetch   time.Time
-	divineRate      float64
-	gcpPrice        float64
-	offeringTiming  json.RawMessage // pre-computed offering timing JSON
+	mu sync.RWMutex
+
+	// One SetTransfigure fills the results and the autocomplete names derived
+	// from them, so transfigureSet is the COLD/WARM discriminator for both.
+	transfigureSet bool
+	transfigure    []TransfigureResult
+	gemNames       []string // unique transfigured gem names, sorted
+
+	// One SetFont fills all three modes from a single AnalyzeFont pass, so they
+	// share one flag: there is no outcome where Safe is authoritative and
+	// Jackpot was never computed.
+	fontSet     bool
+	fontSafe    []FontResult
+	fontPremium []FontResult
+	fontJackpot []FontResult
+
+	qualitySet bool
+	quality    []QualityResult
+
+	lastUpdated    time.Time
+	nextFetch      time.Time
+	divineRate     float64
+	gcpPrice       float64
+	offeringTiming json.RawMessage // pre-computed offering timing JSON
 
 	// Dedication lab analysis results, plus the two request-shaped corpora
 	// derived from the same pass. dedicationSet is the COLD/WARM discriminator
@@ -126,15 +158,24 @@ type Cache struct {
 	dedicationTransfigured []DedicationResult
 	dedicationRankings     map[string][]CollectiveResult // variant -> price-ranked corrupted gems
 	dedicationGemPrices    map[string][]GemPrice         // variant -> that variant's corrupted gems
-	corruptedGemNames            []string // corrupted non-transfigured gem names, sorted
+	// Corrupted autocomplete pools. Two queries fill these, either of which can
+	// fail on its own, so each pool carries its own flag — see
+	// SetCorruptedGemNamePool.
+	corruptedNamesSet             bool
+	corruptedGemNames             []string // corrupted non-transfigured gem names, sorted
+	corruptedTransfiguredNamesSet bool
 	corruptedTransfiguredGemNames []string // corrupted transfigured gem names, sorted
 
-	// V2 pre-computed results. These three fields are populated together by
-	// Analyzer.RunV2 from the same snapshot time, but may be nil independently
-	// during startup or if a pipeline stage fails.
-	marketContext *MarketContext
-	gemFeatures   []GemFeature
-	gemSignals    []GemSignal
+	// V2 pre-computed results. RunV2 computes all three from the same snapshot
+	// but stores them in three separate calls, each after a persist that can
+	// fail the run — so they report warmth separately rather than sharing a flag
+	// the way the Font modes do. marketContext needs no flag: RunV2 only ever
+	// stores a real struct, so nil is an unambiguous COLD.
+	marketContext  *MarketContext
+	gemFeaturesSet bool
+	gemFeatures    []GemFeature
+	gemSignalsSet  bool
+	gemSignals     []GemSignal
 
 	// Rolling per-gem/variant price series, kept warm so sparkline requests do
 	// not hit gem_snapshots. sparklineHighWater is the newest snapshot time
@@ -191,92 +232,101 @@ func (c *Cache) SetTransfigure(results []TransfigureResult) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.transfigureSet = true
 	c.transfigure = results
 	c.gemNames = names
 	c.lastUpdated = time.Now()
 }
 
-// SetFont replaces the cached font results for all three modes.
+// SetFont replaces the cached font results for all three modes and marks them
+// warm. It stores the analysis as it stands, empty modes included — see the
+// writer half of the cache-state contract at the top of this file.
 func (c *Cache) SetFont(analysis FontAnalysis) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.fontSet = true
 	c.fontSafe = analysis.Safe
 	c.fontPremium = analysis.Premium
 	c.fontJackpot = analysis.Jackpot
 	c.lastUpdated = time.Now()
 }
 
-// SetQuality replaces the cached quality results.
+// SetQuality replaces the cached quality results and marks them warm.
 func (c *Cache) SetQuality(results []QualityResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.qualitySet = true
 	c.quality = results
 	c.lastUpdated = time.Now()
 }
 
-// Transfigure returns the cached transfigure results (nil if empty).
-func (c *Cache) Transfigure() []TransfigureResult {
+// Transfigure returns every cached transfigure result, for the caller to narrow
+// by variant and limit with filterTransfigure.
+//
+// ok reports whether a transfigure tick has stored results, and is the caller's
+// cold-cache signal. The results alone cannot carry it: AnalyzeTransfigure over a
+// snapshot holding no priced transfigured gem returns nothing, which is the same
+// empty slice a process that has never ticked holds. When ok is true the results
+// are authoritative — including when they are empty, and including for a variant
+// none of them carry, since one pass computes every variant — and the caller must
+// not fall back. When ok is false the slice is nil.
+func (c *Cache) Transfigure() ([]TransfigureResult, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.transfigure
+	return c.transfigure, c.transfigureSet
 }
 
-// Font returns the cached font analysis with all three modes (nil slices if empty).
-func (c *Cache) Font() FontAnalysis {
+// Font returns the cached font analysis with all three modes.
+//
+// ok reports whether a font tick has stored an analysis. One AnalyzeFont pass
+// fills all three modes, so they cannot disagree about warmth: a run that
+// classified no winner at all stores three empty modes, and that is an answer.
+// When ok is true the analysis is authoritative and the caller must not fall
+// back; when ok is false every mode is nil.
+func (c *Cache) Font() (FontAnalysis, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return FontAnalysis{Safe: c.fontSafe, Premium: c.fontPremium, Jackpot: c.fontJackpot}
+	return FontAnalysis{Safe: c.fontSafe, Premium: c.fontPremium, Jackpot: c.fontJackpot}, c.fontSet
 }
 
-// FontSafe returns the cached safe mode font results (nil if empty).
-func (c *Cache) FontSafe() []FontResult {
+// Quality returns every cached quality-roll result, for the caller to narrow by
+// level and limit with filterQuality.
+//
+// ok reports whether a quality tick has stored results and carries the same
+// cold-cache signal as Transfigure, for the same reason.
+func (c *Cache) Quality() ([]QualityResult, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.fontSafe
-}
-
-// FontPremium returns the cached premium mode font results (nil if empty).
-func (c *Cache) FontPremium() []FontResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.fontPremium
-}
-
-// FontJackpot returns the cached jackpot mode font results (nil if empty).
-func (c *Cache) FontJackpot() []FontResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.fontJackpot
-}
-
-// Quality returns the cached quality results (nil if empty).
-func (c *Cache) Quality() []QualityResult {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.quality
+	return c.quality, c.qualitySet
 }
 
 // GemNamesSearch returns transfigured gem names matching all query words
 // (case-insensitive). Runs entirely in memory — no DB query. Returns up to
 // limit results.
 //
-// ok reports whether the cache holds a name corpus to search, and is the
-// caller's cold-cache signal. It exists because the result alone cannot carry
-// that signal: an empty result means "the cache is warm and nothing matches"
-// just as often as it means "there is nothing cached yet", and reading it as
-// the latter sent every non-matching keystroke of a debounced autocomplete to a
-// DISTINCT ... ILIKE over gem_snapshots (POE-152). When ok is true the result
-// is authoritative — including when it is empty — and the caller must not fall
-// back to the repository. When ok is false the result is always empty.
+// ok reports whether a transfigure tick has stored the corpus these names are
+// derived from, and is the caller's cold-cache signal. It exists because the
+// result alone cannot carry that signal: an empty result means "the cache is warm
+// and nothing matches" just as often as it means "there is nothing cached yet",
+// and reading it as the latter sent every non-matching keystroke of a debounced
+// autocomplete to a DISTINCT ... ILIKE over gem_snapshots (POE-152). When ok is
+// true the result is authoritative — including when it is empty — and the caller
+// must not fall back to the repository. When ok is false the result is always
+// empty.
+//
+// ok is the stored flag rather than the size of the corpus: a snapshot with no
+// priced transfigured gem yields no names, and re-deriving warmth from that put
+// the same permanent fallback back one level up.
 //
 // An empty query matches nothing and is answered from a warm cache, rather than
 // being handed to the database as a search for everything.
 func (c *Cache) GemNamesSearch(query string, limit int) (names []string, ok bool) {
 	c.mu.RLock()
 	corpus := c.gemNames
+	set := c.transfigureSet
 	c.mu.RUnlock()
 
-	if len(corpus) == 0 {
+	if !set {
 		return nil, false
 	}
 	if query == "" {
@@ -352,7 +402,15 @@ func (c *Cache) SetOfferingTiming(data json.RawMessage) {
 	c.offeringTiming = data
 }
 
-// OfferingTiming returns cached offering timing JSON, or nil if not set.
+// OfferingTiming returns cached offering timing JSON, or nil when nothing has
+// stored one.
+//
+// The other single-value exception in the cache-state contract, and it holds only
+// because every writer marshals a never-nil slice: an answer with no offerings in
+// it is stored as `[]`, which is two bytes and not nil. So nil means COLD, and
+// MarketOverview's fallback — ten queries — is reached exactly once rather than
+// on every request. ComputeOfferingTimings returning a non-nil empty slice is
+// what makes that true; see its doc comment.
 func (c *Cache) OfferingTiming() json.RawMessage {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -381,26 +439,40 @@ func (c *Cache) SetMarketContext(mc *MarketContext) {
 	c.lastUpdated = time.Now()
 }
 
-// MarketContext returns the cached market context (nil if empty).
+// MarketContext returns the cached market context, or nil when no RunV2 has
+// stored one.
+//
+// This is the single-value exception in the cache-state contract: RunV2 only ever
+// stores a real struct, so nil here means COLD and cannot also mean
+// warm-and-empty. A nil result is the caller's signal to fall back; a non-nil one
+// is authoritative. It needs no companion flag for that reason and no other.
 func (c *Cache) MarketContext() *MarketContext {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.marketContext
 }
 
-// SetGemFeatures replaces the cached gem features.
+// SetGemFeatures replaces the cached gem features and marks them warm.
 func (c *Cache) SetGemFeatures(features []GemFeature) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gemFeaturesSet = true
 	c.gemFeatures = features
 	c.lastUpdated = time.Now()
 }
 
-// GemFeatures returns the cached gem features (nil if empty).
-func (c *Cache) GemFeatures() []GemFeature {
+// GemFeatures returns every cached gem feature, for the caller to narrow by
+// variant and tier with filterGemFeatures.
+//
+// ok reports whether a RunV2 has stored features. It is separate from the signal
+// flag on purpose: RunV2 stores the two in separate calls with a persist between
+// them that can fail the run, so a warm feature corpus says nothing about the
+// signals. When ok is true the features are authoritative — including when they
+// are empty — and the caller must not fall back.
+func (c *Cache) GemFeatures() ([]GemFeature, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.gemFeatures
+	return c.gemFeatures, c.gemFeaturesSet
 }
 
 // DedicationCorpus is everything one Dedication tick fills as a unit: the EV
@@ -503,22 +575,28 @@ func (c *Cache) CorruptedGemPrices(variant string) []GemPrice {
 	return c.dedicationGemPrices[variant]
 }
 
-// SetCorruptedGemNames stores autocomplete names for corrupted gem pools.
-func (c *Cache) SetCorruptedGemNames(skills, transfigured []string) {
+// SetCorruptedGemNamePool stores one corrupted-gem autocomplete pool and marks
+// that pool warm.
+//
+// One pool at a time, because the two come from two queries and either can fail
+// alone. A caller that skips this call for a failed query leaves that pool's
+// previous names *and* its previous warmth untouched, which is the only way a
+// transient error neither wipes a good corpus nor advertises an unfetched one as
+// authoritative.
+//
+// It stores an empty result as readily as a full one: a pool with no corrupted
+// gems is an answer, and withholding it leaves the pool COLD and every keystroke
+// on a DISTINCT ... ILIKE over gem_snapshots.
+func (c *Cache) SetCorruptedGemNamePool(isTransfigured bool, names []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.corruptedGemNames = skills
-	c.corruptedTransfiguredGemNames = transfigured
-}
-
-// CorruptedGemNames returns cached corrupted gem names for the given pool type.
-func (c *Cache) CorruptedGemNames(isTransfigured bool) []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	if isTransfigured {
-		return c.corruptedTransfiguredGemNames
+		c.corruptedTransfiguredGemNames = names
+		c.corruptedTransfiguredNamesSet = true
+		return
 	}
-	return c.corruptedGemNames
+	c.corruptedGemNames = names
+	c.corruptedNamesSet = true
 }
 
 // CorruptedGemNamesSearch returns corrupted gem names matching all query words
@@ -527,18 +605,22 @@ func (c *Cache) CorruptedGemNames(isTransfigured bool) []string {
 // ok carries the same cold-cache signal as GemNamesSearch, reported per pool:
 // the two corpora are populated from separate queries, so a warm transfigured
 // pool says nothing about the skill pool. See GemNamesSearch for why the signal
-// cannot ride on the result.
+// cannot ride on the result — and note that it cannot ride on the corpus either,
+// which is what it used to do: a league whose snapshots hold no corrupted gem of
+// one pool produces an empty pool, and reading that as COLD sent every keystroke
+// against that pool to the database for the life of the process.
 func (c *Cache) CorruptedGemNamesSearch(query string, isTransfigured bool, limit int) (names []string, ok bool) {
 	c.mu.RLock()
 	var corpus []string
+	var set bool
 	if isTransfigured {
-		corpus = c.corruptedTransfiguredGemNames
+		corpus, set = c.corruptedTransfiguredGemNames, c.corruptedTransfiguredNamesSet
 	} else {
-		corpus = c.corruptedGemNames
+		corpus, set = c.corruptedGemNames, c.corruptedNamesSet
 	}
 	c.mu.RUnlock()
 
-	if len(corpus) == 0 {
+	if !set {
 		return nil, false
 	}
 	if query == "" {
@@ -547,19 +629,26 @@ func (c *Cache) CorruptedGemNamesSearch(query string, isTransfigured bool, limit
 	return searchNames(corpus, query, limit), true
 }
 
-// SetGemSignals replaces the cached gem signals.
+// SetGemSignals replaces the cached gem signals and marks them warm.
 func (c *Cache) SetGemSignals(signals []GemSignal) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gemSignalsSet = true
 	c.gemSignals = signals
 	c.lastUpdated = time.Now()
 }
 
-// GemSignals returns the cached gem signals (nil if empty).
-func (c *Cache) GemSignals() []GemSignal {
+// GemSignals returns every cached gem signal, for the caller to narrow by variant
+// and tier with filterGemSignals.
+//
+// ok reports whether a RunV2 has stored signals, and reports separately from
+// GemFeatures for the reason given there. When ok is true the signals are
+// authoritative — including when they are empty — and the caller must not fall
+// back.
+func (c *Cache) GemSignals() ([]GemSignal, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.gemSignals
+	return c.gemSignals, c.gemSignalsSet
 }
 
 // SetSparklines replaces both sparkline maps and the high-water mark.
@@ -634,6 +723,16 @@ func (c *Cache) SparklineHighWater() time.Time {
 // be told the cache is warm because the corrupted map was filled: it would serve
 // empty series with no fallback and no log. HasSparklinesCorruptedVariant is the
 // same signal for the other corpus, asked per variant.
+//
+// KNOWN GAP against the cache-state contract at the top of this file: this
+// answers from the size of the map, so a tick that retained no series at all —
+// mergeSparklineMaps drops any key whose merged series came out empty — reads as
+// COLD and puts the gem_snapshots query back on every collective, compare and
+// trend request until some series survives. A stored flag is the fix, and it is
+// deliberately not made here: SetSparklines is the one writer both maps share,
+// so the flag is one decision covering both corpora and it changes what
+// HasSparklinesCorruptedVariant should be — a question worth taking on its own
+// rather than riding in on the whole-corpus accessors.
 func (c *Cache) HasSparklines() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -650,6 +749,14 @@ func (c *Cache) HasSparklines() bool {
 // 21/20c ones, a corpus-level "warm" makes a 21/20c read return empty series
 // with no database fallback and no warning — the caller cannot tell "this gem
 // has no recent points" from "this whole variant was never populated".
+//
+// That rationale rests on a premise worth stating, because it is now false: one
+// SparklineWindow read fills both variants, since its filter is
+// sparklineCorruptedVariants, which is DedicationVariants itself — the same list
+// cachedCorruptedSparklines admits. So a variant with no keys after a successful
+// population genuinely has no series, and asking per variant sends the query
+// this cache exists to remove back to the database on every request for it. See
+// the known gap on HasSparklines: both predicates want the same stored flag.
 func (c *Cache) HasSparklinesCorruptedVariant(variant string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

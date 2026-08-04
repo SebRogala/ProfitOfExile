@@ -182,11 +182,17 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		var features []lab.GemFeature
 		usedCache := false
 
+		// Every row here joins all three corpora, so the cache can answer only when
+		// all three report warm. They report separately — transfigure comes from
+		// its own tick, and RunV2 stores features and signals in two calls — and
+		// none of them is judged by its length: this is the dashboard's endpoint,
+		// so a corpus that a tick legitimately left empty would otherwise send
+		// three queries per poll for the rest of the process's life.
 		if cache != nil {
-			ct := cache.For(scope).Transfigure()
-			cs := cache.For(scope).GemSignals()
-			cf := cache.For(scope).GemFeatures()
-			if len(ct) > 0 && len(cs) > 0 {
+			ct, transfigureWarm := cache.For(scope).Transfigure()
+			cs, signalsWarm := cache.For(scope).GemSignals()
+			cf, featuresWarm := cache.For(scope).GemFeatures()
+			if transfigureWarm && signalsWarm && featuresWarm {
 				transfigure = filterTransfigure(ct, variant, 1000)
 				signals = filterGemSignals(cs, variant, "", 5000)
 				features = cf // features used for velocity/CV join, no need to filter heavily
@@ -558,11 +564,14 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 		var signals []lab.GemSignal
 		var features []lab.GemFeature
 
+		// All three corpora, all three warmth flags — see CollectiveAnalysis. This
+		// is the desktop's per-gem path: the in-game scan calls it once per gem, so
+		// a length-derived cold read costs three queries per gem per scan.
 		if cache != nil {
-			ct := cache.For(scope).Transfigure()
-			cs := cache.For(scope).GemSignals()
-			cf := cache.For(scope).GemFeatures()
-			if len(ct) > 0 && len(cs) > 0 {
+			ct, transfigureWarm := cache.For(scope).Transfigure()
+			cs, signalsWarm := cache.For(scope).GemSignals()
+			cf, featuresWarm := cache.For(scope).GemFeatures()
+			if transfigureWarm && signalsWarm && featuresWarm {
 				transfigure = filterTransfigure(ct, variant, 1000)
 				signals = filterGemSignals(cs, variant, "", 5000)
 				features = cf

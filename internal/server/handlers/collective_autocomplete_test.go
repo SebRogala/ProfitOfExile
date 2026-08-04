@@ -98,7 +98,7 @@ func TestGemNamesAutocomplete_ColdCacheFallsBackToTheRepository(t *testing.T) {
 // filters them in Go.
 func TestGemNamesAutocomplete_WarmCorruptedPoolAnswersAZeroMatchQueryWithoutQuerying(t *testing.T) {
 	cache := lab.NewCache(autocompleteScope)
-	cache.For(autocompleteScope).SetCorruptedGemNames(nil, []string{"Grace of the Vaal"})
+	cache.For(autocompleteScope).SetCorruptedGemNamePool(true, []string{"Grace of the Vaal"})
 
 	w := serveWithoutRepository(t, GemNamesAutocomplete(nil, cache, autocompleteScope),
 		"/api/analysis/gems/names?q=zzq&corrupted=true")
@@ -113,7 +113,7 @@ func TestGemNamesAutocomplete_WarmCorruptedPoolAnswersAZeroMatchQueryWithoutQuer
 // separate queries and only one of them may have succeeded.
 func TestGemNamesAutocomplete_ColdCorruptedSkillPoolFallsBackToTheRepository(t *testing.T) {
 	cache := lab.NewCache(autocompleteScope)
-	cache.For(autocompleteScope).SetCorruptedGemNames(nil, []string{"Grace of the Vaal"})
+	cache.For(autocompleteScope).SetCorruptedGemNamePool(true, []string{"Grace of the Vaal"})
 
 	if !queriedRepository(GemNamesAutocomplete(nil, cache, autocompleteScope),
 		"/api/analysis/gems/names?q=zzq&corrupted=true&transfigured=false") {

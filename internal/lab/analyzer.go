@@ -95,12 +95,16 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 		return nil
 	}
 
-	// Load gem features: try cache first, fall back to DB.
+	// Load gem features: try cache first, fall back to DB. Warmth is the cache's
+	// answer, not the number of features it held — a RunV2 that computed none
+	// still computed, and re-asking the database for that is the read-side defect
+	// the cache-state contract names, one tick's worth at a time.
 	var features []GemFeature
+	warmFeatures := false
 	if a.cache != nil {
-		features = a.cache.For(scope).GemFeatures()
+		features, warmFeatures = a.cache.For(scope).GemFeatures()
 	}
-	if len(features) == 0 {
+	if !warmFeatures {
 		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
 		if err != nil {
 			a.logger.Error("font: failed to load gem features", "error", err)
@@ -159,12 +163,14 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 		return nil
 	}
 
-	// Load gem features: try cache first, fall back to DB.
+	// Load gem features: try cache first, fall back to DB. See RunFont for why
+	// warmth is the flag rather than the count.
 	var features []GemFeature
+	warmFeatures := false
 	if a.cache != nil {
-		features = a.cache.For(scope).GemFeatures()
+		features, warmFeatures = a.cache.For(scope).GemFeatures()
 	}
-	if len(features) == 0 {
+	if !warmFeatures {
 		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
 		if err != nil {
 			a.logger.Error("dedication: failed to load gem features", "error", err)
@@ -192,20 +198,21 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 		// costs one pass over gems that has already been loaded.
 		a.cache.For(scope).SetDedication(BuildDedicationCorpus(gems, analysis))
 
-		// Also populate corrupted gem name caches for autocomplete.
-		// Preserve the existing cached slice for any pool whose query fails — a
-		// transient DB error must not wipe a previously valid cache entry.
-		skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, false, 1000)
-		if err != nil {
+		// Also populate corrupted gem name caches for autocomplete. Each pool is
+		// stored only when its own query succeeded: skipping the store leaves
+		// that pool's previous names and its previous warmth alone, so a
+		// transient DB error neither wipes a valid corpus nor advertises an
+		// unfetched pool as authoritative.
+		if skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, false, 1000); err != nil {
 			a.logger.Warn("dedication: failed to load corrupted skill gem names", "error", err)
-			skillNames = a.cache.For(scope).CorruptedGemNames(false)
+		} else {
+			a.cache.For(scope).SetCorruptedGemNamePool(false, skillNames)
 		}
-		transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, true, 1000)
-		if err != nil {
+		if transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, true, 1000); err != nil {
 			a.logger.Warn("dedication: failed to load corrupted transfigured gem names", "error", err)
-			transfiguredNames = a.cache.For(scope).CorruptedGemNames(true)
+		} else {
+			a.cache.For(scope).SetCorruptedGemNamePool(true, transfiguredNames)
 		}
-		a.cache.For(scope).SetCorruptedGemNames(skillNames, transfiguredNames)
 	}
 
 	a.logger.Info("dedication analysis complete",

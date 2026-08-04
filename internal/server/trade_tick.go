@@ -72,7 +72,7 @@ func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCa
 	var tierSet map[string]bool
 	if minTierRank > 0 {
 		tierSet = make(map[string]bool)
-		signals := labCache.For(scope).GemSignals()
+		signals, warm := labCache.For(scope).GemSignals()
 		for _, s := range signals {
 			if s.Variant != p.Variant {
 				continue
@@ -82,13 +82,15 @@ func HandleTradeTick(ctx context.Context, gate *trade.Gate, cache *trade.TradeCa
 			}
 		}
 		if len(tierSet) == 0 {
-			// Either signals haven't been computed yet (cold start), or no gem
-			// for this variant currently meets the requested tier. Either way,
-			// the operator probably wants to see this when investigating why
-			// trade ticks aren't refreshing anything.
+			// The tick is skipped either way — there is no repository fallback
+			// here — but the two reasons are worth telling apart when
+			// investigating why trade ticks aren't refreshing anything: a cold
+			// cache says no RunV2 has stored signals yet, a warm one says no gem
+			// at this variant currently meets the requested tier.
 			slog.Debug("trade tick: no gems at or above tier",
 				"variant", p.Variant,
 				"minTier", p.MinTier,
+				"cache_warm", warm,
 				"signal_count", len(signals),
 			)
 			return
