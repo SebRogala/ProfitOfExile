@@ -45,6 +45,35 @@
 	let isDedication = $derived(selectedLab === 'Dedication');
 	let refreshKey = $state(0);
 
+	// --- Mercure debounce + jitter ---
+	// The 2s debounce mirrors the desktop dashboard (MERCURE_DEBOUNCE_MS in
+	// desktop/src/lib/pages/LabPage.svelte): a burst of publishes collapses into a
+	// single reload instead of one six-request loadAll() per event.
+	//
+	// The jitter is the part the debounce alone does not solve. A fixed per-client
+	// delay does not spread a herd, it aligns one — every client receives the same
+	// publish within milliseconds, so all of them would fire at publish + 2000ms
+	// exactly. The random offset de-synchronises clients: arrivals land somewhere in
+	// 2–6s rather than stacking on one tick. The server already debounces publishes
+	// by 2s (lab.Throttler) and the collector cycle is minutes, so up to 6s of extra
+	// delay is invisible on screen.
+	const MERCURE_DEBOUNCE_MS = 2000;
+	const MERCURE_JITTER_MS = 4000;
+	let mercureDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function debouncedMercureUpdate() {
+		if (mercureDebounceTimer) clearTimeout(mercureDebounceTimer);
+		// Re-rolled on every fire, not once per session: a fixed per-client offset
+		// would put the same clients in the same slot on every publish, which only
+		// spreads the herd once instead of on each tick.
+		const delay = MERCURE_DEBOUNCE_MS + Math.random() * MERCURE_JITTER_MS;
+		mercureDebounceTimer = setTimeout(() => {
+			mercureDebounceTimer = null;
+			refreshKey++;
+			loadAll();
+		}, delay);
+	}
+
 	// --- Desktop pairing ---
 	let desktopPair = $state<string | null>(null);
 
@@ -188,11 +217,11 @@
 		// firing the six-request fan-out a second time.
 		untrack(() => loadAll());
 
-		// Connect to Mercure SSE for live updates — reloads all data on event.
+		// Connect to Mercure SSE for live updates — reloads all data on event,
+		// debounced and jittered so clients do not reload in lockstep.
 		mercure = connectMercure(() => {
-			console.log('[Dashboard] Mercure event — reloading data');
-			refreshKey++;
-			loadAll();
+			console.log('[Dashboard] Mercure event — scheduling reload');
+			debouncedMercureUpdate();
 		}, (connected) => {
 			if (status) {
 				status = { ...status, connected };
@@ -201,6 +230,10 @@
 
 		return () => {
 			mercure?.close();
+			if (mercureDebounceTimer) {
+				clearTimeout(mercureDebounceTimer);
+				mercureDebounceTimer = null;
+			}
 		};
 	});
 </script>
