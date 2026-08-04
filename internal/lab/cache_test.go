@@ -30,7 +30,10 @@ func TestCache_For_OwningLeagueRoundTrips(t *testing.T) {
 	rows := []TransfigureResult{{TransfiguredName: "Spark of Nova"}}
 	c.For(scope).SetTransfigure(rows)
 
-	got := c.For(scope).Transfigure()
+	got, warm := c.For(scope).Transfigure()
+	if !warm {
+		t.Fatal("owning-league read reported a cold cache after SetTransfigure")
+	}
 	if len(got) != 1 || got[0].TransfiguredName != "Spark of Nova" {
 		t.Fatalf("owning-league read: got %+v, want the stored row", got)
 	}
@@ -50,7 +53,7 @@ func TestCache_For_RejectsForeignLeague(t *testing.T) {
 	c.For(owner).SetTransfigure([]TransfigureResult{{TransfiguredName: "Spark of Nova"}})
 
 	requirePanic(t, func() {
-		_ = c.For(other).Transfigure()
+		_, _ = c.For(other).Transfigure()
 	})
 }
 
@@ -267,7 +270,8 @@ func TestCache_GemNamesSearch_StopsAtLimit(t *testing.T) {
 func TestCache_CorruptedGemNamesSearch_WarmPoolAnswersAZeroMatchQuery(t *testing.T) {
 	scope := league.Historical("LeagueA")
 	c := NewCache(scope)
-	c.For(scope).SetCorruptedGemNames([]string{"Vaal Grace"}, []string{"Grace of the Vaal"})
+	c.For(scope).SetCorruptedGemNamePool(false, []string{"Vaal Grace"})
+	c.For(scope).SetCorruptedGemNamePool(true, []string{"Grace of the Vaal"})
 
 	names, ok := c.For(scope).CorruptedGemNamesSearch("zzq", true, 10)
 
@@ -285,7 +289,7 @@ func TestCache_CorruptedGemNamesSearch_WarmPoolAnswersAZeroMatchQuery(t *testing
 func TestCache_CorruptedGemNamesSearch_PoolsReportWarmthIndependently(t *testing.T) {
 	scope := league.Historical("LeagueA")
 	c := NewCache(scope)
-	c.For(scope).SetCorruptedGemNames(nil, []string{"Grace of the Vaal"})
+	c.For(scope).SetCorruptedGemNamePool(true, []string{"Grace of the Vaal"})
 
 	if _, ok := c.For(scope).CorruptedGemNamesSearch("grace", true, 10); !ok {
 		t.Error("transfigured pool: ok = false, want true (it was populated)")

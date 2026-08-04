@@ -111,12 +111,13 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 		var results []lab.TransfigureResult
 		cacheHit := false
 
-		// Fast path: serve from cache. Warmth is the cached corpus, not the size
-		// of this variant's slice of it — the analyzer computes every variant in
-		// one pass, so a warm cache with no rows for the requested variant is
-		// authoritative and the database has none either.
+		// Fast path: serve from cache. Warmth is the cache's own answer, not the
+		// size of anything it handed back — neither this variant's slice of the
+		// corpus (the analyzer computes every variant in one pass) nor the corpus
+		// itself (a snapshot with no priced transfigured gem legitimately produces
+		// none).
 		if cache != nil {
-			if cached := cache.For(scope).Transfigure(); len(cached) > 0 {
+			if cached, warm := cache.For(scope).Transfigure(); warm {
 				results = filterTransfigure(cached, variant, limit)
 				cacheHit = true
 			}
@@ -213,10 +214,11 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 		var safeResults, premiumResults, jackpotResults []lab.FontResult
 		cacheHit := false
 
-		// Fast path: serve from cache.
+		// Fast path: serve from cache. One AnalyzeFont pass fills all three modes,
+		// so a run that classified no winner at all stores three empty modes and
+		// that is the answer — three empty slices are not a cold cache.
 		if cache != nil {
-			analysis := cache.For(scope).Font()
-			if len(analysis.Safe) > 0 || len(analysis.Premium) > 0 || len(analysis.Jackpot) > 0 {
+			if analysis, warm := cache.For(scope).Font(); warm {
 				safeResults = filterFont(analysis.Safe, variant, limit)
 				premiumResults = filterFont(analysis.Premium, variant, limit)
 				jackpotResults = filterFont(analysis.Jackpot, variant, limit)
@@ -308,7 +310,7 @@ func FontAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) ht
 			// Build base price index from transfigure cache: baseName → variant → price.
 			type bKey struct{ name, variant string }
 			basePrices := make(map[bKey]float64)
-			if ct := cache.For(scope).Transfigure(); len(ct) > 0 {
+			if ct, warm := cache.For(scope).Transfigure(); warm {
 				for _, tr := range ct {
 					basePrices[bKey{tr.BaseName, tr.Variant}] = tr.BasePrice
 				}
@@ -410,10 +412,15 @@ func TrendAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 		var features []lab.GemFeature
 		usedCache := false
 
+		// Both corpora are read whole and joined here, so the cache can answer this
+		// request only when both report warm. They report separately because RunV2
+		// stores them in two calls with a persist between: features warm says
+		// nothing about signals. Neither is judged by its length — a tick that
+		// produced no rows produced an answer.
 		if cache != nil {
-			cs := cache.For(scope).GemSignals()
-			cf := cache.For(scope).GemFeatures()
-			if len(cs) > 0 && len(cf) > 0 {
+			cs, signalsWarm := cache.For(scope).GemSignals()
+			cf, featuresWarm := cache.For(scope).GemFeatures()
+			if signalsWarm && featuresWarm {
 				signals = cs
 				features = cf
 				usedCache = true
@@ -677,10 +684,11 @@ func QualityAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope)
 		var results []lab.QualityResult
 		cacheHit := false
 
-		// Fast path: serve from cache. Warmth is the cached corpus, not the size
-		// of this variant's slice of it — see TransfigureAnalysis.
+		// Fast path: serve from cache. Warmth is the cache's own answer, not the
+		// size of the corpus or of this level's slice of it — see
+		// TransfigureAnalysis.
 		if cache != nil {
-			if cached := cache.For(scope).Quality(); len(cached) > 0 {
+			if cached, warm := cache.For(scope).Quality(); warm {
 				results = filterQuality(cached, variant, limit)
 				cacheHit = true
 			}
@@ -804,16 +812,21 @@ func AnalysisStatus(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		lastUpdated := cache.For(scope).LastUpdated()
 		cached := !lastUpdated.IsZero()
 
-		fontAnalysis := cache.For(scope).Font()
+		// Row counts, not warmth: this endpoint reports how much the cache holds
+		// and never falls back, so the ok values are deliberately dropped.
+		fontAnalysis, _ := cache.For(scope).Font()
+		transfigure, _ := cache.For(scope).Transfigure()
+		quality, _ := cache.For(scope).Quality()
+		signals, _ := cache.For(scope).GemSignals()
 		resp := map[string]any{
 			"cached":      cached,
 			"league":      scope.ID(),
-			"transfigure": len(cache.For(scope).Transfigure()),
+			"transfigure": len(transfigure),
 			"fontSafe":    len(fontAnalysis.Safe),
 			"fontPremium": len(fontAnalysis.Premium),
 			"fontJackpot": len(fontAnalysis.Jackpot),
-			"quality":     len(cache.For(scope).Quality()),
-			"trends":      len(cache.For(scope).GemSignals()),
+			"quality":     len(quality),
+			"trends":      len(signals),
 		}
 		if cached {
 			resp["lastUpdated"] = lastUpdated.UTC().Format(time.RFC3339)
@@ -1037,9 +1050,10 @@ func GemFeaturesAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 		var results []lab.GemFeature
 		cacheHit := false
 
-		// Fast path: serve from cache.
+		// Fast path: serve from cache. Warmth is the cache's own answer, not the
+		// size of the corpus or of the variant/tier slice taken out of it.
 		if cache != nil {
-			if cached := cache.For(scope).GemFeatures(); len(cached) > 0 {
+			if cached, warm := cache.For(scope).GemFeatures(); warm {
 				results = filterGemFeatures(cached, variant, tier, limit)
 				cacheHit = true
 			}
@@ -1164,9 +1178,10 @@ func GemSignalsAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		var results []lab.GemSignal
 		cacheHit := false
 
-		// Fast path: serve from cache.
+		// Fast path: serve from cache. Warmth is the cache's own answer, not the
+		// size of the corpus or of the variant/tier slice taken out of it.
 		if cache != nil {
-			if cached := cache.For(scope).GemSignals(); len(cached) > 0 {
+			if cached, warm := cache.For(scope).GemSignals(); warm {
 				results = filterGemSignals(cached, variant, tier, limit)
 				cacheHit = true
 			}
@@ -1285,7 +1300,9 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		}
 
 		// Aggregate from gem features for price/listings/volatile/stable.
-		if feats := cache.For(scope).GemFeatures(); len(feats) > 0 {
+		// The length test is the divisor guard for the averages below, not a
+		// warmth test — this handler has no repository fallback to take.
+		if feats, _ := cache.For(scope).GemFeatures(); len(feats) > 0 {
 			var totalPrice, totalListings float64
 			colorCV := make(map[string][]float64)
 
@@ -1324,7 +1341,7 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		}
 
 		// Sell confidence spread and signal distribution from GemSignals.
-		if signals := cache.For(scope).GemSignals(); len(signals) > 0 {
+		if signals, _ := cache.For(scope).GemSignals(); len(signals) > 0 {
 			for _, s := range signals {
 				if s.SellConfidence != "" {
 					resp.SellConfidenceSpread[s.SellConfidence]++
