@@ -109,16 +109,21 @@ func TransfigureAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sc
 		}
 
 		var results []lab.TransfigureResult
+		cacheHit := false
 
-		// Fast path: serve from cache.
+		// Fast path: serve from cache. Warmth is the cached corpus, not the size
+		// of this variant's slice of it — the analyzer computes every variant in
+		// one pass, so a warm cache with no rows for the requested variant is
+		// authoritative and the database has none either.
 		if cache != nil {
 			if cached := cache.For(scope).Transfigure(); len(cached) > 0 {
 				results = filterTransfigure(cached, variant, limit)
+				cacheHit = true
 			}
 		}
 
-		// Slow path: fall back to DB query.
-		if results == nil {
+		// Slow path: fall back to DB query when the cache was not consulted.
+		if !cacheHit {
 			var err error
 			results, err = repo.LatestTransfigureResults(r.Context(), scope, variant, limit)
 			if err != nil {
@@ -670,16 +675,19 @@ func QualityAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope)
 		}
 
 		var results []lab.QualityResult
+		cacheHit := false
 
-		// Fast path: serve from cache.
+		// Fast path: serve from cache. Warmth is the cached corpus, not the size
+		// of this variant's slice of it — see TransfigureAnalysis.
 		if cache != nil {
 			if cached := cache.For(scope).Quality(); len(cached) > 0 {
 				results = filterQuality(cached, variant, limit)
+				cacheHit = true
 			}
 		}
 
-		// Slow path: fall back to DB query.
-		if results == nil {
+		// Slow path: fall back to DB query when the cache was not consulted.
+		if !cacheHit {
 			var err error
 			results, err = repo.LatestQualityResults(r.Context(), scope, variant, limit)
 			if err != nil {
@@ -1308,16 +1316,34 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 		}
 
 		// Lab offering timing: serve from cache when available, compute on miss.
+		//
+		// A miss is "nothing has been stored", not "the stored answer is empty".
+		// ComputeOfferingTimings drops an offering whose current-price query
+		// returns NULL, so an offering with no fragment_snapshots rows yields an
+		// empty result — and storing it only when non-empty re-ran all ten of its
+		// queries on every request, forever (POE-152).
+		timingCached := false
 		if cache != nil {
 			if cached := cache.For(scope).OfferingTiming(); cached != nil {
-				_ = json.Unmarshal(cached, &resp.Offerings)
+				if err := json.Unmarshal(cached, &resp.Offerings); err == nil {
+					timingCached = true
+				} else {
+					slog.Warn("market overview: cached offering timing is not decodable, recomputing", "error", err)
+				}
 			}
 		}
-		if len(resp.Offerings) == 0 && pool != nil {
+		if !timingCached && pool != nil {
 			resp.Offerings = ComputeOfferingTimings(r.Context(), pool, scope)
-			// Populate cache for next request.
-			if cache != nil && len(resp.Offerings) > 0 {
-				if data, err := json.Marshal(resp.Offerings); err == nil {
+			// Populate the cache with whatever came back, empty included: an empty
+			// answer is an answer, and the next request must not recompute it.
+			// Fragment collection re-populates it once rows exist
+			// (cmd/server/main.go, ninja_fragments event).
+			if cache != nil {
+				timings := resp.Offerings
+				if timings == nil {
+					timings = []offeringTiming{}
+				}
+				if data, err := json.Marshal(timings); err == nil {
 					cache.For(scope).SetOfferingTiming(data)
 				}
 			}

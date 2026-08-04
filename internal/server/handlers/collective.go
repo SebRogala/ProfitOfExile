@@ -675,14 +675,21 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 	// Load Dedication analysis results for input cost context.
 	// Fast path: cache.
 	var dedicationResults []lab.DedicationResult
+	cacheWarm := false
 	if cache != nil {
 		ded := cache.For(scope).Dedication()
+		// Warmth is judged on the whole cached analysis, not on this variant's
+		// slice of it — the same rule the Dedication collective path above
+		// applies, and for the same reason: the analyzer computes every variant
+		// in one pass, so a warm cache with nothing for this variant is
+		// authoritative and the database has nothing either.
+		cacheWarm = len(ded.Skills) > 0 || len(ded.Transfigured) > 0
 		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Skills, variant)...)
 		dedicationResults = append(dedicationResults, lab.FilterDedicationVariant(ded.Transfigured, variant)...)
 	}
 
-	// Slow path: fall back to DB if cache is empty.
-	if len(dedicationResults) == 0 {
+	// Slow path: fall back to DB only from a cold cache.
+	if !cacheWarm {
 		skills, err := repo.LatestDedicationResults(r.Context(), scope, variant, "skill", "", 100)
 		if err != nil {
 			slog.Error("compare analysis (dedication): dedication skills query failed", "error", err)
@@ -860,13 +867,18 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 		corrupted := r.URL.Query().Get("corrupted") == "true"
 		isTransfigured := r.URL.Query().Get("transfigured") != "false" // default true
 
+		// Warmth comes from the cache, never from the size of the result. A query
+		// that legitimately matches nothing is an answer, and re-asking the
+		// database for it turned every mistyped character into a DISTINCT ...
+		// ILIKE over gem_snapshots (POE-152).
 		var names []string
+		cacheWarm := false
 		if corrupted {
 			// Corrupted gem name autocomplete (for Dedication lab).
 			if cache != nil {
-				names = cache.For(scope).CorruptedGemNamesSearch(q, isTransfigured, limit)
+				names, cacheWarm = cache.For(scope).CorruptedGemNamesSearch(q, isTransfigured, limit)
 			}
-			if names == nil {
+			if !cacheWarm {
 				all, err := repo.CorruptedGemNamesAutocomplete(r.Context(), scope, isTransfigured, limit*10)
 				if err != nil {
 					slog.Error("gem names autocomplete: corrupted query failed", "error", err, "q", q)
@@ -896,9 +908,9 @@ func GemNamesAutocomplete(repo *lab.Repository, cache *lab.Cache, scope league.S
 			// Fast path: in-memory search over cached gem names (~200 entries).
 			// Falls back to DB query only if cache is empty (cold start).
 			if cache != nil {
-				names = cache.For(scope).GemNamesSearch(q, limit)
+				names, cacheWarm = cache.For(scope).GemNamesSearch(q, limit)
 			}
-			if names == nil {
+			if !cacheWarm {
 				var err error
 				names, err = repo.GemNamesAutocomplete(r.Context(), scope, q, limit)
 				if err != nil {
