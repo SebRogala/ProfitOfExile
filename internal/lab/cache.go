@@ -11,6 +11,82 @@ import (
 	"profitofexile/internal/league"
 )
 
+// THE CACHE-STATE CONTRACT
+//
+// Canonical for how a caller learns whether the cache can answer.
+// docs/ANALYSIS-CACHE.md points here for this rule and stays canonical for the
+// process topology, the tick chain, the immutability contract, and the
+// sparkline specifics — none of which have a code home.
+//
+// Two states, and only one of them justifies a query:
+//
+//	COLD            Nothing has been stored. The tick has not run yet (the
+//	                server serves traffic against a cold cache after every
+//	                deploy — see the cold-start window in the doc) or its stage
+//	                failed. Only the database can answer, so falling through to
+//	                the repository is correct.
+//
+//	WARM-AND-EMPTY  The tick ran, and its answer was empty. The database has
+//	                nothing to add: the tick computed from it. Falling through
+//	                re-runs the same query on every single request, forever,
+//	                for an answer that cannot change before the next tick.
+//
+// A stored value cannot distinguish them. Nil, an empty slice and an empty map
+// each mean both. Reading empty as COLD is the bug fixed one site at a time
+// across POE-144, POE-152 and POE-158 — autocomplete, offering timings,
+// transfigure, quality, and all three Dedication paths — and it is invisible in
+// the response, because both states emit the same body. Reading empty as WARM
+// is the opposite failure: an empty answer served with no fallback and no log
+// for the whole cold-start window.
+//
+// THE RULE
+//
+//	The cache answers "am I warm". A handler never infers warmth from a value
+//	it filtered.
+//
+// None of those defects was a bare cache read. Each was a handler deciding
+// warmth from a *narrowed* value — the rows left after selecting one variant,
+// the names left after matching a query. Those go to zero while the corpus
+// behind them is full. Warmth is a property of the corpus, so only the field's
+// owner can report it.
+//
+// TWO ACCESSOR SHAPES, CHOSEN BY ADDRESSING MODE
+//
+// Whole-corpus read — the caller takes everything and narrows it itself.
+// Return (value, ok bool). ok is computed here from the stored corpus, before
+// any narrowing. When ok is true the value is authoritative *including when it
+// is empty* and the caller must not fall back; when ok is false the value is
+// empty and the fallback is the only correct move. GemNamesSearch and
+// CorruptedGemNamesSearch are the reference.
+//
+// Keyed read — the caller asks for one key of a map. Comma-ok is wrong here.
+// ok would report "this key is present", a different question, and a caller
+// reading it as warmth falls back per missing key: one cold read becomes one
+// query per gem, and a warm cache with a genuinely absent gem re-queries for it
+// on every request. Pair a plain accessor with a separate corpus-warmth
+// predicate the caller checks first — Sparklines with HasSparklines is the
+// reference. HasSparklinesCorruptedVariant shows where the corpus boundary
+// sits: whatever the tick fills as a unit, which there is per variant, because
+// a warm 21/23c map says nothing about 21/20c.
+//
+// ADDING A FIELD
+//
+//  1. Name the corpus: what does one tick fill as a unit? Two corpora filled by
+//     two queries report warmth separately — one succeeding says nothing about
+//     the other (CorruptedGemNamesSearch reports per pool for exactly this
+//     reason).
+//  2. Pick the shape by addressing mode above, not by taste.
+//  3. Store the tick's answer even when it is empty. A writer that skips Set on
+//     an empty result leaves the cache COLD, and then no reader discipline can
+//     help: every request takes the fallback until the data happens to be
+//     non-empty. This is the same defect on the writer side.
+//  4. State in the accessor's doc comment what ok (or the predicate) reports
+//     and what the caller must do with each answer.
+//  5. Test both halves against whether the *database was reached* — warm
+//     answers empty without querying, cold still falls back. Asserting on the
+//     response shape passes with the bug present; that is why these shipped.
+//     internal/server/handlers uses a nil *lab.Repository as the seam.
+
 // Cache holds pre-computed analysis results in memory for instant API serving.
 // Thread-safe via sync.RWMutex — writers take a write lock, readers take a read lock.
 // Readers get a snapshot of the slice header; the underlying data is treated as

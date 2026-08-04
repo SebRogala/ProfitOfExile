@@ -138,6 +138,80 @@ func TestDedicationAnalysis_RejectsAVariantItDoesNotAnalyze(t *testing.T) {
 	}
 }
 
+// The sixth instance of the POE-152 defect, closed by POE-158: warmth was read
+// off the variant-filtered result, so a variant the warm cache holds no rows
+// for queried the database on every request. Both variants are analyzed in one
+// pass, so a warm cache with nothing for one of them is authoritative — the
+// database has nothing either.
+//
+// The assertion is on whether the repository was reached, not on the response:
+// the body is an empty pool either way, so a shape check passes with the bug
+// present. The seam is this package's usual one, a nil *lab.Repository.
+func TestDedicationAnalysis_WarmCacheAnswersAnUnpopulatedVariantWithoutQuerying(t *testing.T) {
+	cache := lab.NewCache(dedicationScope)
+	cache.For(dedicationScope).SetDedication(lab.DedicationAnalysis{
+		Skills: []lab.DedicationResult{
+			{Time: time.Now(), Variant: "21/23c", Color: "BLUE", GemType: "skill", Mode: "safe", Pool: 3, Profit: 800},
+		},
+	})
+
+	w := serveWithoutRepository(t, DedicationAnalysis(nil, cache, dedicationScope),
+		"/api/analysis/dedication?variant=21/20")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	var body dedicationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, w.Body.String())
+	}
+	if len(body.Skills.Safe) != 0 || len(body.Transfigured.Safe) != 0 {
+		t.Errorf("got %d skill and %d transfigured rows, want none — the 21/23c rows must not leak into a 21/20c answer",
+			len(body.Skills.Safe), len(body.Transfigured.Safe))
+	}
+}
+
+// The fallback stays reachable. Before the first Dedication run there is nothing
+// cached, and answering "no rows" out of an empty cache would leave the endpoint
+// permanently empty on a fresh process.
+func TestDedicationAnalysis_ColdCacheFallsBackToTheRepository(t *testing.T) {
+	cold := lab.NewCache(dedicationScope)
+
+	if !queriedRepository(DedicationAnalysis(nil, cold, dedicationScope),
+		"/api/analysis/dedication?variant=21/23c") {
+		t.Fatal("cold cache did not reach the repository; the database fallback is gone")
+	}
+}
+
+// Warmth is judged on the whole analysis, so a run that produced transfigured
+// rows and no skill rows must not send the skill pool back to the database: both
+// pools come out of the same pass over the same snapshot.
+func TestDedicationAnalysis_WarmCacheWithOnlyTransfiguredRowsDoesNotQueryForTheSkillPool(t *testing.T) {
+	cache := lab.NewCache(dedicationScope)
+	cache.For(dedicationScope).SetDedication(lab.DedicationAnalysis{
+		Transfigured: []lab.DedicationResult{
+			{Time: time.Now(), Variant: "21/23c", Color: "BLUE", GemType: "transfigured", Mode: "safe", Pool: 2, Profit: 300},
+		},
+	})
+
+	w := serveWithoutRepository(t, DedicationAnalysis(nil, cache, dedicationScope),
+		"/api/analysis/dedication?variant=21/23c")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
+	}
+	var body dedicationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v (body %s)", err, w.Body.String())
+	}
+	if len(body.Skills.Safe) != 0 {
+		t.Errorf("got %d safe skill rows, want none", len(body.Skills.Safe))
+	}
+	if len(body.Transfigured.Safe) != 1 {
+		t.Fatalf("got %d safe transfigured rows, want the one cached row", len(body.Transfigured.Safe))
+	}
+}
+
 func TestDedicationAnalysis_AcceptsTheVariantWithItsCorruptedSuffix(t *testing.T) {
 	rec, body := getDedication(t, warmDedicationCache(t), "?variant=21/20c")
 

@@ -28,23 +28,25 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 		}
 
 		var skillResults, transfiguredResults []lab.DedicationResult
-		cacheHit := false
+		cacheWarm := false
 
 		// Fast path: serve from cache. The cache holds every analyzed variant,
 		// so the requested one is selected out of it here.
 		if cache != nil {
-			analysis := cache.For(scope).Dedication()
-			skills := lab.FilterDedicationVariant(analysis.Skills, variant)
-			transfigured := lab.FilterDedicationVariant(analysis.Transfigured, variant)
-			if len(skills) > 0 || len(transfigured) > 0 {
-				skillResults = skills
-				transfiguredResults = transfigured
-				cacheHit = true
-			}
+			ded := cache.For(scope).Dedication()
+			// Warmth is judged on the whole cached analysis, not on this variant's
+			// slice of it — the same rule the two Dedication paths in collective.go
+			// apply, and for the same reason: the analyzer computes every variant in
+			// one pass, so a warm cache with nothing for this variant is
+			// authoritative. The database has nothing either, and re-asking it would
+			// run both MAX() subqueries on every poll for a permanently empty answer.
+			cacheWarm = len(ded.Skills) > 0 || len(ded.Transfigured) > 0
+			skillResults = lab.FilterDedicationVariant(ded.Skills, variant)
+			transfiguredResults = lab.FilterDedicationVariant(ded.Transfigured, variant)
 		}
 
-		// Slow path: fall back to DB query.
-		if !cacheHit {
+		// Slow path: fall back to the database only from a cold cache.
+		if !cacheWarm {
 			var err error
 			skillResults, err = repo.LatestDedicationResults(r.Context(), scope, variant, "skill", "", limit)
 			if err != nil {
