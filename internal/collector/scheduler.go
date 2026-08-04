@@ -307,10 +307,18 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 	snapTime := time.Now().UTC()
 
 	if ep.StoreFunc != nil {
+		// Time the write burst (POE-155). The gem snapshot alone inserts ~7,320
+		// rows, and it competes for the same pgbouncer backends as the server's
+		// request path (see internal/db/db.go). Without a duration there is no
+		// way to tell whether that burst is a few hundred milliseconds or the
+		// thing holding connections while requests queue.
+		storeStart := time.Now()
 		inserted, err := ep.StoreFunc(ctx, snapTime, result)
+		storeElapsed := time.Since(storeStart)
 		if err != nil {
 			s.logger.Error("store failed, skipping post-collect and retrying sooner",
 				"endpoint", ep.Name,
+				"duration_ms", storeDurationMillis(storeElapsed),
 				"error", err,
 			)
 			return ep.MinSleep
@@ -318,6 +326,7 @@ func (s *Scheduler) fetchAndStore(ctx context.Context, ep EndpointConfig, state 
 		s.logger.Info("snapshot stored",
 			"endpoint", ep.Name,
 			"inserted", inserted,
+			"duration_ms", storeDurationMillis(storeElapsed),
 		)
 
 		// Calculate sleep before postCollect so we can include nextFetch in the event.
@@ -408,4 +417,11 @@ func (s *Scheduler) postCollect(ctx context.Context, endpointName string, snapTi
 			"error", err,
 		)
 	}
+}
+
+// storeDurationMillis renders a store duration as milliseconds with microsecond
+// resolution, matching the duration_ms field the HTTP access log emits so both
+// sides of the shared connection pool can be compared in one log query.
+func storeDurationMillis(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000
 }
