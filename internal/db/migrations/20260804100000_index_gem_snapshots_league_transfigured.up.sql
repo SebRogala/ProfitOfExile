@@ -6,12 +6,17 @@
 -- migration. Comments are not statements and are safe.
 --
 -- If the index build fails partway (measured): the invalid parent index
--- survives, schema_migrations is left dirty, re-running fails with
--- "relation ... already exists", and because MigrateUp is fail-fast
--- (cmd/server/main.go, os.Exit(1)) the server crash-loops on deploy. Recovery:
+-- survives, some chunks keep their index and the rest stay unindexed, and
+-- schema_migrations is left dirty. golang-migrate checks the dirty flag before
+-- it reads any migration (migrate.go Up(), the dirty check precedes readUp), so
+-- a redeploy never re-executes this statement — it fails immediately with
+-- "Dirty database version N. Fix and force version." and, because MigrateUp is
+-- fail-fast (cmd/server/main.go, os.Exit(1)), the server crash-loops. Recovery:
 --   1. DROP INDEX IF EXISTS idx_gem_snapshots_league_transfigured_name;
---   2. reset schema_migrations to the previous version (clear the dirty flag)
+--   2. make migrate-force VERSION=<previous version>
 --   3. redeploy
+-- Step 1 before step 2: forcing the version without dropping the index makes the
+-- retry fail with "relation ... already exists" instead.
 --
 -- Do NOT "fix" that by adding IF NOT EXISTS. It was tested: it makes a partial
 -- failure record as clean while leaving chunks unindexed, which is strictly
