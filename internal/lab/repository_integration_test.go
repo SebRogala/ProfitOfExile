@@ -813,11 +813,11 @@ func TestGemNameDictionary_skillPoolExcludesSupportGemsSeenOnlyInSnapshots(t *te
 	assertNotInGemColors(t, pool, supportOnlyInSnapshots)
 
 	// Positive control for the absence assertion below. Same league, same
-	// snapshot time, differing from the support name only in the " Support"
-	// suffix — so if the snapshot half stops arriving in the skill dictionary at
-	// all (league scoping broken, wrong is_transfigured predicate, an over-strip
-	// that drops everything), this fails first and the absence assertion is not
-	// credited as a pass.
+	// snapshot time, identical apart from the final word — and the final word is
+	// exactly what the strip keys on. So if the snapshot half stops arriving in
+	// the skill dictionary at all (league scoping broken, wrong is_transfigured
+	// predicate, an over-strip that drops everything), this fails first and the
+	// absence assertion is not credited as a pass.
 	const controlOnlyInSnapshots = "POE144 Snapshot Only Control"
 	seedGemSnapshot(t, pool, leagueID, tm, controlOnlyInSnapshots, "20/20", false, false, 100, 5, "BLUE")
 	assertNotInGemColors(t, pool, controlOnlyInSnapshots)
