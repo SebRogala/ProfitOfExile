@@ -284,6 +284,28 @@ func TestCollectiveAnalysis_ColdSparklineCacheFallsBackToRepository(t *testing.T
 	}
 }
 
+// A tick whose sparkline stage retained no series at all has still answered.
+// mergeSparklineMaps drops every key whose merged series came out empty, so that
+// tick stores two empty maps — and reading them as a cold cache puts the
+// gem_snapshots query back on every request until some series survives, which is
+// the whole failure this cache exists to prevent.
+func TestCollectiveAnalysis_PopulationThatRetainedNoSeriesServesWithoutQuerying(t *testing.T) {
+	cache := warmAnalysisCache(t, sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40})
+	warmSparklines(t, cache, nil, nil)
+
+	w := serveWithoutRepository(t, CollectiveAnalysis(nil, cache, sparklineScope),
+		"/api/analysis/collective?variant=20/20")
+
+	rows := decodeSparklineRows(t, w)
+	row, ok := rows["Spark of Nova"]
+	if !ok {
+		t.Fatalf("response has no row for Spark of Nova: %v", rows)
+	}
+	if len(row.Sparkline) != 0 {
+		t.Errorf("sparkline = %+v, want empty — no series was retained", row.Sparkline)
+	}
+}
+
 func TestCompareAnalysis_WarmCacheServesSparklinesWithoutQuerying(t *testing.T) {
 	now := time.Now()
 	cache := warmAnalysisCache(t, sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40})
@@ -441,18 +463,23 @@ func TestCachedCorruptedSparklines_NonDedicationVariantDefersToTheQuery(t *testi
 	}
 }
 
-// The corrupted map is the one this call reads. A cache warmed only on the
-// non-corrupted side is cold for this request, and reporting it warm would hand
-// back an empty series for every Dedication gem with no fallback and no log.
-func TestCachedCorruptedSparklines_NonCorruptedOnlyCacheDefersToTheQuery(t *testing.T) {
+// Both maps are filled by one read, so a population that produced no corrupted
+// series is authoritative for this request: the database computed the same
+// nothing. Judging warmth on the corrupted map's contents instead re-asks it on
+// every Dedication request for the life of the process.
+func TestCachedCorruptedSparklines_PopulationWithNoCorruptedSeriesAnswersWithoutTheQuery(t *testing.T) {
 	now := time.Now()
 	cache := lab.NewCache(sparklineScope)
 	warmSparklines(t, cache, map[string]map[string][]lab.SparklinePoint{
 		"Spark of Nova": {"20/20": {sparkAt(now, time.Hour, 125, 26)}},
 	}, nil)
 
-	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours); cached {
-		t.Error("cached = true with only the non-corrupted map populated, want the query")
+	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/23c", sparklineWindowHours)
+	if !cached {
+		t.Fatal("cached = false after a population that retained no corrupted series, want the cache to answer")
+	}
+	if len(got) != 0 {
+		t.Errorf("series = %+v, want none — nothing was populated for this variant", got)
 	}
 }
 
@@ -502,19 +529,26 @@ func TestCollectiveRow_SparklineWithoutPointsMarshalsAsEmptyArray(t *testing.T) 
 // means keying that map by name and variant; no test here asserts the current
 // behaviour, so a fix will not have to break one.
 
-// Warmth is per variant, not per corpus. Once the Dedication pool became
-// selectable, a cache holding only 21/23c series would otherwise report itself
-// able to serve a 21/20c request and hand back empty series with no query and
-// no warning — the same silent-empty-market failure the 20/20 case above exists
-// to prevent, one level down.
-func TestCachedCorruptedSparklines_UnpopulatedDedicationVariantDefersToTheQuery(t *testing.T) {
+// Warmth is per corpus, not per variant: the population query filters on
+// lab.DedicationVariants, so one read covers both selectable pools. A cache
+// holding 21/23c series and no 21/20c ones has therefore answered for 21/20c —
+// the snapshot held no corrupted gem at that variant — and re-asking the
+// database returns the same nothing on every request for it.
+//
+// The 20/20 case above is the boundary this does not cross: that variant is
+// outside the population filter, so the cache never had an answer for it.
+func TestCachedCorruptedSparklines_UnpopulatedDedicationVariantAnswersWithoutTheQuery(t *testing.T) {
 	now := time.Now()
 	cache := lab.NewCache(sparklineScope)
 	warmSparklines(t, cache, nil, map[string]map[string][]lab.SparklinePoint{
 		"Vaal Grace": {"21/23c": {sparkAt(now, time.Hour, 900, 5)}},
 	})
 
-	if _, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/20c", sparklineWindowHours); cached {
-		t.Error("cached = true for 21/20c against a cache warmed only on 21/23c, want the query")
+	got, cached := cachedCorruptedSparklines(cache, sparklineScope, []string{"Vaal Grace"}, "21/20c", sparklineWindowHours)
+	if !cached {
+		t.Fatal("cached = false for 21/20c against a populated corpus, want the cache to answer")
+	}
+	if len(got) != 0 {
+		t.Errorf("series = %+v, want none — the 21/23c series must not answer for 21/20c", got)
 	}
 }

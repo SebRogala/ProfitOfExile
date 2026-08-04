@@ -121,10 +121,10 @@ func cachedCorruptedSparklines(cache *lab.Cache, scope league.Scope, names []str
 		return nil, false
 	}
 	c := cache.For(scope)
-	// This variant specifically: a populated corpus says nothing about whether
-	// the requested variant is in it, and a non-corrupted map says nothing about
-	// either.
-	if !c.HasSparklinesCorruptedVariant(variant) {
+	// Warmth is the whole corpus, both maps and both Dedication variants: one
+	// read fills them together, so once it has run, a variant with no keys has no
+	// series and the database has nothing to add. See lab.Cache.HasSparklines.
+	if !c.HasSparklines() {
 		return nil, false
 	}
 	out := make(map[string][]lab.SparklinePoint, len(names))
