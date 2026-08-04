@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_gem_snapshots_league_transfigured_name;
