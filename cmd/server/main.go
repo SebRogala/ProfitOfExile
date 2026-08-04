@@ -611,13 +611,16 @@ func main() {
 				go func() {
 					qCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					offerings := handlers.ComputeOfferingTimings(qCtx, pool, scope)
-					if len(offerings) > 0 {
-						if data, err := json.Marshal(offerings); err == nil {
-							labCache.For(scope).SetOfferingTiming(data)
-							slog.Info("fragment event: offering timing updated", "offerings", len(offerings))
-						}
+					// Stores the answer even when it is empty — see
+					// RefreshOfferingTimings and the cache-state contract in
+					// internal/lab/cache.go. This used to store only a non-empty
+					// result, the writer-side twin of the reader defect POE-152 fixed.
+					n, err := handlers.RefreshOfferingTimings(qCtx, pool, labCache, scope)
+					if err != nil {
+						slog.Warn("fragment event: offering timing refresh failed", "error", err)
+						return
 					}
+					slog.Info("fragment event: offering timing updated", "offerings", n)
 				}()
 			}
 

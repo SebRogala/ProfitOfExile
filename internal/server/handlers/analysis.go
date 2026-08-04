@@ -1337,13 +1337,10 @@ func MarketOverview(cache *lab.Cache, pool *pgxpool.Pool, scope league.Scope) ht
 			// Populate the cache with whatever came back, empty included: an empty
 			// answer is an answer, and the next request must not recompute it.
 			// Fragment collection re-populates it once rows exist
-			// (cmd/server/main.go, ninja_fragments event).
+			// (cmd/server/main.go, ninja_fragments event). ComputeOfferingTimings
+			// never returns nil, so this stores `[]` rather than `null`.
 			if cache != nil {
-				timings := resp.Offerings
-				if timings == nil {
-					timings = []offeringTiming{}
-				}
-				if data, err := json.Marshal(timings); err == nil {
+				if data, err := json.Marshal(resp.Offerings); err == nil {
 					cache.For(scope).SetOfferingTiming(data)
 				}
 			}
@@ -1393,7 +1390,37 @@ type giftDayEntry struct {
 	Median float64 `json:"median"`
 }
 
+// RefreshOfferingTimings recomputes lab offering timings and stores the result
+// in cache, returning how many offerings the answer holds.
+//
+// It stores the answer even when it is empty. An offering with no
+// fragment_snapshots rows is dropped, so an empty result is the tick's real
+// answer, not a failure — withholding it leaves the cache COLD, and then no
+// amount of reader discipline helps: MarketOverview re-runs all ten queries on
+// every request until rows happen to exist. See the cache-state contract at the
+// top of internal/lab/cache.go.
+//
+// This is the tick's entry point (cmd/server/main.go, ninja_fragments event).
+// MarketOverview's own cold path computes inline because it needs the values it
+// serves, not just the stored bytes.
+func RefreshOfferingTimings(ctx context.Context, pool *pgxpool.Pool, cache *lab.Cache, scope league.Scope) (int, error) {
+	offerings := ComputeOfferingTimings(ctx, pool, scope)
+	data, err := json.Marshal(offerings)
+	if err != nil {
+		return 0, err
+	}
+	cache.For(scope).SetOfferingTiming(data)
+	return len(offerings), nil
+}
+
 // ComputeOfferingTimings computes timing analysis for all lab offerings.
+//
+// It never returns nil. An offering with no fragment_snapshots rows is dropped,
+// so "no offerings" is a legitimate answer, and callers cache that answer — a
+// nil slice marshals to `null`, which is indistinguishable from "never stored"
+// on the way back out. Returning an empty slice lets every caller store the
+// result as it stands. offeringTiming is unexported, so cmd/server cannot
+// normalize this itself.
 func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool, scope league.Scope) []offeringTiming {
 	offerings := []struct {
 		name       string
@@ -1404,7 +1431,7 @@ func ComputeOfferingTimings(ctx context.Context, pool *pgxpool.Pool, scope leagu
 	}
 	dayNames := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 
-	var result []offeringTiming
+	result := make([]offeringTiming, 0, len(offerings))
 	for _, off := range offerings {
 		ot := computeOfferingTiming(ctx, pool, scope, off.name, off.fragmentID, dayNames)
 		if ot != nil {

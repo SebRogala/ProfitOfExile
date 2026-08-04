@@ -1,7 +1,7 @@
 # The In-Memory Analysis Cache
 
 **Status:** Current  
-**Last verified:** 2026-07-26  
+**Last verified:** 2026-08-04  
 **Canonical for:** How `lab.Cache` is populated, served, and safely written, including the sparkline series cache.
 
 `internal/lab.Cache` holds pre-computed analysis results in memory so the HTTP
@@ -129,15 +129,16 @@ Every handler must therefore treat an empty cache as normal, not exceptional.
 
 ## The cache-first, database-fallback pattern
 
-Handlers read the cache, check that the relevant data is actually present, and
-fall through to the repository otherwise — for example the collective and
-compare paths in `internal/server/handlers/collective.go`, which set
-`usedCache = true` only when the slices they read are non-empty, and the
-sparkline reads, which are gated on `HasSparklines()`.
+Handlers read the cache, ask it whether it is warm, and fall through to the
+repository only when it is not.
 
-A bare cache read is a bug. The presence check is what makes the cold-start
-window and a failed pipeline stage degrade into a slower response instead of an
-empty one.
+**The cache-state contract is normative in code, at the top of
+`internal/lab/cache.go`** — COLD versus WARM-AND-EMPTY, the rule that a handler
+never infers warmth from a value it filtered, which accessor shape each
+addressing mode takes, and the checklist for adding a field. Read it there
+before adding or reading a cache field; this document deliberately does not
+restate it, because two normative homes is how the rule drifted in the first
+place (POE-158).
 
 ## The sparkline cache
 
