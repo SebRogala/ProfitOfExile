@@ -3,10 +3,13 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"profitofexile/internal/device"
 )
@@ -365,5 +368,272 @@ func TestDeviceFromContext_NilWhenMissing(t *testing.T) {
 	d := DeviceFromContext(ctx)
 	if d != nil {
 		t.Errorf("expected nil from empty context, got %+v", d)
+	}
+}
+
+// --- deviceCache (POE-159) ---
+//
+// The middleware used to upsert on every request carrying X-Device-ID, so every
+// desktop request acquired a pool connection and wrote a row regardless of what
+// the handler did. These tests pin the cache that removed that cost, and the
+// behaviour it must not lose along the way: registration, ban enforcement, and
+// device identity surviving a database failure.
+
+// countingUpserter records how many times Upsert was called and what it was
+// asked for, and lets a test swap the response mid-run.
+type countingUpserter struct {
+	mu     sync.Mutex
+	calls  int
+	dev    *device.Device
+	err    error
+	notify chan struct{}
+}
+
+func (c *countingUpserter) Upsert(_ context.Context, fp, _ string) (*device.Device, error) {
+	c.mu.Lock()
+	c.calls++
+	dev, err := c.dev, c.err
+	notify := c.notify
+	c.mu.Unlock()
+
+	if notify != nil {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if dev == nil {
+		dev = testDevice(fp)
+	}
+	return dev, nil
+}
+
+func (c *countingUpserter) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+func (c *countingUpserter) failWith(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.err = err
+}
+
+const testFingerprint = "1111111111111111111111111111111111111111111111111111111111111111"
+
+// cachedHandler builds the middleware over a cache with the given TTL, wrapping
+// a handler that performs no work of its own — the cache-served shape.
+func cachedHandler(t *testing.T, repo device.Upserter, ttl time.Duration) http.Handler {
+	t.Helper()
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	return deviceMiddleware(newDeviceCache(repo, ttl, 8192))(inner)
+}
+
+func deviceRequest(handler http.Handler, fingerprint string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/api/analysis/status", nil)
+	if fingerprint != "" {
+		req.Header.Set("X-Device-ID", fingerprint)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	return w
+}
+
+func TestDeviceCache_RepeatRequestsWithinTTL_UpsertOnce(t *testing.T) {
+	repo := &countingUpserter{}
+	handler := cachedHandler(t, repo, time.Minute)
+
+	// A gem scan is four requests from one device; without the cache that was
+	// four upserts against one row.
+	for i := 0; i < 4; i++ {
+		if w := deviceRequest(handler, testFingerprint); w.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200", i, w.Code)
+		}
+	}
+
+	if got := repo.callCount(); got != 1 {
+		t.Errorf("upserts for 4 requests from one device = %d, want 1", got)
+	}
+}
+
+func TestDeviceCache_DistinctDevices_UpsertPerDevice(t *testing.T) {
+	repo := &countingUpserter{}
+	handler := cachedHandler(t, repo, time.Minute)
+
+	deviceRequest(handler, testFingerprint)
+	deviceRequest(handler, "2222222222222222222222222222222222222222222222222222222222222222")
+	deviceRequest(handler, "3333333333333333333333333333333333333333333333333333333333333333")
+
+	if got := repo.callCount(); got != 3 {
+		t.Errorf("upserts for 3 distinct devices = %d, want 3 (cache must be keyed per fingerprint)", got)
+	}
+}
+
+func TestDeviceCache_ConcurrentFirstRequests_UpsertOnce(t *testing.T) {
+	repo := &countingUpserter{}
+	handler := cachedHandler(t, repo, time.Minute)
+
+	const n = 20
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = deviceRequest(handler, testFingerprint).Code
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range codes {
+		if c != http.StatusOK {
+			t.Fatalf("concurrent request %d: status = %d, want 200", i, c)
+		}
+	}
+	if got := repo.callCount(); got != 1 {
+		t.Errorf("upserts for %d simultaneous first requests = %d, want 1", n, got)
+	}
+}
+
+func TestDeviceCache_AfterTTL_RefreshesInBackground(t *testing.T) {
+	repo := &countingUpserter{notify: make(chan struct{}, 4)}
+	handler := cachedHandler(t, repo, 10*time.Millisecond)
+
+	deviceRequest(handler, testFingerprint) // registers, upsert #1
+	<-repo.notify
+
+	time.Sleep(20 * time.Millisecond) // entry is now stale
+
+	if w := deviceRequest(handler, testFingerprint); w.Code != http.StatusOK {
+		t.Fatalf("post-expiry status = %d, want 200", w.Code)
+	}
+
+	select {
+	case <-repo.notify:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no background refresh after the entry expired; last_seen would never advance")
+	}
+	if got := repo.callCount(); got != 2 {
+		t.Errorf("upserts after one expiry = %d, want 2", got)
+	}
+}
+
+// awaitRefreshSettled blocks until no background refresh is in flight for the
+// fingerprint. It is a synchronisation barrier, not an assertion: without it the
+// test would observe the entry before the refresh goroutine has written to it.
+func awaitRefreshSettled(t *testing.T, c *deviceCache, fingerprint string) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		e := c.entries[fingerprint]
+		c.mu.Unlock()
+
+		e.mu.Lock()
+		settled := !e.refreshing
+		e.mu.Unlock()
+		if settled {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("background refresh never completed")
+}
+
+func TestDeviceCache_BackgroundRefreshFails_StillIdentifiesDevice(t *testing.T) {
+	repo := &countingUpserter{notify: make(chan struct{}, 4)}
+
+	var seen *device.Device
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = DeviceFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	cache := newDeviceCache(repo, 10*time.Millisecond, 8192)
+	handler := deviceMiddleware(cache)(inner)
+
+	deviceRequest(handler, testFingerprint) // registers
+	<-repo.notify
+
+	repo.failWith(errors.New("connection refused"))
+	time.Sleep(20 * time.Millisecond) // entry is now stale
+
+	deviceRequest(handler, testFingerprint) // schedules the refresh that will fail
+	<-repo.notify
+	awaitRefreshSettled(t, cache, testFingerprint)
+
+	// Only now can the failed refresh's effect on the cached record be observed.
+	seen = nil
+	if w := deviceRequest(handler, testFingerprint); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	// The refresh failed, but the request must still carry device identity —
+	// /api/lab/runs and /api/desktop/font-session reject a request without it,
+	// so discarding the record on a database blip would turn a transient outage
+	// into 401s.
+	if seen == nil {
+		t.Fatal("device missing from context after a failed refresh; identity-gated routes would 401")
+	}
+	if seen.Fingerprint != testFingerprint {
+		t.Errorf("fingerprint = %q, want %q", seen.Fingerprint, testFingerprint)
+	}
+}
+
+func TestDeviceCache_BannedDeviceServedFromCache_Returns403(t *testing.T) {
+	repo := &countingUpserter{dev: testBannedDevice(testFingerprint)}
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("inner handler must not run for a banned device")
+	})
+	handler := deviceMiddleware(newDeviceCache(repo, time.Minute, 8192))(inner)
+
+	for i := 0; i < 3; i++ {
+		w := deviceRequest(handler, testFingerprint)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("request %d: status = %d, want 403", i, w.Code)
+		}
+	}
+
+	// Caching must not weaken the ban: it is enforced from the cached record,
+	// without going back to the database on every request.
+	if got := repo.callCount(); got != 1 {
+		t.Errorf("upserts while serving a banned device = %d, want 1", got)
+	}
+}
+
+func TestDeviceCache_AtCapacity_DropsExpiredEntries(t *testing.T) {
+	repo := &countingUpserter{}
+	cache := newDeviceCache(repo, 10*time.Millisecond, 2)
+
+	fps := []string{
+		testFingerprint,
+		"2222222222222222222222222222222222222222222222222222222222222222",
+		"3333333333333333333333333333333333333333333333333333333333333333",
+	}
+	for _, fp := range fps[:2] {
+		if _, err := cache.Upsert(context.Background(), fp, ""); err != nil {
+			t.Fatalf("seed upsert: %v", err)
+		}
+	}
+
+	time.Sleep(20 * time.Millisecond) // both seeded entries are now expired
+
+	if _, err := cache.Upsert(context.Background(), fps[2], ""); err != nil {
+		t.Fatalf("upsert past capacity: %v", err)
+	}
+
+	cache.mu.Lock()
+	size := len(cache.entries)
+	cache.mu.Unlock()
+
+	// Without eviction the map grows unbounded on distinct fingerprints.
+	if size > 2 {
+		t.Errorf("cache holds %d entries with max=2; expired entries were not evicted", size)
 	}
 }
