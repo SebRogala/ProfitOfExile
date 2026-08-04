@@ -164,17 +164,39 @@ func (c *Cache) Quality() []QualityResult {
 	return c.quality
 }
 
-// GemNamesSearch returns transfigured gem names matching all query words (case-insensitive).
-// Runs entirely in memory — no DB query. Returns up to limit results.
-func (c *Cache) GemNamesSearch(query string, limit int) []string {
+// GemNamesSearch returns transfigured gem names matching all query words
+// (case-insensitive). Runs entirely in memory — no DB query. Returns up to
+// limit results.
+//
+// ok reports whether the cache holds a name corpus to search, and is the
+// caller's cold-cache signal. It exists because the result alone cannot carry
+// that signal: an empty result means "the cache is warm and nothing matches"
+// just as often as it means "there is nothing cached yet", and reading it as
+// the latter sent every non-matching keystroke of a debounced autocomplete to a
+// DISTINCT ... ILIKE over gem_snapshots (POE-152). When ok is true the result
+// is authoritative — including when it is empty — and the caller must not fall
+// back to the repository. When ok is false the result is always empty.
+//
+// An empty query matches nothing and is answered from a warm cache, rather than
+// being handed to the database as a search for everything.
+func (c *Cache) GemNamesSearch(query string, limit int) (names []string, ok bool) {
 	c.mu.RLock()
-	names := c.gemNames
+	corpus := c.gemNames
 	c.mu.RUnlock()
 
-	if len(names) == 0 || query == "" {
-		return nil
+	if len(corpus) == 0 {
+		return nil, false
 	}
+	if query == "" {
+		return nil, true
+	}
+	return searchNames(corpus, query, limit), true
+}
 
+// searchNames returns up to limit entries of names containing every word of
+// query, case-insensitively, in any order. names is a snapshot of an immutable
+// slice, so this runs outside the lock.
+func searchNames(names []string, query string, limit int) []string {
 	words := strings.Fields(strings.ToLower(query))
 	var results []string
 	for _, name := range names {
@@ -326,41 +348,30 @@ func (c *Cache) CorruptedGemNames(isTransfigured bool) []string {
 	return c.corruptedGemNames
 }
 
-// CorruptedGemNamesSearch returns corrupted gem names matching all query words (case-insensitive).
-// Runs entirely in memory. Returns up to limit results.
-func (c *Cache) CorruptedGemNamesSearch(query string, isTransfigured bool, limit int) []string {
+// CorruptedGemNamesSearch returns corrupted gem names matching all query words
+// (case-insensitive). Runs entirely in memory. Returns up to limit results.
+//
+// ok carries the same cold-cache signal as GemNamesSearch, reported per pool:
+// the two corpora are populated from separate queries, so a warm transfigured
+// pool says nothing about the skill pool. See GemNamesSearch for why the signal
+// cannot ride on the result.
+func (c *Cache) CorruptedGemNamesSearch(query string, isTransfigured bool, limit int) (names []string, ok bool) {
 	c.mu.RLock()
-	var names []string
+	var corpus []string
 	if isTransfigured {
-		names = c.corruptedTransfiguredGemNames
+		corpus = c.corruptedTransfiguredGemNames
 	} else {
-		names = c.corruptedGemNames
+		corpus = c.corruptedGemNames
 	}
 	c.mu.RUnlock()
 
-	if len(names) == 0 || query == "" {
-		return nil
+	if len(corpus) == 0 {
+		return nil, false
 	}
-
-	words := strings.Fields(strings.ToLower(query))
-	var results []string
-	for _, name := range names {
-		lower := strings.ToLower(name)
-		match := true
-		for _, w := range words {
-			if !strings.Contains(lower, w) {
-				match = false
-				break
-			}
-		}
-		if match {
-			results = append(results, name)
-			if len(results) >= limit {
-				break
-			}
-		}
+	if query == "" {
+		return nil, true
 	}
-	return results
+	return searchNames(corpus, query, limit), true
 }
 
 // SetGemSignals replaces the cached gem signals.

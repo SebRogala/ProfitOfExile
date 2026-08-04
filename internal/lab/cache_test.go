@@ -185,3 +185,112 @@ func TestCache_SparklineHighWater_ReturnsStoredMark(t *testing.T) {
 		t.Fatalf("SparklineHighWater: got %s, want the stored %s", got, mark)
 	}
 }
+
+// warmGemNames populates the transfigured-name corpus through the same path the
+// analyzer uses, so the tests below exercise the corpus a live cache holds.
+func warmGemNames(t *testing.T, c *Cache, scope league.Scope, names ...string) {
+	t.Helper()
+	results := make([]TransfigureResult, 0, len(names))
+	for _, n := range names {
+		results = append(results, TransfigureResult{TransfiguredName: n})
+	}
+	c.For(scope).SetTransfigure(results)
+}
+
+// The POE-152 contract: a populated corpus that matches nothing is an answer,
+// not a miss. Reporting ok=false here (as deriving warmth from the result's
+// length would) sends every non-matching keystroke to the hypertable.
+func TestCache_GemNamesSearch_WarmCorpusAnswersAZeroMatchQuery(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+	warmGemNames(t, c, scope, "Spark of Nova", "Ice Nova of Frostbolts")
+
+	names, ok := c.For(scope).GemNamesSearch("zzq", 10)
+
+	if !ok {
+		t.Fatal("GemNamesSearch on a warm corpus with no matches: ok = false, want true (a warm cache answers, it does not defer to the database)")
+	}
+	if len(names) != 0 {
+		t.Errorf("names = %v, want none", names)
+	}
+}
+
+// The other half of the same contract: an empty corpus is the only thing that
+// authorises the database fallback.
+func TestCache_GemNamesSearch_ColdCorpusReportsNotOK(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	names, ok := c.For(scope).GemNamesSearch("spark", 10)
+
+	if ok {
+		t.Fatal("GemNamesSearch on a cold cache: ok = true, want false (the fallback must stay reachable before the first analysis run)")
+	}
+	if len(names) != 0 {
+		t.Errorf("names = %v, want none", names)
+	}
+}
+
+// Matching is per word, case-insensitive, and order-independent — the behaviour
+// the repository's ILIKE fallback implements, which the in-memory path has to
+// reproduce for the two to be interchangeable.
+func TestCache_GemNamesSearch_MatchesEveryWordInAnyOrder(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+	warmGemNames(t, c, scope, "Ice Nova of Frostbolts", "Spark of Nova", "Frostblink of Wintry Blast")
+
+	names, ok := c.For(scope).GemNamesSearch("frostbolts ICE", 10)
+
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if len(names) != 1 || names[0] != "Ice Nova of Frostbolts" {
+		t.Errorf("names = %v, want only [Ice Nova of Frostbolts]", names)
+	}
+}
+
+// limit caps the result: the autocomplete response size must not track the
+// corpus size.
+func TestCache_GemNamesSearch_StopsAtLimit(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+	warmGemNames(t, c, scope, "Nova A", "Nova B", "Nova C")
+
+	names, _ := c.For(scope).GemNamesSearch("nova", 2)
+
+	if len(names) != 2 {
+		t.Errorf("names = %v, want 2 entries", names)
+	}
+}
+
+// Same contract on the Dedication pools.
+func TestCache_CorruptedGemNamesSearch_WarmPoolAnswersAZeroMatchQuery(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+	c.For(scope).SetCorruptedGemNames([]string{"Vaal Grace"}, []string{"Grace of the Vaal"})
+
+	names, ok := c.For(scope).CorruptedGemNamesSearch("zzq", true, 10)
+
+	if !ok {
+		t.Fatal("CorruptedGemNamesSearch on a warm pool with no matches: ok = false, want true")
+	}
+	if len(names) != 0 {
+		t.Errorf("names = %v, want none", names)
+	}
+}
+
+// The two pools are filled by two separate queries, so warmth is reported per
+// pool. A shared signal would serve the skill pool's reader an empty answer with
+// no fallback whenever only the transfigured query succeeded.
+func TestCache_CorruptedGemNamesSearch_PoolsReportWarmthIndependently(t *testing.T) {
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+	c.For(scope).SetCorruptedGemNames(nil, []string{"Grace of the Vaal"})
+
+	if _, ok := c.For(scope).CorruptedGemNamesSearch("grace", true, 10); !ok {
+		t.Error("transfigured pool: ok = false, want true (it was populated)")
+	}
+	if _, ok := c.For(scope).CorruptedGemNamesSearch("grace", false, 10); ok {
+		t.Error("skill pool: ok = true, want false (it was never populated)")
+	}
+}
