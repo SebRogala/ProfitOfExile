@@ -113,15 +113,16 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/gem-icon/{name}", gemIcons.Handler())
 	}
 
-	if cfg.Pool != nil {
-		r.Get("/api/snapshots/gems", handlers.GemSnapshots(cfg.Pool, cfg.League))
-		r.Get("/api/snapshots/currency", handlers.CurrencySnapshots(cfg.Pool, cfg.League))
-		r.Get("/api/snapshots/fragments", handlers.FragmentSnapshots(cfg.Pool, cfg.League))
-		// /api/snapshots/stats was removed (POE-150): three unbounded
-		// full-relation aggregates, 14.7 s of DB time and 168 MB of temp spill
-		// per unauthenticated request, with no consumer. The market overview it
-		// once backed is served from cache by /api/analysis/market-overview.
-	}
+	// The whole /api/snapshots/* family is gone. /stats went first (POE-150):
+	// three unbounded full-relation aggregates, 14.7 s of DB time and 168 MB of
+	// temp spill per unauthenticated request, with no consumer. Its /gems,
+	// /currency and /fragments siblings followed (POE-157): also unauthenticated
+	// raw-hypertable reads whose 24h window was only a default, so
+	// ?from=1970-01-01&limit=10000 bypassed it. They existed so an agent could
+	// pull prod data without SSH; the real prod->local path is the SSH pipe,
+	// which authenticates with a key and can COPY a full dump. Do not re-add an
+	// HTTP export — write a CLI around SSH + psql instead. The market overview
+	// /stats once backed is served from cache by /api/analysis/market-overview.
 
 	if cfg.LabRepo != nil {
 		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
