@@ -812,9 +812,23 @@ func TestGemNameDictionary_skillPoolExcludesSupportGemsSeenOnlyInSnapshots(t *te
 	seedGemSnapshot(t, pool, leagueID, tm, supportOnlyInSnapshots, "20/20", false, false, 100, 5, "BLUE")
 	assertNotInGemColors(t, pool, supportOnlyInSnapshots)
 
+	// Positive control for the absence assertion below. Same league, same
+	// snapshot time, differing from the support name only in the " Support"
+	// suffix — so if the snapshot half stops arriving in the skill dictionary at
+	// all (league scoping broken, wrong is_transfigured predicate, an over-strip
+	// that drops everything), this fails first and the absence assertion is not
+	// credited as a pass.
+	const controlOnlyInSnapshots = "POE144 Snapshot Only Control"
+	seedGemSnapshot(t, pool, leagueID, tm, controlOnlyInSnapshots, "20/20", false, false, 100, 5, "BLUE")
+	assertNotInGemColors(t, pool, controlOnlyInSnapshots)
+
 	names, err := repo.GemNameDictionary(ctx, league.Historical(leagueID), false)
 	if err != nil {
 		t.Fatalf("GemNameDictionary: %v", err)
+	}
+
+	if !containsName(names, controlOnlyInSnapshots) {
+		t.Fatalf("control %q missing — the snapshot half did not reach the skill dictionary, so the exclusion below proves nothing", controlOnlyInSnapshots)
 	}
 
 	if containsName(names, supportOnlyInSnapshots) {
@@ -834,9 +848,16 @@ func TestGemNameDictionary_skillPoolKeepsNonSupportNamesMissingFromGemColors(t *
 	cleanupAtTime(t, pool, tm, "gem_snapshots")
 
 	// The union exists so a gem the market prices before gem_colors records it is
-	// still OCR-matchable. Stripping supports from the snapshot half must not turn
-	// into classifying it: FilterGemDictionary decides transfigured-ness by looking
-	// the base name up in gem_colors, so it would drop this name outright.
+	// still OCR-matchable. This name has no " of ", so it is the plain
+	// non-support case: it catches an inverted isSupportGem predicate, and any
+	// over-strip that drops the snapshot half out of the skill pool.
+	//
+	// It does NOT catch the classification hazard — swapping the strip for
+	// FilterGemDictionary keeps this name, because extractBaseName returns it
+	// unchanged and it classifies non-transfigured. The classification hazard is
+	// guarded on the transfigured half, by
+	// TestGemNameDictionary_includesLeagueNamesMissingFromGemColors, which seeds a
+	// " of " name flagged transfigured.
 	const onlyInSnapshots = "POE144 Snapshot Only Skill"
 	seedGemSnapshot(t, pool, leagueID, tm, onlyInSnapshots, "20/20", false, false, 100, 5, "BLUE")
 	assertNotInGemColors(t, pool, onlyInSnapshots)

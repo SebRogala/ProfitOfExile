@@ -1711,10 +1711,20 @@ func (r *Repository) GemNameDictionary(ctx context.Context, scope league.Scope, 
 	}
 
 	// The snapshot half needs the support-gem strip too, but ONLY the strip.
-	// Running FilterGemDictionary here would classify each name by looking its
-	// base up in gem_colors, dropping exactly the names this union exists to
-	// rescue — the ones the market lists before gem_colors records them
-	// (TestGemNameDictionary_includesLeagueNamesMissingFromGemColors).
+	// FilterGemDictionary re-derives transfigured-ness from whatever list it is
+	// handed — its `known` set is built from its own argument — so running it
+	// over fromSnapshots would re-classify, against the snapshot half as the
+	// universe of base names, names the market already classified authoritatively
+	// in the is_transfigured column. Applying the strip directly keeps the
+	// market's verdict.
+	//
+	// Measured 2026-08-04, local DB, league Allflame: doing that would be a no-op
+	// on this skill half (0 of 341 stripped names lost from the final dictionary)
+	// but would drop 45 of 247 names from the transfigured half, which has no
+	// second source — those are exactly the names the union exists to rescue.
+	// The guard for that lives on the transfigured half, in
+	// TestGemNameDictionary_includesLeagueNamesMissingFromGemColors; nothing pins
+	// the hazard on this half, because it is inert here today.
 	if !transfigured {
 		kept := fromSnapshots[:0]
 		for _, n := range fromSnapshots {
@@ -1775,19 +1785,36 @@ func FilterGemDictionary(all []string, transfigured bool) []string {
 //
 // Game rule: the Font of Enhancement and the Dedication to the Goddess hand out
 // skill gems only (confirmed with the domain owner), so a support gem is never a
-// possible outcome and never a valid OCR match candidate in either pool.
+// possible outcome of either craft.
 //
 // Observed 2026-08-04 on prod: the transfigured=false dictionary carried 224
 // " Support"-suffixed names out of 571 — effectively the whole support roster —
 // because the gem_snapshots half of GemNameDictionary was merged unfiltered.
 //
-// The suffix test is exhaustive for both dictionary halves: gem_snapshots is
-// written only by the collector from poe.ninja's type=SkillGem endpoint
-// (internal/collector/ninja.go), whose only non-active-skill category is support
-// gems, and every support gem's name ends in " Support".
+// The suffix test is exhaustive: gem_snapshots is written only by the collector
+// from poe.ninja's type=SkillGem endpoint (internal/collector/ninja.go), whose
+// only non-active-skill category is support gems, and every support gem's name
+// ends in " Support".
 //
-// POE-142 is expected to fold this into a gem-eligibility SSOT; it is one symbol
-// so there is one call site to relocate, not two string literals to hunt.
+// Both call sites gate the strip on the skill pool (!transfigured), so the
+// transfigured half is deliberately passed through untouched: is_transfigured
+// comes from poe.ninja's alt_ discriminator (convertGemLines in
+// internal/collector/ninja.go), which is authoritative, and a name-shape
+// heuristic layered on top of an authoritative flag can only subtract from it.
+// Measured 2026-08-04 on the local DB, the un-stripped half is inert anyway —
+// SELECT name FROM gem_snapshots WHERE name LIKE '% Support' AND is_transfigured
+// returns 0 rows. TestGemNameDictionary_transfiguredPoolIsNotSupportFiltered
+// pins the pass-through.
+//
+// POE-142 is expected to fold this into a gem-eligibility SSOT. Grepping
+// isSupportGem will not find the whole surface: package lab carries three
+// support-gem predicates, and they are not interchangeable.
+//   - isSupportGem — strings.HasSuffix(name, " Support")
+//   - isDedicationFeed (dedication.go) — strings.Contains(g.Name, "Support")
+//   - CorruptedGemNamesAutocomplete — SQL name NOT LIKE '%Support%'
+//
+// Contains and LIKE '%Support%' also match a non-suffix "Support", so unifying
+// them changes behaviour and is POE-142's call, not a mechanical merge.
 func isSupportGem(name string) bool {
 	return strings.HasSuffix(name, " Support")
 }
