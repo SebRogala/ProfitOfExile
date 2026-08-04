@@ -770,6 +770,117 @@ func TestGemNameDictionary_includesLeagueNamesMissingFromGemColors(t *testing.T)
 	t.Errorf("%q missing — a gem the market lists but gem_colors has not recorded is unmatchable by OCR", onlyInSnapshots)
 }
 
+// assertNotInGemColors fails the test when name is already in gem_colors. The
+// dictionary unions gem_colors with the league's snapshot names, so a name
+// present in both proves nothing about which half produced it.
+func assertNotInGemColors(t *testing.T, pool *pgxpool.Pool, name string) {
+	t.Helper()
+	var inColors bool
+	if err := pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM gem_colors WHERE name = $1)`, name).Scan(&inColors); err != nil {
+		t.Fatalf("check gem_colors: %v", err)
+	}
+	if inColors {
+		t.Fatalf("%q unexpectedly present in gem_colors — the test cannot attribute it to the snapshot half", name)
+	}
+}
+
+func containsName(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGemNameDictionary_skillPoolExcludesSupportGemsSeenOnlyInSnapshots(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-144-dict-support"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(8)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// poe.ninja's type=SkillGem feed carries support gems, so they land in
+	// gem_snapshots. Neither the Font nor Dedication can hand out a support gem, so
+	// every one of these is a false-positive candidate for the desktop OCR matcher.
+	const supportOnlyInSnapshots = "POE144 Snapshot Only Support"
+	seedGemSnapshot(t, pool, leagueID, tm, supportOnlyInSnapshots, "20/20", false, false, 100, 5, "BLUE")
+	assertNotInGemColors(t, pool, supportOnlyInSnapshots)
+
+	names, err := repo.GemNameDictionary(ctx, league.Historical(leagueID), false)
+	if err != nil {
+		t.Fatalf("GemNameDictionary: %v", err)
+	}
+
+	if containsName(names, supportOnlyInSnapshots) {
+		t.Errorf("%q present in the skill dictionary — a support gem is never a Font or Dedication outcome", supportOnlyInSnapshots)
+	}
+}
+
+func TestGemNameDictionary_skillPoolKeepsNonSupportNamesMissingFromGemColors(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-144-dict-union"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(9)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// The union exists so a gem the market prices before gem_colors records it is
+	// still OCR-matchable. Stripping supports from the snapshot half must not turn
+	// into classifying it: FilterGemDictionary decides transfigured-ness by looking
+	// the base name up in gem_colors, so it would drop this name outright.
+	const onlyInSnapshots = "POE144 Snapshot Only Skill"
+	seedGemSnapshot(t, pool, leagueID, tm, onlyInSnapshots, "20/20", false, false, 100, 5, "BLUE")
+	assertNotInGemColors(t, pool, onlyInSnapshots)
+
+	names, err := repo.GemNameDictionary(ctx, league.Historical(leagueID), false)
+	if err != nil {
+		t.Fatalf("GemNameDictionary: %v", err)
+	}
+
+	if !containsName(names, onlyInSnapshots) {
+		t.Errorf("%q missing — a gem the market lists but gem_colors has not recorded is unmatchable by OCR", onlyInSnapshots)
+	}
+}
+
+func TestGemNameDictionary_transfiguredPoolIsNotSupportFiltered(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-144-dict-transfigured"
+	registerLeague(t, pool, leagueID)
+
+	tm := futureTime(10)
+	cleanupAtTime(t, pool, tm, "gem_snapshots")
+
+	// The transfigured half is trusted straight from the market — is_transfigured
+	// comes from poe.ninja's alt_ discriminator, not from a name rule — and the
+	// support strip is gated on the skill pool alone. A " Support" name flagged
+	// transfigured is the one shape that distinguishes a gated strip from an
+	// unconditional one, so it is what this test seeds.
+	const transfiguredSupport = "POE144 Transfigured Support"
+	seedGemSnapshot(t, pool, leagueID, tm, transfiguredSupport, "20/20", true, false, 100, 5, "BLUE")
+	assertNotInGemColors(t, pool, transfiguredSupport)
+
+	names, err := repo.GemNameDictionary(ctx, league.Historical(leagueID), true)
+	if err != nil {
+		t.Fatalf("GemNameDictionary: %v", err)
+	}
+
+	if !containsName(names, transfiguredSupport) {
+		t.Errorf("%q missing from the transfigured dictionary — the support strip must not reach this pool", transfiguredSupport)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read isolation — result tables (seeded via the scoped Save* writers)
 // ---------------------------------------------------------------------------
