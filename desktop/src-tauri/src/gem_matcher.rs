@@ -1,11 +1,68 @@
 use serde::Serialize;
 use strsim::jaro_winkler;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GemMatch {
     pub name: String,
     pub score: f64,
     pub ocr_raw: String,
+}
+
+/// Why `match_gem` declined an OCR candidate.
+///
+/// Returned rather than logged inside the matcher: the matcher has no
+/// `AppHandle`, and `log::` output is unreachable in a shipped build (the
+/// binary sets `windows_subsystem = "windows"`, so there is no console, and
+/// `env_logger` defaults to the `Error` filter with `RUST_LOG` unset). The
+/// callers hold the handle and route this through `app_log`, which reaches the
+/// LOGS panel and `app.log`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GemReject {
+    /// OCR text was empty once trimmed.
+    Empty,
+    /// The matcher holds no names, so nothing could match.
+    NoVocabulary,
+    /// The final token reads as "support". Support gems are never a Font or
+    /// Dedication outcome, so the read is off-panel text, not an option.
+    SupportShaped,
+    /// The winning name is transfigured (" of ") but the OCR text carries no
+    /// " of " — prefix-inflated noise rather than a gem name.
+    MissingOfConnector { name: String, score: f64 },
+    /// Best score below the accept threshold, or too close to the runner-up.
+    Inconclusive { name: String, score: f64, second: f64 },
+}
+
+impl std::fmt::Display for GemReject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GemReject::Empty => write!(f, "empty after trim"),
+            GemReject::NoVocabulary => write!(f, "matcher vocabulary is empty"),
+            GemReject::SupportShaped => write!(
+                f,
+                "support-gem shape — support gems are never a Font or Dedication outcome"
+            ),
+            GemReject::MissingOfConnector { name, score } => write!(
+                f,
+                "closest name '{}' ({:.3}) is transfigured but the text has no \" of \"",
+                name, score
+            ),
+            GemReject::Inconclusive {
+                name,
+                score,
+                second,
+            } => write!(
+                f,
+                "best '{}' {:.3}, second {:.3}, gap {:.3} (needs {:.2} with a {:.2} gap, or {:.2} outright)",
+                name,
+                score,
+                second,
+                score - second,
+                MIN_THRESHOLD,
+                MIN_GAP,
+                NO_GAP_THRESHOLD
+            ),
+        }
+    }
 }
 
 /// Last-token similarity at or above which OCR text is treated as a support-gem
@@ -21,6 +78,13 @@ pub struct GemMatch {
 ///     ("suppport", "Support.").
 /// 0.85 sits in the empty band between 0.771 and 0.905.
 const SUPPORT_TOKEN_THRESHOLD: f64 = 0.85;
+
+/// Minimum similarity for a match, and the minimum lead it needs over the
+/// runner-up. `NO_GAP_THRESHOLD` is the confidence at which the lead stops
+/// being required.
+const MIN_THRESHOLD: f64 = 0.80;
+const MIN_GAP: f64 = 0.05;
+const NO_GAP_THRESHOLD: f64 = 0.95;
 
 pub struct GemMatcher {
     names: Vec<String>,
@@ -47,11 +111,20 @@ impl GemMatcher {
     }
 
     /// Match OCR text against known gem names.
-    /// Returns the best match if score >= min_threshold and gap to second-best >= min_gap.
-    pub fn match_gem(&self, ocr_text: &str) -> Option<GemMatch> {
+    ///
+    /// Returns the best match if its score clears `MIN_THRESHOLD` with a
+    /// `MIN_GAP` lead (or clears `NO_GAP_THRESHOLD` outright), and otherwise
+    /// the `GemReject` naming which gate discarded the text — the caller owns
+    /// logging it, see `GemReject`.
+    pub fn match_gem(&self, ocr_text: &str) -> Result<GemMatch, GemReject> {
         let query = ocr_text.trim().to_lowercase();
         if query.is_empty() {
-            return None;
+            return Err(GemReject::Empty);
+        }
+        // Guards the `self.names_lower[best_idx]` reads below, which would index
+        // an empty vector: `best_idx` stays 0 when the scoring loop never runs.
+        if self.names_lower.is_empty() {
+            return Err(GemReject::NoVocabulary);
         }
 
         // Support-gem reject gate. Game rule: the Font of Enhancement and the
@@ -84,12 +157,8 @@ impl GemMatcher {
         // legal (isDedicationFeed, internal/lab/dedication.go) — needs its own
         // matcher or an opt-out, not a relaxation of this gate.
         if is_support_shaped(&query) {
-            log::debug!("Rejected support-gem candidate '{}' (support gems are never a Font or Dedication outcome)", ocr_text);
-            return None;
+            return Err(GemReject::SupportShaped);
         }
-
-        let min_threshold = 0.80;
-        let min_gap = 0.05;
 
         let mut best_score = 0.0_f64;
         let mut best_idx = 0;
@@ -115,36 +184,35 @@ impl GemMatcher {
         // transfigured and non-transfigured skill gems share one matcher: skill
         // gems have no " of " in their name so this gate never touches them.
         if self.names_lower[best_idx].contains(" of ") && !query.contains(" of ") {
-            return None;
+            return Err(GemReject::MissingOfConnector {
+                name: self.names[best_idx].clone(),
+                score: best_score,
+            });
         }
 
-        if best_score >= min_threshold && (best_score - second_score) >= min_gap {
-            Some(GemMatch {
+        if best_score >= MIN_THRESHOLD && (best_score - second_score) >= MIN_GAP {
+            Ok(GemMatch {
                 name: self.names[best_idx].clone(),
                 score: best_score,
                 ocr_raw: ocr_text.to_string(),
             })
-        } else if best_score >= 0.95 {
+        } else if best_score >= NO_GAP_THRESHOLD {
             // Very high confidence — accept even without a gap to second-best.
             // Retained deliberately: it absorbs OCR character confusions (l<->I,
             // I<->1, etc.) that push a clean read to a near-tie with a sibling
             // variant. The name-keyed shape gate above already blocks the
             // false-positive class, so this no-gap path no longer admits noise.
-            Some(GemMatch {
+            Ok(GemMatch {
                 name: self.names[best_idx].clone(),
                 score: best_score,
                 ocr_raw: ocr_text.to_string(),
             })
         } else {
-            log::debug!(
-                "No match for '{}': best={:.3} ({}), second={:.3}, gap={:.3}",
-                ocr_text,
-                best_score,
-                self.names[best_idx],
-                second_score,
-                best_score - second_score
-            );
-            None
+            Err(GemReject::Inconclusive {
+                name: self.names[best_idx].clone(),
+                score: best_score,
+                second: second_score,
+            })
         }
     }
 }
@@ -178,15 +246,15 @@ mod tests {
         let m = test_matcher();
         // Simulated OCR error: 'i' -> 'l'
         let result = m.match_gem("Earthquale of Fraglllty");
-        assert!(result.is_some());
+        assert!(result.is_ok());
         assert_eq!(result.unwrap().name, "Earthquake of Fragility");
     }
 
     #[test]
-    fn garbage_returns_none() {
+    fn garbage_is_rejected() {
         let m = test_matcher();
         let result = m.match_gem("xyzzy random garbage text");
-        assert!(result.is_none());
+        assert!(result.is_err());
     }
 
     #[test]
@@ -197,10 +265,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_returns_none() {
+    fn empty_input_is_rejected() {
         let m = test_matcher();
-        assert!(m.match_gem("").is_none());
-        assert!(m.match_gem("   ").is_none());
+        assert_eq!(m.match_gem(""), Err(GemReject::Empty));
+        assert_eq!(m.match_gem("   "), Err(GemReject::Empty));
     }
 
     #[test]
@@ -210,7 +278,10 @@ mod tests {
         // gate keys on the matched name, so it holds regardless of mode.
         // "earthquake fragility" drops the " of " the target name carries.
         let m = test_matcher();
-        assert!(m.match_gem("earthquake fragility").is_none());
+        assert!(matches!(
+            m.match_gem("earthquake fragility"),
+            Err(GemReject::MissingOfConnector { .. })
+        ));
     }
 
     #[test]
@@ -234,7 +305,17 @@ mod tests {
             "Divine Ire of Disintegration".into(),
         ]);
         // Text prefix-similar to the transfigured name but lacking " of ".
-        assert!(m.match_gem("divine ire disintegration").is_none());
+        let Err(GemReject::MissingOfConnector { name, .. }) =
+            m.match_gem("divine ire disintegration")
+        else {
+            panic!(
+                "expected a missing-\" of \" reject, got {:?}",
+                m.match_gem("divine ire disintegration")
+            );
+        };
+        // The reject names the transfigured gem it declined — third in the
+        // vocabulary, so a payload built from a fixed index fails here.
+        assert_eq!(name, "Divine Ire of Disintegration");
     }
 
     /// The nine skill gems the POE-145 measurement recorded as absorbing a
@@ -281,9 +362,10 @@ mod tests {
             "Windburst Support",            // 0.815 -> Winter Orb
             "Generosity Support",           // 0.694 -> General's Cry (below threshold)
         ] {
-            assert!(
-                m.match_gem(name).is_none(),
-                "'{}' must be rejected as a support gem, got {:?}",
+            assert_eq!(
+                m.match_gem(name),
+                Err(GemReject::SupportShaped),
+                "'{}' must be rejected by the support gate, got {:?}",
                 name,
                 m.match_gem(name).map(|g| (g.name, g.score))
             );
@@ -297,13 +379,47 @@ mod tests {
         // through to "Barrage" at 0.900 — the very fall-through the gate closes.
         let m = support_neighbour_matcher();
         for name in ["Barrage Suppon", "Barrage 5upport", "Barrage supporl"] {
-            assert!(
-                m.match_gem(name).is_none(),
-                "'{}' must be rejected as a support gem, got {:?}",
+            assert_eq!(
+                m.match_gem(name),
+                Err(GemReject::SupportShaped),
+                "'{}' must be rejected by the support gate, got {:?}",
                 name,
                 m.match_gem(name).map(|g| (g.name, g.score))
             );
         }
+    }
+
+    #[test]
+    fn an_inconclusive_reject_names_the_candidate_it_declined() {
+        // The reject payload is what the LOGS panel prints: which name came
+        // closest, and by how much. "ravage" lands nearest "Barrage" at 0.783,
+        // below the 0.80 accept threshold, so the read is dropped — and without
+        // these fields the log line cannot distinguish a near-miss worth
+        // re-reading from noise that missed by a mile. "Barrage" is deliberately
+        // not the first name in the vocabulary, so a payload built from a fixed
+        // index instead of the winner fails here.
+        let m = GemMatcher::new(vec!["Ignite".into(), "Barrage".into(), "Rage Vortex".into()]);
+        let Err(GemReject::Inconclusive {
+            name,
+            score,
+            second,
+        }) = m.match_gem("ravage")
+        else {
+            panic!("expected an inconclusive reject, got {:?}", m.match_gem("ravage"));
+        };
+        assert_eq!(name, "Barrage");
+        assert!((score - 0.7825).abs() < 0.001, "best score was {}", score);
+        assert!((second - 0.6960).abs() < 0.001, "runner-up score was {}", second);
+    }
+
+    #[test]
+    fn an_empty_vocabulary_is_reported_rather_than_indexed() {
+        // fetch_gem_names returns an empty Vec whenever the dictionary request
+        // fails or the league has no gems yet, and test_ocr_on_image builds a
+        // matcher straight from it. Without the guard the transfigured shape
+        // gate reads names_lower[0] on an empty vector and panics the command.
+        let m = GemMatcher::new(Vec::new());
+        assert_eq!(m.match_gem("Barrage"), Err(GemReject::NoVocabulary));
     }
 
     #[test]
