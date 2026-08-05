@@ -1545,10 +1545,16 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
 
     let mut best_match: Option<gem_matcher::GemMatch> = None;
     for candidate in &candidates {
-        if let Some(m) = matcher.match_gem(candidate) {
-            if best_match.as_ref().map_or(true, |b| m.score > b.score) {
-                best_match = Some(m);
+        match matcher.match_gem(candidate) {
+            Ok(m) => {
+                if best_match.as_ref().map_or(true, |b| m.score > b.score) {
+                    best_match = Some(m);
+                }
             }
+            // Unthrottled and undeduplicated, unlike the scan loop: this command
+            // is a one-shot manual probe over a fixed candidate list, so every
+            // rejection is a result the operator asked for.
+            Err(reason) => app_log(&app, format!("  Rejected {:?}: {}", candidate, reason)),
         }
     }
 
@@ -1610,6 +1616,19 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut gems_found = 0u32;
     let mut loop_count = 0u32;
+    // Rejection log, deduplicated by message and capped per scan.
+    //
+    // Every rejection is worth a line — a player whose third option never
+    // appears otherwise gets no breadcrumb at all, and the throttled raw
+    // candidate dump below fires on one loop in eight and cannot say which gate
+    // discarded the text. But the loop reads the same tooltip four times a
+    // second for up to 45s, and the LOGS panel keeps only 50 entries, so
+    // unbounded reject lines would push every other diagnostic out of the
+    // buffer. Deduplicating collapses the repeats; the cap bounds OCR text that
+    // differs slightly frame to frame.
+    const MAX_REJECT_LOGS: usize = 12;
+    let mut logged_rejects: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut rejects_suppressed = false;
     let start = std::time::Instant::now();
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
     const MAX_GEMS: u32 = 3;
@@ -1673,9 +1692,25 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
         }
         let mut best: Option<gem_matcher::GemMatch> = None;
         for candidate in &candidates {
-            if let Some(m) = matcher.match_gem(candidate) {
-                if best.as_ref().map_or(true, |b| m.score > b.score) {
-                    best = Some(m);
+            match matcher.match_gem(candidate) {
+                Ok(m) => {
+                    if best.as_ref().map_or(true, |b| m.score > b.score) {
+                        best = Some(m);
+                    }
+                }
+                Err(reason) => {
+                    let line = format!("Gem OCR rejected {:?}: {}", candidate, reason);
+                    if logged_rejects.len() < MAX_REJECT_LOGS {
+                        if logged_rejects.insert(line.clone()) {
+                            app_log(&app, line);
+                        }
+                    } else if !rejects_suppressed {
+                        rejects_suppressed = true;
+                        app_log(&app, format!(
+                            "Gem OCR: {} distinct rejections logged — further rejections suppressed for this scan",
+                            MAX_REJECT_LOGS,
+                        ));
+                    }
                 }
             }
         }
