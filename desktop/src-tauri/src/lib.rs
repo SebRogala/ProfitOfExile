@@ -1536,7 +1536,7 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server, &http, &lab_mode));
     if gem_names.is_empty() {
-        app_log(&app, "Gem scan aborted — no gem names loaded (server unreachable?)".to_string());
+        app_log(&app, "Gem scan aborted — no gem names loaded (see the dictionary log lines above for which half failed)".to_string());
         if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
             *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
             emit_status(&app);
@@ -1927,6 +1927,12 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Cl
         );
 
         let mut all_names = Vec::new();
+        // A half-loaded vocabulary is worse than none: the matcher rejects a
+        // candidate whose winning name contains " of " when the OCR text does
+        // not, so losing the plain-skill half turns a clean read of "Barrage"
+        // into zero matches, not a partial one. Track each half and abort the
+        // scan rather than silently shipping a truncated dictionary (POE-146).
+        let mut failed: Vec<&str> = Vec::new();
         for (label, res) in [("skills", skills_res), ("transfigured", transfig_res)] {
             match res {
                 Ok(resp) if resp.status().is_success() => {
@@ -1941,21 +1947,33 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Cl
                                 }
                                 app_log(app, format!("Dedication gem names ({}): {} loaded", label, count));
                             } else {
+                                failed.push(label);
                                 app_log(app, format!("Dedication gem names ({}): response missing 'names' field", label));
                             }
                         }
                         Err(e) => {
+                            failed.push(label);
                             app_log(app, format!("Dedication gem names ({}): parse failed: {}", label, e));
                         }
                     }
                 }
                 Ok(resp) => {
+                    failed.push(label);
                     app_log(app, format!("Dedication gem names ({}): server returned {}", label, resp.status()));
                 }
                 Err(e) => {
+                    failed.push(label);
                     app_log(app, format!("Dedication gem names ({}): request failed: {}", label, e));
                 }
             }
+        }
+
+        if !failed.is_empty() {
+            app_log(app, format!(
+                "Dedication gem names: {} half failed — matcher would be incomplete, aborting scan",
+                failed.join(" + "),
+            ));
+            return Vec::new();
         }
 
         // Deduplicate (transfigured names are a subset of all corrupted gems).
