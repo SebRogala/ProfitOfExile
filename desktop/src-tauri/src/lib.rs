@@ -786,24 +786,34 @@ mod overlay_clickthrough {
     /// Whether the overlay has visible content. When false, clicks pass through entirely.
     static HAS_CONTENT: AtomicBool = AtomicBool::new(false);
 
-    /// Check if cursor is in the interactive zone. Also refreshes cached rect if dirty.
-    fn check_interactive(cx: i32, cy: i32) -> bool {
+    /// Re-read the overlay rect into `WIN_RECT` when it is marked dirty.
+    ///
+    /// Deliberately cached rather than read per event: this runs inside a
+    /// `WH_MOUSE_LL` hook, which Windows silently unhooks when it exceeds
+    /// `LowLevelHooksTimeout`, and the hook sees every mouse event system-wide.
+    fn refresh_rect_if_dirty() {
         let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
-        if hwnd_val == 0 { return false; }
+        if hwnd_val == 0 { return; }
+        if !RECT_DIRTY.swap(false, Ordering::Relaxed) { return; }
 
         unsafe {
             let hwnd = HWND(hwnd_val as *mut _);
-            if RECT_DIRTY.swap(false, Ordering::Relaxed) {
-                let mut rect = RECT::default();
-                if GetWindowRect(hwnd, &mut rect).is_ok() {
-                    if let Ok(mut wr) = WIN_RECT.lock() {
-                        *wr = (rect.left, rect.top, rect.right, rect.bottom);
-                    }
-                } else {
-                    RECT_DIRTY.store(true, Ordering::Relaxed);
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() {
+                if let Ok(mut wr) = WIN_RECT.lock() {
+                    *wr = (rect.left, rect.top, rect.right, rect.bottom);
                 }
+            } else {
+                RECT_DIRTY.store(true, Ordering::Relaxed);
             }
         }
+    }
+
+    /// Check if cursor is in the interactive zone. Also refreshes cached rect if dirty.
+    fn check_interactive(cx: i32, cy: i32) -> bool {
+        if OVERLAY_HWND.load(Ordering::Relaxed) == 0 { return false; }
+
+        refresh_rect_if_dirty();
 
         let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
         let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
@@ -819,6 +829,18 @@ mod overlay_clickthrough {
             let mouse = &*(l_param.0 as *const MSLLHOOKSTRUCT);
             let cx = mouse.pt.x;
             let cy = mouse.pt.y;
+            let msg_id = w_param.0 as u32;
+
+            // A click is the one event rare enough to afford a fresh
+            // GetWindowRect (clicks are ~3 orders of magnitude rarer than
+            // moves, and the move path must stay inside LowLevelHooksTimeout).
+            // Reading here bounds a missed move/resize/DPI event to a single
+            // click instead of misplacing the interactive zone and every
+            // emitted coordinate for the rest of the session (POE-148).
+            if msg_id == WM_LBUTTONDOWN {
+                RECT_DIRTY.store(true, Ordering::Relaxed);
+                refresh_rect_if_dirty();
+            }
 
             // WebView2 may strip WS_EX_TRANSPARENT when creating/updating child
             // windows. Re-apply when it's missing. Only check when cursor is near
@@ -840,7 +862,6 @@ mod overlay_clickthrough {
             }
 
             if check_interactive(cx, cy) && HAS_CONTENT.load(Ordering::Relaxed) {
-                let msg_id = w_param.0 as u32;
                 // Consume clicks in the interactive zone — don't pass to game.
                 if msg_id == WM_LBUTTONDOWN || msg_id == WM_LBUTTONUP {
                     if msg_id == WM_LBUTTONDOWN {
@@ -924,6 +945,16 @@ mod overlay_clickthrough {
 
     pub fn invalidate_rect() {
         RECT_DIRTY.store(true, Ordering::Relaxed);
+    }
+
+    /// Invalidate the cached rect when `hwnd` is the overlay this hook tracks.
+    ///
+    /// Keyed on the HWND rather than a window label so it stays correct for
+    /// whichever overlay currently owns the interactive zone.
+    pub fn invalidate_if_tracked(hwnd: HWND) {
+        if OVERLAY_HWND.load(Ordering::Relaxed) == hwnd.0 as isize {
+            RECT_DIRTY.store(true, Ordering::Relaxed);
+        }
     }
 
     pub unsafe fn set_noactivate(hwnd: HWND) {
@@ -2586,6 +2617,26 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // The mouse hook hit-tests clicks against a cached window rect and
+            // derives overlay-relative coordinates from it. Anything that moves
+            // the overlay without going through `move_overlay` — a DPI or
+            // resolution change, a monitor switch, the game toggling
+            // fullscreen — would otherwise leave that rect stale for the rest
+            // of the session, shifting both the interactive zone and every
+            // click coordinate (POE-148).
+            #[cfg(windows)]
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_)
+                    | tauri::WindowEvent::Resized(_)
+                    | tauri::WindowEvent::ScaleFactorChanged { .. }
+            ) {
+                if let Ok(hwnd) = window.hwnd() {
+                    overlay_clickthrough::invalidate_if_tracked(
+                        windows::Win32::Foundation::HWND(hwnd.0 as *mut _),
+                    );
+                }
+            }
             // Clean up overlay mouse hook when comparator window is destroyed
             if let tauri::WindowEvent::Destroyed = event {
                 if window.label() == "comparator" {
