@@ -52,16 +52,16 @@ func TestResolveMaxConns(t *testing.T) {
 		want     int
 		wantWarn bool
 	}{
-		// The fallback cases assert defaultMaxConns rather than a literal: the
+		// The fallback cases assert DefaultMaxConns rather than a literal: the
 		// number is a deliberate contract against the pgbouncer pool and is
 		// pinned by pool_sizing_test.go, so restating it here would just make
 		// six tests fail whenever that contract is retuned.
-		{"unset returns default", nil, defaultMaxConns, false},
+		{"unset returns default", nil, DefaultMaxConns, false},
 		{"valid override", strPtr("10"), 10, false},
-		{"non-numeric falls back", strPtr("invalid"), defaultMaxConns, true},
-		{"zero falls back", strPtr("0"), defaultMaxConns, true},
-		{"negative falls back", strPtr("-5"), defaultMaxConns, true},
-		{"empty string falls back", strPtr(""), defaultMaxConns, false},
+		{"non-numeric falls back", strPtr("invalid"), DefaultMaxConns, true},
+		{"zero falls back", strPtr("0"), DefaultMaxConns, true},
+		{"negative falls back", strPtr("-5"), DefaultMaxConns, true},
+		{"empty string falls back", strPtr(""), DefaultMaxConns, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

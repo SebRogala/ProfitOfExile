@@ -3,7 +3,7 @@ package db
 import "testing"
 
 // The constants below are not configuration — they are the measured production
-// facts defaultMaxConns was chosen against (POE-154). They live in the test so
+// facts DefaultMaxConns was chosen against (POE-154). They live in the test so
 // that retuning the pool has to confront them: a change that violates one of
 // these is a change that reintroduces either the 120-second pgbouncer stall or
 // request starvation during a recompute.
@@ -28,18 +28,18 @@ const (
 )
 
 func TestDefaultMaxConns_BothProcessesFitTheSharedPgbouncerPool(t *testing.T) {
-	total := poolClientProcesses * defaultMaxConns
+	total := poolClientProcesses * DefaultMaxConns
 	if total > pgbouncerSharedBackends {
-		t.Fatalf("defaultMaxConns = %d: %d processes advertise %d connections into a %d-backend pgbouncer pool; "+
+		t.Fatalf("DefaultMaxConns = %d: %d processes advertise %d connections into a %d-backend pgbouncer pool; "+
 			"exhaustion then queues in pgbouncer and fails after query_wait_timeout (120s) instead of failing locally in Go",
-			defaultMaxConns, poolClientProcesses, total, pgbouncerSharedBackends)
+			DefaultMaxConns, poolClientProcesses, total, pgbouncerSharedBackends)
 	}
 }
 
 func TestDefaultMaxConns_LeavesAConnectionForRequestsDuringRecompute(t *testing.T) {
-	if defaultMaxConns <= serverReservedConns {
-		t.Fatalf("defaultMaxConns = %d but the server's fence, data lock and three analysis goroutines "+
+	if DefaultMaxConns <= serverReservedConns {
+		t.Fatalf("DefaultMaxConns = %d but the server's fence, data lock and three analysis goroutines "+
 			"can hold %d at once; a gem-event recompute would starve the request path of every connection",
-			defaultMaxConns, serverReservedConns)
+			DefaultMaxConns, serverReservedConns)
 	}
 }

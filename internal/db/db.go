@@ -11,9 +11,15 @@ import (
 )
 
 const (
-	// defaultMaxConns is the pool size each process gets when POE_DB_MAX_CONNS
+	// DefaultMaxConns is the pool size each process gets when POE_DB_MAX_CONNS
 	// is unset — which, as of POE-154, is the case on both production
 	// containers, so this constant is what actually runs.
+	//
+	// Exported because it is a budget other packages spend against, not just an
+	// internal default: internal/server/handlers sizes the trade-submit writer
+	// pool as a share of it, and asserts that share in a test. Anything that
+	// starts a fixed number of connection-holding goroutines has to do the same,
+	// or it silently claims connections this comment's arithmetic already spent.
 	//
 	// There is a pgbouncer in front of Postgres. It appears nowhere else in
 	// this repository — no compose service, no config, no docs — yet it is in
@@ -69,7 +75,7 @@ const (
 	// fences in cmd/server/main.go and cmd/collector/main.go, which assume the
 	// session holding the lock is the session that later releases and
 	// health-checks it. Not observed to fail. Do not assume it cannot.
-	defaultMaxConns = 6
+	DefaultMaxConns = 6
 
 	maxAllowedConns = 10000
 )
@@ -77,37 +83,37 @@ const (
 // resolveMaxConns returns the desired pgxpool MaxConns, honoring the
 // POE_DB_MAX_CONNS env var when present and parseable as a positive int
 // within the sane upper bound (maxAllowedConns). Invalid, non-positive,
-// or out-of-range values log a WARN and fall back to defaultMaxConns.
+// or out-of-range values log a WARN and fall back to DefaultMaxConns.
 func resolveMaxConns() int {
 	v := os.Getenv("POE_DB_MAX_CONNS")
 	if v == "" {
-		return defaultMaxConns
+		return DefaultMaxConns
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
 		slog.Warn("db: POE_DB_MAX_CONNS rejected, using default",
 			"raw_value", v,
 			"reason", "parse error: "+err.Error(),
-			"default", defaultMaxConns,
+			"default", DefaultMaxConns,
 		)
-		return defaultMaxConns
+		return DefaultMaxConns
 	}
 	if n <= 0 {
 		slog.Warn("db: POE_DB_MAX_CONNS rejected, using default",
 			"raw_value", v,
 			"reason", "must be positive",
-			"default", defaultMaxConns,
+			"default", DefaultMaxConns,
 		)
-		return defaultMaxConns
+		return DefaultMaxConns
 	}
 	if n > maxAllowedConns {
 		slog.Warn("db: POE_DB_MAX_CONNS rejected, using default",
 			"raw_value", v,
 			"reason", "exceeds upper bound",
 			"max_allowed", maxAllowedConns,
-			"default", defaultMaxConns,
+			"default", DefaultMaxConns,
 		)
-		return defaultMaxConns
+		return DefaultMaxConns
 	}
 	return n
 }
