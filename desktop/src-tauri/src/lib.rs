@@ -664,6 +664,34 @@ fn trade_cancel(app: AppHandle) {
     app_log(&app, format!("Trade queue cancelled ({} pending)", remaining));
 }
 
+/// Total attempts for a trade submit that the server sheds with 503 — the
+/// first send plus two retries.
+///
+/// The insert behind the endpoint is idempotent (`ON CONFLICT DO NOTHING` on
+/// `(league, time, gem, variant)`) and the submit is already detached, so a
+/// retry can duplicate work but never rows. The bound is the point: the server
+/// grew a queue and a 503 precisely to shed load, and an unbounded client-side
+/// retry would hand that load straight back.
+const TRADE_SUBMIT_ATTEMPTS: u32 = 3;
+/// Wait used when a 503 carries no parseable `Retry-After`.
+const TRADE_SUBMIT_RETRY_FALLBACK: std::time::Duration = std::time::Duration::from_secs(1);
+/// Ceiling on an honoured `Retry-After`. The row is a cache-enrichment nicety;
+/// holding a task for minutes because a header said so is not worth it.
+const TRADE_SUBMIT_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Delay to wait before retrying a shed submit.
+///
+/// Honours the delta-seconds form of `Retry-After` (what the server sends),
+/// clamped to `TRADE_SUBMIT_RETRY_MAX`. The HTTP-date form is not parsed — it
+/// falls back like any other unusable value.
+fn retry_after_delay(header: Option<&str>) -> std::time::Duration {
+    header
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(TRADE_SUBMIT_RETRY_FALLBACK)
+        .min(TRADE_SUBMIT_RETRY_MAX)
+}
+
 /// Direct trade API lookup against GGG from the desktop app.
 /// Each user has their own IP → own rate limits (no shared server bottleneck).
 /// Accepts optional divine rate for chaos normalization of divine-priced listings.
@@ -718,15 +746,45 @@ async fn trade_lookup(
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
             let url = format!("{}/api/trade/submit", server_url);
-            match http.post(&url).json(&submit_result).send().await {
-                Ok(res) if res.status().is_success() => {
-                    app_log(&app_clone, format!("Trade submitted to server: {} ({})", submit_result.gem, submit_result.variant));
-                }
-                Ok(res) => {
-                    app_log(&app_clone, format!("Trade submit rejected: {}", res.status()));
-                }
-                Err(e) => {
-                    app_log(&app_clone, format!("Trade submit failed: {}", e));
+            for attempt in 1..=TRADE_SUBMIT_ATTEMPTS {
+                match http.post(&url).json(&submit_result).send().await {
+                    Ok(res) if res.status().is_success() => {
+                        app_log(&app_clone, format!("Trade submitted to server: {} ({})", submit_result.gem, submit_result.variant));
+                        return;
+                    }
+                    // 503 is the server shedding a saturated persist queue, not
+                    // a rejection of this row — it carries Retry-After and the
+                    // insert is idempotent, so re-sending is safe.
+                    Ok(res)
+                        if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE
+                            && attempt < TRADE_SUBMIT_ATTEMPTS =>
+                    {
+                        let delay = retry_after_delay(
+                            res.headers()
+                                .get(reqwest::header::RETRY_AFTER)
+                                .and_then(|v| v.to_str().ok()),
+                        );
+                        app_log(&app_clone, format!(
+                            "Trade submit shed by server (503), retrying in {:.1}s (attempt {}/{})",
+                            delay.as_secs_f64(), attempt, TRADE_SUBMIT_ATTEMPTS,
+                        ));
+                        tokio::time::sleep(delay).await;
+                    }
+                    Ok(res) if res.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                        app_log(&app_clone, format!(
+                            "Trade submit shed by server after {} attempts — history row lost: {} ({})",
+                            TRADE_SUBMIT_ATTEMPTS, submit_result.gem, submit_result.variant,
+                        ));
+                        return;
+                    }
+                    Ok(res) => {
+                        app_log(&app_clone, format!("Trade submit rejected: {}", res.status()));
+                        return;
+                    }
+                    Err(e) => {
+                        app_log(&app_clone, format!("Trade submit failed: {}", e));
+                        return;
+                    }
                 }
             }
         });
