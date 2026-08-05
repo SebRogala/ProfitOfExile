@@ -42,9 +42,36 @@ type tradeLookupPersister interface {
 //     synchronously before enqueueing, so a shed submit still enriches other
 //     users' responses. What is refused is the durable history row.
 //
-// Sizes: 4 workers is ~4,300 inserts/s at the measured 0.93 ms per INSERT, three
-// orders of magnitude above the expected rate, while taking at most 4 of the
-// pool's 50 connections so request-path queries can never be starved by writes.
+// SIZES, AND WHAT THE WORKER COUNT IS ACTUALLY BOUNDED BY
+//
+// Not throughput. At the measured 0.93 ms per INSERT one worker is ~1,075
+// inserts/s, already three orders of magnitude above the expected rate, so every
+// worker past the first buys nothing a queue of 256 does not already absorb.
+//
+// The bound is the connection pool. These goroutines hold a pool connection for
+// the length of an insert, and they are the only work in the process whose
+// latency nobody is waiting on — the caller already has its 204. So they take
+// the smaller share: at most half of what the process-lifetime fence leaves of
+// db.DefaultMaxConns, which is 2 at the current default of 6. Asserted in
+// trade_submit_pool_share_test.go, because this number and that one landed on
+// the same day in separate commits and drifted — the comment here claimed "4 of
+// the pool's 50" for four months after the pool became 6.
+//
+// The second worker is not throughput either, it is liveness: insertTimeout is
+// 5 s, and with a single worker one stuck insert stops the queue draining for
+// that whole window. Two means a stall still leaves a drain path.
+//
+// This is a share of the DEFAULT pool. POE_DB_MAX_CONNS can set the real pool
+// lower — 3 is the floor cmd/server/main.go enforces — and at that floor these
+// two workers plus the fence can hold everything for the ~1 ms of an insert.
+// That is added latency, not a wedge: a worker releases after each row rather
+// than holding across a wait.
+//
+// What does NOT hold, and used to be claimed here: that request-path queries
+// "can never be starved by writes". Nothing reserves connections for requests.
+// Writes contend like everything else and the loser queues in Go, which is the
+// failure mode internal/db deliberately chose over queueing in pgbouncer.
+//
 // A 256-slot queue absorbs a full simultaneous burst from ~50 users compared
 // three-at-a-time without ever reaching the shed path.
 type submitWriterConfig struct {
@@ -55,7 +82,7 @@ type submitWriterConfig struct {
 }
 
 var defaultSubmitWriterConfig = submitWriterConfig{
-	workers:       4,
+	workers:       2,
 	queue:         256,
 	enqueueWait:   250 * time.Millisecond,
 	insertTimeout: 5 * time.Second,
