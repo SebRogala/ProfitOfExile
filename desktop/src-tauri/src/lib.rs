@@ -2826,3 +2826,32 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::retry_after_delay;
+    use std::time::Duration;
+
+    #[test]
+    fn retry_after_delay_honours_delta_seconds() {
+        assert_eq!(retry_after_delay(Some("2")), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn retry_after_delay_clamps_a_long_wait_to_the_ceiling() {
+        assert_eq!(retry_after_delay(Some("120")), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn retry_after_delay_falls_back_when_the_header_is_absent() {
+        assert_eq!(retry_after_delay(None), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn retry_after_delay_falls_back_on_the_http_date_form() {
+        assert_eq!(
+            retry_after_delay(Some("Wed, 21 Oct 2015 07:28:00 GMT")),
+            Duration::from_secs(1),
+        );
+    }
+}
