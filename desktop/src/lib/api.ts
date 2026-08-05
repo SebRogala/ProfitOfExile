@@ -742,8 +742,13 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				let data: any;
 				try {
 					data = JSON.parse(event.data);
-				} catch {
-					onUpdate();
+				} catch (err) {
+					// Every legitimate publish is a marshalled JSON object
+					// (internal/lab/throttler.go marshals a map[string]string), so
+					// unparseable data is not an update — treating it as one fired the
+					// full loadAll() fan-out and threw the parse error away. Matches
+					// frontend/src/lib/api.ts.
+					console.warn('[Mercure] Failed to parse message:', err, 'raw:', event.data);
 					return;
 				}
 
