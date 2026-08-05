@@ -823,8 +823,198 @@ async fn trade_lookup(
 /// pixels) and emits Tauri events instead. The hook consumes these clicks so
 /// they don't reach the game. The overlay frontend maps click coordinates to
 /// button actions.
+/// Cached overlay geometry for the click-through hook, and the rule for when
+/// that cache may be trusted.
+///
+/// A type rather than four loose statics so the trust rule is testable off
+/// Windows. The rule exists entirely for the case a test cannot provoke — a
+/// failed `GetWindowRect` — but every consequence of that failure lives here,
+/// so this is the seam. Compiled on every platform under `test`; only Windows
+/// builds instantiate it (POE-148).
+#[cfg(any(windows, test))]
+// Off Windows this compiles for tests only, with no hook to call `invalidate`.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod rect_cache {
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::Mutex as StdMutex;
+
+    pub struct RectCache {
+        /// (left, top, right, bottom) in physical pixels.
+        rect: StdMutex<(i32, i32, i32, i32)>,
+        dirty: AtomicBool,
+        valid: AtomicBool,
+        read_failures: AtomicU32,
+    }
+
+    impl RectCache {
+        pub const fn new() -> Self {
+            Self {
+                rect: StdMutex::new((0, 0, 0, 0)),
+                // Starts dirty and untrusted: (0,0,0,0) describes no window.
+                dirty: AtomicBool::new(true),
+                valid: AtomicBool::new(false),
+                read_failures: AtomicU32::new(0),
+            }
+        }
+
+        /// Mark the cache stale so the next attempt re-reads it.
+        pub fn invalidate(&self) {
+            self.dirty.store(true, Ordering::Relaxed);
+        }
+
+        /// Whether a refresh is due, clearing the flag in the same operation.
+        pub fn take_dirty(&self) -> bool {
+            self.dirty.swap(false, Ordering::Relaxed)
+        }
+
+        /// Record a successful read.
+        ///
+        /// Poison-tolerant, like every reader: taking the lock with `if let Ok`
+        /// dropped the update on a poisoned mutex *after* the dirty flag had
+        /// already been cleared, so a single panic while holding the lock froze
+        /// the rect for the rest of the session with no signal.
+        pub fn store(&self, rect: (i32, i32, i32, i32)) {
+            *self.rect.lock().unwrap_or_else(|e| e.into_inner()) = rect;
+            self.valid.store(true, Ordering::Relaxed);
+        }
+
+        /// Record a failed read.
+        ///
+        /// The stored tuple still holds the *previous* geometry, so trust is
+        /// withdrawn rather than the value replaced — consumers must decline,
+        /// not compute against another window's rect. Staying dirty lets the
+        /// cache self-heal on the next attempt that can read; the accepted
+        /// trade-off is that a persistently unreadable window is retried on
+        /// every mouse event, which the failure count makes visible.
+        pub fn record_failure(&self) {
+            self.dirty.store(true, Ordering::Relaxed);
+            self.valid.store(false, Ordering::Relaxed);
+            self.read_failures.fetch_add(1, Ordering::Relaxed);
+        }
+
+        /// Forget which window the cache describes, without counting a failure.
+        pub fn reset_for_new_window(&self) {
+            self.dirty.store(true, Ordering::Relaxed);
+            self.valid.store(false, Ordering::Relaxed);
+        }
+
+        /// Whether the stored rect came from a successful read of the current
+        /// window. False means every consumer must decline.
+        pub fn is_valid(&self) -> bool {
+            self.valid.load(Ordering::Relaxed)
+        }
+
+        pub fn get(&self) -> (i32, i32, i32, i32) {
+            *self.rect.lock().unwrap_or_else(|e| e.into_inner())
+        }
+
+        /// Failures since the last drain. The hook cannot log — it must return
+        /// inside `LowLevelHooksTimeout` — so its message loop drains this.
+        pub fn take_failures(&self) -> u32 {
+            self.read_failures.swap(0, Ordering::Relaxed)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::RectCache;
+
+        #[test]
+        fn a_fresh_cache_is_untrusted() {
+            // (0,0,0,0) would hit-test as a degenerate zone at the screen
+            // origin, so the cache must not be trusted before its first read.
+            assert!(!RectCache::new().is_valid());
+        }
+
+        #[test]
+        fn a_failed_read_withdraws_trust_while_leaving_the_stale_rect_in_place() {
+            // The exact POE-148 regression: before this, a failed GetWindowRect
+            // only re-set the dirty flag, and the hook went straight on to
+            // hit-test and translate coordinates against the tuple below.
+            let cache = RectCache::new();
+            cache.store((100, 200, 400, 500));
+
+            cache.record_failure();
+
+            assert!(!cache.is_valid());
+            assert_eq!(
+                cache.get(),
+                (100, 200, 400, 500),
+                "the stale rect is still readable — withdrawing trust is what stops it being used"
+            );
+        }
+
+        #[test]
+        fn a_failed_read_leaves_the_cache_dirty_so_it_can_self_heal() {
+            // Mirrors the refresh sequence: the dirty flag is consumed before
+            // the read, so a successful read leaves the cache clean.
+            let cache = RectCache::new();
+            assert!(cache.take_dirty(), "a fresh cache is due for its first read");
+            cache.store((1, 2, 3, 4));
+            assert!(!cache.take_dirty(), "a successful read leaves nothing to refresh");
+
+            cache.record_failure();
+
+            assert!(cache.take_dirty());
+        }
+
+        #[test]
+        fn a_later_successful_read_restores_trust() {
+            let cache = RectCache::new();
+            cache.record_failure();
+
+            cache.store((10, 20, 30, 40));
+
+            assert!(cache.is_valid());
+            assert_eq!(cache.get(), (10, 20, 30, 40));
+        }
+
+        #[test]
+        fn failed_reads_are_counted_and_drained_by_the_reporter() {
+            let cache = RectCache::new();
+            cache.record_failure();
+            cache.record_failure();
+
+            assert_eq!(cache.take_failures(), 2);
+            assert_eq!(cache.take_failures(), 0, "the drain must not re-report");
+        }
+
+        #[test]
+        fn adopting_a_new_window_withdraws_trust_without_counting_a_failure() {
+            let cache = RectCache::new();
+            cache.store((100, 200, 400, 500));
+
+            cache.reset_for_new_window();
+
+            assert!(!cache.is_valid());
+            assert_eq!(cache.take_failures(), 0);
+        }
+
+        #[test]
+        fn a_poisoned_rect_lock_does_not_freeze_the_cache() {
+            // Every reader already recovers from poisoning with `into_inner`, so
+            // a writer that gives up on `Err` leaves them serving the old tuple
+            // for the rest of the session. One panic while holding this lock
+            // used to be enough.
+            let cache = RectCache::new();
+            cache.store((1, 2, 3, 4));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = cache.rect.lock().unwrap();
+                panic!("poison the rect lock");
+            }));
+            assert!(cache.rect.is_poisoned(), "the arrange step must have poisoned the lock");
+
+            cache.store((50, 60, 70, 80));
+
+            assert_eq!(cache.get(), (50, 60, 70, 80));
+            assert!(cache.is_valid());
+        }
+    }
+}
+
 #[cfg(windows)]
 mod overlay_clickthrough {
+    use super::rect_cache::RectCache;
     use std::sync::atomic::{AtomicI32, AtomicIsize, AtomicBool, Ordering};
     use std::sync::Mutex as StdMutex;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM, BOOL, RECT};
@@ -835,8 +1025,8 @@ mod overlay_clickthrough {
 
     static HOOK_HANDLE: StdMutex<Option<SendHook>> = StdMutex::new(None);
     static OVERLAY_HWND: AtomicIsize = AtomicIsize::new(0);
-    static WIN_RECT: StdMutex<(i32, i32, i32, i32)> = StdMutex::new((0, 0, 0, 0));
-    static RECT_DIRTY: AtomicBool = AtomicBool::new(true);
+    /// Cached overlay geometry. See `rect_cache::RectCache` for the trust rule.
+    static RECT_CACHE: RectCache = RectCache::new();
     /// Width of interactive zone on the right edge (physical pixels).
     static INTERACTIVE_WIDTH: AtomicI32 = AtomicI32::new(48);
     /// Click buffer — hook pushes overlay-relative coordinates, message loop drains and emits events.
@@ -844,7 +1034,7 @@ mod overlay_clickthrough {
     /// Whether the overlay has visible content. When false, clicks pass through entirely.
     static HAS_CONTENT: AtomicBool = AtomicBool::new(false);
 
-    /// Re-read the overlay rect into `WIN_RECT` when it is marked dirty.
+    /// Re-read the overlay rect into `RECT_CACHE` when it is marked dirty.
     ///
     /// Deliberately cached rather than read per event: this runs inside a
     /// `WH_MOUSE_LL` hook, which Windows silently unhooks when it exceeds
@@ -852,17 +1042,15 @@ mod overlay_clickthrough {
     fn refresh_rect_if_dirty() {
         let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
         if hwnd_val == 0 { return; }
-        if !RECT_DIRTY.swap(false, Ordering::Relaxed) { return; }
+        if !RECT_CACHE.take_dirty() { return; }
 
         unsafe {
             let hwnd = HWND(hwnd_val as *mut _);
             let mut rect = RECT::default();
             if GetWindowRect(hwnd, &mut rect).is_ok() {
-                if let Ok(mut wr) = WIN_RECT.lock() {
-                    *wr = (rect.left, rect.top, rect.right, rect.bottom);
-                }
+                RECT_CACHE.store((rect.left, rect.top, rect.right, rect.bottom));
             } else {
-                RECT_DIRTY.store(true, Ordering::Relaxed);
+                RECT_CACHE.record_failure();
             }
         }
     }
@@ -872,8 +1060,14 @@ mod overlay_clickthrough {
         if OVERLAY_HWND.load(Ordering::Relaxed) == 0 { return false; }
 
         refresh_rect_if_dirty();
+        // Decline rather than hit-test against a rect we could not read. The
+        // overlay is fully click-through, so declining passes the click to the
+        // game — the same outcome as the cursor being outside the zone, and
+        // strictly better than claiming a click at coordinates translated
+        // against another window's geometry.
+        if !RECT_CACHE.is_valid() { return false; }
 
-        let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+        let (left, top, right, bottom) = RECT_CACHE.get();
         let iw = INTERACTIVE_WIDTH.load(Ordering::Relaxed);
         cx >= left && cx < right && cy >= top && cy < bottom && cx >= (right - iw)
     }
@@ -892,11 +1086,13 @@ mod overlay_clickthrough {
             // A click is the one event rare enough to afford a fresh
             // GetWindowRect (clicks are ~3 orders of magnitude rarer than
             // moves, and the move path must stay inside LowLevelHooksTimeout).
-            // Reading here bounds a missed move/resize/DPI event to a single
-            // click instead of misplacing the interactive zone and every
-            // emitted coordinate for the rest of the session (POE-148).
+            // A successful read bounds a missed move/resize/DPI event to a
+            // single click instead of misplacing the interactive zone and every
+            // emitted coordinate for the rest of the session (POE-148). A failed
+            // read gives no such bound — it invalidates the cache instead, and
+            // the consumers below decline until a read succeeds.
             if msg_id == WM_LBUTTONDOWN {
-                RECT_DIRTY.store(true, Ordering::Relaxed);
+                RECT_CACHE.invalidate();
                 refresh_rect_if_dirty();
             }
 
@@ -904,11 +1100,13 @@ mod overlay_clickthrough {
             // windows. Re-apply when it's missing. Only check when cursor is near
             // the overlay to avoid per-mouse-event Win32 calls system-wide.
             let hwnd_val = OVERLAY_HWND.load(Ordering::Relaxed);
-            if hwnd_val != 0 {
+            // Cache validity gates this too: "near the overlay" is meaningless
+            // when the cached rect belongs to a window we could not read.
+            if hwnd_val != 0 && RECT_CACHE.is_valid() {
                 let hwnd = HWND(hwnd_val as *mut _);
                 // Only do the GetWindowLongW check when cursor is near the overlay
                 // (within the full window rect, not just the interactive zone).
-                let (left, top, right, bottom) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+                let (left, top, right, bottom) = RECT_CACHE.get();
                 if cx >= left && cx < right && cy >= top && cy < bottom {
                     let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
                     // ex == 0 can mean failure OR "no styles" — only re-apply if we
@@ -924,7 +1122,7 @@ mod overlay_clickthrough {
                 if msg_id == WM_LBUTTONDOWN || msg_id == WM_LBUTTONUP {
                     if msg_id == WM_LBUTTONDOWN {
                         // Buffer overlay-relative coordinates for the message loop to emit.
-                        let (left, top, _, _) = *WIN_RECT.lock().unwrap_or_else(|e| e.into_inner());
+                        let (left, top, _, _) = RECT_CACHE.get();
                         CLICK_BUFFER.lock().unwrap_or_else(|e| e.into_inner())
                             .push((cx - left, cy - top));
                     }
@@ -953,8 +1151,24 @@ mod overlay_clickthrough {
                 log::info!("Overlay mouse hook installed (fully click-through mode)");
 
                 let mut msg = MSG::default();
+                // Throttled: a persistently unreadable rect stays dirty, so the
+                // hook retries on every mouse event and the counter can climb by
+                // thousands a second. One line per second reports the volume
+                // without flooding the 50-entry LOGS buffer.
+                let mut last_failure_report = std::time::Instant::now();
                 loop {
                     if stop_rx.try_recv().is_ok() { break; }
+
+                    if last_failure_report.elapsed() >= std::time::Duration::from_secs(1) {
+                        last_failure_report = std::time::Instant::now();
+                        let failures = RECT_CACHE.take_failures();
+                        if failures > 0 {
+                            crate::app_log(&app, format!(
+                                "Overlay rect read failed {} time(s) in the last second — interactive-zone clicks passed through to the game until a read succeeds",
+                                failures,
+                            ));
+                        }
+                    }
 
                     // Drain click buffer → emit Tauri events.
                     {
@@ -990,7 +1204,9 @@ mod overlay_clickthrough {
 
     pub fn set_overlay_hwnd(hwnd: HWND) {
         OVERLAY_HWND.store(hwnd.0 as isize, Ordering::Relaxed);
-        RECT_DIRTY.store(true, Ordering::Relaxed);
+        // The cached rect describes the previous overlay until the first
+        // successful read of this one.
+        RECT_CACHE.reset_for_new_window();
     }
 
     pub fn set_has_content(has: bool) {
@@ -1002,7 +1218,7 @@ mod overlay_clickthrough {
     }
 
     pub fn invalidate_rect() {
-        RECT_DIRTY.store(true, Ordering::Relaxed);
+        RECT_CACHE.invalidate();
     }
 
     /// Invalidate the cached rect when `hwnd` is the overlay this hook tracks.
@@ -1011,7 +1227,7 @@ mod overlay_clickthrough {
     /// whichever overlay currently owns the interactive zone.
     pub fn invalidate_if_tracked(hwnd: HWND) {
         if OVERLAY_HWND.load(Ordering::Relaxed) == hwnd.0 as isize {
-            RECT_DIRTY.store(true, Ordering::Relaxed);
+            RECT_CACHE.invalidate();
         }
     }
 
