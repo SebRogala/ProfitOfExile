@@ -623,10 +623,45 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	let retries = 0;
 	let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let visibilityHandler: (() => void) | null = null;
+	// Set by close(). Every async continuation re-checks it before touching the
+	// connection — see the guard after the token fetch in connect(), and
+	// frontend/src/lib/desktopBridge.ts, which carries the same flag.
+	let closed = false;
+
+	// Attempts spent in the fast lane before the delay escalates. 2s/4s/8s/10s/10s
+	// recovers quickly from a deploy; a longer outage should not keep costing a
+	// token fetch every 10s forever (360 req/h per client, POE-151).
+	const FAST_RETRIES = 5;
+	const SLOW_RETRY_MS = 60000;
 
 	function retryDelay(): number {
-		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after deploys)
-		return Math.min(2000 * Math.pow(2, retries), 10000);
+		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after
+		// deploys), then a 60s slow lane — the same ceiling desktopBridge.ts uses.
+		const base = retries < FAST_RETRIES
+			? Math.min(2000 * Math.pow(2, retries), 10000)
+			: SLOW_RETRY_MS;
+		// Equal jitter: half the delay is fixed, half is random. A deploy restarts
+		// every client at once, and an un-jittered backoff puts all of them back on
+		// the same grid — the retry then arrives as one wave instead of a spread.
+		// Full jitter (random(0, base)) would spread it too, but also lets a client
+		// retry ~instantly, which is the case we are trying to bound.
+		return base / 2 + Math.random() * (base / 2);
+	}
+
+	/**
+	 * Arm the next reconnect. Increments the attempt counter and logs the delay it
+	 * actually sleeps — the previous code logged the pre-increment delay, so
+	 * "retrying in 4s" was followed by an 8s wait.
+	 */
+	function scheduleReconnect(reason: string, err?: unknown) {
+		if (closed) return;
+		const delay = retryDelay();
+		retries++;
+		const message = `[Mercure] ${reason}, retrying in ${Math.round(delay / 1000)}s (attempt ${retries})`;
+		if (err === undefined) console.warn(message);
+		else console.warn(message, err);
+		if (tokenTimeout) clearTimeout(tokenTimeout);
+		tokenTimeout = setTimeout(connect, delay);
 	}
 
 	function closeEventSource() {
@@ -652,10 +687,16 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 	}
 
 	async function connect() {
+		if (closed) return;
 		try {
 			const tokenResp = await get<{ token: string; url: string }>('/mercure/token');
 			const { token, url } = tokenResp;
-			retries = 0;
+			// close() can land inside the token-fetch RTT. Without this guard the
+			// EventSource below is created after the caller has already dropped its
+			// reference to this connection: nobody can ever close it, it re-arms its
+			// own 25-minute refresh, and the hub holds the dead subscriber until its
+			// write_timeout (480-600s) expires. POE-151.
+			if (closed) return;
 
 			closeEventSource();
 
@@ -672,6 +713,9 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				}
 				state.connected = true;
 				onConnectionChange?.(true);
+				// The only place the attempt counter resets. It used to also reset on a
+				// successful token fetch, which pinned a stream that opens and then fails
+				// at a permanent 4s retry — the backoff never escalated.
 				retries = 0;
 			};
 
@@ -679,8 +723,11 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				let parsed: any;
 				try {
 					parsed = JSON.parse(msg.data);
-				} catch {
-					onUpdate();
+				} catch (err) {
+					// Every legitimate publish is a marshalled JSON object, so unparseable
+					// data is not an update — treating it as one fired the full six-request
+					// loadAll() and threw the parse error away.
+					console.warn('[Mercure] Failed to parse message:', err, 'raw:', msg.data);
 					return;
 				}
 				if (parsed.type === 'waiting' || parsed.type === 'ready' || parsed.type === 'error') {
@@ -694,6 +741,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 				// Close explicitly — prevent browser's native EventSource reconnect
 				// from fighting our token-refresh retry logic.
 				closeEventSource();
+				if (closed) return;
 				scheduleDisconnectIndicator();
 				// Cancel any pending token refresh / retry; we'll re-arm below once we
 				// know whether we're deferring (hidden tab) or retrying immediately.
@@ -721,23 +769,24 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 					return;
 				}
 
-				retries++;
-				tokenTimeout = setTimeout(connect, retryDelay());
+				scheduleReconnect('SSE connection lost');
 			};
 
 			// Token TTL is 30min — refresh before expiry
 			if (tokenTimeout) clearTimeout(tokenTimeout);
 			tokenTimeout = setTimeout(connect, 25 * 60 * 1000);
 		} catch (err) {
-			console.warn('[Mercure] Connection failed, retrying in', retryDelay() / 1000, 's:', err);
+			if (closed) return;
 			scheduleDisconnectIndicator();
-			retries++;
-			if (tokenTimeout) clearTimeout(tokenTimeout);
-			tokenTimeout = setTimeout(connect, retryDelay());
+			scheduleReconnect('Connection failed', err);
 		}
 	}
 
 	state.close = () => {
+		// Set before anything else: an in-flight connect() reads this the moment its
+		// token fetch resolves, and that is the only thing standing between a close()
+		// during the RTT and an EventSource nobody holds a reference to.
+		closed = true;
 		closeEventSource();
 		if (tokenTimeout) {
 			clearTimeout(tokenTimeout);
