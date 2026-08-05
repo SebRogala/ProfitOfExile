@@ -1600,7 +1600,10 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     let lab_mode = state.lab_mode.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let gem_names = tauri::async_runtime::block_on(fetch_gem_names(&app, &server, &http, &lab_mode));
     if gem_names.is_empty() {
-        app_log(&app, "Gem scan aborted — no gem names loaded (see the dictionary log lines above for which half failed)".to_string());
+        // States its own cause rather than deferring upward: the abort is shared
+        // by both modes (Normal has no halves to fail), and an empty dictionary
+        // reaches here from a legitimate 200 as well as from a request failure.
+        app_log(&app, "Gem scan aborted — the gem dictionary loaded 0 names, so no OCR read could match. Either the request failed or this league has no gem dictionary yet; the preceding 'gem names' lines say which.".to_string());
         if state.gem_scan_generation.load(Ordering::SeqCst) == generation {
             *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) = lab_state::LabState::Idle;
             emit_status(&app);
@@ -2000,6 +2003,31 @@ fn send_font_session_data(app: &AppHandle) {
     });
 }
 
+/// Why a fetched gem dictionary is unusable, or `None` when it is usable.
+///
+/// Split out of `fetch_gem_names` so the rule is testable without a live
+/// server, and because "no half failed" and "usable" are different questions: a
+/// 200 carrying `{"names":[]}` is a documented legitimate response
+/// (`GemDictionary`, `internal/server/handlers/collective.go`), so it clears
+/// `failed` while still leaving the matcher with nothing to match against. That
+/// is what a fresh league returns before the first poe.ninja collection —
+/// precisely when lab farming matters most (POE-146).
+fn dictionary_reject_reason(failed: &[&str], loaded: usize) -> Option<String> {
+    if !failed.is_empty() {
+        return Some(format!(
+            "{} half failed — matcher would be incomplete, aborting scan",
+            failed.join(" + "),
+        ));
+    }
+    if loaded == 0 {
+        return Some(
+            "every half returned 0 names — the server has no gem dictionary for this league yet"
+                .to_string(),
+        );
+    }
+    None
+}
+
 /// Fetch gem names from the server API for fuzzy matching.
 ///
 /// In Normal mode: fetches transfigured gem names (contain "of").
@@ -2061,11 +2089,8 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Cl
             }
         }
 
-        if !failed.is_empty() {
-            app_log(app, format!(
-                "Dedication gem names: {} half failed — matcher would be incomplete, aborting scan",
-                failed.join(" + "),
-            ));
+        if let Some(reason) = dictionary_reject_reason(&failed, all_names.len()) {
+            app_log(app, format!("Dedication gem names: {}", reason));
             return Vec::new();
         }
 
@@ -2081,10 +2106,16 @@ async fn fetch_gem_names(app: &AppHandle, server_url: &str, client: &reqwest::Cl
                 match res.json::<serde_json::Value>().await {
                     Ok(body) => {
                         if let Some(names) = body.get("names").and_then(|n| n.as_array()) {
-                            return names
+                            let loaded: Vec<String> = names
                                 .iter()
                                 .filter_map(|n| n.as_str().map(String::from))
                                 .collect();
+                            // Logged on the success path too: a 200 carrying
+                            // {"names":[]} is legitimate (a league with nothing
+                            // collected yet), and without this line that case
+                            // produced no log output whatsoever.
+                            app_log(app, format!("Gem names (transfigured): {} loaded", loaded.len()));
+                            return loaded;
                         }
                         app_log(app, "Gem names: response missing 'names' field".to_string());
                         Vec::new()
@@ -2864,8 +2895,49 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::retry_after_delay;
+    use super::{dictionary_reject_reason, retry_after_delay};
     use std::time::Duration;
+
+    #[test]
+    fn a_dictionary_with_both_halves_loaded_is_usable() {
+        assert_eq!(dictionary_reject_reason(&[], 593), None);
+    }
+
+    #[test]
+    fn a_failed_half_names_itself_in_the_reject_reason() {
+        let reason = dictionary_reject_reason(&["skills"], 412)
+            .expect("a failed half must reject the dictionary even when the other half loaded");
+        assert!(
+            reason.starts_with("skills half failed"),
+            "reason must name the half that failed, got {:?}",
+            reason
+        );
+    }
+
+    #[test]
+    fn both_failed_halves_are_named_in_the_reject_reason() {
+        let reason = dictionary_reject_reason(&["skills", "transfigured"], 0)
+            .expect("two failed halves must reject the dictionary");
+        assert!(
+            reason.starts_with("skills + transfigured half failed"),
+            "reason must name both halves, got {:?}",
+            reason
+        );
+    }
+
+    #[test]
+    fn a_successful_but_empty_dictionary_is_rejected() {
+        // POE-146's remaining hole: 200 + {"names":[]} is a legitimate response,
+        // so no half is recorded as failed — but the matcher still has nothing
+        // to match against, and the scan must not proceed as though it had.
+        let reason = dictionary_reject_reason(&[], 0)
+            .expect("an empty dictionary is unusable even when no request failed");
+        assert!(
+            reason.starts_with("every half returned 0 names"),
+            "reason must say the dictionary was empty rather than blaming a failed half, got {:?}",
+            reason
+        );
+    }
 
     #[test]
     fn retry_after_delay_honours_delta_seconds() {
