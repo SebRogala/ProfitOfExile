@@ -590,6 +590,33 @@ export async function fetchCompare(gems: string[], variant: string, signal?: Abo
 
 // --- Signal History ---
 
+/**
+ * Label for one signal transition's timestamp, as the comparator and Best Plays
+ * rows render it verbatim.
+ *
+ * A bare time-of-day is only honest for a transition that happened today. The
+ * endpoint serves whatever sits in a gem's ring within the server's retention
+ * window (internal/lab: signalHistorySeedMaxDays, 14 days), so a gem that
+ * stopped trading last week answers with last week's transitions — and "03:12"
+ * on an in-game overlay reads as "03:12 today". Anything older than today gets
+ * its age instead: the exact minute of a three-day-old transition is not
+ * actionable, its age is.
+ *
+ * Whole calendar days, not elapsed hours, so "1d ago" means yesterday — which is
+ * how the label is read.
+ */
+export function signalTransitionLabel(iso: string, now: Date = new Date()): string {
+	const at = new Date(iso);
+	if (Number.isNaN(at.getTime())) return '';
+
+	const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+	// Rounded, not floored: a DST shift makes the span 23 or 25 hours.
+	const days = Math.round((midnight(now) - midnight(at)) / 86_400_000);
+	if (days > 0) return `${days}d ago`;
+
+	return at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
 export async function fetchSignalHistory(
 	name: string,
 	variant: string,
@@ -610,10 +637,7 @@ export async function fetchSignalHistory(
 	for (let i = 1; i < snapshots.length; i++) {
 		const prev = snapshots[i - 1];
 		const curr = snapshots[i];
-		const time = new Date(curr.time || '').toLocaleTimeString(undefined, {
-			hour: '2-digit',
-			minute: '2-digit',
-		});
+		const time = signalTransitionLabel(curr.time || '');
 		const reason = deriveReason(prev, curr);
 		transitions.push({
 			time,

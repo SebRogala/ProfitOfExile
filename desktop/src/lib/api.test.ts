@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.0.0-test' }));
 vi.mock('$lib/stores/status.svelte', () => ({ store: { status: { server_url: '' } } }));
 
-const { displayVariant } = await import('./api');
+const { displayVariant, signalTransitionLabel } = await import('./api');
 
 /**
  * The variant strings the UI filters on (ByVariant.svelte, FontEVCompare.svelte).
@@ -39,5 +39,49 @@ describe('displayVariant', () => {
 
 	it('leaves a missing variant empty rather than inventing "/0"', () => {
 		expect(displayVariant('')).toBe('');
+	});
+});
+
+/**
+ * The endpoint serves a gem's ring within the server's 14-day retention window,
+ * so a gem that stopped trading answers with old transitions. The overlay
+ * renders this label verbatim next to a live price, which is what makes a bare
+ * time-of-day on a week-old transition a lie rather than a rounding.
+ */
+describe('signalTransitionLabel', () => {
+	const now = new Date(2026, 7, 5, 18, 30);
+
+	it('shows the time of day for a transition from earlier today', () => {
+		const label = signalTransitionLabel(new Date(2026, 7, 5, 14, 23).toISOString(), now);
+		// Clock reading, whatever the runner's locale does with 12h/24h.
+		expect(label).toMatch(/^\d{1,2}[:.]\d{2}/);
+		expect(label).not.toContain('ago');
+	});
+
+	it('shows the age instead of a time of day for yesterday', () => {
+		// 23:50 yesterday is under 19 hours old, and still not today: the label
+		// counts calendar days because that is how "1d ago" is read.
+		expect(signalTransitionLabel(new Date(2026, 7, 4, 23, 50).toISOString(), now)).toBe('1d ago');
+	});
+
+	it('shows the age for a gem that stopped signalling a week ago', () => {
+		expect(signalTransitionLabel(new Date(2026, 6, 29, 14, 23).toISOString(), now)).toBe('7d ago');
+	});
+
+	it('shows the age at the far edge of the server retention window', () => {
+		// signalHistorySeedMaxDays = 14 — the oldest transition that can be served.
+		expect(signalTransitionLabel(new Date(2026, 6, 22, 9, 0).toISOString(), now)).toBe('14d ago');
+	});
+
+	it('shows the time of day for a timestamp slightly ahead of the clock', () => {
+		// Client/server clock skew must not render as a negative age.
+		expect(signalTransitionLabel(new Date(2026, 7, 5, 18, 35).toISOString(), now)).not.toContain(
+			'ago'
+		);
+	});
+
+	it('renders nothing for an unparseable timestamp rather than "Invalid Date"', () => {
+		expect(signalTransitionLabel('', now)).toBe('');
+		expect(signalTransitionLabel('not-a-date', now)).toBe('');
 	});
 });
