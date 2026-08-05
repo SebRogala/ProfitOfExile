@@ -679,6 +679,24 @@ const TRADE_SUBMIT_RETRY_FALLBACK: std::time::Duration = std::time::Duration::fr
 /// holding a task for minutes because a header said so is not worth it.
 const TRADE_SUBMIT_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Leading `max` bytes of a response body for a log line.
+///
+/// Cuts on a character boundary: `&body[..body.len().min(max)]` panics when the
+/// truncation point lands mid-codepoint, and an error body is exactly the kind
+/// of response that can carry a non-ASCII byte (a proxy's HTML error page, a
+/// server message quoting user text). Panicking while logging a rejection would
+/// lose the rejection.
+fn body_excerpt(body: &str, max: usize) -> &str {
+    if body.len() <= max {
+        return body;
+    }
+    let mut end = max;
+    while end > 0 && !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    &body[..end]
+}
+
 /// Delay to wait before retrying a shed submit.
 ///
 /// Honours the delta-seconds form of `Retry-After` (what the server sends),
@@ -778,7 +796,17 @@ async fn trade_lookup(
                         return;
                     }
                     Ok(res) => {
-                        app_log(&app_clone, format!("Trade submit rejected: {}", res.status()));
+                        // A 400/422 loses the row AND the reason unless the body
+                        // is read — the status alone cannot say which field the
+                        // server objected to. Same shape as the font session
+                        // rejection path below.
+                        let status = res.status();
+                        let body = res.text().await.unwrap_or_default();
+                        app_log(&app_clone, format!(
+                            "Trade submit rejected: {} — {}",
+                            status,
+                            body_excerpt(&body, 200),
+                        ));
                         return;
                     }
                     Err(e) => {
@@ -2210,7 +2238,7 @@ fn send_font_session_data(app: &AppHandle) {
             Ok(res) => {
                 let status = res.status();
                 let body = res.text().await.unwrap_or_default();
-                app_log(&app_clone, format!("Font session rejected: {} — {}", status, &body[..body.len().min(200)]));
+                app_log(&app_clone, format!("Font session rejected: {} — {}", status, body_excerpt(&body, 200)));
             }
             Err(e) => {
                 app_log(&app_clone, format!("Font session send failed: {}", e));
@@ -3111,8 +3139,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{dictionary_reject_reason, retry_after_delay};
+    use super::{body_excerpt, dictionary_reject_reason, retry_after_delay};
     use std::time::Duration;
+
+    #[test]
+    fn a_short_body_is_logged_whole() {
+        assert_eq!(body_excerpt("gem is required", 200), "gem is required");
+    }
+
+    #[test]
+    fn a_long_body_is_cut_to_the_limit() {
+        let body = "x".repeat(500);
+        assert_eq!(body_excerpt(&body, 200), "x".repeat(200));
+    }
+
+    #[test]
+    fn a_cut_landing_mid_codepoint_backs_up_to_a_boundary() {
+        // "é" is two bytes, so a limit of 5 lands inside the third one. Slicing
+        // there panics, and panicking while logging a rejection loses it.
+        assert_eq!(body_excerpt("ééé", 5), "éé");
+    }
 
     #[test]
     fn a_dictionary_with_both_halves_loaded_is_usable() {
