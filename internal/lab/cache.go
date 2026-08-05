@@ -778,8 +778,15 @@ func (c *Cache) SetSignalHistoryByName(byName map[string]map[string][]SignalChan
 // first, or nil when the ring holds none.
 //
 // Keyed read: check HasSignalHistory first. On a warm cache a nil result means
-// this gem has produced no signal rows, which is what the query would return
-// too; reading nil as cold would send one query per gem on every scan.
+// this gem produced no signal rows inside signalHistorySeedMaxDays, which is
+// what the seed asked the database and what it answered; reading nil as cold
+// would send one query per gem on every scan.
+//
+// That equivalence is the seed's responsibility and it is load-bearing. It holds
+// only because SignalHistoryWindow caps rows per series: a seed that bounded the
+// corpus more narrowly than the key space callers address would make nil mean
+// "outside the seed's reach" while the database still held rows, and no reader
+// discipline could tell the two apart.
 func (c *Cache) SignalHistory(name, variant string) []SignalChange {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
