@@ -893,9 +893,12 @@ func SignalHistory(repo *lab.Repository, cache *lab.Cache, scope league.Scope) h
 
 		// Warmth is the cache's answer for the whole ring corpus, not this gem's
 		// ring: a gem with no cached transitions on a warm cache genuinely has
-		// none, and treating that as cold would put one query per gem back on
-		// every scan — the exact shape the keyed-read half of the cache-state
-		// contract exists to prevent.
+		// none inside the seed's retention window, and treating that as cold
+		// would put one query per gem back on every scan — the exact shape the
+		// keyed-read half of the cache-state contract exists to prevent.
+		//
+		// The retention window is the endpoint's contract, not a cache artefact.
+		// See lab.signalHistorySeedMaxDays for what falls outside it and why.
 		var changes []lab.SignalChange
 		warm := cache != nil && cache.For(scope).HasSignalHistory()
 		if warm {

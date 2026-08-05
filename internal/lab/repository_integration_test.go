@@ -1687,3 +1687,114 @@ func TestSignalHistoryWindow_readsOnlyTheNewestDepthSnapshotTimes(t *testing.T) 
 		}
 	}
 }
+
+// The depth cap is per series, not per league. Ranking by the newest `depth`
+// snapshot times league-wide seeds nothing for a gem that stopped signalling
+// before them, and the endpoint then serves a warm empty ring while the rows sit
+// in the database — 142 of 721 series on production when it shipped.
+func TestSignalHistoryWindow_seedsAGemThatStoppedBeforeTheNewestSnapshotTimes(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-158-sigwin-quiet"
+	registerLeague(t, pool, leagueID)
+
+	const variant = "20/20"
+	const active = "POE158 SignalWindow Active Gem"
+	const quiet = "POE158 SignalWindow Quiet Gem"
+
+	// The quiet gem's two rows sit at the OLDER pair of snapshot times, so the
+	// newest `depth` times league-wide belong entirely to the active gem.
+	seeded := []struct {
+		day    int
+		name   string
+		signal string
+	}{
+		{25, quiet, "quiet-older"},
+		{26, quiet, "quiet-newer"},
+		{27, active, "active-older"},
+		{28, active, "active-newer"},
+	}
+	for _, s := range seeded {
+		tm := futureTime(s.day)
+		cleanupAtTime(t, pool, tm, "gem_signals", "gem_features")
+		if _, err := repo.SaveGemSignals(ctx, league.Historical(leagueID), []GemSignal{{
+			Time: tm, Name: s.name, Variant: variant,
+			Signal: s.signal, WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+		}}); err != nil {
+			t.Fatalf("SaveGemSignals %s at day %d: %v", s.name, s.day, err)
+		}
+	}
+
+	rings, err := repo.SignalHistoryWindow(ctx, league.Historical(leagueID), 2)
+	if err != nil {
+		t.Fatalf("SignalHistoryWindow: %v", err)
+	}
+
+	quietRing := rings[signalKey{name: quiet, variant: variant}]
+	if len(quietRing) != 2 {
+		t.Fatalf("quiet gem's ring has %d entries %+v, want both of its transitions — a depth cap applied to league-wide snapshot times leaves it empty while the rows exist", len(quietRing), quietRing)
+	}
+	if quietRing[0].Signal != "quiet-newer" || quietRing[1].Signal != "quiet-older" {
+		t.Errorf("quiet gem's ring = %+v, want [quiet-newer quiet-older]", quietRing)
+	}
+
+	// The active gem must keep exactly its own newest `depth`, so a per-series
+	// cap cannot be faked by dropping the cap altogether.
+	activeRing := rings[signalKey{name: active, variant: variant}]
+	if len(activeRing) != 2 {
+		t.Fatalf("active gem's ring has %d entries %+v, want 2", len(activeRing), activeRing)
+	}
+	for _, c := range activeRing {
+		if c.Signal == "quiet-newer" || c.Signal == "quiet-older" {
+			t.Errorf("active gem's ring = %+v, want only its own transitions — the partition key is wrong", activeRing)
+		}
+	}
+}
+
+// The retention window is the endpoint's contract: a gem whose newest signal
+// predates signalHistorySeedMaxDays holds no ring, and the warm cache answers it
+// empty on purpose. Without the in-window gem alongside it this would pass
+// against a seed that returned nothing at all.
+func TestSignalHistoryWindow_dropsAGemWhoseNewestSignalPredatesTheRetentionWindow(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-158-sigwin-retention"
+	registerLeague(t, pool, leagueID)
+
+	const variant = "20/20"
+	const recent = "POE158 SignalWindow Recent Gem"
+	const expired = "POE158 SignalWindow Expired Gem"
+
+	// Real clock, not futureTime: the window is measured against NOW().
+	inWindow := time.Now().Add(-time.Duration(signalHistorySeedMaxDays-1) * 24 * time.Hour).Truncate(time.Microsecond)
+	outOfWindow := time.Now().Add(-time.Duration(signalHistorySeedMaxDays+1) * 24 * time.Hour).Truncate(time.Microsecond)
+
+	for _, s := range []struct {
+		tm   time.Time
+		name string
+	}{{inWindow, recent}, {outOfWindow, expired}} {
+		cleanupAtTime(t, pool, s.tm, "gem_signals", "gem_features")
+		if _, err := repo.SaveGemSignals(ctx, league.Historical(leagueID), []GemSignal{{
+			Time: s.tm, Name: s.name, Variant: variant,
+			Signal: "STABLE", WindowSignal: "CLOSED", SellabilityLabel: "MODERATE", Tier: "LOW",
+		}}); err != nil {
+			t.Fatalf("SaveGemSignals %s at %v: %v", s.name, s.tm, err)
+		}
+	}
+
+	rings, err := repo.SignalHistoryWindow(ctx, league.Historical(leagueID), SignalHistoryDepth)
+	if err != nil {
+		t.Fatalf("SignalHistoryWindow: %v", err)
+	}
+
+	if got := rings[signalKey{name: expired, variant: variant}]; len(got) != 0 {
+		t.Errorf("expired gem's ring = %+v, want none — %d days is the stated retention window", got, signalHistorySeedMaxDays)
+	}
+	if got := rings[signalKey{name: recent, variant: variant}]; len(got) != 1 {
+		t.Fatalf("in-window gem's ring has %d entries %+v, want 1 — the seed read nothing at all", len(got), got)
+	}
+}

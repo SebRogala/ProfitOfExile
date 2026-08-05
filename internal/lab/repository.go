@@ -848,20 +848,40 @@ func (r *Repository) SignalHistory(ctx context.Context, scope league.Scope, name
 	return changes, nil
 }
 
-// signalHistorySeedMaxDays bounds the seed read's scan so it prunes chunks
-// instead of walking the hypertable. SignalHistoryDepth snapshots at the ~30
-// minute gem cadence is about half a day; 14 leaves room for a stalled collector
-// without turning a startup read into a full-history scan. A league quieter than
-// that seeds a shorter ring, which is the honest answer — those rows are the
-// only ones that exist.
+// signalHistorySeedMaxDays is the seed's retention window, and it is the
+// endpoint's semantics rather than an implementation detail: a gem whose last
+// signal predates it holds no ring, and /api/analysis/history answers empty for
+// it against a warm cache. That is deliberate — the per-request query this seed
+// replaced had no time bound at all, so a gem that stopped trading kept serving
+// transitions from arbitrarily far back, which the desktop renders as a
+// time-of-day with no date.
+//
+// 14 days is chosen to keep that horizon well clear of anything a user would
+// still call current, while staying cheap enough to pay once per process: it
+// prunes to the two most recent hypertable chunks. Measured on production
+// 2026-08-05 (Allflame, 284,954 signal rows in the window): 1.63 s, dominated by
+// the per-series sort, against 13,452 rows returned.
+//
+// It is NOT a per-gem row cap. That is SignalHistoryDepth's job, applied per
+// series below.
 const signalHistorySeedMaxDays = 14
 
 // SignalHistoryWindow returns the newest depth transitions per gem and variant,
 // keyed for the ring cache. It is the one-off seed populateSignalHistory takes
 // on a cold cache, replacing the per-request query for every gem at once.
 //
-// Bounded twice over: to the newest depth distinct snapshot times, and to
-// signalHistorySeedMaxDays so the time predicate can prune chunks.
+// The depth cap is applied PER SERIES, not to a league-wide set of snapshot
+// times, because the endpoint is addressed per series. Ranking by the newest N
+// distinct times league-wide instead seeds nothing for any gem that missed those
+// times — measured on production 2026-08-05, that was 142 of 721 (name, variant)
+// series in Allflame, all of them at the 1/0, 1/20 and 20/0 variants the
+// comparator offers, and each one then answered empty by a warm cache with rows
+// sitting in the database. It also short-changes a series that merely skipped
+// some of those times: 22 further series, 161 entries.
+//
+// Bounded twice over: to depth rows per series, and to signalHistorySeedMaxDays
+// so the time predicate prunes chunks — see that constant for what the window
+// means to a caller.
 func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope, depth int) (map[signalKey][]SignalChange, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: signal history window: %w", err)
@@ -871,23 +891,21 @@ func (r *Repository) SignalHistoryWindow(ctx context.Context, scope league.Scope
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		WITH recent AS (
-			SELECT DISTINCT time
-			FROM gem_signals
-			WHERE league = $1 AND time > NOW() - make_interval(days => $3)
-			ORDER BY time DESC
-			LIMIT $2
+		WITH ranked AS (
+			SELECT s.name, s.variant, s.time, s.signal, s.window_signal, s.advanced_signal,
+			       row_number() OVER (PARTITION BY s.name, s.variant ORDER BY s.time DESC) AS rn
+			FROM gem_signals s
+			WHERE s.league = $1 AND s.time > NOW() - make_interval(days => $3)
 		)
-		SELECT s.name, s.variant, s.time, s.signal, s.window_signal,
-		       COALESCE(s.advanced_signal, ''),
+		SELECT r.name, r.variant, r.time, r.signal, r.window_signal,
+		       COALESCE(r.advanced_signal, ''),
 		       COALESCE(f.vel_long_price, 0), COALESCE(f.vel_long_listing, 0),
 		       COALESCE(f.chaos, 0), COALESCE(f.listings, 0)
-		FROM gem_signals s
-		JOIN recent r ON r.time = s.time
+		FROM ranked r
 		LEFT JOIN gem_features f
-		  ON f.league = s.league AND f.time = s.time AND f.name = s.name AND f.variant = s.variant
-		WHERE s.league = $1 AND s.time > NOW() - make_interval(days => $3)
-		ORDER BY s.time DESC`, scope.ID(), depth, signalHistorySeedMaxDays)
+		  ON f.league = $1 AND f.time = r.time AND f.name = r.name AND f.variant = r.variant
+		WHERE r.rn <= $2
+		ORDER BY r.time DESC`, scope.ID(), depth, signalHistorySeedMaxDays)
 	if err != nil {
 		return nil, fmt.Errorf("lab repo: query signal history window: %w", err)
 	}
