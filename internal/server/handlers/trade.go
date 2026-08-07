@@ -42,7 +42,7 @@ type tradeLookupPersister interface {
 //     synchronously before enqueueing, so a shed submit still enriches other
 //     users' responses. What is refused is the durable history row.
 //
-// SIZES, AND WHAT THE WORKER COUNT IS ACTUALLY BOUNDED BY
+// # SIZES, AND WHAT THE WORKER COUNT IS ACTUALLY BOUNDED BY
 //
 // Not throughput. At the measured 0.93 ms per INSERT one worker is ~1,075
 // inserts/s, already three orders of magnitude above the expected rate, so every

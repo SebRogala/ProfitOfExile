@@ -356,7 +356,7 @@ func CollectiveAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 				High7Days:            cr.High7Days,
 				SellConfidence:       cr.SellConfidence,
 				TradeConfidenceNote:  cr.TradeConfidenceNote,
-				LowConfidence:       cr.LowConfidence,
+				LowConfidence:        cr.LowConfidence,
 			}
 
 			// GCP recipe for 20/20 variants: buy 20/0 base + 20×GCP.
@@ -744,41 +744,41 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 // compareRow is the JSON response shape for the compare endpoint (shared between
 // normal and dedication modes).
 type compareRow struct {
-	TransfiguredName     string              `json:"transfiguredName"`
-	BaseName             string              `json:"baseName"`
-	Variant              string              `json:"variant"`
-	GemColor             string              `json:"gemColor"`
-	ROI                  float64             `json:"roi"`
-	ROIPct               float64             `json:"roiPct"`
-	BasePrice            float64             `json:"basePrice"`
-	TransfiguredPrice    float64             `json:"transfiguredPrice"`
-	Confidence           string              `json:"confidence"`
-	Signal               string              `json:"signal"`
-	CV                   float64             `json:"cv"`
-	PriceVelocity        float64             `json:"priceVelocity"`
-	ListingVelocity      float64             `json:"listingVelocity"`
-	HistPosition         float64             `json:"histPosition"`
-	Sparkline            []lab.SparklinePoint `json:"sparkline"`
-	Recommendation       string              `json:"recommendation"`
-	SellUrgency          string              `json:"sellUrgency"`
-	SellReason           string              `json:"sellReason"`
-	Sellability          int                 `json:"sellability"`
-	SellabilityLabel     string              `json:"sellabilityLabel"`
-	PriceTier            string              `json:"priceTier"`
-	TierAction           string              `json:"tierAction"`
-	WindowSignal         string              `json:"windowSignal"`
-	BaseListings         int                 `json:"baseListings"`
-	LiquidityTier        string              `json:"liquidityTier"`
-	TransListings        int                 `json:"transListings"`
-	TransfiguredListings int                 `json:"transfiguredListings"`
-	WeightedROI          float64             `json:"weightedRoi"`
-	WeightedROIPct       float64             `json:"weightedRoiPct"`
-	Low7Days             float64             `json:"low7d"`
-	High7Days            float64             `json:"high7d"`
-	SellConfidence       string              `json:"sellConfidence"`
-	SellConfidenceReason string              `json:"sellConfidenceReason"`
-	QuickSellPrice       float64             `json:"quickSellPrice"`
-	RiskAdjustedPrice    float64             `json:"riskAdjustedPrice"`
+	TransfiguredName     string                   `json:"transfiguredName"`
+	BaseName             string                   `json:"baseName"`
+	Variant              string                   `json:"variant"`
+	GemColor             string                   `json:"gemColor"`
+	ROI                  float64                  `json:"roi"`
+	ROIPct               float64                  `json:"roiPct"`
+	BasePrice            float64                  `json:"basePrice"`
+	TransfiguredPrice    float64                  `json:"transfiguredPrice"`
+	Confidence           string                   `json:"confidence"`
+	Signal               string                   `json:"signal"`
+	CV                   float64                  `json:"cv"`
+	PriceVelocity        float64                  `json:"priceVelocity"`
+	ListingVelocity      float64                  `json:"listingVelocity"`
+	HistPosition         float64                  `json:"histPosition"`
+	Sparkline            []lab.SparklinePoint     `json:"sparkline"`
+	Recommendation       string                   `json:"recommendation"`
+	SellUrgency          string                   `json:"sellUrgency"`
+	SellReason           string                   `json:"sellReason"`
+	Sellability          int                      `json:"sellability"`
+	SellabilityLabel     string                   `json:"sellabilityLabel"`
+	PriceTier            string                   `json:"priceTier"`
+	TierAction           string                   `json:"tierAction"`
+	WindowSignal         string                   `json:"windowSignal"`
+	BaseListings         int                      `json:"baseListings"`
+	LiquidityTier        string                   `json:"liquidityTier"`
+	TransListings        int                      `json:"transListings"`
+	TransfiguredListings int                      `json:"transfiguredListings"`
+	WeightedROI          float64                  `json:"weightedRoi"`
+	WeightedROIPct       float64                  `json:"weightedRoiPct"`
+	Low7Days             float64                  `json:"low7d"`
+	High7Days            float64                  `json:"high7d"`
+	SellConfidence       string                   `json:"sellConfidence"`
+	SellConfidenceReason string                   `json:"sellConfidenceReason"`
+	QuickSellPrice       float64                  `json:"quickSellPrice"`
+	RiskAdjustedPrice    float64                  `json:"riskAdjustedPrice"`
 	Trade                *trade.TradeLookupResult `json:"trade,omitempty"`
 }
 

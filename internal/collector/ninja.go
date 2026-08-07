@@ -341,4 +341,3 @@ func (f *NinjaFetcher) getWithCache(ctx context.Context, rawURL string, etag str
 		Body:       resp.Body,
 	}, nil
 }
-

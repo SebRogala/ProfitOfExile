@@ -76,11 +76,11 @@ func TestVelocity_UsesTimeWindow(t *testing.T) {
 	// within the window (cutoff = t0+120min - 2h = t0).
 	t0 := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
 	points := []PricePoint{
-		{Time: t0, Chaos: 50, Listings: 5},                           // first in 2h window
+		{Time: t0, Chaos: 50, Listings: 5}, // first in 2h window
 		{Time: t0.Add(30 * time.Minute), Chaos: 60, Listings: 8},
 		{Time: t0.Add(60 * time.Minute), Chaos: 70, Listings: 10},
 		{Time: t0.Add(90 * time.Minute), Chaos: 75, Listings: 12},
-		{Time: t0.Add(120 * time.Minute), Chaos: 80, Listings: 14},   // last point
+		{Time: t0.Add(120 * time.Minute), Chaos: 80, Listings: 14}, // last point
 	}
 	// Delta = (80-50) / 2h = 15
 	v := velocity(points, func(p PricePoint) float64 { return p.Chaos })
@@ -273,10 +273,10 @@ func TestClassifySignal_Boundaries(t *testing.T) {
 		{"preHERD: pVel=20% not HERD", 20, 6, 30, lst, "UNCERTAIN"},
 		{"preHERD: pVel=20.01% lVel=5.01% is HERD", 20.01, 5.01, 30, lst, "HERD"},
 		// RECOVERY boundaries: pVel% in (-8%,0), lVel% < -8%, listings < 20
-		{"RECOVERY: pVel=-5% lVel=-9 lst=10", -5, -2, 30, 10, "RECOVERY"}, // lVel=-2/10*100=-20%
-		{"DEMAND: pVel=0 lVel=-20% lst=10 abs<5", 0, -2, 30, 10, "UNCERTAIN"},    // lVelPct=-20% but absVel=2 < floor(5) → noise
-		{"DEMAND: pVel=0 lVel=-10 lst=50", 0, -10, 30, 50, "DEMAND"},           // lVelPct=-20%, absVel=10 >= 5 → real signal
-		{"DEMAND: pVel=-4% lVel=-20 lst=100", -4, -20, 30, 100, "DEMAND"},       // lVelPct=-20%<-15%, pVelPct=-4%>-5%, absVel=20 >= 5 ✓
+		{"RECOVERY: pVel=-5% lVel=-9 lst=10", -5, -2, 30, 10, "RECOVERY"},     // lVel=-2/10*100=-20%
+		{"DEMAND: pVel=0 lVel=-20% lst=10 abs<5", 0, -2, 30, 10, "UNCERTAIN"}, // lVelPct=-20% but absVel=2 < floor(5) → noise
+		{"DEMAND: pVel=0 lVel=-10 lst=50", 0, -10, 30, 50, "DEMAND"},          // lVelPct=-20%, absVel=10 >= 5 → real signal
+		{"DEMAND: pVel=-4% lVel=-20 lst=100", -4, -20, 30, 100, "DEMAND"},     // lVelPct=-20%<-15%, pVelPct=-4%>-5%, absVel=20 >= 5 ✓
 		{"RECOVERY: pVel=-8% not RECOVERY (>= dump)", -8, -2, 30, 10, "UNCERTAIN"},
 		{"RECOVERY: lst=20 not RECOVERY", -5, -2, 30, 20, "UNCERTAIN"},
 		{"RECOVERY: lst=19 is RECOVERY", -5, -2, 30, 19, "RECOVERY"}, // lVel=-2/19*100=-10.5%
@@ -443,9 +443,9 @@ func TestLiquidityTier(t *testing.T) {
 
 func TestComputeWindowScore(t *testing.T) {
 	tests := []struct {
-		name                                  string
-		roi, baseVel, transLst, relLiq        float64
-		wantMin, wantMax                      float64
+		name                           string
+		roi, baseVel, transLst, relLiq float64
+		wantMin, wantMax               float64
 	}{
 		// High ROI + draining base + low trans + low liquidity = high score
 		{"ideal window", 300, -5, 10, 0.2, 80, 100},
@@ -481,11 +481,11 @@ func TestComputeWindowScore_Capped(t *testing.T) {
 
 func TestClassifyWindowSignal(t *testing.T) {
 	tests := []struct {
-		name                              string
-		score, baseVel, transListVel      float64
-		baseLst                           int
-		priceVel                          float64
-		want                              string
+		name                         string
+		score, baseVel, transListVel float64
+		baseLst                      int
+		priceVel                     float64
+		want                         string
 	}{
 		{"OPEN: high score + draining + momentum", 75, -3, 0, 30, 5, "OPEN"},
 		{"OPENING: mid score + slight drain + momentum", 55, -1, 0, 30, 1, "OPENING"},
@@ -518,11 +518,11 @@ func TestClassifyWindowSignal(t *testing.T) {
 
 func TestClassifyWindowSignal_RelativeDrain(t *testing.T) {
 	tests := []struct {
-		name                              string
-		score, baseVel, transListVel      float64
-		baseLst                           int
-		priceVel                          float64
-		want                              string
+		name                         string
+		score, baseVel, transListVel float64
+		baseLst                      int
+		priceVel                     float64
+		want                         string
 	}{
 		// baseLst=200 → threshold=max(-8,-1)=-1. baseVel=-5 is only 2.5% drain, but exceeds -1 threshold
 		{"large base small drain still OPEN", 75, -5, 0, 200, 5, "OPEN"},
@@ -632,12 +632,12 @@ func TestClassifyAdvancedSignal_Priority(t *testing.T) {
 	// So: manipulation wants |priceVel|<1, rotation wants priceVel>0
 	// priceVel=0.5 satisfies both conditions.
 	got := classifyAdvancedSignal(
-		300,   // currentPrice >200
-		2,     // listings <=3
-		0.5,   // priceVel: |0.5|<1 for manipulation, >0 for rotation
-		-1,    // listingVel <0 for rotation
-		90,    // cv >80 for manipulation
-		20,    // histPos <30 for rotation
+		300, // currentPrice >200
+		2,   // listings <=3
+		0.5, // priceVel: |0.5|<1 for manipulation, >0 for rotation
+		-1,  // listingVel <0 for rotation
+		90,  // cv >80 for manipulation
+		20,  // histPos <30 for rotation
 	)
 	if got != "PRICE_MANIPULATION" {
 		t.Errorf("classifyAdvancedSignal (manipulation+rotation) = %s, want PRICE_MANIPULATION (higher priority)", got)
@@ -650,12 +650,12 @@ func TestClassifyAdvancedSignal_RotationOverUndervalued(t *testing.T) {
 	// Undervalued: price 30-200, listings<40, priceVel>2, histPos<50
 	// NOT manipulation: listings>3
 	got := classifyAdvancedSignal(
-		80,   // currentPrice: in undervalued range (30-200)
-		20,   // listings: >3 (not manipulation), <40 (undervalued)
-		3,    // priceVel: >2 (undervalued), >0 (rotation)
-		-1,   // listingVel: <0 (rotation)
-		30,   // cv: <=80 (not manipulation)
-		20,   // histPos: <30 (rotation), <50 (undervalued)
+		80, // currentPrice: in undervalued range (30-200)
+		20, // listings: >3 (not manipulation), <40 (undervalued)
+		3,  // priceVel: >2 (undervalued), >0 (rotation)
+		-1, // listingVel: <0 (rotation)
+		30, // cv: <=80 (not manipulation)
+		20, // histPos: <30 (rotation), <50 (undervalued)
 	)
 	if got != "COMEBACK" {
 		t.Errorf("classifyAdvancedSignal (rotation+undervalued) = %s, want COMEBACK (higher priority)", got)
@@ -665,12 +665,12 @@ func TestClassifyAdvancedSignal_RotationOverUndervalued(t *testing.T) {
 func TestClassifyAdvancedSignal_Undervalued(t *testing.T) {
 	// Inputs matching ONLY undervalued (not rotation: listingVel >= 0).
 	got := classifyAdvancedSignal(
-		80,  // price in range 30-200
-		20,  // listings < 40
-		5,   // priceVel > 2
-		0,   // listingVel = 0 (not rotation)
-		30,  // cv low
-		30,  // histPos < 50
+		80, // price in range 30-200
+		20, // listings < 40
+		5,  // priceVel > 2
+		0,  // listingVel = 0 (not rotation)
+		30, // cv low
+		30, // histPos < 50
 	)
 	if got != "POTENTIAL" {
 		t.Errorf("classifyAdvancedSignal (undervalued only) = %s, want POTENTIAL", got)
@@ -680,12 +680,12 @@ func TestClassifyAdvancedSignal_Undervalued(t *testing.T) {
 func TestClassifyAdvancedSignal_Breakout(t *testing.T) {
 	// LOW-tier gem with collapsing supply + rising price = BREAKOUT.
 	got := classifyAdvancedSignal(
-		50,   // currentPrice < 200
-		20,   // listings < 30
-		1,    // priceVel > 0
-		-6,   // listingVel < -5
-		30,   // cv (normal)
-		40,   // histPos (irrelevant for breakout)
+		50, // currentPrice < 200
+		20, // listings < 30
+		1,  // priceVel > 0
+		-6, // listingVel < -5
+		30, // cv (normal)
+		40, // histPos (irrelevant for breakout)
 	)
 	if got != "BREAKOUT" {
 		t.Errorf("classifyAdvancedSignal (breakout) = %s, want BREAKOUT", got)
@@ -697,12 +697,12 @@ func TestClassifyAdvancedSignal_BreakoutOverridesComeback(t *testing.T) {
 	// BREAKOUT: price<200, listings<30, listingVel<-5, priceVel>0
 	// COMEBACK: histPos<30, priceVel>0, listingVel<0
 	got := classifyAdvancedSignal(
-		80,   // price < 200 (breakout), in range for comeback
-		20,   // listings < 30 (breakout)
-		2,    // priceVel > 0 (both)
-		-7,   // listingVel < -5 (breakout), < 0 (comeback)
-		30,   // cv
-		20,   // histPos < 30 (comeback)
+		80, // price < 200 (breakout), in range for comeback
+		20, // listings < 30 (breakout)
+		2,  // priceVel > 0 (both)
+		-7, // listingVel < -5 (breakout), < 0 (comeback)
+		30, // cv
+		20, // histPos < 30 (comeback)
 	)
 	if got != "BREAKOUT" {
 		t.Errorf("classifyAdvancedSignal (breakout+comeback) = %s, want BREAKOUT (higher priority)", got)
@@ -905,10 +905,10 @@ func TestSellability_RelativeDepth(t *testing.T) {
 		wantScore   int
 		wantLabel   string
 	}{
-		{"thin market", 0.3, 90, "FAST SELL"},  // 50 + 15(thin) + 5(liquidity) + 20(stability) = 90
-		{"normal depth", 1.0, 75, "GOOD"},       // 50 + 5(liquidity) + 20(stability) = 75
-		{"deep market", 3.0, 90, "FAST SELL"},   // 50 + 15(deep) + 5(liquidity) + 20(stability) = 90
-		{"very deep", 13.5, 90, "FAST SELL"},    // 50 + 15(deep) + 5(liquidity) + 20(stability) = 90
+		{"thin market", 0.3, 90, "FAST SELL"}, // 50 + 15(thin) + 5(liquidity) + 20(stability) = 90
+		{"normal depth", 1.0, 75, "GOOD"},     // 50 + 5(liquidity) + 20(stability) = 75
+		{"deep market", 3.0, 90, "FAST SELL"}, // 50 + 15(deep) + 5(liquidity) + 20(stability) = 90
+		{"very deep", 13.5, 90, "FAST SELL"},  // 50 + 15(deep) + 5(liquidity) + 20(stability) = 90
 	}
 
 	for _, tt := range tests {

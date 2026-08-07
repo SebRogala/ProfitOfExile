@@ -58,12 +58,12 @@ func TestVelocityWindow_2hSelectsCorrectPoints(t *testing.T) {
 	// First point >= cutoff is index 1 (t0+30min).
 	t0 := time.Date(2026, 3, 15, 8, 0, 0, 0, time.UTC)
 	points := []PricePoint{
-		{Time: t0, Chaos: 50, Listings: 5},                           // outside 2h window
-		{Time: t0.Add(30 * time.Minute), Chaos: 60, Listings: 8},     // first in 2h window
+		{Time: t0, Chaos: 50, Listings: 5},                       // outside 2h window
+		{Time: t0.Add(30 * time.Minute), Chaos: 60, Listings: 8}, // first in 2h window
 		{Time: t0.Add(60 * time.Minute), Chaos: 70, Listings: 10},
 		{Time: t0.Add(90 * time.Minute), Chaos: 75, Listings: 12},
 		{Time: t0.Add(120 * time.Minute), Chaos: 80, Listings: 14},
-		{Time: t0.Add(150 * time.Minute), Chaos: 90, Listings: 16},   // last point
+		{Time: t0.Add(150 * time.Minute), Chaos: 90, Listings: 16}, // last point
 	}
 	// Delta = (90-60) / 2h = 15
 	v := velocityWindow(points, 2*time.Hour, func(p PricePoint) float64 { return p.Chaos })

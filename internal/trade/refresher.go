@@ -174,4 +174,3 @@ func SubmitRefresh(ctx context.Context, gate *Gate, gem, variant string) {
 		}
 	}
 }
-

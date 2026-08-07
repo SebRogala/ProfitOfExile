@@ -224,15 +224,15 @@ func TestFetchCurrencyEndpoint_validResponse(t *testing.T) {
 	payload := ninjaResponse[ninjaCurrencyLine]{
 		Lines: []ninjaCurrencyLine{
 			{
-				ID: "divine",
-				PrimaryValue:  210.5,
+				ID:           "divine",
+				PrimaryValue: 210.5,
 				Sparkline: struct {
 					TotalChange float64 `json:"totalChange"`
 				}{TotalChange: -2.3},
 			},
 			{
-				ID: "exalted",
-				PrimaryValue:  18.0,
+				ID:           "exalted",
+				PrimaryValue: 18.0,
 				Sparkline: struct {
 					TotalChange float64 `json:"totalChange"`
 				}{TotalChange: 1.1},
@@ -670,8 +670,8 @@ func TestFetchCurrencyEndpoint_populatedWithETagAndAge(t *testing.T) {
 	payload := ninjaResponse[ninjaCurrencyLine]{
 		Lines: []ninjaCurrencyLine{
 			{
-				ID: "divine",
-				PrimaryValue:  210.5,
+				ID:           "divine",
+				PrimaryValue: 210.5,
 				Sparkline: struct {
 					TotalChange float64 `json:"totalChange"`
 				}{TotalChange: -2.3},

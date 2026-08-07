@@ -201,7 +201,7 @@ func TestAnalyzeFont_RiskAdjustedAvgWin(t *testing.T) {
 	// Two gems: A is expensive but thin market (low sell prob), B is cheaper but liquid
 
 	features := []GemFeature{
-		makeFeature("Gem A", "20/20", 300, 2, "TOP", 0.3, 0.6),  // risk-adjusted: 300*0.3*0.6 = 54
+		makeFeature("Gem A", "20/20", 300, 2, "TOP", 0.3, 0.6),   // risk-adjusted: 300*0.3*0.6 = 54
 		makeFeature("Gem B", "20/20", 200, 30, "TOP", 0.9, 0.95), // risk-adjusted: 200*0.9*0.95 = 171
 	}
 
@@ -250,14 +250,14 @@ func TestAnalyzeFont_LiquidityRiskClassification(t *testing.T) {
 	}{
 		{"no winners", 0, 0, "LOW"},
 		{"no thin", 0, 5, "LOW"},
-		{"20% exact is LOW (> not >=)", 1, 5, "LOW"},  // 0.2 exactly -> LOW (uses > 0.2)
-		{"above 20%", 2, 5, "MEDIUM"},                 // 0.4 -> MEDIUM
-		{"above 50%", 3, 5, "HIGH"},                   // 0.6 -> HIGH
+		{"20% exact is LOW (> not >=)", 1, 5, "LOW"}, // 0.2 exactly -> LOW (uses > 0.2)
+		{"above 20%", 2, 5, "MEDIUM"},                // 0.4 -> MEDIUM
+		{"above 50%", 3, 5, "HIGH"},                  // 0.6 -> HIGH
 		{"all thin", 5, 5, "HIGH"},
 		{"50% exact is MEDIUM (> not >=)", 1, 2, "MEDIUM"}, // 0.5 exactly -> not > 0.5 -> MEDIUM
-		{"just below 20%", 1, 6, "LOW"},                // 0.166 -> LOW
-		{"just above 20%", 2, 9, "MEDIUM"},             // 0.222 -> MEDIUM
-		{"above 50% boundary", 4, 7, "HIGH"},           // 0.571 -> HIGH
+		{"just below 20%", 1, 6, "LOW"},                    // 0.166 -> LOW
+		{"just above 20%", 2, 9, "MEDIUM"},                 // 0.222 -> MEDIUM
+		{"above 50% boundary", 4, 7, "HIGH"},               // 0.571 -> HIGH
 	}
 
 	for _, tt := range tests {

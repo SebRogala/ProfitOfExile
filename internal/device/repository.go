@@ -163,7 +163,7 @@ func (r *Repository) List(ctx context.Context) ([]Device, error) {
 // DeviceStats holds aggregate device statistics.
 type DeviceStats struct {
 	Total      int
-	Active8h  int
+	Active8h   int
 	Active24h  int
 	Active7d   int
 	Identified int

@@ -87,26 +87,26 @@ type TierBoundaries struct {
 
 // GemFeature holds pre-computed per-gem metrics for a single snapshot.
 type GemFeature struct {
-	Time              time.Time
-	Name              string
-	Variant           string
-	Chaos             float64
-	Listings          int
-	Tier              string // per-variant tier (for Font Comparator)
-	GemColor          string // RED, GREEN, BLUE
-	VelShortPrice     float64
-	VelShortListing   float64
-	VelMedPrice       float64
-	VelMedListing     float64
-	VelLongPrice      float64
-	VelLongListing    float64
-	CV                float64
-	CVShort           float64 // 6h coefficient of variation (for stability discount)
-	HistPosition      float64
-	High7Days            float64
-	Low7Days             float64
-	FloodCount        int
-	CrashCount        int
+	Time                  time.Time
+	Name                  string
+	Variant               string
+	Chaos                 float64
+	Listings              int
+	Tier                  string // per-variant tier (for Font Comparator)
+	GemColor              string // RED, GREEN, BLUE
+	VelShortPrice         float64
+	VelShortListing       float64
+	VelMedPrice           float64
+	VelMedListing         float64
+	VelLongPrice          float64
+	VelLongListing        float64
+	CV                    float64
+	CVShort               float64 // 6h coefficient of variation (for stability discount)
+	HistPosition          float64
+	High7Days             float64
+	Low7Days              float64
+	FloodCount            int
+	CrashCount            int
 	ListingElasticity     float64
 	RelativePrice         float64
 	RelativeListings      float64
@@ -118,12 +118,12 @@ type GemFeature struct {
 
 	// Trade-enriched fields (populated when TradeCache has fresh data for this gem).
 	TradeSellerConcentration string  // NORMAL/CONCENTRATED/MONOPOLY/"" (no data)
-	TradeCheapestStaleness  string  // FRESH/AGING/STALE/""
-	TradePriceOutlier       bool    // cheapest < 50% of median top 10
-	TradePriceFloor         float64 // 0 = no data
-	TradeMedianTop10        float64 // more reliable than ninja for MID+
-	TradeDataAge            float64 // seconds since FetchedAt
-	TradeDataAvailable      bool    // true = fresh trade data was used
+	TradeCheapestStaleness   string  // FRESH/AGING/STALE/""
+	TradePriceOutlier        bool    // cheapest < 50% of median top 10
+	TradePriceFloor          float64 // 0 = no data
+	TradeMedianTop10         float64 // more reliable than ninja for MID+
+	TradeDataAge             float64 // seconds since FetchedAt
+	TradeDataAvailable       bool    // true = fresh trade data was used
 }
 
 // GemClassification holds the pre-computed tier and confidence for a single gem.
@@ -150,20 +150,20 @@ type ClassificationResult struct {
 
 // GemSignal holds the computed signal and confidence for a single gem at a snapshot.
 type GemSignal struct {
-	Time             time.Time
-	Name             string
-	Variant          string
-	Signal           string
-	Confidence       int
-	SellUrgency      string
-	SellReason       string
-	Sellability      int
-	SellabilityLabel string
-	WindowSignal     string
-	AdvancedSignal   string
-	PhaseModifier    float64
-	Recommendation    string
-	Tier              string
+	Time                time.Time
+	Name                string
+	Variant             string
+	Signal              string
+	Confidence          int
+	SellUrgency         string
+	SellReason          string
+	Sellability         int
+	SellabilityLabel    string
+	WindowSignal        string
+	AdvancedSignal      string
+	PhaseModifier       float64
+	Recommendation      string
+	Tier                string
 	RiskAdjustedValue   float64 // price * sell_probability * stability_discount
 	QuickSellPrice      float64 // aggressive undercut estimate
 	SellConfidence      string  // "SAFE", "FAIR", "RISKY"

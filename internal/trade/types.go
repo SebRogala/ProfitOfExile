@@ -56,8 +56,8 @@ type TradeLookupResult struct {
 	MedianTop10  float64              `json:"medianTop10"`
 	Listings     []TradeListingDetail `json:"listings"`
 	Signals      TradeSignals         `json:"signals"`
-	DivinePrice  float64              `json:"divinePrice"`  // divine→chaos rate used for normalization
-	TradeURL     string               `json:"tradeUrl"`     // link to trade site results page
+	DivinePrice  float64              `json:"divinePrice"` // divine→chaos rate used for normalization
+	TradeURL     string               `json:"tradeUrl"`    // link to trade site results page
 	FetchedAt    time.Time            `json:"fetchedAt"`
 }
 

@@ -28,13 +28,13 @@ func submitRouter(cache *trade.TradeCache, repo *trade.Repository) http.Handler 
 // validSubmitBody returns a JSON string representing a valid TradeLookupResult.
 func validSubmitBody(gem, variant string) string {
 	result := trade.TradeLookupResult{
-		Gem:         gem,
-		Variant:     variant,
-		Total:       15,
-		PriceFloor:  42.5,
+		Gem:          gem,
+		Variant:      variant,
+		Total:        15,
+		PriceFloor:   42.5,
 		PriceCeiling: 120.0,
-		PriceSpread: 77.5,
-		MedianTop10: 65.0,
+		PriceSpread:  77.5,
+		MedianTop10:  65.0,
 		Listings: []trade.TradeListingDetail{
 			{Price: 42.5, Currency: "chaos", ChaosPrice: 42.5, Account: "seller1", GemLevel: 20, GemQuality: 20},
 			{Price: 55.0, Currency: "chaos", ChaosPrice: 55.0, Account: "seller2", GemLevel: 20, GemQuality: 20},
@@ -291,12 +291,12 @@ func TestTradeSubmit_OverwritesExistingCacheEntry(t *testing.T) {
 
 	// Submit updated result with different price.
 	updated := trade.TradeLookupResult{
-		Gem:         gem,
-		Variant:     variant,
-		Total:       25,
-		PriceFloor:  99.0,
+		Gem:          gem,
+		Variant:      variant,
+		Total:        25,
+		PriceFloor:   99.0,
 		PriceCeiling: 200.0,
-		Listings:    []trade.TradeListingDetail{},
+		Listings:     []trade.TradeListingDetail{},
 		Signals: trade.TradeSignals{
 			SellerConcentration: "CONCENTRATED",
 			CheapestStaleness:   "AGING",

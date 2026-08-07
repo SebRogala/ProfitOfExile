@@ -17,10 +17,10 @@ import (
 // the JSON payload when the SSE event field is absent.
 func TestMercureSubscriber_TopicFallbackToPayload(t *testing.T) {
 	tests := []struct {
-		name      string
+		name       string
 		ssePayload string
-		wantTopic string
-		wantData  string
+		wantTopic  string
+		wantData   string
 	}{
 		{
 			name:       "topic field in payload populates Topic",

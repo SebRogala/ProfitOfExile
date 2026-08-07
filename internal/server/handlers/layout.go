@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/mercure"
-	"github.com/go-chi/chi/v5"
 )
 
 func publishLayoutEvent(pub mercure.Publisher, action, difficulty string) {

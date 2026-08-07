@@ -61,10 +61,10 @@ func TestDeviceMiddleware_InvalidFingerprint_Returns400(t *testing.T) {
 		fingerprint string
 	}{
 		{"too short", "abc123"},
-		{"too long", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, // 67 chars
-		{"wrong length between 36 and 64", "aabbccddeeff00112233445566778899aabbccddeeff"}, // 44 chars
+		{"too long", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},     // 67 chars
+		{"wrong length between 36 and 64", "aabbccddeeff00112233445566778899aabbccddeeff"},      // 44 chars
 		{"uppercase hex", "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899AA"}, // 64 uppercase
-		{"special characters", "abc!@#$%^&*()_+abc!@#$%^&*()_+abcabc"},                        // 37 chars with specials
+		{"special characters", "abc!@#$%^&*()_+abc!@#$%^&*()_+abcabc"},                          // 37 chars with specials
 	}
 
 	for _, tt := range tests {

@@ -23,18 +23,18 @@ const mercureTradeTopic = "poe/trade/results"
 type DivineRateFunc func() float64
 
 type Gate struct {
-	high        chan *GateRequest // buffered: 10 — interactive lookups
-	low         chan *GateRequest // buffered: 50 — background scans
-	limiter     *RateLimiter
-	client      *Client
-	mercure     mercure.Publisher
-	cache       *TradeCache
-	repo        *Repository
-	scope       league.Scope
-	inflight    map[string][]*GateRequest
-	mu          sync.Mutex
-	maxWait     time.Duration
-	divineRate  DivineRateFunc
+	high       chan *GateRequest // buffered: 10 — interactive lookups
+	low        chan *GateRequest // buffered: 50 — background scans
+	limiter    *RateLimiter
+	client     *Client
+	mercure    mercure.Publisher
+	cache      *TradeCache
+	repo       *Repository
+	scope      league.Scope
+	inflight   map[string][]*GateRequest
+	mu         sync.Mutex
+	maxWait    time.Duration
+	divineRate DivineRateFunc
 }
 
 // NewGate creates a Gate wired to the given dependencies. The scope is fixed at

@@ -39,15 +39,15 @@ func TestComputeConfidence_HERDAllAgree(t *testing.T) {
 	// HERD signal + all windows agree (short/med/long all positive) +
 	// bullish hour + no flood history => high confidence (~80-95).
 	f := GemFeature{
-		VelShortPrice: 5,
-		VelMedPrice:   4,
-		VelLongPrice:  3,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            30,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     5,
+		VelMedPrice:       4,
+		VelLongPrice:      3,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                30,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: -0.5,
 	}
 	mc := testConfidenceMarketContext()
@@ -64,15 +64,15 @@ func TestComputeConfidence_UNCERTAINConflicting(t *testing.T) {
 	// RISING signal + conflicting windows (short up, long down) +
 	// bearish hour => low confidence (~25-40).
 	f := GemFeature{
-		VelShortPrice: 3,
-		VelMedPrice:   -1,
-		VelLongPrice:  -2,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            40,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     3,
+		VelMedPrice:       -1,
+		VelLongPrice:      -2,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                40,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -88,15 +88,15 @@ func TestComputeConfidence_UNCERTAINConflicting(t *testing.T) {
 func TestComputeConfidence_STABLENeutral(t *testing.T) {
 	// STABLE signal + neutral everything => moderate confidence (~50-60).
 	f := GemFeature{
-		VelShortPrice: 0,
-		VelMedPrice:   0,
-		VelLongPrice:  0,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            20,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         30,
+		VelShortPrice:     0,
+		VelMedPrice:       0,
+		VelLongPrice:      0,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                20,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          30,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -112,15 +112,15 @@ func TestComputeConfidence_STABLENeutral(t *testing.T) {
 func TestComputeConfidence_TRAPAlwaysLow(t *testing.T) {
 	// TRAP signal => always low confidence regardless of other factors (~10-20).
 	f := GemFeature{
-		VelShortPrice: 5,
-		VelMedPrice:   5,
-		VelLongPrice:  5,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            110,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     5,
+		VelMedPrice:       5,
+		VelLongPrice:      5,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                110,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -135,27 +135,27 @@ func TestComputeConfidence_TRAPAlwaysLow(t *testing.T) {
 func TestComputeConfidence_FloodCrashDampens(t *testing.T) {
 	// Gem with FloodCount>2 and CrashCount>2 => profile modifier dampens.
 	fStable := GemFeature{
-		VelShortPrice: 3,
-		VelMedPrice:   3,
-		VelLongPrice:  3,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            30,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     3,
+		VelMedPrice:       3,
+		VelLongPrice:      3,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                30,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: 0,
 	}
 	fUnstable := GemFeature{
-		VelShortPrice: 3,
-		VelMedPrice:   3,
-		VelLongPrice:  3,
-		FloodCount:    3,
-		CrashCount:    3,
-		CV:            30,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     3,
+		VelMedPrice:       3,
+		VelLongPrice:      3,
+		FloodCount:        3,
+		CrashCount:        3,
+		CV:                30,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -172,15 +172,15 @@ func TestComputeConfidence_FloodCrashDampens(t *testing.T) {
 func TestComputeConfidence_ZeroHistory(t *testing.T) {
 	// Zero-history gem (all velocities 0) => low confidence.
 	f := GemFeature{
-		VelShortPrice: 0,
-		VelMedPrice:   0,
-		VelLongPrice:  0,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            0,
-		RelativePrice:    0,
-		RelativeListings: 0,
-		Listings:         0,
+		VelShortPrice:     0,
+		VelMedPrice:       0,
+		VelLongPrice:      0,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                0,
+		RelativePrice:     0,
+		RelativeListings:  0,
+		Listings:          0,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -196,15 +196,15 @@ func TestComputeConfidence_ZeroHistory(t *testing.T) {
 func TestComputeConfidence_TemporalDifference(t *testing.T) {
 	// Same signal at bullish hour vs bearish hour => different confidence values.
 	f := GemFeature{
-		VelShortPrice: 3,
-		VelMedPrice:   3,
-		VelLongPrice:  3,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            30,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     3,
+		VelMedPrice:       3,
+		VelLongPrice:      3,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                30,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -222,15 +222,15 @@ func TestComputeConfidence_TemporalDifference(t *testing.T) {
 func TestComputeConfidence_PhaseModifier(t *testing.T) {
 	// Verify that phaseModifier is returned and is a reasonable value.
 	f := GemFeature{
-		VelShortPrice: 5,
-		VelMedPrice:   4,
-		VelLongPrice:  3,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            30,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     5,
+		VelMedPrice:       4,
+		VelLongPrice:      3,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                30,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: -0.5,
 	}
 	mc := testConfidenceMarketContext()
@@ -246,15 +246,15 @@ func TestComputeConfidence_DUMPINGHighBase(t *testing.T) {
 	// DUMPING has high base_signal_strength (1.3), should produce decent confidence
 	// with agreeing windows.
 	f := GemFeature{
-		VelShortPrice: -5,
-		VelMedPrice:   -4,
-		VelLongPrice:  -3,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            40,
-		RelativePrice:    1.0,
-		RelativeListings: 1.0,
-		Listings:         20,
+		VelShortPrice:     -5,
+		VelMedPrice:       -4,
+		VelLongPrice:      -3,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                40,
+		RelativePrice:     1.0,
+		RelativeListings:  1.0,
+		Listings:          20,
 		ListingElasticity: 0,
 	}
 	mc := testConfidenceMarketContext()
@@ -269,15 +269,15 @@ func TestComputeConfidence_DUMPINGHighBase(t *testing.T) {
 func TestComputeConfidence_Clamped0to100(t *testing.T) {
 	// Regardless of extreme inputs, confidence must be 0-100.
 	f := GemFeature{
-		VelShortPrice: 100,
-		VelMedPrice:   100,
-		VelLongPrice:  100,
-		FloodCount:    0,
-		CrashCount:    0,
-		CV:            5,
-		RelativePrice:    2.0,
-		RelativeListings: 2.0,
-		Listings:         50,
+		VelShortPrice:     100,
+		VelMedPrice:       100,
+		VelLongPrice:      100,
+		FloodCount:        0,
+		CrashCount:        0,
+		CV:                5,
+		RelativePrice:     2.0,
+		RelativeListings:  2.0,
+		Listings:          50,
 		ListingElasticity: -1.0,
 	}
 	mc := testConfidenceMarketContext()
@@ -622,23 +622,23 @@ func TestComputeConfidence_STABLEAllAgree_LowerThanBefore(t *testing.T) {
 
 	// All windows agree on tiny positive drift.
 	fAgreed := GemFeature{
-		VelShortPrice:     0.5,
-		VelMedPrice:       0.3,
-		VelLongPrice:      0.1,
-		CV:                20,
-		RelativePrice:     1.0,
-		RelativeListings:  1.0,
-		Listings:          30,
+		VelShortPrice:    0.5,
+		VelMedPrice:      0.3,
+		VelLongPrice:     0.1,
+		CV:               20,
+		RelativePrice:    1.0,
+		RelativeListings: 1.0,
+		Listings:         30,
 	}
 	// Only two windows have data (short is zero).
 	fPartial := GemFeature{
-		VelShortPrice:     0,
-		VelMedPrice:       0.3,
-		VelLongPrice:      0.1,
-		CV:                20,
-		RelativePrice:     1.0,
-		RelativeListings:  1.0,
-		Listings:          30,
+		VelShortPrice:    0,
+		VelMedPrice:      0.3,
+		VelLongPrice:     0.1,
+		CV:               20,
+		RelativePrice:    1.0,
+		RelativeListings: 1.0,
+		Listings:         30,
 	}
 
 	confAgreed, _ := computeConfidence("STABLE", fAgreed, mc, snapTime)
@@ -655,9 +655,9 @@ func TestProfileModifier_DUMPINGAmplifiedByCrashHistory(t *testing.T) {
 	// Bug 2 fix: For DUMPING signals, crash/flood history is corroborating
 	// evidence — should amplify (1.2), not reduce (0.7).
 	f := GemFeature{
-		FloodCount:    3,
-		CrashCount:    3,
-		CV:            50,
+		FloodCount: 3,
+		CrashCount: 3,
+		CV:         50,
 	}
 	gotDumping := profileModifier(f, "DUMPING")
 	gotStable := profileModifier(f, "STABLE")
@@ -677,26 +677,26 @@ func TestComputeConfidence_DUMPINGWithCrashHistory_Higher(t *testing.T) {
 	snapTime := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)
 
 	fNoCrash := GemFeature{
-		VelShortPrice:     -5,
-		VelMedPrice:       -4,
-		VelLongPrice:      -3,
-		FloodCount:        0,
-		CrashCount:        0,
-		CV:                40,
-		RelativePrice:     1.0,
-		RelativeListings:  1.0,
-		Listings:          20,
+		VelShortPrice:    -5,
+		VelMedPrice:      -4,
+		VelLongPrice:     -3,
+		FloodCount:       0,
+		CrashCount:       0,
+		CV:               40,
+		RelativePrice:    1.0,
+		RelativeListings: 1.0,
+		Listings:         20,
 	}
 	fWithCrash := GemFeature{
-		VelShortPrice:     -5,
-		VelMedPrice:       -4,
-		VelLongPrice:      -3,
-		FloodCount:        3,
-		CrashCount:        3,
-		CV:                40,
-		RelativePrice:     1.0,
-		RelativeListings:  1.0,
-		Listings:          20,
+		VelShortPrice:    -5,
+		VelMedPrice:      -4,
+		VelLongPrice:     -3,
+		FloodCount:       3,
+		CrashCount:       3,
+		CV:               40,
+		RelativePrice:    1.0,
+		RelativeListings: 1.0,
+		Listings:         20,
 	}
 
 	confNoCrash, _ := computeConfidence("DUMPING", fNoCrash, mc, snapTime)

@@ -38,8 +38,8 @@ func testFeature(name, variant string, chaos float64, listings int) GemFeature {
 		VelLongListing:    1,
 		CV:                25,
 		HistPosition:      50,
-		High7Days:            chaos * 1.2,
-		Low7Days:             chaos * 0.8,
+		High7Days:         chaos * 1.2,
+		Low7Days:          chaos * 0.8,
 		FloodCount:        0,
 		CrashCount:        0,
 		ListingElasticity: -0.3,
@@ -771,7 +771,7 @@ func TestComputeGemSignals_CASCADEDoesNotOverridePRICE_MANIPULATION(t *testing.T
 	f.CV = 250 // CASCADE condition: CV > 200
 	f.Listings = 2
 	f.Tier = "TOP"
-	f.Low7Days = 20        // CASCADE condition: 500/20 = 25x > 20x
+	f.Low7Days = 20 // CASCADE condition: 500/20 = 25x > 20x
 	f.High7Days = 500
 
 	gems := testBaseGems("Manipulated", 30)
@@ -817,8 +817,8 @@ func TestComputeGemSignals_CASCADENotFiredWithLowCV(t *testing.T) {
 
 func TestAdjustSellabilityForTrade_MONOPOLY(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            60, // 1 min, fresh
+		TradeDataAvailable:       true,
+		TradeDataAge:             60, // 1 min, fresh
 		TradeSellerConcentration: "MONOPOLY",
 	}
 	got, _ := adjustSellabilityForTrade(80, f)
@@ -830,8 +830,8 @@ func TestAdjustSellabilityForTrade_MONOPOLY(t *testing.T) {
 
 func TestAdjustSellabilityForTrade_CONCENTRATED(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            60,
+		TradeDataAvailable:       true,
+		TradeDataAge:             60,
 		TradeSellerConcentration: "CONCENTRATED",
 	}
 	got, _ := adjustSellabilityForTrade(80, f)
@@ -869,9 +869,9 @@ func TestAdjustSellabilityForTrade_FRESH(t *testing.T) {
 
 func TestAdjustSellabilityForTrade_SkippedWhenUnavailable(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      false,
+		TradeDataAvailable:       false,
 		TradeSellerConcentration: "MONOPOLY",
-		TradeCheapestStaleness:  "STALE",
+		TradeCheapestStaleness:   "STALE",
 	}
 	got, label := adjustSellabilityForTrade(80, f)
 	if got != 80 {
@@ -884,8 +884,8 @@ func TestAdjustSellabilityForTrade_SkippedWhenUnavailable(t *testing.T) {
 
 func TestAdjustSellabilityForTrade_SkippedWhenStaleAge(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            5400, // exactly at boundary (>= 5400 = skip)
+		TradeDataAvailable:       true,
+		TradeDataAge:             5400, // exactly at boundary (>= 5400 = skip)
 		TradeSellerConcentration: "MONOPOLY",
 	}
 	got, _ := adjustSellabilityForTrade(80, f)
@@ -896,10 +896,10 @@ func TestAdjustSellabilityForTrade_SkippedWhenStaleAge(t *testing.T) {
 
 func TestAdjustSellabilityForTrade_ClampToZero(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            60,
+		TradeDataAvailable:       true,
+		TradeDataAge:             60,
 		TradeSellerConcentration: "MONOPOLY",
-		TradeCheapestStaleness:  "STALE",
+		TradeCheapestStaleness:   "STALE",
 	}
 	got, label := adjustSellabilityForTrade(15, f)
 	// 15 - 20 - 10 = -15 → clamped to 0
@@ -930,8 +930,8 @@ func TestAdjustSellabilityForTrade_ClampTo100(t *testing.T) {
 
 func TestClassifySellConfidence_MONOPOLY_SafeToFair(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            60,
+		TradeDataAvailable:       true,
+		TradeDataAge:             60,
 		TradeSellerConcentration: "MONOPOLY",
 	}
 	// Base would be SAFE (sellProb >= 0.8, stabilityDisc >= 0.85).
@@ -946,8 +946,8 @@ func TestClassifySellConfidence_MONOPOLY_SafeToFair(t *testing.T) {
 
 func TestClassifySellConfidence_MONOPOLY_FairToRisky(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            60,
+		TradeDataAvailable:       true,
+		TradeDataAge:             60,
 		TradeSellerConcentration: "MONOPOLY",
 	}
 	// Base would be FAIR.
@@ -976,10 +976,10 @@ func TestClassifySellConfidence_CASCADE_AlwaysRisky(t *testing.T) {
 
 func TestClassifySellConfidence_PriceOutlier_MONOPOLY_AlwaysRisky(t *testing.T) {
 	f := GemFeature{
-		TradeDataAvailable:      true,
-		TradeDataAge:            60,
+		TradeDataAvailable:       true,
+		TradeDataAge:             60,
 		TradeSellerConcentration: "MONOPOLY",
-		TradePriceOutlier:       true,
+		TradePriceOutlier:        true,
 	}
 	// Even with SAFE base conditions, PriceOutlier + MONOPOLY = always RISKY.
 	got, note := classifySellConfidence(0.9, 0.95, f)
