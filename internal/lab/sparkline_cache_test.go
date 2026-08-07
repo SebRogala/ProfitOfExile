@@ -3,7 +3,9 @@ package lab
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -469,20 +471,12 @@ func TestPopulateSparklineCache_SecondPassRequestsSinceEqualToStoredMark(t *test
 	}
 }
 
-// A cache whose series have all aged out still carries the old mark. Reading
-// incrementally from it would leave the cache permanently empty, so an empty
-// cache must reload the full window regardless of the mark.
-func TestPopulateSparklineCache_ColdCacheRequestsZeroSince(t *testing.T) {
+// A cache that has never observed a row has no mark to read from, so the first
+// tick has to take the bounded cold read.
+func TestPopulateSparklineCache_NeverPopulatedCacheRequestsZeroSince(t *testing.T) {
 	now := sparklineNow()
 	scope := league.Historical("LeagueA")
 	c := NewCache(scope)
-
-	staleMark := now.Add(-200 * time.Hour)
-	c.For(scope).SetSparklines(
-		map[sparklineKey][]SparklinePoint{},
-		map[sparklineKey][]SparklinePoint{},
-		staleMark,
-	)
 
 	src := &fakeSparklineSource{
 		series: map[sparklineKey][]SparklinePoint{
@@ -499,6 +493,45 @@ func TestPopulateSparklineCache_ColdCacheRequestsZeroSince(t *testing.T) {
 	}
 	if !src.sinceCalls[0].IsZero() {
 		t.Fatalf("cold-cache read `since`: got %s, want the zero time (full window)", src.sinceCalls[0])
+	}
+}
+
+// mergeSparklineMaps drops every key whose merged series came out empty, so a
+// tick that legitimately retained nothing leaves both maps empty while the mark
+// stays good. Reading that as cold puts the full-window union back on every
+// subsequent tick, forever — the writer half of the warmth-from-contents defect
+// (POE-161).
+func TestPopulateSparklineCache_RetainedNothingStillReadsFromTheMark(t *testing.T) {
+	now := sparklineNow()
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	// The state a decayed corpus leaves behind: warm, no keys, mark beyond the
+	// lookback floor because that is the only way a series is dropped.
+	decayedMark := now.Add(-(sparklineMaxLookbackHours + 32) * time.Hour)
+	c.For(scope).SetSparklines(
+		map[sparklineKey][]SparklinePoint{},
+		map[sparklineKey][]SparklinePoint{},
+		decayedMark,
+	)
+
+	src := &fakeSparklineSource{
+		series: map[sparklineKey][]SparklinePoint{
+			{name: "Spark of Nova", variant: "20/20"}: {sparkPoint(now, time.Hour, 12)},
+		},
+	}
+
+	if err := populateSparklineCache(context.Background(), src, c, scope, now); err != nil {
+		t.Fatalf("populate: %v", err)
+	}
+
+	if len(src.sinceCalls) != 1 {
+		t.Fatalf("source calls: got %d, want 1", len(src.sinceCalls))
+	}
+	if !src.sinceCalls[0].Equal(decayedMark) {
+		t.Fatalf("read `since` after a tick that retained nothing: got %s, want the stored mark %s — "+
+			"a zero `since` re-runs the cold union on every tick for the life of the process",
+			src.sinceCalls[0], decayedMark)
 	}
 }
 
@@ -630,5 +663,159 @@ func TestPopulateSparklineCache_SourceErrorLeavesCacheAndMarkUnchanged(t *testin
 	}
 	if hw := c.For(scope).SparklineHighWater(); !hw.Equal(mark) {
 		t.Fatalf("high-water after a failed read: got %s, want the untouched %s", hw, mark)
+	}
+}
+
+// --- the retained-nothing warning -----------------------------------------
+
+// recordingHandler captures every record emitted while it is installed as the
+// slog default. populateSparklineCache logs through the package default — the
+// convention internal/lab/repository.go already follows — so the default handler
+// is the seam the warning is observable through.
+type recordingHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// warnings returns every captured record at WARN or above.
+func (h *recordingHandler) warnings() []slog.Record {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []slog.Record
+	for _, r := range h.records {
+		if r.Level >= slog.LevelWarn {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// logAttr returns the value logged under key, and whether it was present at all.
+func logAttr(r slog.Record, key string) (slog.Value, bool) {
+	var (
+		val   slog.Value
+		found bool
+	)
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == key {
+			val, found = a.Value, true
+			return false
+		}
+		return true
+	})
+	return val, found
+}
+
+// captureLogs swaps the slog default for a recorder until the test ends. No test
+// in package lab calls t.Parallel, so the swap is confined to the test making it.
+func captureLogs(t *testing.T) *recordingHandler {
+	t.Helper()
+	h := &recordingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return h
+}
+
+// The state the cache cannot leave in-process: a mark ahead of the live rows, so
+// the incremental read matches nothing and every sparkline serves [] at HTTP 200
+// for the life of the process. Nothing else says so — the call returns nil.
+func TestPopulateSparklineCache_RetainedNothingWithLiveMarkWarns(t *testing.T) {
+	now := sparklineNow()
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	// Inside the lookback, which is what makes this the unrecoverable half: the
+	// rows moved backwards under the process, they did not age out.
+	mark := now.Add(-time.Hour)
+	c.For(scope).SetSparklines(
+		map[sparklineKey][]SparklinePoint{},
+		map[sparklineKey][]SparklinePoint{},
+		mark,
+	)
+
+	logs := captureLogs(t)
+	src := &fakeSparklineSource{}
+
+	if err := populateSparklineCache(context.Background(), src, c, scope, now); err != nil {
+		t.Fatalf("populate: %v", err)
+	}
+
+	warns := logs.warnings()
+	if len(warns) != 1 {
+		t.Fatalf("warnings: got %d, want 1 — a cache serving [] for every gem must say so", len(warns))
+	}
+	got, ok := logAttr(warns[0], "highWater")
+	if !ok {
+		t.Fatalf("warning carries no highWater attribute; an operator cannot tell the decayed "+
+			"case from the mark-ahead one without it: %q", warns[0].Message)
+	}
+	if gotTime, wantTime := got.Any(), mark; gotTime != wantTime {
+		t.Errorf("logged highWater = %v, want the stuck mark %v", gotTime, wantTime)
+	}
+	if leagueAttr, ok := logAttr(warns[0], "league"); !ok || leagueAttr.String() != scope.ID() {
+		t.Errorf("logged league = %v (present=%v), want %q", leagueAttr, ok, scope.ID())
+	}
+}
+
+// The idempotent second pass is the noise case: RunV2 calls this twice per
+// snapshot, so a warning that fired on a tick which kept its series would print
+// on every snapshot forever and train the reader to ignore it.
+func TestPopulateSparklineCache_SecondPassOverUnchangedSnapshotDoesNotWarn(t *testing.T) {
+	now := sparklineNow()
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	logs := captureLogs(t)
+	src := &fakeSparklineSource{
+		series: map[sparklineKey][]SparklinePoint{
+			{name: "Spark of Nova", variant: "20/20"}: {sparkPoint(now, time.Hour, 12)},
+		},
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		if err := populateSparklineCache(context.Background(), src, c, scope, now); err != nil {
+			t.Fatalf("populate pass %d: %v", pass, err)
+		}
+	}
+
+	if warns := logs.warnings(); len(warns) != 0 {
+		t.Errorf("warnings after two passes over the same snapshot: got %d (%q), want 0 — "+
+			"the second pass holds a live mark and a full cache, which is the healthy state",
+			len(warns), warns[0].Message)
+	}
+}
+
+// The zero-mark boundary. A cache that has never observed a row is cold, not
+// stuck: the next tick reads from scratch and fills it, so an empty first read
+// while the collector is still warming up is not a fault to page anyone about.
+func TestPopulateSparklineCache_ColdCacheWithEmptyReadDoesNotWarn(t *testing.T) {
+	now := sparklineNow()
+	scope := league.Historical("LeagueA")
+	c := NewCache(scope)
+
+	logs := captureLogs(t)
+	src := &fakeSparklineSource{}
+
+	if err := populateSparklineCache(context.Background(), src, c, scope, now); err != nil {
+		t.Fatalf("populate: %v", err)
+	}
+
+	if warns := logs.warnings(); len(warns) != 0 {
+		t.Errorf("warnings on a never-populated cache: got %d (%q), want 0 — a zero mark is the "+
+			"cold state the bounded read exists for, and it recovers on its own",
+			len(warns), warns[0].Message)
 	}
 }

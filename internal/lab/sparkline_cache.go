@@ -3,6 +3,7 @@ package lab
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -154,6 +155,52 @@ type sparklineSource interface {
 // lookback — see SparklineBounds. Series that receive no incoming points are
 // still re-merged so points aging out of the rolling window are trimmed.
 //
+// THE READ SHAPE FOLLOWS THE MARK, NOT THE MAPS.
+//
+// The mark is the read cursor: zero means no row has ever been observed, which
+// is the only state the bounded cold read exists for. Every other mark describes
+// rows already folded in, so the read is incremental from it — whether or not
+// the maps still hold a series.
+//
+// Asking the maps instead is the warmth-from-contents defect the cache-state
+// contract forbids, surviving on the writer side (POE-161).
+// mergeSparklineMaps drops every key whose merged series came out empty, so a
+// tick that legitimately retained nothing left both maps empty and every
+// subsequent tick re-ran the cold union against a mark that was perfectly good.
+//
+// A retained-nothing tick is not the cold state and must not read as one: a
+// series is dropped only when its every point is older than
+// sparklineMaxLookbackHours, so an empty pair of maps implies a mark at least
+// that old, and the incremental read from it is bounded by the same lookback
+// (see sparklineIncrementalQuery). It returns every row a cold read would find
+// worth keeping, so a decayed series is still rebuilt the moment its gem is
+// priced again. The cost is that this one read is the flat lookback rather than
+// the bounded union — paid once, when data resumes, instead of every tick
+// forever.
+//
+// KNOWN TRADE-OFF: a mark AHEAD of the live rows does not recover in-process.
+//
+// Following the mark means nothing reconciles it against what the table
+// actually holds, so a mark newer than every row is a state the process cannot
+// leave: the incremental read matches nothing, the maps decay empty once the
+// lookback passes, and sparklines stay empty for the life of the process. The
+// way to reach it is to move the rows backwards under a running server —
+// truncating gem_snapshots and re-COPYing an older prod dump, which is the
+// documented prod→local sync — not anything the server does to itself.
+//
+// Accepted, with a restart as the remedy: the mark is in-memory only, so a
+// restart clears it and the next tick reads cold. The contents-based branch
+// POE-161 removed did recover on its own, but only by re-deriving warmth from
+// the maps — which cost a full cold union every tick for as long as a
+// legitimately decayed cache stayed empty, forever in the steady state. A
+// sawtooth every 168h in exchange for a defect the cache-state contract forbids
+// was the worse half of the trade.
+//
+// Accepted is not the same as invisible, and it was: the call returns nil, the
+// handlers serve [] at HTTP 200, and nothing told anyone to perform the restart
+// the paragraph above prescribes. The warning below is that missing half — see
+// warnSparklineCacheRetainedNothing for what it can and cannot distinguish.
+//
 // The call is idempotent by construction, which RunV2 requires — it runs twice
 // per snapshot (the gem tick and the T+15-minute delayed recompute). A second
 // pass over an unchanged snapshot reads no rows, merges nothing new (and the
@@ -163,14 +210,8 @@ func populateSparklineCache(ctx context.Context, src sparklineSource, cache *Cac
 	c := cache.For(scope)
 
 	existing, existingCorrupted, highWater := c.sparklineSnapshot()
-	since := highWater
-	if len(existing) == 0 && len(existingCorrupted) == 0 {
-		// Cold cache: load the whole window rather than trusting a mark that
-		// no series backs.
-		since = time.Time{}
-	}
 
-	incoming, incomingCorrupted, err := src.SparklineWindow(ctx, scope, since, sparklineCacheBounds())
+	incoming, incomingCorrupted, err := src.SparklineWindow(ctx, scope, highWater, sparklineCacheBounds())
 	if err != nil {
 		return fmt.Errorf("populate sparkline cache: %w", err)
 	}
@@ -187,7 +228,48 @@ func populateSparklineCache(ctx context.Context, src sparklineSource, cache *Cac
 	}
 
 	c.SetSparklines(merged, mergedCorrupted, highWater)
+	warnSparklineCacheRetainedNothing(scope, merged, mergedCorrupted, highWater, now)
 	return nil
+}
+
+// warnSparklineCacheRetainedNothing logs when the cache came out of a tick
+// holding no series at all while its read cursor is live.
+//
+// The pair is the distinguishing condition. A non-zero mark means rows have been
+// observed, so empty maps are not the cold state; and every tick that keeps even
+// one series leaves a non-empty map, so this cannot fire on the ordinary path —
+// including the second of RunV2's two passes per snapshot, which re-merges the
+// same series and stores them again.
+//
+// It covers two states and does not claim to separate them, because from inside
+// the process they are the same observation: an incremental read that matches
+// nothing against a mark that will not move. markAge is the discriminator the
+// operator has to read.
+//
+//   - markAge past the lookback is a corpus that legitimately decayed — nothing
+//     has been priced in this league for a week. It recovers on its own the tick
+//     a gem is priced again.
+//   - markAge inside the lookback is the mark AHEAD of the live rows, which is
+//     the state this process cannot leave. Restart it; the mark is in-memory
+//     only. The documented way in is moving rows backwards under a running
+//     server — truncate gem_snapshots, re-COPY an older dump.
+//
+// Both are worth a warning: in either one every sparkline is serving [] at
+// HTTP 200, which no status code and no error return says out loud.
+func warnSparklineCacheRetainedNothing(
+	scope league.Scope,
+	merged, mergedCorrupted map[sparklineKey][]SparklinePoint,
+	highWater, now time.Time,
+) {
+	if len(merged) > 0 || len(mergedCorrupted) > 0 || highWater.IsZero() {
+		return
+	}
+	slog.Warn("lab sparkline cache retained no series against a live high-water mark; every sparkline serves [] until a row newer than the mark lands, and a markAge inside lookback means the mark is ahead of the live rows and only a restart clears it",
+		"league", scope.ID(),
+		"highWater", highWater,
+		"markAge", now.Sub(highWater),
+		"lookback", sparklineMaxLookbackHours*time.Hour,
+	)
 }
 
 // mergeSparklineMaps folds incoming into existing key by key, returning a fresh
