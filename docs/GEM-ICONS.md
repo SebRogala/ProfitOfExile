@@ -84,7 +84,8 @@ suffice.
 
 ## What "missing" looks like
 
-A name absent from the map returns `404` and renders as `?`. Two ways this happens:
+A name absent from the map returns `404` and renders as `?`. Three ways this
+happens:
 
 - **A new skill the wiki has not published art for yet.** Recheck after a week or
   two; the four Allflame skills missing at launch all resolved within days.
@@ -92,8 +93,51 @@ A name absent from the map returns `404` and renders as `?`. Two ways this happe
   offering names through the gem endpoint, so `Gift to the Goddess` and
   `Dedication to the Goddess` need entries here despite not being gems. That
   `<img>` has no `?` fallback and renders broken instead.
+- **A name the surface should never have asked for.** The map is not the place to
+  fix this one — the name source is. See below.
 
-Currently missing: none. All 762 map entries resolve as of 2026-07-26.
+All 765 map entries resolve as of 2026-08-05.
+
+### Count the surfaces, not the market
+
+"N gems have no icon" is not a number the map can answer on its own, because most
+names the database holds never reach an `<img>`. Measured 2026-08-05 against the
+latest local Allflame snapshot:
+
+| Set | Names | No icon |
+|---|---|---|
+| `gem_colors` ∪ the league's snapshot names | 906 | 143 |
+| Latest league snapshot only | 811 | 51 |
+| Font (normal-mode) picker | 202 | 0 |
+| Dedication picker, both pools | 582 | 45 |
+
+The first row is the tempting one and the wrong one. 46 of its 143 are support
+gems and 12 are `of Trarthus` — none of which any icon surface requests, because
+`internal/lab/eligibility.go` keeps them out of every pool. Reading that number as
+an icon backlog buys artwork nothing renders.
+
+The Font picker reached 0 by routing its SQL through `isFontOutcome`'s fragments
+rather than by adding icons: it used to offer the corrupted transfigured market
+too, which is where 45 of its 46 misses came from.
+
+### The remaining 45: `Vaal <Base> (<Transfigured>)`
+
+poe.ninja gives a transfigured gem corrupted into its Vaal form a compound market
+identity — `Vaal Arc (Arc of Surging)`, `Vaal Reap (Reap of Butchery)`. These are
+legal Dedication *feeds* (`isDedicationFeed`), so the Dedication picker offers
+them deliberately and the `?` is a real gap, not an eligibility leak.
+
+Every one of the 45 has its `Vaal <Base>` prefix already in the map, so no
+artwork needs sourcing. Closing it is a choice between two shapes, neither taken
+yet:
+
+- **45 alias entries** pointing at the URLs already present. Follows the process
+  above unchanged, costs 45 duplicate files in the cache volume, and needs the
+  prod seed before the deploy like any other addition.
+- **Strip the parenthetical in the handler** before the map lookup. One rule
+  instead of 45 rows, and it keeps working for next league's compounds — but it
+  puts a name-shape rule inside `internal/gemicon`, which today knows nothing
+  about gems beyond the map.
 
 ### A cached 404 is why a `?` survives the deploy that fixes it
 

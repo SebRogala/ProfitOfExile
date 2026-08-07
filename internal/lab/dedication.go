@@ -3,7 +3,6 @@ package lab
 import (
 	"math"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -70,51 +69,9 @@ func FilterDedicationVariant(results []DedicationResult, variant string) []Dedic
 	return out
 }
 
-// isDedicationFeed returns true if the gem can be fed INTO the Dedication craft:
-// corrupted, one of the three gem colours, not a support gem, not Trarthus.
-//
-// The colour requirement carries the rule for anything the colour resolver
-// cannot place. The craft transforms a corrupted gem into another "of the same
-// colour", so a colourless item is neither a legal input nor a possible
-// outcome — the 3.29 Pact gems (Beidat, Ghorr, K'Tash, Lycia) are Exceptional
-// skill gems with no attribute requirement and belong out of the pool.
-//
-// It is a blunt instrument: a gem missing from the gem_colors seed resolves the
-// same way and is dropped for a reason that is not true of it. Dark Bargain and
-// Mana-Infused Staff are exactly that today — real coloured skill gems (3.29
-// renamed Dark Pact and added Mana-Infused Staff as an Intelligence/Strength
-// skill) that we cannot colour, so they leave the pool silently.
-func isDedicationFeed(g GemPrice) bool {
-	switch g.GemColor {
-	case "RED", "GREEN", "BLUE":
-	default:
-		return false
-	}
-	// A Vaal gem at 21/23 cannot exist: it would take three corruption outcomes
-	// — the Vaal transform, the extra level and the extra quality — and the
-	// Temple's double corrupt grants two. At 21/20 it is two outcomes and does
-	// exist (25 such listings on 2026-07-30), so it stays a legal feed there.
-	// The price feed carries none today; this keeps a bad listing from pricing
-	// into what a run costs.
-	if strings.HasPrefix(g.Name, "Vaal ") && g.Variant == "21/23c" {
-		return false
-	}
-	return g.IsCorrupted &&
-		!strings.Contains(g.Name, "Support") &&
-		!strings.Contains(g.Name, "Trarthus")
-}
-
-// isDedicationGem returns true if the gem can come OUT of the Dedication craft.
-// That is every feed gem except a Vaal gem: a Vaal gem is a legal input but is
-// never an outcome (measured in game, 2026-07-30), so it prices into what the
-// run costs but never into what it returns.
-//
-// The distinction has to live in the predicate rather than in the pool loop:
-// tier classification and the rankings read this directly, and a colourless 36k
-// listing was setting the TOP boundary for every colour before it did.
-func isDedicationGem(g GemPrice) bool {
-	return isDedicationFeed(g) && !strings.HasPrefix(g.Name, "Vaal ")
-}
+// The two Dedication eligibility predicates — isDedicationFeed (what you may
+// put in) and isDedicationOutcome (what may come back out) — live in
+// eligibility.go with the rest of the gem-eligibility rules.
 
 // dedicationInputCostFromPrices computes the average of the 10 cheapest prices in the pool.
 // If the pool has fewer than 10 entries, averages all of them.
@@ -183,7 +140,7 @@ func BuildDedicationCorpus(gems []GemPrice, analysis DedicationAnalysis) Dedicat
 		// Every corrupted gem at the variant, not just the rankable ones. The
 		// compare path answers for names the font can never hand out — a Vaal
 		// gem above all — and marks them as not an outcome, so narrowing this to
-		// isDedicationGem would silently turn those rows into "no price found".
+		// isDedicationOutcome would silently turn those rows into "no price found".
 		var prices []GemPrice
 		for _, g := range gems {
 			if g.IsCorrupted && g.Variant == variant {
@@ -247,7 +204,7 @@ func analyzeDedicationVariant(snapTime time.Time, gems []GemPrice, features []Ge
 
 		feedPrices[k] = append(feedPrices[k], g.Chaos)
 
-		if !isDedicationGem(g) {
+		if !isDedicationOutcome(g) {
 			continue
 		}
 		poolNames[k][g.Name] = struct{}{}

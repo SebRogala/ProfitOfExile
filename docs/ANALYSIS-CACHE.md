@@ -98,9 +98,9 @@ Consequences, all of them mandatory for new fields:
 ## The write discipline
 
 1. Compute the replacement value **outside** the lock — including sorting, map
-   building, and any allocation. `SetTransfigure` builds and sorts `gemNames`
-   before taking the lock; the sparkline population merges everything before
-   assigning.
+   building, and any allocation. `BuildDedicationCorpus` builds its maps before
+   `SetDedication` takes the lock; the sparkline population merges everything
+   before assigning.
 2. Take the write lock once and assign.
 3. **Never hold the lock across a query or any other slow work.** Read what is
    needed out under `RLock`, release, do the work, then take the write lock for
@@ -184,11 +184,22 @@ rows newer than the cached high-water mark. Series that received no incoming
 points are still re-merged, so points aging out of the rolling window are
 trimmed.
 
-A cold cache (both maps empty) passes a zero `since`. That path does **not** read
-the full 168-hour lookback — doing so would materialise roughly fourteen times
-the rows the merge retains, at process start, exactly when `RunV2` is already
-holding its own history load. Instead it runs a bounded union: the full
-12-hour window, plus a `DISTINCT ON (name, variant)` tail query taking the last
+The read shape follows the mark and nothing else. A zero mark — no row has ever
+been observed — passes a zero `since` and takes the cold read. Any other mark
+takes the incremental read, **including when both maps are empty**: a series is
+dropped only once its every point is older than the lookback, so empty maps imply
+a mark at least that old, and the incremental read is bounded by that same
+lookback. It returns everything a cold read would keep, so a decayed series is
+rebuilt as soon as its gem is priced again.
+
+Deciding from map contents instead is the warmth-from-contents defect on the
+writer side, and it made a retained-nothing tick re-run the cold union forever
+(POE-161).
+
+The cold read does **not** read the full 168-hour lookback — doing so would
+materialise roughly fourteen times the rows the merge retains, at process start,
+exactly when `RunV2` is already holding its own history load. Instead it runs a
+bounded union: the full 12-hour window, plus a lateral tail query taking the last
 `SparklineTailPoints` rows per series within the lookback. Both halves share one
 row predicate, so the variant allowlist and the corruption split cannot drift
 apart between them.

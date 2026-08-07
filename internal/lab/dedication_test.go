@@ -21,15 +21,15 @@ func makeDedicationGem(name, color string, chaos float64, listings int, isTransf
 
 func TestIsDedicationGem_IncludesCorruptedSkills(t *testing.T) {
 	g := GemPrice{Name: "Arc", IsCorrupted: true, GemColor: "BLUE"}
-	if !isDedicationGem(g) {
-		t.Error("corrupted skill gem 'Arc' should pass isDedicationGem")
+	if !isDedicationOutcome(g) {
+		t.Error("corrupted skill gem 'Arc' should pass isDedicationOutcome")
 	}
 }
 
 func TestIsDedicationGem_ExcludesNonCorrupted(t *testing.T) {
 	g := GemPrice{Name: "Arc", IsCorrupted: false, GemColor: "BLUE"}
-	if isDedicationGem(g) {
-		t.Error("non-corrupted gem should NOT pass isDedicationGem")
+	if isDedicationOutcome(g) {
+		t.Error("non-corrupted gem should NOT pass isDedicationOutcome")
 	}
 }
 
@@ -44,8 +44,8 @@ func TestIsDedicationGem_ExcludesSupports(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if isDedicationGem(tt.gem) {
-				t.Errorf("support gem %q should NOT pass isDedicationGem", tt.gem.Name)
+			if isDedicationOutcome(tt.gem) {
+				t.Errorf("support gem %q should NOT pass isDedicationOutcome", tt.gem.Name)
 			}
 		})
 	}
@@ -61,8 +61,8 @@ func TestIsDedicationGem_ExcludesVaalGems(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if isDedicationGem(tt.gem) {
-				t.Errorf("Vaal gem %q should NOT pass isDedicationGem — the Labyrinth cannot hand one out", tt.gem.Name)
+			if isDedicationOutcome(tt.gem) {
+				t.Errorf("Vaal gem %q should NOT pass isDedicationOutcome — the Labyrinth cannot hand one out", tt.gem.Name)
 			}
 		})
 	}
@@ -118,8 +118,8 @@ func redSkillSafeResult(t *testing.T, analysis DedicationAnalysis) DedicationRes
 
 func TestIsDedicationGem_ExcludesTrarthus(t *testing.T) {
 	g := GemPrice{Name: "Trarthus Ire", IsCorrupted: true, GemColor: "RED"}
-	if isDedicationGem(g) {
-		t.Error("Trarthus should NOT pass isDedicationGem")
+	if isDedicationOutcome(g) {
+		t.Error("Trarthus should NOT pass isDedicationOutcome")
 	}
 }
 

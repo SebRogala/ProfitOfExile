@@ -14,16 +14,16 @@ import (
 // Analyzer orchestrates analysis runs triggered by Mercure events.
 // Each analysis type has its own mutex so independent analyses run in parallel.
 type Analyzer struct {
-	repo           *Repository
-	throttler      *Throttler
-	cache          *Cache
-	tradeCache     *trade.TradeCache // nil-safe: when nil, trade enrichment is skipped
-	logger         *slog.Logger
-	muTransfigure  sync.Mutex
-	muFont         sync.Mutex
-	muQuality      sync.Mutex
-	muDedication   sync.Mutex
-	muV2           sync.Mutex
+	repo          *Repository
+	throttler     *Throttler
+	cache         *Cache
+	tradeCache    *trade.TradeCache // nil-safe: when nil, trade enrichment is skipped
+	logger        *slog.Logger
+	muTransfigure sync.Mutex
+	muFont        sync.Mutex
+	muQuality     sync.Mutex
+	muDedication  sync.Mutex
+	muV2          sync.Mutex
 }
 
 // NewAnalyzer creates an analyzer wired to the given repository.
@@ -39,6 +39,23 @@ func NewAnalyzer(repo *Repository, throttler *Throttler, cache *Cache, tradeCach
 		logger:     slog.Default(),
 	}
 }
+
+// gemNamePoolLimit caps every autocomplete name pool a tick loads into the
+// cache. Measured 2026-08-05 on the latest local Allflame snapshot, the largest
+// of the three holds 335 names, so the cap is headroom rather than a policy the
+// pools currently meet. A pool that did reach it would be truncated
+// alphabetically and the picker would silently lose the tail — raise it here,
+// for all three at once, before that becomes possible.
+const gemNamePoolLimit = 1000
+
+// unresolvedColorSampleNames caps how many names the unresolved-colour warning
+// prints. The count beside them is exact and uncapped; the names are a place to
+// start seeding gem_colors from. The cap exists because this fires hardest at a
+// league start, when the resolver is coldest — measured 2026-08-05, the latest
+// local Allflame snapshot resolves every name it carries, but the older
+// 05:28 snapshot in the same table carries 49, so a full list is a plausible
+// three-figure single log line.
+const unresolvedColorSampleNames = 20
 
 // RunTransfigure fetches the latest gem snapshot and computes transfigure ROI.
 // It is safe to call from multiple goroutines; concurrent runs are serialized.
@@ -66,6 +83,21 @@ func (a *Analyzer) RunTransfigure(ctx context.Context, scope league.Scope) error
 
 	if a.cache != nil {
 		a.cache.For(scope).SetTransfigure(results)
+
+		// Fill the Font picker's name pool from the query that backs the picker's
+		// own cold path, not from the results above. The warm pool answers nearly
+		// every keystroke once this tick lands, so deriving it here from anything
+		// else makes the picker's eligibility rules a second implementation that
+		// no test of the cold path can catch — see SetGemNamePool. The whitespace
+		// query is that query's "every name" form.
+		//
+		// Stored only when the query succeeded, for the reason spelled out at the
+		// corrupted pools in RunDedication.
+		if names, err := a.repo.GemNamesAutocomplete(ctx, scope, " ", gemNamePoolLimit); err != nil {
+			a.logger.Warn("transfigure: failed to load font gem name pool", "error", err)
+		} else {
+			a.cache.For(scope).SetGemNamePool(names)
+		}
 	}
 
 	a.logger.Info("transfigure analysis complete",
@@ -179,6 +211,20 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 	}
 	// Dedication can still run without features — risk adjustments use defaults.
 
+	// The one Dedication exclusion that is a data gap rather than a game rule,
+	// counted every tick so a short pool cannot stay silent — see
+	// unresolvedDedicationColorNames. Warn carries the names, because the remedy
+	// is per name (the colour resolver has not met it yet); the completion line
+	// below carries the count either way, so a healthy zero is on the record too
+	// and the absence of a warning is readable as measured rather than unasked.
+	unresolvedColors := unresolvedDedicationColorNames(gems)
+	if len(unresolvedColors) > 0 {
+		a.logger.Warn("dedication: gems dropped from the pools for an unresolved colour",
+			"count", len(unresolvedColors),
+			"names", unresolvedColors[:min(len(unresolvedColors), unresolvedColorSampleNames)],
+		)
+	}
+
 	analysis := AnalyzeDedication(snapTime, gems, features)
 
 	// Combine both pools for DB persistence.
@@ -203,12 +249,12 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 		// that pool's previous names and its previous warmth alone, so a
 		// transient DB error neither wipes a valid corpus nor advertises an
 		// unfetched pool as authoritative.
-		if skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, false, 1000); err != nil {
+		if skillNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, false, gemNamePoolLimit); err != nil {
 			a.logger.Warn("dedication: failed to load corrupted skill gem names", "error", err)
 		} else {
 			a.cache.For(scope).SetCorruptedGemNamePool(false, skillNames)
 		}
-		if transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, true, 1000); err != nil {
+		if transfiguredNames, err := a.repo.CorruptedGemNamesAutocomplete(ctx, scope, true, gemNamePoolLimit); err != nil {
 			a.logger.Warn("dedication: failed to load corrupted transfigured gem names", "error", err)
 		} else {
 			a.cache.For(scope).SetCorruptedGemNamePool(true, transfiguredNames)
@@ -220,6 +266,7 @@ func (a *Analyzer) RunDedication(ctx context.Context, scope league.Scope) error 
 		"skills", len(analysis.Skills),
 		"transfigured", len(analysis.Transfigured),
 		"inserted", inserted,
+		"unresolvedColorGems", len(unresolvedColors),
 	)
 	a.throttler.Signal()
 	return nil

@@ -20,16 +20,12 @@ import (
 
 var autocompleteScope = league.Historical("Mirage")
 
-// warmGemNameCache returns a cache whose transfigured-name corpus is populated,
-// which is what SetTransfigure does on every analysis run.
+// warmGemNameCache returns a cache whose Font autocomplete pool is populated,
+// which is what SetGemNamePool does on every analysis run.
 func warmGemNameCache(t *testing.T, names ...string) *lab.Cache {
 	t.Helper()
 	c := lab.NewCache(autocompleteScope)
-	results := make([]lab.TransfigureResult, 0, len(names))
-	for _, n := range names {
-		results = append(results, lab.TransfigureResult{TransfiguredName: n})
-	}
-	c.For(autocompleteScope).SetTransfigure(results)
+	c.For(autocompleteScope).SetGemNamePool(names)
 	return c
 }
 
