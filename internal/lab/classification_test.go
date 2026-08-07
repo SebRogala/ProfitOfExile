@@ -313,7 +313,7 @@ func TestComputeGemClassification_Integration(t *testing.T) {
 
 	// All analyzable gems should have a classification.
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isFontOutcome(g) || g.Chaos <= 5 {
 			continue
 		}
 		key := GemClassificationKey{g.Name, g.Variant}
@@ -341,7 +341,7 @@ func TestComputeDedicationClassification_SkillPool(t *testing.T) {
 
 	cls := ComputeDedicationClassification(gems, false, "21/23c")
 
-	// All gems that pass isDedicationGem + are not transfigured + chaos > 5 should be classified.
+	// All gems that pass isDedicationOutcome + are not transfigured + chaos > 5 should be classified.
 	for _, g := range gems {
 		if g.Chaos <= 5 {
 			continue
@@ -389,7 +389,7 @@ func TestComputeDedicationClassification_TransfiguredPool(t *testing.T) {
 
 func TestComputeDedicationClassification_ExcludesNonCorrupted(t *testing.T) {
 	gems := []GemPrice{
-		// Non-corrupted gem should be excluded by isDedicationGem.
+		// Non-corrupted gem should be excluded by isDedicationOutcome.
 		{Name: "Non Corrupted", Variant: "21/23c", Chaos: 500, Listings: 50, IsCorrupted: false, IsTransfigured: false, GemColor: "RED"},
 		// Valid dedication gem.
 		{Name: "Valid Gem 1", Variant: "21/23c", Chaos: 300, Listings: 60, IsCorrupted: true, IsTransfigured: false, GemColor: "RED"},

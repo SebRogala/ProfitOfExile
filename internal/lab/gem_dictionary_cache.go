@@ -27,10 +27,10 @@ type gemDictionarySource interface {
 // The two halves are split by the snapshot's own is_transfigured, the same
 // authority the query's `WHERE is_transfigured = $2` uses — never by the base-name
 // rule FilterGemDictionary applies, which exists for gem_colors' unflagged names
-// and would re-classify against the wrong universe here. The support strip runs
-// on the skill half only, matching the query for the same reason: the Font and
-// the Dedication hand out skill gems only, and the transfigured half's flag is
-// authoritative in a way a name-shape heuristic cannot improve on.
+// and would re-classify against the wrong universe here. The eligibility rules
+// this applies match the query's exactly (gemDictionaryNames) — the Heist rule
+// on both halves, the support strip on the skill half only, for the reasons
+// FilterGemDictionary records.
 // TestGemNameDictionary_includesLeagueNamesMissingFromGemColors guards the
 // snapshot half of that union in the repository.
 //
@@ -67,14 +67,19 @@ func populateGemDictionary(ctx context.Context, src gemDictionarySource, cache *
 }
 
 // gemDictionaryNames splits a snapshot's gem names into the two dictionary
-// pools, stripping support gems from the skill half.
+// pools, applying the same eligibility rules the seed query does: the Heist rule
+// on both halves, the support strip on the skill half only. FilterGemDictionary
+// documents why the asymmetry is deliberate.
 func gemDictionaryNames(gems []GemPrice) (skills, transfigured []string) {
 	for _, g := range gems {
+		if isHeistOnlyGemName(g.Name) {
+			continue
+		}
 		if g.IsTransfigured {
 			transfigured = append(transfigured, g.Name)
 			continue
 		}
-		if isSupportGem(g.Name) {
+		if isSupportGemName(g.Name) {
 			continue
 		}
 		skills = append(skills, g.Name)

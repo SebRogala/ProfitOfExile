@@ -159,6 +159,19 @@ func (c *Cache) Handler() http.HandlerFunc {
 
 		body, err := c.load(r.Context(), name, srcURL)
 		if err != nil {
+			// This is the only failure on this route that breaks the render, and
+			// it is the one the client cannot tell apart from a 404: GemIcon
+			// flips to "?" on the <img> error event either way. Nothing else
+			// records it — a failed fetch writes no file and caches no marker —
+			// so without this line a 502 leaves no trace anywhere.
+			//
+			// srcURL is logged because the two causes need different fixes and
+			// only the URL separates them: a transient upstream blip versus a
+			// map entry deployed ahead of its cache volume. ADR-012 makes the
+			// second live — poewiki 403s the production VPS, so an unseeded name
+			// fails here on every request, forever, until the volume is seeded.
+			slog.Error("gemicon: serve icon failed",
+				"gem", name, "url", srcURL, "error", err)
 			// Headers are deliberately set only after load succeeds. A 502 must
 			// stay uncacheable so a later request can retry (see load).
 			http.Error(w, "gem icon unavailable", http.StatusBadGateway)

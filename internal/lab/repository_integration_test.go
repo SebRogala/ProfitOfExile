@@ -625,6 +625,43 @@ func TestSparklineWindow_coldReadDropsSeriesOlderThanTheLookback(t *testing.T) {
 	}
 }
 
+// The incremental read is what populateSparklineCache takes once the cache
+// carries a mark, including the mark a fully decayed corpus leaves behind — one
+// older than the lookback, because that is the only way every series is dropped.
+// Reading from it must return the whole lookback rather than nothing, since that
+// read is the only thing that rebuilds those series (POE-161).
+func TestSparklineWindow_incrementalReadFromADecayedMarkReturnsTheWholeLookback(t *testing.T) {
+	pool := labIntegrationPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	leagueID := "POE-161-spw-decayed-mark"
+	registerLeague(t, pool, leagueID)
+	cleanupLeagueSnapshots(t, pool, leagueID)
+
+	const name = "POE161 Revived Gem"
+	now := time.Now().UTC().Truncate(time.Second)
+	// One row in the window, two beyond it but inside the lookback, one past it.
+	for _, ago := range []int{1, 20, 40, 100} {
+		seedGemSnapshot(t, pool, leagueID, now.Add(-time.Duration(ago)*time.Hour),
+			name, "20/20", true, false, float64(100+ago), 10, "BLUE")
+	}
+
+	bounds := SparklineBounds{WindowHours: 12, TailPoints: 4, LookbackHours: 72}
+	decayedMark := now.Add(-200 * time.Hour)
+	series, _, err := repo.SparklineWindow(ctx, league.Historical(leagueID), decayedMark, bounds)
+	if err != nil {
+		t.Fatalf("SparklineWindow: %v", err)
+	}
+
+	want := []int{40, 20, 1}
+	got := sparkAges(t, now, series[sparklineKey{name: name, variant: "20/20"}])
+	if !sameInts(got, want) {
+		t.Fatalf("point ages (hours before now) = %v, want %v — the lookback bounds this read, not the mark (100 means it lost the %d-hour bound)",
+			got, want, bounds.LookbackHours)
+	}
+}
+
 func TestGemNamesAutocomplete_returnsOnlyScopedLeague(t *testing.T) {
 	pool := labIntegrationPool(t)
 	ctx := context.Background()

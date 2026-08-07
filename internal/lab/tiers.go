@@ -140,7 +140,7 @@ func collectAndSortPrices(gems []GemPrice) []float64 {
 	// First pass: collect all listings to compute median.
 	var allListings []float64
 	for _, g := range gems {
-		if isAnalyzableGem(g) && g.Chaos > 5 {
+		if isFontOutcome(g) && g.Chaos > 5 {
 			allListings = append(allListings, float64(g.Listings))
 		}
 	}
@@ -157,7 +157,7 @@ func collectAndSortPrices(gems []GemPrice) []float64 {
 	// Second pass: collect prices, filtering by dynamic listing floor.
 	nameMax := make(map[string]float64)
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Listings < minListings {
+		if !isFontOutcome(g) || g.Listings < minListings {
 			continue
 		}
 		if g.Chaos > nameMax[g.Name] {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -391,6 +393,81 @@ func TestHandler_UnknownGem404IsNotCacheableByClients(t *testing.T) {
 	}
 	if got := w.Header().Get("Cache-Control"); strings.Contains(got, "max-age") {
 		t.Errorf("404 Cache-Control = %q, want no lifetime at all — any TTL outlives the deploy that adds the icon", got)
+	}
+}
+
+// errorRecords drains buf as newline-delimited slog JSON and returns the records
+// logged at ERROR. Decoding beats substring matching here: an assertion on
+// rec["url"] fails when the attribute is missing, whereas a substring assertion
+// on the whole line also passes when the URL merely appears inside the error
+// text, which is where it already was before this attribute existed.
+func errorRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not slog JSON: %v (line: %q)", err, line)
+		}
+		if rec["level"] == "ERROR" {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// captureLogs points the default logger at a buffer for the duration of the
+// test. The default logger is the seam because the handler logs through the
+// package-level slog, as the disk-write failure path in load already does.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// A 502 is the only response on this route that breaks the render, and it is
+// invisible to the client as a distinct condition: GemIcon flips to "?" on the
+// <img> error event for a 404 and a 502 alike. So the server log is the only
+// place the difference can be recovered, and it has to carry enough to act on —
+// which gem, which upstream URL, and why. ADR-012 is why the URL matters: a map
+// entry deployed ahead of its cache volume 502s forever (poewiki 403s the
+// production VPS), and only the URL separates that from a transient blip.
+//
+// Drop any one of the three attributes and this fails naming the one dropped.
+func TestHandler_UpstreamFailureIsLoggedWithGemURLAndCause(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+	c := newCache(map[string]string{"Absolution": upstream.URL}, upstream.Client(), t.TempDir())
+	logs := captureLogs(t)
+
+	if code := serve(c, "Absolution").Code; code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", code, http.StatusBadGateway)
+	}
+
+	records := errorRecords(t, logs)
+	if len(records) != 1 {
+		t.Fatalf("logged %d ERROR records for a 502, want exactly 1 — the failure that breaks the render must not be silent (log: %q)",
+			len(records), logs.String())
+	}
+	rec := records[0]
+	if got := rec["gem"]; got != "Absolution" {
+		t.Errorf("logged gem = %v, want %q — the log must name which icon failed", got, "Absolution")
+	}
+	if got := rec["url"]; got != upstream.URL {
+		t.Errorf("logged url = %v, want %q — without the resolved URL an unseeded map entry is indistinguishable from an upstream blip", got, upstream.URL)
+	}
+	// The upstream status is the cause; a log that says "it failed" without it
+	// sends the reader back to reproducing the request by hand.
+	if got, _ := rec["error"].(string); !strings.Contains(got, "500") {
+		t.Errorf("logged error = %q, want it to carry the upstream status 500", got)
 	}
 }
 

@@ -22,61 +22,61 @@ type CollectiveResult struct {
 	TransfiguredListings int     `json:"transfiguredListings"`
 	Confidence           string  `json:"confidence"`
 	// From trends
-	Signal          string  `json:"signal"`
-	PriceVelocity   float64 `json:"priceVelocity"`
-	ListingVelocity float64 `json:"listingVelocity"`
-	CV              float64 `json:"cv"`
-	HistPosition    float64 `json:"histPosition"`
-	WindowSignal     string `json:"windowSignal"`
-	AdvancedSignal   string `json:"advancedSignal"`
-	LiquidityTier    string `json:"liquidityTier"`
-	PriceTier        string `json:"priceTier"`
-	TierAction       string `json:"tierAction"`
-	SellUrgency      string `json:"sellUrgency"`
-	SellReason       string `json:"sellReason"`
-	Sellability      int    `json:"sellability"`
-	SellabilityLabel string `json:"sellabilityLabel"`
+	Signal           string  `json:"signal"`
+	PriceVelocity    float64 `json:"priceVelocity"`
+	ListingVelocity  float64 `json:"listingVelocity"`
+	CV               float64 `json:"cv"`
+	HistPosition     float64 `json:"histPosition"`
+	WindowSignal     string  `json:"windowSignal"`
+	AdvancedSignal   string  `json:"advancedSignal"`
+	LiquidityTier    string  `json:"liquidityTier"`
+	PriceTier        string  `json:"priceTier"`
+	TierAction       string  `json:"tierAction"`
+	SellUrgency      string  `json:"sellUrgency"`
+	SellReason       string  `json:"sellReason"`
+	Sellability      int     `json:"sellability"`
+	SellabilityLabel string  `json:"sellabilityLabel"`
 	// From features/signals (risk-adjusted display)
 	Low7Days            float64 `json:"low7d"`
 	High7Days           float64 `json:"high7d"`
 	SellConfidence      string  `json:"sellConfidence"`
-	TradeConfidenceNote string `json:"tradeConfidenceNote,omitempty"`
-	LowConfidence       bool   `json:"lowConfidence,omitempty"`
+	TradeConfidenceNote string  `json:"tradeConfidenceNote,omitempty"`
+	LowConfidence       bool    `json:"lowConfidence,omitempty"`
 }
 
 // CompareResult is a side-by-side gem comparison entry with sparkline data.
 type CompareResult struct {
-	TransfiguredName     string           `json:"transfiguredName"`
-	BaseName             string           `json:"baseName"`
-	Variant              string           `json:"variant"`
-	GemColor             string           `json:"gemColor"`
-	ROI                  float64          `json:"roi"`
-	ROIPct               float64          `json:"roiPct"`
-	BasePrice            float64          `json:"basePrice"`
-	TransfiguredPrice    float64          `json:"transfiguredPrice"`
-	Confidence           string           `json:"confidence"`
-	Signal               string           `json:"signal"`
-	CV                   float64          `json:"cv"`
-	PriceVelocity        float64          `json:"priceVelocity"`
-	ListingVelocity      float64          `json:"listingVelocity"`
-	HistPosition         float64          `json:"histPosition"`
-	Sparkline            []SparklinePoint `json:"sparkline"`
-	Recommendation       string           `json:"recommendation"`
-	SellUrgency          string           `json:"sellUrgency"`
-	SellReason           string           `json:"sellReason"`
-	Sellability          int              `json:"sellability"`
-	SellabilityLabel     string           `json:"sellabilityLabel"`
-	PriceTier            string           `json:"priceTier"`
-	TierAction           string           `json:"tierAction"`
-	WindowSignal         string           `json:"windowSignal"`
-	BaseListings         int              `json:"baseListings"`
-	LiquidityTier        string           `json:"liquidityTier"`
-	TransListings        int              `json:"transListings"`
+	TransfiguredName  string           `json:"transfiguredName"`
+	BaseName          string           `json:"baseName"`
+	Variant           string           `json:"variant"`
+	GemColor          string           `json:"gemColor"`
+	ROI               float64          `json:"roi"`
+	ROIPct            float64          `json:"roiPct"`
+	BasePrice         float64          `json:"basePrice"`
+	TransfiguredPrice float64          `json:"transfiguredPrice"`
+	Confidence        string           `json:"confidence"`
+	Signal            string           `json:"signal"`
+	CV                float64          `json:"cv"`
+	PriceVelocity     float64          `json:"priceVelocity"`
+	ListingVelocity   float64          `json:"listingVelocity"`
+	HistPosition      float64          `json:"histPosition"`
+	Sparkline         []SparklinePoint `json:"sparkline"`
+	Recommendation    string           `json:"recommendation"`
+	SellUrgency       string           `json:"sellUrgency"`
+	SellReason        string           `json:"sellReason"`
+	Sellability       int              `json:"sellability"`
+	SellabilityLabel  string           `json:"sellabilityLabel"`
+	PriceTier         string           `json:"priceTier"`
+	TierAction        string           `json:"tierAction"`
+	WindowSignal      string           `json:"windowSignal"`
+	BaseListings      int              `json:"baseListings"`
+	LiquidityTier     string           `json:"liquidityTier"`
+	TransListings     int              `json:"transListings"`
 	// Risk-adjusted display fields (from features/signals)
 	WeightedROI          float64 `json:"weightedRoi"`
 	WeightedROIPct       float64 `json:"weightedRoiPct"`
-	Low7Days                float64 `json:"low7d"`
-	High7Days               float64 `json:"high7d"`
+	Low7Days             float64 `json:"low7d"`
+	High7Days            float64 `json:"high7d"`
 	SellConfidence       string  `json:"sellConfidence"`
 	SellConfidenceReason string  `json:"sellConfidenceReason"`
 	QuickSellPrice       float64 `json:"quickSellPrice"`
@@ -580,7 +580,7 @@ func rankDedicationCollectiveAll(
 	// Filter to this variant's corrupted gems (no supports, no Trarthus).
 	var pool []GemPrice
 	for _, g := range gems {
-		if !isDedicationGem(g) {
+		if !isDedicationOutcome(g) {
 			continue
 		}
 		if g.Variant != variant {
@@ -744,7 +744,7 @@ func BuildDedicationCompareResults(
 			// For a gem the craft can never hand out — a Vaal gem above all —
 			// that subtraction describes a trade nobody can make, and the
 			// ranking below would happily call it the BEST play.
-			if !isDedicationGem(*g) {
+			if !isDedicationOutcome(*g) {
 				notAnOutcome[len(results)] = true
 				cr.ROI = 0
 				cr.ROIPct = 0

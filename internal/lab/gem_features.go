@@ -9,7 +9,8 @@ import (
 
 // ComputeGemFeatures produces per-gem feature vectors from raw gem data, history,
 // and market context. It is a pure function with no side effects -- called from RunV2.
-// Filters to transfigured, non-corrupted, non-Trarthus gems with Chaos > 5.
+// Filters to the gems isFontOutcome admits (eligibility.go — the Font pool
+// rules, which change there and not here) with Chaos > 5.
 //
 // tradeCache is nil-safe: when nil, trade enrichment is skipped entirely.
 // When non-nil, a snapshot is taken once at the start and each gem is enriched
@@ -40,7 +41,7 @@ func ComputeGemFeatures(snapTime time.Time, gems []GemPrice, history []GemPriceH
 	var features []GemFeature
 
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isFontOutcome(g) || g.Chaos <= 5 {
 			continue
 		}
 

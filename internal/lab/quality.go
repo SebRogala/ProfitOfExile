@@ -1,7 +1,6 @@
 package lab
 
 import (
-	"strings"
 	"time"
 )
 
@@ -41,10 +40,7 @@ func AnalyzeQuality(snapTime time.Time, gems []GemPrice, gcpPrice float64) []Qua
 	index := make(map[string]map[string]priceEntry)
 
 	for _, g := range gems {
-		if g.IsCorrupted {
-			continue
-		}
-		if strings.Contains(g.Name, "Trarthus") {
+		if !isQualityRollCandidate(g) {
 			continue
 		}
 
@@ -96,10 +92,10 @@ func AnalyzeQuality(snapTime time.Time, gems []GemPrice, gcpPrice float64) []Qua
 			}
 
 			var roiSum float64
-		for _, r := range rois {
-			roiSum += r
-		}
-		avgROI := roiSum / float64(len(qualityTiers))
+			for _, r := range rois {
+				roiSum += r
+			}
+			avgROI := roiSum / float64(len(qualityTiers))
 
 			confidence := "LOW"
 			if zeroQ.listings >= 5 && fullQ.listings >= 5 {

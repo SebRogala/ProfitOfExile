@@ -31,10 +31,11 @@ func ComputeMarketContext(snapTime time.Time, gems []GemPrice, history []GemPric
 	mc.WeekdayVolatility = tb.WeekdayVolatility[:]
 	mc.WeekdayActivity = tb.WeekdayActivity[:]
 
-	// Filter to active transfigured gems (not corrupted, exclude Trarthus).
+	// Filter to the gems the Font can actually hand out — isFontOutcome
+	// (eligibility.go) owns which those are.
 	var active []GemPrice
 	for _, g := range gems {
-		if !isAnalyzableGem(g) {
+		if !isFontOutcome(g) {
 			continue
 		}
 		active = append(active, g)

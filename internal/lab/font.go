@@ -183,7 +183,8 @@ func computeLiquidityRisk(thinCount, winnerCount int) string {
 func AnalyzeFont(snapTime time.Time, features []GemFeature) FontAnalysis {
 	// Build feature lookup: "name|variant" -> *GemFeature
 	// Build pool and entries from features — single source of truth.
-	// Features already filter: transfigured, not corrupted, not Trarthus, chaos > 5.
+	// ComputeGemFeatures has already applied isFontOutcome (eligibility.go) and
+	// its own chaos > 5 floor, so the eligibility rules are not restated here.
 	type featureKey struct{ name, variant string }
 	featureLookup := make(map[featureKey]*GemFeature, len(features))
 	for i := range features {

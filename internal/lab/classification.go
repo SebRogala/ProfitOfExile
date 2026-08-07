@@ -42,7 +42,7 @@ func detectLowConfidence(gems []GemPrice) map[string]bool {
 	}
 	byVariant := make(map[string][]gemInfo)
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isFontOutcome(g) || g.Chaos <= 5 {
 			continue
 		}
 		byVariant[g.Variant] = append(byVariant[g.Variant], gemInfo{g.Name, g.Variant, g.Listings})
@@ -75,7 +75,7 @@ func detectLowConfidence(gems []GemPrice) map[string]bool {
 func detectTops(gems []GemPrice, lowConf map[string]bool) map[string]bool {
 	byVariant := make(map[string][]GemPrice)
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isFontOutcome(g) || g.Chaos <= 5 {
 			continue
 		}
 		key := g.Name + "|" + g.Variant
@@ -365,7 +365,7 @@ func computeCleanTierBoundaries(gems []GemPrice, lowConf map[string]bool, tops m
 	// Build per-variant clean price lists (descending).
 	byVariant := make(map[string][]float64)
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isFontOutcome(g) || g.Chaos <= 5 {
 			continue
 		}
 		key := g.Name + "|" + g.Variant
@@ -390,8 +390,8 @@ func computeCleanTierBoundaries(gems []GemPrice, lowConf map[string]bool, tops m
 }
 
 // ComputeDedicationClassification runs the tier pipeline for one Dedication
-// corrupted pool. It uses isDedicationGem as its filter (instead of
-// isAnalyzableGem) and further constrains to the given variant and pool type.
+// corrupted pool. It uses isDedicationOutcome as its filter (instead of
+// isFontOutcome) and further constrains to the given variant and pool type.
 // isTransfigured = false → skills pool, true → transfigured pool.
 //
 // Tiers are relative to the pool they are computed over, so each variant is
@@ -401,7 +401,7 @@ func ComputeDedicationClassification(gems []GemPrice, isTransfigured bool, varia
 	// Pre-filter to only the relevant Dedication pool.
 	var filtered []GemPrice
 	for _, g := range gems {
-		if isDedicationGem(g) && g.Variant == variant && g.IsTransfigured == isTransfigured {
+		if isDedicationOutcome(g) && g.Variant == variant && g.IsTransfigured == isTransfigured {
 			filtered = append(filtered, g)
 		}
 	}
@@ -412,8 +412,8 @@ func ComputeDedicationClassification(gems []GemPrice, isTransfigured bool, varia
 }
 
 // classifyWithFilter runs the classification pipeline using a custom filter
-// predicate instead of isAnalyzableGem. This allows reuse for both the standard
-// Font pipeline (isAnalyzableGem) and Dedication pipeline (isDedicationGem).
+// predicate instead of isFontOutcome. This allows reuse for both the standard
+// Font pipeline (isFontOutcome) and Dedication pipeline (isDedicationOutcome).
 func classifyWithFilter(gems []GemPrice, filter func(GemPrice) bool) ClassificationResult {
 	lowConf := detectLowConfidenceFiltered(gems, filter)
 	tops := detectTopsFiltered(gems, lowConf, filter)
@@ -604,7 +604,7 @@ func ComputeGemClassification(gems []GemPrice) ClassificationResult {
 	}
 
 	for _, g := range gems {
-		if !isAnalyzableGem(g) || g.Chaos <= 5 {
+		if !isFontOutcome(g) || g.Chaos <= 5 {
 			continue
 		}
 		key := GemClassificationKey{g.Name, g.Variant}

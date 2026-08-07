@@ -288,15 +288,14 @@ func TestCompareAnalysis_ColdRankingCorporaFallBackToTheRepository(t *testing.T)
 	}
 }
 
-// --- autocomplete over the transfigure-derived names -----------------------
+// --- autocomplete over the Font name pool ----------------------------------
 
-// The name corpus is derived from the transfigure results in the same call, so
-// it is warm as soon as that tick has stored one — including when the snapshot
-// held no transfigured gem to name. Deriving warmth from the corpus instead put
-// every keystroke back on a DISTINCT ... ILIKE over gem_snapshots.
+// The pool is warm as soon as the tick's query has stored it — including when
+// that query found no eligible gem to name. Deriving warmth from the corpus
+// instead put every keystroke back on a DISTINCT ... ILIKE over gem_snapshots.
 func TestGemNamesAutocomplete_WarmButEmptyCorpusAnswersWithoutQuerying(t *testing.T) {
 	cache := lab.NewCache(corpusScope)
-	cache.For(corpusScope).SetTransfigure(nil)
+	cache.For(corpusScope).SetGemNamePool(nil)
 
 	w := serveWithoutRepository(t, GemNamesAutocomplete(nil, cache, corpusScope),
 		"/api/analysis/gems/names?q=spark")

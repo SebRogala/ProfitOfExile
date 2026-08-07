@@ -186,15 +186,11 @@ func TestCache_SparklineHighWater_ReturnsStoredMark(t *testing.T) {
 	}
 }
 
-// warmGemNames populates the transfigured-name corpus through the same path the
+// warmGemNames populates the Font autocomplete pool through the same path the
 // analyzer uses, so the tests below exercise the corpus a live cache holds.
 func warmGemNames(t *testing.T, c *Cache, scope league.Scope, names ...string) {
 	t.Helper()
-	results := make([]TransfigureResult, 0, len(names))
-	for _, n := range names {
-		results = append(results, TransfigureResult{TransfiguredName: n})
-	}
-	c.For(scope).SetTransfigure(results)
+	c.For(scope).SetGemNamePool(names)
 }
 
 // The POE-152 contract: a populated corpus that matches nothing is an answer,

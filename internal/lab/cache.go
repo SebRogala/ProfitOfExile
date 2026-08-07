@@ -3,7 +3,6 @@ package lab
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -127,11 +126,13 @@ type Cache struct {
 
 	mu sync.RWMutex
 
-	// One SetTransfigure fills the results and the autocomplete names derived
-	// from them, so transfigureSet is the COLD/WARM discriminator for both.
 	transfigureSet bool
 	transfigure    []TransfigureResult
-	gemNames       []string // unique transfigured gem names, sorted
+
+	// The Font (normal-mode) autocomplete pool, filled by its own query and so
+	// carrying its own flag — see SetGemNamePool.
+	gemNamesSet bool
+	gemNames    []string // eligible transfigured gem names, sorted
 
 	// One SetFont fills all three modes from a single AnalyzeFont pass, so they
 	// share one flag: there is no outcome where Safe is authoritative and
@@ -221,23 +222,40 @@ func (c *Cache) For(scope league.Scope) *Cache {
 
 // SetTransfigure replaces the cached transfigure results.
 func (c *Cache) SetTransfigure(results []TransfigureResult) {
-	// Extract unique gem names for autocomplete.
-	seen := make(map[string]struct{}, len(results))
-	for _, r := range results {
-		seen[r.TransfiguredName] = struct{}{}
-	}
-	names := make([]string, 0, len(seen))
-	for n := range seen {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.transfigureSet = true
 	c.transfigure = results
-	c.gemNames = names
 	c.lastUpdated = time.Now()
+}
+
+// SetGemNamePool stores the Font (normal-mode) autocomplete pool and marks it
+// warm.
+//
+// It takes the names rather than deriving them, and that is the point. The pool
+// is what GemNamesSearch answers nearly every keystroke from, and the cold
+// fallback behind it is Repository.GemNamesAutocomplete; if the two are filled
+// by two different rules they answer the same query two different ways, and the
+// cold path — the one every integration test exercises — is not the one users
+// hit. So the caller fills this from that same query (RunTransfigure), and the
+// eligibility rules live in one place: the SQL fragments in eligibility.go.
+//
+// Derived from the transfigure results until POE-142, which is how the picker
+// came to offer a gem the Font cannot hand out: those results are gated on
+// isTransfigurePairCandidate, which carries neither the support nor the WHITE
+// rule.
+//
+// It carries its own flag for the same reason SetCorruptedGemNamePool does: one
+// query fills it, that query can fail on its own, and a caller that skips this
+// call on failure leaves the previous names and the previous warmth alone.
+//
+// It stores an empty result as readily as a full one — see
+// SetCorruptedGemNamePool.
+func (c *Cache) SetGemNamePool(names []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gemNames = names
+	c.gemNamesSet = true
 }
 
 // SetFont replaces the cached font results for all three modes and marks them
@@ -306,15 +324,18 @@ func (c *Cache) Quality() ([]QualityResult, bool) {
 // (case-insensitive). Runs entirely in memory — no DB query. Returns up to
 // limit results.
 //
-// ok reports whether a transfigure tick has stored the corpus these names are
-// derived from, and is the caller's cold-cache signal. It exists because the
-// result alone cannot carry that signal: an empty result means "the cache is warm
-// and nothing matches" just as often as it means "there is nothing cached yet",
-// and reading it as the latter sent every non-matching keystroke of a debounced
-// autocomplete to a DISTINCT ... ILIKE over gem_snapshots (POE-152). When ok is
-// true the result is authoritative — including when it is empty — and the caller
-// must not fall back to the repository. When ok is false the result is always
-// empty.
+// The corpus is Repository.GemNamesAutocomplete's own answer, stored by
+// SetGemNamePool — the cold fallback behind this method is that same query, so
+// the two cannot offer different gems. See SetGemNamePool.
+//
+// ok reports whether a tick has stored that corpus, and is the caller's
+// cold-cache signal. It exists because the result alone cannot carry that
+// signal: an empty result means "the cache is warm and nothing matches" just as
+// often as it means "there is nothing cached yet", and reading it as the latter
+// sent every non-matching keystroke of a debounced autocomplete to a DISTINCT
+// ... ILIKE over gem_snapshots (POE-152). When ok is true the result is
+// authoritative — including when it is empty — and the caller must not fall back
+// to the repository. When ok is false the result is always empty.
 //
 // ok is the stored flag rather than the size of the corpus: a snapshot with no
 // priced transfigured gem yields no names, and re-deriving warmth from that put
@@ -325,7 +346,7 @@ func (c *Cache) Quality() ([]QualityResult, bool) {
 func (c *Cache) GemNamesSearch(query string, limit int) (names []string, ok bool) {
 	c.mu.RLock()
 	corpus := c.gemNames
-	set := c.transfigureSet
+	set := c.gemNamesSet
 	c.mu.RUnlock()
 
 	if !set {

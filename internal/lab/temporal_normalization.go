@@ -82,8 +82,8 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 	// For each variant, detrend and bucket.
 	// Try weekday_hour first, then hourly, then none.
 	// allBuckets maps variant -> buckets
-	allWeekdayHourBuckets := make(map[string]map[int]*bucketEntry)  // key: weekday*24+hour
-	allHourlyBuckets := make(map[string]map[int]*bucketEntry)       // key: hour
+	allWeekdayHourBuckets := make(map[string]map[int]*bucketEntry) // key: weekday*24+hour
+	allHourlyBuckets := make(map[string]map[int]*bucketEntry)      // key: hour
 	allVariantBaselines := make(map[string]float64)
 
 	// Result bucket data for JSONB
@@ -156,9 +156,9 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 			for key, be := range whBuckets {
 				med := medianFloat64(be.values)
 				buckets = append(buckets, TemporalBucket{
-					Hour: key,
-					Coeff:  sanitizeCoeff(med / baseline),
-					N:    len(be.values),
+					Hour:  key,
+					Coeff: sanitizeCoeff(med / baseline),
+					N:     len(be.values),
 				})
 			}
 		case "hourly":
@@ -166,9 +166,9 @@ func computeTemporalCoefficients(snapTime time.Time, history []GemPriceHistory) 
 			for hour, be := range hBuckets {
 				med := medianFloat64(be.values)
 				buckets = append(buckets, TemporalBucket{
-					Hour: hour,
-					Coeff:  sanitizeCoeff(med / baseline),
-					N:    len(be.values),
+					Hour:  hour,
+					Coeff: sanitizeCoeff(med / baseline),
+					N:     len(be.values),
 				})
 			}
 		default:
@@ -444,7 +444,7 @@ func PrecomputeMarketDepth(gems []GemPrice, mc MarketContext) map[string]float64
 	}
 	result := make(map[string]float64, len(gems))
 	for _, g := range gems {
-		if !isAnalyzableGem(g) {
+		if !isFontOutcome(g) {
 			continue
 		}
 		key := g.Name + "|" + g.Variant

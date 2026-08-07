@@ -341,7 +341,12 @@ func (r *Repository) LatestQualityResults(ctx context.Context, scope league.Scop
 
 // BasePriceHistory returns time-series data for base (non-transfigured, non-corrupted) gems
 // within the given number of hours. Returns a map of baseName → []PricePoint.
-// Only includes analysis variants and excludes Trarthus.
+// Only includes analysis variants, and applies sqlNotHeistOnly (eligibility.go).
+//
+// This is deliberately not the Font pool. These are base gems — non-transfigured
+// by definition — read as the base side of the sellUrgency and windowSignal
+// classifiers, so isFontOutcome, which requires IsTransfigured, cannot be the
+// rule here.
 func (r *Repository) BasePriceHistory(ctx context.Context, scope league.Scope, variant string, hours int) (map[string][]PricePoint, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: base price history: %w", err)
@@ -353,7 +358,7 @@ func (r *Repository) BasePriceHistory(ctx context.Context, scope league.Scope, v
 		  AND time > NOW() - make_interval(hours => $2)
 		  AND is_transfigured = false
 		  AND is_corrupted = false
-		  AND name NOT LIKE '%Trarthus%'
+		  AND ` + sqlNotHeistOnly + `
 		  AND variant = ANY($3)`
 	args := []any{scope.ID(), hours, []string{"1", "1/20", "20", "20/20"}}
 
@@ -402,7 +407,7 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
 		  AND is_transfigured = false
 		  AND is_corrupted = false
-		  AND name NOT LIKE '%Trarthus%'
+		  AND ` + sqlNotHeistOnly + `
 		  AND variant = ANY($2)`
 	args := []any{scope.ID(), []string{"1", "1/20", "20", "20/20"}}
 
@@ -414,7 +419,7 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
 		  AND is_transfigured = false
 		  AND is_corrupted = false
-		  AND name NOT LIKE '%Trarthus%'
+		  AND ` + sqlNotHeistOnly + `
 		  AND variant = $2`
 		args = []any{scope.ID(), variant}
 	}
@@ -429,7 +434,13 @@ func (r *Repository) MarketAvgBaseListings(ctx context.Context, scope league.Sco
 
 // GemPriceHistoryByVariant returns time-series gem data for transfigured, non-corrupted gems
 // within the given number of hours, grouped by (name, variant).
-// Only includes variants "1", "1/20", "20", "20/20", chaos > 5, and excludes Trarthus.
+// Only includes variants "1", "1/20", "20", "20/20", chaos > 5, and applies
+// sqlNotHeistOnly (eligibility.go).
+//
+// It is wider than isFontOutcome on purpose: this is history, and the caller
+// that turns it into features (ComputeGemFeatures) applies the full Font rules
+// to the latest snapshot. Narrowing here would only move the same filter
+// earlier, at the cost of a colour join the history query does not need.
 func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.Scope, variant string, hours int) ([]GemPriceHistory, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: gem price history by variant: %w", err)
@@ -441,7 +452,7 @@ func (r *Repository) GemPriceHistoryByVariant(ctx context.Context, scope league.
 		  AND time > NOW() - make_interval(hours => $2)
 		  AND is_transfigured = true
 		  AND is_corrupted = false
-		  AND name NOT LIKE '%Trarthus%'
+		  AND ` + sqlNotHeistOnly + `
 		  AND COALESCE(chaos, 0) > 5
 		  AND variant = ANY($3)`
 	args := []any{scope.ID(), hours, []string{"1", "1/20", "20", "20/20"}}
@@ -615,7 +626,14 @@ func sparklineRowFilter(hoursParam string) string {
 
 // sparklineIncrementalQuery reads only rows strictly newer than the caller's
 // high-water mark ($5). On a running server that mark is one tick old, so the
-// result is a single snapshot's worth of rows and needs no further bound.
+// result is a single snapshot's worth of rows.
+//
+// The shared $2-hour bound is what holds when the mark is not one tick old. A
+// caller whose series have all decayed carries a mark older than the lookback
+// (populateSparklineCache explains why), and this read then degenerates to the
+// flat lookback — every row the cache could still retain, which is what lets
+// that caller rebuild from an old mark instead of falling back to the cold
+// union on every tick. It is the more expensive shape, and it is bounded.
 var sparklineIncrementalQuery = `
 	SELECT name, variant, time, COALESCE(chaos, 0), COALESCE(listings, 0), is_corrupted
 	FROM gem_snapshots
@@ -744,7 +762,47 @@ func (r *Repository) SparklineWindow(ctx context.Context, scope league.Scope, si
 	return series, corrupted, nil
 }
 
-// GemNamesAutocomplete returns distinct transfigured gem names matching all query words (in any order).
+// GemNamesAutocomplete returns distinct transfigured gem names matching all
+// query words (in any order). It backs the Font (normal-mode) gem picker.
+//
+// The filters are the SQL half of isFontOutcome (eligibility.go): the picker
+// offers what the Font of Divine Skill can hand out, which is the *uncorrupted*
+// transfigured market minus the support, Heist and WHITE rules. Before POE-142
+// this query carried no eligibility rule at all beyond is_transfigured, which
+// made it the widest unfiltered name source feeding a gem icon.
+//
+// Measured 2026-08-05 on the latest local Allflame snapshot: it returned 247
+// names, 45 of them poe.ninja's corrupted "Vaal <Base> (<Transfigured>)" market
+// identities — Vaal Arc (Arc of Surging) and the like. The Font cannot hand one
+// out, /api/gem-icon has no entry for that name shape, so each rendered as the
+// "?" fallback next to a compare card that can only answer NO_DATA. With the
+// filters the query returns 202.
+//
+// This is also the query that fills the warm pool the picker answers from the
+// rest of the time (Cache.SetGemNamePool, called by RunTransfigure), so the two
+// halves of the picker cannot offer different gems.
+//
+// The colour rule is the WHITE one, matching isFontOutcome: nothing on this path
+// partitions by colour, so there is no reason to drop a name the gemcolor
+// resolver has not met yet. See the colour-rules comment in eligibility.go.
+//
+// The latest-snapshot bound is what makes the colour rule bite at all.
+// gem_color is written per row at insert time from whatever the gemcolor
+// resolver knew then (internal/collector/repository.go), not looked up as
+// current state, so a name the resolver met late carries NULL on its early rows
+// — and over an unbounded league one such row readmits the name for the rest of
+// it. Measured 2026-08-05 on the local DB, four Allflame names carry both NULL
+// and WHITE rows: Pact of Beidat, Ghorr, K'Tash and Lycia, the 3.29 gems the
+// resolver met 8-10 snapshots in. None of the four is transfigured, so the
+// unbounded form returned the same 202 names as the bounded one here — the
+// readmission is live in the data and this surface escapes it only because this
+// league's WHITE gems happen to sit on the other side of is_transfigured.
+//
+// The bound is the same subquery every other latest-snapshot read in this file
+// uses, rather than CorruptedGemNamesAutocomplete's `time > NOW() - INTERVAL '2
+// hours'`: this query is also what fills the warm pool, and a pool that empties
+// when the collector falls two hours behind would blank the picker while the
+// compare card behind it still answers from that same stale snapshot.
 func (r *Repository) GemNamesAutocomplete(ctx context.Context, scope league.Scope, query string, limit int) ([]string, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: gem names autocomplete: %w", err)
@@ -773,11 +831,21 @@ func (r *Repository) GemNamesAutocomplete(ctx context.Context, scope league.Scop
 		filter = strings.Join(conditions, " AND ")
 	}
 
+	// The eligibility fragments are Sprintf ARGUMENTS, not part of the format
+	// string: each carries a LIKE pattern whose `%` vet reads as an unknown verb
+	// (`% S`) the moment it lands in the format.
 	sql := fmt.Sprintf(`
 		SELECT DISTINCT name FROM gem_snapshots
-		WHERE league = $1 AND is_transfigured = true AND %s
+		WHERE league = $1
+		  AND time = (SELECT MAX(time) FROM gem_snapshots WHERE league = $1)
+		  AND is_transfigured = true
+		  AND is_corrupted = false
+		  AND %s
+		  AND %s
+		  AND %s
+		  AND %s
 		ORDER BY name LIMIT $%d`,
-		filter, len(args))
+		sqlNotSupportGem, sqlNotHeistOnly, sqlNotColorlessByRule, filter, len(args))
 
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -802,14 +870,14 @@ func (r *Repository) GemNamesAutocomplete(ctx context.Context, scope league.Scop
 
 // SignalChange represents a single signal transition for a gem.
 type SignalChange struct {
-	Time      time.Time `json:"time"`
-	Signal    string    `json:"signal"`
-	Window    string    `json:"window"`
-	Advanced  string    `json:"advanced"`
-	PriceVel  float64   `json:"priceVelocity"`
-	ListVel   float64   `json:"listingVelocity"`
-	Price     float64   `json:"currentPrice"`
-	Listings  int       `json:"currentListings"`
+	Time     time.Time `json:"time"`
+	Signal   string    `json:"signal"`
+	Window   string    `json:"window"`
+	Advanced string    `json:"advanced"`
+	PriceVel float64   `json:"priceVelocity"`
+	ListVel  float64   `json:"listingVelocity"`
+	Price    float64   `json:"currentPrice"`
+	Listings int       `json:"currentListings"`
 }
 
 // SignalHistory returns the last N signal snapshots for a gem, used to show transitions.
@@ -1586,10 +1654,34 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 	return results, nil
 }
 
-// CorruptedGemNamesAutocomplete returns distinct corrupted gem names for autocomplete.
-// When isTransfigured is true, returns only transfigured corrupted gems; when false,
-// returns only non-transfigured corrupted gems. Excludes support gems.
+// CorruptedGemNamesAutocomplete returns distinct corrupted gem names for the
+// Dedication picker. When isTransfigured is true, returns only transfigured
+// corrupted gems; when false, only non-transfigured corrupted gems.
 // Restricts to the last 2 hours to avoid full hypertable scans.
+//
+// The filters are the SQL half of isDedicationOutcome (eligibility.go): a picker
+// for the Dedication compare surface must not offer gems the craft can never
+// hand out. Before POE-142 it applied the support and Heist rules and no colour
+// rule at all, so — measured 2026-08-05 on the latest local Allflame snapshot —
+// it offered Pact of Beidat, Ghorr, K'Tash and Lycia, the four WHITE 3.29 gems
+// that isDedicationOutcome excludes from the pool, from tier classification,
+// from the rankings, and that the compare path can only ever render as AVOID.
+// The non-transfigured half went from 339 names to 335.
+//
+// The colour rule applied here is the WHITE one (sqlNotColorlessByRule), not the
+// three-colour one. A typeahead over names does not partition the market by
+// colour, so it has no reason to pay hasAttributeColor's cost of dropping every
+// gem the gemcolor resolver has not met yet — the collector writes a NULL colour
+// for those (internal/collector/repository.go), and a player typing a name the
+// resolver is behind on would get no results at all. Measured 2026-08-05 on the
+// 05:28 Allflame snapshot, where the resolver was still behind: the three-colour
+// form returned 333 names, dropping Dark Bargain and Mana-Infused Staff — real
+// BLUE skill gems by the 12:39 snapshot — alongside the Pact gems.
+//
+// Vaal gems are deliberately still offered. They are a legal Dedication feed,
+// and BuildDedicationCorpus documents the compare path as answering for them and
+// marking them not-an-outcome — so the picker keeps the one non-outcome a player
+// has a reason to look up.
 func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, scope league.Scope, isTransfigured bool, limit int) ([]string, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, fmt.Errorf("lab repo: corrupted gem names autocomplete: %w", err)
@@ -1599,8 +1691,9 @@ func (r *Repository) CorruptedGemNamesAutocomplete(ctx context.Context, scope le
 		WHERE league = $1
 		  AND is_corrupted = true
 		  AND is_transfigured = $2
-		  AND name NOT LIKE '%Support%'
-		  AND name NOT LIKE '%Trarthus%'
+		  AND `+sqlNotSupportGem+`
+		  AND `+sqlNotHeistOnly+`
+		  AND `+sqlNotColorlessByRule+`
 		  AND time > NOW() - INTERVAL '2 hours'
 		ORDER BY name
 		LIMIT $3`, scope.ID(), isTransfigured, limit)
@@ -1790,6 +1883,18 @@ func (r *Repository) GemNameDictionary(ctx context.Context, scope league.Scope, 
 		return nil, fmt.Errorf("lab repo: gem dictionary snapshot rows iteration: %w", err)
 	}
 
+	// The Heist rule holds on both halves — see FilterGemDictionary. Measured
+	// 2026-08-05 the local gem_snapshots carries 0 Trarthus rows, so this guards
+	// a league whose feed reintroduces them rather than an open instance.
+	kept := fromSnapshots[:0]
+	for _, n := range fromSnapshots {
+		if isHeistOnlyGemName(n) {
+			continue
+		}
+		kept = append(kept, n)
+	}
+	fromSnapshots = kept
+
 	// The snapshot half needs the support-gem strip too, but ONLY the strip.
 	// FilterGemDictionary re-derives transfigured-ness from whatever list it is
 	// handed — its `known` set is built from its own argument — so running it
@@ -1806,9 +1911,9 @@ func (r *Repository) GemNameDictionary(ctx context.Context, scope league.Scope, 
 	// TestGemNameDictionary_includesLeagueNamesMissingFromGemColors; nothing pins
 	// the hazard on this half, because it is inert here today.
 	if !transfigured {
-		kept := fromSnapshots[:0]
+		kept = fromSnapshots[:0]
 		for _, n := range fromSnapshots {
-			if isSupportGem(n) {
+			if isSupportGemName(n) {
 				continue
 			}
 			kept = append(kept, n)
@@ -1839,6 +1944,23 @@ func MergeGemDictionary(a, b []string) []string {
 // FilterGemDictionary splits a full gem-name list into transfigured and
 // non-transfigured halves. Separated from the query so the rule is testable
 // without a database.
+//
+// The Heist rule (isHeistOnlyGemName) applies to BOTH halves. gem_colors — the
+// list this is normally handed — still carries 12 seeded "of Trarthus" names
+// whose base gem is also seeded, so every one of them lands in the transfigured
+// half; the collector refuses to store a Trarthus snapshot and every analysis
+// path excludes them, which makes each a name the OCR matcher can hit and
+// nothing can price (POE-142).
+//
+// The support rule (isSupportGemName) applies to the skill half only. That
+// asymmetry is deliberate and predates this split: is_transfigured comes from
+// poe.ninja's alt_ discriminator (convertGemLines in
+// internal/collector/ninja.go), which is authoritative, and a name-shape
+// heuristic layered on top of an authoritative flag can only subtract from it.
+// Measured 2026-08-04 on the local DB the un-stripped half is inert anyway —
+// SELECT name FROM gem_snapshots WHERE name LIKE '% Support' AND is_transfigured
+// returns 0 rows. TestGemNameDictionary_transfiguredPoolIsNotSupportFiltered
+// pins the pass-through.
 func FilterGemDictionary(all []string, transfigured bool) []string {
 	known := make(map[string]struct{}, len(all))
 	for _, n := range all {
@@ -1853,48 +1975,13 @@ func FilterGemDictionary(all []string, transfigured bool) []string {
 		if isTransfigured != transfigured {
 			continue
 		}
-		if !transfigured && isSupportGem(n) {
+		if isHeistOnlyGemName(n) {
+			continue
+		}
+		if !transfigured && isSupportGemName(n) {
 			continue
 		}
 		names = append(names, n)
 	}
 	return names
-}
-
-// isSupportGem reports whether a gem name is a support gem.
-//
-// Game rule: the Font of Enhancement and the Dedication to the Goddess hand out
-// skill gems only (confirmed with the domain owner), so a support gem is never a
-// possible outcome of either craft.
-//
-// Observed 2026-08-04 on prod: the transfigured=false dictionary carried 224
-// " Support"-suffixed names out of 571 — effectively the whole support roster —
-// because the gem_snapshots half of GemNameDictionary was merged unfiltered.
-//
-// The suffix test is exhaustive: gem_snapshots is written only by the collector
-// from poe.ninja's type=SkillGem endpoint (internal/collector/ninja.go), whose
-// only non-active-skill category is support gems, and every support gem's name
-// ends in " Support".
-//
-// Both call sites gate the strip on the skill pool (!transfigured), so the
-// transfigured half is deliberately passed through untouched: is_transfigured
-// comes from poe.ninja's alt_ discriminator (convertGemLines in
-// internal/collector/ninja.go), which is authoritative, and a name-shape
-// heuristic layered on top of an authoritative flag can only subtract from it.
-// Measured 2026-08-04 on the local DB, the un-stripped half is inert anyway —
-// SELECT name FROM gem_snapshots WHERE name LIKE '% Support' AND is_transfigured
-// returns 0 rows. TestGemNameDictionary_transfiguredPoolIsNotSupportFiltered
-// pins the pass-through.
-//
-// POE-142 is expected to fold this into a gem-eligibility SSOT. Grepping
-// isSupportGem will not find the whole surface: package lab carries three
-// support-gem predicates, and they are not interchangeable.
-//   - isSupportGem — strings.HasSuffix(name, " Support")
-//   - isDedicationFeed (dedication.go) — strings.Contains(g.Name, "Support")
-//   - CorruptedGemNamesAutocomplete — SQL name NOT LIKE '%Support%'
-//
-// Contains and LIKE '%Support%' also match a non-suffix "Support", so unifying
-// them changes behaviour and is POE-142's call, not a mechanical merge.
-func isSupportGem(name string) bool {
-	return strings.HasSuffix(name, " Support")
 }
