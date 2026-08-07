@@ -149,4 +149,47 @@ describe('connectMercure', () => {
 		// permanently dead client, since nothing re-invokes connectMercure.
 		expect(fetchMock.mock.calls.length).toBeGreaterThan(5);
 	});
+
+	it('reloads on a well-formed publish', async () => {
+		// Positive control for the unparseable-publish test below: without it that
+		// test passes against a handler that never calls onUpdate at all.
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onUpdate = vi.fn();
+
+		connectMercure(onUpdate);
+		await vi.advanceTimersByTimeAsync(0);
+		opened[0].onmessage!({ data: '{"type":"analysis"}' } as MessageEvent);
+
+		expect(onUpdate).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not reload on an unparseable publish', async () => {
+		// The handler used to call onUpdate() from the catch, firing the whole
+		// loadAll() fan-out on bytes it could not read and dropping the parse error.
+		// Every legitimate publish is a marshalled JSON object
+		// (internal/lab/throttler.go marshals a map[string]string), so unparseable
+		// data is not an update. 542f171.
+		globalThis.fetch = vi.fn(async () => TOKEN_RESPONSE) as unknown as typeof fetch;
+		const onUpdate = vi.fn();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const raw = '<html>502 Bad Gateway</html>';
+
+		connectMercure(onUpdate);
+		await vi.advanceTimersByTimeAsync(0);
+		opened[0].onmessage!({ data: raw } as MessageEvent);
+
+		expect(onUpdate).not.toHaveBeenCalled();
+		// The error is reported rather than swallowed — the silent discard was half
+		// of what made the original bug invisible. What has to survive a refactor is
+		// that the parse error AND the bytes that caused it both reach the log; the
+		// wording of the label does not, so the label positions are matched by shape.
+		// Pinning the literals made rewording a log string a red test with no
+		// behaviour change, which teaches the next reader to edit the assertion.
+		expect(warn).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.any(SyntaxError),
+			expect.anything(),
+			raw,
+		);
+	});
 });

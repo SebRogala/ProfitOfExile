@@ -636,7 +636,10 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 	function retryDelay(): number {
 		// Exponential backoff: 2s, 4s, 8s, capped at 10s (fast recovery after
-		// deploys), then a 60s slow lane — the same ceiling desktopBridge.ts uses.
+		// deploys), then a 60s slow lane. desktopBridge.ts doubles straight to the
+		// same 60s constant with no fast lane and no jitter, so the two share that
+		// number and nothing else about the ladder — and the jitter below means
+		// this one's slow lane is really 30-60s.
 		const base = retries < FAST_RETRIES
 			? Math.min(2000 * Math.pow(2, retries), 10000)
 			: SLOW_RETRY_MS;
