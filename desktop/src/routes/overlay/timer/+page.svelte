@@ -7,8 +7,8 @@
 		handleNavEvent,
 		setStrategy,
 		type NavEvent,
-		type LabLayout,
 	} from '$lib/compass/navigation';
+	import { fetchLabLayout } from '$lib/compass/layout-loader';
 	import {
 		createTimerState,
 		formatTimer,
@@ -160,35 +160,18 @@
 	}
 
 	// --- Layout fetching (needed for navigation, room_count, and golden door detection) ---
-	let layoutRetries = 0;
 	async function fetchLayoutFromServer(preferredDiff?: string) {
-		try {
-			const status = await invoke<any>('get_status');
-			const serverUrl = status?.server_url;
-			if (!serverUrl) {
-				if (layoutRetries++ < 15) {
-					setTimeout(() => fetchLayoutFromServer(preferredDiff), 2000);
-				} else {
-					logToApp('[timer] giving up layout fetch after 15 retries');
-				}
-				return;
-			}
-			if (preferredDiff) lockedDifficulty = preferredDiff;
-			const diff = preferredDiff ?? lockedDifficulty;
-			const diffs = diff ? [diff] : ['Uber', 'Merciless', 'Cruel', 'Normal'];
-			for (const d of diffs) {
-				const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
-				if (r.ok) {
-					const layout: LabLayout = await r.json();
-					navState = loadLayout(navState, layout);
-					if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-					layoutLoaded = true;
-					return;
-				}
-			}
-		} catch (e) {
-			logToApp(`[timer] fetchLayout error: ${e}`);
-		}
+		if (preferredDiff) lockedDifficulty = preferredDiff;
+		const layout = await fetchLabLayout({
+			preferredDifficulty: preferredDiff,
+			lockedDifficulty,
+			log: (msg) => logToApp(`[timer] ${msg}`),
+		});
+		if (!layout) return;
+		navState = loadLayout(navState, layout);
+		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
+		layoutLoaded = true;
+		logToApp(`[timer] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
 	}
 
 	// --- Init: read settings, fetch layout, catch up ---

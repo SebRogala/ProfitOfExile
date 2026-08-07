@@ -12,8 +12,8 @@
 		getRoomContents,
 		setStrategy,
 		type NavEvent,
-		type LabLayout,
 	} from '$lib/compass/navigation';
+	import { fetchLabLayout } from '$lib/compass/layout-loader';
 	import type { DoorExitLocation, ContentLocation } from '$lib/compass/room-presets';
 	import {
 		createTimerState,
@@ -85,7 +85,10 @@
 	// --- Event handling ---
 
 	function logToApp(msg: string) {
-		invoke('app_log_from_frontend', { msg }).catch(() => {});
+		// console is the only fallback left once the log IPC itself is what
+		// failed. It is unreachable in a release webview, but a swallowed failure
+		// here hid the fact that nothing else in this window was being logged.
+		invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[compass] logToApp IPC failed:', msg, e));
 	}
 
 	function onNavEvent(event: any) {
@@ -178,32 +181,17 @@
 	let lockedDifficulty = $state<string | null>(null);
 
 	async function fetchLayoutFromServer(preferredDiff?: string) {
-		try {
-			const status = await invoke<any>('get_status');
-			const serverUrl = status?.server_url;
-			if (!serverUrl) {
-				logToApp('[compass] no server_url yet, retrying in 2s');
-				setTimeout(() => fetchLayoutFromServer(preferredDiff), 2000);
-				return;
-			}
-			if (preferredDiff) lockedDifficulty = preferredDiff;
-			const diff = preferredDiff ?? lockedDifficulty;
-			const diffs = diff ? [diff] : ['Uber', 'Merciless', 'Cruel', 'Normal'];
-			for (const d of diffs) {
-				const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
-				if (r.ok) {
-					const layout: LabLayout = await r.json();
-					navState = loadLayout(navState, layout);
-					if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-					layoutLoaded = true;
-					logToApp(`[compass] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
-					return;
-				}
-			}
-			logToApp(`[compass] no layout found for: ${diffs.join(', ')}`);
-		} catch (e) {
-			logToApp(`[compass] fetchLayout error: ${e}`);
-		}
+		if (preferredDiff) lockedDifficulty = preferredDiff;
+		const layout = await fetchLabLayout({
+			preferredDifficulty: preferredDiff,
+			lockedDifficulty,
+			log: (msg) => logToApp(`[compass] ${msg}`),
+		});
+		if (!layout) return;
+		navState = loadLayout(navState, layout);
+		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
+		layoutLoaded = true;
+		logToApp(`[compass] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
 	}
 
 	// Fetch layout and catch up to current lab state on init

@@ -4,6 +4,7 @@
 	import { formatPrice, setDivineRate } from '$lib/price.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import type { CompareGem } from '$lib/api';
+	import { defaultSelectedGem } from '$lib/comparator-selection';
 	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
 
@@ -48,14 +49,12 @@
 	let overlayLabMode = $state('normal');
 
 	$effect(() => {
-		if (results.length > 0 && !selectedGem) {
-			// Default to most expensive — Comparator handles signal-aware scoring
-			let best = results[0];
-			for (const g of results) {
-				if (g.transPrice > best.transPrice) best = g;
-			}
-			selectedGem = best.name;
-		}
+		// The only place the default pick is decided. The poll below used to run a
+		// second, older rule (first gem recommended BEST) over the same state, and
+		// that one won every time: it assigns inside the poll callback, before this
+		// effect flushes. So the most-expensive rule this file documents was never
+		// the one that ran.
+		selectedGem = defaultSelectedGem(results, selectedGem);
 		// Tell the mouse hook whether we have content — when empty, clicks pass through to game.
 		invoke('set_overlay_has_content', { hasContent: results.length > 0 })
 			.catch(e => console.warn('[overlay] set_overlay_has_content failed:', e));
@@ -240,13 +239,8 @@
 					lastJson = combinedKey;
 					results = data.results ?? [];
 					tradeData = data.tradeData ?? {};
-					if (results.length > 0 && !selectedGem) {
-						const best = results.find((g) => g.recommendation === 'BEST');
-						selectedGem = best?.name ?? results[0]?.name ?? null;
-					}
-					if (results.length === 0) {
-						selectedGem = null;
-					}
+					// Selection is not decided here — the effect above owns it,
+					// including clearing it when the results go empty.
 				}
 			} catch (e) { console.warn('[overlay] poll failed:', e); }
 		}, 500);
