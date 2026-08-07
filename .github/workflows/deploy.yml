@@ -71,13 +71,36 @@ jobs:
       - name: Create Compose network
         run: docker network create infra || true
 
+      # Same throwaway database quality.yml's `backend-integration` job uses;
+      # the shared script is what keeps the deploy gate and the PR gate testing
+      # against identical infrastructure.
+      - name: Start TimescaleDB
+        run: ./scripts/ci-start-timescaledb.sh
+
+      # Unconditional, unlike the race-test step below: the integration suite
+      # needs this image too, and it is the cheaper of the two costs here.
       - name: Build test image
-        if: needs.detect-changes.outputs.go == 'true'
         run: docker compose build app
 
       - name: Run Go tests with race detector
         if: needs.detect-changes.outputs.go == 'true'
         run: docker compose run --rm app go test -race ./...
+
+      # Deliberately ungated, where the race-test step above keys on
+      # `go == 'true'`. The `go` filter is `**/*.go` + go.mod/go.sum, so a
+      # commit touching only internal/db/migrations/*.sql sets `server` (via
+      # `internal/**`) without setting `go`: it reaches this job, deploys, and
+      # would skip the one phase that tests migrations. The job's own `if:`
+      # already restricts it to Go/server/collector changes, so no extra
+      # condition is needed here — a frontend-only commit paying ~1-2 min for
+      # the suite is the accepted price of never skipping a migration test.
+      #
+      # This step failing fails the job, and both deploy-server and
+      # deploy-collector require `needs.validate.result == 'success'`, so a red
+      # integration suite blocks the Coolify webhook rather than reporting
+      # alongside a deploy that shipped anyway.
+      - name: Run Go integration tests
+        run: make test-integration
 
       - name: Build production server image
         if: needs.detect-changes.outputs.server == 'true'
