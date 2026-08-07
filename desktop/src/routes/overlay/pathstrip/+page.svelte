@@ -8,8 +8,16 @@
 		handleNavEvent,
 		setStrategy,
 		type NavEvent,
-		type LabLayout,
 	} from '$lib/compass/navigation';
+	import { fetchLabLayout } from '$lib/compass/layout-loader';
+
+	// Everything this window can report goes through the app log. console is
+	// unreachable in a release webview with no devtools, so a console.warn here
+	// is a message that is never read by anyone — and a path strip that has
+	// given up renders nothing at all, which makes the log the only trace.
+	function logToApp(msg: string) {
+		invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[pathstrip] logToApp IPC failed:', msg, e));
+	}
 
 	let navState = $state(createNavState());
 	let pendingLayoutReset = $state(false);
@@ -68,29 +76,17 @@
 	let layoutLoaded = $state(false);
 
 	async function fetchLayoutFromServer(preferredDiff?: string) {
-		try {
-			const status = await invoke<any>('get_status');
-			const serverUrl = status?.server_url;
-			if (!serverUrl) {
-				setTimeout(() => fetchLayoutFromServer(preferredDiff), 2000);
-				return;
-			}
-			if (preferredDiff) lockedDifficulty = preferredDiff;
-			const diff = preferredDiff ?? lockedDifficulty;
-			const diffs = diff ? [diff] : ['Uber', 'Merciless', 'Cruel', 'Normal'];
-			for (const d of diffs) {
-				const r = await fetch(`${serverUrl}/api/lab/layout/${d}`);
-				if (r.ok) {
-					const layout: LabLayout = await r.json();
-					navState = loadLayout(navState, layout);
-					if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-					layoutLoaded = true;
-					return;
-				}
-			}
-		} catch (e) {
-			console.warn('[pathstrip] fetchLayout error:', e);
-		}
+		if (preferredDiff) lockedDifficulty = preferredDiff;
+		const layout = await fetchLabLayout({
+			preferredDifficulty: preferredDiff,
+			lockedDifficulty,
+			log: (msg) => logToApp(`[pathstrip] ${msg}`),
+		});
+		if (!layout) return;
+		navState = loadLayout(navState, layout);
+		if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
+		layoutLoaded = true;
+		logToApp(`[pathstrip] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
 	}
 
 	// Fetch layout and catch up to current lab state on init
@@ -104,7 +100,7 @@
 			await fetchLayoutFromServer();
 			// Replay recent Client.txt events to reconstruct current room
 			const catchup = await invoke<any>('get_lab_catchup').catch((e: any) => {
-				console.warn('[pathstrip] catchup failed:', e);
+				logToApp(`[pathstrip] catchup failed: ${e}`);
 				return null;
 			});
 			if (catchup?.events?.length) {
@@ -128,7 +124,7 @@
 				})
 				.catch((e: any) => {
 					if (!settingsErrorLogged) {
-						console.warn('[pathstrip] settings poll failed:', e);
+						logToApp(`[pathstrip] settings poll failed: ${e}`);
 						settingsErrorLogged = true;
 					}
 				});
