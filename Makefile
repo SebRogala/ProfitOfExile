@@ -1,4 +1,4 @@
-.PHONY: help build test qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-build desktop-deploy desktop-sync desktop-watch
+.PHONY: help build test test-integration qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-build desktop-deploy desktop-sync desktop-watch
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -12,6 +12,9 @@ build: ## Build Go server binary
 test: ## Run all Go tests with race detection
 	@docker compose exec app true 2>/dev/null || $(MAKE) up
 	docker compose exec app go test -race ./...
+
+test-integration: ## Run Go integration tests (build tag: integration) against a throwaway database
+	./scripts/integration-test.sh
 
 qa: test ## Alias for test
 

@@ -17,6 +17,75 @@ jobs:
       - name: Go tests with race detector
         run: docker compose run --rm app go test -race ./...
 
+  # Its own job rather than steps appended to `backend` so a formatting nit and
+  # a test failure stay separately readable — appended steps report only
+  # whichever fails first. Runs in the compose image, not actions/setup-go, so
+  # gofmt is byte-identical to the toolchain the tests and the production build
+  # use; a setup-go patch release that formats differently would red this gate
+  # for a reason nobody could reproduce locally.
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create Compose network
+        run: docker network create infra
+      - name: Build backend image
+        run: docker compose build app
+      # gofmt exits 0 whether or not it printed anything, so the exit status is
+      # useless as a gate — the file list is the signal and has to be turned
+      # into one explicitly.
+      #
+      # Captured into a variable rather than piped into `tee`: the runner's
+      # default shell is `bash -e` without pipefail, so in a pipeline a failed
+      # `docker compose run` would surface as tee's exit 0 with an empty list —
+      # a broken gate that reports green. An assignment takes the substitution's
+      # exit status, so `set -e` catches it.
+      - name: gofmt
+        run: |
+          unformatted="$(docker compose run --rm -T app gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            echo "::error::gofmt found unformatted files (listed above). Run: gofmt -w <file>" >&2
+            exit 1
+          fi
+      # -tags integration as well as untagged: the integration-only files are
+      # not part of the default build, so an untagged vet never type-checks
+      # them. That is the same blind spot the backend-integration job exists to
+      # close.
+      - name: go vet
+        run: |
+          docker compose run --rm -T app go vet ./...
+          docker compose run --rm -T app go vet -tags integration ./...
+
+  # The `backend` job above runs without `-tags integration`, so every
+  # //go:build integration file is neither compiled nor run there. This job is
+  # the only place they execute — and the only place they are compiled, which is
+  # why a stale integration test used to reach main green.
+  #
+  # Deliberately not a count: the previous wording named one ("the twelve") and
+  # was wrong within a change set. How many there are is the script's business
+  # anyway — scripts/integration-test.sh derives the inventory from the tree on
+  # every run and fails if the names and the build tags disagree.
+  backend-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Compose network
+        run: docker network create infra
+
+      # Container name, network, image and the virgin-database requirement are
+      # documented in the script. deploy.yml's `validate` job calls the same one
+      # so the deploy gate cannot drift from this one.
+      - name: Start TimescaleDB
+        run: ./scripts/ci-start-timescaledb.sh
+
+      - name: Build backend image
+        run: docker compose build app
+
+      - name: Integration tests
+        run: make test-integration
+
   frontend:
     runs-on: ubuntu-latest
     steps:
