@@ -267,21 +267,21 @@ func (r *Repository) LatestSnapshot(ctx context.Context, scope league.Scope) (*S
 
 // CollectionStats holds aggregate statistics about collected data.
 type CollectionStats struct {
-	GemTotalRows       int       `json:"gemTotalRows"`
-	GemSnapshotCount   int       `json:"gemSnapshotCount"`
-	GemFirstSnapshot   time.Time `json:"gemFirstSnapshot"`
-	GemLastSnapshot    time.Time `json:"gemLastSnapshot"`
-	GemUniqueItems     int       `json:"gemUniqueItems"`
-	CurrTotalRows      int       `json:"currTotalRows"`
-	CurrSnapshotCount  int       `json:"currSnapshotCount"`
-	CurrFirstSnapshot  time.Time `json:"currFirstSnapshot"`
-	CurrLastSnapshot   time.Time `json:"currLastSnapshot"`
-	CurrUniqueItems    int       `json:"currUniqueItems"`
-	FragTotalRows      int       `json:"fragTotalRows"`
-	FragSnapshotCount  int       `json:"fragSnapshotCount"`
-	FragFirstSnapshot  time.Time `json:"fragFirstSnapshot"`
-	FragLastSnapshot   time.Time `json:"fragLastSnapshot"`
-	FragUniqueItems    int       `json:"fragUniqueItems"`
+	GemTotalRows      int       `json:"gemTotalRows"`
+	GemSnapshotCount  int       `json:"gemSnapshotCount"`
+	GemFirstSnapshot  time.Time `json:"gemFirstSnapshot"`
+	GemLastSnapshot   time.Time `json:"gemLastSnapshot"`
+	GemUniqueItems    int       `json:"gemUniqueItems"`
+	CurrTotalRows     int       `json:"currTotalRows"`
+	CurrSnapshotCount int       `json:"currSnapshotCount"`
+	CurrFirstSnapshot time.Time `json:"currFirstSnapshot"`
+	CurrLastSnapshot  time.Time `json:"currLastSnapshot"`
+	CurrUniqueItems   int       `json:"currUniqueItems"`
+	FragTotalRows     int       `json:"fragTotalRows"`
+	FragSnapshotCount int       `json:"fragSnapshotCount"`
+	FragFirstSnapshot time.Time `json:"fragFirstSnapshot"`
+	FragLastSnapshot  time.Time `json:"fragLastSnapshot"`
+	FragUniqueItems   int       `json:"fragUniqueItems"`
 }
 
 // GetCollectionStats returns aggregate statistics about the collected data.

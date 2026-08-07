@@ -606,4 +606,3 @@ func TestValidateSellability_PerVariantBreakdown(t *testing.T) {
 		t.Error("expected non-empty FloorHoldRate for 1/20")
 	}
 }
-

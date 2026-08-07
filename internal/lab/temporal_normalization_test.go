@@ -783,9 +783,9 @@ func TestNormalizeHistoryDepthGated_MissingKeyDefaultsCascade(t *testing.T) {
 func TestComputeMarketDepthForGem_AllSourcesZero(t *testing.T) {
 	// When VariantStats is empty AND fallbackAvg is 0, depth should be 0 → CASCADE regime.
 	mc := MarketContext{
-		TotalGems:    0,
+		TotalGems:     0,
 		TotalListings: 0,
-		VariantStats: map[string]VariantBaseline{},
+		VariantStats:  map[string]VariantBaseline{},
 	}
 	depth := computeMarketDepthForGem(50, "20/20", mc, 0)
 	if depth != 0 {

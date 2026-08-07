@@ -17,34 +17,34 @@ import (
 
 // JSONOutput is the structured output for --json mode (sweep).
 type JSONOutput struct {
-	Context    JSONContext        `json:"context"`
-	Results    []JSONResult       `json:"results"`
-	BestDetail *JSONBestDetail   `json:"best_detail,omitempty"`
-	Defaults   *JSONDefaults      `json:"defaults,omitempty"`
+	Context    JSONContext     `json:"context"`
+	Results    []JSONResult    `json:"results"`
+	BestDetail *JSONBestDetail `json:"best_detail,omitempty"`
+	Defaults   *JSONDefaults   `json:"defaults,omitempty"`
 }
 
 // JSONValidateOutput is the structured output for --validate --json mode.
 type JSONValidateOutput struct {
-	Context         JSONContext                        `json:"context"`
-	PerSignal       map[string]lab.SignalAccuracy      `json:"per_signal"`
-	ConfusionMatrix map[string]map[string]int          `json:"confusion_matrix"`
-	ConfBands       []lab.ConfidenceBand               `json:"confidence_bands"`
-	PerTier         map[string]float64                 `json:"per_tier"`
-	PerPhase        map[string]float64                 `json:"per_phase"`
-	SweetSpot       int                                `json:"sweet_spot"`
-	TotalEvals      int                                `json:"total_evals"`
-	OverallAcc      float64                            `json:"overall_acc"`
+	Context         JSONContext                   `json:"context"`
+	PerSignal       map[string]lab.SignalAccuracy `json:"per_signal"`
+	ConfusionMatrix map[string]map[string]int     `json:"confusion_matrix"`
+	ConfBands       []lab.ConfidenceBand          `json:"confidence_bands"`
+	PerTier         map[string]float64            `json:"per_tier"`
+	PerPhase        map[string]float64            `json:"per_phase"`
+	SweetSpot       int                           `json:"sweet_spot"`
+	TotalEvals      int                           `json:"total_evals"`
+	OverallAcc      float64                       `json:"overall_acc"`
 }
 
 // JSONSellabilityOutput is the structured output for --validate-sellability --json mode.
 type JSONSellabilityOutput struct {
-	Context               JSONContext                           `json:"context"`
-	PerSignalCapture      map[string]lab.ValueCapture           `json:"per_signal_capture"`
-	FloorHoldRate         map[string]lab.FloorHoldResult        `json:"floor_hold_rate"`
-	ConfidenceCalibration map[string]lab.ConfidenceCalResult    `json:"confidence_calibration"`
-	PerTierCapture        map[string]lab.ValueCapture           `json:"per_tier_capture"`
-	PerVariant            map[string]lab.VariantReport          `json:"per_variant"`
-	TotalEvals            int                                   `json:"total_evals"`
+	Context               JSONContext                        `json:"context"`
+	PerSignalCapture      map[string]lab.ValueCapture        `json:"per_signal_capture"`
+	FloorHoldRate         map[string]lab.FloorHoldResult     `json:"floor_hold_rate"`
+	ConfidenceCalibration map[string]lab.ConfidenceCalResult `json:"confidence_calibration"`
+	PerTierCapture        map[string]lab.ValueCapture        `json:"per_tier_capture"`
+	PerVariant            map[string]lab.VariantReport       `json:"per_variant"`
+	TotalEvals            int                                `json:"total_evals"`
 }
 
 // JSONContext holds metadata about the optimization run.
@@ -65,14 +65,14 @@ type JSONContext struct {
 // JSONResult holds one sweep result row.
 type JSONResult struct {
 	Rank          int                `json:"rank"`
-	WeightedScore float64           `json:"weighted_score"`
-	TopAcc        float64           `json:"top_acc"`
-	HighAcc       float64           `json:"high_acc"`
-	MidAcc        float64           `json:"mid_acc"`
-	LowAcc        float64           `json:"low_acc"`
-	OverallAcc    float64           `json:"overall_acc"`
-	SweetSpot     int               `json:"sweet_spot"`
-	Sigma         lab.SigmaConfig   `json:"sigma"`
+	WeightedScore float64            `json:"weighted_score"`
+	TopAcc        float64            `json:"top_acc"`
+	HighAcc       float64            `json:"high_acc"`
+	MidAcc        float64            `json:"mid_acc"`
+	LowAcc        float64            `json:"low_acc"`
+	OverallAcc    float64            `json:"overall_acc"`
+	SweetSpot     int                `json:"sweet_spot"`
+	Sigma         lab.SigmaConfig    `json:"sigma"`
 	TemporalAcc   map[string]float64 `json:"temporal_acc,omitempty"`
 }
 

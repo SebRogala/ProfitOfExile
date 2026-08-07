@@ -19,14 +19,14 @@ import (
 // makeCachedResult builds a minimal TradeLookupResult for cache tests.
 func makeCachedResult(gem, variant string) *trade.TradeLookupResult {
 	return &trade.TradeLookupResult{
-		Gem:         gem,
-		Variant:     variant,
-		Total:       42,
-		PriceFloor:  10.0,
+		Gem:          gem,
+		Variant:      variant,
+		Total:        42,
+		PriceFloor:   10.0,
 		PriceCeiling: 50.0,
-		PriceSpread: 40.0,
-		MedianTop10: 25.0,
-		Listings:    []trade.TradeListingDetail{{Price: 10.0, Currency: "chaos", Account: "test"}},
+		PriceSpread:  40.0,
+		MedianTop10:  25.0,
+		Listings:     []trade.TradeListingDetail{{Price: 10.0, Currency: "chaos", Account: "test"}},
 		Signals: trade.TradeSignals{
 			SellerConcentration: "NORMAL",
 			CheapestStaleness:   "FRESH",

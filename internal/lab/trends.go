@@ -18,8 +18,8 @@ type TrendResult struct {
 	CV              float64 // coefficient of variation (%)
 	Signal          string  // CAUTION, DUMPING, HERD, DEMAND, RECOVERY, STABLE, UNCERTAIN (priority order)
 	HistPosition    float64 // 0-100 percentile vs 7-day range
-	PriceHigh7Days     float64
-	PriceLow7Days      float64
+	PriceHigh7Days  float64
+	PriceLow7Days   float64
 
 	// Base-side signals
 	BaseListings      int     // current base gem listings
@@ -309,7 +309,6 @@ func tierAction(signal, windowSignal, priceTier string) string {
 	}
 	return ""
 }
-
 
 // computeRelativeLiquidity returns the gem's base listings relative to the market average.
 // Returns 1.0 (average) when market data is unavailable.
@@ -610,4 +609,3 @@ func TierActionFor(signal, windowSignal, priceTier string) string {
 func LiquidityTierFor(marketDepth float64) string {
 	return liquidityTier(marketDepth)
 }
-

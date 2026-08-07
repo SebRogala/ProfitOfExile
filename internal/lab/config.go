@@ -41,37 +41,37 @@ type SignalConfig struct {
 	BreakoutMinLVel  float64 // min listing velocity drop (default: -5)
 
 	// TRAP threshold
-	TrapCV          float64 // CV threshold for TRAP (default: 50)
-	TrapVelPct      float64 // min |velocity%| to confirm TRAP (default: 5)
+	TrapCV     float64 // CV threshold for TRAP (default: 50)
+	TrapVelPct float64 // min |velocity%| to confirm TRAP (default: 5)
 }
 
 // DefaultSignalConfig returns production defaults.
 func DefaultSignalConfig() SignalConfig {
 	return SignalConfig{
-		HERDPriceVelPct:      8,
-		HERDListingVelPct:    15,
-		HERDListingAbsFloor:  5,
-		PreHERDPriceVelPct:   20,
-		PreHERDListingVelPct: 5,
-		StablePriceVelPct:    5,
-		StableListingVelPct:  10,
-		DumpPriceVelPct:      -8,
-		DumpListingVelPct:    10,
+		HERDPriceVelPct:       8,
+		HERDListingVelPct:     15,
+		HERDListingAbsFloor:   5,
+		PreHERDPriceVelPct:    20,
+		PreHERDListingVelPct:  5,
+		StablePriceVelPct:     5,
+		StableListingVelPct:   10,
+		DumpPriceVelPct:       -8,
+		DumpListingVelPct:     10,
 		DumpListingAbsFloor:   3,
 		DemandListingVelPct:   -10,
 		DemandListingAbsFloor: 3,
 		DemandPriceVelPct:     -8,
 		RecoveryListingVelPct: -8,
 		RecoveryMaxListings:   20,
-		BrewingMinPVel:       2,
-		OpenMinPVel:          2,
-		DrainPct:             0.04,
-		ThinPoolFloor:        -1.5,
-		NormalFloor:          -1.0,
-		BreakoutMaxPrice:     200,
-		BreakoutMaxList:      30,
-		BreakoutMinLVel:      -5,
-		TrapCV:               50,
-		TrapVelPct:           5,
+		BrewingMinPVel:        2,
+		OpenMinPVel:           2,
+		DrainPct:              0.04,
+		ThinPoolFloor:         -1.5,
+		NormalFloor:           -1.0,
+		BreakoutMaxPrice:      200,
+		BreakoutMaxList:       30,
+		BreakoutMinLVel:       -5,
+		TrapCV:                50,
+		TrapVelPct:            5,
 	}
 }

@@ -113,13 +113,13 @@ func TestStabilityDiscount_KeyPoints(t *testing.T) {
 		cv   float64
 		want float64
 	}{
-		{0, 1.0},     // zero CV: no penalty
-		{10, 0.95},   // low CV
-		{30, 0.85},   // moderate CV
-		{50, 0.75},   // medium CV
-		{60, 0.7},    // at floor
-		{100, 0.7},   // high CV: clamped at floor
-		{200, 0.7},   // very high CV: clamped at floor
+		{0, 1.0},   // zero CV: no penalty
+		{10, 0.95}, // low CV
+		{30, 0.85}, // moderate CV
+		{50, 0.75}, // medium CV
+		{60, 0.7},  // at floor
+		{100, 0.7}, // high CV: clamped at floor
+		{200, 0.7}, // very high CV: clamped at floor
 	}
 
 	for _, tt := range tests {
@@ -159,14 +159,14 @@ func TestQuickSellUndercutFactor_ListingBrackets(t *testing.T) {
 		signal   string
 		wantBase float64
 	}{
-		{50, "MID", "STABLE", 0.06},  // >= 30: 9% base - 3% STABLE = 6%
-		{30, "MID", "STABLE", 0.06},  // exactly 30: same
-		{20, "MID", "STABLE", 0.07},  // >= 10: 10% - 3% STABLE = 7%
-		{10, "MID", "STABLE", 0.07},  // exactly 10: same
-		{7, "MID", "STABLE", 0.08},   // >= 5: 11% - 3% STABLE = 8%
-		{3, "MID", "STABLE", 0.12},   // < 5: 15% - 3% STABLE = 12%
-		{50, "MID", "", 0.09},        // no signal: base only
-		{3, "MID", "DUMPING", 0.20},  // < 5 DUMPING: 15% + 5% = 20%
+		{50, "MID", "STABLE", 0.06}, // >= 30: 9% base - 3% STABLE = 6%
+		{30, "MID", "STABLE", 0.06}, // exactly 30: same
+		{20, "MID", "STABLE", 0.07}, // >= 10: 10% - 3% STABLE = 7%
+		{10, "MID", "STABLE", 0.07}, // exactly 10: same
+		{7, "MID", "STABLE", 0.08},  // >= 5: 11% - 3% STABLE = 8%
+		{3, "MID", "STABLE", 0.12},  // < 5: 15% - 3% STABLE = 12%
+		{50, "MID", "", 0.09},       // no signal: base only
+		{3, "MID", "DUMPING", 0.20}, // < 5 DUMPING: 15% + 5% = 20%
 	}
 
 	for _, tt := range tests {

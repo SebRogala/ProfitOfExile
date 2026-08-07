@@ -57,10 +57,10 @@ func ParseColor(s string) (Color, error) {
 type Resolver struct {
 	pool *pgxpool.Pool
 
-	mu          sync.RWMutex
-	colors      map[string]Color // name -> color
-	discovered  map[string]Color // newly resolved names not yet in DB
-	unresolved  map[string]struct{}
+	mu         sync.RWMutex
+	colors     map[string]Color // name -> color
+	discovered map[string]Color // newly resolved names not yet in DB
+	unresolved map[string]struct{}
 }
 
 // NewResolverFromMap creates a resolver pre-seeded with a static color map.

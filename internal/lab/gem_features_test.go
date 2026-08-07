@@ -574,11 +574,11 @@ func TestComputeGemFeatures_MarketDepth(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		listings      int
-		wantDepth     float64
-		wantRegime    string
-		depthTol      float64
+		name       string
+		listings   int
+		wantDepth  float64
+		wantRegime string
+		depthTol   float64
 	}{
 		{"half median", 25, 0.5, "TEMPORAL", 0.001},
 		{"low depth", 10, 0.2, "CASCADE", 0.001},
@@ -790,10 +790,10 @@ func TestComputeGemFeatures_TradeFreshnessDegradation(t *testing.T) {
 	mc := testMarketContext()
 
 	tests := []struct {
-		name        string
-		age         time.Duration
-		wantWeight  float64
-		wantAvail   bool
+		name       string
+		age        time.Duration
+		wantWeight float64
+		wantAvail  bool
 	}{
 		{"very fresh (1min)", 1 * time.Minute, 1.0, true},
 		{"fresh (4min)", 4 * time.Minute, 1.0, true},

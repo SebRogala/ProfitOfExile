@@ -1002,9 +1002,9 @@ func TestValidateDefaults_PerPhase(t *testing.T) {
 	mc := sweepMarketContext(0, 10, 0, 5)
 
 	// Saturday = weekend, Wednesday 16:00 = weekday-peak, Monday 08:00 = weekday-offpeak
-	weekend := time.Date(2026, 3, 14, 16, 0, 0, 0, time.UTC)   // Saturday
-	peak := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)      // Wednesday
-	offpeak := time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC)    // Monday
+	weekend := time.Date(2026, 3, 14, 16, 0, 0, 0, time.UTC) // Saturday
+	peak := time.Date(2026, 3, 18, 16, 0, 0, 0, time.UTC)    // Wednesday
+	offpeak := time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC)  // Monday
 
 	evals := []EvalPoint{
 		// Weekend: correct
@@ -1099,4 +1099,3 @@ func TestValidateDefaults_MultipleSignalTypes(t *testing.T) {
 		t.Errorf("OverallAcc: got %.2f, want 100.0", report.OverallAcc)
 	}
 }
-

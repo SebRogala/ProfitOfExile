@@ -482,8 +482,8 @@ type SignalAccuracy struct {
 
 // ValidationReport holds the full output of ValidateDefaults.
 type ValidationReport struct {
-	PerSignal       map[string]SignalAccuracy   // keyed by signal name
-	ConfusionMatrix map[string]map[string]int   // [predicted_direction][actual_direction] = count
+	PerSignal       map[string]SignalAccuracy // keyed by signal name
+	ConfusionMatrix map[string]map[string]int // [predicted_direction][actual_direction] = count
 	ConfBands       []ConfidenceBand
 	PerTier         map[string]float64
 	PerPhase        map[string]float64
@@ -530,10 +530,10 @@ func ValidateDefaults(evals []EvalPoint, mc MarketContext) ValidationReport {
 
 	// Per-signal accumulators.
 	type signalAcc struct {
-		count      int
-		correct    int
-		confSum    float64
-		predicted  string
+		count     int
+		correct   int
+		confSum   float64
+		predicted string
 	}
 	signalAccs := make(map[string]*signalAcc)
 
@@ -693,10 +693,10 @@ func ValidateDefaults(evals []EvalPoint, mc MarketContext) ValidationReport {
 // ValueCapture holds percentile statistics for actual-vs-predicted value ratios.
 type ValueCapture struct {
 	Count         int     `json:"count"`
-	AvgCapture    float64 `json:"avg_capture"`    // mean(actualPrice / predictedRiskAdjValue)
+	AvgCapture    float64 `json:"avg_capture"` // mean(actualPrice / predictedRiskAdjValue)
 	MedianCapture float64 `json:"median_capture"`
-	P25Capture    float64 `json:"p25_capture"`    // 25th percentile
-	P75Capture    float64 `json:"p75_capture"`    // 75th percentile
+	P25Capture    float64 `json:"p25_capture"` // 25th percentile
+	P75Capture    float64 `json:"p75_capture"` // 75th percentile
 }
 
 // ConfidenceCalResult holds calibration metrics for a sell confidence level.

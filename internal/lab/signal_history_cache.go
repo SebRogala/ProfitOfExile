@@ -34,7 +34,7 @@ type signalHistorySource interface {
 // populateSignalHistory folds this tick's signals into the rings, seeding from
 // the database on the first pass only.
 //
-// THE COLD WINDOW, AND WHY THIS SEEDS RATHER THAN FILLING UP
+// # THE COLD WINDOW, AND WHY THIS SEEDS RATHER THAN FILLING UP
 //
 // Every other cached field is complete after one tick. A ring is not: appending
 // one point per tick, at roughly one snapshot every 30 minutes, it takes ~10

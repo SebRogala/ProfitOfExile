@@ -62,9 +62,9 @@ type tradeFetchEntry struct {
 }
 
 type tradeFetchListing struct {
-	Indexed time.Time          `json:"indexed"`
-	Account tradeFetchAccount  `json:"account"`
-	Price   tradeFetchPrice    `json:"price"`
+	Indexed time.Time         `json:"indexed"`
+	Account tradeFetchAccount `json:"account"`
+	Price   tradeFetchPrice   `json:"price"`
 }
 
 type tradeFetchAccount struct {
@@ -77,8 +77,8 @@ type tradeFetchPrice struct {
 }
 
 type tradeFetchItem struct {
-	Corrupted  bool                   `json:"corrupted"`
-	Properties []tradeFetchProperty   `json:"properties"`
+	Corrupted  bool                 `json:"corrupted"`
+	Properties []tradeFetchProperty `json:"properties"`
 }
 
 type tradeFetchProperty struct {
@@ -219,26 +219,27 @@ func parseVariant(variant string) (int, int) {
 //
 // GGG Trade API query field reference (discovered via testing, not documented):
 //
-//   query.type     — exact gem name match (NOT query.name which is for uniques,
-//                    NOT query.term which is fuzzy and pulls in transfigured variants)
+//	query.type     — exact gem name match (NOT query.name which is for uniques,
+//	                 NOT query.term which is fuzzy and pulls in transfigured variants)
 //
-//   status.option  — "securable" = instant buyout only (matches trade site "Buyout" toggle).
-//                    NOT "priced" which includes ~price (negotiable) listings.
-//                    Other values: "any" (all including offline), "online" (currently online only)
+//	status.option  — "securable" = instant buyout only (matches trade site "Buyout" toggle).
+//	                 NOT "priced" which includes ~price (negotiable) listings.
+//	                 Other values: "any" (all including offline), "online" (currently online only)
 //
-//   sale_type      — "priced" = has any price tag. Includes both ~b/o AND ~price listings.
-//                    "unpriced" = no price tag at all. NOT the same as "instant buyout".
+//	sale_type      — "priced" = has any price tag. Includes both ~b/o AND ~price listings.
+//	                 "unpriced" = no price tag at all. NOT the same as "instant buyout".
 //
-//   collapse       — "true" = one listing per seller account (dedup spam/manipulation)
+//	collapse       — "true" = one listing per seller account (dedup spam/manipulation)
 //
-//   misc_filters:
-//     gem_level    — {min, max} for exact level match
-//     quality      — {min, max} for quality range. Our variant "0" quality means "any
-//                    quality below 20" (0-19), while "20" means exact 20.
-//     corrupted    — "false" = exclude corrupted gems
+//	misc_filters:
+//	  gem_level    — {min, max} for exact level match
+//	  quality      — {min, max} for quality range. Our variant "0" quality means "any
+//	                 quality below 20" (0-19), while "20" means exact 20.
+//	  corrupted    — "false" = exclude corrupted gems
 //
-//   type_filters:
-//     category     — "gem" restricts to skill/support gems only
+//	type_filters:
+//	  category     — "gem" restricts to skill/support gems only
+//
 // stripDiacritics replaces accented characters with ASCII equivalents.
 // GGG trade API returns 0 results for "Maelström" but 35 for "Maelstrom".
 var diacriticReplacer = strings.NewReplacer(

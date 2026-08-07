@@ -60,15 +60,14 @@ func TestResolveTransfigured(t *testing.T) {
 	}
 }
 
-
 func TestResolve_heuristics(t *testing.T) {
 	// Build a resolver with a pre-populated color map (no DB needed).
 	r := &Resolver{
 		colors: map[string]Color{
-			"Cleave":                        ColorRed,
-			"Arc":                           ColorBlue,
+			"Cleave":                       ColorRed,
+			"Arc":                          ColorBlue,
 			"Rain of Arrows":               ColorGreen,
-			"Multiple Projectiles Support":  ColorGreen,
+			"Multiple Projectiles Support": ColorGreen,
 		},
 		discovered: make(map[string]Color),
 		unresolved: make(map[string]struct{}),

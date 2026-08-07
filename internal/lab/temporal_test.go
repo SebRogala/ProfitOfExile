@@ -14,7 +14,7 @@ func makePoint(t time.Time, chaos float64) PricePoint {
 func TestComputeTemporalBiases_DirectionBias(t *testing.T) {
 	// Create history where hour 8 has a -5% price drop and hour 20 has a +3% rise.
 	// Use a Monday (weekday=1) for all points.
-	monday8am := time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC)  // Monday
+	monday8am := time.Date(2026, 3, 16, 8, 0, 0, 0, time.UTC)   // Monday
 	monday20pm := time.Date(2026, 3, 16, 20, 0, 0, 0, time.UTC) // Monday
 
 	history := []GemPriceHistory{
@@ -57,7 +57,7 @@ func TestComputeTemporalBiases_DirectionBias(t *testing.T) {
 func TestComputeTemporalBiases_WeekdayBias(t *testing.T) {
 	// Monday (1) has a -4% drop, Saturday (6) has a +6% rise.
 	monday := time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC)   // Monday
-	saturday := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)  // Saturday
+	saturday := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC) // Saturday
 
 	history := []GemPriceHistory{
 		{
@@ -100,7 +100,7 @@ func TestComputeTemporalBiases_Volatility(t *testing.T) {
 	// Hour 10: two gems with divergent price changes → high volatility.
 	// Hour 14: two gems with same price change → zero volatility.
 	base := time.Date(2026, 3, 16, 10, 0, 0, 0, time.UTC) // Monday 10:00
-	calm := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC)  // Monday 14:00
+	calm := time.Date(2026, 3, 16, 14, 0, 0, 0, time.UTC) // Monday 14:00
 
 	history := []GemPriceHistory{
 		{

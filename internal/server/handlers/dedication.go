@@ -146,22 +146,22 @@ func DedicationAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Sco
 
 // dedicationRow is the JSON response shape for a single Dedication result.
 type dedicationRow struct {
-	Time              string                    `json:"time"`
-	Variant           string                    `json:"variant"`
-	Color             string                    `json:"color"`
-	GemType           string                    `json:"gemType"`
-	Pool              int                       `json:"pool"`
-	Winners           int                       `json:"winners"`
-	PWin              float64                   `json:"pWin"`
-	AvgWinRaw         float64                   `json:"avgWinRaw"`
-	EVRaw             float64                   `json:"evRaw"`
-	InputCost         float64                   `json:"inputCost"`
-	Profit            float64                   `json:"profit"`
-	FontsToHit        float64                   `json:"fontsToHit"`
-	JackpotGems       []lab.JackpotGemInfo      `json:"jackpotGems,omitempty"`
-	ThinPoolGems      int                       `json:"thinPoolGems"`
-	LiquidityRisk     string                    `json:"liquidityRisk"`
-	PoolBreakdown     []lab.TierPoolInfo        `json:"poolBreakdown,omitempty"`
+	Time              string                     `json:"time"`
+	Variant           string                     `json:"variant"`
+	Color             string                     `json:"color"`
+	GemType           string                     `json:"gemType"`
+	Pool              int                        `json:"pool"`
+	Winners           int                        `json:"winners"`
+	PWin              float64                    `json:"pWin"`
+	AvgWinRaw         float64                    `json:"avgWinRaw"`
+	EVRaw             float64                    `json:"evRaw"`
+	InputCost         float64                    `json:"inputCost"`
+	Profit            float64                    `json:"profit"`
+	FontsToHit        float64                    `json:"fontsToHit"`
+	JackpotGems       []lab.JackpotGemInfo       `json:"jackpotGems,omitempty"`
+	ThinPoolGems      int                        `json:"thinPoolGems"`
+	LiquidityRisk     string                     `json:"liquidityRisk"`
+	PoolBreakdown     []lab.TierPoolInfo         `json:"poolBreakdown,omitempty"`
 	LowConfidenceGems []lab.LowConfidenceGemInfo `json:"lowConfidenceGems,omitempty"`
 }
 
