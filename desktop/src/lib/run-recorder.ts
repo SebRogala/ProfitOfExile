@@ -32,7 +32,6 @@ interface RoomLogEntry {
 
 let navState: NavState = createNavState();
 let lockedDifficulty: string | null = null;
-let layoutLoaded = false;
 let pendingLayoutReset = false;
 
 let roomLog: RoomLogEntry[] = [];
@@ -59,10 +58,15 @@ function resetRun() {
 
 function applyLayoutReset() {
 	navState = createNavState();
-	layoutLoaded = false;
 	lockedDifficulty = null;
 	pendingLayoutReset = false;
 	logToApp('[recorder] layout reset applied (midnight UTC)');
+	// Refetch immediately: in the overlays a `layoutLoaded` guard effect does
+	// this, but a module has no effects, so without this call the recorder
+	// stays layout-less until the next layout upload — and if the new day's
+	// layout was uploaded before midnight, that event never comes. Runs
+	// submitted with an empty navState all read has_golden_door=false.
+	void fetchLayoutFromServer();
 }
 
 async function fetchLayoutFromServer(preferredDiff?: string) {
@@ -75,7 +79,6 @@ async function fetchLayoutFromServer(preferredDiff?: string) {
 	if (!layout) return;
 	navState = loadLayout(navState, layout);
 	if (!lockedDifficulty) lockedDifficulty = layout.difficulty;
-	layoutLoaded = true;
 	logToApp(`[recorder] layout loaded: ${layout.difficulty} (${layout.rooms.length} rooms)`);
 }
 
