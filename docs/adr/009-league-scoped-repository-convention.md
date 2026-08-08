@@ -1,3 +1,7 @@
+---
+uid: 8e39f612-f8e4-4aeb-b33a-702359ebbcf3
+---
+
 # ADR-009: League-Scoped Repository Convention
 
 ## Status

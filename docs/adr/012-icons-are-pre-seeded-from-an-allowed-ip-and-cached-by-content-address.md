@@ -1,3 +1,7 @@
+---
+uid: 5daeb06f-ad96-499d-a640-f66bac72b04c
+---
+
 # ADR-012: Icons Are Pre-Seeded from an Allowed IP and Cached by Content Address
 
 ## Status

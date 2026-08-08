@@ -1,3 +1,7 @@
+---
+uid: c62e3757-3699-439d-ad95-36930c1b19fd
+---
+
 # ADR-002: Internal Architecture: Hexagonal + CQRS + Vertical Slice
 
 ## Status

@@ -1,3 +1,7 @@
+---
+uid: 84f28ce3-dcf5-48c5-9efb-4f56a4f9df30
+---
+
 # ADR-007: v3 Hybrid Analysis — Unified Pipeline with Trade-Enriched Features
 
 ## Status

@@ -1,3 +1,7 @@
+---
+uid: cbd946d2-34a3-4258-a21d-1ec536493960
+---
+
 # ADR-006: gem_colors — Database-Backed UPSERT Lookup Table with In-Memory Resolver
 
 ## Status
