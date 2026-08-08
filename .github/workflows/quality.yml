@@ -96,6 +96,10 @@ jobs:
         run: docker compose build frontend
       - name: Install dependencies
         run: docker compose run --rm frontend npm ci
+      - name: Svelte check
+        # vite build does not typecheck — an undefined identifier (the
+        # toStorePool outage) sails through it and dies at runtime in prod.
+        run: docker compose run --rm frontend npm run check
       - name: Build frontend
         run: docker compose run --rm frontend npm run build
 
