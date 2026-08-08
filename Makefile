@@ -16,7 +16,7 @@ test: ## Run all Go tests with race detection
 test-integration: ## Run Go integration tests (build tag: integration) against a throwaway database
 	./scripts/integration-test.sh
 
-qa: test desktop-test-js ## Run the Go suite and the desktop vitest suite
+qa: test desktop-test desktop-test-js ## Run the Go suite, the desktop Rust suite and the desktop vitest suite
 
 up: ## Start dev environment (Docker Compose)
 	docker compose up -d --build
