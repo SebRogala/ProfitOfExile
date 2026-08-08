@@ -25,6 +25,10 @@ desktop/.svelte-kit/
 desktop/build/
 .superpowers/
 .claude/worktrees/
+# Pipeforge writes per-run triage state here. Untracked and unignored, it made
+# the pipeline's own `git status --porcelain` precheck report a dirty tree and
+# stop before doing any work.
+.claude/pipeforge/
 
 # Tauri signing keys (private key MUST NOT be committed)
 desktop/.tauri/
