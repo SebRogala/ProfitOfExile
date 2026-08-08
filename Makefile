@@ -1,4 +1,4 @@
-.PHONY: help build test test-integration qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-build desktop-deploy desktop-sync desktop-watch
+.PHONY: help build test test-integration qa up down migrate migrate-down migrate-force migration build-collector shell-collector logs-collector desktop-check desktop-test desktop-test-js desktop-build desktop-deploy desktop-sync desktop-watch
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | sed 's/:.*## /\t/' | awk -F '\t' '{printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -16,7 +16,7 @@ test: ## Run all Go tests with race detection
 test-integration: ## Run Go integration tests (build tag: integration) against a throwaway database
 	./scripts/integration-test.sh
 
-qa: test ## Alias for test
+qa: test desktop-test-js ## Run the Go suite and the desktop vitest suite
 
 up: ## Start dev environment (Docker Compose)
 	docker compose up -d --build
@@ -61,6 +61,9 @@ desktop-check: ## Cargo check desktop (Rust)
 
 desktop-test: ## Run desktop Rust tests
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo test
+
+desktop-test-js: ## Run desktop JS/TS tests (vitest)
+	docker compose run --rm -w /app/desktop desktop sh -c '[ -x node_modules/.bin/vitest ] || npm ci; npm test'
 
 desktop-build: ## Build desktop release binary
 	docker compose run --rm -w /app/desktop/src-tauri desktop cargo build --release
