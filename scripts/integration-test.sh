@@ -32,8 +32,26 @@ psql_super() {
 	docker exec -i "$PG_CONTAINER" psql -U "$PG_SUPERUSER" -v ON_ERROR_STOP=1 "$@"
 }
 
+# -buildvcs=false, module-wide via GOFLAGS rather than per invocation, because a
+# per-invocation flag drifts: phase 1 does not need it (no main package under
+# internal/db/migrations) and would sit there untouched until the day one lands.
+#
+# Observed 2026-08-07 on the first CI run of this script: phase 2 died with eight
+# `error obtaining VCS status: exit status 128` — one per main package under
+# cmd/. `go test` stamps VCS metadata into a main package's test binary, which
+# shells out to git; in CI the checkout is owned by the runner and the container
+# runs as another user, so git refuses the repository and the build fails. It
+# passes locally only because the repository and the container user happen to
+# agree there.
+#
+# Accepted trade-off: test binaries lose their VCS stamp. They are built, run and
+# discarded inside this script — nothing reads the stamp — so the information has
+# no consumer to lose.
 in_app() {
-	docker compose run --rm -T -e DATABASE_URL="$DATABASE_URL" app "$@"
+	docker compose run --rm -T \
+		-e DATABASE_URL="$DATABASE_URL" \
+		-e GOFLAGS=-buildvcs=false \
+		app "$@"
 }
 
 # Fail on a green-but-vacuous run. Every integration helper in this repository
