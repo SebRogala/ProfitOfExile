@@ -12,11 +12,12 @@
 	} = $props();
 </script>
 
-<div class="segmented" {title}>
-	{#each options as option}
+<div class="segmented" role="group" {title}>
+	{#each options as option (option.value)}
 		<button
 			class="segmented-btn"
 			class:active={option.value === value}
+			aria-pressed={option.value === value}
 			onclick={() => onselect(option.value)}
 		>
 			{option.label}

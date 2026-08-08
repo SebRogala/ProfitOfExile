@@ -409,7 +409,7 @@
 				<div class="pool-variant-select">
 					<span class="pool-select-label">Pool:</span>
 					<SegmentedButtons
-						value={`${ssot.dedicationVariant}:${toWirePool(ssot.dedicationPool)}`}
+						value={`${dedPool.variant}:${dedPool.poolKey}`}
 						options={DEDICATION_ROWS.map(r => ({ value: `${r.variant}:${r.poolKey}`, label: r.label }))}
 						onselect={(key) => {
 							const [variant, poolKey] = key.split(':');

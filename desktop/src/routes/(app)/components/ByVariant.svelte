@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { VARIANTS, DEDICATION_VARIANTS, type GemPlay } from '$lib/api';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import BestPlays from './BestPlays.svelte';
@@ -41,7 +40,7 @@
 		const variant = ssot.normalVariant;
 		if (variant === seenNormalVariant) return;
 		seenNormalVariant = variant;
-		untrack(() => { activeTab = variant; });
+		activeTab = variant;
 	});
 
 	// Both halves are the shared selection now: picking a dedication tab moves
