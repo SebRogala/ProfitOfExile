@@ -11,15 +11,29 @@
  * League is low-churn, so the poll interval is lazy (seconds), not the
  * comparator overlay's 500 ms.
  *
+ * The farming market (normal variant, dedication variant, dedication pool) is
+ * owned here too (POE-163): every surface reads the same rune and writes through
+ * the exported setters, so there is no per-component mirror to drift.
+ *
  * Usage:
  *   import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
  *   // Read: ssot.league  (string | null; null until first successful get_ssot)
+ *   // Read: ssot.normalVariant / ssot.dedicationVariant / ssot.dedicationPool
+ *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Main window: call startSsotStore() top-level (like initStatusStore()).
  *   // Overlay windows: call startSsotStore() from an $effect and return its
  *   //   cleanup (onMount is unreliable in overlay windows).
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
+
+/**
+ * The dedication pools, in Rust/settings/DB canon spelling (singular `skill`).
+ * `api.ts` has no pool constant — the JSON API uses the plural `skills` for the
+ * same pool, and translating between the two is the consumer's job.
+ */
+const POOLS = ['skill', 'transfigured'];
 
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
 export interface SsotSnapshot {
@@ -29,6 +43,12 @@ export interface SsotSnapshot {
 	/** The resolver has failed enough times to treat the server as unreachable
 	 *  (still retrying). Only meaningful while `resolving` is true. */
 	unreachable?: boolean;
+	/** Normal-mode farming market, e.g. "20/20". */
+	normalVariant?: string;
+	/** Dedication-mode farming market, e.g. "21/23". */
+	dedicationVariant?: string;
+	/** Dedication pool, canon spelling: "skill" | "transfigured". */
+	dedicationPool?: string;
 }
 
 /**
@@ -51,26 +71,179 @@ export const ssot = $state({
 	 *  retrying — drives the "Server unreachable" state with an actionable
 	 *  Refresh. Defaults false. */
 	unreachable: false,
+	/** Normal-mode farming market. Every surface that shows or picks the normal
+	 *  market reads this field — it is what Rust stamps onto uploaded sessions.
+	 *  The initial value matches Rust's default; the first poll corrects it. */
+	normalVariant: '20/20',
+	/** Dedication-mode farming market. Same ownership as `normalVariant`. */
+	dedicationVariant: '21/23',
+	/** Dedication pool in canon spelling ("skill" | "transfigured"). */
+	dedicationPool: 'skill',
 });
+
+/** The three market fields, which share the write-through + poll-guard machinery. */
+type MarketField = 'normalVariant' | 'dedicationVariant' | 'dedicationPool';
+
+/**
+ * Poll-vs-write ordering guard.
+ *
+ * Every write bumps `writeSeq` and stamps it into `lastWriteSeq[field]`;
+ * `fetchSsot` captures the counter *before* awaiting `get_ssot` and hands it to
+ * `applySnapshot`. A snapshot is then ignored for a field when either:
+ *
+ *  - `inFlight[field] > 0` — the write round-trip has not settled yet, so the
+ *    snapshot cannot contain it; or
+ *  - `lastWriteSeq[field] > dispatchedAtSeq` — the snapshot was dispatched
+ *    before the write and merely arrived after it. The in-flight clause alone
+ *    misses this ordering, because the write can settle first.
+ *
+ * `inFlight` counts rather than flags: two rapid clicks overlap, and the first
+ * response must not unguard the second write.
+ */
+let writeSeq = 0;
+const lastWriteSeq: Record<MarketField, number> = {
+	normalVariant: 0,
+	dedicationVariant: 0,
+	dedicationPool: 0,
+};
+const inFlight: Record<MarketField, number> = {
+	normalVariant: 0,
+	dedicationVariant: 0,
+	dedicationPool: 0,
+};
+
+const MARKET_DOMAINS: Record<MarketField, readonly string[]> = {
+	normalVariant: VARIANTS,
+	dedicationVariant: DEDICATION_VARIANTS,
+	dedicationPool: POOLS,
+};
+
+/**
+ * Apply one market field from a snapshot, fail-closed.
+ *
+ * An absent, empty or out-of-domain value keeps the last known good value —
+ * never a hardcoded fallback, which would silently move the farming market to
+ * one nobody picked. An out-of-domain *non-empty* value additionally heals the
+ * Rust side: the UI refuses to display it, but Rust keeps stamping it onto
+ * uploaded font sessions, so it is written back with the value we do show. The
+ * write makes the next poll return the healed value, so this branch stops
+ * matching by itself — no repeat-suppression flag needed.
+ */
+function applyMarketField(field: MarketField, incoming: string | undefined, dispatchedAtSeq: number): void {
+	if (inFlight[field] > 0) return;
+	if (lastWriteSeq[field] > dispatchedAtSeq) return;
+	if (!incoming) return;
+	if (MARKET_DOMAINS[field].includes(incoming)) {
+		ssot[field] = incoming;
+		return;
+	}
+	console.warn(`[ssot] ignoring unknown persisted ${field}:`, incoming, '— healing Rust to', ssot[field]);
+	void writeField(field, ssot[field], MARKET_COMMANDS[field].command, MARKET_COMMANDS[field].arg);
+}
 
 /** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`,
  *  `snap.unreachable`) into the flat store fields. Missing/malformed fields fail
- *  closed (null / false). */
-export function applySnapshot(snap: SsotSnapshot): void {
+ *  closed (null / false for league state, last known good for markets).
+ *
+ *  `dispatchedAtSeq` is the write counter as of the moment this snapshot was
+ *  requested; it defaults to "now" so direct callers get no guard suppression. */
+export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writeSeq): void {
 	ssot.league = snap.league?.name ?? null;
 	ssot.resolving = snap.resolving ?? false;
 	ssot.unreachable = snap.unreachable ?? false;
+	applyMarketField('normalVariant', snap.normalVariant, dispatchedAtSeq);
+	applyMarketField('dedicationVariant', snap.dedicationVariant, dispatchedAtSeq);
+	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let unlistenSsot: UnlistenFn | null = null;
 
 /** Fetch the snapshot via the poll-target command and apply it. */
-async function fetchSsot(): Promise<void> {
+export async function fetchSsot(): Promise<void> {
+	// Capture the write counter before awaiting: anything written after this
+	// point is newer than whatever the response carries.
+	const dispatchedAtSeq = writeSeq;
 	try {
-		applySnapshot(await invoke<SsotSnapshot>('get_ssot'));
+		applySnapshot(await invoke<SsotSnapshot>('get_ssot'), dispatchedAtSeq);
 	} catch (e) {
 		console.warn('[ssot] get_ssot failed:', e);
+	}
+}
+
+/** Command + argument name backing each market field's write path. */
+const MARKET_COMMANDS: Record<MarketField, { command: string; arg: string }> = {
+	normalVariant: { command: 'set_normal_variant', arg: 'variant' },
+	dedicationVariant: { command: 'set_dedication_variant', arg: 'variant' },
+	dedicationPool: { command: 'set_dedication_pool', arg: 'pool' },
+};
+
+/**
+ * Write-through one market field: guard, mutate the rune synchronously, then
+ * invoke. The synchronous mutation is what makes same-window surfaces update in
+ * the same frame instead of waiting a poll interval.
+ *
+ * Never throws — matches `fetchSsot`'s catch-and-warn contract. On failure the
+ * optimistic value stays: the next poll restores Rust truth once the guard
+ * clears, and reverting here would flash a value the user did not pick.
+ */
+async function writeField(field: MarketField, value: string, command: string, arg: string): Promise<void> {
+	writeSeq += 1;
+	lastWriteSeq[field] = writeSeq;
+	inFlight[field] += 1;
+	ssot[field] = value;
+	try {
+		await invoke(command, { [arg]: value });
+	} catch (e) {
+		console.warn(`[ssot] ${command} failed:`, e);
+	} finally {
+		inFlight[field] -= 1;
+	}
+}
+
+/** Set the normal-mode farming market. */
+export function setNormalVariant(variant: string): Promise<void> {
+	const { command, arg } = MARKET_COMMANDS.normalVariant;
+	return writeField('normalVariant', variant, command, arg);
+}
+
+/** Set the dedication-mode farming market. */
+export function setDedicationVariant(variant: string): Promise<void> {
+	const { command, arg } = MARKET_COMMANDS.dedicationVariant;
+	return writeField('dedicationVariant', variant, command, arg);
+}
+
+/** Set the dedication pool (canon spelling: "skill" | "transfigured"). */
+export function setDedicationPool(pool: string): Promise<void> {
+	const { command, arg } = MARKET_COMMANDS.dedicationPool;
+	return writeField('dedicationPool', pool, command, arg);
+}
+
+/**
+ * Set the dedication market and pool as one user action.
+ *
+ * Both fields are guarded and mutated together, then the two Tauri commands are
+ * sequenced, and both guards are held until both settle — so no poll tick can
+ * observe the half-applied pair (new variant, stale pool) that nobody selected.
+ * Every Dedication surface writes through this, never through the two
+ * single-field setters.
+ */
+export async function setDedicationSelection(variant: string, pool: string): Promise<void> {
+	writeSeq += 1;
+	lastWriteSeq.dedicationVariant = writeSeq;
+	lastWriteSeq.dedicationPool = writeSeq;
+	inFlight.dedicationVariant += 1;
+	inFlight.dedicationPool += 1;
+	ssot.dedicationVariant = variant;
+	ssot.dedicationPool = pool;
+	try {
+		await invoke('set_dedication_variant', { variant });
+		await invoke('set_dedication_pool', { pool });
+	} catch (e) {
+		console.warn('[ssot] set dedication selection failed:', e);
+	} finally {
+		inFlight.dedicationVariant -= 1;
+		inFlight.dedicationPool -= 1;
 	}
 }
 
