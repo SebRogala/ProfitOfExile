@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
+	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, DEDICATION_POOL_LABELS, type DedicationPool, VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
@@ -17,7 +17,7 @@
 	function toWirePool(pool: string): 'skills' | 'transfigured' {
 		return pool === 'transfigured' ? 'transfigured' : 'skills';
 	}
-	function toStorePool(wire: string): string {
+	function toStorePool(wire: string): DedicationPool {
 		return wire === 'transfigured' ? 'transfigured' : 'skill';
 	}
 
@@ -35,8 +35,10 @@
 	const isDedication = $derived(labMode === 'dedication');
 
 	const DEDICATION_ROWS = DEDICATION_VARIANTS.flatMap((variant) => [
-		{ variant, poolKey: 'skills' as const, label: `${variant} Non-Transfigured` },
-		{ variant, poolKey: 'transfigured' as const, label: `${variant} Transfigured` },
+		// Labels come from DEDICATION_POOL_LABELS via toStorePool, so a rename lands
+		// here too instead of leaving this file behind as a third home for them.
+		{ variant, poolKey: 'skills' as const, label: `${variant} ${DEDICATION_POOL_LABELS[toStorePool('skills')]}` },
+		{ variant, poolKey: 'transfigured' as const, label: `${variant} ${DEDICATION_POOL_LABELS[toStorePool('transfigured')]}` },
 	]);
 
 	// Entry fee is a property of the Dedication offering, not of a gem market —

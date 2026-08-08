@@ -517,6 +517,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		/* Wrap: this row holds six nav tabs, the lab-mode buttons, and in
+		   Dedication mode a market picker AND a pool picker, plus the scan
+		   controls. Nothing in it can shrink below its content, and the default
+		   window is 1024px (src-tauri/tauri.conf.json), so a no-wrap row pushed
+		   the Scan button out of reach. */
+		flex-wrap: wrap;
+		gap: 8px;
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
 		padding: 0 16px;
@@ -726,8 +733,13 @@
 		padding-left: 4px !important;
 		white-space: nowrap;
 	}
+	/* 65px was sized for the old "Skill Gems" label, whose longest token is
+	   "Skill". "Non-Transfigured" breaks to "Transfigured" (~90px), and with
+	   border-collapse: separate and no table-layout: fixed, min-content beats the
+	   width, so the column silently widened and squeezed the three colour
+	   columns. Allow the wider label rather than pretend 65px holds it. */
 	.dashboard :global(.var) {
-		width: 65px !important;
+		width: 110px !important;
 		text-align: center !important;
 		padding: 2px 2px !important;
 		font-size: 1rem;
