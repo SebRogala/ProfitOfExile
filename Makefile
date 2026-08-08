@@ -16,6 +16,10 @@ test: ## Run all Go tests with race detection
 test-integration: ## Run Go integration tests (build tag: integration) against a throwaway database
 	./scripts/integration-test.sh
 
+# desktop-test (cargo) is in the gate despite the earlier decision to keep it
+# out for build cost: measured 37s for the whole qa run with its 119 Rust tests
+# included. Accepted trade-off — the gate pays a warm cargo build so the desktop
+# Rust tests run somewhere. Revisit if a cold build makes qa too slow to run.
 qa: test desktop-test desktop-test-js ## Run the Go suite, the desktop Rust suite and the desktop vitest suite
 
 up: ## Start dev environment (Docker Compose)
