@@ -50,6 +50,14 @@
 		if (variant === seenNormalVariant) return;
 		seenNormalVariant = variant;
 		activeTab = variant;
+		// A market change made anywhere (top-bar selector included) also ends
+		// the remembered ALL view — otherwise a later remount re-seeds ALL from
+		// the pref and silently discards the market the user just picked.
+		// Narrow accepted race: if this component mounts before the store's
+		// first poll lands AND the stored market differs from the default seed,
+		// this clears a remembered ALL view — degrading to the market tab, not
+		// corrupting anything.
+		tabViewPref.value = '';
 	});
 
 	// Both halves are the shared selection now: picking a dedication tab moves
@@ -87,13 +95,43 @@
 	// that level/quality.
 	// --- Budget (one box for every table below it, like the search) ---
 	//
-	// The filter must run BEFORE the per-table row cap. It used to live in
-	// BestPlays, downstream of the cap, so it could only thin out the 20 rows
-	// already chosen by price — and the visible top-20's base prices sit well
-	// under any realistic budget, so typing one changed nothing. Filtering here
-	// re-fills the table with the best gems that actually fit.
+	// A budget is answered by the SERVER, not by filtering the loaded rows: the
+	// ranked pool on hand is the top-100 per market by absolute ROI, so a small
+	// budget filtered client-side keeps only the affordable stragglers of an
+	// expensive-base list. The server's budget param filters the full corpus
+	// before its limit (internal/lab/collective.go). The client-side filter in
+	// browseFilter stays as the fallback while the fetch is in flight or failed.
 	const budgetPref = persisted('rankingsBudget', '');
 	const budgetChaos = $derived(parseInt(budgetPref.value) > 0 ? parseInt(budgetPref.value) : 0);
+	let budgetResults = $state<GemPlay[] | null>(null);
+	let budgetGeneration = 0;
+	$effect(() => {
+		const b = budgetChaos;
+		const dedication = isDedication;
+		const generation = ++budgetGeneration;
+		if (b <= 0) {
+			budgetResults = null;
+			return;
+		}
+		// Debounced: the box is a text input, and each fetch fans out per market.
+		const timer = setTimeout(async () => {
+			try {
+				const rows = dedication
+					? (await Promise.all(
+							DEDICATION_VARIANTS.map((v) => fetchBestPlays(v, b, undefined, 100, undefined, 'dedication')),
+						)).flat()
+					: (await Promise.all(
+							VARIANTS.map((v) => fetchBestPlays(v, b, undefined, 100)),
+						)).flat();
+				if (generation === budgetGeneration) budgetResults = rows;
+			} catch (err) {
+				// Fall back to filtering the rows on hand — fewer results, never wrong ones.
+				console.warn('[ByVariant] budget fetch failed:', err);
+				if (generation === budgetGeneration) budgetResults = null;
+			}
+		}, 300);
+		return () => clearTimeout(timer);
+	});
 
 	let searchQuery = $state('');
 	let searchResults = $state<GemPlay[] | null>(null);
@@ -183,8 +221,9 @@
 
 	// A search replaces the ranked rows as the source, but never the scoping: the
 	// per-market and per-color filters below apply to it exactly as they do to
-	// the ranked rows.
-	const playSource = $derived(searchResults ?? allPlays);
+	// the ranked rows. A budget-scoped fetch replaces them the same way, one
+	// rung lower — search wins over budget.
+	const playSource = $derived(searchResults ?? budgetResults ?? allPlays);
 
 	// Switching lab mode re-fetches under a different mode, so a result carried
 	// across would be from the wrong one.
