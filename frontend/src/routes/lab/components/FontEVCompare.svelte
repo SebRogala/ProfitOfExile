@@ -23,6 +23,12 @@
 
 	const isDedication = $derived(labMode === 'dedication');
 
+	// Rust, settings and the database spell the dedication pool `skill`; the
+	// JSON API — and this component's wire keys — spell it `skills`.
+	function toStorePool(wire: string): DedicationPool {
+		return wire === 'transfigured' ? 'transfigured' : 'skill';
+	}
+
 	// --- Dedication row definitions ---
 	const DEDICATION_ROWS = DEDICATION_VARIANTS.flatMap((variant) => [
 		// Labels come from DEDICATION_POOL_LABELS via toStorePool, so a rename lands
