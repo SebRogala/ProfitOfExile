@@ -16,18 +16,23 @@
 		{ value: 'roiPercent', label: 'ROI%' },
 	];
 
+	// `rowCap` is applied AFTER the sort: the owner passes the full filtered
+	// pool, and "top N" must mean top N under the sort the user picked. Capping
+	// upstream handed this table the top N by fetch order, reordered.
 	let {
 		plays,
 		title = 'Best Plays Now (ALL variants)',
 		showVariantColumn = true,
 		league = '',
 		searchActive = false,
+		rowCap = Infinity,
 	}: {
 		plays: GemPlay[];
 		title?: string;
 		showVariantColumn?: boolean;
 		league?: string;
 		searchActive?: boolean;
+		rowCap?: number;
 	} = $props();
 
 	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
@@ -50,14 +55,16 @@
 			filtered = filtered.filter((p) => !p.lowConfidence);
 		}
 		if (sortBy === 'price') {
-			return filtered.sort((a, b) => b.transPrice - a.transPrice);
+			filtered.sort((a, b) => b.transPrice - a.transPrice);
+		} else if (sortBy === 'riskAdjusted') {
+			filtered.sort((a, b) => b.weightedRoi - a.weightedRoi);
+		} else {
+			filtered.sort((a, b) =>
+				sortBy === 'roi' ? b.roi - a.roi : b.roiPercent - a.roiPercent
+			);
 		}
-		if (sortBy === 'riskAdjusted') {
-			return filtered.sort((a, b) => b.weightedRoi - a.weightedRoi);
-		}
-		return filtered.sort((a, b) =>
-			sortBy === 'roi' ? b.roi - a.roi : b.roiPercent - a.roiPercent
-		);
+		// A search names its gems explicitly — show them all, cap only browsing.
+		return searchActive ? filtered : filtered.slice(0, rowCap);
 	});
 
 	function velocityStr(v: number): string {
