@@ -64,6 +64,7 @@ pub struct LeagueSlice {
 /// The `Default` gives `league.name == None` (fail-closed) — locked by the
 /// unit test below. Future slices are added as sibling fields here.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSsotSnapshot {
     pub league: LeagueSlice,
     /// A league resolve is currently in flight (the bounded-retry fetch task is
@@ -80,7 +81,63 @@ pub struct AppSsotSnapshot {
     /// fresh "Resolving…" flash (Refresh disabled). Cleared on the next
     /// successful fetch. `Default` is `false`.
     pub unreachable: bool,
+    /// The selected Normal-mode market ("20/20", "20/0", "1/20", "1/0").
+    ///
+    /// Composed at read time from `AppState.normal_variant`, which stays the
+    /// owner — this field is NOT stored in `AppState.ssot`, so there is no
+    /// second copy to keep in sync on every `set_normal_variant`. `Default` is
+    /// the empty string, which the webview must reject as "unknown".
+    pub normal_variant: String,
+    /// The selected Dedication corrupted market ("21/23", "21/20").
+    ///
+    /// Composed at read time from `AppState.dedication_variant`, which stays
+    /// the owner — not stored in `AppState.ssot`. `Default` is the empty
+    /// string, which the webview must reject as "unknown".
+    pub dedication_variant: String,
+    /// The selected Dedication rankings pool ("skill", "transfigured").
+    ///
+    /// Composed at read time from `AppState.dedication_pool`, which stays the
+    /// owner — not stored in `AppState.ssot`. `Default` is the empty string,
+    /// which the webview must reject as "unknown".
+    pub dedication_pool: String,
     // future slices (e.g. account, config) added here as later tasks land.
+}
+
+/// Return `base` with the three market fields replaced by the given values.
+///
+/// Pure so the composition is unit-testable without an `AppHandle` or a full
+/// `AppState` — same reason `should_flag_unreachable` and
+/// `clear_resolution_flags` are extracted.
+fn compose_snapshot(
+    base: AppSsotSnapshot,
+    normal_variant: String,
+    dedication_variant: String,
+    dedication_pool: String,
+) -> AppSsotSnapshot {
+    AppSsotSnapshot {
+        normal_variant,
+        dedication_variant,
+        dedication_pool,
+        ..base
+    }
+}
+
+/// Build the full snapshot: the stored `AppState.ssot` slice plus the market
+/// fields composed from their owning `AppState` Mutexes.
+///
+/// The `ssot` guard is dropped before the market Mutexes are locked (never two
+/// guards at once), matching the lock-then-emit discipline documented on
+/// `emit_ssot`. Both `get_ssot` and `emit_ssot` go through here so the two
+/// paths cannot compose different snapshots.
+pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
+    let base = {
+        let guard = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
+        guard.clone()
+    };
+    let normal_variant = state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let dedication_variant = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let dedication_pool = state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    compose_snapshot(base, normal_variant, dedication_variant, dedication_pool)
 }
 
 /// Whether `consecutive_failures` failed fetch attempts should flip the SSOT to
@@ -109,19 +166,18 @@ fn clear_resolution_flags(ssot: &std::sync::Mutex<AppSsotSnapshot>) {
 pub fn emit_ssot(app: &AppHandle) {
     let snapshot = {
         let state = app.state::<AppState>();
-        let guard = state.ssot.lock().unwrap_or_else(|e| e.into_inner());
-        guard.clone()
+        build_snapshot(&state)
     };
     if let Err(e) = app.emit("ssot-changed", snapshot) {
         log::warn!("emit ssot-changed failed: {}", e);
     }
 }
 
-/// Poll target for overlay windows: lock, clone the snapshot, drop the guard,
-/// return the clone. Serialized to the webview.
+/// Poll target for overlay windows: compose the snapshot from the stored slice
+/// plus the market fields, and return it. Serialized to the webview.
 #[tauri::command]
 pub fn get_ssot(state: tauri::State<AppState>) -> AppSsotSnapshot {
-    state.ssot.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    build_snapshot(&state)
 }
 
 /// Dual-write the resolved league into both sources of truth.
@@ -554,5 +610,100 @@ mod tests {
             parse_league_from_status(&serde_json::json!({ "league": 42 })),
             None,
         );
+    }
+
+    /// The composition contract: every one of the three market values lands in
+    /// the returned snapshot, each in its own field. Distinct values so a
+    /// crossed assignment (pool into variant, etc.) fails instead of passing.
+    #[test]
+    fn compose_snapshot_writes_all_three_market_values() {
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "1/20".to_string(),
+            "21/20".to_string(),
+            "transfigured".to_string(),
+        );
+
+        assert_eq!(out.normal_variant, "1/20");
+        assert_eq!(out.dedication_variant, "21/20");
+        assert_eq!(out.dedication_pool, "transfigured");
+    }
+
+    /// Composition must not disturb the league slice it wraps: the stored
+    /// `AppState.ssot` fields survive the market overlay untouched, so a poll
+    /// never trades a resolved league for a market selection.
+    #[test]
+    fn compose_snapshot_preserves_the_stored_league_slice() {
+        let base = AppSsotSnapshot {
+            league: LeagueSlice { name: Some("Mirage".to_string()) },
+            resolving: true,
+            unreachable: true,
+            ..Default::default()
+        };
+
+        let out = compose_snapshot(
+            base,
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+        );
+
+        assert_eq!(out.league.name, Some("Mirage".to_string()));
+        assert!(out.resolving, "resolving must survive composition");
+        assert!(out.unreachable, "unreachable must survive composition");
+    }
+
+    /// Wire contract: the TypeScript store reads camelCase keys, and the Rust
+    /// field names are snake_case — the `rename_all` attribute is what bridges
+    /// them. Dropping it renames these keys and silently breaks the store.
+    #[test]
+    fn snapshot_serializes_market_fields_as_camel_case() {
+        let snap = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/0".to_string(),
+            "21/20".to_string(),
+            "transfigured".to_string(),
+        );
+
+        let json = serde_json::to_value(&snap).unwrap();
+
+        assert_eq!(json.get("normalVariant").and_then(|v| v.as_str()), Some("20/0"));
+        assert_eq!(json.get("dedicationVariant").and_then(|v| v.as_str()), Some("21/20"));
+        assert_eq!(json.get("dedicationPool").and_then(|v| v.as_str()), Some("transfigured"));
+    }
+
+    /// The same `rename_all` must leave the pre-existing keys alone — they are
+    /// single words, so camelCase is a no-op on them. The store already reads
+    /// `league` / `resolving` / `unreachable` by these exact names.
+    #[test]
+    fn snapshot_serialization_keeps_the_existing_league_keys() {
+        let snap = AppSsotSnapshot {
+            league: LeagueSlice { name: Some("Mirage".to_string()) },
+            resolving: true,
+            unreachable: true,
+            ..Default::default()
+        };
+
+        let json = serde_json::to_value(&snap).unwrap();
+
+        assert_eq!(
+            json.get("league").and_then(|v| v.get("name")).and_then(|v| v.as_str()),
+            Some("Mirage"),
+        );
+        assert_eq!(json.get("resolving").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(json.get("unreachable").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    /// Fail-closed default: a snapshot that was never composed from `AppState`
+    /// carries empty markets, never a plausible-looking "20/20". The webview
+    /// treats empty as unknown, so a default can't be mistaken for a real
+    /// selection.
+    #[test]
+    fn default_snapshot_has_no_market_selection() {
+        let snap = AppSsotSnapshot::default();
+
+        assert_eq!(snap.normal_variant, "");
+        assert_eq!(snap.dedication_variant, "");
+        assert_eq!(snap.dedication_pool, "");
     }
 }
