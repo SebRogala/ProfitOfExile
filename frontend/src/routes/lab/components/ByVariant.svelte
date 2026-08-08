@@ -41,10 +41,6 @@
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
-	let visibleVariants = $derived(
-		activeTab === 'ALL' ? VARIANTS : [activeTab]
-	);
-
 	let activeDedTabInfo = $derived(
 		DEDICATION_TABS.find(t => t.key === activeDedTab) ?? DEDICATION_TABS[0]
 	);
@@ -230,6 +226,20 @@
 		return browseFilter(filtered);
 	}
 
+	// The ALL tab is ONE merged table, not four stacked ones: a budget or colour
+	// filter there is a cross-market question, and four tables answer it four
+	// separate times. The merged pool arrives variant-grouped (per-variant
+	// fetches, concatenated), so it must be ranked by price before the row cap —
+	// a positional slice would fill the whole table from the first variant
+	// fetched. Ranking by price matches how the per-variant tables choose their
+	// rows; the Sort dropdown then reorders within the chosen set, as it does
+	// everywhere else.
+	function playsForAll(): GemPlay[] {
+		if (searchResults) return playSource;
+		const ranked = [...playSource].sort((a, b) => b.transPrice - a.transPrice);
+		return browseFilter(ranked);
+	}
+
 	// baseName holds "skill" or "transfigured" for Dedication gems, and each row
 	// carries the market it was ranked in, so both halves of the tab filter.
 	function playsForPool(pool: string, variant: string): GemPlay[] {
@@ -340,20 +350,30 @@
 				<div class="loading">No data for this pool</div>
 			{/if}
 		</div>
+	{:else if activeTab === 'ALL'}
+		{@const vd = playsForAll()}
+		<div class="variant-block">
+			<div class="variant-label">All markets</div>
+			{#if vd.length > 0}
+				<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} searchActive={searchResults !== null} />
+			{:else if searchResults}
+				<div class="loading">{searchMissReason()}</div>
+			{:else}
+				<div class="loading">No data available</div>
+			{/if}
+		</div>
 	{:else}
-		{#each visibleVariants as variant}
-			{@const vd = playsForVariant(variant)}
-			<div class="variant-block">
-				<div class="variant-label">{variant}</div>
-				{#if vd.length > 0}
-					<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} searchActive={searchResults !== null} />
-				{:else if searchResults}
-					<div class="loading">{searchMissReason()}</div>
-				{:else}
-					<div class="loading">No data for this variant</div>
-				{/if}
-			</div>
-		{/each}
+		{@const vd = playsForVariant(activeTab)}
+		<div class="variant-block">
+			<div class="variant-label">{activeTab}</div>
+			{#if vd.length > 0}
+				<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} {league} searchActive={searchResults !== null} />
+			{:else if searchResults}
+				<div class="loading">{searchMissReason()}</div>
+			{:else}
+				<div class="loading">No data for this variant</div>
+			{/if}
+		</div>
 	{/if}
 </section>
 
