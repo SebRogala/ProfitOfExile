@@ -1,17 +1,17 @@
 <script lang="ts">
-	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, type CompareGem } from '$lib/api';
+	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { store } from '$lib/stores/status.svelte';
-	import { ssot } from '$lib/stores/ssot.svelte';
+	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
 	import GemIcon from './GemIcon.svelte';
-	import Select from '$lib/components/Select.svelte';
+	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	const SIGNAL_COLORS: Record<string, string> = {
@@ -34,18 +34,10 @@
 		divineRate = 0,
 		onQueueGem,
 		labMode = 'normal',
-		dedicationVariant,
-		onDedicationVariantChange,
-		normalVariant,
-		onNormalVariantChange,
 	}: {
 		divineRate?: number;
 		onQueueGem?: (gem: string, variant: string, roi: number, tradeData: TradeLookupResult | null) => void;
 		labMode?: 'normal' | 'dedication';
-		dedicationVariant?: string;
-		onDedicationVariantChange?: (variant: string) => void;
-		normalVariant?: string;
-		onNormalVariantChange?: (variant: string) => void;
 	} = $props();
 
 	let isDedication = $derived(labMode === 'dedication');
@@ -110,30 +102,8 @@
 		}).catch(e => console.warn('[comparator] push to overlay failed:', e));
 	});
 
-	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : NORMAL_VARIANTS);
+	let activeVariants = $derived<readonly string[]>(isDedication ? DEDICATION_VARIANTS : VARIANTS);
 	let VARIANT_OPTIONS = $derived(activeVariants.map((v) => ({ value: v, label: v })));
-
-	// The market is NOT the comparator's to own. It is what Rust stamps onto the
-	// uploaded font session and onto every OCR push to a paired web view, so a
-	// locally-held copy made the recorded run and the comparison disagree — a
-	// 21/23 session priced and trade-searched at 21/20. The owner supplies it per
-	// mode and receives changes back (handleVariantChange), so this picker, the
-	// header, the persisted setting and the web view cannot drift apart.
-	//
-	// Without the prop the comparator falls back to owning it, and then only
-	// corrects a market the current mode cannot show: snapping to a market no
-	// caller tracks would rubber-band the picker on every click.
-	let ownerVariant = $derived.by(() => {
-		const supplied = isDedication ? dedicationVariant : normalVariant;
-		if (supplied === undefined) return null; // no owner — see below
-		if (activeVariants.includes(supplied)) return supplied;
-		// Supplied but unusable. Self-owning silently would leave this picker
-		// working while Rust and the paired web view keep using the bad market,
-		// which is the drift this arrangement exists to remove.
-		console.warn('[comparator] owner supplied a market this mode cannot show:', supplied);
-		return null;
-	});
 
 	// Rows are fetched per market AND per mode (loadResults sends the mode), so
 	// the mode has to trigger a refetch in its own right. Keying only on the
@@ -141,11 +111,15 @@
 	// disjoint — one shared string and a mode flip would leave the previous
 	// mode's rows on screen, priced and unrefetched.
 	let loadedForMode: string | null = null;
+	let loadedForVariant: string | null = null;
 
+	// The market is NOT the comparator's to own — it is the ssot store's, and it
+	// is what Rust stamps onto the uploaded font session and onto every OCR push
+	// to a paired web view. This effect only reacts to the store's value; it
+	// never assigns it.
 	$effect(() => {
-		const target = ownerVariant ?? (activeVariants.includes(variant) ? variant : (isDedication ? DEDICATION_VARIANTS[0] : '20/20'));
-		if (variant === target && loadedForMode === labMode) return;
-		variant = target;
+		if (variant === loadedForVariant && labMode === loadedForMode) return;
+		loadedForVariant = variant;
 		loadedForMode = labMode;
 		dropTradeData();
 		loadResults();
@@ -260,7 +234,7 @@
 		};
 	});
 
-	let variant = $state('20/20');
+	const variant = $derived(isDedication ? ssot.dedicationVariant : ssot.normalVariant);
 	let searchQuery = $state('');
 	let suggestions = $state<string[]>([]);
 	let selectedGems = $state<string[]>([]);
@@ -474,15 +448,6 @@
 		tradeExpanded = {};
 	}
 
-	function handleVariantChange() {
-		// Push the pick up to the owner: the header, the persisted setting, the
-		// run upload and the paired web view all read it from there.
-		if (isDedication) onDedicationVariantChange?.(variant);
-		else onNormalVariantChange?.(variant);
-		dropTradeData();
-		loadResults();
-	}
-
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			showDropdown = false;
@@ -623,7 +588,11 @@
 			</label></Tooltip>
 			<div class="variant-select">
 				<span class="select-label">Variant:</span>
-				<Select bind:value={variant} options={VARIANT_OPTIONS} onchange={() => handleVariantChange()} />
+				<SegmentedButtons
+					value={variant}
+					options={VARIANT_OPTIONS}
+					onselect={(v) => isDedication ? setDedicationSelection(v, ssot.dedicationPool) : setNormalVariant(v)}
+				/>
 			</div>
 		</div>
 	</div>
