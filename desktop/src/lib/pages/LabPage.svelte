@@ -3,6 +3,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
+	import { ssot, fetchSsot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { setDivineRate } from '$lib/price.svelte';
 	import {
 		fetchStatus,
@@ -11,13 +12,14 @@
 		DEDICATION_VARIANTS,
 		fetchMarketOverview,
 		connectMercure,
-		type DedicationVariant,
 		type StatusData,
 		type GemPlay,
 		type MarketOverviewData,
 		type MercureConnection,
 	} from '$lib/api';
 	import type { TradeLookupResult } from '$lib/tradeApi';
+	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
+	import Button from '$lib/components/Button.svelte';
 
 	import Header from '../../routes/(app)/components/Header.svelte';
 	import Comparator from '../../routes/(app)/components/Comparator.svelte';
@@ -40,83 +42,28 @@
 	let isDedication = $derived(labMode === 'Dedication');
 	let labModeForChild = $derived<'normal' | 'dedication'>(isDedication ? 'dedication' : 'normal');
 
-	// --- Dedication variant ---
-	// 21/23 and 21/20 are separate corrupted markets, and every analysis surface
-	// now shows both at once. This selection is what Rust stamps onto uploaded
-	// font sessions (lib.rs send_font_session), so it records which market the
-	// player is actually feeding the font — it is not a view filter.
-	let dedVariant = $state<DedicationVariant>('21/23');
-
-	// --- Normal-mode market ---
-	// The Normal counterpart of dedVariant, and Rust-owned for the same reason:
-	// it is the market OCR'd gems are priced against, so the paired web view has
-	// to be able to read it. It used to live only inside the comparator, which
-	// left the web view pricing at a hardcoded 20/20 whatever was selected here.
-	const NORMAL_VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
-	let normalVariant = $state('20/20');
-
-	// Rust is the owner; these are its mirror. A pick made before the restore
-	// resolves is the newer truth — applying the restore over it would leave the
-	// picker showing one market while Rust stamps scans with another, with no way
-	// back short of picking a different market and returning.
-	let pickedDedVariant = false;
-	let pickedNormalVariant = false;
-
-	/**
-	 * Pull mode and both markets from Rust into the mirror.
-	 *
-	 * `authoritative` is for a reset, which replaces what the player picked:
-	 * the ordinary mount-time restore defers to a pick that already happened.
-	 */
-	function restoreFromRust(authoritative = false) {
+	// The market lives in the ssot store (POE-163) — this page reads `ssot.*` and
+	// writes through its setters. Lab mode is the only selection still restored
+	// from Rust here: it is not part of the SSOT snapshot.
+	function restoreFromRust() {
 		invoke<string>('get_lab_mode')
 			.then((mode) => {
 				if (mode === 'Normal' || mode === 'Dedication') labMode = mode;
 			})
 			.catch(e => console.warn('[LabPage] get_lab_mode failed:', e));
-
-		invoke<string>('get_dedication_variant')
-			.then((v) => {
-				if (pickedDedVariant && !authoritative) return;
-				if ((DEDICATION_VARIANTS as readonly string[]).includes(v)) {
-					dedVariant = v as DedicationVariant;
-				} else if (v) {
-					// Correct the stored value too. The UI refuses to display it, but
-					// Rust keeps stamping it onto every uploaded font session, which
-					// would attribute recorded runs to a market nobody was shown.
-					console.warn('[LabPage] ignoring unknown persisted dedication variant:', v);
-					invoke('set_dedication_variant', { variant: dedVariant })
-						.catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
-				}
-			})
-			.catch(e => console.warn('[LabPage] get_dedication_variant failed:', e));
-
-		invoke<string>('get_normal_variant')
-			.then((v) => {
-				if (pickedNormalVariant && !authoritative) return;
-				if (NORMAL_VARIANTS.includes(v)) {
-					normalVariant = v;
-				} else if (v) {
-					console.warn('[LabPage] ignoring unknown persisted normal variant:', v);
-					invoke('set_normal_variant', { variant: normalVariant })
-						.catch(e => console.warn('[LabPage] set_normal_variant failed:', e));
-				}
-			})
-			.catch(e => console.warn('[LabPage] get_normal_variant failed:', e));
 	}
 
 	restoreFromRust();
 
-	// Reset Everything rewrites mode and both markets in Rust. This page reads
-	// them once, so without re-reading the mirror would keep showing the
-	// pre-reset market while every scan carried the reset one.
+	// Reset Everything rewrites mode and both markets in Rust. The store's poll
+	// would pick the markets up within an interval, but the top bar would show
+	// the pre-reset selection until then, so pull both immediately.
 	$effect(() => {
 		let cancelled = false;
 		const unlistenPromise = listen('settings-reset', () => {
 			if (cancelled) return;
-			pickedDedVariant = false;
-			pickedNormalVariant = false;
-			restoreFromRust(true);
+			restoreFromRust();
+			fetchSsot();
 		});
 		return () => {
 			cancelled = true;
@@ -124,20 +71,47 @@
 		};
 	});
 
-	function handleNormalVariantChange(variant: string) {
-		pickedNormalVariant = true;
-		if (variant === normalVariant) return;
-		normalVariant = variant;
-		invoke('set_normal_variant', { variant }).catch(e => console.warn('[LabPage] set_normal_variant failed:', e));
+	const LAB_MODE_OPTIONS = LAB_MODES.map((m) => ({ value: m, label: m }));
+	const NORMAL_MARKET_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
+	const DEDICATION_MARKET_OPTIONS = DEDICATION_VARIANTS.map((v) => ({ value: v, label: v }));
+	const POOL_OPTIONS = [
+		{ value: 'skill', label: 'Skills' },
+		{ value: 'transfigured', label: 'Transfigured' },
+	];
+
+	const MARKET_TOOLTIP =
+		'Market you are farming. Rankings and Pool Overview follow it, and the run is stamped with it when it uploads.';
+
+	// --- Discard the pending font session ---
+	// The stamp is taken once, at send time, so any market click before the send
+	// re-stamps the whole accumulated session. Two-step confirm because this
+	// button sits beside the frequently clicked market buttons and a discarded
+	// run cannot be recaptured.
+	let discardArmed = $state(false);
+	let discardTimer: ReturnType<typeof setTimeout> | null = null;
+	const DISCARD_ARM_MS = 4000;
+
+	function handleDiscardFontSession() {
+		if (discardArmed) {
+			if (discardTimer) clearTimeout(discardTimer);
+			discardTimer = null;
+			discardArmed = false;
+			invoke('discard_font_session')
+				.catch(e => console.warn('[LabPage] discard_font_session failed:', e));
+			return;
+		}
+		discardArmed = true;
+		if (discardTimer) clearTimeout(discardTimer);
+		discardTimer = setTimeout(() => {
+			discardTimer = null;
+			discardArmed = false;
+		}, DISCARD_ARM_MS);
 	}
 
-	function handleDedVariantChange(variant: DedicationVariant) {
-		pickedDedVariant = true;
-		if (variant === dedVariant) return;
-		dedVariant = variant;
-		invoke('set_dedication_variant', { variant }).catch(e => console.warn('[LabPage] set_dedication_variant failed:', e));
-		// No re-fetch: the rankings hold both markets and filter locally now.
-	}
+	$effect(() => () => {
+		if (discardTimer) clearTimeout(discardTimer);
+		discardTimer = null;
+	});
 
 	// Rankings generation guard + failure surfacing. A re-fetch that loses a race
 	// or fails silently would leave the previous mode's rows on screen, and the
@@ -440,21 +414,40 @@
 			{/each}
 		</div>
 		<div class="bar-right">
-			<div class="lab-mode-selector">
-				{#each LAB_MODES as mode}
-					<button class="lab-mode-btn" class:active={labMode === mode} onclick={() => handleLabModeChange(mode)}>
-						{mode}
-					</button>
-				{/each}
-			</div>
+			<SegmentedButtons
+				value={labMode}
+				options={LAB_MODE_OPTIONS}
+				onselect={(mode) => handleLabModeChange(mode as LabMode)}
+			/>
 			{#if isDedication}
-				<div class="lab-mode-selector" title="Market you are farming — recorded on uploaded runs. Every analysis surface shows both markets regardless.">
-					{#each DEDICATION_VARIANTS as variant}
-						<button class="lab-mode-btn" class:active={dedVariant === variant} onclick={() => handleDedVariantChange(variant)}>
-							{variant}
-						</button>
-					{/each}
-				</div>
+				<SegmentedButtons
+					value={ssot.dedicationVariant}
+					options={DEDICATION_MARKET_OPTIONS}
+					onselect={(variant) => setDedicationSelection(variant, ssot.dedicationPool)}
+					title={MARKET_TOOLTIP}
+				/>
+				<SegmentedButtons
+					value={ssot.dedicationPool}
+					options={POOL_OPTIONS}
+					onselect={(pool) => setDedicationSelection(ssot.dedicationVariant, pool)}
+					title="Gem pool you are farming — Rankings and Pool Overview follow it."
+				/>
+			{:else}
+				<SegmentedButtons
+					value={ssot.normalVariant}
+					options={NORMAL_MARKET_OPTIONS}
+					onselect={(variant) => setNormalVariant(variant)}
+					title={MARKET_TOOLTIP}
+				/>
+			{/if}
+			{#if (store.status?.font_session_rounds ?? 0) > 0}
+				<Button
+					variant={discardArmed ? 'danger' : 'default'}
+					onclick={handleDiscardFontSession}
+					title="The captured font session uploads stamped with the currently selected market. Discard it if it was captured against the wrong one."
+				>
+					{discardArmed ? 'Confirm discard' : `Discard font session (${store.status?.font_session_rounds ?? 0})`}
+				</Button>
 			{/if}
 			<div class="scan-controls">
 				<span class="scan-state" class:picking={store.status?.state === 'PickingGems'}>{store.status?.state || '...'}</span>
@@ -489,10 +482,6 @@
 				divineRate={status?.divinePrice || 0}
 				onQueueGem={handleQueueGem}
 				labMode={labModeForChild}
-				dedicationVariant={dedVariant}
-				onDedicationVariantChange={(v) => handleDedVariantChange(v as DedicationVariant)}
-				normalVariant={normalVariant}
-				onNormalVariantChange={handleNormalVariantChange}
 			/>
 			<SessionQueue
 				queue={sessionQueue}
@@ -561,32 +550,6 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
-	}
-	.lab-mode-selector {
-		display: flex;
-		gap: 0;
-		border: 1px solid var(--color-lab-border);
-		border-radius: 4px;
-		overflow: hidden;
-	}
-	.lab-mode-btn {
-		background: transparent;
-		border: none;
-		color: var(--color-lab-text-secondary);
-		padding: 4px 10px;
-		font-size: 0.6875rem;
-		font-weight: 600;
-		cursor: pointer;
-		font-family: inherit;
-		transition: background 0.15s, color 0.15s;
-	}
-	.lab-mode-btn:hover {
-		color: var(--color-lab-text);
-		background: rgba(255, 255, 255, 0.05);
-	}
-	.lab-mode-btn.active {
-		color: var(--color-lab-text);
-		background: rgba(99, 102, 241, 0.2);
 	}
 	.scan-controls {
 		display: flex;
