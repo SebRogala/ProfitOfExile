@@ -1,3 +1,7 @@
+---
+uid: 53495e24-6c45-41f9-84ed-40f065777ac8
+---
+
 # ADR-003: No ORM — Direct pgx Queries
 
 ## Status
