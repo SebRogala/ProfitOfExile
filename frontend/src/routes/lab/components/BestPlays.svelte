@@ -8,6 +8,7 @@
 	import GemIcon from './GemIcon.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
+	import { persisted } from '$lib/prefs.svelte';
 
 	const SORT_OPTIONS = [
 		{ value: 'price', label: 'Price' },
@@ -35,7 +36,12 @@
 		rowCap?: number;
 	} = $props();
 
-	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
+	// Persisted (ADR-013): the chosen sort survives reloads, and one key means
+	// every rankings table sorts the same way.
+	const sortPref = persisted('rankingsSort', 'price');
+	const sortBy = $derived(
+		(['price', 'riskAdjusted', 'roi', 'roiPercent'] as const).find(s => s === sortPref.value) ?? 'price'
+	);
 	// Default ON. At 20-level variants a thin transfigured market is normal, not
 	// anomalous, so the flag covers most of the pool there — a default that hid it
 	// would reproduce the ranking gap this toggle exists to make visible (POE-131).
@@ -102,7 +108,7 @@
 	<div class="plays-controls">
 		<label class="control-label">
 			Sort:
-			<Select bind:value={sortBy} options={SORT_OPTIONS} />
+			<Select bind:value={sortPref.value} options={SORT_OPTIONS} />
 		</label>
 		<label class="low-conf-toggle" title="Show gems with very few listings (unreliable prices)">
 			<input type="checkbox" bind:checked={showLowConf} />
