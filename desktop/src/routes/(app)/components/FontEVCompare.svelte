@@ -1,16 +1,25 @@
 <script lang="ts">
-	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
+	import { fetchFontEV, fetchDedicationEV, DEDICATION_VARIANTS, VARIANTS, type FontEVResponse, type FontColor, type DedicationEVResponse, type DedicationColor } from '$lib/api';
 	import { baseGemTradeUrl, cheapestCorruptedTradeUrl } from '$lib/trade-utils';
 	import { formatPrice, formatPriceSigned, type PriceUnit } from '$lib/price.svelte';
-	import { ssot } from '$lib/stores/ssot.svelte';
-	import Select from '$lib/components/Select.svelte';
+	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
+	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 
 	let { refreshKey = 0, labMode = 'normal' }: { refreshKey?: number; labMode?: 'normal' | 'dedication' } = $props();
 
-	const VARIANTS = ['1/0', '1/20', '20/0', '20/20'];
 	const COLORS = ['RED', 'GREEN', 'BLUE'] as const;
+
+	// Rust, settings and the database spell the dedication pool `skill`; the JSON
+	// API — and therefore this component's data maps — spell it `skills`.
+	// Renaming the wire key is out of scope: the web frontend shares it.
+	function toWirePool(pool: string): 'skills' | 'transfigured' {
+		return pool === 'transfigured' ? 'transfigured' : 'skills';
+	}
+	function toStorePool(wire: string): string {
+		return wire === 'transfigured' ? 'transfigured' : 'skill';
+	}
 
 	// --- Normal (Font) mode state ---
 	let data = $state<Record<string, FontEVResponse>>({});
@@ -270,12 +279,12 @@
 	}
 
 	let showPool = $state(true);
-	let poolVariant = $state('20/20');
-	// One selector over the four (market, pool) combinations — "21/23:skills".
-	let dedPoolSel = $state(`${DEDICATION_ROWS[0].variant}:${DEDICATION_ROWS[0].poolKey}`);
-	const dedPool = $derived.by(() => {
-		const [variant, poolKey] = dedPoolSel.split(':');
-		return { variant, poolKey: poolKey as 'skills' | 'transfigured' };
+	// Both Pool Overviews show the shared farming selection — the market Rust
+	// stamps onto recorded runs — not a local pick.
+	const poolVariant = $derived(ssot.normalVariant);
+	const dedPool = $derived({
+		variant: ssot.dedicationVariant,
+		poolKey: toWirePool(ssot.dedicationPool),
 	});
 
 	function getPoolBreakdown(variant: string, color: string): { tier: string; count: number; minPrice: number; maxPrice: number }[] {
@@ -399,7 +408,14 @@
 			<div class="pool-section">
 				<div class="pool-variant-select">
 					<span class="pool-select-label">Pool:</span>
-					<Select bind:value={dedPoolSel} options={DEDICATION_ROWS.map(r => ({ value: `${r.variant}:${r.poolKey}`, label: r.label }))} />
+					<SegmentedButtons
+						value={`${ssot.dedicationVariant}:${toWirePool(ssot.dedicationPool)}`}
+						options={DEDICATION_ROWS.map(r => ({ value: `${r.variant}:${r.poolKey}`, label: r.label }))}
+						onselect={(key) => {
+							const [variant, poolKey] = key.split(':');
+							setDedicationSelection(variant, toStorePool(poolKey));
+						}}
+					/>
 				</div>
 				<div class="pool-grid">
 					{#each COLORS as color}
@@ -548,7 +564,11 @@
 			<div class="pool-section">
 				<div class="pool-variant-select">
 					<span class="pool-select-label">Variant:</span>
-					<Select bind:value={poolVariant} options={VARIANTS.map(v => ({ value: v, label: v }))} />
+					<SegmentedButtons
+						value={poolVariant}
+						options={VARIANTS.map(v => ({ value: v, label: v }))}
+						onselect={(variant) => setNormalVariant(variant)}
+					/>
 				</div>
 				<div class="pool-grid">
 					{#each COLORS as color}
