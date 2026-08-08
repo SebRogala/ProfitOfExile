@@ -7,6 +7,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | File | Export | Description |
 |------|--------|-------------|
 | `stores/status.svelte.ts` | `store`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. Read `store.status` and `store.logs` reactively. |
+| `stores/ssot.svelte.ts` | `ssot`, `startSsotStore()`, `setNormalVariant()`, `setDedicationVariant()`, `setDedicationPool()`, `setDedicationSelection()` | Rust-owned single source of truth for market selection, polled every 3000 ms. Read `ssot.league` / `ssot.normalVariant` / `ssot.dedicationVariant` / `ssot.dedicationPool` reactively; write through the exported setters (never assign the fields directly or keep a local copy). |
 | `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings' \| 'dev'`. All pages are always mounted (hidden via CSS) — do not use SvelteKit routing for main views because it unmounts their listeners. |
 
 ## Components
@@ -19,6 +20,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `components/IdentifyDialog.svelte` | `open` (bindable) | Device identify dialog — shows short device ID, alias input, POST to `/api/device/identify`. Triggered by Ctrl+Shift+I. |
 | `components/Button.svelte` | `variant` (`'default'`/`'save'`/`'danger'`), `disabled`, `title`, `onclick`, children | Small action button — default (neutral), save (green), danger (red). Disabled state dims to 35% opacity. |
 | `components/Toggle.svelte` | `checked` (bindable) | On/off toggle switch — dark-themed, animated knob. |
+| `components/SegmentedButtons.svelte` | `value`, `options`, `onselect`, `title` | Horizontal segmented button group — one bordered container, flat buttons, active segment filled. `value` is not bindable: the owning store stays the source of truth and `onselect` reports the pick. |
 | `components/RangeSlider.svelte` | `value` (bindable), `min`, `max`, `step`, `formatValue` | Range slider with value display — optional format function for labels (e.g., `v => \`${v}%\``). |
 | `components/Tooltip.svelte` | `content`, `position`, children | Reusable tooltip wrapper for desktop controls. |
 
