@@ -1,3 +1,7 @@
+---
+uid: 0e463a23-26d2-4052-bbe2-9fee9995d8d6
+---
+
 # ADR-010: Archived League History Is Retained Indefinitely
 
 ## Status

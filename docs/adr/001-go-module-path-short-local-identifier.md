@@ -1,3 +1,7 @@
+---
+uid: 2c9b0507-f2f3-4a0f-be2c-432d1ec74c4a
+---
+
 # ADR-001: Go Module Path: Short Local Identifier
 
 ## Status

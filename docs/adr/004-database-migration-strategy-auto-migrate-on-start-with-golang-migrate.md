@@ -1,3 +1,7 @@
+---
+uid: 55dea7ab-ff6d-4869-964f-eeb0d123e206
+---
+
 # ADR-004: Database Migration Strategy — Auto-Migrate on Start with golang-migrate
 
 ## Status

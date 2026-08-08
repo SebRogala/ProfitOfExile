@@ -1,3 +1,7 @@
+---
+uid: 723f68df-5208-4743-ae8f-e6de4013e7ff
+---
+
 # ADR-008: Current Go Package Architecture
 
 ## Status
