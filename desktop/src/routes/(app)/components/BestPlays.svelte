@@ -40,7 +40,6 @@
 	} = $props();
 
 	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
-	let budget = $state('');
 	// Default ON to match the Rust-side setting default; the stored value below
 	// overwrites it on mount. Starting false would flash a filtered list first.
 	let showLowConf = $state(true);
@@ -58,13 +57,6 @@
 		let filtered = [...plays];
 		if (!showLowConf && !searchActive) {
 			filtered = filtered.filter((p) => !p.lowConfidence);
-		}
-		const b = parseInt(budget);
-		if (b > 0) {
-			// NO_BASE gems have no known cost basis (basePrice 0 means unknown, not
-			// free), so they can't be shown to fit a budget — same rule as the server.
-			filtered = filtered.filter((p) => p.confidence !== 'NO_BASE' && p.basePrice <= b);
-			if (b <= 50) sortBy = 'roiPercent';
 		}
 		if (sortBy === 'price') {
 			return filtered.sort((a, b) => b.transPrice - a.transPrice);
@@ -110,15 +102,6 @@
 <div class="plays-header">
 	<h3 class="plays-title">{title}</h3>
 	<div class="plays-controls">
-		<label class="control-label">
-			Budget:
-			<input
-				type="text"
-				class="budget-input"
-				placeholder="unlimited"
-				bind:value={budget}
-			/>
-		</label>
 		<label class="control-label">
 			Sort:
 			<Select bind:value={sortBy} options={SORT_OPTIONS} />
@@ -293,18 +276,6 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-	}
-	.budget-input {
-		width: 90px;
-		background: var(--color-lab-bg);
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text);
-		padding: 5px 10px;
-		font-size: 0.875rem;
-		font-family: inherit;
-	}
-	.budget-input::placeholder {
-		color: var(--color-lab-text-secondary);
 	}
 	.table-scroll {
 		max-height: 590px;
