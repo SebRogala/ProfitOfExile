@@ -620,8 +620,8 @@
 						{#if tradeLoading[gem.name]?.loading && !tradeData[gem.name]}
 							<div class="trade-loading">
 								<span class="trade-spinner"></span>
-								{#if tradeLoading[gem.name].waitSeconds != null && tradeLoading[gem.name].waitSeconds > 0}
-									<span class="trade-loading-text">Waiting {tradeLoading[gem.name].waitSeconds}s...</span>
+								{#if (tradeLoading[gem.name]?.waitSeconds ?? 0) > 0}
+									<span class="trade-loading-text">Waiting {tradeLoading[gem.name]?.waitSeconds}s...</span>
 								{:else}
 									<span class="trade-loading-text">Fetching trade data...</span>
 								{/if}
@@ -633,7 +633,9 @@
 							</div>
 						{/if}
 						{#if tradeData[gem.name]}
-							{@const td = tradeData[gem.name]}
+							<!-- The assertion is guarded by the #if one line up: TS cannot
+							     carry index-access narrowing into the @const. -->
+							{@const td = tradeData[gem.name]!}
 							{@const divFloor = td.listings.find(l => l.currency === 'divine')}
 							{@const chaosFloor = td.listings.find(l => l.currency === 'chaos')}
 							<div class="trade-data">
