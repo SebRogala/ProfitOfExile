@@ -7,6 +7,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { startSsotStore } from '$lib/stores/ssot.svelte';
+	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 	import LabPage from '$lib/pages/LabPage.svelte';
@@ -451,6 +452,11 @@
 	// ssot-changed nudge, but polling get_ssot is consistent with the overlays
 	// and cheap for a low-churn slice. No cleanup — this layout never unmounts.
 	startSsotStore();
+
+	// Record every lab run, whether or not the timer overlay is enabled. The
+	// recorder used to live in the overlay's webview, so a disabled overlay
+	// meant the Runs tab silently collected nothing.
+	startRunRecorder();
 
 	// Reposition comparator overlay when settings page closes a config overlay.
 	// The config overlay destroy can leave Win32 mouse capture stuck; this move resets focus.
