@@ -31,6 +31,10 @@ export interface AppStatus {
 	auto_trade_enabled: boolean;
 	/** Hardware device fingerprint — hex SHA-256 (64 chars) for hardware, UUID for fallback. */
 	device_id: string;
+	/** Rounds accumulated in the pending font session — 0 when nothing is captured.
+	 *  The session is stamped with the selected market at send time, so a non-zero
+	 *  count is what makes a discardable pending run visible. */
+	font_session_rounds: number;
 }
 
 /** Reactive store — mutate properties, never reassign the export. */
