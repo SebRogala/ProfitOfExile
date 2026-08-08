@@ -80,6 +80,7 @@
 	// that level/quality.
 	let searchQuery = $state('');
 	let searchResults = $state<GemPlay[] | null>(null);
+	let searchError = $state('');
 	let suggestions = $state<string[]>([]);
 	let showDropdown = $state(false);
 	let highlightedIndex = $state(-1);
@@ -88,6 +89,7 @@
 	function clearSearch() {
 		searchQuery = '';
 		searchResults = null;
+		searchError = '';
 		suggestions = [];
 		showDropdown = false;
 		highlightedIndex = -1;
@@ -107,7 +109,14 @@
 		}
 		searchDebounce = setTimeout(async () => {
 			if (searchQuery !== query) return;
-			const names = await fetchGemNames(query);
+			let names: string[];
+			try {
+				names = await fetchGemNames(query, isDedication ? 'dedication' : undefined);
+			} catch (err) {
+				// A swallowed rejection here presented as "typing does nothing".
+				console.warn('[ByVariant] gem name lookup failed:', err);
+				return;
+			}
 			if (searchQuery !== query) return;
 			suggestions = names;
 			showDropdown = suggestions.length > 0;
@@ -119,14 +128,25 @@
 		searchQuery = name;
 		suggestions = [];
 		showDropdown = false;
-		// Fetch across every market — the per-market filter below splits the
-		// result back out. The mode has to be passed: without it the server
-		// answers with normal-mode rows, which carry no `baseName`, so in
-		// Dedication mode every table matched nothing and search looked broken.
-		searchResults = await fetchBestPlays(
-			undefined, undefined, undefined, undefined, name,
-			isDedication ? 'dedication' : undefined,
-		);
+		searchError = '';
+		try {
+			// The dedication endpoint answers for ONE market per request: omitting
+			// `variant` does not mean "all", it silently defaults to 21/23, so a
+			// 21/20 tab found nothing. Fan out and merge, the way the ranked rows
+			// are loaded. Normal mode does return every variant in one response.
+			searchResults = isDedication
+				? (await Promise.all(
+						DEDICATION_VARIANTS.map((v) =>
+							fetchBestPlays(v, undefined, undefined, undefined, name, 'dedication'),
+						),
+					)).flat()
+				: await fetchBestPlays(undefined, undefined, undefined, undefined, name);
+		} catch (err) {
+			// Without this the rejection was silent and the UI simply never changed.
+			console.warn('[ByVariant] gem search failed:', err);
+			searchResults = null;
+			searchError = `Search for "${name}" failed \u2014 check the connection and try again.`;
+		}
 	}
 
 	function handleSearchKeydown(e: KeyboardEvent) {
@@ -228,7 +248,11 @@
 			{/each}
 		</div>
 		<div class="tabs">
-			{#if isDedication}
+			{#if searchError}
+		<div class="search-error">{searchError}</div>
+	{/if}
+
+	{#if isDedication}
 				{#each DEDICATION_TABS as tab}
 					<button
 						class="tab"
@@ -298,7 +322,14 @@
 		justify-content: space-between;
 		align-items: center;
 		margin-bottom: 16px;
-	}
+	/* Wrap, and give every child a gap. The row holds five items — title,
+	   search, Show, colour tabs, variant tabs — and measured wider than the
+	   1024px default window, so a no-wrap row left the search box at 26-82px:
+	   two visible characters, with the absolutely-positioned clear button
+	   covering all of it. */
+	flex-wrap: wrap;
+	gap: 8px;
+}
 	.section-title {
 		font-size: 1.125rem;
 		font-weight: 700;
@@ -307,7 +338,11 @@
 	}
 	.search-wrapper {
 		position: relative;
-		flex: 1;
+		/* NOT `flex: 1` — that is flex-basis 0, and this row has no free space to
+		   distribute, so the box collapsed to its automatic minimum. A real basis
+		   keeps it usable and still lets it shrink. */
+		flex: 0 1 240px;
+		min-width: 180px;
 		max-width: 300px;
 	}
 	.search-input {
@@ -326,6 +361,7 @@
 	}
 	.dropdown {
 		position: absolute;
+		min-width: 240px;
 		top: 100%;
 		left: 0;
 		right: 0;
@@ -339,6 +375,9 @@
 	.dropdown-item {
 		display: block;
 		width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		padding: 6px 12px;
 		text-align: left;
 		background: none;
@@ -365,6 +404,11 @@
 	}
 	.search-clear:hover {
 		color: var(--color-lab-text);
+	}
+	.search-error {
+		color: #f87171;
+		font-size: 0.8125rem;
+		margin-bottom: 12px;
 	}
 	.limit-select {
 		display: flex;
