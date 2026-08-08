@@ -20,7 +20,16 @@ test-integration: ## Run Go integration tests (build tag: integration) against a
 # out for build cost: measured 37s for the whole qa run with its 119 Rust tests
 # included. Accepted trade-off — the gate pays a warm cargo build so the desktop
 # Rust tests run somewhere. Revisit if a cold build makes qa too slow to run.
-qa: test desktop-test desktop-test-js ## Run the Go suite, the desktop Rust suite and the desktop vitest suite
+qa: test desktop-test desktop-test-js deps-check ## Run the Go suite, the desktop Rust suite, the desktop vitest suite and the dependency-contract check
+
+# `npm ls --all` exits non-zero when an installed package violates a declared
+# peer range. That state is otherwise invisible until it misbehaves: the
+# vite-plugin-svelte 4 / Vite 6 mismatch bundled Svelte's *server* runtime into
+# the desktop dev build, turning every `untrack` into a no-op — tests kept
+# passing, only real typing broke. Nothing else in the gate reads peer ranges.
+deps-check: ## Fail if installed npm deps violate declared peer ranges
+	docker compose run --rm -w /app/desktop desktop sh -c 'npm ls --all >/dev/null'
+	docker compose run --rm frontend sh -c 'cd /app && npm ls --all >/dev/null'
 
 up: ## Start dev environment (Docker Compose)
 	docker compose up -d --build
