@@ -28,7 +28,14 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
 
       - name: Install frontend dependencies
-        run: cd desktop && npm install --legacy-peer-deps
+        # npm ci, not npm install: the runner's npm regressed between Node
+        # 24.18.0 and 24.18.1 — `npm install --legacy-peer-deps` silently
+        # skipped the @tauri-apps/cli-win32-x64-msvc optional dep (npm/cli
+        # #4828 class) and the v0.7.6 build died on the missing native module.
+        # npm ci installs the lockfile verbatim, platform optionals included,
+        # and --legacy-peer-deps lost its reason to exist when the
+        # vite-plugin-svelte peer conflict was fixed.
+        run: cd desktop && npm ci
 
       - name: Build SvelteKit frontend
         run: cd desktop && npm run build
