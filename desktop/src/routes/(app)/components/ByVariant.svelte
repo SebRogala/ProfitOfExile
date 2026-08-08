@@ -79,6 +79,16 @@
 	// the unsearched rows go through. A market with no match renders its usual
 	// empty state, which is the useful answer — it says the gem does not sell at
 	// that level/quality.
+	// --- Budget (one box for every table below it, like the search) ---
+	//
+	// The filter must run BEFORE the per-table row cap. It used to live in
+	// BestPlays, downstream of the cap, so it could only thin out the 20 rows
+	// already chosen by price — and the visible top-20's base prices sit well
+	// under any realistic budget, so typing one changed nothing. Filtering here
+	// re-fills the table with the best gems that actually fit.
+	let budgetInput = $state('');
+	const budgetChaos = $derived(parseInt(budgetInput) > 0 ? parseInt(budgetInput) : 0);
+
 	let searchQuery = $state('');
 	let searchResults = $state<GemPlay[] | null>(null);
 	let searchError = $state('');
@@ -213,18 +223,27 @@
 			: `${searchQuery} is not in the rankings.`;
 	}
 
-	// Filter from already-loaded data — zero API calls.
-	function playsForVariant(variant: string): GemPlay[] {
-		let filtered = playSource.filter(g => g.variant === variant);
-		// A search names one gem, so the colour tab and the row cap do not apply to
-		// it — they are for browsing a ranked list. Filtering a searched gem out by
-		// colour and then rendering "not at this variant" answers a question the
-		// player did not ask, with the wrong reason.
-		if (searchResults) return filtered;
+	// Browse-mode filters shared by both table shapes: budget, then colour, then
+	// the row cap. A search bypasses all three — it names one gem explicitly, so
+	// hiding it by budget or colour and then blaming the market answers a
+	// question the player did not ask, with the wrong reason.
+	function browseFilter(filtered: GemPlay[]): GemPlay[] {
+		if (budgetChaos > 0) {
+			// NO_BASE gems have no known cost basis (basePrice 0 means unknown, not
+			// free), so they can't be shown to fit a budget — same rule as the server.
+			filtered = filtered.filter(g => g.confidence !== 'NO_BASE' && g.basePrice <= budgetChaos);
+		}
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
 		return filtered.slice(0, parseInt(itemLimit));
+	}
+
+	// Filter from already-loaded data — zero API calls.
+	function playsForVariant(variant: string): GemPlay[] {
+		const filtered = playSource.filter(g => g.variant === variant);
+		if (searchResults) return filtered;
+		return browseFilter(filtered);
 	}
 
 	function playsForPool(poolType: string, variant: string): GemPlay[] {
@@ -233,12 +252,9 @@
 		// both means a heading that has moved ahead of its rows shows an empty
 		// table rather than the previous market's numbers — the rows themselves
 		// are the only thing here that knows which market they describe.
-		let filtered = playSource.filter(g => g.baseName === poolType && g.variant === variant);
+		const filtered = playSource.filter(g => g.baseName === poolType && g.variant === variant);
 		if (searchResults) return filtered;
-		if (activeColor !== 'ALL') {
-			filtered = filtered.filter(g => g.color === activeColor);
-		}
-		return filtered.slice(0, parseInt(itemLimit));
+		return browseFilter(filtered);
 	}
 </script>
 
@@ -271,6 +287,15 @@
 				</div>
 			{/if}
 		</div>
+		<label class="budget-label">
+			Budget:
+			<input
+				type="text"
+				class="budget-input"
+				placeholder="unlimited"
+				bind:value={budgetInput}
+			/>
+		</label>
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
 			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
@@ -400,6 +425,25 @@
 		outline: none;
 	}
 	.search-input::placeholder {
+		color: var(--color-lab-text-secondary);
+	}
+	.budget-label {
+		color: var(--color-lab-text-secondary);
+		font-size: 0.875rem;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.budget-input {
+		width: 90px;
+		background: var(--color-lab-bg);
+		border: 1px solid var(--color-lab-border);
+		color: var(--color-lab-text);
+		padding: 5px 10px;
+		font-size: 0.875rem;
+		font-family: inherit;
+	}
+	.budget-input::placeholder {
 		color: var(--color-lab-text-secondary);
 	}
 	.dropdown {
