@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
+	import { untrack } from 'svelte';
 	import { VARIANTS, DEDICATION_VARIANTS, type GemPlay } from '$lib/api';
+	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
@@ -29,17 +30,23 @@
 		{ value: '50', label: '50' },
 	];
 
-	let activeTab = $state('20/20');
-	let activeDedTab = $state(DEDICATION_TABS[0].key);
-	// Only the pool half is persisted in Rust (it also drives the overlay); the
-	// market shown here is a local view choice, unlike the farmed market in the
-	// top bar which is stamped onto recorded runs.
+	// The tab strip follows the shared market, but it also offers ALL — a fifth
+	// value the store's four-value domain has no room for. So the tab stays local
+	// state seeded from the store, and follows a *change* of the store value
+	// rather than the value itself: a plain effect would snap ALL back to the
+	// market on every run.
+	let activeTab = $state(ssot.normalVariant);
+	let seenNormalVariant = ssot.normalVariant;
 	$effect(() => {
-		invoke<string>('get_dedication_pool').then(p => {
-			const match = DEDICATION_TABS.find(t => t.pool === p);
-			if (match) activeDedTab = match.key;
-		}).catch(() => {});
+		const variant = ssot.normalVariant;
+		if (variant === seenNormalVariant) return;
+		seenNormalVariant = variant;
+		untrack(() => { activeTab = variant; });
 	});
+
+	// Both halves are the shared selection now: picking a dedication tab moves
+	// the market that Rust stamps onto recorded runs, not just this view.
+	const activeDedTab = $derived(`${ssot.dedicationVariant}:${ssot.dedicationPool}`);
 	let activeColor = $state('ALL');
 	let itemLimit = $state('20');
 
@@ -102,7 +109,7 @@
 					<button
 						class="tab"
 						class:active={activeDedTab === tab.key}
-						onclick={() => { activeDedTab = tab.key; invoke('set_dedication_pool', { pool: tab.pool }).catch(() => {}); }}
+						onclick={() => { setDedicationSelection(tab.variant, tab.pool); }}
 					>
 						{#if activeDedTab === tab.key}<span class="tab-dot">●</span>{/if}
 						{tab.label}
@@ -113,7 +120,15 @@
 					<button
 						class="tab"
 						class:active={activeTab === tab}
-						onclick={() => { activeTab = tab; }}
+						onclick={() => {
+							activeTab = tab;
+							// ALL is a view-only tab: it names no market, so it never
+							// writes to the shared selection.
+							if (tab !== 'ALL') {
+								seenNormalVariant = tab;
+								setNormalVariant(tab);
+							}
+						}}
 					>
 						{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
 						{tab}
