@@ -153,6 +153,29 @@ export interface DedicationEVResponse {
 export const DEDICATION_VARIANTS = ['21/20', '21/23'] as const;
 export type DedicationVariant = typeof DEDICATION_VARIANTS[number];
 
+/**
+ * The two Dedication gem pools, in the canon spelling — the one Rust, the
+ * settings file and the database use. The Font EV JSON wire format spells the
+ * first one `skills`; that boundary is translated in FontEVCompare rather than
+ * renamed here, because the web frontend shares the wire key.
+ */
+export const DEDICATION_POOLS = ['skill', 'transfigured'] as const;
+export type DedicationPool = typeof DEDICATION_POOLS[number];
+
+/**
+ * Display labels for the pools. Every surface that names a pool reads them from
+ * here — they were previously written out at each call site, so renaming one
+ * label meant finding six of them.
+ *
+ * "Non-Transfigured" rather than "Normal": the top bar already labels the lab
+ * mode Normal, and two adjacent buttons both reading Normal would name two
+ * different things.
+ */
+export const DEDICATION_POOL_LABELS: Record<DedicationPool, string> = {
+	skill: 'Non-Transfigured',
+	transfigured: 'Transfigured',
+};
+
 export interface MarketOverviewData {
 	avgTransPrice: number;
 	avgTransPriceDelta: number;

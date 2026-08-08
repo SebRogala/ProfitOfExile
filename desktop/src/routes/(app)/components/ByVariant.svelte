@@ -1,5 +1,14 @@
 <script lang="ts">
-	import { VARIANTS, DEDICATION_VARIANTS, type GemPlay } from '$lib/api';
+	import { untrack } from 'svelte';
+	import {
+		VARIANTS,
+		DEDICATION_VARIANTS,
+		DEDICATION_POOLS,
+		DEDICATION_POOL_LABELS,
+		fetchGemNames,
+		fetchBestPlays,
+		type GemPlay,
+	} from '$lib/api';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
@@ -10,8 +19,6 @@
 	const isDedication = $derived(labMode === 'dedication');
 
 	const NORMAL_TABS = ['ALL', ...VARIANTS];
-	const DEDICATION_POOLS = ['skill', 'transfigured'];
-	const DEDICATION_POOL_LABELS: Record<string, string> = { skill: 'Skills', transfigured: 'Transfigured' };
 	// One tab per (market, pool): the four rows of the Dedication EV table, in
 	// the same order.
 	const DEDICATION_TABS = DEDICATION_VARIANTS.flatMap((variant) =>
@@ -57,9 +64,101 @@
 		DEDICATION_TABS.find(t => t.key === activeDedTab) ?? DEDICATION_TABS[0]
 	);
 
+	// --- Gem search (one box for every table below it) ---
+	//
+	// Search lives here rather than in BestPlays because the tables below are
+	// each scoped to one market. A per-table search fetched across every variant
+	// and then replaced that table's rows wholesale, so a table headed "Best
+	// Plays (20/20)" listed all four variants of the matched gem — with the Var
+	// column hidden, as four rows that read as identical. On the ALL tab it was
+	// worse: four tables, four independent boxes, so typing in one left the
+	// other three showing unrelated gems.
+	//
+	// One query, held here, feeds every table through the same per-market filter
+	// the unsearched rows go through. A market with no match renders its usual
+	// empty state, which is the useful answer — it says the gem does not sell at
+	// that level/quality.
+	let searchQuery = $state('');
+	let searchResults = $state<GemPlay[] | null>(null);
+	let suggestions = $state<string[]>([]);
+	let showDropdown = $state(false);
+	let highlightedIndex = $state(-1);
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+	function clearSearch() {
+		searchQuery = '';
+		searchResults = null;
+		suggestions = [];
+		showDropdown = false;
+		highlightedIndex = -1;
+	}
+
+	function handleSearchInput(query: string) {
+		searchQuery = query;
+		if (searchDebounce) clearTimeout(searchDebounce);
+		if (!query.trim()) {
+			clearSearch();
+			return;
+		}
+		if (query.length < 2) {
+			suggestions = [];
+			showDropdown = false;
+			return;
+		}
+		searchDebounce = setTimeout(async () => {
+			if (searchQuery !== query) return;
+			const names = await fetchGemNames(query);
+			if (searchQuery !== query) return;
+			suggestions = names;
+			showDropdown = suggestions.length > 0;
+			highlightedIndex = suggestions.length === 1 ? 0 : -1;
+		}, 100);
+	}
+
+	async function selectGem(name: string) {
+		searchQuery = name;
+		suggestions = [];
+		showDropdown = false;
+		// Fetch across every market — the per-market filter below splits the
+		// result back out. The mode has to be passed: without it the server
+		// answers with normal-mode rows, which carry no `baseName`, so in
+		// Dedication mode every table matched nothing and search looked broken.
+		searchResults = await fetchBestPlays(
+			undefined, undefined, undefined, undefined, name,
+			isDedication ? 'dedication' : undefined,
+		);
+	}
+
+	function handleSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown' && showDropdown) {
+			e.preventDefault();
+			highlightedIndex = Math.min(highlightedIndex + 1, suggestions.length - 1);
+		} else if (e.key === 'ArrowUp' && showDropdown) {
+			e.preventDefault();
+			highlightedIndex = Math.max(highlightedIndex - 1, 0);
+		} else if (e.key === 'Enter' && highlightedIndex >= 0) {
+			e.preventDefault();
+			selectGem(suggestions[highlightedIndex]);
+		} else if (e.key === 'Escape') {
+			clearSearch();
+		}
+	}
+
+	// A search replaces the ranked rows as the source, but never the scoping: the
+	// per-market and per-color filters below apply to it exactly as they do to
+	// the ranked rows.
+	const playSource = $derived(searchResults ?? allPlays);
+
+	// Switching lab mode re-fetches under a different mode, so a result carried
+	// across would be from the wrong one.
+	$effect(() => {
+		isDedication;
+		untrack(() => { if (searchResults) clearSearch(); });
+	});
+
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
-		let filtered = allPlays.filter(g => g.variant === variant);
+		let filtered = playSource.filter(g => g.variant === variant);
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -72,7 +171,7 @@
 		// both means a heading that has moved ahead of its rows shows an empty
 		// table rather than the previous market's numbers — the rows themselves
 		// are the only thing here that knows which market they describe.
-		let filtered = allPlays.filter(g => g.baseName === poolType && g.variant === variant);
+		let filtered = playSource.filter(g => g.baseName === poolType && g.variant === variant);
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -83,6 +182,32 @@
 <section class="section">
 	<div class="section-header">
 		<h2 class="section-title"><Tooltip text="<b>Gem Ranking by Variant</b><br><br>Gems sorted by price (default), ROI, or risk-adjusted ROI. Filter by color and toggle low-confidence gems.<br><br><b>Tiers</b> (computed per variant, dynamic boundaries):<br>&nbsp;&nbsp;<span style='color:#fbbf24'>TOP</span> = monopoly outliers (gap-detected from clean pool)<br>&nbsp;&nbsp;<span style='color:#fb923c'>HIGH</span> = premium cluster (within 30% of top gem)<br>&nbsp;&nbsp;<span style='color:#c084fc'>MID-HIGH</span> = worth farming (above 50% of HIGH boundary)<br>&nbsp;&nbsp;<span style='color:#94a3b8'>MID</span> = decent profit<br>&nbsp;&nbsp;<span style='color:#64748b'>LOW</span> = marginal ROI<br>&nbsp;&nbsp;<span style='color:#475569'>FLOOR</span> = below 8% of top-5 average (not worth farming)<br><br><b>Low confidence</b> toggle shows thin-market gems (listings &lt; 40% of median). These may be price manipulation or meta shifts — system can't tell which.<br><br><b>Sort modes</b>: Price (default), Raw ROI, Risk-Adj ROI, ROI%.">By Variant</Tooltip></h2>
+		<div class="search-wrapper">
+			<input
+				type="text"
+				class="search-input"
+				placeholder="Search gem..."
+				value={searchQuery}
+				oninput={(e) => handleSearchInput(e.currentTarget.value)}
+				onkeydown={handleSearchKeydown}
+				onfocus={() => { if (suggestions.length) showDropdown = true; }}
+				onblur={() => setTimeout(() => { showDropdown = false; }, 200)}
+			/>
+			{#if searchQuery}
+				<button class="search-clear" title="Clear search" onclick={clearSearch}>×</button>
+			{/if}
+			{#if showDropdown && suggestions.length > 0}
+				<div class="dropdown">
+					{#each suggestions as gem, i}
+						<button
+							class="dropdown-item"
+							class:highlighted={i === highlightedIndex}
+							onmousedown={() => selectGem(gem)}
+						>{gem}</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
 			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
@@ -141,7 +266,9 @@
 		{@const tab = activeDedTabInfo}
 		{@const vd = playsForPool(tab.pool, tab.variant)}
 		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} />
+			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} searchActive={searchResults !== null} />
+		{:else if searchResults}
+			<div class="loading">No {searchQuery} in this pool</div>
 		{:else}
 			<div class="loading">No data for this pool</div>
 		{/if}
@@ -149,7 +276,9 @@
 		{#each visibleVariants as variant}
 			{@const vd = playsForVariant(variant)}
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} />
+				<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} searchActive={searchResults !== null} />
+			{:else if searchResults}
+				<div class="loading">No {searchQuery} at {variant}</div>
 			{:else}
 				<div class="loading">No data for this variant</div>
 			{/if}
@@ -175,6 +304,67 @@
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
+	}
+	.search-wrapper {
+		position: relative;
+		flex: 1;
+		max-width: 300px;
+	}
+	.search-input {
+		width: 100%;
+		background: var(--color-lab-bg);
+		border: 1px solid var(--color-lab-border);
+		color: var(--color-lab-text);
+		padding: 6px 12px;
+		font-size: 0.8125rem;
+		font-family: inherit;
+		box-sizing: border-box;
+		outline: none;
+	}
+	.search-input::placeholder {
+		color: var(--color-lab-text-secondary);
+	}
+	.dropdown {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		background: var(--color-lab-surface);
+		border: 1px solid var(--color-lab-border);
+		border-top: none;
+		max-height: 200px;
+		overflow-y: auto;
+		z-index: 100;
+	}
+	.dropdown-item {
+		display: block;
+		width: 100%;
+		padding: 6px 12px;
+		text-align: left;
+		background: none;
+		border: none;
+		color: var(--color-lab-text);
+		font-size: 0.8125rem;
+		cursor: pointer;
+	}
+	.dropdown-item:hover, .dropdown-item.highlighted {
+		background: rgba(255, 255, 255, 0.08);
+	}
+	.search-clear {
+		position: absolute;
+		right: 6px;
+		top: 50%;
+		transform: translateY(-50%);
+		background: none;
+		border: none;
+		color: var(--color-lab-text-secondary);
+		font-size: 1rem;
+		line-height: 1;
+		padding: 0 4px;
+		cursor: pointer;
+	}
+	.search-clear:hover {
+		color: var(--color-lab-text);
 	}
 	.limit-select {
 		display: flex;
