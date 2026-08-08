@@ -13,6 +13,7 @@
 	import BestPlays from './BestPlays.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
+	import { persisted } from '$lib/prefs.svelte';
 
 	let { allPlays = [], league = '', labMode = 'normal' }: { allPlays?: GemPlay[]; league?: string; labMode?: 'normal' | 'dedication' } = $props();
 
@@ -36,13 +37,16 @@
 		{ value: '50', label: '50' },
 	];
 
-	let activeTab = $state('20/20');
-	let activeDedTab = $state(DEDICATION_TABS[0].key);
-	let activeColor = $state('ALL');
-	let itemLimit = $state('20');
+	// Persisted picks (ADR-013): every select on this surface is remembered
+	// across visits. Unlike the desktop app there is no SSOT store here, so the
+	// tabs persist wholesale.
+	const activeTab = persisted('rankingsTab', '20/20');
+	const activeDedTab = persisted('rankingsDedTab', DEDICATION_TABS[0].key);
+	const colorPref = persisted('rankingsColor', 'ALL');
+	const limitPref = persisted('rankingsLimit', '20');
 
 	let activeDedTabInfo = $derived(
-		DEDICATION_TABS.find(t => t.key === activeDedTab) ?? DEDICATION_TABS[0]
+		DEDICATION_TABS.find(t => t.key === activeDedTab.value) ?? DEDICATION_TABS[0]
 	);
 
 	// --- Gem search (one box for every table below it) ---
@@ -66,8 +70,8 @@
 	// already chosen by price — and the visible top-20's base prices sit well
 	// under any realistic budget, so typing one changed nothing. Filtering here
 	// re-fills the table with the best gems that actually fit.
-	let budgetInput = $state('');
-	const budgetChaos = $derived(parseInt(budgetInput) > 0 ? parseInt(budgetInput) : 0);
+	const budgetPref = persisted('rankingsBudget', '');
+	const budgetChaos = $derived(parseInt(budgetPref.value) > 0 ? parseInt(budgetPref.value) : 0);
 
 	let searchQuery = $state('');
 	let searchResults = $state<GemPlay[] | null>(null);
@@ -217,8 +221,8 @@
 			// free), so they can't be shown to fit a budget — same rule as the server.
 			filtered = filtered.filter(g => g.confidence !== 'NO_BASE' && g.basePrice <= budgetChaos);
 		}
-		if (activeColor !== 'ALL') {
-			filtered = filtered.filter(g => g.color === activeColor);
+		if (colorPref.value !== 'ALL') {
+			filtered = filtered.filter(g => g.color === colorPref.value);
 		}
 		return filtered;
 	}
@@ -284,22 +288,22 @@
 				type="text"
 				class="budget-input"
 				placeholder="unlimited"
-				bind:value={budgetInput}
+				bind:value={budgetPref.value}
 			/>
 		</label>
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
-			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
+			<Select bind:value={limitPref.value} options={LIMIT_OPTIONS} />
 		</div>
 		<div class="color-tabs">
 			{#each COLORS as color}
 				<button
 					class="tab color-tab"
-					class:active={activeColor === color}
+					class:active={colorPref.value === color}
 					class:c-red={color === 'RED'}
 					class:c-green={color === 'GREEN'}
 					class:c-blue={color === 'BLUE'}
-					onclick={() => { activeColor = color; }}
+					onclick={() => { colorPref.value = color; }}
 				>
 					{#if color !== 'ALL'}<span class="color-dot">●</span>{/if}
 					{color}
@@ -311,10 +315,10 @@
 				{#each DEDICATION_TABS as tab}
 					<button
 						class="tab"
-						class:active={activeDedTab === tab.key}
-						onclick={() => { activeDedTab = tab.key; }}
+						class:active={activeDedTab.value === tab.key}
+						onclick={() => { activeDedTab.value = tab.key; }}
 					>
-						{#if activeDedTab === tab.key}<span class="tab-dot">●</span>{/if}
+						{#if activeDedTab.value === tab.key}<span class="tab-dot">●</span>{/if}
 						{tab.label}
 					</button>
 				{/each}
@@ -322,10 +326,10 @@
 				{#each TABS as tab}
 					<button
 						class="tab"
-						class:active={activeTab === tab}
-						onclick={() => { activeTab = tab; }}
+						class:active={activeTab.value === tab}
+						onclick={() => { activeTab.value = tab; }}
 					>
-						{#if activeTab === tab}<span class="tab-dot">●</span>{/if}
+						{#if activeTab.value === tab}<span class="tab-dot">●</span>{/if}
 						{tab}
 					</button>
 				{/each}
@@ -343,19 +347,19 @@
 		<div class="variant-block">
 			<div class="variant-label">{tab.label}</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
+				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
 			{:else if searchResults}
 				<div class="loading">{searchMissReason()}</div>
 			{:else}
 				<div class="loading">No data for this pool</div>
 			{/if}
 		</div>
-	{:else if activeTab === 'ALL'}
+	{:else if activeTab.value === 'ALL'}
 		{@const vd = playsForAll()}
 		<div class="variant-block">
 			<div class="variant-label">All markets</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
+				<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
 			{:else if searchResults}
 				<div class="loading">{searchMissReason()}</div>
 			{:else}
@@ -363,11 +367,11 @@
 			{/if}
 		</div>
 	{:else}
-		{@const vd = playsForVariant(activeTab)}
+		{@const vd = playsForVariant(activeTab.value)}
 		<div class="variant-block">
-			<div class="variant-label">{activeTab}</div>
+			<div class="variant-label">{activeTab.value}</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} {league} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
+				<BestPlays plays={vd} title="Best Plays ({activeTab.value})" showVariantColumn={false} {league} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
 			{:else if searchResults}
 				<div class="loading">{searchMissReason()}</div>
 			{:else}

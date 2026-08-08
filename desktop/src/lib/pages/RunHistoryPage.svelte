@@ -2,10 +2,12 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { store } from '$lib/stores/status.svelte';
 	import Select from '$lib/components/Select.svelte';
+	import { persisted } from '$lib/prefs.svelte';
 
 	let runs = $state<any[]>([]);
 	let stats = $state<{ avg_seconds: number; best_seconds: number; avg_kill_seconds: number; best_kill_seconds: number; total_runs: number }>({ avg_seconds: 0, best_seconds: 0, avg_kill_seconds: 0, best_kill_seconds: 0, total_runs: 0 });
-	let difficulty = $state('');
+	// Persisted (ADR-013): the difficulty filter survives restarts.
+	const difficulty = persisted('runsDifficulty', '');
 	let loading = $state(false);
 	let error = $state('');
 
@@ -40,7 +42,7 @@
 		error = '';
 		try {
 			const params = new URLSearchParams({ limit: '50' });
-			if (difficulty) params.set('difficulty', difficulty);
+			if (difficulty.value) params.set('difficulty', difficulty.value);
 			const res = await fetch(`${serverUrl}/api/lab/runs?${params}`, {
 				headers: {
 					'X-Device-ID': deviceId,
@@ -62,7 +64,7 @@
 
 	// Fetch on mount and when filter changes
 	$effect(() => {
-		const _ = difficulty;
+		const _ = difficulty.value;
 		const url = store.status?.server_url;
 		if (url) fetchRuns();
 	});
@@ -71,7 +73,7 @@
 <div class="runs-page">
 	<div class="runs-header">
 		<h1>Run History</h1>
-		<Select bind:value={difficulty} options={difficultyOptions} onchange={fetchRuns} />
+		<Select bind:value={difficulty.value} options={difficultyOptions} onchange={fetchRuns} />
 	</div>
 
 	{#if stats.total_runs > 0}
