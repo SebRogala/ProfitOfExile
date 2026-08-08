@@ -109,7 +109,7 @@
 	{:else if runs.length === 0}
 		<div class="empty">
 			<p>No runs recorded yet.</p>
-			<p class="hint">Complete a lab run with the timer overlay enabled to start tracking.</p>
+			<p class="hint">Complete a lab run to start tracking — runs are recorded automatically.</p>
 		</div>
 	{:else}
 		<div class="table-wrap">

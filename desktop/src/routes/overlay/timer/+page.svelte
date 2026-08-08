@@ -17,7 +17,9 @@
 		resetTimer as timerReset_fn,
 	} from '$lib/compass/timer';
 
-	// --- Navigation state (needed for room tracking, golden door detection, and route info) ---
+	// --- Navigation state (needed to know when we're in the lab and which room) ---
+	// Display only: run measurement and submission live in $lib/run-recorder.ts,
+	// which runs in the main window regardless of this overlay's toggle.
 	let navState = $state(createNavState());
 	let lockedDifficulty = $state<string | null>(null);
 	let layoutLoaded = $state(false);
@@ -42,71 +44,12 @@
 	let textStroke = $state(true);
 	let bgStyle = $derived(`rgba(13, 13, 21, ${bgOpacity})`);
 
-	// --- Room tracking for run submission ---
-	let roomLog = $state<{ room_name: string; entered_at: string; room_number: number }[]>([]);
-	let roomCounter = 0;
-	let killTime = $state(0); // Izaro death time — snapshotted on LabFinished
-
 	function startTimer() { timer = timerStart_fn(timer, (e) => { elapsed = e; }); }
 	function stopTimer() { timer = timerStop_fn(timer); }
-	function resetTimer() { timer = timerReset_fn(timer); elapsed = 0; roomLog = []; roomCounter = 0; killTime = 0; }
+	function resetTimer() { timer = timerReset_fn(timer); elapsed = 0; }
 
 	function logToApp(msg: string) {
 		invoke('app_log_from_frontend', { msg }).catch((e) => console.warn('[timer] logToApp IPC failed:', msg, e));
-	}
-
-	// --- Submit completed run to server ---
-	// Called on LabExited with the full run data. Kill time was snapshotted
-	// on LabFinished; total elapsed is the time from first room to lab exit.
-	async function submitRun() {
-		const totalElapsed = elapsed;
-		const snapshotRooms = [...roomLog];
-		const snapshotKillTime = killTime;
-		const snapshotStartedAt = timer.startTimestamp;
-		if (snapshotKillTime <= 0 || snapshotRooms.length === 0) return;
-		try {
-			const status = await invoke<any>('get_status');
-			const serverUrl = status?.server_url;
-			if (!serverUrl) { logToApp('[timer] no server_url, cannot submit run'); return; }
-
-			const settings = await invoke<any>('get_compass_settings').catch(() => null);
-			const visitedRoomNames = new Set(snapshotRooms.map(r => r.room_name.toLowerCase()));
-			const hasGoldenDoor = navState.lockedDoors.length > 0 ||
-				Array.from(navState.roomById.values())
-					.filter(r => visitedRoomNames.has(r.name.toLowerCase()))
-					.some(r => r.contents.some(c => c.toLowerCase().includes('golden-door')));
-
-			const body = {
-				difficulty: settings?.difficulty ?? lockedDifficulty ?? 'Uber',
-				strategy: settings?.strategy ?? navState.strategy,
-				elapsed_seconds: totalElapsed,
-				kill_seconds: snapshotKillTime,
-				room_count: snapshotRooms.length,
-				has_golden_door: hasGoldenDoor,
-				started_at: snapshotStartedAt ? new Date(snapshotStartedAt).toISOString() : new Date().toISOString(),
-				rooms: snapshotRooms,
-			};
-
-			const res = await fetch(`${serverUrl}/api/lab/runs`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'X-Device-ID': status?.device_id ?? '',
-					'X-App-Version': status?.app_version ?? '',
-				},
-				body: JSON.stringify(body),
-			});
-
-			if (res.ok) {
-				const data = await res.json();
-				logToApp(`[timer] run submitted: id=${data.run_id}, kill=${snapshotKillTime}s, total=${totalElapsed}s`);
-			} else {
-				const errBody = await res.text().catch(() => '');
-				logToApp(`[timer] submit failed: ${res.status} ${errBody}`);
-			}
-		} catch (e) {
-			logToApp(`[timer] submit error: ${e}`);
-		}
 	}
 
 	// --- Event handling ---
@@ -130,26 +73,17 @@
 				if (navState.inLab && timer.startTimestamp === null) {
 					startTimer();
 				}
-				// Log room for submission
-				roomCounter++;
-				roomLog = [...roomLog, {
-					room_name: event.name,
-					entered_at: new Date().toISOString(),
-					room_number: roomCounter,
-				}];
 				// Hide during Izaro fights
 				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
 				hidden = room?.name.toLowerCase() === "aspirant's trial";
 				break;
 			}
 			case 'LabFinished':
-				// Snapshot Izaro death time — timer keeps running through looting
-				killTime = elapsed;
+				// Timer keeps running through looting
 				hidden = false;
 				break;
 			case 'LabExited':
 				stopTimer();
-				submitRun();
 				resetTimer();
 				hidden = true;
 				if (pendingLayoutReset) {
