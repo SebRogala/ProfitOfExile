@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { fetchSignalHistory, fetchGemNames, fetchBestPlays, type GemPlay, type SignalTransition } from '$lib/api';
+	import { fetchSignalHistory, type GemPlay, type SignalTransition } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { formatPrice } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
@@ -18,78 +18,29 @@
 		{ value: 'roiPercent', label: 'ROI%' },
 	];
 
+	// `plays` arrives already scoped to this table's variant (and pool, in
+	// Dedication mode) by the owner. Search lives in the owner too, for the same
+	// reason: a search run per-table fetched across every variant and replaced
+	// the scoped rows wholesale, so a table headed "Best Plays (20/20)" listed
+	// all four variants of the matched gem with no column to tell them apart.
+	//
+	// `searchActive` is the one thing a scoped table still needs to know about
+	// the search: a search names a gem explicitly, so its result is shown even
+	// when that gem is low-confidence and the toggle is off.
 	let {
 		plays,
 		title = 'Best Plays Now (ALL variants)',
 		showVariantColumn = true,
+		searchActive = false,
 	}: {
 		plays: GemPlay[];
 		title?: string;
 		showVariantColumn?: boolean;
+		searchActive?: boolean;
 	} = $props();
 
 	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
 	let budget = $state('');
-	let searchQuery = $state('');
-	let searchFilter = $state('');
-	let suggestions = $state<string[]>([]);
-	let showDropdown = $state(false);
-	let highlightedIndex = $state(-1);
-	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-
-	function handleSearchInput(query: string) {
-		searchQuery = query;
-		if (searchDebounce) clearTimeout(searchDebounce);
-		if (!query.trim()) {
-			searchFilter = '';
-			searchResults = null;
-			suggestions = [];
-			showDropdown = false;
-			return;
-		}
-		if (query.length < 2) {
-			suggestions = [];
-			showDropdown = false;
-			return;
-		}
-		searchDebounce = setTimeout(async () => {
-			if (searchQuery !== query) return;
-			const names = await fetchGemNames(query);
-			if (searchQuery !== query) return;
-			suggestions = names;
-			showDropdown = suggestions.length > 0;
-			highlightedIndex = suggestions.length === 1 ? 0 : -1;
-		}, 100);
-	}
-
-	let searchResults = $state<GemPlay[] | null>(null);
-
-	async function selectGem(name: string) {
-		searchQuery = name;
-		searchFilter = name;
-		suggestions = [];
-		showDropdown = false;
-		const results = await fetchBestPlays(undefined, undefined, undefined, undefined, name);
-		searchResults = results;
-	}
-
-	function handleSearchKeydown(e: KeyboardEvent) {
-		if (e.key === 'ArrowDown' && showDropdown) {
-			e.preventDefault();
-			highlightedIndex = Math.min(highlightedIndex + 1, suggestions.length - 1);
-		} else if (e.key === 'ArrowUp' && showDropdown) {
-			e.preventDefault();
-			highlightedIndex = Math.max(highlightedIndex - 1, 0);
-		} else if (e.key === 'Enter' && highlightedIndex >= 0) {
-			e.preventDefault();
-			selectGem(suggestions[highlightedIndex]);
-		} else if (e.key === 'Escape') {
-			showDropdown = false;
-			searchQuery = '';
-			searchFilter = '';
-			searchResults = null;
-		}
-	}
 	// Default ON to match the Rust-side setting default; the stored value below
 	// overwrites it on mount. Starting false would flash a filtered list first.
 	let showLowConf = $state(true);
@@ -104,8 +55,8 @@
 	let historyLoading = $state(false);
 
 	let sorted = $derived.by(() => {
-		let filtered = searchResults ? [...searchResults] : [...plays];
-		if (!showLowConf && !searchResults) {
+		let filtered = [...plays];
+		if (!showLowConf && !searchActive) {
 			filtered = filtered.filter((p) => !p.lowConfidence);
 		}
 		const b = parseInt(budget);
@@ -158,29 +109,6 @@
 
 <div class="plays-header">
 	<h3 class="plays-title">{title}</h3>
-	<div class="search-wrapper">
-		<input
-			type="text"
-			class="search-input"
-			placeholder="Search gem..."
-			value={searchQuery}
-			oninput={(e) => handleSearchInput(e.currentTarget.value)}
-			onkeydown={handleSearchKeydown}
-			onfocus={() => { if (suggestions.length) showDropdown = true; }}
-			onblur={() => setTimeout(() => { showDropdown = false; }, 200)}
-		/>
-		{#if showDropdown && suggestions.length > 0}
-			<div class="dropdown">
-				{#each suggestions as gem, i}
-					<button
-						class="dropdown-item"
-						class:highlighted={i === highlightedIndex}
-						onmousedown={() => selectGem(gem)}
-					>{gem}</button>
-				{/each}
-			</div>
-		{/if}
-	</div>
 	<div class="plays-controls">
 		<label class="control-label">
 			Budget:
@@ -353,51 +281,6 @@
 		font-weight: 700;
 		color: var(--color-lab-text);
 		margin: 0;
-	}
-	.search-wrapper {
-		position: relative;
-		flex: 1;
-		max-width: 300px;
-	}
-	.search-input {
-		width: 100%;
-		background: var(--color-lab-bg);
-		border: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text);
-		padding: 6px 12px;
-		font-size: 0.8125rem;
-		font-family: inherit;
-		box-sizing: border-box;
-		outline: none;
-	}
-	.search-input::placeholder {
-		color: var(--color-lab-text-secondary);
-	}
-	.dropdown {
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
-		background: var(--color-lab-surface);
-		border: 1px solid var(--color-lab-border);
-		border-top: none;
-		max-height: 200px;
-		overflow-y: auto;
-		z-index: 100;
-	}
-	.dropdown-item {
-		display: block;
-		width: 100%;
-		padding: 6px 12px;
-		text-align: left;
-		background: none;
-		border: none;
-		color: var(--color-lab-text);
-		font-size: 0.8125rem;
-		cursor: pointer;
-	}
-	.dropdown-item:hover, .dropdown-item.highlighted {
-		background: rgba(255, 255, 255, 0.08);
 	}
 	.plays-controls {
 		display: flex;

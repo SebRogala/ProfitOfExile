@@ -35,7 +35,7 @@
 	const isDedication = $derived(labMode === 'dedication');
 
 	const DEDICATION_ROWS = DEDICATION_VARIANTS.flatMap((variant) => [
-		{ variant, poolKey: 'skills' as const, label: `${variant} Skill Gems` },
+		{ variant, poolKey: 'skills' as const, label: `${variant} Non-Transfigured` },
 		{ variant, poolKey: 'transfigured' as const, label: `${variant} Transfigured` },
 	]);
 
@@ -320,7 +320,7 @@
 		<table class="ft ded">
 			<thead>
 				<tr>
-					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options per run, each at either corrupted variant:<br>• <b>Skill Gems</b>: Non-transfigured corrupted skill gems<br>• <b>Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted gems of that variant in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>21/23 and 21/20 are separate markets: pool, tiers and input cost are computed per variant, and the highlighted cell is the best <b>profit</b> across both.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
+					<th class="var-header">Dedication EV<InfoTooltip text="<b>Dedication Lab — Corrupted Gem Exchange EV</b><br><br>Two font options per run, each at either corrupted variant:<br>• <b>Non-Transfigured</b>: Corrupted skill gems that are not transfigured<br>• <b>Transfigured</b>: Transfigured corrupted skill gems<br><br><b>Nc/font</b>: Expected income per font usage. Based on best-of-3 random draws from the corrupted pool of that color.<br><br><b>Input cost</b>: Average price of the 10 cheapest corrupted gems of that variant in that color pool — this is what you feed into the font.<br><br><b>Profit</b>: EV minus input cost. Entry fee (Dedication offering) is NOT included.<br><br>21/23 and 21/20 are separate markets: pool, tiers and input cost are computed per variant, and the highlighted cell is the best <b>profit</b> across both.<br><br>Thin liquidity is expected for corrupted gems — fewer listings than normal font pools." /></th>
 					{#each COLORS as color}
 						<th><span class="c-{color.toLowerCase()}">{'\u25CF'} {color}</span></th>
 					{/each}

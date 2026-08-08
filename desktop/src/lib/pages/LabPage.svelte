@@ -10,6 +10,8 @@
 		fetchBestPlays,
 		VARIANTS,
 		DEDICATION_VARIANTS,
+		DEDICATION_POOLS,
+		DEDICATION_POOL_LABELS,
 		fetchMarketOverview,
 		connectMercure,
 		type StatusData,
@@ -74,10 +76,7 @@
 	const LAB_MODE_OPTIONS = LAB_MODES.map((m) => ({ value: m, label: m }));
 	const NORMAL_MARKET_OPTIONS = VARIANTS.map((v) => ({ value: v, label: v }));
 	const DEDICATION_MARKET_OPTIONS = DEDICATION_VARIANTS.map((v) => ({ value: v, label: v }));
-	const POOL_OPTIONS = [
-		{ value: 'skill', label: 'Skills' },
-		{ value: 'transfigured', label: 'Transfigured' },
-	];
+	const POOL_OPTIONS = DEDICATION_POOLS.map((p) => ({ value: p, label: DEDICATION_POOL_LABELS[p] }));
 
 	const MARKET_TOOLTIP =
 		'Market you are farming. Rankings and Pool Overview follow it, and the run is stamped with it when it uploads.';
