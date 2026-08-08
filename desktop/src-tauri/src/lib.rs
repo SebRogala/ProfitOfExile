@@ -2019,10 +2019,15 @@ fn spawn_font_scan(app: &AppHandle) {
     let state = app.state::<AppState>();
     let gen = state.font_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
-    // Reset font session for the new scan.
+    // Reset font session for the new scan. The temporary guard is dropped at the
+    // end of this statement, so the emit below cannot self-deadlock on
+    // `build_status` re-reading `font_session`.
     *state.font_session.lock().unwrap_or_else(|e| e.into_inner()) = FontSessionData::default();
 
     app_log(app, format!("Font scan started (gen={})", gen));
+    // `font_session_rounds` dropped back to 0 — clear the Discard affordance
+    // left over from the previous run instead of waiting for the next emit.
+    emit_status(app);
 
     let app_capture = app.clone();
     std::thread::spawn(move || {
@@ -2152,34 +2157,51 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
 /// Moves current_options into the rounds list. Returns true if this was the last craft.
 fn seal_font_round(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
-    let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
 
-    let options = match session.current_options.take() {
-        Some(opts) => opts,
-        None => {
-            app_log(app, "Font round seal skipped — OCR did not capture options before CRAFT click".to_string());
-            return false;
-        }
+    // The guard lives in this block only: `emit_status` -> `build_status` locks
+    // `font_session` to read `font_session_rounds`, and std Mutex is not
+    // re-entrant, so emitting while the guard is alive deadlocks this thread.
+    let is_last = {
+        let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+
+        let options = match session.current_options.take() {
+            Some(opts) => opts,
+            None => {
+                app_log(app, "Font round seal skipped — OCR did not capture options before CRAFT click".to_string());
+                // Nothing was appended to `rounds`, so the status the frontend
+                // already holds is still accurate — no emit needed.
+                return false;
+            }
+        };
+
+        let crafts_remaining = session.current_crafts_remaining.take();
+        // is_last: only true if we've already used at least one craft AND no "Crafts Remaining"
+        // text was detected. On the first craft, None could mean single-craft OR OCR missed it —
+        // so don't assume last on first round (prevents blocking multi-craft labs).
+        let is_last = crafts_remaining.is_none() && !session.rounds.is_empty();
+
+        let round_num = session.rounds.len() + 1;
+        app_log(app, format!(
+            "Font round {} sealed ({} options{})",
+            round_num,
+            options.len(),
+            if is_last { ", last craft" } else { "" },
+        ));
+
+        session.rounds.push(FontRound {
+            options,
+            crafts_remaining,
+        });
+
+        is_last
     };
 
-    let crafts_remaining = session.current_crafts_remaining.take();
-    // is_last: only true if we've already used at least one craft AND no "Crafts Remaining"
-    // text was detected. On the first craft, None could mean single-craft OR OCR missed it —
-    // so don't assume last on first round (prevents blocking multi-craft labs).
-    let is_last = crafts_remaining.is_none() && !session.rounds.is_empty();
-
-    let round_num = session.rounds.len() + 1;
-    app_log(app, format!(
-        "Font round {} sealed ({} options{})",
-        round_num,
-        options.len(),
-        if is_last { ", last craft" } else { "" },
-    ));
-
-    session.rounds.push(FontRound {
-        options,
-        crafts_remaining,
-    });
+    // `rounds` just grew, and `font_session_rounds` is what gates the Discard
+    // affordance and its round count. Nothing else emits after this on the
+    // CRAFT path: `spawn_gem_scan` emits before the seal, the per-gem emit only
+    // fires when OCR actually matches a gem, and CONFIRM bumps the scan
+    // generation so `gem_scan_loop`'s terminal idle emit is skipped.
+    emit_status(app);
 
     is_last
 }

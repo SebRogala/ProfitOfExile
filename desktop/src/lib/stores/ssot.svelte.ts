@@ -247,10 +247,17 @@ const DEDICATION_FIELDS: readonly MarketField[] = ['dedicationVariant', 'dedicat
  * Set the dedication market and pool as one user action.
  *
  * Both fields are guarded and mutated together, then the two Tauri commands are
- * sequenced, and both guards are held until both settle — so no poll tick can
- * observe the half-applied pair (new variant, stale pool) that nobody selected.
- * Every Dedication surface writes through this, never through the two
- * single-field setters.
+ * sequenced, and both guards are held until both settle — so no poll tick lands
+ * between them and reverts one half. Every Dedication surface writes through
+ * this, never through the two single-field setters.
+ *
+ * What that does NOT buy is atomicity in Rust: the pair is two commands, so a
+ * rejected second invoke (IPC failure, command error) leaves Rust holding the
+ * new variant with the old pool, `persist_settings` writes that pair to disk,
+ * and once the guards clear the next poll settles the UI onto it. Accepted:
+ * making the pair atomic means a combined Rust command, and a failure between
+ * two local IPC calls has not been observed. The catch below only warns, per
+ * `writeField`'s never-throw contract.
  */
 export async function setDedicationSelection(variant: string, pool: string): Promise<void> {
 	beginWrite(DEDICATION_FIELDS);
