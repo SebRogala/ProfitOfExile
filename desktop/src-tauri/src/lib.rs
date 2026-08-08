@@ -55,6 +55,9 @@ pub struct AppStatus {
     pub trade_auto_refresh_secs: u32,
     pub auto_trade_enabled: bool,
     pub device_id: String,
+    /// Sealed rounds accumulated in the current font session. Drives the
+    /// discard affordance: zero means there is nothing to throw away.
+    pub font_session_rounds: usize,
 }
 
 /// Accumulated font session data — shared between font scan loop and event handlers.
@@ -173,6 +176,7 @@ fn build_status(state: &AppState) -> AppStatus {
         trade_auto_refresh_secs: *state.trade_auto_refresh_secs.lock().unwrap_or_else(|e| e.into_inner()),
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
         device_id: state.device_id.clone(),
+        font_session_rounds: state.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
     }
 }
 
@@ -2180,6 +2184,28 @@ fn seal_font_round(app: &AppHandle) -> bool {
     is_last
 }
 
+/// Throw away the accumulated font session without sending it (POE-163 D4).
+///
+/// The escape hatch for a session captured against the wrong market: the
+/// stamp is read once at send time, so an unwanted run has to be discarded
+/// rather than corrected after the fact.
+///
+/// Deliberately does NOT touch `font_scan_generation` (discarding data must
+/// not stop an in-progress scan) or `lab_state` (the player may still be in
+/// the lab).
+#[tauri::command]
+fn discard_font_session(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let discarded = {
+        let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
+        let discarded = session.rounds.len();
+        *session = FontSessionData::default();
+        discarded
+    };
+    app_log(&app, format!("Font session discarded ({} rounds)", discarded));
+    emit_status(&app);
+}
+
 /// Send accumulated font session to the server and reset.
 fn send_font_session_data(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -2937,6 +2963,7 @@ pub fn run() {
             set_normal_variant,
             get_show_low_confidence,
             set_show_low_confidence,
+            discard_font_session,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
