@@ -150,6 +150,10 @@ pub struct AppState {
     pub dedication_variant: Mutex<String>,
     pub normal_variant: Mutex<String>,
     pub show_low_confidence: Mutex<bool>,
+    /// Schema-less UI view preferences (sort mode, colour filter, row limit…).
+    /// The frontend owns the keys; Rust only stores and persists the map. A
+    /// typed Settings field is warranted only when Rust itself reads the value.
+    pub ui_prefs: Mutex<std::collections::HashMap<String, String>>,
     /// App-wide cross-window state SSOT (POE-128). Rust-owned; overlays read it
     /// by polling the `get_ssot` command. See src/ssot.rs.
     pub ssot: Mutex<ssot::AppSsotSnapshot>,
@@ -1637,6 +1641,20 @@ fn set_show_low_confidence(show: bool, app: AppHandle) {
 }
 
 #[tauri::command]
+fn get_ui_prefs(app: AppHandle) -> std::collections::HashMap<String, String> {
+    let state = app.state::<AppState>();
+    let prefs = state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    prefs
+}
+
+#[tauri::command]
+fn set_ui_pref(key: String, value: String, app: AppHandle) {
+    let state = app.state::<AppState>();
+    state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()).insert(key, value);
+    persist_settings(&app);
+}
+
+#[tauri::command]
 fn get_logs(state: tauri::State<AppState>) -> Vec<String> {
     state.logs.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -2919,6 +2937,7 @@ pub fn run() {
         dedication_variant: Mutex::new(String::from("21/23")),
         normal_variant: Mutex::new(String::from("20/20")),
         show_low_confidence: Mutex::new(false),
+        ui_prefs: Mutex::new(std::collections::HashMap::new()),
         ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
     };
 
@@ -2997,6 +3016,8 @@ pub fn run() {
             set_normal_variant,
             get_show_low_confidence,
             set_show_low_confidence,
+            get_ui_prefs,
+            set_ui_pref,
             discard_font_session,
         ])
         .setup(|app| {

@@ -70,6 +70,11 @@ pub struct Settings {
     /// Show low-confidence gems in rankings (default: false).
     #[serde(default)]
     pub show_low_confidence: bool,
+    /// Schema-less UI view preferences (sort mode, colour filter, row limit…).
+    /// The frontend owns the keys and values; Rust stores and persists the map
+    /// blindly. Add a typed field here only when Rust itself reads the value.
+    #[serde(default)]
+    pub ui_prefs: std::collections::HashMap<String, String>,
 }
 
 fn default_lab_mode() -> String {
@@ -150,6 +155,7 @@ impl Default for Settings {
             // 20-level variants a thin market is normal, so hiding flagged gems
             // by default reproduces the POE-131 ranking gap.
             show_low_confidence: true,
+            ui_prefs: std::collections::HashMap::new(),
         }
     }
 }
@@ -255,6 +261,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         dedication_variant: state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         normal_variant: state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         show_low_confidence: *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()),
+        ui_prefs: state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()).clone(),
     }
 }
 
@@ -370,4 +377,5 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.dedication_variant.clone();
     *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
     *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
+    *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
 }
