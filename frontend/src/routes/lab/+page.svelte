@@ -20,7 +20,6 @@
 	import Comparator from './components/Comparator.svelte';
 	import SessionQueue from './components/SessionQueue.svelte';
 	import type { QueueItem } from './components/SessionQueue.svelte';
-	import BestPlays from './components/BestPlays.svelte';
 	import ByVariant from './components/ByVariant.svelte';
 	import MarketOverview from './components/MarketOverview.svelte';
 	import Legend from './components/Legend.svelte';
