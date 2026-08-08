@@ -218,8 +218,16 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) {
     };
     match serde_json::to_string_pretty(settings) {
         Ok(json) => {
-            if let Err(e) = fs::write(&path, &json) {
-                log::error!("Failed to write settings to {:?}: {}", path, e);
+            // Write-temp-then-rename: a plain fs::write leaves a truncated
+            // settings file if the process dies mid-write, and this path runs
+            // on every persisted preference change, not just discrete toggles.
+            let tmp = path.with_extension("json.tmp");
+            if let Err(e) = fs::write(&tmp, &json) {
+                log::error!("Failed to write settings to {:?}: {}", tmp, e);
+                return;
+            }
+            if let Err(e) = fs::rename(&tmp, &path) {
+                log::error!("Failed to move settings into place at {:?}: {}", path, e);
             }
         }
         Err(e) => {
