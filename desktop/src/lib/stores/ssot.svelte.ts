@@ -33,7 +33,7 @@ import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
  * `api.ts` has no pool constant — the JSON API uses the plural `skills` for the
  * same pool, and translating between the two is the consumer's job.
  */
-const POOLS = ['skill', 'transfigured'];
+const POOLS = ['skill', 'transfigured'] as const;
 
 /** Serialized Rust `AppSsotSnapshot` — `league.name` is `string | null`. */
 export interface SsotSnapshot {
@@ -138,7 +138,7 @@ function applyMarketField(field: MarketField, incoming: string | undefined, disp
 		return;
 	}
 	console.warn(`[ssot] ignoring unknown persisted ${field}:`, incoming, '— healing Rust to', ssot[field]);
-	void writeField(field, ssot[field], MARKET_COMMANDS[field].command, MARKET_COMMANDS[field].arg);
+	void writeField(field, ssot[field]);
 }
 
 /** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`,
@@ -179,6 +179,25 @@ const MARKET_COMMANDS: Record<MarketField, { command: string; arg: string }> = {
 };
 
 /**
+ * Open the poll-vs-write guard on every field a single user action writes.
+ *
+ * One `writeSeq` bump for the whole action, so a multi-field action is ordered
+ * against polls as one unit rather than as N independent writes.
+ */
+function beginWrite(fields: readonly MarketField[]): void {
+	writeSeq += 1;
+	for (const field of fields) {
+		lastWriteSeq[field] = writeSeq;
+		inFlight[field] += 1;
+	}
+}
+
+/** Close the guard opened by `beginWrite`. Always call from a `finally`. */
+function endWrite(fields: readonly MarketField[]): void {
+	for (const field of fields) inFlight[field] -= 1;
+}
+
+/**
  * Write-through one market field: guard, mutate the rune synchronously, then
  * invoke. The synchronous mutation is what makes same-window surfaces update in
  * the same frame instead of waiting a poll interval.
@@ -187,37 +206,42 @@ const MARKET_COMMANDS: Record<MarketField, { command: string; arg: string }> = {
  * optimistic value stays: the next poll restores Rust truth once the guard
  * clears, and reverting here would flash a value the user did not pick.
  */
-async function writeField(field: MarketField, value: string, command: string, arg: string): Promise<void> {
-	writeSeq += 1;
-	lastWriteSeq[field] = writeSeq;
-	inFlight[field] += 1;
+async function writeField(field: MarketField, value: string): Promise<void> {
+	const { command, arg } = MARKET_COMMANDS[field];
+	beginWrite([field]);
 	ssot[field] = value;
 	try {
 		await invoke(command, { [arg]: value });
 	} catch (e) {
 		console.warn(`[ssot] ${command} failed:`, e);
 	} finally {
-		inFlight[field] -= 1;
+		endWrite([field]);
 	}
 }
 
 /** Set the normal-mode farming market. */
 export function setNormalVariant(variant: string): Promise<void> {
-	const { command, arg } = MARKET_COMMANDS.normalVariant;
-	return writeField('normalVariant', variant, command, arg);
+	return writeField('normalVariant', variant);
 }
 
-/** Set the dedication-mode farming market. */
+/** Set the dedication-mode farming market on its own.
+ *
+ *  Dedication surfaces that pick a market and a pool together must use
+ *  `setDedicationSelection` instead — this setter guards only its own field. */
 export function setDedicationVariant(variant: string): Promise<void> {
-	const { command, arg } = MARKET_COMMANDS.dedicationVariant;
-	return writeField('dedicationVariant', variant, command, arg);
+	return writeField('dedicationVariant', variant);
 }
 
-/** Set the dedication pool (canon spelling: "skill" | "transfigured"). */
+/** Set the dedication pool on its own (canon spelling: "skill" | "transfigured").
+ *
+ *  Same caveat as `setDedicationVariant`: use `setDedicationSelection` when the
+ *  user action changes both fields. */
 export function setDedicationPool(pool: string): Promise<void> {
-	const { command, arg } = MARKET_COMMANDS.dedicationPool;
-	return writeField('dedicationPool', pool, command, arg);
+	return writeField('dedicationPool', pool);
 }
+
+/** The fields `setDedicationSelection` guards and mutates as one unit. */
+const DEDICATION_FIELDS: readonly MarketField[] = ['dedicationVariant', 'dedicationPool'];
 
 /**
  * Set the dedication market and pool as one user action.
@@ -229,21 +253,16 @@ export function setDedicationPool(pool: string): Promise<void> {
  * single-field setters.
  */
 export async function setDedicationSelection(variant: string, pool: string): Promise<void> {
-	writeSeq += 1;
-	lastWriteSeq.dedicationVariant = writeSeq;
-	lastWriteSeq.dedicationPool = writeSeq;
-	inFlight.dedicationVariant += 1;
-	inFlight.dedicationPool += 1;
+	beginWrite(DEDICATION_FIELDS);
 	ssot.dedicationVariant = variant;
 	ssot.dedicationPool = pool;
 	try {
-		await invoke('set_dedication_variant', { variant });
-		await invoke('set_dedication_pool', { pool });
+		await invoke(MARKET_COMMANDS.dedicationVariant.command, { variant });
+		await invoke(MARKET_COMMANDS.dedicationPool.command, { pool });
 	} catch (e) {
 		console.warn('[ssot] set dedication selection failed:', e);
 	} finally {
-		inFlight.dedicationVariant -= 1;
-		inFlight.dedicationPool -= 1;
+		endWrite(DEDICATION_FIELDS);
 	}
 }
 
