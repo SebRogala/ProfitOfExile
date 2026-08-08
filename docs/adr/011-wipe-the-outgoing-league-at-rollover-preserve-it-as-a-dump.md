@@ -1,3 +1,7 @@
+---
+uid: b6757498-fa1b-4213-939c-cd41c22fb626
+---
+
 # ADR-011: Wipe the Outgoing League at Rollover; Preserve It as a Dump
 
 ## Status
