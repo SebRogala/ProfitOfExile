@@ -1379,6 +1379,17 @@ fn force_show_overlays(app: AppHandle) {
 }
 
 #[tauri::command]
+fn set_devtools(open: bool, window: tauri::WebviewWindow) {
+    // Devtools has no JS API in Tauri 2 — calling `openDevtools()` on the
+    // WebviewWindow object throws synchronously. This command is the only path.
+    if open {
+        window.open_devtools();
+    } else {
+        window.close_devtools();
+    }
+}
+
+#[tauri::command]
 fn set_comparator_data(payload: serde_json::Value, app: AppHandle) {
     let state = app.state::<AppState>();
     *state.comparator_data.lock().unwrap_or_else(|e| e.into_inner()) = payload;
@@ -2947,6 +2958,7 @@ pub fn run() {
             send_test_gems,
             test_ocr_on_image,
             force_show_overlays,
+            set_devtools,
             set_comparator_data,
             set_overlay_has_content,
             set_overlay_interactive_width,
