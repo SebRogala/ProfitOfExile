@@ -203,10 +203,14 @@
 			: `${searchQuery} is not in the rankings.`;
 	}
 
-	// Browse-mode filters shared by both table shapes: budget, then colour, then
-	// the row cap. A search bypasses all three — it names one gem explicitly, so
-	// hiding it by budget or colour and then blaming the market answers a
-	// question the player did not ask, with the wrong reason.
+	// Browse-mode filters shared by both table shapes: budget, then colour. A
+	// search bypasses both — it names one gem explicitly, so hiding it by budget
+	// or colour and then blaming the market answers a question the player did
+	// not ask, with the wrong reason.
+	//
+	// No row cap here: the cap belongs downstream in BestPlays, AFTER its sort.
+	// Capping before the sort handed the table "the top rows by fetch order,
+	// reordered" — under a ROI sort that is not the top rows by ROI at all.
 	function browseFilter(filtered: GemPlay[]): GemPlay[] {
 		if (budgetChaos > 0) {
 			// NO_BASE gems have no known cost basis (basePrice 0 means unknown, not
@@ -216,7 +220,7 @@
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
-		return filtered.slice(0, parseInt(itemLimit));
+		return filtered;
 	}
 
 	// Filter from already-loaded data — zero API calls.
@@ -229,15 +233,11 @@
 	// The ALL tab is ONE merged table, not four stacked ones: a budget or colour
 	// filter there is a cross-market question, and four tables answer it four
 	// separate times. The merged pool arrives variant-grouped (per-variant
-	// fetches, concatenated), so it must be ranked by price before the row cap —
-	// a positional slice would fill the whole table from the first variant
-	// fetched. Ranking by price matches how the per-variant tables choose their
-	// rows; the Sort dropdown then reorders within the chosen set, as it does
-	// everywhere else.
+	// fetches, concatenated) — safe to pass on unordered, because BestPlays
+	// sorts before it caps.
 	function playsForAll(): GemPlay[] {
 		if (searchResults) return playSource;
-		const ranked = [...playSource].sort((a, b) => b.transPrice - a.transPrice);
-		return browseFilter(ranked);
+		return browseFilter(playSource);
 	}
 
 	// baseName holds "skill" or "transfigured" for Dedication gems, and each row
@@ -343,7 +343,7 @@
 		<div class="variant-block">
 			<div class="variant-label">{tab.label}</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} searchActive={searchResults !== null} />
+				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
 			{:else if searchResults}
 				<div class="loading">{searchMissReason()}</div>
 			{:else}
@@ -355,7 +355,7 @@
 		<div class="variant-block">
 			<div class="variant-label">All markets</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} searchActive={searchResults !== null} />
+				<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} {league} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
 			{:else if searchResults}
 				<div class="loading">{searchMissReason()}</div>
 			{:else}
@@ -367,7 +367,7 @@
 		<div class="variant-block">
 			<div class="variant-label">{activeTab}</div>
 			{#if vd.length > 0}
-				<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} {league} searchActive={searchResults !== null} />
+				<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} {league} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
 			{:else if searchResults}
 				<div class="loading">{searchMissReason()}</div>
 			{:else}
