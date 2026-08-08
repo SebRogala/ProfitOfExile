@@ -423,14 +423,14 @@
 			if (e.ctrlKey && e.shiftKey && e.key === 'F12') {
 				e.preventDefault();
 				debugMode = !debugMode;
-				const win = getCurrentWebviewWindow();
+				// Devtools has no JS API in Tauri 2 — `openDevtools()` on the window
+				// object is not a function and threw before the .catch could apply.
+				invoke('set_devtools', { open: debugMode }).catch((e: any) => console.warn('[debug] set_devtools failed:', e));
 				if (debugMode) {
-					(win as any).openDevtools().catch((e: any) => console.warn('[debug] openDevtools failed:', e));
 					// Force-show overlays regardless of game focus
 					invoke('force_show_overlays').catch((e: any) => console.warn('[debug] force_show_overlays failed:', e));
 					console.log('[debug] Debug mode ON — overlays force-shown');
 				} else {
-					(win as any).closeDevtools().catch((e: any) => console.warn('[debug] closeDevtools failed:', e));
 					console.log('[debug] Debug mode OFF');
 				}
 			}
