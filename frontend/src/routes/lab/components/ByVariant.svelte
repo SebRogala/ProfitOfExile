@@ -5,6 +5,7 @@
 		DEDICATION_VARIANTS,
 		DEDICATION_POOLS,
 		DEDICATION_POOL_LABELS,
+		type DedicationPool,
 		fetchGemNames,
 		fetchBestPlays,
 		type GemPlay,
@@ -157,12 +158,53 @@
 	// across would be from the wrong one.
 	$effect(() => {
 		isDedication;
-		untrack(() => { if (searchResults) clearSearch(); });
+		// Unconditional: a query typed but not yet picked leaves `suggestions`
+		// full of names from the other mode's pool, and picking one then searches a
+		// gem that cannot exist in this mode.
+		untrack(() => { if (searchQuery || searchResults) clearSearch(); });
 	});
+
+	/**
+	 * Why a searched gem is missing from the table in front of you.
+	 *
+	 * The Dedication picker offers names the rankings can never contain: Vaal gems
+	 * are a legal feed and deliberately stay in the autocomplete for the compare
+	 * surface (internal/lab/repository.go, CorruptedGemNamesAutocomplete), but
+	 * isDedicationOutcome excludes them from every ranking. The picker also spans
+	 * both pools, so a non-transfigured name is offerable while the Transfigured
+	 * tab is active. Measured 2026-08-08 over 77 suggestions from 8 queries: 36 of
+	 * them yield nothing on the 21/23 Transfigured tab — 19 Vaal, 17 wrong-pool.
+	 *
+	 * "No <gem> in this pool" was a wrong answer for all 36: it reads as "this gem
+	 * does not sell here", when the truth is either "it is in the other pool" or
+	 * "it is never a craft outcome". Say which.
+	 */
+	function searchMissReason(): string {
+		if (!searchResults) return '';
+		if (searchResults.length === 0) {
+			return `${searchQuery} is not in the rankings \u2014 Vaal gems are a legal feed but never a craft outcome, so they are never ranked.`;
+		}
+		const pools = [...new Set(searchResults.map((g) => g.baseName).filter(Boolean))];
+		const markets = [...new Set(searchResults.map((g) => g.variant).filter(Boolean))].sort();
+		const wherePool = pools
+			.map((pool) => DEDICATION_POOL_LABELS[pool as DedicationPool] ?? pool)
+			.join(' / ');
+		if (isDedication && wherePool) {
+			return `${searchQuery} is in ${wherePool}${markets.length ? ` at ${markets.join(', ')}` : ''} \u2014 not this tab.`;
+		}
+		return markets.length
+			? `${searchQuery} is ranked at ${markets.join(', ')} \u2014 not this one.`
+			: `${searchQuery} is not in the rankings.`;
+	}
 
 	// Filter from already-loaded data — zero API calls.
 	function playsForVariant(variant: string): GemPlay[] {
 		let filtered = playSource.filter(g => g.variant === variant);
+		// A search names one gem, so the colour tab and the row cap do not apply to
+		// it — they are for browsing a ranked list. Filtering a searched gem out by
+		// colour and then rendering "not at this variant" answers a question the
+		// player did not ask, with the wrong reason.
+		if (searchResults) return filtered;
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -173,6 +215,7 @@
 	// carries the market it was ranked in, so both halves of the tab filter.
 	function playsForPool(pool: string, variant: string): GemPlay[] {
 		let filtered = playSource.filter(g => g.baseName === pool && g.variant === variant);
+		if (searchResults) return filtered;
 		if (activeColor !== 'ALL') {
 			filtered = filtered.filter(g => g.color === activeColor);
 		}
@@ -229,11 +272,7 @@
 			{/each}
 		</div>
 		<div class="tabs">
-			{#if searchError}
-		<div class="search-error">{searchError}</div>
-	{/if}
-
-	{#if isDedication}
+			{#if isDedication}
 				{#each DEDICATION_TABS as tab}
 					<button
 						class="tab"
@@ -259,6 +298,10 @@
 		</div>
 	</div>
 
+	{#if searchError}
+		<div class="search-error">{searchError}</div>
+	{/if}
+
 	{#if isDedication}
 		{@const tab = activeDedTabInfo}
 		{@const vd = playsForPool(tab.pool, tab.variant)}
@@ -267,7 +310,7 @@
 			{#if vd.length > 0}
 				<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool]}) — {tab.variant}" showVariantColumn={false} {league} searchActive={searchResults !== null} />
 			{:else if searchResults}
-				<div class="loading">No {searchQuery} in this pool</div>
+				<div class="loading">{searchMissReason()}</div>
 			{:else}
 				<div class="loading">No data for this pool</div>
 			{/if}
@@ -280,7 +323,7 @@
 				{#if vd.length > 0}
 					<BestPlays plays={vd} title="Best Plays ({variant})" showVariantColumn={false} {league} searchActive={searchResults !== null} />
 				{:else if searchResults}
-					<div class="loading">No {searchQuery} at {variant}</div>
+					<div class="loading">{searchMissReason()}</div>
 				{:else}
 					<div class="loading">No data for this variant</div>
 				{/if}
