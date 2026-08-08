@@ -4,6 +4,7 @@
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import { formatPrice } from '$lib/price.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
+	import { persisted } from '$lib/prefs.svelte';
 	import { METRIC_TOOLTIPS } from '$lib/tooltips';
 	import SignalBadge from './SignalBadge.svelte';
 	import Sparkline from './Sparkline.svelte';
@@ -44,7 +45,12 @@
 		rowCap?: number;
 	} = $props();
 
-	let sortBy = $state<'price' | 'riskAdjusted' | 'roi' | 'roiPercent'>('price');
+	// Persisted (ADR-013): the chosen sort survives restarts, and one key means
+	// every rankings table sorts the same way.
+	const sortPref = persisted('rankingsSort', 'price');
+	const sortBy = $derived(
+		(['price', 'riskAdjusted', 'roi', 'roiPercent'] as const).find(s => s === sortPref.value) ?? 'price'
+	);
 	// Default ON to match the Rust-side setting default; the stored value below
 	// overwrites it on mount. Starting false would flash a filtered list first.
 	let showLowConf = $state(true);
@@ -111,7 +117,7 @@
 	<div class="plays-controls">
 		<label class="control-label">
 			Sort:
-			<Select bind:value={sortBy} options={SORT_OPTIONS} />
+			<Select bind:value={sortPref.value} options={SORT_OPTIONS} />
 		</label>
 		<Tooltip text="Show gems with very few listings (unreliable prices)"><label class="low-conf-toggle">
 			<input type="checkbox" bind:checked={showLowConf} onchange={() => invoke('set_show_low_confidence', { show: showLowConf }).catch(() => {})} />

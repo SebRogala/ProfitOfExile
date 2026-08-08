@@ -11,6 +11,7 @@
 		type GemPlay,
 	} from '$lib/api';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
+	import { persisted } from '$lib/prefs.svelte';
 	import BestPlays from './BestPlays.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Select from '$lib/components/Select.svelte';
@@ -54,8 +55,17 @@
 	// Both halves are the shared selection now: picking a dedication tab moves
 	// the market that Rust stamps onto recorded runs, not just this view.
 	const activeDedTab = $derived(`${ssot.dedicationVariant}:${ssot.dedicationPool}`);
-	let activeColor = $state('ALL');
-	let itemLimit = $state('20');
+
+	// Persisted picks (ADR-013): every select on this surface is remembered
+	// across launches. The market tabs are already remembered through the SSOT
+	// store; the ALL view is the one tab value the store's domain has no room
+	// for, so it gets its own pref, applied on top of the market seed.
+	const colorPref = persisted('rankingsColor', 'ALL');
+	const limitPref = persisted('rankingsLimit', '20');
+	const tabViewPref = persisted('rankingsTabView', '');
+	$effect(() => {
+		if (tabViewPref.value === 'ALL') activeTab = 'ALL';
+	});
 
 	let activeDedTabInfo = $derived(
 		DEDICATION_TABS.find(t => t.key === activeDedTab) ?? DEDICATION_TABS[0]
@@ -82,8 +92,8 @@
 	// already chosen by price — and the visible top-20's base prices sit well
 	// under any realistic budget, so typing one changed nothing. Filtering here
 	// re-fills the table with the best gems that actually fit.
-	let budgetInput = $state('');
-	const budgetChaos = $derived(parseInt(budgetInput) > 0 ? parseInt(budgetInput) : 0);
+	const budgetPref = persisted('rankingsBudget', '');
+	const budgetChaos = $derived(parseInt(budgetPref.value) > 0 ? parseInt(budgetPref.value) : 0);
 
 	let searchQuery = $state('');
 	let searchResults = $state<GemPlay[] | null>(null);
@@ -233,8 +243,8 @@
 			// free), so they can't be shown to fit a budget — same rule as the server.
 			filtered = filtered.filter(g => g.confidence !== 'NO_BASE' && g.basePrice <= budgetChaos);
 		}
-		if (activeColor !== 'ALL') {
-			filtered = filtered.filter(g => g.color === activeColor);
+		if (colorPref.value !== 'ALL') {
+			filtered = filtered.filter(g => g.color === colorPref.value);
 		}
 		return filtered;
 	}
@@ -303,22 +313,22 @@
 				type="text"
 				class="budget-input"
 				placeholder="unlimited"
-				bind:value={budgetInput}
+				bind:value={budgetPref.value}
 			/>
 		</label>
 		<div class="limit-select">
 			<span class="select-label">Show:</span>
-			<Select bind:value={itemLimit} options={LIMIT_OPTIONS} />
+			<Select bind:value={limitPref.value} options={LIMIT_OPTIONS} />
 		</div>
 		<div class="color-tabs">
 			{#each COLORS as color}
 				<button
 					class="tab color-tab"
-					class:active={activeColor === color}
+					class:active={colorPref.value === color}
 					class:c-red={color === 'RED'}
 					class:c-green={color === 'GREEN'}
 					class:c-blue={color === 'BLUE'}
-					onclick={() => { activeColor = color; }}
+					onclick={() => { colorPref.value = color; }}
 				>
 					{#if color !== 'ALL'}<span class="color-dot">●</span>{/if}
 					{color}
@@ -345,7 +355,9 @@
 						onclick={() => {
 							activeTab = tab;
 							// ALL is a view-only tab: it names no market, so it never
-							// writes to the shared selection.
+							// writes to the shared selection — it is remembered through
+							// its own pref instead.
+							tabViewPref.value = tab === 'ALL' ? 'ALL' : '';
 							if (tab !== 'ALL') {
 								seenNormalVariant = tab;
 								setNormalVariant(tab);
@@ -368,7 +380,7 @@
 		{@const tab = activeDedTabInfo}
 		{@const vd = playsForPool(tab.pool, tab.variant)}
 		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
+			<BestPlays plays={vd} title="Dedication Pool ({DEDICATION_POOL_LABELS[tab.pool] || tab.pool}) — {tab.variant}" showVariantColumn={false} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
 		{:else if searchResults}
 			<div class="loading">{searchMissReason()}</div>
 		{:else}
@@ -377,7 +389,7 @@
 	{:else if activeTab === 'ALL'}
 		{@const vd = playsForAll()}
 		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
+			<BestPlays plays={vd} title="Best Plays (all markets)" showVariantColumn={true} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
 		{:else if searchResults}
 			<div class="loading">{searchMissReason()}</div>
 		{:else}
@@ -386,7 +398,7 @@
 	{:else}
 		{@const vd = playsForVariant(activeTab)}
 		{#if vd.length > 0}
-			<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} rowCap={parseInt(itemLimit)} searchActive={searchResults !== null} />
+			<BestPlays plays={vd} title="Best Plays ({activeTab})" showVariantColumn={false} rowCap={parseInt(limitPref.value)} searchActive={searchResults !== null} />
 		{:else if searchResults}
 			<div class="loading">{searchMissReason()}</div>
 		{:else}
