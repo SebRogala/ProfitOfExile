@@ -340,3 +340,199 @@ describe('farming market fields', () => {
 		});
 	});
 });
+
+/**
+ * The module-flag half of the store (POE-128). Same re-import harness as the
+ * market block: the guard records and the `modules` rune are module-level
+ * mutable state, so each test gets its own instance.
+ */
+describe('module flags', () => {
+	let mod: typeof import('./ssot.svelte');
+	let invokeMock: ReturnType<typeof vi.mocked<typeof import('@tauri-apps/api/core').invoke>>;
+
+	/** A snapshot carrying only league state, for the slices we are not exercising. */
+	const league = { name: 'Mirage' };
+
+	/** Calls of one Tauri command, in order, with their argument objects. */
+	function callsOf(command: string): unknown[] {
+		return invokeMock.mock.calls.filter((c) => c[0] === command).map((c) => c[1]);
+	}
+
+	beforeEach(async () => {
+		vi.resetModules();
+		vi.clearAllMocks();
+		const core = await import('@tauri-apps/api/core');
+		invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockImplementation(async (command: string) =>
+			command === 'get_ssot' ? { league, modules: {} } : undefined,
+		);
+		mod = await import('./ssot.svelte');
+	});
+
+	/** Put the store in a known module state through the production apply path. */
+	function seedModules(modules: Record<string, boolean>): void {
+		mod.applySnapshot({ league, modules });
+	}
+
+	/**
+	 * Land a poll response carrying `modules` while a `mercenary` write is still
+	 * outstanding — the window in which Rust cannot yet know the new value.
+	 *
+	 * The write is released before returning so no test leaks a pending invoke;
+	 * the snapshot has already been applied by then, so the assertion still reads
+	 * the guarded state.
+	 */
+	async function applySnapshotDuringMercenaryWrite(modules: Record<string, boolean>): Promise<void> {
+		let releaseWrite: () => void = () => {};
+		invokeMock.mockImplementation((command: string) => {
+			if (command === 'set_module_enabled') {
+				return new Promise<void>((resolve) => {
+					releaseWrite = () => resolve();
+				});
+			}
+			return Promise.resolve(undefined);
+		});
+		seedModules({ mercenary: false });
+
+		const write = mod.setModuleEnabled('mercenary', true);
+		mod.applySnapshot({ league, modules });
+
+		releaseWrite();
+		await write;
+	}
+
+	describe('applySnapshot', () => {
+		it('applies the snapshot value for a module flag', () => {
+			// Seeded to the opposite value, so a pass proves the apply wrote it.
+			seedModules({ mercenary: false });
+			mod.applySnapshot({ league, modules: { mercenary: true } });
+			expect(mod.ssot.modules.mercenary).toBe(true);
+		});
+
+		it('records a module id the webview knows nothing about', () => {
+			// Rust owns the registry: a module added there must reach the store
+			// without a webview-side allow-list to update in lockstep.
+			mod.applySnapshot({ league, modules: { from_the_future: true } });
+			expect(mod.ssot.modules.from_the_future).toBe(true);
+		});
+
+		it('does not overwrite a module flag whose write round-trip is still outstanding', async () => {
+			await applySnapshotDuringMercenaryWrite({ mercenary: false });
+			expect(mod.ssot.modules.mercenary).toBe(true);
+		});
+
+		it('still applies another module flag carried by that same snapshot', async () => {
+			// The guard is per key: `scout` was never written, so it takes the update
+			// even though `mercenary` in the same payload is suppressed.
+			await applySnapshotDuringMercenaryWrite({ mercenary: false, scout: true });
+			expect(mod.ssot.modules.scout).toBe(true);
+		});
+
+		it('drops a local module flag the snapshot no longer reports', () => {
+			seedModules({ mercenary: true, from_the_future: true });
+			// A downgrade unregisters the module — the stale toggle must go with it.
+			mod.applySnapshot({ league, modules: { mercenary: true } });
+			expect(mod.ssot.modules).toEqual({ mercenary: true });
+		});
+
+		it('keeps a local module flag missing from the snapshot while its write is outstanding', async () => {
+			// Rust has not seen the write yet, so its map has no such key — dropping
+			// it here would flip the toggle back under the user's click.
+			await applySnapshotDuringMercenaryWrite({});
+			expect(mod.ssot.modules.mercenary).toBe(true);
+		});
+
+		it('keeps the known flags when the snapshot carries no modules map at all', () => {
+			seedModules({ mercenary: true });
+			// Absent means "not known" (malformed or older payload), not "no modules":
+			// Rust always sends the map, empty at worst.
+			mod.applySnapshot({ league });
+			expect(mod.ssot.modules.mercenary).toBe(true);
+		});
+
+		it('does not let a module write guard a market field of the same name', async () => {
+			// Module ids are free-form Rust data; only the `module:` prefix on the
+			// guard key keeps them out of the market fields' namespace.
+			let releaseWrite: () => void = () => {};
+			invokeMock.mockImplementation((command: string) => {
+				if (command === 'set_module_enabled') {
+					return new Promise<void>((resolve) => {
+						releaseWrite = () => resolve();
+					});
+				}
+				return Promise.resolve(undefined);
+			});
+			mod.applySnapshot({ league, normalVariant: '1/20' });
+
+			const write = mod.setModuleEnabled('normalVariant', true);
+			mod.applySnapshot({ league, normalVariant: '20/0' });
+
+			expect(mod.ssot.normalVariant).toBe('20/0');
+			releaseWrite();
+			await write;
+		});
+	});
+
+	describe('setModuleEnabled', () => {
+		it('mutates the flag before the invoke round-trip resolves', () => {
+			// Never settles: anything observable now happened synchronously.
+			invokeMock.mockImplementation(() => new Promise<void>(() => {}));
+			seedModules({ mercenary: false });
+			void mod.setModuleEnabled('mercenary', true);
+			expect(mod.ssot.modules.mercenary).toBe(true);
+		});
+
+		it('writes through to the set_module_enabled command', async () => {
+			seedModules({ mercenary: false });
+			await mod.setModuleEnabled('mercenary', true);
+			expect(callsOf('set_module_enabled')).toEqual([{ id: 'mercenary', enabled: true }]);
+		});
+
+		it('leaves the optimistic flag in place when the invoke rejects', async () => {
+			// Rust rejects an unregistered id with an Err, and IPC can fail on its
+			// own. Never throws — same catch-and-warn contract as fetchSsot.
+			invokeMock.mockRejectedValue(new Error('unknown module id: mercenary'));
+			seedModules({ mercenary: false });
+			await expect(mod.setModuleEnabled('mercenary', true)).resolves.toBeUndefined();
+			expect(mod.ssot.modules.mercenary).toBe(true);
+		});
+
+		it('yields to Rust truth on the next snapshot after a rejected invoke', async () => {
+			invokeMock.mockRejectedValue(new Error('unknown module id: mercenary'));
+			seedModules({ mercenary: false });
+			await mod.setModuleEnabled('mercenary', true);
+			// The failed write must not keep the toggle pinned to a value Rust
+			// never accepted.
+			mod.applySnapshot({ league, modules: { mercenary: false } });
+			expect(mod.ssot.modules.mercenary).toBe(false);
+		});
+
+		it('does not unguard a still-outstanding second write when the first one settles', async () => {
+			// Two clicks on the same toggle overlap: off, then on again before the
+			// off round-trip has settled.
+			const releases: Array<() => void> = [];
+			invokeMock.mockImplementation((command: string) => {
+				if (command === 'set_module_enabled') {
+					return new Promise<void>((resolve) => {
+						releases.push(() => resolve());
+					});
+				}
+				return Promise.resolve(undefined);
+			});
+			seedModules({ mercenary: true });
+
+			const off = mod.setModuleEnabled('mercenary', false);
+			const on = mod.setModuleEnabled('mercenary', true);
+			releases[0]();
+			await off;
+
+			// Rust has taken the first write only, so its map legitimately reports
+			// `false` — the value that predates the second, still-outstanding write.
+			mod.applySnapshot({ league, modules: { mercenary: false } });
+			expect(mod.ssot.modules.mercenary).toBe(true);
+
+			releases[1]();
+			await on;
+		});
+	});
+});
