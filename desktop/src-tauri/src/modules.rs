@@ -45,6 +45,10 @@
 //! task-exit signal and is future work — do not read the slice as a health
 //! check.
 //!
+//! A disabled module's own SSOT data slice (whatever state it later projects
+//! into `AppSsotSnapshot`) stays registered as inert memory — data shape is
+//! cheap, work is not. Disable aborts tasks, never unregisters state.
+//!
 //! # Thread modules must poll
 //!
 //! Threads cannot be aborted. A `ModuleJoin::Thread` module is signalled and
