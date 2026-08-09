@@ -5,6 +5,7 @@ mod gem_matcher;
 mod lab_navigation;
 mod lab_state;
 mod log_watcher;
+mod modules;
 mod ocr;
 mod settings;
 mod ssot;
@@ -157,6 +158,17 @@ pub struct AppState {
     /// App-wide cross-window state SSOT (POE-128). Rust-owned; overlays read it
     /// by polling the `get_ssot` command. See src/ssot.rs.
     pub ssot: Mutex<ssot::AppSsotSnapshot>,
+    /// Per-module enabled flags — the SINGLE owner, always holding the
+    /// **effective** state (registry defaults overlaid with the persisted
+    /// delta, written by `settings::apply_to_state`). See src/modules.rs.
+    pub modules_enabled: Mutex<std::collections::HashMap<String, bool>>,
+    /// Currently running modules, keyed by module id. Acquired BEFORE
+    /// `modules_enabled` — never the inverse (lock order, see src/modules.rs).
+    pub module_handles: Mutex<std::collections::HashMap<String, modules::ModuleHandle>>,
+    /// Latched at the top of the main-window `CloseRequested` handler. A
+    /// distinct `reconcile` input: while set, reconcile stops everything and
+    /// starts nothing, so a racing `set_module_enabled` cannot respawn.
+    pub modules_shutting_down: AtomicBool,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -410,6 +422,13 @@ fn reset_all_settings(app: AppHandle) {
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
     // Save fresh settings
     persist_settings(&app);
+    // `apply_to_state` above rewrote the module owner map to registry
+    // defaults, so bring the running set back in line with it.
+    modules::apply_reconcile(&app);
+    // Nudge after the reconcile, exactly as `set_module_enabled` does: without
+    // it every window keeps polling the pre-reset `modules` slice until the
+    // next unrelated emit.
+    ssot::emit_ssot(&app);
     // Tell the windows. Lab mode and both markets live in AppState and are
     // mirrored by LabPage, which reads them once at mount — without this the
     // mirror keeps showing the pre-reset market while every scan is stamped
@@ -2939,6 +2958,9 @@ pub fn run() {
         show_low_confidence: Mutex::new(false),
         ui_prefs: Mutex::new(std::collections::HashMap::new()),
         ssot: Mutex::new(ssot::AppSsotSnapshot::default()),
+        modules_enabled: Mutex::new(std::collections::HashMap::new()),
+        module_handles: Mutex::new(std::collections::HashMap::new()),
+        modules_shutting_down: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
@@ -2951,6 +2973,7 @@ pub fn run() {
             ssot::get_ssot,
             ssot::set_league,
             ssot::refresh_league,
+            modules::set_module_enabled,
             get_pair_code,
             get_device_id,
             regenerate_pair_code,
@@ -3082,6 +3105,13 @@ pub fn run() {
             ssot::spawn_league_fetch(handle.clone());
             emit_status(&handle);
             emit_logs(&handle);
+            // Modules start LAST: the owner map is effective by now
+            // (`apply_to_state` above) and settings are on disk, and module
+            // spawn must never delay or reorder the unconditional spawns
+            // above. The `ssot-changed` nudge is best-effort here — no window
+            // is listening yet, and overlays poll `get_ssot` anyway.
+            modules::apply_reconcile(&handle);
+            ssot::emit_ssot(&handle);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -3126,7 +3156,14 @@ pub fn run() {
                     let app = window.app_handle();
                     let state = app.state::<AppState>();
 
+                    // Latch shutdown BEFORE any stop, so a `set_module_enabled`
+                    // racing the close can only stop, never respawn.
+                    state.modules_shutting_down.store(true, Ordering::SeqCst);
+
                     // Stop all background threads before exit.
+                    // Registered modules — stops everything running, including
+                    // NoWindow modules the enabled flag cannot touch.
+                    modules::apply_reconcile(app);
                     // Mouse hook
                     if let Some(tx) = state.overlay_hook_stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
                         let _ = tx.send(());

@@ -9,6 +9,10 @@ Read `desktop/src/lib/README.md` for desktop components, stores, navigation, and
 OCR lifecycle. The proposed Rust-owned navigation contract is specified in
 tracker item `POE-88` (LabCompass fidelity restoration and overlay SSOT).
 
+Switchable background modules are a separate mechanism with its own recipe: see
+the module doc of `desktop/src-tauri/src/modules.rs`. The four overlay `enabled`
+flags and `lab_overlays_enabled` documented here are NOT modules.
+
 ## Non-negotiable regression guards
 
 1. **Capabilities:** every overlay and configuration-window label must appear in
