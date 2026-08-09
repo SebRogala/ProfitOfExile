@@ -75,6 +75,44 @@ pub struct Settings {
     /// blindly. Add a typed field here only when Rust itself reads the value.
     #[serde(default)]
     pub ui_prefs: std::collections::HashMap<String, String>,
+    /// Per-module enabled flags — a DELTA, not the full registry map. Only
+    /// entries that differ from the module's `default_enabled` are written
+    /// (plus keys this build does not recognise, kept verbatim), so a later
+    /// version that flips a default still reaches users who never chose.
+    /// See src/modules.rs. Container-level `#[serde(default)]` covers the
+    /// absent-field case; `modules_or_default` covers a present-but-wrong one.
+    #[serde(default, deserialize_with = "modules_or_default")]
+    pub modules: std::collections::HashMap<String, bool>,
+}
+
+/// Tolerant reader for `Settings.modules`: keeps every key whose value is a
+/// real bool and drops the rest, so neither a wrong-shaped map nor one bad
+/// entry can take out anything else.
+///
+/// Without this, one bad `modules` value discards the ENTIRE settings file —
+/// `load` falls back to `Settings::default()`, so every unrelated preference
+/// (server URL, capture regions, overlay layout) is silently reset. And a
+/// whole-map typed deserialize fails as a unit, so a single non-bool entry
+/// (a newer build's key, a hand edit) would erase the user's valid choices
+/// alongside it. The map is a schema-less key/value area written by two
+/// different code paths, which is exactly where a wrong shape can turn up.
+fn modules_or_default<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<String, bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Settings are JSON only, so the value is always representable; taking it
+    // as a `Value` first is what makes the salvage possible at all — a failed
+    // typed deserialize has already consumed the deserializer.
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    let Some(entries) = raw.as_object() else {
+        return Ok(Default::default());
+    };
+    Ok(entries
+        .iter()
+        .filter_map(|(k, v)| v.as_bool().map(|b| (k.clone(), b)))
+        .collect())
 }
 
 fn default_lab_mode() -> String {
@@ -156,6 +194,7 @@ impl Default for Settings {
             // by default reproduces the POE-131 ranking gap.
             show_low_confidence: true,
             ui_prefs: std::collections::HashMap::new(),
+            modules: std::collections::HashMap::new(),
         }
     }
 }
@@ -195,6 +234,12 @@ pub fn load(app: &tauri::AppHandle) -> Settings {
                 }
                 Err(e) => {
                     log::warn!("Settings file invalid, using defaults: {}", e);
+                    // `log::` is unreachable in a shipped build; this discards
+                    // every stored preference, so it must reach the app log.
+                    crate::app_log(
+                        app,
+                        format!("Settings file invalid — ALL settings reset to defaults: {}", e),
+                    );
                     Settings::default()
                 }
             }
@@ -224,14 +269,20 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) {
             let tmp = path.with_extension("json.tmp");
             if let Err(e) = fs::write(&tmp, &json) {
                 log::error!("Failed to write settings to {:?}: {}", tmp, e);
+                crate::app_log(app, format!("Failed to write settings to {:?}: {}", tmp, e));
                 return;
             }
             if let Err(e) = fs::rename(&tmp, &path) {
                 log::error!("Failed to move settings into place at {:?}: {}", path, e);
+                crate::app_log(
+                    app,
+                    format!("Failed to move settings into place at {:?}: {}", path, e),
+                );
             }
         }
         Err(e) => {
             log::error!("Failed to serialize settings: {}", e);
+            crate::app_log(app, format!("Failed to serialize settings: {}", e));
         }
     }
 }
@@ -270,6 +321,12 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         normal_variant: state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         show_low_confidence: *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()),
         ui_prefs: state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        // Delta only — the owner map holds every registry id, but persisting
+        // unchosen defaults would pin them forever (see modules.rs).
+        modules: crate::modules::persistable_modules(
+            &state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()),
+            &crate::modules::module_lifecycles(),
+        ),
     }
 }
 
@@ -288,6 +345,179 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
+    use std::sync::Mutex;
+
+    /// A bare `AppState` for the settings round-trip tests — the same literal
+    /// `run()` builds, minus the runtime-only bits. Deliberately not a
+    /// `Default` impl: `run()` stays the one production construction site, and
+    /// a new field breaking this helper is the intended signal to decide
+    /// whether it also needs a settings touch point.
+    fn test_app_state() -> crate::AppState {
+        crate::AppState {
+            device_id: String::new(),
+            pair_code: Mutex::new(String::new()),
+            client_txt_path: Mutex::new(String::new()),
+            server_url: Mutex::new(String::new()),
+            detected_gems: Mutex::new(Vec::new()),
+            lab_state: Mutex::new(crate::lab_state::LabState::Idle),
+            logs: Mutex::new(Vec::new()),
+            gem_region: Mutex::new(CaptureRegion::default()),
+            font_region: Mutex::new(CaptureRegion::default_font_panel()),
+            sidebar_open: Mutex::new(true),
+            game_focused: Mutex::new(false),
+            trade_client: crate::trade::TradeApiClient::new(),
+            server_http: reqwest::Client::new(),
+            watcher_cancel: Mutex::new(None),
+            comparator_data: Mutex::new(serde_json::json!({})),
+            overlay_hook_stop: Mutex::new(None),
+            focus_poller_stop: Mutex::new(None),
+            debug_mode: Mutex::new(false),
+            trade_stale_warn_secs: Mutex::new(DEFAULT_TRADE_STALE_WARN_SECS),
+            trade_stale_critical_secs: Mutex::new(DEFAULT_TRADE_STALE_CRITICAL_SECS),
+            trade_auto_refresh_secs: Mutex::new(DEFAULT_TRADE_AUTO_REFRESH_SECS),
+            auto_trade_enabled: Mutex::new(false),
+            gem_scan_generation: AtomicU64::new(0),
+            font_scan_generation: AtomicU64::new(0),
+            aspirant_trial_count: AtomicU32::new(0),
+            font_session: Mutex::new(crate::FontSessionData::default()),
+            font_exhausted: AtomicBool::new(false),
+            gem_scan_done: AtomicBool::new(false),
+            in_lab: AtomicBool::new(false),
+            compass_mode: Mutex::new(String::new()),
+            compass_strategy: Mutex::new(String::new()),
+            compass_difficulty: Mutex::new(String::new()),
+            shrine_warn_enabled: Mutex::new(true),
+            shrine_warn_size: Mutex::new(String::new()),
+            shrine_warn_corner: Mutex::new(String::new()),
+            shrine_warn_on_take: Mutex::new(String::new()),
+            lab_overlays_enabled: Mutex::new(true),
+            lab_mode: Mutex::new(String::new()),
+            autoclear_minutes: Mutex::new(2),
+            dedication_pool: Mutex::new(String::new()),
+            dedication_variant: Mutex::new(String::new()),
+            normal_variant: Mutex::new(String::new()),
+            show_low_confidence: Mutex::new(false),
+            ui_prefs: Mutex::new(std::collections::HashMap::new()),
+            ssot: Mutex::new(crate::ssot::AppSsotSnapshot::default()),
+            modules_enabled: Mutex::new(std::collections::HashMap::new()),
+            module_handles: Mutex::new(std::collections::HashMap::new()),
+            modules_shutting_down: AtomicBool::new(false),
+        }
+    }
+
+    /// Fresh install: `apply_to_state` must fill the owner map with the registry
+    /// defaults (effective from birth), and `from_state` must then write NOTHING
+    /// — pinning an unchosen default in settings.json would freeze a user on it
+    /// when a later version flips that default.
+    #[test]
+    fn a_module_left_at_its_default_is_not_written_to_settings() {
+        let state = test_app_state();
+
+        apply_to_state(&Settings::default(), &state);
+        assert!(
+            state
+                .modules_enabled
+                .lock()
+                .unwrap()
+                .contains_key("mercenary"),
+            "precondition: the owner map is effective, so it carries every registry id",
+        );
+
+        let saved = from_state(&state);
+
+        assert!(
+            saved.modules.is_empty(),
+            "an unchosen default must not reach settings.json, got {:?}",
+            saved.modules,
+        );
+    }
+
+    /// The five-touch-point cycle end to end: an explicit choice and a key this
+    /// build does not recognise both survive `from_state` → `apply_to_state` →
+    /// `from_state`. Guards the wiring, not just the pure helpers — dropping
+    /// either touch point silently loses the user's choice on next launch.
+    #[test]
+    fn a_non_default_module_choice_round_trips_through_state() {
+        let state = test_app_state();
+        *state.modules_enabled.lock().unwrap() = [
+            ("mercenary".to_string(), true),
+            ("from_the_future".to_string(), true),
+        ]
+        .into_iter()
+        .collect();
+
+        let saved = from_state(&state);
+        assert_eq!(
+            saved.modules.get("mercenary"),
+            Some(&true),
+            "an explicit non-default choice must be persisted",
+        );
+        assert_eq!(
+            saved.modules.get("from_the_future"),
+            Some(&true),
+            "a key from a newer build must be persisted verbatim",
+        );
+
+        // Next launch: a fresh state loads that file.
+        let reloaded = test_app_state();
+        apply_to_state(&saved, &reloaded);
+        assert_eq!(
+            reloaded.modules_enabled.lock().unwrap().get("mercenary"),
+            Some(&true),
+            "the persisted choice must beat the registry default on load",
+        );
+
+        assert_eq!(
+            from_state(&reloaded).modules,
+            saved.modules,
+            "the delta must be stable across a full cycle",
+        );
+    }
+
+    /// A `modules` value of the wrong SHAPE must cost only that field. Serde
+    /// aborts the whole struct on a field error and `load` then falls back to
+    /// `Settings::default()` — so without the tolerant reader, one bad map
+    /// wipes every unrelated preference in the file.
+    #[test]
+    fn a_wrong_typed_modules_value_does_not_discard_the_rest_of_the_file() {
+        let json = r#"{"server_url":"https://kept.example","modules":{"x":"yes"}}"#;
+
+        let parsed: Settings = serde_json::from_str(json).expect("the file must still parse");
+
+        assert_eq!(parsed.server_url, "https://kept.example");
+        assert!(parsed.modules.is_empty(), "the unreadable entry is dropped");
+    }
+
+    /// One bad ENTRY must cost only that entry, not its valid siblings — a
+    /// whole-map typed deserialize fails as a unit, which would erase the
+    /// user's real choices next persist (delta absent → default reasserted).
+    #[test]
+    fn a_bad_modules_entry_does_not_erase_the_valid_ones() {
+        let json =
+            r#"{"server_url":"https://kept.example","modules":{"mercenary":true,"future_mod":"on"}}"#;
+
+        let parsed: Settings = serde_json::from_str(json).expect("the file must still parse");
+
+        assert_eq!(
+            parsed.modules.get("mercenary"),
+            Some(&true),
+            "the valid bool entry survives its bad sibling"
+        );
+        assert!(!parsed.modules.contains_key("future_mod"), "the non-bool entry is dropped");
+    }
+
+    /// Same rule for an explicit null — the shape a hand-edited or
+    /// partially-written settings file most easily ends up with.
+    #[test]
+    fn a_null_modules_value_does_not_discard_the_rest_of_the_file() {
+        let json = r#"{"server_url":"https://kept.example","modules":null}"#;
+
+        let parsed: Settings = serde_json::from_str(json).expect("the file must still parse");
+
+        assert_eq!(parsed.server_url, "https://kept.example");
+        assert!(parsed.modules.is_empty(), "null means no choices, not a broken file");
+    }
 
     /// Overlay settings must survive the from_state→persist_overlay→save cycle.
     /// Regression test: from_state returns None for overlays (they're not in AppState),
@@ -386,4 +616,8 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     *state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()) = settings.normal_variant.clone();
     *state.show_low_confidence.lock().unwrap_or_else(|e| e.into_inner()) = settings.show_low_confidence;
     *state.ui_prefs.lock().unwrap_or_else(|e| e.into_inner()) = settings.ui_prefs.clone();
+    // The owner map holds the EFFECTIVE state, not the persisted delta:
+    // registry defaults overlaid with what the user chose (see modules.rs).
+    *state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()) =
+        crate::modules::effective_modules(&settings.modules, &crate::modules::module_lifecycles());
 }

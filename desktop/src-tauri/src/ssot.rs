@@ -100,10 +100,16 @@ pub struct AppSsotSnapshot {
     /// owner — not stored in `AppState.ssot`. `Default` is the empty string,
     /// which the webview must reject as "unknown".
     pub dedication_pool: String,
+    /// Per-module enabled flags, projected unchanged from the owner map
+    /// `AppState.modules_enabled` (see src/modules.rs). **Intent, not
+    /// liveness**: a module that panicked still reports enabled. `Default` is
+    /// the empty map, which the webview must read as "not yet known".
+    pub modules: std::collections::HashMap<String, bool>,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
-/// Return `base` with the three market fields replaced by the given values.
+/// Return `base` with the three market fields and the module map replaced by
+/// the given values.
 ///
 /// Pure so the composition is unit-testable without an `AppHandle` or a full
 /// `AppState` — same reason `should_flag_unreachable` and
@@ -113,17 +119,19 @@ fn compose_snapshot(
     normal_variant: String,
     dedication_variant: String,
     dedication_pool: String,
+    modules: std::collections::HashMap<String, bool>,
 ) -> AppSsotSnapshot {
     AppSsotSnapshot {
         normal_variant,
         dedication_variant,
         dedication_pool,
+        modules,
         ..base
     }
 }
 
 /// Build the full snapshot: the stored `AppState.ssot` slice plus the market
-/// fields composed from their owning `AppState` Mutexes.
+/// fields and the module map, composed from their owning `AppState` Mutexes.
 ///
 /// The `ssot` guard is dropped before the market Mutexes are locked (never two
 /// guards at once), matching the lock-then-emit discipline documented on
@@ -137,7 +145,10 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     let normal_variant = state.normal_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dedication_variant = state.dedication_variant.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dedication_pool = state.dedication_pool.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    compose_snapshot(base, normal_variant, dedication_variant, dedication_pool)
+    // Lone acquisition of `modules_enabled` — `module_handles` is not held here
+    // (lock order, see src/modules.rs).
+    let modules = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    compose_snapshot(base, normal_variant, dedication_variant, dedication_pool, modules)
 }
 
 /// Whether `consecutive_failures` failed fetch attempts should flip the SSOT to
@@ -622,11 +633,31 @@ mod tests {
             "1/20".to_string(),
             "21/20".to_string(),
             "transfigured".to_string(),
+            std::collections::HashMap::new(),
         );
 
         assert_eq!(out.normal_variant, "1/20");
         assert_eq!(out.dedication_variant, "21/20");
         assert_eq!(out.dedication_pool, "transfigured");
+    }
+
+    /// The module map is projected into the snapshot unchanged. Without this
+    /// the field falls back to `..base` (always the empty default), and every
+    /// window would poll an empty `modules` slice forever.
+    #[test]
+    fn compose_snapshot_projects_the_module_map() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("mercenary".to_string(), true)].into_iter().collect();
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+        );
+
+        assert_eq!(out.modules.get("mercenary"), Some(&true));
     }
 
     /// Composition must not disturb the league slice it wraps: the stored
@@ -646,6 +677,7 @@ mod tests {
             "20/20".to_string(),
             "21/23".to_string(),
             "skill".to_string(),
+            std::collections::HashMap::new(),
         );
 
         assert_eq!(out.league.name, Some("Mirage".to_string()));
@@ -663,6 +695,7 @@ mod tests {
             "20/0".to_string(),
             "21/20".to_string(),
             "transfigured".to_string(),
+            std::collections::HashMap::new(),
         );
 
         let json = serde_json::to_value(&snap).unwrap();
