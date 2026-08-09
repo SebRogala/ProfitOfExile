@@ -15,11 +15,18 @@
  * owned here too (POE-163): every surface reads the same rune and writes through
  * the exported setters, so there is no per-component mirror to drift.
  *
+ * The module enabled flags (POE-128) are the same deal, with dynamic keys: the
+ * ids come from the Rust registry (src-tauri/src/modules.rs), so the slice is a
+ * record rather than named fields. It reports **intent, not liveness** — a
+ * module that panicked still reports enabled.
+ *
  * Usage:
  *   import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
  *   // Read: ssot.league  (string | null; null until first successful get_ssot)
  *   // Read: ssot.normalVariant / ssot.dedicationVariant / ssot.dedicationPool
+ *   // Read: ssot.modules['mercenary'] ?? false  (absent key = not yet known)
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
+ *   // Write: setModuleEnabled(id, enabled)
  *   // Main window: call startSsotStore() top-level (like initStatusStore()).
  *   // Overlay windows: call startSsotStore() from an $effect and return its
  *   //   cleanup (onMount is unreliable in overlay windows).
@@ -49,6 +56,8 @@ export interface SsotSnapshot {
 	dedicationVariant?: string;
 	/** Dedication pool, canon spelling: "skill" | "transfigured". */
 	dedicationPool?: string;
+	/** Per-module enabled flags, keyed by registry id (Rust owns the keys). */
+	modules?: Record<string, boolean>;
 }
 
 /**
@@ -79,38 +88,62 @@ export const ssot = $state({
 	dedicationVariant: '21/23',
 	/** Dedication pool in canon spelling ("skill" | "transfigured"). */
 	dedicationPool: 'skill',
+	/** Per-module enabled flags, keyed by the Rust registry id. Empty means
+	 *  not-yet-polled, and an absent key means "unknown" — every surface supplies
+	 *  its own fallback (`?? false`) rather than trusting a default here, because
+	 *  the registry, not this file, owns which modules exist and what they
+	 *  default to. Intent, not liveness. */
+	modules: {} as Record<string, boolean>,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
 type MarketField = 'normalVariant' | 'dedicationVariant' | 'dedicationPool';
 
 /**
+ * What a poll-vs-write guard record is keyed by.
+ *
+ * Market fields key on their own field name; module flags key on
+ * `module:<id>` because their ids come from Rust at runtime and a bare id could
+ * collide with a market field name, letting one slice's write suppress the
+ * other's poll.
+ */
+type GuardKey = MarketField | `module:${string}`;
+
+/** Guard key for one module's enabled flag. */
+function moduleKey(id: string): GuardKey {
+	return `module:${id}`;
+}
+
+/**
  * Poll-vs-write ordering guard.
  *
- * Every write bumps `writeSeq` and stamps it into `lastWriteSeq[field]`;
+ * Every write bumps `writeSeq` and stamps it into `lastWriteSeq[key]`;
  * `fetchSsot` captures the counter *before* awaiting `get_ssot` and hands it to
- * `applySnapshot`. A snapshot is then ignored for a field when either:
+ * `applySnapshot`. A snapshot is then ignored for a key when either:
  *
- *  - `inFlight[field] > 0` — the write round-trip has not settled yet, so the
+ *  - `inFlight[key] > 0` — the write round-trip has not settled yet, so the
  *    snapshot cannot contain it; or
- *  - `lastWriteSeq[field] > dispatchedAtSeq` — the snapshot was dispatched
+ *  - `lastWriteSeq[key] > dispatchedAtSeq` — the snapshot was dispatched
  *    before the write and merely arrived after it. The in-flight clause alone
  *    misses this ordering, because the write can settle first.
  *
  * `inFlight` counts rather than flags: two rapid clicks overlap, and the first
  * response must not unguard the second write.
+ *
+ * Both records are keyed dynamically (module ids are only known at runtime), so
+ * a never-written key is simply absent and reads as zero — the same value the
+ * market fields used to be initialised to, which is why generalising the keys
+ * leaves market-field behaviour untouched.
  */
 let writeSeq = 0;
-const lastWriteSeq: Record<MarketField, number> = {
-	normalVariant: 0,
-	dedicationVariant: 0,
-	dedicationPool: 0,
-};
-const inFlight: Record<MarketField, number> = {
-	normalVariant: 0,
-	dedicationVariant: 0,
-	dedicationPool: 0,
-};
+const lastWriteSeq: Partial<Record<GuardKey, number>> = {};
+const inFlight: Partial<Record<GuardKey, number>> = {};
+
+/** Whether a snapshot must leave `key` alone — see the guard doc above. */
+function isGuarded(key: GuardKey, dispatchedAtSeq: number): boolean {
+	if ((inFlight[key] ?? 0) > 0) return true;
+	return (lastWriteSeq[key] ?? 0) > dispatchedAtSeq;
+}
 
 const MARKET_DOMAINS: Record<MarketField, readonly string[]> = {
 	normalVariant: VARIANTS,
@@ -130,8 +163,7 @@ const MARKET_DOMAINS: Record<MarketField, readonly string[]> = {
  * matching by itself — no repeat-suppression flag needed.
  */
 function applyMarketField(field: MarketField, incoming: string | undefined, dispatchedAtSeq: number): void {
-	if (inFlight[field] > 0) return;
-	if (lastWriteSeq[field] > dispatchedAtSeq) return;
+	if (isGuarded(field, dispatchedAtSeq)) return;
 	if (!incoming) return;
 	if (MARKET_DOMAINS[field].includes(incoming)) {
 		ssot[field] = incoming;
@@ -139,6 +171,33 @@ function applyMarketField(field: MarketField, incoming: string | undefined, disp
 	}
 	console.warn(`[ssot] ignoring unknown persisted ${field}:`, incoming, '— healing Rust to', ssot[field]);
 	void writeField(field, ssot[field]);
+}
+
+/**
+ * Apply the module map from a snapshot, per key.
+ *
+ * The map is applied key by key rather than assigned wholesale, so an in-flight
+ * toggle keeps its optimistic value while every other module in the same
+ * snapshot still updates. Within a key the snapshot is the whole truth: an id
+ * Rust stopped reporting (module unregistered by a downgrade, settings reset)
+ * is dropped, so a stale toggle cannot linger with nothing behind it.
+ *
+ * An absent map is "not yet known", NOT "no modules" — same fail-closed rule as
+ * the market fields. Rust always sends the map (empty at worst), so absence
+ * means a malformed or older payload, and wiping the local record on one would
+ * blank every toggle for a poll interval.
+ */
+function applyModules(incoming: Record<string, boolean> | undefined, dispatchedAtSeq: number): void {
+	if (!incoming) return;
+	for (const [id, enabled] of Object.entries(incoming)) {
+		if (isGuarded(moduleKey(id), dispatchedAtSeq)) continue;
+		ssot.modules[id] = enabled;
+	}
+	for (const id of Object.keys(ssot.modules)) {
+		if (Object.hasOwn(incoming, id)) continue;
+		if (isGuarded(moduleKey(id), dispatchedAtSeq)) continue;
+		delete ssot.modules[id];
+	}
 }
 
 /** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`,
@@ -154,6 +213,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyMarketField('normalVariant', snap.normalVariant, dispatchedAtSeq);
 	applyMarketField('dedicationVariant', snap.dedicationVariant, dispatchedAtSeq);
 	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
+	applyModules(snap.modules, dispatchedAtSeq);
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -179,22 +239,22 @@ const MARKET_COMMANDS: Record<MarketField, { command: string; arg: string }> = {
 };
 
 /**
- * Open the poll-vs-write guard on every field a single user action writes.
+ * Open the poll-vs-write guard on every key a single user action writes.
  *
- * One `writeSeq` bump for the whole action, so a multi-field action is ordered
+ * One `writeSeq` bump for the whole action, so a multi-key action is ordered
  * against polls as one unit rather than as N independent writes.
  */
-function beginWrite(fields: readonly MarketField[]): void {
+function beginWrite(keys: readonly GuardKey[]): void {
 	writeSeq += 1;
-	for (const field of fields) {
-		lastWriteSeq[field] = writeSeq;
-		inFlight[field] += 1;
+	for (const key of keys) {
+		lastWriteSeq[key] = writeSeq;
+		inFlight[key] = (inFlight[key] ?? 0) + 1;
 	}
 }
 
 /** Close the guard opened by `beginWrite`. Always call from a `finally`. */
-function endWrite(fields: readonly MarketField[]): void {
-	for (const field of fields) inFlight[field] -= 1;
+function endWrite(keys: readonly GuardKey[]): void {
+	for (const key of keys) inFlight[key] = (inFlight[key] ?? 0) - 1;
 }
 
 /**
@@ -270,6 +330,30 @@ export async function setDedicationSelection(variant: string, pool: string): Pro
 		console.warn('[ssot] set dedication selection failed:', e);
 	} finally {
 		endWrite(DEDICATION_FIELDS);
+	}
+}
+
+/**
+ * Switch a module on or off (POE-128): guard, mutate the rune synchronously,
+ * then invoke. Same write-through shape as `writeField`, keyed on the module's
+ * guard key.
+ *
+ * Never throws. Rust rejects an unregistered id with an `Err`, and the invoke
+ * can fail on its own; either way the optimistic value stays and the next poll
+ * settles the toggle onto Rust truth once the guard clears. A rejected toggle
+ * therefore flips back by itself within a poll interval rather than reverting
+ * mid-click.
+ */
+export async function setModuleEnabled(id: string, enabled: boolean): Promise<void> {
+	const key = moduleKey(id);
+	beginWrite([key]);
+	ssot.modules[id] = enabled;
+	try {
+		await invoke('set_module_enabled', { id, enabled });
+	} catch (e) {
+		console.warn('[ssot] set_module_enabled failed:', e);
+	} finally {
+		endWrite([key]);
 	}
 }
 
