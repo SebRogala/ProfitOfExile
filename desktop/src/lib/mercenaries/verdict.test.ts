@@ -386,6 +386,21 @@ describe('ladder selection', () => {
 		expect(rulesetOf(verdict, 'guide-b', 'guide-b-kinetist-gg').outcome).toBe('fail');
 	});
 
+	it('caveats a GG pass with the 4-link nature of the search and the core row link count', () => {
+		// GMP on the core row completes the GG rung: 6 supports on Kinetic Blast.
+		const gg = rulesetOf(verdictOf(kinetistCapture([GMP])), 'guide-b', 'guide-b-kinetist-gg');
+		expect(gg.outcome).toBe('pass');
+		expect(gg.reasons).toContain(
+			'GG comps are 4-link searches; a merc with more links prices above them — this core skill row carries 6 supports'
+		);
+	});
+
+	it('does not put the GG link caveat on a lower rung', () => {
+		const end = rulesetOf(verdictOf(kinetistCapture()), 'guide-b', 'guide-b-kinetist-end');
+		expect(end.outcome).toBe('pass');
+		expect(end.reasons.some((reason) => reason.includes('4-link'))).toBe(false);
+	});
+
 	it('lists every passing archetype for an untiered source', () => {
 		// Ice Shot + Vaal Ice Shot passes Manyshot; nothing here passes the other two.
 		const verdict = verdictOf(manyshotCapture());

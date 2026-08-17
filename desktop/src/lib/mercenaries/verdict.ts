@@ -450,7 +450,24 @@ function groupReasons(group: MercGroupResult): string[] {
 	return [];
 }
 
-function passReasons(ruleset: MercRuleset, groups: MercGroupResult[]): string[] {
+/**
+ * The guide-b saved searches are 4-link searches (POE-165, tier ladder: "a
+ * 5-link GG merc prices above the GG comps — look at damage links still").
+ * On a GG pass, say how many supports the core row actually carries so the
+ * reader knows the comps are a floor, not the price.
+ */
+function ggLinkCaveat(ruleset: MercRuleset, groups: MercGroupResult[], capture: MercCapture): string[] {
+	if (ruleset.tier !== 'gg') return [];
+	const core = groups.find((group) => group.id === 'core');
+	const row = core?.rowIndex === null || core?.rowIndex === undefined
+		? undefined
+		: capture.rows.find((candidate) => candidate.index === core.rowIndex);
+	const links = row ? row.supports.length : null;
+	const carried = links === null ? '' : ` — this core skill row carries ${links} supports`;
+	return [`GG comps are 4-link searches; a merc with more links prices above them${carried}`];
+}
+
+function passReasons(ruleset: MercRuleset, groups: MercGroupResult[], capture: MercCapture): string[] {
 	const positions = groups.flatMap((group) => group.positions);
 	const reasons: string[] = [];
 	if (ruleset.floor) reasons.push(`Floor ${ruleset.floor}`);
@@ -458,6 +475,7 @@ function passReasons(ruleset: MercRuleset, groups: MercGroupResult[]): string[] 
 	if (bonuses.length > 0) reasons.push(`Bonuses fired: ${namesOf(bonuses)}`);
 	const contextual = positions.filter((position) => position.outcome === 'contextual-present');
 	if (contextual.length > 0) reasons.push(`Buyer-contextual present: ${namesOf(contextual)}`);
+	reasons.push(...ggLinkCaveat(ruleset, groups, capture));
 	return reasons;
 }
 
@@ -514,7 +532,7 @@ function evaluateRuleset(
 
 	const reasons =
 		outcome === 'pass'
-			? passReasons(ruleset, groups)
+			? passReasons(ruleset, groups, capture)
 			: applied.flatMap((group) => groupReasons(group));
 
 	return {
