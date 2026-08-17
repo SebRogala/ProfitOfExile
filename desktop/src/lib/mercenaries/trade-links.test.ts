@@ -1,6 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { savedSearchUrl } from './trade-links';
-import { MERC_SOURCES, allRulesets } from './rulesets';
+import { derivedSearchUrl, rulesetQuery, savedSearchUrl } from './trade-links';
+import { MERC_SOURCES, allRulesets, type MercRuleset } from './rulesets';
+import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
+import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
+import n5nd22GvKCa from './__fixtures__/5nd22GvKCa.json';
+import n7nRvBzl2S5 from './__fixtures__/7nRvBzl2S5.json';
+import BgzkZKGQF8 from './__fixtures__/BgzkZKGQF8.json';
+import LgkGrPO5Fn from './__fixtures__/LgkGrPO5Fn.json';
+import zbrQyEqah4 from './__fixtures__/zbrQyEqah4.json';
+
+/** Keyed by the hash the ruleset declares — the `rulesets.test.ts` idiom. */
+const FIXTURES: Record<string, { id: string; query: unknown }> = {
+	WvKGjV8Kfm,
+	LgkKKmllTn,
+	'5nd22GvKCa': n5nd22GvKCa,
+	'7nRvBzl2S5': n7nRvBzl2S5,
+	BgzkZKGQF8,
+	LgkGrPO5Fn,
+	zbrQyEqah4
+};
 
 /**
  * Split a built saved-search URL into its decoded `/trade/search/<league>/<hash>`
@@ -63,5 +81,137 @@ describe('source guide links', () => {
 			['guide-a', null],
 			['guide-b', null]
 		]);
+	});
+});
+
+/**
+ * The one normaliser both sides of the round-trip pass through, owned by the
+ * test and NOT by the builder.
+ *
+ * GGG's saved searches are inconsistent about spelling out `disabled: false`:
+ * some groups and filters carry it, most just leave the key out, and the two
+ * mean the same thing. Dropping it here is the only difference the oracle
+ * forgives — every other key survives on both sides, so a `sort` the builder
+ * invented, or a group it silently dropped, still fails the comparison. Putting
+ * this inside `rulesetQuery` would let the builder launder its own output into
+ * agreement with the fixture.
+ */
+function withoutExplicitFalses(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(withoutExplicitFalses);
+	if (value !== null && typeof value === 'object') {
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>)
+				.filter(([key, inner]) => !(key === 'disabled' && inner === false))
+				.map(([key, inner]) => [key, withoutExplicitFalses(inner)])
+		);
+	}
+	return value;
+}
+
+describe('round-trip normaliser', () => {
+	it('drops only an explicit disabled:false, at any depth', () => {
+		expect(
+			withoutExplicitFalses({
+				stats: [
+					{ type: 'not', disabled: false, filters: [{ id: 'a', disabled: false }] },
+					{ type: 'and', disabled: true, filters: [{ id: 'b', disabled: true }] }
+				],
+				sort: { price: 'asc' }
+			})
+		).toEqual({
+			stats: [
+				{ type: 'not', filters: [{ id: 'a' }] },
+				{ type: 'and', disabled: true, filters: [{ id: 'b', disabled: true }] }
+			],
+			sort: { price: 'asc' }
+		});
+	});
+});
+
+describe('rulesetQuery', () => {
+	for (const ruleset of allRulesets()) {
+		// The oracle is the saved search itself: the builder walks the typed data
+		// model, and what comes out has to be the JSON GGG returned for that hash.
+		it(`rebuilds the saved search ${ruleset.savedSearch.hash} from the ${ruleset.id} data model`, () => {
+			expect(withoutExplicitFalses(rulesetQuery(ruleset))).toEqual(
+				withoutExplicitFalses(FIXTURES[ruleset.savedSearch.hash].query)
+			);
+		});
+	}
+
+	const MANYSHOT = allRulesets().find((r) => r.id === 'guide-a-manyshot') as MercRuleset;
+	const MV = allRulesets().find((r) => r.id === 'guide-b-kinetist-mv') as MercRuleset;
+
+	it('switches on an entry the flips name', () => {
+		const query = rulesetQuery(MANYSHOT, {
+			enable: new Set(['core/mercenary.support_49419'])
+		});
+		expect(query.stats[1].filters).toEqual([
+			{ id: 'mercenary.skill_11495' },
+			{ id: 'mercenary.support_5293' },
+			{ id: 'mercenary.support_49419' }
+		]);
+	});
+
+	it('switches off an entry the flips name', () => {
+		const query = rulesetQuery(MV, { disable: new Set(['auras/mercenary.skill_52155']) });
+		expect(query.stats[5].filters).toEqual([{ id: 'mercenary.skill_52155', disabled: true }]);
+	});
+
+	it('flips one group only, leaving the same entry id in its sibling group alone', () => {
+		// Return sits in both Manyshot `mercenary` groups; a flip is keyed by group.
+		const query = rulesetQuery(MANYSHOT, {
+			disable: new Set(['core/mercenary.support_5293'])
+		});
+		expect(query.stats[1].filters[1]).toEqual({ id: 'mercenary.support_5293', disabled: true });
+		expect(query.stats[2].filters[1]).toEqual({ id: 'mercenary.support_5293' });
+	});
+
+	it('refuses to flip an entry of a denial group', () => {
+		const query = rulesetQuery(MV, {
+			disable: new Set(['deny/mercenary.skill_1356', 'deny-supports/mercenary.support_56267'])
+		});
+		expect(query.stats[0].filters).toEqual([
+			{ id: 'mercenary.skill_32089' },
+			{ id: 'mercenary.skill_12583' },
+			{ id: 'mercenary.skill_26705' }
+		]);
+		expect(query.stats[4].filters).toEqual([
+			{ id: 'mercenary.support_56267' },
+			{ id: 'mercenary.support_27970' }
+		]);
+	});
+
+	it('leaves a parked group parked whatever its entries are flipped to', () => {
+		const query = rulesetQuery(MV, {
+			enable: new Set(['deny-supports/mercenary.support_56267'])
+		});
+		expect(query.stats[4].disabled).toBe(true);
+	});
+});
+
+describe('derivedSearchUrl', () => {
+	const MANYSHOT = allRulesets().find((r) => r.id === 'guide-a-manyshot') as MercRuleset;
+
+	it('puts the league in the path and the query in the q parameter', () => {
+		const url = derivedSearchUrl('Allflame', rulesetQuery(MANYSHOT));
+		expect(new URL(url).pathname).toBe('/trade/search/Allflame');
+		const q = new URL(url).searchParams.get('q') ?? '';
+		expect(JSON.parse(q).query.status).toEqual({ option: 'securable' });
+	});
+
+	it('sends the query inside the request body envelope the trade site reads', () => {
+		const url = derivedSearchUrl('Allflame', rulesetQuery(MANYSHOT));
+		expect(Object.keys(JSON.parse(new URL(url).searchParams.get('q') ?? ''))).toEqual(['query']);
+	});
+
+	it('adds no sort, so the derived search orders like the search it came from', () => {
+		const url = derivedSearchUrl('Allflame', rulesetQuery(MANYSHOT));
+		expect(JSON.parse(new URL(url).searchParams.get('q') ?? '').sort).toBeUndefined();
+	});
+
+	it('percent-encodes a league containing a space', () => {
+		const url = derivedSearchUrl('Hardcore Allflame', rulesetQuery(MANYSHOT));
+		expect(new URL(url).pathname).toBe('/trade/search/Hardcore%20Allflame');
 	});
 });

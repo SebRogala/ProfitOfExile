@@ -1,10 +1,18 @@
 /**
- * Trade links for mercenary rulesets.
+ * Trade links for mercenary rulesets — the saved search and the derived one.
  *
- * Distinct from `lib/trade-utils.ts`, which builds `?q=<encoded query>` searches:
- * a mercenary ruleset is a *saved* search, addressed by the hash GGG assigned it,
- * so the URL is a bare path with no query string at all.
+ * Two different addressing schemes live here on purpose. A ruleset's own search
+ * is a *saved* search, addressed by the hash GGG assigned it, so the URL is a
+ * bare path with no query string (`savedSearchUrl`). The derived search is the
+ * same ruleset rebuilt from the data model with the verdict's toggles flipped,
+ * so it has to travel as an encoded query (`rulesetQuery` + `derivedSearchUrl`)
+ * — GGG never assigned it a hash. The saved link stays the primary one; the
+ * derived link is what you open to comp a specific mercenary.
+ *
+ * Distinct from `lib/trade-utils.ts`, which builds gem searches.
  */
+
+import type { MercFilterEntry, MercFilterGroup, MercRuleset } from './rulesets';
 
 /** The league + hash pair identifying one GGG saved search. */
 export interface MercSavedSearch {
@@ -20,4 +28,124 @@ export interface MercSavedSearch {
  */
 export function savedSearchUrl(savedSearch: MercSavedSearch): string {
 	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(savedSearch.league)}/${savedSearch.hash}`;
+}
+
+/** One stat filter as the trade site serialises it. `disabled` is absent when the filter is on. */
+export interface TradeStatFilter {
+	id: string;
+	disabled?: boolean;
+}
+
+/** One stat group. `value.min` is absent when the group has no minimum. */
+export interface TradeStatGroup {
+	type: string;
+	value?: { min: number };
+	disabled?: boolean;
+	filters: TradeStatFilter[];
+}
+
+/**
+ * The `query` object of a trade search — the same shape the saved-search
+ * fixtures carry under their own `query` key. No `sort`: none of the seven
+ * saved searches has one, and adding one here would make the derived search
+ * order differently from the search it was derived from.
+ */
+export interface TradeQuery {
+	stats: TradeStatGroup[];
+	status: { option: string };
+	filters?: { misc_filters: { filters: { ilvl: { min: number } } } };
+}
+
+/**
+ * Per-entry overrides for `rulesetQuery`, keyed `<groupId>/<entryId>`.
+ *
+ * The verdict engine enables the bonuses a mercenary actually fired and the
+ * buyer-contextual entries it actually has, and disables the contextual ones it
+ * lacks — so the derived search comps THIS mercenary rather than the ruleset's
+ * floor case. Group switches are never flipped: a parked `not` group stays
+ * parked, and a group the guide switched off stays off.
+ */
+export interface QueryFlips {
+	enable?: ReadonlySet<string>;
+	disable?: ReadonlySet<string>;
+	/**
+	 * Group ids to switch ON — the one case where a group switch moves. A bonus
+	 * the guide parked by switching its whole group off (guide B's Mid rung does
+	 * this to Haste) cannot be comped through an entry flip alone, because the
+	 * trade site ignores every filter of a disabled group. `not` groups are never
+	 * in here: a parked denial stays parked.
+	 */
+	enableGroups?: ReadonlySet<string>;
+}
+
+/** Flip key for one entry — the same key the verdict engine emits. */
+export function flipKey(groupId: string, entryId: string): string {
+	return `${groupId}/${entryId}`;
+}
+
+/**
+ * A group stays as the guide left it unless the flips switch it on — and a
+ * denial group is never switched on, whatever the flips say.
+ */
+function groupEnabled(group: MercFilterGroup, flips: QueryFlips | undefined): boolean {
+	if (group.enabledInSearch) return true;
+	return group.type !== 'not' && flips?.enableGroups?.has(group.id) === true;
+}
+
+function entryEnabled(
+	group: MercFilterGroup,
+	entry: MercFilterEntry,
+	flips: QueryFlips | undefined
+): boolean {
+	// A `not` group's entries are the guide's denial list; flipping one on or
+	// off would change what the search rejects, not what it comps.
+	if (!flips || group.type === 'not') return entry.enabledInSearch;
+	const key = flipKey(group.id, entry.id);
+	if (flips.enable?.has(key)) return true;
+	if (flips.disable?.has(key)) return false;
+	return entry.enabledInSearch;
+}
+
+/**
+ * Rebuild a ruleset's trade query from the data model.
+ *
+ * The output is the canonical form — a switched-on filter carries no `disabled`
+ * key at all — and this builder does NOT normalise: it never emits
+ * `disabled: false`, and it never reorders or drops anything the ruleset
+ * declares. The saved searches themselves are inconsistent about spelling out
+ * `disabled: false`, so the round-trip test owns the normaliser that makes both
+ * sides comparable; putting that normalisation here would let the builder
+ * launder a transcription error into a match.
+ */
+export function rulesetQuery(ruleset: MercRuleset, flips?: QueryFlips): TradeQuery {
+	const stats: TradeStatGroup[] = ruleset.groups.map((group) => {
+		const built: TradeStatGroup = {
+			type: group.type,
+			filters: group.entries.map((entry) =>
+				entryEnabled(group, entry, flips) ? { id: entry.id } : { id: entry.id, disabled: true }
+			)
+		};
+		if (group.min !== undefined) built.value = { min: group.min };
+		if (!groupEnabled(group, flips)) built.disabled = true;
+		return built;
+	});
+
+	const query: TradeQuery = { stats, status: { option: ruleset.status } };
+	if (ruleset.ilvlMin !== undefined) {
+		query.filters = { misc_filters: { filters: { ilvl: { min: ruleset.ilvlMin } } } };
+	}
+	return query;
+}
+
+/**
+ * Build a trade-site URL for a query the app assembled itself.
+ *
+ * The `q` parameter carries the request BODY, not the bare query — the trade
+ * site reads `{"query": ...}` (same envelope as `lib/trade-utils.ts` sends, and
+ * the same key the saved-search responses store their query under). `league`
+ * MUST be resolved, for the reason `savedSearchUrl` gives.
+ */
+export function derivedSearchUrl(league: string, query: TradeQuery): string {
+	const body = JSON.stringify({ query });
+	return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}?q=${encodeURIComponent(body)}`;
 }

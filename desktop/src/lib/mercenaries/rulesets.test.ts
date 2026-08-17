@@ -414,3 +414,31 @@ describe('source registry', () => {
 		expect([...new Set(ids)]).toEqual(ids);
 	});
 });
+
+describe('buyer-contextual entries', () => {
+	/**
+	 * `buyerContextual` is Sebastian's selling-side ruling, not something the
+	 * saved searches say — the transcription tests above cannot see it drift,
+	 * because from the fixture's point of view these entries are ordinary enabled
+	 * filters. So the flag's exact placement is pinned here: Haste wherever a
+	 * guide gates on it, and the experimental Barrage toggle on the one rung that
+	 * has it switched on.
+	 */
+	it('flags Haste on every ruleset that gates on it, plus the MV Barrage', () => {
+		const flagged = allRulesets().flatMap((ruleset) =>
+			ruleset.groups.flatMap((group) =>
+				group.entries
+					.filter((entry) => entry.buyerContextual)
+					.map((entry) => `${ruleset.id}/${group.id}/${entry.id}`)
+			)
+		);
+		expect(flagged).toEqual([
+			'guide-a-kinetist-v1/auras/mercenary.skill_52155',
+			'guide-b-kinetist-mv/secondary/mercenary.skill_1356',
+			'guide-b-kinetist-mv/auras/mercenary.skill_52155',
+			'guide-b-kinetist-mid/auras/mercenary.skill_52155',
+			'guide-b-kinetist-end/auras/mercenary.skill_52155',
+			'guide-b-kinetist-gg/auras/mercenary.skill_52155'
+		]);
+	});
+});
