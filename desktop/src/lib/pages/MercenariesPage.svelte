@@ -93,6 +93,9 @@
 				{source.label}
 				{#if source.guideUrl}
 					<a class="guide-link" href={source.guideUrl} target="_blank">guide</a>
+				{:else}
+					<!-- Provenance is pending, not nonexistent — the URL is a known gap. -->
+					<span class="guide-pending">guide URL pending</span>
 				{/if}
 			</h2>
 
@@ -137,7 +140,9 @@
 								<span class="quantifier">{quantifier(group)}</span>
 							</div>
 							<div class="chips">
-								{#each group.entries as entry (group.id + entry.id)}
+								<!-- Keys are unique per group (asserted upstream in rulesets.test.ts);
+								     the same id may legitimately recur across sibling groups. -->
+								{#each group.entries as entry (entry.id)}
 									{@const kind = entryKind(group, entry)}
 									<span
 										class="chip chip-{kind}"
@@ -210,6 +215,14 @@
 	.guide-link:hover,
 	.search-link:hover {
 		text-decoration: underline;
+	}
+
+	.guide-pending {
+		font-size: 0.7rem;
+		text-transform: none;
+		letter-spacing: 0;
+		color: var(--color-lab-text-secondary);
+		font-style: italic;
 	}
 
 	.ruleset {
