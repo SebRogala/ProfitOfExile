@@ -42,6 +42,15 @@ export interface MercFilterEntry {
 	name: string;
 	/** False when the saved search carries `disabled: true` on this filter. */
 	enabledInSearch: boolean;
+	/**
+	 * Set on an entry a BUYER may or may not want, whatever the saved search
+	 * switches say — a selling-side ruling, not a fact about the search.
+	 *
+	 * The verdict engine never lets such an entry fail a group: present it
+	 * counts and is flagged, absent it drops out of the group's need. The flag
+	 * is additive, so the fixture-fidelity tests above it stay untouched.
+	 */
+	buyerContextual?: true;
 }
 
 export interface MercFilterGroup {
@@ -210,7 +219,19 @@ const GUIDE_A_KINETIST_V1: MercRuleset = {
 			label: 'Auras',
 			type: 'and',
 			enabledInSearch: true,
-			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true }]
+			entries: [
+				{
+					id: 'mercenary.skill_52155',
+					name: 'Haste',
+					enabledInSearch: true,
+					// Provenance: guide A's own saved search gates on Haste — the switch
+					// above is transcribed, not softened. The demotion to contextual is
+					// Sebastian's selling-side ruling (POE-165 "Kinetist tier ladder",
+					// slice-1 comment item 2): guide B's author tunes Haste to their
+					// spectres, so a merc without it still sells. Not a fixture fact.
+					buyerContextual: true
+				}
+			]
 		},
 		{
 			id: 'core',
@@ -359,7 +380,15 @@ const GUIDE_B_KINETIST_MV: MercRuleset = {
 			min: 1,
 			entries: [
 				{ id: 'mercenary.skill_44258', name: 'Greater Kinetic Blast', enabledInSearch: true },
-				{ id: 'mercenary.skill_1356', name: 'Barrage', enabledInSearch: true }
+				// The guide calls Barrage its experimental toggle, live only on this
+				// rung — a mapping merc with Barrage instead of Greater Kinetic Blast
+				// still sells, so it counts toward the minimum but never fails it.
+				{
+					id: 'mercenary.skill_1356',
+					name: 'Barrage',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
 			]
 		},
 		{
@@ -403,7 +432,17 @@ const GUIDE_B_KINETIST_MV: MercRuleset = {
 			label: 'Auras',
 			type: 'and',
 			enabledInSearch: true,
-			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true }]
+			// Buyer-contextual on every rung: the guide tells its readers to enable
+			// Haste "depending on your spectres", so it widens the buyer pool
+			// instead of gating the sale (POE-165 "Kinetist tier ladder").
+			entries: [
+				{
+					id: 'mercenary.skill_52155',
+					name: 'Haste',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
+			]
 		},
 		{
 			id: 'damage',
@@ -534,7 +573,17 @@ const GUIDE_B_KINETIST_MID: MercRuleset = {
 			label: 'Auras',
 			type: 'and',
 			enabledInSearch: false,
-			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true }]
+			// Buyer-contextual on every rung: the guide tells its readers to enable
+			// Haste "depending on your spectres", so it widens the buyer pool
+			// instead of gating the sale (POE-165 "Kinetist tier ladder").
+			entries: [
+				{
+					id: 'mercenary.skill_52155',
+					name: 'Haste',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
+			]
 		},
 		{
 			id: 'damage',
@@ -665,7 +714,17 @@ const GUIDE_B_KINETIST_END: MercRuleset = {
 			label: 'Auras',
 			type: 'and',
 			enabledInSearch: true,
-			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true }]
+			// Buyer-contextual on every rung: the guide tells its readers to enable
+			// Haste "depending on your spectres", so it widens the buyer pool
+			// instead of gating the sale (POE-165 "Kinetist tier ladder").
+			entries: [
+				{
+					id: 'mercenary.skill_52155',
+					name: 'Haste',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
+			]
 		},
 		{
 			id: 'damage',
@@ -796,7 +855,17 @@ const GUIDE_B_KINETIST_GG: MercRuleset = {
 			label: 'Auras',
 			type: 'and',
 			enabledInSearch: true,
-			entries: [{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: true }]
+			// Buyer-contextual on every rung: the guide tells its readers to enable
+			// Haste "depending on your spectres", so it widens the buyer pool
+			// instead of gating the sale (POE-165 "Kinetist tier ladder").
+			entries: [
+				{
+					id: 'mercenary.skill_52155',
+					name: 'Haste',
+					enabledInSearch: true,
+					buyerContextual: true
+				}
+			]
 		},
 		{
 			id: 'damage',
