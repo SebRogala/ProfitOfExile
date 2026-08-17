@@ -403,6 +403,7 @@ mod tests {
             modules_enabled: Mutex::new(std::collections::HashMap::new()),
             module_handles: Mutex::new(std::collections::HashMap::new()),
             modules_shutting_down: AtomicBool::new(false),
+            mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
         }
     }
 
