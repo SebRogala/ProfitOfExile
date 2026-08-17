@@ -14,6 +14,7 @@
  */
 
 import { entryKind, type MercFilterGroup, type MercRuleset, type MercTier } from './rulesets';
+import type { MercRulesetResult, RulesetOutcome } from './verdict';
 
 /** Column heads of the Kinetist ladder, in `TIERS` order. */
 export const TIER_LABELS: Record<MercTier, string> = {
@@ -115,6 +116,10 @@ export interface LadderEntryRow {
 	kind: 'entry';
 	/** Row key — entry ids recur across sibling groups, so the group id qualifies it. */
 	id: string;
+	/** The two halves of `id`, carried rather than parsed back out: the page needs
+	 *  them to look this row's verdict position up per rung. */
+	groupId: string;
+	entryId: string;
 	name: string;
 	/** One per rung, in the order the rungs were passed. */
 	cells: LadderCell[];
@@ -190,6 +195,8 @@ export function ladderRows(rungs: MercRuleset[]): LadderRow[] {
 			rows.push({
 				kind: 'entry',
 				id: `${group.id}/${entry.id}`,
+				groupId: group.id,
+				entryId: entry.id,
 				name: entry.name,
 				cells,
 				varies: sharedValue(cells) === null
@@ -197,4 +204,23 @@ export function ladderRows(rungs: MercRuleset[]): LadderRow[] {
 		}
 	}
 	return rows;
+}
+
+/**
+ * The verdict's outcome for each rung, in the matrix's column order — the
+ * header row that turns the ladder from "what the rungs ask" into "what THIS
+ * mercenary answers".
+ *
+ * A rung with no result in hand is `null`, not a fabricated outcome: that is
+ * the state before any capture has arrived and whenever the source is switched
+ * off, and drawing a badge there would claim a verdict nobody computed. Results
+ * are matched by ruleset id rather than by position, for the same reason
+ * `ladderRows` looks groups up by id: a mismatch must show a hole, never the
+ * neighbouring column's answer.
+ */
+export function rungOutcomes(
+	rungs: MercRuleset[],
+	results: MercRulesetResult[]
+): (RulesetOutcome | null)[] {
+	return rungs.map((rung) => results.find((result) => result.id === rung.id)?.outcome ?? null);
 }

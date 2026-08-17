@@ -25,6 +25,7 @@
  *   // Read: ssot.league  (string | null; null until first successful get_ssot)
  *   // Read: ssot.normalVariant / ssot.dedicationVariant / ssot.dedicationPool
  *   // Read: ssot.modules['mercenary'] ?? false  (absent key = not yet known)
+ *   // Read: ssot.mercenary  (Merc OCR status + last capture; no write path)
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Write: setModuleEnabled(id, enabled)
  *   // Main window: call startSsotStore() top-level (like initStatusStore()).
@@ -34,6 +35,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
+import { mercenarySliceDefault, type MercenarySlice } from '$lib/mercenaries/capture';
 
 /**
  * The dedication pools, in Rust/settings/DB canon spelling (singular `skill`).
@@ -58,6 +60,8 @@ export interface SsotSnapshot {
 	dedicationPool?: string;
 	/** Per-module enabled flags, keyed by registry id (Rust owns the keys). */
 	modules?: Record<string, boolean>;
+	/** Merc OCR module state + the last capture (POE-165). Rust-owned, read-only here. */
+	mercenary?: MercenarySlice;
 }
 
 /**
@@ -94,6 +98,11 @@ export const ssot = $state({
 	 *  the registry, not this file, owns which modules exist and what they
 	 *  default to. Intent, not liveness. */
 	modules: {} as Record<string, boolean>,
+	/** Merc OCR module state and its last capture (POE-165). Rust owns every
+	 *  field — there is no setter here and no surface writes it, so the
+	 *  poll-vs-write guard the other slices need does not apply. Until the first
+	 *  poll answers, this is `mercenarySliceDefault()`: module off, no capture. */
+	mercenary: mercenarySliceDefault() as MercenarySlice,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
@@ -200,6 +209,21 @@ function applyModules(incoming: Record<string, boolean> | undefined, dispatchedA
 	}
 }
 
+/**
+ * Apply the mercenary slice from a snapshot.
+ *
+ * Taken whole rather than field by field: Rust is the only writer, so a
+ * snapshot that carries the slice carries all of it, and merging would let a
+ * retired capture's rows survive under a newer capture's header. An ABSENT
+ * slice keeps what we have — same fail-closed rule as the market fields, and
+ * the only payload that lacks it is a malformed or older one, where blanking
+ * the last capture would be a lie about what the reader saw.
+ */
+function applyMercenary(incoming: MercenarySlice | undefined): void {
+	if (!incoming) return;
+	ssot.mercenary = incoming;
+}
+
 /** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`,
  *  `snap.unreachable`) into the flat store fields. Missing/malformed fields fail
  *  closed (null / false for league state, last known good for markets).
@@ -214,6 +238,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyMarketField('dedicationVariant', snap.dedicationVariant, dispatchedAtSeq);
 	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
 	applyModules(snap.modules, dispatchedAtSeq);
+	applyMercenary(snap.mercenary);
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
