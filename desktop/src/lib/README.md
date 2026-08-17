@@ -8,7 +8,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 |------|--------|-------------|
 | `stores/status.svelte.ts` | `store`, `initStatusStore()` | Shared app state — event-driven from Rust backend. No polling. Call `initStatusStore()` once from root layout. Read `store.status` and `store.logs` reactively. |
 | `stores/ssot.svelte.ts` | `ssot`, `startSsotStore()`, `setNormalVariant()`, `setDedicationVariant()`, `setDedicationPool()`, `setDedicationSelection()` | Rust-owned single source of truth for market selection, polled every 3000 ms. Read `ssot.league` / `ssot.normalVariant` / `ssot.dedicationVariant` / `ssot.dedicationPool` reactively; write through the exported setters (never assign the fields directly or keep a local copy). |
-| `stores/navigation.svelte.ts` | `nav` | Global view toggle. `nav.view` is `'lab' \| 'settings' \| 'dev'`. All pages are always mounted (hidden via CSS) — do not use SvelteKit routing for main views because it unmounts their listeners. |
+| `stores/navigation.svelte.ts` | `nav`, `viewToPath()` | Global view toggle. `nav.view` is `'lab' \| 'settings' \| 'dev' \| 'mercenaries'`. All pages are always mounted (hidden via CSS) — do not use SvelteKit routing for main views because it unmounts their listeners. `viewToPath(view)` gives the Sidebar path for a view (`'lab'` → `'/'`); use it instead of re-deriving the mapping, and add both a `go()` branch and a `VIEW_PATHS` entry when adding a view. |
 
 ## Components
 
@@ -50,6 +50,14 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `compass/LabGraph.svelte` | layout/navigation props | Full lab graph used by planner and path-strip presentation. |
 | `compass/RoomEditor.svelte` | room/editing props | Room metadata and connection editor used by planner tooling. |
 
+## Mercenary Data
+
+| File | Exports | Description |
+|------|---------|-------------|
+| `mercenaries/rulesets.ts` | `MERC_SOURCES`, `allRulesets()`, `kinetistLadder()`, `entryRole()`, `entryTier()`, `entryKind()`, `SOURCE_IDS`, `ARCHETYPES`, `TIERS`, `GROUP_TYPES` + types | Declarative transcription of the guides' saved trade searches — sources → rulesets → filter groups → entries, each carrying its `enabledInSearch` switch. `entryKind(group, entry)` is the single owner of the required/forbidden/bonus rule (type first: a `not` group's entries stay forbidden even when switched off); consumers call it rather than reading the flags themselves. |
+| `mercenaries/trade-links.ts` | `savedSearchUrl()`, `MercSavedSearch` | Saved-search URL builder — a bare `/trade/search/<league>/<hash>` path, no `?q=`. No default-league fallback: the league comes from the saved search itself. Distinct from `lib/trade-utils.ts`, which builds encoded-query searches. |
+| `mercenaries/__fixtures__/` | raw JSON | The seven saved-search responses verbatim plus GGG's Mercenary stat vocabulary. Ground truth for `rulesets.test.ts` — the data module is asserted against these, not against itself. See the directory's `README.md` for source URLs and re-fetch commands. |
+
 ## Pages
 
 Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store — **not** SvelteKit routing.
@@ -59,6 +67,7 @@ Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store 
 | `pages/LabPage.svelte` | Lab farming dashboard — tabs (Session/Rankings/Font EV/Market), comparator, session queue, best plays, font EV, market overview. |
 | `pages/PlannerPage.svelte` | Lab Planner — full lab graph view, route strategy, compass mode, layout import. Rendered as the "Planner" tab inside LabPage. |
 | `pages/SettingsPage.svelte` | Settings — General, Game Integration, Overlays, Trade, Logs. |
+| `pages/MercenariesPage.svelte` | Mercenaries — per-source rulesets rendered as read-only trade-style filter panels (`$lib/mercenaries`), with saved-search links and a stubbed verdict card. Reads `ssot.league` only for the "saved in &lt;league&gt;" badge. |
 | `pages/RunHistoryPage.svelte` | Lab run-history presentation. Present in the library but not currently wired into `nav.View`. |
 
 ## Routes
@@ -67,7 +76,7 @@ Only used for the app shell and overlay windows. **Do NOT add page routes** — 
 
 | Route | Description |
 |-------|-------------|
-| `(app)/+layout.svelte` | App shell — TopBar + Sidebar + renders all pages (LabPage, SettingsPage). View switching via `nav` store. |
+| `(app)/+layout.svelte` | App shell — TopBar + Sidebar + renders all pages (LabPage, SettingsPage, MercenariesPage, DevPage in DEV). View switching via `nav` store. |
 | `(app)/+page.svelte` | Empty stub — required by adapter-static for HTML generation. |
 | `(app)/dev/+page.svelte` | Dev tools — trade lookup test, pipeline test, OCR test. (DEV only) |
 | `overlay/+page.svelte` | Capture region overlay — transparent, draggable, resizable, Save/Cancel buttons. |
