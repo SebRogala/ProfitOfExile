@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ssot, applySnapshot } from './ssot.svelte';
+import type { MercenarySlice } from '../mercenaries/capture';
 
 // The store reaches Rust through `invoke` only; the real core module cannot load
 // outside a webview. Same shape as desktop/src/lib/compass/layout-loader.test.ts:13.
@@ -534,5 +535,98 @@ describe('module flags', () => {
 			releases[1]();
 			await on;
 		});
+	});
+});
+
+/**
+ * The mercenary slice (POE-165) is Rust-owned and read-only in the webview, so
+ * it has no write path and no guard record — what there IS to get wrong is the
+ * apply: taking the slice whole, and leaving the last known one alone when a
+ * payload does not carry it. Same re-import harness as the blocks above so the
+ * default state is pristine rather than whatever an earlier test left behind.
+ */
+describe('mercenary slice', () => {
+	let mod: typeof import('./ssot.svelte');
+
+	const league = { name: 'Mirage' };
+
+	/** A slice as Rust publishes one: a live capture of a one-row recruit window. */
+	function liveSlice(): MercenarySlice {
+		return {
+			status: 'live',
+			capture: {
+				capturedAtMs: 1_700_000_000_000,
+				live: true,
+				scale: 1,
+				screen: [2560, 1440],
+				header: { name: 'Cai, the Lout', class: 'Shock Ambusher', level: 70, wager: 1028 },
+				rows: [
+					{
+						index: 0,
+						skill: {
+							raw: 'Ice Shot',
+							ids: ['mercenary.skill_11495'],
+							name: 'Ice Shot',
+							score: 0.99,
+							state: 'matched',
+						},
+						supports: [],
+					},
+				],
+			},
+			learnedFamilies: ['Return--3'],
+			lastError: 'ocr engine slow',
+			geometrySource: 'file',
+		};
+	}
+
+	beforeEach(async () => {
+		vi.resetModules();
+		vi.clearAllMocks();
+		const core = await import('@tauri-apps/api/core');
+		vi.mocked(core.invoke).mockResolvedValue({ league });
+		mod = await import('./ssot.svelte');
+	});
+
+	it('reports the module off with no capture before the first snapshot', () => {
+		expect(mod.ssot.mercenary.status).toBe('off');
+		expect(mod.ssot.mercenary.capture).toBeNull();
+	});
+
+	it('applies the slice the snapshot carries', () => {
+		mod.applySnapshot({ league, mercenary: liveSlice() });
+		expect(mod.ssot.mercenary.status).toBe('live');
+		expect(mod.ssot.mercenary.capture?.header.name).toBe('Cai, the Lout');
+		expect(mod.ssot.mercenary.capture?.rows[0].skill.name).toBe('Ice Shot');
+		expect(mod.ssot.mercenary.geometrySource).toBe('file');
+		expect(mod.ssot.mercenary.learnedFamilies).toEqual(['Return--3']);
+	});
+
+	it('keeps the last known slice when the snapshot carries no mercenary field', () => {
+		mod.applySnapshot({ league, mercenary: liveSlice() });
+		mod.applySnapshot({ league });
+		expect(mod.ssot.mercenary.status).toBe('live');
+		expect(mod.ssot.mercenary.capture?.rows).toHaveLength(1);
+	});
+
+	it('replaces the whole slice instead of merging it into the previous one', () => {
+		// The window closed: Rust retired the capture, dropped the error and
+		// forgot the learned template. A field-wise merge would leave the old row,
+		// the old error and the old family standing under the new status.
+		mod.applySnapshot({ league, mercenary: liveSlice() });
+		mod.applySnapshot({
+			league,
+			mercenary: {
+				status: 'idle',
+				capture: null,
+				learnedFamilies: [],
+				lastError: null,
+				geometrySource: 'default',
+			},
+		});
+		expect(mod.ssot.mercenary.status).toBe('idle');
+		expect(mod.ssot.mercenary.capture).toBeNull();
+		expect(mod.ssot.mercenary.lastError).toBeNull();
+		expect(mod.ssot.mercenary.learnedFamilies).toEqual([]);
 	});
 });

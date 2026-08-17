@@ -4,6 +4,7 @@ import {
 	kindTitle,
 	ladderRows,
 	quantifier,
+	rungOutcomes,
 	sharedValue,
 	type LadderEntryRow,
 	type LadderGroupRow,
@@ -15,6 +16,7 @@ import {
 	type MercFilterGroup,
 	type MercRuleset
 } from './rulesets';
+import type { MercRulesetResult } from './verdict';
 
 function entry(id: string, enabledInSearch = true): MercFilterEntry {
 	return { id, name: id, enabledInSearch };
@@ -243,5 +245,58 @@ describe('ladderRows over rungs that do not share a skeleton', () => {
 		const rows = ladderRows([rung('one', [parked]), rung('two', [parked])]);
 		expect(groupRow(rows, 'deny').offIn).toEqual(['minimum viable', 'minimum viable']);
 		expect(groupRow(rows, 'deny').varies).toBe(false);
+	});
+});
+
+describe('ladderRows entry ids', () => {
+	it('carries the group and entry id the verdict lookup needs, not just the joined key', () => {
+		// The page looks a rung's position up by (rulesetId, groupId, entryId); if
+		// it had to split the row key apart, an id containing the separator would
+		// silently address the wrong position.
+		const rows = ladderRows([
+			rung('mv', [group({ id: 'core', entries: [entry('mercenary.support_49419')] })])
+		]);
+		const row = entryRow(rows, 'core/mercenary.support_49419');
+		expect(row.groupId).toBe('core');
+		expect(row.entryId).toBe('mercenary.support_49419');
+	});
+});
+
+describe('rungOutcomes', () => {
+	/** A verdict result carrying only what the header row reads. */
+	function result(id: string, outcome: MercRulesetResult['outcome']): MercRulesetResult {
+		return {
+			id,
+			label: id,
+			tier: null,
+			outcome,
+			groups: [],
+			notInRules: [],
+			reasons: [],
+			floor: null,
+			savedUrl: `https://www.pathofexile.com/trade/search/Allflame/${id}`,
+			derivedUrl: null
+		};
+	}
+
+	it('puts each rung’s outcome in that rung’s column', () => {
+		const outcomes = rungOutcomes(
+			[rung('mv', []), rung('mid', []), rung('gg', [])],
+			// Deliberately out of column order: the matching is by id, not position.
+			[result('gg', 'fail'), result('mv', 'pass'), result('mid', 'unknown')]
+		);
+		expect(outcomes).toEqual(['pass', 'unknown', 'fail']);
+	});
+
+	it('leaves a rung with no result blank instead of borrowing a neighbour’s', () => {
+		// The state before any capture, and whenever the source is switched off.
+		expect(rungOutcomes([rung('mv', []), rung('mid', [])], [result('mv', 'pass')])).toEqual([
+			'pass',
+			null
+		]);
+	});
+
+	it('reports no columns at all when there are no rungs', () => {
+		expect(rungOutcomes([], [result('mv', 'pass')])).toEqual([]);
 	});
 });

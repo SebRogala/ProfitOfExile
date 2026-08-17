@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { invoke } from '@tauri-apps/api/core';
 	import {
 		MERC_SOURCES,
+		SOURCE_IDS,
 		entryKind,
 		kinetistLadder,
 		type MercRuleset,
@@ -11,11 +13,43 @@
 		kindTitle,
 		ladderRows,
 		quantifier,
+		rungOutcomes,
 		sharedValue,
 		type LadderCell,
 	} from '$lib/mercenaries/ladder-view';
+	import {
+		GROUP_OUTCOME_LABEL,
+		GROUP_OUTCOME_TONE,
+		HEADLINE_LABEL,
+		HEADLINE_TONE,
+		positionOutcomeLabel,
+		POSITION_OUTCOME_TONE,
+		READ_GLYPH,
+		READ_STATE_LABEL,
+		READ_TONE,
+		RULESET_OUTCOME_LABEL,
+		RULESET_OUTCOME_TONE,
+		capturedAt,
+		describeDebugResult,
+		groupKey,
+		indexGroups,
+		indexPositions,
+		notInRulesNames,
+		parseLearnedTemplate,
+		positionKey,
+		skillText,
+		skillTitle,
+		supportText,
+		supportTitle,
+		type OutcomeTone,
+	} from '$lib/mercenaries/capture-view';
+	import { MERC_SOURCES_OFF_PREF_KEY, enabledSources, parseSourcesOff } from '$lib/mercenaries/merc-prefs';
+	import { evaluateCapture } from '$lib/mercenaries/verdict';
+	import type { MercStatus } from '$lib/mercenaries/capture';
 	import { savedSearchUrl } from '$lib/mercenaries/trade-links';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import { persisted } from '$lib/prefs.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 
 	// Every rule shown here is read from `$lib/mercenaries/rulesets` — the page
@@ -23,6 +57,12 @@
 	// its colour come from `entryKind`, which resolves type-first (a switched-off
 	// denial is still a denial); reproducing that rule in markup is how the page
 	// would end up advertising the stats a search exists to reject.
+	//
+	// The verdict half is the same deal one layer up: `evaluateCapture` decides
+	// every outcome and `capture-view` words it. The page reads `ssot.mercenary`
+	// (Rust-owned) plus its own prefs, and NEVER `ssot.modules` — the module
+	// toggle lives in the sidebar and this page stays browsable with it off
+	// (ADR-014).
 
 	/** One glyph per state. Text, not shapes: it survives a colour-blind reader,
 	 *  and the wording behind it is on the row's `title`. */
@@ -33,11 +73,120 @@
 		absent: '·',
 	};
 
+	/** Module status in words. `status` outranks `capture.live`: a retired capture
+	 *  is left behind with `live: false`, and nothing clears it on app exit. */
+	const STATUS_LABEL: Record<MercStatus, string> = {
+		off: 'module off',
+		idle: 'watching for a recruit window',
+		live: 'recruit window on screen',
+		unavailable: 'capture unavailable here',
+	};
+
+	const STATUS_TONE: Record<MercStatus, OutcomeTone> = {
+		off: 'muted',
+		idle: 'muted',
+		live: 'pass',
+		unavailable: 'fail',
+	};
+
 	const SOURCE_OPTIONS = MERC_SOURCES.map((s) => ({ value: s.id, label: s.label }));
 
 	let selectedSource = $state<MercSourceId>(MERC_SOURCES[0].id);
 
 	const source = $derived(MERC_SOURCES.find((s) => s.id === selectedSource) ?? MERC_SOURCES[0]);
+
+	// --- SSOT + prefs ---------------------------------------------------------
+
+	const merc = $derived(ssot.mercenary);
+	const capture = $derived(merc.capture);
+	/** Display-only liveness: the status is what decides, the flag only agrees. */
+	const captureLive = $derived(merc.status === 'live' && capture?.live === true);
+
+	const sourcesOff = persisted(MERC_SOURCES_OFF_PREF_KEY, '');
+	const enabled = $derived(enabledSources(sourcesOff.value));
+
+	/** The verdict is derived, never stored: it is a function of the capture, the
+	 *  rulesets, the source toggles and the active league, and any copy of it
+	 *  would be one poll away from lying. */
+	const verdict = $derived(
+		capture === null ? null : evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
+	);
+	const sourceVerdict = $derived(verdict?.sources.find((s) => s.id === source.id) ?? null);
+	const results = $derived(sourceVerdict?.rulesets ?? []);
+	const positions = $derived(indexPositions(results));
+	const groups = $derived(indexGroups(results));
+
+	function resultOf(ruleset: MercRuleset) {
+		return results.find((r) => r.id === ruleset.id) ?? null;
+	}
+
+	/** `null` = nothing to say yet (no capture); the engine owns every other value,
+	 *  including `off` for a source the user switched out. */
+	function headlineOf(id: MercSourceId) {
+		if (!enabled.has(id)) return 'off' as const;
+		return verdict?.sources.find((s) => s.id === id)?.headline ?? null;
+	}
+
+	// --- Settings -------------------------------------------------------------
+
+	/** Write the off-list back in `SOURCE_IDS` order so the stored value is stable
+	 *  whatever order the user clicked in. */
+	function setSourceEnabled(id: MercSourceId, on: boolean): void {
+		const off = parseSourcesOff(sourcesOff.value);
+		if (on) off.delete(id);
+		else off.add(id);
+		sourcesOff.value = SOURCE_IDS.filter((candidate) => off.has(candidate)).join(',');
+	}
+
+	// --- Module commands ------------------------------------------------------
+
+	const templates = $derived(
+		merc.learnedFamilies.map((raw) => ({ raw, ...parseLearnedTemplate(raw) }))
+	);
+
+	let debugBusy = $state(false);
+	let debugReport = $state<string | null>(null);
+	let debugFailed = $state(false);
+	let templateError = $state<string | null>(null);
+
+	/** Take a debug dump on demand — the channel that turns the first Windows run
+	 *  into calibration data. The report is shown verbatim, and so is the error:
+	 *  a silent failure here is the one outcome that teaches nothing. */
+	async function runDebugCapture(): Promise<void> {
+		debugBusy = true;
+		debugReport = null;
+		debugFailed = false;
+		try {
+			debugReport = describeDebugResult(await invoke('merc_debug_capture', { imagePath: null }));
+		} catch (e) {
+			debugFailed = true;
+			debugReport = `${e}`;
+		} finally {
+			debugBusy = false;
+		}
+	}
+
+	/** The un-poison path for a template learned from a mistimed hover. Rust owns
+	 *  the store, so the list refreshes on the next poll rather than locally. */
+	async function forgetTemplate(family: string, tier: number | null): Promise<void> {
+		templateError = null;
+		try {
+			await invoke('merc_forget_template', { family, tier });
+		} catch (e) {
+			templateError = `${e}`;
+		}
+	}
+
+	async function resetTemplates(): Promise<void> {
+		templateError = null;
+		try {
+			await invoke('merc_reset_templates');
+		} catch (e) {
+			templateError = `${e}`;
+		}
+	}
+
+	// --- Rulesets (slice 1) ---------------------------------------------------
 
 	/**
 	 * The tier matrix is guide-b's presentation, not a generic capability — a
@@ -49,6 +198,12 @@
 	);
 	const rows = $derived(ladderRows(ladder));
 	const cards = $derived(source.rulesets.filter((r) => !ladder.includes(r)));
+	const ladderVerdict = $derived(rungOutcomes(ladder, results));
+	/** The rungs share one entry skeleton, so their "not in these rules" lists
+	 *  repeat — the matrix prints the union once instead of four identical lines. */
+	const ladderNotInRules = $derived(
+		notInRulesNames(results.filter((result) => ladder.some((rung) => rung.id === result.id)))
+	);
 
 	/** Status + item level as one line — identical across all four rungs today, so
 	 *  the matrix prints it once instead of four times. */
@@ -60,9 +215,17 @@
 
 	const ladderMeta = $derived(sharedValue(ladder.map(metaText)));
 
-	/** Wording for a matrix cell — `absent` is a hole in the skeleton, not a rule. */
-	function cellTitle(cell: LadderCell): string {
-		return cell === 'absent' ? 'not in this rung' : kindTitle(cell);
+	/**
+	 * Wording for a matrix cell — `absent` is a hole in the skeleton, not a rule.
+	 * With a capture in hand the cell also carries what this mercenary did with
+	 * that rule, which is the only place guide-b's per-position debug can live:
+	 * its rungs are columns here, not cards.
+	 */
+	function cellTitle(cell: LadderCell, rung: MercRuleset, groupId: string, entryId: string): string {
+		const base = cell === 'absent' ? 'not in this rung' : kindTitle(cell);
+		const position = positions.get(positionKey(rung.id, groupId, entryId));
+		if (!position || capture === null) return base;
+		return `${base} · ${positionOutcomeLabel(position.kind, position.outcome)} · ${capturedAt(capture, position.site)}`;
 	}
 
 	/**
@@ -104,12 +267,191 @@
 		</span>
 	</p>
 
-	<section class="card verdict">
-		<h2 class="card-title">Last capture</h2>
-		<p class="stub">
-			No capture yet. The Merc OCR module (slice 2) fills this with per-rule
-			pass/fail for the last seen mercenary.
-		</p>
+	<!-- 1. Capture status: what the module is doing, and the two levers that fix it. -->
+	<section class="card status-card">
+		<div class="card-head">
+			<h2 class="card-title">Merc OCR</h2>
+			<span class="badge tone-{STATUS_TONE[merc.status]}">{STATUS_LABEL[merc.status]}</span>
+			<span class="meta">
+				geometry: {merc.geometrySource === 'file' ? 'merc-geometry.json' : 'built-in reference'}
+			</span>
+			<span class="spacer"></span>
+			<Button
+				onclick={runDebugCapture}
+				disabled={debugBusy}
+				title="Capture the screen now and write a debug dump (screenshot, row crops, cell crops, report.json)."
+			>
+				{debugBusy ? 'Capturing…' : 'Debug capture'}
+			</Button>
+		</div>
+
+		{#if merc.lastError}
+			<p class="error">Last error: {merc.lastError}</p>
+		{/if}
+
+		{#if debugReport}
+			<pre class="report" class:error={debugFailed}>{debugReport}</pre>
+		{/if}
+
+		<div class="templates">
+			<span class="templates-head">Learned icon templates ({templates.length})</span>
+			<!-- Where they live is a fact about the store, not about it being empty:
+			     the un-poison path needs it most when the list is NOT empty. -->
+			<span class="meta">stored under merc-icons/ in the app data directory</span>
+			{#if templates.length === 0}
+				<span class="meta">none yet — hover a support cell in game to teach one</span>
+			{:else}
+				<ul class="template-list">
+					{#each templates as template (template.raw)}
+						<li class="template">
+							<span>{template.label}</span>
+							<button
+								class="forget"
+								onclick={() => forgetTemplate(template.family, template.tier)}
+								aria-label="forget the learned template for {template.label}"
+								title="Forget this template — the next hover relearns it."
+							>
+								✕
+							</button>
+						</li>
+					{/each}
+				</ul>
+				<Button
+					variant="danger"
+					onclick={resetTemplates}
+					title="Forget every learned template. Use this when a mistimed hover poisoned the store."
+				>
+					Reset learned templates
+				</Button>
+			{/if}
+			{#if templateError}
+				<p class="error">{templateError}</p>
+			{/if}
+		</div>
+	</section>
+
+	<!-- 2. What the reader saw, before any rule is applied to it. -->
+	<section class="card capture-card">
+		<div class="card-head">
+			<h2 class="card-title">Last capture</h2>
+			<!-- The capture glyphs are about CONFIDENCE, not about rules: without
+			     this line the ✕ reads as the rulesets' "denied". -->
+			<span class="legend read-legend">
+				<span class="legend-item read-read"
+					><span class="glyph" aria-hidden="true">{READ_GLYPH.matched}</span> read</span
+				>
+				<span class="legend-item read-unsure"
+					><span class="glyph" aria-hidden="true">{READ_GLYPH.low_confidence}</span> unsure — hover
+					to confirm</span
+				>
+				<span class="legend-item read-unread"
+					><span class="glyph" aria-hidden="true">{READ_GLYPH.unknown}</span> not read</span
+				>
+			</span>
+			{#if capture}
+				<span class="meta">
+					{captureLive ? 'on screen' : 'window gone'} · {capture.rows.length} rows · scale
+					{capture.scale.toFixed(2)} · screen {capture.screen[0]}×{capture.screen[1]}
+				</span>
+			{/if}
+		</div>
+
+		{#if merc.status === 'unavailable'}
+			<p class="stub">
+				Capture is unavailable here — the module needs Windows and the system OCR engine. The rules
+				below are readable anyway.
+			</p>
+		{:else if capture === null}
+			<p class="stub">No capture yet. Turn on Merc OCR (sidebar) and open a recruit window.</p>
+		{:else}
+			<div class="capture-header">
+				<span class="hdr"><span class="hdr-key">name</span> {capture.header.name ?? '—'}</span>
+				<span class="hdr"><span class="hdr-key">class</span> {capture.header.class ?? '—'}</span>
+				<span class="hdr"><span class="hdr-key">level</span> {capture.header.level ?? '—'}</span>
+				<span class="hdr"><span class="hdr-key">wager</span> {capture.header.wager ?? '—'}</span>
+			</div>
+
+			<div class="rows-scroll">
+				<table class="rows">
+					<thead>
+						<tr>
+							<th class="num-col" scope="col">#</th>
+							<th scope="col">skill</th>
+							<th scope="col">supports</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each capture.rows as row (row.index)}
+							<tr>
+								<th class="num-col" scope="row">{row.index + 1}</th>
+								<td class="read read-{READ_TONE[row.skill.state]}" title={skillTitle(row.skill)}>
+									<span class="glyph" aria-hidden="true">{READ_GLYPH[row.skill.state]}</span>
+									<span>{skillText(row.skill)}</span>
+									<span class="visually-hidden">({READ_STATE_LABEL[row.skill.state]})</span>
+								</td>
+								<td>
+									<!-- The flex box is a div INSIDE the cell: a `display: flex` table
+									     cell is taken out of the table layout and browsers wrap it in an
+									     anonymous cell, which is a layout surprise this row does not need. -->
+									<div class="supports">
+										{#if row.supports.length === 0}
+											<span class="meta">no support cells</span>
+										{:else}
+											{#each row.supports as support (support.slot)}
+												<span
+													class="read read-{READ_TONE[support.state]}"
+													title={supportTitle(support)}
+												>
+													<span class="glyph" aria-hidden="true">{READ_GLYPH[support.state]}</span>
+													<span>{supportText(support)}</span>
+													<span class="visually-hidden">({READ_STATE_LABEL[support.state]})</span>
+												</span>
+											{/each}
+										{/if}
+									</div>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
+
+	<!-- 3. The verdict: one headline per source, then the selected source's work. -->
+	<section class="card verdict-card">
+		<div class="card-head">
+			<h2 class="card-title">Verdict</h2>
+			{#if capture === null}
+				<span class="meta">nothing captured to judge yet</span>
+			{/if}
+		</div>
+
+		<div class="headline-strip">
+			{#each MERC_SOURCES as strip (strip.id)}
+				{@const headline = headlineOf(strip.id)}
+				<div class="headline" class:selected={strip.id === source.id}>
+					<span class="headline-source">{strip.label}</span>
+					{#if headline === null}
+						<span class="badge tone-muted" title="no capture yet">—</span>
+					{:else}
+						<span class="badge tone-{HEADLINE_TONE[headline]}">{HEADLINE_LABEL[headline]}</span>
+					{/if}
+				</div>
+			{/each}
+		</div>
+
+		{#if sourceVerdict && sourceVerdict.reasons.length > 0}
+			<ul class="reasons">
+				{#each sourceVerdict.reasons as reason (reason)}
+					<li>{reason}</li>
+				{/each}
+			</ul>
+		{:else if sourceVerdict && sourceVerdict.headline === 'off'}
+			<p class="stub">
+				{source.label} is switched off in Settings below — its rules are shown, not evaluated.
+			</p>
+		{/if}
 	</section>
 
 	<section class="panel">
@@ -161,6 +503,44 @@
 										</th>
 									{/each}
 								</tr>
+								{#if results.length > 0}
+									<!-- The rung-by-rung answer for the captured mercenary; blank
+									     where no result exists (source off, or rungs not verdicted). -->
+									<tr class="verdict-row">
+										<th class="rule-col" scope="row">
+											this mercenary
+											{#if ssot.league === null}
+												<!-- The rungs are columns, not cards, so this is where guide B's
+												     missing-league note has to live. Once, not per column: the
+												     league is one fact about the app, not four about the rungs. -->
+												<span class="meta">— derived links need an active league</span>
+											{/if}
+										</th>
+										{#each ladderVerdict as outcome, i (ladder[i].id)}
+											<td class="tier-verdict">
+												{#if outcome === null}
+													<span class="meta">—</span>
+												{:else}
+													<span class="badge tone-{RULESET_OUTCOME_TONE[outcome]}"
+														>{RULESET_OUTCOME_LABEL[outcome]}</span
+													>
+													{#if resultOf(ladder[i])?.derivedUrl}
+														<a
+															class="search-link"
+															href={resultOf(ladder[i])!.derivedUrl}
+															target="_blank"
+															aria-label="open derived search — {source.label} {columnLabel(
+																ladder[i]
+															)}"
+														>
+															derived ↗
+														</a>
+													{/if}
+												{/if}
+											</td>
+										{/each}
+									</tr>
+								{/if}
 							</thead>
 							<tbody>
 								{#each rows as row (row.id)}
@@ -185,10 +565,22 @@
 												{/if}
 											</th>
 											{#each row.cells as cell, i (ladder[i].id)}
+												{@const outcome =
+													positions.get(
+														positionKey(ladder[i].id, row.groupId, row.entryId)
+													)?.outcome ?? null}
 												<td
 													class="cell entry-{cell}"
-													title={cellTitle(cell)}
-													aria-label={cellTitle(cell)}
+													class:outcome-pass={outcome !== null &&
+														POSITION_OUTCOME_TONE[outcome] === 'pass'}
+													class:outcome-fail={outcome !== null &&
+														POSITION_OUTCOME_TONE[outcome] === 'fail'}
+													class:outcome-unknown={outcome !== null &&
+														POSITION_OUTCOME_TONE[outcome] === 'unknown'}
+													class:outcome-bonus={outcome !== null &&
+														POSITION_OUTCOME_TONE[outcome] === 'bonus'}
+													title={cellTitle(cell, ladder[i], row.groupId, row.entryId)}
+													aria-label={cellTitle(cell, ladder[i], row.groupId, row.entryId)}
 												>
 													<span class="glyph" aria-hidden="true">{GLYPH[cell]}</span>
 												</td>
@@ -199,13 +591,23 @@
 							</tbody>
 						</table>
 					</div>
+
+					{#if ladderNotInRules.length > 0}
+						<p class="not-in-rules">Not in these rules: {ladderNotInRules.join(', ')}</p>
+					{/if}
 				</article>
 			{/if}
 
 			{#each cards as ruleset (ruleset.id)}
+				{@const result = resultOf(ruleset)}
 				<article class="card">
 					<header class="card-head">
 						<h3 class="card-title">{ruleset.label}</h3>
+						{#if result}
+							<span class="badge tone-{RULESET_OUTCOME_TONE[result.outcome]}"
+								>{RULESET_OUTCOME_LABEL[result.outcome]}</span
+							>
+						{/if}
 						<a
 							class="search-link"
 							href={savedSearchUrl(ruleset.savedSearch)}
@@ -214,13 +616,36 @@
 						>
 							open saved search ↗
 						</a>
+						{#if result}
+							{#if result.derivedUrl}
+								<a
+									class="search-link"
+									href={result.derivedUrl}
+									target="_blank"
+									aria-label="open derived search — {source.label} {ruleset.label}, with this mercenary's bonuses switched on"
+								>
+									derived ↗
+								</a>
+							{:else}
+								<span class="meta">derived link needs an active league</span>
+							{/if}
+						{/if}
 					</header>
 					<div class="meta">{metaText(ruleset)}</div>
 					{#if ruleset.floor}
 						<p class="floor">Floor: {ruleset.floor}</p>
 					{/if}
 
+					{#if result && result.reasons.length > 0}
+						<ul class="reasons">
+							{#each result.reasons as reason (reason)}
+								<li>{reason}</li>
+							{/each}
+						</ul>
+					{/if}
+
 					{#each ruleset.groups as group (group.id)}
+						{@const groupResult = groups.get(groupKey(ruleset.id, group.id)) ?? null}
 						<div class="group">
 							<div class="group-head">
 								<span class="group-label">{group.label}</span>
@@ -228,23 +653,69 @@
 								{#if !group.enabledInSearch}
 									<span class="off-badge">off in this search</span>
 								{/if}
+								{#if groupResult}
+									<span class="badge tone-{GROUP_OUTCOME_TONE[groupResult.outcome]}"
+										>{GROUP_OUTCOME_LABEL[groupResult.outcome]}</span
+									>
+									{#if groupResult.need > 0}
+										<span class="meta">
+											{groupResult.confident} of {groupResult.need}{groupResult.rowIndex === null
+												? ''
+												: ` · row ${groupResult.rowIndex + 1}`}
+										</span>
+									{/if}
+								{/if}
 							</div>
 							<ul class="entries">
 								<!-- Keys are unique per group (asserted upstream in rulesets.test.ts);
 								     the same id may legitimately recur across sibling groups. -->
 								{#each group.entries as entry (entry.id)}
 									{@const kind = entryKind(group, entry)}
+									{@const position = positions.get(positionKey(ruleset.id, group.id, entry.id)) ?? null}
 									<li class="entry entry-{kind}" title={kindTitle(kind)}>
 										<span class="glyph" aria-hidden="true">{GLYPH[kind]}</span>
 										<span class="entry-name">{entry.name}</span>
+										{#if position && capture}
+											<span class="captured">{capturedAt(capture, position.site)}</span>
+											<span class="badge tone-{POSITION_OUTCOME_TONE[position.outcome]}"
+												>{positionOutcomeLabel(position.kind, position.outcome)}</span
+											>
+										{/if}
 									</li>
 								{/each}
 							</ul>
 						</div>
 					{/each}
+
+					{#if result && result.notInRules.length > 0}
+						<p class="not-in-rules">Not in these rules: {notInRulesNames([result]).join(', ')}</p>
+					{/if}
 				</article>
 			{/each}
 		</div>
+	</section>
+
+	<!-- 4. Settings: which sources take part in the verdict. -->
+	<section class="card settings-card">
+		<h2 class="card-title">Settings</h2>
+		<p class="meta">
+			A source switched off keeps its rules on the page but takes no part in the verdict — its
+			headline reads OFF.
+		</p>
+		<ul class="source-toggles">
+			{#each MERC_SOURCES as toggleSource (toggleSource.id)}
+				<li>
+					<label class="source-toggle">
+						<input
+							type="checkbox"
+							checked={enabled.has(toggleSource.id)}
+							onchange={(e) => setSourceEnabled(toggleSource.id, e.currentTarget.checked)}
+						/>
+						<span>{toggleSource.label}</span>
+					</label>
+				</li>
+			{/each}
+		</ul>
 	</section>
 </div>
 
@@ -286,6 +757,14 @@
 		white-space: nowrap;
 	}
 
+	/* The capture card's own legend rides the card head, so it stays smaller and
+	   quieter than the page-level one under the intro. */
+	.read-legend {
+		font-size: 0.68rem;
+		gap: 0.7rem;
+		color: var(--color-lab-text-muted);
+	}
+
 	.card,
 	.panel {
 		background: var(--color-lab-surface);
@@ -294,13 +773,264 @@
 		padding: 1rem;
 	}
 
-	.verdict {
+	.status-card,
+	.capture-card,
+	.verdict-card,
+	.settings-card {
 		margin-bottom: 1rem;
+	}
+
+	.settings-card {
+		margin-top: 1rem;
+		margin-bottom: 0;
 	}
 
 	.stub {
 		font-size: 0.8rem;
 		color: var(--color-lab-text-secondary);
+	}
+
+	.spacer {
+		flex: 1 1 auto;
+	}
+
+	.error {
+		font-size: 0.75rem;
+		color: var(--color-lab-red);
+		margin-top: 0.4rem;
+	}
+
+	.report {
+		font-size: 0.7rem;
+		line-height: 1.45;
+		color: var(--color-lab-text-secondary);
+		background: var(--color-lab-bg);
+		border: 1px solid var(--color-lab-border);
+		border-radius: 4px;
+		padding: 0.5rem;
+		margin-top: 0.5rem;
+		max-height: 240px;
+		overflow: auto;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.report.error {
+		color: var(--color-lab-red);
+	}
+
+	/* --- learned templates --- */
+
+	.templates {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.6rem;
+	}
+
+	.templates-head {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--color-lab-text);
+	}
+
+	.template-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+		list-style: none;
+		padding-left: 0;
+	}
+
+	.template {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.7rem;
+		color: var(--color-lab-text-secondary);
+		border: 1px solid var(--color-lab-border);
+		border-radius: 999px;
+		padding: 1px 4px 1px 8px;
+	}
+
+	.forget {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-lab-text-muted);
+		font-size: 0.7rem;
+		line-height: 1;
+		padding: 2px 4px;
+		border-radius: 3px;
+	}
+
+	.forget:hover {
+		color: var(--color-lab-red);
+	}
+
+	.forget:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: 1px;
+	}
+
+	/* --- capture rows --- */
+
+	.capture-header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.9rem;
+		font-size: 0.75rem;
+		margin: 0.4rem 0 0.6rem;
+	}
+
+	.hdr-key {
+		font-size: 0.62rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--color-lab-text-muted);
+		margin-right: 0.25rem;
+	}
+
+	.rows-scroll {
+		overflow-x: auto;
+		/* Same reason as the matrix: a horizontal bar must not spawn a vertical one. */
+		overflow-y: hidden;
+	}
+
+	.rows {
+		border-collapse: collapse;
+		width: 100%;
+	}
+
+	.rows th,
+	.rows td {
+		text-align: left;
+		vertical-align: top;
+		padding: 3px 8px;
+		font-weight: 400;
+		font-size: 0.75rem;
+	}
+
+	.rows thead th {
+		font-size: 0.62rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--color-lab-text-muted);
+		border-bottom: 1px solid var(--color-lab-border);
+	}
+
+	.num-col {
+		width: 2rem;
+		color: var(--color-lab-text-muted);
+	}
+
+	.supports {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.15rem 0.9rem;
+	}
+
+	.read {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.35rem;
+	}
+
+	.read-read .glyph {
+		color: var(--color-lab-green);
+	}
+
+	.read-unsure .glyph {
+		color: var(--color-lab-yellow);
+	}
+
+	.read-unread .glyph {
+		color: var(--color-lab-red);
+	}
+
+	.read-unsure,
+	.read-unread {
+		color: var(--color-lab-text-secondary);
+	}
+
+	/* --- verdict --- */
+
+	.headline-strip {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin: 0.4rem 0;
+	}
+
+	.headline {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.75rem;
+		border: 1px solid var(--color-lab-border);
+		border-radius: 6px;
+		padding: 3px 8px;
+	}
+
+	.headline.selected {
+		border-color: var(--color-lab-purple);
+	}
+
+	.headline-source {
+		color: var(--color-lab-text);
+	}
+
+	.reasons {
+		list-style: none;
+		padding-left: 0.15rem;
+		margin-top: 0.3rem;
+		font-size: 0.72rem;
+		line-height: 1.55;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.not-in-rules {
+		font-size: 0.7rem;
+		color: var(--color-lab-text-muted);
+		margin-top: 0.5rem;
+	}
+
+	.badge {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		border-radius: 3px;
+		border: 1px solid currentcolor;
+		padding: 0 4px;
+		white-space: nowrap;
+	}
+
+	.tone-pass {
+		color: var(--color-lab-green);
+	}
+
+	.tone-fail {
+		color: var(--color-lab-red);
+	}
+
+	.tone-unknown {
+		color: var(--color-lab-yellow);
+	}
+
+	.tone-bonus {
+		color: var(--color-lab-blue);
+	}
+
+	.tone-muted {
+		color: var(--color-lab-text-muted);
+	}
+
+	.captured {
+		margin-left: auto;
+		font-size: 0.68rem;
+		color: var(--color-lab-text-muted);
+		text-align: right;
 	}
 
 	/* The source you are inside is the loudest thing on the page — it used to be a
@@ -450,6 +1180,11 @@
 		display: block;
 	}
 
+	.verdict-row .tier-verdict {
+		padding-bottom: 0.4rem;
+		border-bottom: 1px solid var(--color-lab-border);
+	}
+
 	.group-row .group-cell {
 		padding-top: 0.7rem;
 	}
@@ -462,6 +1197,31 @@
 
 	.cell {
 		line-height: 1.5;
+	}
+
+	/* The verdict tint sits UNDER the kind glyph rather than replacing it: the
+	   cell still says what the rule is, and now also what this mercenary did with
+	   it. Both facts are in the cell's title for readers the tint cannot reach.
+
+	   The `.matrix .cell` qualifier is load-bearing: `.varies th, .varies td`
+	   below is (0,1,1) and would otherwise win over a bare `.outcome-*` (0,1,0),
+	   so a delta row — exactly the row a reader is comparing rungs on — would
+	   show no outcome at all. The row's name cell keeps the varies tint, so the
+	   delta cue survives the override. */
+	.matrix .cell.outcome-pass {
+		background: rgba(34, 197, 94, 0.12);
+	}
+
+	.matrix .cell.outcome-fail {
+		background: rgba(239, 68, 68, 0.12);
+	}
+
+	.matrix .cell.outcome-unknown {
+		background: rgba(234, 179, 8, 0.12);
+	}
+
+	.matrix .cell.outcome-bonus {
+		background: rgba(59, 130, 246, 0.12);
 	}
 
 	/* The deltas are what a reader comparing rungs is hunting for; everything else
@@ -550,5 +1310,35 @@
 
 	.entry-absent .glyph {
 		color: var(--color-lab-text-muted);
+	}
+
+	/* --- settings --- */
+
+	.source-toggles {
+		list-style: none;
+		padding-left: 0;
+		margin-top: 0.5rem;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.9rem;
+	}
+
+	.source-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.78rem;
+		color: var(--color-lab-text);
+		cursor: pointer;
+	}
+
+	.source-toggle input {
+		accent-color: var(--color-lab-green);
+		cursor: pointer;
+	}
+
+	.source-toggle input:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: 2px;
 	}
 </style>
