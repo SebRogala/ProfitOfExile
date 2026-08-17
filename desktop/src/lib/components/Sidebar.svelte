@@ -8,7 +8,9 @@
 	// flag and a background task but no way for the user to reach it. The flags
 	// themselves live in `ssot.modules`; this map only supplies labels.
 	const MODULE_LABELS: Record<string, string> = {
-		mercenary: '⚔️ Mercenaries',
+		// The work toggle for the OCR module, not the Mercenaries view page — the
+		// page is a nav item and stays reachable with the module switched off.
+		mercenary: '👁️ Merc OCR',
 	};
 
 	let {
@@ -51,6 +53,10 @@
 	<div class="collapsed-icons">
 		<button class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming" onclick={() => nav.go('/')}>
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
+		</button>
+		<!-- Outside the DEV block on purpose: this one ships. -->
+		<button class="collapsed-item" class:active={currentPath === '/mercenaries'} title="Mercenaries" onclick={() => nav.go('/mercenaries')}>
+			<span class="icon">&#x2694;&#xFE0F;</span>
 		</button>
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
@@ -114,6 +120,10 @@
 			<button class="nav-item" class:active={currentPath === '/'} onclick={() => nav.go('/')}>
 				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
+			</button>
+			<button class="nav-item" class:active={currentPath === '/mercenaries'} onclick={() => nav.go('/mercenaries')}>
+				<span class="icon">&#x2694;&#xFE0F;</span>
+				<span>Mercenaries</span>
 			</button>
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">

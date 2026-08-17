@@ -8,10 +8,11 @@
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { startSsotStore } from '$lib/stores/ssot.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
-	import { nav } from '$lib/stores/navigation.svelte';
+	import { nav, viewToPath } from '$lib/stores/navigation.svelte';
 	import { destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
+	import MercenariesPage from '$lib/pages/MercenariesPage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
@@ -634,7 +635,7 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={nav.view === 'dev' ? '/dev' : nav.view === 'settings' ? '/settings' : '/'} onToggle={toggleSidebar}
+		<Sidebar open={sidebarOpen} currentPath={viewToPath(nav.view)} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
 			compassActive={compassActive} onToggleCompass={toggleCompassOverlay}
 			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay}
@@ -649,6 +650,9 @@
 			</div>
 			<div class:view-hidden={nav.view !== 'settings'}>
 				<SettingsPage />
+			</div>
+			<div class:view-hidden={nav.view !== 'mercenaries'}>
+				<MercenariesPage />
 			</div>
 			{#if import.meta.env.DEV}
 				<div class:view-hidden={nav.view !== 'dev'}>
