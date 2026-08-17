@@ -97,7 +97,14 @@ pub struct GemMatcher {
 /// Fuzzy rather than an exact `ends_with(" support")` because the token is what
 /// OCR mangles ("Suppon", "5upport", "supporl"), and a strict suffix test would
 /// hand exactly those reads back to the fall-through this gate exists to close.
-fn is_support_shaped(query_lower: &str) -> bool {
+///
+/// Shared with `mercenary::vocab`, which uses the same TEST for the opposite
+/// ACTION: this module rejects support-shaped text outright (a support gem is
+/// never a Font or Dedication outcome), while the merc tooltip reader strips
+/// the suffix and keeps matching. One scorer so a recalibration of
+/// `SUPPORT_TOKEN_THRESHOLD` moves both — the threshold's measured basis is
+/// documented on the constant and does not depend on which caller asks.
+pub fn is_support_shaped(query_lower: &str) -> bool {
     query_lower
         .split_whitespace()
         .next_back()

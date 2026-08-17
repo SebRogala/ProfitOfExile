@@ -5,6 +5,7 @@ mod gem_matcher;
 mod lab_navigation;
 mod lab_state;
 mod log_watcher;
+mod mercenary;
 mod modules;
 mod ocr;
 mod settings;
@@ -169,6 +170,10 @@ pub struct AppState {
     /// distinct `reconcile` input: while set, reconcile stops everything and
     /// starts nothing, so a racing `set_module_enabled` cannot respawn.
     pub modules_shutting_down: AtomicBool,
+    /// Merc OCR capture state (POE-165) — the owner of the `mercenary` SSOT
+    /// slice. Written by the capture loop, projected read-only into every
+    /// snapshot by `ssot::build_snapshot`. See src/mercenary/mod.rs.
+    pub mercenary: Mutex<mercenary::MercenarySlice>,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -2961,6 +2966,7 @@ pub fn run() {
         modules_enabled: Mutex::new(std::collections::HashMap::new()),
         module_handles: Mutex::new(std::collections::HashMap::new()),
         modules_shutting_down: AtomicBool::new(false),
+        mercenary: Mutex::new(mercenary::MercenarySlice::default()),
     };
 
     tauri::Builder::default()

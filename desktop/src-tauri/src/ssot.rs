@@ -105,11 +105,23 @@ pub struct AppSsotSnapshot {
     /// liveness**: a module that panicked still reports enabled. `Default` is
     /// the empty map, which the webview must read as "not yet known".
     pub modules: std::collections::HashMap<String, bool>,
+    /// Merc OCR capture state (POE-165), projected from the owner
+    /// `AppState.mercenary` (see src/mercenary/mod.rs). `status` is forced to
+    /// `Off` here when the module is disabled — the composer owns that one
+    /// precedence step (off > unavailable > live > idle), the capture loop
+    /// owns the other three. `Default` is the `Off` slice, which the page
+    /// renders as "module off".
+    pub mercenary: crate::mercenary::MercenarySlice,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
-/// Return `base` with the three market fields and the module map replaced by
-/// the given values.
+/// Return `base` with the three market fields, the module map and the
+/// mercenary slice replaced by the given values.
+///
+/// The mercenary slice's `status` is forced to `Off` when the module is
+/// disabled. This is the single place module enablement reaches that slice, so
+/// the page never has to read `ssot.modules` to know whether the toggle is on
+/// (ADR-014: the page reads slices, not module state).
 ///
 /// Pure so the composition is unit-testable without an `AppHandle` or a full
 /// `AppState` — same reason `should_flag_unreachable` and
@@ -120,15 +132,23 @@ fn compose_snapshot(
     dedication_variant: String,
     dedication_pool: String,
     modules: std::collections::HashMap<String, bool>,
+    mut mercenary: crate::mercenary::MercenarySlice,
 ) -> AppSsotSnapshot {
+    if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
+        mercenary.status = crate::mercenary::MercStatus::Off;
+    }
     AppSsotSnapshot {
         normal_variant,
         dedication_variant,
         dedication_pool,
         modules,
+        mercenary,
         ..base
     }
 }
+
+/// The module id the mercenary slice belongs to (see `modules.rs::MODULES`).
+const MERCENARY_MODULE_ID: &str = "mercenary";
 
 /// Build the full snapshot: the stored `AppState.ssot` slice plus the market
 /// fields and the module map, composed from their owning `AppState` Mutexes.
@@ -148,7 +168,17 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // Lone acquisition of `modules_enabled` — `module_handles` is not held here
     // (lock order, see src/modules.rs).
     let modules = state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    compose_snapshot(base, normal_variant, dedication_variant, dedication_pool, modules)
+    // Same lock-then-drop discipline: the guard ends with this statement, so
+    // the merc mutex is never held while another is taken or while emitting.
+    let mercenary = state.mercenary.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    compose_snapshot(
+        base,
+        normal_variant,
+        dedication_variant,
+        dedication_pool,
+        modules,
+        mercenary,
+    )
 }
 
 /// Whether `consecutive_failures` failed fetch attempts should flip the SSOT to
@@ -634,6 +664,7 @@ mod tests {
             "21/20".to_string(),
             "transfigured".to_string(),
             std::collections::HashMap::new(),
+            crate::mercenary::MercenarySlice::default(),
         );
 
         assert_eq!(out.normal_variant, "1/20");
@@ -655,9 +686,101 @@ mod tests {
             "21/23".to_string(),
             "skill".to_string(),
             modules,
+            crate::mercenary::MercenarySlice::default(),
         );
 
         assert_eq!(out.modules.get("mercenary"), Some(&true));
+    }
+
+    /// The mercenary slice is projected through composition while the module
+    /// is enabled: the loop owns `live`/`idle`/`unavailable`, and the composer
+    /// must not overwrite them. Without the projection the field falls back to
+    /// `..base` (always the `Off` default) and the page would poll a
+    /// permanently-off slice while a capture was on screen.
+    #[test]
+    fn compose_snapshot_projects_the_mercenary_slice_while_the_module_is_on() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("mercenary".to_string(), true)].into_iter().collect();
+        let slice = crate::mercenary::MercenarySlice {
+            status: crate::mercenary::MercStatus::Live,
+            learned_families: vec!["Chain--2".to_string()],
+            geometry_source: "file".to_string(),
+            ..Default::default()
+        };
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+            slice,
+        );
+
+        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Live);
+        assert_eq!(out.mercenary.learned_families, vec!["Chain--2".to_string()]);
+        assert_eq!(out.mercenary.geometry_source, "file");
+    }
+
+    /// `off` beats every other status (D6 precedence off > unavailable > live
+    /// > idle). A module switched off mid-capture must publish `off`, or the
+    /// page keeps rendering a live verdict for a loop that has stopped.
+    #[test]
+    fn a_disabled_module_forces_the_mercenary_status_to_off() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("mercenary".to_string(), false)].into_iter().collect();
+        let slice = crate::mercenary::MercenarySlice {
+            status: crate::mercenary::MercStatus::Live,
+            capture: Some(crate::mercenary::MercCapture::default()),
+            ..Default::default()
+        };
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+            slice,
+        );
+
+        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
+        assert!(
+            out.mercenary.capture.is_some(),
+            "only the status is forced — the last capture stays readable",
+        );
+    }
+
+    /// A module map that does not mention the module yet (nothing has written
+    /// the owner map) reads as OFF, not as on. Fail-closed: claiming a module
+    /// is running when its enablement is unknown is the worse lie.
+    #[test]
+    fn an_unknown_module_flag_forces_the_mercenary_status_to_off() {
+        let slice = crate::mercenary::MercenarySlice {
+            status: crate::mercenary::MercStatus::Idle,
+            ..Default::default()
+        };
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            std::collections::HashMap::new(),
+            slice,
+        );
+
+        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
+    }
+
+    /// The snapshot's own key for the slice, which the TS store reads.
+    #[test]
+    fn the_snapshot_exposes_the_mercenary_slice_under_its_camel_case_key() {
+        let json = serde_json::to_value(AppSsotSnapshot::default()).unwrap();
+
+        assert_eq!(json["mercenary"]["status"], "off");
+        assert_eq!(json["mercenary"]["geometrySource"], "default");
+        assert_eq!(json["mercenary"]["capture"], serde_json::Value::Null);
     }
 
     /// Composition must not disturb the league slice it wraps: the stored
@@ -678,6 +801,7 @@ mod tests {
             "21/23".to_string(),
             "skill".to_string(),
             std::collections::HashMap::new(),
+            crate::mercenary::MercenarySlice::default(),
         );
 
         assert_eq!(out.league.name, Some("Mirage".to_string()));
@@ -696,6 +820,7 @@ mod tests {
             "21/20".to_string(),
             "transfigured".to_string(),
             std::collections::HashMap::new(),
+            crate::mercenary::MercenarySlice::default(),
         );
 
         let json = serde_json::to_value(&snap).unwrap();

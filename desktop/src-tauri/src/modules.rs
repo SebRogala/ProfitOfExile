@@ -69,6 +69,10 @@
 //! it inside to "satisfy" the order. Acquiring `modules_enabled` alone, with
 //! `module_handles` NOT held, is fine anywhere (`from_state`, `apply_to_state`,
 //! `ssot::build_snapshot` and `set_module_enabled` all do it).
+//! Module-owned state Mutexes sit OUTSIDE this order and are acquired alone:
+//! `AppState.mercenary` (POE-165) is taken by the merc loop with no module
+//! lock held, and by `ssot::build_snapshot` only after the `modules_enabled`
+//! guard has been dropped — never inside `module_handles`.
 //!
 //! # Cleanup never runs on app exit
 //!
