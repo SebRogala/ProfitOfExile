@@ -50,11 +50,23 @@
 				hidden = false;
 				break;
 			case 'RoomChanged': {
-				// Track visited: previous room becomes visited
-				if (currentRoomId && !visitedRoomIds.includes(currentRoomId)) {
+				// Track visited: the room being left becomes visited — but only when
+				// the tracker actually MOVED. A RoomChanged that resolves to the room
+				// already tracked (a duplicate log line re-announcing it, a name no
+				// room in the layout carries, a name too ambiguous to place) must not
+				// retire the room the player is standing in.
+				//
+				// This list is append-only on purpose. Badges mean UNCOLLECTED content,
+				// so a room must stay retired once left — walking back through it (a
+				// golden-door route does exactly that) must not re-light the darkshrine
+				// marker of a shrine already taken. The "current room always renders in
+				// full" half of the invariant is LabGraph's job, enforced there for
+				// both of its visited sources.
+				const nextRoomId = navState.currentRoom;
+				if (currentRoomId && currentRoomId !== nextRoomId && !visitedRoomIds.includes(currentRoomId)) {
 					visitedRoomIds = [...visitedRoomIds, currentRoomId];
 				}
-				currentRoomId = navState.currentRoom;
+				currentRoomId = nextRoomId;
 				// Hide during Izaro fights, show again on regular rooms
 				const room = navState.currentRoom ? navState.roomById.get(navState.currentRoom) : null;
 				hidden = room?.name.toLowerCase() === "aspirant's trial";
@@ -64,6 +76,10 @@
 				break;
 			case 'LabExited':
 				currentRoomId = null;
+				// Symmetric with PlazaEntered. Without it, a run whose PlazaEntered
+				// falls outside the replay window starts wearing the previous run's
+				// visited set, and rooms it never entered render dimmed.
+				visitedRoomIds = [];
 				hidden = true;
 				if (pendingLayoutReset) {
 					applyLayoutReset();
