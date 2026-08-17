@@ -182,9 +182,16 @@ describe('ladderRows over the Kinetist ladder', () => {
 	});
 
 	it('spells out each rung when the disagreement is not just the number', () => {
-		expect(groupRow(rows, 'auras').quantifier).toBe(
-			'all of: · when enabled: · all of: · all of:'
-		);
+		// The mid rung PARKS the group; its wording is excluded from the line —
+		// the "off in mid" badge already carries that fact, and the group reads
+		// "all of:" everywhere it is live.
+		expect(groupRow(rows, 'auras').quantifier).toBe('all of:');
+	});
+
+	it('falls back to the parked wording when every rung parks the group', () => {
+		const parked = group({ id: 'auras', type: 'and', enabledInSearch: false, entries: [entry('a')] });
+		const rows = ladderRows([rung('one', [parked]), rung('two', [parked])]);
+		expect(groupRow(rows, 'auras').quantifier).toBe('when enabled:');
 	});
 });
 

@@ -403,6 +403,12 @@
 
 	.matrix-scroll {
 		overflow-x: auto;
+		/* `overflow-x: auto` alone COMPUTES overflow-y to auto as well (the spec
+		 * forbids visible on one axis with non-visible on the other), and on
+		 * Windows classic scrollbars any horizontal bar's own height then spawns
+		 * a spurious vertical bar — the double-scrollbar Sebastian hit. The
+		 * matrix never needs to scroll vertically; its height is its content. */
+		overflow-y: hidden;
 	}
 
 	.matrix {

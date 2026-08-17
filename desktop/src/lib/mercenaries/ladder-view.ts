@@ -125,15 +125,24 @@ export type LadderRow = LadderGroupRow | LadderEntryRow;
 
 /**
  * The quantifier line for one group across the rungs: a single sentence when they
- * agree, "at least 2 · 2 · 3 · 2 of:" when only the number moves, and the four
+ * agree, "at least 2 · 2 · 3 · 2 of:" when only the number moves, and the
  * sentences joined in column order for any other disagreement.
+ *
+ * Rungs that PARK the group (`enabledInSearch: false` on a positive group) are
+ * excluded from the wording: their state is already carried by the row's
+ * "off in <rung>" badge, and letting them vote produced noise like
+ * "all of: · when enabled: · all of: · all of:" for a group that reads
+ * "all of:" everywhere it is actually live. A rung the group is ABSENT from
+ * still contributes its hole marker — that is skeleton drift, not a switch.
  */
 function ladderQuantifier(perRung: (MercFilterGroup | undefined)[]): string {
-	const sentences = perRung.map((g) => (g ? quantifier(g) : ABSENT_QUANTIFIER));
+	const voting = perRung.filter((g) => g === undefined || g.enabledInSearch || g.type === 'not');
+	const sentences = voting.map((g) => (g ? quantifier(g) : ABSENT_QUANTIFIER));
+	if (sentences.length === 0) return quantifier(perRung.find((g) => g !== undefined)!);
 	const agreed = sharedValue(sentences);
 	if (agreed !== null) return agreed;
 
-	const parts = perRung.map((g) => (g ? quantifierParts(g) : null));
+	const parts = voting.map((g) => (g ? quantifierParts(g) : null));
 	const mins = parts.map((p) => p?.min ?? null);
 	const prefix = sharedValue(parts.map((p) => p?.prefix ?? null));
 	const suffix = sharedValue(parts.map((p) => p?.suffix ?? null));
