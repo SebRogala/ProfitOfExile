@@ -27,7 +27,6 @@ use super::{BadgeGeometry, MercGeometry, ReadState, Thresholds};
 
 /// Signature side length. 24×24 keeps the icon's silhouette and colour
 /// gradient while discarding the per-pixel noise a 44 px crop carries.
-#[allow(dead_code)] // WI-3 removes: the debug dump labels template sizes.
 pub const SIG_DIM: u32 = 24;
 
 /// The badge corner masked out of a signature, as fractions of the cell.
@@ -41,13 +40,11 @@ const MASK_W_FRAC: f32 = 0.45;
 const MASK_H_FRAC: f32 = 0.35;
 
 /// Index file naming the templates in a store directory.
-#[allow(dead_code)] // WI-3 removes: read by TemplateStore::load/save.
 const INDEX_FILE: &str = "index.json";
 
 /// A normalized cell signature: 24×24 grayscale, zero-mean and unit-stddev
 /// over its unmasked cells, with the badge corner zeroed.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: the loop caches one pre-hover crop per cell.
 pub struct CellSig {
     /// The pre-normalization grayscale, kept so a template round-trips
     /// through a PNG on disk without storing floats. Masked positions are
@@ -69,7 +66,6 @@ fn masked(x: u32, y: u32) -> bool {
     x >= mask_x0 && y >= mask_y0
 }
 
-#[allow(dead_code)] // WI-3 removes: the loop compares and dumps signatures.
 impl CellSig {
     /// Build a signature from a `SIG_DIM × SIG_DIM` grayscale buffer.
     ///
@@ -153,7 +149,6 @@ impl CellSig {
 /// correlate at ~1.0: learning one as a template would then "recognise" every
 /// empty slot on screen as that family. One rule, one threshold
 /// (`empty_cell_stddev`), enforced where the signature is built.
-#[allow(dead_code)] // WI-3 removes: the loop signs each occupied cell.
 pub fn normalize_cell(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option<CellSig> {
     if !occupied(img, rect, g) {
         return None;
@@ -178,7 +173,6 @@ pub fn normalize_cell(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> O
 
 /// One learned sample.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // WI-3 removes: reached through TemplateStore.
 pub struct Template {
     pub family: String,
     pub tier: u8,
@@ -190,7 +184,6 @@ pub struct Template {
 
 /// What a template lookup concluded.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: match_family returns one per cell.
 pub struct IconMatch {
     pub family: Option<String>,
     /// The tier the winning SAMPLE was learned at — informational only. The
@@ -202,9 +195,11 @@ pub struct IconMatch {
     pub state: ReadState,
 }
 
-#[allow(dead_code)] // WI-3 removes: match_family builds these.
 impl IconMatch {
-    fn unknown() -> Self {
+    /// The read a cell gets when nothing in the store reaches it — also what
+    /// `read::build_capture` falls back to when a rect passes the occupancy
+    /// gate but not the signature's own bounds check.
+    pub fn unknown() -> Self {
         Self {
             family: None,
             learned_tier: None,
@@ -216,7 +211,6 @@ impl IconMatch {
 }
 
 #[derive(Serialize, Deserialize)]
-#[allow(dead_code)] // WI-3 removes: the on-disk store index.
 struct IndexEntry {
     family: String,
     tier: u8,
@@ -225,12 +219,10 @@ struct IndexEntry {
 
 /// The learned icon templates, keyed by `(family, tier)`.
 #[derive(Debug, Default)]
-#[allow(dead_code)] // WI-3 removes: the loop owns one, hover-confirm writes it.
 pub struct TemplateStore {
     templates: Vec<Template>,
 }
 
-#[allow(dead_code)] // WI-3 removes: the loop and the forget/reset commands drive it.
 impl TemplateStore {
     pub fn new() -> Self {
         Self::default()
@@ -423,7 +415,6 @@ impl TemplateStore {
 }
 
 /// File-name-safe form of a family name.
-#[allow(dead_code)] // WI-3 removes: names a template file.
 fn slug(family: &str) -> String {
     let s: String = family
         .chars()
@@ -474,7 +465,6 @@ struct Stroke {
 ///    numerals are identical thin bars on one baseline; art is not. The caps
 ///    carry the whole judgement for tier I, whose single stroke has nothing to
 ///    be "comparable" to.
-#[allow(dead_code)] // WI-3 removes: the loop reads each cell badge.
 pub fn read_tier(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option<u8> {
     let [x, y, w, h] = inner_rect(rect, g);
     if x < 0 || y < 0 || w <= 0 || h <= 0 {

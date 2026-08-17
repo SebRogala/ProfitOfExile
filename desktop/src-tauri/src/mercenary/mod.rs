@@ -22,17 +22,21 @@
 //! a partial `<app_data>/merc-geometry.json` over those defaults, so the first
 //! correction is a file edit rather than a rebuild, and the slice reports
 //! which source was used (`geometry_source`).
-
-//! # `#[allow(dead_code)] // WI-3 removes` markers
 //!
-//! Every such marker in this directory names one item whose first non-test
-//! caller is the WI-3 capture loop, with the caller named. They are per-item
-//! rather than a module-wide `#![allow]` so that an item WI-3 turns out not to
-//! need still shows up as dead, and so removing them is a grep for the marker
-//! rather than a judgement call.
+//! # The capture loop
+//!
+//! `run` owns the thread (focus gate, detect cadence, hover-confirm), `read`
+//! turns one detected layout plus one screen image into a capture, and `debug`
+//! writes the calibration dump and the template-store commands. Two items here
+//! stay `#[allow(dead_code)]` because only tests reach them
+//! (`MercVocab::stats`, `vocab::default_thresholds`); every other WI-2 item now
+//! has a production caller.
 
+pub mod debug;
 pub mod geometry;
 pub mod icons;
+pub mod read;
+pub mod run;
 pub mod vocab;
 
 use std::path::Path;
@@ -198,11 +202,13 @@ impl Default for MercenarySlice {
 /// `geometry_source` when the built-in reference values are in force.
 pub const GEOMETRY_SOURCE_DEFAULT: &str = "default";
 /// `geometry_source` when `<app_data>/merc-geometry.json` was merged in.
-#[allow(dead_code)] // WI-3 removes: the debug report / loop writes it into the slice.
 pub const GEOMETRY_SOURCE_FILE: &str = "file";
 /// The override file's name inside the app data directory.
-#[allow(dead_code)] // WI-3 removes: the loop resolves the override path.
 pub const GEOMETRY_OVERRIDE_FILE: &str = "merc-geometry.json";
+/// The learned icon templates' directory inside the app data directory.
+pub const ICONS_DIR: &str = "merc-icons";
+/// Where `merc_debug_capture` writes its per-capture dump directories.
+pub const DEBUG_DIR: &str = "merc-debug";
 
 // ---------------------------------------------------------------------------
 // D1 — reference geometry + thresholds
@@ -215,7 +221,6 @@ pub const GEOMETRY_OVERRIDE_FILE: &str = "merc-geometry.json";
 /// vocabulary, not from a measured error distribution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
-#[allow(dead_code)] // WI-3 removes: reached only through MercGeometry, which the loop builds.
 pub struct Thresholds {
     /// Jaro-Winkler score at which a name read is `Matched`.
     pub name_match: f32,
@@ -296,7 +301,6 @@ impl Default for Thresholds {
 /// [`icons::read_tier`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
-#[allow(dead_code)] // WI-3 removes: reached only through MercGeometry, which the loop builds.
 pub struct BadgeGeometry {
     /// Badge box width, as a fraction of the cell's inner width.
     pub width_frac: f32,
@@ -371,7 +375,6 @@ impl Default for BadgeGeometry {
 /// from the observed row pitch (see [`geometry::detect`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
-#[allow(dead_code)] // WI-3 removes: the loop builds one per capture.
 pub struct MercGeometry {
     /// Vertical distance between skill rows.
     pub row_pitch: f32,
@@ -388,6 +391,15 @@ pub struct MercGeometry {
     pub cell_inset: f32,
     /// Support slots scanned per row before giving up.
     pub max_slots: u8,
+    /// Rows the pass-2 re-OCR will read before it stops (D2 pass 2).
+    ///
+    /// Pass 2 costs ONE OCR call per row inside a single tick, so an
+    /// over-clustered detect — a chat column, a stash page, anything that
+    /// yields twenty left-aligned "rows" — turns one tick into twenty OCR
+    /// calls and blows the loop's poll budget. 8 clears the 6 rows the
+    /// reference panel has with room to spare; rows past it keep their pass-1
+    /// text rather than being dropped.
+    pub max_rows: u8,
     /// Lines within this fraction of a line height of the column's median x0
     /// belong to the skill-name column.
     pub column_x_tolerance_frac: f32,
@@ -417,6 +429,7 @@ impl Default for MercGeometry {
             cell_size: 44.0,
             cell_inset: 2.0,
             max_slots: 6,
+            max_rows: 8,
             column_x_tolerance_frac: 0.15,
             row_cluster_factor: 1.5,
             min_skill_candidates: 2,
@@ -442,7 +455,6 @@ impl Default for MercGeometry {
 /// A missing file, an unreadable file, malformed JSON and an unknown key all
 /// fall back to the defaults, and every case but the missing file returns the
 /// error so the loop can surface it in `last_error`.
-#[allow(dead_code)] // WI-3 removes: the loop calls it at module start and on each debug capture.
 pub fn load_override(dir: &Path) -> (MercGeometry, &'static str, Option<String>) {
     let path = dir.join(GEOMETRY_OVERRIDE_FILE);
     let raw = match std::fs::read_to_string(&path) {

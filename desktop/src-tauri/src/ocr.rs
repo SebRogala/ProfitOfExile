@@ -12,6 +12,8 @@ mod platform {
     use windows::Globalization::Language;
     use windows::core::HSTRING;
 
+    use crate::mercenary::geometry::OcrLineBox;
+
     use std::cell::RefCell;
 
     thread_local! {
@@ -141,6 +143,101 @@ mod platform {
         Ok(text_lines)
     }
 
+    /// Ensure an OCR engine can be created on this thread.
+    ///
+    /// Separate from `engine_report` because the merc capture loop needs the
+    /// *decision* (run, or publish `unavailable`), not the prose — and
+    /// `engine_report` deliberately returns a String in both cases so the LOGS
+    /// panel always gets a line.
+    pub fn engine_ready() -> Result<(), String> {
+        get_or_create_engine().map(|_| ())
+    }
+
+    /// Recognize text as LINES WITH RECTS (POE-165 D2).
+    ///
+    /// `recognize_text` returns strings only, which is enough for the gem and
+    /// font loops (they OCR a known region). The merc detector has no fixed
+    /// region: it finds the recruit window by where the text sits, so it needs
+    /// each line's bounding box.
+    ///
+    /// `OcrLine` itself exposes no rect — only its words do — so the line box
+    /// is the union of its words' `BoundingRect()`s. A line whose words all
+    /// fail to report a rect is DROPPED rather than emitted at the origin: a
+    /// (0,0) line would join the leftmost column and drag the geometry.
+    ///
+    /// Coordinates are in the pixel space of the image passed in. The loop
+    /// therefore OCRs the screen grab at native resolution and never
+    /// `preprocess_for_ocr`s it first — that upscales 2×, and every rect would
+    /// come back at twice the screen coordinate.
+    pub fn recognize_lines(img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+        let engine = get_or_create_engine()?;
+        let bitmap = to_software_bitmap(img)?;
+
+        let result = engine
+            .RecognizeAsync(&bitmap)
+            .map_err(|e| format!("OCR recognize failed: {}", e))?
+            .get()
+            .map_err(|e| format!("OCR result failed: {}", e))?;
+
+        let lines: IVectorView<OcrLine> = result
+            .Lines()
+            .map_err(|e| format!("Failed to get OCR lines: {}", e))?;
+
+        let mut out = Vec::new();
+        for i in 0..lines.Size().unwrap_or(0) {
+            let Ok(line) = lines.GetAt(i) else { continue };
+            let text = match line.Text() {
+                Ok(t) => t.to_string_lossy().trim().to_string(),
+                Err(_) => continue,
+            };
+            if text.is_empty() {
+                continue;
+            }
+            let Ok(words) = line.Words() else { continue };
+            let (mut x0, mut y0) = (f32::MAX, f32::MAX);
+            let (mut x1, mut y1) = (f32::MIN, f32::MIN);
+            for w in 0..words.Size().unwrap_or(0) {
+                let Ok(word) = words.GetAt(w) else { continue };
+                let Ok(r) = word.BoundingRect() else { continue };
+                x0 = x0.min(r.X);
+                y0 = y0.min(r.Y);
+                x1 = x1.max(r.X + r.Width);
+                y1 = y1.max(r.Y + r.Height);
+            }
+            if !(x1 > x0 && y1 > y0) {
+                continue;
+            }
+            out.push(OcrLineBox {
+                text,
+                x: x0.floor() as i32,
+                y: y0.floor() as i32,
+                w: (x1 - x0).ceil().max(1.0) as i32,
+                h: (y1 - y0).ceil().max(1.0) as i32,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Copy an image into a `SoftwareBitmap` for the OCR engine.
+    ///
+    /// Deliberately NOT shared with `recognize_text`: this whole module is
+    /// Windows-only and cannot be compile-checked on the Linux host this was
+    /// written on, so the working gem/font path is left byte-identical rather
+    /// than refactored blind. Fold the two together on a Windows box.
+    fn to_software_bitmap(img: &DynamicImage) -> Result<SoftwareBitmap, String> {
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let pixels = rgba.into_raw();
+
+        let bitmap = SoftwareBitmap::Create(BitmapPixelFormat::Rgba8, width as i32, height as i32)
+            .map_err(|e| format!("Failed to create bitmap: {}", e))?;
+        let buffer = create_buffer(&pixels)?;
+        bitmap
+            .CopyFromBuffer(&buffer)
+            .map_err(|e| format!("Failed to copy pixels: {}", e))?;
+        Ok(bitmap)
+    }
+
     /// Create an IBuffer from a byte slice for SoftwareBitmap::CopyFromBuffer.
     fn create_buffer(data: &[u8]) -> Result<windows::Storage::Streams::IBuffer, String> {
         let writer = DataWriter::new()
@@ -158,12 +255,26 @@ mod platform {
 mod platform {
     use image::DynamicImage;
 
+    use crate::mercenary::geometry::OcrLineBox;
+
+    /// The one message every non-Windows OCR entry point returns, so the merc
+    /// loop's `unavailable` status and the debug command's error read the same.
+    pub const UNAVAILABLE: &str = "OCR not available on this platform";
+
     pub fn recognize_text(_img: &DynamicImage) -> Result<Vec<String>, String> {
-        Err("OCR not available on this platform".to_string())
+        Err(UNAVAILABLE.to_string())
+    }
+
+    pub fn recognize_lines(_img: &DynamicImage) -> Result<Vec<OcrLineBox>, String> {
+        Err(UNAVAILABLE.to_string())
+    }
+
+    pub fn engine_ready() -> Result<(), String> {
+        Err(UNAVAILABLE.to_string())
     }
 
     pub fn engine_report() -> String {
-        "OCR not available on this platform".to_string()
+        UNAVAILABLE.to_string()
     }
 }
 

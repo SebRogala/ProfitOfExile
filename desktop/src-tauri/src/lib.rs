@@ -174,6 +174,19 @@ pub struct AppState {
     /// slice. Written by the capture loop, projected read-only into every
     /// snapshot by `ssot::build_snapshot`. See src/mercenary/mod.rs.
     pub mercenary: Mutex<mercenary::MercenarySlice>,
+    /// Learned support-icon templates (POE-165 D4). Shared because two owners
+    /// need it: the capture loop matches and learns through it, and the
+    /// `merc_forget_template` / `merc_reset_templates` commands are the
+    /// un-poison path a user reaches for while that loop is running. Acquired
+    /// alone, never inside a module lock (lock order — see src/modules.rs).
+    pub merc_templates: Mutex<mercenary::icons::TemplateStore>,
+    /// Bumped whenever the template store is EDITED by the user
+    /// (`merc_forget_template` / `merc_reset_templates`). The capture loop
+    /// watches it to drop the confirmations it is still re-applying from
+    /// memory — a forgotten template that keeps being re-applied is the
+    /// un-poison button not working. An atomic, not a Mutex: it is read on
+    /// every detect tick and never read together with the store.
+    pub merc_template_generation: AtomicU64,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -616,6 +629,10 @@ fn set_font_region(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     emit_status(&app);
 }
 
+/// Read the cursor position. READ ONLY — nothing in this app moves the cursor
+/// or sends input; injecting input into the PoE client is against GGG's ToS.
+/// Shared with the merc hover-confirm tick (POE-165 D5), which calls it
+/// directly rather than duplicating the `cfg` blocks.
 #[tauri::command]
 fn capture_mouse_position() -> Result<(i32, i32), String> {
     // Get current mouse cursor position on screen
@@ -2967,6 +2984,8 @@ pub fn run() {
         module_handles: Mutex::new(std::collections::HashMap::new()),
         modules_shutting_down: AtomicBool::new(false),
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
+        merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
+        merc_template_generation: AtomicU64::new(0),
     };
 
     tauri::Builder::default()
@@ -3005,6 +3024,9 @@ pub fn run() {
             trade_cancel,
             send_test_gems,
             test_ocr_on_image,
+            mercenary::debug::merc_debug_capture,
+            mercenary::debug::merc_forget_template,
+            mercenary::debug::merc_reset_templates,
             force_show_overlays,
             set_devtools,
             set_comparator_data,
