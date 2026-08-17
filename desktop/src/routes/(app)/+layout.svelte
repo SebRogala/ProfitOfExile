@@ -666,6 +666,17 @@
 <IdentifyDialog bind:open={identifyOpen} />
 
 <style>
+	/* The app is a fixed 100vh shell whose ONLY scroller is main.content —
+	 * the document itself must never scroll, or its scrollbar doubles the
+	 * content one (seen on the Mercenaries matrix, where a stray pixel of
+	 * document overflow produced a second bar). Scoped here, not app.css,
+	 * so overlay windows keep their own scroll behaviour. */
+	:global(html),
+	:global(body) {
+		height: 100%;
+		overflow: hidden;
+	}
+
 	.app-shell {
 		display: flex;
 		flex-direction: column;
