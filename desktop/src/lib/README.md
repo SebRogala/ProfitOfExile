@@ -56,6 +56,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 |------|---------|-------------|
 | `mercenaries/rulesets.ts` | `MERC_SOURCES`, `allRulesets()`, `kinetistLadder()`, `entryRole()`, `entryTier()`, `entryKind()`, `SOURCE_IDS`, `ARCHETYPES`, `TIERS`, `GROUP_TYPES` + types | Declarative transcription of the guides' saved trade searches — sources → rulesets → filter groups → entries, each carrying its `enabledInSearch` switch. `entryKind(group, entry)` is the single owner of the required/forbidden/bonus rule (type first: a `not` group's entries stay forbidden even when switched off); consumers call it rather than reading the flags themselves. |
 | `mercenaries/trade-links.ts` | `savedSearchUrl()`, `MercSavedSearch` | Saved-search URL builder — a bare `/trade/search/<league>/<hash>` path, no `?q=`. No default-league fallback: the league comes from the saved search itself. Distinct from `lib/trade-utils.ts`, which builds encoded-query searches. |
+| `mercenaries/ladder-view.ts` | `ladderRows()`, `quantifier()`, `quantifierParts()`, `kindTitle()`, `columnLabel()`, `sharedValue()`, `TIER_LABELS` + row types | Presentation derivations for `MercenariesPage` — quantifier prose, kind wording, and the transposition of the Kinetist rungs into one tier matrix (`ladderRows`), whose per-tier state is `entryKind`'s answer looked up by group id + entry id in each rung. A view module, not the data model: it adds no rule and stores no tier fact. Lives outside the page because `.svelte` pages have no unit-test harness here. |
 | `mercenaries/__fixtures__/` | raw JSON | The seven saved-search responses verbatim plus GGG's Mercenary stat vocabulary. Ground truth for `rulesets.test.ts` — the data module is asserted against these, not against itself. See the directory's `README.md` for source URLs and re-fetch commands. |
 
 ## Pages
@@ -67,7 +68,7 @@ Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store 
 | `pages/LabPage.svelte` | Lab farming dashboard — tabs (Session/Rankings/Font EV/Market), comparator, session queue, best plays, font EV, market overview. |
 | `pages/PlannerPage.svelte` | Lab Planner — full lab graph view, route strategy, compass mode, layout import. Rendered as the "Planner" tab inside LabPage. |
 | `pages/SettingsPage.svelte` | Settings — General, Game Integration, Overlays, Trade, Logs. |
-| `pages/MercenariesPage.svelte` | Mercenaries — per-source rulesets rendered as read-only trade-style filter panels (`$lib/mercenaries`), with saved-search links and a stubbed verdict card. Reads `ssot.league` only for the "saved in &lt;league&gt;" badge. |
+| `pages/MercenariesPage.svelte` | Mercenaries — one guide at a time (`SegmentedButtons` source switcher), its rulesets as a responsive card grid of glyph rows, guide B's four Kinetist rungs as a single tier matrix (`$lib/mercenaries/ladder-view`), plus saved-search links and a stubbed verdict card. Reads `ssot.league` only for the "saved in &lt;league&gt;" badge. |
 | `pages/RunHistoryPage.svelte` | Lab run-history presentation. Present in the library but not currently wired into `nav.View`. |
 
 ## Routes
