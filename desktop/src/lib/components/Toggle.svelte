@@ -1,27 +1,5 @@
 <script lang="ts">
-	/**
-	 * `onchange` decides who owns the state:
-	 *
-	 *  - supplied → pure delegation. The click reports the intended value and
-	 *    mutates nothing; the parent's store write is what flips the visual. A
-	 *    self-flip here would fight a store whose value can be rejected or
-	 *    overwritten by a poll, showing a state nobody committed to.
-	 *  - absent → the original `bind:checked` self-flip, unchanged.
-	 *
-	 * `ariaLabel` names *what* is being switched. Without it every toggle on a
-	 * page shares the state-only name "Enable"/"Disable", so a screen-reader user
-	 * hears the same control repeated; supply it whenever a view renders more
-	 * than one toggle.
-	 */
-	let {
-		checked = $bindable(),
-		onchange,
-		ariaLabel,
-	}: {
-		checked?: boolean;
-		onchange?: (checked: boolean) => void;
-		ariaLabel?: string;
-	} = $props();
+	let { checked = $bindable() } = $props();
 </script>
 
 <button
@@ -29,11 +7,8 @@
 	class:on={checked}
 	role="switch"
 	aria-checked={checked}
-	aria-label={ariaLabel ?? (checked ? 'Disable' : 'Enable')}
-	onclick={() => {
-		if (onchange) { onchange(!checked); return; }
-		checked = !checked;
-	}}
+	aria-label={checked ? 'Disable' : 'Enable'}
+	onclick={() => { checked = !checked; }}
 >
 	<span class="knob"></span>
 </button>

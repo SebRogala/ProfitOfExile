@@ -1,5 +1,15 @@
 <script lang="ts">
 	import { nav } from '$lib/stores/navigation.svelte';
+	import { ssot, setModuleEnabled } from '$lib/stores/ssot.svelte';
+
+	// --- Modules (SSOT) ---
+	// User-facing names for the Rust module registry (src-tauri/src/modules.rs).
+	// Adding a module means adding its id here too — an unlisted module has a
+	// flag and a background task but no way for the user to reach it. The flags
+	// themselves live in `ssot.modules`; this map only supplies labels.
+	const MODULE_LABELS: Record<string, string> = {
+		mercenary: '⚔️ Mercenaries',
+	};
 
 	let {
 		open = true,
@@ -86,6 +96,13 @@
 			<span class="icon">&#x23F1;&#xFE0F;</span>
 			<span class="indicator" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}></span>
 		</button>
+		{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
+			{@const on = ssot.modules[id] ?? false}
+			<button class="collapsed-overlay" title="{label.replace(/^\S+\s/, '')}: {on ? 'on' : 'off'}" onclick={() => setModuleEnabled(id, !on)}>
+				<span class="icon">{label.split(' ')[0]}</span>
+				<span class="indicator" class:off={!on} class:always={on}></span>
+			</button>
+		{/each}
 	</div>
 	<button class="collapse-btn collapsed-expand" onclick={onToggle} title="Expand sidebar">&#9654;</button>
 </nav>
@@ -153,6 +170,14 @@
 			<span>&#x23F1;&#xFE0F; Timer</span>
 			<span class="mode" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}>{timerActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
+		<div class="label">Modules</div>
+		{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
+			{@const on = ssot.modules[id] ?? false}
+			<button class="overlay-row clickable" onclick={() => setModuleEnabled(id, !on)}>
+				<span>{label}</span>
+				<span class="mode" class:off={!on} class:always={on}>{on ? 'on' : 'off'}</span>
+			</button>
+		{/each}
 	</div>
 	<button class="collapse-btn collapse-inside" onclick={onToggle} title="Collapse sidebar">&#9664;</button>
 </nav>
