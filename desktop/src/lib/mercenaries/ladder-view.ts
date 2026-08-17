@@ -1,0 +1,191 @@
+/**
+ * Presentation derivations for the Mercenaries page.
+ *
+ * This is a VIEW module, not part of the data model: `rulesets.ts` declares what
+ * the saved searches say, this file reshapes that into what the page draws —
+ * quantifier prose, kind wording, and the guide-b Kinetist tier matrix. Nothing
+ * here invents a rule: every per-tier state is `entryKind`'s answer for the
+ * matching group/entry in that rung, so the type-first denial rule survives the
+ * transposition instead of being re-derived from the switches.
+ *
+ * It lives outside `MercenariesPage.svelte` because a `.svelte` page is not
+ * unit-testable in this project (no component harness), and the matrix
+ * derivation is the one part of the page that can be wrong quietly.
+ */
+
+import { entryKind, type MercFilterGroup, type MercRuleset, type MercTier } from './rulesets';
+
+/** Column heads of the Kinetist ladder, in `TIERS` order. */
+export const TIER_LABELS: Record<MercTier, string> = {
+	mv: 'minimum viable',
+	mid: 'mid',
+	end: 'endgame',
+	gg: 'GG'
+};
+
+export type MercEntryKind = ReturnType<typeof entryKind>;
+
+/**
+ * One matrix cell. `absent` is not a rule — it means the rung has no such group
+ * or no such entry. The ladder rungs are test-pinned to share one skeleton, so
+ * it should never render today; it exists so a future rung that drifts shows a
+ * hole instead of borrowing the neighbouring column's state.
+ */
+export type LadderCell = MercEntryKind | 'absent';
+
+const ABSENT_QUANTIFIER = '—';
+
+/** Entries the saved search actually has switched on, ignoring the group switch. */
+function enabledEntries(group: MercFilterGroup) {
+	return group.entries.filter((e) => e.enabledInSearch);
+}
+
+/**
+ * The quantifier split into its pieces, so the matrix can collapse four rungs
+ * that differ only in the number ("at least 2 · 2 · 3 · 2 of:") without parsing
+ * the rendered sentence back apart. `min` is null for the wordings that carry no
+ * number.
+ */
+export interface QuantifierParts {
+	prefix: string;
+	min: number | null;
+	suffix: string;
+}
+
+/**
+ * How many of the group's entries a mercenary has to satisfy, in words.
+ *
+ * An absent `min` means "all enabled entries must match" on a positive group
+ * and "none of these may be present" on a `not` group — the trade site's own
+ * semantics, which the raw number alone does not carry.
+ */
+export function quantifierParts(group: MercFilterGroup): QuantifierParts {
+	const words = (prefix: string): QuantifierParts => ({ prefix, min: null, suffix: '' });
+	if (enabledEntries(group).length === 0) return words('bonus vocabulary — none enabled');
+	if (group.type === 'not') return words('none of:');
+	// A switched-off positive group is not applying its requirement — saying
+	// "all of:" under an "off in this search" badge would claim it is. (A
+	// switched-off `not` group still reads "none of:" — a parked denial is
+	// still a denial, same type-first rule as entryKind.)
+	if (!group.enabledInSearch) return words('when enabled:');
+	if (group.min !== undefined) return { prefix: 'at least', min: group.min, suffix: 'of:' };
+	return words('all of:');
+}
+
+/** `quantifierParts` rendered as the sentence the page prints. */
+export function quantifier(group: MercFilterGroup): string {
+	const parts = quantifierParts(group);
+	return parts.min === null ? parts.prefix : `${parts.prefix} ${parts.min} ${parts.suffix}`;
+}
+
+/** Tooltip naming the kind in words — glyph and colour alone must not be the
+ *  only carriers (colourblind + screen-reader parity). */
+export function kindTitle(kind: MercEntryKind): string {
+	if (kind === 'required') return 'required';
+	if (kind === 'forbidden') return 'denied';
+	return 'bonus — off in this search';
+}
+
+/** The one value every element shares, or null when they differ (or there are none). */
+export function sharedValue<T>(values: T[]): T | null {
+	if (values.length === 0) return null;
+	return values.every((v) => v === values[0]) ? values[0] : null;
+}
+
+/** Head text for a rung's column: its tier, falling back to its own label. */
+export function columnLabel(ruleset: MercRuleset): string {
+	return ruleset.tier ? TIER_LABELS[ruleset.tier] : ruleset.label;
+}
+
+/** A group header, spanning the matrix, carrying what the group asks per rung. */
+export interface LadderGroupRow {
+	kind: 'group';
+	/** Row key — the group id, distinct from the `groupId/entryId` entry keys. */
+	id: string;
+	label: string;
+	/** Collapsed when every rung agrees, per-rung (in column order) when they do not. */
+	quantifier: string;
+	/** Column labels whose rung has this group switched off. */
+	offIn: string[];
+	varies: boolean;
+}
+
+/** One skeleton entry, with its resolved state in each rung's column. */
+export interface LadderEntryRow {
+	kind: 'entry';
+	/** Row key — entry ids recur across sibling groups, so the group id qualifies it. */
+	id: string;
+	name: string;
+	/** One per rung, in the order the rungs were passed. */
+	cells: LadderCell[];
+	varies: boolean;
+}
+
+export type LadderRow = LadderGroupRow | LadderEntryRow;
+
+/**
+ * The quantifier line for one group across the rungs: a single sentence when they
+ * agree, "at least 2 · 2 · 3 · 2 of:" when only the number moves, and the four
+ * sentences joined in column order for any other disagreement.
+ */
+function ladderQuantifier(perRung: (MercFilterGroup | undefined)[]): string {
+	const sentences = perRung.map((g) => (g ? quantifier(g) : ABSENT_QUANTIFIER));
+	const agreed = sharedValue(sentences);
+	if (agreed !== null) return agreed;
+
+	const parts = perRung.map((g) => (g ? quantifierParts(g) : null));
+	const mins = parts.map((p) => p?.min ?? null);
+	const prefix = sharedValue(parts.map((p) => p?.prefix ?? null));
+	const suffix = sharedValue(parts.map((p) => p?.suffix ?? null));
+	if (prefix !== null && suffix !== null && mins.every((m) => m !== null)) {
+		return `${prefix} ${mins.join(' · ')} ${suffix}`;
+	}
+	return sentences.join(' · ');
+}
+
+/**
+ * Transpose the ladder into matrix rows: the first rung supplies the skeleton
+ * (group order, then entry order), every rung supplies one column.
+ *
+ * Lookups go by group id then entry id rather than by position, so a rung that
+ * ever stops matching the skeleton reports `absent` in its own column instead of
+ * shifting every state one row up.
+ */
+export function ladderRows(rungs: MercRuleset[]): LadderRow[] {
+	const skeleton = rungs[0];
+	if (!skeleton) return [];
+
+	const rows: LadderRow[] = [];
+	for (const group of skeleton.groups) {
+		const perRung = rungs.map((rung) => rung.groups.find((g) => g.id === group.id));
+		const offIn = rungs
+			.filter((_, i) => perRung[i]?.enabledInSearch === false)
+			.map((rung) => columnLabel(rung));
+		const sentences = perRung.map((g) => (g ? quantifier(g) : ABSENT_QUANTIFIER));
+		rows.push({
+			kind: 'group',
+			id: group.id,
+			label: group.label,
+			quantifier: ladderQuantifier(perRung),
+			offIn,
+			// A group parked in every rung is not a delta — only a switch that moves
+			// between rungs is something the reader is hunting for.
+			varies: sharedValue(sentences) === null || (offIn.length > 0 && offIn.length < rungs.length)
+		});
+
+		for (const entry of group.entries) {
+			const cells: LadderCell[] = perRung.map((rungGroup) => {
+				const match = rungGroup?.entries.find((e) => e.id === entry.id);
+				return rungGroup && match ? entryKind(rungGroup, match) : 'absent';
+			});
+			rows.push({
+				kind: 'entry',
+				id: `${group.id}/${entry.id}`,
+				name: entry.name,
+				cells,
+				varies: sharedValue(cells) === null
+			});
+		}
+	}
+	return rows;
+}

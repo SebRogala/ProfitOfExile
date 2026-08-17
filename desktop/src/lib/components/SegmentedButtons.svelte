@@ -44,6 +44,12 @@
 		font-family: inherit;
 		transition: background 0.15s, color 0.15s;
 	}
+	/* The group is reachable by Tab, so the focused segment has to be findable —
+	   the hover and active fills alone leave a keyboard user with no cursor. */
+	.segmented-btn:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: -1px;
+	}
 	.segmented-btn:hover {
 		color: var(--color-lab-text);
 		background: rgba(255, 255, 255, 0.05);
