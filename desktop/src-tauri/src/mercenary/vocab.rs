@@ -33,33 +33,27 @@ use strsim::jaro_winkler;
 use super::{MercGeometry, ReadState, Thresholds};
 
 /// The vocabulary block, exactly as `GET /api/trade/data/stats` returns it.
-#[allow(dead_code)] // WI-3 removes: parsed by MercVocab::load.
 const RAW_VOCAB: &str = include_str!(
     "../../../src/lib/mercenaries/__fixtures__/mercenary-stats.json"
 );
 
 /// Id prefix marking an active skill entry.
-#[allow(dead_code)] // WI-3 removes: splits the vocabulary by role.
 const SKILL_PREFIX: &str = "mercenary.skill_";
 /// Id prefix marking a support-link entry.
-#[allow(dead_code)] // WI-3 removes: splits the vocabulary by role.
 const SUPPORT_PREFIX: &str = "mercenary.support_";
 
 /// Grade prefixes a support name can carry. Stripping them yields the icon
 /// FAMILY, which is what a learned template is keyed on together with the
 /// tier: `Lesser Chain (Tier 1)`, `Chain (Tier 2)` and `Gilded Chain (Tier 3)`
 /// are three tiers of one family.
-#[allow(dead_code)] // WI-3 removes: derives the icon family.
 const GRADE_PREFIXES: [&str; 3] = ["Lesser ", "Greater ", "Gilded "];
 
 #[derive(Deserialize)]
-#[allow(dead_code)] // WI-3 removes: the compiled-in JSON shape.
 struct RawVocab {
     entries: Vec<RawEntry>,
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)] // WI-3 removes: the compiled-in JSON shape.
 struct RawEntry {
     id: String,
     text: String,
@@ -67,7 +61,6 @@ struct RawEntry {
 
 /// Which half of the vocabulary an entry belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // WI-3 removes: reached through MercStat.
 pub enum MercRole {
     /// An active skill — read from the skill-name column by OCR.
     Skill,
@@ -77,7 +70,6 @@ pub enum MercRole {
 
 /// One vocabulary entry, with the family/tier decomposition supports need.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: reached through MercVocab.
 pub struct MercStat {
     pub id: String,
     /// Display text, verbatim — including the `(Tier N)` suffix.
@@ -95,7 +87,6 @@ pub struct MercStat {
 
 /// A name read: the ids it resolves to, and how confident it is.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: match_skill returns one per row.
 pub struct NameRead {
     pub ids: Vec<String>,
     pub name: Option<String>,
@@ -109,7 +100,6 @@ pub struct NameRead {
 /// A hover-tooltip title read (D5): which support family it names, and the
 /// tier if the title carried one.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: match_support_title returns one per hover.
 pub struct SupportTitleRead {
     pub family: Option<String>,
     pub tier: Option<u8>,
@@ -120,7 +110,6 @@ pub struct SupportTitleRead {
 }
 
 /// Strip a trailing `(Tier N)` suffix, returning the rest and the tier.
-#[allow(dead_code)] // WI-3 removes: derives a support tier.
 fn split_tier(text: &str) -> (&str, Option<u8>) {
     let trimmed = text.trim_end();
     let Some(open) = trimmed.rfind(" (Tier ") else {
@@ -137,7 +126,6 @@ fn split_tier(text: &str) -> (&str, Option<u8>) {
 }
 
 /// Strip a leading grade word (`Lesser `/`Greater `/`Gilded `).
-#[allow(dead_code)] // WI-3 removes: derives an icon family.
 fn strip_grade(name: &str) -> &str {
     for p in GRADE_PREFIXES {
         if let Some(rest) = name.strip_prefix(p) {
@@ -150,7 +138,6 @@ fn strip_grade(name: &str) -> &str {
 /// Drop a trailing " Support" from a tooltip title (fuzzy — OCR mangles that
 /// token as readily as any other). Titles that are ONLY that token are left
 /// alone; there is nothing to match on afterwards.
-#[allow(dead_code)] // WI-3 removes: normalizes a tooltip title.
 fn strip_support_suffix(text: &str) -> &str {
     let trimmed = text.trim();
     let mut it = trimmed.rsplitn(2, char::is_whitespace);
@@ -168,7 +155,6 @@ fn strip_support_suffix(text: &str) -> &str {
 }
 
 /// One scored candidate during matching.
-#[allow(dead_code)] // WI-3 removes: one candidate during matching.
 struct Scored<'a> {
     stat: &'a MercStat,
     /// Which spelling of the entry scored — the label reported back.
@@ -176,12 +162,10 @@ struct Scored<'a> {
     score: f64,
 }
 
-#[allow(dead_code)] // WI-3 removes: the loop loads one at start.
 pub struct MercVocab {
     stats: Vec<MercStat>,
 }
 
-#[allow(dead_code)] // WI-3 removes: the loop matches every row and tooltip through it.
 impl MercVocab {
     /// Parse the compiled-in vocabulary.
     ///
@@ -230,6 +214,10 @@ impl MercVocab {
         Self { stats }
     }
 
+    /// The whole vocabulary. Test-only in this build — the two read paths go
+    /// through `by_role` / `resolve`, and the parse-conformance tests are what
+    /// walk the raw list.
+    #[allow(dead_code)]
     pub fn stats(&self) -> &[MercStat] {
         &self.stats
     }
@@ -422,7 +410,6 @@ fn classify(best: f64, runner_up: f64, t: &Thresholds) -> ReadState {
 /// Zero entries is `Unknown` (the tier and the family disagree); more than one
 /// NAME is `Ambiguous` (Greater vs Gilded at tier 3 — the icon cannot tell
 /// them apart); one name is `Matched`, with every id that name carries.
-#[allow(dead_code)] // WI-3 removes: the loop turns a (family, tier) into a cell read.
 pub fn classify_resolution(matches: &[&MercStat]) -> (Vec<String>, Option<String>, ReadState, Vec<String>) {
     let mut names: Vec<String> = Vec::new();
     for m in matches {
@@ -439,7 +426,13 @@ pub fn classify_resolution(matches: &[&MercStat]) -> (Vec<String>, Option<String
 }
 
 /// The default thresholds, for callers that have no [`MercGeometry`] at hand.
-#[allow(dead_code)] // WI-3 removes: callers without a MercGeometry at hand.
+///
+/// Test-only in this build: WI-3's capture loop and debug command both build a
+/// [`MercGeometry`] (defaults merged with the JSON override) and pass its
+/// `thresholds`, which is the only way a recalibration reaches the matcher.
+/// Kept because every matcher test would otherwise reach through a geometry it
+/// does not care about.
+#[allow(dead_code)]
 pub fn default_thresholds() -> Thresholds {
     MercGeometry::default().thresholds
 }

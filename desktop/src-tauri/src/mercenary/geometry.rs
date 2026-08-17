@@ -21,7 +21,6 @@ use super::{MercGeometry, MercHeader, ReadState};
 /// `BoundingRect()`s (WI-3); nothing in this module cares where they came
 /// from.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: ocr::recognize_lines returns these.
 pub struct OcrLineBox {
     pub text: String,
     pub x: i32,
@@ -38,7 +37,6 @@ impl OcrLineBox {
 
 /// One detected skill row.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: reached through MercLayout.
 pub struct MercLayoutRow {
     pub index: u8,
     /// Mean of the member lines' vertical centres — a wrapped two-line name
@@ -56,7 +54,6 @@ pub struct MercLayoutRow {
 
 /// A detected recruit window.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // WI-3 removes: detect returns one per tick.
 pub struct MercLayout {
     /// Runtime scale: observed row pitch ÷ [`MercGeometry::row_pitch`].
     pub scale: f32,
@@ -93,7 +90,6 @@ fn median(values: &mut [f32]) -> f32 {
 /// candidates, or no "Wager" anchor above the panel. The anchor is the
 /// discriminator against every other PoE surface that lists skill names (a gem
 /// tooltip, the character panel): those have skill text but no wager.
-#[allow(dead_code)] // WI-3 removes: the detect tick calls it.
 pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Option<MercLayout> {
     // 1. Skill-name candidates seed the column.
     let candidates: Vec<&OcrLineBox> = lines
@@ -262,7 +258,7 @@ pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Opti
 ///   `Wage` 0.960 and `Wagner` 0.961 — and "Wagner has entered the area" is an
 ///   ordinary PoE chat line, which at 0.85 would anchor a capture. The bar is
 ///   `thresholds.wager_anchor` (0.98), which admits only a clean read.
-fn is_wager_line(text: &str, g: &MercGeometry) -> bool {
+pub fn is_wager_line(text: &str, g: &MercGeometry) -> bool {
     let lower = text.trim().to_lowercase();
     let head: String = lower
         .split_whitespace()
@@ -341,7 +337,6 @@ fn parse_trailing_number(text: &str) -> Option<u64> {
 ///
 /// A rect that falls outside the image is NOT occupied: a partial read of a
 /// half-off-screen window must not invent a support.
-#[allow(dead_code)] // WI-3 removes: the loop walks slots with it.
 pub fn occupied(img: &image::DynamicImage, rect: [i32; 4], g: &MercGeometry) -> bool {
     stddev(img, inner_rect(rect, g)).is_some_and(|sd| sd > g.thresholds.empty_cell_stddev)
 }
@@ -349,7 +344,6 @@ pub fn occupied(img: &image::DynamicImage, rect: [i32; 4], g: &MercGeometry) -> 
 /// A cell's inner region — the outer rect minus its frame, which is drawn
 /// identically whether the slot is filled or not and would raise an empty
 /// slot's stddev.
-#[allow(dead_code)] // WI-3 removes: the debug dump crops with it.
 pub fn inner_rect(rect: [i32; 4], g: &MercGeometry) -> [i32; 4] {
     let inset = g.cell_inset.round() as i32;
     [
@@ -362,7 +356,6 @@ pub fn inner_rect(rect: [i32; 4], g: &MercGeometry) -> [i32; 4] {
 
 /// Grayscale standard deviation over a rect. `None` when the rect does not lie
 /// wholly inside the image.
-#[allow(dead_code)] // WI-3 removes: the debug report prints per-cell stddevs.
 pub fn stddev(img: &image::DynamicImage, rect: [i32; 4]) -> Option<f32> {
     let [x, y, w, h] = rect;
     if w <= 0 || h <= 0 || x < 0 || y < 0 {
@@ -397,7 +390,6 @@ pub fn stddev(img: &image::DynamicImage, rect: [i32; 4]) -> Option<f32> {
 /// call. `icons::normalize_cell` deliberately goes through `to_luma8` instead:
 /// its output is normalized to zero mean and unit stddev, so the weighting
 /// cancels out of the correlation.
-#[allow(dead_code)] // WI-3 removes: shared by the occupancy and badge readers.
 pub fn luma(r: u8, gch: u8, b: u8) -> u8 {
     ((r as u32 * 299 + gch as u32 * 587 + b as u32 * 114) / 1000).min(255) as u8
 }

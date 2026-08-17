@@ -70,9 +70,11 @@
 //! `module_handles` NOT held, is fine anywhere (`from_state`, `apply_to_state`,
 //! `ssot::build_snapshot` and `set_module_enabled` all do it).
 //! Module-owned state Mutexes sit OUTSIDE this order and are acquired alone:
-//! `AppState.mercenary` (POE-165) is taken by the merc loop with no module
-//! lock held, and by `ssot::build_snapshot` only after the `modules_enabled`
-//! guard has been dropped — never inside `module_handles`.
+//! `AppState.mercenary` and `AppState.merc_templates` (POE-165) are taken by
+//! the merc loop with no module lock held — and never together, so they have no
+//! order between them. `ssot::build_snapshot` takes `mercenary` only after the
+//! `modules_enabled` guard has been dropped; neither is ever taken inside
+//! `module_handles`.
 //!
 //! # Cleanup never runs on app exit
 //!
@@ -116,8 +118,10 @@ const MODULE_STOP_GRACE: Duration = Duration::from_secs(2);
 /// Threads cannot be aborted, so this bounds how long one can outlive its stop
 /// signal. A picked number, not a measured one.
 ///
-/// Unused until the first `ModuleJoin::Thread` module lands (merc OCR is the
-/// expected one); it is the recipe's normative number, not a loose constant.
+/// The merc capture loop is the first thread module and honours it by waiting
+/// in 100 ms slices (`mercenary::run::TICK`, asserted against this constant
+/// there). Nothing reads it at runtime — it is the recipe's normative number
+/// for the next thread module to be measured against, not a loose constant.
 #[allow(dead_code)]
 pub const MODULE_THREAD_POLL_CEILING: Duration = Duration::from_secs(5);
 
@@ -141,13 +145,15 @@ pub enum DisabledSemantics {
 /// async runtime deadlocks (see `spawn_gem_scan` in lib.rs).
 pub enum ModuleJoin {
     /// Async task on the Tauri runtime — abortable, so it gets a reaper.
-    Task(tauri::async_runtime::JoinHandle<()>),
-    /// Dedicated OS thread — NOT abortable, signal-and-detach only.
     ///
-    /// No registered module uses it yet; the variant exists because the WinRT
-    /// rule makes it the only legal shape for capture/OCR work, and `stop_module`
-    /// already implements its (different) stop path.
+    /// No registered module uses it: the only module today is merc OCR, which
+    /// the WinRT apartment rule forces onto a thread. The variant stays because
+    /// `reconcile`/`stop_module` implement its (different, reaped) stop path and
+    /// the tests cover it — the next non-capture module is a `Task`.
     #[allow(dead_code)]
+    Task(tauri::async_runtime::JoinHandle<()>),
+    /// Dedicated OS thread — NOT abortable, signal-and-detach only. The shape
+    /// the WinRT apartment rule forces on capture/OCR work; `mercenary` uses it.
     Thread(std::thread::JoinHandle<()>),
 }
 
@@ -435,19 +441,15 @@ pub fn set_module_enabled(id: String, enabled: bool, app: AppHandle) -> Result<(
     Ok(())
 }
 
-/// The mercenary module shell: no feature logic yet, just the smallest honest
-/// end-to-end proof that enable spawns and disable stops. Exits well inside
-/// `MODULE_STOP_GRACE`, so the reaper's abort never fires.
-fn spawn_mercenary(app: AppHandle, mut cancel: watch::Receiver<bool>) -> ModuleJoin {
-    ModuleJoin::Task(tauri::async_runtime::spawn(async move {
-        // Distinct from the registry's "started" line: that one proves the spawn
-        // was requested, this one proves the task body actually ran.
-        crate::app_log(&app, "Module mercenary: task body running".to_string());
-        tokio::select! {
-            _ = cancel.changed() => {}
-        }
-        crate::app_log(&app, "Module mercenary: stopped".to_string());
-    }))
+/// The merc OCR capture module (POE-165). A `Thread`, not a `Task`: screen
+/// capture and `Windows.Media.Ocr` are apartment-threaded and deadlock on the
+/// async runtime (see `spawn_gem_scan` in lib.rs).
+///
+/// Threads are signalled and detached, never aborted, so the loop's own poll
+/// discipline is the whole stop mechanism — `mercenary::run` waits in 100 ms
+/// slices, well inside `MODULE_THREAD_POLL_CEILING`.
+fn spawn_mercenary(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
+    crate::mercenary::run::spawn(app, cancel)
 }
 
 // Known gap: the stop BACKSTOP — the reaper's grace sleep, its `abort()`, the

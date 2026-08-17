@@ -404,6 +404,8 @@ mod tests {
             module_handles: Mutex::new(std::collections::HashMap::new()),
             modules_shutting_down: AtomicBool::new(false),
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
+            merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
+            merc_template_generation: AtomicU64::new(0),
         }
     }
 
