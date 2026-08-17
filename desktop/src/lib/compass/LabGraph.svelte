@@ -60,6 +60,25 @@
 		key: string;
 	}
 
+	// Visited rooms, from whichever source the caller gave us — and never the
+	// room the player is standing in. A visited room hides its content badges
+	// and dims its exit dots to 0.2, so a current room that also counts as
+	// visited renders as a green circle with its darkshrine marker stripped off.
+	// The overlay's explicit list can contain the current room (a duplicate
+	// RoomChanged, a re-acquire after the position was dropped); the planner's
+	// route-prefix fallback structurally cannot. Enforced here so both agree.
+	let visitedSet = $derived.by<Set<string>>(() => {
+		const set = new Set<string>();
+		if (visitedRoomIds) {
+			for (const id of visitedRoomIds) set.add(id);
+		} else if (currentRoomId && navState.plannedRoute.length > 0) {
+			const currentIdx = navState.plannedRoute.indexOf(currentRoomId);
+			for (let i = 0; i < currentIdx; i++) set.add(navState.plannedRoute[i]);
+		}
+		if (currentRoomId) set.delete(currentRoomId);
+		return set;
+	});
+
 	let roomNodes = $derived.by<RoomNode[]>(() => {
 		if (!navState.layout) return [];
 		const rooms = navState.layout.rooms;
@@ -73,17 +92,6 @@
 		const rangeY = maxY - minY || 1;
 
 		const routeSet = new Set(navState.plannedRoute);
-		const visitedSet = new Set<string>();
-		if (visitedRoomIds) {
-			// Explicit visited list provided (from overlay tracking)
-			for (const id of visitedRoomIds) visitedSet.add(id);
-		} else if (currentRoomId && navState.plannedRoute.length > 0) {
-			// Fallback: infer from route position (for planner)
-			const currentIdx = navState.plannedRoute.indexOf(currentRoomId);
-			if (currentIdx > 0) {
-				for (let i = 0; i < currentIdx; i++) visitedSet.add(navState.plannedRoute[i]);
-			}
-		}
 
 		// Find the median Y to use as the "main path" baseline
 		const sortedYs = [...ys].sort((a, b) => a - b);
@@ -139,19 +147,15 @@
 
 		const routeEdges = new Set<string>();
 		const visitedEdges = new Set<string>();
-		const visitedNodeSet = visitedRoomIds ? new Set(visitedRoomIds) : null;
 
 		for (let i = 0; i < navState.plannedRoute.length - 1; i++) {
 			const pair = [navState.plannedRoute[i], navState.plannedRoute[i + 1]].sort().join('|');
 			routeEdges.add(pair);
-			// Edge is visited if both endpoints are visited
-			if (visitedNodeSet) {
-				if (visitedNodeSet.has(navState.plannedRoute[i]) && visitedNodeSet.has(navState.plannedRoute[i + 1])) {
-					visitedEdges.add(pair);
-				}
-			} else {
-				const currentIdx = currentRoomId ? navState.plannedRoute.indexOf(currentRoomId) : -1;
-				if (currentIdx > 0 && i < currentIdx) visitedEdges.add(pair);
+			// Edge is visited if both endpoints are visited. Reading the same
+			// visitedSet as the nodes keeps the edge touching the current room lit
+			// with it, instead of dimming out from under a fully-rendered room.
+			if (visitedSet.has(navState.plannedRoute[i]) && visitedSet.has(navState.plannedRoute[i + 1])) {
+				visitedEdges.add(pair);
 			}
 		}
 

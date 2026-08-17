@@ -158,27 +158,44 @@ fn watch_file(path: &Path, tx: mpsc::Sender<String>) -> anyhow::Result<()> {
                         log::warn!("Log watcher: seek failed: {}", e);
                         continue;
                     }
-                    let reader = BufReader::new(&f);
-                    for line in reader.lines() {
-                        match line {
-                            Ok(line) if !line.is_empty() => {
-                                if tx.blocking_send(line).is_err() {
+                    // Advance `pos` by what was actually consumed, and only over
+                    // NEWLINE-TERMINATED lines. The client keeps appending while we
+                    // drain, so the reader reaches an EOF past the `new_len` sampled
+                    // above; assigning `pos = new_len` rewound behind everything that
+                    // arrived mid-read and re-sent it on the next pass. A duplicated
+                    // "you have entered" line is a second RoomChanged for the room the
+                    // player is already standing in. Stopping at the last '\n' also
+                    // keeps a half-written trailing line unconsumed, so it is emitted
+                    // once, whole, when its newline lands.
+                    let mut reader = BufReader::new(&f);
+                    let mut consumed = pos;
+                    loop {
+                        let mut buf = String::new();
+                        match reader.read_line(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if !buf.ends_with('\n') {
+                                    break;
+                                }
+                                consumed += n as u64;
+                                let line = buf.trim_end_matches(['\n', '\r']);
+                                if !line.is_empty() && tx.blocking_send(line.to_string()).is_err() {
                                     return Ok(());
                                 }
                             }
-                            Ok(_) => {}
                             Err(e) => {
                                 log::warn!("Log watcher: failed to read line: {}", e);
+                                break;
                             }
                         }
                     }
+                    pos = consumed;
                 }
                 Err(e) => {
                     log::warn!("Log watcher: failed to open file: {}", e);
                     continue;
                 }
             }
-            pos = new_len;
         }
     }
 }
