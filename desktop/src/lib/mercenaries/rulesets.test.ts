@@ -317,6 +317,24 @@ describe('guide-a rulesets', () => {
 	});
 });
 
+describe('group entry keys', () => {
+	// The page keys its chip {#each} on entry.id alone — the same id may recur
+	// across sibling groups (Return does, in Manyshot), but a duplicate WITHIN
+	// one group would make Svelte's keyed each throw at runtime. Transcription
+	// fidelity would faithfully copy such a duplicate out of a future fixture,
+	// so uniqueness needs its own gate here.
+	it('keeps entry ids unique within every group of every ruleset', () => {
+		for (const ruleset of allRulesets()) {
+			for (const group of ruleset.groups) {
+				const ids = group.entries.map((e) => e.id);
+				expect(new Set(ids).size, `${ruleset.id}/${group.id} repeats an entry id`).toBe(
+					ids.length
+				);
+			}
+		}
+	});
+});
+
 describe('Kinetist ladder', () => {
 	const KINETIST_GROUP_IDS = [
 		'deny',
