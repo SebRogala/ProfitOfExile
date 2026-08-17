@@ -19,7 +19,7 @@ Component registry for the ProfitOfExile desktop app. Read this first before cre
 | `components/Select.svelte` | `value` (bindable), `options`, `onchange` | Custom dropdown select — styled dark theme, chevron indicator. Used by dashboard components. |
 | `components/IdentifyDialog.svelte` | `open` (bindable) | Device identify dialog — shows short device ID, alias input, POST to `/api/device/identify`. Triggered by Ctrl+Shift+I. |
 | `components/Button.svelte` | `variant` (`'default'`/`'save'`/`'danger'`), `disabled`, `title`, `onclick`, children | Small action button — default (neutral), save (green), danger (red). Disabled state dims to 35% opacity. |
-| `components/Toggle.svelte` | `checked` (bindable), `onchange` | On/off toggle switch — dark-themed, animated knob. With `onchange` it is pure delegation (reports the intended value, does not self-flip) so a store owning the state stays authoritative; without it, `bind:checked` self-flips. |
+| `components/Toggle.svelte` | `checked` (bindable) | On/off toggle switch — dark-themed, animated knob. |
 | `components/SegmentedButtons.svelte` | `value`, `options`, `onselect`, `title` | Horizontal segmented button group — one bordered container, flat buttons, active segment filled. `value` is not bindable: the owning store stays the source of truth and `onselect` reports the pick. |
 | `components/RangeSlider.svelte` | `value` (bindable), `min`, `max`, `step`, `formatValue` | Range slider with value display — optional format function for labels (e.g., `v => \`${v}%\``). |
 | `components/Tooltip.svelte` | `content`, `position`, children | Reusable tooltip wrapper for desktop controls. |

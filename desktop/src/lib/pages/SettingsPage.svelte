@@ -5,7 +5,7 @@
 	import { check } from '@tauri-apps/plugin-updater';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
-	import { ssot, setModuleEnabled } from '$lib/stores/ssot.svelte';
+	import { ssot } from '$lib/stores/ssot.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import Toggle from '$lib/components/Toggle.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
@@ -42,15 +42,6 @@
 			console.warn('[settings] refresh_league failed:', e);
 		}
 	}
-
-	// --- Modules (SSOT) ---
-	// User-facing names for the Rust module registry (src-tauri/src/modules.rs).
-	// Adding a module means adding its id here too — an unlisted module has a
-	// flag and a background task but no way for the user to reach it. The flags
-	// themselves live in `ssot.modules`; this map only supplies labels.
-	const MODULE_LABELS: Record<string, string> = {
-		mercenary: 'Mercenary triage',
-	};
 
 	// Sync: when background checker detects an update, reflect it immediately
 	$effect(() => {
@@ -732,24 +723,6 @@
 					<span class="setting-error">{tradeStalenessError}</span>
 				</div>
 			{/if}
-		</section>
-
-		<!-- Modules -->
-		<section>
-			<h2>Modules</h2>
-
-			{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
-				<div class="setting-row">
-					<span class="setting-label">{label}</span>
-					<!-- Plain prop, not `bind:` — the store is written only through the
-					     guard machinery, and the toggle flips when that write lands. -->
-					<Toggle
-						checked={ssot.modules[id] ?? false}
-						onchange={(checked) => setModuleEnabled(id, checked)}
-						ariaLabel={label}
-					/>
-				</div>
-			{/each}
 		</section>
 
 		<!-- Danger Zone -->

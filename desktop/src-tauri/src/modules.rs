@@ -18,7 +18,7 @@
 //!    keeps running — every module must yield.
 //! 2. Add a `ModuleDef` to `MODULES` with an explicit `disabled_means` — there
 //!    is no default, the choice is a product decision (below).
-//! 3. Add the id to the Settings "Modules" display-name map so the toggle has a
+//! 3. Add the id to the Sidebar "Modules" display-name map so the toggle has a
 //!    user-facing label.
 //!
 //! Persistence, the SSOT slice, and start/stop need no further edits: they all
@@ -34,7 +34,7 @@
 //!   Two failures this prevents symmetrically: a toggle silently killing
 //!   collection, and collection silently never running because the user left
 //!   the toggle off.
-//!   **Honesty rule:** a `NoWindow` module's Settings row must say what the
+//!   **Honesty rule:** a `NoWindow` module's Sidebar row must say what the
 //!   toggle actually governs ("hides the window; collection keeps running").
 //!   A row that reads as an off-switch while work continues is a lie.
 //!
