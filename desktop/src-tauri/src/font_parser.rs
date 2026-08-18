@@ -64,9 +64,13 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     // but also scan line-by-line for numeric extraction.
     let full_text = lines.join(" ");
     let full_lower = full_text.to_lowercase();
+    let full_compact = collapse_whitespace(&full_lower);
 
-    // Standard transform (always first, always present when font is open)
-    if full_lower.contains("random transfigured gem") {
+    // Standard transform (always first, always present when font is open).
+    // Matched on whitespace-collapsed text: the lines are joined with a single
+    // space, so a plain wrap already matches, but a wrap that also carried a
+    // trailing space (or a tab) leaves "random  Transfigured Gem" behind.
+    if full_compact.contains("random transfigured gem") {
         font_active = true;
         options.push(CraftOption {
             option_type: "transform_random".to_string(),
@@ -75,18 +79,23 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
         });
     }
 
-    // JACKPOT: direct transfigure
-    if full_lower.contains("non-transfigured") {
+    // JACKPOT: direct transfigure. OCR drops the hyphen ("nonTransfigured"),
+    // replaces it with a space, or substitutes an en/em dash, so the anchor is
+    // matched with separators removed. The flag and the option's text come from
+    // ONE lookup: a flag raised by text no line can produce would push an option
+    // with an empty `text`, and merge_options would keep that empty text for the
+    // whole round.
+    if let Some(text) = find_non_transfigured_text(lines) {
         jackpot_detected = true;
         options.push(CraftOption {
             option_type: "transform_direct".to_string(),
-            text: find_line_containing(lines, "non-Transfigured").unwrap_or_default(),
+            text,
             value: None,
         });
     }
 
     // Exchange for Empower/Enlighten/Enhance
-    if full_lower.contains("empower support") {
+    if full_compact.contains("empower support") {
         options.push(CraftOption {
             option_type: "exchange_exceptional".to_string(),
             text: find_line_containing(lines, "Empower Support").unwrap_or_default(),
@@ -94,14 +103,25 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
         });
     }
 
-    // Add quality — anchor on "% quality" rather than "quality to a gem". The
-    // "to"→"10" OCR misread (e.g. "Add +20% quality 10 a Gem") breaks the "to a gem"
-    // anchor, but "% quality" survives it.
-    if full_lower.contains("% quality") {
-        let value = extract_percentage_near(lines, "quality");
+    // Add quality — see `is_quality_option_line` for the anchor and its guard.
+    if let Some(idx) = lines.iter().position(|line| is_quality_option_line(line)) {
+        let line = &lines[idx];
+        // The anchor line's own percentage first. Only one other line may donate
+        // a number: an immediate predecessor that ENDS in a percentage, which is
+        // the wrap that split "Add +20%" from "quality to a Gem". A full option
+        // line above (the Facetor's "…gain 60% of the gem's…") does not end in
+        // its percentage, and must not donate — merge_options would lock the
+        // borrowed value in for the rest of the round.
+        let mut value = extract_percentage_from_text(line);
+        if value.is_none() && idx > 0 {
+            let previous = &lines[idx - 1];
+            if previous.trim_end().ends_with('%') {
+                value = extract_percentage_from_text(previous);
+            }
+        }
         options.push(CraftOption {
             option_type: "quality".to_string(),
-            text: find_line_containing(lines, "% quality").unwrap_or_default(),
+            text: line.clone(),
             value,
         });
     }
@@ -147,7 +167,7 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     }
 
     // Sacrifice for Treasure Keys
-    if full_lower.contains("treasure keys") {
+    if full_compact.contains("treasure keys") {
         options.push(CraftOption {
             option_type: "sacrifice_keys".to_string(),
             text: find_line_containing(lines, "Treasure Keys").unwrap_or_default(),
@@ -156,7 +176,7 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     }
 
     // Sacrifice for Currency Items
-    if full_lower.contains("currency items") {
+    if full_compact.contains("currency items") {
         options.push(CraftOption {
             option_type: "sacrifice_currency".to_string(),
             text: find_line_containing(lines, "Currency Items").unwrap_or_default(),
@@ -165,7 +185,7 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     }
 
     // Sacrifice for player experience
-    if full_lower.contains("your own experience") {
+    if full_compact.contains("your own experience") {
         let value = extract_percentage_near(lines, "your own experience");
         options.push(CraftOption {
             option_type: "sacrifice_experience".to_string(),
@@ -175,7 +195,7 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     }
 
     // Dedication: corrupted transfigured reroll
-    if full_lower.contains("corrupted transfigured") {
+    if full_compact.contains("corrupted transfigured") {
         font_active = true;
         options.push(CraftOption {
             option_type: "corrupted_transfigured_reroll".to_string(),
@@ -188,28 +208,22 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     // Check line-by-line: match lines containing "corrupted skill gem" but NOT "transfigured",
     // so it works even when the transfigured option is present in the same panel.
     {
-        let has_non_transfig_reroll = lines.iter().any(|line| {
-            let lower = line.to_lowercase();
+        let is_reroll_line = |line: &&String| {
+            let lower = collapse_whitespace(&line.to_lowercase());
             lower.contains("corrupted skill gem") && !lower.contains("transfigured")
-        });
-        if has_non_transfig_reroll {
+        };
+        if let Some(line) = lines.iter().find(is_reroll_line) {
             font_active = true;
             options.push(CraftOption {
                 option_type: "corrupted_gem_reroll".to_string(),
-                text: lines.iter()
-                    .find(|l| {
-                        let lower = l.to_lowercase();
-                        lower.contains("corrupted skill gem") && !lower.contains("transfigured")
-                    })
-                    .cloned()
-                    .unwrap_or_default(),
+                text: line.clone(),
                 value: None,
             });
         }
     }
 
     // Crafts Remaining: N
-    let count_read = if full_lower.contains("crafts remaining") {
+    let count_read = if full_compact.contains("crafts remaining") {
         match extract_number_after(lines, "Crafts Remaining") {
             Some(n) => CountRead::Count(n),
             None => CountRead::LabelUnreadable,
@@ -264,12 +278,87 @@ pub fn merge_options(existing: &[CraftOption], incoming: &[CraftOption]) -> Vec<
     merged
 }
 
-/// Find the first line containing a case-sensitive substring.
+/// Collapse runs of whitespace (spaces, tabs) into single spaces.
+///
+/// OCR of a wrapped line can leave a double space or a tab inside an anchor
+/// phrase; matching on the collapsed form keeps the anchor intact.
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Remove whitespace and every dash-like character.
+///
+/// The "non-transfigured" wording is the only jackpot signal, and OCR renders
+/// its hyphen inconsistently ("nonTransfigured", "non Transfigured",
+/// "non–Transfigured"). Squashing separators makes all of them one string.
+fn squash_separators(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace() && !is_dash(*c))
+        .collect()
+}
+
+/// The ASCII hyphen plus the Unicode dashes OCR substitutes for it.
+fn is_dash(c: char) -> bool {
+    matches!(c, '-' | '\u{2010}'..='\u{2015}' | '\u{2212}')
+}
+
+/// Locate the "non-transfigured" anchor, hyphen or not, and return the text the
+/// jackpot option should carry.
+///
+/// Looks inside each line first, then at each adjacent PAIR joined the way the
+/// panel reads them — a wrap can split the phrase ("…a non" / "Transfigured
+/// Skill Gem"). Adjacent-only, not the whole blob: two lines that merely happen
+/// to end in "non" and start with "Transfigured" pages apart are not one phrase.
+fn find_non_transfigured_text(lines: &[String]) -> Option<String> {
+    let carries_anchor =
+        |text: &str| squash_separators(&text.to_lowercase()).contains("nontransfigured");
+    if let Some(line) = lines.iter().find(|l| carries_anchor(l)) {
+        return Some(line.clone());
+    }
+    lines.windows(2).find_map(|pair| {
+        let joined = format!("{} {}", pair[0], pair[1]);
+        carries_anchor(&joined).then_some(joined)
+    })
+}
+
+/// Whether a line is the panel's "Add quality" craft option.
+///
+/// One admission rule: the word "quality" plus "add" or "gem" as a WHOLE word.
+/// Whole-word matching is the guard — as substrings, "Additional" contains
+/// "add", and the gem tooltip's "Additional Effects From 1-20% Quality" would
+/// otherwise be read as a craft option offering 20% quality.
+///
+/// Precision is what this branch needs most: it is not gated on `font_active`,
+/// so gem-tooltip text bleeding into a torn frame pushes a bogus option whose
+/// value `merge_options` then locks in for the rest of the round.
+///
+/// The recall this buys back is real but bounded — the option survives the
+/// "to"→"10" misread ("Add +20% quality 10 a Gem") and a swallowed value
+/// ("Add qualityto a Gem", 2026-07-27 field log). It is lost only when "Add"
+/// AND "Gem" both garble in the same frame ("+7% quality to a Gcm"), an
+/// accepted trade: a shape-only anchor such as "% quality" cannot tell that
+/// line apart from the tooltip above it.
+fn is_quality_option_line(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("quality") && contains_word(&lower, &["add", "adds", "gem", "gems"])
+}
+
+/// Whether lowercase `text` carries one of `words` as a whole token, with
+/// surrounding punctuation trimmed.
+fn contains_word(text_lower: &str, words: &[&str]) -> bool {
+    text_lower.split_whitespace().any(|token| {
+        let trimmed = token.trim_matches(|c: char| !c.is_alphanumeric());
+        words.contains(&trimmed)
+    })
+}
+
+/// Find the first line containing a case-insensitive substring, compared on
+/// whitespace-collapsed text so a doubled space inside the line still matches.
 fn find_line_containing(lines: &[String], needle: &str) -> Option<String> {
     let needle_lower = needle.to_lowercase();
     lines
         .iter()
-        .find(|l| l.to_lowercase().contains(&needle_lower))
+        .find(|l| collapse_whitespace(&l.to_lowercase()).contains(&needle_lower))
         .cloned()
 }
 
@@ -371,8 +460,12 @@ fn extract_millions_from_text(text: &str) -> Option<i32> {
 fn extract_number_after(lines: &[String], keyword: &str) -> Option<i32> {
     let keyword_lower = keyword.to_lowercase();
     for line in lines {
-        if let Some(idx) = line.to_lowercase().find(&keyword_lower) {
-            let after = &line[idx + keyword.len()..];
+        // Collapsed, so a doubled space inside the label ("Crafts  Remaining: 7")
+        // still finds the keyword — the detection gate above is collapsed too, and
+        // a label the gate accepts but this misses reads as LabelUnreadable.
+        let lower = collapse_whitespace(&line.to_lowercase());
+        if let Some(idx) = lower.find(&keyword_lower) {
+            let after = &lower[idx + keyword_lower.len()..];
             let num_str: String = after
                 .chars()
                 .filter(|c| c.is_ascii_digit())
@@ -598,7 +691,7 @@ mod tests {
     #[test]
     fn detects_quality_with_to_misread() {
         // "to"→"10" OCR misread: "quality to a Gem" becomes "quality 10 a Gem".
-        // The "% quality" anchor survives it.
+        // The "quality" anchor and its "add"/"gem" guard survive it.
         let lines = vec!["Add +20% quality 10 a Gem".to_string()];
         let state = parse_font_panel(&lines);
         let quality = state.options.iter().find(|o| o.option_type == "quality");
@@ -716,6 +809,218 @@ mod tests {
             sorted,
             vec!["experience", "quality", "sacrifice_keys", "transform_random"]
         );
+    }
+
+    #[test]
+    fn quality_is_detected_when_ocr_swallows_the_percentage() {
+        // 2026-07-27 field log: OCR dropped the value and the space, leaving
+        // "Add qualityto a Gem". The old "% quality" anchor lost the option whole.
+        let lines = vec!["Add qualityto a Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        assert_eq!(types_of(&state.options), vec!["quality"]);
+        assert_eq!(state.options[0].value, None);
+    }
+
+    #[test]
+    fn a_gem_tooltip_quality_line_yields_no_quality_option() {
+        // A gem tooltip bleeding into a torn frame carries "Quality: +20%" with
+        // neither "add" nor "gem" on the line. Admitting it would push a bogus
+        // option whose value merge_options then locks in for the whole round.
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Quality: +20% (augmented)".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(types_of(&state.options), vec!["transform_random"]);
+    }
+
+    #[test]
+    fn a_quality_and_an_experience_line_yield_one_option_each() {
+        // Both lines carry "Gem", and the experience line is the one that could
+        // slip into the quality bucket — the "quality" word is what keeps it out.
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Add +20% quality to a Gem".to_string(),
+            "Add 150m experience to a Gem".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(
+            types_of(&state.options),
+            vec!["transform_random", "quality", "experience"]
+        );
+        let quality = state.options.iter().find(|o| o.option_type == "quality").unwrap();
+        assert_eq!(quality.text, "Add +20% quality to a Gem");
+    }
+
+    #[test]
+    fn a_double_spaced_transform_wrap_still_matches_the_anchor() {
+        // A wrap that also carried a trailing space leaves two spaces inside the
+        // anchor phrase once the lines are joined.
+        let lines =
+            vec!["Transform a Skill Gem to be a random  Transfigured Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        assert!(state.font_active);
+        assert_eq!(types_of(&state.options), vec!["transform_random"]);
+    }
+
+    #[test]
+    fn a_double_spaced_line_is_still_found_for_the_option_text() {
+        // Separate from the anchor match: the option's `text` comes from a
+        // line lookup, which does its own collapsing.
+        let lines =
+            vec!["Transform a Skill Gem to be a random  Transfigured Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        assert_eq!(
+            state.options[0].text,
+            "Transform a Skill Gem to be a random  Transfigured Gem"
+        );
+    }
+
+    #[test]
+    fn jackpot_is_detected_when_ocr_drops_the_hyphen() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Transform a nonTransfigured Skill Gem".to_string(),
+            "to a Transfigured version".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.jackpot_detected);
+        let direct = state
+            .options
+            .iter()
+            .find(|o| o.option_type == "transform_direct")
+            .expect("jackpot option missing");
+        assert_eq!(direct.text, "Transform a nonTransfigured Skill Gem");
+    }
+
+    #[test]
+    fn jackpot_is_detected_when_ocr_replaces_the_hyphen_with_a_space() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Transform a non Transfigured Skill Gem".to_string(),
+            "to a Transfigured version".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.jackpot_detected);
+        let direct = state
+            .options
+            .iter()
+            .find(|o| o.option_type == "transform_direct")
+            .expect("jackpot option missing");
+        assert_eq!(direct.text, "Transform a non Transfigured Skill Gem");
+    }
+
+    #[test]
+    fn a_tooltip_range_line_without_colon_yields_no_quality_option() {
+        // Gem tooltip line: "Additional" CONTAINS "add" and the line carries a
+        // "% Quality" shape with a number. Admitting it would push a quality
+        // option valued 20 that merge_options keeps for the whole round. Only
+        // whole-word "add"/"gem" matching rejects it — inside an active panel.
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Additional Effects From 1-20% Quality".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(types_of(&state.options), vec!["transform_random"]);
+    }
+
+    #[test]
+    fn a_quality_line_with_add_and_gem_both_garbled_yields_no_option() {
+        // The accepted cost of whole-word admission: with "Add" dropped and
+        // "Gem" read as "Gcm", nothing on the line is admissible. Recovering it
+        // would mean anchoring on the "% quality" shape, which the gem tooltip
+        // "Additional Effects From 1-20% Quality" also has — a swap of a rare
+        // miss for a value-poisoning false positive.
+        let lines = vec!["+7% quality to a Gcm".to_string()];
+        let state = parse_font_panel(&lines);
+        assert!(state.options.is_empty(), "unexpected options: {:?}", state.options);
+    }
+
+    #[test]
+    fn a_preceding_facetor_line_does_not_donate_its_percentage_to_quality() {
+        // The Facetor line is a complete option of its own, not the head of a
+        // wrapped quality line — its 60% must not become the quality value, which
+        // merge_options would then keep for the whole round.
+        let lines = vec![
+            "Sacrifice a Gem to gain 60% of the gem's total experience stored as a Facetor's Lens"
+                .to_string(),
+            "Add qualityto a Gem".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        let quality = state
+            .options
+            .iter()
+            .find(|o| o.option_type == "quality")
+            .expect("quality option missing");
+        assert_eq!(quality.value, None);
+    }
+
+    #[test]
+    fn a_wrapped_quality_value_is_read_from_the_line_above() {
+        // The wrap cut the option right after its value, so the previous line
+        // ends in the percentage — the one case that may donate a number.
+        let lines = vec!["Add +20%".to_string(), "quality to a Gem".to_string()];
+        let state = parse_font_panel(&lines);
+        let quality = state
+            .options
+            .iter()
+            .find(|o| o.option_type == "quality")
+            .expect("quality option missing");
+        assert_eq!(quality.value, Some(20));
+    }
+
+    #[test]
+    fn jackpot_is_detected_when_the_anchor_wraps_across_two_lines() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Transform a non".to_string(),
+            "Transfigured Skill Gem".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.jackpot_detected);
+        let direct = state
+            .options
+            .iter()
+            .find(|o| o.option_type == "transform_direct")
+            .expect("jackpot option missing");
+        // The flag and the text come from one lookup, so a wrap-detected jackpot
+        // still carries the joined phrase instead of an empty string.
+        assert_eq!(direct.text, "Transform a non Transfigured Skill Gem");
+    }
+
+    #[test]
+    fn jackpot_is_detected_when_ocr_substitutes_an_en_dash() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Transform a non\u{2013}Transfigured Skill Gem".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert!(state.jackpot_detected);
+        let direct = state
+            .options
+            .iter()
+            .find(|o| o.option_type == "transform_direct")
+            .expect("jackpot option missing");
+        assert_eq!(direct.text, "Transform a non\u{2013}Transfigured Skill Gem");
+    }
+
+    #[test]
+    fn a_double_spaced_crafts_remaining_line_still_reads_as_a_count() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Crafts  Remaining: 7".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(state.count_read, CountRead::Count(7));
+        assert_eq!(state.crafts_remaining, Some(7));
     }
 
     /// Build a craft option the way `parse_font_panel` would, without going
