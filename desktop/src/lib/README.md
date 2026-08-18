@@ -116,7 +116,7 @@ Two decoupled scan loops, each on a dedicated OS thread (required by Windows COM
 Scans the gem tooltip region to detect transfigured gem names for the comparator.
 
 **Start triggers** (all: clear comparator, restart scan):
-- `FontOpened` — Client.txt `InstanceClientLabyrinthCraftResultOptionsList recieved` (user clicked CRAFT button)
+- `FontOpened` — Client.txt `InstanceClientLabyrinthCraftResultOptionsList recieved` (fires on font open AND on CRAFT click — see Game UI facts below)
 - Manual "Start Scanning" button
 
 **Stop triggers**:
@@ -146,7 +146,7 @@ Scans the font region to capture craft options (transform, quality, experience, 
 
 - **CRAFT screen**: Shows options list + "Crafts Remaining: X" + CRAFT button. "Crafts Remaining" only visible when X > 1.
 - **CONFIRM screen**: Shows 3 gem slots + CONFIRM button. Options list is gone. This is when gem tooltip OCR runs.
-- Clicking the font opens the CRAFT screen (no Client.txt event). Clicking CRAFT fires `FontOpened` and switches to CONFIRM screen.
+- `FontOpened` (`InstanceClientLabyrinthCraftResultOptionsList recieved`) fires in TWO moments: when the font is OPENED (CRAFT screen appears) and when CRAFT is CLICKED (CONFIRM screen appears). Opening the font, closing it for a stash trip, and reopening it therefore yields 3 events by the time CRAFT is clicked. Never derive CRAFT/CONFIRM parity or the round count from event count — the count is unbounded per craft. (Rule confirmed by Sebastian from play, 2026-08-18; earlier notes claiming "no event on open" were wrong.)
 - Gem tooltips cover the font panel area when hovering — OCR regions overlap.
 
 ### Focus & Overlay
