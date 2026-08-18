@@ -132,13 +132,15 @@ Scans the gem tooltip region to detect transfigured gem names for the comparator
 
 Scans the font region to capture craft options (transform, quality, experience, etc.) from the CRAFT screen.
 
-**Start**: Izaro death voiceline (`LabFinished` nav event) — triggers when final Izaro is killed, right when the font becomes available.
+**Start**: Izaro death voiceline (`LabFinished` nav event) — triggers when final Izaro is killed, right when the font becomes available. A `FontOpened` event also starts a scan whenever the liveness token (`font_scan_live_gen`) reads 0, so the panel is still read when `LabFinished` was never seen — the app launched mid-run, or the scan was stopped earlier by a zone change or lab exit.
 
 **Running**: Scans at 250ms, parses options via `font_parser`, then union-merges the frame into the current round's option buffer (`merge_options`). A torn frame never deletes an option an earlier frame of the same panel read, and a value already read is never downgraded to `None` or overwritten by a disagreeing later read.
 
 **Round tracking**: the panel's "Crafts Remaining" count owns the round boundary (`font_ledger`), gated on a `FontOpened` counter. `FontOpened` seals nothing — it fires on font open as well as on CRAFT, an unbounded number of times per craft. A count change with no `FontOpened` since the last accepted count is a misread: the frame's options still merge, the count is ignored. A count change after a `FontOpened` that holds for 2 consecutive frames seals the current round under the *old* count and opens the next one; direction is irrelevant. Known limitation: a round on screen for under 2 frames (~500ms) is never accepted, so its options fold into the neighbouring round.
 
-**Stop**: ZoneChanged, or 5-min timeout safety net.
+**Stop**: a `font_scan_generation` bump — ZoneChanged, `LabExited`, a replacement scan, app shutdown — or 10 minutes with no active font panel on screen. There is no wall-clock timeout: a font run has no bounded length (stash trips, town portals, a player reading the options), and a scan expiring under a still-open panel silently lost every remaining craft. The idle limit measures from the last frame that saw the panel, so it only fires on a scan with nothing left to read — it is the backstop for a run whose stop event never arrives (the game killed rather than exited, the font never opened, screen capture failing in a loop). That path sends the session itself; every other stop is either a sender or is followed by one.
+
+**Re-arm**: the token is what makes that restart exactly-once — a scan claims it on spawn and releases it on exit with a compare-exchange, so a superseded loop cannot clear its replacement's claim and a `FontOpened` arriving mid-handover does not stack a second loop. The case that needs it most is a portal trip out of the lab: `LabFinished` never fires again on return, so without the re-arm every remaining craft is lost. Every stop that can have rounds behind it sends and resets the session before a re-arm can run: ZoneChanged does it on the send path (and fires on the same log line as `LabExited`, which only stops the loop), idle expiry does it from inside the loop. So a re-armed scan is always a new segment; a mid-font town trip therefore reports one run as two font-session POSTs.
 
 **Data flow**: ZoneChanged sends accumulated session (all rounds with options + crafts_remaining) to server via `POST /api/desktop/font-session`.
 
