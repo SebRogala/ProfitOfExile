@@ -379,6 +379,7 @@ mod tests {
             auto_trade_enabled: Mutex::new(false),
             gem_scan_generation: AtomicU64::new(0),
             font_scan_generation: AtomicU64::new(0),
+            font_opened_seq: AtomicU64::new(0),
             aspirant_trial_count: AtomicU32::new(0),
             font_session: Mutex::new(crate::FontSessionData::default()),
             font_exhausted: AtomicBool::new(false),

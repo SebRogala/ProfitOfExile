@@ -134,11 +134,11 @@ Scans the font region to capture craft options (transform, quality, experience, 
 
 **Start**: Izaro death voiceline (`LabFinished` nav event) — triggers when final Izaro is killed, right when the font becomes available.
 
-**Running**: Scans at 250ms, parses options via `font_parser`. Deduplicates — same options seen again (user reopened font without crafting) are skipped.
+**Running**: Scans at 250ms, parses options via `font_parser`, then union-merges the frame into the current round's option buffer (`merge_options`). A torn frame never deletes an option an earlier frame of the same panel read, and a value already read is never downgraded to `None` or overwritten by a disagreeing later read.
 
-**Round tracking**: `FontOpened` seals the current round into the session. If no "Crafts Remaining" text was detected alongside options, this was the last craft → scan stops.
+**Round tracking**: the panel's "Crafts Remaining" count owns the round boundary (`font_ledger`), gated on a `FontOpened` counter. `FontOpened` seals nothing — it fires on font open as well as on CRAFT, an unbounded number of times per craft. A count change with no `FontOpened` since the last accepted count is a misread: the frame's options still merge, the count is ignored. A count change after a `FontOpened` that holds for 2 consecutive frames seals the current round under the *old* count and opens the next one; direction is irrelevant. Known limitation: a round on screen for under 2 frames (~500ms) is never accepted, so its options fold into the neighbouring round.
 
-**Stop**: Last craft sealed, ZoneChanged, or 5-min timeout safety net.
+**Stop**: ZoneChanged, or 5-min timeout safety net.
 
 **Data flow**: ZoneChanged sends accumulated session (all rounds with options + crafts_remaining) to server via `POST /api/desktop/font-session`.
 

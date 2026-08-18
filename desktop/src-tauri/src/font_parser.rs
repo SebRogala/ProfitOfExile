@@ -19,6 +19,24 @@ pub struct CraftOption {
     pub value: Option<i32>,
 }
 
+/// How a frame read the panel's "Crafts Remaining" line.
+///
+/// The three states are not interchangeable for round tracking. An absent
+/// label means the panel is on its last craft (the game hides the line when
+/// only one craft is left) — a real, meaningful count. A present-but-garbled
+/// label means the OCR failed on a panel that does have a count, which is no
+/// information at all. Collapsing both into `None` makes a torn frame
+/// indistinguishable from the last craft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum CountRead {
+    /// A number was read after the label.
+    Count(i32),
+    /// No "Crafts Remaining" text on the panel — the last craft.
+    LabelAbsent,
+    /// The label is present but no digits followed it — OCR noise.
+    LabelUnreadable,
+}
+
 /// Result of parsing font panel OCR lines.
 #[derive(Debug, Clone, Serialize)]
 pub struct FontPanelState {
@@ -26,6 +44,9 @@ pub struct FontPanelState {
     pub options: Vec<CraftOption>,
     /// Crafts remaining (None if not detected).
     pub crafts_remaining: Option<i32>,
+    /// The same read, keeping "label garbled" apart from "no label" for the
+    /// craft ledger (`font_ledger`).
+    pub count_read: CountRead,
     /// Whether the "Transform a Skill Gem" anchor was found (font is active).
     pub font_active: bool,
     /// Whether the jackpot option was detected.
@@ -188,13 +209,22 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
     }
 
     // Crafts Remaining: N
-    if full_lower.contains("crafts remaining") {
-        crafts_remaining = extract_number_after(lines, "Crafts Remaining");
+    let count_read = if full_lower.contains("crafts remaining") {
+        match extract_number_after(lines, "Crafts Remaining") {
+            Some(n) => CountRead::Count(n),
+            None => CountRead::LabelUnreadable,
+        }
+    } else {
+        CountRead::LabelAbsent
+    };
+    if let CountRead::Count(n) = count_read {
+        crafts_remaining = Some(n);
     }
 
     FontPanelState {
         options,
         crafts_remaining,
+        count_read,
         font_active,
         jackpot_detected,
     }
@@ -446,6 +476,41 @@ mod tests {
         let state = parse_font_panel(&lines);
         assert!(state.font_active);
         assert_eq!(state.crafts_remaining, None); // last craft
+    }
+
+    #[test]
+    fn a_readable_count_line_reads_as_a_count() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Crafts Remaining: 7".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(state.count_read, CountRead::Count(7));
+    }
+
+    #[test]
+    fn a_count_line_without_digits_reads_as_unreadable() {
+        // OCR found the label but garbled the number. This is not the last
+        // craft — the ledger must not treat it as a count change.
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Crafts Remaining: |".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(state.count_read, CountRead::LabelUnreadable);
+    }
+
+    #[test]
+    fn a_panel_with_no_count_line_reads_as_the_last_craft() {
+        let lines = vec![
+            "Transform a Skill Gem to be a random".to_string(),
+            "Transfigured Gem of the same colour".to_string(),
+            "Add +8% quality to a Gem".to_string(),
+        ];
+        let state = parse_font_panel(&lines);
+        assert_eq!(state.count_read, CountRead::LabelAbsent);
     }
 
     #[test]
