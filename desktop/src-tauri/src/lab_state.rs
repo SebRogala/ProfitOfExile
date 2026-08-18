@@ -48,7 +48,9 @@ impl LabStateMachine {
             return Some(LabEvent::GameBlurred);
         }
 
-        // Font opened — the reliable trigger
+        // Fires on font OPEN and again on CRAFT click (same line both times), so
+        // open→stash→reopen→CRAFT yields 3 events. Never a craft count.
+        // See desktop/src/lib/README.md → Game UI Context.
         if line.contains("InstanceClientLabyrinthCraftResultOptionsList recieved") {
             let prev = self.state.clone();
             self.state = LabState::FontReady;
