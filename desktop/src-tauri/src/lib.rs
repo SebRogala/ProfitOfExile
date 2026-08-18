@@ -1,6 +1,8 @@
 mod capture;
 mod fingerprint;
+mod font_ledger;
 mod font_parser;
+mod font_session;
 mod gem_matcher;
 mod lab_navigation;
 mod lab_state;
@@ -62,26 +64,7 @@ pub struct AppStatus {
     pub font_session_rounds: usize,
 }
 
-/// Accumulated font session data — shared between font scan loop and event handlers.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct FontSessionData {
-    /// Sealed rounds (one per FontOpened/CRAFT click).
-    pub rounds: Vec<FontRound>,
-    /// Current round's detected options (not yet sealed by FontOpened).
-    /// None = no options detected yet this round.
-    #[serde(skip)]
-    pub current_options: Option<Vec<font_parser::CraftOption>>,
-    /// Crafts remaining from the last detected options.
-    #[serde(skip)]
-    pub current_crafts_remaining: Option<i32>,
-}
-
-/// A sealed font round — options captured before user clicked CRAFT.
-#[derive(Debug, Clone, Serialize)]
-pub struct FontRound {
-    pub options: Vec<font_parser::CraftOption>,
-    pub crafts_remaining: Option<i32>,
-}
+pub use font_session::{FontRound, FontSessionData};
 
 pub struct AppState {
     /// Hardware-based device fingerprint — computed once at startup, immutable.
@@ -120,6 +103,12 @@ pub struct AppState {
     pub gem_scan_generation: AtomicU64,
     /// Generation counter for font panel OCR scans.
     pub font_scan_generation: AtomicU64,
+    /// Monotonic count of `FontOpened` events. The craft ledger gates every
+    /// count change on it: the panel's count cannot change without a CRAFT
+    /// click, and a CRAFT click always fires this event, so a count change with
+    /// no new event is a misread. Never reset — the ledger stores the value it
+    /// accepted at, and a counter going backwards would re-open accepted rounds.
+    pub font_opened_seq: AtomicU64,
     /// Aspirant's Trial entry count (reset on Aspirants' Plaza). Font OCR starts at 3.
     pub aspirant_trial_count: AtomicU32,
     /// Font session data — accumulated rounds, shared between font scan loop and handlers.
@@ -2108,9 +2097,9 @@ fn spawn_font_scan(app: &AppHandle) {
 /// Font panel OCR loop on a dedicated OS thread.
 ///
 /// Scans the font region every 250ms looking for craft options (CRAFT screen).
-/// Stores detected options in AppState.font_session. Stops when:
+/// Stores detected options in AppState.font_session, sealing a round whenever
+/// the panel's craft count changes (`font_ledger`). Stops when:
 ///   - Generation mismatch (zone change, manual stop, new scan started)
-///   - Last craft completed (no "Crafts Remaining" seen → FontOpened seals it → done)
 fn font_scan_loop(app: AppHandle, generation: u64) {
     let state = app.state::<AppState>();
     let mut loop_count = 0u32;
@@ -2176,39 +2165,64 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         }
 
         if panel.font_active && !panel.options.is_empty() {
-            // Union-merge this frame into the round buffer under lock, then
-            // log/emit outside. `buffer_grew` means the round buffer grew (new
-            // type or value upgrade); a torn frame must not delete options an
-            // earlier frame of the same panel already read (see merge_options).
-            let (buffer_grew, merged, crafts_remaining) = {
+            // Apply the frame under lock, then log/emit outside it.
+            let outcome = {
                 let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
-                let previous = session.current_options.take().unwrap_or_default();
-                let merged = font_parser::merge_options(&previous, &panel.options);
-                let grew = merged != previous;
-                session.current_options = Some(merged.clone());
-                // Never downgrade a known count: a frame that failed to read the
-                // "Crafts Remaining" line must not clear what an earlier frame of
-                // the same panel read.
-                if let Some(n) = panel.crafts_remaining {
-                    session.current_crafts_remaining = Some(n);
+                // Re-check the generation while holding the session lock: this
+                // frame was captured before the check at the top of the
+                // iteration, and `spawn_font_scan` resets the session under this
+                // same lock right after bumping the generation. Without the
+                // re-check a stale frame lands in the fresh session.
+                if state.font_scan_generation.load(Ordering::SeqCst) != generation {
+                    None
+                } else {
+                    // Read the event counter as late as possible. A `FontOpened`
+                    // that lands between the capture and here at worst makes a
+                    // pre-click frame read as the already-accepted count (a
+                    // `Same`); reading it earlier would instead make the frame
+                    // that first shows the new count look like a misread.
+                    let event_seq = state.font_opened_seq.load(Ordering::SeqCst);
+                    Some(font_session::apply_font_frame(&mut session, &panel, event_seq))
                 }
-                (grew, merged, session.current_crafts_remaining)
             }; // lock released
 
-            if buffer_grew {
+            let outcome = match outcome {
+                Some(outcome) => outcome,
+                None => {
+                    app_log(&app, "Font scan stopped (generation mismatch)".to_string());
+                    break;
+                }
+            };
+
+            if let Some(sealed) = &outcome.sealed {
+                app_log(&app, format!(
+                    "Font round {} sealed ({} options{})",
+                    sealed.number,
+                    sealed.round.options.len(),
+                    sealed.round.crafts_remaining.map_or(
+                        ", last craft".to_string(),
+                        |n| format!(", {} remaining", n),
+                    ),
+                ));
+                // `rounds` just grew, and `font_session_rounds` is what gates
+                // the Discard affordance and its round count.
+                emit_status(&app);
+            }
+
+            if outcome.buffer_grew {
                 // Re-log the raw OCR each time the round buffer grows so later
                 // captures in the same scan aren't blinded (was a one-shot flag).
                 app_log(&app, format!("Font OCR raw ({} lines): {}", lines.len(), lines.join(" | ")));
                 app_log(&app, format!(
                     "Font options captured: {} options{}{}",
-                    merged.len(),
+                    outcome.buffer.len(),
                     if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" },
-                    crafts_remaining.map_or(
+                    outcome.crafts_remaining.map_or(
                         " (last craft)".to_string(),
                         |n| format!(" (remaining: {})", n),
                     ),
                 ));
-                for opt in &merged {
+                for opt in &outcome.buffer {
                     app_log(&app, format!("  - {} {}", opt.option_type,
                         opt.value.map(|v| format!("({})", v)).unwrap_or_default()));
                 }
@@ -2225,57 +2239,42 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
     }
 }
 
-/// Called by FontOpened handler to seal the current font round.
-/// Moves current_options into the rounds list. Returns true if this was the last craft.
-fn seal_font_round(app: &AppHandle) -> bool {
+/// Seal the round buffer left over when the session ends without another craft.
+///
+/// Tauri-side adapter over `font_session::seal_leftover_round`: locks, seals,
+/// logs and emits. Rounds are otherwise sealed by the craft-count ledger inside
+/// `font_scan_loop`; `FontOpened` seals nothing, because it fires on font open
+/// as well as on CRAFT.
+fn seal_font_round(app: &AppHandle) {
     let state = app.state::<AppState>();
 
     // The guard lives in this block only: `emit_status` -> `build_status` locks
     // `font_session` to read `font_session_rounds`, and std Mutex is not
     // re-entrant, so emitting while the guard is alive deadlocks this thread.
-    let is_last = {
+    let sealed = {
         let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
-
-        let options = match session.current_options.take() {
-            Some(opts) => opts,
-            None => {
-                app_log(app, "Font round seal skipped — OCR did not capture options before CRAFT click".to_string());
-                // Nothing was appended to `rounds`, so the status the frontend
-                // already holds is still accurate — no emit needed.
-                return false;
-            }
-        };
-
-        let crafts_remaining = session.current_crafts_remaining.take();
-        // is_last: only true if we've already used at least one craft AND no "Crafts Remaining"
-        // text was detected. On the first craft, None could mean single-craft OR OCR missed it —
-        // so don't assume last on first round (prevents blocking multi-craft labs).
-        let is_last = crafts_remaining.is_none() && !session.rounds.is_empty();
-
-        let round_num = session.rounds.len() + 1;
-        app_log(app, format!(
-            "Font round {} sealed ({} options{})",
-            round_num,
-            options.len(),
-            if is_last { ", last craft" } else { "" },
-        ));
-
-        session.rounds.push(FontRound {
-            options,
-            crafts_remaining,
-        });
-
-        is_last
+        font_session::seal_leftover_round(&mut session)
     };
 
-    // `rounds` just grew, and `font_session_rounds` is what gates the Discard
-    // affordance and its round count. Nothing else emits after this on the
-    // CRAFT path: `spawn_gem_scan` emits before the seal, the per-gem emit only
-    // fires when OCR actually matches a gem, and CONFIRM bumps the scan
-    // generation so `gem_scan_loop`'s terminal idle emit is skipped.
-    emit_status(app);
+    // Nothing buffered. This is the ordinary case on the send path: every
+    // ZoneChanged calls it, and most of them happen with no font session at
+    // all. `rounds` did not change, so there is nothing to log and the status
+    // the frontend already holds is still accurate.
+    let Some(sealed) = sealed else { return };
 
-    is_last
+    app_log(app, format!(
+        "Font round {} sealed ({} options{})",
+        sealed.number,
+        sealed.round.options.len(),
+        sealed.round.crafts_remaining.map_or(
+            ", last craft".to_string(),
+            |n| format!(", {} remaining", n),
+        ),
+    ));
+
+    // `rounds` just grew, and `font_session_rounds` is what gates the Discard
+    // affordance and its round count.
+    emit_status(app);
 }
 
 /// Throw away the accumulated font session without sending it (POE-163 D4).
@@ -2302,18 +2301,12 @@ fn discard_font_session(app: AppHandle) {
 
 /// Send accumulated font session to the server and reset.
 fn send_font_session_data(app: &AppHandle) {
+    // Seal the round still on screen (the player left without another craft).
+    // Takes and releases the session lock itself, so it runs before ours.
+    seal_font_round(app);
+
     let state = app.state::<AppState>();
     let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
-
-    // Seal any unsent current round (user left without clicking CRAFT).
-    if let Some(options) = session.current_options.take() {
-        let crafts_remaining = session.current_crafts_remaining.take();
-        session.rounds.push(FontRound { options, crafts_remaining });
-    }
-
-    if session.rounds.is_empty() {
-        return;
-    }
 
     let pair = state.pair_code.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let server = state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -2328,17 +2321,18 @@ fn send_font_session_data(app: &AppHandle) {
     let lab_type = if lab_mode == "Dedication" { "Dedication" } else { "Unknown" };
     let variant = current_gem_variant(&state);
 
-    let session_data = serde_json::json!({
-        "lab_type": lab_type,
-        "total_crafts": session.rounds.len(),
-        "variant": variant.as_str(),
-        "device_id": device_id,
-        "pair_code": pair,
-        "rounds": session.rounds.iter().map(|r| serde_json::json!({
-            "craft_options": r.options,
-            "crafts_remaining": r.crafts_remaining,
-        })).collect::<Vec<_>>(),
-    });
+    let session_data = match font_session::finalize_font_session(
+        &session,
+        lab_type,
+        variant.as_str(),
+        &device_id,
+        &pair,
+    ) {
+        Some(data) => data,
+        // No sealed rounds — nothing was captured, so there is nothing to send
+        // and nothing to reset.
+        None => return,
+    };
 
     app_log(app, format!("Sending font session: {} rounds", session.rounds.len()));
 
@@ -2824,24 +2818,40 @@ fn spawn_log_watcher(app: AppHandle) {
                         let state = app.state::<AppState>();
                         match &event {
                             lab_state::LabEvent::FontOpened => {
-                                // Count-based: odd = CRAFT (start gem scan),
-                                // even = CONFIRM (stop gem scan).
-                                // Works for any number of crafts (Normal=1, Uber=2, Gift=8).
+                                // Publish the event before anything else: the
+                                // craft ledger reads this counter per OCR frame
+                                // and a frame captured after the click must see
+                                // the new value, or the count change it carries
+                                // reads as a misread.
+                                state.font_opened_seq.fetch_add(1, Ordering::SeqCst);
+                                // The event cannot seal a round — it fires on
+                                // font open as well as on CRAFT, an unbounded
+                                // number of times per craft. Only the panel's
+                                // craft count delimits rounds (`font_ledger`).
                                 font_opened_count += 1;
-                                if font_opened_count % 2 == 1 {
-                                    // Odd: CRAFT click → start gem scan
-                                    detected_gems.clear();
-                                    spawn_gem_scan(&app, "font");
-                                    app_log(&app, format!("FontOpened #{} — CRAFT, gem scan started", font_opened_count));
-                                    seal_font_round(&app);
-                                } else {
-                                    // Even: CONFIRM click → stop scanning, clear comparator
-                                    state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
-                                    detected_gems.clear();
-                                    *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
-                                    if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
-                                    app_log(&app, format!("FontOpened #{} — CONFIRM, gem scan stopped", font_opened_count));
-                                    seal_font_round(&app);
+                                // Chunk 3 wires the real liveness token; until
+                                // then the scan is reported live, so no re-arm
+                                // is ever asked for.
+                                for effect in font_session::font_opened_effects(font_opened_count, true) {
+                                    match effect {
+                                        font_session::FontOpenedEffect::StartGemScan => {
+                                            // Odd: CRAFT click → start gem scan
+                                            detected_gems.clear();
+                                            spawn_gem_scan(&app, "font");
+                                            app_log(&app, format!("FontOpened #{} — CRAFT, gem scan started", font_opened_count));
+                                        }
+                                        font_session::FontOpenedEffect::StopGemScan => {
+                                            // Even: CONFIRM click → stop scanning, clear comparator
+                                            state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                            detected_gems.clear();
+                                            *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+                                            if let Err(e) = app.emit("gems-cleared", ()) { log::warn!("emit gems-cleared failed: {}", e); }
+                                            app_log(&app, format!("FontOpened #{} — CONFIRM, gem scan stopped", font_opened_count));
+                                        }
+                                        font_session::FontOpenedEffect::RearmFontScan => {
+                                            spawn_font_scan(&app);
+                                        }
+                                    }
                                 }
                             }
                             lab_state::LabEvent::ZoneChanged { area } => {
@@ -2961,6 +2971,7 @@ pub fn run() {
         auto_trade_enabled: Mutex::new(false),
         gem_scan_generation: AtomicU64::new(0),
         font_scan_generation: AtomicU64::new(0),
+        font_opened_seq: AtomicU64::new(0),
         aspirant_trial_count: AtomicU32::new(0),
         font_session: Mutex::new(FontSessionData::default()),
         font_exhausted: AtomicBool::new(false),
