@@ -103,6 +103,14 @@ pub struct AppState {
     pub gem_scan_generation: AtomicU64,
     /// Generation counter for font panel OCR scans.
     pub font_scan_generation: AtomicU64,
+    /// Generation of the font scan loop that is currently running, or 0 when
+    /// none is. `FontOpened` re-arms the scan when it reads 0 — after a portal
+    /// trip no further `LabFinished` fires, so the event is the only chance to
+    /// bring the panel OCR back. Written by `spawn_font_scan` (its own
+    /// generation), by the loop on exit (compare-exchange, so a stale loop
+    /// cannot clear its replacement's token) and by anything that bumps
+    /// `font_scan_generation` without starting a replacement.
+    pub font_scan_live_gen: AtomicU64,
     /// Monotonic count of `FontOpened` events. The craft ledger gates every
     /// count change on it: the panel's count cannot change without a CRAFT
     /// click, and a CRAFT click always fires this event, so a count change with
@@ -113,13 +121,6 @@ pub struct AppState {
     pub aspirant_trial_count: AtomicU32,
     /// Font session data — accumulated rounds, shared between font scan loop and handlers.
     pub font_session: Mutex<FontSessionData>,
-    /// Set after the last font craft is sealed. Prevents FontOpened from starting
-    /// new gem scans (CONFIRM click also fires the same Client.txt event).
-    /// Reset on ZoneChanged or Aspirants' Plaza.
-    pub font_exhausted: AtomicBool,
-    /// Set when gem scan completes with 3/3 gems. Used to distinguish CONFIRM
-    /// from CRAFT clicks (both fire FontOpened). Reset on next CRAFT.
-    pub gem_scan_done: AtomicBool,
     /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
     /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
     pub in_lab: AtomicBool,
@@ -652,7 +653,6 @@ fn spawn_gem_scan(app: &AppHandle, source: &str) {
 
     // Bump generation — any running capture loop will see the mismatch and exit.
     let gen = state.gem_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
-    state.gem_scan_done.store(false, Ordering::SeqCst);
 
     // Clear frontend comparator.
     *state.detected_gems.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
@@ -2050,7 +2050,6 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
 
                 // All 3 gems found — stop scanning.
                 if gems_found >= MAX_GEMS {
-                    state.gem_scan_done.store(true, Ordering::SeqCst);
                     app_log(&app, "Gem scan complete (3/3 gems detected)".to_string());
                     break;
                 }
@@ -2076,7 +2075,12 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
 /// Start font panel OCR. Bumps generation to cancel any running scan, spawns a new loop.
 fn spawn_font_scan(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let gen = state.font_scan_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    // Minted, not `fetch_add` + 1: the liveness token reads generation 0 as
+    // "no scan running", so no loop may ever own it.
+    let gen = font_session::next_scan_generation(&state.font_scan_generation);
+    // Claim the liveness token before the thread starts, so a `FontOpened`
+    // arriving in between does not re-arm a scan that is already on its way.
+    state.font_scan_live_gen.store(gen, Ordering::SeqCst);
 
     // Reset font session for the new scan. The temporary guard is dropped at the
     // end of this statement, so the emit below cannot self-deadlock on
@@ -2098,14 +2102,29 @@ fn spawn_font_scan(app: &AppHandle) {
 ///
 /// Scans the font region every 250ms looking for craft options (CRAFT screen).
 /// Stores detected options in AppState.font_session, sealing a round whenever
-/// the panel's craft count changes (`font_ledger`). Stops when:
-///   - Generation mismatch (zone change, manual stop, new scan started)
+/// the panel's craft count changes (`font_ledger`).
+///
+/// Stops on a generation bump — `ZoneChanged`, lab exit, a replacement scan or
+/// app shutdown — or after `IDLE_LIMIT` with no active font panel on screen.
+/// There is deliberately no wall-clock timeout: a font run has no bounded length
+/// (stash trips, town portals, a player reading the options), and the scan
+/// expiring under a still-open panel silently lost every remaining craft. The
+/// idle limit measures from the last frame that saw the panel, so it can only
+/// fire on a scan that has nothing left to read — the case where every stop
+/// event was missed, e.g. the player never opened the font and the game was
+/// killed rather than exited. That path sends the session itself, because no
+/// caller follows it and the next re-arm would reset the rounds it sealed.
 fn font_scan_loop(app: AppHandle, generation: u64) {
     let state = app.state::<AppState>();
     let mut loop_count = 0u32;
-    let start = std::time::Instant::now();
     const SCAN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 min safety net
+    const IDLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+    let mut last_active = std::time::Instant::now();
+    // What the previous iteration's frame saw. The tick reads it at the top of
+    // the loop rather than where the panel is parsed, so the capture- and
+    // OCR-failure paths below cannot `continue` past the expiry check — a
+    // permanently failing capture is exactly the case this guard exists for.
+    let mut frame_saw_panel = false;
 
     // Surface which OCR recognizer is active (and any en-US fallback warning) so a
     // silent CJK fallback shows up in the LOGS panel, not just stderr.
@@ -2118,8 +2137,21 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
             break;
         }
 
-        if start.elapsed() >= TIMEOUT {
-            app_log(&app, "Font scan timed out after 5 minutes".to_string());
+        let (deadline, idle_expired) = font_session::idle_tick(
+            last_active,
+            std::time::Instant::now(),
+            frame_saw_panel,
+            IDLE_LIMIT,
+        );
+        last_active = deadline;
+        frame_saw_panel = false;
+        if idle_expired {
+            app_log(&app, "Font scan stopped (no font panel for 10 minutes)".to_string());
+            // The only stop that no sender follows: ZoneChanged and the send
+            // path seal and POST for themselves, and the next re-arm's
+            // `spawn_font_scan` resets the session. Without this, rounds sealed
+            // before the player wandered off are dropped.
+            send_font_session_data(&app);
             break;
         }
 
@@ -2156,6 +2188,7 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         };
 
         let panel = font_parser::parse_font_panel(&lines);
+        frame_saw_panel = panel.font_active;
 
         // Silent-failure breadcrumb: OCR produced text but nothing parsed as an
         // active font panel — usually the panel garbled (e.g. a wrong-language
@@ -2237,6 +2270,10 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
 
         std::thread::sleep(SCAN_INTERVAL);
     }
+
+    // Release the liveness token unless a replacement scan already claimed it,
+    // so the next `FontOpened` knows whether the panel is still being watched.
+    font_session::try_clear_live(&state.font_scan_live_gen, generation);
 }
 
 /// Seal the round buffer left over when the session ends without another craft.
@@ -2775,6 +2812,17 @@ fn spawn_log_watcher(app: AppHandle) {
                                 lab_navigation::NavEvent::LabExited => {
                                     state.in_lab.store(false, Ordering::SeqCst);
                                     app_log(&app, "Lab nav: exited lab".to_string());
+                                    // The state machine only emits `ZoneChanged`
+                                    // from FontReady/PickingGems, so a scan
+                                    // spawned at LabFinished for a player who
+                                    // never opened the font has no other stop.
+                                    state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                    let was_live = font_session::font_scan_is_live(
+                                        state.font_scan_live_gen.swap(0, Ordering::SeqCst),
+                                    );
+                                    if was_live {
+                                        app_log(&app, "Font scan stopped (lab exited)".to_string());
+                                    }
                                     // Emit event BEFORE hiding overlays — timer needs
                                     // LabExited to submit the run before being hidden.
                                     if let Err(e) = app.emit("lab-nav", &nav_event) {
@@ -2829,10 +2877,15 @@ fn spawn_log_watcher(app: AppHandle) {
                                 // number of times per craft. Only the panel's
                                 // craft count delimits rounds (`font_ledger`).
                                 font_opened_count += 1;
-                                // Chunk 3 wires the real liveness token; until
-                                // then the scan is reported live, so no re-arm
-                                // is ever asked for.
-                                for effect in font_session::font_opened_effects(font_opened_count, true) {
+                                // A portal trip out of the lab stops the font
+                                // scan for good (`LabFinished` does not fire
+                                // again on return), so the liveness token is
+                                // what decides whether this event has to bring
+                                // the panel OCR back.
+                                let font_scan_live = font_session::font_scan_is_live(
+                                    state.font_scan_live_gen.load(Ordering::SeqCst),
+                                );
+                                for effect in font_session::font_opened_effects(font_opened_count, font_scan_live) {
                                     match effect {
                                         font_session::FontOpenedEffect::StartGemScan => {
                                             // Odd: CRAFT click → start gem scan
@@ -2849,6 +2902,10 @@ fn spawn_log_watcher(app: AppHandle) {
                                             app_log(&app, format!("FontOpened #{} — CONFIRM, gem scan stopped", font_opened_count));
                                         }
                                         font_session::FontOpenedEffect::RearmFontScan => {
+                                            // `ZoneChanged` owns the session
+                                            // reset, so this starts a fresh
+                                            // segment rather than resuming one.
+                                            app_log(&app, "Font scan re-armed".to_string());
                                             spawn_font_scan(&app);
                                         }
                                     }
@@ -2860,6 +2917,10 @@ fn spawn_log_watcher(app: AppHandle) {
                                 // Stop both gem and font scans + reset state.
                                 state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
                                 state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                                // Synchronously, not by waiting for the loop to
+                                // notice: a `FontOpened` arriving in that window
+                                // must still see a dead scan and re-arm it.
+                                state.font_scan_live_gen.store(0, Ordering::SeqCst);
                                 font_opened_count = 0;
                                 *state.lab_state.lock().unwrap_or_else(|e| e.into_inner()) =
                                     lab_state::LabState::Idle;
@@ -2971,11 +3032,10 @@ pub fn run() {
         auto_trade_enabled: Mutex::new(false),
         gem_scan_generation: AtomicU64::new(0),
         font_scan_generation: AtomicU64::new(0),
+        font_scan_live_gen: AtomicU64::new(0),
         font_opened_seq: AtomicU64::new(0),
         aspirant_trial_count: AtomicU32::new(0),
         font_session: Mutex::new(FontSessionData::default()),
-        font_exhausted: AtomicBool::new(false),
-        gem_scan_done: AtomicBool::new(false),
         in_lab: AtomicBool::new(false),
         compass_mode: Mutex::new(String::from("minimap")),
         compass_strategy: Mutex::new(String::from("shortest")),
@@ -3220,6 +3280,7 @@ pub fn run() {
                     // Gem/font scan loops — bump generations so they exit
                     state.gem_scan_generation.fetch_add(1, Ordering::SeqCst);
                     state.font_scan_generation.fetch_add(1, Ordering::SeqCst);
+                    state.font_scan_live_gen.store(0, Ordering::SeqCst);
 
                     let is_maximized = window.is_maximized().unwrap_or(false);
                     // Only save position/size if not maximized (restore to normal position)

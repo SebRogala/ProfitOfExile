@@ -5,6 +5,9 @@
 //! spawning outside it. That split is what makes the round-boundary rules
 //! testable — see `font_ledger` for the rule the boundary itself follows.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
 use serde::Serialize;
 
 use crate::font_ledger::{CraftLedger, LedgerVerdict};
@@ -210,6 +213,68 @@ pub enum FontOpenedEffect {
     StartGemScan,
     StopGemScan,
     RearmFontScan,
+}
+
+/// Mint the generation for a new scan, never handing out 0.
+///
+/// 0 is the liveness token's "no scan running" value, so a loop that owned it
+/// would read as dead and every `FontOpened` would spawn another loop on top of
+/// it. `fetch_add(1) + 1` only produces 0 once the counter wraps, which needs
+/// 2^64 scans — the skip costs one generation and removes the state entirely.
+pub fn next_scan_generation(counter: &AtomicU64) -> u64 {
+    let minted = counter.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    if minted == 0 {
+        counter.fetch_add(1, Ordering::SeqCst).wrapping_add(1)
+    } else {
+        minted
+    }
+}
+
+/// Advance the font scan's idle clock by one frame: the deadline to carry into
+/// the next iteration, and whether the scan should give up.
+///
+/// Only a frame that actually saw the panel resets the clock; anything else —
+/// an inactive frame, a failed capture, a failed OCR — lets it run down. The
+/// loop otherwise only stops on a generation bump, and every event that bumps
+/// it (`ZoneChanged`, lab exit, shutdown) can be missed: the game can be killed
+/// rather than exited, or the log line can simply never arrive. Without this
+/// the scan captures and OCRs the screen every 250 ms for the rest of the
+/// app's life.
+pub fn idle_tick(
+    last_active: Instant,
+    now: Instant,
+    font_active: bool,
+    limit: Duration,
+) -> (Instant, bool) {
+    if font_active {
+        return (now, false);
+    }
+    (last_active, now.duration_since(last_active) >= limit)
+}
+
+/// Whether a font scan loop is running, read from the liveness token.
+///
+/// The token holds the generation of the loop that owns it. Generations are
+/// handed out as `fetch_add(1) + 1`, so no loop can own 0 and 0 is free to mean
+/// "no scan running".
+pub fn font_scan_is_live(live_token: u64) -> bool {
+    live_token != 0
+}
+
+/// Release the liveness token on behalf of the loop generation `own_gen`.
+///
+/// A compare-exchange rather than a store, because a superseded loop only
+/// notices its generation changed on its next iteration — up to a scan interval
+/// after the replacement scan already published its own generation. A blind
+/// store would mark that running scan dead and every later `FontOpened` would
+/// spawn another loop on top of it.
+///
+/// Returns whether this call was the one that released the token; callers that
+/// only need the token cleared may ignore it.
+pub fn try_clear_live(token: &AtomicU64, own_gen: u64) -> bool {
+    token
+        .compare_exchange(own_gen, 0, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
 }
 
 /// Decide what a `FontOpened` event should trigger.
@@ -555,5 +620,134 @@ mod tests {
             font_opened_effects(1, false),
             vec![FontOpenedEffect::StartGemScan, FontOpenedEffect::RearmFontScan],
         );
+    }
+
+    #[test]
+    fn a_loop_that_still_owns_the_token_releases_it_on_exit() {
+        let token = AtomicU64::new(3);
+
+        assert!(try_clear_live(&token, 3), "the owning loop must win the release");
+        assert!(
+            !font_scan_is_live(token.load(Ordering::SeqCst)),
+            "a released token must read as no scan running",
+        );
+    }
+
+    #[test]
+    fn a_superseded_loop_exiting_leaves_the_replacement_scan_live() {
+        // Loop 7 was still sleeping between frames when `spawn_font_scan`
+        // published generation 8; it exits a scan interval later.
+        let token = AtomicU64::new(8);
+
+        assert!(!try_clear_live(&token, 7), "a stale loop must not win the release");
+        assert!(
+            !font_opened_effects(1, font_scan_is_live(token.load(Ordering::SeqCst)))
+                .contains(&FontOpenedEffect::RearmFontScan),
+            "the running scan must not be re-armed on top of itself",
+        );
+    }
+
+    #[test]
+    fn a_zone_change_leaves_the_next_font_opened_to_rearm_the_scan() {
+        // ZoneChanged clears the token synchronously with the generation bump,
+        // so the event that follows re-arms even before the old loop notices.
+        let token = AtomicU64::new(0);
+
+        assert!(
+            font_opened_effects(1, font_scan_is_live(token.load(Ordering::SeqCst)))
+                .contains(&FontOpenedEffect::RearmFontScan),
+            "a dead scan must be re-armed by the next event",
+        );
+    }
+
+    #[test]
+    fn successive_scans_are_minted_distinct_generations() {
+        let counter = AtomicU64::new(0);
+
+        assert_eq!(
+            [next_scan_generation(&counter), next_scan_generation(&counter)],
+            [1, 2],
+        );
+    }
+
+    #[test]
+    fn a_wrapped_counter_never_mints_the_no_scan_generation() {
+        // The next `fetch_add(1) + 1` is 0 — the value the liveness token uses
+        // for "no scan running", which no live loop may own.
+        let counter = AtomicU64::new(u64::MAX);
+
+        assert!(font_scan_is_live(next_scan_generation(&counter)));
+    }
+
+    #[test]
+    fn a_frame_that_saw_the_panel_pushes_the_idle_deadline_out() {
+        let opened = Instant::now();
+
+        let (deadline, _) = idle_tick(
+            opened,
+            opened + Duration::from_secs(300),
+            true,
+            Duration::from_secs(600),
+        );
+
+        assert_eq!(deadline, opened + Duration::from_secs(300));
+    }
+
+    #[test]
+    fn a_frame_without_the_panel_leaves_the_idle_deadline_alone() {
+        let opened = Instant::now();
+
+        let (deadline, _) = idle_tick(
+            opened,
+            opened + Duration::from_secs(300),
+            false,
+            Duration::from_secs(600),
+        );
+
+        assert_eq!(deadline, opened);
+    }
+
+    #[test]
+    fn a_scan_that_has_just_reached_the_idle_limit_gives_up() {
+        let opened = Instant::now();
+
+        let (_, expired) = idle_tick(
+            opened,
+            opened + Duration::from_secs(600),
+            false,
+            Duration::from_secs(600),
+        );
+
+        assert!(expired);
+    }
+
+    #[test]
+    fn a_scan_one_tick_short_of_the_idle_limit_keeps_going() {
+        let opened = Instant::now();
+
+        let (_, expired) = idle_tick(
+            opened,
+            opened + Duration::from_millis(599_999),
+            false,
+            Duration::from_secs(600),
+        );
+
+        assert!(!expired);
+    }
+
+    #[test]
+    fn a_scan_reading_the_panel_past_the_idle_limit_keeps_going() {
+        // The player left the font open for eleven minutes. The panel is right
+        // there on screen, so the scan that would report it must not expire.
+        let opened = Instant::now();
+
+        let (_, expired) = idle_tick(
+            opened,
+            opened + Duration::from_secs(660),
+            true,
+            Duration::from_secs(600),
+        );
+
+        assert!(!expired);
     }
 }
