@@ -12,6 +12,7 @@ mod modules;
 mod ocr;
 mod settings;
 mod ssot;
+mod temple;
 mod trade;
 
 use serde::{Deserialize, Serialize};
