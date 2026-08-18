@@ -360,8 +360,8 @@ pub fn distance_sq(rect: [i32; 4], cursor: (i32, i32)) -> i64 {
 /// Map a hover crop's OCR lines back to screen space and score them by cursor
 /// distance.
 ///
-/// `upscale` is the factor `preprocess_for_ocr` applied to the crop (2× for a
-/// short band, 1× otherwise), read off the processed image rather than assumed:
+/// `upscale` is the factor `preprocess_for_ocr` applied to the crop, read off
+/// the processed image rather than assumed:
 /// every rect the OCR reports is in the PROCESSED image's pixel space, so
 /// skipping the division would put every line at twice its real offset.
 pub fn tooltip_lines(
@@ -497,7 +497,7 @@ struct Session {
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     crate::app_log(&app, "Merc: capture loop started".to_string());
-    crate::app_log(&app, crate::ocr::engine_report());
+    crate::report_ocr_engine(&app);
 
     let data_dir = app.path().app_data_dir().ok();
     let (geometry, geometry_source, geometry_err) = match &data_dir {

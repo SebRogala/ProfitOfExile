@@ -35,6 +35,11 @@ export interface AppStatus {
 	 *  The session is stamped with the selected market at send time, so a non-zero
 	 *  count is what makes a discardable pending run visible. */
 	font_session_rounds: number;
+	/** Set when the OCR engine could not resolve to en-US and fell back to the
+	 *  Windows profile language — every read (gems, font options, merc rows) is
+	 *  unreliable until the English (US) OCR pack is installed. Null when the
+	 *  recognizer is fine or no scan has resolved one yet. */
+	ocr_language_warning: string | null;
 }
 
 /** Reactive store — mutate properties, never reassign the export. */

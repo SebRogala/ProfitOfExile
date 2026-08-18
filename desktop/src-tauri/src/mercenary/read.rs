@@ -231,8 +231,8 @@ pub fn crop_rgba(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option
 /// Pass 2 (D2): re-OCR each row's name band on its own.
 ///
 /// The whole-screen pass 1 reads the name at native size; a 44 px-tall band
-/// goes through `preprocess_for_ocr`, which upscales it 2× (h ≤ 400) and
-/// stretches its contrast — measurably better on small text (POE-116).
+/// goes through `preprocess_for_ocr`, which upscales it 2× and stretches its
+/// contrast — measurably better on small text (POE-116).
 ///
 /// Every failure falls back to the pass-1 text rather than blanking the row:
 /// an off-image band, an OCR error (which is EVERY call on non-Windows), an

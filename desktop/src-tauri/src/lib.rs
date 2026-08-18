@@ -62,6 +62,11 @@ pub struct AppStatus {
     /// Sealed rounds accumulated in the current font session. Drives the
     /// discard affordance: zero means there is nothing to throw away.
     pub font_session_rounds: usize,
+    /// Set when a scan thread had to fall back off the en-US recognizer. The
+    /// whole OCR pipeline (gem names, font options, merc rows) misreads on a
+    /// profile-language recognizer, and the only other trace is one LOGS line
+    /// that scrolls away, so it is surfaced in Settings as a standing warning.
+    pub ocr_language_warning: Option<String>,
 }
 
 pub use font_session::{FontRound, FontSessionData};
@@ -201,6 +206,7 @@ fn build_status(state: &AppState) -> AppStatus {
         auto_trade_enabled: *state.auto_trade_enabled.lock().unwrap_or_else(|e| e.into_inner()),
         device_id: state.device_id.clone(),
         font_session_rounds: state.font_session.lock().unwrap_or_else(|e| e.into_inner()).rounds.len(),
+        ocr_language_warning: ocr_warning_field(),
     }
 }
 
@@ -225,6 +231,45 @@ fn persist_overlay_settings(existing: &settings::Settings, target: &mut settings
 fn emit_status(app: &AppHandle) {
     let state = app.state::<AppState>();
     if let Err(e) = app.emit("status-changed", build_status(&state)) { log::warn!("emit status-changed failed: {}", e); }
+}
+
+/// The `ocr_language_warning` field of `AppStatus`, as its own seam.
+///
+/// `build_status` needs a live `AppState` to call, so this is the part of the
+/// payload a unit test can reach. Reads the cached warning and deliberately NOT
+/// `ocr::engine_report()`: `build_status` runs on every command and event
+/// thread, and resolving an engine there would construct an extra one — and
+/// re-log the fallback — per thread.
+fn ocr_warning_field() -> Option<String> {
+    ocr::language_warning()
+}
+
+thread_local! {
+    /// Whether this thread has already pushed the OCR language warning to the
+    /// UI. Per-thread rather than global so each scan thread emits at most once
+    /// while none of them depends on another having run.
+    static OCR_WARNING_REPORTED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// Resolve this thread's OCR recognizer, log which one it is, and push a cached
+/// language warning to the UI once per thread.
+///
+/// Every scan thread calls this on start. The emit cannot be left to the spawn
+/// site: `spawn_font_scan` emits before the thread exists, so at that point no
+/// engine has resolved and `ocr_language_warning` is still `None`.
+///
+/// The trigger is the warning being PRESENT, not this thread having been the one
+/// to cache it. Any engine resolution caches it — including one from a debug
+/// command (`test_ocr_on_image`, the merc debug dump), which has no status to
+/// emit — so keying on the cache transition would drop the notification whenever
+/// a debug path resolved first.
+fn report_ocr_engine(app: &AppHandle) {
+    app_log(app, ocr::engine_report());
+    // `replace` returns the previous value, so the first call through here on a
+    // thread with a warning cached is the only one that emits.
+    if ocr::language_warning().is_some() && !OCR_WARNING_REPORTED.with(|c| c.replace(true)) {
+        emit_status(app);
+    }
 }
 
 /// Emit the current logs array to all frontend listeners.
@@ -1827,10 +1872,20 @@ async fn test_ocr_on_image(path: String, app: AppHandle) -> Result<String, Strin
     let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
     app_log(&app, format!("Image loaded: {}x{}", img.width(), img.height()));
 
-    let processed = capture::preprocess_for_ocr(&img);
-    app_log(&app, format!("Preprocessed: {}x{}", processed.width(), processed.height()));
+    // Preprocessing and recognition are both blocking CPU work — a 2x Lanczos
+    // resize of an arbitrary image the user picked, then a synchronous WinRT OCR
+    // call. This command is async, so running them inline would stall the async
+    // worker (and every other command sharing it) for the duration.
+    let (proc_w, proc_h, ocr_result) = tauri::async_runtime::spawn_blocking(move || {
+        let processed = capture::preprocess_for_ocr(&img);
+        let dims = (processed.width(), processed.height());
+        (dims.0, dims.1, ocr::recognize_text(&processed))
+    })
+    .await
+    .map_err(|e| format!("OCR task failed to run: {}", e))?;
+    app_log(&app, format!("Preprocessed: {}x{}", proc_w, proc_h));
 
-    let lines = ocr::recognize_text(&processed).map_err(|e| {
+    let lines = ocr_result.map_err(|e| {
         app_log(&app, format!("OCR failed: {}", e));
         e
     })?;
@@ -1921,7 +1976,7 @@ fn gem_scan_loop(app: AppHandle, generation: u64) {
     app_log(&app, format!("Gem scan: loaded {} gem names", gem_names.len()));
     // Surface which OCR recognizer is active (and any en-US fallback warning) —
     // this is the only breadcrumb the LOGS panel gets for a silent CJK fallback.
-    app_log(&app, ocr::engine_report());
+    report_ocr_engine(&app);
 
     let mut seen_gems: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut gems_found = 0u32;
@@ -2128,7 +2183,7 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
 
     // Surface which OCR recognizer is active (and any en-US fallback warning) so a
     // silent CJK fallback shows up in the LOGS panel, not just stderr.
-    app_log(&app, ocr::engine_report());
+    report_ocr_engine(&app);
 
     loop {
         // Check generation.
@@ -3360,8 +3415,25 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_excerpt, dictionary_reject_reason, retry_after_delay};
+    use super::{body_excerpt, dictionary_reject_reason, ocr_warning_field, retry_after_delay};
     use std::time::Duration;
+
+    #[test]
+    fn the_status_ocr_warning_field_reports_the_cached_warning() {
+        // The status payload's only reachable seam: `build_status` needs a live
+        // AppState, so this pins the field's SOURCE — a warning cached by the
+        // engine path is what the payload carries, not a hardcoded None.
+        //
+        // Asserts against the cache rather than a literal because the cache is
+        // process-wide and never cleared: another test in this binary may have
+        // recorded first, and this must hold whichever write won.
+        crate::ocr::record_language_warning_globally(
+            "en-US unavailable — fell back to the Windows profile language",
+        );
+        let cached = crate::ocr::language_warning();
+        assert!(cached.is_some(), "recording must leave a warning cached");
+        assert_eq!(ocr_warning_field(), cached);
+    }
 
     #[test]
     fn a_short_body_is_logged_whole() {

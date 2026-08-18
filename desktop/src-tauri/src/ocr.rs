@@ -2,6 +2,77 @@
 /// Windows implementation uses Windows.Media.Ocr (built-in, zero dependencies).
 /// Other platforms get a stub.
 
+use std::sync::Mutex;
+
+/// The "en-US pack missing, fell back to the profile language" warning, cached
+/// for the whole process.
+///
+/// The engine itself is `thread_local!` — every scan thread resolves its own —
+/// so the warning cannot live beside it: `build_status` runs on many threads
+/// and must NOT call `engine_report()`, which would construct an extra engine
+/// (and re-log the fallback) per thread. This is the one slot `build_status`
+/// reads instead. Never cleared: a language pack cannot appear mid-session, and
+/// clearing it would flicker the warning off in the UI.
+///
+/// **Never call `emit_status` (or anything that reaches `build_status`) while
+/// holding this lock.** `build_status` reads the cache through
+/// [`language_warning`], so emitting under the guard re-enters the same
+/// non-reentrant `Mutex` and deadlocks the calling thread. Record first, drop
+/// the guard, then emit — which is why [`record_language_warning`] returns
+/// rather than notifying.
+static OCR_LANGUAGE_WARNING: Mutex<Option<String>> = Mutex::new(None);
+
+/// Store `warning` in `cache`, but only while the cache is still empty.
+///
+/// Returns true EXACTLY on the `None` -> `Some` transition — the compare-and-set
+/// result, for a caller that needs to know it won the race. `None` records
+/// nothing: an en-US resolution is not news and must not lock out a later
+/// thread's real warning.
+///
+/// The UI notification deliberately does NOT hang off this return value.
+/// Any engine resolution caches the warning, including one from a debug command
+/// (`test_ocr_on_image`, the merc debug dump) that has no status to emit — so
+/// the thread that wins the transition is not reliably a thread that reports it.
+/// `report_ocr_engine` therefore keys its emit on the warning being PRESENT and
+/// on its own thread not having reported yet, which is correct whoever recorded.
+///
+/// Takes the cache by reference so the transition is testable on any platform,
+/// without the Windows-only engine. Unused on non-Windows because only the
+/// Windows engine path can produce a warning to record.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn record_language_warning(cache: &Mutex<Option<String>>, warning: Option<String>) -> bool {
+    let Some(warning) = warning else {
+        return false;
+    };
+    let mut slot = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_some() {
+        return false;
+    }
+    *slot = Some(warning);
+    true
+}
+
+/// The cached OCR language warning, or `None` when the recognizer resolved to
+/// en-US (or when no thread has resolved one yet). Read by `build_status`.
+pub fn language_warning() -> Option<String> {
+    OCR_LANGUAGE_WARNING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Test-only writer for the process-wide cache the production path uses.
+///
+/// Exists so the `lib.rs` status-field test can seed the same slot
+/// `build_status` reads without making the static crate-visible. Exactly the
+/// tests named in `ocr.rs` and `lib.rs` may call it, and they are written to be
+/// order-independent: the cache is never cleared, so a second caller in the same
+/// test binary records nothing.
+#[cfg(test)]
+pub fn record_language_warning_globally(warning: &str) -> bool {
+    record_language_warning(&OCR_LANGUAGE_WARNING, Some(warning.to_string()))
+}
+
 #[cfg(windows)]
 mod platform {
     use image::DynamicImage;
@@ -42,6 +113,12 @@ mod platform {
         OcrEngine::TryCreateFromLanguage(&lang).map_err(|e| format!("en-US engine: {}", e))
     }
 
+    /// Resolve (and thread-locally cache) the recognizer.
+    ///
+    /// Whatever the outcome, the process-wide language warning is cached before
+    /// this returns — a fallback on the success path, the combined failure on
+    /// the error path — so `build_status` can surface it without ever resolving
+    /// an engine of its own.
     fn get_or_create_engine() -> Result<OcrEngine, String> {
         OCR_ENGINE.with(|cell| {
             let mut opt = cell.borrow_mut();
@@ -52,26 +129,49 @@ mod platform {
             // only when en-US OCR isn't installed. Record a human-readable status
             // either way so the active recognizer (and any fallback warning)
             // surfaces in the LOGS panel via engine_report().
-            let (engine, status) = match create_english_engine() {
+            let (engine, status, warning) = match create_english_engine() {
                 Ok(engine) => {
                     log::info!("OCR: using en-US recognizer");
-                    (engine, "OCR: using English (en-US) recognizer".to_string())
+                    (
+                        engine,
+                        "OCR: using English (en-US) recognizer".to_string(),
+                        None,
+                    )
                 }
                 Err(en_err) => {
                     log::warn!("OCR: en-US unavailable ({en_err}), falling back to profile languages");
                     // Keep BOTH errors if the fallback also fails — the en-US
                     // reason is the actionable one, the profile error is the proximate.
-                    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
-                        .map_err(|pe| format!("Failed to create OCR engine — en-US: {en_err}; profile: {pe}"))?;
+                    let engine = match OcrEngine::TryCreateFromUserProfileLanguages() {
+                        Ok(engine) => engine,
+                        Err(pe) => {
+                            let err = format!(
+                                "Failed to create OCR engine — en-US: {en_err}; profile: {pe}"
+                            );
+                            // OCR is dead on this thread, which is strictly worse
+                            // than the fallback this arm exists to warn about.
+                            // Cache it as the warning BEFORE propagating, or the
+                            // one path where nothing can be read is also the one
+                            // path where the UI says nothing.
+                            super::record_language_warning(
+                                &super::OCR_LANGUAGE_WARNING,
+                                Some(err.clone()),
+                            );
+                            return Err(err);
+                        }
+                    };
                     let status = format!(
                         "OCR: en-US unavailable ({en_err}) — fell back to the Windows profile \
                          language; text may be misread. Install the English (US) OCR language \
                          pack for reliable detection."
                     );
                     log::info!("{status}");
-                    (engine, status)
+                    (engine, status.clone(), Some(status))
                 }
             };
+            // Cache the warning process-wide BEFORE handing the engine back, so
+            // `build_status` (which never resolves an engine itself) can read it.
+            super::record_language_warning(&super::OCR_LANGUAGE_WARNING, warning);
             OCR_STATUS.with(|s| *s.borrow_mut() = Some(status));
             *opt = Some(engine.clone());
             Ok(engine)
@@ -81,6 +181,7 @@ mod platform {
     /// Ensure the engine exists on this thread and return the recorded recognizer
     /// status (or the creation error). Call once at the top of each scan thread so
     /// the active recognizer — and any en-US fallback warning — lands in the LOGS panel.
+    /// Call it through `report_ocr_engine`, which also gets the warning to the UI.
     pub fn engine_report() -> String {
         match get_or_create_engine() {
             Ok(_) => OCR_STATUS.with(|s| {
@@ -309,6 +410,66 @@ pub fn extract_gem_name(lines: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fresh cache, isolated from the process-wide one so the transition can
+    /// be exercised more than once per test run.
+    fn empty_cache() -> Mutex<Option<String>> {
+        Mutex::new(None)
+    }
+
+    #[test]
+    fn the_first_warning_reports_the_transition_and_is_cached() {
+        let cache = empty_cache();
+        assert!(record_language_warning(&cache, Some("fell back to ja-JP".into())));
+        assert_eq!(
+            cache.lock().unwrap().as_deref(),
+            Some("fell back to ja-JP")
+        );
+    }
+
+    #[test]
+    fn a_second_warning_reports_no_transition_and_leaves_the_first_standing() {
+        // The second scan thread resolves the same broken language setup. The
+        // cache is first-write-wins: the text the UI is already showing must not
+        // be rewritten under it, and the transition is reported once.
+        let cache = empty_cache();
+        record_language_warning(&cache, Some("fell back to ja-JP".into()));
+        assert!(!record_language_warning(&cache, Some("fell back to ko-KR".into())));
+        assert_eq!(
+            cache.lock().unwrap().as_deref(),
+            Some("fell back to ja-JP"),
+            "the first warning is the one the UI already shows; a later thread must not rewrite it"
+        );
+    }
+
+    #[test]
+    fn a_healthy_en_us_resolution_records_nothing() {
+        // An en-US engine has no warning to report, and must not occupy the slot
+        // — a later thread that DOES fall back still has to get through.
+        let cache = empty_cache();
+        assert!(!record_language_warning(&cache, None));
+        assert_eq!(*cache.lock().unwrap(), None);
+        assert!(record_language_warning(&cache, Some("fell back to ja-JP".into())));
+    }
+
+    #[test]
+    fn language_warning_reads_the_cache_the_recorder_writes() {
+        // Wiring: `build_status` reads through `language_warning()` while the
+        // engine path writes through `record_language_warning`. Pointing either
+        // at a different cell would leave the UI permanently warning-free.
+        //
+        // Touches the process-wide static, which no test may assume it owns —
+        // the cache is never cleared and another test in this binary may have
+        // recorded first. So it asserts the reader agrees with the cell rather
+        // than with a literal, which holds whichever write won.
+        record_language_warning(
+            &OCR_LANGUAGE_WARNING,
+            Some("en-US unavailable — fell back to the Windows profile language".into()),
+        );
+        let stored = OCR_LANGUAGE_WARNING.lock().unwrap().clone();
+        assert!(stored.is_some(), "recording must leave the cache populated");
+        assert_eq!(language_warning(), stored);
+    }
 
     #[test]
     fn extract_gem_name_from_tooltip_lines() {
