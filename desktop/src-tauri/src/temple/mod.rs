@@ -1,4 +1,5 @@
-//! Temple of Atzoatl **builder** advisor (POE-124 epic, POE-167 slice 0).
+//! Temple of Atzoatl **builder** advisor (POE-124 epic, POE-167 slice 0,
+//! POE-168 slice 1).
 //!
 //! Scope of this directory is the *building* phase — the two decisions a player
 //! makes per incursion (which architect to kill, which passage to open) while
@@ -11,8 +12,26 @@
 //!   vocabulary, the per-strategy [`strategy::StrategyProfile`], the
 //!   Chase/Scarab [`strategy::Mode`] selector, and the two user-facing config
 //!   flags. No Tauri, no state, no Windows code, no board graph.
+//! - [`lattice`], [`anchor`], [`doors`], [`reader`] (POE-168) — the layout
+//!   reader: a screenshot of the temple's layout panel in, a
+//!   [`reader::TempleLayout`] out. Also pure, and equally free of Tauri and
+//!   Windows code, so the whole of it runs in the Linux test container.
 //! - Room identity (POE-169) and the advisor/board graph (POE-170) land as
 //!   sibling modules and are the only intended consumers of this one.
+//!
+//! # Where the pixels live
+//!
+//! Two different kinds of image, kept apart by role rather than by directory
+//! symmetry:
+//!
+//! - **`src/temple/assets/entrance-plate.png`** — the Entrance template the
+//!   anchor correlates against, `include_bytes!`-embedded by [`anchor`]. It is
+//!   production input: the reader cannot run without it, so it ships in the
+//!   binary and must not sit under `tests/`.
+//! - **`tests/fixtures/temple/*.png`** — real boards, loaded from
+//!   `CARGO_MANIFEST_DIR` by the reader's tests. This follows the convention
+//!   POE-165 established with `tests/fixtures/merc-skills-panel.png`; see
+//!   [`reader`]'s test module for each fixture's source file and crop box.
 //!
 //! # Architecture decision this encodes
 //!
@@ -35,4 +54,38 @@
 // Waiting on POE-170: `DOUBLE_TIER_CHANCE`, `Mode`, `ModeRule`, `Combination`,
 // `StrategyProfile`, `highest_tier_per_line`, `TempleConfig`.
 
+pub mod anchor;
+pub mod doors;
+pub mod lattice;
+pub mod reader;
 pub mod strategy;
+
+/// Why a screenshot did not yield a board.
+///
+/// There is deliberately no "read it anyway" variant. A layout the reader is
+/// not sure of is worse than none: anchoring at NCC 0.829 and 0.809 on two
+/// live boards each invented an Apex corridor that was actually closed, which
+/// would have driven a confident and wrong recommendation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReadError {
+    /// No Entrance plate matched well enough at any searched scale.
+    AnchorNotFound {
+        /// The best fine score seen, for logging. `-inf` when no scale
+        /// produced a template that fits the image at all.
+        best_ncc: f32,
+    },
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadError::AnchorNotFound { best_ncc } => write!(
+                f,
+                "no temple layout panel found (best NCC {best_ncc:.3}, floor {:.2})",
+                anchor::NCC_FLOOR
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
