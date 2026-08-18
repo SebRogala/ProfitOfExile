@@ -7,7 +7,7 @@
 use serde::Serialize;
 
 /// A detected craft option from the font panel.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CraftOption {
     /// Machine-readable type for grouping in statistics.
     #[serde(rename = "type")]
@@ -198,6 +198,40 @@ pub fn parse_font_panel(lines: &[String]) -> FontPanelState {
         font_active,
         jackpot_detected,
     }
+}
+
+/// Union-merge a round's accumulated craft options with a freshly parsed frame.
+///
+/// OCR frames of one static panel disagree: a torn frame can miss options the
+/// previous frame read, and a frame can read a numeric value that an earlier
+/// frame garbled. Merging keyed on `option_type` keeps everything seen in any
+/// frame of the round instead of letting the newest frame overwrite the buffer.
+///
+/// Rules:
+/// - An existing option is kept when `incoming` omits its type — a torn frame
+///   must not delete a prior read.
+/// - An existing option with no `value` is replaced by an incoming read that
+///   carries one.
+/// - An existing `Some(value)` is never overwritten, neither by `None` nor by a
+///   different `Some`: the panel cannot change without ending the round, so a
+///   later disagreeing number is OCR noise.
+/// - First-seen order of `option_type` is preserved; newly seen types append.
+pub fn merge_options(existing: &[CraftOption], incoming: &[CraftOption]) -> Vec<CraftOption> {
+    let mut merged: Vec<CraftOption> = existing.to_vec();
+    for option in incoming {
+        match merged
+            .iter_mut()
+            .find(|seen| seen.option_type == option.option_type)
+        {
+            Some(seen) => {
+                if seen.value.is_none() && option.value.is_some() {
+                    *seen = option.clone();
+                }
+            }
+            None => merged.push(option.clone()),
+        }
+    }
+    merged
 }
 
 /// Find the first line containing a case-sensitive substring.
@@ -617,6 +651,125 @@ mod tests {
             sorted,
             vec!["experience", "quality", "sacrifice_keys", "transform_random"]
         );
+    }
+
+    /// Build a craft option the way `parse_font_panel` would, without going
+    /// through OCR — `merge_options` only reads `option_type` and `value`.
+    fn opt(option_type: &str, value: Option<i32>) -> CraftOption {
+        CraftOption {
+            option_type: option_type.to_string(),
+            text: format!("{} line", option_type),
+            value,
+        }
+    }
+
+    fn types_of(options: &[CraftOption]) -> Vec<&str> {
+        options.iter().map(|o| o.option_type.as_str()).collect()
+    }
+
+    #[test]
+    fn merges_two_disjoint_frames_into_one_option_set() {
+        let seen_so_far = vec![opt("transform_random", None), opt("quality", Some(20))];
+        let next_frame = vec![opt("experience", Some(30)), opt("sacrifice_keys", None)];
+
+        let merged = merge_options(&seen_so_far, &next_frame);
+
+        assert_eq!(
+            types_of(&merged),
+            vec!["transform_random", "quality", "experience", "sacrifice_keys"]
+        );
+        assert_eq!(merged[1].value, Some(20));
+        assert_eq!(merged[2].value, Some(30));
+    }
+
+    #[test]
+    fn torn_one_option_frame_keeps_the_options_it_missed() {
+        let seen_so_far = vec![
+            opt("transform_random", None),
+            opt("quality", Some(20)),
+            opt("sacrifice_keys", None),
+        ];
+        let torn_frame = vec![opt("quality", Some(20))];
+
+        let merged = merge_options(&seen_so_far, &torn_frame);
+
+        assert_eq!(
+            types_of(&merged),
+            vec!["transform_random", "quality", "sacrifice_keys"]
+        );
+    }
+
+    #[test]
+    fn known_facetor_value_survives_a_later_valueless_read() {
+        // Negative case: a frame that garbled the percentage must not erase the
+        // percentage an earlier frame read cleanly.
+        let seen_so_far = vec![opt("facetors_lens", Some(60))];
+        let valueless_frame = vec![opt("facetors_lens", None)];
+
+        let merged = merge_options(&seen_so_far, &valueless_frame);
+
+        assert_eq!(types_of(&merged), vec!["facetors_lens"]);
+        assert_eq!(merged[0].value, Some(60));
+    }
+
+    #[test]
+    fn missing_facetor_value_is_upgraded_by_a_later_read() {
+        let seen_so_far = vec![opt("facetors_lens", None)];
+        let readable_frame = vec![opt("facetors_lens", Some(60))];
+
+        let merged = merge_options(&seen_so_far, &readable_frame);
+
+        assert_eq!(types_of(&merged), vec!["facetors_lens"]);
+        assert_eq!(merged[0].value, Some(60));
+    }
+
+    #[test]
+    fn merging_three_frames_keeps_first_seen_option_order() {
+        let first = vec![opt("transform_random", None), opt("facetors_lens", None)];
+        let second = vec![opt("facetors_lens", None), opt("experience", Some(30))];
+        // The third frame re-reads a type first seen in frame one, this time
+        // with a readable value: the in-place upgrade must leave the option at
+        // its first-seen index, while the genuinely new type appends at the end.
+        let third = vec![opt("sacrifice_keys", None), opt("facetors_lens", Some(60))];
+
+        let merged = merge_options(&merge_options(&first, &second), &third);
+
+        assert_eq!(
+            types_of(&merged),
+            vec!["transform_random", "facetors_lens", "experience", "sacrifice_keys"]
+        );
+        assert_eq!(merged[1].value, Some(60));
+    }
+
+    #[test]
+    fn first_read_value_wins_over_a_later_disagreeing_value() {
+        // The panel cannot change mid-round, so a second, different number is
+        // OCR noise — the value already read stands.
+        let seen_so_far = vec![opt("facetors_lens", Some(60))];
+        let disagreeing_frame = vec![opt("facetors_lens", Some(30))];
+
+        let merged = merge_options(&seen_so_far, &disagreeing_frame);
+
+        assert_eq!(types_of(&merged), vec!["facetors_lens"]);
+        assert_eq!(merged[0].value, Some(60));
+    }
+
+    #[test]
+    fn an_empty_incoming_frame_leaves_the_buffer_unchanged() {
+        let seen_so_far = vec![opt("transform_random", None), opt("quality", Some(20))];
+
+        let merged = merge_options(&seen_so_far, &[]);
+
+        assert_eq!(merged, seen_so_far);
+    }
+
+    #[test]
+    fn merging_into_an_empty_buffer_yields_the_incoming_frame() {
+        let first_frame = vec![opt("transform_random", None), opt("quality", Some(20))];
+
+        let merged = merge_options(&[], &first_frame);
+
+        assert_eq!(merged, first_frame);
     }
 
     #[test]

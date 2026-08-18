@@ -2176,37 +2176,39 @@ fn font_scan_loop(app: AppHandle, generation: u64) {
         }
 
         if panel.font_active && !panel.options.is_empty() {
-            // Check dedup and update session under lock, then log/emit outside.
-            let is_new = {
+            // Union-merge this frame into the round buffer under lock, then
+            // log/emit outside. `buffer_grew` means the round buffer grew (new
+            // type or value upgrade); a torn frame must not delete options an
+            // earlier frame of the same panel already read (see merge_options).
+            let (buffer_grew, merged, crafts_remaining) = {
                 let mut session = state.font_session.lock().unwrap_or_else(|e| e.into_inner());
-                let new_types: Vec<&str> = panel.options.iter().map(|o| o.option_type.as_str()).collect();
-                let same = session.current_options.as_ref().map_or(false, |existing| {
-                    let existing_types: Vec<&str> = existing.iter().map(|o| o.option_type.as_str()).collect();
-                    existing_types == new_types
-                });
-                if !same {
-                    session.current_options = Some(panel.options.clone());
-                    session.current_crafts_remaining = panel.crafts_remaining;
-                    true
-                } else {
-                    false
+                let previous = session.current_options.take().unwrap_or_default();
+                let merged = font_parser::merge_options(&previous, &panel.options);
+                let grew = merged != previous;
+                session.current_options = Some(merged.clone());
+                // Never downgrade a known count: a frame that failed to read the
+                // "Crafts Remaining" line must not clear what an earlier frame of
+                // the same panel read.
+                if let Some(n) = panel.crafts_remaining {
+                    session.current_crafts_remaining = Some(n);
                 }
+                (grew, merged, session.current_crafts_remaining)
             }; // lock released
 
-            if is_new {
-                // Re-log the raw OCR each time the option set changes so later
+            if buffer_grew {
+                // Re-log the raw OCR each time the round buffer grows so later
                 // captures in the same scan aren't blinded (was a one-shot flag).
                 app_log(&app, format!("Font OCR raw ({} lines): {}", lines.len(), lines.join(" | ")));
                 app_log(&app, format!(
                     "Font options captured: {} options{}{}",
-                    panel.options.len(),
+                    merged.len(),
                     if panel.jackpot_detected { " *** JACKPOT! ***" } else { "" },
-                    panel.crafts_remaining.map_or(
+                    crafts_remaining.map_or(
                         " (last craft)".to_string(),
                         |n| format!(" (remaining: {})", n),
                     ),
                 ));
-                for opt in &panel.options {
+                for opt in &merged {
                     app_log(&app, format!("  - {} {}", opt.option_type,
                         opt.value.map(|v| format!("({})", v)).unwrap_or_default()));
                 }
