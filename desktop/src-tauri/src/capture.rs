@@ -61,20 +61,23 @@ pub fn preprocess_for_ocr(img: &image::DynamicImage) -> image::DynamicImage {
         }
     }
 
-    // Upscale short captures — text size tracks band HEIGHT, not crop width, so
-    // gate on height alone (POE-116). The old `w <= 800` term silently skipped
-    // upscaling for wide-but-short bands (e.g. a 1432×96 gem-name strip), leaving
-    // the name too small for OCR. Width is intentionally uncapped: a very wide
-    // region upscales proportionally, which is fine in practice because the live
-    // capture paths crop from the primary monitor, so widths stay bounded. (The
-    // test_ocr_on_image debug command can feed an arbitrary image, which is why the
-    // gate itself does not hard-cap width.)
-    if h <= 400 {
-        let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, FilterType::Lanczos3);
-        image::DynamicImage::ImageLuma8(upscaled)
-    } else {
-        image::DynamicImage::ImageLuma8(contrasted)
-    }
+    // Upscale EVERY crop 2×, with no size gate (POE-164). Text size tracks the
+    // glyph height inside the band, not the band's own dimensions, so a crop
+    // being tall says nothing about whether its text is big enough for OCR.
+    // The default font panel region (530×350) cleared the old `h <= 400` gate,
+    // but a region widened for a higher-resolution client does not: a 683×641
+    // font crop carries the same small UI text and was sent to OCR at native
+    // size. The earlier `w <= 800` term (POE-116) had already been dropped for
+    // the same reason on the width axis. Both axes scale by the same factor, so
+    // the aspect ratio is preserved and OCR line rects stay proportional to the
+    // source.
+    //
+    // Nothing hard-caps the input size: the live capture paths crop from the
+    // primary monitor, so dimensions stay bounded. (The test_ocr_on_image debug
+    // command can feed an arbitrary image — a 2× buffer of it is the accepted
+    // cost of not special-casing a debug path.)
+    let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, FilterType::Lanczos3);
+    image::DynamicImage::ImageLuma8(upscaled)
 }
 
 #[cfg(test)]
@@ -106,27 +109,30 @@ mod tests {
         assert_eq!((out.width(), out.height()), (7680, 192));
     }
 
-    // Non-regression: a tall font-panel crop (h > 400) is left at native size.
-    // Fails if the gate ever upscales tall images.
+    // The POE-164 bug case: a tall crop upscales. 683×641 is a font panel region
+    // widened for a higher-resolution client — past the removed `h <= 400` gate,
+    // so its small UI text used to reach OCR at native size.
     #[test]
-    fn tall_font_panel_is_left_unchanged() {
-        let out = preprocess_for_ocr(&gray(753, 759));
-        assert_eq!((out.width(), out.height()), (753, 759));
+    fn font_region_crop_683x641_is_upscaled_2x() {
+        let out = preprocess_for_ocr(&gray(683, 641));
+        assert_eq!((out.width(), out.height()), (1366, 1282));
     }
 
-    // Boundary: h == 400 is inside the gate (`<=`), so it upscales.
-    // Fails if the operator tightens to `<`.
+    // h == 400 was the last height the old gate upscaled; it still does. Kept
+    // from the gated era so a reintroduced gate cannot pass this suite by
+    // upscaling only the tall cases.
     #[test]
     fn height_400_boundary_is_upscaled() {
         let out = preprocess_for_ocr(&gray(100, 400));
         assert_eq!((out.width(), out.height()), (200, 800));
     }
 
-    // Boundary: h == 401 is just past the gate, so it is left unchanged.
-    // Fails if the operator loosens to include 401.
+    // Both axes scale by the same factor. A non-square input pins it: scaling
+    // one axis only keeps the other dimension right and skews the text, which is
+    // exactly the distortion OCR cannot recover from.
     #[test]
-    fn height_401_boundary_is_left_unchanged() {
-        let out = preprocess_for_ocr(&gray(100, 401));
-        assert_eq!((out.width(), out.height()), (100, 401));
+    fn upscaling_preserves_the_source_aspect_ratio() {
+        let out = preprocess_for_ocr(&gray(300, 200));
+        assert_eq!((out.width(), out.height()), (600, 400));
     }
 }

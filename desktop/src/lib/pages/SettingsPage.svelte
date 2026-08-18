@@ -577,6 +577,12 @@
 		<section>
 			<h2>OCR Regions</h2>
 
+			{#if store.status?.ocr_language_warning}
+				<div class="warning-banner">
+					{store.status.ocr_language_warning}
+				</div>
+			{/if}
+
 			<div class="setting-row">
 				<span class="setting-label">Gem Tooltip Region</span>
 				{#if overlayVisible === 'gem'}

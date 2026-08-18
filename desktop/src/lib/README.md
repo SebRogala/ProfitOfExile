@@ -71,7 +71,7 @@ Located in `$lib/pages/`. Always mounted in the layout, toggled via `nav` store 
 |------|-------------|
 | `pages/LabPage.svelte` | Lab farming dashboard — tabs (Session/Rankings/Font EV/Market), comparator, session queue, best plays, font EV, market overview. |
 | `pages/PlannerPage.svelte` | Lab Planner — full lab graph view, route strategy, compass mode, layout import. Rendered as the "Planner" tab inside LabPage. |
-| `pages/SettingsPage.svelte` | Settings — General, Game Integration, Overlays, Trade, Logs. |
+| `pages/SettingsPage.svelte` | Settings — General, Game Integration, OCR Regions, Overlays, Trade, Logs. Renders `status.ocr_language_warning` as a `warning-banner` at the top of OCR Regions (the same affordance the missing-Client.txt warning uses in Game Integration); the banner is absent while the field is null. |
 | `pages/MercenariesPage.svelte` | Mercenaries — capture status bar (module status, debug-capture command, learned templates with forget/reset, last error, geometry source), the last capture's rows with per-read glyphs, the verdict per source (headline strip for every source, the `SegmentedButtons` switcher picking the expanded one, per-ruleset outcome + saved and derived links, per-position outcome column), the rulesets as a card grid of glyph rows with guide B's four rungs as one tier matrix (`$lib/mercenaries/ladder-view`), and a Settings section toggling sources through the `mercSourcesOff` pref. The verdict is `$derived` from `ssot.mercenary.capture` + `MERC_SOURCES` + the pref + `ssot.league` via `evaluateCapture`, never stored. Reads `ssot.mercenary`, `ssot.league` and its own prefs only — never `ssot.modules` (ADR-014: the page is browsable with the module off). |
 | `pages/RunHistoryPage.svelte` | Lab run-history presentation. Present in the library but not currently wired into `nav.View`. |
 
@@ -110,6 +110,8 @@ Located in `routes/(app)/components/`. Lab farming dashboard components migrated
 ## OCR Lifecycle
 
 Two decoupled scan loops, each on a dedicated OS thread (required by Windows COM/WinRT).
+
+Every crop is contrast-stretched and upscaled 2× before recognition (`capture.rs::preprocess_for_ocr`) — no size gate: crop dimensions say nothing about the glyph height inside them, and a font panel region widened for a high-resolution client was the case an earlier height gate skipped. The recognizer is pinned to en-US because the PoE client renders English whatever the Windows profile locale says. When that pack is missing, each scan thread falls back to the profile language and OCR degrades silently, so the warning is cached process-wide (`ocr.rs`) and surfaced as `AppStatus.ocr_language_warning` — the engine itself is thread-local and `build_status` must never resolve one. Every scan thread emits the status once when it starts and finds a warning cached, rather than only the thread that cached it: a debug command can resolve the engine first and has no status to emit, and the scan's own pre-spawn emit runs before any engine exists.
 
 ### Gem Tooltip OCR
 
