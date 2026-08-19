@@ -4,14 +4,10 @@
 //! no Windows API. POE-143's capture layer and POE-169's room-identity pass
 //! are the intended callers.
 
-// POE-168's whole surface is reached only by its own tests until POE-143
-// (capture) and POE-169 (room identity) call `reader::read_layout`. Unlike
-// `strategy`, which carries a per-item `#[allow(dead_code)]` because its items
-// are claimed piecemeal by two different consumers, this is one unit with one
-// root: marking the root alone silences nothing, because rustc walks
-// reachability from live code. The allow is therefore per file, and it comes
-// off in one edit when the first caller lands.
-#![allow(dead_code)]
+// POE-171 is that caller: `temple::run` and `temple::slice` reach this module
+// on every read, so the file-level `#![allow(dead_code)]` is gone. What is
+// still uncalled carries its own attribute, which is now the inventory of what
+// only the tests reach rather than a blanket over the whole file.
 
 use std::collections::BTreeSet;
 
@@ -69,6 +65,7 @@ pub struct TempleLayout {
 /// crop seeds far too low, falls through to the (much slower) full sweep, and
 /// on a narrow enough crop finds nothing at all. POE-143's capture layer is the
 /// intended caller and captures the window.
+#[allow(dead_code)] // POE-171: only the tests reach this.
 pub fn read_layout(img: &DynamicImage) -> Result<TempleLayout, ReadError> {
     read_layout_with_hint(img, None)
 }

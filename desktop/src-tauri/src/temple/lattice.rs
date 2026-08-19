@@ -20,14 +20,10 @@
 //! Row x offsets from the Entrance centre: A `0` · B `±106` · C `−212, 0, +212`
 //! · D `−318, −106, +106, +318` · E `−212, 0, +212`.
 
-// POE-168's whole surface is reached only by its own tests until POE-143
-// (capture) and POE-169 (room identity) call `reader::read_layout`. Unlike
-// `strategy`, which carries a per-item `#[allow(dead_code)]` because its items
-// are claimed piecemeal by two different consumers, this is one unit with one
-// root: marking the root alone silences nothing, because rustc walks
-// reachability from live code. The allow is therefore per file, and it comes
-// off in one edit when the first caller lands.
-#![allow(dead_code)]
+// POE-171 is that caller: `temple::run` and `temple::slice` reach this module
+// on every read, so the file-level `#![allow(dead_code)]` is gone. What is
+// still uncalled carries its own attribute, which is now the inventory of what
+// only the tests reach rather than a blanket over the whole file.
 
 /// Horizontal distance between two slots in the same row, reference px.
 pub const COL_PITCH: f64 = 212.0;

@@ -28,14 +28,10 @@
 //! low-confidence anchor puts a wrong board in front of the player, which is
 //! worse than no board.
 
-// POE-168's whole surface is reached only by its own tests until POE-143
-// (capture) and POE-169 (room identity) call `reader::read_layout`. Unlike
-// `strategy`, which carries a per-item `#[allow(dead_code)]` because its items
-// are claimed piecemeal by two different consumers, this is one unit with one
-// root: marking the root alone silences nothing, because rustc walks
-// reachability from live code. The allow is therefore per file, and it comes
-// off in one edit when the first caller lands.
-#![allow(dead_code)]
+// POE-171 is that caller: `temple::run` and `temple::slice` reach this module
+// on every read, so the file-level `#![allow(dead_code)]` is gone. What is
+// still uncalled carries its own attribute, which is now the inventory of what
+// only the tests reach rather than a blanket over the whole file.
 
 use std::sync::OnceLock;
 
@@ -122,6 +118,7 @@ impl AnchorCalibration {
 }
 
 /// Anchor with no prior knowledge: seeded band first, full sweep as fallback.
+#[allow(dead_code)] // POE-171: only the tests reach this.
 pub fn anchor(img: &DynamicImage) -> Result<Anchor, ReadError> {
     anchor_with_hint(img, None)
 }

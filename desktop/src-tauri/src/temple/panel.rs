@@ -26,13 +26,20 @@
 //!   of the eight boards;
 //! - a diamond with one door marker per lattice neighbour ([`super::markers`]).
 //!
-//! `N Incursions Remaining` is printed at the bottom of the *layout* panel,
-//! not the side panel, which is why [`read_panel`] takes every line of the
-//! window rather than a side-panel crop.
+//! `N Incursions Remaining` is printed at the bottom of the *layout* panel, not
+//! the side panel, which is why [`read_panel`] takes a line VECTOR rather than
+//! one crop: it needs both regions' text in one list. POE-171's
+//! [`super::run::panel_text`] concatenates the two bounded crops — side panel
+//! first, budget line second, the order they are drawn in — and hands the
+//! result here. It is deliberately not "every line on screen": the parsing
+//! below only needs the panel's own lines in reading order, and a whole-frame
+//! OCR would both cost a 2× buffer of the monitor and feed the title rule every
+//! plate name on the board.
 
-// POE-169's surface is reached only by its own tests until POE-170 (the
-// advisor) and POE-171 (the overlay) call in — see `rooms` for the same note.
-#![allow(dead_code)]
+// POE-171 is that caller: `temple::run` and `temple::slice` reach this module
+// on every read, so the file-level `#![allow(dead_code)]` is gone. What is
+// still uncalled carries its own attribute, which is now the inventory of what
+// only the tests reach rather than a blanket over the whole file.
 
 use image::DynamicImage;
 use strsim::jaro_winkler;
@@ -206,6 +213,7 @@ struct Block {
     /// next `Architect` line or at the end of the input.
     closed: bool,
     /// The run's lines, joined back into one string.
+    #[allow(dead_code)] // POE-171: only the tests reach this.
     text: String,
     /// The offer, when the run is one.
     offer: Option<ArchitectOffer>,
@@ -265,6 +273,7 @@ fn architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<Block> {
 }
 
 /// The architect blocks as text, in reading order.
+#[allow(dead_code)] // POE-171: only the tests reach this.
 pub fn group_architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
     architect_blocks(lines)
         .into_iter()
@@ -323,6 +332,7 @@ pub fn parse_architect_block(block: &str) -> Option<ArchitectOffer> {
 }
 
 /// Every architect offer the OCR lines contain.
+#[allow(dead_code)] // POE-171: only the tests reach this.
 pub fn parse_architects<S: AsRef<str>>(lines: &[S]) -> Vec<ArchitectOffer> {
     architect_blocks(lines)
         .into_iter()
@@ -398,6 +408,7 @@ pub struct PanelReading {
 
 impl PanelReading {
     /// The title's game name, when it was legible.
+    #[allow(dead_code)] // POE-171: only the tests reach this.
     pub fn identity_name(&self) -> Option<&'static str> {
         self.room.identity().map(|id| id.display_name())
     }
@@ -632,16 +643,33 @@ impl TextRecognizer for SystemOcr {
 /// A slot whose crop falls outside the capture, or whose OCR call fails, comes
 /// back as [`Match::Unknown`] rather than being dropped: the board always has
 /// 13 slots and a missing one would silently change the graph POE-170 scores.
+///
+/// # `should_stop`
+///
+/// This is 26 OCR calls — the longest blocking stretch in the capture loop, and
+/// one a detached thread cannot be aborted out of (POE-171). `should_stop` is
+/// polled **before each plate**, so a stop signal costs at most the two calls
+/// already in flight rather than all 26. The slots not reached come back
+/// [`Match::Unknown`], the same value an unreadable plate gets: the caller
+/// discards a stopped read rather than publishing it, and 13 entries is the
+/// invariant above.
+///
+/// Pass `&|| false` when there is nothing to stop for.
 pub fn read_board(
     recognizer: &dyn TextRecognizer,
     img: &DynamicImage,
     lattice: &Lattice,
+    should_stop: &dyn Fn() -> bool,
 ) -> Vec<RoomReading> {
     Slot::ALL
         .into_iter()
         .map(|slot| RoomReading {
             slot,
-            identity: read_plate(recognizer, img, lattice, slot),
+            identity: if should_stop() {
+                Match::Unknown
+            } else {
+                read_plate(recognizer, img, lattice, slot)
+            },
         })
         .collect()
 }
@@ -1275,7 +1303,7 @@ mod tests {
             name: vec!["Gemcutter's".into(), "Workshop".into()],
             numeral: Vec::new(),
         };
-        let board = read_board(&recognizer, &img, &lattice);
+        let board = read_board(&recognizer, &img, &lattice, &|| false);
         assert_eq!(board.len(), 13, "the board always has 13 slots");
         assert!(board
             .iter()
@@ -1295,7 +1323,7 @@ mod tests {
     fn a_plate_whose_ocr_call_fails_reads_unknown() {
         let img = blank(1374, 862);
         let lattice = Lattice::new((673, 682), 0.99);
-        let broken = read_board(&Broken, &img, &lattice);
+        let broken = read_board(&Broken, &img, &lattice, &|| false);
         assert_eq!(
             broken.iter().map(|r| r.slot).collect::<Vec<_>>(),
             Slot::ALL.to_vec()
@@ -1309,7 +1337,7 @@ mod tests {
     fn a_plate_cropped_outside_the_capture_reads_unknown() {
         let img = blank(1374, 862);
         let offscreen = Lattice::new((60, 682), 0.99);
-        let clipped = read_board(&Canned::name("Tombs"), &img, &offscreen);
+        let clipped = read_board(&Canned::name("Tombs"), &img, &offscreen, &|| false);
         assert_eq!(
             clipped.iter().map(|r| r.slot).collect::<Vec<_>>(),
             Slot::ALL.to_vec(),
@@ -1318,6 +1346,49 @@ mod tests {
         assert!(
             clipped.iter().any(|r| r.identity == Match::Unknown),
             "a plate outside the capture must read Unknown"
+        );
+    }
+
+    // A stop signal lands BETWEEN plate crops, not after all 26 OCR calls.
+    // The recogniser counts its calls, so this fails if `should_stop` is only
+    // polled once before the walk (13 plates read) or never (26 calls).
+    #[test]
+    fn a_stop_signal_ends_the_board_walk_at_the_next_plate() {
+        use std::cell::Cell;
+
+        struct Counting {
+            calls: Cell<usize>,
+        }
+        impl TextRecognizer for Counting {
+            fn recognize(&self, _img: &DynamicImage) -> Result<Vec<String>, String> {
+                self.calls.set(self.calls.get() + 1);
+                Ok(vec!["Tombs".to_string()])
+            }
+        }
+
+        let img = blank(1374, 862);
+        let lattice = Lattice::new((673, 682), 0.99);
+        let recognizer = Counting { calls: Cell::new(0) };
+        // Two OCR calls per plate, so this stops after the third plate.
+        let stop_after = 6;
+        let board = read_board(&recognizer, &img, &lattice, &|| {
+            recognizer.calls.get() >= stop_after
+        });
+
+        assert_eq!(
+            recognizer.calls.get(),
+            stop_after,
+            "the walk must stop at the next plate boundary, not run to 26 calls",
+        );
+        assert_eq!(board.len(), 13, "a stopped read still reports 13 slots");
+        assert_eq!(
+            board.iter().filter(|r| r.identity.is_known()).count(),
+            3,
+            "exactly the plates read before the stop carry an identity",
+        );
+        assert!(
+            board[3..].iter().all(|r| r.identity == Match::Unknown),
+            "the slots the walk never reached are Unknown, never guessed",
         );
     }
 
@@ -1333,9 +1404,9 @@ mod tests {
             name: vec![name.to_string()],
             numeral: vec!["III".to_string()],
         };
-        let contradicted = read_board(&iii("Corruption Chamber"), &img, &lattice);
+        let contradicted = read_board(&iii("Corruption Chamber"), &img, &lattice, &|| false);
         assert!(contradicted.iter().all(|r| r.identity == Match::Unknown));
-        let agreed = read_board(&iii("Locus of Corruption"), &img, &lattice);
+        let agreed = read_board(&iii("Locus of Corruption"), &img, &lattice, &|| false);
         assert!(agreed
             .iter()
             .all(|r| r.identity.identity().map(|id| id.display_name())

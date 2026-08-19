@@ -83,6 +83,37 @@ pub struct Settings {
     /// absent-field case; `modules_or_default` covers a present-but-wrong one.
     #[serde(default, deserialize_with = "modules_or_default")]
     pub modules: std::collections::HashMap<String, bool>,
+    /// The temple reader's remembered anchor scale (POE-171 D0), keyed on the
+    /// capture dimensions it was measured at. Self-invalidating: the reader
+    /// ignores it at any other capture size and re-verifies it against the NCC
+    /// floor every time, so a stale one costs one extra match and never a wrong
+    /// board. `None` on a fresh install and after a resolution change.
+    #[serde(default)]
+    pub temple_calibration: Option<crate::temple::anchor::AnchorCalibration>,
+    /// The four tunable fields of the temple strategy profile. Absent means the
+    /// Locus/Doryani Rush's own values — see `TempleProfileSettings::default`.
+    ///
+    /// **camelCase inside**, unlike the rest of this file. Both temple structs
+    /// are the webview's wire types first (they are command arguments and slice
+    /// fields), and one struct with two serialisations plus a DTO to convert
+    /// between them is a worse trade than a documented deviation in one block
+    /// of the file. See `TempleConfig`'s own note.
+    #[serde(default)]
+    pub temple_profile: crate::temple::slice::TempleProfileSettings,
+    /// The two temple config flags: the Atlas passive and the scarab.
+    /// camelCase inside — see `temple_profile`.
+    #[serde(default)]
+    pub temple_config: crate::temple::strategy::TempleConfig,
+    /// Opening stones per incursion, 0..=2. The panel does not print the count,
+    /// so it is the one board fact the user supplies.
+    #[serde(default = "default_temple_keys")]
+    pub temple_keys: u8,
+}
+
+/// The common case: one opening stone. `u8`'s own default is 0, which is a
+/// legal but uncommon board, so this field carries its own default fn.
+fn default_temple_keys() -> u8 {
+    crate::temple::slice::default_keys()
 }
 
 /// Tolerant reader for `Settings.modules`: keeps every key whose value is a
@@ -195,6 +226,10 @@ impl Default for Settings {
             show_low_confidence: true,
             ui_prefs: std::collections::HashMap::new(),
             modules: std::collections::HashMap::new(),
+            temple_calibration: None,
+            temple_profile: Default::default(),
+            temple_config: Default::default(),
+            temple_keys: default_temple_keys(),
         }
     }
 }
@@ -289,6 +324,7 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) {
 
 /// Build a Settings struct from the current AppState.
 pub fn from_state(state: &crate::AppState) -> Settings {
+    let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     Settings {
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -327,6 +363,13 @@ pub fn from_state(state: &crate::AppState) -> Settings {
             &state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()),
             &crate::modules::module_lifecycles(),
         ),
+        // One AppState Mutex, four settings fields: the aggregate is what the
+        // loop and the commands share, but splitting it on disk keeps a
+        // hand-edited file readable and lets one bad field default on its own.
+        temple_calibration: temple.calibration,
+        temple_profile: temple.profile,
+        temple_config: temple.config,
+        temple_keys: temple.keys,
     }
 }
 
@@ -406,6 +449,9 @@ mod tests {
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
             merc_template_generation: AtomicU64::new(0),
+            temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
+            temple_settings: Mutex::new(crate::temple::slice::TempleSettings::shipped()),
+            temple_rearm: AtomicU64::new(0),
         }
     }
 
@@ -417,7 +463,7 @@ mod tests {
     fn a_module_left_at_its_default_is_not_written_to_settings() {
         let state = test_app_state();
 
-        apply_to_state(&Settings::default(), &state);
+        let _ = apply_to_state(&Settings::default(), &state);
         assert!(
             state
                 .modules_enabled
@@ -464,7 +510,7 @@ mod tests {
 
         // Next launch: a fresh state loads that file.
         let reloaded = test_app_state();
-        apply_to_state(&saved, &reloaded);
+        let _ = apply_to_state(&saved, &reloaded);
         assert_eq!(
             reloaded.modules_enabled.lock().unwrap().get("mercenary"),
             Some(&true),
@@ -476,6 +522,139 @@ mod tests {
             saved.modules,
             "the delta must be stable across a full cycle",
         );
+    }
+
+    /// The temple settings survive the five-touch-point cycle: one AppState
+    /// Mutex out to four settings fields and back. Fails if `from_state` or
+    /// `apply_to_state` drops one of the four — which would silently reset the
+    /// user's tuning, or the anchor calibration, on next launch.
+    #[test]
+    fn temple_settings_round_trip_through_state() {
+        let state = test_app_state();
+        let chosen = crate::temple::slice::TempleSettings {
+            calibration: Some(crate::temple::anchor::AnchorCalibration {
+                screen_w: 1539,
+                screen_h: 865,
+                scale: 1.13,
+            }),
+            profile: crate::temple::slice::TempleProfileSettings {
+                apex_score: 6.5,
+                path_cost: 0.75,
+                reroll_until_favourable: true,
+                r4_keep_upgrade_targets: false,
+            },
+            config: crate::temple::strategy::TempleConfig {
+                artefacts_of_the_vaal: false,
+                scarab_of_timelines: true,
+            },
+            keys: 2,
+        };
+        *state.temple_settings.lock().unwrap() = chosen.clone();
+
+        let saved = from_state(&state);
+        assert_eq!(saved.temple_keys, 2);
+        assert_eq!(saved.temple_calibration, chosen.calibration);
+
+        // Next launch: a fresh state loads that file.
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        assert_eq!(*reloaded.temple_settings.lock().unwrap(), chosen);
+    }
+
+    /// A file with no temple keys at all — every build before POE-171 — loads
+    /// as the Rush with one key, not as zeros. Fails if a `#[serde(default)]`
+    /// is dropped or if `temple_keys` falls back to `u8::default()`.
+    #[test]
+    fn a_settings_file_without_temple_keys_loads_the_shipped_defaults() {
+        let parsed: Settings = serde_json::from_str(r#"{"server_url":"https://kept.example"}"#)
+            .expect("an older file must still parse");
+
+        let state = test_app_state();
+        let _ = apply_to_state(&parsed, &state);
+
+        assert_eq!(
+            *state.temple_settings.lock().unwrap(),
+            crate::temple::slice::TempleSettings::shipped(),
+        );
+    }
+
+    /// A hand-edited file carrying a key count or a profile weight this build
+    /// rejects must not become the running value. `apply_to_state` has no error
+    /// channel, so the fallback is the only honest option — and a stored NaN
+    /// would make every later ranking arbitrary with nothing on screen to say
+    /// why. Fails if either field is copied through unvalidated.
+    #[test]
+    fn out_of_range_temple_settings_fall_back_instead_of_being_applied() {
+        let settings = Settings {
+            temple_keys: 9,
+            temple_profile: crate::temple::slice::TempleProfileSettings {
+                apex_score: f64::NAN,
+                ..Default::default()
+            },
+            ..Settings::default()
+        };
+        let state = test_app_state();
+
+        let _ = apply_to_state(&settings, &state);
+
+        let applied = state.temple_settings.lock().unwrap().clone();
+        assert_eq!(applied.keys, 1, "9 keys is not a board the game produces");
+        assert_eq!(
+            applied.profile,
+            crate::temple::slice::TempleProfileSettings::default(),
+            "a NaN weight must not reach the ranking",
+        );
+    }
+
+    /// The other half of the fallback: it is REPORTED. Without this the file
+    /// says 9 keys, the module runs on 1, and nothing anywhere tells the user
+    /// which of the two they are looking at.
+    ///
+    /// Fails if a rejection stops being returned, or if the line drops the
+    /// field name or the validator's reason — both are what make the log line
+    /// actionable rather than just alarming.
+    #[test]
+    fn a_rejected_temple_setting_is_reported_with_its_field_and_reason() {
+        let settings = Settings {
+            temple_keys: 9,
+            temple_profile: crate::temple::slice::TempleProfileSettings {
+                apex_score: f64::NAN,
+                ..Default::default()
+            },
+            ..Settings::default()
+        };
+        let state = test_app_state();
+
+        let rejected = apply_to_state(&settings, &state);
+
+        assert_eq!(rejected.len(), 2, "both bad fields report, got {rejected:?}");
+        let profile = rejected
+            .iter()
+            .find(|line| line.contains("profile"))
+            .expect("the profile rejection must name the field");
+        assert!(
+            profile.contains("apex_score") && profile.contains("using default"),
+            "the line must carry the validator's own reason, got {profile:?}",
+        );
+        let keys = rejected
+            .iter()
+            .find(|line| line.contains("keys"))
+            .expect("the key rejection must name the field");
+        assert!(
+            keys.contains('9') && keys.contains("using default"),
+            "the line must name the rejected value, got {keys:?}",
+        );
+    }
+
+    /// A clean file reports nothing. Fails if `apply_to_state` reports on the
+    /// happy path — a log line on every launch is noise that trains the user to
+    /// ignore the one that matters.
+    #[test]
+    fn a_settings_file_this_build_accepts_reports_no_rejections() {
+        let state = test_app_state();
+
+        assert!(apply_to_state(&Settings::default(), &state).is_empty());
     }
 
     /// A `modules` value of the wrong SHAPE must cost only that field. Serde
@@ -594,7 +773,19 @@ mod tests {
 }
 
 /// Apply loaded settings to AppState.
-pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
+///
+/// Returns one ready-to-log line per value this build refused, in the order the
+/// fields are applied. Empty on a clean load, which is the common case.
+///
+/// A fallback that leaves no trace is the failure mode this return value
+/// exists for: the file still says `temple_keys: 9`, the module runs on 1, and
+/// nothing anywhere tells the user which of the two they are looking at. There
+/// is no error channel here — a rejected value must not become the running one
+/// and a rejected value must not fail the whole load either — so the rejections
+/// come back as text and the caller logs them.
+#[must_use = "a silent settings rejection is the bug this return value exists to prevent"]
+pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<String> {
+    let mut rejected: Vec<String> = Vec::new();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = settings.client_txt_path.clone();
     *state.server_url.lock().unwrap_or_else(|e| e.into_inner()) = settings.server_url.clone();
     *state.gem_region.lock().unwrap_or_else(|e| e.into_inner()) = settings.gem_region.clone();
@@ -623,4 +814,33 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) {
     // registry defaults overlaid with what the user chose (see modules.rs).
     *state.modules_enabled.lock().unwrap_or_else(|e| e.into_inner()) =
         crate::modules::effective_modules(&settings.modules, &crate::modules::module_lifecycles());
+    // The four temple fields recombine into the one Mutex the module reads. A
+    // key count from a file this build would reject falls back to the default
+    // rather than poisoning every later ranking — and says so, through
+    // `rejected`, because the file and the running value now disagree.
+    *state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()) =
+        crate::temple::slice::TempleSettings {
+            calibration: settings.temple_calibration,
+            profile: match settings.temple_profile.validate() {
+                Ok(()) => settings.temple_profile.clone(),
+                Err(why) => {
+                    rejected.push(format!(
+                        "temple settings: profile rejected ({why}), using default"
+                    ));
+                    Default::default()
+                }
+            },
+            config: settings.temple_config.clone(),
+            keys: match crate::temple::slice::validate_keys(settings.temple_keys) {
+                Ok(()) => settings.temple_keys,
+                Err(why) => {
+                    rejected.push(format!(
+                        "temple settings: keys rejected ({why}), using default"
+                    ));
+                    crate::temple::slice::default_keys()
+                }
+            },
+        };
+
+    rejected
 }

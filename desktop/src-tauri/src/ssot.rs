@@ -112,6 +112,12 @@ pub struct AppSsotSnapshot {
     /// owns the other three. `Default` is the `Off` slice, which the page
     /// renders as "module off".
     pub mercenary: crate::mercenary::MercenarySlice,
+    /// Temple builder state (POE-171), projected from the owner
+    /// `AppState.temple` (see src/temple/slice.rs). `status` is forced to `Off`
+    /// here when the module is disabled — and the advice is dropped with it, so
+    /// a disabled module cannot leave a stale recommendation on screen under an
+    /// "off" badge. `Default` is the `Idle` slice with no board.
+    pub temple: crate::temple::slice::TempleSlice,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -133,9 +139,13 @@ fn compose_snapshot(
     dedication_pool: String,
     modules: std::collections::HashMap<String, bool>,
     mut mercenary: crate::mercenary::MercenarySlice,
+    mut temple: crate::temple::slice::TempleSlice,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
         mercenary.status = crate::mercenary::MercStatus::Off;
+    }
+    if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
+        crate::temple::slice::force_off(&mut temple);
     }
     AppSsotSnapshot {
         normal_variant,
@@ -143,12 +153,16 @@ fn compose_snapshot(
         dedication_pool,
         modules,
         mercenary,
+        temple,
         ..base
     }
 }
 
 /// The module id the mercenary slice belongs to (see `modules.rs::MODULES`).
 const MERCENARY_MODULE_ID: &str = "mercenary";
+
+/// The module id the temple slice belongs to (see `modules.rs::MODULES`).
+const TEMPLE_MODULE_ID: &str = "temple";
 
 /// Build the full snapshot: the stored `AppState.ssot` slice plus the market
 /// fields and the module map, composed from their owning `AppState` Mutexes.
@@ -171,6 +185,9 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // Same lock-then-drop discipline: the guard ends with this statement, so
     // the merc mutex is never held while another is taken or while emitting.
     let mercenary = state.mercenary.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Same discipline again: the temple guard ends with this statement, so it
+    // is never held alongside the merc one or across the compose.
+    let temple = state.temple.lock().unwrap_or_else(|e| e.into_inner()).clone();
     compose_snapshot(
         base,
         normal_variant,
@@ -178,6 +195,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         dedication_pool,
         modules,
         mercenary,
+        temple,
     )
 }
 
@@ -665,6 +683,7 @@ mod tests {
             "transfigured".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            crate::temple::slice::TempleSlice::default(),
         );
 
         assert_eq!(out.normal_variant, "1/20");
@@ -687,6 +706,7 @@ mod tests {
             "skill".to_string(),
             modules,
             crate::mercenary::MercenarySlice::default(),
+            crate::temple::slice::TempleSlice::default(),
         );
 
         assert_eq!(out.modules.get("mercenary"), Some(&true));
@@ -715,6 +735,7 @@ mod tests {
             "skill".to_string(),
             modules,
             slice,
+            crate::temple::slice::TempleSlice::default(),
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Live);
@@ -742,6 +763,7 @@ mod tests {
             "skill".to_string(),
             modules,
             slice,
+            crate::temple::slice::TempleSlice::default(),
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
@@ -768,9 +790,114 @@ mod tests {
             "skill".to_string(),
             std::collections::HashMap::new(),
             slice,
+            crate::temple::slice::TempleSlice::default(),
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
+    }
+
+    /// The temple slice is projected through composition while the module is
+    /// enabled. Without the projection the field falls back to `..base` (the
+    /// empty default) and every overlay would poll a boardless slice while a
+    /// board was on screen.
+    #[test]
+    fn compose_snapshot_projects_the_temple_slice_while_the_module_is_on() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("temple".to_string(), true)].into_iter().collect();
+        let slice = crate::temple::slice::TempleSlice {
+            status: crate::temple::slice::TempleStatus::Read,
+            keys: 2,
+            unknown_rooms: vec!["A0".to_string()],
+            mode: Some("chase".to_string()),
+            ..Default::default()
+        };
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+            crate::mercenary::MercenarySlice::default(),
+            slice,
+        );
+
+        assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Read);
+        assert_eq!(out.temple.keys, 2);
+        assert_eq!(out.temple.unknown_rooms, vec!["A0".to_string()]);
+        assert_eq!(out.temple.mode, Some("chase".to_string()));
+    }
+
+    /// A disabled temple module publishes `off` AND drops its advice, so the
+    /// page cannot render a stale recommendation under an off badge. The
+    /// layout is left readable — same split as the merc slice's capture.
+    #[test]
+    fn a_disabled_module_forces_the_temple_status_off_and_drops_its_advice() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("temple".to_string(), false)].into_iter().collect();
+        let slice = crate::temple::slice::TempleSlice {
+            status: crate::temple::slice::TempleStatus::Read,
+            advice: Some(crate::temple::slice::AdviceView {
+                recommendations: Vec::new(),
+                gambles: Vec::new(),
+                map_action: "leaveMap".to_string(),
+                warnings: Vec::new(),
+            }),
+            mode: Some("chase".to_string()),
+            unknown_rooms: vec!["A0".to_string()],
+            ..Default::default()
+        };
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+            crate::mercenary::MercenarySlice::default(),
+            slice,
+        );
+
+        assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Off);
+        assert_eq!(out.temple.advice, None);
+        assert_eq!(out.temple.mode, None);
+        assert_eq!(
+            out.temple.unknown_rooms,
+            vec!["A0".to_string()],
+            "only the acting half is forced — the read stays readable",
+        );
+    }
+
+    /// A module map that does not mention the temple module yet reads as OFF,
+    /// not as on. Fail-closed, same as the merc slice.
+    #[test]
+    fn an_unknown_module_flag_forces_the_temple_status_to_off() {
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            std::collections::HashMap::new(),
+            crate::mercenary::MercenarySlice::default(),
+            crate::temple::slice::TempleSlice {
+                status: crate::temple::slice::TempleStatus::Read,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Off);
+    }
+
+    /// The snapshot's own key for the temple slice, which the TS store reads.
+    /// Dropping `rename_all` on either struct silently breaks the store.
+    #[test]
+    fn the_snapshot_exposes_the_temple_slice_under_its_camel_case_keys() {
+        let json = serde_json::to_value(AppSsotSnapshot::default()).unwrap();
+
+        assert_eq!(json["temple"]["status"], "idle");
+        assert_eq!(json["temple"]["layout"], serde_json::Value::Null);
+        assert_eq!(json["temple"]["unknownRooms"], serde_json::json!([]));
+        assert_eq!(json["temple"]["lastReadAt"], serde_json::Value::Null);
     }
 
     /// The snapshot's own key for the slice, which the TS store reads.
@@ -802,6 +929,7 @@ mod tests {
             "skill".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            crate::temple::slice::TempleSlice::default(),
         );
 
         assert_eq!(out.league.name, Some("Mirage".to_string()));
@@ -821,6 +949,7 @@ mod tests {
             "transfigured".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            crate::temple::slice::TempleSlice::default(),
         );
 
         let json = serde_json::to_value(&snap).unwrap();

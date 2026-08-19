@@ -42,9 +42,10 @@
 //! confirmation: those two boards put the green seal in *different* positions,
 //! and the model predicts both.
 
-// POE-169's surface is reached only by its own tests until POE-170 (the
-// advisor) and POE-171 (the overlay) call in — see `rooms` for the same note.
-#![allow(dead_code)]
+// POE-171 is that caller: `temple::run` and `temple::slice` reach this module
+// on every read, so the file-level `#![allow(dead_code)]` is gone. What is
+// still uncalled carries its own attribute, which is now the inventory of what
+// only the tests reach rather than a blanket over the whole file.
 
 use std::collections::BTreeSet;
 
