@@ -1,7 +1,7 @@
 # Adding a Collector Endpoint
 
 **Status:** Current  
-**Last verified:** 2026-07-22  
+**Last verified:** 2026-08-19  
 **Canonical for:** Cross-layer procedure for adding a collector-backed market-data endpoint.
 
 Use the existing fragments endpoint as the working reference. Exact fields,
@@ -59,12 +59,22 @@ hours inside one catch-up pass so a long backlog does not pull 48 payloads of
 On the server side, `cmd/server` recomputes the league's best plays from the
 stored hours on startup and on every `poe/collector/currency-exchange` event,
 serves the answer from memory at
-`GET /api/currency-exchange/plays?mode=all|direct|1-hop` (never from the
-database), and publishes `poe/currency-exchange/updated` after each recompute
-burst; the ranking knobs are overridable with `EXCHANGE_WINDOW_HOURS`,
-`EXCHANGE_MIN_VOLUME_PER_HOUR`, `EXCHANGE_MIN_EDGE`, `EXCHANGE_MIN_HOURS_SEEN`
-and `EXCHANGE_MAX_PLAYS`, each of which logs a WARN and keeps its default when
-the value is unusable.
+`GET /api/currency-exchange/plays?mode=all|direct|1-hop&horizon=recent|day`
+(never from the database), and publishes `poe/currency-exchange/updated` after
+each recompute burst. Both horizons — `recent` (the default, a six-hour window)
+and `day` (twenty-four hours) — come from the same recompute, so `?horizon=` is a
+cache lookup; an unknown value of either parameter is a 400. On the wire `roiPct`
+is the fractional return of one round trip at the leg prices shown (`edge` is its
+deprecated alias) and `roi` is that return in chaos for one exchanged unit, so
+`roi == roiPct × investment` by construction. The ranking knobs are overridable
+with `EXCHANGE_MIN_VOLUME_PER_HOUR`, `EXCHANGE_MIN_EDGE`,
+`EXCHANGE_MAX_PLAYS`, the gate knobs
+`EXCHANGE_MIN_TURNOVER_CHAOS`, `EXCHANGE_MAX_TICK`,
+`EXCHANGE_MIN_EDGE_TICK_RATIO` and `EXCHANGE_MIN_ROI_CHAOS`, and the per-horizon
+windows `EXCHANGE_RECENT_WINDOW_HOURS` / `EXCHANGE_RECENT_MIN_HOURS_SEEN` and
+`EXCHANGE_DAY_WINDOW_HOURS` / `EXCHANGE_DAY_MIN_HOURS_SEEN` (`EXCHANGE_WINDOW_HOURS`
+and `EXCHANGE_MIN_HOURS_SEEN` still work and bind the recent horizon only), each
+of which logs a WARN and keeps its default when the value is unusable.
 
 Legs are served with display names and icon paths, not raw metadata ids: the
 handler resolves each id through the committed asset in

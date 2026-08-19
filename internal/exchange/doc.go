@@ -19,7 +19,8 @@
 // pricing.go, direct.go, crossquote.go and plays.go are pure: no database, no
 // scheduler, no HTTP server, no collector. Callers fetch a payload with
 // Client.FetchHour and derive rows with Normalize; Normalize, PriceOf, Ratio and
-// priceIn are the only places prices are computed.
+// pricing.go's direction mappers — priceIn, vwapIn, tickOf and the volume
+// readers — are the only places prices are computed.
 //
 // repository.go, runner.go and service.go are the lifecycle layer — database
 // access, the ticking cursor walk, and the server-side recompute that keeps the
@@ -34,9 +35,27 @@
 // # Engine
 //
 // BestPlays (plays.go) is the single entry point: it takes a league's StoredRows
-// and returns a ranked Result. It finds two shapes of opportunity per feed hour.
+// and returns a ranked Result. It works in two passes — each feed hour is scored
+// on its own, and the surviving candidates are then merged by recipe key, where
+// every number a Play shows — except Stock, RoiPctNewestHour, HoursSeen and
+// LastHour — is a cross-hour MEDIAN of those per-hour readings or arithmetic on
+// such medians.
 //
-// A direct flip buys and sells the same item on one market:
+// What one hour observes about one leg (the obs struct in direct.go, filled by
+// gatedLeg): the hour's cheapest and dearest realized price of the item in its
+// quote (priceIn); the volume-weighted average price the hour's mass actually
+// cleared at, quote units traded divided by item units traded (vwapIn); the
+// market's price resolution (tickOf — the feed quotes each side as a reduced
+// integer quantity pair, so the smallest representable step on a pair (a, b) is
+// 1/max(a, b), and the coarser of the row's two pairs bounds everything derived
+// from it); the traded units of both sides; and the item's highest stock. A leg
+// counts for the hour only when priceIn can price it, at least
+// Config.MinVolumePerHour units of the ITEM side traded, and both sides carried
+// stock. That gate is liveness, not liquidity, and one failed leg drops the
+// whole candidate — a recipe is only as executable as its thinnest step.
+//
+// Two shapes of candidate come out of each hour. A direct flip buys and sells
+// the same item on one market:
 //
 //	edge = high/low - 1
 //
@@ -56,34 +75,111 @@
 // Every price comes from priceIn (pricing.go), the one place that maps a stored
 // quantity pair onto a direction; it hands the quantities to Ratio rather than
 // dividing, and the engine never computes 1/price from a stored float, which
-// would be a division by zero on an unpriced row.
+// would be a division by zero on an unpriced row. vwapIn, tickOf and
+// quoteVolumeOf sit beside it for the same reason.
 //
-// The caveat that governs every edge: the feed publishes each hour's realized
-// LOW and HIGH, not a book. The two prices are trades that happened during the
-// same hour, not two sides that stood at the same instant, so an edge is an upper
-// bound on what was takeable — and on items that move in one-or-two-divine ticks,
-// most of the apparent spread is quantization rather than opportunity.
+// The merge is a median with NO recency weight: hours are equal citizens,
+// because the failure mode being defended against is a single hour's blowup and
+// 38% of markets print an hourly edge above five times their own median. Per leg
+// a Play carries Price — the median of the hourly LOWS on a buy leg and of the
+// hourly HIGHS on a sell leg, because a market maker posts at the edges and the
+// extreme is the executable recipe — Fair, the median VWAP over the hours that
+// HAD one (an hour whose quote side reported no volume is skipped rather than
+// averaged in as a zero, and a leg no hour ever priced reads 0, meaning "no
+// anchor"), median Tick, median item Volume, and Stock from the NEWEST hour
+// only. Stock is liveness and nothing else: the feed's stock columns are the
+// hour's min and max of total book size and say nothing about the extreme
+// (measured corr <= 0.13 against the edge).
 //
-// Two filters push back on that. Each leg is gated on the hour's traded volume
-// and stock, so an edge nobody could have executed never becomes a play. The
-// floor applies to the ITEM side of the leg as oriented by Config.QuotePriority,
-// which means a currency/currency market gates on the lower-priority currency —
-// chaos in a chaos/divine market under the default priority — and the epic's
-// "59% keep-rate" measurement used min(volA, volB) and so does not describe this
-// gate.
+// The play-level numbers are arithmetic on those emitted legs, which is what
+// makes a Play reproducible from what it shows:
 //
-// Config.MinHoursSeen is the ghost filter: an edge that printed in a single hour
-// of the window and never repeated is far more likely to be a digest artifact
-// than a standing opportunity, so a play must survive several hours to be
-// returned. Aggregation weights recent hours more heavily (w_i = (N - i) / N for
-// the i-th newest of N hours), which is what keeps one stale hour from carrying a
-// play.
+//   - RoiPct is recomputed FROM the leg Prices: sell/buy − 1 for a direct flip,
+//     (sellXinB * sellBinA)/buyXinA − 1 for a triangle. Edge is the same value
+//     under its pre-POE-184 name, kept for clients written before the rename and
+//     deprecated in favour of RoiPct.
+//   - RoiPctNewestHour is LastHour's own extreme-to-extreme edge — the NOW
+//     reading, not a bound: it sits above RoiPct when the newest hour was louder
+//     than the window's typical one and BELOW RoiPct when that hour was quiet.
+//   - Investment is the first leg's Price valued in chaos, and Roi is the chaos
+//     one exchanged unit returns. Roi == RoiPct * Investment by construction,
+//     not two independent measurements.
+//   - Turnover is the chaos per hour flowing through the play's THINNEST leg:
+//     the minimum over legs of median quote-side volume times that quote's chaos
+//     rate. It is the liquidity reading, and unit volume is not one.
+//   - Tick is the MAXIMUM over the legs' median ticks — the worst step the
+//     recipe has to live with: the one market for a direct flip, the worst of
+//     three for a triangle.
+//   - Depth is the minimum over the legs' median item Volume. It carries a
+//     comparability caveat: for a direct play it is the
+//     item's FULL hourly volume even though the recipe both buys and sells that
+//     item, so a round trip can absorb at most half of it, and a direct Depth is
+//     not on the same scale as a 1-hop Depth. Whether to halve it is POE-180's
+//     call, not something to change silently; Turnover already measures the
+//     quote side.
 //
-// Play.Depth carries a known comparability caveat: for a direct play it is the
-// item's FULL hourly volume on the market even though the recipe both buys and
-// sells that item, so a round trip can absorb at most half of it, and a direct
-// Depth is not on the same scale as a 1-hop Depth. Whether to halve it is
-// POE-178/180's call, not something to change silently.
+// Chaos is the unit every absolute number is expressed in, through one
+// window-level scalar: Result.DivineChaosRate, the median across the window's
+// hours of the divine/chaos market's VWAP. It is measured from the same table as
+// everything else (198.97 c/div over the reference window) rather than
+// hard-coded, and it is per window rather than per play so that two divine-quoted
+// plays are valued identically. Chaos-quoted legs convert at 1, divine-quoted
+// legs at that rate. A play whose quote is neither chaos nor divine —
+// scarab/scarab, card/scarab and every other cross-item market — is dropped
+// outright, because gates denominated in chaos cannot judge a payout measured in
+// scarabs. When the divine/chaos market did not trade in any of the window's
+// hours the rate is 0 and every divine-quoted play is dropped rather than valued
+// at a guess; that is logged once per HORIZON, so twice per Service recompute.
+//
+// The gates, in the order play() applies them, with DefaultConfig's values:
+// HoursSeen >= MinHoursSeen (2 on the base config, capped at the hours actually
+// present so a short window still returns plays, and overridden per horizon),
+// RoiPct >= MinEdge (0.02), Turnover >= MinTurnoverChaos (10,000 chaos/hour),
+// Tick <= MaxTick (0.10), RoiPct >= MinEdgeTickRatio * Tick (5 steps), and
+// Roi >= MinROIChaos (3 chaos per exchanged unit). MinVolumePerHour (10 units)
+// has already run, per leg per hour.
+//
+// Those LEVELS come from 30,534 priced Allflame market-hours: price quantization
+// is the strongest single predictor of an apparent spread (corr(ln edge,
+// ln tick) = +0.42, median tick 14.3%), which is what MaxTick and
+// MinEdgeTickRatio answer, and chaos-denominated flow predicts a real edge where
+// unit volume does not (−0.30 against +0.06; p50 robust edge 242% under 100
+// chaos/hour and 18% over 100k), which is what MinTurnoverChaos answers. The
+// levels were calibrated against that measurement's statistic — the median of
+// the per-hour edges, under which the set took 908 markets to 135 — while the
+// engine gates on the related ratio of the medians, so 908→135 is a calibration
+// of the levels and not a prediction of how many plays come back; the served
+// ranking was confirmed by a live check against the running stack.
+//
+// Ranking is RoiPct desc, then Turnover desc, then direct before 1-hop (one
+// execution risk instead of three), then Key ascending, truncated to MaxPlays
+// (100). It is a stable sort over a key-sorted list, so identical rows produce
+// identical output whatever order they arrived in.
+//
+// The caveat that governs every percentage has two layers. First, the feed
+// publishes each hour's realized LOW and HIGH, not a book: the two prices are
+// trades that happened during the same hour, not two sides that stood at the
+// same instant. Second, the medians are synthesized ACROSS hours — even a direct
+// play's two Prices are independent medians, one over the hourly lows and one
+// over the hourly highs, so its RoiPct is a combination no single hour
+// necessarily offered, and a 1-hop play compounds that over three such medians
+// AND three separate markets. A Play is the typical shape of a route, not a
+// trade someone made. The tick gates are what bound the fiction, Fair is what
+// anchors it, and RoiPctNewestHour is the one number that belongs to a single
+// real hour.
+//
+// Volume is a per-side TOTAL, not a split by direction: the feed publishes
+// volume_traded for each side of a market and says nothing about how much of it
+// was bought versus sold, so no number here distinguishes the two.
+//
+// BestPlays ranks ONE window; which window is the Service's call. It runs the
+// engine once per HorizonConfig (service.go) over the same loaded rows: recent,
+// six hours needing four, which is what a request naming no horizon gets, and
+// day, twenty-four hours needing eighteen. Both hours-seen demands are about
+// three quarters of their window and in absolute terms ask for very different
+// things, which is the point — a recent play may be two hours old, a day play
+// may not. A horizon overlays Config.WindowHours and Config.MinHoursSeen and
+// nothing else; BestPlays ignores Config.Horizons itself.
 //
 // What the Result contract promises its consumers (POE-175/176): From is the
 // oldest hour PRESENT in the window and To the newest hour plus one, so a gap in
@@ -202,21 +298,31 @@
 // from them and serves the answer out of memory. Nothing is persisted — the
 // plays are derived, and storing them is POE-180.
 //
-// Cache holds the newest Result and reports warmth as an explicit flag, per the
-// cache-state contract in internal/lab/cache.go. COLD (no recompute has stored
-// anything yet) and WARM-AND-EMPTY (the recompute ran and honestly found no
-// plays) hold the same empty value, so a caller must never infer warmth from
-// what it read; Service.Recompute stores its answer even when it is empty, which
-// is the writer half of the same rule. Cache.Snapshot hands back a copy whose
-// Plays slice is fresh, so a handler may filter it in place.
+// Cache holds the newest Result PER HORIZON and reports warmth as an explicit
+// flag, per the cache-state contract in internal/lab/cache.go. COLD (no
+// recompute has stored anything for that horizon yet) and WARM-AND-EMPTY (the
+// recompute ran and honestly found no plays) hold the same empty value, so a
+// caller must never infer warmth from what it read; Service.Recompute stores its
+// answer even when it is empty, which is the writer half of the same rule. Each
+// horizon warms on its own, so Cache.Snapshot takes the horizon to read and its
+// answer says nothing about the other one — though in practice a recompute
+// writes both before it returns. Snapshot hands back a copy whose Plays slice is
+// fresh, so a handler may filter it in place.
 //
 // Service.Recompute anchors its window on the newest hour that HAS rows, not on
-// the clock and not on the ingest cursor: it loads [newest − WindowHours·1h,
-// newest + 1h) and runs BestPlays over it. A stalled feed therefore keeps
-// serving its last real hours instead of sliding into an empty window. A league
-// with no rows yields a warm, empty result rather than an error. On any error
-// the cache is left untouched and nothing is signalled, so a failed read never
-// downgrades a good cached answer.
+// the clock and not on the ingest cursor: it loads [newest − widest·1h,
+// newest + 1h) ONCE — widest being the longest span any configured horizon
+// ranks — and then runs BestPlays over that same slice once per horizon,
+// because the engine keeps only the newest WindowHours distinct hours it is
+// given. Two horizons therefore cost two in-memory passes and one hypertable
+// scan, and both describe the same instant of the feed. The read reaches one
+// clock hour further back than the widest window on purpose: a feed that missed
+// a poll would otherwise rank an hour short. Recompute returns the FIRST
+// configured horizon's result, which is what an unqualified request is served.
+// A stalled feed keeps serving its last real hours instead of sliding into an
+// empty window. A league with no rows warms every horizon with an empty result
+// rather than erroring. On any error the cache is left untouched and nothing is
+// signalled, so a failed read never downgrades a good cached answer.
 //
 // Service.Trigger coalesces: while a recompute is in flight, further triggers
 // only mark the service dirty, and the running recompute repeats once for
@@ -253,14 +359,25 @@
 //
 // The endpoint (internal/server/handlers):
 //
-//	GET /api/currency-exchange/plays?mode=all|direct|1-hop
+//	GET /api/currency-exchange/plays?mode=all|direct|1-hop&horizon=recent|day
 //
-// mode is optional and defaults to all; an unknown mode is a 400. The response
-// carries league, lastUpdated (RFC3339 or null), from, to, hours, warm, mode,
-// count and plays. A COLD cache answers 200 with an empty plays list, warm:
-// false and lastUpdated: null rather than an error or a database fallback — the
-// recompute is the only reader, so a fallback query would just repeat it. The
-// handler never touches the database.
+// Both parameters are optional and default to all and recent; an unknown value
+// of either is a 400 rather than a silent fallback, because a typo that quietly
+// returned every play, or the other horizon's ranking, would look like a working
+// filter. Picking a horizon is a map lookup, not work: both were computed by the
+// same recompute.
+//
+// The response carries league, lastUpdated (RFC3339 or null), from, to, hours,
+// warm, mode, horizon (echoed, so a cached body cannot be mistaken for the other
+// window's), divineChaosRate (0 when the divine/chaos market did not trade in
+// the window, in which case no divine-quoted play is in the list), count and
+// plays. Each play carries key, mode, legs, roiPct, edge (its deprecated alias),
+// roiPctNewestHour, roi, investment, turnover, tick, depth, hoursSeen and
+// lastHour; each leg action, item, quote, price, fair, tick, volume and stock.
+// A COLD cache answers 200 with an empty plays list, warm: false and
+// lastUpdated: null rather than an error or a database fallback — the recompute
+// is the only reader, so a fallback query would just repeat it. The handler
+// never touches the database.
 //
 // Each leg gains four transport-only fields; the engine itself never carries
 // display data. itemName and quoteName come from DisplayName (the asset, with
@@ -278,8 +395,15 @@
 //
 // The server reads its tuning from the environment in cmd/server, each override
 // falling back to DefaultConfig on an unparseable value with a Warn:
-// EXCHANGE_WINDOW_HOURS, EXCHANGE_MIN_VOLUME_PER_HOUR, EXCHANGE_MIN_EDGE (may be
-// negative), EXCHANGE_MIN_HOURS_SEEN and EXCHANGE_MAX_PLAYS. The Warn is louder
+// EXCHANGE_MIN_VOLUME_PER_HOUR, EXCHANGE_MIN_EDGE (may be negative),
+// EXCHANGE_MAX_PLAYS and the four gate knobs EXCHANGE_MIN_TURNOVER_CHAOS,
+// EXCHANGE_MAX_TICK, EXCHANGE_MIN_EDGE_TICK_RATIO and EXCHANGE_MIN_ROI_CHAOS.
+// The window knobs are per horizon: EXCHANGE_RECENT_WINDOW_HOURS /
+// EXCHANGE_RECENT_MIN_HOURS_SEEN and EXCHANGE_DAY_WINDOW_HOURS /
+// EXCHANGE_DAY_MIN_HOURS_SEEN. EXCHANGE_WINDOW_HOURS and
+// EXCHANGE_MIN_HOURS_SEEN still work but bind the RECENT horizon only — they
+// leave the day window alone, and an EXCHANGE_RECENT_* name set alongside one of
+// them wins. The Warn is louder
 // than the silent fallbacks the collector's knobs use on purpose: a typo in a
 // ranking threshold changes what users see and has no other symptom.
 //
