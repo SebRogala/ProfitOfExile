@@ -15,7 +15,7 @@
 //
 // # Layers
 //
-// client.go, payload.go, normalize.go, humanize.go and the four engine files
+// client.go, payload.go, normalize.go, humanize.go, items.go and the four engine files
 // pricing.go, direct.go, crossquote.go and plays.go are pure: no database, no
 // scheduler, no HTTP server, no collector. Callers fetch a payload with
 // Client.FetchHour and derive rows with Normalize; Normalize, PriceOf, Ratio and
@@ -100,7 +100,58 @@
 // Nothing here is persisted: BestPlays is recomputed from stored rows. Storing
 // plays, and the stricter filtering that only makes sense once they can be
 // compared against their own history, is POE-180. Results carry raw feed item
-// ids; the HTTP handler is what runs them through Humanize.
+// ids; the HTTP handler is what turns them into display names, today through
+// Humanize, with POE-177 chunk 2 pending to wire it to the resolver below.
+//
+// # Items
+//
+// The feed sends metadata ids and nothing else — no display name, no icon — so
+// both are carried in the binary. itemdata/items.json is a committed asset,
+// `{"<metadata id>": {"name": ..., "icon": <poewiki URL> | null}}` sorted by id,
+// embedded by items.go and parsed once at package init. A malformed asset
+// panics there: it is a build artifact, so the defect is in the committed file
+// and is the same in every process.
+//
+// items.go is the whole resolver. LookupItem is the raw read; DisplayName is
+// what callers want, returning the asset name and falling back to Humanize for
+// an id the asset does not cover. Humanize is the FALLBACK, not the mechanism —
+// it splits an id's CamelCase tail, which is readable but often wrong (it calls
+// a Chaos Orb "Reroll Rare"), and it exists so an id added since the last
+// regeneration still renders. UnknownItems.Note records such an id with one
+// Warn per distinct id rather than one per occurrence, because an unknown id
+// recurs in every leg of every play that touches it on every recompute.
+//
+// Icons are not served from poewiki: it 403s the production VPS
+// (docs/adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md),
+// so the server serves its own cached copy through internal/gemicon's cache the
+// way gem icons already work. IconURLs hands that cache a fresh id → upstream
+// URL map, and IconPath returns the API-relative client path
+// "/currency-exchange/icon/<escaped id>" — the id escaped as a SINGLE path
+// segment, so its slashes are %2F — or false for an item with no icon, which
+// renders without one rather than requesting a URL that would 404 every time.
+// The prefix carries no "/api" because clients join it onto a base that already
+// ends in one.
+//
+// Regeneration, once per league (GGG adds items between leagues, not within
+// one), from the repository root:
+//
+//	python3 scripts/generate-currency-exchange-items.py
+//
+// It reads the id universe from the RePoE-fork base-item dump filtered to the
+// eight exchange categories, joins poewiki's items cargo table by metadata id
+// for the icon File names, resolves the distinct Files to their poewiki image
+// URLs fifty at a time through the imageinfo API — a request per file
+// instead of per fifty earns a 429 partway through, measured 2026-08-19 — and
+// prints coverage per category. Those URLs are committable because MediaWiki
+// derives the /images/<h>/<hh>/ path from the MD5 of the File NAME, so a
+// re-upload under the same name keeps the URL. The whole run is about thirty
+// requests. It refuses to write on a name-coverage shortfall or a cache-filename collision,
+// and its output is deterministic, so an unchanged upstream re-runs to a
+// zero-length diff. Unnamed drop-table placeholders (RePoE carries hundreds of
+// RandomFossilOutcome<N> entries in the Currency namespace) are excluded rather
+// than shipped under a fabricated name. It also writes itemdata/icon-urls.json,
+// a flat id → URL map, which is what scripts/download-gem-icons.py pre-seeds
+// the production icon cache from.
 //
 // # Storage
 //

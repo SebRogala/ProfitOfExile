@@ -21,9 +21,9 @@ var categoryPrefixes = []string{"DivinationCard", "Currency", "Scarab"}
 //	Metadata/Items/DivinationCards/DivinationCardThunderousSkies    -> "Thunderous Skies"
 //	Metadata/Items/Currency/AncestralOmenOnJewellersMakeFullSockets -> "Ancestral Omen On Jewellers Make Full Sockets"
 //
-// An unknown shape returns its CamelCase-split last segment. This is a stand-in
-// for the real display-name mapping (POE-177), so names are readable but not
-// guaranteed to match the in-game wording.
+// An unknown shape returns its CamelCase-split last segment. This is the
+// FALLBACK for ids the embedded asset in items.go does not cover, so names are
+// readable but not guaranteed to match the in-game wording.
 func Humanize(id string) string {
 	name := id
 	if idx := strings.LastIndex(name, "/"); idx >= 0 {
