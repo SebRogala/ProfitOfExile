@@ -8,20 +8,28 @@ import (
 	"profitofexile/internal/exchange"
 )
 
-// legResponse is one execution step, the engine's Leg plus display names.
+// legResponse is one execution step, the engine's Leg plus display data.
 //
 // exchange.Leg is EMBEDDED rather than copied field by field: the engine owns
 // the leg's shape and its JSON tags, so a field added there appears here without
 // an edit, and a field renamed there cannot silently keep serializing under its
-// old name. ItemName and QuoteName are the only additions the transport layer
-// makes — the engine deliberately carries raw feed ids (see exchange.Humanize).
+// old name. The names and icons are the only additions the transport layer
+// makes — the engine deliberately carries raw feed ids.
+//
+// The icons are pointers so an item with no artwork serializes as null rather
+// than as "": a client must be able to tell "render no icon" from a path it
+// should fetch, and an empty string joined onto an API base is a request for the
+// base itself. They are API-relative paths into this server's icon route, not
+// upstream poewiki URLs — production cannot fetch poewiki (ADR-012).
 type legResponse struct {
 	exchange.Leg
-	ItemName  string `json:"itemName"`
-	QuoteName string `json:"quoteName"`
+	ItemName  string  `json:"itemName"`
+	ItemIcon  *string `json:"itemIcon"`
+	QuoteName string  `json:"quoteName"`
+	QuoteIcon *string `json:"quoteIcon"`
 }
 
-// playResponse is one ranked play with humanized legs.
+// playResponse is one ranked play with decorated legs.
 //
 // Legs shadows the embedded exchange.Play.Legs: encoding/json resolves a tag
 // collision in favour of the shallower field, so "legs" serializes from this
@@ -72,6 +80,14 @@ const modeAll = "all"
 // Responses are Cache-Control: no-store: the body changes whenever a feed hour
 // lands, and clients are told about that over poe/currency-exchange/updated.
 func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
+	// One recorder per handler, captured in the closure rather than declared at
+	// package level. "Warn once per id" then means once per router — which is
+	// once per process in cmd/server, the only place a router is built for real
+	// — while a test that asserts the log gets a recorder nothing else has
+	// already silenced. A package-level var would make that assertion depend on
+	// which tests ran before it.
+	unknown := &exchange.UnknownItems{}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		mode := r.URL.Query().Get("mode")
 		if mode == "" {
@@ -92,7 +108,7 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 			if mode != modeAll && string(play.Mode) != mode {
 				continue
 			}
-			plays = append(plays, playResponse{Play: play, Legs: humanizeLegs(play.Legs)})
+			plays = append(plays, playResponse{Play: play, Legs: decorateLegs(play.Legs, unknown)})
 		}
 
 		body := playsResponse{
@@ -116,16 +132,56 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 	}
 }
 
-// humanizeLegs attaches display names to a play's legs. The result is always a
-// non-nil slice so "legs" is [] rather than null on a play with no legs.
-func humanizeLegs(legs []exchange.Leg) []legResponse {
+// decorateLegs attaches display names and icon paths to a play's legs, noting
+// every id the item asset does not cover on unknown, which must not be nil.
+//
+// The result is always a non-nil slice so "legs" is [] rather than null on a
+// play with no legs.
+func decorateLegs(legs []exchange.Leg, unknown *exchange.UnknownItems) []legResponse {
 	out := make([]legResponse, 0, len(legs))
 	for _, leg := range legs {
 		out = append(out, legResponse{
 			Leg:       leg,
-			ItemName:  exchange.Humanize(leg.Item),
-			QuoteName: exchange.Humanize(leg.Quote),
+			ItemName:  itemName(leg.Item, unknown),
+			ItemIcon:  itemIcon(leg.Item),
+			QuoteName: itemName(leg.Quote, unknown),
+			QuoteIcon: itemIcon(leg.Quote),
 		})
 	}
 	return out
+}
+
+// itemName resolves one feed id to its display name, recording an id the asset
+// does not name.
+//
+// The lookup is what separates "the asset has no name for this" from "the asset
+// has one" — exchange.DisplayName alone cannot say which of the two it
+// returned, because its Humanize fallback always produces something readable.
+// An unnamed id is the symptom that the asset needs regenerating (a new
+// league's items), so it has to reach the log rather than quietly render as a
+// plausible-looking wrong name. A present-but-blank name falls in the same
+// bucket: it renders through the same fallback, so it is worth the same log
+// line.
+//
+// This repeats DisplayName's rule (asset name when non-empty, else Humanize)
+// rather than calling it, so that one lookup answers both questions. The two
+// must stay in step.
+func itemName(id string, unknown *exchange.UnknownItems) string {
+	item, ok := exchange.LookupItem(id)
+	if !ok || item.Name == "" {
+		unknown.Note(id)
+		return exchange.Humanize(id)
+	}
+	return item.Name
+}
+
+// itemIcon returns the API-relative icon path for a feed id, or nil when the
+// item has no artwork. A known item without an icon is not an anomaly — the
+// asset carries a null icon for roughly one id in seven — so it is not noted.
+func itemIcon(id string) *string {
+	path, ok := exchange.IconPath(id)
+	if !ok {
+		return nil
+	}
+	return &path
 }

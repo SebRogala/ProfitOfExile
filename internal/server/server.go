@@ -82,6 +82,15 @@ type RouterConfig struct {
 	// GemIconCacheDir is the persistent directory where fetched gem icons are
 	// cached. Empty falls back to gemicon.DefaultCacheDir.
 	GemIconCacheDir string
+	// CurrencyExchangeIconCacheDir is the persistent directory where fetched
+	// currency-exchange item icons are cached. It must not share
+	// GemIconCacheDir: the two maps have separate key spaces and a shared
+	// directory shares the cache-filename scheme. Empty has NO default — the
+	// route is then not registered and item icons are simply absent, which the
+	// clients already render as no icon.
+	// That case logs at Info; an ERROR here means the directory was configured
+	// and the cache still failed to open.
+	CurrencyExchangeIconCacheDir string
 }
 
 // NewRouter creates a chi router with middleware and mounted routes.
@@ -133,6 +142,22 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		slog.Error("gem icon cache init failed; /api/gem-icon disabled", "error", err)
 	} else {
 		r.Get("/api/gem-icon/{name}", gemIcons.Handler())
+	}
+
+	// Currency Exchange item icons: the same cache implementation over the
+	// exchange asset's id→poewiki URL map and its own directory. The {name} here
+	// is a feed metadata id whose slashes arrive percent-encoded (%2F), which the
+	// handler unescapes before the map lookup — see exchange.IconPath, which is
+	// what builds the path clients request.
+	// An unset directory is a configuration choice, not a failure: NewWithMap
+	// rejects it deliberately (no default, see the field doc), so the two cases
+	// are split to keep the ERROR line meaning "configured and broken".
+	if cfg.CurrencyExchangeIconCacheDir == "" {
+		slog.Info("currency-exchange icon cache not configured; /api/currency-exchange/icon disabled")
+	} else if itemIcons, err := gemicon.NewWithMap(exchange.IconURLs(), cfg.CurrencyExchangeIconCacheDir); err != nil {
+		slog.Error("currency-exchange icon cache init failed; /api/currency-exchange/icon disabled", "error", err)
+	} else {
+		r.Get("/api/currency-exchange/icon/{name}", itemIcons.Handler())
 	}
 
 	// The whole /api/snapshots/* family is gone. /stats went first (POE-150):

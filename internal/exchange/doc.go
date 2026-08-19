@@ -100,8 +100,8 @@
 // Nothing here is persisted: BestPlays is recomputed from stored rows. Storing
 // plays, and the stricter filtering that only makes sense once they can be
 // compared against their own history, is POE-180. Results carry raw feed item
-// ids; the HTTP handler is what turns them into display names, today through
-// Humanize, with POE-177 chunk 2 pending to wire it to the resolver below.
+// ids; the HTTP handler is what turns them into display names and icon paths,
+// through the resolver below.
 //
 // # Items
 //
@@ -259,9 +259,22 @@
 // carries league, lastUpdated (RFC3339 or null), from, to, hours, warm, mode,
 // count and plays. A COLD cache answers 200 with an empty plays list, warm:
 // false and lastUpdated: null rather than an error or a database fallback — the
-// recompute is the only reader, so a fallback query would just repeat it. Each
-// leg gains itemName and quoteName from Humanize; the engine itself never
-// carries display names. The handler never touches the database.
+// recompute is the only reader, so a fallback query would just repeat it. The
+// handler never touches the database.
+//
+// Each leg gains four transport-only fields; the engine itself never carries
+// display data. itemName and quoteName come from DisplayName (the asset, with
+// Humanize as the fallback for an id it does not cover, noted once through
+// UnknownItems), and itemIcon and quoteIcon from IconPath — API-relative paths
+// into this server's icon route, or null for an item with no artwork, which the
+// client renders without one. The icons are served by
+//
+//	GET /api/currency-exchange/icon/{escaped metadata id}
+//
+// which is internal/gemicon's cache over IconURLs() and its own cache directory
+// (CURRENCY_EXCHANGE_ICON_CACHE_DIR, default ./data/currency-exchange-icons-cache;
+// a persistent volume in production). An id absent from the map is a 404 and an
+// unfetchable upstream a 502, exactly as for gem icons.
 //
 // The server reads its tuning from the environment in cmd/server, each override
 // falling back to DefaultConfig on an unparseable value with a Warn:

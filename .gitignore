@@ -19,6 +19,10 @@ data/
 # URL map in internal/gemicon/ is the only committed part. Covered by data/
 # above for the default path, but kept explicit in case the dir is relocated.
 data/gem-icons-cache/
+# Pre-seed dumps the documented puller writes at the repository root before they
+# are copied into the production volumes. Same copyrighted bytes, outside data/.
+gem-icons-cache/
+currency-exchange-icons-cache/
 desktop/src-tauri/target/
 desktop/node_modules/
 desktop/.svelte-kit/

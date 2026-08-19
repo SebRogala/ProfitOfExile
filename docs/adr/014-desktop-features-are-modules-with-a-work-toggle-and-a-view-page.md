@@ -69,3 +69,9 @@ module follows a future default change; an explicit choice survives it.
 First consumer: mercenary triage (POE-165) — Sidebar toggle runs its OCR
 capture; the Mercenaries page holds per-source rule panels, verdicts, and
 settings.
+
+Currency Exchange (the "CX flippables" of Context above) landed in POE-176 as a
+plain view page with no module and no work toggle: all of its work happens
+server-side — the ranking is recomputed there and pushed over Mercure — so it
+needs surface 2 and has nothing for surface 1 to govern. A feature with no
+Rust-side background work does not get a `ModuleDef`.
