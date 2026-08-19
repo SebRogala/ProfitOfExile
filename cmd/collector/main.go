@@ -15,6 +15,7 @@ import (
 
 	"profitofexile/internal/collector"
 	"profitofexile/internal/db"
+	"profitofexile/internal/exchange"
 	"profitofexile/internal/league"
 	"profitofexile/internal/price/gemcolor"
 )
@@ -241,6 +242,54 @@ func main() {
 	if mercureJWTSecret != "" {
 		go runLayoutResetTicker(schedulerCtx, scope, mercureURL, mercureJWTSecret)
 		slog.Info("lab layout reset ticker started (fires at 00:00 UTC daily)")
+	}
+
+	// Currency exchange ingest — walks GGG's public hourly feed from a stored
+	// cursor, keeps the active league's markets and publishes one Mercure event
+	// per stored hour. Enabled by default: unlike the two loops above this is the
+	// only writer of currency_exchange_markets, and a missed window cannot be
+	// backfilled past the feed's retention, so only an explicit "false" stops it.
+	//
+	// Deliberately NOT gated on mercureJWTSecret != "" like the sibling loops:
+	// those exist solely to publish, whereas this one performs essential DB
+	// ingestion and collector.PublishMercureEvent already no-ops on an empty
+	// secret. Do not "fix" the asymmetry — gating it would silently stop
+	// collection on a hub-less deployment.
+	if os.Getenv("EXCHANGE_INGEST_ENABLED") != "false" {
+		exchangeTick := 5 * time.Minute
+		if d, err := time.ParseDuration(os.Getenv("EXCHANGE_TICK")); err == nil && d > 0 {
+			exchangeTick = d
+		}
+
+		// Pacing between the hours of one catch-up pass. The runner itself
+		// defaults to no pacing; the production value lives here because it is a
+		// courtesy to GGG's CDN (48 hours of ~1.7 MB back to back), not a
+		// property of the walk.
+		exchangePerHourDelay := 250 * time.Millisecond
+		if d, err := time.ParseDuration(os.Getenv("EXCHANGE_PER_HOUR_DELAY")); err == nil && d >= 0 {
+			exchangePerHourDelay = d
+		}
+
+		exchangeRunner := exchange.NewRunner(
+			exchange.NewClient(),
+			exchange.NewRepository(pool),
+			stampedPublisher{scope: scope, mercureURL: mercureURL, mercureSecret: mercureJWTSecret},
+			exchange.RunnerConfig{
+				Scope:        scope,
+				Realm:        exchange.RealmPC,
+				Tick:         exchangeTick,
+				PerHourDelay: exchangePerHourDelay,
+				Logger:       logger,
+			},
+		)
+		go func() {
+			if err := exchangeRunner.Run(schedulerCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("currency exchange ingest stopped", "error", err)
+			}
+		}()
+		slog.Info("currency exchange ingest started", "tick", exchangeTick, "perHourDelay", exchangePerHourDelay)
+	} else {
+		slog.Info("currency exchange ingest disabled (EXCHANGE_INGEST_ENABLED=false)")
 	}
 
 	// Health/debug HTTP server.

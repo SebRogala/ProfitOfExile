@@ -13,7 +13,7 @@ application implementation.
 ## Gate
 
 POE-119 cannot deploy independently. Its migrations make `league` mandatory
-on twelve data tables, while the pre-POE-120/POE-121 writers do not supply it
+on the twelve tables it scopes, while the pre-POE-120/POE-121 writers do not supply it
 and server analysis is not yet scoped. Before starting, an operator must
 confirm all of the following in the change record:
 
@@ -37,8 +37,8 @@ POE-119, POE-120, and POE-121 are developed as **stacked branches**
 deploy** — every push to `main` auto-deploys to production.
 
 - **Do not merge POE-119 to `main` on its own.** Alone it makes `league`
-  `NOT NULL` on twelve tables while the still-deployed pre-POE-120 writers omit
-  it, so production writes begin failing on the next collector tick.
+  `NOT NULL` on the twelve tables it scopes while the still-deployed pre-POE-120
+  writers omit it, so production writes begin failing on the next collector tick.
 - Land them together. Recommended: collapse POE-120 and POE-121 onto the
   POE-119 branch (rebase each onto its parent so the branch carries all three),
   then open and merge **one** PR to `main`. That single merge is the single
@@ -63,7 +63,7 @@ run the rehearsal against the live database.
    hypertable as the rehearsal source.
 2. Before migration, record the revision under test, PostgreSQL and TimescaleDB
    versions, `schema_migrations` version/dirty state, compression and
-   continuous-aggregate policies, aggregate indexes, and the twelve-table
+   continuous-aggregate policies, aggregate indexes, and the league-scoped table
    count manifest below.
 3. Compare the restored counts to the captured source manifest. Stop if any
    count differs; the rehearsal is invalid until the restore is explained.
@@ -74,7 +74,7 @@ run the rehearsal against the live database.
    `league` values. Confirm that compression and continuous-aggregate refresh
    policies match the pre-migration capture, that every scoped table now has a
    foreign key to `leagues(id)`, and that no retention policy remains
-   (see [ADR-010](adr/010-retain-archived-league-history.md)). Record the disk
+   (see [ADR-010](adr/010-archived-league-history-is-retained-indefinitely.md)). Record the disk
    usage that indefinite retention will now grow.
 6. Refresh a controlled, completed source window in dependency order: hourly
    aggregate first, then daily. Do not refresh daily before hourly.
@@ -100,10 +100,13 @@ run the rehearsal against the live database.
    migration and health checks pass. Confirm server and collector startup
    health, then dispose of the rehearsal database.
 
-## Twelve-table count manifest
+## Fourteen-table count manifest
 
 Capture a `COUNT(*)` for each relation before and after the migration. The
-manifest is complete only with all twelve rows:
+manifest is complete only with all fourteen rows. The last two rows postdate the
+POE-119 migration (added 2026-08-19 by POE-173): for a POE-119 rehearsal their
+pre/post-migration and null-`league` columns are `n/a`; for a league rollover
+they count like every other row.
 
 | Relation | Pre-migration count | Post-migration count | Null `league` count |
 | --- | ---: | ---: | ---: |
@@ -119,6 +122,8 @@ manifest is complete only with all twelve rows:
 | `dedication_snapshots` |  |  |  |
 | `trade_lookups` |  |  |  |
 | `market_context` |  |  |  |
+| `currency_exchange_markets` |  |  |  |
+| `currency_exchange_cursor` |  |  |  |
 
 ## Production execution (wipe-first — the chosen rollover)
 
@@ -150,12 +155,14 @@ steps in order; each line is one action or one check.
 3. Stop the collector.
 4. Stop the current (old) server revision.
 5. Confirm both are stopped and nothing is writing.
-6. On the production database (old schema, pre-migration), truncate the twelve
+6. On the production database (old schema, pre-migration), truncate the fourteen
    league-scoped tables in one statement:
-   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context;`
+   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor;`
    (Plain `TRUNCATE` works directly on the compressed hypertables — no decompress
-   step; ~3.5 s for 27M rows in rehearsal.)
-7. Confirm all twelve tables report zero rows.
+   step; ~3.5 s for 27M rows in rehearsal. `currency_exchange_markets` and
+   `currency_exchange_cursor` exist only from the POE-173 migration onward; drop
+   them from the statement when running against an older schema.)
+7. Confirm all fourteen tables report zero rows.
 8. Deploy the staged 119–121 revision (the atomic merge). The server migrates on
    boot against the now-empty tables — expect a near-instant apply.
 9. Verify migration state + server health: every table has a `NOT NULL` `league`
@@ -290,8 +297,9 @@ encode these**; until it exists, follow them manually.
    the server fails its assertion on boot and crash-loops. Leave it unset for the
    initial deploy, set it after activating the new league, then restart.
 4. **Clean the stray outgoing-league rows** once services are on the new league
-   (so no new strays land): `DELETE FROM <each of the 12 tables> WHERE
-   league='<OldLeagueId>';` (they are recent/uncompressed, so DELETE is cheap).
+   (so no new strays land): `DELETE FROM <each of the 14 league-scoped tables>
+   WHERE league='<OldLeagueId>';` (they are recent/uncompressed, so DELETE is
+   cheap).
 5. **Collector boot fence can crash-loop on restart.** If a previous collector
    instance's DB connection is still holding `RuntimeLockKey`, the new one refuses
    to start ("another collector still holds the runtime fence after 15s"). It

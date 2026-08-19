@@ -39,3 +39,22 @@ The current fragments path spans `internal/collector/{fetcher,endpoint,ninja,
 repository,scheduler}.go`, `cmd/collector/main.go`, `internal/server`, and
 `cmd/server/main.go`. Search by `EndpointNinjaFragments`, `FragmentData`, and
 `poe/collector/fragments` to inspect the complete implementation before editing.
+
+## Currency Exchange feed (not an endpoint)
+
+The currency exchange feed does not follow the procedure above and is not part of
+`internal/collector`'s endpoint list. It reads GGG's CDN directly rather than
+poe.ninja, is addressed by unix hour rather than polled for freshness, and returns
+every league in one payload, so the scheduler's staleness/`FetchResult` model does
+not fit it. It lives in `internal/exchange` and runs in `cmd/collector` as an
+`exchange.Runner` sibling goroutine next to `runTradeRefresher` and
+`runLayoutResetTicker`: each tick advances a database cursor hour by hour, filters
+the payload to the resolved league, stores the hour, and publishes one Mercure
+event per stored hour on topic `poe/collector/currency-exchange`. Env:
+`EXCHANGE_INGEST_ENABLED` (default on; `false` disables), `EXCHANGE_TICK`
+(default `5m`) and `EXCHANGE_PER_HOUR_DELAY` (default `250ms`), which paces the
+hours inside one catch-up pass so a long backlog does not pull 48 payloads of
+~1.7 MB from the CDN back to back; `0` disables the pacing.
+
+Read `internal/exchange/doc.go` before changing it — the feed's semantics, the
+cursor rule, and the event payload fields are documented there.

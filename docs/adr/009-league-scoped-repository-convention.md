@@ -6,11 +6,17 @@ uid: 8e39f612-f8e4-4aeb-b33a-702359ebbcf3
 
 ## Status
 
-Accepted
+Accepted.
+
+**Amended 2026-08-19 (POE-173):** the convention binds every league-scoped table,
+not only the twelve POE-119 retrofitted. The set is now fourteen —
+`currency_exchange_markets` and `currency_exchange_cursor` were created with
+`league TEXT NOT NULL REFERENCES leagues(id)` and are read and written only
+through `internal/exchange`'s scope-taking repository.
 
 ## Context
 
-POE-119 adds a league column to the twelve historical data tables and introduces
+POE-119 adds a league column to its twelve historical data tables and introduces
 `runtime_config` as the database-backed selection of the active league. A
 repository query without a league predicate can mix observations and analysis
 from distinct leagues. A string parameter at individual call sites does not

@@ -6,13 +6,20 @@ uid: 0e463a23-26d2-4052-bbe2-9fee9995d8d6
 
 ## Status
 
-Accepted, then **superseded in part by [ADR-011](011-wipe-outgoing-league-at-rollover.md)**:
+Accepted, then **superseded in part by
+[ADR-011](011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md)**:
 the age-based retention removal below stands, but the intent that archived leagues
 stay live and queryable is replaced by wipe-at-rollover + preserved dump.
 
+**Amended 2026-08-19 (POE-173):** the no-retention rule binds new league-scoped
+hypertables at creation, not just the eleven that carried a policy. The
+league-scoped set is now fourteen tables — `currency_exchange_markets` and
+`currency_exchange_cursor` were created with a compression policy and no
+retention policy.
+
 ## Context
 
-POE-119 scopes twelve data tables by league and introduces `league.Historical`
+POE-119 scopes its twelve data tables by league and introduces `league.Historical`
 so research can select an archived league. The same tables carried TimescaleDB
 retention policies from POE-15 onward: 90 days on the observation tables and
 120 days on the derived tables.
@@ -56,5 +63,5 @@ rows, not a background job that runs on age.
   `TestLeagueMigrationsPreserveLegacySchemaContract` asserts compression and
   continuous-aggregate refresh survive the POE-119 migration while no retention
   policy remains.
-- [ADR-009](009-league-scope-repository-convention.md) — the scope convention
+- [ADR-009](009-league-scoped-repository-convention.md) — the scope convention
   whose historical access this decision makes meaningful.
