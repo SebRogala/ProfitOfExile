@@ -216,6 +216,11 @@ func TestScopedRelationsHaveLeagueIdentityAndPrimaryKeys(t *testing.T) {
 	migrateUp(t, m)
 
 	relations := map[string][]string{
+		// currency_exchange_cursor is the one entry that is not a hypertable: one
+		// row per league, keyed by the league alone.
+		"currency_exchange_cursor":  {"league"},
+		"currency_exchange_markets": {"league", "time", "market_id"},
+
 		"currency_snapshots":   {"league", "time", "currency_id"},
 		"dedication_snapshots": {"league", "time", "variant", "color", "gem_type", "mode"},
 		"font_snapshots":       {"league", "time", "color", "variant", "mode"},
@@ -306,7 +311,7 @@ func TestScopedRelationsReferenceTheLeagueRegistry(t *testing.T) {
 	requireTimescaleDB(t, pool)
 	migrateUp(t, m)
 
-	for _, relation := range scopedRelations {
+	for _, relation := range leagueRegistryRelations {
 		t.Run(relation, func(t *testing.T) {
 			var referenced, column string
 			err := pool.QueryRow(context.Background(), `
@@ -469,11 +474,25 @@ func TestGemContinuousAggregatesPreserveLeagueAndCorruption(t *testing.T) {
 
 const preLeagueSchemaVersion uint = 20260412224254
 
+// scopedRelations is the set of league-scoped relations that PREDATE the league
+// migration: every one of them existed at preLeagueSchemaVersion, was backfilled
+// to Mirage by the up-walk, and is a hypertable carrying a compression policy.
+// The legacy-contract test asserts all three of those properties, so a relation
+// created after that migration does not belong here — put it in
+// leagueRegistryRelations, which asserts only the foreign key.
 var scopedRelations = []string{
 	"currency_snapshots", "dedication_snapshots", "font_snapshots", "fragment_snapshots",
 	"gem_features", "gem_signals", "gem_snapshots", "market_context", "quality_results",
 	"trade_lookups", "transfigure_results", "trend_results",
 }
+
+// leagueRegistryRelations is every relation whose league column is a foreign key
+// into the leagues registry: the legacy set plus the two currency-exchange tables
+// added by POE-173. currency_exchange_cursor is a plain table and
+// currency_exchange_markets is younger than the backfill, so neither can join
+// scopedRelations — the FK is the one contract all of them share.
+var leagueRegistryRelations = append(append([]string{},
+	scopedRelations...), "currency_exchange_markets", "currency_exchange_cursor")
 
 var retainedRelations = []string{
 	"currency_snapshots", "dedication_snapshots", "font_snapshots", "fragment_snapshots",
