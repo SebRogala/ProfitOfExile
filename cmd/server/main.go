@@ -300,10 +300,15 @@ func main() {
 	// typo in a threshold silently changes which plays users are shown, with no
 	// other symptom to notice it by.
 	exchangeCfg := exchange.DefaultConfig()
-	exchangeCfg.WindowHours = envPositiveInt("EXCHANGE_WINDOW_HOURS", exchangeCfg.WindowHours)
+	// WindowHours and MinHoursSeen are per horizon (below), not on the base
+	// config: the base values would be overwritten by every horizon overlay, so
+	// an override here would read as configured and do nothing.
 	exchangeCfg.MinVolumePerHour = envPositiveFloat("EXCHANGE_MIN_VOLUME_PER_HOUR", exchangeCfg.MinVolumePerHour)
-	exchangeCfg.MinHoursSeen = envPositiveInt("EXCHANGE_MIN_HOURS_SEEN", exchangeCfg.MinHoursSeen)
 	exchangeCfg.MaxPlays = envPositiveInt("EXCHANGE_MAX_PLAYS", exchangeCfg.MaxPlays)
+	exchangeCfg.MinTurnoverChaos = envPositiveFloat("EXCHANGE_MIN_TURNOVER_CHAOS", exchangeCfg.MinTurnoverChaos)
+	exchangeCfg.MaxTick = envPositiveFloat("EXCHANGE_MAX_TICK", exchangeCfg.MaxTick)
+	exchangeCfg.MinEdgeTickRatio = envPositiveFloat("EXCHANGE_MIN_EDGE_TICK_RATIO", exchangeCfg.MinEdgeTickRatio)
+	exchangeCfg.MinROIChaos = envPositiveFloat("EXCHANGE_MIN_ROI_CHAOS", exchangeCfg.MinROIChaos)
 	// MinEdge is the one knob where a negative value is meaningful (it surfaces
 	// the losing direction of a loop), so only an exact 0 is rejected — the
 	// engine reads 0 as "unset" and would restore the default behind the log
@@ -322,6 +327,27 @@ func main() {
 		}
 	}
 
+	// Both served horizons are recomputed from one read; each has its own span
+	// and its own persistence demand. EXCHANGE_WINDOW_HOURS and
+	// EXCHANGE_MIN_HOURS_SEEN predate the split and still work: they set the
+	// RECENT horizon, which is the one an unqualified request gets, and the
+	// EXCHANGE_RECENT_* names override them for anyone who wants to say so.
+	horizons := append([]exchange.HorizonConfig(nil), exchangeCfg.Horizons...)
+	for i, horizon := range horizons {
+		switch horizon.Horizon {
+		case exchange.HorizonRecent:
+			horizon.WindowHours = envPositiveInt("EXCHANGE_WINDOW_HOURS", horizon.WindowHours)
+			horizon.MinHoursSeen = envPositiveInt("EXCHANGE_MIN_HOURS_SEEN", horizon.MinHoursSeen)
+			horizon.WindowHours = envPositiveInt("EXCHANGE_RECENT_WINDOW_HOURS", horizon.WindowHours)
+			horizon.MinHoursSeen = envPositiveInt("EXCHANGE_RECENT_MIN_HOURS_SEEN", horizon.MinHoursSeen)
+		case exchange.HorizonDay:
+			horizon.WindowHours = envPositiveInt("EXCHANGE_DAY_WINDOW_HOURS", horizon.WindowHours)
+			horizon.MinHoursSeen = envPositiveInt("EXCHANGE_DAY_MIN_HOURS_SEEN", horizon.MinHoursSeen)
+		}
+		horizons[i] = horizon
+	}
+	exchangeCfg.Horizons = horizons
+
 	// Publishing "the served answer changed" is debounced: a catch-up pass
 	// stores several hours back to back and triggers one recompute per hour, and
 	// clients only need to be told once, about the final state.
@@ -330,7 +356,7 @@ func main() {
 	// line, so it must hold the process-lifetime context by value.
 	publishCtx := ctx
 	exchangeDebounce := exchange.NewDebouncer(exchange.DefaultUpdateDebounce, func() {
-		res, _ := exchangeCache.Snapshot()
+		res, _ := exchangeCache.Snapshot(exchange.DefaultHorizon)
 		if err := exchangePublisher.Publish(publishCtx, exchange.UpdatedTopic, exchange.UpdatePayload(res, time.Now())); err != nil {
 			slog.Warn("currency-exchange: publishing the update event failed", "error", err)
 		}
@@ -340,12 +366,21 @@ func main() {
 	defer exchangeDebounce.Stop()
 	exchangeService := exchange.NewService(exchangeRepo, scope, exchangeCfg, exchangeCache, exchangeDebounce.Signal, slog.Default())
 	slog.Info("currency exchange service configured",
-		"windowHours", exchangeCfg.WindowHours,
 		"minVolumePerHour", exchangeCfg.MinVolumePerHour,
 		"minEdge", exchangeCfg.MinEdge,
-		"minHoursSeen", exchangeCfg.MinHoursSeen,
+		"minTurnoverChaos", exchangeCfg.MinTurnoverChaos,
+		"maxTick", exchangeCfg.MaxTick,
+		"minEdgeTickRatio", exchangeCfg.MinEdgeTickRatio,
+		"minROIChaos", exchangeCfg.MinROIChaos,
 		"maxPlays", exchangeCfg.MaxPlays,
 	)
+	for _, horizon := range exchangeCfg.Horizons {
+		slog.Info("currency exchange horizon configured",
+			"horizon", horizon.Horizon,
+			"windowHours", horizon.WindowHours,
+			"minHoursSeen", horizon.MinHoursSeen,
+		)
+	}
 
 	// Trade cache — created before analyzer so the v2 pipeline can use it.
 	tradeCacheMax := 200

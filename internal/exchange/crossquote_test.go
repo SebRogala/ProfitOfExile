@@ -91,14 +91,69 @@ func candidateKeys(candidates []candidate) []string {
 	return keys
 }
 
-func TestCrossQuoteCandidates_cardBoughtInChaos_sellsThroughDivineForTheProductOfThreePrices(t *testing.T) {
+// cardInChaos, cardInDivine and divineInChaos are the three legs the triangle's
+// routes execute, as the hour observed them. They are spelled out once because
+// both routes walk the same three markets in different orders and directions.
+func cardInChaos(action string) candidateLeg {
+	return candidateLeg{
+		action: action, item: cardID, quote: chaosID,
+		obs: obs{
+			low: 10, high: 12,
+			vwap: 5000.0 / 300.0, vwapOK: true,
+			tick:        1.0 / 10.0,
+			quoteVolume: 5000, volume: 300, stock: 40,
+		},
+	}
+}
+
+func cardInDivine(action string) candidateLeg {
+	return candidateLeg{
+		action: action, item: cardID, quote: divineID,
+		obs: obs{
+			low: 1.0 / 20.0, high: 1.0 / 16.0,
+			vwap: 80.0 / 250.0, vwapOK: true,
+			tick:        1.0 / 16.0,
+			quoteVolume: 80, volume: 250, stock: 35,
+		},
+	}
+}
+
+func divineInChaos(action string) candidateLeg {
+	return candidateLeg{
+		action: action, item: divineID, quote: chaosID,
+		obs: obs{
+			low: 196, high: 201,
+			vwap: 13001051.0 / 65361.0, vwapOK: true,
+			tick:        1.0 / 196.0,
+			quoteVolume: 13001051, volume: 65361, stock: 8878,
+		},
+	}
+}
+
+func chaosInDivine(action string) candidateLeg {
+	return candidateLeg{
+		action: action, item: chaosID, quote: divineID,
+		obs: obs{
+			low: 1.0 / 201.0, high: 1.0 / 196.0,
+			vwap: 65361.0 / 13001051.0, vwapOK: true,
+			tick:        1.0 / 196.0,
+			quoteVolume: 65361, volume: 13001051, stock: 4564191,
+		},
+	}
+}
+
+func TestCrossQuoteCandidates_cardBoughtInChaos_observesTheThreeMarketsItWalks(t *testing.T) {
 	got := crossQuoteCandidates(triangle(), DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
-	wantLegs := []Leg{
-		{Action: "buy", Item: cardID, Quote: chaosID, Price: 10, Volume: 300, Stock: 40},
-		{Action: "sell", Item: cardID, Quote: divineID, Price: 1.0 / 16.0, Volume: 250, Stock: 35},
-		{Action: "sell", Item: divineID, Quote: chaosID, Price: 201, Volume: 65361, Stock: 8878},
+	// Each leg carries the hour as ITS market saw it: the chaos market's tenths,
+	// the divine market's sixteenths and the chaos/divine market's depth. The
+	// route buys on one market and sells on the other two, so each leg's action
+	// decides which end of its own spread the play is priced from later.
+	wantLegs := []candidateLeg{
+		cardInChaos("buy"),
+		cardInDivine("sell"),
+		divineInChaos("sell"),
 	}
 	if !reflect.DeepEqual(c.legs, wantLegs) {
 		t.Errorf("legs = %+v, want %+v", c.legs, wantLegs)
@@ -106,23 +161,38 @@ func TestCrossQuoteCandidates_cardBoughtInChaos_sellsThroughDivineForTheProductO
 	if c.mode != ModeOneHop {
 		t.Errorf("mode = %q, want %q", c.mode, ModeOneHop)
 	}
+}
+
+func TestCrossQuoteCandidates_cardBoughtInChaos_edgeIsTheProductOfThreeHourlyExtremes(t *testing.T) {
+	got := crossQuoteCandidates(triangle(), DefaultConfig())
+
+	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
 	// Ten chaos buys a card, the card sells for a sixteenth of a divine, and
 	// the divine sells back for 201 chaos.
 	wantClose(t, "edge", c.edge, (1.0/16.0)*201.0/10.0-1)
 }
 
-func TestCrossQuoteCandidates_cardBoughtInDivine_sellsThroughChaosForTheProductOfThreePrices(t *testing.T) {
+func TestCrossQuoteCandidates_cardBoughtInDivine_observesTheThreeMarketsItWalks(t *testing.T) {
 	got := crossQuoteCandidates(triangle(), DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, divineID, chaosID))
-	wantLegs := []Leg{
-		{Action: "buy", Item: cardID, Quote: divineID, Price: 1.0 / 20.0, Volume: 250, Stock: 35},
-		{Action: "sell", Item: cardID, Quote: chaosID, Price: 12, Volume: 300, Stock: 40},
-		{Action: "sell", Item: chaosID, Quote: divineID, Price: 1.0 / 196.0, Volume: 13001051, Stock: 4564191},
+	// The mirror walks the same three markets the other way round, so the
+	// closing leg is now chaos priced in divine — the same market as the route
+	// above, read from its other side.
+	wantLegs := []candidateLeg{
+		cardInDivine("buy"),
+		cardInChaos("sell"),
+		chaosInDivine("sell"),
 	}
 	if !reflect.DeepEqual(c.legs, wantLegs) {
 		t.Errorf("legs = %+v, want %+v", c.legs, wantLegs)
 	}
+}
+
+func TestCrossQuoteCandidates_cardBoughtInDivine_edgeIsTheProductOfThreeHourlyExtremes(t *testing.T) {
+	got := crossQuoteCandidates(triangle(), DefaultConfig())
+
+	c := candidateByKey(t, got, oneHopKey(cardID, divineID, chaosID))
 	wantClose(t, "edge", c.edge, 12.0*(1.0/196.0)/(1.0/20.0)-1)
 }
 
@@ -315,8 +385,8 @@ func TestCrossQuoteCandidates_secondRowForTheSamePair_isIgnored(t *testing.T) {
 	got := crossQuoteCandidates(append(triangle(), second.row()), DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
-	if c.legs[2].Price != 201 {
-		t.Errorf("closing leg price = %v, want the first row's 201", c.legs[2].Price)
+	if c.legs[2].obs.high != 201 {
+		t.Errorf("closing leg price = %v, want the first row's 201", c.legs[2].obs.high)
 	}
 }
 

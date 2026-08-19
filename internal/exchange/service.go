@@ -23,7 +23,60 @@ const UpdatedTopic = "poe/currency-exchange/updated"
 // client refetch and short enough that a single stored hour still lands promptly.
 const DefaultUpdateDebounce = 2 * time.Second
 
-// Cache holds the newest computed Result for instant serving.
+// Horizon names one of the windows the Service ranks in parallel.
+//
+// The two exist because the question has two forms: "what should I set up before
+// I log off" is answered by a day of hours, and "what is worth checking in game
+// right now" is answered by the last few. One recompute produces both from the
+// same rows, so the client picks a horizon rather than waiting for one.
+type Horizon string
+
+const (
+	// HorizonRecent is the default: a short window that reacts within hours,
+	// which is also what a league's first days need, when nothing has been
+	// stable long enough for a day-long median to exist.
+	HorizonRecent Horizon = "recent"
+	// HorizonDay is the overnight-planning window: a full day of hours, so a
+	// play has to have survived the league's daily price cycle to appear.
+	HorizonDay Horizon = "day"
+)
+
+// DefaultHorizon is what a request that names no horizon gets, and the horizon
+// DefaultHorizons lists first. Recent rather than day because a play the client
+// can still act on beats a play that was true all night, and because a young
+// league has no day-long history to median over.
+const DefaultHorizon = HorizonRecent
+
+// HorizonConfig is one horizon's overlay on the base Config: the same gates and
+// the same quote priority, a different span and a different persistence demand.
+type HorizonConfig struct {
+	Horizon      Horizon
+	WindowHours  int
+	MinHoursSeen int
+}
+
+// DefaultHorizons is the served pair: six hours needing four, and twenty-four
+// hours needing eighteen.
+//
+// Both MinHoursSeen are about three quarters of their window, which is the
+// hours-seen gate the 26-hour measurement was taken with; in absolute terms they
+// demand very different things, and that is the point — a recent play may be two
+// hours old, a day play may not.
+func DefaultHorizons() []HorizonConfig {
+	return []HorizonConfig{
+		{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 4},
+		{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 18},
+	}
+}
+
+// horizonConfig applies one horizon's overlay to a base Config.
+func horizonConfig(base Config, h HorizonConfig) Config {
+	base.WindowHours = h.WindowHours
+	base.MinHoursSeen = h.MinHoursSeen
+	return base
+}
+
+// Cache holds the newest computed Result per horizon for instant serving.
 //
 // It follows the cache-state contract written down in internal/lab/cache.go:
 // COLD (nothing stored yet — the recompute has not run or it failed) and
@@ -37,36 +90,41 @@ const DefaultUpdateDebounce = 2 * time.Second
 // The handler reads warm == false as "no answer yet" and renders lastUpdated as
 // null; it never falls back to the database, because this package's read side is
 // the recompute and a handler query would only repeat it.
+// Each horizon warms on its own, so a Snapshot of one says nothing about the
+// other; in practice a recompute writes both before returning.
 type Cache struct {
-	mu     sync.RWMutex
-	result Result
-	warm   bool
+	mu      sync.RWMutex
+	results map[Horizon]Result
 }
 
 // NewCache creates an empty, COLD cache.
 func NewCache() *Cache {
-	return &Cache{}
+	return &Cache{results: make(map[Horizon]Result)}
 }
 
-// Set replaces the stored result wholesale and marks the cache warm. Results are
-// whole-corpus answers, so there is no merge: the newest recompute is the truth.
+// Set replaces the stored result for one horizon wholesale and marks that
+// horizon warm. Results are whole-corpus answers, so there is no merge: the
+// newest recompute is the truth.
 //
 // An empty Result is stored like any other — see the cache-state contract above.
-func (c *Cache) Set(r Result) {
+func (c *Cache) Set(horizon Horizon, r Result) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.result = r
-	c.warm = true
+	if c.results == nil {
+		c.results = make(map[Horizon]Result)
+	}
+	c.results[horizon] = r
 }
 
-// Snapshot returns the stored result and whether the cache is warm.
+// Snapshot returns one horizon's stored result and whether that horizon is warm.
 //
-// warm == false means COLD: nothing has been computed yet and the returned
-// Result is the zero value. warm == true means the Result is authoritative
-// INCLUDING when it holds no plays.
+// warm == false means COLD: nothing has been computed for this horizon yet (or
+// no such horizon is configured) and the returned Result is the zero value.
+// warm == true means the Result is authoritative INCLUDING when it holds no
+// plays.
 //
 // The returned Result carries a fresh Plays slice, so a caller that filters or
 // sorts it in place cannot corrupt what the next reader sees. The Play values
@@ -76,19 +134,24 @@ func (c *Cache) Set(r Result) {
 //
 // A nil *Cache reads as COLD rather than panicking, so a server started without
 // the currency-exchange pillar can still register the route.
-func (c *Cache) Snapshot() (Result, bool) {
+func (c *Cache) Snapshot(horizon Horizon) (Result, bool) {
 	if c == nil {
 		return Result{}, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	snapshot := c.result
-	if c.result.Plays != nil {
-		snapshot.Plays = make([]Play, len(c.result.Plays))
-		copy(snapshot.Plays, c.result.Plays)
+	stored, warm := c.results[horizon]
+	if !warm {
+		return Result{}, false
 	}
-	return snapshot, c.warm
+
+	snapshot := stored
+	if stored.Plays != nil {
+		snapshot.Plays = make([]Play, len(stored.Plays))
+		copy(snapshot.Plays, stored.Plays)
+	}
+	return snapshot, true
 }
 
 // RowSource is the storage the recompute reads. *Repository satisfies it.
@@ -164,23 +227,30 @@ func NewService(rows RowSource, scope league.Scope, cfg Config, cache *Cache, no
 	}
 }
 
-// Recompute reads the newest window from storage, ranks it, stores the answer in
-// the cache and signals notify. It returns what it stored.
+// Recompute reads the newest window from storage, ranks it once per horizon,
+// stores each answer in the cache and signals notify. It returns the FIRST
+// configured horizon's result — DefaultHorizon's, in the served configuration,
+// which is what the endpoint answers with when a request names no horizon.
+//
+// The rows are read ONCE, for the widest horizon; every horizon is then ranked
+// from that same slice, because BestPlays keeps only the newest WindowHours
+// distinct hours it is given. Two horizons therefore cost two in-memory passes,
+// not two hypertable scans, and both describe the same instant of the feed.
 //
 // The window is anchored on the newest hour that actually HAS rows, not on the
-// clock and not on the ingest cursor: [newest − WindowHours·1h, newest + 1h).
-// A feed that stalls therefore keeps serving its last real hours instead of
-// sliding into an empty window, and the upper bound includes the newest hour
-// while excluding the next one.
+// clock and not on the ingest cursor: [newest − widest·1h, newest + 1h). A feed
+// that stalls therefore keeps serving its last real hours instead of sliding
+// into an empty window, and the upper bound includes the newest hour while
+// excluding the next one.
 //
-// That span covers WindowHours+1 CLOCK hours, which is deliberate rather than
-// an off-by-one: the extra oldest hour is a hedge against gaps, since the engine
+// That span covers widest+1 CLOCK hours, which is deliberate rather than an
+// off-by-one: the extra oldest hour is a hedge against gaps, since the engine
 // keeps only the newest WindowHours DISTINCT hours it finds and a feed that
 // missed a poll would otherwise rank one hour short.
 //
-// A league with no rows yields Result{League, Plays: []Play{}} — warm, empty and
-// honest — rather than an error, because "nothing ingested yet" is the normal
-// state of a fresh league.
+// A league with no rows warms every horizon with Result{League, Plays: []Play{}}
+// — warm, empty and honest — rather than erroring, because "nothing ingested
+// yet" is the normal state of a fresh league.
 //
 // On any error the cache is left untouched and notify is NOT called: a failed
 // read must not turn a good cached answer into an empty one, and must not tell
@@ -195,28 +265,57 @@ func (s *Service) Recompute(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("exchange service: recompute: %w", err)
 	}
 
-	res := Result{League: s.scope.ID(), Plays: []Play{}}
+	var rows []StoredRow
 	newestAttr := "none"
 	if found {
 		newestAttr = newest.Format(time.RFC3339)
-		from := newest.Add(-time.Duration(s.cfg.WindowHours) * time.Hour)
+		from := newest.Add(-time.Duration(s.widestWindow()) * time.Hour)
 		to := newest.Add(time.Hour)
 
-		rows, loadErr := s.rows.LoadRows(ctx, s.scope, from, to)
-		if loadErr != nil {
-			return Result{}, fmt.Errorf("exchange service: recompute: %w", loadErr)
+		rows, err = s.rows.LoadRows(ctx, s.scope, from, to)
+		if err != nil {
+			return Result{}, fmt.Errorf("exchange service: recompute: %w", err)
 		}
-		res = BestPlays(s.scope.ID(), rows, s.cfg)
 	}
 
-	s.cache.Set(res)
+	var served Result
+	for i, horizon := range s.cfg.Horizons {
+		res := Result{League: s.scope.ID(), Horizon: string(horizon.Horizon), Plays: []Play{}}
+		if found {
+			res = BestPlays(s.scope.ID(), rows, horizonConfig(s.cfg, horizon))
+			res.Horizon = string(horizon.Horizon)
+		}
+		s.cache.Set(horizon.Horizon, res)
+		if i == 0 {
+			served = res
+		}
+		s.logger.Info("currency-exchange: plays recomputed",
+			"horizon", res.Horizon,
+			"hours", res.Hours,
+			"plays", len(res.Plays),
+			"divineChaosRate", res.DivineChaosRate,
+			"newestHour", newestAttr,
+		)
+	}
+
 	s.notify()
-	s.logger.Info("currency-exchange: plays recomputed",
-		"hours", res.Hours,
-		"plays", len(res.Plays),
-		"newestHour", newestAttr,
-	)
-	return res, nil
+	return served, nil
+}
+
+// widestWindow is the longest span any configured horizon ranks, and therefore
+// how far back one read has to reach to serve all of them.
+//
+// The base Config.WindowHours does not count: Recompute ranks the horizons and
+// nothing else, so seeding from the base would read hours no served answer looks
+// at. withDefaults guarantees at least one horizon.
+func (s *Service) widestWindow() int {
+	widest := 0
+	for _, horizon := range s.cfg.Horizons {
+		if horizon.WindowHours > widest {
+			widest = horizon.WindowHours
+		}
+	}
+	return widest
 }
 
 // Trigger runs a recompute, coalescing concurrent requests.

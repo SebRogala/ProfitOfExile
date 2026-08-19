@@ -105,13 +105,24 @@ func emptyRows() *fakeRows {
 }
 
 // twoHourRows is a source whose newest hour is feedHour and whose rows are the
-// same chaos/divine market in feedHour and the hour before it — a window that
+// same chaos-quoted market in feedHour and the hour before it — a window that
 // clears every default gate and produces exactly one direct play.
 func twoHourRows() *fakeRows {
 	rows := append(
-		storedAt(feedHour, chaosDivineSpec().row()),
-		storedAt(feedHour.Add(-time.Hour), chaosDivineSpec().row())...,
+		storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row()),
+		storedAt(feedHour.Add(-time.Hour), liquidChaosMarket(cardID, 100, 120).row())...,
 	)
+	return &fakeRows{newest: feedHour, found: true, rows: rows}
+}
+
+// eightHourRows carries the same market in the eight hours ending at feedHour —
+// more than the recent horizon's window and fewer than the day horizon's, so the
+// two horizons cannot produce the same answer.
+func eightHourRows() *fakeRows {
+	var rows []StoredRow
+	for i := 0; i < 8; i++ {
+		rows = append(rows, storedAt(feedHour.Add(-time.Duration(i)*time.Hour), liquidChaosMarket(cardID, 100, 120).row())...)
+	}
 	return &fakeRows{newest: feedHour, found: true, rows: rows}
 }
 
@@ -156,7 +167,7 @@ func TestRecompute_leagueWithNoStoredHour_cachesAWarmEmptyResult(t *testing.T) {
 		t.Errorf("got %d plays, want 0", len(got.Plays))
 	}
 
-	cached, warm := cache.Snapshot()
+	cached, warm := cache.Snapshot(DefaultHorizon)
 	if !warm {
 		t.Error("cache warm = false, want true — an honest empty answer is still an answer")
 	}
@@ -193,22 +204,48 @@ func TestRecompute_leagueWithNoStoredHour_signalsNotifyOnce(t *testing.T) {
 	}
 }
 
-func TestRecompute_anchorsTheWindowOnTheNewestStoredHour(t *testing.T) {
-	// [newest − WindowHours·1h, newest + 1h): anchored on real rows, not on the
-	// clock, and half-open so the newest hour is in and the next one is out.
+func TestRecompute_readsOneWindowSizedToTheWidestHorizon(t *testing.T) {
+	// [newest − widest·1h, newest + 1h): anchored on real rows, not on the clock,
+	// and half-open so the newest hour is in and the next one is out. One read
+	// serves every horizon, because BestPlays keeps only the newest WindowHours
+	// distinct hours of whatever it is handed.
 	tests := []struct {
-		name        string
-		windowHours int
-		wantFrom    time.Time
+		name     string
+		cfg      Config
+		wantFrom time.Time
 	}{
-		{"configured window", 3, feedHour.Add(-3 * time.Hour)},
-		{"unset window falls back to the default six hours", 0, feedHour.Add(-6 * time.Hour)},
+		{
+			name:     "the served pair reaches back as far as the day horizon",
+			cfg:      Config{},
+			wantFrom: feedHour.Add(-24 * time.Hour),
+		},
+		{
+			name: "configured horizons decide the span",
+			cfg: Config{Horizons: []HorizonConfig{
+				{Horizon: HorizonRecent, WindowHours: 2, MinHoursSeen: 1},
+				{Horizon: HorizonDay, WindowHours: 5, MinHoursSeen: 1},
+			}},
+			wantFrom: feedHour.Add(-5 * time.Hour),
+		},
+		{
+			name: "the widest is a maximum, not the last one listed",
+			cfg: Config{Horizons: []HorizonConfig{
+				{Horizon: HorizonRecent, WindowHours: 9, MinHoursSeen: 1},
+				{Horizon: HorizonDay, WindowHours: 3, MinHoursSeen: 1},
+			}},
+			wantFrom: feedHour.Add(-9 * time.Hour),
+		},
+		{
+			name:     "the base window is not a horizon, however wide",
+			cfg:      Config{WindowHours: 48},
+			wantFrom: feedHour.Add(-24 * time.Hour),
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rows := twoHourRows()
-			service, _, _ := newTestService(t, rows, Config{WindowHours: tc.windowHours})
+			service, _, _ := newTestService(t, rows, tc.cfg)
 
 			if _, err := service.Recompute(context.Background()); err != nil {
 				t.Fatalf("Recompute: %v", err)
@@ -216,7 +253,7 @@ func TestRecompute_anchorsTheWindowOnTheNewestStoredHour(t *testing.T) {
 
 			calls := rows.loadCalls()
 			if len(calls) != 1 {
-				t.Fatalf("LoadRows called %d times, want 1", len(calls))
+				t.Fatalf("LoadRows called %d times, want 1 — every horizon is ranked from the same read", len(calls))
 			}
 			if !calls[0].from.Equal(tc.wantFrom) {
 				t.Errorf("from = %s, want %s", calls[0].from, tc.wantFrom)
@@ -228,6 +265,110 @@ func TestRecompute_anchorsTheWindowOnTheNewestStoredHour(t *testing.T) {
 				t.Errorf("scope = %q, want %q", calls[0].scope.ID(), serviceScope.ID())
 			}
 		})
+	}
+}
+
+func TestRecompute_ranksTheSameRowsOncePerHorizon(t *testing.T) {
+	// Eight stored hours: the recent horizon medians the newest six of them and
+	// the day horizon all eight, from ONE read. Two horizons that answered with
+	// the same window would make the toggle a decoration.
+	service, cache, _ := newTestService(t, eightHourRows(), Config{})
+
+	if _, err := service.Recompute(context.Background()); err != nil {
+		t.Fatalf("Recompute: %v", err)
+	}
+
+	tests := []struct {
+		horizon   Horizon
+		wantHours int
+	}{
+		{horizon: HorizonRecent, wantHours: 6},
+		{horizon: HorizonDay, wantHours: 8},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.horizon), func(t *testing.T) {
+			cached, warm := cache.Snapshot(tc.horizon)
+			if !warm {
+				t.Fatalf("%s cache warm = false, want true", tc.horizon)
+			}
+			if cached.Hours != tc.wantHours {
+				t.Errorf("Hours = %d, want %d", cached.Hours, tc.wantHours)
+			}
+			if cached.Horizon != string(tc.horizon) {
+				t.Errorf("Horizon = %q, want %q — a client must not mistake one window's body for the other's",
+					cached.Horizon, tc.horizon)
+			}
+			if len(cached.Plays) != 1 {
+				t.Fatalf("got %d plays, want 1 (%v)", len(cached.Plays), playKeys(cached.Plays))
+			}
+			if got := cached.Plays[0].HoursSeen; got != tc.wantHours {
+				t.Errorf("HoursSeen = %d, want %d", got, tc.wantHours)
+			}
+		})
+	}
+}
+
+func TestRecompute_returnsTheFirstConfiguredHorizonsResult(t *testing.T) {
+	// The endpoint answers a request that names no horizon from the first one,
+	// so the value Recompute hands back — the one cmd/server logs and publishes
+	// counts from — has to be that same answer rather than the last computed.
+	tests := []struct {
+		name        string
+		cfg         Config
+		wantHorizon Horizon
+		wantHours   int
+	}{
+		{
+			name:        "the served pair leads with recent",
+			cfg:         Config{},
+			wantHorizon: HorizonRecent,
+			wantHours:   6,
+		},
+		{
+			name: "a configuration that leads with day returns day",
+			cfg: Config{Horizons: []HorizonConfig{
+				{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 18},
+				{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 4},
+			}},
+			wantHorizon: HorizonDay,
+			wantHours:   8,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			service, _, _ := newTestService(t, eightHourRows(), tc.cfg)
+
+			got, err := service.Recompute(context.Background())
+			if err != nil {
+				t.Fatalf("Recompute: %v", err)
+			}
+
+			if got.Horizon != string(tc.wantHorizon) {
+				t.Errorf("Horizon = %q, want %q", got.Horizon, tc.wantHorizon)
+			}
+			if got.Hours != tc.wantHours {
+				t.Errorf("Hours = %d, want the %s window's %d", got.Hours, tc.wantHorizon, tc.wantHours)
+			}
+		})
+	}
+}
+
+func TestHorizonConfig_overlaysOnlyTheWindowAndTheHoursSeen(t *testing.T) {
+	// A horizon is a span and a persistence demand, nothing else: the gates, the
+	// cut and the quote priority are the engine's and must survive the overlay,
+	// or the two horizons would silently rank by different rules.
+	base := DefaultConfig()
+	base.MinEdge = 0.5
+	base.MinTurnoverChaos = 250
+	base.QuotePriority = []string{ChaosID}
+
+	got := horizonConfig(base, HorizonConfig{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 18})
+
+	want := base
+	want.WindowHours, want.MinHoursSeen = 24, 18
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("horizonConfig() = %+v, want %+v", got, want)
 	}
 }
 
@@ -268,7 +409,7 @@ func TestRecompute_storedHours_ranksThemIntoTheResult(t *testing.T) {
 	if len(got.Plays) != 1 {
 		t.Fatalf("got %d plays, want 1 (%v)", len(got.Plays), playKeys(got.Plays))
 	}
-	if want := "direct:" + chaosDivineMarket; got.Plays[0].Key != want {
+	if want := directKey(chaosID, cardID); got.Plays[0].Key != want {
 		t.Errorf("play key = %q, want %q", got.Plays[0].Key, want)
 	}
 	if want := feedHour.Add(time.Hour); !got.To.Equal(want) {
@@ -284,7 +425,7 @@ func TestRecompute_storedHours_cachesExactlyTheReturnedResult(t *testing.T) {
 		t.Fatalf("Recompute: %v", err)
 	}
 
-	cached, warm := cache.Snapshot()
+	cached, warm := cache.Snapshot(DefaultHorizon)
 	if !warm {
 		t.Fatal("cache warm = false, want true")
 	}
@@ -337,7 +478,7 @@ func TestRecompute_storageFails_returnsTheErrorAndLeavesTheCacheCold(t *testing.
 			if got.League != "" || got.Hours != 0 || got.Plays != nil {
 				t.Errorf("result = %+v, want the zero Result", got)
 			}
-			if _, warm := cache.Snapshot(); warm {
+			if _, warm := cache.Snapshot(DefaultHorizon); warm {
 				t.Error("cache warm = true, want false — a failed read must not warm the cache")
 			}
 			if n := notify.count(); n != 0 {
@@ -361,7 +502,7 @@ func TestRecompute_unscopedScope_isRejectedBeforeReadingStorage(t *testing.T) {
 	if got := rows.newestHourCalls(); len(got) != 0 {
 		t.Errorf("NewestHour called %d times, want 0", len(got))
 	}
-	if _, warm := cache.Snapshot(); warm {
+	if _, warm := cache.Snapshot(DefaultHorizon); warm {
 		t.Error("cache warm = true, want false")
 	}
 	if n := notify.count(); n != 0 {
@@ -380,7 +521,7 @@ func TestRecompute_nilNotifyAndNilLogger_stillWarmsTheCache(t *testing.T) {
 		t.Fatalf("Recompute: %v", err)
 	}
 
-	cached, warm := cache.Snapshot()
+	cached, warm := cache.Snapshot(DefaultHorizon)
 	if !warm {
 		t.Fatal("cache warm = false, want true")
 	}
@@ -398,7 +539,7 @@ func TestTrigger_recomputesOnce(t *testing.T) {
 	if got := rows.newestHourCalls(); len(got) != 1 {
 		t.Errorf("NewestHour called %d times, want 1", len(got))
 	}
-	if _, warm := cache.Snapshot(); !warm {
+	if _, warm := cache.Snapshot(DefaultHorizon); !warm {
 		t.Error("cache warm = false, want true")
 	}
 }
@@ -460,7 +601,7 @@ func TestTrigger_recomputeFails_logsAWarningInsteadOfPanicking(t *testing.T) {
 	if !strings.HasPrefix(errText, "exchange service: recompute: ") {
 		t.Errorf("error attribute = %q, want it to name the failing operation", errText)
 	}
-	if _, warm := cache.Snapshot(); warm {
+	if _, warm := cache.Snapshot(DefaultHorizon); warm {
 		t.Error("cache warm = true, want false")
 	}
 }
@@ -477,7 +618,7 @@ func TestHandleEvent_malformedPayload_stillRecomputes(t *testing.T) {
 	if got := rows.newestHourCalls(); len(got) != 1 {
 		t.Errorf("NewestHour called %d times, want 1", len(got))
 	}
-	cached, warm := cache.Snapshot()
+	cached, warm := cache.Snapshot(DefaultHorizon)
 	if !warm {
 		t.Fatal("cache warm = false, want true")
 	}
@@ -489,7 +630,7 @@ func TestHandleEvent_malformedPayload_stillRecomputes(t *testing.T) {
 func TestCache_beforeAnyRecompute_readsAsCold(t *testing.T) {
 	cache := NewCache()
 
-	got, warm := cache.Snapshot()
+	got, warm := cache.Snapshot(DefaultHorizon)
 
 	if warm {
 		t.Error("warm = true, want false — nothing has been computed yet")
@@ -504,7 +645,7 @@ func TestCache_nilReceiver_readsAsCold(t *testing.T) {
 	// with a nil cache; reading it must answer "no answer yet", not panic.
 	var cache *Cache
 
-	got, warm := cache.Snapshot()
+	got, warm := cache.Snapshot(DefaultHorizon)
 
 	if warm {
 		t.Error("warm = true, want false")
@@ -512,7 +653,7 @@ func TestCache_nilReceiver_readsAsCold(t *testing.T) {
 	if got.Plays != nil {
 		t.Errorf("Plays = %v, want nil", got.Plays)
 	}
-	cache.Set(Result{League: "Allflame"}) // must not panic either
+	cache.Set(DefaultHorizon, Result{League: "Allflame"}) // must not panic either
 }
 
 func TestCache_emptyResult_readsAsWarm(t *testing.T) {
@@ -520,9 +661,9 @@ func TestCache_emptyResult_readsAsWarm(t *testing.T) {
 	// must not leave the cache reading as "not computed yet" forever.
 	cache := NewCache()
 
-	cache.Set(Result{League: "Allflame", Plays: []Play{}})
+	cache.Set(DefaultHorizon, Result{League: "Allflame", Plays: []Play{}})
 
-	got, warm := cache.Snapshot()
+	got, warm := cache.Snapshot(DefaultHorizon)
 	if !warm {
 		t.Error("warm = false, want true")
 	}
@@ -534,6 +675,29 @@ func TestCache_emptyResult_readsAsWarm(t *testing.T) {
 	}
 }
 
+func TestCache_oneHorizonSet_leavesTheOtherCold(t *testing.T) {
+	// Each horizon warms on its own, so a client asking for the day ranking
+	// before the first recompute finished must not be served the recent one.
+	cache := NewCache()
+	cache.Set(HorizonRecent, Result{League: "Allflame", Horizon: string(HorizonRecent), Hours: 6, Plays: []Play{{Key: "direct:a"}}})
+
+	recent, recentWarm := cache.Snapshot(HorizonRecent)
+	day, dayWarm := cache.Snapshot(HorizonDay)
+
+	if !recentWarm {
+		t.Error("recent warm = false, want true")
+	}
+	if recent.Hours != 6 || len(recent.Plays) != 1 {
+		t.Errorf("recent = %+v, want the stored six-hour result", recent)
+	}
+	if dayWarm {
+		t.Error("day warm = true, want false — nothing has been computed for it")
+	}
+	if day.Horizon != "" || day.Plays != nil {
+		t.Errorf("day = %+v, want the zero Result", day)
+	}
+}
+
 func TestCache_secondSet_replacesTheStoredResultWholesale(t *testing.T) {
 	// Results are whole-corpus answers, so the newest recompute is the truth —
 	// a merge would keep plays the newest window no longer supports.
@@ -541,10 +705,10 @@ func TestCache_secondSet_replacesTheStoredResultWholesale(t *testing.T) {
 	first := Result{League: "Allflame", Hours: 6, Plays: []Play{{Key: "direct:a"}, {Key: "direct:b"}}}
 	second := Result{League: "Allflame", Hours: 1, Plays: []Play{{Key: "direct:c"}}}
 
-	cache.Set(first)
-	cache.Set(second)
+	cache.Set(DefaultHorizon, first)
+	cache.Set(DefaultHorizon, second)
 
-	got, _ := cache.Snapshot()
+	got, _ := cache.Snapshot(DefaultHorizon)
 	if !reflect.DeepEqual(got, second) {
 		t.Errorf("snapshot = %+v, want %+v", got, second)
 	}
@@ -552,16 +716,16 @@ func TestCache_secondSet_replacesTheStoredResultWholesale(t *testing.T) {
 
 func TestCache_snapshotPlaysAreACopy_soAReaderCannotCorruptTheCache(t *testing.T) {
 	cache := NewCache()
-	cache.Set(Result{League: "Allflame", Plays: []Play{{Key: "direct:a"}, {Key: "direct:b"}}})
+	cache.Set(DefaultHorizon, Result{League: "Allflame", Plays: []Play{{Key: "direct:a"}, {Key: "direct:b"}}})
 
 	// Rewriting through the snapshot is what a handler filtering or sorting in
 	// place would do. Assigning through the index (rather than appending, which
 	// reallocates a full slice and would pass either way) is what reaches the
 	// backing array the cache would be sharing.
-	snapshot, _ := cache.Snapshot()
+	snapshot, _ := cache.Snapshot(DefaultHorizon)
 	snapshot.Plays[0].Key = "rewritten by the reader"
 
-	got, _ := cache.Snapshot()
+	got, _ := cache.Snapshot(DefaultHorizon)
 	if got.Plays[0].Key != "direct:a" {
 		t.Errorf("cached play key = %q, want %q — the snapshot aliased the cached slice",
 			got.Plays[0].Key, "direct:a")

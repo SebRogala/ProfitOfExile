@@ -5,18 +5,30 @@ import (
 	"testing"
 )
 
-func TestDirectCandidates_chaosDivineRow_quotesTheFlipInDivine(t *testing.T) {
+func TestDirectCandidates_chaosDivineRow_observesBothLegsQuotedInDivine(t *testing.T) {
 	got := directCandidates([]Row{chaosDivineSpec().row()}, DefaultConfig())
 
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1", len(got))
 	}
 	// Divine leads the default quote priority, so the market reads as "chaos
-	// priced in divine": both legs trade the chaos side, and the volume and
-	// stock quoted are chaos's.
-	wantLegs := []Leg{
-		{Action: "buy", Item: chaosID, Quote: divineID, Price: 1.0 / 201.0, Volume: 13001051, Stock: 4564191},
-		{Action: "sell", Item: chaosID, Quote: divineID, Price: 1.0 / 196.0, Volume: 13001051, Stock: 4564191},
+	// priced in divine": both legs trade the chaos side, the traded volume and
+	// stock are chaos's, and the quote volume is divine's. Both legs observe the
+	// same hour of the same market and differ only in which end of the spread
+	// they execute on, which is read from action.
+	hour := obs{
+		low:         1.0 / 201.0,
+		high:        1.0 / 196.0,
+		vwap:        65361.0 / 13001051.0,
+		vwapOK:      true,
+		tick:        1.0 / 196.0,
+		quoteVolume: 65361,
+		volume:      13001051,
+		stock:       4564191,
+	}
+	wantLegs := []candidateLeg{
+		{action: "buy", item: chaosID, quote: divineID, obs: hour},
+		{action: "sell", item: chaosID, quote: divineID, obs: hour},
 	}
 	if !reflect.DeepEqual(got[0].legs, wantLegs) {
 		t.Errorf("legs = %+v, want %+v", got[0].legs, wantLegs)
@@ -24,10 +36,9 @@ func TestDirectCandidates_chaosDivineRow_quotesTheFlipInDivine(t *testing.T) {
 	if got[0].mode != ModeDirect {
 		t.Errorf("mode = %q, want %q", got[0].mode, ModeDirect)
 	}
-	wantClose(t, "edge", got[0].edge, 201.0/196.0-1)
 }
 
-func TestDirectCandidates_chaosPreferredAsQuote_pricesTheFlipInChaos(t *testing.T) {
+func TestDirectCandidates_chaosPreferredAsQuote_observesBothLegsQuotedInChaos(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.QuotePriority = []string{ChaosID, DivineID}
 
@@ -37,10 +48,23 @@ func TestDirectCandidates_chaosPreferredAsQuote_pricesTheFlipInChaos(t *testing.
 		t.Fatalf("got %d candidates, want 1", len(got))
 	}
 	// The same market, read the other way round: divine is the traded item, so
-	// the prices are the feed's own 196 and 201 and the depth is divine's.
-	wantLegs := []Leg{
-		{Action: "buy", Item: divineID, Quote: chaosID, Price: 196, Volume: 65361, Stock: 8878},
-		{Action: "sell", Item: divineID, Quote: chaosID, Price: 201, Volume: 65361, Stock: 8878},
+	// the prices are the feed's own 196 and 201, the depth and the stock are
+	// divine's, and the volume-weighted price is the 198.97 chaos a divine the
+	// hour actually cleared at. The tick is a property of the quantity pairs, so
+	// it does not depend on which side is read as the quote.
+	hour := obs{
+		low:         196,
+		high:        201,
+		vwap:        13001051.0 / 65361.0,
+		vwapOK:      true,
+		tick:        1.0 / 196.0,
+		quoteVolume: 13001051,
+		volume:      65361,
+		stock:       8878,
+	}
+	wantLegs := []candidateLeg{
+		{action: "buy", item: divineID, quote: chaosID, obs: hour},
+		{action: "sell", item: divineID, quote: chaosID, obs: hour},
 	}
 	if !reflect.DeepEqual(got[0].legs, wantLegs) {
 		t.Errorf("legs = %+v, want %+v", got[0].legs, wantLegs)
@@ -138,8 +162,8 @@ func TestDirectCandidates_itemVolumeExactlyAtTheFloor_keepsTheCandidate(t *testi
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1: the floor is inclusive", len(got))
 	}
-	if got[0].legs[0].Volume != 10 {
-		t.Errorf("leg volume = %v, want 10", got[0].legs[0].Volume)
+	if got[0].legs[0].obs.volume != 10 {
+		t.Errorf("leg volume = %v, want 10", got[0].legs[0].obs.volume)
 	}
 }
 
@@ -154,7 +178,27 @@ func TestDirectCandidates_untradedQuoteSide_stillProducesACandidate(t *testing.T
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1", len(got))
 	}
-	if got[0].legs[0].Item != chaosID {
-		t.Errorf("traded item = %s, want %s", got[0].legs[0].Item, chaosID)
+	if got[0].legs[0].item != chaosID {
+		t.Errorf("traded item = %s, want %s", got[0].legs[0].item, chaosID)
+	}
+}
+
+func TestDirectCandidates_untradedQuoteSide_marksTheHourAsCarryingNoFairPrice(t *testing.T) {
+	// No divine changed hands, so the hour has no volume-weighted price at all.
+	// That is a MISSING reading, not a price of zero: vwapOK is what keeps the
+	// aggregator from averaging the 0 into the leg's fair anchor.
+	spec := chaosDivineSpec()
+	spec.volume[1] = 0
+
+	got := directCandidates([]Row{spec.row()}, DefaultConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want 1", len(got))
+	}
+	if got[0].legs[0].obs.vwapOK {
+		t.Errorf("vwapOK = true, want false when the quote side traded nothing")
+	}
+	if got[0].legs[0].obs.vwap != 0 {
+		t.Errorf("vwap = %v, want 0 beside vwapOK false", got[0].legs[0].obs.vwap)
 	}
 }

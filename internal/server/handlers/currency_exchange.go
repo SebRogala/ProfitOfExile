@@ -34,8 +34,7 @@ type legResponse struct {
 // Legs shadows the embedded exchange.Play.Legs: encoding/json resolves a tag
 // collision in favour of the shallower field, so "legs" serializes from this
 // []legResponse and the embedded []exchange.Leg is dropped. Every other Play
-// field (key, mode, edge, depth, hoursSeen, lastHour) comes through the
-// embedding untouched.
+// field (see exchange.Play) comes through the embedding untouched.
 type playResponse struct {
 	exchange.Play
 	Legs []legResponse `json:"legs"`
@@ -49,15 +48,22 @@ type playResponse struct {
 // computed yet) from WARM-AND-EMPTY (computed, and the honest answer is no
 // plays); see the cache-state contract in internal/exchange/service.go.
 type playsResponse struct {
-	League      string         `json:"league"`
-	LastUpdated *time.Time     `json:"lastUpdated"`
-	From        *time.Time     `json:"from"`
-	To          *time.Time     `json:"to"`
-	Hours       int            `json:"hours"`
-	Warm        bool           `json:"warm"`
-	Mode        string         `json:"mode"`
-	Count       int            `json:"count"`
-	Plays       []playResponse `json:"plays"`
+	League      string     `json:"league"`
+	LastUpdated *time.Time `json:"lastUpdated"`
+	From        *time.Time `json:"from"`
+	To          *time.Time `json:"to"`
+	Hours       int        `json:"hours"`
+	Warm        bool       `json:"warm"`
+	Mode        string     `json:"mode"`
+	// Horizon echoes which window these plays were ranked in, so a client that
+	// requested one cannot mistake a cached body for another.
+	Horizon string `json:"horizon"`
+	// DivineChaosRate is the chaos value of one divine the engine valued every
+	// play with, or 0 when the divine/chaos market did not trade in the window
+	// (in which case no divine-quoted play is in the list).
+	DivineChaosRate float64        `json:"divineChaosRate"`
+	Count           int            `json:"count"`
+	Plays           []playResponse `json:"plays"`
 }
 
 // modeAll is the query value (and the default) meaning "do not filter".
@@ -65,9 +71,13 @@ const modeAll = "all"
 
 // CurrencyExchangePlays serves the cached currency-exchange ranking.
 //
-// GET /api/currency-exchange/plays?mode=all|direct|1-hop — mode is optional and
-// defaults to all; anything else is a 400 rather than a silent fallback, because
-// a typo that quietly returned every play would look like a working filter.
+// GET /api/currency-exchange/plays?mode=all|direct|1-hop&horizon=recent|day —
+// both parameters are optional and default to all and recent; anything else is a
+// 400 rather than a silent fallback, because a typo that quietly returned every
+// play, or the other horizon's ranking, would look like a working filter.
+//
+// The two horizons are computed by the same recompute and both live in the
+// cache, so picking one is a map lookup rather than work.
 //
 // The handler never touches the database. The read side of this pillar is
 // exchange.Service's recompute, which stores whole answers in the cache; a query
@@ -100,8 +110,19 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 			return
 		}
 
+		horizon := exchange.Horizon(r.URL.Query().Get("horizon"))
+		if horizon == "" {
+			horizon = exchange.DefaultHorizon
+		}
+		switch horizon {
+		case exchange.HorizonRecent, exchange.HorizonDay:
+		default:
+			jsonError(w, http.StatusBadRequest, "horizon must be one of recent, day")
+			return
+		}
+
 		// A nil *exchange.Cache reads as cold; Snapshot handles the nil receiver.
-		result, warm := cache.Snapshot()
+		result, warm := cache.Snapshot(horizon)
 
 		plays := make([]playResponse, 0, len(result.Plays))
 		for _, play := range result.Plays {
@@ -112,12 +133,14 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 		}
 
 		body := playsResponse{
-			League: result.League,
-			Hours:  result.Hours,
-			Warm:   warm,
-			Mode:   mode,
-			Count:  len(plays),
-			Plays:  plays,
+			League:          result.League,
+			Hours:           result.Hours,
+			Warm:            warm,
+			Mode:            mode,
+			Horizon:         string(horizon),
+			DivineChaosRate: result.DivineChaosRate,
+			Count:           len(plays),
+			Plays:           plays,
 		}
 		if last, ok := exchange.LastUpdated(result); ok {
 			last = last.UTC()

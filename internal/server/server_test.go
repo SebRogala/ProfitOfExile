@@ -139,7 +139,7 @@ func TestNewRouter_CurrencyExchangeRouteIsServedWithoutTheLabStack(t *testing.T)
 	// and the cache the route answers from is the one in the config, which is
 	// what the league and the play count below prove.
 	cache := exchange.NewCache()
-	cache.Set(exchange.Result{
+	cache.Set(exchange.DefaultHorizon, exchange.Result{
 		League: "Mirage",
 		Hours:  6,
 		To:     time.Date(2026, 8, 19, 7, 0, 0, 0, time.UTC),
