@@ -10,6 +10,8 @@ vi.mock('$lib/stores/status.svelte', () => ({
 
 const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays } = await import('./api');
 
+import type { CurrencyExchangeLeg, CurrencyExchangeResponse } from './api';
+
 /**
  * The variant strings the UI filters on (ByVariant.svelte, FontEVCompare.svelte).
  * Kept literal here on purpose: if the backend format and this list drift apart
@@ -96,7 +98,7 @@ describe('signalTransitionLabel', () => {
  * turn into the "stale" header rather than a blank table.
  */
 describe('fetchCurrencyExchangePlays', () => {
-	const PLAYS_RESPONSE = {
+	const PLAYS_RESPONSE: CurrencyExchangeResponse = {
 		league: 'Mirage',
 		lastUpdated: '2026-08-19T12:00:00.000Z',
 		from: null,
@@ -106,6 +108,54 @@ describe('fetchCurrencyExchangePlays', () => {
 		mode: 'direct',
 		count: 0,
 		plays: []
+	};
+
+	/**
+	 * A play as the decorated handler sends it (POE-177): every leg carries a
+	 * display name, and an icon path only when the item has artwork. Both
+	 * shapes appear in the same payload because the page has to render a row
+	 * that mixes them.
+	 */
+	const DECORATED_LEG: CurrencyExchangeLeg = {
+		action: 'buy',
+		item: 'Metadata/Items/Currency/CurrencyRerollRare',
+		quote: 'Metadata/Items/Currency/CurrencyAddModToRare',
+		price: 0.004975,
+		volume: 1200,
+		stock: 40,
+		itemName: 'Chaos Orb',
+		itemIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		quoteName: 'Exalted Orb',
+		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyAddModToRare'
+	};
+
+	const ICONLESS_LEG: CurrencyExchangeLeg = {
+		action: 'sell',
+		item: 'Metadata/Items/Currency/CurrencyAfflictionOrbGeneric',
+		quote: 'Metadata/Items/Currency/CurrencyRerollRare',
+		price: 3.5,
+		volume: 90,
+		stock: 12,
+		itemName: 'Delirium Orb',
+		itemIcon: null,
+		quoteName: 'Chaos Orb',
+		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+	};
+
+	const DECORATED_RESPONSE: CurrencyExchangeResponse = {
+		...PLAYS_RESPONSE,
+		count: 1,
+		plays: [
+			{
+				key: 'chaos:exalted',
+				mode: 'direct',
+				legs: [DECORATED_LEG, ICONLESS_LEG],
+				edge: 0.12,
+				depth: 90,
+				hoursSeen: 20,
+				lastHour: '2026-08-19T12:00:00.000Z'
+			}
+		]
 	};
 
 	let originalFetch: typeof globalThis.fetch;
@@ -120,7 +170,11 @@ describe('fetchCurrencyExchangePlays', () => {
 
 	beforeEach(() => {
 		originalFetch = globalThis.fetch;
-		fetchMock = vi.fn(async () => ({ ok: true, json: async () => PLAYS_RESPONSE }));
+		// `json()` hands back a fresh parse on every real request, so the mock
+		// clones too — sharing the fixture object would alias `expect`'s
+		// argument with the fetcher's own return value and hide any in-place
+		// rewrite of the body.
+		fetchMock = vi.fn(async () => ({ ok: true, json: async () => structuredClone(PLAYS_RESPONSE) }));
 		globalThis.fetch = fetchMock as unknown as typeof fetch;
 	});
 
@@ -162,6 +216,30 @@ describe('fetchCurrencyExchangePlays', () => {
 
 	it('returns the parsed body on a successful request', async () => {
 		expect(await fetchCurrencyExchangePlays('direct')).toEqual(PLAYS_RESPONSE);
+	});
+
+	it('hands the page a leg with its display names and icon paths exactly as the server sent them', async () => {
+		// The page joins `itemIcon` onto the API base itself (view.ts `iconSrc`),
+		// so the path has to arrive server-relative and with its `%2F` escaping
+		// intact — a fetcher that normalised, re-encoded or re-keyed the leg
+		// would send every chip to a 404.
+		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
+
+		const result = await fetchCurrencyExchangePlays('direct');
+
+		expect(result.plays[0].legs[0]).toEqual(DECORATED_LEG);
+	});
+
+	it('keeps a null icon as null rather than dropping the field', async () => {
+		// "no artwork" and "field absent" render differently: ItemIcon draws
+		// nothing for the first, and `undefined` would reach `iconSrc` as a
+		// missing prop instead. A few live ids have no icon (Delirium Orb), so
+		// this is the shape of a real payload, not a defensive case.
+		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
+
+		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[1];
+
+		expect(leg.itemIcon).toBeNull();
 	});
 
 	it('rejects with the status when the server answers a non-OK response', async () => {
