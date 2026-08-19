@@ -9,11 +9,13 @@ import (
 
 // Mode names the shape of a play: how many markets it touches.
 //
-// A direct play is a same-market flip (buy low, sell high, roiPct = high/low - 1).
-// A one-hop play is a three-leg triangle through a second quote currency
-// (roiPct = highXinB * highBinA / lowXinA - 1). Ranking prefers the direct shape
-// when everything else ties, because it carries one execution risk instead of
-// three.
+// A direct play is a same-market flip (buy low, sell high, roiPctRaw =
+// high/low - 1). A one-hop play is a three-leg triangle through a second quote
+// currency (roiPctRaw = highXinB * highBinA / lowXinA - 1). Both formulas are
+// the RAW return on the hour's observed extremes; RoiPct, what the gates and the
+// ranking use, is the same round trip after each leg pays its tick. Ranking
+// prefers the direct shape when everything else ties, because it carries one
+// execution risk instead of three.
 type Mode string
 
 const (
@@ -25,18 +27,18 @@ const (
 	ModeOneHop Mode = "1-hop"
 )
 
-// Leg is one executed step of a play on one market.
+// Leg is one executed step of a play on one market, as ONE feed hour observed
+// it — the hour named by Play.LastHour, and no other.
 //
-// Price is the median across the window's hours of that hour's extreme on the
-// leg's side — the cheapest realized price for a buy, the dearest for a sell —
-// expressed in Quote units per one Item. It is the executable recipe: a market
-// maker posts at the edges, and the median is what that edge was worth in a
-// typical hour rather than in the loudest one.
-//
-// Fair is the median of the hours' volume-weighted average prices, the price the
-// traded mass actually cleared at, and it is the anchor Price should be read
-// against: a Price far outside Fair is quantization, not opportunity. Tick says
-// how far apart two representable prices are on this market, as a fraction.
+// Price is that hour's realized extreme on the leg's side — the cheapest price
+// for a buy, the dearest for a sell — expressed in Quote units per one Item, and
+// it is RAW: the undercut a real order needs lives in Play.RoiPct and Play.Roi,
+// never in this number. Reading it against Fair, the hour's volume-weighted
+// average price, is how a quantization artefact is told from an opportunity, and
+// Suspect is that comparison already made (see Config.SuspectLowBand). Tick says
+// how far apart two representable prices are on this market, as a fraction, so a
+// client can rebuild the undercut price: Price*(1+Tick) to buy, Price*(1-Tick)
+// to sell.
 type Leg struct {
 	// Action is "buy" or "sell", from the player's point of view.
 	Action string `json:"action"`
@@ -45,44 +47,58 @@ type Leg struct {
 	Item string `json:"item"`
 	// Quote is the raw feed id of the currency Price and Fair are denominated in.
 	Quote string `json:"quote"`
-	// Price is Quote units per one Item: the median hourly low on a buy leg,
-	// the median hourly high on a sell leg.
+	// Price is Quote units per one Item: the hour's low on a buy leg, the
+	// hour's high on a sell leg. Raw, not undercut.
 	Price float64 `json:"price"`
-	// Fair is the median hourly volume-weighted average price of one Item in
-	// Quote units — where the hour's mass traded, between the two extremes. Only
-	// the hours that HAD a volume-weighted price count toward it; it is 0 when
-	// no hour in the window did, which reads as "no anchor", not as a free item.
+	// Fair is the hour's volume-weighted average price of one Item in Quote
+	// units — where the hour's mass traded, between the two extremes. It is 0
+	// when the hour's quote side reported no volume, which is a missing reading
+	// rather than a free item; FairOK is what tells the two apart.
 	Fair float64 `json:"fair"`
-	// Tick is the median hourly price resolution of this market as a fraction
-	// of the price: 0.5 means the next representable price is 50% away. See
-	// tickOf for why it is the strongest predictor of a fake spread.
+	// FairOK says whether the hour had a volume-weighted price at all. When it
+	// is false Fair is 0 and Suspect is false: with no anchor there is nothing
+	// to call the extreme suspect against.
+	FairOK bool `json:"fairOk"`
+	// Tick is this market's price resolution in the hour, as a fraction of the
+	// price: 0.5 means the next representable price is 50% away. See tickOf for
+	// why it is the strongest predictor of a fake spread.
 	Tick float64 `json:"tick"`
-	// Volume is the median of the units of Item traded per hour on this market
-	// across the hours the play was seen.
+	// Volume is the units of Item traded on this market in the hour.
 	Volume float64 `json:"volume"`
-	// Stock is the market's highest stock of Item in the newest hour the play
-	// was seen. Liveness only — it is an hourly max of total book size and does
-	// not describe the extreme (measured corr <= 0.13 against the edge).
+	// Stock is the market's highest stock of Item in the hour. Liveness only —
+	// it is an hourly max of total book size and does not describe the extreme
+	// (measured corr <= 0.13 against the edge).
 	Stock int64 `json:"stock"`
+	// Suspect marks an extreme too far from Fair to trade on: a buy leg whose
+	// low is under Fair*Config.SuspectLowBand, a sell leg whose high is over
+	// Fair*Config.SuspectHighBand. Measured on 221 liquid chaos markets over 24
+	// hours, extremes sit 11-13% off the hour's VWAP at the median hour and 50%
+	// at p90, so a leg outside the bands is one trade nobody could repeat rather
+	// than a price. The play is still served — the reader judges it — but it
+	// ranks after every clean one.
+	Suspect bool `json:"suspect"`
 }
 
-// Play is one ranked opportunity aggregated over the window's hours.
+// Play is one ranked opportunity: ONE hour's prices, plus how many hours the
+// recipe has been holding up.
 //
-// The window's hours enter as cross-hour MEDIANS, with no recency weighting:
-// one hour of nonsense moves a median by nothing, and 38% of markets print a
-// single-hour edge above 5x their own median. Each leg's Price, Fair, Tick and
-// Volume is such a median; RoiPct, Roi, Investment, Turnover, Tick and Depth are
-// arithmetic ON those medians — a ratio, a product, a min or a max across the
-// legs — not medians of themselves. Leg.Stock, RoiPctNewestHour, HoursSeen and
-// LastHour are not medians at all: the first two read the newest hour alone, the
-// last two count and name the hours. RoiPct is recomputed FROM the emitted leg
-// prices, so what the play claims is reproducible from what it shows.
+// Every price-shaped number a Play carries comes from a single feed hour, the
+// one LastHour names — and for a served play that is the window's NEWEST hour,
+// the last snapshot, because BestPlays drops any recipe that did not clear its
+// gates there. Nothing is blended across hours, because a blend is a trade
+// nobody could have made: Mawr Blaidd/Chaos printed lows of 62-81 chaos in four
+// consecutive hours against a VWAP near 250, which is why a price shown here
+// belongs to one hour.
 //
-// The medians are synthesized across hours in BOTH shapes: even a direct play's
-// two Prices are independent medians — one of the hourly lows, one of the hourly
-// highs — so its RoiPct is a combination no single hour necessarily offered. A
-// 1-hop play compounds that over three such medians AND three separate markets:
-// a typical shape of the route rather than a trade someone made.
+// The only cross-hour thing left is persistence: HoursSeen counts the window
+// hours in which the recipe cleared the gates on that hour's own prices, so a
+// one-hour ghost and a play that has held all day are told apart by a count
+// rather than by an averaged price.
+//
+// RoiPct, Roi, Investment, Tick and Depth are arithmetic on that one hour's
+// legs — a ratio, a product, a min or a max across them — so a client can
+// recheck them from what it shows; Turnover is the same hour's quote-side volume
+// valued in chaos, which the legs do not carry.
 type Play struct {
 	// Key identifies the recipe across hours: "direct:<marketID>" or
 	// "1-hop:<item>|<buyQuote>|<sellQuote>".
@@ -91,40 +107,56 @@ type Play struct {
 	Mode Mode `json:"mode"`
 	// Legs are the steps in execution order: two for direct, three for 1-hop.
 	Legs []Leg `json:"legs"`
-	// RoiPct is the fractional gain of one round trip at the prices the Legs
-	// show, 0.05 meaning +5%.
+	// RoiPct is the fractional gain of one round trip at the UNDERCUT prices,
+	// 0.05 meaning +5%: each leg pays one of its own ticks to be the order that
+	// fills (buy at Price*(1+Tick), sell at Price*(1-Tick)). It is what the
+	// gates and the ranking use, because it is the return an order that
+	// actually gets taken can expect.
 	RoiPct float64 `json:"roiPct"`
 	// Edge is RoiPct under its old name, kept on the wire for clients written
 	// before POE-184.
 	//
 	// Deprecated: read RoiPct. The two always carry the same value.
 	Edge float64 `json:"edge"`
-	// RoiPctNewestHour is the extreme-to-extreme edge of LastHour, the newest
-	// hour this recipe was seen in — the single-hour number the engine used to
-	// rank on. It is the NOW reading, not a bound: it sits above RoiPct when
-	// that hour was louder than the window's typical one and BELOW RoiPct when
-	// the newest hour was quieter. That is the "is it moving right now" marker
-	// the desktop draws.
-	RoiPctNewestHour float64 `json:"roiPctNewestHour"`
-	// Roi is chaos gained per exchange of ONE unit: Investment * RoiPct.
+	// RoiPctRaw is the same round trip at the raw observed extremes — what the
+	// hour printed, with nothing paid for the fill. It is always at least
+	// RoiPct, and the gap between them is what the ticks cost: on a coarse
+	// market it eats the whole spread.
+	RoiPctRaw float64 `json:"roiPctRaw"`
+	// Roi is chaos gained per exchange of ONE unit at the undercut prices:
+	// = Investment * RoiPct. Both factors are priced at the undercut entry, so
+	// the identity holds by construction and a client can check the payout
+	// against the outlay without knowing which tick was paid.
 	Roi float64 `json:"roi"`
-	// Investment is the chaos one unit costs to enter, from the first leg.
+	// Investment is the chaos per unit at the UNDERCUT entry price: what one
+	// unit costs to enter on the first leg after paying that leg's tick to be
+	// the order that fills. Leg.Price stays RAW — this is Price*(1+Tick) on a
+	// buy entry, valued in chaos at the hour's rate.
 	Investment float64 `json:"investment"`
 	// Turnover is chaos per hour flowing through the play's thinnest leg — the
-	// median quote-side volume valued in chaos. It is the liquidity reading;
-	// unit volume is not one (corr(ln edge, ln units) = +0.06 against −0.30 for
+	// hour's quote-side volume valued in chaos. It is the liquidity reading;
+	// unit volume is not one (corr(ln edge, ln units) = +0.06 against -0.30 for
 	// chaos turnover).
 	Turnover float64 `json:"turnover"`
-	// Tick is the coarsest median price resolution among the legs: the worst
-	// step the recipe has to live with.
+	// Tick is the coarsest price resolution among the legs: the worst step the
+	// recipe has to live with.
 	Tick float64 `json:"tick"`
-	// Depth is the thinnest leg's median Volume — the units per hour the whole
-	// recipe can absorb.
+	// Depth is the thinnest leg's Volume — the units per hour the whole recipe
+	// can absorb.
 	Depth float64 `json:"depth"`
-	// HoursSeen counts the window hours where the recipe passed its gates. A
-	// low count on a wide window is a ghost: an edge that showed up once.
+	// Suspect is true when ANY leg is: one unrepeatable extreme is enough to
+	// make the whole percentage a story. Suspect plays rank after every clean
+	// one, and Config.HideSuspect drops them instead.
+	Suspect bool `json:"suspect"`
+	// HoursSeen counts the window hours in which the recipe cleared every gate
+	// on THAT hour's own prices. A low count on a wide window is a ghost: an
+	// edge that showed up once.
 	HoursSeen int `json:"hoursSeen"`
-	// LastHour is the newest feed hour the recipe was seen in, UTC.
+	// LastHour is the hour every price above was read from, UTC. For a served
+	// play it is always the window's NEWEST hour: BestPlays drops a recipe that
+	// did not clear in the last snapshot, so a stale row can never present
+	// itself as a current price. HoursSeen, not this field, is what says how
+	// long the recipe has been holding up.
 	LastHour time.Time `json:"lastHour"`
 }
 
@@ -142,15 +174,16 @@ type Result struct {
 	From    time.Time `json:"from"`
 	To      time.Time `json:"to"`
 	Hours   int       `json:"hours"`
-	// DivineChaosRate is the chaos every play was valued in: the median hourly
-	// VWAP of the divine/chaos market over the window. It is 0 when that market
-	// did not trade in the window, in which case no divine-quoted play is
-	// returned at all.
+	// DivineChaosRate is the NEWEST hour's divine/chaos VWAP, the current chaos
+	// value of one divine. Because a served play must have cleared in that hour,
+	// it IS the rate every play in the list was valued at; the older hours' rates
+	// govern only whether a recipe counted towards HoursSeen. It is 0 when the
+	// newest hour had no divine/chaos trade.
 	DivineChaosRate float64 `json:"divineChaosRate"`
 	Plays           []Play  `json:"plays"`
 }
 
-// Config tunes the window, the gates and the ranking cut.
+// Config tunes the window, the gates, the junk bands and the ranking cut.
 //
 // The gates answer different failure modes, all of them measured over 26 hours
 // of Allflame: MinVolumePerHour drops legs nobody traded, MinHoursSeen drops
@@ -158,8 +191,10 @@ type Result struct {
 // (p50 robust edge is 242% under 100 chaos/hour and 18% over 100k),
 // MaxTick and MinEdgeTickRatio drop the spreads that are one integer price step
 // wide, and MinROIChaos drops plays whose percentage is fine and whose payout is
-// a rounding error. QuotePriority decides which side of a market reads as the
-// currency (see orient).
+// a rounding error. The suspect bands do not gate at all by default: they flag
+// an extreme that sits too far from its hour's VWAP to be repeatable, and only
+// HideSuspect turns the flag into a filter. QuotePriority decides which side of
+// a market reads as the currency (see orient).
 type Config struct {
 	// WindowHours is how many of the newest distinct hours to aggregate. It
 	// binds only a direct BestPlays call: the served path overlays it per
@@ -168,11 +203,12 @@ type Config struct {
 	// MinVolumePerHour is the per-leg liveness floor on units traded in an
 	// hour. It is not the liquidity gate — MinTurnoverChaos is.
 	MinVolumePerHour float64
-	// MinEdge is the smallest RoiPct kept, 0.02 meaning +2%. A zero value means
-	// "use the default"; a negative value lowers the percentage floor and
-	// surfaces the small positive returns the default hides. It cannot surface a
-	// losing route: MinEdgeTickRatio * Tick and MinROIChaos are always positive,
-	// so a negative RoiPct fails those two gates whatever MinEdge says.
+	// MinEdge is the smallest RoiPct kept, 0.02 meaning +2%, judged on the
+	// UNDERCUT return. A zero value means "use the default"; a negative value
+	// lowers the percentage floor and surfaces the small positive returns the
+	// default hides. It cannot surface a losing route: MinEdgeTickRatio * Tick
+	// and MinROIChaos are always positive, so a negative RoiPct fails those two
+	// gates whatever MinEdge says.
 	MinEdge float64
 	// MinTurnoverChaos is the smallest Play.Turnover kept, in chaos per hour.
 	MinTurnoverChaos float64
@@ -183,11 +219,22 @@ type Config struct {
 	MinEdgeTickRatio float64
 	// MinROIChaos is the smallest Play.Roi kept, in chaos per exchanged unit.
 	MinROIChaos float64
-	// MinHoursSeen is the smallest number of window hours a play must appear
-	// in. It is capped at the number of hours actually present, so a
-	// single-hour window still returns plays. Like WindowHours it binds only a
-	// direct BestPlays call; the served path overlays it per horizon (see
-	// DefaultHorizons and horizonConfig in service.go).
+	// SuspectLowBand is how far under an hour's VWAP a buy leg's low may sit
+	// before it reads as junk: 0.67 flags a low below two thirds of fair.
+	SuspectLowBand float64
+	// SuspectHighBand is the same on the sell side: 1.5 flags a high above one
+	// and a half times fair.
+	SuspectHighBand float64
+	// HideSuspect drops a play in every hour where any leg's extreme is
+	// suspect, instead of serving it flagged and ranked last. Default false:
+	// the owner would rather see a flagged row than a missing one, and a hidden
+	// play cannot be argued with.
+	HideSuspect bool
+	// MinHoursSeen is the smallest number of window hours a play must have
+	// cleared its gates in. It is capped at the number of hours actually
+	// present, so a single-hour window still returns plays. Like WindowHours it
+	// binds only a direct BestPlays call; the served path overlays it per
+	// horizon (see DefaultHorizons and horizonConfig in service.go).
 	MinHoursSeen int
 	// MaxPlays truncates the ranked result.
 	MaxPlays int
@@ -206,21 +253,26 @@ type Config struct {
 // DefaultConfig is the engine's tuning: a six-hour window, at least ten units
 // traded per leg per hour, a two-percent ROI floor, ten thousand chaos an hour
 // of turnover, a price resolution no coarser than 10% with an ROI at least five
-// steps wide, three chaos per exchanged unit, seen in at least two hours, the
-// top hundred plays, quoted in divine before chaos.
+// steps wide, three chaos per exchanged unit, junk bands at two thirds and one
+// and a half times fair with the flag shown rather than hidden, cleared in at
+// least two hours, the top hundred plays, quoted in divine before chaos.
 //
 // The gate LEVELS are derived from the 26-hour Allflame measurement in POE-184,
 // whose robust edge was the MEDIAN OF PER-HOUR EDGES: that gate set takes 908
-// markets to 135, and the survivors' top 25 are all full-window with 29–71%
-// robust edge at 0.1–8.7% ticks. The engine does not gate on that statistic. It
-// gates on the ratio of the medians (median high / median low − 1), the related
-// statistic chosen so the legs shown and the percentage claimed are one
-// reproducible arithmetic statement — which is also why the SQL's 908→135 is a
-// calibration of the levels, not a prediction of how many plays come back. The
-// served ranking is confirmed by the live check against the running stack, not
-// by those counts. Loosening any one level lets a measured noise case back in —
-// Divine Vessel returns at 109 chaos/hour of turnover, Delirium Scarab at a 100%
-// tick.
+// markets to 135, and the survivors' top 25 are all full-window with 29-71%
+// robust edge at 0.1-8.7% ticks. The engine does not gate on that statistic. It
+// gates on ONE hour's prices, hour by hour, and counts the hours that cleared —
+// which is why the SQL's 908->135 is a calibration of the levels, not a
+// prediction of how many plays come back. The served ranking is confirmed by the
+// live check against the running stack, not by those counts. Loosening any one
+// level lets a measured noise case back in — Divine Vessel returns at 109
+// chaos/hour of turnover, Delirium Scarab at a 100% tick.
+//
+// The band levels come from the same feed read the other way round: across 221
+// liquid chaos markets over 24 hours the hour's extremes sit 11-13% off its VWAP
+// at the median hour and 50% at p90, so 0.67 and 1.5 sit just outside the p90 of
+// ordinary noise and catch the 62.5-chaos low under a 245-chaos VWAP that
+// started POE-188.
 //
 // WindowHours is the base window, which the Service overrides per horizon (see
 // Horizons); the ranking a client sees comes from one of those, not from this.
@@ -233,6 +285,9 @@ func DefaultConfig() Config {
 		MaxTick:          0.10,
 		MinEdgeTickRatio: 5,
 		MinROIChaos:      3,
+		SuspectLowBand:   0.67,
+		SuspectHighBand:  1.5,
+		HideSuspect:      false,
 		MinHoursSeen:     2,
 		MaxPlays:         100,
 		QuotePriority:    []string{DivineID, ChaosID},
@@ -244,13 +299,15 @@ func DefaultConfig() Config {
 // caller can set one knob and inherit the rest.
 //
 // A non-positive count, floor or cap (WindowHours, MinVolumePerHour,
-// MinTurnoverChaos, MaxTick, MinEdgeTickRatio, MinROIChaos, MinHoursSeen,
-// MaxPlays) reads as unset, because none of them has a meaningful negative
-// value. MinEdge is different: only an exact 0 reads as unset, so a caller can
-// push the percentage floor below zero and see the small positive returns the
-// default hides (the other gates still bar a losing route). To run
-// effectively without one of the other gates, pass a value that cannot bind (a
-// tiny positive floor, a huge cap) rather than 0.
+// MinTurnoverChaos, MaxTick, MinEdgeTickRatio, MinROIChaos, SuspectLowBand,
+// SuspectHighBand, MinHoursSeen, MaxPlays) reads as unset, because none of them
+// has a meaningful negative value. MinEdge is different: only an exact 0 reads
+// as unset, so a caller can push the percentage floor below zero and see the
+// small positive returns the default hides (the other gates still bar a losing
+// route). HideSuspect is a bool and has no unset state: false is a choice, and
+// it is also the default. To run effectively without one of the other gates,
+// pass a value that cannot bind (a tiny positive floor, a huge cap) rather
+// than 0.
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
 	if c.WindowHours <= 0 {
@@ -273,6 +330,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MinROIChaos <= 0 {
 		c.MinROIChaos = d.MinROIChaos
+	}
+	if c.SuspectLowBand <= 0 {
+		c.SuspectLowBand = d.SuspectLowBand
+	}
+	if c.SuspectHighBand <= 0 {
+		c.SuspectHighBand = d.SuspectHighBand
 	}
 	if c.MinHoursSeen <= 0 {
 		c.MinHoursSeen = d.MinHoursSeen
@@ -300,39 +363,56 @@ func (c Config) withDefaults() Config {
 // database and no clock.
 //
 // Rows are grouped by feed hour and the newest Config.WindowHours distinct hours
-// are kept. Each hour is scored independently — direct flips and one-hop
-// triangles, each leg gated on that hour's traded volume and stock — and the
-// surviving candidates are merged by key. The merge takes MEDIANS across the
-// hours a recipe survived, not a weighted mean: the failure mode being defended
-// against is one hour's blowup, and a mean carries it while a median does not.
+// are kept. Each hour is then scored ALONE: direct flips and one-hop triangles
+// are built from that hour's rows, each leg gated on that hour's traded volume
+// and stock, and evaluate turns each surviving candidate into a whole Play — leg
+// prices, undercut return, chaos payout, gates and all — out of that one hour.
+// Hours never mix. The merge by recipe key keeps two things and nothing else:
+// the NEWEST hour's Play, which is what gets served, and a COUNT of the hours
+// that cleared, which becomes HoursSeen and is what MinHoursSeen judges.
 //
-// Everything a play claims is then rebuilt from those medians. Prices are the
-// median hourly extreme on each leg's side, so RoiPct is arithmetic on the legs
-// the client is shown rather than a separately averaged number, and Roi,
-// Investment and Turnover value them in chaos through DivineChaosRate — the
-// median hourly VWAP of the divine/chaos market in this same window. A play
-// whose quote is neither chaos nor divine — scarab/scarab, card/scarab and every
-// other cross-item market — is dropped outright, because gates denominated in
-// chaos (MinTurnoverChaos, MinROIChaos) cannot be evaluated against a payout
-// measured in scarabs. When the divine/chaos market itself did not trade in the
-// window the rate is 0 and every divine-quoted play is dropped rather than
-// valued at a guess; that warning is logged once per HORIZON, so twice per
-// Service recompute.
+// A play is then served only if it cleared in the window's newest hour — the
+// last snapshot. The two cross-hour readings are deliberately separate: the
+// PRICES are the last snapshot's and nothing older, while PERSISTENCE is a
+// separate count over the whole window. A recipe that cleared four hours ago and
+// has not cleared since is not a current price and does not appear, however many
+// hours it once held; one that cleared in the last snapshot appears with
+// HoursSeen saying how long it has been holding up. Because the newest-hour
+// check compares against the window's newest hour rather than against whatever
+// arrived last, the result does not depend on the order rows come in.
 //
-// What comes back has passed, in order: HoursSeen >= MinHoursSeen (capped at the
-// hours present), RoiPct >= MinEdge, Turnover >= MinTurnoverChaos,
-// Tick <= MaxTick, RoiPct >= MinEdgeTickRatio * Tick, and Roi >= MinROIChaos. It
-// is ranked by RoiPct desc, then Turnover desc, then direct before 1-hop, then
-// Key ascending, and truncated to MaxPlays. The ranking is a stable sort over a
-// key-sorted list, so identical input always produces identical output
-// regardless of the order rows arrive in.
+// The measured reason for that split: four consecutive hours on Mawr
+// Blaidd/Chaos printed lows of 62.5-81 chaos against a VWAP near 250, which is
+// why a price shown here belongs to one hour, the one LastHour names.
+//
+// Chaos valuation is per hour too: divineRateOf reads each hour's own
+// divine/chaos VWAP, so a play quoted in divine is valued at the rate of the
+// hour it was observed in, and an hour without that market simply does not clear
+// its divine-quoted candidates. A play whose quote is neither chaos nor divine —
+// scarab/scarab, card/scarab and every other cross-item market — is dropped
+// outright, because gates denominated in chaos (MinTurnoverChaos, MinROIChaos)
+// cannot be evaluated against a payout measured in scarabs. Result.DivineChaosRate
+// is that newest hour's rate, which — because every served play cleared in that
+// hour — is the rate every one of them was valued at, and the warning fires only
+// when NO hour in the window carried that market — once per HORIZON, so twice
+// per Service recompute.
+//
+// What comes back has passed, per hour: RoiPct >= MinEdge (on the UNDERCUT
+// return, so a coarse tick that eats the spread fails here), Turnover >=
+// MinTurnoverChaos, Tick <= MaxTick, RoiPct >= MinEdgeTickRatio * Tick, and
+// Roi >= MinROIChaos; and then, across the window, HoursSeen >= MinHoursSeen
+// (capped at the hours present). It is ranked clean before suspect, then RoiPct
+// desc, then Turnover desc, then direct before 1-hop, then Key ascending, and
+// truncated to MaxPlays. The ranking is a stable sort over a key-sorted list, so
+// identical input always produces identical output regardless of the order rows
+// arrive in.
 //
 // The caveat that governs the percentages: the feed publishes each hour's
-// realized low and high, not a book. Even a median edge is the typical gap
-// between two trades of the same hour, and nothing says both were takeable at
-// once — that is what the tick gates bound, and what RoiPctNewestHour shows the
-// current hour's version of. This returns raw item ids; POE-175's handler runs
-// them through Humanize.
+// realized low and high, not a book. Both prices are trades that happened inside
+// the same hour, and nothing says both were takeable at once — that is what the
+// tick gates bound, what the undercut charges for, and what Suspect flags when
+// an extreme is too far from the hour's VWAP to be repeatable. This returns raw
+// item ids; POE-175's handler runs them through Humanize.
 func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	cfg = cfg.withDefaults()
 	result := Result{League: league, Plays: []Play{}}
@@ -355,9 +435,8 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	for stamp := range byHour {
 		stamps = append(stamps, stamp)
 	}
-	// Newest hour first: the merge below reads the newest hour's recipe, stock
-	// and edge off the first candidate it sees (aggregate.add re-checks the
-	// stamp, so a reordering here costs nothing but the reading).
+	// Newest hour first, so stamps[0] names the hour Result.DivineChaosRate is
+	// read from and the window cut below keeps the newest WindowHours.
 	sort.Slice(stamps, func(i, j int) bool { return stamps[i] > stamps[j] })
 	if len(stamps) > cfg.WindowHours {
 		stamps = stamps[:cfg.WindowHours]
@@ -368,16 +447,18 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	result.From = hourAt[stamps[n-1]]
 	result.To = hourAt[stamps[0]].Add(time.Hour)
 
-	divineChaos, found := divineChaosRate(stamps, byHour)
-	if !found {
-		slog.Warn("currency-exchange: no divine/chaos market in the window; divine-quoted plays are dropped",
-			"league", league, "hours", n)
-	}
-	result.DivineChaosRate = divineChaos
-
+	anyRate := false
 	merged := make(map[string]*aggregate)
 	for _, stamp := range stamps {
 		hour, hourRows := hourAt[stamp], byHour[stamp]
+
+		hourRate, hourRateOK := divineRateOf(hourRows)
+		if hourRateOK {
+			anyRate = true
+		}
+		if stamp == stamps[0] {
+			result.DivineChaosRate = hourRate
+		}
 
 		candidates := directCandidates(hourRows, cfg)
 		candidates = append(candidates, crossQuoteCandidates(hourRows, cfg)...)
@@ -389,28 +470,51 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 			}
 			seen[c.key] = true
 
+			play, ok := evaluate(c, hour, hourRate, hourRateOK, cfg)
+			if !ok {
+				continue
+			}
 			a, known := merged[c.key]
 			if !known {
-				a = newAggregate(c, hour)
+				a = &aggregate{}
 				merged[c.key] = a
 			}
-			a.add(c, hour)
+			a.add(play)
 		}
+	}
+	if !anyRate {
+		slog.Warn("currency-exchange: no divine/chaos market in the window; divine-quoted plays are dropped",
+			"league", league, "hours", n)
 	}
 
 	minHoursSeen := cfg.MinHoursSeen
 	if minHoursSeen > n {
 		minHoursSeen = n
 	}
+	// stamps[0] is the window's newest hour, fixed before any aggregation, so
+	// this cut is order-independent.
+	newestHour := hourAt[stamps[0]]
 	for _, key := range sortedIDs(merged) {
-		if play, ok := merged[key].play(cfg, minHoursSeen, divineChaos); ok {
-			result.Plays = append(result.Plays, play)
+		a := merged[key]
+		if a.hoursCleared < minHoursSeen {
+			continue
 		}
+		// The prices a served play shows must be the last snapshot's. A recipe
+		// that cleared only in older hours is persistence without a current
+		// price, and is dropped rather than served stale.
+		if !a.newest.LastHour.Equal(newestHour) {
+			continue
+		}
+		play := a.newest
+		play.HoursSeen = a.hoursCleared
+		result.Plays = append(result.Plays, play)
 	}
 
 	sort.SliceStable(result.Plays, func(i, j int) bool {
 		a, b := result.Plays[i], result.Plays[j]
 		switch {
+		case a.Suspect != b.Suspect:
+			return !a.Suspect
 		case a.RoiPct != b.RoiPct:
 			return a.RoiPct > b.RoiPct
 		case a.Turnover != b.Turnover:
@@ -427,41 +531,36 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	return result
 }
 
-// divineChaosRate returns the chaos value of one divine over the window: the
-// median across the window's hours of the divine/chaos market's VWAP.
+// divineRateOf returns the chaos value of one divine in ONE hour: that hour's
+// divine/chaos market VWAP.
 //
-// The rate is a window-level scalar rather than a per-play lookup so that two
-// plays quoted in divine are valued identically, and it is measured from the
-// same table everything else is (198.97 c/div over the reference window) rather
-// than hard-coded — the number moves with the league.
+// It is called twice for different reasons. Per hour, it is the rate every
+// divine-quoted candidate of that hour is valued at, so an hour is priced with
+// its own exchange rate rather than with a window-wide one — the rate moves with
+// the league, and pricing an old hour at today's rate is the same class of
+// mistake as pricing a leg at another hour's low. Once more on the window's
+// newest hour, it fills Result.DivineChaosRate, the current rate the client
+// displays.
 //
-// found is false when the market did not trade in any of the window's hours; the
-// caller drops the divine-quoted plays rather than pricing them at a guess.
-func divineChaosRate(stamps []int64, byHour map[int64][]Row) (rate float64, found bool) {
-	rates := make([]float64, 0, len(stamps))
-	for _, stamp := range stamps {
-		for _, r := range byHour[stamp] {
-			if pairKey(r.ItemA, r.ItemB) != pairKey(DivineID, ChaosID) {
-				continue
-			}
-			if hourly, ok := vwapIn(r, DivineID, ChaosID); ok {
-				rates = append(rates, hourly)
-			}
-			break
+// found is false when that hour had no divine/chaos trade; the caller drops the
+// hour's divine-quoted plays rather than pricing them at a guess, and reports
+// the rate as 0.
+func divineRateOf(hourRows []Row) (rate float64, found bool) {
+	for _, r := range hourRows {
+		if pairKey(r.ItemA, r.ItemB) != pairKey(DivineID, ChaosID) {
+			continue
 		}
+		return vwapIn(r, DivineID, ChaosID)
 	}
-	if len(rates) == 0 {
-		return 0, false
-	}
-	return median(rates), true
+	return 0, false
 }
 
 // chaosPerUnit values one unit of a quote currency in chaos.
 //
-// Chaos is 1 by definition and divine is the window's measured rate. Any other
-// id — a market where neither side is a listed currency, or divine when the rate
-// is unknown — returns 0, meaning "this play cannot be valued in chaos", and the
-// caller drops it: a ranking denominated in chaos cannot honestly hold a row
+// Chaos is 1 by definition and divine is the hour's measured rate. Any other
+// id — a market where neither side is a listed currency, or divine when the hour
+// had no rate — returns 0, meaning "this play cannot be valued in chaos", and
+// the caller drops it: a ranking denominated in chaos cannot honestly hold a row
 // whose payout is in scarabs.
 func chaosPerUnit(quote string, divineChaos float64) float64 {
 	switch quote {
@@ -474,108 +573,96 @@ func chaosPerUnit(quote string, divineChaos float64) float64 {
 	}
 }
 
-// aggregate accumulates one key's candidates across the window's hours.
+// evaluate turns ONE hour's candidate into a finished Play, or reports
+// ok == false when any gate rejects it in that hour.
 //
-// legs carry the recipe and the NEWEST hour's observation; samples[i] holds
-// every hour's observation of leg i in that same order. BestPlays walks hours
-// newest first, so the first candidate merged in is normally the newest — but
-// lastHour records which hour the newest fields came from and add only replaces
-// them for a strictly newer one, so the aggregate does not depend on that order.
-// Every candidate sharing a key has the same number of legs: the key spells out
-// the mode and, for a triangle, the route.
-type aggregate struct {
-	key        string
-	mode       Mode
-	legs       []candidateLeg
-	samples    [][]obs
-	newestEdge float64
-	lastHour   time.Time
-	hoursSeen  int
-}
-
-// newAggregate starts an aggregate from the first hour a key was seen in,
-// keeping that hour's recipe, stock and edge until add sees a newer one.
-func newAggregate(c candidate, hour time.Time) *aggregate {
-	return &aggregate{
-		key:        c.key,
-		mode:       c.mode,
-		legs:       append([]candidateLeg(nil), c.legs...),
-		samples:    make([][]obs, len(c.legs)),
-		newestEdge: c.edge,
-		lastHour:   hour,
-	}
-}
-
-// add folds one hour's observation in. Hours are equal citizens for the medians:
-// the aggregation carries no recency weight. The newest-hour fields — the recipe
-// legs with their stock, newestEdge and lastHour — are the exception, and they
-// move only when hour is strictly newer than the one already recorded, so they
-// hold the newest hour's reading whatever order the hours arrive in.
-func (a *aggregate) add(c candidate, hour time.Time) {
-	if hour.After(a.lastHour) {
-		a.legs = append(a.legs[:0:0], c.legs...)
-		a.newestEdge = c.edge
-		a.lastHour = hour
-	}
-	for i, leg := range c.legs {
-		a.samples[i] = append(a.samples[i], leg.obs)
-	}
-	a.hoursSeen++
-}
-
-// play turns the accumulated hours into a Play, or reports ok == false when any
-// gate rejects it.
+// It is pure: everything it emits comes from c's per-leg observations, the
+// hour's divine rate and cfg. Nothing about other hours reaches it, which is
+// what makes "this play's prices are one hour's prices" a property of the code
+// rather than a convention.
 //
-// Order matters only for reading: a play must clear every gate. The prices come
-// out first because everything else — RoiPct, Roi, Investment — is arithmetic on
-// them, which is the property that makes the shown legs and the claimed return
-// the same statement.
-func (a *aggregate) play(cfg Config, minHoursSeen int, divineChaos float64) (Play, bool) {
-	if a.hoursSeen < minHoursSeen {
-		return Play{}, false
+// Two price systems live here at once. The legs carry the RAW extreme, because
+// that is what the feed observed and what the reader must be able to check
+// against the game. The percentages are computed at the UNDERCUT prices — a buy
+// posted one tick above the hour's low, a sell one tick under its high, each leg
+// on its OWN tick — because an order at exactly the last realized price is
+// behind every order already queued there. The gap between the two is
+// RoiPctRaw - RoiPct, and on a coarse market it is the whole spread.
+//
+// hourRateOK false means the hour had no divine/chaos market; it is passed
+// separately from hourRate so a zero rate cannot be mistaken for a real one, and
+// it drops exactly the divine-quoted candidates (chaosPerUnit returns 0 for
+// them) while leaving chaos-quoted ones alone.
+func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cfg Config) (Play, bool) {
+	if !hourRateOK {
+		hourRate = 0
 	}
 
-	legs := make([]Leg, len(a.legs))
+	legs := make([]Leg, len(c.legs))
+	raw := make([]float64, len(c.legs))
+	undercut := make([]float64, len(c.legs))
 	depth, turnover, tick, entryRate := 0.0, 0.0, 0.0, 0.0
-	for i, recipe := range a.legs {
-		samples := a.samples[i]
+	suspect := false
 
-		side := func(o obs) float64 { return o.low }
+	for i, recipe := range c.legs {
+		o := recipe.obs
+
+		price, legSuspect, filled := o.low, false, o.low*(1+o.tick)
 		if recipe.action == "sell" {
-			side = func(o obs) float64 { return o.high }
+			price, filled = o.high, o.high*(1-o.tick)
+		}
+		if o.vwapOK {
+			if recipe.action == "sell" {
+				legSuspect = o.high > o.vwap*cfg.SuspectHighBand
+			} else {
+				legSuspect = o.low < o.vwap*cfg.SuspectLowBand
+			}
 		}
 
 		legs[i] = Leg{
-			Action: recipe.action,
-			Item:   recipe.item,
-			Quote:  recipe.quote,
-			Price:  medianOf(samples, side),
-			Fair:   medianWhere(samples, func(o obs) (float64, bool) { return o.vwap, o.vwapOK }),
-			Tick:   medianOf(samples, func(o obs) float64 { return o.tick }),
-			Volume: medianOf(samples, func(o obs) float64 { return o.volume }),
-			Stock:  recipe.obs.stock,
+			Action:  recipe.action,
+			Item:    recipe.item,
+			Quote:   recipe.quote,
+			Price:   price,
+			Fair:    o.vwap,
+			FairOK:  o.vwapOK,
+			Tick:    o.tick,
+			Volume:  o.volume,
+			Stock:   o.stock,
+			Suspect: legSuspect,
 		}
+		raw[i], undercut[i] = price, filled
+		suspect = suspect || legSuspect
 
-		rate := chaosPerUnit(recipe.quote, divineChaos)
+		rate := chaosPerUnit(recipe.quote, hourRate)
 		if rate <= 0 {
 			return Play{}, false
 		}
-		legTurnover := medianOf(samples, func(o obs) float64 { return o.quoteVolume }) * rate
+		legTurnover := o.quoteVolume * rate
 
 		if i == 0 {
-			depth, turnover, tick, entryRate = legs[i].Volume, legTurnover, legs[i].Tick, rate
+			depth, turnover, tick, entryRate = o.volume, legTurnover, o.tick, rate
 			continue
 		}
-		depth = math.Min(depth, legs[i].Volume)
+		depth = math.Min(depth, o.volume)
 		turnover = math.Min(turnover, legTurnover)
-		tick = math.Max(tick, legs[i].Tick)
+		tick = math.Max(tick, o.tick)
 	}
 
-	roiPct, ok := roiPctOf(a.mode, legs)
+	if suspect && cfg.HideSuspect {
+		return Play{}, false
+	}
+
+	roiPct, ok := roiPctOf(c.mode, undercut)
 	if !ok {
 		return Play{}, false
 	}
-	investment := legs[0].Price * entryRate
+	roiPctRaw, ok := roiPctOf(c.mode, raw)
+	if !ok {
+		return Play{}, false
+	}
+
+	investment := undercut[0] * entryRate
 	roi := investment * roiPct
 
 	switch {
@@ -588,83 +675,69 @@ func (a *aggregate) play(cfg Config, minHoursSeen int, divineChaos float64) (Pla
 	}
 
 	return Play{
-		Key:              a.key,
-		Mode:             a.mode,
-		Legs:             legs,
-		RoiPct:           roiPct,
-		Edge:             roiPct,
-		RoiPctNewestHour: a.newestEdge,
-		Roi:              roi,
-		Investment:       investment,
-		Turnover:         turnover,
-		Tick:             tick,
-		Depth:            depth,
-		HoursSeen:        a.hoursSeen,
-		LastHour:         a.lastHour,
+		Key:        c.key,
+		Mode:       c.mode,
+		Legs:       legs,
+		RoiPct:     roiPct,
+		Edge:       roiPct,
+		RoiPctRaw:  roiPctRaw,
+		Roi:        roi,
+		Investment: investment,
+		Turnover:   turnover,
+		Tick:       tick,
+		Depth:      depth,
+		Suspect:    suspect,
+		LastHour:   hour,
 	}, true
 }
 
-// roiPctOf recomputes a play's return from the prices its legs show, so the
-// percentage is reproducible by anyone reading the response:
+// roiPctOf computes a round trip's return from one price per leg, in execution
+// order:
 //
 //	direct: sell / buy - 1
 //	1-hop:  (sellXinB * sellBinA) / buyXinA - 1
 //
-// ok is false for a shape with the wrong number of legs or a zero entry price,
-// neither of which the candidate builders can produce — the check is there so a
-// future third shape cannot silently divide by zero.
-func roiPctOf(mode Mode, legs []Leg) (float64, bool) {
+// evaluate calls it twice on the same legs — once at the undercut prices for
+// RoiPct, once at the raw extremes for RoiPctRaw — so the two percentages are
+// the same statement about two price systems rather than two formulas.
+//
+// ok is false for a shape with the wrong number of legs or a non-positive entry
+// price, neither of which the candidate builders can produce — the check is
+// there so a future third shape cannot silently divide by zero.
+func roiPctOf(mode Mode, prices []float64) (float64, bool) {
 	switch {
-	case mode == ModeDirect && len(legs) == 2 && legs[0].Price > 0:
-		return legs[1].Price/legs[0].Price - 1, true
-	case mode == ModeOneHop && len(legs) == 3 && legs[0].Price > 0:
-		return legs[1].Price*legs[2].Price/legs[0].Price - 1, true
+	case mode == ModeDirect && len(prices) == 2 && prices[0] > 0:
+		return prices[1]/prices[0] - 1, true
+	case mode == ModeOneHop && len(prices) == 3 && prices[0] > 0:
+		return prices[1]*prices[2]/prices[0] - 1, true
 	default:
 		return 0, false
 	}
 }
 
-// medianWhere is medianOf over the observations that HAVE the field, skipping
-// the rest. Leg.Fair uses it because an hour whose quote side reported no volume
-// has no VWAP at all: feeding its 0 into the median would drag the fair anchor
-// toward zero and make a live market look like a free one. When no hour in the
-// window carried the field the result is 0 — the same "no anchor" reading a leg
-// gets when nothing ever cleared.
-func medianWhere(samples []obs, field func(obs) (float64, bool)) float64 {
-	values := make([]float64, 0, len(samples))
-	for _, s := range samples {
-		if v, ok := field(s); ok {
-			values = append(values, v)
-		}
-	}
-	return median(values)
+// aggregate is what one recipe key carries across the window's hours: the
+// newest hour's finished Play and a count of the hours that produced one.
+//
+// It holds no prices of its own. Every hour is already a complete answer by the
+// time it gets here (evaluate ran the whole arithmetic and every gate on that
+// hour alone), so there is nothing left to blend — only to pick the newest and
+// to count.
+type aggregate struct {
+	newest       Play
+	hoursCleared int
 }
 
-// medianOf returns the median of one field across a leg's hourly observations.
-func medianOf(samples []obs, field func(obs) float64) float64 {
-	values := make([]float64, 0, len(samples))
-	for _, s := range samples {
-		values = append(values, field(s))
+// add folds in one hour that cleared. The kept Play is replaced only by a
+// strictly newer hour, so which hour is served does not depend on the order the
+// hours arrive in; every cleared hour raises the count.
+//
+// The zero aggregate has no Play, and a Play's LastHour is never the zero time
+// (evaluate stamps it with the hour it scored), so the first add always takes.
+func (a *aggregate) add(play Play) {
+	if a.hoursCleared == 0 || play.LastHour.After(a.newest.LastHour) {
+		a.newest = play
 	}
-	return median(values)
-}
-
-// median returns the middle value of values, or the mean of the two middle ones
-// when the count is even, matching the percentile_cont(0.5) the measurements
-// were made with. It sorts a copy, so the caller's slice keeps its order. An
-// empty input is 0.
-func median(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	sorted := append([]float64(nil), values...)
-	sort.Float64s(sorted)
-
-	mid := len(sorted) / 2
-	if len(sorted)%2 == 1 {
-		return sorted[mid]
-	}
-	return (sorted[mid-1] + sorted[mid]) / 2
+	a.hoursCleared++
 }
 
 // modeRank orders modes for the ranking tie-break: the direct flip wins a tie

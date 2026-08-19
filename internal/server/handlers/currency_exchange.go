@@ -59,8 +59,8 @@ type playsResponse struct {
 	// requested one cannot mistake a cached body for another.
 	Horizon string `json:"horizon"`
 	// DivineChaosRate is the chaos value of one divine the engine valued every
-	// play with, or 0 when the divine/chaos market did not trade in the window
-	// (in which case no divine-quoted play is in the list).
+	// play with, or 0 when the divine/chaos market did not trade in the newest
+	// hour (in which case no divine-quoted play is in the list).
 	DivineChaosRate float64        `json:"divineChaosRate"`
 	Count           int            `json:"count"`
 	Plays           []playResponse `json:"plays"`

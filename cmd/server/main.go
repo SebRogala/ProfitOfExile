@@ -309,6 +309,16 @@ func main() {
 	exchangeCfg.MaxTick = envPositiveFloat("EXCHANGE_MAX_TICK", exchangeCfg.MaxTick)
 	exchangeCfg.MinEdgeTickRatio = envPositiveFloat("EXCHANGE_MIN_EDGE_TICK_RATIO", exchangeCfg.MinEdgeTickRatio)
 	exchangeCfg.MinROIChaos = envPositiveFloat("EXCHANGE_MIN_ROI_CHAOS", exchangeCfg.MinROIChaos)
+	// The junk bands are fractions of an hour's VWAP, so both are positive and
+	// the low one is meant to be under 1 while the high one is over it. Nothing
+	// enforces that ordering here: a deploy that wants to widen or narrow either
+	// side of "believable" is allowed to, and inverting them would flag every
+	// leg rather than none, which is loud enough to notice.
+	exchangeCfg.SuspectLowBand = envPositiveFloat("EXCHANGE_SUSPECT_LOW_BAND", exchangeCfg.SuspectLowBand)
+	exchangeCfg.SuspectHighBand = envPositiveFloat("EXCHANGE_SUSPECT_HIGH_BAND", exchangeCfg.SuspectHighBand)
+	// HideSuspect turns the flag into a filter. Default false: a flagged row can
+	// be argued with, a missing one cannot.
+	exchangeCfg.HideSuspect = envBool("EXCHANGE_HIDE_SUSPECT", exchangeCfg.HideSuspect)
 	// MinEdge is the one knob where a negative value is meaningful (it surfaces
 	// the losing direction of a loop), so only an exact 0 is rejected — the
 	// engine reads 0 as "unset" and would restore the default behind the log
@@ -914,6 +924,24 @@ func envPositiveFloat(key string, def float64) float64 {
 		return def
 	}
 	return f
+}
+
+// envBool is envPositiveInt for a switch, with the same
+// keep-the-default-and-say-so contract. There is no "unset" value to inherit
+// from — a bool that parses replaces the default outright — so an empty
+// variable and an unparseable one are the only ways to keep it.
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Warn("ignoring invalid environment override; keeping the default",
+			"var", key, "value", v, "default", def)
+		return def
+	}
+	return b
 }
 
 func getEnvDefault(key, fallback string) string {

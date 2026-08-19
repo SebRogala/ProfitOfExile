@@ -269,7 +269,7 @@ func TestRecompute_readsOneWindowSizedToTheWidestHorizon(t *testing.T) {
 }
 
 func TestRecompute_ranksTheSameRowsOncePerHorizon(t *testing.T) {
-	// Eight stored hours: the recent horizon medians the newest six of them and
+	// Eight stored hours: the recent horizon reads the newest six of them and
 	// the day horizon all eight, from ONE read. Two horizons that answered with
 	// the same window would make the toggle a decoration.
 	service, cache, _ := newTestService(t, eightHourRows(), Config{})
