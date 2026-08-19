@@ -86,28 +86,15 @@ func crossQuoteCandidates(rows []Row, cfg Config) []candidate {
 // fails its depth gate. The mirror route is the same call with a and b (and the
 // two X rows) swapped.
 func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB Row, cfg Config) (candidate, bool) {
-	lowXinA, _, ok := priceIn(rowXA, x, a)
+	buyX, ok := gatedLeg("buy", x, a, rowXA, cfg)
 	if !ok {
 		return candidate{}, false
 	}
-	_, highXinB, ok := priceIn(rowXB, x, b)
+	sellX, ok := gatedLeg("sell", x, b, rowXB, cfg)
 	if !ok {
 		return candidate{}, false
 	}
-	_, highBinA, ok := priceIn(rowAB, b, a)
-	if !ok {
-		return candidate{}, false
-	}
-
-	buyX, ok := gatedLeg("buy", x, a, lowXinA, rowXA, cfg)
-	if !ok {
-		return candidate{}, false
-	}
-	sellX, ok := gatedLeg("sell", x, b, highXinB, rowXB, cfg)
-	if !ok {
-		return candidate{}, false
-	}
-	sellB, ok := gatedLeg("sell", b, a, highBinA, rowAB, cfg)
+	sellB, ok := gatedLeg("sell", b, a, rowAB, cfg)
 	if !ok {
 		return candidate{}, false
 	}
@@ -115,8 +102,8 @@ func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB Row, cfg Config) (candi
 	return candidate{
 		key:  "1-hop:" + x + "|" + a + "|" + b,
 		mode: ModeOneHop,
-		legs: []Leg{buyX, sellX, sellB},
-		edge: highXinB*highBinA/lowXinA - 1,
+		legs: []candidateLeg{buyX, sellX, sellB},
+		edge: sellX.obs.high*sellB.obs.high/buyX.obs.low - 1,
 	}, true
 }
 

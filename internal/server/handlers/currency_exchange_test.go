@@ -31,6 +31,10 @@ var (
 	fixtureLastHour = time.Date(2026, 8, 19, 6, 0, 0, 0, time.UTC)
 )
 
+// divineChaosRate is the rate the fixture result valued every divine-quoted
+// play at: the 198.97 chaos a divine the reference window measured.
+const divineChaosRate = 198.97
+
 // directDivinePlay is the fixture's headline flip: buy a divine for 196 chaos,
 // sell it for 201.
 func directDivinePlay() exchange.Play {
@@ -38,13 +42,19 @@ func directDivinePlay() exchange.Play {
 		Key:  "direct:" + exchange.ChaosID + "|" + exchange.DivineID,
 		Mode: exchange.ModeDirect,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 196, Volume: 65361, Stock: 8878},
-			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 201, Volume: 65361, Stock: 8878},
+			{Action: "buy", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 196, Fair: 198.97, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
+			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 201, Fair: 198.97, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
 		},
-		Edge:      0.0255,
-		Depth:     65361,
-		HoursSeen: 6,
-		LastHour:  fixtureLastHour,
+		RoiPct:           0.0255,
+		Edge:             0.0255,
+		RoiPctNewestHour: 0.0306,
+		Roi:              4.998,
+		Investment:       196,
+		Turnover:         13001051,
+		Tick:             1.0 / 196.0,
+		Depth:            65361,
+		HoursSeen:        6,
+		LastHour:         fixtureLastHour,
 	}
 }
 
@@ -54,13 +64,19 @@ func directScarabPlay() exchange.Play {
 		Key:  "direct:" + exchange.DivineID + "|" + scarabID,
 		Mode: exchange.ModeDirect,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Volume: 300, Stock: 60},
-			{Action: "sell", Item: scarabID, Quote: exchange.DivineID, Price: 0.08, Volume: 300, Stock: 60},
+			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60},
+			{Action: "sell", Item: scarabID, Quote: exchange.DivineID, Price: 0.08, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60},
 		},
-		Edge:      0.28,
-		Depth:     300,
-		HoursSeen: 4,
-		LastHour:  fixtureLastHour,
+		RoiPct:           0.28,
+		Edge:             0.28,
+		RoiPctNewestHour: 0.19,
+		Roi:              3.481,
+		Investment:       12.435,
+		Turnover:         59691,
+		Tick:             0.0625,
+		Depth:            300,
+		HoursSeen:        4,
+		LastHour:         fixtureLastHour,
 	}
 }
 
@@ -71,27 +87,75 @@ func oneHopPlay() exchange.Play {
 		Key:  "1-hop:" + scarabID + "|" + exchange.DivineID + "|" + exchange.ChaosID,
 		Mode: exchange.ModeOneHop,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Volume: 300, Stock: 60},
-			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 8, Volume: 250, Stock: 25},
-			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 64, Volume: 65361, Stock: 8878},
+			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60},
+			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 8, Fair: 7.5, Tick: 0.02, Volume: 250, Stock: 25},
+			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 64, Fair: 63, Tick: 1.0 / 64.0, Volume: 65361, Stock: 8878},
 		},
-		Edge:      1,
-		Depth:     250,
-		HoursSeen: 3,
-		LastHour:  fixtureLastHour,
+		RoiPct:           1,
+		Edge:             1,
+		RoiPctNewestHour: 0.75,
+		Roi:              12.435,
+		Investment:       12.435,
+		Turnover:         59691,
+		Tick:             0.0625,
+		Depth:            250,
+		HoursSeen:        3,
+		LastHour:         fixtureLastHour,
 	}
 }
 
-// warmExchangeCache holds a computed ranking of two direct plays and one 1-hop.
+// warmExchangeCache holds a computed ranking of two direct plays and one 1-hop
+// in the default horizon.
 func warmExchangeCache(t *testing.T) *exchange.Cache {
 	t.Helper()
 	cache := exchange.NewCache()
-	cache.Set(exchange.Result{
-		League: "Mirage",
-		From:   fixtureFrom,
-		To:     fixtureTo,
-		Hours:  6,
-		Plays:  []exchange.Play{oneHopPlay(), directScarabPlay(), directDivinePlay()},
+	cache.Set(exchange.DefaultHorizon, exchange.Result{
+		League:          "Mirage",
+		Horizon:         string(exchange.DefaultHorizon),
+		From:            fixtureFrom,
+		To:              fixtureTo,
+		Hours:           6,
+		DivineChaosRate: divineChaosRate,
+		Plays:           []exchange.Play{oneHopPlay(), directScarabPlay(), directDivinePlay()},
+	})
+	return cache
+}
+
+// dayOnlyPlay is a flip that only survived the day horizon's twenty-four hour
+// window, so a body carrying it cannot have come from the recent one.
+func dayOnlyPlay() exchange.Play {
+	return exchange.Play{
+		Key:  "direct:" + exchange.ChaosID + "|" + scarabID,
+		Mode: exchange.ModeDirect,
+		Legs: []exchange.Leg{
+			{Action: "buy", Item: scarabID, Quote: exchange.ChaosID, Price: 12, Fair: 13, Tick: 1.0 / 12.0, Volume: 900, Stock: 120},
+			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 15, Fair: 13, Tick: 1.0 / 12.0, Volume: 900, Stock: 120},
+		},
+		RoiPct:     0.25,
+		Edge:       0.25,
+		Roi:        3,
+		Investment: 12,
+		Turnover:   11700,
+		Tick:       1.0 / 12.0,
+		Depth:      900,
+		HoursSeen:  22,
+		LastHour:   fixtureLastHour,
+	}
+}
+
+// bothHorizonsCache holds a different ranking under each horizon, which is what
+// makes "the body came from the horizon that was asked for" observable.
+func bothHorizonsCache(t *testing.T) *exchange.Cache {
+	t.Helper()
+	cache := warmExchangeCache(t)
+	cache.Set(exchange.HorizonDay, exchange.Result{
+		League:          "Mirage",
+		Horizon:         string(exchange.HorizonDay),
+		From:            fixtureTo.Add(-24 * time.Hour),
+		To:              fixtureTo,
+		Hours:           24,
+		DivineChaosRate: divineChaosRate,
+		Plays:           []exchange.Play{dayOnlyPlay()},
 	})
 	return cache
 }
@@ -105,6 +169,8 @@ type exchangeLegBody struct {
 	Item      string  `json:"item"`
 	Quote     string  `json:"quote"`
 	Price     float64 `json:"price"`
+	Fair      float64 `json:"fair"`
+	Tick      float64 `json:"tick"`
 	Volume    float64 `json:"volume"`
 	Stock     int64   `json:"stock"`
 	ItemName  string  `json:"itemName"`
@@ -116,8 +182,8 @@ type exchangeLegBody struct {
 // String renders the leg with its icon pointers dereferenced, so a failed
 // comparison names the paths instead of two heap addresses.
 func (l exchangeLegBody) String() string {
-	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v volume:%v stock:%d itemName:%q itemIcon:%s quoteName:%q quoteIcon:%s}",
-		l.Action, l.Item, l.Quote, l.Price, l.Volume, l.Stock,
+	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v fair:%v tick:%v volume:%v stock:%d itemName:%q itemIcon:%s quoteName:%q quoteIcon:%s}",
+		l.Action, l.Item, l.Quote, l.Price, l.Fair, l.Tick, l.Volume, l.Stock,
 		l.ItemName, quoteOrNull(l.ItemIcon), l.QuoteName, quoteOrNull(l.QuoteIcon))
 }
 
@@ -137,25 +203,33 @@ func iconPath(id string) *string {
 }
 
 type exchangePlayBody struct {
-	Key       string            `json:"key"`
-	Mode      string            `json:"mode"`
-	Edge      float64           `json:"edge"`
-	Depth     float64           `json:"depth"`
-	HoursSeen int               `json:"hoursSeen"`
-	LastHour  time.Time         `json:"lastHour"`
-	Legs      []exchangeLegBody `json:"legs"`
+	Key              string            `json:"key"`
+	Mode             string            `json:"mode"`
+	RoiPct           float64           `json:"roiPct"`
+	Edge             float64           `json:"edge"`
+	RoiPctNewestHour float64           `json:"roiPctNewestHour"`
+	Roi              float64           `json:"roi"`
+	Investment       float64           `json:"investment"`
+	Turnover         float64           `json:"turnover"`
+	Tick             float64           `json:"tick"`
+	Depth            float64           `json:"depth"`
+	HoursSeen        int               `json:"hoursSeen"`
+	LastHour         time.Time         `json:"lastHour"`
+	Legs             []exchangeLegBody `json:"legs"`
 }
 
 type exchangePlaysBody struct {
-	League      string             `json:"league"`
-	LastUpdated *string            `json:"lastUpdated"`
-	From        *string            `json:"from"`
-	To          *string            `json:"to"`
-	Hours       int                `json:"hours"`
-	Warm        bool               `json:"warm"`
-	Mode        string             `json:"mode"`
-	Count       int                `json:"count"`
-	Plays       []exchangePlayBody `json:"plays"`
+	League          string             `json:"league"`
+	LastUpdated     *string            `json:"lastUpdated"`
+	From            *string            `json:"from"`
+	To              *string            `json:"to"`
+	Hours           int                `json:"hours"`
+	Warm            bool               `json:"warm"`
+	Mode            string             `json:"mode"`
+	Horizon         string             `json:"horizon"`
+	DivineChaosRate float64            `json:"divineChaosRate"`
+	Count           int                `json:"count"`
+	Plays           []exchangePlayBody `json:"plays"`
 }
 
 // getPlays serves one request through a chi router, the way the server mounts
@@ -373,19 +447,19 @@ func TestCurrencyExchangePlays_legsCarryDisplayNamesAndIconPathsBesideTheRawFeed
 	want := []exchangeLegBody{
 		{
 			Action: "buy", Item: scarabID, Quote: exchange.DivineID,
-			Price: 0.0625, Volume: 300, Stock: 60,
+			Price: 0.0625, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60,
 			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
 			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID),
 		},
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
-			Price: 8, Volume: 250, Stock: 25,
+			Price: 8, Fair: 7.5, Tick: 0.02, Volume: 250, Stock: 25,
 			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
 			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
 		},
 		{
 			Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID,
-			Price: 64, Volume: 65361, Stock: 8878,
+			Price: 64, Fair: 63, Tick: 1.0 / 64.0, Volume: 65361, Stock: 8878,
 			ItemName: "Divine Orb", ItemIcon: iconPath(exchange.DivineID),
 			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
 		},
@@ -413,7 +487,7 @@ const unknownHumanizedName = "Not In The Asset Yet"
 func unknownItemCache(t *testing.T) *exchange.Cache {
 	t.Helper()
 	cache := exchange.NewCache()
-	cache.Set(exchange.Result{
+	cache.Set(exchange.DefaultHorizon, exchange.Result{
 		League: "Mirage",
 		From:   fixtureFrom,
 		To:     fixtureTo,
@@ -586,11 +660,26 @@ func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
 	if got.Mode != string(want.Mode) {
 		t.Errorf("mode = %q, want %q", got.Mode, want.Mode)
 	}
-	if got.Edge != want.Edge {
-		t.Errorf("edge = %v, want %v", got.Edge, want.Edge)
+	// Every number the engine ranked on has to reach the client unchanged: the
+	// DTO embeds exchange.Play rather than copying it precisely so that a field
+	// added there cannot go missing here.
+	numbers := []struct {
+		name      string
+		got, want float64
+	}{
+		{"roiPct", got.RoiPct, want.RoiPct},
+		{"edge", got.Edge, want.Edge},
+		{"roiPctNewestHour", got.RoiPctNewestHour, want.RoiPctNewestHour},
+		{"roi", got.Roi, want.Roi},
+		{"investment", got.Investment, want.Investment},
+		{"turnover", got.Turnover, want.Turnover},
+		{"tick", got.Tick, want.Tick},
+		{"depth", got.Depth, want.Depth},
 	}
-	if got.Depth != want.Depth {
-		t.Errorf("depth = %v, want %v", got.Depth, want.Depth)
+	for _, n := range numbers {
+		if n.got != n.want {
+			t.Errorf("%s = %v, want %v", n.name, n.got, n.want)
+		}
 	}
 	if got.HoursSeen != want.HoursSeen {
 		t.Errorf("hoursSeen = %d, want %d", got.HoursSeen, want.HoursSeen)
@@ -600,6 +689,112 @@ func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
 	}
 	if len(got.Legs) != len(want.Legs) {
 		t.Errorf("got %d legs, want %d", len(got.Legs), len(want.Legs))
+	}
+}
+
+func TestCurrencyExchangePlays_warmCache_publishesTheRateEveryPlayWasValuedIn(t *testing.T) {
+	// roi, investment and turnover are all denominated in chaos through this one
+	// number, so a client that wants to render a divine-quoted play in divine
+	// needs it beside them.
+	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays"))
+
+	if body.DivineChaosRate != divineChaosRate {
+		t.Errorf("divineChaosRate = %v, want %v", body.DivineChaosRate, divineChaosRate)
+	}
+}
+
+func TestCurrencyExchangePlays_horizon_servesTheWindowThatWasAskedFor(t *testing.T) {
+	// Both horizons are computed by the same recompute and both live in the
+	// cache, so picking one is a lookup — and the body echoes which one, so a
+	// client cannot mistake a cached response for the other window's.
+	cache := bothHorizonsCache(t)
+
+	tests := []struct {
+		name        string
+		target      string
+		wantHorizon string
+		wantHours   int
+		wantKeys    []string
+	}{
+		{
+			name:        "horizon absent falls back to recent",
+			target:      "/api/currency-exchange/plays",
+			wantHorizon: "recent",
+			wantHours:   6,
+			wantKeys:    []string{oneHopPlay().Key, directScarabPlay().Key, directDivinePlay().Key},
+		},
+		{
+			name:        "horizon=recent is the same answer, asked for explicitly",
+			target:      "/api/currency-exchange/plays?horizon=recent",
+			wantHorizon: "recent",
+			wantHours:   6,
+			wantKeys:    []string{oneHopPlay().Key, directScarabPlay().Key, directDivinePlay().Key},
+		},
+		{
+			name:        "horizon=day serves the day ranking",
+			target:      "/api/currency-exchange/plays?horizon=day",
+			wantHorizon: "day",
+			wantHours:   24,
+			wantKeys:    []string{dayOnlyPlay().Key},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body := decodePlays(t, getPlays(t, cache, tc.target))
+
+			if body.Horizon != tc.wantHorizon {
+				t.Errorf("horizon = %q, want %q", body.Horizon, tc.wantHorizon)
+			}
+			if body.Hours != tc.wantHours {
+				t.Errorf("hours = %d, want %d", body.Hours, tc.wantHours)
+			}
+			gotKeys := make([]string, 0, len(body.Plays))
+			for _, play := range body.Plays {
+				gotKeys = append(gotKeys, play.Key)
+			}
+			if !reflect.DeepEqual(gotKeys, tc.wantKeys) {
+				t.Errorf("keys = %v, want %v", gotKeys, tc.wantKeys)
+			}
+		})
+	}
+}
+
+func TestCurrencyExchangePlays_horizonThatIsNotServed_isRejectedInsteadOfFallingBackToTheDefault(t *testing.T) {
+	// A typo that quietly returned the other window's ranking would look like a
+	// working toggle — and the two windows disagree by design.
+	w := getPlays(t, bothHorizonsCache(t), "/api/currency-exchange/plays?horizon=week")
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if want := "horizon must be one of recent, day"; body["error"] != want {
+		t.Errorf("error = %v, want %q", body["error"], want)
+	}
+	if _, leaked := body["plays"]; leaked {
+		t.Errorf("rejected request still carried plays: %v", body["plays"])
+	}
+}
+
+func TestCurrencyExchangePlays_horizonWithNoCacheEntry_answersColdRatherThanTheOtherWindow(t *testing.T) {
+	// Each horizon warms on its own. Between the first recompute writing one and
+	// the next, a request for the other must read as "not ready", never as the
+	// window that happens to be warm.
+	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays?horizon=day"))
+
+	if body.Warm {
+		t.Error("warm = true, want false — nothing has been computed for the day horizon")
+	}
+	if len(body.Plays) != 0 {
+		t.Errorf("got %d plays, want none (%+v)", len(body.Plays), body.Plays)
+	}
+	if body.Horizon != "day" {
+		t.Errorf("horizon = %q, want %q", body.Horizon, "day")
 	}
 }
 

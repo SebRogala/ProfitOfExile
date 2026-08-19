@@ -305,6 +305,162 @@ func TestPriceIn_everyPricedFixtureRow_yieldsAUsableIntervalBothWays(t *testing.
 	}
 }
 
+func TestVwapIn_pricesBothDirectionsFromTheSameTradedVolumes(t *testing.T) {
+	// The hour traded 13,001,051 chaos against 65,361 divine, so the price its
+	// mass cleared at is one of those two quotients — which one depends on the
+	// direction asked for, and they are not each other.
+	row := chaosDivineSpec().row()
+
+	tests := []struct {
+		name  string
+		item  string
+		quote string
+		want  float64
+	}{
+		{
+			name:  "a divine cleared at the chaos traded per divine traded",
+			item:  divineID,
+			quote: chaosID,
+			want:  13001051.0 / 65361.0,
+		},
+		{
+			name:  "a chaos cleared at the divine traded per chaos traded",
+			item:  chaosID,
+			quote: divineID,
+			want:  65361.0 / 13001051.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := vwapIn(row, tt.item, tt.quote)
+			if !ok {
+				t.Fatalf("ok = false, want true for %s priced in %s", tt.item, tt.quote)
+			}
+			if got != tt.want {
+				t.Errorf("vwap = %v, want %v (quote units traded per item unit traded)", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVwapIn_itemEqualsQuote_returnsNotOk(t *testing.T) {
+	// Both readings would come from the same column, so the quotient is a
+	// tautological 1 rather than a price. Without the guard the caller would
+	// take that 1 for a fair anchor.
+	got, ok := vwapIn(chaosDivineSpec().row(), chaosID, chaosID)
+
+	if ok {
+		t.Errorf("ok = true (vwap %v), want false: an item has no price in itself", got)
+	}
+	if got != 0 {
+		t.Errorf("vwap = %v, want 0 on a refused pair", got)
+	}
+}
+
+func TestVwapIn_quoteSideTradedNothing_returnsNotOk(t *testing.T) {
+	// The divisor is the item side, so an empty QUOTE side still yields a
+	// finite 0 — a price of zero, which reads as a free item. The hour has no
+	// volume-weighted price at all and has to say so.
+	spec := chaosDivineSpec()
+	spec.volume[0] = 0
+	row := spec.row()
+
+	got, ok := vwapIn(row, divineID, chaosID)
+
+	if ok {
+		t.Errorf("ok = true (vwap %v), want false: no chaos changed hands this hour", got)
+	}
+	if got != 0 {
+		t.Errorf("vwap = %v, want 0", got)
+	}
+}
+
+func TestVwapIn_itemSideTradedNothing_returnsNotOk(t *testing.T) {
+	// The item side is the divisor: without the guard this is a division by
+	// zero and the leg's fair anchor becomes +Inf.
+	spec := chaosDivineSpec()
+	spec.volume[1] = 0
+	row := spec.row()
+
+	got, ok := vwapIn(row, divineID, chaosID)
+
+	if ok {
+		t.Errorf("ok = true (vwap %v), want false: no divine changed hands this hour", got)
+	}
+	if got != 0 {
+		t.Errorf("vwap = %v, want 0", got)
+	}
+}
+
+func TestTickOf_bothPairsNonUnit_reportsTheCoarserStep(t *testing.T) {
+	// A step is one unit of the pair's LARGER quantity, so the coarser of the
+	// row's two pairs is the one with the smaller maximum — and it can be
+	// either pair, on either side of it.
+	tests := []struct {
+		name         string
+		lowestRatio  [2]int64
+		highestRatio [2]int64
+		want         float64
+	}{
+		{
+			name:         "the lowest pair is the coarser one",
+			lowestRatio:  [2]int64{17, 28},
+			highestRatio: [2]int64{50, 3},
+			want:         1.0 / 28.0,
+		},
+		{
+			name:         "the highest pair is the coarser one",
+			lowestRatio:  [2]int64{100, 7},
+			highestRatio: [2]int64{9, 40},
+			want:         1.0 / 40.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := chaosDivineSpec()
+			spec.lowestRatio, spec.highestRatio = tt.lowestRatio, tt.highestRatio
+
+			if got := tickOf(spec.row()); got != tt.want {
+				t.Errorf("tickOf = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTickOf_pairWithNoPositiveQuantity_reportsNoResolution(t *testing.T) {
+	// Such a row resolves no price at all. Returning 0 keeps the caller away
+	// from the 1/0 the formula would otherwise produce.
+	tests := []struct {
+		name         string
+		lowestRatio  [2]int64
+		highestRatio [2]int64
+	}{
+		{
+			name:         "the lowest pair carries no quantity",
+			lowestRatio:  [2]int64{0, 0},
+			highestRatio: [2]int64{201, 1},
+		},
+		{
+			name:         "the highest pair carries no quantity",
+			lowestRatio:  [2]int64{196, 1},
+			highestRatio: [2]int64{0, 0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := chaosDivineSpec()
+			spec.lowestRatio, spec.highestRatio = tt.lowestRatio, tt.highestRatio
+
+			if got := tickOf(spec.row()); got != 0 {
+				t.Errorf("tickOf = %v, want 0", got)
+			}
+		})
+	}
+}
+
 func TestOrient_defaultPriority_picksTheCurrencySideAsQuote(t *testing.T) {
 	priority := DefaultConfig().QuotePriority
 
@@ -389,6 +545,31 @@ func TestVolumeOf_returnsTheTradedUnitsOfTheNamedSide(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := volumeOf(row, tt.item); got != tt.want {
 				t.Errorf("volumeOf(%s) = %d, want %d", tt.item, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestQuoteVolumeOf_readsTheQuoteSideNotTheItemSide(t *testing.T) {
+	// It is the liquidity reading of a leg — the units of the CURRENCY that
+	// flowed — so on a market whose two sides traded wildly different unit
+	// counts it must never come back with the item side's number.
+	row := chaosDivineSpec().row()
+
+	tests := []struct {
+		name  string
+		quote string
+		want  int64
+	}{
+		{name: "quoted in the ItemA side", quote: chaosID, want: 13001051},
+		{name: "quoted in the ItemB side", quote: divineID, want: 65361},
+		{name: "quoted in a currency the row does not carry", quote: cardID, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := quoteVolumeOf(row, tt.quote); got != tt.want {
+				t.Errorf("quoteVolumeOf(%s) = %d, want %d", tt.quote, got, tt.want)
 			}
 		})
 	}
