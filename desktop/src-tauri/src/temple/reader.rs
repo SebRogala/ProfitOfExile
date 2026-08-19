@@ -65,7 +65,7 @@ pub struct TempleLayout {
 /// crop seeds far too low, falls through to the (much slower) full sweep, and
 /// on a narrow enough crop finds nothing at all. POE-143's capture layer is the
 /// intended caller and captures the window.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn read_layout(img: &DynamicImage) -> Result<TempleLayout, ReadError> {
     read_layout_with_hint(img, None)
 }
@@ -79,13 +79,33 @@ pub fn read_layout_with_hint(
     img: &DynamicImage,
     hint: Option<&AnchorCalibration>,
 ) -> Result<TempleLayout, ReadError> {
-    let found = anchor::anchor_with_hint(img, hint)?;
+    Ok(read_layout_at(img, anchor::anchor_with_hint(img, hint)?))
+}
+
+/// Read a board from an anchor that has already been found.
+///
+/// [`anchor::detect_cheap`]'s hinted path returns a full-resolution match
+/// verified against [`anchor::NCC_FLOOR`]. It is not the same computation as
+/// [`anchor::anchor_with_hint`] (that one seeds its fine window from the ÷4
+/// coarse position; `recheck` seeds it from the remembered origin) — the two
+/// converge on the same board in practice, which
+/// `a_read_from_a_pre_found_anchor_reproduces_the_swept_read` pins on both
+/// fixtures. So the capture loop hands that anchor here rather than paying to
+/// find the plate twice on every tick a panel is open. Note the SCALE on this
+/// path is the hint's scale copied verbatim and is never re-derived while the
+/// hint keeps clearing the floor — a slightly drifted scale that still matches
+/// is a fixed point; start there when a lattice looks a few px off.
+///
+/// Infallible: there is no anchor left to fail on. Everything downstream —
+/// current room, corridors, confidence — is beam sampling over a lattice this
+/// anchor fixes, and it reports its own uncertainty on the layout.
+pub fn read_layout_at(img: &DynamicImage, found: Anchor) -> TempleLayout {
     let Anchor { origin, scale, ncc } = found;
     let lattice = Lattice::new(origin, scale);
     let rgb = img.to_rgb8();
     let current = doors::current_room(&rgb, &lattice);
     let read = doors::read_doors(&rgb, &lattice, current);
-    Ok(TempleLayout {
+    TempleLayout {
         origin,
         scale,
         ncc,
@@ -96,7 +116,7 @@ pub fn read_layout_with_hint(
         slots: lattice.centres,
         thresholds: read.thresholds,
         calibration: AnchorCalibration::of(img, &found),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -309,6 +329,57 @@ mod tests {
         assert!(
             layout.uncertain.contains(&apex),
             "it touches the current room, so it must be flagged"
+        );
+    }
+
+    /// The read the capture loop's promoted tick takes: handed the anchor
+    /// [`super::anchor::detect_cheap`] already verified, it produces exactly
+    /// what sweeping for that anchor again would.
+    ///
+    /// Fails if `read_layout_at` and `read_layout_with_hint` grow two different
+    /// ways of building a board off one anchor.
+    #[test]
+    fn a_read_from_a_pre_found_anchor_reproduces_the_swept_read() {
+        for f in [&REF, &LIVE] {
+            let img = load(f);
+            let swept = read_layout(&img).expect("the fixture anchors");
+
+            let handed = read_layout_at(
+                &img,
+                Anchor {
+                    origin: swept.origin,
+                    scale: swept.scale,
+                    ncc: swept.ncc,
+                },
+            );
+
+            assert_eq!(handed, swept, "{}", f.file);
+        }
+    }
+
+    /// …and it is the anchor it was HANDED that the board is built on. Fails if
+    /// `read_layout_at` re-finds the plate and ignores its argument, which
+    /// would put the loop back to anchoring twice per tick while looking
+    /// correct.
+    #[test]
+    fn the_board_is_built_on_the_anchor_that_was_handed_in() {
+        let img = load(&REF);
+        let swept = read_layout(&img).expect("the fixture anchors");
+        let moved = (swept.origin.0 + 40, swept.origin.1 - 25);
+
+        let elsewhere = read_layout_at(
+            &img,
+            Anchor {
+                origin: moved,
+                scale: swept.scale,
+                ncc: swept.ncc,
+            },
+        );
+
+        assert_eq!(elsewhere.origin, moved, "the handed origin is the board's");
+        assert_ne!(
+            elsewhere.slots, swept.slots,
+            "and every plate moves with it",
         );
     }
 

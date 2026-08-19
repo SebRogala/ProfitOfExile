@@ -118,7 +118,7 @@ impl AnchorCalibration {
 }
 
 /// Anchor with no prior knowledge: seeded band first, full sweep as fallback.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn anchor(img: &DynamicImage) -> Result<Anchor, ReadError> {
     anchor_with_hint(img, None)
 }
@@ -169,6 +169,179 @@ pub fn anchor_with_hint(
     Err(ReadError::AnchorNotFound {
         best_ncc: best.map_or(f32::NEG_INFINITY, |b| b.ncc),
     })
+}
+
+/// What the cheap detect tick found — see [`detect_cheap`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CheapDetect {
+    /// The remembered plate re-matched where it was last seen, at or above
+    /// [`NCC_FLOOR`]. A real anchor, verified at full resolution.
+    Anchored(Anchor),
+    /// Nothing was verified, but the nominating pass found something
+    /// plate-shaped at the width-derived scale. A *candidate*, never an
+    /// anchor: coarse scores are the ones the whole module refuses to trust
+    /// (see the file header), so this only means "worth the full read".
+    Candidate { coarse_ncc: f32 },
+    /// Neither. The tick can be skipped.
+    Nothing { best_ncc: f32 },
+}
+
+impl CheapDetect {
+    /// Whether this outcome is worth paying [`super::reader::read_layout_with_hint`] for.
+    pub fn worth_reading(&self) -> bool {
+        !matches!(self, CheapDetect::Nothing { .. })
+    }
+}
+
+/// Where the cheap tick last saw the plate, so it can look there first.
+///
+/// Held in memory by the capture loop rather than persisted beside
+/// [`AnchorCalibration`]: the scale is a property of the capture SIZE, which is
+/// what that type is keyed on, while the origin is a property of the game
+/// window's POSITION, which the same capture size does not pin. Storing the two
+/// under one key would let a moved window write a stale origin to disk.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CheapHint {
+    /// Screen size and scale, reusing [`AnchorCalibration::applies_to`].
+    pub calibration: AnchorCalibration,
+    /// Entrance plate centre in image px, as [`Anchor::origin`] reports it.
+    pub origin: (i32, i32),
+}
+
+// No constructor from an `Anchor`: the capture loop's own source is a
+// `reader::TempleLayout`, which already carries both fields, and a second way
+// to build a two-field struct would only be a second thing to keep in step.
+
+/// Coarse score above which the unverified nominating pass calls a candidate.
+///
+/// Measured 2026-08-19 at the width-derived scale alone, over the whole
+/// capture: the two committed boards nominate at **0.939** and **0.938**,
+/// deterministic noise of the same two sizes at **0.204** and **0.203**.
+///
+/// 0.70 sits in that gap, deliberately nearer the noise end. The two errors are
+/// not symmetric and neither is unbounded: a false candidate costs exactly one
+/// of the full reads the loop used to run on *every* tick, while a missed
+/// candidate hides the panel until the caller's periodic full read. Buying
+/// detection latency with an occasional tick of the old cost is the right side
+/// of that trade — but it is the reason this floor is not tuned any closer to
+/// 0.938 on a two-board sample.
+pub const COARSE_CANDIDATE_FLOOR: f32 = 0.70;
+
+/// The detect tick's cheap half: "is there anything here worth a full read?"
+///
+/// # Why this exists
+///
+/// [`anchor_with_hint`] is coarse-to-fine over a *band* of scales, and on a
+/// MISS it runs all three attempts — hint, [`seed_band`], [`full_sweep`] —
+/// because a miss is what "the band did not contain it" looks like. A closed
+/// layout panel misses, and a closed panel is the state the capture loop lives
+/// in, so the loop's steady state was the most expensive path in this module.
+///
+/// Measured 2026-08-19, release build, on deterministic noise the size of each
+/// committed board fixture — i.e. a focused game with no layout panel, which is
+/// where the loop spends its life:
+///
+/// | capture | [`super::reader::read_layout_with_hint`] | [`detect_cheap`] |
+/// |---|---|---|
+/// | 1374×542 | 92 correlations, 2 586 408 positions, 2.51 s | 2 correlations, 36 920 positions, 32 ms |
+/// | 1539×613 | 105 correlations, 3 860 177 positions, 3.91 s | 2 correlations, 46 795 positions, 47 ms |
+///
+/// **~1/80 of the cost**, on both units and on both boards. (For scale, the
+/// same hinted full read over a capture that *does* hold the panel is 2
+/// correlations — the expense is entirely the two fallbacks a miss runs
+/// through.)
+///
+/// This does at most two correlations instead, in this order:
+///
+/// 1. **The hint**, when one applies to this capture size: a single windowed
+///    match at the remembered scale, in the same [`FINE_RADIUS`] box the fine
+///    pass uses, around the remembered origin. Verified against [`NCC_FLOOR`]
+///    like any other anchor, so a stale hint is never *believed* — it is just
+///    the first place to look.
+/// 2. **One nominating correlation** at `image_width / REFERENCE_SCREEN_WIDTH`,
+///    against [`COARSE_CANDIDATE_FLOOR`]. One scale, not the whole
+///    [`seed_band`], because the ÷4 pass is famously scale-insensitive here
+///    (it ranked 1.09 above the true 1.13 at 0.968 vs 0.961) — the property
+///    that makes it useless as a *winner* is what makes one of its scales
+///    enough as a *detector*. The measured seeds sit within 3% of the true
+///    scale on all five boards.
+///
+/// Step 2 runs even when a hint applied and missed, which is what bounds the
+/// recovery of a panel that moved or rescaled to one tick: without it a stale
+/// origin would hide the panel until the caller's periodic full read.
+pub fn detect_cheap(img: &DynamicImage, hint: Option<&CheapHint>) -> CheapDetect {
+    if let Some(h) = hint.filter(|h| h.calibration.applies_to(img)) {
+        if let Some(found) = recheck(img, h) {
+            return CheapDetect::Anchored(found);
+        }
+    }
+    match coarse_candidate(img) {
+        Some(score) if score >= COARSE_CANDIDATE_FLOOR => CheapDetect::Candidate { coarse_ncc: score },
+        Some(score) => CheapDetect::Nothing { best_ncc: score },
+        None => CheapDetect::Nothing {
+            best_ncc: f32::NEG_INFINITY,
+        },
+    }
+}
+
+/// One full-resolution windowed match at the hint's scale and origin.
+///
+/// `None` when the template does not fit, when the window is flat, or when the
+/// score is below [`NCC_FLOOR`] — the same refusal [`anchor_with_hint`] makes,
+/// for the same reason.
+fn recheck(img: &DynamicImage, hint: &CheapHint) -> Option<Anchor> {
+    let tmpl = template();
+    let scale = hint.calibration.scale;
+    let (tw, th) = (
+        (tmpl.width() as f32 * scale) as u32,
+        (tmpl.height() as f32 * scale) as u32,
+    );
+    // Before `full_level`, not after: a hint whose template cannot fit must not
+    // buy a full-resolution integral pass to find that out.
+    if tw == 0 || th == 0 || tw >= img.width() || th >= img.height() {
+        return None;
+    }
+    let level = full_level(img);
+    let scaled = Gray::from_rgb(&image::imageops::resize(tmpl, tw, th, FilterType::Triangle));
+    // `hint.origin` is the plate CENTRE, as `Anchor::origin` reports it, and
+    // `locate` works in top-left coordinates.
+    let top_left = (
+        hint.origin.0 - tw as i32 / 2,
+        hint.origin.1 - th as i32 / 2,
+    );
+    let (x, y, score) = locate(&level, &scaled, Some(fine_window(top_left)))?;
+    (score >= NCC_FLOOR).then_some(Anchor {
+        origin: (x + tw as i32 / 2, y + th as i32 / 2),
+        scale,
+        ncc: score,
+    })
+}
+
+/// The best ÷4 score at the width-derived scale alone, over the whole capture.
+///
+/// `None` when that scale produces a template the coarse level cannot hold.
+fn coarse_candidate(img: &DynamicImage) -> Option<f32> {
+    let level = coarse_level(img);
+    let tmpl = template();
+    let scale = seed_scale(img.width());
+    let size = (
+        (tmpl.width() as f32 * scale / COARSE_DIVISOR as f32) as u32,
+        (tmpl.height() as f32 * scale / COARSE_DIVISOR as f32) as u32,
+    );
+    if size.0 < 4
+        || size.1 < 4
+        || size.0 as usize >= level.gray.w
+        || size.1 as usize >= level.gray.h
+    {
+        return None;
+    }
+    let scaled = Gray::from_rgb(&image::imageops::resize(
+        tmpl,
+        size.0,
+        size.1,
+        FilterType::Triangle,
+    ));
+    locate(&level, &scaled, None).map(|(_, _, score)| score)
 }
 
 /// The scale the capture's own width implies, and the centre of the seeded
@@ -264,17 +437,33 @@ struct Scene {
     coarse: Level,
 }
 
+/// The capture at full resolution, with its prefix tables.
+///
+/// Built apart from [`coarse_level`] so a caller can pay for one resolution
+/// instead of both. [`detect_cheap`] builds this one only when a hint applies,
+/// and the coarse one only when it has to nominate — which on a hinted MISS is
+/// both of them, because that path falls through from one to the other.
+fn full_level(img: &DynamicImage) -> Level {
+    Level::of(Gray::from_rgb(&img.to_rgb8()))
+}
+
+/// The capture at [`COARSE_DIVISOR`], with its prefix tables — see
+/// [`full_level`].
+fn coarse_level(img: &DynamicImage) -> Level {
+    let (cw, ch) = (
+        (img.width() / COARSE_DIVISOR).max(1),
+        (img.height() / COARSE_DIVISOR).max(1),
+    );
+    Level::of(Gray::from_rgb(
+        &img.resize_exact(cw, ch, FilterType::Triangle).to_rgb8(),
+    ))
+}
+
 impl Scene {
     fn of(img: &DynamicImage) -> Scene {
-        let (cw, ch) = (
-            (img.width() / COARSE_DIVISOR).max(1),
-            (img.height() / COARSE_DIVISOR).max(1),
-        );
         Scene {
-            full: Level::of(Gray::from_rgb(&img.to_rgb8())),
-            coarse: Level::of(Gray::from_rgb(
-                &img.resize_exact(cw, ch, FilterType::Triangle).to_rgb8(),
-            )),
+            full: full_level(img),
+            coarse: coarse_level(img),
         }
     }
 
@@ -493,32 +682,52 @@ fn locate(
             }
         }
     }
-    if window.is_some() {
-        note_windowed_search(positions);
-    }
+    note_search(positions, window.is_some());
     best
 }
 
-// Largest number of positions any *windowed* `locate` call has scored since
-// `windowed_search_high_water` last reset it.
-//
+/// What the correlations under one call did, in the two units the tests bound
+/// them in.
+///
+/// `calls` and `positions` count every [`locate`]; `windowed_high_water` is the
+/// largest single *windowed* call, kept apart so the unbounded nominating pass
+/// cannot drown out the number the fine pass's radius is pinned by — and so a
+/// fine pass that stopped passing a window at all records nothing there rather
+/// than recording a larger figure.
+#[cfg(test)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SearchTally {
+    pub calls: usize,
+    pub positions: usize,
+    pub windowed_high_water: usize,
+}
+
 // Thread-local: the harness gives each test its own thread and a search never
-// leaves the one it started on. Windowed calls only, so the unbounded
-// nominating pass does not drown out the number under test — and so a fine
-// pass that stopped passing a window at all records nothing rather than
-// recording a larger figure.
+// leaves the one it started on.
 #[cfg(test)]
 thread_local! {
-    static WINDOWED_HIGH_WATER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TALLY: std::cell::Cell<SearchTally> = const { std::cell::Cell::new(SearchTally {
+        calls: 0,
+        positions: 0,
+        windowed_high_water: 0,
+    }) };
 }
 
 #[cfg(test)]
-fn note_windowed_search(positions: usize) {
-    WINDOWED_HIGH_WATER.with(|c| c.set(c.get().max(positions)));
+fn note_search(positions: usize, windowed: bool) {
+    TALLY.with(|c| {
+        let mut t = c.get();
+        t.calls += 1;
+        t.positions += positions;
+        if windowed {
+            t.windowed_high_water = t.windowed_high_water.max(positions);
+        }
+        c.set(t);
+    });
 }
 
 #[cfg(not(test))]
-fn note_windowed_search(_positions: usize) {}
+fn note_search(_positions: usize, _windowed: bool) {}
 
 #[cfg(test)]
 mod tests {
@@ -782,6 +991,229 @@ mod tests {
         assert!(locate(&Level::of(scene), &tmpl, None).is_none());
     }
 
+    // ------------------------------------------------ the cheap detect tick --
+
+    /// A committed board fixture, with the `(scale, origin)` its
+    /// [`super::super::reader`] test pins.
+    struct Board {
+        file: &'static str,
+        scale: f32,
+        origin: (i32, i32),
+    }
+
+    const BOARDS: [Board; 2] = [
+        Board {
+            file: "board-ref-1374.png",
+            scale: 0.99,
+            origin: (673, 494),
+        },
+        Board {
+            file: "board-live-1539.png",
+            scale: 1.13,
+            origin: (745, 561),
+        },
+    ];
+
+    impl Board {
+        fn load(&self) -> DynamicImage {
+            let path = format!(
+                "{}/tests/fixtures/temple/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                self.file
+            );
+            image::open(&path).unwrap_or_else(|e| panic!("{path} loads: {e}"))
+        }
+
+        fn hint(&self, img: &DynamicImage) -> CheapHint {
+            CheapHint {
+                calibration: AnchorCalibration {
+                    screen_w: img.width(),
+                    screen_h: img.height(),
+                    scale: self.scale,
+                },
+                origin: self.origin,
+            }
+        }
+    }
+
+    /// The hinted path re-anchors a panel it has already seen in ONE windowed
+    /// match, on both scale families.
+    ///
+    /// The position count is half the assertion: a `recheck` that dropped the
+    /// window, or that mistook the hint's plate CENTRE for a top-left, would
+    /// either search the whole capture (the cost this whole path exists to
+    /// avoid) or search 78 px away from the plate and find nothing.
+    #[test]
+    fn a_hinted_cheap_detect_re_anchors_both_boards_in_one_windowed_match() {
+        for board in BOARDS {
+            let img = board.load();
+            let (found, tally) = search_tally(|| detect_cheap(&img, Some(&board.hint(&img))));
+
+            let CheapDetect::Anchored(anchor) = found else {
+                panic!("{}: expected an anchor, got {found:?}", board.file)
+            };
+            assert_eq!(anchor.scale, board.scale, "{}: the hint's scale", board.file);
+            assert!(
+                (anchor.origin.0 - board.origin.0).abs() <= 3
+                    && (anchor.origin.1 - board.origin.1).abs() <= 3,
+                "{}: origin {:?} is more than 3 px from {:?}",
+                board.file,
+                anchor.origin,
+                board.origin
+            );
+            assert!(
+                anchor.ncc >= NCC_FLOOR,
+                "{}: NCC {} below the floor",
+                board.file,
+                anchor.ncc
+            );
+            assert_eq!(
+                (tally.calls, tally.positions),
+                (1, ((2 * FINE_RADIUS + 1) as usize).pow(2)),
+                "{}: the hinted path is one windowed match and nothing else",
+                board.file
+            );
+        }
+    }
+
+    /// With no hint the tick nominates rather than anchors: one *unwindowed*
+    /// ÷4 correlation at the width-derived scale, above
+    /// [`COARSE_CANDIDATE_FLOOR`], on both boards.
+    ///
+    /// One correlation, not the seeded band's fourteen: fails if the unhinted
+    /// path is widened back into a band, and fails if it starts verifying at
+    /// full resolution (which would register a windowed call).
+    #[test]
+    fn an_unhinted_cheap_detect_nominates_both_boards_in_one_coarse_pass() {
+        for board in BOARDS {
+            let img = board.load();
+            let (found, tally) = search_tally(|| detect_cheap(&img, None));
+
+            let CheapDetect::Candidate { coarse_ncc } = found else {
+                panic!("{}: expected a candidate, got {found:?}", board.file)
+            };
+            // The measured margin, not just the ordering: pinning this against
+            // `COARSE_CANDIDATE_FLOOR` alone would let the pass degrade all the
+            // way to 0.70 — into the band where a busy game screen lives —
+            // while still passing. Measured 0.939 and 0.938.
+            assert!(
+                coarse_ncc >= 0.90,
+                "{}: nominated at {coarse_ncc}; the measured boards score 0.938+, \
+                 and a pass that has drifted to the floor is not a detector",
+                board.file
+            );
+            assert_eq!(tally.calls, 1, "{}: one correlation", board.file);
+            assert_eq!(
+                tally.windowed_high_water, 0,
+                "{}: the unhinted path must not verify at full resolution",
+                board.file
+            );
+        }
+    }
+
+    /// A screen with no plate on it is `Nothing`, hint or no hint — otherwise
+    /// the loop promotes to a full read on every tick and the cheap tick buys
+    /// nothing.
+    #[test]
+    fn a_capture_with_no_plate_is_nothing_with_or_without_a_hint() {
+        for board in BOARDS {
+            let img = board.load();
+            let empty = DynamicImage::ImageRgb8(noise(img.width(), img.height()));
+
+            for hint in [None, Some(board.hint(&img))] {
+                let found = detect_cheap(&empty, hint.as_ref());
+                let CheapDetect::Nothing { best_ncc } = found else {
+                    panic!("{}: expected nothing, got {found:?}", board.file)
+                };
+                // Measured 0.204 and 0.203. Pinned as a margin for the same
+                // reason the boards are: a pass that crept up to 0.69 on an
+                // empty screen still clears this assertion against the floor
+                // alone, and has no headroom left for a real game background.
+                assert!(
+                    best_ncc <= 0.35,
+                    "{}: scored {best_ncc} on an empty screen; the measured \
+                     noise scores 0.21, and {COARSE_CANDIDATE_FLOOR} is the \
+                     floor this has to stay clear of",
+                    board.file
+                );
+            }
+        }
+    }
+
+    /// A panel that moved — the hint's scale still applies, its origin does
+    /// not — is found again on the SAME tick, as a candidate.
+    ///
+    /// This is what bounds the recovery of a moved or rescaled panel to one
+    /// tick. Fails if the hinted path returns early on its own miss, which
+    /// would hide the panel until the caller's periodic full read.
+    #[test]
+    fn a_hint_pointing_at_the_wrong_place_still_nominates_the_panel_it_moved_from() {
+        for board in BOARDS {
+            let img = board.load();
+            let mut stale = board.hint(&img);
+            stale.origin = (board.origin.0 - 200, board.origin.1 - 120);
+
+            let found = detect_cheap(&img, Some(&stale));
+
+            assert!(
+                matches!(found, CheapDetect::Candidate { .. }),
+                "{}: a stale origin must fall through to the nominating pass, got {found:?}",
+                board.file
+            );
+        }
+    }
+
+    /// The point of the whole tick, as a ratio against the path it replaces:
+    /// on a capture with no panel — the state the capture loop lives in — the
+    /// cheap tick costs a bounded couple of correlations where
+    /// [`super::super::reader::read_layout_with_hint`] runs its hint, the
+    /// seeded band AND the full sweep.
+    ///
+    /// Measured on the real capture sizes (release, 2026-08-19): 2 correlations
+    /// and 46 795 positions against 105 and 3 860 177 — see [`detect_cheap`].
+    /// Asserted here on a small frame so the full path is affordable in a unit
+    /// test, and as a ratio against that path rather than as a pinned number,
+    /// so it cannot rot when the sweep's constants move.
+    ///
+    /// Fails if the cheap tick ever reaches [`seed_band`] or [`full_sweep`].
+    #[test]
+    fn the_cheap_tick_costs_an_order_of_magnitude_less_than_the_read_it_gates() {
+        let empty = DynamicImage::ImageRgb8(noise(480, 360));
+        let hint = CheapHint {
+            calibration: AnchorCalibration {
+                screen_w: 480,
+                screen_h: 360,
+                scale: 1.0,
+            },
+            origin: (240, 180),
+        };
+        let calibration = hint.calibration;
+
+        let (found, cheap) = search_tally(|| detect_cheap(&empty, Some(&hint)));
+        assert!(matches!(found, CheapDetect::Nothing { .. }), "got {found:?}");
+        assert_eq!(
+            cheap.calls, 2,
+            "the cheap tick is one windowed match plus one nominating pass",
+        );
+
+        let (_, full) = search_tally(|| {
+            super::super::reader::read_layout_with_hint(&empty, Some(&calibration))
+        });
+
+        assert!(
+            full.calls >= 10 * cheap.calls,
+            "the read this gates ran {} correlations to the cheap tick's {}",
+            full.calls,
+            cheap.calls,
+        );
+        assert!(
+            full.positions >= 10 * cheap.positions,
+            "the read this gates scored {} positions to the cheap tick's {}",
+            full.positions,
+            cheap.positions,
+        );
+    }
+
     /// A calibration is only applicable at the capture size it was taken at.
     #[test]
     fn calibration_is_scoped_to_its_capture_size() {
@@ -829,13 +1261,20 @@ pub fn fine_window_for_test(origin: (i32, i32)) -> (i32, i32, i32, i32) {
     fine_window(origin)
 }
 
+/// Run `f` and report every correlation it performed.
+#[cfg(test)]
+pub fn search_tally<T>(f: impl FnOnce() -> T) -> (T, SearchTally) {
+    TALLY.with(|c| c.set(SearchTally::default()));
+    let out = f();
+    (out, TALLY.with(|c| c.get()))
+}
+
 /// Run `f`, and report the largest windowed correlation it performed, in scored
 /// positions. Zero means the fine pass never passed a window at all.
 #[cfg(test)]
 pub fn windowed_search_high_water<T>(f: impl FnOnce() -> T) -> (T, usize) {
-    WINDOWED_HIGH_WATER.with(|c| c.set(0));
-    let out = f();
-    (out, WINDOWED_HIGH_WATER.with(|c| c.get()))
+    let (out, tally) = search_tally(f);
+    (out, tally.windowed_high_water)
 }
 
 /// [`FINE_RADIUS`], for the test that pins the fine pass's search bound.

@@ -756,15 +756,45 @@ pub struct ReadGate {
 }
 
 impl ReadGate {
+    /// Whether the user's re-arm counter has moved since the last read, WITHOUT
+    /// spending the bump.
+    ///
+    /// The detect tick reaches this before anything has been read, and it only
+    /// *asks*: a re-arm while nothing is anchored has to force the read, or
+    /// pressing the button with the panel closed would do nothing. Spending it
+    /// is [`Self::note_rearm`]'s job and belongs on the tick that promoted for
+    /// it.
+    pub fn rearm_pending(&self, rearm: u64) -> bool {
+        self.rearm_seen != rearm
+    }
+
+    /// Spend a re-arm bump.
+    ///
+    /// Drops the recorded read as well as recording the counter, because a
+    /// bump means "read this board again even though it looks identical" —
+    /// recording the counter alone would let the read it forced match its own
+    /// fingerprint and skip.
+    ///
+    /// **The detect tick must call this on the tick it promoted for a bump.**
+    /// [`Self::layout_wants_read`] is reached only after a read that SUCCEEDED,
+    /// so a re-arm pressed while no panel is on screen would otherwise stay
+    /// pending forever and pin the loop into the full read on every tick — the
+    /// exact cost [`super::run`]'s detect tick exists to remove, re-entered
+    /// through the settings commands, which re-arm on every change.
+    pub fn note_rearm(&mut self, rearm: u64) {
+        self.rearm_seen = rearm;
+        self.read = None;
+    }
+
     /// Whether the layout fingerprint alone already justifies a full read.
     ///
     /// `rearm` is the user's re-arm counter; a bump forces one read and is then
-    /// consumed, so holding the button down does not pin the loop into
-    /// re-reading forever.
+    /// spent, so holding the button down does not pin the loop into re-reading
+    /// forever. A bump the detect tick already spent is no longer pending here,
+    /// which is why this and that tick share one writer.
     pub fn layout_wants_read(&mut self, layout: u64, rearm: u64) -> bool {
-        if self.rearm_seen != rearm {
-            self.rearm_seen = rearm;
-            self.read = None;
+        if self.rearm_pending(rearm) {
+            self.note_rearm(rearm);
             return true;
         }
         !matches!(self.read, Some((seen, _)) if seen == layout)
@@ -1376,6 +1406,29 @@ mod tests {
             !gate.layout_wants_read(layout_signature(&board), 1),
             "the same counter value must not force a second read",
         );
+    }
+
+    /// `rearm_pending` is a pure peek: it reports the bump and spends nothing.
+    /// [`ReadGate::note_rearm`] is the single place the bump is spent (the
+    /// promoting detect tick calls it; so does `layout_wants_read`).
+    ///
+    /// Fails if `rearm_pending` consumes the bump itself — the tick that
+    /// peeked would then be the only one to ever see it, and a read that
+    /// spends it through `note_rearm` would no longer drop the recorded board.
+    #[test]
+    fn rearm_pending_peeks_and_note_rearm_is_what_spends_the_bump() {
+        let board = layout(Some(Slot::B0), &[], &[]);
+        let mut gate = ReadGate::default();
+        gate.record(layout_signature(&board), 7);
+        assert!(!gate.rearm_pending(0), "nothing pressed yet");
+
+        assert!(gate.rearm_pending(1), "the bump is visible");
+        assert!(gate.rearm_pending(1), "and peeking does not spend it");
+        assert!(
+            gate.layout_wants_read(layout_signature(&board), 1),
+            "the read still sees the bump it was promoted for",
+        );
+        assert!(!gate.rearm_pending(1), "which is what spends it");
     }
 
     /// A disabled module publishes no advice, whatever the loop left behind.

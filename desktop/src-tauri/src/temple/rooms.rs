@@ -61,7 +61,7 @@ pub enum Grade {
 
 impl Grade {
     /// The grade as it is written on the sheet.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn as_str(self) -> &'static str {
         match self {
             Grade::D => "D",
@@ -96,13 +96,13 @@ impl RoomLine {
     /// POE-167's key, so [`RoomLine::mechanical_line`] round-trips through
     /// [`Line::named`]; for the other 21 it is a snake_case slug of the tier-3
     /// name, which is the name the strategy layer talks about.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn key(self) -> &'static str {
         self.key
     }
 
     /// The three room names, tier 1 first.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn tiers(self) -> [&'static str; 3] {
         self.tiers
     }
@@ -117,7 +117,7 @@ impl RoomLine {
     }
 
     /// Vertolka's grade for this line's tier-3 room.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn grade(self) -> Grade {
         self.grade
     }
@@ -443,7 +443,7 @@ pub fn normalise(name: &str) -> String {
 
 /// Exact (post-[`normalise`]) lookup. `None` for anything outside the closed
 /// vocabulary — this never guesses.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn resolve_name(name: &str) -> Option<RoomIdentity> {
     let key = normalise(name);
     if key.is_empty() {

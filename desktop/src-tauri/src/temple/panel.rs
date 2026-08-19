@@ -213,7 +213,7 @@ struct Block {
     /// next `Architect` line or at the end of the input.
     closed: bool,
     /// The run's lines, joined back into one string.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     text: String,
     /// The offer, when the run is one.
     offer: Option<ArchitectOffer>,
@@ -273,7 +273,7 @@ fn architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<Block> {
 }
 
 /// The architect blocks as text, in reading order.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn group_architect_blocks<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
     architect_blocks(lines)
         .into_iter()
@@ -332,7 +332,7 @@ pub fn parse_architect_block(block: &str) -> Option<ArchitectOffer> {
 }
 
 /// Every architect offer the OCR lines contain.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn parse_architects<S: AsRef<str>>(lines: &[S]) -> Vec<ArchitectOffer> {
     architect_blocks(lines)
         .into_iter()
@@ -408,7 +408,7 @@ pub struct PanelReading {
 
 impl PanelReading {
     /// The title's game name, when it was legible.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn identity_name(&self) -> Option<&'static str> {
         self.room.identity().map(|id| id.display_name())
     }

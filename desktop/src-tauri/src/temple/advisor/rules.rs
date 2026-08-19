@@ -28,8 +28,19 @@
 //!
 //! # The chain
 //!
-//! `RV > R1-apex > R2 > R1-gradient > RS`, with RU and RD as local overrides
-//! and generic cluster-merging ranked below R2 while no cluster holds value.
+//! `RV > RU > R1-apex > RD > R2 > R1-gradient > RS`, and generic
+//! cluster-merging ranked below R2 while no cluster holds value.
+//!
+//! That order is not a description of [`DoorKey`] — it IS [`DoorKey`], read off
+//! its field order by the derived lexicographic `Ord`. Reordering the fields
+//! reorders the chain.
+//!
+//! RU and RD sit *inside* the chain at those two positions rather than beside
+//! it, and each is bounded by what it sits under: RU vetoes everything below it
+//! but never RV, so an option that dilutes a saturated upgrade room still wins
+//! when it is the one that connects value; RD is a count of corridors opened
+//! and outranks R2, but not R1-apex, so spending both keys beats a tidier merge
+//! and still loses to banking the Apex.
 //!
 //! Two placements deserve their justification in the file rather than a commit
 //! message:

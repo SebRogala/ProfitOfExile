@@ -61,7 +61,7 @@ pub fn junk_offers() -> Vec<ArchitectOffer> {
 }
 
 /// A door set, for asserting on a recommendation.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn doors(edges: &[(Slot, Slot)]) -> BTreeSet<Edge> {
     edges.iter().map(|(a, b)| Edge::new(*a, *b)).collect()
 }
