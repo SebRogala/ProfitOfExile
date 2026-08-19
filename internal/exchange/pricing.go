@@ -28,7 +28,8 @@ const (
 //
 // The low and the high are realized extremes of the hour's trades, not two
 // sides of a book that existed at the same instant: nobody was necessarily
-// offering both at once. Every edge built on them is therefore an upper bound.
+// offering both at once. A per-hour edge built on them is the hour's optimistic
+// reading — both extremes were realized, not necessarily takeable together.
 //
 // ok is false when the row is not that pair, when PriceValid is false, when
 // either Ratio rejects its quantities, or when the result is not a usable

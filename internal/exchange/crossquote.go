@@ -23,8 +23,9 @@ import "sort"
 // profitable direction is not symmetric.
 //
 // Every price is one of the hour's realized extremes rather than a quote that
-// stood at the moment of the trade (see priceIn), so the edge is an upper bound
-// and the tighter the tick granularity of the pair, the more of it is fiction.
+// stood at the moment of the trade (see priceIn), so the per-hour edge is the
+// hour's optimistic reading — and the coarser the pair's tick, the more of it
+// is quantization rather than opportunity.
 //
 // Each leg is gated on its own market's depth (gatedLeg) and every price must
 // come back ok, so one thin or unpriced side drops the whole route.
