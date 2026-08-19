@@ -36,25 +36,26 @@ var (
 const divineChaosRate = 198.97
 
 // directDivinePlay is the fixture's headline flip: buy a divine for 196 chaos,
-// sell it for 201.
+// sell it for 201 — 197 and 199.97 once each side has paid its tick, which is
+// why roiPct is under half of roiPctRaw.
 func directDivinePlay() exchange.Play {
 	return exchange.Play{
 		Key:  "direct:" + exchange.ChaosID + "|" + exchange.DivineID,
 		Mode: exchange.ModeDirect,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 196, Fair: 198.97, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
-			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 201, Fair: 198.97, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
+			{Action: "buy", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 196, Fair: 198.97, FairOK: true, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
+			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 201, Fair: 198.97, FairOK: true, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
 		},
-		RoiPct:           0.0255,
-		Edge:             0.0255,
-		RoiPctNewestHour: 0.0306,
-		Roi:              4.998,
-		Investment:       196,
-		Turnover:         13001051,
-		Tick:             1.0 / 196.0,
-		Depth:            65361,
-		HoursSeen:        6,
-		LastHour:         fixtureLastHour,
+		RoiPct:     0.0151,
+		Edge:       0.0151,
+		RoiPctRaw:  0.0255,
+		Roi:        2.9745,
+		Investment: 197,
+		Turnover:   13001051,
+		Tick:       1.0 / 196.0,
+		Depth:      65361,
+		HoursSeen:  6,
+		LastHour:   fixtureLastHour,
 	}
 }
 
@@ -64,43 +65,55 @@ func directScarabPlay() exchange.Play {
 		Key:  "direct:" + exchange.DivineID + "|" + scarabID,
 		Mode: exchange.ModeDirect,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60},
-			{Action: "sell", Item: scarabID, Quote: exchange.DivineID, Price: 0.08, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60},
+			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60},
+			{Action: "sell", Item: scarabID, Quote: exchange.DivineID, Price: 0.08, Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60},
 		},
-		RoiPct:           0.28,
-		Edge:             0.28,
-		RoiPctNewestHour: 0.19,
-		Roi:              3.481,
-		Investment:       12.435,
-		Turnover:         59691,
-		Tick:             0.0625,
-		Depth:            300,
-		HoursSeen:        4,
-		LastHour:         fixtureLastHour,
+		RoiPct:     0.1294,
+		Edge:       0.1294,
+		RoiPctRaw:  0.28,
+		Roi:        1.7099,
+		Investment: 13.2131,
+		Turnover:   59691,
+		Tick:       0.0625,
+		Depth:      300,
+		HoursSeen:  4,
+		LastHour:   fixtureLastHour,
 	}
 }
 
 // oneHopPlay is the three-leg triangle: buy the scarab in divine, sell it in
-// chaos, convert back.
+// chaos, convert the chaos proceeds back into divine. Its last leg sells the
+// SECOND quote back into the first, which is why it is priced in divine per
+// chaos — the same chaos/divine market directDivinePlay flips, read the other
+// way round, so 1/196 at the dearest against a fair of 1/198.97.
+//
+// Its middle leg sold at 24.5 chaos against a fair of 15, so the leg AND the
+// play carry the suspect flag — the handler is a transport and has to pass both
+// through untouched.
+//
+// The numbers are the ones those legs imply: 24.5 * (1/196) / 0.0625 - 1 is the
+// raw 100%, and 0.8353 is the same round trip once each leg has paid its own
+// tick, for 11.0369 chaos on an entry of 13.2131.
 func oneHopPlay() exchange.Play {
 	return exchange.Play{
 		Key:  "1-hop:" + scarabID + "|" + exchange.DivineID + "|" + exchange.ChaosID,
 		Mode: exchange.ModeOneHop,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60},
-			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 8, Fair: 7.5, Tick: 0.02, Volume: 250, Stock: 25},
-			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 64, Fair: 63, Tick: 1.0 / 64.0, Volume: 65361, Stock: 8878},
+			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60},
+			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 24.5, Fair: 15, FairOK: true, Tick: 0.02, Volume: 250, Stock: 25, Suspect: true},
+			{Action: "sell", Item: exchange.ChaosID, Quote: exchange.DivineID, Price: 1.0 / 196.0, Fair: 1.0 / divineChaosRate, FairOK: true, Tick: 1.0 / 196.0, Volume: 13001051, Stock: 4564191},
 		},
-		RoiPct:           1,
-		Edge:             1,
-		RoiPctNewestHour: 0.75,
-		Roi:              12.435,
-		Investment:       12.435,
-		Turnover:         59691,
-		Tick:             0.0625,
-		Depth:            250,
-		HoursSeen:        3,
-		LastHour:         fixtureLastHour,
+		RoiPct:     0.8353,
+		Edge:       0.8353,
+		RoiPctRaw:  1,
+		Roi:        11.0369,
+		Investment: 13.2131,
+		Turnover:   59691,
+		Tick:       0.0625,
+		Depth:      250,
+		Suspect:    true,
+		HoursSeen:  3,
+		LastHour:   fixtureLastHour,
 	}
 }
 
@@ -128,13 +141,14 @@ func dayOnlyPlay() exchange.Play {
 		Key:  "direct:" + exchange.ChaosID + "|" + scarabID,
 		Mode: exchange.ModeDirect,
 		Legs: []exchange.Leg{
-			{Action: "buy", Item: scarabID, Quote: exchange.ChaosID, Price: 12, Fair: 13, Tick: 1.0 / 12.0, Volume: 900, Stock: 120},
-			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 15, Fair: 13, Tick: 1.0 / 12.0, Volume: 900, Stock: 120},
+			{Action: "buy", Item: scarabID, Quote: exchange.ChaosID, Price: 12, Fair: 13, FairOK: true, Tick: 1.0 / 12.0, Volume: 900, Stock: 120},
+			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 15, Fair: 13, FairOK: true, Tick: 1.0 / 12.0, Volume: 900, Stock: 120},
 		},
-		RoiPct:     0.25,
-		Edge:       0.25,
-		Roi:        3,
-		Investment: 12,
+		RoiPct:     0.0577,
+		Edge:       0.0577,
+		RoiPctRaw:  0.25,
+		Roi:        0.75,
+		Investment: 13,
 		Turnover:   11700,
 		Tick:       1.0 / 12.0,
 		Depth:      900,
@@ -170,9 +184,11 @@ type exchangeLegBody struct {
 	Quote     string  `json:"quote"`
 	Price     float64 `json:"price"`
 	Fair      float64 `json:"fair"`
+	FairOK    bool    `json:"fairOk"`
 	Tick      float64 `json:"tick"`
 	Volume    float64 `json:"volume"`
 	Stock     int64   `json:"stock"`
+	Suspect   bool    `json:"suspect"`
 	ItemName  string  `json:"itemName"`
 	ItemIcon  *string `json:"itemIcon"`
 	QuoteName string  `json:"quoteName"`
@@ -182,8 +198,8 @@ type exchangeLegBody struct {
 // String renders the leg with its icon pointers dereferenced, so a failed
 // comparison names the paths instead of two heap addresses.
 func (l exchangeLegBody) String() string {
-	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v fair:%v tick:%v volume:%v stock:%d itemName:%q itemIcon:%s quoteName:%q quoteIcon:%s}",
-		l.Action, l.Item, l.Quote, l.Price, l.Fair, l.Tick, l.Volume, l.Stock,
+	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v fair:%v fairOk:%t tick:%v volume:%v stock:%d suspect:%t itemName:%q itemIcon:%s quoteName:%q quoteIcon:%s}",
+		l.Action, l.Item, l.Quote, l.Price, l.Fair, l.FairOK, l.Tick, l.Volume, l.Stock, l.Suspect,
 		l.ItemName, quoteOrNull(l.ItemIcon), l.QuoteName, quoteOrNull(l.QuoteIcon))
 }
 
@@ -203,19 +219,20 @@ func iconPath(id string) *string {
 }
 
 type exchangePlayBody struct {
-	Key              string            `json:"key"`
-	Mode             string            `json:"mode"`
-	RoiPct           float64           `json:"roiPct"`
-	Edge             float64           `json:"edge"`
-	RoiPctNewestHour float64           `json:"roiPctNewestHour"`
-	Roi              float64           `json:"roi"`
-	Investment       float64           `json:"investment"`
-	Turnover         float64           `json:"turnover"`
-	Tick             float64           `json:"tick"`
-	Depth            float64           `json:"depth"`
-	HoursSeen        int               `json:"hoursSeen"`
-	LastHour         time.Time         `json:"lastHour"`
-	Legs             []exchangeLegBody `json:"legs"`
+	Key        string            `json:"key"`
+	Mode       string            `json:"mode"`
+	RoiPct     float64           `json:"roiPct"`
+	Edge       float64           `json:"edge"`
+	RoiPctRaw  float64           `json:"roiPctRaw"`
+	Roi        float64           `json:"roi"`
+	Investment float64           `json:"investment"`
+	Turnover   float64           `json:"turnover"`
+	Tick       float64           `json:"tick"`
+	Depth      float64           `json:"depth"`
+	Suspect    bool              `json:"suspect"`
+	HoursSeen  int               `json:"hoursSeen"`
+	LastHour   time.Time         `json:"lastHour"`
+	Legs       []exchangeLegBody `json:"legs"`
 }
 
 type exchangePlaysBody struct {
@@ -447,21 +464,21 @@ func TestCurrencyExchangePlays_legsCarryDisplayNamesAndIconPathsBesideTheRawFeed
 	want := []exchangeLegBody{
 		{
 			Action: "buy", Item: scarabID, Quote: exchange.DivineID,
-			Price: 0.0625, Fair: 0.07, Tick: 0.0625, Volume: 300, Stock: 60,
+			Price: 0.0625, Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60,
 			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
 			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID),
 		},
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
-			Price: 8, Fair: 7.5, Tick: 0.02, Volume: 250, Stock: 25,
+			Price: 24.5, Fair: 15, FairOK: true, Tick: 0.02, Volume: 250, Stock: 25, Suspect: true,
 			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
 			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
 		},
 		{
-			Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID,
-			Price: 64, Fair: 63, Tick: 1.0 / 64.0, Volume: 65361, Stock: 8878,
-			ItemName: "Divine Orb", ItemIcon: iconPath(exchange.DivineID),
-			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
+			Action: "sell", Item: exchange.ChaosID, Quote: exchange.DivineID,
+			Price: 1.0 / 196.0, Fair: 1.0 / divineChaosRate, FairOK: true, Tick: 1.0 / 196.0, Volume: 13001051, Stock: 4564191,
+			ItemName: "Chaos Orb", ItemIcon: iconPath(exchange.ChaosID),
+			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID),
 		},
 	}
 	if len(play.Legs) != len(want) {
@@ -669,7 +686,7 @@ func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
 	}{
 		{"roiPct", got.RoiPct, want.RoiPct},
 		{"edge", got.Edge, want.Edge},
-		{"roiPctNewestHour", got.RoiPctNewestHour, want.RoiPctNewestHour},
+		{"roiPctRaw", got.RoiPctRaw, want.RoiPctRaw},
 		{"roi", got.Roi, want.Roi},
 		{"investment", got.Investment, want.Investment},
 		{"turnover", got.Turnover, want.Turnover},
@@ -689,6 +706,21 @@ func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
 	}
 	if len(got.Legs) != len(want.Legs) {
 		t.Errorf("got %d legs, want %d", len(got.Legs), len(want.Legs))
+	}
+}
+
+func TestCurrencyExchangePlays_flaggedPlay_publishesTheSuspectFlagBesideTheRawPrice(t *testing.T) {
+	// The engine serves a play built on an unrepeatable extreme rather than
+	// hiding it, so the play-level flag is the only thing telling the reader why
+	// a 24.5-chaos sell against a 15-chaos average is not a 100% opportunity. A
+	// body that dropped it would render the row as clean. The per-leg fields it
+	// was raised from are pinned by the leg-body test above.
+	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays?mode=1-hop"))
+
+	play := playByKey(t, body, oneHopPlay().Key)
+
+	if !play.Suspect {
+		t.Error("suspect = false, want true — the engine flagged this play")
 	}
 }
 

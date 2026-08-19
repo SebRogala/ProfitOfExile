@@ -2,13 +2,14 @@ package exchange
 
 // obs is what ONE hour observed about one leg's market.
 //
-// It is the unit the aggregator takes medians of, so every number a Play shows
-// traces back to a slice of these. low and high are the hour's cheapest and
+// It is the unit a Play is built from: evaluate prices one hour's legs straight
+// off these, so every number a Play shows traces back to ONE of them — the hour
+// Play.LastHour names. low and high are the hour's cheapest and
 // dearest realized price of the leg's item in its quote (priceIn); vwap is the
 // price its traded mass actually cleared at (vwapIn), and vwapOK says whether
 // the hour had one at all — an hour whose quote side reported no volume carries
-// vwap 0, which is a missing reading rather than a price of zero, and the
-// aggregator must leave it out instead of averaging it in; tick is the coarsest
+// vwap 0, which is a missing reading rather than a price of zero, and evaluate
+// must report as missing (Leg.FairOK) rather than as a price; tick is the coarsest
 // step the market's quantity pairs can express (tickOf); quoteVolume and volume
 // are the two sides' traded units; stock is liveness only — lowest/highest stock
 // are the hour's min and max of total book size and say nothing about the
@@ -44,6 +45,7 @@ type candidate struct {
 	key  string
 	mode Mode
 	legs []candidateLeg
+	// edge is retained for the per-hour candidate tests; Play.RoiPctRaw supersedes it.
 	edge float64
 }
 
@@ -55,10 +57,11 @@ type candidate struct {
 //	edge = high/low - 1
 //
 // Both extremes are realized trades from the same hour rather than two live
-// sides of a book, so this hour's edge is the optimistic reading (see priceIn);
-// it survives onto the Play as RoiPctNewestHour, while what the Play ranks on is
-// the cross-hour median. It is also orientation-independent: pricing the market
-// the other way round inverts both prices and leaves the ratio unchanged.
+// sides of a book, so this hour's edge is the optimistic reading (see priceIn):
+// it reaches the Play as RoiPctRaw, while what the Play ranks on is the same
+// round trip after one tick of undercut per leg (Play.RoiPct). It is also
+// orientation-independent: pricing the market the other way round inverts both
+// prices and leaves the ratio unchanged.
 //
 // A row contributes only when priceIn can price it and the traded side is alive
 // — at least Config.MinVolumePerHour units traded and stock on both sides of the
@@ -110,9 +113,9 @@ func gatedLeg(action, item, quote string, r Row, cfg Config) (candidateLeg, bool
 	}
 
 	// A row that traded MinVolumePerHour units has a usable vwap unless the
-	// quote side reported nothing; that hour then contributes no fair anchor and
-	// no turnover, and vwapOK keeps it out of the leg's Fair median rather than
-	// pulling that median toward zero.
+	// quote side reported nothing; that hour then has no fair anchor, and vwapOK
+	// carries that through to Leg.FairOK rather than letting a 0 read as a free
+	// item — with no anchor, nothing can be called suspect either.
 	vwap, vwapOK := vwapIn(r, item, quote)
 
 	return candidateLeg{
