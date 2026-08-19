@@ -9,6 +9,7 @@ import {
 	formatTime,
 	formatTimeAgo,
 	formatVolume,
+	iconSrc,
 	legLabel,
 	parseMode,
 	refetchDelay
@@ -342,6 +343,54 @@ describe('legLabel', () => {
 	it('prices the leg through formatLegPrice rather than printing the raw number', () => {
 		expect(legLabel(leg({ price: 0.004975 }))).toBe(
 			'buy Mod Values with Reroll Rare @ 0.004975'
+		);
+	});
+});
+
+describe('iconSrc', () => {
+	// What `getApiBase()` hands the page: an origin plus the `/api` mount.
+	const BASE = 'https://server.test/api';
+	// What the server puts on a leg — `url.PathEscape`d id under the icon route.
+	const PATH = '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare';
+
+	it('joins the API base onto the icon path the server sent', () => {
+		// The `%2F`s are the server's escaping of the metadata id's slashes; the
+		// join must carry them through byte for byte, because a decoded
+		// "Metadata/Items/..." would address a different route entirely and a
+		// re-encoded "%252F" would reach the handler as a literal percent. The
+		// `/api` mount has to survive too: the icon route lives under it, so a
+		// join that treated the path as origin-relative (`new URL(path, base)`)
+		// would drop the mount and request an endpoint the server does not serve.
+		expect(iconSrc(BASE, PATH)).toBe(
+			'https://server.test/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+		);
+	});
+
+	it('renders no icon for a leg the server sent without artwork', () => {
+		// `itemIcon: null` is the asset saying the item has no image at all, which
+		// ItemIcon renders as nothing rather than as the "?" 404 fallback.
+		expect(iconSrc(BASE, null)).toBeNull();
+	});
+
+	it('renders no icon for an empty path rather than requesting the API base itself', () => {
+		// An empty path joined onto the base would fetch `/api`, which answers with
+		// something that is not an image and would show the broken-image glyph.
+		expect(iconSrc(BASE, '')).toBeNull();
+	});
+
+	it('trims a trailing slash off the base rather than emitting a double slash', () => {
+		// Defensive: `iconSrc` takes the base as an argument, so its contract is
+		// "join any base", not "join the one `getApiBase()` happens to build
+		// today". `//currency-exchange/...` is normalised by some proxies and
+		// 404d by others, so the trim is pinned for whatever base reaches it.
+		expect(iconSrc('https://server.test/api/', PATH)).toBe(
+			'https://server.test/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+		);
+	});
+
+	it('inserts the separator when the path arrives without a leading slash', () => {
+		expect(iconSrc(BASE, 'currency-exchange/icon/Chaos')).toBe(
+			'https://server.test/api/currency-exchange/icon/Chaos'
 		);
 	});
 });
