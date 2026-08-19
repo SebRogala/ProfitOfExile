@@ -26,8 +26,12 @@ use super::ReadError;
 ///
 /// `doors` and `uncertain` overlap on purpose — see [`super::doors`]. A
 /// consumer that wants only corridors it can act on takes
-/// `doors.difference(&uncertain)`; POE-169 resolves the rest from the side
-/// panel's door markers.
+/// `doors.difference(&uncertain)`; a consumer that also has the side panel's
+/// diamond passes the whole layout to
+/// [`super::markers::apply_markers`], which settles the current room's
+/// corridors from the seals and hands back the finished door set. Do not union
+/// a marker result into `doors` — the whole point of the current room's
+/// corridors being uncertain is that `doors` may be wrong about them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TempleLayout {
     /// Entrance plate centre in image px — the origin every other coordinate

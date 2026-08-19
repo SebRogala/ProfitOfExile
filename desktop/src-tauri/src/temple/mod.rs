@@ -1,5 +1,5 @@
 //! Temple of Atzoatl **builder** advisor (POE-124 epic, POE-167 slice 0,
-//! POE-168 slice 1).
+//! POE-168 slice 1, POE-169 slice 2).
 //!
 //! Scope of this directory is the *building* phase — the two decisions a player
 //! makes per incursion (which architect to kill, which passage to open) while
@@ -8,7 +8,7 @@
 //!
 //! # What lives where
 //!
-//! - [`strategy`] (this slice) — the pure objective function: the room-line
+//! - [`strategy`] (POE-167) — the pure objective function: the room-line
 //!   vocabulary, the per-strategy [`strategy::StrategyProfile`], the
 //!   Chase/Scarab [`strategy::Mode`] selector, and the two user-facing config
 //!   flags. No Tauri, no state, no Windows code, no board graph.
@@ -16,7 +16,13 @@
 //!   reader: a screenshot of the temple's layout panel in, a
 //!   [`reader::TempleLayout`] out. Also pure, and equally free of Tauri and
 //!   Windows code, so the whole of it runs in the Linux test container.
-//! - Room identity (POE-169) and the advisor/board graph (POE-170) land as
+//! - [`rooms`], [`panel`], [`markers`] (POE-169) — room identity: the closed
+//!   87-name vocabulary and the fuzzy matcher over it ([`rooms`]), the side
+//!   panel's text behind a one-method OCR trait ([`panel`]), and the door
+//!   markers on the panel's diamond, which settle the corridors POE-168 hands
+//!   back as [`reader::TempleLayout::uncertain`] ([`markers`]). Pure apart
+//!   from [`panel::SystemOcr`], the single seam that calls the engine.
+//! - The advisor/board graph (POE-170) and the overlay (POE-171) land as
 //!   sibling modules and are the only intended consumers of this one.
 //!
 //! # Where the pixels live
@@ -28,10 +34,13 @@
 //!   anchor correlates against, `include_bytes!`-embedded by [`anchor`]. It is
 //!   production input: the reader cannot run without it, so it ships in the
 //!   binary and must not sit under `tests/`.
-//! - **`tests/fixtures/temple/*.png`** — real boards, loaded from
-//!   `CARGO_MANIFEST_DIR` by the reader's tests. This follows the convention
-//!   POE-165 established with `tests/fixtures/merc-skills-panel.png`; see
-//!   [`reader`]'s test module for each fixture's source file and crop box.
+//! - **`tests/fixtures/temple/board-*.png`** and **`diamond-*.png`** — real
+//!   boards and real side-panel diamonds, loaded from `CARGO_MANIFEST_DIR` by
+//!   the [`reader`] and [`markers`] tests. This follows the convention
+//!   POE-165 established with `tests/fixtures/merc-skills-panel.png`; each
+//!   fixture's source file and crop box is recorded in the `Fixture` struct of
+//!   the test module that loads it ([`reader`] for the boards, [`markers`] for
+//!   the diamonds).
 //!
 //! # Architecture decision this encodes
 //!
@@ -50,14 +59,19 @@
 // nothing as the two consumers land instead of silently covering whatever is
 // added next.
 //
-// Waiting on POE-169: `Line` (+ `key`/`named`), the four `KEY_*` keys, `Tier`.
+// POE-169 claimed `Line` (+ `key`/`named`), the four `KEY_*` keys and `Tier`;
+// those attributes stay only because the module root is still unreachable from
+// live code.
 // Waiting on POE-170: `DOUBLE_TIER_CHANCE`, `Mode`, `ModeRule`, `Combination`,
 // `StrategyProfile`, `highest_tier_per_line`, `TempleConfig`.
 
 pub mod anchor;
 pub mod doors;
 pub mod lattice;
+pub mod markers;
+pub mod panel;
 pub mod reader;
+pub mod rooms;
 pub mod strategy;
 
 /// Why a screenshot did not yield a board.
