@@ -20,23 +20,34 @@
 	 * server is the thing that is down.
 	 */
 	import { listen } from '@tauri-apps/api/event';
-	import { fetchCurrencyExchangePlays, type CurrencyExchangeResponse } from '$lib/api';
+	import { fetchCurrencyExchangePlays, getApiBase, type CurrencyExchangeResponse } from '$lib/api';
 	import {
 		MODE_OPTIONS,
 		deriveState,
 		formatEdge,
 		formatTime,
 		formatVolume,
+		iconSrc,
 		legLabel,
 		parseMode,
 		refetchDelay
 	} from '$lib/exchange/view';
 	import { persisted } from '$lib/prefs.svelte';
+	import ItemIcon from '$lib/components/ItemIcon.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	/** Persisted (ADR-013): the mode filter survives restarts. */
 	const mode = persisted('currencyExchangeMode', 'all');
+
+	/**
+	 * The base the legs' relative icon paths hang off. `$derived` rather than a
+	 * const read at init: this page is mounted for the life of the app (ADR-014),
+	 * so on a cold start it renders before the Rust status carrying `server_url`
+	 * arrives, and a value captured then would pin every icon to the fallback
+	 * base for the whole session. One call feeds every chip on screen.
+	 */
+	const apiBase = $derived(getApiBase());
 
 	let result = $state<CurrencyExchangeResponse | null>(null);
 	let lastFetchedAt = $state<Date | null>(null);
@@ -188,7 +199,10 @@
 							<td>
 								<div class="legs">
 									{#each play.legs as leg}
-										<span class="leg" title="{leg.item} | {leg.quote}">{legLabel(leg)}</span>
+										<span class="leg" title="{leg.item} | {leg.quote}">
+											<ItemIcon src={iconSrc(apiBase, leg.itemIcon)} alt="" />
+											{legLabel(leg)}
+										</span>
 									{/each}
 								</div>
 							</td>
@@ -335,6 +349,9 @@
 	}
 
 	.leg {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 		background: var(--color-lab-bg);
 		border: 1px solid var(--color-lab-border);
 		border-radius: 3px;

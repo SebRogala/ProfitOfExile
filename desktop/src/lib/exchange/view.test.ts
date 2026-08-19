@@ -316,7 +316,9 @@ describe('legLabel', () => {
 			volume: 1200,
 			stock: 40,
 			itemName: 'Mod Values',
+			itemIcon: null,
 			quoteName: 'Reroll Rare',
+			quoteIcon: null,
 			...overrides
 		};
 	}

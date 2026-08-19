@@ -256,8 +256,16 @@ export type CurrencyExchangeMode = 'all' | 'direct' | '1-hop';
 
 /**
  * One swap inside a play. `item`/`quote` are the raw Currency Exchange ids and
- * `itemName`/`quoteName` their display names — Humanize stand-ins until
- * POE-177 supplies the real labels. `price` is quote per item.
+ * `itemName`/`quoteName` their display names — real item names (POE-177), with
+ * the humanized id as the fallback for an id the server's asset does not know.
+ * `price` is quote per item.
+ *
+ * `itemIcon`/`quoteIcon` are API-RELATIVE paths into this server's icon route
+ * (`/currency-exchange/icon/<escaped id>`), not upstream poewiki URLs —
+ * production cannot reach poewiki (ADR-012). Join them onto `getApiBase()` with
+ * `$lib/exchange/view`'s `iconSrc`. `null` means the item has no artwork, which
+ * is a different thing from a path that later 404s: the first renders no icon
+ * at all, the second the "?" fallback.
  */
 export interface CurrencyExchangeLeg {
 	action: 'buy' | 'sell';
@@ -267,7 +275,9 @@ export interface CurrencyExchangeLeg {
 	volume: number;
 	stock: number;
 	itemName: string;
+	itemIcon: string | null;
 	quoteName: string;
+	quoteIcon: string | null;
 }
 
 /**
