@@ -1,0 +1,1602 @@
+//! The `temple` SSOT slice and the pure projection that fills it (POE-171).
+//!
+//! Everything in this file is a **wire type plus the pure function that builds
+//! it**: a [`reader::TempleLayout`], the per-plate [`panel::RoomReading`]s, the
+//! [`panel::PanelReading`] and an optional [`advisor::Advice`] go in, a
+//! [`TempleSlice`] comes out. No capture, no OCR, no Tauri — so the whole
+//! projection is exercised on Linux, and the Windows glue in [`super::run`] is
+//! only the part that fetches the inputs.
+//!
+//! # Why the domain types are not published directly
+//!
+//! `Slot`, `Edge`, `Match`, `Decision` and `Reason` are reasoning types, not
+//! wire types: none of them is `Serialize`, several carry `&'static` references
+//! into the vocabulary tables, and their shapes are chosen for the rollout
+//! kernel rather than for a webview. Projecting into flat strings and numbers
+//! here is what keeps POE-167..170 free of serde and free of any obligation to
+//! the overlay's shape. It follows `mercenary::MercenarySlice`, which does the
+//! same for the merc capture.
+//!
+//! # What the projection refuses to do
+//!
+//! - **Guess an unread plate.** [`rooms::Match::Unknown`] lands in
+//!   [`TempleSlice::unknown_rooms`] and the plate is published with
+//!   `known: false`. The advisor still runs; Unknown is junk, not a stop.
+//! - **Rank without a position.** `layout.current == None` publishes the layout
+//!   and [`TempleStatus::NoCurrentRoom`] with `advice: None` — the advisor is
+//!   not called at all, because "between rooms" is not a decision.
+//! - **Invent the current room's corridors.** When the diamond read fails, the
+//!   door set falls back to `doors − uncertain` and every edge incident to the
+//!   current room is published in
+//!   [`LayoutView::unresolved_incident`] instead of being silently included or
+//!   silently dropped. See [`super::run::diamond_rect`].
+
+use std::collections::BTreeSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use serde::{Deserialize, Serialize};
+
+use super::advisor::{self, Advice, MapAction};
+use super::anchor::AnchorCalibration;
+use super::doors::Confidence;
+use super::lattice::{Edge, Slot};
+use super::panel::{ArchitectOffer, PanelReading, RoomReading};
+use super::reader::TempleLayout;
+use super::rooms::{self, Match, OfferKind, RoomIdentity};
+use super::strategy::{Mode, StrategyProfile, TempleConfig, Tier};
+
+// ---------------------------------------------------------------- settings --
+
+/// The profile fields a user may set (POE-167 §4: *everything a player might
+/// disagree on is a profile field, never a code branch*).
+///
+/// Four of [`StrategyProfile`]'s fields, not the whole struct: `room_values`,
+/// `combinations` and `mode_rule` describe what "Locus + Doryani Rush" *is*,
+/// and a user editing them is choosing a different strategy rather than tuning
+/// this one. Those arrive as a second shipped profile, not as settings JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TempleProfileSettings {
+    /// What the Apex is worth on its own.
+    pub apex_score: f64,
+    /// Run-time traversal weight per BFS hop from the Entrance. 0 for the Rush.
+    pub path_cost: f64,
+    /// Prefer `change` over `upgrade` while no favourable line exists.
+    pub reroll_until_favourable: bool,
+    /// R4's carve-out: keep a slot in the drop pool while an adjacent upgrade
+    /// room can still hit it.
+    pub r4_keep_upgrade_targets: bool,
+}
+
+impl Default for TempleProfileSettings {
+    /// The Rush's own values, read off [`StrategyProfile::locus_doryani_rush`]
+    /// rather than typed in — a defaults table that can drift from the profile
+    /// it defaults to is a defaults table that will.
+    fn default() -> Self {
+        let rush = StrategyProfile::locus_doryani_rush();
+        TempleProfileSettings {
+            apex_score: rush.apex_score,
+            path_cost: rush.path_cost,
+            reroll_until_favourable: rush.reroll_until_favourable,
+            r4_keep_upgrade_targets: rush.r4_keep_upgrade_targets,
+        }
+    }
+}
+
+/// Largest number of opening stones one incursion can drop.
+pub const MAX_KEYS: u8 = 2;
+
+impl TempleProfileSettings {
+    /// The Rush with these four fields applied.
+    pub fn to_profile(&self) -> StrategyProfile {
+        StrategyProfile {
+            apex_score: self.apex_score,
+            path_cost: self.path_cost,
+            reroll_until_favourable: self.reroll_until_favourable,
+            r4_keep_upgrade_targets: self.r4_keep_upgrade_targets,
+            ..StrategyProfile::locus_doryani_rush()
+        }
+    }
+
+    /// Reject a profile the scorer cannot use.
+    ///
+    /// Both weights are *magnitudes* the objective function adds and
+    /// subtracts. A negative `apex_score` would make the Apex a penalty and a
+    /// negative `path_cost` would pay the player to walk further — neither is
+    /// a preference, both are a sign error. NaN is rejected for the reason
+    /// every comparison in the ranking is a float compare: one NaN makes the
+    /// whole ordering arbitrary.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.apex_score.is_finite() || self.apex_score < 0.0 {
+            return Err(format!(
+                "apex_score must be a finite number ≥ 0, got {}",
+                self.apex_score
+            ));
+        }
+        if !self.path_cost.is_finite() || self.path_cost < 0.0 {
+            return Err(format!(
+                "path_cost must be a finite number ≥ 0, got {}",
+                self.path_cost
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Everything the temple module persists — the D0 calibration, the user's
+/// profile tuning, the two config flags and the key count.
+///
+/// One `AppState` Mutex holds this whole struct while `settings.json` keeps
+/// four separate fields, so a hand-edited file stays readable and one bad
+/// field defaults on its own (`#[serde(default)]` per field on `Settings`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TempleSettings {
+    /// Remembered anchor scale, keyed on the capture dimensions it was
+    /// measured at. Self-invalidating: [`super::anchor::anchor_with_hint`]
+    /// ignores it at any other capture size, and verifies it against
+    /// [`super::anchor::NCC_FLOOR`] like any other candidate, so a stale one
+    /// costs one extra match and never a wrong board.
+    pub calibration: Option<AnchorCalibration>,
+    pub profile: TempleProfileSettings,
+    pub config: TempleConfig,
+    /// Opening stones this incursion dropped. The panel does not print it, so
+    /// the user sets it; 1 is the common case.
+    pub keys: u8,
+}
+
+/// The common case: one opening stone dropped. `u8::default()` is 0, which is
+/// a legal but uncommon board, so this is the number every default path uses.
+pub fn default_keys() -> u8 {
+    1
+}
+
+impl TempleSettings {
+    /// The shipped defaults. `Default::default()` gives `keys: 0`, which is a
+    /// legal but uncommon board — go through here, never through the derive.
+    pub fn shipped() -> TempleSettings {
+        TempleSettings {
+            calibration: None,
+            profile: TempleProfileSettings::default(),
+            config: TempleConfig::default(),
+            keys: default_keys(),
+        }
+    }
+
+    /// Drop a calibration measured at a different capture size.
+    ///
+    /// The reader would ignore it anyway — this is the *settings* half, so a
+    /// resolution change does not leave a permanently dead hint in the file
+    /// and the slice does not advertise a calibration that can never apply.
+    pub fn prune_calibration(&mut self, screen: (u32, u32)) -> bool {
+        match self.calibration {
+            Some(cal) if cal.screen_w != screen.0 || cal.screen_h != screen.1 => {
+                self.calibration = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Reject a key count the game cannot produce.
+pub fn validate_keys(keys: u8) -> Result<(), String> {
+    if keys > MAX_KEYS {
+        return Err(format!(
+            "an incursion drops at most {MAX_KEYS} opening stones, got {keys}"
+        ));
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------- wire types --
+
+/// What the module is doing, in the one field a page can switch on.
+///
+/// `Error` carries no message: the text lives in [`TempleSlice::last_error`],
+/// matching [`crate::mercenary::MercStatus`]. One flat string enum keeps the
+/// TypeScript side a plain union instead of a tagged one, and the two fields
+/// are written together in the same publish.
+///
+/// `snake_case` wire strings, matching [`crate::mercenary::MercStatus`] and the
+/// convention `desktop/src/lib/README.md` records for this app's enums
+/// (camelCase FIELDS, snake_case enum VARIANTS). The struct views in this file
+/// keep `camelCase` because that attribute renames their fields, not variants.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TempleStatus {
+    /// The module is disabled — no loop, and no overlay.
+    Off,
+    /// Running, and nothing read yet.
+    ///
+    /// Not the unfocused state: the loop keeps whatever it last published while
+    /// the game is alt-tabbed and does not publish at all (see
+    /// [`super::run`]'s focus gate), so an alt-tab leaves the previous status
+    /// standing rather than reverting to this one.
+    #[default]
+    Idle,
+    /// The loop looked and found no layout panel.
+    PanelNotVisible,
+    /// A full read is in flight.
+    Reading,
+    /// A board is published and current.
+    Read,
+    /// The panel was open between rooms — the layout is published, the advice
+    /// is not.
+    NoCurrentRoom,
+    /// Capture or OCR is not available on this host / in this build.
+    Unavailable,
+    /// The last attempt failed; see [`TempleSlice::last_error`].
+    Error,
+}
+
+/// One of the 13 plates, as read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotView {
+    /// `"A0"`… `"E2"`.
+    pub slot: String,
+    /// The game's own name for what was read, or `None` for an unread plate.
+    pub name: Option<String>,
+    /// 0 for the Entrance, the Apex, a filler and an unread plate.
+    pub tier: u8,
+    /// The name matched the vocabulary exactly (as opposed to fuzzily).
+    pub exact: bool,
+    /// `false` means the plate is unread — drawn as such, never guessed.
+    pub known: bool,
+    /// The room the player is standing in.
+    pub current: bool,
+}
+
+/// The board, as pixels gave it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutView {
+    /// 13 entries, in [`Slot::ALL`] order.
+    pub slots: Vec<SlotView>,
+    /// Corridors to act on — the settled set when the diamond read succeeded,
+    /// `doors − uncertain` when it did not.
+    pub doors: Vec<String>,
+    /// Corridors the current room's selection frame covers, exactly as the
+    /// reader reported them.
+    pub uncertain: Vec<String>,
+    /// Corridors incident to the current room that NOTHING settled — populated
+    /// only on the diamond-read fallback. Surfaced, never guessed.
+    pub unresolved_incident: Vec<String>,
+    /// Why the corridors are unresolved, when they are.
+    pub marker_error: Option<String>,
+    pub current: Option<String>,
+    pub scale: f32,
+    pub ncc: f32,
+    /// `"high"` or `"low"` — [`Confidence::Low`] means the door sets are a best
+    /// effort over an unreadable panel and nothing should act on them.
+    pub confidence: String,
+}
+
+/// One architect block, resolved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferView {
+    /// Position in the panel, so the overlay can point at the right block.
+    pub index: usize,
+    pub architect_name: String,
+    /// `"change"` or `"upgrade"`.
+    pub kind: String,
+    /// What the panel printed. Kept because it is what the player sees.
+    pub printed_target: String,
+    /// What the kill actually builds — `None` when the printed name did not
+    /// resolve. **Not** the printed name (POE-169: Contested Development turns
+    /// `change` into `currentTier + 1` of the named line).
+    pub display_name: Option<String>,
+    /// The tier the kill guarantees. An `upgrade` also rolls one more at 50%.
+    pub built_tier: Option<u8>,
+}
+
+/// The side panel, as text gave it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelView {
+    /// The panel's title — the current room's name.
+    pub room: Option<String>,
+    pub offers: Vec<OfferView>,
+    /// `None` means the line was not legible; every rollout then terminates
+    /// immediately and the scores are the board as it stands.
+    pub incursions_remaining: Option<u8>,
+}
+
+/// One ranked move.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankedView {
+    /// `"upgrade → Locus of Corruption"`, or `"kill either"`.
+    pub headline: String,
+    /// `"C1-C2, B0-C1"`, or `"no door"`.
+    pub doors_label: String,
+    pub doors: Vec<String>,
+    /// Which architect block to point at.
+    pub architect_index: Option<usize>,
+    pub ev: f64,
+    /// Fraction of rollouts that finished below the profile's "lost the room"
+    /// threshold. `None` on the recommended side — RV did not exclude it.
+    pub risk: Option<f64>,
+    /// One line per rule that put the option here. A bare score cannot be
+    /// audited.
+    pub reasons: Vec<String>,
+}
+
+/// The decision, with everything needed to justify it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdviceView {
+    /// Best first.
+    pub recommendations: Vec<RankedView>,
+    /// The RV-excluded options, best first, each with its measured risk.
+    pub gambles: Vec<RankedView>,
+    /// `"continue"` or `"leaveMap"`. R5's verdict for the top recommendation —
+    /// as prominent as the kill when it says leave.
+    pub map_action: String,
+    pub warnings: Vec<String>,
+}
+
+/// The `temple` SSOT slice (POE-171).
+///
+/// Owned by `AppState.temple`, written by [`super::run`] and the commands,
+/// projected read-only into every snapshot by `ssot::build_snapshot`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TempleSlice {
+    pub status: TempleStatus,
+    pub layout: Option<LayoutView>,
+    pub panel: Option<PanelView>,
+    /// `None` whenever there is no decision to make — no board, or no current
+    /// room.
+    pub advice: Option<AdviceView>,
+    /// Chase or Scarab, from the profile's own selector. `None` with no
+    /// advice.
+    pub mode: Option<String>,
+    /// The user's key count, echoed so the overlay does not need a second
+    /// command to render its own control.
+    pub keys: u8,
+    /// Slots whose plate did not resolve, by key. Surfaced, never hidden — the
+    /// player can then see which rooms the advisor is treating as junk.
+    pub unknown_rooms: Vec<String>,
+    /// Unix ms of the last completed read.
+    pub last_read_at: Option<u64>,
+    /// The anchor scale in force, keyed on the capture size it was measured at.
+    pub calibration: Option<AnchorCalibration>,
+    pub last_error: Option<String>,
+}
+
+// ------------------------------------------------------------ projection --
+
+/// Everything one completed read produced, before it becomes a slice.
+///
+/// A struct rather than six positional arguments because the two that are
+/// `Option` — the advice and the settled door set — are exactly the two a
+/// caller could otherwise swap or drop silently.
+pub struct ReadResult<'a> {
+    pub layout: &'a TempleLayout,
+    pub rooms: &'a [RoomReading],
+    pub panel: &'a PanelReading,
+    /// The door set the diamond settled, or `None` on the marker fallback.
+    pub settled: Option<&'a BTreeSet<Edge>>,
+    /// Why the diamond read failed, when it did.
+    pub marker_error: Option<String>,
+    pub advice: Option<&'a Advice>,
+    pub keys: u8,
+    pub read_at: u64,
+}
+
+fn edge_labels(edges: impl IntoIterator<Item = Edge>) -> Vec<String> {
+    edges.into_iter().map(|e| e.to_string()).collect()
+}
+
+/// The identity a plate read, with the two facts the slice publishes about it.
+fn slot_view(reading: &RoomReading, current: Option<Slot>) -> SlotView {
+    let identity = reading.identity.identity();
+    SlotView {
+        slot: reading.slot.as_str().to_string(),
+        name: identity.map(|id| id.display_name().to_string()),
+        tier: identity.map_or(0, |id| id.tier().get()),
+        exact: matches!(reading.identity, Match::Exact(_)),
+        known: identity.is_some(),
+        current: current == Some(reading.slot),
+    }
+}
+
+/// The 13 identities in the shape [`advisor::state::BoardState::from_reading`]
+/// takes.
+///
+/// Indexed by [`Slot::index`] rather than by position in `rooms`, so a caller
+/// that hands over a short or reordered vector gets `None` plates instead of a
+/// board with the wrong rooms in it.
+pub fn identities(rooms: &[RoomReading]) -> [Option<RoomIdentity>; 13] {
+    let mut out = [None; 13];
+    for reading in rooms {
+        out[reading.slot.index()] = reading.identity.identity();
+    }
+    out
+}
+
+/// The plates that did not resolve, by slot key, in board order.
+pub fn unknown_rooms(rooms: &[RoomReading]) -> Vec<String> {
+    let mut out: Vec<(usize, String)> = rooms
+        .iter()
+        .filter(|r| !r.identity.is_known())
+        .map(|r| (r.slot.index(), r.slot.as_str().to_string()))
+        .collect();
+    out.sort_by_key(|(index, _)| *index);
+    out.into_iter().map(|(_, key)| key).collect()
+}
+
+fn layout_view(read: &ReadResult<'_>) -> LayoutView {
+    let layout = read.layout;
+    let doors: BTreeSet<Edge> = match read.settled {
+        Some(settled) => settled.clone(),
+        None => layout.doors.difference(&layout.uncertain).copied().collect(),
+    };
+    // On the fallback the current room's corridors were never settled by
+    // anything: the beam sampler flagged them uncertain precisely because the
+    // selection frame covers them. Publishing them as unresolved is the whole
+    // honesty guard — the alternative is a page that cannot tell "closed" from
+    // "we could not see it".
+    let unresolved = match read.settled {
+        Some(_) => Vec::new(),
+        None => edge_labels(layout.uncertain.iter().copied()),
+    };
+    LayoutView {
+        slots: read
+            .rooms
+            .iter()
+            .map(|r| slot_view(r, layout.current))
+            .collect(),
+        doors: edge_labels(doors),
+        uncertain: edge_labels(layout.uncertain.iter().copied()),
+        unresolved_incident: unresolved,
+        marker_error: read.marker_error.clone(),
+        current: layout.current.map(|s| s.as_str().to_string()),
+        scale: layout.scale,
+        ncc: layout.ncc,
+        confidence: match layout.confidence {
+            Confidence::High => "high".to_string(),
+            Confidence::Low => "low".to_string(),
+        },
+    }
+}
+
+/// The tier of the slot the player is standing in — what
+/// [`rooms::resolve_offer`] needs to turn a printed target into the room the
+/// kill actually builds.
+fn current_tier(read: &ReadResult<'_>) -> Tier {
+    let Some(current) = read.layout.current else {
+        return Tier::T0;
+    };
+    read.rooms
+        .iter()
+        .find(|r| r.slot == current)
+        .and_then(|r| r.identity.identity())
+        .map_or(Tier::T0, |id| id.tier())
+}
+
+fn offer_view(index: usize, offer: &ArchitectOffer, current_tier: Tier) -> OfferView {
+    let resolved = rooms::resolve_offer(&offer.printed_target, current_tier);
+    OfferView {
+        index,
+        architect_name: offer.architect_name.clone(),
+        kind: match offer.kind {
+            OfferKind::Change => "change".to_string(),
+            OfferKind::Upgrade => "upgrade".to_string(),
+        },
+        printed_target: offer.printed_target.clone(),
+        display_name: resolved.as_ref().map(|r| r.display_name.to_string()),
+        built_tier: resolved.as_ref().map(|r| r.built_tier.get()),
+    }
+}
+
+fn panel_view(read: &ReadResult<'_>) -> PanelView {
+    let tier = current_tier(read);
+    PanelView {
+        room: read
+            .panel
+            .room
+            .identity()
+            .map(|id| id.display_name().to_string()),
+        offers: read
+            .panel
+            .architects
+            .iter()
+            .enumerate()
+            .map(|(index, offer)| offer_view(index, offer, tier))
+            .collect(),
+        incursions_remaining: read.panel.incursions_remaining,
+    }
+}
+
+fn advice_view(advice: &Advice) -> AdviceView {
+    AdviceView {
+        recommendations: advice
+            .recommendations
+            .iter()
+            .map(|r| RankedView {
+                headline: r.option.headline(),
+                doors_label: r.option.doors_label(),
+                doors: edge_labels(r.option.doors.iter().copied()),
+                architect_index: r.option.architect.as_ref().map(|a| a.offer_index),
+                ev: r.ev,
+                risk: None,
+                reasons: r.reasons.iter().map(|reason| reason.describe()).collect(),
+            })
+            .collect(),
+        gambles: advice
+            .gambles
+            .iter()
+            .map(|g| RankedView {
+                headline: g.option.headline(),
+                doors_label: g.option.doors_label(),
+                doors: edge_labels(g.option.doors.iter().copied()),
+                architect_index: g.option.architect.as_ref().map(|a| a.offer_index),
+                ev: g.ev,
+                risk: Some(g.risk),
+                reasons: g.reasons.iter().map(|reason| reason.describe()).collect(),
+            })
+            .collect(),
+        map_action: match advice.map_action {
+            MapAction::Continue => "continue".to_string(),
+            MapAction::LeaveMap => "leaveMap".to_string(),
+        },
+        warnings: advice.warnings.iter().map(|w| w.describe()).collect(),
+    }
+}
+
+fn mode_label(mode: Mode) -> String {
+    match mode {
+        Mode::Chase => "chase".to_string(),
+        Mode::Scarab => "scarab".to_string(),
+    }
+}
+
+/// Project one completed read into the slice.
+///
+/// The status is derived here rather than passed in, because it is a *function
+/// of the read*: a board with no current room is `NoCurrentRoom` whoever asked
+/// for the read, and a board with one is `Read`. The loop's own transient
+/// states (`Idle`, `Reading`, `PanelNotVisible`, `Error`) never come through
+/// this function — they are written directly, with no board to project.
+pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) -> TempleSlice {
+    TempleSlice {
+        status: if read.layout.current.is_none() {
+            TempleStatus::NoCurrentRoom
+        } else {
+            TempleStatus::Read
+        },
+        layout: Some(layout_view(read)),
+        panel: Some(panel_view(read)),
+        advice: read.advice.map(advice_view),
+        mode: read.advice.map(|a| mode_label(a.mode)),
+        keys: read.keys,
+        unknown_rooms: unknown_rooms(read.rooms),
+        last_read_at: Some(read.read_at),
+        calibration,
+        last_error: None,
+    }
+}
+
+/// The rollouts one decision runs. 2000 rather than the advisor suite's 400:
+/// this runs once per panel open, not once per assertion, and the extra
+/// samples buy a stabler ordering inside the noise margin.
+pub const ROLLOUTS: u32 = 2000;
+
+/// The advisor's RNG seed.
+///
+/// **Fixed on purpose.** The same board must produce the same advice every
+/// time it is read, or a re-read triggered by an unrelated pixel change would
+/// reshuffle two options separated by less than the sampling noise, and the
+/// overlay would flicker between them while the player is deciding.
+pub const SEED: u64 = 0x_7065_0171;
+
+/// Rank one read, or refuse to.
+///
+/// Refuses exactly once: with no current room there is no position, and
+/// `advise` would return an empty `Advice` carrying `Warning::NoPosition`.
+/// Publishing `None` instead is the contract POE-171 states — the layout is
+/// still worth showing, an empty recommendation list is not.
+pub fn advise_read(
+    layout: &TempleLayout,
+    rooms: &[RoomReading],
+    panel: &PanelReading,
+    settled: Option<&BTreeSet<Edge>>,
+    settings: &TempleSettings,
+) -> Option<Advice> {
+    layout.current?;
+    let board = advisor::state::BoardState::from_reading(layout, &identities(rooms), panel, settled);
+    Some(advisor::advise(
+        &board,
+        &panel.architects,
+        settings.keys,
+        &settings.profile.to_profile(),
+        &settings.config,
+        ROLLOUTS,
+        SEED,
+    ))
+}
+
+/// Force a disabled module's slice to [`TempleStatus::Off`] and drop what it
+/// was advising.
+///
+/// The SSOT composer owns this one precedence step, the loop owns the rest —
+/// the same split `ssot::compose_snapshot` uses for the merc slice, and the
+/// reason the page never has to read `ssot.modules` to know whether the toggle
+/// is on (ADR-014: the page reads slices, not module state).
+///
+/// The advice goes with the status, unlike the merc slice's capture: a stale
+/// recommendation under an "off" badge is a move the player could still act on,
+/// whereas a retired capture is only a record of what was on screen.
+///
+/// `last_error` goes with it for the same reason: the message describes a read
+/// the disabled module is no longer attempting, and a red line under an "off"
+/// badge reads as "this module is broken" rather than "you switched it off".
+pub fn force_off(slice: &mut TempleSlice) {
+    slice.status = TempleStatus::Off;
+    slice.advice = None;
+    slice.mode = None;
+    slice.last_error = None;
+}
+
+// ------------------------------------------------------ change detection --
+
+/// The cheap per-tick fingerprint of a board: everything
+/// [`super::reader::read_layout`] produces WITHOUT OCR.
+///
+/// Pixels only, so computing it costs one anchor match and one beam-sampling
+/// pass — no per-plate crops, no OCR engine. It moves when the player moves
+/// (`current`), when a corridor opens (`doors`), and when the panel itself
+/// moves or rescales (`origin`, `scale`).
+///
+/// What it deliberately does NOT see is the plate TEXT: a kill that upgrades
+/// the room the player is standing in changes a name and a numeral and nothing
+/// else. [`panel_signature`] is the second gate that catches those, and
+/// [`ReadGate::on_panel_lost`] is the third — closing the panel always re-arms.
+pub fn layout_signature(layout: &TempleLayout) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    layout.origin.hash(&mut hasher);
+    // `scale` is an f32 and has no `Hash`; the bit pattern is the right key
+    // here anyway — two scales that differ at all are two different reads.
+    layout.scale.to_bits().hash(&mut hasher);
+    layout.current.map(|s| s.index()).hash(&mut hasher);
+    for edge in &layout.doors {
+        edge.to_string().hash(&mut hasher);
+    }
+    for edge in &layout.uncertain {
+        edge.to_string().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// The fingerprint of the side panel's TEXT — the two bounded OCR crops
+/// [`super::run::panel_text`] takes, no per-plate crops.
+///
+/// Hashes what [`panel::read_panel`] PARSED, not the lines it parsed from. The
+/// distinction is the whole value of this gate: the crops still catch stray
+/// text — a tooltip, a floating combat number, a chat line drawn over the
+/// panel's corner — and a raw-line hash moves for every one of them, which
+/// buys a full 26-crop re-read every [`super::run::PANEL_RECHECK_INTERVAL`]
+/// for the whole time the noise is on screen. The parsed fields move only when
+/// the board did.
+///
+/// The rule for what belongs here is **exactly the panel fields
+/// [`panel_view`] publishes** — title identity, each offer's architect, kind
+/// and printed target, and the budget. A published field left out of the hash
+/// is a change the gate can never see, so the slice would keep showing the
+/// pre-kill panel until something else re-armed the read.
+pub fn panel_signature(panel: &PanelReading) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    // The identity, not the OCR text: `panel_view` publishes the identity, so
+    // two spellings of the same room are one published value and re-reading
+    // because OCR wobbled a glyph is churn. An unread title hashes as `None`,
+    // so "unread → read" still re-arms.
+    panel.room.identity().map(|id| id.display_name()).hash(&mut hasher);
+    for offer in &panel.architects {
+        offer.architect_name.trim().hash(&mut hasher);
+        // `OfferKind` is not `Hash`; the discriminant is what matters.
+        matches!(offer.kind, OfferKind::Upgrade).hash(&mut hasher);
+        // The printed name, not the resolved one: `OfferView` publishes it
+        // verbatim because it is what the player reads off the panel, and two
+        // targets that both fail to resolve are still two different offers.
+        offer.printed_target.trim().hash(&mut hasher);
+    }
+    panel.incursions_remaining.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// "Read once per panel open, not per frame."
+///
+/// Three ways a re-read is armed, in the order the loop reaches them:
+///
+/// 1. the layout fingerprint moved — the player moved, a door opened, the
+///    panel moved;
+/// 2. the panel's text moved — a kill changed a plate without changing a
+///    corridor;
+/// 3. the panel was lost and found again, or the user pressed re-arm.
+///
+/// A pure state machine over `u64`s so all three are testable without a
+/// screen. It holds no `Instant`: the loop owns the cadence, this owns only
+/// the question "is what I am looking at the thing I already read?".
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ReadGate {
+    read: Option<(u64, u64)>,
+    rearm_seen: u64,
+}
+
+impl ReadGate {
+    /// Whether the layout fingerprint alone already justifies a full read.
+    ///
+    /// `rearm` is the user's re-arm counter; a bump forces one read and is then
+    /// consumed, so holding the button down does not pin the loop into
+    /// re-reading forever.
+    pub fn layout_wants_read(&mut self, layout: u64, rearm: u64) -> bool {
+        if self.rearm_seen != rearm {
+            self.rearm_seen = rearm;
+            self.read = None;
+            return true;
+        }
+        !matches!(self.read, Some((seen, _)) if seen == layout)
+    }
+
+    /// Whether the panel's text has moved since the last completed read.
+    ///
+    /// Only consulted when [`Self::layout_wants_read`] said no — it costs the
+    /// two bounded OCR crops [`super::run::panel_text`] takes, which the cheap
+    /// tick exists to avoid.
+    pub fn panel_wants_read(&self, panel: u64) -> bool {
+        !matches!(self.read, Some((_, seen)) if seen == panel)
+    }
+
+    /// Remember what a completed read saw.
+    pub fn record(&mut self, layout: u64, panel: u64) {
+        self.read = Some((layout, panel));
+    }
+
+    /// The panel left the screen. The next one that appears is a new decision
+    /// even if it looks identical — this is what makes "close the panel, kill
+    /// the architect, reopen" re-read rather than show the pre-kill board.
+    pub fn on_panel_lost(&mut self) {
+        self.read = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::temple::advisor::Warning;
+    use crate::temple::doors::Thresholds;
+    use crate::temple::lattice::Slot;
+    use crate::temple::rooms::{match_room_name, resolve_name};
+
+    fn calibration() -> AnchorCalibration {
+        AnchorCalibration {
+            screen_w: 1374,
+            screen_h: 773,
+            scale: 0.99,
+        }
+    }
+
+    /// A layout with the given current room and door set; every other field is
+    /// a plausible constant, because nothing below reads them.
+    fn layout(current: Option<Slot>, doors: &[(Slot, Slot)], uncertain: &[(Slot, Slot)]) -> TempleLayout {
+        TempleLayout {
+            origin: (673, 494),
+            scale: 0.99,
+            ncc: 0.94,
+            confidence: Confidence::High,
+            current,
+            doors: doors.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
+            uncertain: uncertain.iter().map(|(a, b)| Edge::new(*a, *b)).collect(),
+            slots: [(0, 0); 13],
+            thresholds: Thresholds { horizontal: 0.20, diagonal: 0.20 },
+            calibration: calibration(),
+        }
+    }
+
+    /// 13 plates: `named` maps a slot to the room name printed on it,
+    /// everything else reads Unknown.
+    fn board_rooms(named: &[(Slot, &str)]) -> Vec<RoomReading> {
+        Slot::ALL
+            .into_iter()
+            .map(|slot| RoomReading {
+                slot,
+                identity: match named.iter().find(|(s, _)| *s == slot) {
+                    Some((_, name)) => match_room_name(name),
+                    None => Match::Unknown,
+                },
+            })
+            .collect()
+    }
+
+    fn panel(room: &str, remaining: Option<u8>, offers: Vec<ArchitectOffer>) -> PanelReading {
+        PanelReading {
+            room: match_room_name(room),
+            architects: offers,
+            incursions_remaining: remaining,
+        }
+    }
+
+    fn offer(name: &str, target: &str, kind: OfferKind) -> ArchitectOffer {
+        ArchitectOffer {
+            architect_name: name.to_string(),
+            kind,
+            printed_target: target.to_string(),
+            target: match_room_name(target),
+        }
+    }
+
+    fn read<'a>(
+        layout: &'a TempleLayout,
+        rooms: &'a [RoomReading],
+        panel: &'a PanelReading,
+        settled: Option<&'a BTreeSet<Edge>>,
+        advice: Option<&'a Advice>,
+    ) -> ReadResult<'a> {
+        ReadResult {
+            layout,
+            rooms,
+            panel,
+            settled,
+            marker_error: None,
+            advice,
+            keys: 1,
+            read_at: 1_700_000_000_000,
+        }
+    }
+
+    // ------------------------------------------------------- projection --
+
+    /// The headline projection: a plate that read a real room reaches the
+    /// slice with the game's own name and its tier, and the current room is
+    /// flagged. Fails if `slot_view` drops the identity, the tier, or the
+    /// current-room comparison.
+    #[test]
+    fn a_read_plate_projects_its_name_tier_and_current_flag() {
+        let layout = layout(Some(Slot::D3), &[], &[]);
+        let rooms = board_rooms(&[(Slot::D3, "Tombs"), (Slot::C1, "Locus of Corruption")]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let view = slice.layout.expect("a read publishes its layout");
+        let d3 = view
+            .slots
+            .iter()
+            .find(|s| s.slot == "D3")
+            .expect("D3 is one of the 13 slots");
+        assert_eq!(d3.name.as_deref(), Some("Tombs"));
+        assert!(d3.current, "D3 is the current room");
+
+        let c1 = view
+            .slots
+            .iter()
+            .find(|s| s.slot == "C1")
+            .expect("C1 is one of the 13 slots");
+        assert_eq!(c1.name.as_deref(), Some("Locus of Corruption"));
+        assert_eq!(c1.tier, 3, "Locus of Corruption is the tier-3 corruption room");
+        assert!(!c1.current, "only the layout's own current room is current");
+    }
+
+    /// Unknown plates are SURFACED, not hidden: they carry `known: false` and
+    /// they are listed. Fails if `unknown_rooms` filters on the wrong side of
+    /// `is_known`, or if an unread plate is silently dropped from `slots`.
+    #[test]
+    fn unread_plates_are_listed_and_marked_unknown() {
+        let layout = layout(Some(Slot::D3), &[], &[]);
+        let rooms = board_rooms(&[(Slot::D3, "Tombs")]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        assert_eq!(
+            slice.unknown_rooms.len(),
+            12,
+            "12 of the 13 plates did not resolve, got {:?}",
+            slice.unknown_rooms,
+        );
+        assert!(
+            !slice.unknown_rooms.contains(&"D3".to_string()),
+            "the plate that DID resolve must not be listed as unknown",
+        );
+        let view = slice.layout.expect("a read publishes its layout");
+        assert_eq!(view.slots.len(), 13, "every plate is published, read or not");
+        let unknown = view
+            .slots
+            .iter()
+            .find(|s| s.slot == "A0")
+            .expect("A0 is one of the 13 slots");
+        assert!(!unknown.known);
+        assert_eq!(unknown.name, None, "an unread plate is never given a name");
+    }
+
+    /// The no-current-room contract: layout published, advice `None`, status
+    /// says why. Fails if `project` ranks anyway or if the status collapses to
+    /// `Read`.
+    #[test]
+    fn a_board_with_no_current_room_publishes_the_layout_without_advice() {
+        let layout = layout(None, &[(Slot::B0, Slot::C1)], &[]);
+        let rooms = board_rooms(&[(Slot::C1, "Locus of Corruption")]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        assert_eq!(slice.status, TempleStatus::NoCurrentRoom);
+        assert!(slice.advice.is_none(), "no position, no ranking");
+        assert!(slice.mode.is_none(), "the mode comes from the advice");
+        let view = slice.layout.expect("the layout is still worth showing");
+        assert_eq!(view.doors, vec!["B0-C1".to_string()]);
+        assert_eq!(view.current, None);
+    }
+
+    /// `advise_read` is the seam that refuses. Fails if it calls `advise` and
+    /// returns its empty `NoPosition` advice instead of `None`.
+    #[test]
+    fn advise_read_refuses_to_rank_between_rooms() {
+        let layout = layout(None, &[], &[]);
+        let rooms = board_rooms(&[]);
+        let panel = panel("Tombs", Some(6), Vec::new());
+
+        assert!(advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).is_none());
+    }
+
+    /// Unknown plates do not stop the advisor: with a current room it still
+    /// ranks, and the unknown rooms are still surfaced alongside. Fails if the
+    /// projection gates the advice on a clean board read.
+    #[test]
+    fn unknown_plates_still_produce_advice() {
+        let layout = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+        let settings = TempleSettings::shipped();
+
+        let advice = advise_read(&layout, &rooms, &panel, None, &settings)
+            .expect("a board with a current room ranks");
+        let slice = project(
+            &read(&layout, &rooms, &panel, None, Some(&advice)),
+            None,
+        );
+
+        assert_eq!(slice.status, TempleStatus::Read);
+        let published = slice.advice.expect("the advice reaches the slice");
+        assert!(
+            !published.recommendations.is_empty(),
+            "an offer plus a corridor is at least one ranked option",
+        );
+        assert!(
+            !slice.unknown_rooms.is_empty(),
+            "the unread plates are still surfaced next to the advice",
+        );
+    }
+
+    /// Every recommendation carries its reasons as human strings — the audit
+    /// trail is the point. Fails if `advice_view` drops `reasons` or publishes
+    /// the enum's `Debug` instead of `describe()`.
+    #[test]
+    fn recommendations_carry_their_reasons_as_prose() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+
+        let view = advice_view(&advice);
+
+        let top = view
+            .recommendations
+            .first()
+            .expect("at least one recommendation");
+        assert!(
+            top.headline.starts_with("change → "),
+            "the headline names the resolved room, got {:?}",
+            top.headline,
+        );
+        assert!(
+            top.reasons.iter().all(|r| !r.is_empty()),
+            "every reason is a rendered line, got {:?}",
+            top.reasons,
+        );
+    }
+
+    /// The warning the advisor raises for an illegible budget reaches the page
+    /// as text. Fails if `advice_view` drops `warnings`.
+    #[test]
+    fn an_illegible_incursion_count_reaches_the_slice_as_a_warning() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel("Chasm", None, Vec::new());
+        let advice =
+            advise_read(&layout, &rooms, &panel, None, &TempleSettings::shipped()).expect("ranks");
+
+        assert!(
+            advice.warnings.contains(&Warning::NoBudget),
+            "precondition: an unread budget warns",
+        );
+        let view = advice_view(&advice);
+        assert!(
+            view.warnings.iter().any(|w| w.contains("incursions remaining")),
+            "the warning must reach the page as prose, got {:?}",
+            view.warnings,
+        );
+    }
+
+    /// The panel's printed target is NOT the answer — the slice publishes the
+    /// room the kill actually builds. On a tier-2 room, "change to Corruption
+    /// Chamber" builds the tier-3 room of that line. Fails if `offer_view`
+    /// echoes `printed_target` into `display_name`.
+    #[test]
+    fn an_offer_resolves_to_the_room_the_kill_actually_builds() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        // B0 holds a tier-2 room, so Contested Development's +1 lands on 3.
+        let rooms = board_rooms(&[(Slot::B0, "Catalyst of Corruption")]);
+        let panel = panel(
+            "Catalyst of Corruption",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let view = slice.panel.expect("a read publishes its panel");
+        let first = view.offers.first().expect("one architect block");
+        assert_eq!(first.printed_target, "Corruption Chamber");
+        assert_eq!(
+            first.display_name.as_deref(),
+            Some("Locus of Corruption"),
+            "tier 2 + 1 is the tier-3 corruption room, not the printed tier-1 name",
+        );
+        assert_eq!(first.built_tier, Some(3));
+        assert_eq!(first.kind, "change");
+    }
+
+    /// An architect target outside the vocabulary leaves `display_name` empty
+    /// rather than echoing the OCR text as if it resolved. Fails if
+    /// `offer_view` falls back to `printed_target`.
+    #[test]
+    fn an_unresolvable_offer_publishes_no_display_name() {
+        let layout = layout(Some(Slot::B0), &[], &[]);
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Qwertz Chamber", OfferKind::Upgrade)],
+        );
+
+        let slice = project(&read(&layout, &rooms, &panel, None, None), None);
+
+        let first = slice
+            .panel
+            .expect("panel")
+            .offers
+            .into_iter()
+            .next()
+            .expect("one architect block");
+        assert_eq!(first.display_name, None);
+        assert_eq!(first.built_tier, None);
+        assert_eq!(
+            first.printed_target, "Qwertz Chamber",
+            "what the panel printed is still shown — it is what the player sees",
+        );
+    }
+
+    // --------------------------------------------------- marker fallback --
+
+    /// The diamond read succeeded: the settled set is what the slice
+    /// publishes, and nothing is flagged unresolved. The paired failure case
+    /// is the next test.
+    #[test]
+    fn a_settled_door_set_is_published_with_nothing_unresolved() {
+        let layout = layout(
+            Some(Slot::B0),
+            &[(Slot::C1, Slot::C2)],
+            &[(Slot::B0, Slot::C1), (Slot::B0, Slot::C0)],
+        );
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel("Chasm", Some(6), Vec::new());
+        let settled: BTreeSet<Edge> = [
+            Edge::new(Slot::C1, Slot::C2),
+            Edge::new(Slot::B0, Slot::C1),
+        ]
+        .into_iter()
+        .collect();
+
+        let slice = project(&read(&layout, &rooms, &panel, Some(&settled), None), None);
+
+        let view = slice.layout.expect("layout");
+        assert_eq!(
+            view.doors,
+            vec!["B0-C1".to_string(), "C1-C2".to_string()],
+            "the seals settled B0-C1 open, which `doors - uncertain` would have dropped",
+        );
+        assert!(
+            view.unresolved_incident.is_empty(),
+            "a settled read leaves nothing unresolved",
+        );
+    }
+
+    /// The fallback: with no settled set the door list is `doors − uncertain`
+    /// and EVERY uncertain corridor is surfaced as unresolved with the marker
+    /// error attached. Fails if the fallback unions `uncertain` into `doors`
+    /// (the mistake `apply_markers`' doc names) or drops the unresolved list.
+    #[test]
+    fn a_failed_diamond_read_falls_back_and_surfaces_the_unresolved_corridors() {
+        let layout = layout(
+            Some(Slot::B0),
+            &[(Slot::C1, Slot::C2), (Slot::B0, Slot::C1)],
+            &[(Slot::B0, Slot::C1), (Slot::B0, Slot::C0)],
+        );
+        let rooms = board_rooms(&[(Slot::B0, "Chasm")]);
+        let panel = panel("Chasm", Some(6), Vec::new());
+        let mut result = read(&layout, &rooms, &panel, None, None);
+        result.marker_error = Some("read 3 door markers for a 4-neighbour room".to_string());
+
+        let slice = project(&result, None);
+
+        let view = slice.layout.expect("layout");
+        assert_eq!(
+            view.doors,
+            vec!["C1-C2".to_string()],
+            "B0-C1 is uncertain, so the fallback must NOT act on it",
+        );
+        assert_eq!(
+            view.unresolved_incident,
+            vec!["B0-C0".to_string(), "B0-C1".to_string()],
+            "both corridors the frame covers are surfaced, not guessed",
+        );
+        assert_eq!(
+            view.marker_error.as_deref(),
+            Some("read 3 door markers for a 4-neighbour room"),
+        );
+    }
+
+    // -------------------------------------------------- change detection --
+
+    /// The gate's whole purpose: an unchanged board does not buy a second
+    /// read. Fails if `layout_wants_read` ignores the recorded fingerprint.
+    #[test]
+    fn an_unchanged_layout_does_not_re_read() {
+        let before = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
+        let again = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
+        let mut gate = ReadGate::default();
+
+        assert!(gate.layout_wants_read(layout_signature(&before), 0), "the first sight is always a read");
+        gate.record(layout_signature(&before), 7);
+
+        assert!(
+            !gate.layout_wants_read(layout_signature(&again), 0),
+            "the same board must not be re-read",
+        );
+    }
+
+    /// A door that opened moves the fingerprint. Fails if `layout_signature`
+    /// skips `doors`.
+    #[test]
+    fn an_opened_corridor_re_arms_the_read() {
+        let before = layout(Some(Slot::B0), &[], &[]);
+        let after = layout(Some(Slot::B0), &[(Slot::B0, Slot::C1)], &[]);
+        let mut gate = ReadGate::default();
+        gate.record(layout_signature(&before), 7);
+
+        assert!(gate.layout_wants_read(layout_signature(&after), 0));
+    }
+
+    /// Moving to another room moves the fingerprint. Fails if
+    /// `layout_signature` skips `current`.
+    #[test]
+    fn a_new_current_room_re_arms_the_read() {
+        let before = layout(Some(Slot::B0), &[], &[]);
+        let after = layout(Some(Slot::C1), &[], &[]);
+        let mut gate = ReadGate::default();
+        gate.record(layout_signature(&before), 7);
+
+        assert!(gate.layout_wants_read(layout_signature(&after), 0));
+    }
+
+    /// The second gate: the plates changed but no corridor did — a kill that
+    /// upgraded the room the player is standing in. Fails if `panel_signature`
+    /// ignores the panel's contents, or if `panel_wants_read` compares against
+    /// the layout half of the pair.
+    #[test]
+    fn a_changed_panel_re_arms_a_read_the_layout_alone_would_skip() {
+        let board = layout(Some(Slot::B0), &[], &[]);
+        let mut gate = ReadGate::default();
+        let before = panel_signature(&panel("Corruption Chamber", Some(6), Vec::new()));
+        gate.record(layout_signature(&board), before);
+
+        assert!(
+            !gate.layout_wants_read(layout_signature(&board), 0),
+            "precondition: the pixels did not move",
+        );
+        assert!(
+            gate.panel_wants_read(panel_signature(&panel(
+                "Catalyst of Corruption",
+                Some(5),
+                Vec::new(),
+            ))),
+            "a changed panel must re-arm",
+        );
+        assert!(
+            !gate.panel_wants_read(before),
+            "an unchanged panel must not",
+        );
+    }
+
+    /// The point of hashing the PARSED panel: text the crop caught but the
+    /// panel did not print — screen furniture, a tooltip, a chat line — leaves
+    /// the fingerprint alone, so it cannot buy a 26-crop re-read every four
+    /// seconds for as long as it is on screen.
+    ///
+    /// The stray line is a MIS-READ of the window header, `tample of atzoatl`,
+    /// which `panel.rs` measures at 0.9190 against `Apex of Atzoatl` — a
+    /// confident, wrong room name. Two guards keep it out of the parse
+    /// (`is_screen_furniture`, and `title_match`'s exact-only rule for the two
+    /// fixed slots), and `panel.rs` documents the second as the backstop for
+    /// the first: gut BOTH and the stray line becomes the title, which moves
+    /// the fingerprint and re-arms the read on nothing. Verified as the
+    /// mutation — either guard alone still holds this line, which is what
+    /// "backstop" means.
+    #[test]
+    fn text_the_panel_did_not_print_does_not_move_the_panel_fingerprint() {
+        let printed = [
+            "Tombs".to_string(),
+            "Ticaba, Architect of the Arena".to_string(),
+            "(Kill to change to Storage Room)".to_string(),
+            "9 Incursions Remaining".to_string(),
+        ];
+        // Between the title and the architect block, which is exactly where
+        // `read_panel`'s positional rule looks first — anywhere else and the
+        // real title would win for a reason that has nothing to do with the
+        // guards this pins.
+        let with_stray = [
+            printed[0].clone(),
+            "Tample of Atzoatl".to_string(),
+            printed[1].clone(),
+            printed[2].clone(),
+            printed[3].clone(),
+        ];
+
+        assert_eq!(
+            panel_signature(&crate::temple::panel::read_panel(&printed)),
+            panel_signature(&crate::temple::panel::read_panel(&with_stray)),
+            "text the panel did not print must not re-arm the read",
+        );
+    }
+
+    /// The other half of the same rule: a field the panel DOES publish moves
+    /// the fingerprint. Fails if `panel_signature` drops the offers, which
+    /// would leave the slice showing the pre-kill architect block until
+    /// something else re-armed.
+    #[test]
+    fn a_changed_architect_offer_moves_the_panel_fingerprint() {
+        let before = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Corruption Chamber", OfferKind::Change)],
+        );
+        let after = panel(
+            "Chasm",
+            Some(6),
+            vec![offer("Guatelitzi", "Storage Room", OfferKind::Change)],
+        );
+
+        assert_ne!(panel_signature(&before), panel_signature(&after));
+    }
+
+    /// The room the panel is titled after re-arms the read. This is the case
+    /// the pixel gate cannot see at all: a kill that upgrades the room the
+    /// player is standing in changes a name and a numeral and no corridor.
+    ///
+    /// Fails if `panel_signature` drops the title, which would leave the slice
+    /// showing the pre-kill room until the player moved.
+    #[test]
+    fn a_changed_room_title_moves_the_panel_fingerprint() {
+        let before = panel("Catalyst of Corruption", Some(6), Vec::new());
+        let after = panel("Locus of Corruption", Some(6), Vec::new());
+
+        assert_ne!(panel_signature(&before), panel_signature(&after));
+    }
+
+    /// A budget that ticked down re-arms even when nothing else moved. Fails
+    /// if `panel_signature` drops `incursions_remaining`, which the advisor
+    /// scores every rollout against.
+    #[test]
+    fn a_spent_incursion_moves_the_panel_fingerprint() {
+        let before = panel("Chasm", Some(6), Vec::new());
+        let after = panel("Chasm", Some(5), Vec::new());
+
+        assert_ne!(panel_signature(&before), panel_signature(&after));
+    }
+
+    /// Closing and reopening the panel re-arms even on an identical board.
+    /// Fails if `on_panel_lost` does not clear the recorded read.
+    #[test]
+    fn losing_the_panel_re_arms_the_next_identical_board() {
+        let board = layout(Some(Slot::B0), &[], &[]);
+        let mut gate = ReadGate::default();
+        gate.record(layout_signature(&board), 7);
+        assert!(!gate.layout_wants_read(layout_signature(&board), 0), "precondition");
+
+        gate.on_panel_lost();
+
+        assert!(gate.layout_wants_read(layout_signature(&board), 0));
+    }
+
+    /// The explicit re-arm forces exactly ONE read, not a permanent one.
+    /// Fails if the counter is never recorded (re-reads forever) or recorded
+    /// without forcing the read (the button does nothing).
+    #[test]
+    fn an_explicit_rearm_forces_one_read_and_then_stops() {
+        let board = layout(Some(Slot::B0), &[], &[]);
+        let mut gate = ReadGate::default();
+        gate.record(layout_signature(&board), 7);
+
+        assert!(gate.layout_wants_read(layout_signature(&board), 1), "the bump forces a read");
+        gate.record(layout_signature(&board), 7);
+        assert!(
+            !gate.layout_wants_read(layout_signature(&board), 1),
+            "the same counter value must not force a second read",
+        );
+    }
+
+    /// A disabled module publishes no advice, whatever the loop left behind.
+    /// Fails if `force_off` only rewrites the status — a stale recommendation
+    /// under an "off" badge is exactly the lie the precedence step prevents.
+    #[test]
+    fn forcing_a_disabled_slice_off_also_drops_its_advice() {
+        let mut s = TempleSlice {
+            status: TempleStatus::Read,
+            advice: Some(AdviceView {
+                recommendations: Vec::new(),
+                gambles: Vec::new(),
+                map_action: "leaveMap".to_string(),
+                warnings: Vec::new(),
+            }),
+            mode: Some("chase".to_string()),
+            unknown_rooms: vec!["A0".to_string()],
+            last_error: Some("Temple: screen capture failed — no monitor".to_string()),
+            ..TempleSlice::default()
+        };
+
+        force_off(&mut s);
+
+        assert_eq!(s.status, TempleStatus::Off);
+        assert_eq!(s.advice, None);
+        assert_eq!(s.mode, None);
+        assert_eq!(
+            s.last_error, None,
+            "a red line under an off badge reads as broken, not as switched off",
+        );
+        assert_eq!(
+            s.unknown_rooms,
+            vec!["A0".to_string()],
+            "only the acting half is forced — what was read stays readable",
+        );
+    }
+
+    /// Every `TempleStatus` variant's wire string, pinned one by one.
+    ///
+    /// `snake_case`, matching `MercStatus` and the app's enum convention (see
+    /// the type's own note). The page switches on these strings, so a silent
+    /// `rename_all` change would leave every branch falling through to the
+    /// default rather than erroring.
+    #[test]
+    fn every_temple_status_wire_string_is_pinned() {
+        let statuses = [
+            (TempleStatus::Off, "off"),
+            (TempleStatus::Idle, "idle"),
+            (TempleStatus::PanelNotVisible, "panel_not_visible"),
+            (TempleStatus::Reading, "reading"),
+            (TempleStatus::Read, "read"),
+            (TempleStatus::NoCurrentRoom, "no_current_room"),
+            (TempleStatus::Unavailable, "unavailable"),
+            (TempleStatus::Error, "error"),
+        ];
+        for (status, wire) in statuses {
+            assert_eq!(serde_json::to_value(status).unwrap(), wire);
+        }
+    }
+
+    // ------------------------------------------------------- validation --
+
+    /// Keys are 0, 1 or 2 — the game drops no more. Fails if the bound is
+    /// exclusive or absent.
+    #[test]
+    fn key_counts_above_two_are_rejected() {
+        assert!(validate_keys(0).is_ok(), "zero keys is a legal board");
+        assert!(validate_keys(2).is_ok(), "two keys is the maximum");
+        let err = validate_keys(3).expect_err("three keys is not a board the game produces");
+        assert!(err.contains('3'), "the message names the rejected value, got {err:?}");
+    }
+
+    /// Both profile weights are magnitudes. Fails if `validate` accepts a sign
+    /// error or a NaN into the float ordering.
+    #[test]
+    fn negative_and_non_finite_profile_weights_are_rejected() {
+        let mut p = TempleProfileSettings::default();
+        assert!(p.validate().is_ok(), "the shipped defaults must validate");
+
+        p.apex_score = -1.0;
+        assert!(p.validate().is_err(), "a negative apex score is a sign error");
+
+        p = TempleProfileSettings::default();
+        p.path_cost = -0.1;
+        assert!(p.validate().is_err(), "a negative path cost pays for walking");
+
+        p = TempleProfileSettings::default();
+        p.apex_score = f64::NAN;
+        assert!(p.validate().is_err(), "NaN makes the whole ranking arbitrary");
+    }
+
+    /// The four settings fields reach the profile they tune, and the fields
+    /// they do NOT own are left at the Rush's values. Fails if `to_profile`
+    /// drops a field or rebuilds the profile from scratch.
+    #[test]
+    fn profile_settings_override_only_their_own_four_fields() {
+        let settings = TempleProfileSettings {
+            apex_score: 8.5,
+            path_cost: 0.4,
+            reroll_until_favourable: true,
+            r4_keep_upgrade_targets: false,
+        };
+
+        let profile = settings.to_profile();
+
+        assert_eq!(profile.apex_score, 8.5);
+        assert_eq!(profile.path_cost, 0.4);
+        assert!(profile.reroll_until_favourable);
+        assert!(!profile.r4_keep_upgrade_targets);
+        assert_eq!(
+            profile.combinations,
+            StrategyProfile::locus_doryani_rush().combinations,
+            "the strategy's identity is not a settings field",
+        );
+    }
+
+    // ------------------------------------------------ settings round-trip --
+
+    /// The whole settings block survives a JSON round-trip, calibration
+    /// included. Fails if a field is `skip`ped or renamed on one side only.
+    #[test]
+    fn temple_settings_round_trip_through_json() {
+        let settings = TempleSettings {
+            calibration: Some(calibration()),
+            profile: TempleProfileSettings {
+                apex_score: 9.0,
+                path_cost: 1.5,
+                reroll_until_favourable: true,
+                r4_keep_upgrade_targets: false,
+            },
+            config: TempleConfig {
+                artefacts_of_the_vaal: false,
+                scarab_of_timelines: true,
+            },
+            keys: 2,
+        };
+
+        let json = serde_json::to_string(&settings).expect("settings serialise");
+        let back: TempleSettings = serde_json::from_str(&json).expect("settings parse back");
+
+        assert_eq!(back, settings);
+    }
+
+    /// `TempleConfig` is camelCase on the wire, like every other temple type —
+    /// it is the `temple_set_config` argument and a `TempleSettings` field
+    /// before it is a `settings.json` key.
+    ///
+    /// Fails if the `rename_all` is dropped, which would leave the command
+    /// silently rejecting what the webview sends (serde has no key to bind) and
+    /// the persisted block half snake, half camel.
+    #[test]
+    fn temple_config_is_camel_case_on_the_wire() {
+        let json = serde_json::to_value(TempleConfig::default()).expect("config serialises");
+
+        assert_eq!(json["artefactsOfTheVaal"], serde_json::json!(true));
+        assert_eq!(json["scarabOfTimelines"], serde_json::json!(false));
+        assert_eq!(
+            json.get("artefacts_of_the_vaal"),
+            None,
+            "the snake_case key must be gone, not merely joined",
+        );
+    }
+
+    /// A `temple_config` object carrying only one of the two keys fills the
+    /// other from `Default` instead of failing.
+    ///
+    /// This is not a nicety: `Settings` deserialises as a unit, so a partial
+    /// object would abort the WHOLE file and `load` would fall back to
+    /// `Settings::default()` — silently resetting every unrelated preference.
+    /// Fails if the struct-level `#[serde(default)]` is dropped.
+    #[test]
+    fn a_partial_temple_config_object_fills_the_missing_flag() {
+        let parsed: TempleConfig = serde_json::from_str(r#"{"scarabOfTimelines":true}"#)
+            .expect("a partial config must still parse");
+
+        assert!(parsed.scarab_of_timelines, "the key that was present wins");
+        assert_eq!(
+            parsed.artefacts_of_the_vaal,
+            TempleConfig::default().artefacts_of_the_vaal,
+            "the missing key comes from Default, not from `bool::default()`",
+        );
+    }
+
+    /// A settings file written by an older build — every temple key missing —
+    /// loads as the Rush rather than as zeros. Fails if a `#[serde(default)]`
+    /// is dropped or if `Default` is used where `shipped()` is meant.
+    #[test]
+    fn missing_profile_keys_default_to_the_rush() {
+        let parsed: TempleProfileSettings =
+            serde_json::from_str("{}").expect("an empty object is a valid partial profile");
+
+        let rush = StrategyProfile::locus_doryani_rush();
+        assert_eq!(parsed.apex_score, rush.apex_score);
+        assert_eq!(parsed.path_cost, rush.path_cost);
+        assert_eq!(parsed.reroll_until_favourable, rush.reroll_until_favourable);
+        assert_eq!(parsed.r4_keep_upgrade_targets, rush.r4_keep_upgrade_targets);
+    }
+
+    /// A calibration measured on a different screen is discarded, and one
+    /// measured on this screen is kept. Fails if `prune_calibration` compares
+    /// only one axis, or discards unconditionally.
+    #[test]
+    fn a_calibration_from_another_screen_size_is_discarded() {
+        let mut settings = TempleSettings {
+            calibration: Some(calibration()),
+            ..TempleSettings::shipped()
+        };
+
+        assert!(!settings.prune_calibration((1374, 773)), "the same size is kept");
+        assert!(settings.calibration.is_some());
+
+        assert!(settings.prune_calibration((1539, 865)), "a different width is stale");
+        assert_eq!(settings.calibration, None);
+
+        settings.calibration = Some(calibration());
+        assert!(
+            settings.prune_calibration((1374, 865)),
+            "a different HEIGHT at the same width is stale too",
+        );
+    }
+
+    /// Fresh install defaults: one key, not zero. Fails if a caller reaches
+    /// for `TempleSettings::default()` where `shipped()` is meant.
+    #[test]
+    fn the_shipped_default_is_one_key() {
+        assert_eq!(TempleSettings::shipped().keys, 1);
+        assert_eq!(
+            TempleSettings::shipped().config,
+            TempleConfig::default(),
+            "Artefacts of the Vaal on, scarab off",
+        );
+    }
+
+    /// `identities` is indexed by slot, not by position, so a short or
+    /// reordered reading vector cannot put a room in the wrong slot. Fails if
+    /// it `collect`s positionally.
+    #[test]
+    fn identities_are_placed_by_slot_not_by_position() {
+        let readings = vec![RoomReading {
+            slot: Slot::C1,
+            identity: match_room_name("Locus of Corruption"),
+        }];
+
+        let out = identities(&readings);
+
+        assert_eq!(out[Slot::C1.index()], resolve_name("Locus of Corruption"));
+        assert!(
+            out.iter().filter(|id| id.is_some()).count() == 1,
+            "one reading fills exactly one slot",
+        );
+        assert_eq!(out[0], None, "the first slot was not the one read");
+    }
+}

@@ -48,26 +48,21 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 ///   "killing non-resident Architects", and non-resident is the upgrade side,
 ///   while Contested Development powers `change` with a flat +1 and no roll;
 /// - it never produces **0 → 2**. A tier-0 room has no line to upgrade.
-#[allow(dead_code)]
 pub const DOUBLE_TIER_CHANCE: f64 = 0.50;
 
 // --------------------------------------------------------------- room line --
 
 /// Canonical key of the corruption line (Corruption Chamber → Catalyst of
 /// Corruption → **Locus of Corruption**).
-#[allow(dead_code)]
 const KEY_CORRUPTION: &str = "corruption";
 /// Canonical key of the gem line (Gemcutter's Workshop → Department of
 /// Thaumaturgy → **Doryani's Institute**).
-#[allow(dead_code)]
 const KEY_GEM: &str = "gem";
 /// Canonical key of the upgrade line (Shrine of Empowerment → Sanctum of Unity
 /// → Temple Nexus).
-#[allow(dead_code)]
 const KEY_UPGRADE: &str = "upgrade";
 /// Canonical key of the explosives line (Explosives Room → Demolition Lab →
 /// Shrine of Unmaking).
-#[allow(dead_code)]
 const KEY_EXPLOSIVE: &str = "explosive";
 
 /// A room *line* — the three-tier family a room belongs to, not one room.
@@ -87,7 +82,6 @@ const KEY_EXPLOSIVE: &str = "explosive";
 /// `Line::Other("corruption".into())` by hand produces a value that compares
 /// unequal to [`Line::Corruption`] and silently scores zero.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[allow(dead_code)]
 pub enum Line {
     /// Ends in Locus of Corruption — priority #1 of the whole build.
     Corruption,
@@ -101,7 +95,6 @@ pub enum Line {
     Other(String),
 }
 
-#[allow(dead_code)]
 impl Line {
     /// Canonical key for a line, and the wire form used by serde.
     pub fn key(&self) -> &str {
@@ -149,10 +142,8 @@ impl<'de> Deserialize<'de> for Line {
 /// A room tier, `0..=3`. Tier 0 is filler: a slot the temple generated with no
 /// line of its own, worth nothing and upgradeable by nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[allow(dead_code)]
 pub struct Tier(u8);
 
-#[allow(dead_code)]
 impl Tier {
     /// Filler — no line, no value, and never a legal upgrade target result.
     pub const T0: Tier = Tier(0);
@@ -202,7 +193,6 @@ impl<'de> Deserialize<'de> for Tier {
 /// the score. It decides which *map* the incursion budget is spent in, while
 /// the score decides which *door* to open once there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub enum Mode {
     /// A target line is still missing. R5 applies: leave the map once the
     /// target room has been used, because staying risks a guaranteed-zero draw.
@@ -216,7 +206,6 @@ pub enum Mode {
 /// The rule that picks the [`Mode`]. A profile field so the trigger can be
 /// tightened or loosened per user without touching the selector.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub enum ModeRule {
     /// v1 (Sebastian, 2026-08-18): Scarab as soon as every named line is
     /// **built and connected to the Entrance**, at any tier ≥ 1. Built-but-
@@ -237,7 +226,6 @@ pub enum ModeRule {
 /// A whole-temple outcome that is worth more (or less) than the sum of its
 /// rooms.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct Combination {
     /// Every `(line, tier)` that must be reachable. A reached room satisfies a
     /// requirement when its line matches and its tier is **at least** the
@@ -248,7 +236,6 @@ pub struct Combination {
     pub score: f64,
 }
 
-#[allow(dead_code)]
 impl Combination {
     fn matches(&self, reached: &BTreeMap<Line, Tier>) -> bool {
         self.requires.iter().all(|(line, tier)| {
@@ -267,7 +254,6 @@ impl Combination {
 /// connectivity rules (RV/R1/R2/RS/RD/RE/RU/RC) are strategy-independent and do
 /// not appear.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct StrategyProfile {
     /// Per-line, per-tier value, indexed `[tier1, tier2, tier3]`. Tier 0 always
     /// scores zero and has no slot. A line absent from the map is worth zero.
@@ -329,7 +315,6 @@ pub struct StrategyProfile {
     pub r4_keep_upgrade_targets: bool,
 }
 
-#[allow(dead_code)]
 impl StrategyProfile {
     /// Sebastian's Locus / Doryani Rush.
     ///
@@ -511,7 +496,6 @@ impl StrategyProfile {
 
 /// Collapse `(line, tier)` pairs to the best tier seen per line, dropping the
 /// tier-0 filler rooms that carry no line at all.
-#[allow(dead_code)]
 fn highest_tier_per_line(rooms: &[(Line, Tier)]) -> BTreeMap<Line, Tier> {
     let mut best: BTreeMap<Line, Tier> = BTreeMap::new();
     for (line, tier) in rooms {
@@ -536,8 +520,24 @@ fn highest_tier_per_line(rooms: &[(Line, Tier)]) -> BTreeMap<Line, Tier> {
 /// The three tier-modifying Atlas nodes (Contested Development, Resource
 /// Reallocation, Incursion Upgrade Chance) are **assumed taken and are not
 /// surfaced** — see [`DOUBLE_TIER_CHANCE`].
+///
+/// # Wire shape
+///
+/// `camelCase`, like every other temple wire type: this struct is the argument
+/// of `temple_set_config` and a field of
+/// [`crate::temple::slice::TempleSettings`], so it is the webview's shape first.
+/// It is ALSO what `settings.rs` persists as `temple_config`, and the rest of
+/// `settings.json` is snake_case — a documented, deliberate deviation, kept
+/// because the alternative is one struct with two serialisations and a DTO to
+/// convert between them. Its sibling `TempleProfileSettings` already reads the
+/// same way, so the temple block is internally consistent.
+///
+/// `#[serde(default)]` is on the struct, not per field: a settings file with a
+/// partial `temple_config` object then fills the missing key from
+/// [`TempleConfig::default`] instead of failing the WHOLE `Settings` parse,
+/// which would silently reset every unrelated preference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
+#[serde(default, rename_all = "camelCase")]
 pub struct TempleConfig {
     /// Atlas passive: *"Your Maps with Incursions always have four Incursions"*.
     pub artefacts_of_the_vaal: bool,
@@ -556,7 +556,6 @@ impl Default for TempleConfig {
     }
 }
 
-#[allow(dead_code)]
 impl TempleConfig {
     /// Incursion entrances per map — the rate at which the temple budget is
     /// spent.

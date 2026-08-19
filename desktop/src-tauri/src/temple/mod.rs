@@ -54,30 +54,25 @@
 //! junk-vs-junk kill should reroll) is a **field of a profile, never a code
 //! branch**.
 
-// Every item in `strategy` is consumed by POE-169 (room identity) and POE-170
-// (the advisor), neither of which exists yet, so in this slice only the unit
-// tests reach the module. Each such item therefore carries its OWN
-// `#[allow(dead_code)]` rather than the module carrying a blanket one: the
-// attributes are the inventory of what is still uncalled, and it shrinks to
-// nothing as the two consumers land instead of silently covering whatever is
-// added next.
-//
-// POE-169 claimed `Line` (+ `key`/`named`), the four `KEY_*` keys and `Tier`;
-// those attributes stay only because the module root is still unreachable from
-// live code.
-// POE-170 claimed `DOUBLE_TIER_CHANCE`, `Mode`, `ModeRule`, `StrategyProfile`
-// and `TempleConfig`; those attributes stay only because the module root is
-// still unreachable from live code, and come off with `advisor`'s own file-level
-// allow when POE-171 calls in.
+// POE-171 (this module's overlay loop and SSOT slice) is the live caller every
+// sub-module was waiting for: `run` captures and reads, `slice` projects, and
+// `commands` exposes the settings. Every file-level `#![allow(dead_code)]` and
+// every per-item allow in `strategy` has therefore come off. The attributes
+// that remain — one per item, in `anchor`, `reader`, `rooms`, `panel` and
+// `advisor` — are the inventory of what only the tests still reach, and each
+// comes off with its first production caller.
 
 pub mod advisor;
 pub mod anchor;
+pub mod commands;
 pub mod doors;
 pub mod lattice;
 pub mod markers;
 pub mod panel;
 pub mod reader;
 pub mod rooms;
+pub mod run;
+pub mod slice;
 pub mod strategy;
 
 /// Why a screenshot did not yield a board.

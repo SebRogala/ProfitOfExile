@@ -70,11 +70,19 @@
 //! `module_handles` NOT held, is fine anywhere (`from_state`, `apply_to_state`,
 //! `ssot::build_snapshot` and `set_module_enabled` all do it).
 //! Module-owned state Mutexes sit OUTSIDE this order and are acquired alone:
-//! `AppState.mercenary` and `AppState.merc_templates` (POE-165) are taken by
-//! the merc loop with no module lock held — and never together, so they have no
-//! order between them. `ssot::build_snapshot` takes `mercenary` only after the
-//! `modules_enabled` guard has been dropped; neither is ever taken inside
-//! `module_handles`.
+//! `AppState.mercenary` and `AppState.merc_templates` (POE-165), and
+//! `AppState.temple` and `AppState.temple_settings` (POE-171), are taken by
+//! their own module's loop with no module lock held — and never together, so
+//! they have no order between them. The one place two of them meet is
+//! `ssot::build_snapshot`, which takes each in turn and drops each guard before
+//! taking the next, after the `modules_enabled` guard has already been dropped;
+//! none of them is ever taken inside `module_handles`.
+//!
+//! Two consequences the temple commands rely on: `temple_set_*` writes
+//! `temple_settings` in a scoped block and calls `persist_settings` (disk I/O,
+//! and `settings::from_state` re-takes that same mutex) strictly AFTER the
+//! guard is dropped; and `temple::run::publish` drops the `temple` guard before
+//! `emit_ssot`, which re-takes it to compose the snapshot.
 //!
 //! # Cleanup never runs on app exit
 //!
@@ -176,14 +184,24 @@ pub struct ModuleDef {
 
 /// The registry. Adding an entry here is the only registration step — the
 /// settings delta, the SSOT slice and start/stop all derive from it.
-pub const MODULES: &[ModuleDef] = &[ModuleDef {
-    lifecycle: ModuleDefLite {
-        id: "mercenary",
-        default_enabled: false,
-        disabled_means: DisabledSemantics::NoWork,
+pub const MODULES: &[ModuleDef] = &[
+    ModuleDef {
+        lifecycle: ModuleDefLite {
+            id: "mercenary",
+            default_enabled: false,
+            disabled_means: DisabledSemantics::NoWork,
+        },
+        spawn: spawn_mercenary,
     },
-    spawn: spawn_mercenary,
-}];
+    ModuleDef {
+        lifecycle: ModuleDefLite {
+            id: "temple",
+            default_enabled: false,
+            disabled_means: DisabledSemantics::NoWork,
+        },
+        spawn: spawn_temple,
+    },
+];
 
 /// The registry's lifecycle facts. The single accessor the pure functions and
 /// the settings touch points go through, so none of them re-derives the list.
@@ -452,6 +470,20 @@ fn spawn_mercenary(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin 
     crate::mercenary::run::spawn(app, cancel)
 }
 
+/// The temple builder advisor (POE-171). A `Thread` for the same reason as
+/// `spawn_mercenary`: screen capture and `Windows.Media.Ocr` are
+/// apartment-threaded.
+///
+/// `NoWork`, not `NoWindow`: the flag governs the loop AND the overlay window
+/// together. Disabling it stops the capture, so the honesty rule is satisfied
+/// by the plain reading — the Sidebar row means what it says, "off" is off, and
+/// there is no background collection left running behind the user's back. The
+/// overlay window is created only while this flag is on, and it is gated where
+/// windows are created, not here.
+fn spawn_temple(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
+    crate::temple::run::spawn(app, cancel)
+}
+
 // Known gap: the stop BACKSTOP — the reaper's grace sleep, its `abort()`, the
 // panic report and the did-not-terminate timeout — is exercised only indirectly
 // here. Those branches live in a detached task on the global Tauri runtime and
@@ -700,6 +732,38 @@ mod tests {
     #[test]
     fn validate_module_id_accepts_a_registered_id() {
         assert!(validate_module_id("mercenary", &module_lifecycles()).is_ok());
+    }
+
+    /// The temple module is registered, off by default, and `NoWork` — the
+    /// flag governs the loop AND the overlay together, which is what the
+    /// Sidebar row promises. Fails if the entry is dropped, if it ships on by
+    /// default (a full-screen anchor match once a second on every install), or
+    /// if it is changed to `NoWindow`, which would keep the capture running
+    /// behind a toggle that reads as off.
+    #[test]
+    fn the_temple_module_is_registered_as_off_by_default_and_nowork() {
+        let temple = module_lifecycles()
+            .into_iter()
+            .find(|d| d.id == "temple")
+            .expect("temple must be a registered module");
+
+        assert!(!temple.default_enabled, "the temple loop must be opt-in");
+        assert_eq!(temple.disabled_means, DisabledSemantics::NoWork);
+    }
+
+    /// Disabling the temple module stops its loop. This is the half `NoWork`
+    /// buys that `NoWindow` would not, over real registry data.
+    #[test]
+    fn disabling_the_temple_module_stops_its_running_loop() {
+        let plan = reconcile(
+            &desired(&[("temple", false)]),
+            &running(&["temple"]),
+            &module_lifecycles(),
+            false,
+        );
+
+        assert_eq!(plan.stop, vec!["temple".to_string()]);
+        assert!(plan.start.is_empty());
     }
 
     /// The id is the key for the owner map, the settings delta, the SSOT slice

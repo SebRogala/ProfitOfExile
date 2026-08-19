@@ -183,6 +183,23 @@ pub struct AppState {
     /// un-poison button not working. An atomic, not a Mutex: it is read on
     /// every detect tick and never read together with the store.
     pub merc_template_generation: AtomicU64,
+    /// Temple builder state (POE-171) — the owner of the `temple` SSOT slice.
+    /// Written by the temple capture loop and by `temple_set_keys`, projected
+    /// read-only into every snapshot by `ssot::build_snapshot`. Acquired alone,
+    /// never inside a module lock (lock order — see src/modules.rs).
+    pub temple: Mutex<temple::slice::TempleSlice>,
+    /// The temple module's persisted settings: the cached anchor calibration,
+    /// the four tunable profile fields, the two config flags and the key count.
+    /// Shared because two owners need it — the capture loop reads a snapshot
+    /// per read and writes the calibration back, and the `temple_set_*`
+    /// commands are what the user edits while that loop is running.
+    pub temple_settings: Mutex<temple::slice::TempleSettings>,
+    /// Bumped by `temple_rearm` (and by every settings command that invalidates
+    /// the current advice). The loop's read gate watches it to force one full
+    /// re-read of a board it would otherwise skip as unchanged. An atomic, not
+    /// a Mutex: it is read on every tick and never read together with the
+    /// settings.
+    pub temple_rearm: AtomicU64,
 }
 
 /// Build the full AppStatus from current state. Used by get_status command and event emitting.
@@ -470,7 +487,12 @@ fn reset_all_settings(app: AppHandle) {
     // Re-apply defaults to AppState
     let defaults = settings::Settings::default();
     let state = app.state::<AppState>();
-    settings::apply_to_state(&defaults, &state);
+    // Defaults cannot be rejected by the build that ships them, but the log
+    // line is the contract, not the odds: if this ever prints, the shipped
+    // defaults and the validators disagree and that is worth seeing.
+    for rejection in settings::apply_to_state(&defaults, &state) {
+        app_log(&app, rejection);
+    }
     // Re-detect Client.txt
     let detected = detect_client_txt_path();
     *state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()) = detected;
@@ -3115,6 +3137,9 @@ pub fn run() {
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
         merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
         merc_template_generation: AtomicU64::new(0),
+        temple: Mutex::new(temple::slice::TempleSlice::default()),
+        temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
+        temple_rearm: AtomicU64::new(0),
     };
 
     tauri::Builder::default()
@@ -3156,6 +3181,11 @@ pub fn run() {
             mercenary::debug::merc_debug_capture,
             mercenary::debug::merc_forget_template,
             mercenary::debug::merc_reset_templates,
+            temple::commands::temple_set_keys,
+            temple::commands::temple_set_config,
+            temple::commands::temple_set_profile,
+            temple::commands::temple_rearm,
+            temple::commands::temple_debug_capture,
             force_show_overlays,
             set_devtools,
             set_comparator_data,
@@ -3206,7 +3236,12 @@ pub fn run() {
             // If no settings file exists, write defaults so the file is always present.
             let saved = settings::load(&handle);
             let state = handle.state::<AppState>();
-            settings::apply_to_state(&saved, &state);
+            // A value this build refuses falls back rather than failing the
+            // load, so the file and the running value disagree from here on.
+            // Logging is the only place that difference is visible.
+            for rejection in settings::apply_to_state(&saved, &state) {
+                app_log(&handle, rejection);
+            }
 
             // If saved Client.txt path doesn't exist, re-detect
             {

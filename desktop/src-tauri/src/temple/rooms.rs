@@ -28,11 +28,10 @@
 //! *names* is not the room that gets built. [`resolve_offer`] is the only
 //! function that should ever produce user-facing text for an architect offer.
 
-// POE-169's surface is reached only by its own tests until POE-170 (the
-// advisor) and POE-171 (the overlay) call in. Following `lattice`/`doors`/
-// `reader` rather than `strategy`: this is one unit with one root, so the allow
-// is per file and comes off in one edit when the first caller lands.
-#![allow(dead_code)]
+// POE-171 is that caller: `temple::run` and `temple::slice` reach this module
+// on every read, so the file-level `#![allow(dead_code)]` is gone. What is
+// still uncalled carries its own attribute, which is now the inventory of what
+// only the tests reach rather than a blanket over the whole file.
 
 use strsim::jaro_winkler;
 
@@ -62,6 +61,7 @@ pub enum Grade {
 
 impl Grade {
     /// The grade as it is written on the sheet.
+    #[allow(dead_code)] // POE-171: only the tests reach this.
     pub fn as_str(self) -> &'static str {
         match self {
             Grade::D => "D",
@@ -96,11 +96,13 @@ impl RoomLine {
     /// POE-167's key, so [`RoomLine::mechanical_line`] round-trips through
     /// [`Line::named`]; for the other 21 it is a snake_case slug of the tier-3
     /// name, which is the name the strategy layer talks about.
+    #[allow(dead_code)] // POE-171: only the tests reach this.
     pub fn key(self) -> &'static str {
         self.key
     }
 
     /// The three room names, tier 1 first.
+    #[allow(dead_code)] // POE-171: only the tests reach this.
     pub fn tiers(self) -> [&'static str; 3] {
         self.tiers
     }
@@ -115,6 +117,7 @@ impl RoomLine {
     }
 
     /// Vertolka's grade for this line's tier-3 room.
+    #[allow(dead_code)] // POE-171: only the tests reach this.
     pub fn grade(self) -> Grade {
         self.grade
     }
@@ -440,6 +443,7 @@ pub fn normalise(name: &str) -> String {
 
 /// Exact (post-[`normalise`]) lookup. `None` for anything outside the closed
 /// vocabulary — this never guesses.
+#[allow(dead_code)] // POE-171: only the tests reach this.
 pub fn resolve_name(name: &str) -> Option<RoomIdentity> {
     let key = normalise(name);
     if key.is_empty() {

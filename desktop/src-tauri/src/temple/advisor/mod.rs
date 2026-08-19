@@ -51,10 +51,13 @@
 // POE-171 (the overlay) is the only intended caller and does not exist yet, so
 // the whole module is reached only by its own tests. One `allow` per file, as
 // `lattice`/`reader` do: it comes off in one edit when POE-171 calls in.
-#![allow(dead_code)]
 
 mod cases;
 mod fixtures;
+// POE-171 calls `advise` on every completed read, so the file-level
+// `#![allow(dead_code)]` this module shipped with is gone. The handful of items
+// still reached only by tests — in `state`, `rollout` and `fixtures` — carry
+// their own attribute instead.
 pub mod rollout;
 pub mod rules;
 pub mod state;
