@@ -15,17 +15,91 @@
 //
 // # Layers
 //
-// client.go, payload.go, normalize.go and humanize.go are pure: no database, no
+// client.go, payload.go, normalize.go, humanize.go and the four engine files
+// pricing.go, direct.go, crossquote.go and plays.go are pure: no database, no
 // scheduler, no HTTP server, no collector. Callers fetch a payload with
-// Client.FetchHour and derive rows with Normalize; Normalize, PriceOf and Ratio
-// are the only places prices are computed.
+// Client.FetchHour and derive rows with Normalize; Normalize, PriceOf, Ratio and
+// priceIn are the only places prices are computed.
 //
 // repository.go and runner.go are the lifecycle layer — database access and the
 // ticking cursor walk — mixed into the same flat package the way
 // internal/collector mixes fetcher, repository and scheduler
-// (docs/adr/008-current-go-package-architecture.md). The layering rule the
-// compiler cannot enforce: this package must never import internal/collector.
-// The Mercure stamping adapter that needs both lives in cmd/collector.
+// (docs/adr/008-current-go-package-architecture.md). The layering rules the
+// compiler cannot enforce: this package must never import internal/collector,
+// and never internal/lab either — the engine scores the currency feed on its own
+// terms rather than borrowing the gem stack's scoring vocabulary. The Mercure
+// stamping adapter that needs both lives in cmd/collector.
+//
+// # Engine
+//
+// BestPlays (plays.go) is the single entry point: it takes a league's StoredRows
+// and returns a ranked Result. It finds two shapes of opportunity per feed hour.
+//
+// A direct flip buys and sells the same item on one market:
+//
+//	edge = high/low - 1
+//
+// A one-hop triangle buys item X against currency A, sells it against currency
+// B, and converts the proceeds back on the A/B market — three executed legs:
+//
+//	edge = highXinB * highBinA / lowXinA - 1
+//
+// A cross-quote play is one item against two quote currencies, and the
+// currencies are exactly the ids in Config.QuotePriority: A and B must both be
+// listed and X must not be. A triangle of three non-currency items is not a
+// 1-hop play, however well its three markets close, and no route ever trades a
+// quote currency as its item. An item quoted in both default currencies
+// therefore yields two routes — a direction and its mirror — not the three
+// rotations of its triangle.
+//
+// Every price comes from priceIn (pricing.go), the one place that maps a stored
+// quantity pair onto a direction; it hands the quantities to Ratio rather than
+// dividing, and the engine never computes 1/price from a stored float, which
+// would be a division by zero on an unpriced row.
+//
+// The caveat that governs every edge: the feed publishes each hour's realized
+// LOW and HIGH, not a book. The two prices are trades that happened during the
+// same hour, not two sides that stood at the same instant, so an edge is an upper
+// bound on what was takeable — and on items that move in one-or-two-divine ticks,
+// most of the apparent spread is quantization rather than opportunity.
+//
+// Two filters push back on that. Each leg is gated on the hour's traded volume
+// and stock, so an edge nobody could have executed never becomes a play. The
+// floor applies to the ITEM side of the leg as oriented by Config.QuotePriority,
+// which means a currency/currency market gates on the lower-priority currency —
+// chaos in a chaos/divine market under the default priority — and the epic's
+// "59% keep-rate" measurement used min(volA, volB) and so does not describe this
+// gate.
+//
+// Config.MinHoursSeen is the ghost filter: an edge that printed in a single hour
+// of the window and never repeated is far more likely to be a digest artifact
+// than a standing opportunity, so a play must survive several hours to be
+// returned. Aggregation weights recent hours more heavily (w_i = (N - i) / N for
+// the i-th newest of N hours), which is what keeps one stale hour from carrying a
+// play.
+//
+// Play.Depth carries a known comparability caveat: for a direct play it is the
+// item's FULL hourly volume on the market even though the recipe both buys and
+// sells that item, so a round trip can absorb at most half of it, and a direct
+// Depth is not on the same scale as a 1-hop Depth. Whether to halve it is
+// POE-178/180's call, not something to change silently.
+//
+// What the Result contract promises its consumers (POE-175/176): From is the
+// oldest hour PRESENT in the window and To the newest hour plus one, so a gap in
+// the feed makes the span wider than Config.WindowHours while Hours stays the
+// honest count of hours that carried data. An empty result carries zero From/To
+// rather than a real interval, which the handler must special-case instead of
+// rendering. Keys are opaque: a MarketID contains "|" itself, so a key must
+// never be parsed — read Play.Mode and Play.Legs, which carry the same facts in
+// typed fields. A direct play's two legs are the SAME market and the SAME item
+// (buy low, sell high); a 1-hop play's three legs are three markets in execution
+// order. And a change to Config.QuotePriority leaves direct Keys untouched while
+// flipping which side of each leg reads as Item and which as Quote.
+//
+// Nothing here is persisted: BestPlays is recomputed from stored rows. Storing
+// plays, and the stricter filtering that only makes sense once they can be
+// compared against their own history, is POE-180. Results carry raw feed item
+// ids; the HTTP handler is what runs them through Humanize.
 //
 // # Storage
 //
