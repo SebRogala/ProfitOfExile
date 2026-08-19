@@ -22,8 +22,11 @@
 //!   markers on the panel's diamond, which settle the corridors POE-168 hands
 //!   back as [`reader::TempleLayout::uncertain`] ([`markers`]). Pure apart
 //!   from [`panel::SystemOcr`], the single seam that calls the engine.
-//! - The advisor/board graph (POE-170) and the overlay (POE-171) land as
-//!   sibling modules and are the only intended consumers of this one.
+//! - [`advisor`] (POE-170) — the board graph, the Monte-Carlo rollout and the
+//!   rule layer that ranks `(architect kill, door set)` and decides whether to
+//!   leave the map. Consumes every module above it and is pure.
+//! - The overlay (POE-171) lands as a sibling module and is the only intended
+//!   consumer of this one.
 //!
 //! # Where the pixels live
 //!
@@ -62,9 +65,12 @@
 // POE-169 claimed `Line` (+ `key`/`named`), the four `KEY_*` keys and `Tier`;
 // those attributes stay only because the module root is still unreachable from
 // live code.
-// Waiting on POE-170: `DOUBLE_TIER_CHANCE`, `Mode`, `ModeRule`, `Combination`,
-// `StrategyProfile`, `highest_tier_per_line`, `TempleConfig`.
+// POE-170 claimed `DOUBLE_TIER_CHANCE`, `Mode`, `ModeRule`, `StrategyProfile`
+// and `TempleConfig`; those attributes stay only because the module root is
+// still unreachable from live code, and come off with `advisor`'s own file-level
+// allow when POE-171 calls in.
 
+pub mod advisor;
 pub mod anchor;
 pub mod doors;
 pub mod lattice;

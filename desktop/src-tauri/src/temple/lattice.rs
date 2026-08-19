@@ -112,6 +112,21 @@ impl Slot {
         }
     }
 
+    /// Row index, `0` for the Apex's row A down to `4` for the Entrance's row E.
+    ///
+    /// R1's "connect toward the top" is a **gradient, not a binary** — row C
+    /// beats row D even when neither is row B — so the advisor needs the row as
+    /// a number, not as a letter.
+    pub fn row(self) -> u8 {
+        match self {
+            Slot::A0 => 0,
+            Slot::B0 | Slot::B1 => 1,
+            Slot::C0 | Slot::C1 | Slot::C2 => 2,
+            Slot::D0 | Slot::D1 | Slot::D2 | Slot::D3 => 3,
+            Slot::E0 | Slot::E1 | Slot::E2 => 4,
+        }
+    }
+
     /// Offset of this slot's centre from the Entrance centre, in reference px,
     /// before scaling. `+y` is down, matching image coordinates.
     fn offset(self) -> (f64, f64) {

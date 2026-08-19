@@ -312,6 +312,21 @@ pub struct StrategyProfile {
     /// (deliberately max junk out of the drop pool) takes over. Read by the
     /// architect-choice advisor (POE-170), not by the scorer.
     pub reroll_until_favourable: bool,
+    /// R4's carve-out: keep a slot in the drop pool while an adjacent upgrade
+    /// room can still hit it, instead of maxing it out of the pool.
+    ///
+    /// **PROPOSED, pending Sebastian's explicit yes** (TEMPLE-CORE-RULES §6e).
+    /// The evidence is live board 8: the transcript records him typing
+    /// *"upgrade here is correct one"*, but the next board shows that Workshop
+    /// as **Cultivar Chamber II** — the poison line at tier 2, i.e. he actually
+    /// *changed*, keeping the slot as the adjacent Sanctum's only live target.
+    /// The reply and the board disagree, so the rule ships behind a field
+    /// rather than silently.
+    ///
+    /// It is a profile field and not a constant because §4 settles that
+    /// *"everything a player might disagree on is a profile field"*, and R4 vs
+    /// staying in the pool is §6e's one explicitly unresolved tension.
+    pub r4_keep_upgrade_targets: bool,
 }
 
 #[allow(dead_code)]
@@ -351,6 +366,7 @@ impl StrategyProfile {
             mode_rule: ModeRule::LinesConnected(vec![Line::Corruption, Line::Gem]),
             path_cost: 0.0,
             reroll_until_favourable: false,
+            r4_keep_upgrade_targets: true,
         }
     }
 
