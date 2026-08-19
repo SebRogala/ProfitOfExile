@@ -38,7 +38,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-009: League-scoped repository convention](adr/009-league-scoped-repository-convention.md)
 - [ADR-010: Archived league history is retained indefinitely](adr/010-archived-league-history-is-retained-indefinitely.md)
 - [ADR-011: Wipe the outgoing league at rollover; preserve it as a dump](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md)
-- [ADR-012: Icons are pre-seeded from an allowed IP and content-addressed](adr/012-icon-cache-preseeded-and-content-addressed.md)
+- [ADR-012: Icons are pre-seeded from an allowed IP and content-addressed](adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md)
 - [ADR-013: UI picks persist in a schema-less prefs map](adr/013-ui-picks-persist-in-a-schema-less-prefs-map.md)
 - [ADR-014: Desktop features are modules with a work toggle and a view page](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md)
 

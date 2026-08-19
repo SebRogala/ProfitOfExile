@@ -1,5 +1,13 @@
-// Package gemicon serves Path of Exile gem inventory icons to both the web and
-// desktop clients through a single server endpoint.
+// Package gemicon serves Path of Exile artwork to both the web and desktop
+// clients through a persistent, on-disk icon cache.
+//
+// It backs two endpoints over two independent instances: gem inventory icons at
+// /api/gem-icon/{name} from the embedded gem map (New), and currency exchange
+// item icons at /api/currency-exchange/icon/{name} from internal/exchange's
+// asset (NewWithMap). Nothing below is gem-specific — a key is whatever the
+// route parameter carries — so the package keeps its name for its origin, and
+// the description that follows says "gem" because that is the set it was
+// written for.
 //
 // The clients only know a gem's display name (e.g. "Added Chaos Damage
 // Support"). The correct poewiki image URL is an /images/<h>/<hh>/ path that
@@ -25,6 +33,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -98,17 +107,42 @@ type Cache struct {
 	etags  map[string]string
 }
 
-// New builds a Cache from the embedded name→URL map and ensures cacheDir exists.
-// An empty cacheDir falls back to DefaultCacheDir. It returns an error if the
-// embedded JSON is malformed (a build-time defect) or the cache directory
-// cannot be created.
+// New builds a Cache from the embedded gem name→URL map and ensures cacheDir
+// exists. An empty cacheDir falls back to DefaultCacheDir. It returns an error
+// if the embedded JSON is malformed (a build-time defect) or the cache
+// directory cannot be created.
 func New(cacheDir string) (*Cache, error) {
 	var urls map[string]string
 	if err := json.Unmarshal(iconURLsJSON, &urls); err != nil {
 		return nil, fmt.Errorf("gemicon: parse embedded url map: %w", err)
 	}
+	// The DefaultCacheDir fallback lives here and not in NewWithMap on purpose:
+	// it is the GEM map's directory, and silently handing it to a second map
+	// would make two icon sets share one directory and one filename scheme.
 	if cacheDir == "" {
 		cacheDir = DefaultCacheDir
+	}
+	return NewWithMap(urls, cacheDir)
+}
+
+// NewWithMap builds a Cache over an arbitrary key→upstream-URL map, ensuring
+// cacheDir exists.
+//
+// This is what makes the cache reusable for a second icon set — currency
+// exchange items pass exchange.IconURLs() and their own directory (POE-177) —
+// rather than the gem map being the only thing it can serve. Everything the
+// Cache does is map-agnostic already: the key is whatever the route's {name}
+// parameter carries, and safeFileName reduces it to a cache filename.
+//
+// Each map needs its OWN directory. Two maps sharing one directory would share
+// the filename scheme too, so any pair of keys that reduce to the same
+// safeFileName — across the two maps, where neither generator can see the
+// other's keys — would serve one set's artwork under the other's name.
+// cacheDir is therefore required: an empty one is an unconfigured caller, not a
+// request for a default.
+func NewWithMap(urls map[string]string, cacheDir string) (*Cache, error) {
+	if cacheDir == "" {
+		return nil, errors.New("gemicon: cache dir is required")
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("gemicon: create cache dir %q: %w", cacheDir, err)

@@ -9,8 +9,12 @@ UI renders its `?` fallback.
 
 The architectural constraints — why production cannot fetch icons itself, and why
 the cache is seeded before the map deploys — are recorded in
-[ADR-012](adr/012-icon-cache-preseeded-and-content-addressed.md). Read that before
+[ADR-012](adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md). Read that before
 changing how icons are fetched or cached.
+
+Currency Exchange item icons run on the same cache under a second map and a
+second route; the steps below are gem-specific, so see
+[Currency Exchange items](#currency-exchange-items) for what differs.
 
 ## Adding an icon
 
@@ -81,6 +85,86 @@ the old artwork is served indefinitely.
 Update the map entry, **delete the stale file from the production volume**, then
 deploy. Once cache filenames are content-addressed, the map edit alone will
 suffice.
+
+## Currency Exchange items
+
+Status: current. Added 2026-08-19 (POE-177).
+
+The Currency Exchange page needs artwork for a different key space: GGG's feed
+identifies items by metadata id (`Metadata/Items/Currency/CurrencyRerollRare`),
+not by display name. Those icons are served at
+
+```
+GET /api/currency-exchange/icon/{metadata id, %2F-escaped}
+```
+
+by the **same** `internal/gemicon` cache over a second map —
+`gemicon.NewWithMap(exchange.IconURLs(), CURRENCY_EXCHANGE_ICON_CACHE_DIR)`.
+Everything above about 404s, 502s, `no-store`, caching headers and seed-before-
+deploy applies unchanged. The two sets keep separate cache directories on
+purpose: they share the cache-filename scheme, and a gem name and an item id
+could reduce to the same file.
+
+What is different is where the map comes from. There is no hand-edited JSON to
+add a row to: `internal/exchange/itemdata/items.json` (names + icons) and
+`icon-urls.json` (the flat `id → URL` map the puller reads) are **generated**,
+and hand edits are lost on the next run. From the repository root:
+
+```
+python3 scripts/generate-currency-exchange-items.py
+```
+
+It reads the item universe from the RePoE-fork base-item dump, joins poewiki's
+`items` cargo table for the icon file names, resolves them through the imageinfo
+API, and prints per-category coverage. It refuses to write on a coverage
+shortfall or a cache-filename collision, and its output is deterministic — an
+unchanged upstream re-runs to an empty diff. Run it **once per league**: GGG
+adds items between leagues, not within one. An id the asset misses is not a
+broken page — the name falls back to the humanized id and the icon to none —
+but it does log `WARN currency-exchange: unknown item id`, which is the signal
+to re-run.
+
+### Pre-seeding production
+
+Step 4 above hardcodes the gem directory and the gem volume, so it does not
+transfer as written. The item set needs its own volume, its own environment
+variable and its own copy. `PROD_HOST` and `SERVER_SERVICE_ID` are the same
+placeholders as in step 4.
+
+1. **Create a second Coolify persistent volume** on the server service, mounted
+   at `/data/currency-exchange-icons-cache`. Following the gem volume's naming,
+   that is `$SERVER_SERVICE_ID-profitofexile-currency-exchange-icons`. It must
+   be a separate volume from `$SERVER_SERVICE_ID-profitofexile-gem-icons`, for
+   the filename-collision reason above.
+
+2. **Set `CURRENCY_EXCHANGE_ICON_CACHE_DIR=/data/currency-exchange-icons-cache`
+   in the Coolify environment.** Like `GEM_ICON_CACHE_DIR`, this variable lives
+   only there — neither is in the `Dockerfile` or `docker-compose.yml`, so
+   nothing in the repository will set it for you. Skip it and the code default
+   (`./data/currency-exchange-icons-cache`) resolves inside the container's
+   writable layer: no error, no icons, and whatever the container did fetch is
+   gone on the next deploy.
+
+3. **Pull and copy the files** — from a machine poewiki does not block. Same
+   puller as step 3 above, pointed at the generated flat map:
+
+   ```
+   python3 scripts/download-gem-icons.py \
+     internal/exchange/itemdata/icon-urls.json currency-exchange-icons-cache
+
+   tar czf new-item-icons.tgz -C currency-exchange-icons-cache .
+   scp new-item-icons.tgz "$PROD_HOST":/tmp/
+   ssh "$PROD_HOST" "C=\$(docker ps -q -f name=$SERVER_SERVICE_ID); \
+     mkdir -p /tmp/nii && tar xzf /tmp/new-item-icons.tgz -C /tmp/nii && \
+     for f in /tmp/nii/*.png; do docker cp \"\$f\" \"\$C:/data/currency-exchange-icons-cache/\"; done"
+   ```
+
+   As with gems, the server image has no shell, so `docker cp` is the way in.
+
+4. **Then deploy.** The seed has to land *before* the first deploy that serves
+   item icons, not after. This does not degrade gracefully: poewiki 403s the
+   VPS, so an unseeded item icon is a permanent `502` and a permanent `?`, not
+   a slow first request.
 
 ## What "missing" looks like
 

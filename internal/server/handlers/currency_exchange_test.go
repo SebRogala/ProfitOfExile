@@ -13,8 +13,9 @@ import (
 )
 
 // scarabID is a third feed id, so the fixture's plays are not all quoted in the
-// same two currencies. Its humanized form ("Domination 3") also exercises the
-// letter-to-digit split, which a raw id would not produce.
+// same two currencies. It is also a real id the item asset resolves
+// ("Domination Scarab of Evolution"), which its humanized form — "Domination 3"
+// — would not have produced.
 const scarabID = "Metadata/Items/Scarabs/ScarabDomination3"
 
 // The window the fixture result covers: six hours ending on the 06:00 feed hour,
@@ -330,9 +331,9 @@ func TestCurrencyExchangePlays_warmCache_reportsTheWindowItCovers(t *testing.T) 
 }
 
 func TestCurrencyExchangePlays_legsCarryDisplayNamesBesideTheRawFeedIDs(t *testing.T) {
-	// The engine deliberately carries raw ids; humanizing them is the transport
-	// layer's one addition, and the raw ids must survive it — the client keys on
-	// them.
+	// The engine deliberately carries raw ids; resolving them to in-game names is
+	// the transport layer's addition, and the raw ids must survive it — the
+	// client keys on them.
 	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays?mode=1-hop"))
 
 	play := playByKey(t, body, oneHopPlay().Key)
@@ -340,17 +341,17 @@ func TestCurrencyExchangePlays_legsCarryDisplayNamesBesideTheRawFeedIDs(t *testi
 		{
 			Action: "buy", Item: scarabID, Quote: exchange.DivineID,
 			Price: 0.0625, Volume: 300, Stock: 60,
-			ItemName: "Domination 3", QuoteName: "Mod Values",
+			ItemName: "Domination Scarab of Evolution", QuoteName: "Divine Orb",
 		},
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
 			Price: 8, Volume: 250, Stock: 25,
-			ItemName: "Domination 3", QuoteName: "Reroll Rare",
+			ItemName: "Domination Scarab of Evolution", QuoteName: "Chaos Orb",
 		},
 		{
 			Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID,
 			Price: 64, Volume: 65361, Stock: 8878,
-			ItemName: "Mod Values", QuoteName: "Reroll Rare",
+			ItemName: "Divine Orb", QuoteName: "Chaos Orb",
 		},
 	}
 	if len(play.Legs) != len(want) {
