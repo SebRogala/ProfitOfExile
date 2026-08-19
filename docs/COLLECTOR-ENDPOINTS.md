@@ -63,16 +63,26 @@ serves the answer from memory at
 (never from the database), and publishes `poe/currency-exchange/updated` after
 each recompute burst. Both horizons — `recent` (the default, a six-hour window)
 and `day` (twenty-four hours) — come from the same recompute, so `?horizon=` is a
-cache lookup; an unknown value of either parameter is a 400. On the wire `roiPct`
-is the fractional return of one round trip at the leg prices shown (`edge` is its
-deprecated alias) and `roi` is that return in chaos for one exchanged unit, so
-`roi == roiPct × investment` by construction. The ranking knobs are overridable
+cache lookup; an unknown value of either parameter is a 400. Every price a play
+shows is the LAST SNAPSHOT's — the window's newest feed hour, which is the hour
+a served play must have cleared its gates in; the window contributes
+`hoursSeen`, a count of every hour the play cleared on that hour's own prices,
+and nothing else. On the wire `roiPct` is the fractional return of one round
+trip after undercutting each leg by one of its own ticks (`edge` is its
+deprecated alias; `roiPctRaw` is the same trip at the raw extremes shown on the
+legs) and `roi` is that return in chaos for one exchanged unit, so
+`roi == roiPct × investment` by construction. A leg whose extreme sits too far
+from that hour's VWAP is flagged `suspect` rather than replaced, and a suspect
+play is served ranked after every clean one. The ranking knobs are overridable
 with `EXCHANGE_MIN_VOLUME_PER_HOUR`, `EXCHANGE_MIN_EDGE`,
 `EXCHANGE_MAX_PLAYS`, the gate knobs
 `EXCHANGE_MIN_TURNOVER_CHAOS`, `EXCHANGE_MAX_TICK`,
-`EXCHANGE_MIN_EDGE_TICK_RATIO` and `EXCHANGE_MIN_ROI_CHAOS`, and the per-horizon
-windows `EXCHANGE_RECENT_WINDOW_HOURS` / `EXCHANGE_RECENT_MIN_HOURS_SEEN` and
-`EXCHANGE_DAY_WINDOW_HOURS` / `EXCHANGE_DAY_MIN_HOURS_SEEN` (`EXCHANGE_WINDOW_HOURS`
+`EXCHANGE_MIN_EDGE_TICK_RATIO` and `EXCHANGE_MIN_ROI_CHAOS`, the junk-flag knobs
+`EXCHANGE_SUSPECT_LOW_BAND`, `EXCHANGE_SUSPECT_HIGH_BAND` and
+`EXCHANGE_HIDE_SUSPECT` (a bool; drops flagged plays instead of ranking them
+last), and the per-horizon windows `EXCHANGE_RECENT_WINDOW_HOURS` /
+`EXCHANGE_RECENT_MIN_HOURS_SEEN` and `EXCHANGE_DAY_WINDOW_HOURS` /
+`EXCHANGE_DAY_MIN_HOURS_SEEN` (`EXCHANGE_WINDOW_HOURS`
 and `EXCHANGE_MIN_HOURS_SEEN` still work and bind the recent horizon only), each
 of which logs a WARN and keeps its default when the value is unusable.
 
