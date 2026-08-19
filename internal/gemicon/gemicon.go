@@ -2,8 +2,10 @@
 // desktop clients through a single server endpoint.
 //
 // The clients only know a gem's display name (e.g. "Added Chaos Damage
-// Support"). The correct poewiki image URL is a content-hashed path that cannot
-// be constructed from the name, so a name→URL map is embedded from
+// Support"). The correct poewiki image URL is an /images/<h>/<hh>/ path that
+// MediaWiki derives from the MD5 of the image's FILE name — stable for that
+// name, so a re-upload keeps the URL, but not constructible from the gem's
+// display name — so a name→URL map is embedded from
 // gem-icon-urls.json. On the first request for a gem the upstream image is
 // fetched once and written to a persistent on-disk cache directory ("our own
 // copy"); every subsequent request — including after a server restart — is
@@ -49,9 +51,9 @@ const DefaultCacheDir = "./data/gem-icons-cache"
 const maxImageBytes = 5 << 20 // 5 MiB
 
 // cacheControl instructs browsers and webviews to cache an icon for a year and
-// never revalidate. Icon bytes for a given gem name are immutable (the upstream
-// URL is content-hashed), so this is safe and is what stops re-downloads on
-// every app open.
+// never revalidate. The upstream URL is stable per file name (MediaWiki hashes
+// the name, not the bytes), so a cached icon is treated as immutable; this is
+// what stops re-downloads on every app open.
 const cacheControl = "public, max-age=31536000, immutable"
 
 // notFoundCacheControl stops clients from caching an unknown-gem 404 at all.
