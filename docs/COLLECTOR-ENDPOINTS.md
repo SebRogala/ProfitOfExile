@@ -58,3 +58,21 @@ hours inside one catch-up pass so a long backlog does not pull 48 payloads of
 
 Read `internal/exchange/doc.go` before changing it — the feed's semantics, the
 cursor rule, and the event payload fields are documented there.
+
+**Recovery from a stuck cursor.** If the feed's `next_change_id` is more than one
+hour ahead of the stored cursor — the hour aged out of retention or was never
+published — the walk stops on that hour and never advances on its own, logging
+`WARN currency-exchange: feed moved past the cursor` with `gapHours` on every
+tick. Read the position with `SELECT league, next_hour, to_timestamp(next_hour)
+FROM currency_exchange_cursor;` and move it by hand:
+
+```sql
+UPDATE currency_exchange_cursor
+SET next_hour = <unix hour to resume from>, updated_at = now()
+WHERE league = '<league>';
+```
+
+Resume at the WARN's `nextChangeID` minus 3600 (the newest complete hour), or at
+any earlier hour the feed still serves — the inserts are idempotent against the
+primary key, so re-walking a stored range is safe. The collector needs no
+restart; the next pass reads the cursor row again.

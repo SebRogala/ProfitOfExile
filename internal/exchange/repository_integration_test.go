@@ -74,6 +74,33 @@ func newTestRepository(t *testing.T, pool *pgxpool.Pool) *Repository {
 	return NewRepository(pool)
 }
 
+// registerSecondLeague adds a second league to the leagues registry — the FK
+// target of both currency-exchange tables — and returns its scope. Cleanup runs
+// in FK order: the league's rows in both tables first, then the league row.
+func registerSecondLeague(t *testing.T, pool *pgxpool.Pool, id string) league.Scope {
+	t.Helper()
+
+	t.Cleanup(func() {
+		ctx := context.Background()
+		for _, stmt := range []string{
+			"DELETE FROM currency_exchange_markets WHERE league = $1",
+			"DELETE FROM currency_exchange_cursor WHERE league = $1",
+			"DELETE FROM leagues WHERE id = $1",
+		} {
+			if _, err := pool.Exec(ctx, stmt, id); err != nil {
+				t.Logf("cleanup warning: %q: %v", stmt, err)
+			}
+		}
+	})
+
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO leagues (id, display_name, collection_state, prepared_at, activated_at)
+		VALUES ($1, $1, 'collecting', now(), now())`, id); err != nil {
+		t.Fatalf("register league %q: %v", id, err)
+	}
+	return league.Historical(id)
+}
+
 // pricedRow is a chaos/divine market at 196 chaos per divine, priced on both the
 // lowest and the highest ratio pair.
 func pricedRow() Row {
@@ -443,6 +470,53 @@ func TestLoadRows_ordersByHourThenMarketID(t *testing.T) {
 			t.Errorf("row %d = (%s, %s), want (%s, %s)",
 				i, stored[i].Hour, stored[i].MarketID, w.hour, w.marketID)
 		}
+	}
+}
+
+func TestLoadRows_hourHeldByTwoLeagues_returnsOnlyTheScopesRows(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newTestRepository(t, pool)
+	otherScope := registerSecondLeague(t, pool, "ExchangeScopeTest")
+	ctx := context.Background()
+	hour := baseHour
+	nextHour := hour.Add(time.Hour).Unix()
+
+	// Same market, same feed hour, one row per league — which is what the feed
+	// actually produces, since one payload carries every league. The league
+	// column is therefore the only thing that can separate them, and volume_a is
+	// what proves which row came back: LoadRows fills Row.League from the scope
+	// argument, so asserting on that field would assert on the input.
+	mine := pricedRow()
+	theirs := pricedRow()
+	theirs.League = otherScope.ID()
+	theirs.VolumeA = 4242
+
+	if _, err := repo.InsertHour(ctx, integrationScope, hour, []Row{mine}, nextHour); err != nil {
+		t.Fatalf("InsertHour %s: %v", integrationScope.ID(), err)
+	}
+	if _, err := repo.InsertHour(ctx, otherScope, hour, []Row{theirs}, nextHour); err != nil {
+		t.Fatalf("InsertHour %s: %v", otherScope.ID(), err)
+	}
+
+	for _, tc := range []struct {
+		scope       league.Scope
+		wantVolumeA int64
+	}{
+		{integrationScope, mine.VolumeA},
+		{otherScope, theirs.VolumeA},
+	} {
+		t.Run(tc.scope.ID(), func(t *testing.T) {
+			stored, err := repo.LoadRows(ctx, tc.scope, hour, hour.Add(time.Hour))
+			if err != nil {
+				t.Fatalf("LoadRows: %v", err)
+			}
+			if len(stored) != 1 {
+				t.Fatalf("loaded %d rows, want 1 — the other league's row for the same hour must not come back", len(stored))
+			}
+			if stored[0].VolumeA != tc.wantVolumeA {
+				t.Errorf("VolumeA = %d, want %d — this is the other league's row", stored[0].VolumeA, tc.wantVolumeA)
+			}
+		})
 	}
 }
 

@@ -83,4 +83,30 @@
 // Naming rule: the Go package is named exchange, and every user-facing string
 // (User-Agent, error text, log message) says "currency-exchange". A bare "cx"
 // identifier is never used.
+//
+// # Operations
+//
+// One failure mode needs a hand: the walk can be left on an hour the feed will
+// never serve. When the 404 body's next_change_id is more than one hour ahead of
+// the cursor, the hours in between are not coming — aged out of retention, or
+// never published — and RunOnce stops without advancing and logs
+//
+//	WARN currency-exchange: feed moved past the cursor hour=… nextChangeID=… gapHours=…
+//
+// on every tick. The cursor does not move on its own from there. Read its
+// position with
+//
+//	SELECT league, next_hour, to_timestamp(next_hour) FROM currency_exchange_cursor;
+//
+// and move it forward by hand:
+//
+//	UPDATE currency_exchange_cursor
+//	SET next_hour = <unix hour to resume from>, updated_at = now()
+//	WHERE league = '<league>';
+//
+// Resume at the WARN's nextChangeID minus 3600 — the newest complete hour — or at
+// any earlier hour the feed still serves; the walk re-fetches from there and the
+// inserts are idempotent against the primary key, so overlapping an already
+// stored range costs bandwidth and nothing else. The collector does not need a
+// restart: the next pass reads the cursor row again.
 package exchange
