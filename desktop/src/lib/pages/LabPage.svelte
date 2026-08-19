@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { listen } from '@tauri-apps/api/event';
+	import { emit, listen } from '@tauri-apps/api/event';
 	import { untrack } from 'svelte';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot, fetchSsot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
@@ -388,10 +388,15 @@
 			}
 		}, (data) => {
 			// Layout updated or reset on server — notify overlays
-			import('@tauri-apps/api/event').then(({ emit }) => {
-				emit('lab-layout-updated', { difficulty: data?.difficulty, action: data?.action })
-					.catch(e => console.warn('[mercure] failed to emit layout update:', e));
-			}).catch(() => {}); // expected: not in Tauri context (web dashboard)
+			emit('lab-layout-updated', { difficulty: data?.difficulty, action: data?.action })
+				.catch(e => console.warn('[mercure] failed to emit layout update:', e));
+		}, (data) => {
+			// Currency Exchange hour closed. This page owns the app's only Mercure
+			// connection (ADR-014 keeps every page mounted), so the payload is
+			// re-emitted for CurrencyExchangePage to pick up — the lab dashboard
+			// itself does not reload on this topic.
+			emit('currency-exchange-updated', data)
+				.catch(e => console.warn('[mercure] failed to emit currency exchange update:', e));
 		});
 		mercure = connection;
 

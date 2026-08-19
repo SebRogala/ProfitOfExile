@@ -76,6 +76,9 @@
 		<button class="collapsed-item" class:active={currentPath === '/temple'} title="Temple of Atzoatl" onclick={() => nav.go('/temple')}>
 			<span class="icon">&#x1F3DB;&#xFE0F;</span>
 		</button>
+		<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange" onclick={() => nav.go('/currency-exchange')}>
+			<span class="icon">&#x1F4B1;</span>
+		</button>
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
 				<span class="icon">&#x1F5FA;&#xFE0F;</span>
@@ -146,6 +149,10 @@
 			<button class="nav-item" class:active={currentPath === '/temple'} onclick={() => nav.go('/temple')}>
 				<span class="icon">&#x1F3DB;&#xFE0F;</span>
 				<span>Temple</span>
+			</button>
+			<button class="nav-item" class:active={currentPath === '/currency-exchange'} onclick={() => nav.go('/currency-exchange')}>
+				<span class="icon">&#x1F4B1;</span>
+				<span>Currency Exchange</span>
 			</button>
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
