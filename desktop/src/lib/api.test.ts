@@ -106,6 +106,8 @@ describe('fetchCurrencyExchangePlays', () => {
 		hours: 24,
 		warm: true,
 		mode: 'direct',
+		horizon: 'recent',
+		divineChaosRate: 198.97,
 		count: 0,
 		plays: []
 	};
@@ -121,6 +123,8 @@ describe('fetchCurrencyExchangePlays', () => {
 		item: 'Metadata/Items/Currency/CurrencyRerollRare',
 		quote: 'Metadata/Items/Currency/CurrencyAddModToRare',
 		price: 0.004975,
+		fair: 0.00512,
+		tick: 0.02,
 		volume: 1200,
 		stock: 40,
 		itemName: 'Chaos Orb',
@@ -134,6 +138,8 @@ describe('fetchCurrencyExchangePlays', () => {
 		item: 'Metadata/Items/Currency/CurrencyAfflictionOrbGeneric',
 		quote: 'Metadata/Items/Currency/CurrencyRerollRare',
 		price: 3.5,
+		fair: 3.2,
+		tick: 0.05,
 		volume: 90,
 		stock: 12,
 		itemName: 'Delirium Orb',
@@ -150,7 +156,15 @@ describe('fetchCurrencyExchangePlays', () => {
 				key: 'chaos:exalted',
 				mode: 'direct',
 				legs: [DECORATED_LEG, ICONLESS_LEG],
+				roiPct: 0.12,
 				edge: 0.12,
+				roiPctNewestHour: 0.31,
+				// roi === roiPct * investment, and the play's tick is the
+				// coarsest of its legs' — the shapes the server guarantees.
+				roi: 21.6,
+				investment: 180,
+				turnover: 74000,
+				tick: 0.05,
 				depth: 90,
 				hoursSeen: 20,
 				lastHour: '2026-08-19T12:00:00.000Z'
@@ -201,6 +215,22 @@ describe('fetchCurrencyExchangePlays', () => {
 		await fetchCurrencyExchangePlays('all');
 
 		expect(request().url.searchParams.get('mode')).toBe('all');
+	});
+
+	it('sends "recent" as an explicit horizon when the caller names none', async () => {
+		// The page (POE-184) still calls with a mode only. Riding the server's
+		// own default would make the window the page renders change under it the
+		// day that default moves, and the response's `horizon` echo would then be
+		// the first place anyone noticed.
+		await fetchCurrencyExchangePlays('all');
+
+		expect(request().url.searchParams.get('horizon')).toBe('recent');
+	});
+
+	it('sends the requested horizon when the caller asks for the day window', async () => {
+		await fetchCurrencyExchangePlays('all', 'day');
+
+		expect(request().url.searchParams.get('horizon')).toBe('day');
 	});
 
 	it('identifies the device and app version on the request', async () => {

@@ -30,6 +30,8 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
 		hours: 24,
 		warm: true,
 		mode: 'all',
+		horizon: 'recent',
+		divineChaosRate: 198.97,
 		count: 0,
 		plays: [],
 		...overrides
@@ -314,6 +316,8 @@ describe('legLabel', () => {
 			item: 'divine',
 			quote: 'chaos',
 			price: 196,
+			fair: 197.4,
+			tick: 0.005,
 			volume: 1200,
 			stock: 40,
 			itemName: 'Mod Values',
