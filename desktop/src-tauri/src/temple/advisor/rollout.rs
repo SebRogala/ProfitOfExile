@@ -119,10 +119,10 @@ impl Valuation {
     pub const JUNK: u8 = u8::MAX;
 
     /// Tag of the corruption line.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub const CORRUPTION: u8 = 1;
     /// Tag of the gem line.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub const GEM: u8 = 2;
     /// Tag of the upgrade line.
     pub const UPGRADE: u8 = 3;
@@ -682,7 +682,7 @@ pub fn mode_of(board: &BoardState, profile: &StrategyProfile) -> Mode {
 
 /// The slot mask of one slot — re-exported so the rules layer does not have to
 /// reach past this module for it.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn slot_mask(slot: Slot) -> SlotMask {
     mask_of(slot)
 }

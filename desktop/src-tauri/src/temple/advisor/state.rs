@@ -21,7 +21,7 @@ use crate::temple::strategy::{Line, Tier};
 pub type SlotMask = u16;
 
 /// Every slot, as a mask.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub const ALL_SLOTS: SlotMask = (1 << 13) - 1;
 
 /// The single-bit mask of one slot.
@@ -30,7 +30,7 @@ pub fn mask_of(slot: Slot) -> SlotMask {
 }
 
 /// The slot at a bit index. Only valid for `0..13`.
-#[allow(dead_code)] // POE-171: only the tests reach this.
+#[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
 pub fn slot_at(index: usize) -> Slot {
     Slot::ALL[index]
 }
@@ -197,7 +197,7 @@ pub struct BoardState {
 
 impl BoardState {
     /// An empty board: 13 tier-0 slots, no doors.
-    #[allow(dead_code)] // POE-171: only the tests reach this.
+    #[allow(dead_code)] // Only the tests reach this; comes off with its first production caller.
     pub fn empty() -> BoardState {
         BoardState {
             rooms: std::array::from_fn(|_| (None, Tier::T0)),

@@ -17,24 +17,61 @@
 //! Linux container compiling the code it is meant to protect. This follows
 //! `mercenary::run`, which does the same.
 //!
-//! # Three gates before an expensive read
+//! # Four gates before an expensive read
 //!
 //! A full read is 28 OCR calls: two bounded crops for the side panel and the
 //! budget line, and two per plate (name band + tier numeral) for all 13. That
 //! is far too much to run per frame, so the loop spends most of its time on the
 //! cheap half:
 //!
-//! 1. **The pixel tick** ([`DETECT_INTERVAL`]) — one
-//!    [`reader::read_layout_with_hint`], which is an anchor match plus beam
-//!    sampling and touches no OCR engine. Its fingerprint
-//!    ([`slice::layout_signature`]) moves when the player moves, when a
-//!    corridor opens, and when the panel moves or rescales.
-//! 2. **The text tick** ([`PANEL_RECHECK_INTERVAL`]) — the two text crops
+//! 1. **The detect tick** ([`DETECT_INTERVAL`]) — one
+//!    [`anchor::detect_cheap`], which is at most two correlations and touches
+//!    no OCR engine. It answers only "is anything plate-shaped on screen?",
+//!    and it is the gate that decides whether this tick pays for a
+//!    [`reader::read_layout_with_hint`] at all.
+//! 2. **The pixel gate** — the [`reader::read_layout_with_hint`] the detect
+//!    tick promoted to. Its fingerprint ([`slice::layout_signature`]) moves
+//!    when the player moves, when a corridor opens, and when the panel moves
+//!    or rescales.
+//! 3. **The text tick** ([`PANEL_RECHECK_INTERVAL`]) — the two text crops
 //!    ([`panel_text`]), run only while the pixel fingerprint is unchanged. It
 //!    catches the case the pixels cannot see: a kill that changes a plate's
 //!    name and tier without touching a corridor.
-//! 3. **Panel lost → re-arm.** Closing the panel clears the gate, so
+//! 4. **Panel lost → re-arm.** Closing the panel clears the gate, so
 //!    "close, kill the architect, reopen" always re-reads.
+//!
+//! # The detect cadence
+//!
+//! Gate 1 exists because gates 2–4 all sit *behind* a read whose cost is
+//! upside down: a capture with the panel OPEN anchors in two correlations,
+//! while a capture with no panel on it runs the hint, the seeded band and the
+//! full sweep — ~105 correlations, measured 3.9 s on a 1539 px board. A closed
+//! panel is the state this loop lives in, so its steady state was its most
+//! expensive one.
+//!
+//! So every [`DETECT_INTERVAL`] the loop runs [`anchor::detect_cheap`] (~1/80
+//! of that, measured) and pays for the full read only when:
+//!
+//! - the cheap tick anchored the remembered plate, or nominated a new one; or
+//! - a panel is already live — a live panel is the CHEAP input, and refusing
+//!   to read one because the cheap tick could not see it is how a panel whose
+//!   scale drifted would get retired instead of re-anchored; or
+//! - the user pressed re-arm ([`slice::ReadGate::rearm_pending`]), which the
+//!   promoting tick then spends ([`slice::ReadGate::note_rearm`]); or
+//! - [`FULL_READ_EVERY_N_MISSES`] cheap ticks in a row have said nothing —
+//!   the backstop for a UI-scale change, which is the one way a panel can be on
+//!   screen and invisible to the cheap tick.
+//!
+//! [`wants_full_read`] is all four rules in one pure function, so the
+//! composition is testable without a screen. A cheap tick that says nothing is
+//! a MISS in the sense [`LoopState`] already meant it, so the retire-after-two
+//! rule and the status machine are unchanged by all of this.
+//!
+//! The two timings above were taken by [`anchor::detect_cheap`]'s own
+//! measurement, described in that function's note: `cargo test --release --lib`
+//! on the Linux container, over deterministic noise cut to each committed board
+//! fixture's dimensions. A **release** build — the ratio holds in debug but the
+//! absolute numbers do not.
 //!
 //! # Every OCR crop is bounded
 //!
@@ -63,6 +100,7 @@ use tokio::sync::watch;
 use crate::modules::ModuleJoin;
 use crate::AppState;
 
+use super::anchor::{self, CheapHint};
 use super::lattice::{self, Lattice};
 use super::markers;
 use super::panel::{self, SystemOcr};
@@ -85,8 +123,15 @@ const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
 /// catches — a kill inside the same room with no corridor change — is not one
 /// the player is waiting on a sub-second answer for.
 const PANEL_RECHECK_INTERVAL: Duration = Duration::from_millis(4000);
-/// A pixel tick slower than this backs the detect cadence off, once, for the
-/// life of the thread.
+/// A **cheap** detect tick slower than this backs the detect cadence off, once,
+/// for the life of the thread.
+///
+/// Cheap ticks only — a tick that promoted to the full read is excluded, and
+/// the [`FULL_READ_EVERY_N_MISSES`] backstop is the reason that matters: it
+/// deliberately costs seconds, and letting one of those trip a *sticky* backoff
+/// would slow the loop permanently on the strength of a cost the loop chose to
+/// pay. What this still measures is the thing that runs on every tick, which is
+/// what the cadence has to fit inside.
 const SLOW_TICK: Duration = Duration::from_millis(1500);
 /// How long to idle between focus checks while the game is not focused.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
@@ -99,6 +144,24 @@ const MAX_DISTINCT_ERRORS: usize = 12;
 /// anchor briefly loses a panel that is mid-fade, and retiring on the first
 /// miss would re-arm the gate and buy a full re-read every time.
 const RETIRE_AFTER: u8 = 2;
+/// Cheap detect ticks that may say "nothing here" before one full read is
+/// forced anyway.
+///
+/// [`anchor::detect_cheap`] recovers a panel that MOVED on the next tick, and
+/// [`settings_for_capture`] drops the remembered scale the moment the capture
+/// changes size, so this is not the recovery path for either of those. What it
+/// covers is the case neither of them can see: a capture that is still the same
+/// size and still holds a panel whose scale has drifted far enough from
+/// `width / REFERENCE_SCREEN_WIDTH` that the nominating pass no longer clears
+/// [`anchor::COARSE_CANDIDATE_FLOOR`] — the game's own UI-scale slider is the
+/// way that happens.
+///
+/// 30 ticks is 30 s at [`DETECT_INTERVAL`] and 90 s once
+/// [`DETECT_INTERVAL_SLOW`] has fired. Long, deliberately: the case is rare and
+/// the forced read costs ~80× a cheap tick (see [`anchor::detect_cheap`]), so
+/// this is the one place the loop still pays the old price and it should be
+/// paid as seldom as the recovery it buys allows.
+const FULL_READ_EVERY_N_MISSES: u32 = 30;
 
 /// Spawn the capture loop. Called through `MODULES` — see `modules.rs`.
 pub fn spawn(app: AppHandle, cancel: watch::Receiver<bool>) -> ModuleJoin {
@@ -125,9 +188,13 @@ pub struct LoopState {
     /// The slow-tick backoff has fired.
     ///
     /// Sticky for the life of the thread: it means "this machine takes over
-    /// 1.5 s to anchor a screen", which does not become false again, and
-    /// flapping between cadences would flap the log line that announces it.
+    /// 1.5 s to run a cheap detect tick on a screen this size", which does not
+    /// become false again, and flapping between cadences would flap the log
+    /// line that announces it.
     pub backed_off: bool,
+    /// Cheap detect ticks since the last full read — see
+    /// [`FULL_READ_EVERY_N_MISSES`].
+    pub cheap_misses: u32,
 }
 
 /// What one pixel tick did to the panel state.
@@ -181,9 +248,46 @@ impl LoopState {
         }
     }
 
-    /// Record how long one pixel tick took. `true` the one time the backoff
+    /// Fold one cheap detect into the state, and say whether this tick pays for
+    /// the full read.
+    ///
+    /// Four ways in, and the counter resets on all four so a promotion for any
+    /// reason restarts the periodic one:
+    ///
+    /// 1. the cheap tick saw something ([`anchor::CheapDetect::worth_reading`]);
+    /// 2. a panel is already live. The loop lives in `live == false`, so the
+    ///    gate keeps all of its value — and what this buys is the case the
+    ///    cheap tick is blind to: an OPEN panel whose UI scale drifted past
+    ///    [`anchor::COARSE_CANDIDATE_FLOOR`] with a hint that no longer
+    ///    matches. Without it two such ticks retire a panel that is on screen
+    ///    and the board goes away for [`FULL_READ_EVERY_N_MISSES`] ticks;
+    /// 3. the user pressed re-arm — which must force a read even while nothing
+    ///    is anchored, or the button does nothing on a panel that is open and
+    ///    unchanged;
+    /// 4. [`FULL_READ_EVERY_N_MISSES`] cheap ticks have said nothing.
+    pub fn note_cheap_detect(&mut self, detected: bool, rearmed: bool) -> bool {
+        if detected || self.live || rearmed || self.cheap_misses + 1 >= FULL_READ_EVERY_N_MISSES {
+            self.cheap_misses = 0;
+            true
+        } else {
+            self.cheap_misses += 1;
+            false
+        }
+    }
+
+    /// Record how long one detect tick took. `true` the one time the backoff
     /// fires, so the caller logs it once.
-    pub fn note_tick_duration(&mut self, took: Duration) -> bool {
+    ///
+    /// `promoted` ticks are ignored rather than filtered by the caller, so the
+    /// rule sits in the tested surface: a tick that paid for the full read is
+    /// not evidence about the cadence, and the periodic backstop deliberately
+    /// costs seconds — letting one of those trip a *sticky* backoff would slow
+    /// the loop for the rest of the session on the strength of a cost it chose
+    /// to pay. See [`SLOW_TICK`].
+    pub fn note_tick_duration(&mut self, took: Duration, promoted: bool) -> bool {
+        if promoted {
+            return false;
+        }
         if took > SLOW_TICK && !self.backed_off {
             self.backed_off = true;
             true
@@ -191,6 +295,30 @@ impl LoopState {
             false
         }
     }
+}
+
+/// The detect tick's whole decision: does this tick pay for the full read?
+///
+/// Pure over both state machines so the composition is testable without a
+/// screen or a clock — and the composition is where the interesting rule lives:
+/// **a promotion that happened because of a re-arm has to spend the bump right
+/// here.** [`slice::ReadGate::layout_wants_read`], the other place that spends
+/// it, is reached only after a read that SUCCEEDED, so a re-arm pressed while
+/// no panel is on screen would stay pending on every subsequent tick and pin
+/// the loop into the full read for the rest of the session. The settings
+/// commands re-arm on every change, so that is not a corner case.
+pub fn wants_full_read(
+    state: &mut LoopState,
+    gate: &mut slice::ReadGate,
+    cheap: &anchor::CheapDetect,
+    rearm: u64,
+) -> bool {
+    let rearmed = gate.rearm_pending(rearm);
+    let read = state.note_cheap_detect(cheap.worth_reading(), rearmed);
+    if read && rearmed {
+        gate.note_rearm(rearm);
+    }
+    read
 }
 
 // --------------------------------------------------- the status machine --
@@ -650,6 +778,16 @@ struct Session {
     gate: slice::ReadGate,
     errors: ErrorLog,
     last_panel_check: Instant,
+    /// Where the last successful read found the Entrance plate, for
+    /// [`anchor::detect_cheap`] to look first.
+    ///
+    /// In memory, not in `settings.json`: it is a property of where the game
+    /// window sits, which the capture size the persisted
+    /// [`anchor::AnchorCalibration`] is keyed on does not pin. Never cleared —
+    /// [`anchor::AnchorCalibration::applies_to`] discards it on a capture-size
+    /// change, and a hint that is merely in the wrong PLACE costs one windowed
+    /// correlation and is caught by the nominating pass on the same tick.
+    cheap_hint: Option<CheapHint>,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -677,6 +815,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         gate: slice::ReadGate::default(),
         errors: ErrorLog::default(),
         last_panel_check: Instant::now(),
+        cheap_hint: None,
     };
     // Backdated so the first iteration ticks immediately rather than after a
     // full cadence of doing nothing.
@@ -698,13 +837,13 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
 
         if last_detect.elapsed() >= session.state.detect_interval() {
             let started = Instant::now();
-            tick(&app, &mut session, &cancel);
+            let promoted = tick(&app, &mut session, &cancel);
             last_detect = Instant::now();
-            if session.state.note_tick_duration(started.elapsed()) {
+            if session.state.note_tick_duration(started.elapsed(), promoted) {
                 crate::app_log(
                     &app,
                     format!(
-                        "Temple: pixel tick took {} ms — cadence backing off to {} s",
+                        "Temple: detect tick took {} ms — cadence backing off to {} s",
                         started.elapsed().as_millis(),
                         DETECT_INTERVAL_SLOW.as_secs()
                     ),
@@ -760,14 +899,18 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
     });
 }
 
-/// One pixel tick: grab the screen, anchor it, and decide whether the board
-/// underneath is one the loop has already read.
-fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) {
+/// One detect tick: grab the screen, ask [`anchor::detect_cheap`] whether
+/// anything is there, and read the board when it is.
+///
+/// Returns whether this tick paid for the full read — the caller times only the
+/// ticks that did not, per [`SLOW_TICK`].
+fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) -> bool {
     let img = match crate::capture::capture_screen() {
         Ok(img) => img,
         Err(e) => {
             fail(app, session, format!("Temple: screen capture failed — {e}"));
-            return miss(app, session, true);
+            miss(app, session, true);
+            return false;
         }
     };
     // The ONLY place the loop obtains its settings, so the stale-hint prune
@@ -784,20 +927,40 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
             ),
         );
     }
-    let layout = match reader::read_layout_with_hint(&img, settings.calibration.as_ref()) {
-        Ok(layout) => layout,
-        Err(_) => {
-            // Not an error path: "no layout panel on screen" is the state the
-            // loop spends most of its life in, and reporting it as a failure
-            // would put a permanent red line on the page. `AnchorNotFound`
-            // carries its best NCC, which IS worth seeing when the panel never
-            // anchors — but it varies per frame, so it belongs in
-            // `temple_debug_capture`'s report rather than in a log line the
-            // loop would rewrite every second. A panel that anchors but reads
-            // badly is a different case, and reaches the slice as
-            // `layout.confidence`.
-            return miss(app, session, false);
-        }
+    // The cheap gate. A closed panel is what this loop looks at nearly all the
+    // time, and it is the most expensive input the reader has — see
+    // `anchor::detect_cheap`, which answers "anything here?" for ~1/80 of the
+    // price of finding out the long way.
+    let rearm = rearm_counter(app);
+    let cheap = anchor::detect_cheap(&img, session.cheap_hint.as_ref());
+    if !wants_full_read(&mut session.state, &mut session.gate, &cheap, rearm) {
+        miss(app, session, false);
+        return false;
+    }
+
+    // A cheap tick that anchored has already done the expensive half of the
+    // read's own first step, at full resolution and against the same floor —
+    // so the promoted read takes that anchor instead of finding the plate a
+    // second time. Every other promotion has no anchor to hand over.
+    let layout = match cheap {
+        anchor::CheapDetect::Anchored(found) => reader::read_layout_at(&img, found),
+        _ => match reader::read_layout_with_hint(&img, settings.calibration.as_ref()) {
+            Ok(layout) => layout,
+            Err(_) => {
+                // Not an error path: "no layout panel on screen" is the state
+                // the loop spends most of its life in, and reporting it as a
+                // failure would put a permanent red line on the page.
+                // `AnchorNotFound` carries its best NCC, which IS worth seeing
+                // when the panel never anchors — but it varies per frame, so it
+                // belongs in `temple_debug_capture`'s report rather than in a
+                // log line the loop would rewrite every second. A panel that
+                // anchors but reads badly is a different case, and reaches the
+                // slice as `layout.confidence`.
+                miss(app, session, false);
+                // This tick DID pay for the read; it just found nothing.
+                return true;
+            }
+        },
     };
 
     if session.state.on_detect(true) == DetectOutcome::Found {
@@ -810,27 +973,32 @@ fn tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) 
         );
     }
     remember_calibration(app, &layout);
+    session.cheap_hint = Some(CheapHint {
+        calibration: layout.calibration,
+        origin: layout.origin,
+    });
 
     let layout_sig = slice::layout_signature(&layout);
-    let rearm = rearm_counter(app);
     if session.gate.layout_wants_read(layout_sig, rearm) {
-        return full_read(app, session, cancel, &img, layout, &settings, layout_sig, None);
+        full_read(app, session, cancel, &img, layout, &settings, layout_sig, None);
+        return true;
     }
 
     // The board looks the same. Pay for the text gate only on its own, slower
     // cadence — and only after checking the stop signal, because two OCR calls
     // are not something a cancelled thread should still be buying.
     if session.last_panel_check.elapsed() < PANEL_RECHECK_INTERVAL || *cancel.borrow() {
-        return;
+        return true;
     }
     session.last_panel_check = Instant::now();
     let Some(lines) = panel_text(app, session, &img, &layout) else {
-        return;
+        return true;
     };
     let read = panel::read_panel(&lines);
     if session.gate.panel_wants_read(slice::panel_signature(&read)) {
         full_read(app, session, cancel, &img, layout, &settings, layout_sig, Some(read));
     }
+    true
 }
 
 /// A tick that produced no layout — nothing on screen, or the grab failed.
@@ -1041,18 +1209,181 @@ mod tests {
     fn the_slow_tick_backoff_fires_once_and_stays() {
         let mut state = LoopState::default();
 
-        assert!(!state.note_tick_duration(Duration::from_millis(200)));
+        assert!(!state.note_tick_duration(Duration::from_millis(200), false));
         assert_eq!(state.detect_interval(), DETECT_INTERVAL);
 
-        assert!(state.note_tick_duration(SLOW_TICK + Duration::from_millis(1)));
+        assert!(state.note_tick_duration(SLOW_TICK + Duration::from_millis(1), false));
         assert_eq!(state.detect_interval(), DETECT_INTERVAL_SLOW);
         assert!(
-            !state.note_tick_duration(SLOW_TICK + Duration::from_millis(1)),
+            !state.note_tick_duration(SLOW_TICK + Duration::from_millis(1), false),
             "the backoff announces itself once",
         );
         assert!(
-            !state.note_tick_duration(Duration::from_millis(10)),
+            !state.note_tick_duration(Duration::from_millis(10), false),
             "and does not come back off",
+        );
+    }
+
+    /// A tick that paid for the full read is not evidence about the cadence.
+    /// The periodic backstop costs seconds by design, so one of those must not
+    /// trip a backoff that is sticky for the life of the thread.
+    ///
+    /// Fails if the promoted tick is timed like a cheap one — every 30th tick
+    /// would then permanently slow a loop that is running perfectly well.
+    #[test]
+    fn a_slow_promoted_tick_does_not_back_the_cadence_off() {
+        let mut state = LoopState::default();
+
+        assert!(!state.note_tick_duration(SLOW_TICK * 3, true));
+
+        assert!(!state.backed_off);
+        assert_eq!(state.detect_interval(), DETECT_INTERVAL);
+    }
+
+    // ------------------------------------------------ the cheap detect gate --
+
+    /// A cheap outcome that saw nothing, for the gate tests.
+    fn saw_nothing() -> anchor::CheapDetect {
+        anchor::CheapDetect::Nothing { best_ncc: 0.2 }
+    }
+
+    /// A cheap outcome that nominated something.
+    fn saw_something() -> anchor::CheapDetect {
+        anchor::CheapDetect::Candidate { coarse_ncc: 0.94 }
+    }
+
+    /// The bug the composition exists to prevent: the settings commands re-arm
+    /// on every change, and a re-arm pressed while no panel is on screen must
+    /// buy ONE full read — not pin the loop into one on every tick for the rest
+    /// of the session.
+    ///
+    /// Fails if the promoting tick does not spend the bump, which is what
+    /// happens when the only writer is `ReadGate::layout_wants_read`: that runs
+    /// after a read that SUCCEEDED, and a read over a closed panel does not.
+    #[test]
+    fn a_rearm_with_no_panel_on_screen_buys_exactly_one_full_read() {
+        let mut state = LoopState::default();
+        let mut gate = slice::ReadGate::default();
+
+        assert!(
+            !wants_full_read(&mut state, &mut gate, &saw_nothing(), 0),
+            "precondition: a quiet screen is a cheap tick",
+        );
+
+        assert!(
+            wants_full_read(&mut state, &mut gate, &saw_nothing(), 1),
+            "the bump buys a read",
+        );
+        assert!(
+            !wants_full_read(&mut state, &mut gate, &saw_nothing(), 1),
+            "and exactly one — the tick after it is cheap again",
+        );
+        assert!(!wants_full_read(&mut state, &mut gate, &saw_nothing(), 1));
+    }
+
+    /// …and the read it forced actually happens. Fails if spending the bump
+    /// records the counter without dropping the recorded read — the promoted
+    /// tick would then match its own fingerprint and skip, so the button would
+    /// cost a full read and change nothing on screen.
+    #[test]
+    fn the_read_a_rearm_forced_is_not_skipped_as_unchanged() {
+        let mut state = LoopState::default();
+        let mut gate = slice::ReadGate::default();
+        let (board, panel) = (77u64, 88u64);
+        gate.record(board, panel);
+        assert!(!gate.layout_wants_read(board, 0), "precondition: already read");
+
+        assert!(wants_full_read(&mut state, &mut gate, &saw_something(), 1));
+
+        assert!(
+            gate.layout_wants_read(board, 1),
+            "the board the re-arm was pressed over must be read again",
+        );
+    }
+
+    /// A panel already on screen is read whatever the cheap tick says. It is
+    /// the CHEAP input, and the case this covers is the one the cheap tick is
+    /// blind to: an open panel whose UI scale drifted, with a hint that no
+    /// longer matches.
+    ///
+    /// Fails if the promotion is gated on the cheap outcome alone — two such
+    /// ticks would then retire a panel that is on screen, and the board would
+    /// disappear until the periodic backstop 30 ticks later.
+    #[test]
+    fn a_live_panel_is_read_even_when_the_cheap_tick_sees_nothing() {
+        let mut state = LoopState {
+            live: true,
+            ..LoopState::default()
+        };
+        let mut gate = slice::ReadGate::default();
+
+        assert!(wants_full_read(&mut state, &mut gate, &saw_nothing(), 0));
+    }
+
+    /// A cheap tick that saw something buys the full read. Fails if the
+    /// promotion on a detection is dropped — the loop would then only read on
+    /// the periodic backstop, i.e. up to 30 s after the panel opened.
+    #[test]
+    fn a_cheap_detect_that_saw_something_promotes_to_the_full_read() {
+        let mut state = LoopState::default();
+
+        assert!(state.note_cheap_detect(true, false));
+    }
+
+    /// Re-arm promotes even while the cheap tick sees nothing. Fails if the
+    /// button is only honoured behind a detection, which would make it dead on
+    /// exactly the tick the user pressed it for.
+    #[test]
+    fn a_rearm_promotes_while_the_cheap_tick_sees_nothing() {
+        let mut state = LoopState::default();
+
+        assert!(state.note_cheap_detect(false, true));
+    }
+
+    /// The backstop fires on the Nth consecutive miss and NOT before it, and
+    /// the count restarts afterwards.
+    ///
+    /// Fails if the periodic path is removed (a panel the cheap tick cannot see
+    /// — a UI-scale change — would then never be read again), if it is off by
+    /// one, or if the counter is not reset (the backstop would fire on every
+    /// tick from the Nth onwards, which is the cost this whole gate removes).
+    #[test]
+    fn only_the_nth_consecutive_cheap_miss_promotes_and_the_count_restarts() {
+        let mut state = LoopState::default();
+
+        for i in 1..FULL_READ_EVERY_N_MISSES {
+            assert!(
+                !state.note_cheap_detect(false, false),
+                "miss {i} of {FULL_READ_EVERY_N_MISSES} must not promote",
+            );
+        }
+        assert!(
+            state.note_cheap_detect(false, false),
+            "the {FULL_READ_EVERY_N_MISSES}th miss is the backstop",
+        );
+
+        assert!(
+            !state.note_cheap_detect(false, false),
+            "the count restarts, so the tick after the backstop is cheap again",
+        );
+    }
+
+    /// A promotion for any reason restarts the backstop's count. Fails if
+    /// `cheap_misses` is only cleared on the periodic path — a panel that is
+    /// open and being read would still drag the counter up to N and buy a
+    /// redundant forced read.
+    #[test]
+    fn a_detection_restarts_the_backstops_count() {
+        let mut state = LoopState::default();
+        for _ in 1..FULL_READ_EVERY_N_MISSES {
+            state.note_cheap_detect(false, false);
+        }
+
+        assert!(state.note_cheap_detect(true, false), "precondition: a detection");
+
+        assert!(
+            !state.note_cheap_detect(false, false),
+            "the next miss is the FIRST of a new run, not the backstop",
         );
     }
 
