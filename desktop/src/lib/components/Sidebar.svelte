@@ -11,7 +11,22 @@
 		// The work toggle for the OCR module, not the Mercenaries view page — the
 		// page is a nav item and stays reachable with the module switched off.
 		mercenary: '👁️ Merc OCR',
+		// One switch, two things: the temple capture loop AND the temple overlay
+		// window. They are deliberately not separable — an overlay with no reader
+		// behind it can only show a board that is no longer on screen. The Temple
+		// PAGE is a nav item and stays reachable with this off.
+		temple: '🏛️ Temple reader',
 	};
+
+	/** The longer tooltip for a module whose one-line label cannot say it all. */
+	const MODULE_TITLES: Record<string, string> = {
+		temple: 'Temple reader: reads the layout panel AND spawns the temple overlay — one switch for both. The Temple page stays browsable either way.',
+	};
+
+	/** What a module toggle's `title` says: the specific note, or the default. */
+	function moduleTitle(id: string, label: string, on: boolean): string {
+		return MODULE_TITLES[id] ?? `${label.replace(/^\S+\s/, '')}: ${on ? 'on' : 'off'}`;
+	}
 
 	let {
 		open = true,
@@ -57,6 +72,9 @@
 		<!-- Outside the DEV block on purpose: this one ships. -->
 		<button class="collapsed-item" class:active={currentPath === '/mercenaries'} title="Mercenaries" onclick={() => nav.go('/mercenaries')}>
 			<span class="icon">&#x2694;&#xFE0F;</span>
+		</button>
+		<button class="collapsed-item" class:active={currentPath === '/temple'} title="Temple of Atzoatl" onclick={() => nav.go('/temple')}>
+			<span class="icon">&#x1F3DB;&#xFE0F;</span>
 		</button>
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
@@ -104,7 +122,7 @@
 		</button>
 		{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
 			{@const on = ssot.modules[id] ?? false}
-			<button class="collapsed-overlay" title="{label.replace(/^\S+\s/, '')}: {on ? 'on' : 'off'}" onclick={() => setModuleEnabled(id, !on)}>
+			<button class="collapsed-overlay" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
 				<span class="icon">{label.split(' ')[0]}</span>
 				<span class="indicator" class:off={!on} class:always={on}></span>
 			</button>
@@ -124,6 +142,10 @@
 			<button class="nav-item" class:active={currentPath === '/mercenaries'} onclick={() => nav.go('/mercenaries')}>
 				<span class="icon">&#x2694;&#xFE0F;</span>
 				<span>Mercenaries</span>
+			</button>
+			<button class="nav-item" class:active={currentPath === '/temple'} onclick={() => nav.go('/temple')}>
+				<span class="icon">&#x1F3DB;&#xFE0F;</span>
+				<span>Temple</span>
 			</button>
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
@@ -183,7 +205,7 @@
 		<div class="label">Modules</div>
 		{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
 			{@const on = ssot.modules[id] ?? false}
-			<button class="overlay-row clickable" onclick={() => setModuleEnabled(id, !on)}>
+			<button class="overlay-row clickable" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
 				<span>{label}</span>
 				<span class="mode" class:off={!on} class:always={on}>{on ? 'on' : 'off'}</span>
 			</button>

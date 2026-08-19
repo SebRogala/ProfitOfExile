@@ -656,13 +656,15 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     crate::app_log(&app, "Temple: capture loop started".to_string());
     crate::report_ocr_engine(&app);
 
-    // The user's key count belongs on the slice from the first frame — the
-    // overlay renders its own control from it, and a zero there would read as
-    // "you have no keys" rather than "not loaded yet".
-    let keys = settings_snapshot(&app).keys;
+    // The user's settings belong on the slice from the first frame — the page
+    // and the overlay render their own controls from them, and a zeroed key
+    // count would read as "you have no keys" rather than "not loaded yet".
+    let settings = settings_snapshot(&app);
     publish(&app, |slice| {
         slice.status = TempleStatus::Idle;
-        slice.keys = keys;
+        slice.keys = settings.keys;
+        slice.config = settings.config.clone();
+        slice.profile = settings.profile.clone();
         slice.last_error = None;
     });
 
@@ -963,7 +965,13 @@ fn full_read(
             settled: settled.as_ref(),
             marker_error,
             advice: advice.as_ref(),
+            // The settings THIS tick started with. A setter that lands
+            // mid-read echoes its new value onto the slice and then loses it
+            // again for one tick when this projection overwrites it — the
+            // setters' own `rearm` forces the next read, which restores it.
             keys: settings.keys,
+            config: settings.config.clone(),
+            profile: settings.profile.clone(),
             read_at: now_ms(),
         },
         // The calibration THIS capture measured, not the one the snapshot was

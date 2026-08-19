@@ -562,6 +562,57 @@ mod tests {
         assert_eq!(*reloaded.temple_settings.lock().unwrap(), chosen);
     }
 
+    /// The slice's settings echo is seeded at load, not at loop start.
+    ///
+    /// The page and the overlay render the keys, config flags and profile
+    /// controls from `AppState.temple` alone (ADR-014: a page reads slices, not
+    /// module state). With the module switched OFF no loop ever publishes, so
+    /// without this seeding every control would sit at the derive default —
+    /// keys 0 — while `settings.json` said otherwise, with nothing to correct
+    /// it. Fails if `apply_to_state` stops seeding, or seeds from the raw file
+    /// rather than from the validated owner.
+    #[test]
+    fn loading_settings_seeds_the_slice_echo_the_page_renders_its_controls_from() {
+        let settings = Settings {
+            temple_keys: 2,
+            temple_config: crate::temple::strategy::TempleConfig {
+                artefacts_of_the_vaal: false,
+                scarab_of_timelines: true,
+            },
+            temple_profile: crate::temple::slice::TempleProfileSettings {
+                apex_score: 6.5,
+                path_cost: 0.75,
+                reroll_until_favourable: true,
+                r4_keep_upgrade_targets: false,
+            },
+            ..Settings::default()
+        };
+        let state = test_app_state();
+
+        let _ = apply_to_state(&settings, &state);
+
+        let slice = state.temple.lock().unwrap().clone();
+        assert_eq!(slice.keys, 2);
+        assert_eq!(slice.config, settings.temple_config);
+        assert_eq!(slice.profile, settings.temple_profile);
+    }
+
+    /// The echo is the value IN FORCE, not the value on disk.
+    ///
+    /// A rejected key count falls back to the default and the module runs on
+    /// it; echoing the file's 9 would show the user a control set to a number
+    /// nothing is using. Fails if the seeding reads `settings` instead of the
+    /// owner it just wrote.
+    #[test]
+    fn a_rejected_setting_is_echoed_as_the_value_actually_in_force() {
+        let settings = Settings { temple_keys: 9, ..Settings::default() };
+        let state = test_app_state();
+
+        let _ = apply_to_state(&settings, &state);
+
+        assert_eq!(state.temple.lock().unwrap().keys, crate::temple::slice::default_keys());
+    }
+
     /// A file with no temple keys at all — every build before POE-171 — loads
     /// as the Rush with one key, not as zeros. Fails if a `#[serde(default)]`
     /// is dropped or if `temple_keys` falls back to `u8::default()`.
@@ -841,6 +892,20 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
                 }
             },
         };
+
+    // Seed the slice's settings echo, so the page and the overlay render the
+    // persisted key count, flags and profile from the first poll — including
+    // while the module is OFF and no loop will ever publish them. Taken from
+    // the owner just written rather than from `settings`, so a rejected value
+    // is echoed as the one actually in force. The `temple_settings` guard is
+    // released before `temple` is taken; nothing else locks the two together.
+    let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    {
+        let mut slice = state.temple.lock().unwrap_or_else(|e| e.into_inner());
+        slice.keys = temple.keys;
+        slice.config = temple.config;
+        slice.profile = temple.profile;
+    }
 
     rejected
 }

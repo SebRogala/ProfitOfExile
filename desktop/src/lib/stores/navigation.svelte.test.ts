@@ -34,6 +34,10 @@ describe('viewToPath', () => {
 	it("maps 'mercenaries' to '/mercenaries'", () => {
 		expect(viewToPath('mercenaries')).toBe('/mercenaries');
 	});
+
+	it("maps 'temple' to '/temple'", () => {
+		expect(viewToPath('temple')).toBe('/temple');
+	});
 });
 
 describe('go', () => {

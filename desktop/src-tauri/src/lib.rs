@@ -1474,6 +1474,15 @@ fn force_show_overlays(app: AppHandle) {
                 log::warn!("Failed to force-show timer: {}", e);
             }
         }
+        // The temple overlay belongs here for the same reason the others do:
+        // the focus poller hides it when the game loses focus, so without this
+        // line debug mode could show every overlay except the one the user is
+        // most likely debugging out of the game's foreground.
+        if let Some(win) = app.get_webview_window("temple") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show temple: {}", e);
+            }
+        }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
         log::info!("Debug mode OFF");
@@ -2714,21 +2723,27 @@ fn spawn_focus_poller(app: AppHandle) {
                     emit_status(&app);
 
                     // Hide/show overlay windows based on game focus.
-                    // Comparator: shows whenever game is focused (used everywhere).
+                    // Comparator + Temple: show whenever game is focused (used everywhere).
                     // Compass + Pathstrip: only show when game is focused AND in lab.
                     // Skip hide in debug mode.
                     let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
                     let in_lab = state.in_lab.load(Ordering::SeqCst);
 
-                    // Comparator: game focus only
-                    if let Some(win) = app.get_webview_window("comparator") {
-                        if is_focused {
-                            if let Err(e) = win.show() {
-                                log::warn!("Failed to show comparator overlay: {}", e);
-                            }
-                        } else if !debug {
-                            if let Err(e) = win.hide() {
-                                log::warn!("Failed to hide comparator overlay: {}", e);
+                    // Game focus only. The temple is here rather than in the lab
+                    // list because its board is read from the Atlas/map UI, which
+                    // has nothing to do with the labyrinth lifecycle; its route
+                    // still gates on the module's own status, so a shown window
+                    // with no board on screen draws nothing.
+                    for overlay_name in &["comparator", "temple"] {
+                        if let Some(win) = app.get_webview_window(overlay_name) {
+                            if is_focused {
+                                if let Err(e) = win.show() {
+                                    log::warn!("Failed to show {} overlay: {}", overlay_name, e);
+                                }
+                            } else if !debug {
+                                if let Err(e) = win.hide() {
+                                    log::warn!("Failed to hide {} overlay: {}", overlay_name, e);
+                                }
                             }
                         }
                     }
