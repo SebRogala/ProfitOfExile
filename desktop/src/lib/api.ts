@@ -255,10 +255,29 @@ export interface CompareGem {
 export type CurrencyExchangeMode = 'all' | 'direct' | '1-hop';
 
 /**
+ * Which window `GET /currency-exchange/plays` ranks in. `'recent'` is a short
+ * window that reacts within hours and is what the server assumes when the
+ * parameter is absent; `'day'` is the overnight-planning window, where a play
+ * has to have held for most of a day to be listed at all.
+ *
+ * The server computes both windows in one recompute and answers a horizon it
+ * does not know with a 400, so this is sent explicitly like `mode` is.
+ */
+export type CurrencyExchangeHorizon = 'recent' | 'day';
+
+/**
  * One swap inside a play. `item`/`quote` are the raw Currency Exchange ids and
  * `itemName`/`quoteName` their display names — real item names (POE-177), with
  * the humanized id as the fallback for an id the server's asset does not know.
  * `price` is quote per item.
+ *
+ * `price` is the median across the window's hours of that hour's extreme on the
+ * leg's side (cheapest for a buy, dearest for a sell) — the executable recipe.
+ * `fair` is the median hourly volume-weighted price, where the traded mass
+ * actually cleared, and is the anchor `price` should be read against; it is 0
+ * when no hour in the window had one. `tick` is the market's median hourly price resolution
+ * as a fraction of the price (0.5 = the next representable price is 50% away),
+ * which is what separates a real spread from one integer step (POE-184).
  *
  * `itemIcon`/`quoteIcon` are API-RELATIVE paths into this server's icon route
  * (`/currency-exchange/icon/<escaped id>`), not upstream poewiki URLs —
@@ -272,6 +291,8 @@ export interface CurrencyExchangeLeg {
 	item: string;
 	quote: string;
 	price: number;
+	fair: number;
+	tick: number;
 	volume: number;
 	stock: number;
 	itemName: string;
@@ -282,15 +303,33 @@ export interface CurrencyExchangeLeg {
 
 /**
  * A ranked arbitrage play. `direct` swaps back through the same market;
- * `1-hop` routes through an intermediate currency. `edge` is a fraction
- * (0.123 = 12.3%), `depth` a per-hour volume, `hoursSeen` how many hours of
- * the window the play held.
+ * `1-hop` routes through an intermediate currency.
+ *
+ * `roiPct` is the round trip's fractional gain at the prices the legs show
+ * (0.123 = 12.3%), recomputed from those legs so the claim is reproducible
+ * from what the row displays. `roiPctNewestHour` is the same reading for
+ * `lastHour` alone — the "is it moving right now" marker, which sits below
+ * `roiPct` when the newest hour was quieter than the window's typical one, so
+ * it is not an upper bound. `roi` is chaos gained per exchange of one unit and
+ * `investment` the chaos that one unit costs to enter, with
+ * `roi === roiPct * investment` by construction. `turnover` is chaos per hour
+ * through the play's thinnest leg, which is the liquidity reading — `depth`
+ * (units per hour) is not one. `tick` is the coarsest leg tick, the worst
+ * price step the recipe has to live with. `hoursSeen` is how many hours of the
+ * window the play held.
  */
 export interface CurrencyExchangePlay {
 	key: string;
 	mode: 'direct' | '1-hop';
 	legs: CurrencyExchangeLeg[];
+	roiPct: number;
+	/** @deprecated use `roiPct` — the server sends both with the same value. */
 	edge: number;
+	roiPctNewestHour: number;
+	roi: number;
+	investment: number;
+	turnover: number;
+	tick: number;
 	depth: number;
 	hoursSeen: number;
 	lastHour: string;
@@ -301,6 +340,12 @@ export interface CurrencyExchangePlay {
  * `warm: false` and an empty `plays`, so an empty list is not an error — the
  * page tells the two apart through `warm`. `count` is the size after the mode
  * filter and `plays` arrives already ranked.
+ *
+ * `horizon` echoes the window these plays were ranked in, so a body arriving
+ * from the cache cannot be mistaken for the other horizon's. `divineChaosRate`
+ * is the chaos value of one divine that every `roi`/`investment`/`turnover`
+ * here was valued with; it is 0 when the divine/chaos market did not trade in
+ * the window, in which case no divine-quoted play is in the list at all.
  */
 export interface CurrencyExchangeResponse {
 	league: string;
@@ -310,6 +355,8 @@ export interface CurrencyExchangeResponse {
 	hours: number;
 	warm: boolean;
 	mode: CurrencyExchangeMode;
+	horizon: CurrencyExchangeHorizon;
+	divineChaosRate: number;
 	count: number;
 	plays: CurrencyExchangePlay[];
 }
@@ -759,15 +806,23 @@ function deriveReason(prev: any, curr: any): string {
 
 
 /**
- * Fetch the ranked Currency Exchange plays for one mode.
+ * Fetch the ranked Currency Exchange plays for one mode and horizon.
  *
  * `mode` is always sent, `'all'` included: the server reads an absent mode as
  * a default rather than as "no filter", and answers 400 to an unknown one.
+ * `horizon` is sent explicitly for the same reason — the request states which
+ * window it wants instead of inheriting whatever the server's default becomes,
+ * and the response echoes it back. `'recent'` is the default here because it is
+ * the server's; POE-186 gives the page a picker that passes the other one.
+ *
  * Unlike `fetchStatus`, this throws on a failed request — the caller keeps the
  * result it already has and marks it stale instead of blanking the table.
  */
-export async function fetchCurrencyExchangePlays(mode: CurrencyExchangeMode): Promise<CurrencyExchangeResponse> {
-	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { mode });
+export async function fetchCurrencyExchangePlays(
+	mode: CurrencyExchangeMode,
+	horizon: CurrencyExchangeHorizon = 'recent'
+): Promise<CurrencyExchangeResponse> {
+	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { mode, horizon });
 }
 
 // --- Mercure SSE ---
