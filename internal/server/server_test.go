@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	"profitofexile/internal/exchange"
+	"profitofexile/internal/league"
 	"profitofexile/internal/server/handlers"
 )
 
@@ -126,6 +129,81 @@ func TestNewRouter_StaticCatchAllFallbackForUnknownPaths(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "ProfitOfExile") {
 		t.Errorf("GET /strategies/lab body = %q, want SPA fallback with %q", string(body), "ProfitOfExile")
+	}
+}
+
+func TestNewRouter_CurrencyExchangeRouteIsServedWithoutTheLabStack(t *testing.T) {
+	// Currency exchange is a separate pillar: its own collector, tables and
+	// cache, sharing nothing with LabRepo. Registering it inside the
+	// `if cfg.LabRepo != nil` block would make a lab-less server 404 on it —
+	// and the cache the route answers from is the one in the config, which is
+	// what the league and the play count below prove.
+	cache := exchange.NewCache()
+	cache.Set(exchange.Result{
+		League: "Mirage",
+		Hours:  6,
+		To:     time.Date(2026, 8, 19, 7, 0, 0, 0, time.UTC),
+		Plays:  []exchange.Play{{Key: "direct:a", Mode: exchange.ModeDirect}},
+	})
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{
+		League:        league.Historical("Mirage"),
+		ExchangeCache: cache,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/currency-exchange/plays", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/currency-exchange/plays status = %d, want %d (body: %s)",
+			w.Code, http.StatusOK, w.Body.String())
+	}
+	var body struct {
+		League string `json:"league"`
+		Warm   bool   `json:"warm"`
+		Count  int    `json:"count"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if body.League != "Mirage" {
+		t.Errorf("league = %q, want %q — the route must read the configured cache", body.League, "Mirage")
+	}
+	if !body.Warm {
+		t.Error("warm = false, want true")
+	}
+	if body.Count != 1 {
+		t.Errorf("count = %d, want 1", body.Count)
+	}
+}
+
+func TestNewRouter_CurrencyExchangeRouteIsRegisteredWithoutACache(t *testing.T) {
+	// A server started without the pillar leaves ExchangeCache nil; the route
+	// still answers, cold, rather than 404ing.
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/currency-exchange/plays", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/currency-exchange/plays status = %d, want %d (body: %s)",
+			w.Code, http.StatusOK, w.Body.String())
+	}
+	var body struct {
+		Warm  bool `json:"warm"`
+		Count int  `json:"count"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if body.Warm {
+		t.Error("warm = true, want false")
+	}
+	if body.Count != 0 {
+		t.Errorf("count = %d, want 0", body.Count)
 	}
 }
 

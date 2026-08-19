@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"profitofexile/internal/exchange"
 )
 
 // MercureToken returns a short-lived subscriber JWT and the public Mercure URL.
@@ -47,6 +49,10 @@ func signSubscriberToken(secret string) (string, error) {
 				"poe/trade/results",
 				"poe/desktop/{pair}",
 				"poe/lab/layout",
+				// The currency-exchange pillar publishes here after a recompute
+				// changed the served answer; without the claim the browser's
+				// subscription is rejected and the page never refetches.
+				exchange.UpdatedTopic,
 			},
 		},
 		"iat": now.Unix(),
