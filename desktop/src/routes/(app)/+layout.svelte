@@ -25,6 +25,7 @@
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import MercenariesPage from '$lib/pages/MercenariesPage.svelte';
 	import TemplePage from '$lib/pages/TemplePage.svelte';
+	import CurrencyExchangePage from '$lib/pages/CurrencyExchangePage.svelte';
 	import DevPage from '$lib/pages/DevPage.svelte';
 	import IdentifyDialog from '$lib/components/IdentifyDialog.svelte';
 
@@ -924,6 +925,9 @@
 			</div>
 			<div class:view-hidden={nav.view !== 'temple'}>
 				<TemplePage />
+			</div>
+			<div class:view-hidden={nav.view !== 'currency-exchange'}>
+				<CurrencyExchangePage />
 			</div>
 			{#if import.meta.env.DEV}
 				<div class:view-hidden={nav.view !== 'dev'}>

@@ -242,6 +242,68 @@ export interface CompareGem {
 	trade?: TradeLookupResult;
 }
 
+// --- Currency Exchange (POE-175) ---
+
+/**
+ * Which plays `GET /currency-exchange/plays` returns: every ranked play, only
+ * the single-swap ones, or only the two-swap ones. `'all'` is an explicit
+ * filter value rather than the absence of one, so it is sent like any other.
+ *
+ * `$lib/exchange/view.ts` re-exports this type, which is what keeps the page's
+ * mode picker and this fetcher from drifting apart.
+ */
+export type CurrencyExchangeMode = 'all' | 'direct' | '1-hop';
+
+/**
+ * One swap inside a play. `item`/`quote` are the raw Currency Exchange ids and
+ * `itemName`/`quoteName` their display names — Humanize stand-ins until
+ * POE-177 supplies the real labels. `price` is quote per item.
+ */
+export interface CurrencyExchangeLeg {
+	action: 'buy' | 'sell';
+	item: string;
+	quote: string;
+	price: number;
+	volume: number;
+	stock: number;
+	itemName: string;
+	quoteName: string;
+}
+
+/**
+ * A ranked arbitrage play. `direct` swaps back through the same market;
+ * `1-hop` routes through an intermediate currency. `edge` is a fraction
+ * (0.123 = 12.3%), `depth` a per-hour volume, `hoursSeen` how many hours of
+ * the window the play held.
+ */
+export interface CurrencyExchangePlay {
+	key: string;
+	mode: 'direct' | '1-hop';
+	legs: CurrencyExchangeLeg[];
+	edge: number;
+	depth: number;
+	hoursSeen: number;
+	lastHour: string;
+}
+
+/**
+ * The `/currency-exchange/plays` payload. A cold server answers 200 with
+ * `warm: false` and an empty `plays`, so an empty list is not an error — the
+ * page tells the two apart through `warm`. `count` is the size after the mode
+ * filter and `plays` arrives already ranked.
+ */
+export interface CurrencyExchangeResponse {
+	league: string;
+	lastUpdated: string | null;
+	from: string | null;
+	to: string | null;
+	hours: number;
+	warm: boolean;
+	mode: CurrencyExchangeMode;
+	count: number;
+	plays: CurrencyExchangePlay[];
+}
+
 // --- API helpers ---
 
 /** Cached app version — resolved once, reused on every request. */
@@ -686,6 +748,18 @@ function deriveReason(prev: any, curr: any): string {
 }
 
 
+/**
+ * Fetch the ranked Currency Exchange plays for one mode.
+ *
+ * `mode` is always sent, `'all'` included: the server reads an absent mode as
+ * a default rather than as "no filter", and answers 400 to an unknown one.
+ * Unlike `fetchStatus`, this throws on a failed request — the caller keeps the
+ * result it already has and marks it stale instead of blanking the table.
+ */
+export async function fetchCurrencyExchangePlays(mode: CurrencyExchangeMode): Promise<CurrencyExchangeResponse> {
+	return get<CurrencyExchangeResponse>('/currency-exchange/plays', { mode });
+}
+
 // --- Mercure SSE ---
 
 export interface MercureConnection {
@@ -693,7 +767,32 @@ export interface MercureConnection {
 	connected: boolean;
 }
 
-export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void): MercureConnection {
+/**
+ * The Mercure topic the server publishes on when a Currency Exchange hour
+ * closes. Exported because the subscribe URL and the dispatch branch below
+ * must name the same string, and because tests assert on it.
+ */
+export const CURRENCY_EXCHANGE_UPDATED_TOPIC = 'poe/currency-exchange/updated';
+
+/**
+ * Open the Mercure SSE stream and keep it open (token refresh, backoff,
+ * visibility-aware reconnect). One connection serves the whole app — LabPage
+ * owns it and fans the per-topic payloads out to the other pages.
+ *
+ * Dispatch is per topic, and each specific topic returns instead of falling
+ * through: `poe/lab/layout` reaches `onLayoutUpdate` only, and
+ * `poe/currency-exchange/updated` reaches `onCurrencyExchangeUpdate` only, so
+ * a Currency Exchange tick does not drag the lab dashboard through a reload.
+ * Everything else — `poe/analysis/updated` above all — calls `onUpdate`.
+ *
+ * @param onUpdate Fired for every topic without a dedicated callback.
+ * @param onConnectionChange Connection state, debounced by 5s on the way down.
+ * @param onLayoutUpdate `poe/lab/layout` payloads.
+ * @param onCurrencyExchangeUpdate `poe/currency-exchange/updated` payloads.
+ *   Optional like the rest: three-argument callers keep working unchanged and
+ *   simply drop those events.
+ */
+export function connectMercure(onUpdate: () => void, onConnectionChange?: (connected: boolean) => void, onLayoutUpdate?: (data?: any) => void, onCurrencyExchangeUpdate?: (data?: any) => void): MercureConnection {
 	const state: MercureConnection = { close: () => {}, connected: false };
 	let eventSource: EventSource | null = null;
 	let tokenTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -771,6 +870,7 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 			const authedUrl = new URL(url);
 			authedUrl.searchParams.append('topic', 'poe/analysis/updated');
 			authedUrl.searchParams.append('topic', 'poe/lab/layout');
+			authedUrl.searchParams.append('topic', CURRENCY_EXCHANGE_UPDATED_TOPIC);
 			authedUrl.searchParams.set('authorization', token);
 
 			eventSource = new EventSource(authedUrl.toString());
@@ -804,6 +904,11 @@ export function connectMercure(onUpdate: () => void, onConnectionChange?: (conne
 
 				if (data?.topic === 'poe/lab/layout') {
 					onLayoutUpdate?.(data);
+					return;
+				}
+
+				if (data?.topic === CURRENCY_EXCHANGE_UPDATED_TOPIC) {
+					onCurrencyExchangeUpdate?.(data);
 					return;
 				}
 

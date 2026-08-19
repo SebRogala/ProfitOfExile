@@ -1,11 +1,14 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// api.ts pulls in Tauri + the status store at module load; neither is needed for
-// the pure variant mapping under test.
+// api.ts pulls in Tauri + the status store at module load. The pure mapping
+// tests need neither; the fetcher tests read both back out of the request, so
+// the mock carries a recognisable server URL and device id rather than blanks.
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: async () => '0.0.0-test' }));
-vi.mock('$lib/stores/status.svelte', () => ({ store: { status: { server_url: '' } } }));
+vi.mock('$lib/stores/status.svelte', () => ({
+	store: { status: { server_url: 'https://server.test', device_id: 'device-abc123' } }
+}));
 
-const { displayVariant, signalTransitionLabel } = await import('./api');
+const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays } = await import('./api');
 
 /**
  * The variant strings the UI filters on (ByVariant.svelte, FontEVCompare.svelte).
@@ -83,5 +86,97 @@ describe('signalTransitionLabel', () => {
 	it('renders nothing for an unparseable timestamp rather than "Invalid Date"', () => {
 		expect(signalTransitionLabel('', now)).toBe('');
 		expect(signalTransitionLabel('not-a-date', now)).toBe('');
+	});
+});
+
+/**
+ * The Currency Exchange page keeps whatever it last rendered when a fetch
+ * fails, so the two things this fetcher owes it are an exactly-shaped request
+ * (an unknown or missing mode is a 400, not a fallback) and a rejection it can
+ * turn into the "stale" header rather than a blank table.
+ */
+describe('fetchCurrencyExchangePlays', () => {
+	const PLAYS_RESPONSE = {
+		league: 'Mirage',
+		lastUpdated: '2026-08-19T12:00:00.000Z',
+		from: null,
+		to: null,
+		hours: 24,
+		warm: true,
+		mode: 'direct',
+		count: 0,
+		plays: []
+	};
+
+	let originalFetch: typeof globalThis.fetch;
+	let fetchMock: ReturnType<typeof vi.fn>;
+
+	/** The URL and init of the single request the fetcher made. */
+	function request(): { url: URL; init: RequestInit } {
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const [url, init] = fetchMock.mock.calls[0];
+		return { url: new URL(url as string), init: (init ?? {}) as RequestInit };
+	}
+
+	beforeEach(() => {
+		originalFetch = globalThis.fetch;
+		fetchMock = vi.fn(async () => ({ ok: true, json: async () => PLAYS_RESPONSE }));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+	});
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it('requests the plays endpoint under the configured server API base', async () => {
+		await fetchCurrencyExchangePlays('direct');
+
+		const { url } = request();
+		expect(url.origin + url.pathname).toBe('https://server.test/api/currency-exchange/plays');
+	});
+
+	it('sends the selected mode as the mode query parameter', async () => {
+		await fetchCurrencyExchangePlays('direct');
+
+		expect(request().url.searchParams.get('mode')).toBe('direct');
+	});
+
+	it('sends "all" as an explicit mode rather than omitting the parameter', async () => {
+		// The server reads a missing mode as its own default, and the page's
+		// picker has to be able to say "all" back to a server whose default is not.
+		await fetchCurrencyExchangePlays('all');
+
+		expect(request().url.searchParams.get('mode')).toBe('all');
+	});
+
+	it('identifies the device and app version on the request', async () => {
+		// The server attributes requests per device (POE-102); a fetcher that
+		// reaches the network without these headers is an anonymous client.
+		await fetchCurrencyExchangePlays('all');
+
+		expect(request().init.headers).toEqual({
+			'X-Device-ID': 'device-abc123',
+			'X-App-Version': '0.0.0-test'
+		});
+	});
+
+	it('returns the parsed body on a successful request', async () => {
+		expect(await fetchCurrencyExchangePlays('direct')).toEqual(PLAYS_RESPONSE);
+	});
+
+	it('rejects with the status when the server answers a non-OK response', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
+
+		await expect(fetchCurrencyExchangePlays('all')).rejects.toThrow(
+			'API /currency-exchange/plays: 500 Internal Server Error'
+		);
+	});
+
+	it('rejects rather than resolving an empty result when the request never lands', async () => {
+		// The page tells "server unreachable" from "no plays pass the filters"
+		// purely by whether this promise rejected.
+		fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+
+		await expect(fetchCurrencyExchangePlays('all')).rejects.toThrow('Failed to fetch');
 	});
 });

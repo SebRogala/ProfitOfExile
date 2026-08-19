@@ -10,7 +10,7 @@
  *   // Navigate: nav.go('/settings')
  */
 
-export type View = 'lab' | 'settings' | 'dev' | 'mercenaries' | 'temple';
+export type View = 'lab' | 'settings' | 'dev' | 'mercenaries' | 'temple' | 'currency-exchange';
 
 /**
  * The path each view answers to. These strings are the Sidebar's keys — it
@@ -27,6 +27,7 @@ export const VIEW_PATHS: Record<View, string> = {
 	dev: '/dev',
 	mercenaries: '/mercenaries',
 	temple: '/temple',
+	'currency-exchange': '/currency-exchange',
 };
 
 /** The path for a view — the inverse of `go` for every path `go` recognises. */
@@ -41,6 +42,7 @@ export const nav = $state({
 		else if (path === '/dev') nav.view = 'dev';
 		else if (path === '/mercenaries') nav.view = 'mercenaries';
 		else if (path === '/temple') nav.view = 'temple';
+		else if (path === '/currency-exchange') nav.view = 'currency-exchange';
 		else nav.view = 'lab';
 	},
 });
