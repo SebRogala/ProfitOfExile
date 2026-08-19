@@ -124,9 +124,11 @@ describe('fetchCurrencyExchangePlays', () => {
 		quote: 'Metadata/Items/Currency/CurrencyAddModToRare',
 		price: 0.004975,
 		fair: 0.00512,
+		fairOk: true,
 		tick: 0.02,
 		volume: 1200,
 		stock: 40,
+		suspect: false,
 		itemName: 'Chaos Orb',
 		itemIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
 		quoteName: 'Exalted Orb',
@@ -137,11 +139,16 @@ describe('fetchCurrencyExchangePlays', () => {
 		action: 'sell',
 		item: 'Metadata/Items/Currency/CurrencyAfflictionOrbGeneric',
 		quote: 'Metadata/Items/Currency/CurrencyRerollRare',
+		// A sell 75% over the hour's volume-weighted price is past the server's
+		// 1.5x band, so this leg carries the junk flag — the payload the page has
+		// to render mixes a clean leg with a suspect one, as a real one does.
 		price: 3.5,
-		fair: 3.2,
+		fair: 2,
+		fairOk: true,
 		tick: 0.05,
 		volume: 90,
 		stock: 12,
+		suspect: true,
 		itemName: 'Delirium Orb',
 		itemIcon: null,
 		quoteName: 'Chaos Orb',
@@ -158,7 +165,9 @@ describe('fetchCurrencyExchangePlays', () => {
 				legs: [DECORATED_LEG, ICONLESS_LEG],
 				roiPct: 0.12,
 				edge: 0.12,
-				roiPctNewestHour: 0.31,
+				// The raw extremes read higher than the undercut prices by what
+				// the legs' two ticks cost to fill; roiPctRaw is never below roiPct.
+				roiPctRaw: 0.2025,
 				// roi === roiPct * investment, and the play's tick is the
 				// coarsest of its legs' — the shapes the server guarantees.
 				roi: 21.6,
@@ -166,6 +175,8 @@ describe('fetchCurrencyExchangePlays', () => {
 				turnover: 74000,
 				tick: 0.05,
 				depth: 90,
+				// Any suspect leg makes the play suspect; it is still served.
+				suspect: true,
 				hoursSeen: 20,
 				lastHour: '2026-08-19T12:00:00.000Z'
 			}

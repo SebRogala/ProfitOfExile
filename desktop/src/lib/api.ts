@@ -266,18 +266,26 @@ export type CurrencyExchangeMode = 'all' | 'direct' | '1-hop';
 export type CurrencyExchangeHorizon = 'recent' | 'day';
 
 /**
- * One swap inside a play. `item`/`quote` are the raw Currency Exchange ids and
- * `itemName`/`quoteName` their display names — real item names (POE-177), with
- * the humanized id as the fallback for an id the server's asset does not know.
- * `price` is quote per item.
+ * One swap inside a play, as ONE feed hour observed it — the hour the play's
+ * `lastHour` names, and no other. `item`/`quote` are the raw Currency Exchange
+ * ids and `itemName`/`quoteName` their display names — real item names
+ * (POE-177), with the humanized id as the fallback for an id the server's asset
+ * does not know. `price` is quote per item.
  *
- * `price` is the median across the window's hours of that hour's extreme on the
- * leg's side (cheapest for a buy, dearest for a sell) — the executable recipe.
- * `fair` is the median hourly volume-weighted price, where the traded mass
- * actually cleared, and is the anchor `price` should be read against; it is 0
- * when no hour in the window had one. `tick` is the market's median hourly price resolution
- * as a fraction of the price (0.5 = the next representable price is 50% away),
- * which is what separates a real spread from one integer step (POE-184).
+ * `price` is that hour's realized extreme on the leg's side (cheapest for a buy,
+ * dearest for a sell) and it is RAW: the undercut a real order has to pay lives
+ * in the play's `roiPct`/`roi`, never in this number. `fair` is the same hour's
+ * volume-weighted price, where the traded mass actually cleared, and is the
+ * anchor `price` should be read against; `fairOk` is false when the hour's quote
+ * side reported no volume, and `fair` is then 0 — a missing reading rather than
+ * a free item. `suspect` is that comparison already made: an extreme too far
+ * from `fair` to be repeatable (a buy under `fair × 0.67`, a sell over
+ * `fair × 1.5`), and it stays false when there is no `fair` to judge against.
+ * `tick` is the hour's price resolution on this market as a fraction of the
+ * price (0.5 = the next representable price is 50% away), which is what
+ * separates a real spread from one integer step (POE-184) — and what lets a
+ * client rebuild the undercut price: `price × (1 + tick)` to buy,
+ * `price × (1 − tick)` to sell.
  *
  * `itemIcon`/`quoteIcon` are API-RELATIVE paths into this server's icon route
  * (`/currency-exchange/icon/<escaped id>`), not upstream poewiki URLs —
@@ -292,9 +300,11 @@ export interface CurrencyExchangeLeg {
 	quote: string;
 	price: number;
 	fair: number;
+	fairOk: boolean;
 	tick: number;
 	volume: number;
 	stock: number;
+	suspect: boolean;
 	itemName: string;
 	itemIcon: string | null;
 	quoteName: string;
@@ -302,21 +312,27 @@ export interface CurrencyExchangeLeg {
 }
 
 /**
- * A ranked arbitrage play. `direct` swaps back through the same market;
- * `1-hop` routes through an intermediate currency.
+ * A ranked arbitrage play: ONE hour's prices, plus how many hours the recipe
+ * has been holding up. `direct` swaps back through the same market; `1-hop`
+ * routes through an intermediate currency.
  *
- * `roiPct` is the round trip's fractional gain at the prices the legs show
- * (0.123 = 12.3%), recomputed from those legs so the claim is reproducible
- * from what the row displays. `roiPctNewestHour` is the same reading for
- * `lastHour` alone — the "is it moving right now" marker, which sits below
- * `roiPct` when the newest hour was quieter than the window's typical one, so
- * it is not an upper bound. `roi` is chaos gained per exchange of one unit and
- * `investment` the chaos that one unit costs to enter, with
- * `roi === roiPct * investment` by construction. `turnover` is chaos per hour
- * through the play's thinnest leg, which is the liquidity reading — `depth`
- * (units per hour) is not one. `tick` is the coarsest leg tick, the worst
- * price step the recipe has to live with. `hoursSeen` is how many hours of the
- * window the play held.
+ * `roiPct` is the round trip's fractional gain at the UNDERCUT prices (0.123 =
+ * 12.3%): each leg pays one of its own ticks to be the order that fills, which
+ * makes it the return an order that actually gets taken can expect, and it is
+ * what the server gates and ranks on. `roiPctRaw` is the same round trip at the
+ * raw extremes the legs show — never below `roiPct`, and the gap between the
+ * two is what the ticks cost. `roi` is chaos gained per exchange of one unit
+ * and `investment` the chaos that one unit costs to enter, both priced at the
+ * undercut entry, so `roi === roiPct * investment` holds by construction.
+ * `turnover` is chaos per hour through the play's thinnest leg, which is the
+ * liquidity reading — `depth` (units per hour) is not one. `tick` is the
+ * coarsest leg tick, the worst price step the recipe has to live with.
+ * `suspect` is true when any leg is; such a play is still served — the reader
+ * judges it — but ranks after every clean one. `hoursSeen` counts the window
+ * hours in which the recipe cleared every gate on that hour's own prices, and
+ * `lastHour` is the hour every price above was read from: always the window's
+ * newest, because a recipe that did not clear in the last snapshot is not
+ * served at all.
  */
 export interface CurrencyExchangePlay {
 	key: string;
@@ -325,12 +341,13 @@ export interface CurrencyExchangePlay {
 	roiPct: number;
 	/** @deprecated use `roiPct` — the server sends both with the same value. */
 	edge: number;
-	roiPctNewestHour: number;
+	roiPctRaw: number;
 	roi: number;
 	investment: number;
 	turnover: number;
 	tick: number;
 	depth: number;
+	suspect: boolean;
 	hoursSeen: number;
 	lastHour: string;
 }
@@ -343,9 +360,11 @@ export interface CurrencyExchangePlay {
  *
  * `horizon` echoes the window these plays were ranked in, so a body arriving
  * from the cache cannot be mistaken for the other horizon's. `divineChaosRate`
- * is the chaos value of one divine that every `roi`/`investment`/`turnover`
- * here was valued with; it is 0 when the divine/chaos market did not trade in
- * the window, in which case no divine-quoted play is in the list at all.
+ * is the newest hour's chaos value of one divine, and because a play is served
+ * only if it cleared in that hour, it is the rate every divine-quoted `roi`,
+ * `investment` and `turnover` here was valued with. It is 0 when that hour
+ * carried no divine/chaos trade, in which case no divine-quoted play is in the
+ * list at all.
  */
 export interface CurrencyExchangeResponse {
 	league: string;
