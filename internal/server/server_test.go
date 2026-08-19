@@ -220,3 +220,54 @@ func TestNewRouter_NilFrontendFSReturns404ForNonAPIPaths(t *testing.T) {
 		t.Errorf("GET / with nil frontendFS status = %d, want non-200 (404 or 405)", w.Code)
 	}
 }
+
+// currencyExchangeIconPath is the escaped-id path clients request, built the way
+// exchange.IconPath builds it: the whole metadata id is ONE route segment, so
+// its slashes arrive as %2F.
+const currencyExchangeIconPath = "/api/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyNotInTheAssetYet"
+
+// The icon route is registered whenever a cache directory is configured. An
+// unknown id is what proves it without a network call: the icon handler answers
+// its own 404 and stamps it no-store, where an unregistered route falls through
+// to chi's NotFound, which sets no Cache-Control at all. Drop the r.Get and this
+// fails on the header.
+func TestNewRouter_CurrencyExchangeIconRouteIsRegisteredWhenACacheDirIsConfigured(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{
+		CurrencyExchangeIconCacheDir: t.TempDir(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, currencyExchangeIconPath, nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET %s status = %d, want %d (body: %s)",
+			currencyExchangeIconPath, w.Code, http.StatusNotFound, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q — the icon handler answered this 404, chi's NotFound would not have set it",
+			got, "no-store")
+	}
+}
+
+// An unset directory is a configuration choice, not a failure: the two icon sets
+// must not share the gem default's directory and filename scheme, so the route
+// is left off entirely. Restore a DefaultCacheDir fallback and this fails,
+// because the handler's no-store 404 reappears.
+func TestNewRouter_CurrencyExchangeIconRouteIsDisabledWithoutACacheDir(t *testing.T) {
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+
+	req := httptest.NewRequest(http.MethodGet, currencyExchangeIconPath, nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET %s status = %d, want %d (body: %s)",
+			currencyExchangeIconPath, w.Code, http.StatusNotFound, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("Cache-Control = %q, want none — an unconfigured icon route must not be registered at all", got)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -491,5 +492,107 @@ func TestHandler_UpstreamFailure502IsNotCacheable(t *testing.T) {
 	}
 	if got := w.Header().Get("ETag"); got != "" {
 		t.Errorf("502 ETag = %q, want none — there are no bytes to validate", got)
+	}
+}
+
+// chaosIconKey and divineIconKey are currency-exchange keys: whole feed metadata
+// ids, slashes and all. They are what NewWithMap has to serve that the gem map
+// never asked for — the route parameter arrives percent-encoded and the map
+// lookup happens on the decoded id.
+const (
+	chaosIconKey  = "Metadata/Items/Currency/CurrencyRerollRare"
+	divineIconKey = "Metadata/Items/Currency/CurrencyModValues"
+)
+
+// pathBodyUpstream serves the request path as the response body, so a test can
+// tell WHICH map entry the handler resolved rather than only that it fetched
+// something.
+func pathBodyUpstream(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("image-for" + r.URL.Path))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// serveWith routes a GET through the handler under the currency-exchange route
+// pattern, which is where a key with encoded slashes actually arrives.
+func serveWith(c *Cache, pattern, encodedName string) *httptest.ResponseRecorder {
+	router := chi.NewRouter()
+	router.Get(pattern, c.Handler())
+	req := httptest.NewRequest(http.MethodGet, strings.Replace(pattern, "{name}", encodedName, 1), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// NewWithMap is what makes this cache reusable for a second icon set. The map is
+// the caller's, so the key that resolves must be the caller's too — with two
+// entries in play, serving the wrong one is the failure this catches.
+func TestNewWithMap_ServesTheRequestedKeyFromTheSuppliedMap(t *testing.T) {
+	upstream := pathBodyUpstream(t)
+	c, err := NewWithMap(map[string]string{
+		chaosIconKey:  upstream.URL + "/chaos",
+		divineIconKey: upstream.URL + "/divine",
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewWithMap() error = %v, want nil", err)
+	}
+
+	w := serveWith(c, "/api/currency-exchange/icon/{name}", url.PathEscape(divineIconKey))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %q)", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got, want := w.Body.String(), "image-for/divine"; got != want {
+		t.Errorf("body = %q, want %q — the handler resolved the wrong map entry", got, want)
+	}
+	if got := w.Header().Get("Content-Type"); got != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", got)
+	}
+}
+
+// A feed id the asset has no icon for is never in the map, and that request must
+// cost nothing: no upstream fetch, no cache file.
+func TestNewWithMap_KeyOutsideTheSuppliedMapReturns404WithoutFetching(t *testing.T) {
+	up := newStubUpstream()
+	defer up.close()
+	dir := t.TempDir()
+	c, err := NewWithMap(map[string]string{chaosIconKey: up.server.URL}, dir)
+	if err != nil {
+		t.Fatalf("NewWithMap() error = %v, want nil", err)
+	}
+
+	w := serveWith(c, "/api/currency-exchange/icon/{name}", url.PathEscape("Metadata/Items/Currency/CurrencyNotInTheAssetYet"))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+	if up.hitCount() != 0 {
+		t.Errorf("upstream hit %d times for a key outside the map, want 0", up.hitCount())
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("cache dir holds %d files after an unknown-key request, want 0", len(entries))
+	}
+}
+
+// Each map needs its OWN directory: two maps sharing one would share the
+// filename scheme, and any pair of keys reducing to the same safeFileName would
+// serve one set's artwork under the other's name. So an empty dir is an
+// unconfigured caller, not a request for the gem default.
+func TestNewWithMap_EmptyCacheDirIsRejectedWithoutFallingBackToTheGemDefault(t *testing.T) {
+	c, err := NewWithMap(map[string]string{chaosIconKey: "https://example.invalid/icon.png"}, "")
+
+	if err == nil {
+		t.Fatalf("NewWithMap(_, \"\") error = nil, want a rejection (cache = %+v)", c)
+	}
+	if c != nil {
+		t.Errorf("NewWithMap returned a cache alongside an error: %+v", c)
+	}
+	if _, statErr := os.Stat(DefaultCacheDir); !os.IsNotExist(statErr) {
+		t.Errorf("an empty cache dir created %q; stat err = %v — the gem default must not be shared", DefaultCacheDir, statErr)
 	}
 }

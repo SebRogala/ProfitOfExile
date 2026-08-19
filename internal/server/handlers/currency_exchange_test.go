@@ -1,9 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,7 +97,9 @@ func warmExchangeCache(t *testing.T) *exchange.Cache {
 }
 
 // exchangeLegBody mirrors the leg contract the desktop and web clients read:
-// every engine field plus the two display names the transport layer adds.
+// every engine field plus the display names and icon paths the transport layer
+// adds. The icons are pointers because the wire contract distinguishes a path to
+// fetch from an explicit null for an item with no artwork.
 type exchangeLegBody struct {
 	Action    string  `json:"action"`
 	Item      string  `json:"item"`
@@ -101,7 +108,32 @@ type exchangeLegBody struct {
 	Volume    float64 `json:"volume"`
 	Stock     int64   `json:"stock"`
 	ItemName  string  `json:"itemName"`
+	ItemIcon  *string `json:"itemIcon"`
 	QuoteName string  `json:"quoteName"`
+	QuoteIcon *string `json:"quoteIcon"`
+}
+
+// String renders the leg with its icon pointers dereferenced, so a failed
+// comparison names the paths instead of two heap addresses.
+func (l exchangeLegBody) String() string {
+	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v volume:%v stock:%d itemName:%q itemIcon:%s quoteName:%q quoteIcon:%s}",
+		l.Action, l.Item, l.Quote, l.Price, l.Volume, l.Stock,
+		l.ItemName, quoteOrNull(l.ItemIcon), l.QuoteName, quoteOrNull(l.QuoteIcon))
+}
+
+func quoteOrNull(value *string) string {
+	if value == nil {
+		return "null"
+	}
+	return `"` + *value + `"`
+}
+
+// iconPath is the API-relative path the handler is expected to emit for id.
+// Spelled out rather than built with exchange.IconPath: a test that asks the
+// production helper what to expect cannot notice the helper changing.
+func iconPath(id string) *string {
+	path := "/currency-exchange/icon/" + strings.ReplaceAll(id, "/", "%2F")
+	return &path
 }
 
 type exchangePlayBody struct {
@@ -330,10 +362,11 @@ func TestCurrencyExchangePlays_warmCache_reportsTheWindowItCovers(t *testing.T) 
 	}
 }
 
-func TestCurrencyExchangePlays_legsCarryDisplayNamesBesideTheRawFeedIDs(t *testing.T) {
-	// The engine deliberately carries raw ids; resolving them to in-game names is
-	// the transport layer's addition, and the raw ids must survive it — the
-	// client keys on them.
+func TestCurrencyExchangePlays_legsCarryDisplayNamesAndIconPathsBesideTheRawFeedIDs(t *testing.T) {
+	// The engine deliberately carries raw ids; resolving them to in-game names and
+	// icon paths is the transport layer's addition, and the raw ids must survive
+	// it — the client keys on them. Every leg names both sides of the trade, so
+	// the item AND the quote carry a name and an icon.
 	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays?mode=1-hop"))
 
 	play := playByKey(t, body, oneHopPlay().Key)
@@ -341,27 +374,207 @@ func TestCurrencyExchangePlays_legsCarryDisplayNamesBesideTheRawFeedIDs(t *testi
 		{
 			Action: "buy", Item: scarabID, Quote: exchange.DivineID,
 			Price: 0.0625, Volume: 300, Stock: 60,
-			ItemName: "Domination Scarab of Evolution", QuoteName: "Divine Orb",
+			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
+			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID),
 		},
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
 			Price: 8, Volume: 250, Stock: 25,
-			ItemName: "Domination Scarab of Evolution", QuoteName: "Chaos Orb",
+			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
+			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
 		},
 		{
 			Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID,
 			Price: 64, Volume: 65361, Stock: 8878,
-			ItemName: "Divine Orb", QuoteName: "Chaos Orb",
+			ItemName: "Divine Orb", ItemIcon: iconPath(exchange.DivineID),
+			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
 		},
 	}
 	if len(play.Legs) != len(want) {
 		t.Fatalf("got %d legs, want %d", len(play.Legs), len(want))
 	}
 	for i, wantLeg := range want {
-		if play.Legs[i] != wantLeg {
-			t.Errorf("leg %d = %+v, want %+v", i, play.Legs[i], wantLeg)
+		if !reflect.DeepEqual(play.Legs[i], wantLeg) {
+			t.Errorf("leg %d = %v, want %v", i, play.Legs[i], wantLeg)
 		}
 	}
+}
+
+// unknownItemID is shaped like a feed id but is absent from the item asset — the
+// item GGG adds mid-league, before the next regeneration.
+const unknownItemID = "Metadata/Items/Currency/CurrencyNotInTheAssetYet"
+
+// unknownHumanizedName is what Humanize makes of unknownItemID: the leading
+// category word is dropped and the CamelCase tail is split.
+const unknownHumanizedName = "Not In The Asset Yet"
+
+// unknownItemCache holds one play whose single leg buys an item the asset does
+// not cover, quoted in chaos.
+func unknownItemCache(t *testing.T) *exchange.Cache {
+	t.Helper()
+	cache := exchange.NewCache()
+	cache.Set(exchange.Result{
+		League: "Mirage",
+		From:   fixtureFrom,
+		To:     fixtureTo,
+		Hours:  6,
+		Plays: []exchange.Play{{
+			Key:  "direct:" + exchange.ChaosID + "|" + unknownItemID,
+			Mode: exchange.ModeDirect,
+			Legs: []exchange.Leg{
+				{Action: "buy", Item: unknownItemID, Quote: exchange.ChaosID, Price: 3, Volume: 100, Stock: 20},
+			},
+			LastHour: fixtureLastHour,
+		}},
+	})
+	return cache
+}
+
+// firstLegRaw returns the first leg of the first play as raw JSON fields, which
+// is the only way to tell an absent key from one whose value is null.
+func firstLegRaw(t *testing.T, w *httptest.ResponseRecorder) map[string]json.RawMessage {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+	var body struct {
+		Plays []struct {
+			Legs []map[string]json.RawMessage `json:"legs"`
+		} `json:"plays"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body %q: %v", w.Body.String(), err)
+	}
+	if len(body.Plays) != 1 || len(body.Plays[0].Legs) != 1 {
+		t.Fatalf("want exactly one play with one leg, got %+v", body)
+	}
+	return body.Plays[0].Legs[0]
+}
+
+func TestCurrencyExchangePlays_itemTheAssetDoesNotCover_rendersTheHumanizedNameNotTheRawID(t *testing.T) {
+	// The client renders itemName verbatim, so an id with no asset entry still has
+	// to arrive as words rather than as a metadata path.
+	body := decodePlays(t, getPlays(t, unknownItemCache(t), "/api/currency-exchange/plays"))
+
+	leg := body.Plays[0].Legs[0]
+	if leg.ItemName != unknownHumanizedName {
+		t.Errorf("itemName = %q, want the humanized fallback %q", leg.ItemName, unknownHumanizedName)
+	}
+	if leg.Item != unknownItemID {
+		t.Errorf("item = %q, want the raw feed id %q untouched", leg.Item, unknownItemID)
+	}
+}
+
+func TestCurrencyExchangePlays_itemWithNoIcon_sendsItemIconAsAnExplicitNull(t *testing.T) {
+	// null and absent are different answers to the client: an absent key reads as
+	// undefined and a "" would be joined onto the API base into a request for the
+	// base itself. The field must be present and null.
+	leg := firstLegRaw(t, getPlays(t, unknownItemCache(t), "/api/currency-exchange/plays"))
+
+	value, present := leg["itemIcon"]
+	if !present {
+		t.Fatalf("leg has no itemIcon key, want it present and null: %v", leg)
+	}
+	if string(value) != "null" {
+		t.Errorf("itemIcon = %s, want null — the asset has no artwork for %q", value, unknownItemID)
+	}
+}
+
+func TestCurrencyExchangePlays_itemWithAnIcon_sendsQuoteIconAsAPath(t *testing.T) {
+	// The quote is chaos, which the asset does cover, so this leg is the positive
+	// half of the pair: an id with artwork must arrive as the route path the
+	// client appends to its API base.
+	leg := firstLegRaw(t, getPlays(t, unknownItemCache(t), "/api/currency-exchange/plays"))
+
+	want := `"/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"`
+	if got := string(leg["quoteIcon"]); got != want {
+		t.Errorf("quoteIcon = %s, want %s", got, want)
+	}
+}
+
+func TestCurrencyExchangePlays_itemTheAssetDoesNotCover_isWarnedAboutOncePerHandler(t *testing.T) {
+	// The id recurs in every leg of every play on every request, so the warning is
+	// once per recorder — and the recorder lives in the handler closure, not in a
+	// package-level var. Two requests through ONE handler therefore log one line.
+	logs := captureLogs(t)
+	handler := CurrencyExchangePlays(unknownItemCache(t))
+
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodGet, "/api/currency-exchange/plays", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d status = %d, want %d (body: %s)", i, w.Code, http.StatusOK, w.Body.String())
+		}
+	}
+
+	records := warnRecords(t, logs)
+	if len(records) != 1 {
+		t.Fatalf("logged %d WARN records across two requests, want exactly 1 (log: %q)", len(records), logs.String())
+	}
+	if got := records[0]["id"]; got != unknownItemID {
+		t.Errorf("warned id = %v, want %q — the log must name the id the asset is missing", got, unknownItemID)
+	}
+}
+
+func TestCurrencyExchangePlays_itemTheAssetDoesNotCover_isWarnedAboutAgainByASecondHandlerOverTheSameCache(t *testing.T) {
+	// "Once" is scoped to the handler closure, not to the process: two handlers
+	// built over the same cache each carry their own recorder and each warn. A
+	// package-level recorder would swallow the second line, and with it every
+	// test's ability to see the warning at all once an earlier test had silenced
+	// it.
+	logs := captureLogs(t)
+	cache := unknownItemCache(t)
+	handlers := []http.HandlerFunc{CurrencyExchangePlays(cache), CurrencyExchangePlays(cache)}
+
+	for i, handler := range handlers {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodGet, "/api/currency-exchange/plays", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("handler %d status = %d, want %d (body: %s)", i, w.Code, http.StatusOK, w.Body.String())
+		}
+	}
+
+	records := warnRecords(t, logs)
+	if len(records) != 2 {
+		t.Fatalf("logged %d WARN records across two handlers, want exactly 2 — one per handler (log: %q)", len(records), logs.String())
+	}
+	for i, rec := range records {
+		if got := rec["id"]; got != unknownItemID {
+			t.Errorf("record %d warned id = %v, want %q", i, got, unknownItemID)
+		}
+	}
+}
+
+// captureLogs points the default logger at a buffer for one test. The default
+// logger is the seam because exchange.UnknownItems warns through package-level
+// slog.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// warnRecords drains buf as newline-delimited slog JSON and returns the records
+// logged at WARN.
+func warnRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not slog JSON: %v (line: %q)", err, line)
+		}
+		if rec["level"] == "WARN" {
+			out = append(out, rec)
+		}
+	}
+	return out
 }
 
 func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
