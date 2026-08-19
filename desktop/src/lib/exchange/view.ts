@@ -223,6 +223,27 @@ export function legLabel(leg: CurrencyExchangeLeg): string {
 	return `${leg.action} ${leg.itemName} ${preposition} ${leg.quoteName} @ ${formatLegPrice(leg.price)}`;
 }
 
+/**
+ * A leg's `itemIcon`/`quoteIcon` as a URL the browser can fetch.
+ *
+ * The server sends API-relative paths (`/currency-exchange/icon/<escaped id>`)
+ * rather than poewiki URLs, because production cannot reach poewiki (ADR-012)
+ * and serves the artwork from its own cache instead. The join is here, not in
+ * `ItemIcon.svelte`, so it is unit-testable and so the page reads the API base
+ * once for every chip on screen.
+ *
+ * `null` and `""` both mean "no artwork" and both answer `null` — an empty path
+ * joined onto the base would request the base itself, which answers with
+ * something that is not an image. The trailing slash is trimmed off the base
+ * because a `server_url` typed with one would otherwise produce `//` in the
+ * path, which some proxies normalise and others 404.
+ */
+export function iconSrc(apiBase: string, path: string | null): string | null {
+	if (!path) return null;
+	const base = apiBase.replace(/\/+$/, '');
+	return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`;
+}
+
 // ------------------------------------------------------------ the refetch --
 
 /**
