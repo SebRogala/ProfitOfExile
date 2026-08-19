@@ -21,14 +21,15 @@
 // Client.FetchHour and derive rows with Normalize; Normalize, PriceOf, Ratio and
 // priceIn are the only places prices are computed.
 //
-// repository.go and runner.go are the lifecycle layer — database access and the
-// ticking cursor walk — mixed into the same flat package the way
+// repository.go, runner.go and service.go are the lifecycle layer — database
+// access, the ticking cursor walk, and the server-side recompute that keeps the
+// served answer current — mixed into the same flat package the way
 // internal/collector mixes fetcher, repository and scheduler
 // (docs/adr/008-current-go-package-architecture.md). The layering rules the
 // compiler cannot enforce: this package must never import internal/collector,
 // and never internal/lab either — the engine scores the currency feed on its own
 // terms rather than borrowing the gem stack's scoring vocabulary. The Mercure
-// stamping adapter that needs both lives in cmd/collector.
+// stamping adapters that need both live in cmd/collector and cmd/server.
 //
 // # Engine
 //
@@ -143,6 +144,80 @@
 // an hour replayed after a crash re-inserts nothing and publishes rows: 0 even
 // though the hour is fully populated. Consumers must read the field as "how much
 // is new" and reach for Repository.LoadRows when they need the hour's contents.
+//
+// # Server surface
+//
+// service.go is the read side: the collector writes hours, the server recomputes
+// from them and serves the answer out of memory. Nothing is persisted — the
+// plays are derived, and storing them is POE-180.
+//
+// Cache holds the newest Result and reports warmth as an explicit flag, per the
+// cache-state contract in internal/lab/cache.go. COLD (no recompute has stored
+// anything yet) and WARM-AND-EMPTY (the recompute ran and honestly found no
+// plays) hold the same empty value, so a caller must never infer warmth from
+// what it read; Service.Recompute stores its answer even when it is empty, which
+// is the writer half of the same rule. Cache.Snapshot hands back a copy whose
+// Plays slice is fresh, so a handler may filter it in place.
+//
+// Service.Recompute anchors its window on the newest hour that HAS rows, not on
+// the clock and not on the ingest cursor: it loads [newest − WindowHours·1h,
+// newest + 1h) and runs BestPlays over it. A stalled feed therefore keeps
+// serving its last real hours instead of sliding into an empty window. A league
+// with no rows yields a warm, empty result rather than an error. On any error
+// the cache is left untouched and nothing is signalled, so a failed read never
+// downgrades a good cached answer.
+//
+// Service.Trigger coalesces: while a recompute is in flight, further triggers
+// only mark the service dirty, and the running recompute repeats once for
+// however many arrived — a six-hour catch-up pass costs as few as two window
+// reads. How many it actually costs depends on how a recompute's duration lines
+// up against the collector's EXCHANGE_PER_HOUR_DELAY pacing: triggers that
+// arrive while one is in flight coalesce, ones that arrive between runs do not. Service.HandleEvent ignores the event payload entirely, which is what
+// makes it replay-safe: the collector's "rows" field counts what that pass
+// INSERTED, so a replayed hour reports rows: 0 while being fully populated, and
+// a content check would skip exactly the recompute a crash recovery needs. The
+// league guard is the caller's job (server.LeagueEventGuard).
+//
+// Debouncer collapses a burst of signals into one trailing-edge call after
+// DefaultUpdateDebounce (2s) of quiet. internal/lab/throttler.go is the same
+// idea and is NOT reused: it hard-codes the topic poe/analysis/updated, holds a
+// *lab.Cache to write SetNextFetch into, and builds a gem-stack payload — and
+// reaching for it would import internal/lab, which the boundary test forbids.
+//
+// After each recompute the server publishes UpdatePayload on
+// poe/currency-exchange/updated (UpdatedTopic), debounced. That topic is
+// deliberately not the collector's poe/collector/currency-exchange: one says
+// "an hour was ingested", the other "the served answer changed", and a client
+// listening to the ingest topic would refetch before the recompute had run. The
+// payload carries topic, league, lastUpdated, hours, plays (a COUNT, not the
+// plays) and timestamp, plus the league and leagueRevision stamp
+// collector.StampScope adds in cmd/server. It is a notification: clients refetch
+// the endpoint below for the data.
+//
+// lastUpdated is LastUpdated(Result) — Result.To minus one hour, i.e. the newest
+// feed hour the answer covers, and null when it covers none. It is DATA
+// freshness, not compute freshness: a recompute over unchanged rows leaves it
+// where it was, where a wall clock would read fresh while the feed was hours
+// stale.
+//
+// The endpoint (internal/server/handlers):
+//
+//	GET /api/currency-exchange/plays?mode=all|direct|1-hop
+//
+// mode is optional and defaults to all; an unknown mode is a 400. The response
+// carries league, lastUpdated (RFC3339 or null), from, to, hours, warm, mode,
+// count and plays. A COLD cache answers 200 with an empty plays list, warm:
+// false and lastUpdated: null rather than an error or a database fallback — the
+// recompute is the only reader, so a fallback query would just repeat it. Each
+// leg gains itemName and quoteName from Humanize; the engine itself never
+// carries display names. The handler never touches the database.
+//
+// The server reads its tuning from the environment in cmd/server, each override
+// falling back to DefaultConfig on an unparseable value with a Warn:
+// EXCHANGE_WINDOW_HOURS, EXCHANGE_MIN_VOLUME_PER_HOUR, EXCHANGE_MIN_EDGE (may be
+// negative), EXCHANGE_MIN_HOURS_SEEN and EXCHANGE_MAX_PLAYS. The Warn is louder
+// than the silent fallbacks the collector's knobs use on purpose: a typo in a
+// ranking threshold changes what users see and has no other symptom.
 //
 // # Configuration
 //

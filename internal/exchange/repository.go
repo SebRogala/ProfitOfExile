@@ -50,10 +50,24 @@ ORDER BY time, market_id`
 // selectCursorSQL reads the league's next unfetched hour.
 const selectCursorSQL = `SELECT next_hour FROM currency_exchange_cursor WHERE league = $1`
 
+// selectNewestHourSQL reads the newest feed hour the league has rows for.
+//
+// This is deliberately not the cursor: the cursor is where the walk goes NEXT,
+// and it advances past hours that stored zero rows for this league (see
+// internal/exchange/doc.go). A recompute needs the newest hour that actually
+// carries data, so it aggregates a window that ends on real rows.
+//
+// MAX over the hypertable's partitioning column is a chunk-bounded scan rather
+// than a full read, and the predicate narrows it to one league.
+const selectNewestHourSQL = `SELECT MAX(time) FROM currency_exchange_markets WHERE league = $1`
+
 // Repository persists currency-exchange hours in TimescaleDB. It is the only
 // reader and the only writer of currency_exchange_markets and
-// currency_exchange_cursor: downstream engines go through LoadRows rather than
-// writing their own SQL.
+// currency_exchange_cursor: downstream engines go through NewestHour and
+// LoadRows rather than writing their own SQL.
+//
+// Cursor and InsertHour serve the ingest walk; NewestHour and LoadRows serve the
+// read side (the server's recompute, see service.go).
 type Repository struct {
 	pool *pgxpool.Pool
 }
@@ -154,6 +168,36 @@ func (r *Repository) InsertHour(ctx context.Context, scope league.Scope, hour ti
 	}
 
 	return inserted, nil
+}
+
+// NewestHour returns the newest feed hour the scope has stored rows for. found
+// is false when the league has no rows at all — a fresh league, or one whose
+// hours were wiped at rollover — which callers read as "nothing to aggregate"
+// rather than as an error.
+//
+// The returned time is pinned to UTC for the same reason LoadRows pins its
+// hours: pgx hands a TIMESTAMPTZ back in time.Local, and the feed hour is a UTC
+// identity that callers render into caches and event payloads.
+//
+// This is the read side's window anchor: recompute asks for the newest stored
+// hour and then loads backwards from it, so a stalled feed narrows the window
+// instead of returning nothing.
+func (r *Repository) NewestHour(ctx context.Context, scope league.Scope) (time.Time, bool, error) {
+	if err := scope.Validate(); err != nil {
+		return time.Time{}, false, fmt.Errorf("exchange repo: newest hour: %w", err)
+	}
+
+	// MAX over zero rows is one row holding NULL, not pgx.ErrNoRows, so the
+	// scan target has to be nullable — a plain time.Time would fail to scan
+	// exactly in the empty-league case this reports as found == false.
+	var newest *time.Time
+	if err := r.pool.QueryRow(ctx, selectNewestHourSQL, scope.ID()).Scan(&newest); err != nil {
+		return time.Time{}, false, fmt.Errorf("exchange repo: newest hour: %w", err)
+	}
+	if newest == nil {
+		return time.Time{}, false, nil
+	}
+	return newest.UTC(), true, nil
 }
 
 // LoadRows returns the scope's stored rows for the half-open hour window

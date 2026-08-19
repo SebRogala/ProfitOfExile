@@ -570,6 +570,10 @@ func TestRepositoryMethods_unscopedScope_areRejectedBeforeTouchingTheDatabase(t 
 			_, err := repo.LoadRows(ctx, unscoped, baseHour, baseHour.Add(time.Hour))
 			return err
 		}},
+		{"NewestHour", func() error {
+			_, _, err := repo.NewestHour(ctx, unscoped)
+			return err
+		}},
 	}
 
 	for _, op := range operations {
@@ -588,5 +592,108 @@ func TestRepositoryMethods_unscopedScope_areRejectedBeforeTouchingTheDatabase(t 
 		t.Fatalf("Cursor: %v", err)
 	} else if found {
 		t.Error("cursor row exists, want none")
+	}
+}
+
+func TestNewestHour_leagueWithNoRows_reportsNotFound(t *testing.T) {
+	// A fresh league, or one whose hours were wiped at rollover. MAX over zero
+	// rows is one row holding NULL rather than pgx.ErrNoRows, so this is also
+	// where a non-nullable scan target would fail instead of reporting empty.
+	pool := integrationPool(t)
+	repo := newTestRepository(t, pool)
+
+	newest, found, err := repo.NewestHour(context.Background(), integrationScope)
+
+	if err != nil {
+		t.Fatalf("NewestHour: %v", err)
+	}
+	if found {
+		t.Errorf("found = true, want false — the league has stored no hour")
+	}
+	if !newest.IsZero() {
+		t.Errorf("newest = %s, want the zero time", newest)
+	}
+}
+
+func TestNewestHour_twoStoredHours_returnsTheLaterOne(t *testing.T) {
+	pool := integrationPool(t)
+	repo := newTestRepository(t, pool)
+	ctx := context.Background()
+
+	earlier, later := baseHour, baseHour.Add(time.Hour)
+	for _, hour := range []time.Time{later, earlier} { // stored out of order on purpose
+		if _, err := repo.InsertHour(ctx, integrationScope, hour,
+			[]Row{pricedRow()}, hour.Add(time.Hour).Unix()); err != nil {
+			t.Fatalf("InsertHour %s: %v", hour, err)
+		}
+	}
+
+	newest, found, err := repo.NewestHour(ctx, integrationScope)
+
+	if err != nil {
+		t.Fatalf("NewestHour: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true")
+	}
+	if !newest.Equal(later) {
+		t.Errorf("newest = %s, want %s — the recompute anchors its window on the latest stored hour",
+			newest, later)
+	}
+}
+
+func TestNewestHour_returnsTheFeedHourInUTC(t *testing.T) {
+	// pgx scans a TIMESTAMPTZ into time.Local; the anchor is rendered into the
+	// cache and the update payload, where the feed hour is a UTC identity.
+	pool := integrationPool(t)
+	repo := newTestRepository(t, pool)
+
+	if _, err := repo.InsertHour(context.Background(), integrationScope, baseHour,
+		[]Row{pricedRow()}, baseHour.Add(time.Hour).Unix()); err != nil {
+		t.Fatalf("InsertHour: %v", err)
+	}
+
+	newest, _, err := repo.NewestHour(context.Background(), integrationScope)
+	if err != nil {
+		t.Fatalf("NewestHour: %v", err)
+	}
+
+	if loc := newest.Location(); loc != time.UTC {
+		t.Errorf("location = %v, want UTC", loc)
+	}
+}
+
+func TestNewestHour_anotherLeaguesLaterHour_isIgnored(t *testing.T) {
+	// One feed payload carries every league, so a neighbouring league routinely
+	// holds hours this one does not. Anchoring on its hour would slide the window
+	// past this league's own newest rows and serve an empty ranking.
+	pool := integrationPool(t)
+	repo := newTestRepository(t, pool)
+	otherScope := registerSecondLeague(t, pool, "ExchangeNewestHourTest")
+	ctx := context.Background()
+
+	mine, theirs := baseHour, baseHour.Add(5*time.Hour)
+	if _, err := repo.InsertHour(ctx, integrationScope, mine,
+		[]Row{pricedRow()}, mine.Add(time.Hour).Unix()); err != nil {
+		t.Fatalf("InsertHour %s: %v", integrationScope.ID(), err)
+	}
+	theirRow := pricedRow()
+	theirRow.League = otherScope.ID()
+	if _, err := repo.InsertHour(ctx, otherScope, theirs,
+		[]Row{theirRow}, theirs.Add(time.Hour).Unix()); err != nil {
+		t.Fatalf("InsertHour %s: %v", otherScope.ID(), err)
+	}
+
+	newest, found, err := repo.NewestHour(ctx, integrationScope)
+
+	if err != nil {
+		t.Fatalf("NewestHour: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true")
+	}
+	if !newest.Equal(mine) {
+		t.Errorf("newest = %s, want %s — the other league's later hour must not anchor this window",
+			newest, mine)
 	}
 }

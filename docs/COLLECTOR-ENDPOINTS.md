@@ -56,6 +56,16 @@ event per stored hour on topic `poe/collector/currency-exchange`. Env:
 hours inside one catch-up pass so a long backlog does not pull 48 payloads of
 ~1.7 MB from the CDN back to back; `0` disables the pacing.
 
+On the server side, `cmd/server` recomputes the league's best plays from the
+stored hours on startup and on every `poe/collector/currency-exchange` event,
+serves the answer from memory at
+`GET /api/currency-exchange/plays?mode=all|direct|1-hop` (never from the
+database), and publishes `poe/currency-exchange/updated` after each recompute
+burst; the ranking knobs are overridable with `EXCHANGE_WINDOW_HOURS`,
+`EXCHANGE_MIN_VOLUME_PER_HOUR`, `EXCHANGE_MIN_EDGE`, `EXCHANGE_MIN_HOURS_SEEN`
+and `EXCHANGE_MAX_PLAYS`, each of which logs a WARN and keeps its default when
+the value is unusable.
+
 Read `internal/exchange/doc.go` before changing it — the feed's semantics, the
 cursor rule, and the event payload fields are documented there.
 

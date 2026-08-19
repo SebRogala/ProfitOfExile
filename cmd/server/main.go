@@ -21,6 +21,7 @@ import (
 
 	"profitofexile/internal/db"
 	"profitofexile/internal/device"
+	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
 	"profitofexile/internal/mercure"
@@ -287,6 +288,65 @@ func main() {
 	labCache := lab.NewCache(scope)
 	throttler := lab.NewThrottler(mercureURL, mercureSecret, 2*time.Second, labCache)
 
+	// Currency exchange: its own repository, cache and recompute service. This
+	// pillar shares nothing with the lab/gem stack above — separate tables,
+	// separate collector, separate Mercure topics (see ADR-008 and
+	// internal/exchange/doc.go).
+	exchangeRepo := exchange.NewRepository(pool)
+	exchangeCache := exchange.NewCache()
+
+	// Ranking knobs are overridable per deploy. Unlike the TRADE_* fallbacks
+	// above, an unusable value here is logged loudly rather than swallowed: a
+	// typo in a threshold silently changes which plays users are shown, with no
+	// other symptom to notice it by.
+	exchangeCfg := exchange.DefaultConfig()
+	exchangeCfg.WindowHours = envPositiveInt("EXCHANGE_WINDOW_HOURS", exchangeCfg.WindowHours)
+	exchangeCfg.MinVolumePerHour = envPositiveFloat("EXCHANGE_MIN_VOLUME_PER_HOUR", exchangeCfg.MinVolumePerHour)
+	exchangeCfg.MinHoursSeen = envPositiveInt("EXCHANGE_MIN_HOURS_SEEN", exchangeCfg.MinHoursSeen)
+	exchangeCfg.MaxPlays = envPositiveInt("EXCHANGE_MAX_PLAYS", exchangeCfg.MaxPlays)
+	// MinEdge is the one knob where a negative value is meaningful (it surfaces
+	// the losing direction of a loop), so only an exact 0 is rejected — the
+	// engine reads 0 as "unset" and would restore the default behind the log
+	// line, making the configured value a lie.
+	if v := os.Getenv("EXCHANGE_MIN_EDGE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		switch {
+		case err != nil:
+			slog.Warn("ignoring unparseable environment override; keeping the default",
+				"var", "EXCHANGE_MIN_EDGE", "value", v, "default", exchangeCfg.MinEdge)
+		case f == 0:
+			slog.Warn("EXCHANGE_MIN_EDGE=0 reads as unset by the engine; keeping the default (pass a small negative value to disable the floor)",
+				"default", exchangeCfg.MinEdge)
+		default:
+			exchangeCfg.MinEdge = f
+		}
+	}
+
+	// Publishing "the served answer changed" is debounced: a catch-up pass
+	// stores several hours back to back and triggers one recompute per hour, and
+	// clients only need to be told once, about the final state.
+	exchangePublisher := exchangeUpdatePublisher{scope: scope, mercureURL: mercureURL, mercureSecret: mercureSecret}
+	// Captured explicitly: the closure runs on a timer goroutine long after this
+	// line, so it must hold the process-lifetime context by value.
+	publishCtx := ctx
+	exchangeDebounce := exchange.NewDebouncer(exchange.DefaultUpdateDebounce, func() {
+		res, _ := exchangeCache.Snapshot()
+		if err := exchangePublisher.Publish(publishCtx, exchange.UpdatedTopic, exchange.UpdatePayload(res, time.Now())); err != nil {
+			slog.Warn("currency-exchange: publishing the update event failed", "error", err)
+		}
+	})
+	// Pairs with ctxCancel above: a pending publish is dropped rather than sent
+	// from a process on its way out, and clients refetch on their next poll.
+	defer exchangeDebounce.Stop()
+	exchangeService := exchange.NewService(exchangeRepo, scope, exchangeCfg, exchangeCache, exchangeDebounce.Signal, slog.Default())
+	slog.Info("currency exchange service configured",
+		"windowHours", exchangeCfg.WindowHours,
+		"minVolumePerHour", exchangeCfg.MinVolumePerHour,
+		"minEdge", exchangeCfg.MinEdge,
+		"minHoursSeen", exchangeCfg.MinHoursSeen,
+		"maxPlays", exchangeCfg.MaxPlays,
+	)
+
 	// Trade cache — created before analyzer so the v2 pipeline can use it.
 	tradeCacheMax := 200
 	if v := os.Getenv("TRADE_CACHE_MAX"); v != "" {
@@ -395,6 +455,7 @@ func main() {
 		LabRepo:              labRepo,
 		LayoutRepo:           layoutRepo,
 		LabCache:             labCache,
+		ExchangeCache:        exchangeCache,
 		MercureSubscriberKey: os.Getenv("MERCURE_SUBSCRIBER_KEY"),
 		MercurePublicURL:     os.Getenv("MERCURE_PUBLIC_URL"),
 		TradeGate:            tradeGate,
@@ -493,6 +554,11 @@ func main() {
 			slog.Warn("startup quality analysis failed (non-fatal)", "error", err)
 		}
 	}()
+	// Currency-exchange plays are held in memory only, so a restart leaves the
+	// cache COLD until something recomputes it. Rebuild at boot rather than
+	// waiting for the collector's next stored hour, which can be minutes away.
+	// Trigger logs its own failures and never blocks serving.
+	go exchangeService.Trigger(ctx)
 	// Delayed recompute timer — fires 15min after the last ninja_gems event
 	// so that the v2 pipeline picks up trade data accumulated since the snapshot.
 	// Protected by a mutex since the timer callback and Mercure handler run on
@@ -520,6 +586,7 @@ func main() {
 			"poe/collector/fragments",
 			"poe/collector/trade-tick", // collector schedules trade refresh ticks
 			"poe/admin/recompute",      // operator-triggered full recompute
+			exchange.Topic,             // collector stored a currency-exchange hour
 		}
 		mercureSubKey := os.Getenv("MERCURE_SUBSCRIBER_KEY")
 		// One-shot warning for misconfigured deploys where the collector is
@@ -553,6 +620,24 @@ func main() {
 					return
 				}
 				go server.HandleTradeTick(ctx, tradeGate, tradeCache, labCache, scope, []byte(ev.Data))
+				return
+			}
+
+			// A stored currency-exchange hour. This branch returns before the
+			// generic dispatch below, which reads payload["endpoint"] and knows
+			// only the poe.ninja endpoints — falling through would log a
+			// "missing endpoint" warning per hour and do nothing useful.
+			//
+			// The payload itself is ignored on purpose (see Service.HandleEvent):
+			// its "rows" field counts what that pass inserted, not what the hour
+			// holds, so a replayed hour reports 0 while being fully populated.
+			// Parent ctx, like the branches above, so a recompute survives a
+			// subscriber reconnect. Recomputes coalesce, so a catch-up burst
+			// costs one extra pass, not one per hour.
+			if ev.Topic == exchange.Topic {
+				if eventGuard.AcceptRaw([]byte(ev.Data)) {
+					go exchangeService.HandleEvent(ctx, []byte(ev.Data))
+				}
 				return
 			}
 
@@ -742,15 +827,53 @@ func main() {
 		slog.Info("shutting down server", "signal", sig.String())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Named apart from the service ctx above: closures still running (the
+	// exchange debounce publish, the subscriber branches) read that one
+	// asynchronously, and shadowing it here would hand them a 10-second deadline.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server forced to shutdown", "error", err)
 		os.Exit(1)
 	}
 
 	slog.Info("server stopped")
+}
+
+// envPositiveInt reads key as a positive integer, falling back to def when the
+// variable is unset. An unparseable or non-positive value logs a Warn naming the
+// variable and keeps def: the engine treats a non-positive count as "unset" and
+// would restore the default anyway, so the log is the only way an operator finds
+// out their override never took effect.
+func envPositiveInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		slog.Warn("ignoring invalid environment override; keeping the default",
+			"var", key, "value", v, "default", def)
+		return def
+	}
+	return n
+}
+
+// envPositiveFloat is envPositiveInt for a float knob, with the same
+// keep-the-default-and-say-so contract.
+func envPositiveFloat(key string, def float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		slog.Warn("ignoring invalid environment override; keeping the default",
+			"var", key, "value", v, "default", def)
+		return def
+	}
+	return f
 }
 
 func getEnvDefault(key, fallback string) string {

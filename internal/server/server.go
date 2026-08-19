@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"profitofexile/internal/device"
+	"profitofexile/internal/exchange"
 	"profitofexile/internal/gemicon"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
@@ -55,6 +56,10 @@ type RouterConfig struct {
 	Analyzer *lab.Analyzer
 	// LayoutRepo is the repository for daily lab layout data.
 	LayoutRepo *lab.LayoutRepository
+	// ExchangeCache holds the newest currency-exchange ranking, refreshed by
+	// exchange.Service in cmd/server. May be nil — the handler then reads as
+	// COLD and answers 200 with no plays rather than failing.
+	ExchangeCache *exchange.Cache
 	// AllowedOrigins for CORS (desktop app needs cross-origin access).
 	// Example: ["http://localhost:1420", "tauri://localhost"]
 	AllowedOrigins []string
@@ -168,6 +173,14 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		// container (e.g. `docker exec server /recalculate`), which publish
 		// Mercure events the running subscriber consumes.
 	}
+
+	// Currency exchange is a separate pillar from the lab/gem stack: it has its
+	// own collector, its own tables and its own cache, and shares nothing with
+	// LabRepo. The route is therefore registered UNCONDITIONALLY, outside the
+	// `if cfg.LabRepo != nil` block above — a server started without lab
+	// analysis still serves currency-exchange plays. The handler treats a nil
+	// ExchangeCache as cold, so registration never depends on the wiring.
+	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlays(cfg.ExchangeCache))
 
 	if cfg.DeviceRepo != nil {
 		r.Post("/api/device/identify", handlers.DeviceIdentify(cfg.DeviceRepo))
