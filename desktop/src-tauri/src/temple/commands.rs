@@ -88,6 +88,11 @@ pub fn temple_set_config(config: TempleConfig, app: AppHandle) -> Result<(), Str
             .config = config.clone();
     }
     crate::persist_settings(&app);
+    // Echoed onto the slice for the same reason as the key count: the page and
+    // the overlay render these controls from the slice, so without this write
+    // the switch the user just flipped would not move until the next full read
+    // — and with the module off, never.
+    super::run::publish(&app, |s| s.config = config.clone());
     crate::app_log(
         &app,
         format!(
@@ -120,6 +125,8 @@ pub fn temple_set_profile(profile: TempleProfileSettings, app: AppHandle) -> Res
             .profile = profile.clone();
     }
     crate::persist_settings(&app);
+    // Same echo as `temple_set_config` — see the note there.
+    super::run::publish(&app, |s| s.profile = profile.clone());
     crate::app_log(
         &app,
         format!(

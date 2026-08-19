@@ -358,6 +358,15 @@ pub struct TempleSlice {
     /// The user's key count, echoed so the overlay does not need a second
     /// command to render its own control.
     pub keys: u8,
+    /// The two config flags in force, echoed for the same reason as [`Self::keys`]
+    /// — the page renders the controls it owns from ONE source, and there is no
+    /// getter command to ask a second time. Settings, not a reading: unlike
+    /// [`Self::advice`] it survives [`force_off`], because a switched-off module's
+    /// settings are still the settings the next read will use.
+    pub config: TempleConfig,
+    /// The four tunable profile fields in force. Same ownership and same
+    /// survival rule as [`Self::config`].
+    pub profile: TempleProfileSettings,
     /// Slots whose plate did not resolve, by key. Surfaced, never hidden — the
     /// player can then see which rooms the advisor is treating as junk.
     pub unknown_rooms: Vec<String>,
@@ -385,6 +394,13 @@ pub struct ReadResult<'a> {
     pub marker_error: Option<String>,
     pub advice: Option<&'a Advice>,
     pub keys: u8,
+    /// The config flags this read was ranked under — echoed onto the slice, not
+    /// used by the projection. Carried here rather than read from state because
+    /// `project` is pure and the whole slice is written in one replace: a field
+    /// the projection does not set is a field every read would blank.
+    pub config: TempleConfig,
+    /// The profile this read was ranked under. Same reason as [`Self::config`].
+    pub profile: TempleProfileSettings,
     pub read_at: u64,
 }
 
@@ -563,6 +579,10 @@ fn mode_label(mode: Mode) -> String {
 /// for the read, and a board with one is `Read`. The loop's own transient
 /// states (`Idle`, `Reading`, `PanelNotVisible`, `Error`) never come through
 /// this function — they are written directly, with no board to project.
+///
+/// The settings echo is the read's own snapshot, so a setting changed while
+/// this read was running is echoed back at its OLD value for one tick; the
+/// setters re-arm, and the next read publishes the new one.
 pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) -> TempleSlice {
     TempleSlice {
         status: if read.layout.current.is_none() {
@@ -575,6 +595,8 @@ pub fn project(read: &ReadResult<'_>, calibration: Option<AnchorCalibration>) ->
         advice: read.advice.map(advice_view),
         mode: read.advice.map(|a| mode_label(a.mode)),
         keys: read.keys,
+        config: read.config.clone(),
+        profile: read.profile.clone(),
         unknown_rooms: unknown_rooms(read.rooms),
         last_read_at: Some(read.read_at),
         calibration,
@@ -636,6 +658,11 @@ pub fn advise_read(
 /// `last_error` goes with it for the same reason: the message describes a read
 /// the disabled module is no longer attempting, and a red line under an "off"
 /// badge reads as "this module is broken" rather than "you switched it off".
+///
+/// What does NOT go is the settings echo (`keys`, `config`, `profile`). Those
+/// are not something the module read — they are what the user set, and the page
+/// renders its own controls from them while the module is off (ADR-014: the
+/// page reads the slice, never `ssot.modules`).
 pub fn force_off(slice: &mut TempleSlice) {
     slice.status = TempleStatus::Off;
     slice.advice = None;
@@ -845,6 +872,8 @@ mod tests {
             marker_error: None,
             advice,
             keys: 1,
+            config: TempleConfig::default(),
+            profile: TempleProfileSettings::default(),
             read_at: 1_700_000_000_000,
         }
     }
@@ -1383,6 +1412,164 @@ mod tests {
             "only the acting half is forced — what was read stays readable",
         );
     }
+
+    /// The settings echo survives the module being switched off. Fails if
+    /// `force_off` blanks it: the page renders the keys/flags/profile controls
+    /// from the slice alone, so a wipe here would show every control at its
+    /// derive default while `settings.json` says otherwise, with the module off
+    /// and no loop left to correct it.
+    #[test]
+    fn forcing_a_disabled_slice_off_keeps_the_settings_echo() {
+        let profile = TempleProfileSettings { apex_score: 42.0, ..Default::default() };
+        let config = TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true };
+        let mut s = TempleSlice {
+            status: TempleStatus::Read,
+            keys: 2,
+            config: config.clone(),
+            profile: profile.clone(),
+            ..TempleSlice::default()
+        };
+
+        force_off(&mut s);
+
+        assert_eq!(s.keys, 2);
+        assert_eq!(s.config, config);
+        assert_eq!(s.profile, profile);
+    }
+
+    /// A completed read republishes the settings it was ranked under.
+    ///
+    /// `project` writes the WHOLE slice (`*slice = projected` in `run`), so a
+    /// field the projection forgets is a field every read blanks — the control
+    /// on the page would snap back to its default one second after the user
+    /// moved it. Fails if the echo is dropped from `project`.
+    #[test]
+    fn a_read_republishes_the_settings_it_was_ranked_under() {
+        let layout = layout(Some(Slot::E1), &[], &[]);
+        let rooms = board_rooms(&[(Slot::E1, "Chamber of Iron")]);
+        let panel = panel("Chamber of Iron", Some(6), Vec::new());
+        let config = TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true };
+        let profile = TempleProfileSettings { path_cost: 3.5, ..Default::default() };
+        let result = ReadResult {
+            keys: 2,
+            config: config.clone(),
+            profile: profile.clone(),
+            ..read(&layout, &rooms, &panel, None, None)
+        };
+
+        let published = project(&result, None);
+
+        assert_eq!(published.keys, 2);
+        assert_eq!(published.config, config);
+        assert_eq!(published.profile, profile);
+    }
+
+    /// The whole default slice, as JSON, character for character.
+    ///
+    /// This string is COPIED into `desktop/src/lib/temple/slice.test.ts`, where
+    /// it is asserted against `templeSliceDefault()`. That is the whole point:
+    /// the two mirrors cannot be checked against each other at build time, so
+    /// one pinned string is checked from both sides and a rename, a dropped
+    /// `rename_all`, an added field or a changed default fails HERE and in the
+    /// TS suite rather than rendering an empty control on the page.
+    ///
+    /// Note the calibration's keys: `AnchorCalibration` carries no
+    /// `rename_all`, so its fields stay snake_case INSIDE a camelCase parent.
+    #[test]
+    fn the_default_slice_json_is_pinned_for_the_typescript_mirror() {
+        let json = serde_json::to_string(&TempleSlice::default()).expect("slice serialises");
+
+        assert_eq!(
+            json,
+            r#"{"status":"idle","layout":null,"panel":null,"advice":null,"mode":null,"keys":0,"config":{"artefactsOfTheVaal":true,"scarabOfTimelines":false},"profile":{"apexScore":2.0,"pathCost":0.0,"rerollUntilFavourable":false,"r4KeepUpgradeTargets":true},"unknownRooms":[],"lastReadAt":null,"calibration":null,"lastError":null}"#,
+        );
+    }
+
+    /// A fully populated slice, as JSON, character for character.
+    ///
+    /// The sibling of the default pin, and the one that actually exercises the
+    /// nested views: `LayoutView`, `SlotView`, `PanelView`, `OfferView`,
+    /// `AdviceView`, `RankedView` and `AnchorCalibration`. Copied verbatim into
+    /// `desktop/src/lib/temple/slice.test.ts`, which parses it as a
+    /// `TempleSlice` — so a field this side renames and the TS side does not is
+    /// a failure in both suites rather than a silently missing value on the page.
+    #[test]
+    fn a_populated_slice_json_is_pinned_for_the_typescript_mirror() {
+        let s = TempleSlice {
+            status: TempleStatus::Read,
+            layout: Some(LayoutView {
+                slots: vec![SlotView {
+                    slot: "A0".to_string(),
+                    name: Some("Apex of Atzoatl".to_string()),
+                    tier: 0,
+                    exact: true,
+                    known: true,
+                    current: false,
+                }],
+                doors: vec!["C1-C2".to_string()],
+                uncertain: vec!["B0-C1".to_string()],
+                unresolved_incident: vec!["B0-C1".to_string()],
+                marker_error: Some("the diamond rect fell outside the capture".to_string()),
+                current: Some("C1".to_string()),
+                scale: 0.99,
+                ncc: 0.94,
+                confidence: "high".to_string(),
+            }),
+            panel: Some(PanelView {
+                room: Some("Locus of Corruption".to_string()),
+                offers: vec![OfferView {
+                    index: 0,
+                    architect_name: "Guatelitzi".to_string(),
+                    kind: "upgrade".to_string(),
+                    printed_target: "Sadist's Den".to_string(),
+                    display_name: Some("Torment Cells".to_string()),
+                    built_tier: Some(2),
+                }],
+                incursions_remaining: Some(6),
+            }),
+            advice: Some(AdviceView {
+                recommendations: vec![RankedView {
+                    headline: "upgrade → Locus of Corruption".to_string(),
+                    doors_label: "C1-C2, B0-C1".to_string(),
+                    doors: vec!["C1-C2".to_string(), "B0-C1".to_string()],
+                    architect_index: Some(0),
+                    ev: 12.5,
+                    risk: None,
+                    reasons: vec!["R1: connects toward the top".to_string()],
+                }],
+                gambles: vec![RankedView {
+                    headline: "kill either".to_string(),
+                    doors_label: "no door".to_string(),
+                    doors: Vec::new(),
+                    architect_index: None,
+                    ev: 14.0,
+                    risk: Some(0.31),
+                    reasons: vec!["RV: excluded above the risk threshold".to_string()],
+                }],
+                map_action: "leaveMap".to_string(),
+                warnings: vec!["the incursion budget was not legible".to_string()],
+            }),
+            mode: Some("chase".to_string()),
+            keys: 2,
+            config: TempleConfig { artefacts_of_the_vaal: false, scarab_of_timelines: true },
+            profile: TempleProfileSettings {
+                apex_score: 3.5,
+                path_cost: 1.25,
+                reroll_until_favourable: true,
+                r4_keep_upgrade_targets: false,
+            },
+            unknown_rooms: vec!["D3".to_string()],
+            last_read_at: Some(1_700_000_000_000),
+            calibration: Some(AnchorCalibration { screen_w: 2560, screen_h: 1440, scale: 0.99 }),
+            last_error: Some("Temple: OCR failed".to_string()),
+        };
+
+        assert_eq!(serde_json::to_string(&s).expect("slice serialises"), SAMPLE_SLICE_JSON);
+    }
+
+    /// The pinned sample. Kept as a constant so the string the TS suite copies
+    /// is one literal rather than a value spread across an assertion.
+    const SAMPLE_SLICE_JSON: &str = r#"{"status":"read","layout":{"slots":[{"slot":"A0","name":"Apex of Atzoatl","tier":0,"exact":true,"known":true,"current":false}],"doors":["C1-C2"],"uncertain":["B0-C1"],"unresolvedIncident":["B0-C1"],"markerError":"the diamond rect fell outside the capture","current":"C1","scale":0.99,"ncc":0.94,"confidence":"high"},"panel":{"room":"Locus of Corruption","offers":[{"index":0,"architectName":"Guatelitzi","kind":"upgrade","printedTarget":"Sadist's Den","displayName":"Torment Cells","builtTier":2}],"incursionsRemaining":6},"advice":{"recommendations":[{"headline":"upgrade → Locus of Corruption","doorsLabel":"C1-C2, B0-C1","doors":["C1-C2","B0-C1"],"architectIndex":0,"ev":12.5,"risk":null,"reasons":["R1: connects toward the top"]}],"gambles":[{"headline":"kill either","doorsLabel":"no door","doors":[],"architectIndex":null,"ev":14.0,"risk":0.31,"reasons":["RV: excluded above the risk threshold"]}],"mapAction":"leaveMap","warnings":["the incursion budget was not legible"]},"mode":"chase","keys":2,"config":{"artefactsOfTheVaal":false,"scarabOfTimelines":true},"profile":{"apexScore":3.5,"pathCost":1.25,"rerollUntilFavourable":true,"r4KeepUpgradeTargets":false},"unknownRooms":["D3"],"lastReadAt":1700000000000,"calibration":{"screen_w":2560,"screen_h":1440,"scale":0.99},"lastError":"Temple: OCR failed"}"#;
 
     /// Every `TempleStatus` variant's wire string, pinned one by one.
     ///

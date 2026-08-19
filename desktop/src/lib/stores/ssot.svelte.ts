@@ -26,8 +26,12 @@
  *   // Read: ssot.normalVariant / ssot.dedicationVariant / ssot.dedicationPool
  *   // Read: ssot.modules['mercenary'] ?? false  (absent key = not yet known)
  *   // Read: ssot.mercenary  (Merc OCR status + last capture; no write path)
+ *   // Read: ssot.temple  (temple board, advice and settings echo; no direct write)
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Write: setModuleEnabled(id, enabled)
+ *   // Write: setTempleKeys(n) / setTempleConfig(c) / setTempleProfile(p) / rearmTemple()
+ *   //   (these four return the rejection message instead of throwing — Rust
+ *   //    validates them, so the page renders what it said no to)
  *   // Main window: call startSsotStore() top-level (like initStatusStore()).
  *   // Overlay windows: call startSsotStore() from an $effect and return its
  *   //   cleanup (onMount is unreliable in overlay windows).
@@ -36,6 +40,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { DEDICATION_VARIANTS, VARIANTS } from '$lib/api';
 import { mercenarySliceDefault, type MercenarySlice } from '$lib/mercenaries/capture';
+import {
+	isTempleStatus,
+	templeSliceDefault,
+	type TempleConfig,
+	type TempleDebugReport,
+	type TempleProfile,
+	type TempleSlice
+} from '$lib/temple/slice';
 
 /**
  * The dedication pools, in Rust/settings/DB canon spelling (singular `skill`).
@@ -62,6 +74,11 @@ export interface SsotSnapshot {
 	modules?: Record<string, boolean>;
 	/** Merc OCR module state + the last capture (POE-165). Rust-owned, read-only here. */
 	mercenary?: MercenarySlice;
+	/** Temple builder module state + the last board read (POE-171). Rust-owned,
+	 *  read-only here — the four `setTemple*` writers below go through commands
+	 *  that write `temple_settings`, and Rust echoes the result back into this
+	 *  slice. Nothing in the webview assigns it except `applyTemple`. */
+	temple?: TempleSlice;
 }
 
 /**
@@ -103,6 +120,12 @@ export const ssot = $state({
 	 *  poll-vs-write guard the other slices need does not apply. Until the first
 	 *  poll answers, this is `mercenarySliceDefault()`: module off, no capture. */
 	mercenary: mercenarySliceDefault() as MercenarySlice,
+	/** Temple builder module state and its last board read (POE-171). Rust owns
+	 *  every field; the setters below never write it, so it needs no
+	 *  poll-vs-write guard. Until the first poll answers, this is
+	 *  `templeSliceDefault()` — the Rust derive default, pinned by a serde test
+	 *  on both sides. */
+	temple: templeSliceDefault() as TempleSlice,
 });
 
 /** The three market fields, which share the write-through + poll-guard machinery. */
@@ -224,6 +247,85 @@ function applyMercenary(incoming: MercenarySlice | undefined): void {
 	ssot.mercenary = incoming;
 }
 
+/**
+ * Apply the temple slice from a snapshot.
+ *
+ * Whole, and fail-closed on absence — the same two rules as `applyMercenary`,
+ * for the same two reasons. Rust is the only writer, so a snapshot that carries
+ * the slice carries all of it, and merging would let a retired board's plates
+ * survive under a newer read's advice. An ABSENT slice keeps the last known
+ * one: the only payload that lacks it is a malformed or older one, and blanking
+ * the board there would be a lie about what the reader saw.
+ *
+ * No write guard, unlike the market fields: the setters below do not write this
+ * rune at all. They invoke a command, Rust echoes the new value onto the slice,
+ * and the re-fetch they trigger brings it back — so there is no optimistic
+ * local value for a poll to race.
+ */
+/**
+ * The unknown status already reported, so a stuck one is not reported again.
+ *
+ * A bad status is not a one-off event: whatever produced it is on the other
+ * side of a 3-second poll, so the same payload comes back twenty times a
+ * minute. One line per distinct value says everything the log can say; the
+ * nineteen repeats only bury it. Cleared by the first good payload, so a
+ * recurrence after a recovery is reported afresh.
+ */
+let reportedBadTempleStatus: string | null = null;
+
+function applyTemple(incoming: TempleSlice | undefined): void {
+	if (!incoming) return;
+	if (!isTempleStatus(incoming.status)) {
+		// `status` is the field every surface switches on, and an unrecognised
+		// one falls through every branch — the overlay would decide it has no
+		// board to draw and the page would render an empty badge, both silently.
+		// The last known slice is the honest thing to keep: it is what the
+		// reader last actually saw.
+		const seen = JSON.stringify(incoming.status) ?? 'undefined';
+		if (seen !== reportedBadTempleStatus) {
+			reportedBadTempleStatus = seen;
+			void templeFailed(
+				'get_ssot',
+				`temple slice carried an unknown status ${seen} — payload ignored, keeping the last known board`
+			);
+		}
+		return;
+	}
+	reportedBadTempleStatus = null;
+	ssot.temple = normaliseTemple(incoming);
+}
+
+/**
+ * Take a payload field by field, so the rune matches its declared type.
+ *
+ * Whole-replace is preserved exactly: every value comes from `incoming` or from
+ * a fresh default, and NOTHING is carried over from the slice being replaced —
+ * a board that is gone must not be filled back in from the previous read.
+ *
+ * What this adds is that a field the payload omits lands as the `null` (or the
+ * empty list) the type promises rather than as `undefined`. The types are read
+ * as a guarantee by every consumer — `slice.unknownRooms.length` in
+ * `unknownRoomsBadge`, drawn on the overlay — and an older or truncated payload
+ * used to make that guarantee false.
+ */
+function normaliseTemple(incoming: TempleSlice): TempleSlice {
+	const fresh = templeSliceDefault();
+	return {
+		status: incoming.status,
+		layout: incoming.layout ?? null,
+		panel: incoming.panel ?? null,
+		advice: incoming.advice ?? null,
+		mode: incoming.mode ?? null,
+		keys: incoming.keys ?? fresh.keys,
+		config: incoming.config ?? fresh.config,
+		profile: incoming.profile ?? fresh.profile,
+		unknownRooms: incoming.unknownRooms ?? [],
+		lastReadAt: incoming.lastReadAt ?? null,
+		calibration: incoming.calibration ?? null,
+		lastError: incoming.lastError ?? null
+	};
+}
+
 /** Map the Rust snapshot shape (`snap.league.name`, `snap.resolving`,
  *  `snap.unreachable`) into the flat store fields. Missing/malformed fields fail
  *  closed (null / false for league state, last known good for markets).
@@ -239,6 +341,7 @@ export function applySnapshot(snap: SsotSnapshot, dispatchedAtSeq: number = writ
 	applyMarketField('dedicationPool', snap.dedicationPool, dispatchedAtSeq);
 	applyModules(snap.modules, dispatchedAtSeq);
 	applyMercenary(snap.mercenary);
+	applyTemple(snap.temple);
 }
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -379,6 +482,92 @@ export async function setModuleEnabled(id: string, enabled: boolean): Promise<vo
 		console.warn('[ssot] set_module_enabled failed:', e);
 	} finally {
 		endWrite([key]);
+	}
+}
+
+// ------------------------------------------------------- temple settings --
+
+/**
+ * Report a failed temple command everywhere it can be read.
+ *
+ * `console.warn` alone is what the market setters do, and it is enough for
+ * them: their only failure mode is IPC. The temple commands are different —
+ * Rust REJECTS values (`validate_keys`, `TempleProfileSettings::validate`), so
+ * a failure here is a thing the user did and must be told about. So the message
+ * goes to the persistent app log (the LOGS channel the README names as the one
+ * place a desktop error must reach) AND comes back to the caller, which is how
+ * the page renders it next to the control that produced it.
+ */
+async function templeFailed(command: string, e: unknown): Promise<string> {
+	const message = `${e}`;
+	console.warn(`[ssot] ${command} failed:`, e);
+	try {
+		await invoke('app_log_from_frontend', { msg: `[temple] ${command} failed: ${message}` });
+	} catch (logError) {
+		// The log channel itself is down. There is nowhere left to put this, so
+		// the console is the last resort rather than a silent swallow.
+		console.warn('[ssot] app_log_from_frontend failed:', logError);
+	}
+	return message;
+}
+
+/**
+ * Run one temple command and bring the echo back.
+ *
+ * Returns null on success and the rejection message on failure — NOT void like
+ * the market setters, because Rust validates these and the page has to show
+ * what it said no to.
+ *
+ * On success it re-fetches immediately rather than mutating the rune: the slice
+ * is Rust-owned and whole-replace, so an optimistic local write would have to
+ * be reconciled with the next poll's whole slice. Rust echoes `keys`, `config`
+ * and `profile` onto the slice in the same command, so one `get_ssot` is the
+ * whole round trip and the control moves without waiting out a poll interval.
+ */
+async function templeCommand(command: string, args: Record<string, unknown>): Promise<string | null> {
+	try {
+		await invoke(command, args);
+	} catch (e) {
+		return templeFailed(command, e);
+	}
+	await fetchSsot();
+	return null;
+}
+
+/** Set how many opening stones this incursion dropped (0, 1 or 2). */
+export function setTempleKeys(keys: number): Promise<string | null> {
+	return templeCommand('temple_set_keys', { keys });
+}
+
+/** Set the two temple config flags — the Atlas passive and the scarab. */
+export function setTempleConfig(config: TempleConfig): Promise<string | null> {
+	return templeCommand('temple_set_config', { config });
+}
+
+/** Set the four tunable strategy-profile fields. */
+export function setTempleProfile(profile: TempleProfile): Promise<string | null> {
+	return templeCommand('temple_set_profile', { profile });
+}
+
+/** Force the next tick to do a full read, whatever the read gate thinks. */
+export function rearmTemple(): Promise<string | null> {
+	return templeCommand('temple_rearm', {});
+}
+
+/**
+ * Take a temple debug dump and hand back the report.
+ *
+ * The one temple command that returns a value rather than an echo, so it does
+ * not go through `templeCommand`: there is nothing to re-fetch, and the report
+ * is the whole point. Failures still reach the log channel.
+ */
+export async function templeDebugCapture(
+	imagePath: string | null = null
+): Promise<{ report: TempleDebugReport | null; error: string | null }> {
+	try {
+		return { report: await invoke<TempleDebugReport>('temple_debug_capture', { imagePath }), error: null };
+	} catch (e) {
+		return { report: null, error: await templeFailed('temple_debug_capture', e) };
 	}
 }
 

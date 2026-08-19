@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ssot, applySnapshot } from './ssot.svelte';
 import type { MercenarySlice } from '../mercenaries/capture';
+import { templeSliceDefault, type TempleSlice } from '../temple/slice';
 
 // The store reaches Rust through `invoke` only; the real core module cannot load
 // outside a webview. Same shape as desktop/src/lib/compass/layout-loader.test.ts:13.
@@ -628,5 +629,344 @@ describe('mercenary slice', () => {
 		expect(mod.ssot.mercenary.capture).toBeNull();
 		expect(mod.ssot.mercenary.lastError).toBeNull();
 		expect(mod.ssot.mercenary.learnedFamilies).toEqual([]);
+	});
+});
+
+
+/**
+ * The temple slice (POE-171). Rust-owned and read-only like the mercenary one,
+ * so the apply half is the same contract — whole replace, keep the last known
+ * on absence — and gets the same coverage.
+ *
+ * What is NEW here is the four settings commands. They do not write the rune:
+ * Rust validates them, echoes the accepted value back onto the slice and this
+ * store re-fetches, so what the tests below pin is the command name, the
+ * argument shape, the re-fetch, and — the part with a user consequence — that a
+ * REJECTION reaches the app log and comes back to the caller instead of
+ * vanishing into a console nobody can open in a shipped build.
+ */
+describe('temple slice', () => {
+	let mod: typeof import('./ssot.svelte');
+	let invokeMock: ReturnType<typeof vi.mocked<typeof import('@tauri-apps/api/core').invoke>>;
+
+	const league = { name: 'Mirage' };
+
+	/** Calls of one Tauri command, in order, with their argument objects. */
+	function callsOf(command: string): unknown[] {
+		return invokeMock.mock.calls.filter((c) => c[0] === command).map((c) => c[1]);
+	}
+
+	/** A slice as Rust publishes one after a completed read. */
+	function readSlice(): TempleSlice {
+		return {
+			...templeSliceDefault(),
+			status: 'read',
+			layout: {
+				slots: [
+					{ slot: 'C1', name: 'Locus of Corruption', tier: 3, exact: true, known: true, current: true }
+				],
+				doors: ['C1-C2'],
+				uncertain: [],
+				unresolvedIncident: [],
+				markerError: null,
+				current: 'C1',
+				scale: 0.99,
+				ncc: 0.94,
+				confidence: 'high'
+			},
+			panel: { room: 'Locus of Corruption', offers: [], incursionsRemaining: 6 },
+			advice: {
+				recommendations: [
+					{
+						headline: 'upgrade → Locus of Corruption',
+						doorsLabel: 'C1-C2',
+						doors: ['C1-C2'],
+						architectIndex: 0,
+						ev: 12,
+						risk: null,
+						reasons: ['R1: connects toward the top']
+					}
+				],
+				gambles: [],
+				mapAction: 'continue',
+				warnings: []
+			},
+			mode: 'chase',
+			keys: 2,
+			unknownRooms: ['D3'],
+			lastReadAt: 1_700_000_000_000
+		};
+	}
+
+	beforeEach(async () => {
+		vi.resetModules();
+		vi.clearAllMocks();
+		const core = await import('@tauri-apps/api/core');
+		invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockImplementation(async (command: string) =>
+			command === 'get_ssot' ? { league } : undefined,
+		);
+		mod = await import('./ssot.svelte');
+	});
+
+	describe('applying a snapshot', () => {
+		it('reports the Rust default before the first snapshot', () => {
+			expect(mod.ssot.temple).toEqual(templeSliceDefault());
+		});
+
+		it('applies the slice the snapshot carries', () => {
+			mod.applySnapshot({ league, temple: readSlice() });
+			expect(mod.ssot.temple.status).toBe('read');
+			expect(mod.ssot.temple.layout?.current).toBe('C1');
+			expect(mod.ssot.temple.advice?.recommendations[0].reasons).toEqual([
+				'R1: connects toward the top'
+			]);
+			expect(mod.ssot.temple.keys).toBe(2);
+		});
+
+		it('keeps the last known slice when the snapshot carries no temple field', () => {
+			mod.applySnapshot({ league, temple: readSlice() });
+			mod.applySnapshot({ league });
+			expect(mod.ssot.temple.status).toBe('read');
+			expect(mod.ssot.temple.layout?.doors).toEqual(['C1-C2']);
+		});
+
+		it('replaces the whole slice instead of merging it into the previous one', () => {
+			// The panel closed: Rust published a board-less slice. A field-wise
+			// merge would leave the old layout and the old recommendation
+			// standing under a status that says there is no panel — a move the
+			// player could still act on, against a board that is gone.
+			mod.applySnapshot({ league, temple: readSlice() });
+			mod.applySnapshot({
+				league,
+				temple: { ...templeSliceDefault(), status: 'panel_not_visible', keys: 2 },
+			});
+			expect(mod.ssot.temple.status).toBe('panel_not_visible');
+			expect(mod.ssot.temple.layout).toBeNull();
+			expect(mod.ssot.temple.advice).toBeNull();
+			expect(mod.ssot.temple.unknownRooms).toEqual([]);
+		});
+
+		it('takes an incomplete payload as it stands rather than filling it from the last one', () => {
+			// A complete replacement and a field-wise merge look identical while
+			// Rust sends every field, so the difference only shows on a payload
+			// that does NOT — an older or truncated one. Whole-replace is the
+			// contract: a board that is gone must not be filled back in from the
+			// previous read, because a stale layout under a fresh status is a
+			// move the player could still act on.
+			mod.applySnapshot({ league, temple: readSlice() });
+			mod.applySnapshot({
+				league,
+				temple: { status: 'idle', keys: 1 } as unknown as TempleSlice,
+			});
+			expect(mod.ssot.temple.status).toBe('idle');
+			expect(mod.ssot.temple.layout).toBeNull();
+			expect(mod.ssot.temple.advice).toBeNull();
+		});
+
+		it('lands an omitted field as the null its type promises, not as undefined', () => {
+			// The types are read as a guarantee by every consumer — the overlay
+			// draws `unknownRooms.length` — so a truncated payload that left
+			// them `undefined` made the declared shape a lie, and the crash
+			// would land in the surface rather than here.
+			mod.applySnapshot({
+				league,
+				temple: { status: 'idle', keys: 1 } as unknown as TempleSlice,
+			});
+			expect(mod.ssot.temple.panel).toBeNull();
+			expect(mod.ssot.temple.mode).toBeNull();
+			expect(mod.ssot.temple.lastReadAt).toBeNull();
+			expect(mod.ssot.temple.calibration).toBeNull();
+			expect(mod.ssot.temple.lastError).toBeNull();
+			expect(mod.ssot.temple.unknownRooms).toEqual([]);
+		});
+
+		it('keeps the payload\'s own value for a field it does carry', () => {
+			// The filling above must not reach a field that IS present, or a
+			// board would be blanked by the very code meant to type it honestly.
+			mod.applySnapshot({ league, temple: readSlice() });
+			expect(mod.ssot.temple.layout?.doors).toEqual(['C1-C2']);
+			expect(mod.ssot.temple.unknownRooms).toEqual(['D3']);
+			expect(mod.ssot.temple.lastReadAt).toBe(1_700_000_000_000);
+		});
+
+		it('ignores a payload whose status is not one Rust publishes', () => {
+			// `status` is the field every surface switches on. An unrecognised
+			// one falls through every branch at once: the overlay decides it has
+			// no board and draws nothing, the page renders an empty badge, and
+			// neither says why. Keeping the last known board is the honest
+			// answer — it is what the reader last actually saw.
+			mod.applySnapshot({ league, temple: readSlice() });
+			mod.applySnapshot({
+				league,
+				temple: { ...readSlice(), status: 'panel_missing' } as unknown as TempleSlice,
+			});
+			expect(mod.ssot.temple.status).toBe('read');
+			expect(mod.ssot.temple.layout?.current).toBe('C1');
+		});
+
+		it('reports an unknown status to the app log rather than dropping it silently', async () => {
+			mod.applySnapshot({
+				league,
+				temple: { ...readSlice(), status: '' } as unknown as TempleSlice,
+			});
+			await Promise.resolve();
+			const logged = callsOf('app_log_from_frontend') as { msg: string }[];
+			expect(logged).toHaveLength(1);
+			expect(logged[0].msg).toContain('unknown status');
+		});
+
+		it('reports a status that stays bad once, not once per poll', async () => {
+			// Whatever produced the bad status sits behind a 3-second poll, so
+			// the same payload comes back twenty times a minute. The repeats add
+			// nothing the first line did not say and bury the lines around them.
+			const bad = { ...readSlice(), status: 'panel_missing' } as unknown as TempleSlice;
+			mod.applySnapshot({ league, temple: bad });
+			mod.applySnapshot({ league, temple: bad });
+			await Promise.resolve();
+			expect(callsOf('app_log_from_frontend')).toHaveLength(1);
+		});
+
+		it('reports a second, different bad status', async () => {
+			// Deduplication is per value, not a latch: a payload that went from
+			// one unrecognised status to another is new information, and a
+			// blanket "already reported" would hide it.
+			mod.applySnapshot({
+				league,
+				temple: { ...readSlice(), status: 'panel_missing' } as unknown as TempleSlice,
+			});
+			mod.applySnapshot({
+				league,
+				temple: { ...readSlice(), status: 'board_gone' } as unknown as TempleSlice,
+			});
+			await Promise.resolve();
+			const logged = callsOf('app_log_from_frontend') as { msg: string }[];
+			expect(logged).toHaveLength(2);
+			expect(logged[1].msg).toContain('board_gone');
+		});
+
+		it('reports the same status again once a good payload has come between', async () => {
+			// A recovery ends the episode. The next occurrence is a new fault,
+			// and a permanent mute would leave it unrecorded.
+			const bad = { ...readSlice(), status: 'panel_missing' } as unknown as TempleSlice;
+			mod.applySnapshot({ league, temple: bad });
+			mod.applySnapshot({ league, temple: readSlice() });
+			mod.applySnapshot({ league, temple: bad });
+			await Promise.resolve();
+			expect(callsOf('app_log_from_frontend')).toHaveLength(2);
+		});
+	});
+
+	describe('the settings commands', () => {
+		it('sends the key count under the argument name the command takes', async () => {
+			expect(await mod.setTempleKeys(2)).toBeNull();
+			expect(callsOf('temple_set_keys')).toEqual([{ keys: 2 }]);
+		});
+
+		it('sends the config flags as one nested object', async () => {
+			const config = { artefactsOfTheVaal: false, scarabOfTimelines: true };
+			expect(await mod.setTempleConfig(config)).toBeNull();
+			expect(callsOf('temple_set_config')).toEqual([{ config }]);
+		});
+
+		it('sends the four profile fields as one nested object', async () => {
+			const profile = {
+				apexScore: 3.5,
+				pathCost: 1.25,
+				rerollUntilFavourable: true,
+				r4KeepUpgradeTargets: false,
+			};
+			expect(await mod.setTempleProfile(profile)).toBeNull();
+			expect(callsOf('temple_set_profile')).toEqual([{ profile }]);
+		});
+
+		it('re-arms with no arguments', async () => {
+			expect(await mod.rearmTemple()).toBeNull();
+			expect(callsOf('temple_rearm')).toEqual([{}]);
+		});
+
+		it('re-fetches the snapshot so the echo lands without waiting out a poll', async () => {
+			// The slice is Rust-owned, so the control the user just moved only
+			// updates when a snapshot comes back. Without this the checkbox
+			// would sit at its old value for up to a poll interval.
+			const before = callsOf('get_ssot').length;
+			await mod.setTempleKeys(0);
+			expect(callsOf('get_ssot').length).toBe(before + 1);
+		});
+
+		it('does not re-fetch after a rejected command', async () => {
+			// Nothing changed in Rust, so there is nothing to fetch — and a
+			// fetch here would overwrite nothing while costing a round trip.
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_set_keys') throw new Error('rejected');
+				return command === 'get_ssot' ? { league } : undefined;
+			});
+			const before = callsOf('get_ssot').length;
+			await mod.setTempleKeys(9);
+			expect(callsOf('get_ssot').length).toBe(before);
+		});
+	});
+
+	describe('a rejected command', () => {
+		/** Make one temple command reject with Rust's own validation message. */
+		function rejectWith(command: string, message: string): void {
+			invokeMock.mockImplementation(async (name: string) => {
+				if (name === command) throw new Error(message);
+				return name === 'get_ssot' ? { league } : undefined;
+			});
+		}
+
+		it('hands the rejection back to the caller instead of throwing', async () => {
+			rejectWith('temple_set_keys', 'an incursion drops at most 2 opening stones, got 9');
+			// Never throws — a rejected setting must not take the page with it.
+			const error = await mod.setTempleKeys(9);
+			expect(error).toContain('at most 2 opening stones');
+		});
+
+		it('reaches the app log, which is the only channel a shipped build has', async () => {
+			// console.warn goes nowhere in a release webview (no devtools), so a
+			// validation rejection that only warned would be invisible to the
+			// user AND to a log dump.
+			rejectWith('temple_set_profile', 'apex_score must be a finite number ≥ 0, got NaN');
+			await mod.setTempleProfile({
+				apexScore: Number.NaN,
+				pathCost: 0,
+				rerollUntilFavourable: false,
+				r4KeepUpgradeTargets: true,
+			});
+			const logged = callsOf('app_log_from_frontend') as { msg: string }[];
+			expect(logged).toHaveLength(1);
+			expect(logged[0].msg).toContain('temple_set_profile');
+			expect(logged[0].msg).toContain('apex_score must be a finite number');
+		});
+
+		it('says nothing to the log when the command is accepted', async () => {
+			await mod.setTempleConfig({ artefactsOfTheVaal: true, scarabOfTimelines: false });
+			expect(callsOf('app_log_from_frontend')).toHaveLength(0);
+		});
+	});
+
+	describe('templeDebugCapture', () => {
+		it('returns the report Rust produced', async () => {
+			const report = { dumpDir: '/tmp/poe/1', anchored: true };
+			invokeMock.mockImplementation(async (command: string) =>
+				command === 'temple_debug_capture' ? report : { league },
+			);
+			expect(await mod.templeDebugCapture()).toEqual({ report, error: null });
+			expect(callsOf('temple_debug_capture')).toEqual([{ imagePath: null }]);
+		});
+
+		it('returns the failure and logs it, rather than a null report with no reason', async () => {
+			// This is the command a user runs BECAUSE something else went wrong;
+			// a silent failure here teaches nothing.
+			invokeMock.mockImplementation(async (command: string) => {
+				if (command === 'temple_debug_capture') throw new Error('no monitor');
+				return { league };
+			});
+			const { report, error } = await mod.templeDebugCapture();
+			expect(report).toBeNull();
+			expect(error).toContain('no monitor');
+			expect(callsOf('app_log_from_frontend')).toHaveLength(1);
+		});
 	});
 });

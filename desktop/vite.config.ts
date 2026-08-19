@@ -1,11 +1,20 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+// `vitest/config` rather than `vite`: same `defineConfig`, plus the `test`
+// field below. Vitest is already a devDependency.
+import { defineConfig } from 'vitest/config';
 
 // @ts-expect-error process is available at Vite build time (Node)
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	test: {
+		// Vitest replaces every CSS module with an empty one unless this is on,
+		// which also blanks a `?raw` import of a stylesheet. `overlay-tokens.test.ts`
+		// reads `tokens.css` that way to prove the overlay window's palette is
+		// actually declared, so it needs the real text.
+		css: true
+	},
 	clearScreen: false,
 	server: {
 		port: 1420,

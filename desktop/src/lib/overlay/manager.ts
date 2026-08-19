@@ -7,6 +7,33 @@
 
 import { listen } from '@tauri-apps/api/event';
 
+/**
+ * The temple overlay's WINDOW LABEL.
+ *
+ * Every label must also appear in `src-tauri/capabilities/default.json`'s
+ * `windows` list — guard 1 of `docs/OVERLAY-GUIDE.md`. A label missing there
+ * leaves the Tauri APIs unavailable to that window, which fails as a window
+ * that renders but cannot talk to Rust rather than as a build error.
+ *
+ * The four lab overlays are created in `routes/(app)/+layout.svelte` from their
+ * persisted settings; this window is created by the same file but from the
+ * `temple` MODULE flag instead, and persists no settings of its own.
+ */
+export const TEMPLE_WINDOW_LABEL = 'temple';
+
+/**
+ * The temple MODULE's registry id — a different thing that happens to spell the
+ * same word.
+ *
+ * The label above is ours to choose (it names a Tauri window and the
+ * `/overlay/…` route under it); this one is `src-tauri/src/modules.rs`'s, and
+ * renaming the module there would have to be followed here or the lifecycle
+ * effect would read `ssot.modules[…]` as permanently `undefined` — a temple
+ * overlay that never appears, with nothing failing. `manager.test.ts` pins it
+ * against the Rust registry so that rename fails a test instead.
+ */
+export const TEMPLE_MODULE_ID = 'temple';
+
 /** Active overlay window references, keyed by overlay name. */
 const activeOverlays = new Map<string, any>();
 
