@@ -7,8 +7,12 @@ uid: b6757498-fa1b-4213-939c-cd41c22fb626
 ## Status
 
 Accepted. Supersedes the retain-history-**live** intent of
-[ADR-010](010-retain-archived-league-history.md); ADR-010's removal of age-based
-retention policies stands.
+[ADR-010](010-archived-league-history-is-retained-indefinitely.md); ADR-010's
+removal of age-based retention policies stands.
+
+**Amended 2026-08-19 (POE-173):** the wipe set is now fourteen tables — the
+original twelve plus `currency_exchange_markets` and `currency_exchange_cursor`.
+Every table added to the league-scoped schema joins this set at creation.
 
 ## Context
 
@@ -36,7 +40,7 @@ dominates). Neither half is small, and the computed half is the larger.
 
 ## Decision
 
-At each league rollover, deliberately **wipe** the outgoing league's twelve scoped
+At each league rollover, deliberately **wipe** the outgoing league's fourteen scoped
 tables (`TRUNCATE`) rather than keeping them live, and **preserve** that league's
 data as a dedicated dump stored outside the nightly rotation. Analysis of a past
 league is served by restoring its dump to a scratch database, not by a live query.
@@ -67,12 +71,14 @@ lifetime" is superseded: that reach now requires a dump restore.
 ## Evidence
 
 - `docs/LEAGUE-SCHEMA-MIGRATION-RUNBOOK.md` — "Production execution (wipe-first)":
-  ordering (truncate before deploy), the twelve-table `TRUNCATE`, and the
+  ordering (truncate before deploy), the fourteen-table `TRUNCATE`, and the
   preserve-dump step.
 - Rehearsal 2026-07-24: restored the `profitofexile` nightly (~27M `gem_snapshots`)
   to a disposable scratch DB; `TRUNCATE` 27M → 0 in ~3.5 s directly on the
   compressed hypertables (no decompress); migrate-on-empty near-instant; the
   Allflame Phase A→B switch and DB-level FK fail-closed (writes to an unregistered
   league rejected) verified.
-- [ADR-010](010-retain-archived-league-history.md) — the retain-history decision
-  this supersedes in part.
+- [ADR-010](010-archived-league-history-is-retained-indefinitely.md) — the
+  retain-history decision this supersedes in part.
+- `internal/db/migrations/20260819120000_create_currency_exchange_markets.up.sql`
+  — the two POE-173 tables, created with compression and no retention policy.

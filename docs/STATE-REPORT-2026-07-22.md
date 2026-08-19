@@ -105,11 +105,14 @@ Every `INSERT`/`UPDATE`/`DELETE` across non-test Go, mapped to owning package:
 | `internal/lab` | `transfigure_results`, `quality_results`, `font_snapshots`, `dedication_snapshots`, `market_context`, `gem_features`, `gem_signals`, `lab_layouts` |
 | `internal/device` | `devices` |
 | `internal/trade` | `trade_lookups` |
+| `internal/exchange` | `currency_exchange_markets`, `currency_exchange_cursor` |
 | `internal/price/gemcolor` | `gem_colors` |
 | **`internal/server/handlers`** | **`lab_runs`, `lab_run_rooms`, `font_sessions`, `font_rounds`** |
 | *(none)* | `strategies`, `trend_results` — dead schema, no Go references |
 
 **No table is written by two packages.** Zero multi-writer conflicts — this matters directly for league isolation.
+
+*Amended 2026-08-19 (POE-173):* the `internal/exchange` row was added after this report's measurement date. It is the sole writer and sole reader (`Repository.LoadRows`) of both tables, so the single-writer property above still holds.
 
 **The gap:** four tables are owned by a delivery-layer package with no repository at all. `internal/server/handlers` contains **23 raw SQL call sites across 4 files** — more than `internal/lab` or `internal/collector`:
 

@@ -69,6 +69,10 @@ services:
       # - NINJA_MAX_AGE=30m
       # - NINJA_MAX_RETRIES=5
       # - NINJA_MIN_SLEEP=30s
+      # Currency exchange ingest (internal/exchange) — on by default; values shown are the defaults.
+      # - EXCHANGE_INGEST_ENABLED=true
+      # - EXCHANGE_TICK=5m
+      # - EXCHANGE_PER_HOUR_DELAY=250ms
       - MERCURE_URL=${MERCURE_URL:-http://mercure/.well-known/mercure}
       - MERCURE_JWT_SECRET=${MERCURE_JWT_SECRET:-!ChangeThisMercureHubJWTSecretKey!}
       - SERVER_URL=${SERVER_URL:-http://app:8080}
