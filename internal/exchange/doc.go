@@ -237,12 +237,13 @@
 //
 // # Items
 //
-// The feed sends metadata ids and nothing else — no display name, no icon — so
-// both are carried in the binary. itemdata/items.json is a committed asset,
-// `{"<metadata id>": {"name": ..., "icon": <poewiki URL> | null}}` sorted by id,
-// embedded by items.go and parsed once at package init. A malformed asset
-// panics there: it is a build artifact, so the defect is in the committed file
-// and is the same in every process.
+// The feed sends metadata ids and nothing else — no display name, no icon, no
+// category — so all three are carried in the binary. itemdata/items.json is a
+// committed asset, `{"<metadata id>": {"category": <sidebar category>, "icon":
+// <poewiki URL> | null, "name": ...}}` sorted by id (keys too), embedded by items.go
+// and parsed once at package init. A malformed asset panics there: it is a
+// build artifact, so the defect is in the committed file and is the same in
+// every process.
 //
 // items.go is the whole resolver. LookupItem is the raw read; DisplayName is
 // what callers want, returning the asset name and falling back to Humanize for
@@ -252,6 +253,14 @@
 // regeneration still renders. UnknownItems.Note records such an id with one
 // Warn per distinct id rather than one per occurrence, because an unknown id
 // recurs in every leg of every play that touches it on every recompute.
+//
+// Item.Category is the in-game Currency Exchange sidebar category, resolved
+// offline by the generator because the metadata bucket is not that taxonomy
+// (oils, catalysts, omens, tattoos and runegrafts all sit under
+// Metadata/Items/Currency/). Categories returns the sidebar's sixteen in
+// sidebar order — a fixed list, not the distinct values the asset carries, so a
+// category the exchange happens not to trade this league is still a filter row
+// rather than one that appears on its own later.
 //
 // Icons are not served from poewiki: it 403s the production VPS
 // (docs/adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md),
@@ -274,11 +283,15 @@
 // for the icon File names, resolves the distinct Files to their poewiki image
 // URLs fifty at a time through the imageinfo API — a request per file
 // instead of per fifty earns a 429 partway through, measured 2026-08-19 — and
-// prints coverage per category. Those URLs are committable because MediaWiki
-// derives the /images/<h>/<hh>/ path from the MD5 of the File NAME, so a
-// re-upload under the same name keeps the URL. The whole run is about thirty
-// requests. It refuses to write on a name-coverage shortfall or a cache-filename collision,
-// and its output is deterministic, so an unchanged upstream re-runs to a
+// prints coverage per metadata bucket and per sidebar category. Those URLs are
+// committable because MediaWiki derives the /images/<h>/<hh>/ path from the MD5
+// of the File NAME, so a re-upload under the same name keeps the URL. The whole
+// run is about thirty requests. The sidebar category has no upstream: an ordered
+// prefix-plus-substring rule table in the script maps every id onto one of the
+// sixteen. A rule naming a category the sidebar does not have fails the run
+// before the first request; a name-coverage shortfall, a cache-filename
+// collision, or an id no rule matches refuses the write after the fetch.
+// Its output is deterministic, so an unchanged upstream re-runs to a
 // zero-length diff. Unnamed drop-table placeholders (RePoE carries hundreds of
 // RandomFossilOutcome<N> entries in the Currency namespace) are excluded rather
 // than shipped under a fabricated name. It also writes itemdata/icon-urls.json,
@@ -411,18 +424,24 @@
 // Each play carries key, mode, legs, roiPct, edge (its deprecated alias),
 // roiPctRaw, roi, investment, turnover, tick, depth, suspect, hoursSeen and
 // lastHour; each leg action, item, quote, price, fair, fairOk, tick, volume,
-// stock and suspect.
+// stock and suspect. Every served body also carries categories, the sidebar's
+// sixteen in sidebar order — the whole taxonomy, independent of the plays in
+// this one, so the client's filter is not a function of the ranking.
 // A COLD cache answers 200 with an empty plays list, warm: false and
 // lastUpdated: null rather than an error or a database fallback — the recompute
 // is the only reader, so a fallback query would just repeat it. The handler
 // never touches the database.
 //
-// Each leg gains four transport-only fields; the engine itself never carries
+// Each leg gains six transport-only fields; the engine itself never carries
 // display data. itemName and quoteName come from DisplayName (the asset, with
 // Humanize as the fallback for an id it does not cover, noted once through
-// UnknownItems), and itemIcon and quoteIcon from IconPath — API-relative paths
+// UnknownItems), itemIcon and quoteIcon from IconPath — API-relative paths
 // into this server's icon route, or null for an item with no artwork, which the
-// client renders without one. The icons are served by
+// client renders without one — and itemCategory and quoteCategory from
+// Item.Category, plain strings where "" (an id the asset does not cover) is
+// what a filter treats as unfiltered, so it needs no absent-versus-empty
+// distinction. Both sides carry one because a filter applies to whichever side
+// the reader is shopping for. The icons are served by
 //
 //	GET /api/currency-exchange/icon/{escaped metadata id}
 //
