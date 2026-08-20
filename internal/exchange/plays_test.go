@@ -324,16 +324,16 @@ func TestBestPlays_playSeenInThreeHours_reportsTheNewestHourAsLastHour(t *testin
 
 func TestBestPlays_playThatStoppedClearingInTheNewestHour_isNotServed(t *testing.T) {
 	// Persistence is not a licence to serve a stale price. The card cleared in
-	// the two older hours — enough for MinHoursSeen — and then its market went
-	// under the turnover floor in the last snapshot, so there is no current
-	// price to show and the row is dropped rather than served at an hour-old
-	// one. The hell market clears in all three and proves the window itself is
-	// alive.
-	quiet := liquidChaosMarket(cardID, 100, 120)
-	quiet.volume = [2]int64{9999, 1000}
+	// the two older hours — enough for MinHoursSeen — and then its spread CLOSED
+	// in the last snapshot: one price all hour, so the round trip loses its two
+	// ticks and the sanity floor cuts it. There is no current price to show, so
+	// the row is dropped rather than served at an hour-old one. The hell market
+	// clears in all three and proves the window itself is alive.
+	closed := liquidChaosMarket(cardID, 100, 120)
+	closed.highestRatio = [2]int64{100, 1}
 
 	rows := append(
-		storedAt(feedHour, quiet.row(), liquidChaosMarket(hellID, 100, 120).row()),
+		storedAt(feedHour, closed.row(), liquidChaosMarket(hellID, 100, 120).row()),
 		append(
 			storedAt(feedHour.Add(-time.Hour), liquidChaosMarket(cardID, 100, 120).row(), liquidChaosMarket(hellID, 100, 120).row()),
 			storedAt(feedHour.Add(-2*time.Hour), liquidChaosMarket(cardID, 100, 120).row(), liquidChaosMarket(hellID, 100, 120).row())...,
@@ -349,10 +349,10 @@ func TestBestPlays_playThatStoppedClearingInTheNewestHour_isNotServed(t *testing
 
 func TestBestPlays_hourThatFailedItsGates_isNotCountedInHoursSeen(t *testing.T) {
 	// HoursSeen counts the hours the recipe CLEARED on that hour's own prices,
-	// not the hours its market appeared in: the middle hour traded 9,999 chaos,
-	// under the turnover floor, so three sightings are two hours seen.
+	// not the hours its market appeared in: the middle hour traded nine cards,
+	// under the ten-unit liveness floor, so three sightings are two hours seen.
 	quiet := liquidChaosMarket(cardID, 100, 120)
-	quiet.volume = [2]int64{9999, 1000}
+	quiet.volume = [2]int64{986, 9}
 
 	rows := append(
 		storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row()),
@@ -366,7 +366,7 @@ func TestBestPlays_hourThatFailedItsGates_isNotCountedInHoursSeen(t *testing.T) 
 
 	play := playByKey(t, got, directKey(chaosID, cardID))
 	if play.HoursSeen != 2 {
-		t.Errorf("HoursSeen = %d, want 2 — the middle hour did not clear the turnover gate", play.HoursSeen)
+		t.Errorf("HoursSeen = %d, want 2 — the middle hour did not clear the liveness gate", play.HoursSeen)
 	}
 }
 
@@ -873,10 +873,11 @@ func TestBestPlays_olderHourWithACheaperDivine_isValuedAtThatHoursRateNotTheNewe
 	// Presence of the divine/chaos market is not the whole contract: its VALUE is
 	// read per hour too. Both hours trade the same divine-quoted scarab market —
 	// 560 divine of quote volume, a 0.05 -> 0.1 spread — so only the rate the hour
-	// is valued at separates them. At the newest hour's 200 chaos a divine that is
-	// 112,000 chaos of turnover on a payout of 8.5 chaos, which clears; at the
-	// older hour's 10 it is 5,600 chaos against the 10,000 floor on a payout of
-	// 0.43 against the floor of 3, which cannot.
+	// is valued at separates them. A chaos-denominated gate is what makes that
+	// visible, so the turnover floor is ARMED here (it ships off since POE-191):
+	// at the newest hour's 200 chaos a divine the leg carries 112,000 chaos of
+	// turnover and clears it, while at the older hour's 10 the same leg carries
+	// 5,600 and cannot.
 	_, divineLeg, anchor := liquidTriangle()
 	rows := append(
 		storedAt(feedHour, divineLeg.row(), anchor.row()),
@@ -884,6 +885,7 @@ func TestBestPlays_olderHourWithACheaperDivine_isValuedAtThatHoursRateNotTheNewe
 	)
 	cfg := DefaultConfig()
 	cfg.MinHoursSeen = 1
+	cfg.MinTurnoverChaos = 10000
 
 	got := BestPlays("Allflame", rows, cfg)
 
@@ -993,7 +995,15 @@ func TestBestPlays_marketQuotedInNeitherChaosNorDivine_isDropped(t *testing.T) {
 
 func TestBestPlays_minTurnoverChaos_cutsTheMarketsTooSmallForTheSpreadToBeReal(t *testing.T) {
 	// The measured floor: under 100 chaos an hour the median robust edge is
-	// 242%, over 100k it is 18%. The gate is inclusive at 10,000.
+	// 242%, over 100k it is 18%. The gate is inclusive at the floor.
+	//
+	// It ships OFF since POE-191 — the desktop applies it, with 10,000 as its own
+	// default — so the level is armed here rather than inherited. What the test
+	// pins is the arithmetic the client's knob rides on: the comparison is
+	// Turnover >= the floor, in chaos, and one chaos short of it is out.
+	cfg := DefaultConfig()
+	cfg.MinTurnoverChaos = 10000
+
 	tests := []struct {
 		name        string
 		chaosTraded int64
@@ -1016,7 +1026,7 @@ func TestBestPlays_minTurnoverChaos_cutsTheMarketsTooSmallForTheSpreadToBeReal(t
 			spec := liquidChaosMarket(cardID, 100, 120)
 			spec.volume = [2]int64{tt.chaosTraded, 100}
 
-			got := BestPlays("Allflame", storedAt(feedHour, spec.row()), DefaultConfig())
+			got := BestPlays("Allflame", storedAt(feedHour, spec.row()), cfg)
 			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
 				t.Errorf("keys = %v, want %v (Turnover %v)", playKeys(got.Plays), tt.want, tt.chaosTraded)
 			}
@@ -1027,6 +1037,13 @@ func TestBestPlays_minTurnoverChaos_cutsTheMarketsTooSmallForTheSpreadToBeReal(t
 func TestBestPlays_maxTick_cutsTheSpreadsThatAreOneIntegerPriceStepWide(t *testing.T) {
 	// tick = 1/max(quantity), so a market quoting ten chaos to the item can only
 	// move in tenths — exactly the cap. Nine chaos to the item cannot.
+	//
+	// The cap ships OFF since POE-191 (DefaultConfig sets 1, which no tick can
+	// exceed) and the desktop applies 10% as its own default, so the level is
+	// armed here. The comparison it pins is Tick <= the cap, inclusive.
+	cfg := DefaultConfig()
+	cfg.MaxTick = 0.10
+
 	tests := []struct {
 		name string
 		low  int64
@@ -1049,7 +1066,7 @@ func TestBestPlays_maxTick_cutsTheSpreadsThatAreOneIntegerPriceStepWide(t *testi
 			spec := liquidChaosMarket(cardID, tt.low, 20)
 			spec.volume = [2]int64{11000, 1000}
 
-			got := BestPlays("Allflame", storedAt(feedHour, spec.row()), DefaultConfig())
+			got := BestPlays("Allflame", storedAt(feedHour, spec.row()), cfg)
 			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
 				t.Errorf("keys = %v, want %v (tick 1/%d)", playKeys(got.Plays), tt.want, tt.low)
 			}
@@ -1063,9 +1080,14 @@ func TestBestPlays_minEdgeTickRatio_cutsTheSpreadsNarrowerThanFivePriceSteps(t *
 	// for 11.25, a return of exactly five steps. Fifteen rather than a rounder
 	// number because 4, 15 and a quarter are all exact in binary, so both sides
 	// of the comparison are the SAME double and the case sits ON the gate
-	// instead of a rounding above it. The tick cap is lifted for the same
-	// reason — no market this coarse clears the default 10%.
+	// instead of a rounding above it.
+	//
+	// The ratio ships OFF since POE-191 and the desktop applies 5 as its own
+	// default, so it is armed here; the tick cap is armed at 0.5 as well, because
+	// a market this coarse is exactly what the client's 10% default would drop
+	// and the point here is the ratio, not the cap.
 	cfg := DefaultConfig()
+	cfg.MinEdgeTickRatio = 5
 	cfg.MaxTick = 0.5
 
 	tests := []struct {
@@ -1103,7 +1125,9 @@ func TestBestPlays_minEdgeTickRatio_judgesTheUndercutReturnNotTheRawSpread(t *te
 	// The gate reads the return an order that gets TAKEN can expect. This omen
 	// prints half a divine at the cheapest and three quarters at the dearest on
 	// a 10% tick: the raw spread is 50%, exactly the five steps the gate asks
-	// for, while the undercut return is 22.7% and does not come close.
+	// for, while the undercut return is 22.7% and does not come close. Which
+	// price system the gate reads is the engine's decision and stays the engine's
+	// after POE-191, so the level is armed here and the pin is unchanged.
 	inDivine := rowSpec{
 		itemA:        divineID,
 		itemB:        omenID,
@@ -1115,13 +1139,14 @@ func TestBestPlays_minEdgeTickRatio_judgesTheUndercutReturnNotTheRawSpread(t *te
 	}
 	rows := storedAt(feedHour, inDivine.row(), divineChaosAnchor().row())
 
-	if got := BestPlays("Allflame", rows, DefaultConfig()); len(got.Plays) != 0 {
+	cfg := DefaultConfig()
+	cfg.MinEdgeTickRatio = 5
+	if got := BestPlays("Allflame", rows, cfg); len(got.Plays) != 0 {
 		t.Fatalf("keys = %v, want none — the undercut return is under five ticks", playKeys(got.Plays))
 	}
 
 	// With the ratio lowered to two steps the same hour clears, which is what
 	// makes the raw reading visible: it is at the gate the undercut failed.
-	cfg := DefaultConfig()
 	cfg.MinEdgeTickRatio = 2
 
 	got := BestPlays("Allflame", rows, cfg)
@@ -1137,7 +1162,15 @@ func TestBestPlays_minROIChaos_cutsThePlaysWhosePayoutIsARoundingError(t *testin
 	// A percentage says nothing about what a flip pays. Both markets below quote
 	// an item at 8 chaos in lots of sixteen — a 6.25% tick, an entry of 8.50 and
 	// a return well over five steps — so only the chaos per exchanged unit
-	// separates them, and the floor is three.
+	// separates them.
+	//
+	// The floor ships OFF since POE-191 and the desktop applies 3 chaos as its
+	// own default, so it is armed here. What the test pins is that the gate reads
+	// Roi (the chaos an exchange pays) and not RoiPct: the two markets differ by
+	// a quarter of a chaos on the same percentage-shaped fixture.
+	cfg := DefaultConfig()
+	cfg.MinROIChaos = 3
+
 	tests := []struct {
 		name string
 		high [2]int64
@@ -1162,7 +1195,7 @@ func TestBestPlays_minROIChaos_cutsThePlaysWhosePayoutIsARoundingError(t *testin
 			spec.highestRatio = tt.high
 			spec.volume = [2]int64{30000, 3000}
 
-			got := BestPlays("Allflame", storedAt(feedHour, spec.row()), DefaultConfig())
+			got := BestPlays("Allflame", storedAt(feedHour, spec.row()), cfg)
 			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
 				t.Errorf("keys = %v, want %v", playKeys(got.Plays), tt.want)
 			}
@@ -1171,10 +1204,10 @@ func TestBestPlays_minROIChaos_cutsThePlaysWhosePayoutIsARoundingError(t *testin
 }
 
 func TestBestPlays_minVolumePerHour_stillDropsTheLegNobodyTraded(t *testing.T) {
-	// The unit-volume floor survived POE-184 as a LIVENESS gate: it is no longer
-	// what judges liquidity (Turnover is), but a leg the hour did not trade at
-	// all is not executable at any depth. The market is a thousand-chaos item,
-	// so ten units still clear the chaos turnover floor.
+	// The unit-volume floor survived POE-184 as a LIVENESS gate and POE-191 as
+	// one of the four the server still arms: it is not what judges liquidity
+	// (Turnover is, client-side now), but a leg the hour did not trade at all is
+	// not executable at any depth, whatever the reader's bankroll.
 	tests := []struct {
 		name  string
 		units int64
@@ -1256,18 +1289,27 @@ func TestBestPlays_minEdge_cutsThePlaysBelowTheFloor(t *testing.T) {
 	}
 }
 
-func TestBestPlays_negativeMinEdge_surfacesTheReturnsTheDefaultFloorHides(t *testing.T) {
+// barelyProfitableFlip is one hour of a market whose UNDERCUT round trip gains
+// about 0.05% — positive, and under DefaultConfig's 0.1% sanity floor. The market
+// quotes 10,000 chaos to the card at the hour's cheapest and 10,007 at its
+// dearest, so its tick is 1/10,000 and the two ticks the round trip pays eat
+// almost all of the seven-chaos spread.
+func barelyProfitableFlip() rowSpec {
+	return liquidChaosMarket(cardID, 10000, 10007)
+}
+
+func TestBestPlays_negativeMinEdge_surfacesTheReturnsTheSanityFloorHides(t *testing.T) {
 	// An explicitly negative MinEdge is a choice rather than an unset field, and
-	// this is what it buys: the returns the two-percent floor hides. What it can
-	// no longer do is surface a LOSING route — MinEdgeTickRatio compares the
-	// return against a positive multiple of the tick, so a negative one cannot
-	// clear it whatever MinEdge says (see the report on Config.MinEdge's doc).
-	spec := liquidChaosMarket(cardID, 1000, 1010)
-	spec.volume = [2]int64{100000, 100}
-	rows := storedAt(feedHour, spec.row())
+	// this is what it buys after POE-191: the gains that are real and smaller
+	// than the floor. The floor is all that stands between this play and the
+	// list — every other gate is off by default — so the two runs below differ
+	// in exactly one number.
+	rows := storedAt(feedHour, barelyProfitableFlip().row())
 
 	if got := BestPlays("Allflame", rows, DefaultConfig()); len(got.Plays) != 0 {
-		t.Fatalf("the default floor kept %v, want a sub-1%% return to sit below it", playKeys(got.Plays))
+		play := got.Plays[0]
+		t.Fatalf("the sanity floor kept a play returning %v, want the fixture's return under DefaultConfig().MinEdge of %v",
+			play.RoiPct, DefaultConfig().MinEdge)
 	}
 
 	cfg := DefaultConfig()
@@ -1276,7 +1318,79 @@ func TestBestPlays_negativeMinEdge_surfacesTheReturnsTheDefaultFloorHides(t *tes
 	got := BestPlays("Allflame", rows, cfg)
 
 	if want := []string{directKey(chaosID, cardID)}; !reflect.DeepEqual(playKeys(got.Plays), want) {
-		t.Errorf("keys = %v, want %v", playKeys(got.Plays), want)
+		t.Fatalf("keys = %v, want %v", playKeys(got.Plays), want)
+	}
+	// The fixture has to be a GAIN the floor hid, not a loss the floor caught —
+	// otherwise the test above would pass for the wrong reason.
+	if play := got.Plays[0]; !(play.RoiPct > 0 && play.RoiPct < DefaultConfig().MinEdge) {
+		t.Errorf("RoiPct = %v, want a positive return under the 0.1%% floor", play.RoiPct)
+	}
+}
+
+func TestBestPlays_undercutReturnBelowZero_isNotServedUnderTheDefaults(t *testing.T) {
+	// The floor POE-191 kept when it handed the quality gates to the client: the
+	// server serves everything sane, and a round trip that ends with less than it
+	// started is not sane under any bankroll.
+	//
+	// Both markets below print the same +10% RAW spread and differ only in price
+	// resolution. Ten chaos to the card can only move in tenths, so the two ticks
+	// the round trip pays turn that spread into a 10% LOSS; a thousand chaos to
+	// the card moves in thousandths and the same spread survives as a +9.8% gain.
+	// The pair is what keeps the failing case honest — the loss is cut for being
+	// a loss, not for being an unpriceable or dead market.
+	tests := []struct {
+		name string
+		low  int64
+		high int64
+		want []string
+	}{
+		{
+			name: "a tenth-of-a-chaos tick turns the spread into a loss",
+			low:  10,
+			high: 11,
+			want: []string{},
+		},
+		{
+			name: "the same spread on a thousandth-of-a-chaos tick still gains",
+			low:  1000,
+			high: 1100,
+			want: []string{directKey(chaosID, cardID)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := storedAt(feedHour, liquidChaosMarket(cardID, tt.low, tt.high).row())
+
+			got := BestPlays("Allflame", rows, DefaultConfig())
+			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
+				tick := 1 / float64(tt.low)
+				t.Errorf("keys = %v, want %v (undercut return %v)",
+					playKeys(got.Plays), tt.want, undercutRoi(float64(tt.low), tick, [2]float64{float64(tt.high), tick}))
+			}
+		})
+	}
+}
+
+func TestBestPlays_undercutReturnBelowZero_isNotServedEvenWithANegativeMinEdge(t *testing.T) {
+	// MinEdge is the floor a deploy can lower (EXCHANGE_MIN_EDGE); the bar under
+	// it is structural. withDefaults clamps MinEdgeTickRatio and MinROIChaos to
+	// at least 0, and Roi carries RoiPct's sign because Investment is positive,
+	// so Roi >= MinROIChaos rejects a losing route however low MinEdge goes.
+	// Losing the clamp — or the gate — is what this test is here to catch.
+	//
+	// The caller below asks for the loosest gates it can express: -1 on all
+	// three. The fixture is a two-chaos card at a half-chaos tick, so the losing
+	// round trip returns -16.7% on a payout of -0.50 chaos — inside every one of
+	// those -1s, and served the moment the clamp stops turning them into zeroes.
+	rows := storedAt(feedHour, liquidChaosMarket(cardID, 2, 5).row())
+	cfg := DefaultConfig()
+	cfg.MinEdge = -1
+	cfg.MinEdgeTickRatio, cfg.MinROIChaos = -1, -1
+
+	if got := BestPlays("Allflame", rows, cfg); len(got.Plays) != 0 {
+		t.Errorf("keys = %v, want none — the round trip returns %v",
+			playKeys(got.Plays), got.Plays[0].RoiPct)
 	}
 }
 
@@ -1452,8 +1566,14 @@ func astrolabeInChaos() rowSpec {
 func TestBestPlays_measuredNoiseMarkets_areCutByTheGates(t *testing.T) {
 	// The three markets that motivated POE-184, rebuilt from the 26-hour
 	// Allflame measurement. Each row is one hour of a real market; what has to
-	// hold is the OUTCOME, because more than one gate bites some of them — the
-	// levels themselves are pinned one at a time by the boundary tests above.
+	// hold is the OUTCOME — the levels themselves are pinned one at a time by the
+	// boundary tests above.
+	//
+	// The two noise markets are still cut with the quality gates off, and the
+	// reason is worth stating: both print a 100% tick, so the sell leg's undercut
+	// price is Price*(1-1) = 0 and the round trip returns -100%. Junk that coarse
+	// fails the sanity floor on its own arithmetic, which is why relaxing the
+	// defaults did not let it back in.
 	tests := []struct {
 		name string
 		spec rowSpec
@@ -1611,13 +1731,14 @@ func TestBestPlays_recordedHour_ranksFinitePlaysUnderTheDefaultGates(t *testing.
 
 	got := BestPlays("Allflame", storedAt(feedHour, rows...), DefaultConfig())
 
-	// The recorded hour is frozen input: its 23 priced markets have to yield
-	// same-market flips, and every number in them has to be finite and positive.
-	// How MANY flips is a characterization, not a spec — 2 under DefaultConfig on
-	// this fixture — so the direct count is read as "some" rather than pinned,
-	// which would make an unrelated tuning change look like a regression. The
-	// absence of routes IS pinned: none of the hour's three cross-quote routes
-	// clears the default gates, and one appearing would mean a gate moved.
+	// The recorded hour is frozen input: its 23 priced markets have to yield both
+	// shapes, and every number in them has to be finite and positive. How MANY of
+	// each is a characterization, not a spec, so the counts are read as "some"
+	// rather than pinned, which would make an unrelated tuning change look like a
+	// regression. That routes appear at all IS pinned, and is what POE-191
+	// changed: the hour's best cross-quote route returns 3.3 ticks on a payout of
+	// 2.94 chaos, which the old server-side levels of 5 and 3 cut. Those levels
+	// now live client-side, and the test below arms them on the same rows.
 	direct, oneHop := 0, 0
 	for _, play := range got.Plays {
 		switch play.Mode {
@@ -1650,41 +1771,53 @@ func TestBestPlays_recordedHour_ranksFinitePlaysUnderTheDefaultGates(t *testing.
 	if direct <= 0 {
 		t.Errorf("direct plays = %d, want the recorded hour to yield same-market flips", direct)
 	}
-	if oneHop != 0 {
-		t.Errorf("one-hop plays = %d, want none: the hour's best route returns 3.3 ticks against the five MinEdgeTickRatio demands, on a payout of 2.94 chaos against the MinROIChaos floor of 3", oneHop)
+	if oneHop <= 0 {
+		t.Errorf("one-hop plays = %d, want the recorded hour's cross-quote routes, which the relaxed defaults no longer cut", oneHop)
+	}
+	for _, play := range got.Plays {
+		if play.Mode == ModeOneHop && len(play.Legs) != 3 {
+			t.Errorf("%s: %d legs, want the three of a route", play.Key, len(play.Legs))
+		}
 	}
 }
 
-func TestBestPlays_recordedHourUnderALowerTickRatioAndRoiFloor_yieldsOneHopRoutes(t *testing.T) {
-	// What the default gates hide in this hour is the SIZE of the route's
-	// return, not the shape: its coarsest leg steps 9.1% — inside the 10% tick
-	// cap — and the undercut return is 29.6%, three ticks rather than the five
-	// MinEdgeTickRatio demands, on a payout of 2.94 chaos rather than the 3
-	// MinROIChaos demands. BOTH levels have to come down for the route to
-	// appear: lowering either alone still leaves the other cutting it. Lowering
-	// the pair brings the same recorded rows back as three-leg routes, which is
-	// what keeps the cross-quote path exercised.
+func TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes(t *testing.T) {
+	// POE-191's migration invariant: applying the four levels this engine used to
+	// enforce — and which the desktop now ships as its own default knobs — gives
+	// back the pre-POE-191 answer on the same recorded hour. A user who never
+	// touches the knobs sees what the old server served.
+	//
+	// The route is the case that decides it: its coarsest leg steps 9.1%, inside
+	// the 10% tick cap, and its undercut return is 29.6% — three ticks rather
+	// than the five the ratio asks for, on a payout of 2.94 chaos rather than 3.
+	// Either level alone cuts it, so both have to be armed for this to mean what
+	// it says, and the flips have to survive or the levels would be cutting the
+	// whole hour rather than the route.
 	rows, _ := Normalize(loadFixtureHour(t))
 	cfg := DefaultConfig()
-	cfg.MinEdgeTickRatio, cfg.MinROIChaos = 3, 2.5
+	cfg.MinTurnoverChaos, cfg.MaxTick = 10000, 0.10
+	cfg.MinEdgeTickRatio, cfg.MinROIChaos = 5, 3
+	// The fifth old level: the server enforced 2% before POE-191 made it the
+	// client's minRoiPct default. Armed so the invariant is pinned, not
+	// coincidental on this fixture.
+	cfg.MinEdge = 0.02
 
 	got := BestPlays("Allflame", storedAt(feedHour, rows...), cfg)
 
-	oneHop := 0
+	direct, oneHop := 0, 0
 	for _, play := range got.Plays {
-		if play.Mode != ModeOneHop {
-			continue
-		}
-		oneHop++
-		if len(play.Legs) != 3 {
-			t.Errorf("%s: %d legs, want the three of a route", play.Key, len(play.Legs))
-		}
-		if math.IsNaN(play.RoiPct) || math.IsInf(play.RoiPct, 0) {
-			t.Errorf("%s: RoiPct = %v, want a finite number", play.Key, play.RoiPct)
+		switch play.Mode {
+		case ModeDirect:
+			direct++
+		case ModeOneHop:
+			oneHop++
 		}
 	}
-	if oneHop <= 0 {
-		t.Errorf("one-hop plays = %d, want the recorded hour to yield cross-quote routes once MinEdgeTickRatio and MinROIChaos come down to 3 and 2.5", oneHop)
+	if oneHop != 0 {
+		t.Errorf("one-hop plays = %d, want none: the hour's best route returns 3.3 ticks against the 5 the ratio asks for, on a payout of 2.94 chaos against the floor of 3", oneHop)
+	}
+	if direct <= 0 {
+		t.Errorf("direct plays = %d, want the flips that cleared the old levels to still clear them", direct)
 	}
 }
 
@@ -1701,19 +1834,23 @@ func TestBestPlays_zeroValueConfig_scoresTheHourLikeDefaultConfig(t *testing.T) 
 }
 
 func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
+	// The four quality levels are 0 / 1 / 0 / 0 on purpose since POE-191: off,
+	// with the desktop applying 10,000 / 0.10 / 5 / 3 client-side. Changing one
+	// of them back here changes what every user is shown and cannot be undone
+	// from the app, which is why the whole tuning is pinned rather than described.
 	want := Config{
 		WindowHours:      6,
 		MinVolumePerHour: 10,
-		MinEdge:          0.02,
-		MinTurnoverChaos: 10000,
-		MaxTick:          0.10,
-		MinEdgeTickRatio: 5,
-		MinROIChaos:      3,
+		MinEdge:          0.001,
+		MinTurnoverChaos: 0,
+		MaxTick:          1,
+		MinEdgeTickRatio: 0,
+		MinROIChaos:      0,
 		SuspectLowBand:   0.67,
 		SuspectHighBand:  1.5,
 		HideSuspect:      false,
 		MinHoursSeen:     2,
-		MaxPlays:         100,
+		MaxPlays:         500,
 		QuotePriority:    []string{DivineID, ChaosID},
 		Horizons: []HorizonConfig{
 			{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 4},
@@ -1828,9 +1965,13 @@ func TestConfigWithDefaults_fillsTheUnsetFieldsIndependently(t *testing.T) {
 
 func TestConfigWithDefaults_nonPositiveCount_fallsBackToTheDefault(t *testing.T) {
 	// Negative counts, floors, caps and bands have no meaning, so they read as
-	// unset — the one exception being MinEdge, which the table above pins. It is
-	// also why no gate can be switched off by passing 0 or -1; the way to run
-	// without one is a value that cannot bind.
+	// unset — the one exception being MinEdge, which the table above pins.
+	//
+	// For the three levels DefaultConfig now leaves at 0 this is a CLAMP rather
+	// than a restoration, and it is load-bearing: a negative MinEdgeTickRatio or
+	// MinROIChaos would make evaluate's last two gates admit a losing round trip,
+	// which is the bar under MinEdge (see
+	// TestBestPlays_undercutReturnBelowZero_isNotServedEvenWithANegativeMinEdge).
 	cfg := Config{
 		WindowHours:      -1,
 		MinVolumePerHour: -1,
