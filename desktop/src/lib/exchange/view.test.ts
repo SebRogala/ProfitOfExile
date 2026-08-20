@@ -8,11 +8,13 @@ import {
 	dataAgeParts,
 	deriveState,
 	formatChaos,
+	formatGain,
 	formatLegPrice,
 	formatRoiPct,
 	formatTime,
 	formatTimeAgo,
 	formatVolume,
+	hoursProgress,
 	iconSrc,
 	legLabel,
 	parseDensity,
@@ -627,6 +629,58 @@ describe('formatChaos', () => {
 
 	it('renders a non-finite amount as "0.00" rather than "NaN"', () => {
 		expect(formatChaos(Number.NaN)).toBe('0.00');
+	});
+});
+
+describe('formatGain', () => {
+	it('signs a gain so the column does not read as a second cost', () => {
+		expect(formatGain(700)).toBe('+700.00');
+	});
+
+	it('keeps the thousands grouping under the sign', () => {
+		expect(formatGain(5050)).toBe('+5,050.00');
+	});
+
+	it('keeps the significant digits of a sub-chaos gain', () => {
+		expect(formatGain(0.0125)).toBe('+0.0125');
+	});
+
+	it('signs a loss', () => {
+		expect(formatGain(-5)).toBe('-5.00');
+	});
+
+	it('leaves a play that returns what it cost unsigned', () => {
+		// A round trip at 0.00c is not a positive play, and "+0.00" would rank it
+		// as one to a reader scanning the column for plus signs.
+		expect(formatGain(0)).toBe('0.00');
+	});
+
+	it('renders negative zero unsigned rather than as "-0.00"', () => {
+		expect(formatGain(-0)).toBe('0.00');
+	});
+});
+
+describe('hoursProgress', () => {
+	it('reports the fraction of the window a play held', () => {
+		expect(hoursProgress(3, 6)).toBe(0.5);
+	});
+
+	it('reports a full window as 1', () => {
+		expect(hoursProgress(6, 6)).toBe(1);
+	});
+
+	it('reports 0 for a window of no hours rather than dividing by zero', () => {
+		// A body served before any hour closed: the bar is a CSS width, so an
+		// Infinity here would be a broken track rather than an empty one.
+		expect(hoursProgress(2, 0)).toBe(0);
+	});
+
+	it('clamps a count above the window to a full bar', () => {
+		expect(hoursProgress(8, 6)).toBe(1);
+	});
+
+	it('reports 0 for a non-finite count', () => {
+		expect(hoursProgress(Number.NaN, 6)).toBe(0);
 	});
 });
 

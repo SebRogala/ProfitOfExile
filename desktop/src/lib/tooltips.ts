@@ -59,6 +59,43 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
 	'\u039412h': 'Change over the last 12 hours. Shows recent momentum. \u2191 = increasing, \u2193 = decreasing.',
 };
 
+/**
+ * The Currency Exchange table's column and control tooltips (POE-186).
+ *
+ * Separate from `METRIC_TOOLTIPS` on purpose: the two surfaces share the words
+ * "ROI" and "ROI%" and mean different things by them. A gem's ROI% is
+ * percentage points off a base-gem price; an exchange play's is a fraction of
+ * what one round trip costs, net of the undercut each leg pays. Pointing a gem
+ * tooltip at this table would word the number wrongly by a factor of a hundred.
+ *
+ * Every figure these describe is the LAST SETTLED feed hour (POE-188), not the
+ * live book — which is why each entry ends where it does: with what to do about
+ * that, rather than with the number as if it were a quote.
+ */
+export const EXCHANGE_TOOLTIPS: Record<string, string> = {
+	ROI: 'Absolute profit in chaos orbs — one exchange is chaos in, chaos out. What you get back minus what you spent, multiplied by your Quantity; the sub-line is the per-exchange figure. Both are net of one tick of undercut on each leg, the price an order that actually fills pays. Higher = more profit, but every figure here is the last settled hour: verify the route in game before committing.',
+	'ROI%':
+		'Return on investment as a percentage — ROI divided by what one exchange costs. Scale-free, so it compares plays across price tiers. NET is net of one tick of undercut on every leg, the return an order that actually gets taken can expect, and it is what the ranking uses. RAW is the same round trip at the hour’s raw extremes — never below NET, and the gap between them is what the ticks cost.',
+	Quantity:
+		'How many exchanges you intend to run. ROI and Investment are both multiplied by it; ROI% is not, because it is scale-free. Default 1, and it is remembered across restarts. Set it above a play’s Depth and the Depth cell turns amber — the number is never capped for you.',
+	Investment:
+		'Chaos you need liquid: the per-exchange cost at the undercut entry, times your Quantity. Set the min/max in the filter bar to see only what your bankroll covers, and switch the unit to divine for the large ones — converted at the divine/chaos rate from the same feed hour.',
+	Gold: 'The in-game currency exchange charges gold per trade. Not computed yet — the column is reserved so ROI can be shown net of gold once the per-trade cost is known.',
+	Trend:
+		'Reserved for the fair-price trend across recent hours — whether the market this play trades against is drifting up or down. No per-play fair history is published yet, so nothing is derived and the cell shows a dash rather than a direction the data cannot support.',
+	Depth:
+		'Units per hour the thinnest leg traded — the hourly ceiling. This is the whole market’s volume, not your share, and a direct play buys and sells the same item on one market, so its real ceiling is lower still. A Quantity above it is marked amber rather than capped: the ROI stands, filling it takes longer than an hour or moves the price.',
+	Hours:
+		'How many of the window’s hours this play held — the persistence gate. A play must clear every gate in at least four of the recent window’s six hours (eighteen of the day window’s twenty-four) to be served at all, so the full count is a standing spread and the minimum is an edge that only just persisted.',
+	'Only / Hide':
+		'Two layers. Category pills are coarse — the 16 buckets the in-game exchange lists down its own sidebar. Item chips are overrides: an item rule beats whatever its category says, and Hide beats Only when both apply. A play matches if any leg’s item or quote hits a rule, in either role. Both layers are remembered across restarts.',
+	Mode: 'DIRECT buys and sells the same item on one market — market making, two trades. 1-HOP buys an item against one currency, sells it against another, then converts back — three trades, three chances to be beaten to the fill.',
+	Suspect:
+		'A leg’s price sits outside its fair band: a buy below fair × 0.67, or a sell above fair × 1.5. The play is still served and still ranked, after every clean one, because the extreme may be a real fill or a single stray order and only the book can say which. Read the row as a signal, not a quote — verify the route in game before committing.',
+	'Data age':
+		'Every figure on this page is the last SETTLED feed hour, not the live book. The feed publishes 40–60 minutes after an hour closes, so these prices can be up to about two hours behind what the exchange is showing you right now. Check the route in game before committing to it.',
+};
+
 export const SELL_CONFIDENCE_TOOLTIPS: Record<string, string> = {
 	SAFE: 'Liquid market, stable price \u2014 will sell near listed price',
 	FAIR: 'Moderate risk \u2014 may need patience or small undercut',

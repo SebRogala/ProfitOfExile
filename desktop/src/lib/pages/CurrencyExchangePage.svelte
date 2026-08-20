@@ -1,13 +1,19 @@
 <script lang="ts">
 	/**
 	 * Currency Exchange — the ranked arbitrage plays the server computes each
-	 * hour (POE-175), as a table with one filter over it.
+	 * hour (POE-175/188), as a table with two layers of filters over it.
 	 *
-	 * Deliberately thin. Every derivation the header and the cells need lives in
-	 * `$lib/exchange/view`, which is pure and unit-tested; this file owns only
-	 * the four loose variables that view module reads, the fetch that fills
-	 * them, and the markup. A `.svelte` file has no unit-test harness here, so
-	 * anything with a rule in it belongs on the other side of that import.
+	 * Deliberately thin. Every derivation the header, the filters and the cells
+	 * need lives in `$lib/exchange/view` and `$lib/exchange/filters`, which are
+	 * pure and unit-tested; this file owns the persisted picks, the fetch that
+	 * fills the four loose state variables, and the markup. A `.svelte` file has
+	 * no unit-test harness here, so anything with a rule in it belongs on the
+	 * other side of those imports.
+	 *
+	 * Everything on screen is the LAST SETTLED feed hour, which is why the status
+	 * line leads with how old that hour is rather than footnoting it: the feed
+	 * publishes 40-60 minutes after an hour closes, so a reader who takes these
+	 * numbers for the live book is reading something up to two hours stale.
 	 *
 	 * It does not open its own Mercure connection: `LabPage.svelte` owns the one
 	 * connection for the whole app (ADR-014 keeps every page mounted) and
@@ -22,30 +28,69 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { fetchCurrencyExchangePlays, getApiBase, type CurrencyExchangeResponse } from '$lib/api';
 	import {
+		DENSITY_OPTIONS,
+		HORIZON_OPTIONS,
 		MODE_OPTIONS,
+		SORT_OPTIONS,
+		dataAgeParts,
 		deriveState,
-		formatEdge,
-		formatTime,
+		formatChaos,
+		formatGain,
+		formatRoiPct,
 		formatVolume,
-		iconSrc,
-		legLabel,
+		hoursProgress,
+		parseDensity,
+		parseHorizon,
 		parseMode,
-		refetchDelay
+		parseQuantity,
+		parseSort,
+		parseUnit,
+		refetchDelay,
+		sortPlays
 	} from '$lib/exchange/view';
+	import {
+		applyNumericFilters,
+		applyRules,
+		itemUniverse,
+		overDepth,
+		parseCategoryRules,
+		parseItemRules,
+		serializeCategoryRules,
+		serializeItemRules,
+		type CategoryRuleState
+	} from '$lib/exchange/filters';
+	import { EXCHANGE_TOOLTIPS } from '$lib/tooltips';
 	import { persisted } from '$lib/prefs.svelte';
-	import ItemIcon from '$lib/components/ItemIcon.svelte';
+	import ExchangeFilterBar from '$lib/components/ExchangeFilterBar.svelte';
+	import ExchangeRoute from '$lib/components/ExchangeRoute.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 
-	/** Persisted (ADR-013): the mode filter survives restarts. */
+	/**
+	 * Every pick the reader makes survives a restart (ADR-013). All strings,
+	 * validated on read by the pure parsers rather than on write: a preference
+	 * written by an older build, or a half-typed number still in an input, has to
+	 * degrade to a usable default instead of throwing on first render.
+	 */
 	const mode = persisted('currencyExchangeMode', 'all');
+	const horizon = persisted('currencyExchangeHorizon', 'recent');
+	const sortPref = persisted('currencyExchangeSort', 'roiPct');
+	const densityPref = persisted('currencyExchangeDensity', 'comfortable');
+	const quantityPref = persisted('currencyExchangeQuantity', '1');
+	const unitPref = persisted('currencyExchangeUnit', 'chaos');
+	const investMinPref = persisted('currencyExchangeInvestMin', '');
+	const investMaxPref = persisted('currencyExchangeInvestMax', '');
+	const minRoiPctPref = persisted('currencyExchangeMinRoiPct', '');
+	const minGainPref = persisted('currencyExchangeMinGain', '');
+	const categoryRulesPref = persisted('currencyExchangeCategoryRules', '{}');
+	const itemRulesPref = persisted('currencyExchangeItemRules', '[]');
 
 	/**
 	 * The base the legs' relative icon paths hang off. `$derived` rather than a
 	 * const read at init: this page is mounted for the life of the app (ADR-014),
 	 * so on a cold start it renders before the Rust status carrying `server_url`
 	 * arrives, and a value captured then would pin every icon to the fallback
-	 * base for the whole session. One call feeds every chip on screen.
+	 * base for the whole session. One call feeds every tile on screen.
 	 */
 	const apiBase = $derived(getApiBase());
 
@@ -56,22 +101,101 @@
 
 	/**
 	 * The clock the relative strings are measured against. Ticked rather than
-	 * read inline: "updated 3 min ago" is derived once and would otherwise stay
-	 * frozen at its fetch-time wording until the next Mercure publish, which on
-	 * a quiet hour is an hour away.
+	 * read inline: "as of 14:35 (3 min ago)" is derived once and would otherwise
+	 * stay frozen at its fetch-time wording until the next Mercure publish, which
+	 * on a quiet hour is an hour away.
 	 */
 	let now = $state(new Date());
 	const NOW_TICK_MS = 30_000;
 
 	const viewState = $derived(deriveState({ result, lastFetchedAt, lastError, now }));
+	const age = $derived(dataAgeParts(result, now));
+
+	// ------------------------------------------------------------ the picks --
+
+	const density = $derived(parseDensity(densityPref.value));
+	const dense = $derived(density === 'dense');
+	const quantity = $derived(parseQuantity(quantityPref.value));
+	const unit = $derived(parseUnit(unitPref.value));
+	const categoryRules = $derived(parseCategoryRules(categoryRulesPref.value));
+	const itemRules = $derived(parseItemRules(itemRulesPref.value));
+
+	// ----------------------------------------------------------- the filters --
+
+	/** The response's own list — what the counter counts against and what the
+	 *  picker's universe is built from, never the filtered one. */
+	const allPlays = $derived(result?.plays ?? []);
+	const items = $derived(itemUniverse(allPlays));
+	const hoursWindow = $derived(result?.hours ?? 0);
+
+	/**
+	 * Rules, then numbers, then order. The two rule layers narrow by identity and
+	 * the numeric bounds by size, so running them the other way round would cost
+	 * the same rows at more comparisons; the sort is last because it is the only
+	 * step whose answer depends on how many rows survived.
+	 */
+	const rows = $derived(
+		sortPlays(
+			applyNumericFilters(applyRules(allPlays, categoryRules, itemRules), {
+				quantity,
+				investMin: investMinPref.value,
+				investMax: investMaxPref.value,
+				unit,
+				divineChaosRate: result?.divineChaosRate ?? 0,
+				minRoiPct: minRoiPctPref.value,
+				minGain: minGainPref.value
+			}),
+			parseSort(sortPref.value)
+		)
+	);
+
+	function setQuantity(next: number) {
+		quantityPref.value = String(Math.max(1, next));
+	}
+
+	/**
+	 * A pill's new state. Neutral is stored as an absent key rather than a
+	 * `'neutral'` value — `parseCategoryRules` reads it back that way, and a
+	 * stored neutral would be a second spelling of the same fact.
+	 */
+	function setCategoryRule(category: string, state: CategoryRuleState | undefined) {
+		const next = { ...categoryRules };
+		if (state === undefined) delete next[category];
+		else next[category] = state;
+		categoryRulesPref.value = serializeCategoryRules(next);
+	}
+
+	/** An item's new state; `undefined` drops the rule. One rule per id. */
+	function setItemRule(item: { id: string; name: string }, state: CategoryRuleState | undefined) {
+		const next = itemRules.filter((rule) => rule.id !== item.id);
+		if (state !== undefined) next.push({ id: item.id, name: item.name, state });
+		itemRulesPref.value = serializeItemRules(next);
+	}
+
+	/**
+	 * Clear resets what hides rows — the two rule layers and the four bounds —
+	 * and nothing else. Quantity, sort, mode, horizon and density change what the
+	 * reader is looking at, not how much of it, so clearing a filter that emptied
+	 * the table must not also throw away the way they had it set up.
+	 */
+	function clearFilters() {
+		categoryRulesPref.value = serializeCategoryRules({});
+		itemRulesPref.value = serializeItemRules([]);
+		investMinPref.value = '';
+		investMaxPref.value = '';
+		minRoiPctPref.value = '';
+		minGainPref.value = '';
+	}
+
+	// ------------------------------------------------------------- the fetch --
 
 	/**
 	 * Which `load()` call owns the state. Two fetches are routinely in flight at
-	 * once — a cold start fires `all` and then the restored mode a tick later,
-	 * and a Mercure refetch can be overtaken by a mode switch — and the requests
-	 * are not guaranteed to answer in the order they were sent. Without the
-	 * counter the slower one wins and the table shows one mode's plays under the
-	 * other mode's button. Same pattern as `LabPage.svelte`'s
+	 * once — a cold start fires the defaults and then the restored picks a tick
+	 * later, and a Mercure refetch can be overtaken by a mode switch — and the
+	 * requests are not guaranteed to answer in the order they were sent. Without
+	 * the counter the slower one wins and the table shows one mode's plays under
+	 * the other mode's button. Same pattern as `LabPage.svelte`'s
 	 * `bestPlaysGeneration`.
 	 *
 	 * A plain `let`, not `$state`: nothing renders it, and making it reactive
@@ -83,7 +207,10 @@
 		const generation = ++loadGeneration;
 		loading = true;
 		try {
-			const response = await fetchCurrencyExchangePlays(parseMode(mode.value));
+			const response = await fetchCurrencyExchangePlays(
+				parseMode(mode.value),
+				parseHorizon(horizon.value)
+			);
 			if (generation !== loadGeneration) return;
 			result = response;
 			lastFetchedAt = new Date();
@@ -98,11 +225,13 @@
 		}
 	}
 
-	// Fetch on mount and on every mode change — one effect for both.
+	// Fetch on mount and on every mode or horizon change — one effect for all
+	// three, because both picks are parameters of the same request.
 	$effect(() => {
-		// The explicit read is the dependency: reactivity must not rest on
-		// `load()` happening to read `mode.value` before its first await.
+		// The explicit reads are the dependencies: reactivity must not rest on
+		// `load()` happening to read them before its first await.
 		void mode.value;
+		void horizon.value;
 		load();
 	});
 
@@ -143,6 +272,23 @@
 	});
 </script>
 
+{#snippet warning()}
+	<svg
+		class="warn-icon"
+		width="11"
+		height="11"
+		viewBox="0 0 12 12"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="1.3"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		aria-hidden="true"
+	>
+		<path d="M6 1.2 L11.2 10.6 H0.8 Z M6 4.6 V7.4 M6 8.9 V9.1" />
+	</svg>
+{/snippet}
+
 <div class="exchange-page" aria-busy={loading}>
 	<div class="page-head">
 		<h1>Currency Exchange</h1>
@@ -150,13 +296,94 @@
 			<span class="league">{result.league}</span>
 		{/if}
 		<div class="spacer"></div>
+
+		<Tooltip text={EXCHANGE_TOOLTIPS.Quantity}><span class="control-label">Quantity</span></Tooltip>
+		<div class="stepper">
+			<button class="step" aria-label="One fewer exchange" onclick={() => setQuantity(quantity - 1)}
+				>&minus;</button
+			>
+			<input
+				class="qty mono"
+				type="text"
+				inputmode="numeric"
+				aria-label="Exchanges"
+				value={quantityPref.value}
+				oninput={(e) => (quantityPref.value = e.currentTarget.value)}
+				onblur={() => (quantityPref.value = String(quantity))}
+			/>
+			<!-- The blur write-back keeps the control honest: mid-typing the raw
+			     string stays (so "2" en route to "25" is not fought), but a value
+			     left behind ("abc", "2.9", "") snaps to the integer every figure
+			     in the table was actually computed at. -->
+			<button class="step" aria-label="One more exchange" onclick={() => setQuantity(quantity + 1)}
+				>+</button
+			>
+		</div>
+		<span class="control-hint">exchanges</span>
+
+		<div class="divider"></div>
+
+		<span class="control-label">Sort</span>
+		<SegmentedButtons
+			value={parseSort(sortPref.value)}
+			options={SORT_OPTIONS}
+			onselect={(v) => (sortPref.value = parseSort(v))}
+			title="Rank by return on investment, or by chaos gained per exchange."
+		/>
+
+		<div class="divider"></div>
+
 		<SegmentedButtons
 			value={parseMode(mode.value)}
 			options={MODE_OPTIONS}
 			onselect={(v) => (mode.value = parseMode(v))}
 			title="Which plays to show: every one, single-swap only, or two-swap only."
 		/>
+
+		<div class="divider"></div>
+
+		<SegmentedButtons
+			value={parseHorizon(horizon.value)}
+			options={HORIZON_OPTIONS}
+			onselect={(v) => (horizon.value = parseHorizon(v))}
+			title="How many hours of history ranked the list. The Hours column counts against this window."
+		/>
+
+		<div class="divider"></div>
+
+		<span class="control-label">Density</span>
+		<SegmentedButtons
+			value={density}
+			options={DENSITY_OPTIONS}
+			onselect={(v) => (densityPref.value = parseDensity(v))}
+			title="Dense drops the sub-lines and shrinks the icons; their content is in the column tooltips."
+		/>
 	</div>
+
+	{#if result}
+		<ExchangeFilterBar
+			categories={result.categories}
+			{categoryRules}
+			{itemRules}
+			{items}
+			investMin={investMinPref.value}
+			investMax={investMaxPref.value}
+			minRoiPct={minRoiPctPref.value}
+			minGain={minGainPref.value}
+			{unit}
+			divineChaosRate={result.divineChaosRate}
+			counts={{ shown: rows.length, total: allPlays.length }}
+			{apiBase}
+			oncategoryrule={setCategoryRule}
+			onitemrule={setItemRule}
+			oninvestmin={(v) => (investMinPref.value = v)}
+			oninvestmax={(v) => (investMaxPref.value = v)}
+			onminroipct={(v) => (minRoiPctPref.value = v)}
+			onmingain={(v) => (minGainPref.value = v)}
+			onunit={(v) => (unitPref.value = v)}
+			onclear={clearFilters}
+		/>
+	{/if}
 
 	<div class="status-line">
 		{#if viewState.kind === 'loading'}
@@ -164,13 +391,24 @@
 		{:else if viewState.kind === 'warming'}
 			Waiting for the first Currency Exchange hour…
 		{:else if viewState.kind === 'ready'}
-			{#if viewState.updatedAgo}
-				<Tooltip text={formatTime(result?.lastUpdated ?? null)} position="below">
-					<span>updated {viewState.updatedAgo}</span>
+			{#if age}
+				<Tooltip text={EXCHANGE_TOOLTIPS['Data age']} position="below">
+					<span class="age">{age.label}{age.ago === '' ? '' : ` (${age.ago})`}</span>
 				</Tooltip>
 				<span class="dot">·</span>
 			{/if}
-			<span>{result?.count ?? 0} plays</span>
+			<span>window: {hoursWindow} hours</span>
+			{#if quantity > 1}
+				<span class="dot">·</span>
+				<span>
+					ROI and Investment are shown for <span class="mono strong">{quantity}</span> exchanges
+				</span>
+			{/if}
+			<span class="dot">·</span>
+			<span>
+				prices are the newest hour’s cheapest buy and dearest sell — every ROI below is a best case,
+				not a quote
+			</span>
 		{:else if viewState.kind === 'stale'}
 			<span class="warn">stale since {viewState.staleSince} — server unreachable</span>
 		{:else}
@@ -178,44 +416,165 @@
 		{/if}
 	</div>
 
-	{#if result && result.plays.length > 0}
+	{#if rows.length > 0}
 		<div class="table-wrap">
-			<table>
+			<table class:dense>
 				<thead>
 					<tr>
-						<th class="num">#</th>
-						<th>Mode</th>
-						<th>Play</th>
-						<th class="num">Edge</th>
-						<th class="num">Depth</th>
-						<th class="num">Hours</th>
+						<th class="col-rank num">#</th>
+						<th class="col-mode">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Mode}>Mode</Tooltip>
+						</th>
+						<th class="col-route">
+							<!-- The label spans mirror `ExchangeRoute`'s slot geometry exactly
+							     (see the contract in that file's header comment): change a
+							     width there and the labels here drift off the tiles. -->
+							<div class="route-head" class:dense>
+								<span class="slot-end">Spend</span>
+								<span class="gap"></span>
+								<span class="slot-buy">{dense ? 'Buy' : 'Step 1 — buy'}</span>
+								<span class="gap"></span>
+								<span class="slot-sell">{dense ? 'Sell' : 'Step 2 — sell'}</span>
+								<span class="gap"></span>
+								<span class="slot-convert">{dense ? 'Convert' : 'Step 3 — convert'}</span>
+								<span class="gap"></span>
+								<span class="slot-end">Get</span>
+							</div>
+						</th>
+						<th class="col-money num">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Investment}>Investment</Tooltip>
+						</th>
+						<th class="col-gold num reserved">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Gold}>Gold</Tooltip>
+						</th>
+						<th class="col-money num">
+							<Tooltip text={EXCHANGE_TOOLTIPS.ROI}>ROI</Tooltip>
+						</th>
+						<th class="col-pct num">
+							<Tooltip text={EXCHANGE_TOOLTIPS['ROI%']}>ROI%</Tooltip>
+						</th>
+						<th class="col-trend num reserved">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Trend}>Trend</Tooltip>
+						</th>
+						<th class="col-depth num">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Depth}>Depth</Tooltip>
+						</th>
+						<th class="col-hours num">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Hours}>Hours</Tooltip>
+						</th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each result.plays as play, i}
+					{#each rows as play, i (play.key)}
+						{@const over = overDepth(play, quantity)}
+						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						<tr>
-							<td class="num mono">{i + 1}</td>
-							<td><span class="pill">{play.mode}</span></td>
+							<td class="num mono rank">{i + 1}</td>
+
 							<td>
-								<div class="legs">
-									{#each play.legs as leg}
-										<span class="leg" title="{leg.item} | {leg.quote}">
-											<ItemIcon src={iconSrc(apiBase, leg.itemIcon)} alt="" />
-											{legLabel(leg)}
-										</span>
-									{/each}
-								</div>
+								<span class="pill" class:hop={play.mode === '1-hop'}>{play.mode}</span>
 							</td>
-							<td class="num mono edge">{formatEdge(play.edge)}</td>
-							<td class="num mono">{formatVolume(play.depth)}/h</td>
-							<td class="num mono">{play.hoursSeen}</td>
+
+							<td class="route-cell">
+								<ExchangeRoute {play} {density} {apiBase} />
+							</td>
+
+							<td class="num">
+								<div class="mono value">{formatChaos(play.investment * quantity)}c</div>
+								{#if !dense}
+									<div class="sub">{formatChaos(play.investment)}c each</div>
+								{/if}
+							</td>
+
+							<td class="num">
+								<span class="mono reserved">—</span>
+							</td>
+
+							<td class="num">
+								<div class="mono gain" class:flat={play.roi <= 0}>
+									{formatGain(play.roi * quantity)}c
+								</div>
+								{#if !dense}
+									<div class="sub">{formatGain(play.roi)}c each</div>
+								{/if}
+							</td>
+
+							<td class="num">
+								<div class="cell-line">
+									{#if play.suspect}
+										<Tooltip text={EXCHANGE_TOOLTIPS.Suspect}>{@render warning()}</Tooltip>
+									{/if}
+									<span class="cap">Net</span>
+									<span class="mono value">{formatRoiPct(play.roiPct)}</span>
+								</div>
+								{#if !dense}
+									<div class="cell-line">
+										<span class="cap">Raw</span>
+										<span class="mono sub">{formatRoiPct(play.roiPctRaw)}</span>
+									</div>
+								{/if}
+							</td>
+
+							<td class="num">
+								<span class="mono reserved">—</span>
+							</td>
+
+							<td class="num">
+								<div class="cell-line">
+									{#if over}{@render warning()}{/if}
+									<span class="mono value" class:amber={over}>{formatVolume(play.depth)}/h</span>
+								</div>
+								{#if over && !dense}
+									<div class="sub amber">
+										{quantity} above this hour’s {formatVolume(play.depth)}
+									</div>
+								{/if}
+							</td>
+
+							<td class="num">
+								<div class="mono value">{play.hoursSeen} / {hoursWindow}</div>
+								{#if !dense}
+									<div class="bar-row">
+										<span class="bar">
+											<span
+												class="bar-fill"
+												class:full={progress === 1}
+												style="width: {progress * 100}%"
+											></span>
+										</span>
+									</div>
+								{/if}
+							</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
 		</div>
+
+		<div class="footnotes">
+			<div class="footnote">
+				{@render warning()}
+				<span>
+					on <strong>ROI%</strong> — a leg's price sits outside its fair band: a buy below fair
+					&times; 0.67, or a sell above fair &times; 1.5. The play still ranks, after every clean
+					one; the extreme may be a real fill or one stray order, so verify the route in game.
+				</span>
+			</div>
+			<div class="footnote">
+				{@render warning()}
+				<span>
+					on <strong>Depth</strong> — your quantity is above what the thinnest leg traded last hour.
+					The ROI still stands; filling it will take longer than an hour or move the price. Nothing
+					is capped for you.
+				</span>
+			</div>
+		</div>
 	{:else if viewState.kind === 'ready'}
-		<div class="empty">No plays pass the filters right now.</div>
+		<div class="empty">
+			{allPlays.length > 0
+				? 'No plays pass your filters right now.'
+				: 'No plays ranked for this mode and horizon.'}
+		</div>
 	{/if}
 </div>
 
@@ -223,7 +582,7 @@
 	.exchange-page {
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
+		gap: 10px;
 		height: 100%;
 		color: var(--color-lab-text);
 	}
@@ -231,7 +590,8 @@
 	.page-head {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
+		flex-wrap: wrap;
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
 		padding: 10px 16px;
@@ -255,17 +615,98 @@
 		flex: 1;
 	}
 
+	.control-label {
+		font-size: 0.625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--color-lab-text-secondary);
+		white-space: nowrap;
+	}
+
+	.control-hint {
+		font-size: 0.6875rem;
+		color: #6b7280;
+		white-space: nowrap;
+	}
+
+	.divider {
+		width: 1px;
+		height: 20px;
+		background: var(--color-lab-border);
+		margin: 0 2px;
+	}
+
+	.stepper {
+		display: flex;
+		align-items: center;
+		border: 1px solid var(--color-lab-border);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+
+	.step {
+		background: transparent;
+		border: none;
+		color: var(--color-lab-text-secondary);
+		padding: 3px 9px;
+		font-size: 0.8125rem;
+		font-family: inherit;
+		cursor: pointer;
+	}
+
+	.step:hover {
+		color: var(--color-lab-text);
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.step:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: -1px;
+	}
+
+	/* Free text rather than `type="number"`: the value is a persisted STRING and
+	   is validated by `parseQuantity` on read, so a half-typed entry has to be
+	   allowed to sit in the box without the browser rewriting it. */
+	.qty {
+		width: 52px;
+		background: transparent;
+		border: none;
+		border-left: 1px solid var(--color-lab-border);
+		border-right: 1px solid var(--color-lab-border);
+		color: var(--color-lab-text);
+		text-align: center;
+		padding: 3px 4px;
+		font-size: 0.8125rem;
+	}
+
+	.qty:focus {
+		outline: none;
+		background: var(--color-lab-bg);
+	}
+
 	.status-line {
 		display: flex;
 		align-items: center;
 		gap: 6px;
+		flex-wrap: wrap;
 		font-size: 0.75rem;
 		color: var(--color-lab-text-secondary);
 		padding: 0 2px;
 	}
 
+	/* The one thing on this line in primary text: how stale the whole table is
+	   is the fact a reader has to take with them, not a footnote. */
+	.status-line .age {
+		color: var(--color-lab-text);
+		font-weight: 600;
+	}
+
 	.status-line .warn {
 		color: var(--color-lab-yellow);
+	}
+
+	.status-line .strong {
+		color: var(--color-lab-text);
 	}
 
 	.dot {
@@ -275,7 +716,8 @@
 	.table-wrap {
 		flex: 1;
 		overflow-y: auto;
-		/* Three nowrap leg chips on a 1-hop play outrun a narrow window. */
+		/* The route's five fixed slots outrun a narrow window by design — the
+		   geometry is what makes a column readable down the page. */
 		overflow-x: auto;
 		background: var(--color-lab-surface);
 		border: 1px solid var(--color-lab-border);
@@ -290,25 +732,133 @@
 	thead {
 		position: sticky;
 		top: 0;
+		z-index: 1;
 		background: var(--color-lab-surface);
 	}
 
 	th {
 		text-align: left;
-		padding: 8px 10px;
+		padding: 8px;
 		font-size: 0.6875rem;
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
 		color: var(--color-lab-text-secondary);
 		border-bottom: 1px solid var(--color-lab-border);
 		font-weight: 600;
+		vertical-align: bottom;
+		white-space: nowrap;
+	}
+
+	table.dense th {
+		padding: 5px 8px;
+		font-size: 0.625rem;
+	}
+
+	/* A reserved column reads as reserved before it is hovered — Gold and Trend
+	   carry no number yet, and a full-weight header would promise one. */
+	th.reserved {
+		color: #6b7280;
+	}
+
+	.col-rank {
+		width: 40px;
+	}
+	.col-mode {
+		width: 74px;
+	}
+	.col-money {
+		width: 136px;
+	}
+	.col-gold {
+		width: 62px;
+	}
+	.col-pct {
+		width: 132px;
+	}
+	.col-trend {
+		width: 62px;
+	}
+	.col-depth {
+		width: 148px;
+	}
+	.col-hours {
+		width: 92px;
+	}
+
+	table.dense .col-mode {
+		width: 68px;
+	}
+	table.dense .col-money {
+		width: 116px;
+	}
+	table.dense .col-gold {
+		width: 58px;
+	}
+	table.dense .col-pct {
+		width: 112px;
+	}
+	table.dense .col-trend {
+		width: 58px;
+	}
+	table.dense .col-depth {
+		width: 96px;
+	}
+	table.dense .col-hours {
+		width: 62px;
+	}
+
+	/* Mirrors `ExchangeRoute`'s slot widths, arrows and gap. Both densities. */
+	.route-head {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+	}
+
+	.route-head.dense {
+		gap: 6px;
+	}
+
+	.route-head span {
+		flex-shrink: 0;
+	}
+
+	.route-head .gap {
+		width: 22px;
+	}
+	.route-head .slot-end {
+		width: 92px;
+	}
+	.route-head .slot-buy {
+		width: 196px;
+	}
+	.route-head .slot-sell,
+	.route-head .slot-convert {
+		width: 164px;
+	}
+
+	.route-head.dense .gap {
+		width: 18px;
+	}
+	.route-head.dense .slot-end {
+		width: 70px;
+	}
+	.route-head.dense .slot-buy {
+		width: 220px;
+	}
+	.route-head.dense .slot-sell,
+	.route-head.dense .slot-convert {
+		width: 140px;
 	}
 
 	td {
-		padding: 6px 10px;
+		padding: 8px;
 		color: var(--color-lab-text);
 		border-bottom: 1px solid var(--color-lab-border);
-		vertical-align: top;
+		vertical-align: middle;
+	}
+
+	table.dense td {
+		padding: 4px 8px;
 	}
 
 	th.num,
@@ -317,13 +867,104 @@
 		white-space: nowrap;
 	}
 
-	td.mono {
+	.mono {
 		font-family: 'Consolas', 'Monaco', monospace;
 		font-weight: 600;
 	}
 
-	td.edge {
+	td .value {
+		font-size: 0.8125rem;
+		line-height: 1.25;
+	}
+
+	table.dense td .value {
+		font-size: 0.75rem;
+	}
+
+	td .sub {
+		font-size: 0.6875rem;
+		color: #6b7280;
+		line-height: 1.25;
+		white-space: nowrap;
+	}
+
+	.rank {
+		color: var(--color-lab-text-secondary);
+	}
+
+	/* Gold and Trend hold their slot with a dash rather than an empty cell: an
+	   empty cell reads as a missing value for THIS row, a dash as a column that
+	   does not answer yet. */
+	.reserved {
+		color: #4b5563;
+	}
+
+	.gain {
+		font-size: 0.875rem;
+		font-weight: 700;
 		color: var(--color-lab-green);
+		line-height: 1.25;
+	}
+
+	table.dense .gain {
+		font-size: 0.75rem;
+	}
+
+	/* A round trip that returns exactly what it cost is not a gain, and green
+	   would put it in the same class as the plays that are. */
+	.gain.flat {
+		color: #6b7280;
+	}
+
+	.cell-line {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 5px;
+		line-height: 1.3;
+	}
+
+	.cap {
+		font-size: 0.5625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: #6b7280;
+	}
+
+	.amber {
+		color: var(--color-lab-yellow);
+	}
+
+	.warn-icon {
+		color: var(--color-lab-yellow);
+		flex-shrink: 0;
+	}
+
+	.bar-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 3px;
+	}
+
+	.bar {
+		display: block;
+		width: 56px;
+		height: 4px;
+		background: var(--color-lab-border);
+		border-radius: 2px;
+		overflow: hidden;
+	}
+
+	.bar-fill {
+		display: block;
+		height: 4px;
+		background: #4b5563;
+	}
+
+	/* Only a play that held every hour of the window gets the green bar — the
+	   colour is the persistence verdict, not a progress indicator. */
+	.bar-fill.full {
+		background: var(--color-lab-green);
 	}
 
 	tr:hover {
@@ -337,27 +978,39 @@
 		letter-spacing: 0.05em;
 		border-radius: 3px;
 		border: 1px solid currentcolor;
-		padding: 0 4px;
+		padding: 0 5px;
 		white-space: nowrap;
 		color: var(--color-lab-text-secondary);
 	}
 
-	.legs {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
+	table.dense .pill {
+		font-size: 0.5625rem;
+		padding: 0 4px;
 	}
 
-	.leg {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		background: var(--color-lab-bg);
-		border: 1px solid var(--color-lab-border);
-		border-radius: 3px;
-		padding: 1px 6px;
-		font-size: 0.75rem;
-		white-space: nowrap;
+	/* 1-hop is three trades against two markets — a different risk from market
+	   making, so it is told apart at a glance rather than by reading the word. */
+	.pill.hop {
+		color: var(--color-lab-purple);
+	}
+
+	.footnotes {
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+		padding: 0 2px;
+	}
+
+	.footnote {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		font-size: 0.6875rem;
+		color: #6b7280;
+	}
+
+	.footnote strong {
+		color: var(--color-lab-text-secondary);
 	}
 
 	.empty {

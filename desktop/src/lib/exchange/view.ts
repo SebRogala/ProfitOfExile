@@ -299,13 +299,6 @@ export function formatRoiPct(roiPct: number): string {
 }
 
 /**
- * @deprecated Use `formatRoiPct`. Kept only so `CurrencyExchangePage.svelte`
- * keeps compiling until chunk 5 rewrites its cells; that chunk deletes this
- * alias together with the page's last `play.edge` read.
- */
-export const formatEdge = formatRoiPct;
-
-/**
  * A per-hour volume, abbreviated: `0`, `42`, `1.2k`, `13.0M`.
  *
  * Depth spans several orders of magnitude across currencies, and the column is
@@ -374,6 +367,35 @@ export function formatChaos(amount: number): string {
 	const negative = fixed.startsWith('-');
 	const [whole, fraction] = (negative ? fixed.slice(1) : fixed).split('.');
 	return `${negative ? '-' : ''}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction}`;
+}
+
+/**
+ * A chaos gain as the ROI column prints it: `+700.00`, `+5,050.00`, `0.00`.
+ *
+ * The sign is explicit on anything that moved, because the column sits beside
+ * Investment and a bare "700.00" reads as a second cost rather than a return.
+ * It is taken from the ROUNDED magnitude, the same rule `formatRoiPct` follows:
+ * a gain too small to print must not be dressed as a gain, and a loss that
+ * rounds away must not print "-0.00". Exactly zero keeps no sign at all — a
+ * play that returns what it cost is not a positive one.
+ */
+export function formatGain(amount: number): string {
+	const magnitude = formatChaos(Math.abs(amount));
+	if (Number(magnitude.replace(/,/g, '')) === 0) return magnitude;
+	return `${amount < 0 ? '-' : '+'}${magnitude}`;
+}
+
+/**
+ * How much of the window a play held, as a 0–1 fraction for the Hours bar.
+ *
+ * Clamped at both ends rather than trusted: the bar is a CSS width, so a
+ * `hours` of 0 (a body served before any hour closed) would otherwise divide to
+ * Infinity and a `hoursSeen` above the window would draw past the track. Both
+ * are read as their honest extreme — nothing seen, and the whole window.
+ */
+export function hoursProgress(hoursSeen: number, hours: number): number {
+	if (!Number.isFinite(hoursSeen) || !Number.isFinite(hours) || hours <= 0) return 0;
+	return Math.min(1, Math.max(0, hoursSeen / hours));
 }
 
 // -------------------------------------------------------------- the order --
