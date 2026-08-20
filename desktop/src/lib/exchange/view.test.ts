@@ -1,20 +1,32 @@
 import { describe, it, expect } from 'vitest';
 import {
+	HORIZON_OPTIONS,
 	MODE_OPTIONS,
 	REFETCH_DEBOUNCE_MS,
 	REFETCH_JITTER_MS,
+	dataAgeParts,
 	deriveState,
-	formatEdge,
 	formatLegPrice,
+	formatRoiPct,
 	formatTime,
 	formatTimeAgo,
 	formatVolume,
 	iconSrc,
 	legLabel,
+	parseDensity,
+	parseHorizon,
 	parseMode,
-	refetchDelay
+	parseQuantity,
+	parseSort,
+	parseUnit,
+	refetchDelay,
+	sortPlays
 } from './view';
-import type { CurrencyExchangeLeg, CurrencyExchangeResponse } from '$lib/api';
+import type {
+	CurrencyExchangeLeg,
+	CurrencyExchangePlay,
+	CurrencyExchangeResponse
+} from '$lib/api';
 
 /**
  * A warm response with no plays. Every `deriveState` case overrides only the
@@ -59,6 +71,30 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
 	};
 }
 
+/**
+ * A clean, ranked play. `sortPlays` reads only `roi` and `suspect`, so every
+ * sort case overrides one of those and the `key` it is identified by.
+ */
+function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+	return {
+		key: 'direct:divine:chaos',
+		mode: 'direct',
+		legs: [],
+		roiPct: 0.05,
+		edge: 0.05,
+		roiPctRaw: 0.08,
+		roi: 10,
+		investment: 200,
+		turnover: 5000,
+		tick: 0.005,
+		depth: 40,
+		suspect: false,
+		hoursSeen: 6,
+		lastHour: '2026-08-19T11:00:00.000Z',
+		...overrides
+	};
+}
+
 describe('parseMode', () => {
 	it('passes "all" through', () => {
 		expect(parseMode('all')).toBe('all');
@@ -93,6 +129,125 @@ describe('MODE_OPTIONS', () => {
 			{ value: 'direct', label: 'Direct' },
 			{ value: '1-hop', label: '1-hop' }
 		]);
+	});
+});
+
+describe('parseHorizon', () => {
+	it('passes "recent" through', () => {
+		expect(parseHorizon('recent')).toBe('recent');
+	});
+
+	it('passes "day" through', () => {
+		expect(parseHorizon('day')).toBe('day');
+	});
+
+	it('falls back to "recent" for a horizon the server would reject with a 400', () => {
+		expect(parseHorizon('week')).toBe('recent');
+	});
+
+	it('falls back to "recent" for an unset preference', () => {
+		// The window the page fetched before the toggle existed, so a preference
+		// written by an older build resolves to what that build already showed.
+		expect(parseHorizon('')).toBe('recent');
+	});
+});
+
+describe('HORIZON_OPTIONS', () => {
+	it('offers the two server horizons, labelled with their window length', () => {
+		// Wire values: the selected one goes to fetchCurrencyExchangePlays as a
+		// query param, so a prettified value would be a 400 rather than a slip.
+		expect(HORIZON_OPTIONS).toEqual([
+			{ value: 'recent', label: 'Recent 6h' },
+			{ value: 'day', label: 'Day 24h' }
+		]);
+	});
+});
+
+describe('parseSort', () => {
+	it('passes "roiPct" through', () => {
+		expect(parseSort('roiPct')).toBe('roiPct');
+	});
+
+	it('passes "roi" through', () => {
+		expect(parseSort('roi')).toBe('roi');
+	});
+
+	it('falls back to "roiPct" for an unknown sort', () => {
+		expect(parseSort('turnover')).toBe('roiPct');
+	});
+
+	it('falls back to "roiPct" for an unset preference', () => {
+		// The server's own ranking is the default order, so an unset preference
+		// leaves the list exactly as served.
+		expect(parseSort('')).toBe('roiPct');
+	});
+});
+
+describe('parseDensity', () => {
+	it('passes "comfortable" through', () => {
+		expect(parseDensity('comfortable')).toBe('comfortable');
+	});
+
+	it('passes "dense" through', () => {
+		expect(parseDensity('dense')).toBe('dense');
+	});
+
+	it('falls back to "comfortable" for an unknown density', () => {
+		expect(parseDensity('compact')).toBe('comfortable');
+	});
+
+	it('falls back to "comfortable" for an unset preference', () => {
+		expect(parseDensity('')).toBe('comfortable');
+	});
+});
+
+describe('parseUnit', () => {
+	it('passes "chaos" through', () => {
+		expect(parseUnit('chaos')).toBe('chaos');
+	});
+
+	it('passes "divine" through', () => {
+		expect(parseUnit('divine')).toBe('divine');
+	});
+
+	it('falls back to "chaos" for a currency the bounds cannot be converted to', () => {
+		expect(parseUnit('exalted')).toBe('chaos');
+	});
+
+	it('falls back to "chaos" for an unset preference', () => {
+		// Chaos is what every wire number is denominated in, so it is the one unit
+		// that stays readable when divineChaosRate is 0.
+		expect(parseUnit('')).toBe('chaos');
+	});
+});
+
+describe('parseQuantity', () => {
+	it('passes a whole count through', () => {
+		expect(parseQuantity('12')).toBe(12);
+	});
+
+	it('falls back to one for an unset preference', () => {
+		expect(parseQuantity('')).toBe(1);
+	});
+
+	it('truncates a fractional count rather than claiming a partial exchange', () => {
+		expect(parseQuantity('2.9')).toBe(2);
+	});
+
+	it('falls back to one for a zero, which would flatten every figure to nothing', () => {
+		expect(parseQuantity('0')).toBe(1);
+	});
+
+	it('falls back to one for a negative count', () => {
+		expect(parseQuantity('-4')).toBe(1);
+	});
+
+	it('falls back to one for a count that is not a number at all', () => {
+		expect(parseQuantity('lots')).toBe(1);
+	});
+
+	it('falls back to one for an infinite count', () => {
+		expect(parseQuantity('Infinity')).toBe(1);
 	});
 });
 
@@ -252,21 +407,131 @@ describe('formatTime', () => {
 	});
 });
 
-describe('formatEdge', () => {
-	it('renders a positive edge as a signed percentage with one decimal', () => {
-		expect(formatEdge(0.1234)).toBe('+12.3%');
+describe('formatRoiPct', () => {
+	it('renders a positive return as a signed percentage with one decimal', () => {
+		// The wire value is a FRACTION — 0.1234 is 12.34%, not 0.12% — so the
+		// formatter multiplies. Pointing it at a gem roiPct (already percentage
+		// points) would inflate the number a hundredfold.
+		expect(formatRoiPct(0.1234)).toBe('+12.3%');
 	});
 
-	it('renders a negative edge with a minus sign', () => {
-		expect(formatEdge(-0.05)).toBe('-5.0%');
+	it('renders a negative return with a minus sign', () => {
+		expect(formatRoiPct(-0.05)).toBe('-5.0%');
 	});
 
-	it('renders a zero edge as +0.0%', () => {
-		expect(formatEdge(0)).toBe('+0.0%');
+	it('renders a zero return as +0.0%', () => {
+		expect(formatRoiPct(0)).toBe('+0.0%');
 	});
 
-	it('renders an edge that rounds away to nothing as +0.0%, never -0.0%', () => {
-		expect(formatEdge(-0.00001)).toBe('+0.0%');
+	it('renders a return that rounds away to nothing as +0.0%, never -0.0%', () => {
+		expect(formatRoiPct(-0.00001)).toBe('+0.0%');
+	});
+});
+
+describe('dataAgeParts', () => {
+	// Built from local components, like the formatTime cases: formatTime reads a
+	// local clock, so an ISO literal would assert a different hour per timezone.
+	const hourEnd = new Date(2026, 7, 19, 11, 0);
+	const computedAt = new Date(2026, 7, 19, 11, 45);
+	const now = new Date(2026, 7, 19, 12, 0);
+
+	it('dates the badge from the end of the settled hour, not from the ranking', () => {
+		// The feed publishes 40-60 min after an hour closes, so `to` and
+		// `lastUpdated` differ by most of an hour — and only `to` answers "how old
+		// are these prices", which is what the badge claims.
+		expect(
+			dataAgeParts(
+				response({ to: hourEnd.toISOString(), lastUpdated: computedAt.toISOString() }),
+				now
+			)
+		).toEqual({ label: 'as of 11:00', ago: '1 h ago' });
+	});
+
+	it('falls back to the ranking time for a body served without a window', () => {
+		expect(
+			dataAgeParts(response({ to: null, lastUpdated: computedAt.toISOString() }), now)
+		).toEqual({ label: 'as of 11:45', ago: '15 min ago' });
+	});
+
+	it('renders no badge for a body carrying neither timestamp', () => {
+		expect(dataAgeParts(response({ to: null, lastUpdated: null }), now)).toBeNull();
+	});
+
+	it('renders no badge rather than "as of " for a timestamp that will not parse', () => {
+		expect(dataAgeParts(response({ to: 'not-a-date' }), now)).toBeNull();
+	});
+
+	it('renders no badge before the first fetch has landed', () => {
+		expect(dataAgeParts(null, now)).toBeNull();
+	});
+});
+
+describe('sortPlays', () => {
+	function keys(plays: CurrencyExchangePlay[]): string[] {
+		return plays.map((p) => p.key);
+	}
+
+	it('leaves the server ranking untouched under the ROI% sort', () => {
+		// The served order already carries roiPct desc plus turnover, direct-first
+		// and key tie-breaks; re-sorting on roiPct alone would discard them.
+		const served = [
+			play({ key: 'a', roi: 5 }),
+			play({ key: 'b', roi: 500 }),
+			play({ key: 'c', roi: 50 })
+		];
+
+		expect(keys(sortPlays(served, 'roiPct'))).toEqual(['a', 'b', 'c']);
+	});
+
+	it('orders by chaos gained per exchange under the ROI sort', () => {
+		const served = [
+			play({ key: 'a', roi: 5 }),
+			play({ key: 'b', roi: 500 }),
+			play({ key: 'c', roi: 50 })
+		];
+
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['b', 'c', 'a']);
+	});
+
+	it('keeps a suspect play behind every clean one even when its ROI is the largest', () => {
+		// The flag is the reason the server ranks it last: its price sits outside
+		// the fair band, so the big number is the part not to trust.
+		const served = [
+			play({ key: 'clean-small', roi: 5 }),
+			play({ key: 'clean-big', roi: 50 }),
+			play({ key: 'suspect-huge', roi: 5000, suspect: true })
+		];
+
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['clean-big', 'clean-small', 'suspect-huge']);
+	});
+
+	it('keeps the server order between two plays tied on ROI', () => {
+		const served = [play({ key: 'first', roi: 40 }), play({ key: 'second', roi: 40 })];
+
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['first', 'second']);
+	});
+
+	it('sorts into a new array rather than reordering the fetched list', () => {
+		// The page holds the fetched list in reactive state and re-derives the sort
+		// from it; an in-place sort would make the ROI% option unable to restore
+		// the server ranking without a refetch.
+		const served = [play({ key: 'a', roi: 5 }), play({ key: 'b', roi: 500 })];
+
+		sortPlays(served, 'roi');
+
+		expect(keys(served)).toEqual(['a', 'b']);
+	});
+
+	it("hands out a copy under the ROI% sort too, never the caller's own array", () => {
+		// The ROI% branch keeps the served order but must not alias the
+		// response's array: the page mutating the sorted list (or Svelte state
+		// wrapping it) would otherwise write through to the fetched result.
+		const served = [play({ key: 'a' }), play({ key: 'b' })];
+
+		const sorted = sortPlays(served, 'roiPct');
+
+		expect(sorted).not.toBe(served);
+		expect(keys(sorted)).toEqual(['a', 'b']);
 	});
 });
 
