@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the Currency Exchange item-data asset (names + icon URLs).
+"""Generate the Currency Exchange item-data asset (names + icon URLs + categories).
 
 The currency exchange feed identifies every item by its metadata id
-(``Metadata/Items/Currency/CurrencyRerollRare``). The server needs two things
-that the feed never sends: the in-game display name ("Chaos Orb") and an icon.
+(``Metadata/Items/Currency/CurrencyRerollRare``). The server needs three things
+that the feed never sends: the in-game display name ("Chaos Orb"), an icon, and
+the in-game sidebar category the item is filed under ("Currency").
 
-Two upstreams supply them:
+Two upstreams supply the first two:
 
 * **names** — the RePoE-fork base-item dump, keyed by metadata id. This is the
   id universe: every id the feed can contain in the eight item categories the
@@ -16,6 +17,10 @@ Two upstreams supply them:
   from the MD5 of the File NAME, so it is stable per name and a re-upload keeps
   the URL — in batches of fifty through the ``imageinfo`` API, with
   ``Special:FilePath`` as the per-file fallback.
+
+The category has no upstream: neither source knows the exchange's own sidebar,
+so ``CATEGORY_RULES`` maps id prefixes onto the sixteen categories the game
+shows, and every id in the universe must match a rule or the run fails.
 
 The result is committed as ``internal/exchange/itemdata/items.json`` (embedded
 into the server binary by ``internal/exchange/items.go``) plus a flat
@@ -33,8 +38,8 @@ costs about thirty requests to poewiki, paced at ``--rate`` per second. If it
 does hit a 429, stop and let the window clear — retrying immediately extends
 the block rather than shortening it.
 
-Exit codes: 0 success, 1 a coverage or uniqueness gate failed, 2 an upstream
-could not be read.
+Exit codes: 0 success, 1 a coverage, uniqueness, or category gate failed, 2 an
+upstream could not be read.
 """
 
 from __future__ import annotations
@@ -65,6 +70,9 @@ WIKI_INDEX = "https://www.poewiki.net/w/index.php"
 # a given name (a re-upload keeps it) — that is what makes it committable.
 IMAGE_URL_PREFIX = "https://www.poewiki.net/images/"
 
+# Every exchangeable metadata id starts with this.
+METADATA_PREFIX = "Metadata/Items/"
+
 # The item categories the currency exchange trades. A metadata id outside these
 # eight prefixes is not exchangeable, so widening this list without a feed
 # observation to justify it only inflates the asset.
@@ -77,6 +85,68 @@ CATEGORIES = [
     "AtlasExiles",
     "Delve",
     "Heist",
+]
+
+# The sixteen categories of the in-game Currency Exchange sidebar, in the game's
+# order and spelling. The desktop filter renders this list verbatim, so both are
+# the game's to change, not ours. Expedition is listed although no id maps to it
+# (the exchange trades no logbooks or artifacts): the sidebar shows it, and an
+# empty filter entry is cheaper than a list that drifts from the game's.
+GAME_CATEGORIES = [
+    "Currency",
+    "Essences",
+    "Delve",
+    "Scarabs",
+    "Divination Cards",
+    "Delirium",
+    "Legion",
+    "Fragments",
+    "Oils",
+    "Catalysts",
+    "Omens",
+    "Tattoos",
+    "Expedition",
+    "Harvest",
+    "Runegrafts",
+    "Allflame",
+]
+
+# (id prefix, required substring or None, game category), matched against the id
+# with METADATA_PREFIX stripped, first match wins. The order is load-bearing:
+# every narrower "Currency/" rule precedes the "Currency/" catch-all and the
+# three "MapFragments/" splits precede theirs, so appending a rule at the end
+# rather than above its catch-all makes it dead.
+CATEGORY_RULES = [
+    ("Scarabs/", None, "Scarabs"),
+    ("DivinationCards/", None, "Divination Cards"),
+    ("Delve/", None, "Delve"),
+    ("AtlasExiles/", None, "Currency"),
+    # Of the Heist bucket only Rogue's Marker trades, and the sidebar files it
+    # under Currency.
+    ("Heist/", None, "Currency"),
+    # Ducats and "Message in a Bottle"; the Deepwater charts themselves are not
+    # on the exchange.
+    ("Deepwater/", None, "Allflame"),
+    ("Currency/CurrencyDeepwater", None, "Allflame"),  # Dead Man's Sulphur
+    ("MapFragments/AtlasMemory/", None, "Fragments"),  # "Echo of ..."
+    ("MapFragments/", "AllflamePack", "Allflame"),  # "Allflame Ember of ..."
+    ("MapFragments/", "Legion", "Legion"),  # emblems and legion splinters
+    ("MapFragments/", None, "Fragments"),  # incl. breach splinters and stones
+    ("Currency/CurrencyEssence", None, "Essences"),
+    ("Currency/CurrencyAffliction", None, "Delirium"),
+    ("Currency/Mushrune", None, "Oils"),
+    ("Currency/CurrencyJewelleryQuality", None, "Catalysts"),
+    ("Currency/Runegraft", None, "Runegrafts"),
+    ("Currency/HarvestSeed", None, "Harvest"),
+    # Ancestral omens and tattoos share a prefix in the feed and split by id.
+    ("Currency/AncestralOmen", None, "Omens"),
+    ("Currency/AncestralTattoo", None, "Tattoos"),
+    ("Currency/CurrencyDelveCrafting", None, "Delve"),  # fossils
+    ("Currency/CurrencyLegion", None, "Legion"),  # timeless splinters
+    ("Currency/LegionCocoon", None, "Legion"),  # Enshrouding Crystals
+    # Catch-all: astrolabes, memories, Kalguuran, Sanctum, Incubation, Sentinel,
+    # Bestiary, scouting reports, Eldritch.
+    ("Currency/", None, "Currency"),
 ]
 
 # A polite, identifying User-Agent. poewiki asks for one and answers a generic
@@ -193,13 +263,30 @@ def fetch_base_items(fetcher: Fetcher) -> dict:
 
 def id_universe(base_items: dict) -> list:
     """Every metadata id in the eight exchange categories, sorted."""
-    prefixes = tuple(f"Metadata/Items/{category}/" for category in CATEGORIES)
+    prefixes = tuple(f"{METADATA_PREFIX}{category}/" for category in CATEGORIES)
     return sorted(k for k in base_items if k.startswith(prefixes))
 
 
 def category_of(item_id: str) -> str:
     parts = item_id.split("/")
     return parts[2] if len(parts) > 2 else "?"
+
+
+def category_for(item_id: str) -> str | None:
+    """Return the sidebar category for a metadata id, or None when no rule matches."""
+    if not item_id.startswith(METADATA_PREFIX):
+        return None
+    relative = item_id[len(METADATA_PREFIX):]
+    for prefix, contains, category in CATEGORY_RULES:
+        if relative.startswith(prefix) and (contains is None or contains in relative):
+            return category
+    return None
+
+
+def unknown_rule_categories() -> list:
+    """Return the rule categories that are not one of GAME_CATEGORIES."""
+    known = set(GAME_CATEGORIES)
+    return sorted({category for _, _, category in CATEGORY_RULES if category not in known})
 
 
 def fetch_cargo_rows(fetcher: Fetcher) -> dict:
@@ -386,7 +473,7 @@ def resolve_via_filepath(fetcher: Fetcher, files: list) -> dict:
 
 def build_items(universe: list, base_items: dict, cargo: dict, icon_urls: dict,
                 carried_icons: dict = None):
-    """Return (items, skipped) — id -> {name, icon} for every named id.
+    """Return (items, skipped) — id -> {name, icon, category} for every named id.
 
     An id with no name in either source is a drop-table placeholder rather than
     an item (RePoE carries 420 unnamed ``RandomFossilOutcome<N>`` entries in the
@@ -410,7 +497,7 @@ def build_items(universe: list, base_items: dict, cargo: dict, icon_urls: dict,
         icon = icon_urls.get(icon_file) or None
         if icon is None and carried_icons:
             icon = carried_icons.get(item_id)
-        items[item_id] = {"name": name, "icon": icon}
+        items[item_id] = {"name": name, "icon": icon, "category": category_for(item_id)}
     return items, skipped
 
 
@@ -480,6 +567,22 @@ def report(universe, items, skipped, cargo, icon_files_count) -> None:
         print(f"    {category:<16} universe {total:>5}  names {named_count:>5}  "
               f"icons {icon_count:>5} ({_pct(icon_count, named_count)})")
 
+    print("  per game category:")
+    per_game = defaultdict(lambda: [0, 0])
+    for item_id in universe:
+        stats = per_game[category_for(item_id)]
+        stats[0] += 1
+        if item_id in items:
+            stats[1] += 1
+    for category in GAME_CATEGORIES:
+        total, named_count = per_game[category]
+        print(f"    {category:<16} universe {total:>5}  names {named_count:>5}")
+    # None means the id matched no rule, which the gate below fails on; the
+    # count is printed anyway so a failing run says how big the hole is.
+    unruled = per_game[None][0]
+    if unruled:
+        print(f"    {'(no rule)':<16} universe {unruled:>5}  names {per_game[None][1]:>5}")
+
 
 def _cargo_name_coverage(items: dict, cargo: dict):
     """Return (named, total) over the ids poewiki lists as items.
@@ -507,10 +610,10 @@ def _pct(part: int, whole: int) -> str:
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
-        description="Generate the Currency Exchange item names + icon URLs asset.",
+        description="Generate the Currency Exchange item names + icons + categories asset.",
     )
     parser.add_argument("--out", default="internal/exchange/itemdata/items.json",
-                        help="id -> {name, icon} asset embedded by internal/exchange")
+                        help="id -> {name, icon, category} asset embedded by internal/exchange")
     parser.add_argument("--icons-out", default="internal/exchange/itemdata/icon-urls.json",
                         help="flat id -> icon URL map consumed by scripts/download-gem-icons.py")
     parser.add_argument("--rate", type=float, default=2.0,
@@ -533,6 +636,17 @@ def parse_args(argv):
 def main(argv) -> int:
     args = parse_args(argv)
     started = time.monotonic()
+
+    # A rule table that names a category the sidebar does not have would ship a
+    # category the desktop filter cannot render. Checked before the first
+    # request: it is a table typo, not an upstream fact.
+    stray = unknown_rule_categories()
+    if stray:
+        print(f"FAIL: category rules name {len(stray)} categories outside the "
+              f"{len(GAME_CATEGORIES)} game categories: {', '.join(stray)}", file=sys.stderr)
+        print("Nothing written.", file=sys.stderr)
+        return 1
+
     fetcher = Fetcher(args.rate, verbose=args.verbose)
 
     # Checked before the first request: a names-only run rewrites --out without
@@ -576,6 +690,17 @@ def main(argv) -> int:
               + (" ..." if len(shapes) > 8 else ""))
 
     failures = []
+
+    # An id no rule matches would ship with a null category, which reaches the
+    # client as "unfiltered" — a silent hole. A widened upstream bucket lands
+    # here, and the fix is one more row in CATEGORY_RULES.
+    uncategorized = [item_id for item_id in universe if category_for(item_id) is None]
+    for item_id in uncategorized[:10]:
+        print(f"  NO RULE  {item_id}", file=sys.stderr)
+    if len(uncategorized) > 10:
+        print(f"  ... and {len(uncategorized) - 10} more", file=sys.stderr)
+    if uncategorized:
+        failures.append(f"{len(uncategorized)} universe ids match no category rule")
 
     collisions = check_safe_name_uniqueness(items)
     for token, ids in collisions[:10]:
