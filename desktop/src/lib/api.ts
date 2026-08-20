@@ -293,6 +293,15 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
  * `$lib/exchange/view`'s `iconSrc`. `null` means the item has no artwork, which
  * is a different thing from a path that later 404s: the first renders no icon
  * at all, the second the "?" fallback.
+ *
+ * `itemCategory`/`quoteCategory` are the leg's two sides placed in the in-game
+ * Currency Exchange sidebar — one of the sixteen names the response's
+ * `categories` lists, or `""` for an id the server's item asset does not cover.
+ * `""` is a usable answer rather than an ambiguous one: a client filtering by
+ * category treats an uncategorised side as UNFILTERED, so it never has to tell
+ * an absent category from an empty one, and the fields are plain strings for
+ * that reason. Both sides carry one because a filter applies to whichever side
+ * the reader is shopping for.
  */
 export interface CurrencyExchangeLeg {
 	action: 'buy' | 'sell';
@@ -307,8 +316,10 @@ export interface CurrencyExchangeLeg {
 	suspect: boolean;
 	itemName: string;
 	itemIcon: string | null;
+	itemCategory: string;
 	quoteName: string;
 	quoteIcon: string | null;
+	quoteCategory: string;
 }
 
 /**
@@ -365,6 +376,12 @@ export interface CurrencyExchangePlay {
  * `investment` and `turnover` here was valued with. It is 0 when that hour
  * carried no divine/chaos trade, in which case no divine-quoted play is in the
  * list at all.
+ *
+ * `categories` is the in-game Currency Exchange sidebar, in sidebar order: the
+ * whole taxonomy, on every served body, INDEPENDENT of the plays in it — a cold
+ * body with no plays still carries all sixteen. It is the source the category
+ * filter renders from; never hold a copy of the list client-side, or a category
+ * GGG adds becomes a silent gap in the filter while the legs already name it.
  */
 export interface CurrencyExchangeResponse {
 	league: string;
@@ -378,6 +395,7 @@ export interface CurrencyExchangeResponse {
 	divineChaosRate: number;
 	count: number;
 	plays: CurrencyExchangePlay[];
+	categories: string[];
 }
 
 // --- API helpers ---
