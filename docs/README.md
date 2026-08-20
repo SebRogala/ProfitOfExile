@@ -41,6 +41,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-012: Icons are pre-seeded from an allowed IP and content-addressed](adr/012-icons-are-pre-seeded-from-an-allowed-ip-and-cached-by-content-address.md)
 - [ADR-013: UI picks persist in a schema-less prefs map](adr/013-ui-picks-persist-in-a-schema-less-prefs-map.md)
 - [ADR-014: Desktop features are modules with a work toggle and a view page](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md)
+- [ADR-015: Exchange quality gates live client-side; the server serves everything sane](adr/015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
 
 Superseded:
 

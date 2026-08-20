@@ -327,6 +327,11 @@ export interface Gates {
  * `minRoiPct` is 2 for the same reason the other four carry the server's old
  * numbers — the server gated 2% regardless of what the reader had typed, so a
  * reader who never set it was already looking at a 2% table.
+ *
+ * These five numbers are pinned in Go too:
+ * TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes
+ * arms the same levels to prove untouched knobs give the old server's answer
+ * (ADR-015). Changing a default here is changing that test.
  */
 export const gateDefaults: Gates = {
 	minRoiChaos: 3,

@@ -1785,7 +1785,9 @@ func TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes
 	// POE-191's migration invariant: applying the four levels this engine used to
 	// enforce — and which the desktop now ships as its own default knobs — gives
 	// back the pre-POE-191 answer on the same recorded hour. A user who never
-	// touches the knobs sees what the old server served.
+	// touches the knobs sees what the old server served. The same five levels
+	// live as gateDefaults in desktop/src/lib/exchange/filters.ts (ADR-015);
+	// changing either side is changing both.
 	//
 	// The route is the case that decides it: its coarsest leg steps 9.1%, inside
 	// the 10% tick cap, and its undercut return is 29.6% — three ticks rather
