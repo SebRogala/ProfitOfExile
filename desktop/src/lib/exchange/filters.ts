@@ -458,19 +458,6 @@ export interface NumericFilters {
 	unit: ExchangeUnit;
 	/** The response's newest-hour chaos value of one divine; 0 when unknown. */
 	divineChaosRate: number;
-	/**
-	 * @deprecated POE-192 removed the Quantity stepper; the bounds read
-	 * `worthwhileScale` instead. Ignored here, and accepted only so the page's
-	 * still-passing object literal compiles until chunk 3 stops passing it.
-	 */
-	quantity?: number;
-	/**
-	 * @deprecated POE-192 removed the Min gain input: the per-flip floor is
-	 * `Gates.minRoiChaos` and the run-level floor is now the fixed scale target,
-	 * so a third gain knob had nothing left to say. Ignored here; chunk 3 removes
-	 * the input, the `currencyExchangeMinGain` preference and this field.
-	 */
-	minGain?: string;
 }
 
 /**
@@ -531,22 +518,6 @@ export function applyNumericFilters(
 		if (investMax !== null && investment > investMax * rate) return false;
 		return true;
 	});
-}
-
-/**
- * Whether the reader's quantity is more than the play's thinnest leg cleared in
- * the hour the prices come from.
- *
- * Equal is not over: a depth of 40 means 40 units changed hands, so 40 is a
- * quantity the book demonstrably supported. The row is marked, never dropped —
- * depth is last hour's evidence, not this hour's limit.
- *
- * @deprecated POE-192: absorption speaks through the Scale column's hours now,
- * so the amber Depth cell and its footnote go. Kept only so the page compiles
- * until chunk 3 removes that marking, which deletes this with it.
- */
-export function overDepth(play: CurrencyExchangePlay, quantity: number): boolean {
-	return quantity > play.depth;
 }
 
 // ------------------------------------------------------------- the search --

@@ -9,7 +9,6 @@ import {
 	chaosIconPath,
 	dataAgeParts,
 	deriveState,
-	fillHours,
 	formatChaos,
 	formatGain,
 	formatLegPrice,
@@ -804,38 +803,6 @@ describe('hoursProgress', () => {
 
 	it('reports 0 for a non-finite count', () => {
 		expect(hoursProgress(Number.NaN, 6)).toBe(0);
-	});
-});
-
-describe('fillHours', () => {
-	it('reports the hours the quantity needs at the thinnest leg’s hourly depth', () => {
-		expect(fillHours(play({ depth: 40 }), 120)).toBe(3);
-	});
-
-	it('reports a fraction of an hour when the depth covers the quantity outright', () => {
-		// Unrounded on purpose: the page rounds up for display, and rounding here
-		// would flatten every play under an hour onto one sort key.
-		expect(fillHours(play({ depth: 40 }), 10)).toBe(0.25);
-	});
-
-	it('reports exactly one hour for a quantity that is the whole hourly depth', () => {
-		expect(fillHours(play({ depth: 40 }), 40)).toBe(1);
-	});
-
-	it('reports null for a market that traded nothing rather than an infinite wait', () => {
-		expect(fillHours(play({ depth: 0 }), 10)).toBeNull();
-	});
-
-	it('reports null for a negative depth', () => {
-		expect(fillHours(play({ depth: -5 }), 10)).toBeNull();
-	});
-
-	it('reports null for a non-finite depth rather than printing "NaN h"', () => {
-		expect(fillHours(play({ depth: Number.NaN }), 10)).toBeNull();
-	});
-
-	it('reports null for a non-finite quantity', () => {
-		expect(fillHours(play({ depth: 40 }), Number.POSITIVE_INFINITY)).toBeNull();
 	});
 });
 
