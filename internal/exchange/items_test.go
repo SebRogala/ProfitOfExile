@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -36,6 +37,33 @@ const (
 // fetches these URLs verbatim, so a relative path or a wiki *page* URL sneaking
 // into the asset would serve HTML as an icon.
 const wikiImagePrefix = "https://www.poewiki.net/images/"
+
+// sidebarCategories is the in-game Currency Exchange sidebar restated
+// independently of the package's own list, so that a category dropped, renamed
+// or reordered in items.go fails here instead of quietly agreeing with itself.
+var sidebarCategories = []string{
+	"Currency",
+	"Essences",
+	"Delve",
+	"Scarabs",
+	"Divination Cards",
+	"Delirium",
+	"Legion",
+	"Fragments",
+	"Oils",
+	"Catalysts",
+	"Omens",
+	"Tattoos",
+	"Expedition",
+	"Harvest",
+	"Runegrafts",
+	"Allflame",
+}
+
+// isSidebarCategory reports whether c is one of the sixteen sidebar categories.
+func isSidebarCategory(c string) bool {
+	return slices.Contains(sidebarCategories, c)
+}
 
 // unknownItemIDs returns the "id" attribute of every unknown-item warning the
 // capture holds, in the order logged.
@@ -360,6 +388,192 @@ func TestItemAsset_everyIconURLPointsAtAPoewikiImageFile(t *testing.T) {
 		if !strings.HasPrefix(*entry.Icon, wikiImagePrefix) {
 			t.Errorf("asset entry %q icon = %q, want a %s URL the cache can fetch verbatim", id, *entry.Icon, wikiImagePrefix)
 		}
+	}
+}
+
+func TestItemAsset_everyEntryCarriesOneOfTheSidebarCategories(t *testing.T) {
+	// The filter the desktop client draws from this field is a whitelist: an
+	// entry with an empty or misspelled category is an item that can never be
+	// shown, whatever the player picks. The generator gates on it; this is what
+	// holds the committed file to that.
+	_, entries := assetEntries(t)
+
+	if len(entries) == 0 {
+		t.Fatal("the embedded asset is empty")
+	}
+	for id, entry := range entries {
+		if entry.Category == "" {
+			t.Errorf("asset entry %q has no category", id)
+			continue
+		}
+		if !isSidebarCategory(entry.Category) {
+			t.Errorf("asset entry %q category = %q, want one of the in-game sidebar categories %v", id, entry.Category, sidebarCategories)
+		}
+	}
+}
+
+func TestLookupItem_ancestralIDs_splitOmensFromTattoosOnTheIDStem(t *testing.T) {
+	// Omens and tattoos share the Metadata/Items/Currency/Ancestral prefix and
+	// are two separate rows in the sidebar. The generator tells them apart by the
+	// stem alone, so this is the pair that proves the split survived the join.
+	tests := []struct {
+		name         string
+		id           string
+		wantItemName string
+		wantCategory string
+	}{
+		{
+			name:         "omen",
+			id:           "Metadata/Items/Currency/AncestralOmenOnDeathCreatePortal",
+			wantItemName: "Omen of Return",
+			wantCategory: "Omens",
+		},
+		{
+			name:         "tattoo",
+			id:           "Metadata/Items/Currency/AncestralTattooArohongui1",
+			wantItemName: "Tattoo of the Arohongui Moonwarden",
+			wantCategory: "Tattoos",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			item, ok := LookupItem(tc.id)
+
+			if !ok {
+				t.Fatalf("LookupItem(%q) reported a miss, want the asset entry", tc.id)
+			}
+			if item.Name != tc.wantItemName {
+				t.Fatalf("name = %q, want %q — the pinned id is not the item this case is about", item.Name, tc.wantItemName)
+			}
+			if item.Category != tc.wantCategory {
+				t.Errorf("category = %q, want %q", item.Category, tc.wantCategory)
+			}
+		})
+	}
+}
+
+func TestLookupItem_returnsTheSidebarCategoryTheGameFilesTheItemUnder(t *testing.T) {
+	// One item per rule that does not follow its metadata bucket: everything
+	// below Metadata/Items/Currency/ would be "Currency" and everything below
+	// MapFragments/ would be "Fragments" if the generator went by the id's top
+	// bucket. The name assertion pins the id — a rule that lands on the right
+	// category for the wrong item is not a passing case.
+	tests := []struct {
+		name         string
+		id           string
+		wantItemName string
+		wantCategory string
+	}{
+		{
+			name:         "chaos orb stays in the currency bucket",
+			id:           "Metadata/Items/Currency/CurrencyRerollRare",
+			wantItemName: "Chaos Orb",
+			wantCategory: "Currency",
+		},
+		{
+			name:         "oil leaves the currency bucket",
+			id:           "Metadata/Items/Currency/Mushrune1",
+			wantItemName: "Clear Oil",
+			wantCategory: "Oils",
+		},
+		{
+			name:         "catalyst leaves the currency bucket",
+			id:           "Metadata/Items/Currency/CurrencyJewelleryQualityAttack",
+			wantItemName: "Abrasive Catalyst",
+			wantCategory: "Catalysts",
+		},
+		{
+			name:         "fossil leaves the currency bucket",
+			id:           "Metadata/Items/Currency/CurrencyDelveCraftingAbyss",
+			wantItemName: "Hollow Fossil",
+			wantCategory: "Delve",
+		},
+		{
+			name:         "legion emblem leaves the fragment bucket",
+			id:           "Metadata/Items/MapFragments/CurrencyLegionFragmentEternal",
+			wantItemName: "Timeless Eternal Emblem",
+			wantCategory: "Legion",
+		},
+		{
+			name:         "vaal fragment stays in the fragment bucket",
+			id:           "Metadata/Items/MapFragments/CurrencyVaalFragment1_1",
+			wantItemName: "Sacrifice at Midnight",
+			wantCategory: "Fragments",
+		},
+		{
+			// The asset carries the same fragment under a second, prefix-less id;
+			// both are live feed ids and both must land on the same row.
+			name:         "vaal fragment under its legacy id",
+			id:           "Metadata/Items/MapFragments/VaalFragment1_1",
+			wantItemName: "Sacrifice at Midnight",
+			wantCategory: "Fragments",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			item, ok := LookupItem(tc.id)
+
+			if !ok {
+				t.Fatalf("LookupItem(%q) reported a miss, want the asset entry", tc.id)
+			}
+			if item.Name != tc.wantItemName {
+				t.Fatalf("name = %q, want %q — the pinned id is not the item this case is about", item.Name, tc.wantItemName)
+			}
+			if item.Category != tc.wantCategory {
+				t.Errorf("category = %q, want %q", item.Category, tc.wantCategory)
+			}
+		})
+	}
+}
+
+func TestLookupItem_everyItemTradedInTheRecordedHour_hasACategory(t *testing.T) {
+	// The asset covering an id is not the same as the client being able to filter
+	// it: a recorded hour of real markets is the sample that says the categories
+	// reach the ids the feed actually trades, not just the ids the generator
+	// happened to enumerate.
+	payload := loadFixtureHour(t)
+
+	if len(payload.Markets) == 0 {
+		t.Fatal("the recorded hour carries no markets")
+	}
+	for _, market := range payload.Markets {
+		for _, id := range market.MarketPair {
+			item, ok := LookupItem(id)
+			if !ok {
+				t.Errorf("market %q trades %q, which the asset does not cover", market.MarketID, id)
+				continue
+			}
+			if !isSidebarCategory(item.Category) {
+				t.Errorf("market %q trades %q with category %q, want one of the in-game sidebar categories", market.MarketID, id, item.Category)
+			}
+		}
+	}
+}
+
+func TestCategories_returnsTheSixteenSidebarRowsInGameOrder(t *testing.T) {
+	// The client renders this list verbatim as its filter, so the order is part
+	// of the contract: sorted or shuffled, the filter stops matching the sidebar
+	// the player is looking at.
+	got := Categories()
+
+	if !slices.Equal(got, sidebarCategories) {
+		t.Fatalf("Categories() = %v, want the in-game sidebar order %v", got, sidebarCategories)
+	}
+}
+
+func TestCategories_returnsACopyCallersCannotReachTheSidebarListThrough(t *testing.T) {
+	// The caller is the plays handler, which puts the slice on a response; a
+	// slice backed by the package's own array would let one request rewrite the
+	// taxonomy for every later one.
+	first := Categories()
+	first[0] = "Rewritten"
+
+	second := Categories()
+
+	if second[0] != sidebarCategories[0] {
+		t.Errorf("a write to a returned slice changed Categories()[0] to %q", second[0])
 	}
 }
 
