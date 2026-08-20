@@ -13,20 +13,28 @@ import (
 // exchange.Leg is EMBEDDED rather than copied field by field: the engine owns
 // the leg's shape and its JSON tags, so a field added there appears here without
 // an edit, and a field renamed there cannot silently keep serializing under its
-// old name. The names and icons are the only additions the transport layer
-// makes — the engine deliberately carries raw feed ids.
+// old name. The names, icons, and categories are the only additions the
+// transport layer makes — the engine deliberately carries raw feed ids.
 //
 // The icons are pointers so an item with no artwork serializes as null rather
 // than as "": a client must be able to tell "render no icon" from a path it
 // should fetch, and an empty string joined onto an API base is a request for the
 // base itself. They are API-relative paths into this server's icon route, not
 // upstream poewiki URLs — production cannot fetch poewiki (ADR-012).
+//
+// The categories are plain strings, not pointers, because "" is a usable answer
+// rather than an ambiguous one: a client filtering by category treats an
+// uncategorized leg as unfiltered, so it needs no way to tell an absent category
+// from an empty one. Both sides of the trade carry one, since a filter applies
+// to whichever side the reader is shopping for.
 type legResponse struct {
 	exchange.Leg
-	ItemName  string  `json:"itemName"`
-	ItemIcon  *string `json:"itemIcon"`
-	QuoteName string  `json:"quoteName"`
-	QuoteIcon *string `json:"quoteIcon"`
+	ItemName      string  `json:"itemName"`
+	ItemIcon      *string `json:"itemIcon"`
+	ItemCategory  string  `json:"itemCategory"`
+	QuoteName     string  `json:"quoteName"`
+	QuoteIcon     *string `json:"quoteIcon"`
+	QuoteCategory string  `json:"quoteCategory"`
 }
 
 // playResponse is one ranked play with decorated legs.
@@ -64,6 +72,12 @@ type playsResponse struct {
 	DivineChaosRate float64        `json:"divineChaosRate"`
 	Count           int            `json:"count"`
 	Plays           []playResponse `json:"plays"`
+	// Categories is the in-game Currency Exchange sidebar, in sidebar order, so
+	// a client renders its category filter from the response instead of holding
+	// its own copy of the taxonomy. It is the whole list, independent of the
+	// plays in this body: a filter whose rows appeared and vanished with the
+	// ranking would be unusable.
+	Categories []string `json:"categories"`
 }
 
 // modeAll is the query value (and the default) meaning "do not filter".
@@ -141,6 +155,7 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 			DivineChaosRate: result.DivineChaosRate,
 			Count:           len(plays),
 			Plays:           plays,
+			Categories:      exchange.Categories(),
 		}
 		if last, ok := exchange.LastUpdated(result); ok {
 			last = last.UTC()
@@ -155,8 +170,9 @@ func CurrencyExchangePlays(cache *exchange.Cache) http.HandlerFunc {
 	}
 }
 
-// decorateLegs attaches display names and icon paths to a play's legs, noting
-// every id the item asset does not cover on unknown, which must not be nil.
+// decorateLegs attaches display names, icon paths and categories to a play's
+// legs, noting every id the item asset does not cover on unknown, which must not
+// be nil.
 //
 // The result is always a non-nil slice so "legs" is [] rather than null on a
 // play with no legs.
@@ -164,11 +180,13 @@ func decorateLegs(legs []exchange.Leg, unknown *exchange.UnknownItems) []legResp
 	out := make([]legResponse, 0, len(legs))
 	for _, leg := range legs {
 		out = append(out, legResponse{
-			Leg:       leg,
-			ItemName:  itemName(leg.Item, unknown),
-			ItemIcon:  itemIcon(leg.Item),
-			QuoteName: itemName(leg.Quote, unknown),
-			QuoteIcon: itemIcon(leg.Quote),
+			Leg:           leg,
+			ItemName:      itemName(leg.Item, unknown),
+			ItemIcon:      itemIcon(leg.Item),
+			ItemCategory:  itemCategory(leg.Item),
+			QuoteName:     itemName(leg.Quote, unknown),
+			QuoteIcon:     itemIcon(leg.Quote),
+			QuoteCategory: itemCategory(leg.Quote),
 		})
 	}
 	return out
@@ -207,4 +225,15 @@ func itemIcon(id string) *string {
 		return nil
 	}
 	return &path
+}
+
+// itemCategory returns the sidebar category an id belongs to, or "" when the
+// asset does not cover it.
+//
+// The miss is not noted on UnknownItems: itemName looked the same id up on the
+// same leg and already warned about it, and a second note per leg would only
+// double the work behind a log line that is emitted once per id anyway.
+func itemCategory(id string) string {
+	item, _ := exchange.LookupItem(id)
+	return item.Category
 }
