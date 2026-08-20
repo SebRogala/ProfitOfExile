@@ -5,8 +5,11 @@ import {
 	MODE_OPTIONS,
 	REFETCH_DEBOUNCE_MS,
 	REFETCH_JITTER_MS,
+	SORT_OPTIONS,
+	chaosIconPath,
 	dataAgeParts,
 	deriveState,
+	fillHours,
 	formatChaos,
 	formatGain,
 	formatLegPrice,
@@ -177,6 +180,10 @@ describe('parseSort', () => {
 		expect(parseSort('roi')).toBe('roi');
 	});
 
+	it('passes "fill" through', () => {
+		expect(parseSort('fill')).toBe('fill');
+	});
+
 	it('falls back to "roiPct" for an unknown sort', () => {
 		expect(parseSort('turnover')).toBe('roiPct');
 	});
@@ -185,6 +192,16 @@ describe('parseSort', () => {
 		// The server's own ranking is the default order, so an unset preference
 		// leaves the list exactly as served.
 		expect(parseSort('')).toBe('roiPct');
+	});
+});
+
+describe('SORT_OPTIONS', () => {
+	it('offers the three orders the table can be read in, labelled, in picker order', () => {
+		expect(SORT_OPTIONS).toEqual([
+			{ value: 'roiPct', label: 'ROI%' },
+			{ value: 'roi', label: 'ROI' },
+			{ value: 'fill', label: 'Fill' }
+		]);
 	});
 });
 
@@ -472,6 +489,9 @@ describe('dataAgeParts', () => {
 });
 
 describe('sortPlays', () => {
+	/** The page's own default; every non-fill case is indifferent to it. */
+	const ONE = 1;
+
 	function keys(plays: CurrencyExchangePlay[]): string[] {
 		return plays.map((p) => p.key);
 	}
@@ -485,7 +505,7 @@ describe('sortPlays', () => {
 			play({ key: 'c', roi: 50 })
 		];
 
-		expect(keys(sortPlays(served, 'roiPct'))).toEqual(['a', 'b', 'c']);
+		expect(keys(sortPlays(served, 'roiPct', ONE))).toEqual(['a', 'b', 'c']);
 	});
 
 	it('orders by chaos gained per exchange under the ROI sort', () => {
@@ -495,7 +515,7 @@ describe('sortPlays', () => {
 			play({ key: 'c', roi: 50 })
 		];
 
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['b', 'c', 'a']);
+		expect(keys(sortPlays(served, 'roi', ONE))).toEqual(['b', 'c', 'a']);
 	});
 
 	it('keeps a suspect play behind every clean one even when its ROI is the largest', () => {
@@ -507,13 +527,17 @@ describe('sortPlays', () => {
 			play({ key: 'suspect-huge', roi: 5000, suspect: true })
 		];
 
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['clean-big', 'clean-small', 'suspect-huge']);
+		expect(keys(sortPlays(served, 'roi', ONE))).toEqual([
+			'clean-big',
+			'clean-small',
+			'suspect-huge'
+		]);
 	});
 
 	it('keeps the server order between two plays tied on ROI', () => {
 		const served = [play({ key: 'first', roi: 40 }), play({ key: 'second', roi: 40 })];
 
-		expect(keys(sortPlays(served, 'roi'))).toEqual(['first', 'second']);
+		expect(keys(sortPlays(served, 'roi', ONE))).toEqual(['first', 'second']);
 	});
 
 	it('sorts into a new array rather than reordering the fetched list', () => {
@@ -522,7 +546,7 @@ describe('sortPlays', () => {
 		// the server ranking without a refetch.
 		const served = [play({ key: 'a', roi: 5 }), play({ key: 'b', roi: 500 })];
 
-		sortPlays(served, 'roi');
+		sortPlays(served, 'roi', ONE);
 
 		expect(keys(served)).toEqual(['a', 'b']);
 	});
@@ -533,10 +557,62 @@ describe('sortPlays', () => {
 		// wrapping it) would otherwise write through to the fetched result.
 		const served = [play({ key: 'a' }), play({ key: 'b' })];
 
-		const sorted = sortPlays(served, 'roiPct');
+		const sorted = sortPlays(served, 'roiPct', ONE);
 
 		expect(sorted).not.toBe(served);
 		expect(keys(sorted)).toEqual(['a', 'b']);
+	});
+
+	it('puts the fastest fill first under the Fill sort', () => {
+		// Ascending, not descending: the question the column answers is how long
+		// the quantity waits, and the shortest wait is the best row.
+		const served = [
+			play({ key: 'slow', depth: 10 }),
+			play({ key: 'fast', depth: 4000 }),
+			play({ key: 'middling', depth: 250 })
+		];
+
+		expect(keys(sortPlays(served, 'fill', 500))).toEqual(['fast', 'middling', 'slow']);
+	});
+
+	it('puts a play whose depth cannot be read last under the Fill sort', () => {
+		// An unreadable depth is an unknown wait, not a zero one — sorting it to
+		// the front would put the least-known row at the top of the list.
+		const served = [
+			play({ key: 'unreadable', depth: 0 }),
+			play({ key: 'slow', depth: 10 }),
+			play({ key: 'fast', depth: 4000 })
+		];
+
+		expect(keys(sortPlays(served, 'fill', 500))).toEqual(['fast', 'slow', 'unreadable']);
+	});
+
+	it('keeps a suspect play behind every clean one under the Fill sort, however fast it fills', () => {
+		const served = [
+			play({ key: 'clean-slow', depth: 10 }),
+			play({ key: 'suspect-instant', depth: 100_000, suspect: true }),
+			play({ key: 'clean-quick', depth: 900 })
+		];
+
+		expect(keys(sortPlays(served, 'fill', 500))).toEqual([
+			'clean-quick',
+			'clean-slow',
+			'suspect-instant'
+		]);
+	});
+
+	it('keeps the server order between two plays tied on fill', () => {
+		const served = [play({ key: 'first', depth: 250 }), play({ key: 'second', depth: 250 })];
+
+		expect(keys(sortPlays(served, 'fill', 500))).toEqual(['first', 'second']);
+	});
+
+	it('sorts into a new array under the Fill sort as well', () => {
+		const served = [play({ key: 'slow', depth: 10 }), play({ key: 'fast', depth: 4000 })];
+
+		sortPlays(served, 'fill', 500);
+
+		expect(keys(served)).toEqual(['slow', 'fast']);
 	});
 });
 
@@ -601,62 +677,89 @@ describe('formatLegPrice', () => {
 });
 
 describe('formatChaos', () => {
-	it('keeps two decimals on a whole-chaos amount', () => {
-		expect(formatChaos(50)).toBe('50.00');
+	it('renders a whole-chaos amount as a bare count of orbs', () => {
+		// Chaos AMOUNTS are integers — a count of items in a stash tab. The
+		// decimals belong to the leg RATES, which go through formatLegPrice.
+		expect(formatChaos(50)).toBe('50');
+	});
+
+	it('rounds a fractional amount to the nearest whole orb', () => {
+		expect(formatChaos(49.6)).toBe('50');
 	});
 
 	it('separates the thousands of a four-figure payout', () => {
-		expect(formatChaos(5050)).toBe('5,050.00');
+		expect(formatChaos(5050)).toBe('5,050');
 	});
 
 	it('separates every group of a seven-figure payout', () => {
-		expect(formatChaos(1234567.891)).toBe('1,234,567.89');
+		expect(formatChaos(1234567.891)).toBe('1,234,568');
 	});
 
-	it('keeps the significant digits of a sub-chaos amount', () => {
-		// An oil that enters at 0.0125c: two fixed decimals would print "0.01",
-		// which is a 25% cheaper play than the one on screen.
-		expect(formatChaos(0.0125)).toBe('0.0125');
+	it('rounds a sub-chaos amount away to zero', () => {
+		// Accepted (POE-189): a play whose whole per-exchange figure is under one
+		// chaos is not flippable once the exchange's gold fee is paid, so the four
+		// significant digits this used to print dressed junk as precision.
+		expect(formatChaos(0.0125)).toBe('0');
 	});
 
-	it('renders zero with the two-decimal floor', () => {
-		expect(formatChaos(0)).toBe('0.00');
+	it('renders zero as a bare "0"', () => {
+		expect(formatChaos(0)).toBe('0');
 	});
 
 	it('puts the minus sign outside the grouped digits', () => {
-		expect(formatChaos(-1234.5)).toBe('-1,234.50');
+		expect(formatChaos(-1234)).toBe('-1,234');
 	});
 
-	it('renders a non-finite amount as "0.00" rather than "NaN"', () => {
-		expect(formatChaos(Number.NaN)).toBe('0.00');
+	it('rounds a half orb up on a gain', () => {
+		expect(formatChaos(2.5)).toBe('3');
+	});
+
+	it('rounds a half orb up in magnitude on a loss, matching the gain', () => {
+		// Rounding the signed value would break halves towards +Infinity and print
+		// a loss one orb smaller than the identical gain.
+		expect(formatChaos(-2.5)).toBe('-3');
+	});
+
+	it('renders a loss too small to print as an unsigned "0", never "-0"', () => {
+		expect(formatChaos(-0.4)).toBe('0');
+	});
+
+	it('renders a non-finite amount as "0" rather than "NaN"', () => {
+		expect(formatChaos(Number.NaN)).toBe('0');
 	});
 });
 
 describe('formatGain', () => {
 	it('signs a gain so the column does not read as a second cost', () => {
-		expect(formatGain(700)).toBe('+700.00');
+		expect(formatGain(700)).toBe('+700');
 	});
 
 	it('keeps the thousands grouping under the sign', () => {
-		expect(formatGain(5050)).toBe('+5,050.00');
+		expect(formatGain(5050)).toBe('+5,050');
 	});
 
-	it('keeps the significant digits of a sub-chaos gain', () => {
-		expect(formatGain(0.0125)).toBe('+0.0125');
+	it('signs a gain that rounds up to a single orb', () => {
+		expect(formatGain(0.6)).toBe('+1');
+	});
+
+	it('leaves a sub-chaos gain unsigned, because it rounds away to nothing', () => {
+		// The rule formatRoiPct follows: the sign comes from the ROUNDED
+		// magnitude, so a gain too small to print is not dressed as a gain.
+		expect(formatGain(0.0125)).toBe('0');
 	});
 
 	it('signs a loss', () => {
-		expect(formatGain(-5)).toBe('-5.00');
+		expect(formatGain(-5)).toBe('-5');
 	});
 
 	it('leaves a play that returns what it cost unsigned', () => {
-		// A round trip at 0.00c is not a positive play, and "+0.00" would rank it
-		// as one to a reader scanning the column for plus signs.
-		expect(formatGain(0)).toBe('0.00');
+		// A round trip at 0c is not a positive play, and "+0" would rank it as one
+		// to a reader scanning the column for plus signs.
+		expect(formatGain(0)).toBe('0');
 	});
 
-	it('renders negative zero unsigned rather than as "-0.00"', () => {
-		expect(formatGain(-0)).toBe('0.00');
+	it('renders negative zero unsigned rather than as "-0"', () => {
+		expect(formatGain(-0)).toBe('0');
 	});
 });
 
@@ -681,6 +784,38 @@ describe('hoursProgress', () => {
 
 	it('reports 0 for a non-finite count', () => {
 		expect(hoursProgress(Number.NaN, 6)).toBe(0);
+	});
+});
+
+describe('fillHours', () => {
+	it('reports the hours the quantity needs at the thinnest leg’s hourly depth', () => {
+		expect(fillHours(play({ depth: 40 }), 120)).toBe(3);
+	});
+
+	it('reports a fraction of an hour when the depth covers the quantity outright', () => {
+		// Unrounded on purpose: the page rounds up for display, and rounding here
+		// would flatten every play under an hour onto one sort key.
+		expect(fillHours(play({ depth: 40 }), 10)).toBe(0.25);
+	});
+
+	it('reports exactly one hour for a quantity that is the whole hourly depth', () => {
+		expect(fillHours(play({ depth: 40 }), 40)).toBe(1);
+	});
+
+	it('reports null for a market that traded nothing rather than an infinite wait', () => {
+		expect(fillHours(play({ depth: 0 }), 10)).toBeNull();
+	});
+
+	it('reports null for a negative depth', () => {
+		expect(fillHours(play({ depth: -5 }), 10)).toBeNull();
+	});
+
+	it('reports null for a non-finite depth rather than printing "NaN h"', () => {
+		expect(fillHours(play({ depth: Number.NaN }), 10)).toBeNull();
+	});
+
+	it('reports null for a non-finite quantity', () => {
+		expect(fillHours(play({ depth: 40 }), Number.POSITIVE_INFINITY)).toBeNull();
 	});
 });
 
@@ -778,6 +913,17 @@ describe('iconSrc', () => {
 	});
 });
 
+describe('chaosIconPath', () => {
+	it('escapes the id’s slashes the way the server’s PathEscape does', () => {
+		// Pinned, not rebuilt from CHAOS_ID: the whole point is that this string
+		// matches the route `IconPath` registers. Verified 200 against a running
+		// server — a differently escaped path would 404 and empty the tile again.
+		expect(chaosIconPath()).toBe(
+			'/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+		);
+	});
+});
+
 describe('routeSlots', () => {
 	const CHAOS_ICON = '/currency-exchange/icon/Chaos';
 	const DIVINE_ID = 'Metadata/Items/Currency/CurrencyModValues';
@@ -844,13 +990,13 @@ describe('routeSlots', () => {
 	}
 
 	it('spends what one exchange costs to enter', () => {
-		expect(routeSlots(direct())?.spend.amount).toBe('50.00');
+		expect(routeSlots(direct())?.spend.amount).toBe('50');
 	});
 
 	it('gets back the entry plus the round trip’s gain', () => {
 		// Not `roi` alone (the gain is not the payout) and not a product of the
 		// leg prices (those are raw, the ends are net of the ticks).
-		expect(routeSlots(direct())?.get.amount).toBe('750.00');
+		expect(routeSlots(direct())?.get.amount).toBe('750');
 	});
 
 	it('names the item bought in step 1, at its buy price', () => {
@@ -903,16 +1049,21 @@ describe('routeSlots', () => {
 		expect(routeSlots(direct({ roi: 0 }))?.positive).toBe(false);
 	});
 
-	it('takes the ends’ artwork from whichever side of the play is chaos', () => {
+	it('gives both ends the built chaos artwork, not the path a leg happens to carry', () => {
+		// The legs here ARE quoted in chaos and carry their own icon path; the ends
+		// still take `chaosIconPath()`, so the two tiles cannot depend on which
+		// artwork this particular play was served with.
 		const route = routeSlots(direct());
 
-		expect(route?.spend.icon).toBe(CHAOS_ICON);
-		expect(route?.get.icon).toBe(CHAOS_ICON);
+		expect(route?.spend.icon).toBe(chaosIconPath());
+		expect(route?.get.icon).toBe(chaosIconPath());
+		expect(route?.spend.icon).not.toBe(CHAOS_ICON);
 	});
 
-	it('leaves the ends without artwork when no side of the play is chaos', () => {
-		// A round trip quoted end to end in divine is still valued in chaos, so
-		// the amounts stand and only the tile artwork is missing.
+	it('still gives both ends chaos artwork when no leg of the play is quoted in chaos', () => {
+		// The black-square bug (POE-189): a round trip quoted end to end in divine
+		// is still valued in chaos, so the ends must wear the chaos icon rather
+		// than render as two empty tiles.
 		const divineQuoted = direct({
 			legs: [
 				leg({ quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: '/icon/Divine' }),
@@ -920,7 +1071,10 @@ describe('routeSlots', () => {
 			]
 		});
 
-		expect(routeSlots(divineQuoted)?.spend.icon).toBeNull();
+		const route = routeSlots(divineQuoted);
+
+		expect(route?.spend.icon).toBe(chaosIconPath());
+		expect(route?.get.icon).toBe(chaosIconPath());
 	});
 
 	it('draws no route for a play that arrives with fewer than two legs', () => {

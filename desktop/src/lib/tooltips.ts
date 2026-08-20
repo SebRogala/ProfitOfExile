@@ -80,7 +80,10 @@ export const EXCHANGE_TOOLTIPS: Record<string, string> = {
 		'How many exchanges you intend to run. ROI and Investment are both multiplied by it; ROI% is not, because it is scale-free. Default 1, and it is remembered across restarts. Set it above a play’s Depth and the Depth cell turns amber — the number is never capped for you.',
 	Investment:
 		'Chaos you need liquid: the per-exchange cost at the undercut entry, times your Quantity. Set the min/max in the filter bar to see only what your bankroll covers, and switch the unit to divine for the large ones — converted at the divine/chaos rate from the same feed hour.',
-	Gold: 'The in-game currency exchange charges gold per trade. Not computed yet — the column is reserved so ROI can be shown net of gold once the per-trade cost is known.',
+	Gold: '(column hidden until computable) The in-game currency exchange charges gold per trade. Nothing here is net of it yet, and a reserved column of dashes promised a number the page could not give, so the column is gone until the per-trade cost is known and ROI can be shown net of gold.',
+	Route:
+		'The round trip as five slots: what you spend, the two or three trades, what you get back. Spend is the chaos ONE exchange costs at the undercut entry; Get is the chaos that same exchange returns — your spend plus the profit, not a separate payout. Each step’s rate is quoted in that leg’s own currency, so a play that sells into divine shows a divine number there while both ends stay in chaos: the conversion back is already inside the Get figure. Both ends are per exchange, whatever your Quantity.',
+	Fill: 'How long trading your Quantity would take at this play’s Depth — Quantity ÷ units per hour, rounded up, green under an hour. Optimistic on purpose: it assumes you take the market’s WHOLE hourly volume on the thinnest leg, which everyone else is competing for, and a direct play buys and sells on that one market. Read it as the floor on the time, not the time.',
 	Trend:
 		'Reserved for the fair-price trend across recent hours — whether the market this play trades against is drifting up or down. No per-play fair history is published yet, so nothing is derived and the cell shows a dash rather than a direction the data cannot support.',
 	Depth:
