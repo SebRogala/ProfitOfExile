@@ -194,12 +194,58 @@ export function playSides(play: CurrencyExchangePlay): PlaySide[] {
 }
 
 /**
+ * What the two layers say about one side, resolved.
+ *
+ * The item layer beats the category layer — that is what makes "hide Currency,
+ * keep Imperial Legacy" expressible at all — and a side whose category is `""`
+ * (an id the server's item asset does not cover) inherits nothing: it is not
+ * filed under a seventeenth group, so no category rule reaches it.
+ *
+ * The caller passes the item rule it has already looked up rather than the
+ * whole list, so a filter pass over hundreds of plays keeps its one map and the
+ * picker keeps its one `find`. Both then read precedence from here instead of
+ * spelling it out twice — the picker marks a row hidden exactly when this
+ * answers `'hide'`.
+ */
+export function effectiveRule(
+	itemRule: CategoryRuleState | undefined,
+	category: string,
+	categoryRules: CategoryRules
+): CategoryRuleState | undefined {
+	if (itemRule !== undefined) return itemRule;
+	return category === '' ? undefined : categoryRules[category];
+}
+
+/**
+ * Whether an item rule is doing work the category layer would not have done —
+ * what the filter bar's chip badges itself with.
+ *
+ * True exactly when the item's category carries an EXPLICIT rule that says
+ * something else: an Only inside a hidden category, and a Hide inside a
+ * category ruled Only. A neutral category is not a disagreement — an Only chip
+ * in an unruled category is the only thing saying anything about that item, so
+ * badging it would call every chip an override.
+ *
+ * `category` is `undefined` for an item the current response does not carry: a
+ * rule outlives the response that created it, and a chip whose category is
+ * unknown cannot be shown to contradict one. Uncategorised (`''`) is false for
+ * the reason `effectiveRule` gives — no category rule reaches it.
+ */
+export function overridesCategory(
+	rule: ItemRule,
+	category: string | undefined,
+	categoryRules: CategoryRules
+): boolean {
+	if (category === undefined || category === '') return false;
+	const categoryRule = categoryRules[category];
+	return categoryRule !== undefined && categoryRule !== rule.state;
+}
+
+/**
  * Apply the two rule layers.
  *
  * The pinned semantics, in the order they resolve:
- * 1. Every side of the play gets a verdict — its item rule if it has one, else
- *    its category's rule. The item layer beats the category layer, which is
- *    what makes "hide Currency, keep Imperial Legacy" expressible at all.
+ * 1. Every side of the play gets a verdict, per `effectiveRule`.
  * 2. One `hide` verdict anywhere hides the play. Hide beats Only: a play the
  *    reader has said they will not trade is not rescued by another leg they
  *    would.
@@ -207,10 +253,6 @@ export function playSides(play: CurrencyExchangePlay): PlaySide[] {
  *    one `only` verdict to survive. Only is a whitelist over the whole table,
  *    not a per-layer one — otherwise setting an item to Only would leave every
  *    unrelated play on screen and read as a no-op.
- *
- * A side whose category is `""` (an id the server's asset does not cover)
- * simply has no category rule to inherit; it is not silently filed under a
- * sixteenth group, and it is never hidden by a category rule it is not in.
  */
 export function applyRules(
 	plays: CurrencyExchangePlay[],
@@ -227,8 +269,7 @@ export function applyRules(
 	return plays.filter((play) => {
 		let matchedOnly = false;
 		for (const side of playSides(play)) {
-			const verdict =
-				byItem.get(side.id) ?? (side.category === '' ? undefined : categoryRules[side.category]);
+			const verdict = effectiveRule(byItem.get(side.id), side.category, categoryRules);
 			if (verdict === 'hide') return false;
 			if (verdict === 'only') matchedOnly = true;
 		}

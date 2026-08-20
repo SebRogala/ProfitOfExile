@@ -351,6 +351,31 @@ export function formatLegPrice(price: number): string {
 	return fractionDigits < MIN_PRICE_DECIMALS ? price.toFixed(MIN_PRICE_DECIMALS) : trimmed;
 }
 
+/**
+ * A chaos amount as the route slots and the money columns print it:
+ * `50.00`, `5,050.00`, `0.0125`.
+ *
+ * Two decimals from 1 up, because that is the resolution a trader reads a
+ * balance at, and thousands separated so a five-figure payout is not a wall of
+ * digits. Below 1 the fixed decimals would erase the number — an oil bought at
+ * 0.0125c is "0.01" at two places, which is a different price — so sub-1
+ * amounts fall through to `formatLegPrice`'s significant-digit rule.
+ *
+ * Grouped by hand rather than through `toLocaleString`, for the reason
+ * `formatTime` gives: a locale that groups with "." would print 5.050,00 beside
+ * an English sentence.
+ */
+export function formatChaos(amount: number): string {
+	if (!Number.isFinite(amount)) return '0.00';
+	const magnitude = Math.abs(amount);
+	if (magnitude > 0 && magnitude < 1) return formatLegPrice(amount);
+
+	const fixed = amount.toFixed(MIN_PRICE_DECIMALS);
+	const negative = fixed.startsWith('-');
+	const [whole, fraction] = (negative ? fixed.slice(1) : fixed).split('.');
+	return `${negative ? '-' : ''}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction}`;
+}
+
 // -------------------------------------------------------------- the order --
 
 /**
@@ -414,6 +439,130 @@ export function iconSrc(apiBase: string, path: string | null): string | null {
 	if (!path) return null;
 	const base = apiBase.replace(/\/+$/, '');
 	return path.startsWith('/') ? `${base}${path}` : `${base}/${path}`;
+}
+
+// ------------------------------------------------------------- the route --
+
+/**
+ * The Currency Exchange's id for Chaos Orbs, mirroring `ChaosID` in
+ * `internal/exchange/pricing.go`.
+ *
+ * Held client-side for one reason: the Spend and Get amounts are chaos —
+ * `investment` and `roi` are valued in it whatever currency the legs are quoted
+ * in — but no wire field says "this side is the chaos side", so the artwork for
+ * those two tiles can only be found by matching the id the server sends on the
+ * legs. Nothing else here reads it: it decides no price and no verdict, so a
+ * rename upstream costs the two tiles their icon and never a wrong number.
+ */
+export const CHAOS_ID = 'Metadata/Items/Currency/CurrencyRerollRare';
+
+/** One traded step of a route: what it moves, at what price. */
+export interface RouteStep {
+	/** The item the step is about — bought, received, or converted. */
+	name: string;
+	/** Its API-relative icon path, for `iconSrc`; `null` when it has none. */
+	icon: string | null;
+	/** `buy @ 1.00`, `sell @ 0.50`, `convert @ 204`. */
+	rate: string;
+	/** The leg's price sits outside its fair band — the tile is marked. */
+	suspect: boolean;
+}
+
+/** The chaos in and the chaos out, per exchange. */
+export interface RouteEnd {
+	amount: string;
+	icon: string | null;
+}
+
+/**
+ * A play as the five fixed slots the row draws: what you spend, the two or
+ * three steps, what you get back.
+ */
+export interface RouteView {
+	spend: RouteEnd;
+	/** Step 1 — the item bought with the entry currency. */
+	buy: RouteStep;
+	/** Step 2 — what selling it pays out in. */
+	sell: RouteStep;
+	/** Step 3 — the intermediate currency converted back; `null` on a direct play. */
+	convert: RouteStep | null;
+	get: RouteEnd;
+	/** The play gains chaos, so the Get amount is drawn as a gain. */
+	positive: boolean;
+}
+
+/**
+ * The five route slots of one play.
+ *
+ * The legs arrive in execution order — two for direct (buy X, sell X), three
+ * for 1-hop (buy X in A, sell X in B, sell B in A) — so the slots are read off
+ * by position, not by `action`: the third leg is a `sell` on the wire and a
+ * *convert* on screen, because what it does for the reader is turn the
+ * intermediate currency back into the one they started in.
+ *
+ * Which half of each leg the slot names follows what the reader receives at
+ * that step: step 1 is the leg's item (the thing bought), step 2 is the leg's
+ * QUOTE (what the sale pays in — chaos on a direct play, the intermediate on a
+ * 1-hop), and step 3 the leg's item again (the intermediate being converted).
+ *
+ * The ends are the play's own chaos figures rather than a product of the leg
+ * prices: `investment` is what one exchange costs at the undercut entry and
+ * `investment + roi` what it returns, both already net of the ticks the legs
+ * do not show (POE-188). Rebuilding them from `price` here would print the raw
+ * best case beside an ROI that is not.
+ *
+ * `null` for a play with fewer than two legs — a shape the server does not
+ * send. Nothing drops such a play: `ExchangeRoute` guards on this answer and
+ * renders an empty route cell, so the row is still there with its rank, ROI and
+ * depth, and only the route is missing.
+ */
+export function routeSlots(play: CurrencyExchangePlay): RouteView | null {
+	const [buyLeg, sellLeg, convertLeg] = play.legs;
+	if (buyLeg === undefined || sellLeg === undefined) return null;
+
+	const chaos = chaosIcon(play);
+	return {
+		spend: { amount: formatChaos(play.investment), icon: chaos },
+		buy: {
+			name: buyLeg.itemName,
+			icon: buyLeg.itemIcon,
+			rate: `buy @ ${formatLegPrice(buyLeg.price)}`,
+			suspect: buyLeg.suspect
+		},
+		sell: {
+			name: sellLeg.quoteName,
+			icon: sellLeg.quoteIcon,
+			rate: `sell @ ${formatLegPrice(sellLeg.price)}`,
+			suspect: sellLeg.suspect
+		},
+		convert:
+			convertLeg === undefined
+				? null
+				: {
+						name: convertLeg.itemName,
+						icon: convertLeg.itemIcon,
+						rate: `convert @ ${formatLegPrice(convertLeg.price)}`,
+						suspect: convertLeg.suspect
+					},
+		get: { amount: formatChaos(play.investment + play.roi), icon: chaos },
+		positive: play.roi > 0
+	};
+}
+
+/**
+ * The chaos artwork this play happens to carry, from whichever side of
+ * whichever leg is quoted in it.
+ *
+ * `null` when no side is — a round trip quoted end to end in divine is still
+ * valued in chaos, so the ends keep their amount and lose only the icon, which
+ * is what `ItemIcon` renders as nothing at all.
+ */
+function chaosIcon(play: CurrencyExchangePlay): string | null {
+	for (const leg of play.legs) {
+		if (leg.item === CHAOS_ID && leg.itemIcon) return leg.itemIcon;
+		if (leg.quote === CHAOS_ID && leg.quoteIcon) return leg.quoteIcon;
+	}
+	return null;
 }
 
 // ------------------------------------------------------------ the refetch --

@@ -3,8 +3,10 @@ import {
 	applyNumericFilters,
 	applyRules,
 	cycleCategoryRule,
+	effectiveRule,
 	itemUniverse,
 	overDepth,
+	overridesCategory,
 	parseCategoryRules,
 	parseItemRules,
 	playSides,
@@ -219,6 +221,69 @@ describe('playSides', () => {
 			category: 'Fragments',
 			role: 'item'
 		});
+	});
+});
+
+describe('effectiveRule', () => {
+	it('lets an item rule override the category it belongs to', () => {
+		// "Hide the divination cards, but keep the one card I actually farm."
+		expect(effectiveRule('only', 'Divination Cards', { 'Divination Cards': 'hide' })).toBe('only');
+	});
+
+	it('falls through to the category rule when the item has none', () => {
+		expect(effectiveRule(undefined, 'Divination Cards', { 'Divination Cards': 'hide' })).toBe(
+			'hide'
+		);
+	});
+
+	it('leaves an uncategorised side unruled, whatever the empty key says', () => {
+		// `""` is the wire's "the item asset does not cover this id", not a
+		// seventeenth group — a rule stored under it must not reach the side.
+		expect(effectiveRule(undefined, '', { '': 'hide' })).toBeUndefined();
+	});
+
+	it('leaves a side unruled when neither layer names it', () => {
+		expect(effectiveRule(undefined, 'Scarabs', { Currency: 'only' })).toBeUndefined();
+	});
+});
+
+describe('overridesCategory', () => {
+	function rule(state: ItemRule['state']): ItemRule {
+		return { id: 'imperial-legacy', name: 'The Imperial Legacy', state };
+	}
+
+	it('reports an Only item inside a hidden category as overriding it', () => {
+		expect(
+			overridesCategory(rule('only'), 'Divination Cards', { 'Divination Cards': 'hide' })
+		).toBe(true);
+	});
+
+	it('reports a Hide item inside a category ruled Only as overriding it', () => {
+		expect(
+			overridesCategory(rule('hide'), 'Divination Cards', { 'Divination Cards': 'only' })
+		).toBe(true);
+	});
+
+	it('reports an Only item in a category with no rule as overriding nothing', () => {
+		// A neutral category never said anything to contradict — badging this
+		// chip would badge every chip the reader sets.
+		expect(overridesCategory(rule('only'), 'Divination Cards', { Currency: 'hide' })).toBe(false);
+	});
+
+	it('reports an item saying what its category already says as overriding nothing', () => {
+		expect(
+			overridesCategory(rule('hide'), 'Divination Cards', { 'Divination Cards': 'hide' })
+		).toBe(false);
+	});
+
+	it('reports an uncategorised item as overriding nothing, whatever the empty key says', () => {
+		expect(overridesCategory(rule('only'), '', { '': 'hide' })).toBe(false);
+	});
+
+	it('reports an item the response no longer carries as overriding nothing', () => {
+		// The rule outlives the response that created it, so the chip can render
+		// with no category to compare against.
+		expect(overridesCategory(rule('only'), undefined, { 'Divination Cards': 'hide' })).toBe(false);
 	});
 });
 
