@@ -78,20 +78,29 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
  * Which number the table is ordered by. `'roiPct'` is the server's own
  * ranking; `'roi'` re-orders by chaos gained per exchange, which is a different
  * question — a 40% return on 2c is not the play a stocked account wants; and
- * `'fill'` by how long the reader's quantity would take to trade, which is the
- * question a big return on a thin market answers badly.
+ * `'fastest'` by how long the market needs to absorb the play's worthwhile
+ * scale (`worthwhileScale().hours`), which is the question a big return on a
+ * thin market answers badly.
  */
-export type ExchangeSort = 'roiPct' | 'roi' | 'fill';
+export type ExchangeSort = 'roiPct' | 'roi' | 'fastest';
 
 /** The sort picker's entries, in display order. */
 export const SORT_OPTIONS: { value: ExchangeSort; label: string }[] = [
 	{ value: 'roiPct', label: 'ROI%' },
 	{ value: 'roi', label: 'ROI' },
-	{ value: 'fill', label: 'Fill' }
+	{ value: 'fastest', label: 'Fastest' }
 ];
 
-/** Narrow a persisted or user-supplied string to a sort; default `'roiPct'`. */
+/**
+ * Narrow a persisted or user-supplied string to a sort; default `'roiPct'`.
+ *
+ * `'fill'` — what `'fastest'` was called while the table scaled by a typed
+ * Quantity (POE-192 replaced that with the derived scale) — maps forward rather
+ * than falling back: a reader who left the picker on the fill order asked for
+ * the fastest-to-absorb list, and that order still exists under its new name.
+ */
 export function parseSort(raw: string): ExchangeSort {
+	if (raw === 'fill') return 'fastest';
 	return SORT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeSort) : 'roiPct';
 }
 
@@ -136,7 +145,13 @@ export function parseUnit(raw: string): ExchangeUnit {
 	return UNIT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeUnit) : 'chaos';
 }
 
-/** How many exchanges the row's figures are multiplied by when nothing is set. */
+/**
+ * How many exchanges the row's figures are multiplied by when nothing is set.
+ *
+ * @deprecated POE-192 derives the scale instead of asking for it. Kept only so
+ * `CurrencyExchangePage.svelte` still compiles until chunk 3 removes the
+ * Quantity stepper; that chunk deletes this constant with `parseQuantity`.
+ */
 export const DEFAULT_QUANTITY = 1;
 
 /**
@@ -147,6 +162,11 @@ export const DEFAULT_QUANTITY = 1;
  * table to zero and a fraction would claim a partial exchange the book cannot
  * fill. A typed-in decimal truncates rather than rejecting, because the stepper
  * writes while the user is still typing.
+ *
+ * @deprecated POE-192: the reader no longer types a size — `worthwhileScale`
+ * derives one per play. Kept only for the page's still-mounted stepper; chunk 3
+ * deletes the stepper, this function, `DEFAULT_QUANTITY` and the
+ * `currencyExchangeQuantity` preference together.
  */
 export function parseQuantity(raw: string): number {
 	const value = Number(raw);
@@ -423,11 +443,84 @@ export function hoursProgress(hoursSeen: number, hours: number): number {
  * market has) and for a non-finite one: both mean the hours cannot be computed,
  * and dividing would answer `Infinity`/`NaN`, which the column would print as a
  * duration.
+ *
+ * @deprecated POE-192: `worthwhileScale().hours` answers the same question at
+ * the size the app derives instead of the size the reader typed, and rounds up
+ * where this stays fractional. Kept only for the page's still-mounted Fill
+ * column; chunk 3 replaces that column with Scale and deletes this.
  */
 export function fillHours(play: CurrencyExchangePlay, quantity: number): number | null {
 	if (!Number.isFinite(play.depth) || play.depth <= 0) return null;
 	if (!Number.isFinite(quantity)) return null;
 	return quantity / play.depth;
+}
+
+// --------------------------------------------------------------- the scale --
+
+/**
+ * The chaos a play is scaled up to before it is worth the reader's attention
+ * (POE-192).
+ *
+ * An OWNER CONSTANT, not a preference: the page's job is a quick market
+ * overview, and the moment the reader has to type their own case the overview
+ * stops being quick — that is the whole reason the Quantity stepper this
+ * replaced was removed. 100c is the size at which a flip pays for the clicking
+ * on a Currency Exchange whose fee is gold: below it the row is real but not
+ * worth the trip, above it the table starts recommending inventories nobody
+ * holds. Revisit on field feedback, not per reader.
+ */
+export const SCALE_TARGET_CHAOS = 100;
+
+/** What one play looks like scaled to `SCALE_TARGET_CHAOS`. */
+export interface WorthwhileScale {
+	/** Whole exchanges needed to clear the target — the `×N` the column leads with. */
+	flips: number;
+	/** Chaos gained across those flips: `roi × flips`, so at least the target. */
+	gain: number;
+	/** Chaos tied up across those flips: `investment × flips`. */
+	investment: number;
+	/**
+	 * Hours the market needs to absorb them, rounded UP to whole hours; `null`
+	 * when the play's thinnest leg traded nothing and the wait cannot be read.
+	 */
+	hours: number | null;
+}
+
+/**
+ * How far a play has to be repeated to be worth doing, and what that costs.
+ *
+ * The app derives the size so the reader does not type one. `flips` is rounded
+ * UP — a play that reaches 99c in three exchanges has not cleared the target, so
+ * the honest answer is the fourth exchange and the gain it actually pays, not
+ * the target itself. `gain` and `investment` are therefore the scaled figures,
+ * which is why `gain` is reported rather than assumed to be 100: a play worth
+ * 33c an exchange clears the bar at 102c, and the column says so.
+ *
+ * `hours` is the same optimistic reading `fillHours` documents — `depth` is the
+ * WHOLE market's hourly volume on the play's thinnest leg, so this is the time
+ * the fill takes if the reader takes every unit of it and no one else trades.
+ * Rounded up to whole hours because that is how the column reads it, and there
+ * is no cap branch: a scale the market cannot absorb inside the hour simply
+ * answers 2, 5, 40 — the wait IS the warning, and a capped `flips` would quietly
+ * report a scale that does not clear the target.
+ *
+ * `null` for a play that gains nothing or less than nothing per exchange: there
+ * is no repeat count that reaches a positive target from a non-positive step,
+ * and dividing would answer `Infinity` or a negative count. The server's
+ * positivity floor (ADR-015) means no served play is shaped that way — the guard
+ * is for type honesty, not for a case the page is expected to hit.
+ */
+export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | null {
+	if (!Number.isFinite(play.roi) || play.roi <= 0) return null;
+
+	const flips = Math.ceil(SCALE_TARGET_CHAOS / play.roi);
+	const readableDepth = Number.isFinite(play.depth) && play.depth > 0;
+	return {
+		flips,
+		gain: play.roi * flips,
+		investment: play.investment * flips,
+		hours: readableDepth ? Math.ceil(flips / play.depth) : null
+	};
 }
 
 // -------------------------------------------------------------- the order --
@@ -441,36 +534,40 @@ export function fillHours(play: CurrencyExchangePlay, quantity: number): number 
  * tie-breaks, so the ROI% sort keeps the served order — copied, so a caller
  * holding the result can never mutate the response's own array through it.
  *
- * `'roi'` re-sorts by chaos per exchange, and `'fill'` by how long the reader's
- * quantity would take to trade — ascending, because the fastest fill is the best
- * one, and a play whose depth cannot be read (`fillHours` `null`) sits at the
- * end of its partition rather than being dropped or treated as instant.
+ * `'roi'` re-sorts by chaos per exchange, and `'fastest'` by how long the market
+ * needs to absorb the play's worthwhile scale — ascending, because the shortest
+ * wait is the best row, and a play whose hours cannot be read (`worthwhileScale`
+ * `null`, or its `hours` `null`) sits at the end of its partition rather than
+ * being dropped or treated as instant.
  *
  * Both re-sorts keep the one property the server ordering exists to carry: every
  * suspect play stays after every clean one, however large its ROI or however
- * fast its fill. A suspect number is the reason it ranks last, so letting it
+ * fast it absorbs. A suspect number is the reason it ranks last, so letting it
  * out-sort a clean play would hand the reader the very row the flag warns about.
  * Within a partition the sort is stable, so tied plays keep the server's
- * remaining tie-breaks.
+ * remaining tie-breaks — and the Fastest sort ties often, because its hours are
+ * whole ones: everything the market swallows inside the hour reads 1 and stays
+ * in the server's order behind that.
  *
- * `quantity` names the size the fill is measured at, so the order and the Fill
- * column always read the same figure. For the finite quantity ≥ 1 that
- * `parseQuantity` guarantees every caller, it does not change the ORDER on its
- * own — one positive multiplier over every play cannot reorder `quantity /
- * depth` — so a build that dropped it would still sort correctly and would then
- * drift the moment the column's rule stops being a plain division.
+ * The order reads the same `worthwhileScale` the Scale column prints, so the
+ * list cannot be sorted by a number the reader is not shown.
+ *
+ * @param quantity Ignored since POE-192, which derives the scale instead of
+ * taking one. Accepted so the page's still-passing call site compiles; chunk 3
+ * drops the argument and this parameter goes with it.
  */
 export function sortPlays(
 	plays: CurrencyExchangePlay[],
 	sort: ExchangeSort,
-	quantity: number
+	quantity?: number
 ): CurrencyExchangePlay[] {
+	void quantity;
 	if (sort === 'roiPct') return [...plays];
-	if (sort === 'fill') {
+	if (sort === 'fastest') {
 		return [...plays].sort((a, b) => {
 			if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
-			const left = fillHours(a, quantity);
-			const right = fillHours(b, quantity);
+			const left = worthwhileScale(a)?.hours ?? null;
+			const right = worthwhileScale(b)?.hours ?? null;
 			if (left === null || right === null) {
 				if (left === right) return 0;
 				return left === null ? 1 : -1;

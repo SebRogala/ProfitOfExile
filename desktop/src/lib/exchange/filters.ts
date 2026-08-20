@@ -1,11 +1,12 @@
 /**
  * The Currency Exchange page's client-side filtering (POE-186).
  *
- * The server ranks; this file only narrows what the reader looks at. Nothing
- * here re-derives a market number — every predicate reads a field the wire
- * already carries — and nothing here is fetched: the filters run over the list
- * already on screen, so a rule that empties the table is a rule the reader can
- * undo without a round trip.
+ * The server ranks; this file only narrows what the reader looks at. Every
+ * predicate reads a wire field or the one derived figure the page is built
+ * around — `worthwhileScale` from `./view`, this file's single runtime import
+ * of it — and nothing here is fetched: the filters run over the list already
+ * on screen, so a rule that empties the table is a rule the reader can undo
+ * without a round trip.
  *
  * Two layers of rules, one verdict. A category rule paints all sixteen sidebar
  * groups; an item rule names one exchange id and beats the category it belongs
@@ -24,6 +25,7 @@
  * `view.ts` gives.
  */
 import type { CurrencyExchangePlay } from '$lib/api';
+import { worthwhileScale } from './view';
 import type { ExchangeUnit } from './view';
 
 // -------------------------------------------------------------- the rules --
@@ -401,9 +403,10 @@ export function parseGates(inputs: GateInputs): Gates {
  * same split, since Clear empties the bounds while Defaults restores the gates.
  *
  * A play passes only by clearing every gate that is on:
- * - `roi ≥ minRoiChaos` — the chaos one exchange gains, unscaled by the
- *   reader's quantity: a gate is about whether the market is worth trading, not
- *   about how much of it they intend to trade.
+ * - `roi ≥ minRoiChaos` — the chaos ONE exchange gains, never the scaled figure:
+ *   a gate is about whether the market is worth trading at all, and the size it
+ *   has to be repeated to be worth doing is the Scale column's answer, not this
+ *   one's.
  * - `turnover ≥ minTurnover` — chaos that changed hands in the hour.
  * - `tick ≤ maxTickPct / 100` — the spread ceiling.
  * - `roiPct ≥ minEdgeTickRatio × tick` — the return has to be a multiple of the
@@ -436,8 +439,8 @@ export function applyGates(plays: CurrencyExchangePlay[], gates: Gates): Currenc
 /**
  * The numeric filter bar's inputs.
  *
- * The three bounds arrive as the raw persisted strings, not as numbers: they
- * are `persisted()` values bound to text inputs, and "" (never set, or cleared)
+ * Both bounds arrive as the raw persisted strings, not as numbers: they are
+ * `persisted()` values bound to text inputs, and "" (never set, or cleared)
  * has to mean "filter off" rather than 0. Parsing them here keeps that one
  * boundary in one place instead of spreading `=== ''` checks through the page.
  *
@@ -446,16 +449,28 @@ export function applyGates(plays: CurrencyExchangePlay[], gates: Gates): Currenc
  * has exactly one owner.
  */
 export interface NumericFilters {
-	/** Exchanges the reader intends to run; multiplies investment and ROI. */
-	quantity: number;
-	/** Investment bounds, typed in `unit`, compared AT quantity. */
+	/**
+	 * Investment bounds, typed in `unit`, compared against the play's WORTHWHILE
+	 * SCALE — see `applyNumericFilters`.
+	 */
 	investMin: string;
 	investMax: string;
 	unit: ExchangeUnit;
 	/** The response's newest-hour chaos value of one divine; 0 when unknown. */
 	divineChaosRate: number;
-	/** Minimum chaos gained across the whole quantity. */
-	minGain: string;
+	/**
+	 * @deprecated POE-192 removed the Quantity stepper; the bounds read
+	 * `worthwhileScale` instead. Ignored here, and accepted only so the page's
+	 * still-passing object literal compiles until chunk 3 stops passing it.
+	 */
+	quantity?: number;
+	/**
+	 * @deprecated POE-192 removed the Min gain input: the per-flip floor is
+	 * `Gates.minRoiChaos` and the run-level floor is now the fixed scale target,
+	 * so a third gain knob had nothing left to say. Ignored here; chunk 3 removes
+	 * the input, the `currencyExchangeMinGain` preference and this field.
+	 */
+	minGain?: string;
 }
 
 /**
@@ -473,34 +488,47 @@ function parseAmount(raw: string): number | null {
 }
 
 /**
- * Apply the investment and gain bounds.
+ * Apply the investment bounds.
  *
- * Investment and gain are compared AT QUANTITY: the reader sets the quantity to
- * say how many exchanges they intend to run, so "at most 500c" is a question
- * about what the run costs, not about one unit of it.
+ * The bounds are compared against the play's WORTHWHILE SCALE (POE-192), not
+ * against one exchange: the question a bankroll asks is "can I afford to run
+ * this play until it pays", and since the app derives that size rather than
+ * asking for it, the size the bound has to meet is the derived one. A 2c
+ * fragment flip whose per-exchange cost is 40c ties up 4,000c by the time it has
+ * cleared the target, and a 500c ceiling that let it through would be answering
+ * about a trip the reader would never make.
  *
- * The `unit` toggle converts the investment bounds only — `minGain` is chaos by
- * definition, and the wire's `investment`/`roi` are always chaos. A rate of 0
- * (the newest hour carried no divine/chaos trade) makes divine unconvertible,
- * so the bounds are read as chaos instead of being multiplied by nothing and
- * silently passing every play.
+ * A play whose scale cannot be derived — `roi ≤ 0`, which the server's
+ * positivity floor (ADR-015) never serves — falls back to its per-exchange
+ * investment rather than being dropped or waved through: that is what such a
+ * play demonstrably ties up, and reading it that way keeps the bound a
+ * comparison against a real figure instead of a second hidden gate.
+ *
+ * The `unit` toggle converts the bounds, never the play: the wire's
+ * `investment` is always chaos. A rate of 0 (the newest hour carried no
+ * divine/chaos trade) makes divine unconvertible, so the bounds are read as
+ * chaos instead of being multiplied by nothing and silently passing every play.
+ *
+ * POE-192 changed what the bounds MEASURE — the worthwhile run's investment,
+ * not one exchange's — which is why the page stores them under new pref keys:
+ * a ceiling typed against the old meaning must not silently empty the new
+ * table.
  */
 export function applyNumericFilters(
 	plays: CurrencyExchangePlay[],
 	filters: NumericFilters
 ): CurrencyExchangePlay[] {
-	const { quantity, unit, divineChaosRate } = filters;
-	const scale = unit === 'divine' && divineChaosRate > 0 ? divineChaosRate : 1;
+	const { unit, divineChaosRate } = filters;
+	const rate = unit === 'divine' && divineChaosRate > 0 ? divineChaosRate : 1;
 
 	const investMin = parseAmount(filters.investMin);
 	const investMax = parseAmount(filters.investMax);
-	const minGain = parseAmount(filters.minGain);
+	if (investMin === null && investMax === null) return [...plays];
 
 	return plays.filter((play) => {
-		const investment = play.investment * quantity;
-		if (investMin !== null && investment < investMin * scale) return false;
-		if (investMax !== null && investment > investMax * scale) return false;
-		if (minGain !== null && play.roi * quantity < minGain) return false;
+		const investment = worthwhileScale(play)?.investment ?? play.investment;
+		if (investMin !== null && investment < investMin * rate) return false;
+		if (investMax !== null && investment > investMax * rate) return false;
 		return true;
 	});
 }
@@ -512,6 +540,10 @@ export function applyNumericFilters(
  * Equal is not over: a depth of 40 means 40 units changed hands, so 40 is a
  * quantity the book demonstrably supported. The row is marked, never dropped —
  * depth is last hour's evidence, not this hour's limit.
+ *
+ * @deprecated POE-192: absorption speaks through the Scale column's hours now,
+ * so the amber Depth cell and its footnote go. Kept only so the page compiles
+ * until chunk 3 removes that marking, which deletes this with it.
  */
 export function overDepth(play: CurrencyExchangePlay, quantity: number): boolean {
 	return quantity > play.depth;

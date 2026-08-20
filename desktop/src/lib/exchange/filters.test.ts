@@ -8,7 +8,6 @@ import {
 	gateDefaults,
 	itemUniverse,
 	matchesSearch,
-	overDepth,
 	overridesCategory,
 	parseCategoryRules,
 	parseGate,
@@ -72,12 +71,10 @@ function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePl
 /** Every numeric filter off, which is the state the bar starts in. */
 function filters(overrides: Partial<NumericFilters> = {}): NumericFilters {
 	return {
-		quantity: 1,
 		investMin: '',
 		investMax: '',
 		unit: 'chaos',
 		divineChaosRate: 198.97,
-		minGain: '',
 		...overrides
 	};
 }
@@ -617,8 +614,11 @@ describe('applyGates', () => {
 });
 
 describe('applyNumericFilters', () => {
+	// 100c an exchange gaining 10c: ten flips clear the 100c scale target, so the
+	// bounds are asked about 1,000c — never about the 100c one exchange costs.
 	const cheap = play({ key: 'cheap', investment: 100, roi: 10, roiPct: 0.1 });
-	const dear = play({ key: 'dear', investment: 250, roi: 25, roiPct: 0.1 });
+	// Dearer at the same return per exchange: ten flips of 250c tie up 2,500c.
+	const dear = play({ key: 'dear', investment: 250, roi: 10, roiPct: 0.1 });
 
 	it('keeps every play when no bound is typed', () => {
 		// The losing play stays: the return floor is a gate now (POE-191), and
@@ -646,44 +646,42 @@ describe('applyNumericFilters', () => {
 		]);
 	});
 
-	it('measures the investment floor against the whole run, not one exchange', () => {
-		// One exchange costs 100c, five cost 500c — the reader set the quantity to
-		// say how many they intend to run, so the bound is a question about the run.
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, investMin: '300' })))).toEqual(
-			['cheap']
-		);
+	it('measures the investment floor against the scale the play must be run at', () => {
+		// Ten flips tie up 1,000c, so a 900c floor is met — even though one
+		// exchange, at 100c, would fall an order of magnitude short of it.
+		expect(keys(applyNumericFilters([cheap], filters({ investMin: '900' })))).toEqual(['cheap']);
 	});
 
-	it('keeps a run sitting exactly on the investment floor', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, investMin: '500' })))).toEqual(
-			['cheap']
-		);
+	it('keeps a play whose scale sits exactly on the investment floor', () => {
+		expect(keys(applyNumericFilters([cheap], filters({ investMin: '1000' })))).toEqual(['cheap']);
 	});
 
-	it('drops a run one chaos under the investment floor', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, investMin: '501' })))).toEqual(
-			[]
-		);
+	it('drops a play whose scale is one chaos under the investment floor', () => {
+		expect(keys(applyNumericFilters([cheap], filters({ investMin: '1001' })))).toEqual([]);
 	});
 
-	it('keeps a run sitting exactly on the investment ceiling', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, investMax: '500' })))).toEqual(
-			['cheap']
-		);
+	it('drops a play the bankroll covers one exchange of but not the scale it needs', () => {
+		// The discriminating case for the re-anchoring (POE-192): 100c an exchange
+		// clears a 500c ceiling, and the 1,000c the play has to tie up to be worth
+		// running does not. Answering about the exchange would sell the reader a
+		// trip they cannot afford to finish.
+		expect(keys(applyNumericFilters([cheap], filters({ investMax: '500' })))).toEqual([]);
 	});
 
-	it('drops a run one chaos over the investment ceiling', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, investMax: '499' })))).toEqual(
-			[]
-		);
+	it('keeps a play whose scale sits exactly on the investment ceiling', () => {
+		expect(keys(applyNumericFilters([cheap], filters({ investMax: '1000' })))).toEqual(['cheap']);
+	});
+
+	it('drops a play whose scale is one chaos over the investment ceiling', () => {
+		expect(keys(applyNumericFilters([cheap], filters({ investMax: '999' })))).toEqual([]);
 	});
 
 	it('reads the investment bounds as divine when the unit says divine', () => {
-		// A ceiling of 1 divine at 200c/div is a 200c ceiling: the 100c play fits
-		// and the 250c one does not.
+		// A ceiling of 5 divine at 200c/div is a 1,000c ceiling: the cheap play's
+		// scale ties up exactly that, the dear one's 2,500c does not.
 		const kept = applyNumericFilters(
 			[cheap, dear],
-			filters({ unit: 'divine', divineChaosRate: 200, investMax: '1' })
+			filters({ unit: 'divine', divineChaosRate: 200, investMax: '5' })
 		);
 
 		expect(keys(kept)).toEqual(['cheap']);
@@ -694,57 +692,25 @@ describe('applyNumericFilters', () => {
 		// nothing — converting by it would give a 0c ceiling and empty the table.
 		const kept = applyNumericFilters(
 			[cheap, dear],
-			filters({ unit: 'divine', divineChaosRate: 0, investMax: '200' })
+			filters({ unit: 'divine', divineChaosRate: 0, investMax: '1000' })
 		);
 
 		expect(keys(kept)).toEqual(['cheap']);
 	});
 
-	it('measures the minimum gain across the whole quantity', () => {
-		// 10c per exchange clears a 40c floor only because five exchanges are run.
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, minGain: '40' })))).toEqual([
-			'cheap'
-		]);
+	it('measures a play with no derivable scale against one exchange', () => {
+		// A play that gains nothing never reaches the target, so there is no scaled
+		// figure to compare — what it demonstrably ties up is the one exchange.
+		// (The server's positivity floor means no served play is shaped this way.)
+		const flat = play({ key: 'flat', investment: 100, roi: 0 });
+
+		expect(keys(applyNumericFilters([flat], filters({ investMax: '100' })))).toEqual(['flat']);
 	});
 
-	it('keeps a run gaining exactly the minimum', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, minGain: '50' })))).toEqual([
-			'cheap'
-		]);
-	});
+	it('drops a play with no derivable scale whose one exchange is over the ceiling', () => {
+		const flat = play({ key: 'flat', investment: 100, roi: 0 });
 
-	it('drops a run one chaos short of the minimum gain', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, minGain: '51' })))).toEqual([]);
-	});
-
-	it('leaves the minimum gain in chaos when the investment bounds are typed in divine', () => {
-		// The unit toggle sits with the investment inputs; the gain input is chaos
-		// by definition, and converting it would raise a 50c floor to 10,000c.
-		const kept = applyNumericFilters(
-			[dear],
-			filters({ unit: 'divine', divineChaosRate: 200, minGain: '25' })
-		);
-
-		expect(keys(kept)).toEqual(['dear']);
-	});
-
-});
-
-describe('overDepth', () => {
-	const shallow = play({ depth: 40 });
-
-	it('reports a quantity above the depth of that hour as over it', () => {
-		expect(overDepth(shallow, 41)).toBe(true);
-	});
-
-	it('reports a quantity equal to the depth as within it', () => {
-		// 40 units changed hands in that hour, so 40 is a quantity the book
-		// demonstrably supported.
-		expect(overDepth(shallow, 40)).toBe(false);
-	});
-
-	it('reports a quantity below the depth as within it', () => {
-		expect(overDepth(shallow, 1)).toBe(false);
+		expect(keys(applyNumericFilters([flat], filters({ investMax: '99' })))).toEqual([]);
 	});
 });
 
