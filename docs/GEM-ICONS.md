@@ -88,7 +88,7 @@ suffice.
 
 ## Currency Exchange items
 
-Status: current. Added 2026-08-19 (POE-177).
+Status: current. Added 2026-08-19 (POE-177); categories 2026-08-20 (POE-185).
 
 The Currency Exchange page needs artwork for a different key space: GGG's feed
 identifies items by metadata id (`Metadata/Items/Currency/CurrencyRerollRare`),
@@ -106,9 +106,10 @@ purpose: they share the cache-filename scheme, and a gem name and an item id
 could reduce to the same file.
 
 What is different is where the map comes from. There is no hand-edited JSON to
-add a row to: `internal/exchange/itemdata/items.json` (names + icons) and
-`icon-urls.json` (the flat `id → URL` map the puller reads) are **generated**,
-and hand edits are lost on the next run. From the repository root:
+add a row to: `internal/exchange/itemdata/items.json` (names, icons and
+categories) and `icon-urls.json` (the flat `id → URL` map the puller reads) are
+**generated**, and hand edits are lost on the next run. From the repository
+root:
 
 ```
 python3 scripts/generate-currency-exchange-items.py
@@ -116,13 +117,29 @@ python3 scripts/generate-currency-exchange-items.py
 
 It reads the item universe from the RePoE-fork base-item dump, joins poewiki's
 `items` cargo table for the icon file names, resolves them through the imageinfo
-API, and prints per-category coverage. It refuses to write on a coverage
-shortfall or a cache-filename collision, and its output is deterministic — an
-unchanged upstream re-runs to an empty diff. Run it **once per league**: GGG
-adds items between leagues, not within one. An id the asset misses is not a
+API, and prints coverage per metadata bucket and per sidebar category. It
+refuses to write on a coverage shortfall, a cache-filename collision or an id no
+category rule matches, and its output is deterministic — an unchanged upstream
+re-runs to an empty diff. Run it **once per league**: GGG adds items between
+leagues, not within one. An id the asset misses is not a
 broken page — the name falls back to the humanized id and the icon to none —
 but it does log `WARN currency-exchange: unknown item id`, which is the signal
 to re-run.
+
+The category is the third generated field, and it has no upstream: neither
+source knows the exchange's own sidebar, and the metadata path is not the
+taxonomy (oils, catalysts, omens, tattoos and runegrafts all sit under
+`Metadata/Items/Currency/`). `CATEGORY_RULES` in the script is the curated
+answer — ordered `(prefix, optional id substring, category)` rows onto the
+sixteen categories the in-game sidebar lists, first match wins (the substring is
+what pulls Allflame embers and Legion emblems out of `MapFragments/` before its
+catch-all) — and a rule naming a category outside those sixteen fails the run
+before the first request. `internal/exchange/items.go` holds the same sixteen
+for the wire, and both test suites restate the list as deliberate independent
+oracles, so a sidebar change is a four-file edit that fails loudly until all
+four agree. Refreshing
+the taxonomy needs no icon pass: `--skip-icons` carries the previous asset's
+icons forward and rewrites names and categories from the dump.
 
 ### Pre-seeding production
 
