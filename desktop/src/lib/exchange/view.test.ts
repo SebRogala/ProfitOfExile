@@ -34,6 +34,27 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
 		divineChaosRate: 198.97,
 		count: 0,
 		plays: [],
+		// The full sixteen, as the wire guarantees on every served body — a
+		// shorter stand-in would let a category-filter test pass against a
+		// universe the server never sends.
+		categories: [
+			'Currency',
+			'Essences',
+			'Delve',
+			'Scarabs',
+			'Divination Cards',
+			'Delirium',
+			'Legion',
+			'Fragments',
+			'Oils',
+			'Catalysts',
+			'Omens',
+			'Tattoos',
+			'Expedition',
+			'Harvest',
+			'Runegrafts',
+			'Allflame'
+		],
 		...overrides
 	};
 }
@@ -324,8 +345,10 @@ describe('legLabel', () => {
 			suspect: false,
 			itemName: 'Mod Values',
 			itemIcon: null,
+			itemCategory: 'Currency',
 			quoteName: 'Reroll Rare',
 			quoteIcon: null,
+			quoteCategory: 'Currency',
 			...overrides
 		};
 	}

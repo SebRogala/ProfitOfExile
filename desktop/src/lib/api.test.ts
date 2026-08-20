@@ -109,14 +109,35 @@ describe('fetchCurrencyExchangePlays', () => {
 		horizon: 'recent',
 		divineChaosRate: 198.97,
 		count: 0,
-		plays: []
+		plays: [],
+		// The sidebar's sixteen, in sidebar order, on a body with no plays at
+		// all — that is the shape the server guarantees
+		// (internal/exchange/items.go categories).
+		categories: [
+			'Currency',
+			'Essences',
+			'Delve',
+			'Scarabs',
+			'Divination Cards',
+			'Delirium',
+			'Legion',
+			'Fragments',
+			'Oils',
+			'Catalysts',
+			'Omens',
+			'Tattoos',
+			'Expedition',
+			'Harvest',
+			'Runegrafts',
+			'Allflame'
+		]
 	};
 
 	/**
 	 * A play as the decorated handler sends it (POE-177): every leg carries a
-	 * display name, and an icon path only when the item has artwork. Both
-	 * shapes appear in the same payload because the page has to render a row
-	 * that mixes them.
+	 * display name, a sidebar category on each side, and an icon path only when
+	 * the item has artwork. Both shapes appear in the same payload because the
+	 * page has to render a row that mixes them.
 	 */
 	const DECORATED_LEG: CurrencyExchangeLeg = {
 		action: 'buy',
@@ -131,8 +152,10 @@ describe('fetchCurrencyExchangePlays', () => {
 		suspect: false,
 		itemName: 'Chaos Orb',
 		itemIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		itemCategory: 'Currency',
 		quoteName: 'Exalted Orb',
-		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyAddModToRare'
+		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyAddModToRare',
+		quoteCategory: 'Currency'
 	};
 
 	const ICONLESS_LEG: CurrencyExchangeLeg = {
@@ -151,8 +174,37 @@ describe('fetchCurrencyExchangePlays', () => {
 		suspect: true,
 		itemName: 'Delirium Orb',
 		itemIcon: null,
+		// The two sides sit in different sidebar categories, as a real leg's
+		// usually do — the filter has to be able to match on either one.
+		itemCategory: 'Delirium',
 		quoteName: 'Chaos Orb',
-		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare'
+		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		quoteCategory: 'Currency'
+	};
+
+	/**
+	 * A leg whose item is an id the server's asset does not cover — a currency
+	 * added since the last asset regeneration. The server humanises the id into
+	 * a name, has no icon URL for it, and sends `""` for the category, which the
+	 * filter reads as unfiltered.
+	 */
+	const UNCATEGORISED_LEG: CurrencyExchangeLeg = {
+		action: 'buy',
+		item: 'Metadata/Items/Currency/CurrencyNewLeagueOrb',
+		quote: 'Metadata/Items/Currency/CurrencyRerollRare',
+		price: 12,
+		fair: 11.5,
+		fairOk: true,
+		tick: 0.01,
+		volume: 300,
+		stock: 25,
+		suspect: false,
+		itemName: 'New League Orb',
+		itemIcon: null,
+		itemCategory: '',
+		quoteName: 'Chaos Orb',
+		quoteIcon: '/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare',
+		quoteCategory: 'Currency'
 	};
 
 	const DECORATED_RESPONSE: CurrencyExchangeResponse = {
@@ -281,6 +333,67 @@ describe('fetchCurrencyExchangePlays', () => {
 		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[1];
 
 		expect(leg.itemIcon).toBeNull();
+	});
+
+	it('keeps each side of a leg in its own category field', async () => {
+		// The filter matches on whichever side the reader is shopping for, so
+		// item and quote categories must not be crossed or collapsed into one:
+		// this leg buys a Delirium Orb quoted in chaos, and hiding "Currency"
+		// has to leave the Delirium side of it still matchable.
+		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
+
+		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[1];
+
+		expect(leg.itemCategory).toBe('Delirium');
+		expect(leg.quoteCategory).toBe('Currency');
+	});
+
+	it('keeps an uncovered item\'s empty category as "" rather than substituting a name', async () => {
+		// "" is the server's answer for an id its asset does not know, and the
+		// filter reads it as unfiltered. A fetcher that defaulted it to a
+		// placeholder category would file the item under a row it does not
+		// belong to, and one that dropped the falsy field would hand the filter
+		// `undefined` instead.
+		fetchMock.mockResolvedValue({
+			ok: true,
+			json: async () =>
+				structuredClone({
+					...DECORATED_RESPONSE,
+					plays: [{ ...DECORATED_RESPONSE.plays[0], legs: [UNCATEGORISED_LEG, ICONLESS_LEG] }]
+				})
+		});
+
+		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[0];
+
+		expect(leg.itemCategory).toBe('');
+	});
+
+	it('carries the whole sidebar taxonomy in sidebar order on a body with no plays', async () => {
+		// The category filter renders from this list, so it cannot be a function
+		// of the ranking: a taxonomy derived from the plays in the body would
+		// leave the filter empty on a cold server, and one re-sorted on the way
+		// through would stop matching the in-game sidebar the reader is reading
+		// alongside it.
+		const result = await fetchCurrencyExchangePlays('all');
+
+		expect(result.categories).toEqual([
+			'Currency',
+			'Essences',
+			'Delve',
+			'Scarabs',
+			'Divination Cards',
+			'Delirium',
+			'Legion',
+			'Fragments',
+			'Oils',
+			'Catalysts',
+			'Omens',
+			'Tattoos',
+			'Expedition',
+			'Harvest',
+			'Runegrafts',
+			'Allflame'
+		]);
 	});
 
 	it('rejects with the status when the server answers a non-OK response', async () => {
