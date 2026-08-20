@@ -61,10 +61,11 @@
 		parseItemRules,
 		serializeCategoryRules,
 		serializeItemRules,
-		type CategoryRuleState
+		type CategoryRuleState,
+		type Gates
 	} from '$lib/exchange/filters';
 	import { EXCHANGE_TOOLTIPS } from '$lib/tooltips';
-	import { persisted } from '$lib/prefs.svelte';
+	import { persisted, type PersistedString } from '$lib/prefs.svelte';
 	import ExchangeFilterBar from '$lib/components/ExchangeFilterBar.svelte';
 	import ExchangeRoute from '$lib/components/ExchangeRoute.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
@@ -84,10 +85,31 @@
 	const unitPref = persisted('currencyExchangeUnit', 'chaos');
 	const investMinPref = persisted('currencyExchangeInvestMin', '');
 	const investMaxPref = persisted('currencyExchangeInvestMax', '');
-	const minRoiPctPref = persisted('currencyExchangeMinRoiPct', '');
 	const minGainPref = persisted('currencyExchangeMinGain', '');
 	const categoryRulesPref = persisted('currencyExchangeCategoryRules', '{}');
 	const itemRulesPref = persisted('currencyExchangeItemRules', '[]');
+
+	/**
+	 * The five quality gates (POE-191), one preference each.
+	 *
+	 * Every one defaults to '' and NOT to the number it stands for, because ''
+	 * already means that number: `parseGate` reads an unset knob as its default,
+	 * so an empty preference and a preference holding "3" filter identically. The
+	 * empty one has the property the literal lacks — a default this build changes
+	 * reaches the reader who never touched the knob, instead of leaving them
+	 * pinned to a number an older build wrote into their settings file.
+	 *
+	 * `minRoiPct` keeps its original key: it is the same knob the reader has been
+	 * setting since POE-186, moved into the group rather than replaced, and
+	 * renaming it would silently drop the floor of anyone who had one.
+	 */
+	const gatePrefs: Record<keyof Gates, PersistedString> = {
+		minRoiChaos: persisted('currencyExchangeGateMinRoiChaos', ''),
+		minTurnover: persisted('currencyExchangeGateMinTurnover', ''),
+		maxTickPct: persisted('currencyExchangeGateMaxTickPct', ''),
+		minEdgeTickRatio: persisted('currencyExchangeGateMinEdgeTickRatio', ''),
+		minRoiPct: persisted('currencyExchangeMinRoiPct', '')
+	};
 
 	/**
 	 * The base the legs' relative icon paths hang off. `$derived` rather than a
@@ -125,6 +147,22 @@
 	const itemRules = $derived(parseItemRules(itemRulesPref.value));
 
 	/**
+	 * The gate knobs, raw and parsed. Both go to the filter bar: the boxes show
+	 * the raw strings (so a half-typed number is not fought while it is typed) and
+	 * the badge measures the parsed ones against `gateDefaults`. Parsed once here
+	 * rather than once here and once in the bar, so the filter and the badge
+	 * cannot disagree about whether a knob is at its default.
+	 */
+	const gateInputs = $derived({
+		minRoiChaos: gatePrefs.minRoiChaos.value,
+		minTurnover: gatePrefs.minTurnover.value,
+		maxTickPct: gatePrefs.maxTickPct.value,
+		minEdgeTickRatio: gatePrefs.minEdgeTickRatio.value,
+		minRoiPct: gatePrefs.minRoiPct.value
+	});
+	const gates = $derived(parseGates(gateInputs));
+
+	/**
 	 * The filter bar's search box, as typed. Plain `$state` and deliberately NOT
 	 * `persisted()`, the one pick on this page that is not: everything else here
 	 * is a setup the reader built and expects back, and a search is a moment —
@@ -142,45 +180,51 @@
 	const hoursWindow = $derived(result?.hours ?? 0);
 
 	/**
-	 * Rules, then gates, then numbers, then the search, then order. The gates run
-	 * at their defaults here apart from the reader's return floor — POE-191's
-	 * chunk 4 owns the knobs and the filter-bar row that set the other four. The
-	 * two rule layers narrow
-	 * by identity and the numeric bounds by size, so running them the other way
-	 * round would cost the same rows at more comparisons; the search runs last of
-	 * the three because it narrows what the persisted setup has already left on
-	 * screen rather than joining it. The sort is last of all because it is the
-	 * only step whose answer depends on how many rows survived.
+	 * Rules, then gates, then numbers, then the search, then order. The two rule
+	 * layers narrow by identity and the numeric bounds by size, so running them
+	 * the other way round would cost the same rows at more comparisons; the search
+	 * runs last of the four because it narrows what the persisted setup has
+	 * already left on screen rather than joining it. The sort is last of all
+	 * because it is the only step whose answer depends on how many rows survived.
+	 *
+	 * The gate step is held in its own `$derived` rather than folded into the
+	 * chain, because the counter has to be able to say how many rows the GATES
+	 * took: since POE-191 they are the one filter that hides rows the reader never
+	 * set, and a lump "hidden by filters" over a bar with nothing visibly on it
+	 * reads as a broken table rather than as a knob to turn.
 	 *
 	 * `rows` is what the counter counts, so the shown figure is the post-search
 	 * one: a query that hides a play is one of the reasons it is not on the table.
 	 */
+	const afterRules = $derived(applyRules(allPlays, categoryRules, itemRules));
+	const afterGates = $derived(applyGates(afterRules, gates));
 	const rows = $derived(
 		sortPlays(
-			applyNumericFilters(
-				applyGates(
-					applyRules(allPlays, categoryRules, itemRules),
-					parseGates({
-						minRoiChaos: '',
-						minTurnover: '',
-						maxTickPct: '',
-						minEdgeTickRatio: '',
-						minRoiPct: minRoiPctPref.value
-					})
-				),
-				{
-					quantity,
-					investMin: investMinPref.value,
-					investMax: investMaxPref.value,
-					unit,
-					divineChaosRate: result?.divineChaosRate ?? 0,
-					minGain: minGainPref.value
-				}
-			).filter((play) => matchesSearch(play, search)),
+			applyNumericFilters(afterGates, {
+				quantity,
+				investMin: investMinPref.value,
+				investMax: investMaxPref.value,
+				unit,
+				divineChaosRate: result?.divineChaosRate ?? 0,
+				minGain: minGainPref.value
+			}).filter((play) => matchesSearch(play, search)),
 			parseSort(sortPref.value),
 			quantity
 		)
 	);
+
+	/**
+	 * The counter's attribution. Gates get their own figure; the rules, the
+	 * bounds and the search share the other, because those three are all things
+	 * the reader can see they set — the rows they take are not a surprise the way
+	 * a default-on gate's are.
+	 */
+	const counts = $derived({
+		shown: rows.length,
+		total: allPlays.length,
+		hiddenByGates: afterRules.length - afterGates.length,
+		hiddenByFilters: allPlays.length - rows.length - (afterRules.length - afterGates.length)
+	});
 
 	function setQuantity(next: number) {
 		quantityPref.value = String(Math.max(1, next));
@@ -205,21 +249,41 @@
 		itemRulesPref.value = serializeItemRules(next);
 	}
 
+	/** One gate knob, as typed. Validation is `parseGate`'s, on read. */
+	function setGate(knob: keyof Gates, value: string) {
+		gatePrefs[knob].value = value;
+	}
+
+	/**
+	 * Every knob back to its default, which is spelled '' and not the number:
+	 * `parseGate` reads unset as the default, so emptying the boxes IS the reset,
+	 * and it leaves the reader on whatever this build's defaults are rather than
+	 * on a snapshot of them.
+	 */
+	function resetGates() {
+		for (const pref of Object.values(gatePrefs)) pref.value = '';
+	}
+
 	/**
 	 * Clear resets the persisted setup that hides rows — the two rule layers and
-	 * the four bounds — and nothing else. Quantity, sort, mode, horizon and
+	 * the three bounds — and nothing else. Quantity, sort, mode, horizon and
 	 * density change what the reader is looking at, not how much of it, so
 	 * clearing a filter that emptied the table must not also throw away the way
 	 * they had it set up. The search is left alone too, for the opposite reason:
 	 * it is not part of the setup, it is visibly in its own box, and that box has
 	 * its own × for the reader who wants it gone.
+	 *
+	 * The GATES are left alone for a third reason (POE-191): they are standing
+	 * policy rather than a question asked once, "clearing" them would have to mean
+	 * setting five zeroes rather than emptying five boxes — emptying them is what
+	 * turns them back ON — and the Gates row has its own Defaults for the reader
+	 * who wants them where they started.
 	 */
 	function clearFilters() {
 		categoryRulesPref.value = serializeCategoryRules({});
 		itemRulesPref.value = serializeItemRules([]);
 		investMinPref.value = '';
 		investMaxPref.value = '';
-		minRoiPctPref.value = '';
 		minGainPref.value = '';
 	}
 
@@ -402,20 +466,22 @@
 			{categoryRules}
 			{itemRules}
 			{items}
+			{gateInputs}
+			{gates}
 			investMin={investMinPref.value}
 			investMax={investMaxPref.value}
-			minRoiPct={minRoiPctPref.value}
 			minGain={minGainPref.value}
 			{unit}
 			divineChaosRate={result.divineChaosRate}
 			{search}
-			counts={{ shown: rows.length, total: allPlays.length }}
+			{counts}
 			{apiBase}
 			oncategoryrule={setCategoryRule}
 			onitemrule={setItemRule}
+			ongate={setGate}
+			ongatedefaults={resetGates}
 			oninvestmin={(v) => (investMinPref.value = v)}
 			oninvestmax={(v) => (investMaxPref.value = v)}
-			onminroipct={(v) => (minRoiPctPref.value = v)}
 			onmingain={(v) => (minGainPref.value = v)}
 			onunit={(v) => (unitPref.value = v)}
 			onsearch={(v) => (search = v)}
@@ -611,26 +677,35 @@
 			<div class="footnote">
 				{@render warning()}
 				<span>
-					on <strong>ROI%</strong> — a leg's price sits outside its fair band: a buy below fair
-					&times; 0.67, or a sell above fair &times; 1.5. The play still ranks, after every clean
-					one; the extreme may be a real fill or one stray order, so verify the route in game.
+					on <strong>ROI%</strong> — one of the play's trades is priced outside its fair band: a buy
+					below fair &times; 0.67, or a sell above fair &times; 1.5. The play still ranks, after every
+					clean one; the extreme may be a real fill or one stray order, so verify the route in game.
 				</span>
 			</div>
 			<div class="footnote">
 				{@render warning()}
 				<span>
-					on <strong>Depth</strong> — your quantity is above what the thinnest leg traded last hour.
+					on <strong>Depth</strong> — your quantity is above what the play's thinnest trade saw last
+					hour.
 					The ROI still stands; filling it will take longer than an hour or move the price. Nothing
 					is capped for you.
 				</span>
 			</div>
 		</div>
 	{:else if viewState.kind === 'ready'}
+		<!-- The gates are named separately here for the reason the counter splits
+		     them: they hide rows on a bar the reader may never have opened, so
+		     "your filters" alone would point at controls that are all visibly
+		     off. -->
 		<div class="empty">
 			{allPlays.length > 0
 				? search.trim() !== ''
-					? 'No plays match your search and filters right now.'
-					: 'No plays pass your filters right now.'
+					? 'No plays match your search, gates and filters right now.'
+					: counts.hiddenByGates > 0 && counts.hiddenByFilters === 0
+						? 'No plays clear your gates right now — lower them in the filter bar’s Gates row.'
+						: counts.hiddenByFilters > 0 && counts.hiddenByGates === 0
+							? 'No plays pass your filters right now.'
+							: 'No plays pass your gates and filters right now.'
 				: 'No plays ranked for this mode and horizon.'}
 		</div>
 	{/if}

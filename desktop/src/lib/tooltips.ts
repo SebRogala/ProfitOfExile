@@ -65,38 +65,58 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
  * Separate from `METRIC_TOOLTIPS` on purpose: the two surfaces share the words
  * "ROI" and "ROI%" and mean different things by them. A gem's ROI% is
  * percentage points off a base-gem price; an exchange play's is a fraction of
- * what one round trip costs, net of the undercut each leg pays. Pointing a gem
- * tooltip at this table would word the number wrongly by a factor of a hundred.
+ * what one round trip costs, net of the undercut each of its trades pays.
+ * Pointing a gem tooltip at this table would word the number wrongly by a
+ * factor of a hundred.
  *
  * Every figure these describe is the LAST SETTLED feed hour (POE-188), not the
  * live book — which is why each entry ends where it does: with what to do about
  * that, rather than with the number as if it were a quote.
+ *
+ * Written for a reader who plays the game, not one who trades for a living
+ * (POE-191): a play is a round trip made of TRADES or STEPS, never of "legs".
+ * The word survives in the code, where it names a wire field, and nowhere the
+ * reader can see it.
  */
 export const EXCHANGE_TOOLTIPS: Record<string, string> = {
-	ROI: 'Absolute profit in chaos orbs — one exchange is chaos in, chaos out. What you get back minus what you spent, multiplied by your Quantity; the sub-line is the per-exchange figure. Both are net of one tick of undercut on each leg, the price an order that actually fills pays. Higher = more profit, but every figure here is the last settled hour: verify the route in game before committing.',
+	ROI: 'Absolute profit in chaos orbs — one exchange is chaos in, chaos out. What you get back minus what you spent, multiplied by your Quantity; the sub-line is the per-exchange figure. Both are net of one price step of undercut on each of the play’s trades, the price an order that actually fills pays. Higher = more profit, but every figure here is the last settled hour: verify the route in game before committing.',
 	'ROI%':
-		'Return on investment as a percentage — ROI divided by what one exchange costs. Scale-free, so it compares plays across price tiers. NET is net of one tick of undercut on every leg, the return an order that actually gets taken can expect, and it is what the ranking uses. RAW is the same round trip at the hour’s raw extremes — never below NET, and the gap between them is what the ticks cost.',
+		'Return on investment as a percentage — ROI divided by what one exchange costs. Scale-free, so it compares plays across price tiers. NET is net of one price step of undercut on every one of the play’s trades, the return an order that actually gets taken can expect, and it is what the ranking uses. RAW is the same round trip at the hour’s raw extremes — never below NET, and the gap between them is what those steps cost.',
 	Quantity:
 		'How many exchanges you intend to run. ROI and Investment are both multiplied by it; ROI% is not, because it is scale-free. Default 1, and it is remembered across restarts. Set it above a play’s Depth and the Depth cell turns amber — the number is never capped for you.',
 	Investment:
 		'Chaos you need liquid: the per-exchange cost at the undercut entry, times your Quantity. Set the min/max in the filter bar to see only what your bankroll covers, and switch the unit to divine for the large ones — converted at the divine/chaos rate from the same feed hour.',
 	Gold: '(column hidden until computable) The in-game currency exchange charges gold per trade. Nothing here is net of it yet, and a reserved column of dashes promised a number the page could not give, so the column is gone until the per-trade cost is known and ROI can be shown net of gold.',
 	Route:
-		'The round trip as five slots: what you spend, the two or three trades, what you get back. Spend is the chaos ONE exchange costs at the undercut entry; Get is the chaos that same exchange returns — your spend plus the profit, not a separate payout. Each step’s rate is quoted in that leg’s own currency, so a play that sells into divine shows a divine number there while both ends stay in chaos: the conversion back is already inside the Get figure. Both ends are per exchange, whatever your Quantity.',
-	Fill: 'How long trading your Quantity would take at this play’s Depth — Quantity ÷ units per hour, rounded up, green under an hour. Optimistic on purpose: it assumes you take the market’s WHOLE hourly volume on the thinnest leg, which everyone else is competing for, and a direct play buys and sells on that one market. Read it as the floor on the time, not the time.',
+		'The round trip as five slots: what you spend, the two or three trades, what you get back. Spend is the chaos ONE exchange costs at the undercut entry; Get is the chaos that same exchange returns — your spend plus the profit, not a separate payout. Each step’s rate is quoted in that step’s own currency, so a play that sells into divine shows a divine number there while both ends stay in chaos: the conversion back is already inside the Get figure. Both ends are per exchange, whatever your Quantity.',
+	Fill: 'How long trading your Quantity would take at this play’s Depth — Quantity ÷ units per hour, rounded up, green under an hour. Optimistic on purpose: it assumes you take the market’s WHOLE hourly volume on the play’s thinnest trade, which everyone else is competing for, and a direct play buys and sells on that one market. Read it as the floor on the time, not the time.',
 	Trend:
 		'Reserved for the fair-price trend across recent hours — whether the market this play trades against is drifting up or down. No per-play fair history is published yet, so nothing is derived and the cell shows a dash rather than a direction the data cannot support.',
 	Depth:
-		'Units per hour the thinnest leg traded — the hourly ceiling. This is the whole market’s volume, not your share, and a direct play buys and sells the same item on one market, so its real ceiling is lower still. A Quantity above it is marked amber rather than capped: the ROI stands, filling it takes longer than an hour or moves the price.',
+		'Units per hour the thinnest of the play’s trades saw — the hourly ceiling. This is the whole market’s volume, not your share, and a direct play buys and sells the same item on one market, so its real ceiling is lower still. A Quantity above it is marked amber rather than capped: the ROI stands, filling it takes longer than an hour or moves the price.',
 	Hours:
-		'How many of the window’s hours this play held — the persistence gate. A play must clear every gate in at least four of the recent window’s six hours (eighteen of the day window’s twenty-four) to be served at all, so the full count is a standing spread and the minimum is an edge that only just persisted.',
+		'How many of the window’s hours this play held — the persistence count. An hour counts when the play was ALIVE in it (at least ten units of each traded item changed hands, with orders standing on both sides) and its return cleared the server’s +0.1% sanity floor. That is the whole test since POE-191: the quality bar moved to your Gates row, so these hours no longer ask a play to have been worth trading, only to have existed and paid. Expect the fraction to read higher than it used to. The server still needs a minimum before it serves a play at all — four of the recent window’s six hours, eighteen of the day window’s twenty-four — so the full count is a spread that stood all window and the minimum is one that only just persisted.',
 	'Only / Hide':
-		'Two layers. Category pills are coarse — the 16 buckets the in-game exchange lists down its own sidebar. Item chips are overrides: an item rule beats whatever its category says, and Hide beats Only when both apply. A play matches if any leg’s item or quote hits a rule, in either role. Both layers are remembered across restarts.',
+		'Two layers. Category pills are coarse — the 16 buckets the in-game exchange lists down its own sidebar. Item chips are overrides: an item rule beats whatever its category says, and Hide beats Only when both apply. A play matches if either side of any of its trades hits a rule — what you buy or what you pay with. Both layers are remembered across restarts.',
 	Mode: 'DIRECT buys and sells the same item on one market — market making, two trades. 1-HOP buys an item against one currency, sells it against another, then converts back — three trades, three chances to be beaten to the fill.',
 	Suspect:
-		'A leg’s price sits outside its fair band: a buy below fair × 0.67, or a sell above fair × 1.5. The play is still served and still ranked, after every clean one, because the extreme may be a real fill or a single stray order and only the book can say which. Read the row as a signal, not a quote — verify the route in game before committing.',
+		'One of the play’s trades is priced outside its fair band: a buy below fair × 0.67, or a sell above fair × 1.5. The play is still served and still ranked, after every clean one, because the extreme may be a real fill or a single stray order and only the book can say which. Read the row as a signal, not a quote — verify the route in game before committing.',
 	'Data age':
 		'Every figure on this page is the last SETTLED feed hour, not the live book. The feed publishes 40–60 minutes after an hour closes, so these prices can be up to about two hours behind what the exchange is showing you right now. Check the route in game before committing to it.',
+	Gates:
+		'The quality bar — four floors and one ceiling the SERVER used to apply to everybody before it sent anything (POE-191 handed them to you). An EMPTY box is that gate running at the old server value, NOT off: the opposite of the Investment and Min gain bounds beside them, where empty means no filter at all. Type 0 to turn one off. Clear leaves all five alone — Defaults is what puts them back.',
+	'Min profit':
+		'The least chaos a play must gain on ONE exchange, whatever your Quantity — a gate asks whether the market is worth trading, not how much of it you intend to trade. Empty = 3c, the old server floor. Lower it (or 0) to see the cheap plays: sacrifice fragments and the like gain a fraction of a chaos each and only add up on volume.',
+	'Min turnover':
+		'How much chaos had to change hands on the play’s market during the feed hour. Empty = 10,000c, the old server floor — below that you are not joining a market so much as being one, and your own order sets the price. Lower it (or 0) to see the quiet corners of the exchange.',
+	'Max price step':
+		'The coarsest price step the play’s market may quote in, as a percent of the price. A market that only moves in 25% jumps cannot be undercut finely, so the entry you planned is not the entry you get. Empty = 10%. 0 means no ceiling.',
+	'Edge vs step':
+		'How many price steps wide the play’s return has to be. At 5 the return must be five times the market’s own step, which keeps a play whose entire edge is one step of rounding off the table — most 1-hop routes fail here, because the divine step alone eats them. Empty = 5. 0 turns it off and they appear.',
+	'Min return':
+		'The least return a play must show, as a percent of what one exchange costs — the same NET figure the ROI% column prints. Empty = 2%, which the server used to apply to everyone regardless of what was typed here. 0 shows everything above the server’s +0.1% sanity floor — it never serves a play that loses money or gains only float noise.',
+	Counter:
+		'What is left of the response, and what took the rest. Gates are counted apart from everything else because they run whether or not you have opened that row — an unset gate is the old server default, not an absent filter. Everything else is counted together: the category pills, the item chips, the investment and gain bounds, and the search box.'
 };
 
 export const SELL_CONFIDENCE_TOOLTIPS: Record<string, string> = {
