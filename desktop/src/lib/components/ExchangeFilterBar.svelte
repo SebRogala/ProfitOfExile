@@ -9,8 +9,13 @@
 	 * when the two layers disagree, because a chip that reads "Only" inside a
 	 * hidden category otherwise looks like a rule that is not working.
 	 *
+	 * The search box sits beside the counter on the last row because the two read
+	 * as one sentence — what the reader is looking for, and how much of the table
+	 * is left. It is a view filter and not a rule: nothing about it is persisted
+	 * and Clear does not empty it.
+	 *
 	 * Presentation only. It holds one piece of state — whether the Add popover is
-	 * open — and every rule, bound and count is a prop; every change leaves
+	 * open — and every rule, bound, query and count is a prop; every change leaves
 	 * through a callback so the page owns what is persisted (ADR-013).
 	 */
 	import { overridesCategory } from '$lib/exchange/filters';
@@ -38,6 +43,7 @@
 		minGain,
 		unit,
 		divineChaosRate,
+		search,
 		counts,
 		apiBase,
 		oncategoryrule,
@@ -47,6 +53,7 @@
 		onminroipct,
 		onmingain,
 		onunit,
+		onsearch,
 		onclear
 	}: {
 		/** The sidebar taxonomy, straight off the response — never a local copy. */
@@ -69,6 +76,9 @@
 		unit: ExchangeUnit;
 		/** The newest hour's chaos value of one divine; 0 when that hour had none. */
 		divineChaosRate: number;
+		/** The raw search text, as typed — `matchesSearch` owns the trimming. */
+		search: string;
+		/** Counted AFTER the search, which is one of the things hiding rows. */
 		counts: { shown: number; total: number };
 		apiBase: string;
 		/** The pill's NEXT state, per `cycleCategoryRule`; `undefined` is neutral. */
@@ -80,7 +90,13 @@
 		onminroipct: (value: string) => void;
 		onmingain: (value: string) => void;
 		onunit: (unit: ExchangeUnit) => void;
-		/** Clears the rules and the bounds — never the quantity, sort or mode. */
+		/** The raw box contents; `''` is the search off. */
+		onsearch: (query: string) => void;
+		/**
+		 * Clears the rules and the bounds — never the quantity, sort, mode or the
+		 * search. The search is not persisted and has its own ×, so sweeping it up
+		 * here would make Clear the second control that empties the box.
+		 */
 		onclear: () => void;
 	} = $props();
 
@@ -265,6 +281,45 @@
 		<span class="unit-hint">chaos</span>
 
 		<div class="spacer"></div>
+
+		<div class="search">
+			<svg
+				width="12"
+				height="12"
+				viewBox="0 0 14 14"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.6"
+				stroke-linecap="round"
+				aria-hidden="true"
+			>
+				<circle cx="6" cy="6" r="4.5" />
+				<path d="M9.4 9.4 L12.5 12.5" />
+			</svg>
+			<input
+				type="text"
+				placeholder="Search names…"
+				aria-label="Search plays by item name"
+				value={search}
+				oninput={(e) => onsearch(e.currentTarget.value)}
+				onkeydown={(e) => {
+					// On the input rather than on the window: Escape empties the box
+					// the reader is typing in, and a global listener would also fire
+					// for a search they cannot see and fight the picker's dismissal.
+					// When the box had text, the press is consumed — one Escape does
+					// one thing, so it cannot also close an open picker.
+					if (e.key === 'Escape' && search !== '') {
+						e.stopPropagation();
+						onsearch('');
+					}
+				}}
+			/>
+			{#if search !== ''}
+				<button class="remove" aria-label="Clear the search" onclick={() => onsearch('')}
+					>&times;</button
+				>
+			{/if}
+		</div>
 
 		<span class="counter">
 			<span class="mono shown">{counts.shown}</span> of {counts.total} plays &middot;
@@ -461,6 +516,37 @@
 
 	.spacer {
 		flex: 1;
+	}
+
+	/* The box is the bordered field, not the input inside it: the magnifier and
+	   the × have to sit within the same frame the reader clicks into. */
+	.search {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		background: var(--color-lab-bg);
+		border: 1px solid var(--color-lab-border);
+		border-radius: 3px;
+		padding: 2px 6px;
+		color: #6b7280;
+	}
+
+	.search:focus-within {
+		border-color: var(--color-lab-blue);
+	}
+
+	.search input {
+		width: 140px;
+		background: transparent;
+		border: none;
+		padding: 1px 0;
+		font-family: inherit;
+		font-size: 0.75rem;
+		color: var(--color-lab-text);
+	}
+
+	.search input:focus {
+		outline: none;
 	}
 
 	.counter {

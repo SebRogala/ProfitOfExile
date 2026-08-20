@@ -53,6 +53,7 @@
 		applyNumericFilters,
 		applyRules,
 		itemUniverse,
+		matchesSearch,
 		overDepth,
 		parseCategoryRules,
 		parseItemRules,
@@ -121,6 +122,15 @@
 	const categoryRules = $derived(parseCategoryRules(categoryRulesPref.value));
 	const itemRules = $derived(parseItemRules(itemRulesPref.value));
 
+	/**
+	 * The filter bar's search box, as typed. Plain `$state` and deliberately NOT
+	 * `persisted()`, the one pick on this page that is not: everything else here
+	 * is a setup the reader built and expects back, and a search is a moment —
+	 * restoring one would open the app on a table narrowed by a word they typed
+	 * days ago, with the reason for it sitting in a box they are not looking at.
+	 */
+	let search = $state('');
+
 	// ----------------------------------------------------------- the filters --
 
 	/** The response's own list — what the counter counts against and what the
@@ -130,10 +140,15 @@
 	const hoursWindow = $derived(result?.hours ?? 0);
 
 	/**
-	 * Rules, then numbers, then order. The two rule layers narrow by identity and
-	 * the numeric bounds by size, so running them the other way round would cost
-	 * the same rows at more comparisons; the sort is last because it is the only
-	 * step whose answer depends on how many rows survived.
+	 * Rules, then numbers, then the search, then order. The two rule layers narrow
+	 * by identity and the numeric bounds by size, so running them the other way
+	 * round would cost the same rows at more comparisons; the search runs last of
+	 * the three because it narrows what the persisted setup has already left on
+	 * screen rather than joining it. The sort is last of all because it is the
+	 * only step whose answer depends on how many rows survived.
+	 *
+	 * `rows` is what the counter counts, so the shown figure is the post-search
+	 * one: a query that hides a play is one of the reasons it is not on the table.
 	 */
 	const rows = $derived(
 		sortPlays(
@@ -145,7 +160,7 @@
 				divineChaosRate: result?.divineChaosRate ?? 0,
 				minRoiPct: minRoiPctPref.value,
 				minGain: minGainPref.value
-			}),
+			}).filter((play) => matchesSearch(play, search)),
 			parseSort(sortPref.value),
 			quantity
 		)
@@ -175,10 +190,13 @@
 	}
 
 	/**
-	 * Clear resets what hides rows — the two rule layers and the four bounds —
-	 * and nothing else. Quantity, sort, mode, horizon and density change what the
-	 * reader is looking at, not how much of it, so clearing a filter that emptied
-	 * the table must not also throw away the way they had it set up.
+	 * Clear resets the persisted setup that hides rows — the two rule layers and
+	 * the four bounds — and nothing else. Quantity, sort, mode, horizon and
+	 * density change what the reader is looking at, not how much of it, so
+	 * clearing a filter that emptied the table must not also throw away the way
+	 * they had it set up. The search is left alone too, for the opposite reason:
+	 * it is not part of the setup, it is visibly in its own box, and that box has
+	 * its own × for the reader who wants it gone.
 	 */
 	function clearFilters() {
 		categoryRulesPref.value = serializeCategoryRules({});
@@ -374,6 +392,7 @@
 			minGain={minGainPref.value}
 			{unit}
 			divineChaosRate={result.divineChaosRate}
+			{search}
 			counts={{ shown: rows.length, total: allPlays.length }}
 			{apiBase}
 			oncategoryrule={setCategoryRule}
@@ -383,6 +402,7 @@
 			onminroipct={(v) => (minRoiPctPref.value = v)}
 			onmingain={(v) => (minGainPref.value = v)}
 			onunit={(v) => (unitPref.value = v)}
+			onsearch={(v) => (search = v)}
 			onclear={clearFilters}
 		/>
 	{/if}
@@ -592,7 +612,9 @@
 	{:else if viewState.kind === 'ready'}
 		<div class="empty">
 			{allPlays.length > 0
-				? 'No plays pass your filters right now.'
+				? search.trim() !== ''
+					? 'No plays match your search and filters right now.'
+					: 'No plays pass your filters right now.'
 				: 'No plays ranked for this mode and horizon.'}
 		</div>
 	{/if}

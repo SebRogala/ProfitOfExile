@@ -370,6 +370,34 @@ export function overDepth(play: CurrencyExchangePlay, quantity: number): boolean
 	return quantity > play.depth;
 }
 
+// ------------------------------------------------------------- the search --
+
+/**
+ * Whether a play mentions what the reader typed.
+ *
+ * A VIEW filter, not a rule: it composes after the two rule layers and the
+ * numeric bounds, nothing about it is persisted, and Clear leaves it alone — a
+ * search is a moment, not a setup.
+ *
+ * Case-insensitive substring over the DISPLAY names of both halves of every
+ * leg, both halves for the reason `playSides` gives: the reader shops for
+ * whichever side they hold, and a 1-hop play is worth finding by the currency
+ * it passes through as well as by its ends. Names only, never the
+ * `Metadata/Items/...` ids — the reader types what the row shows them, so an id
+ * hit would be a row with nothing on screen to explain why it survived.
+ *
+ * An empty or whitespace-only query matches every play, so a box the reader has
+ * cleared (or left a space in) is a filter that is off rather than one that
+ * empties the table. The query is normalised per play rather than by the
+ * caller, which keeps the signature a plain predicate: callers pass the raw
+ * input string and have nothing to remember.
+ */
+export function matchesSearch(play: CurrencyExchangePlay, query: string): boolean {
+	const needle = query.trim().toLowerCase();
+	if (needle === '') return true;
+	return playSides(play).some((side) => side.name.toLowerCase().includes(needle));
+}
+
 // ------------------------------------------------------------ the universe --
 
 /** One row of the item picker. */
