@@ -34,6 +34,7 @@
 		SORT_OPTIONS,
 		dataAgeParts,
 		deriveState,
+		fillHours,
 		formatChaos,
 		formatGain,
 		formatRoiPct,
@@ -145,7 +146,8 @@
 				minRoiPct: minRoiPctPref.value,
 				minGain: minGainPref.value
 			}),
-			parseSort(sortPref.value)
+			parseSort(sortPref.value),
+			quantity
 		)
 	);
 
@@ -328,7 +330,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by return on investment, or by chaos gained per exchange."
+			title="Rank by return on investment, by chaos gained per exchange, or by how long your quantity would take to fill."
 		/>
 
 		<div class="divider"></div>
@@ -434,23 +436,22 @@
 							<!-- The label spans mirror `ExchangeRoute`'s slot geometry exactly
 							     (see the contract in that file's header comment): change a
 							     width there and the labels here drift off the tiles. -->
-							<div class="route-head" class:dense>
-								<span class="slot-end">Spend</span>
-								<span class="gap"></span>
-								<span class="slot-buy">{dense ? 'Buy' : 'Step 1 — buy'}</span>
-								<span class="gap"></span>
-								<span class="slot-sell">{dense ? 'Sell' : 'Step 2 — sell'}</span>
-								<span class="gap"></span>
-								<span class="slot-convert">{dense ? 'Convert' : 'Step 3 — convert'}</span>
-								<span class="gap"></span>
-								<span class="slot-end">Get</span>
-							</div>
+							<Tooltip text={EXCHANGE_TOOLTIPS.Route}>
+								<div class="route-head" class:dense>
+									<span class="slot-end">Spend</span>
+									<span class="gap"></span>
+									<span class="slot-buy">{dense ? 'Buy' : 'Step 1 — buy'}</span>
+									<span class="gap"></span>
+									<span class="slot-sell">{dense ? 'Sell' : 'Step 2 — sell'}</span>
+									<span class="gap"></span>
+									<span class="slot-convert">{dense ? 'Convert' : 'Step 3 — convert'}</span>
+									<span class="gap"></span>
+									<span class="slot-end">Get</span>
+								</div>
+							</Tooltip>
 						</th>
 						<th class="col-money num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.Investment}>Investment</Tooltip>
-						</th>
-						<th class="col-gold num reserved">
-							<Tooltip text={EXCHANGE_TOOLTIPS.Gold}>Gold</Tooltip>
 						</th>
 						<th class="col-money num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.ROI}>ROI</Tooltip>
@@ -464,6 +465,9 @@
 						<th class="col-depth num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.Depth}>Depth</Tooltip>
 						</th>
+						<th class="col-fill num">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Fill}>Fill</Tooltip>
+						</th>
 						<th class="col-hours num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.Hours}>Hours</Tooltip>
 						</th>
@@ -473,6 +477,7 @@
 					{#each rows as play, i (play.key)}
 						{@const over = overDepth(play, quantity)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
+						{@const fill = fillHours(play, quantity)}
 						<tr>
 							<td class="num mono rank">{i + 1}</td>
 
@@ -489,10 +494,6 @@
 								{#if !dense}
 									<div class="sub">{formatChaos(play.investment)}c each</div>
 								{/if}
-							</td>
-
-							<td class="num">
-								<span class="mono reserved">—</span>
 							</td>
 
 							<td class="num">
@@ -533,6 +534,20 @@
 									<div class="sub amber">
 										{quantity} above this hour’s {formatVolume(play.depth)}
 									</div>
+								{/if}
+							</td>
+
+							<!-- One line in both densities: the cell is a single duration, so
+							     there is no sub-line for dense to drop. Green is "inside the
+							     hour"; anything longer is amber because the ROI was computed
+							     on a book that will have moved by then. -->
+							<td class="num">
+								{#if fill === null}
+									<span class="mono reserved">—</span>
+								{:else if fill <= 1}
+									<span class="mono value fast">&lt;1 h</span>
+								{:else}
+									<span class="mono value amber">~{Math.ceil(fill)} h</span>
 								{/if}
 							</td>
 
@@ -759,8 +774,8 @@
 		font-size: 0.625rem;
 	}
 
-	/* A reserved column reads as reserved before it is hovered — Gold and Trend
-	   carry no number yet, and a full-weight header would promise one. */
+	/* A reserved column reads as reserved before it is hovered — Trend carries no
+	   number yet, and a full-weight header would promise one. */
 	th.reserved {
 		color: #6b7280;
 	}
@@ -774,9 +789,6 @@
 	.col-money {
 		width: 136px;
 	}
-	.col-gold {
-		width: 62px;
-	}
 	.col-pct {
 		width: 132px;
 	}
@@ -785,6 +797,9 @@
 	}
 	.col-depth {
 		width: 148px;
+	}
+	.col-fill {
+		width: 72px;
 	}
 	.col-hours {
 		width: 92px;
@@ -796,9 +811,6 @@
 	table.dense .col-money {
 		width: 116px;
 	}
-	table.dense .col-gold {
-		width: 58px;
-	}
 	table.dense .col-pct {
 		width: 112px;
 	}
@@ -808,8 +820,18 @@
 	table.dense .col-depth {
 		width: 96px;
 	}
+	table.dense .col-fill {
+		width: 64px;
+	}
 	table.dense .col-hours {
 		width: 62px;
+	}
+
+	/* The Route header is the one tooltip trigger wrapping a BLOCK: `Tooltip`'s
+	   own wrapper is an inline span, and the slot geometry below only lines up
+	   with the tiles when the flex row is the full width of the cell. */
+	.col-route :global(.tooltip-wrap) {
+		display: block;
 	}
 
 	/* Mirrors `ExchangeRoute`'s slot widths, arrows and gap. Both densities. */
@@ -897,11 +919,17 @@
 		color: var(--color-lab-text-secondary);
 	}
 
-	/* Gold and Trend hold their slot with a dash rather than an empty cell: an
-	   empty cell reads as a missing value for THIS row, a dash as a column that
-	   does not answer yet. */
+	/* Trend holds its slot with a dash rather than an empty cell, and so does a
+	   Fill the depth cannot be read for: an empty cell reads as a value that went
+	   missing, a dash as a question this row has no answer to. */
 	.reserved {
 		color: #4b5563;
+	}
+
+	/* A fill inside the hour is the only one the ROI was computed against a book
+	   that will still be there — the colour is that verdict, not a speed. */
+	.fast {
+		color: var(--color-lab-green);
 	}
 
 	.gain {

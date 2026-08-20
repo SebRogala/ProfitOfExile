@@ -77,14 +77,17 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
 /**
  * Which number the table is ordered by. `'roiPct'` is the server's own
  * ranking; `'roi'` re-orders by chaos gained per exchange, which is a different
- * question — a 40% return on 2c is not the play a stocked account wants.
+ * question — a 40% return on 2c is not the play a stocked account wants; and
+ * `'fill'` by how long the reader's quantity would take to trade, which is the
+ * question a big return on a thin market answers badly.
  */
-export type ExchangeSort = 'roiPct' | 'roi';
+export type ExchangeSort = 'roiPct' | 'roi' | 'fill';
 
 /** The sort picker's entries, in display order. */
 export const SORT_OPTIONS: { value: ExchangeSort; label: string }[] = [
 	{ value: 'roiPct', label: 'ROI%' },
-	{ value: 'roi', label: 'ROI' }
+	{ value: 'roi', label: 'ROI' },
+	{ value: 'fill', label: 'Fill' }
 ];
 
 /** Narrow a persisted or user-supplied string to a sort; default `'roiPct'`. */
@@ -345,43 +348,48 @@ export function formatLegPrice(price: number): string {
 }
 
 /**
- * A chaos amount as the route slots and the money columns print it:
- * `50.00`, `5,050.00`, `0.0125`.
+ * A chaos AMOUNT as the route slots and the money columns print it: `50`,
+ * `5,050`, `0`.
  *
- * Two decimals from 1 up, because that is the resolution a trader reads a
- * balance at, and thousands separated so a five-figure payout is not a wall of
- * digits. Below 1 the fixed decimals would erase the number — an oil bought at
- * 0.0125c is "0.01" at two places, which is a different price — so sub-1
- * amounts fall through to `formatLegPrice`'s significant-digit rule.
+ * Whole orbs, because that is the unit the game trades in — a chaos amount is a
+ * count of items in a stash tab, and there is no such holding as 0.07 of one.
+ * The decimals this used to print belonged to the leg RATES, which are still
+ * fractional and still go through `formatLegPrice` (POE-189).
+ *
+ * A sub-1c amount therefore rounds to "0", and that is the reading the owner
+ * asked for: a play whose whole per-exchange investment or gain is under one
+ * chaos is not flippable once the exchange's gold fee is paid, so printing four
+ * significant digits of it dressed junk as precision. The min-gain filter hides
+ * such rows outright when one is set.
+ *
+ * Rounded on the MAGNITUDE and signed afterwards, so `-1234.5` and `1234.5`
+ * round to the same number of orbs — `Math.round` alone breaks halves towards
+ * +Infinity, which would print a loss one orb smaller than the matching gain.
  *
  * Grouped by hand rather than through `toLocaleString`, for the reason
- * `formatTime` gives: a locale that groups with "." would print 5.050,00 beside
- * an English sentence.
+ * `formatTime` gives: a locale that groups with "." would print 5.050 beside an
+ * English sentence and read as five point zero five.
  */
 export function formatChaos(amount: number): string {
-	if (!Number.isFinite(amount)) return '0.00';
-	const magnitude = Math.abs(amount);
-	if (magnitude > 0 && magnitude < 1) return formatLegPrice(amount);
-
-	const fixed = amount.toFixed(MIN_PRICE_DECIMALS);
-	const negative = fixed.startsWith('-');
-	const [whole, fraction] = (negative ? fixed.slice(1) : fixed).split('.');
-	return `${negative ? '-' : ''}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction}`;
+	if (!Number.isFinite(amount)) return '0';
+	const rounded = Math.round(Math.abs(amount));
+	const grouped = String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	return rounded === 0 || amount > 0 ? grouped : `-${grouped}`;
 }
 
 /**
- * A chaos gain as the ROI column prints it: `+700.00`, `+5,050.00`, `0.00`.
+ * A chaos gain as the ROI column prints it: `+700`, `+5,050`, `0`.
  *
  * The sign is explicit on anything that moved, because the column sits beside
- * Investment and a bare "700.00" reads as a second cost rather than a return.
+ * Investment and a bare "700" reads as a second cost rather than a return.
  * It is taken from the ROUNDED magnitude, the same rule `formatRoiPct` follows:
  * a gain too small to print must not be dressed as a gain, and a loss that
- * rounds away must not print "-0.00". Exactly zero keeps no sign at all — a
- * play that returns what it cost is not a positive one.
+ * rounds away must not print "-0". Exactly zero keeps no sign at all — a play
+ * that returns what it cost is not a positive one.
  */
 export function formatGain(amount: number): string {
 	const magnitude = formatChaos(Math.abs(amount));
-	if (Number(magnitude.replace(/,/g, '')) === 0) return magnitude;
+	if (magnitude === '0') return magnitude;
 	return `${amount < 0 ? '-' : '+'}${magnitude}`;
 }
 
@@ -398,6 +406,30 @@ export function hoursProgress(hoursSeen: number, hours: number): number {
 	return Math.min(1, Math.max(0, hoursSeen / hours));
 }
 
+/**
+ * How long the reader's quantity would take to trade, in hours, at the depth of
+ * the play's thinnest leg (POE-189).
+ *
+ * Deliberately OPTIMISTIC, and the tooltip says so: `depth` is the whole
+ * market's hourly volume on that leg, so this is the time the fill would take if
+ * the reader took every unit of it and no one else traded. The real number is
+ * larger by however much of the book the competition holds, and larger again on
+ * a direct play, which buys and sells the same item on the one market.
+ *
+ * Unrounded on purpose — the page rounds UP for display, and rounding here would
+ * flatten every play under an hour onto the same sort key.
+ *
+ * `null` for a leg that traded nothing (`depth` 0, the shape a just-listed
+ * market has) and for a non-finite one: both mean the hours cannot be computed,
+ * and dividing would answer `Infinity`/`NaN`, which the column would print as a
+ * duration.
+ */
+export function fillHours(play: CurrencyExchangePlay, quantity: number): number | null {
+	if (!Number.isFinite(play.depth) || play.depth <= 0) return null;
+	if (!Number.isFinite(quantity)) return null;
+	return quantity / play.depth;
+}
+
 // -------------------------------------------------------------- the order --
 
 /**
@@ -409,18 +441,43 @@ export function hoursProgress(hoursSeen: number, hours: number): number {
  * tie-breaks, so the ROI% sort keeps the served order — copied, so a caller
  * holding the result can never mutate the response's own array through it.
  *
- * `'roi'` re-sorts by chaos per exchange, and keeps the one property the server
- * ordering exists to carry: every suspect play stays after every clean one,
- * however large its ROI. A suspect number is the reason it ranks last, so
- * letting it out-sort a clean play would hand the reader the very row the flag
- * warns about. Within a partition the sort is stable, so plays tied on `roi`
- * keep the server's remaining tie-breaks.
+ * `'roi'` re-sorts by chaos per exchange, and `'fill'` by how long the reader's
+ * quantity would take to trade — ascending, because the fastest fill is the best
+ * one, and a play whose depth cannot be read (`fillHours` `null`) sits at the
+ * end of its partition rather than being dropped or treated as instant.
+ *
+ * Both re-sorts keep the one property the server ordering exists to carry: every
+ * suspect play stays after every clean one, however large its ROI or however
+ * fast its fill. A suspect number is the reason it ranks last, so letting it
+ * out-sort a clean play would hand the reader the very row the flag warns about.
+ * Within a partition the sort is stable, so tied plays keep the server's
+ * remaining tie-breaks.
+ *
+ * `quantity` names the size the fill is measured at, so the order and the Fill
+ * column always read the same figure. For the finite quantity ≥ 1 that
+ * `parseQuantity` guarantees every caller, it does not change the ORDER on its
+ * own — one positive multiplier over every play cannot reorder `quantity /
+ * depth` — so a build that dropped it would still sort correctly and would then
+ * drift the moment the column's rule stops being a plain division.
  */
 export function sortPlays(
 	plays: CurrencyExchangePlay[],
-	sort: ExchangeSort
+	sort: ExchangeSort,
+	quantity: number
 ): CurrencyExchangePlay[] {
 	if (sort === 'roiPct') return [...plays];
+	if (sort === 'fill') {
+		return [...plays].sort((a, b) => {
+			if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
+			const left = fillHours(a, quantity);
+			const right = fillHours(b, quantity);
+			if (left === null || right === null) {
+				if (left === right) return 0;
+				return left === null ? 1 : -1;
+			}
+			return left - right;
+		});
+	}
 	return [...plays].sort((a, b) => {
 		if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
 		return b.roi - a.roi;
@@ -472,11 +529,29 @@ export function iconSrc(apiBase: string, path: string | null): string | null {
  * Held client-side for one reason: the Spend and Get amounts are chaos —
  * `investment` and `roi` are valued in it whatever currency the legs are quoted
  * in — but no wire field says "this side is the chaos side", so the artwork for
- * those two tiles can only be found by matching the id the server sends on the
- * legs. Nothing else here reads it: it decides no price and no verdict, so a
- * rename upstream costs the two tiles their icon and never a wrong number.
+ * those two tiles can only be named by the client. Nothing else here reads it:
+ * it decides no price and no verdict, so a rename upstream costs the two tiles
+ * their icon and never a wrong number.
  */
 export const CHAOS_ID = 'Metadata/Items/Currency/CurrencyRerollRare';
+
+/**
+ * The API-relative artwork path for Chaos Orbs (POE-189).
+ *
+ * Built rather than scavenged off a leg. The server's icon route serves ANY
+ * asset id (`IconPath` in `internal/exchange/items.go`), so the path exists
+ * whether or not this particular play happens to quote a leg in chaos — and the
+ * plays that do not are exactly the ones the old leg-scavenging version left
+ * with two empty tiles, on a row whose ends are still denominated in chaos.
+ *
+ * `encodeURIComponent` is the mirror of the server's `url.PathEscape`: the id
+ * carries slashes, Go escapes them as `%2F` in a path SEGMENT, and so does this.
+ * Verified against a running server — the escaped URL answers 200, not the 404 a
+ * mismatched escaping would give.
+ */
+export function chaosIconPath(): string {
+	return `/currency-exchange/icon/${encodeURIComponent(CHAOS_ID)}`;
+}
 
 /** One traded step of a route: what it moves, at what price. */
 export interface RouteStep {
@@ -493,7 +568,8 @@ export interface RouteStep {
 /** The chaos in and the chaos out, per exchange. */
 export interface RouteEnd {
 	amount: string;
-	icon: string | null;
+	/** Always the chaos artwork — `chaosIconPath()`, never `null` (POE-189). */
+	icon: string;
 }
 
 /**
@@ -531,7 +607,9 @@ export interface RouteView {
  * prices: `investment` is what one exchange costs at the undercut entry and
  * `investment + roi` what it returns, both already net of the ticks the legs
  * do not show (POE-188). Rebuilding them from `price` here would print the raw
- * best case beside an ROI that is not.
+ * best case beside an ROI that is not. Both wear the chaos artwork
+ * unconditionally, because both are chaos figures whatever the legs are quoted
+ * in — see `chaosIconPath`.
  *
  * `null` for a play with fewer than two legs — a shape the server does not
  * send. Nothing drops such a play: `ExchangeRoute` guards on this answer and
@@ -542,7 +620,7 @@ export function routeSlots(play: CurrencyExchangePlay): RouteView | null {
 	const [buyLeg, sellLeg, convertLeg] = play.legs;
 	if (buyLeg === undefined || sellLeg === undefined) return null;
 
-	const chaos = chaosIcon(play);
+	const chaos = chaosIconPath();
 	return {
 		spend: { amount: formatChaos(play.investment), icon: chaos },
 		buy: {
@@ -569,22 +647,6 @@ export function routeSlots(play: CurrencyExchangePlay): RouteView | null {
 		get: { amount: formatChaos(play.investment + play.roi), icon: chaos },
 		positive: play.roi > 0
 	};
-}
-
-/**
- * The chaos artwork this play happens to carry, from whichever side of
- * whichever leg is quoted in it.
- *
- * `null` when no side is — a round trip quoted end to end in divine is still
- * valued in chaos, so the ends keep their amount and lose only the icon, which
- * is what `ItemIcon` renders as nothing at all.
- */
-function chaosIcon(play: CurrencyExchangePlay): string | null {
-	for (const leg of play.legs) {
-		if (leg.item === CHAOS_ID && leg.itemIcon) return leg.itemIcon;
-		if (leg.quote === CHAOS_ID && leg.quoteIcon) return leg.quoteIcon;
-	}
-	return null;
 }
 
 // ------------------------------------------------------------ the refetch --
