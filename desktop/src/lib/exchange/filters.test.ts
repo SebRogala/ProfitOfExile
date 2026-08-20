@@ -5,6 +5,7 @@ import {
 	cycleCategoryRule,
 	effectiveRule,
 	itemUniverse,
+	matchesSearch,
 	overDepth,
 	overridesCategory,
 	parseCategoryRules,
@@ -551,6 +552,82 @@ describe('overDepth', () => {
 
 	it('reports a quantity below the depth as within it', () => {
 		expect(overDepth(shallow, 1)).toBe(false);
+	});
+});
+
+describe('matchesSearch', () => {
+	/** Buy Divine Orbs with Chaos Orbs — the item side is "Divine Orb". */
+	const divinePlay = play();
+
+	it('finds a play by part of its item name', () => {
+		expect(matchesSearch(divinePlay, 'ivine')).toBe(true);
+	});
+
+	it('finds a play by part of its QUOTE name', () => {
+		// The reader shops for whichever side they hold: this play's item side is
+		// Divine, and it is still the play someone spending chaos is looking for.
+		expect(matchesSearch(divinePlay, 'chaos')).toBe(true);
+	});
+
+	it('finds a play by a name that only its second leg carries', () => {
+		const hop = play({
+			legs: [
+				leg(),
+				leg({
+					action: 'sell',
+					item: 'scarab-gilded',
+					itemName: 'Gilded Scarab',
+					itemCategory: 'Scarabs'
+				})
+			]
+		});
+
+		expect(matchesSearch(hop, 'gilded')).toBe(true);
+	});
+
+	it('ignores the case of the query', () => {
+		expect(matchesSearch(divinePlay, 'DIVINE')).toBe(true);
+	});
+
+	it('ignores the case of the name', () => {
+		const shouty = play({ legs: [leg({ itemName: 'DIVINE ORB' })] });
+
+		expect(matchesSearch(shouty, 'divine')).toBe(true);
+	});
+
+	it('drops a play no side of which carries the query', () => {
+		expect(matchesSearch(divinePlay, 'scarab')).toBe(false);
+	});
+
+	it('keeps every play for an empty query', () => {
+		expect(matchesSearch(divinePlay, '')).toBe(true);
+	});
+
+	it('keeps every play for a whitespace-only query', () => {
+		// A space left in the box is a search the reader is done with, not a
+		// needle no name contains — matching it literally would empty the table.
+		expect(matchesSearch(divinePlay, '   ')).toBe(true);
+	});
+
+	it('ignores the space around a query typed with one', () => {
+		expect(matchesSearch(divinePlay, ' divine ')).toBe(true);
+	});
+
+	it('does not match on the exchange id, only on the names', () => {
+		// The ids are `Metadata/Items/...`-shaped and never on screen, so an id
+		// hit would leave a row with nothing in it to explain why it survived.
+		const hidden = play({
+			legs: [
+				leg({
+					item: 'Metadata/Items/Currency/CurrencyRerollRare',
+					itemName: 'Chromatic Orb',
+					quote: 'chaos',
+					quoteName: 'Chaos Orb'
+				})
+			]
+		});
+
+		expect(matchesSearch(hidden, 'metadata')).toBe(false);
 	});
 });
 
