@@ -15,17 +15,19 @@
  * whole file is reachable from vitest without a component harness.
  */
 import type {
+	CurrencyExchangeHorizon,
 	CurrencyExchangeLeg,
 	CurrencyExchangeMode,
+	CurrencyExchangePlay,
 	CurrencyExchangeResponse
 } from '$lib/api';
 
 /**
- * Re-exported from `$lib/api` so the page can import its mode type from the
- * same module as the helpers that consume it. One definition, two entry
- * points — the fetcher and the picker cannot drift.
+ * Re-exported from `$lib/api` so the page can import its wire enums from the
+ * same module as the helpers that consume them. One definition, two entry
+ * points — the fetcher and the pickers cannot drift.
  */
-export type { CurrencyExchangeMode };
+export type { CurrencyExchangeMode, CurrencyExchangeHorizon };
 
 // ------------------------------------------------------------ the filter --
 
@@ -47,6 +49,106 @@ export function parseMode(raw: string): CurrencyExchangeMode {
 	return MODE_OPTIONS.some((option) => option.value === raw)
 		? (raw as CurrencyExchangeMode)
 		: 'all';
+}
+
+/**
+ * The horizon picker's entries. The labels carry the window length because
+ * "Recent" and "Day" alone do not say how much history ranked the list, and
+ * that length is what the Hours column counts against.
+ */
+export const HORIZON_OPTIONS: { value: CurrencyExchangeHorizon; label: string }[] = [
+	{ value: 'recent', label: 'Recent 6h' },
+	{ value: 'day', label: 'Day 24h' }
+];
+
+/**
+ * Narrow a persisted or user-supplied string to a horizon.
+ *
+ * `'recent'` is both the API default and the fallback, so a preference written
+ * by a build that predates the horizon toggle resolves to the window the page
+ * has always fetched rather than silently widening it.
+ */
+export function parseHorizon(raw: string): CurrencyExchangeHorizon {
+	return HORIZON_OPTIONS.some((option) => option.value === raw)
+		? (raw as CurrencyExchangeHorizon)
+		: 'recent';
+}
+
+/**
+ * Which number the table is ordered by. `'roiPct'` is the server's own
+ * ranking; `'roi'` re-orders by chaos gained per exchange, which is a different
+ * question — a 40% return on 2c is not the play a stocked account wants.
+ */
+export type ExchangeSort = 'roiPct' | 'roi';
+
+/** The sort picker's entries, in display order. */
+export const SORT_OPTIONS: { value: ExchangeSort; label: string }[] = [
+	{ value: 'roiPct', label: 'ROI%' },
+	{ value: 'roi', label: 'ROI' }
+];
+
+/** Narrow a persisted or user-supplied string to a sort; default `'roiPct'`. */
+export function parseSort(raw: string): ExchangeSort {
+	return SORT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeSort) : 'roiPct';
+}
+
+/**
+ * How much of each row is drawn. `'dense'` drops every sub-line and shrinks the
+ * icons; the content the sub-lines carried moves into the cell tooltips rather
+ * than disappearing.
+ */
+export type ExchangeDensity = 'comfortable' | 'dense';
+
+/** The density picker's entries, in display order. */
+export const DENSITY_OPTIONS: { value: ExchangeDensity; label: string }[] = [
+	{ value: 'comfortable', label: 'Comfortable' },
+	{ value: 'dense', label: 'Dense' }
+];
+
+/**
+ * Narrow a persisted or user-supplied string to a density; default
+ * `'comfortable'`, which is the layout every sub-line's copy was written for.
+ */
+export function parseDensity(raw: string): ExchangeDensity {
+	return DENSITY_OPTIONS.some((option) => option.value === raw)
+		? (raw as ExchangeDensity)
+		: 'comfortable';
+}
+
+/** Which currency the investment bounds are typed in. */
+export type ExchangeUnit = 'chaos' | 'divine';
+
+/** The unit picker's entries, in display order. */
+export const UNIT_OPTIONS: { value: ExchangeUnit; label: string }[] = [
+	{ value: 'chaos', label: 'Chaos' },
+	{ value: 'divine', label: 'Divine' }
+];
+
+/**
+ * Narrow a persisted or user-supplied string to a unit; default `'chaos'`,
+ * which is the currency every wire number is already denominated in and the
+ * only one that stays meaningful when `divineChaosRate` is 0.
+ */
+export function parseUnit(raw: string): ExchangeUnit {
+	return UNIT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeUnit) : 'chaos';
+}
+
+/** How many exchanges the row's figures are multiplied by when nothing is set. */
+export const DEFAULT_QUANTITY = 1;
+
+/**
+ * Narrow a persisted or user-supplied string to a repeat count.
+ *
+ * Whole exchanges only, and never below one: the quantity multiplies
+ * investment, ROI and the depth comparison, so a `0` would flatten the whole
+ * table to zero and a fraction would claim a partial exchange the book cannot
+ * fill. A typed-in decimal truncates rather than rejecting, because the stepper
+ * writes while the user is still typing.
+ */
+export function parseQuantity(raw: string): number {
+	const value = Number(raw);
+	if (!Number.isFinite(value) || value < DEFAULT_QUANTITY) return DEFAULT_QUANTITY;
+	return Math.floor(value);
 }
 
 // ------------------------------------------------------------- the state --
@@ -144,23 +246,64 @@ export function formatTime(iso: string | null): string {
 	return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
+/** The clock reading and the relative age the status line leads with. */
+export interface DataAge {
+	/** `"as of 14:35"` — the local clock time the prices below were read at. */
+	label: string;
+	/** How long ago that was, in `formatTimeAgo`'s wording. */
+	ago: string;
+}
+
+/**
+ * How old the table is, for the status line.
+ *
+ * Dated from `to` — the end of the settled hour the prices come from — and not
+ * from `lastUpdated`, which is when the server computed the ranking: the feed
+ * publishes 40-60 minutes after an hour closes, so the two differ by most of an
+ * hour and only the first answers "how stale are these prices". `lastUpdated`
+ * is the fallback for a body served without a window, and `null` (no timestamp
+ * at all, or one that will not parse) means the page shows no badge rather than
+ * an "as of :" with a hole in it.
+ */
+export function dataAgeParts(
+	response: CurrencyExchangeResponse | null,
+	now: Date
+): DataAge | null {
+	const stamp = response?.to ?? response?.lastUpdated ?? null;
+	if (stamp === null) return null;
+	const clock = formatTime(stamp);
+	if (clock === '') return null;
+	return { label: `as of ${clock}`, ago: formatTimeAgo(stamp, now) };
+}
+
 // ------------------------------------------------------------ the numbers --
 
 /**
- * An edge fraction as a signed percentage: `0.1234` → `"+12.3%"`,
+ * An ROI fraction as a signed percentage: `0.1234` → `"+12.3%"`,
  * `-0.05` → `"-5.0%"`.
+ *
+ * Exchange ROI arrives as a FRACTION (0.05 = +5%), unlike the gem side's
+ * percentage points — this formatter multiplies, so pointing it at a gem number
+ * inflates it a hundredfold.
  *
  * The sign is always explicit — a bare "12.3%" next to a "-5.0%" reads as an
  * absolute price rather than a delta. The sign is taken from the *rounded*
- * magnitude, so an edge that rounds to nothing prints "+0.0%" instead of the
+ * magnitude, so a return that rounds to nothing prints "+0.0%" instead of the
  * nonsense "-0.0%".
  */
-export function formatEdge(edge: number): string {
-	const percent = edge * 100;
+export function formatRoiPct(roiPct: number): string {
+	const percent = roiPct * 100;
 	const magnitude = Math.abs(percent).toFixed(1);
 	const sign = Number(magnitude) !== 0 && percent < 0 ? '-' : '+';
 	return `${sign}${magnitude}%`;
 }
+
+/**
+ * @deprecated Use `formatRoiPct`. Kept only so `CurrencyExchangePage.svelte`
+ * keeps compiling until chunk 5 rewrites its cells; that chunk deletes this
+ * alias together with the page's last `play.edge` read.
+ */
+export const formatEdge = formatRoiPct;
 
 /**
  * A per-hour volume, abbreviated: `0`, `42`, `1.2k`, `13.0M`.
@@ -206,6 +349,35 @@ export function formatLegPrice(price: number): string {
 	const trimmed = price.toFixed(decimals).replace(/0+$/, '');
 	const fractionDigits = trimmed.length - trimmed.indexOf('.') - 1;
 	return fractionDigits < MIN_PRICE_DECIMALS ? price.toFixed(MIN_PRICE_DECIMALS) : trimmed;
+}
+
+// -------------------------------------------------------------- the order --
+
+/**
+ * The table's rows in the order the sort picker asks for.
+ *
+ * `'roiPct'` is the list exactly as served: the server already ranks clean
+ * before suspect, then `roiPct` desc, then turnover, then direct-first, then
+ * key (POE-188). Re-sorting it here on `roiPct` alone would throw away those
+ * tie-breaks, so the ROI% sort keeps the served order — copied, so a caller
+ * holding the result can never mutate the response's own array through it.
+ *
+ * `'roi'` re-sorts by chaos per exchange, and keeps the one property the server
+ * ordering exists to carry: every suspect play stays after every clean one,
+ * however large its ROI. A suspect number is the reason it ranks last, so
+ * letting it out-sort a clean play would hand the reader the very row the flag
+ * warns about. Within a partition the sort is stable, so plays tied on `roi`
+ * keep the server's remaining tie-breaks.
+ */
+export function sortPlays(
+	plays: CurrencyExchangePlay[],
+	sort: ExchangeSort
+): CurrencyExchangePlay[] {
+	if (sort === 'roiPct') return [...plays];
+	return [...plays].sort((a, b) => {
+		if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
+		return b.roi - a.roi;
+	});
 }
 
 // --------------------------------------------------------------- the legs --
