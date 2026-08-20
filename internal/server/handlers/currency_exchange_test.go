@@ -175,32 +175,36 @@ func bothHorizonsCache(t *testing.T) *exchange.Cache {
 }
 
 // exchangeLegBody mirrors the leg contract the desktop and web clients read:
-// every engine field plus the display names and icon paths the transport layer
-// adds. The icons are pointers because the wire contract distinguishes a path to
-// fetch from an explicit null for an item with no artwork.
+// every engine field plus the display names, icon paths and categories the
+// transport layer adds. The icons are pointers because the wire contract
+// distinguishes a path to fetch from an explicit null for an item with no
+// artwork; the categories are plain strings because "" is the answer for an
+// uncategorized id, not the absence of one.
 type exchangeLegBody struct {
-	Action    string  `json:"action"`
-	Item      string  `json:"item"`
-	Quote     string  `json:"quote"`
-	Price     float64 `json:"price"`
-	Fair      float64 `json:"fair"`
-	FairOK    bool    `json:"fairOk"`
-	Tick      float64 `json:"tick"`
-	Volume    float64 `json:"volume"`
-	Stock     int64   `json:"stock"`
-	Suspect   bool    `json:"suspect"`
-	ItemName  string  `json:"itemName"`
-	ItemIcon  *string `json:"itemIcon"`
-	QuoteName string  `json:"quoteName"`
-	QuoteIcon *string `json:"quoteIcon"`
+	Action        string  `json:"action"`
+	Item          string  `json:"item"`
+	Quote         string  `json:"quote"`
+	Price         float64 `json:"price"`
+	Fair          float64 `json:"fair"`
+	FairOK        bool    `json:"fairOk"`
+	Tick          float64 `json:"tick"`
+	Volume        float64 `json:"volume"`
+	Stock         int64   `json:"stock"`
+	Suspect       bool    `json:"suspect"`
+	ItemName      string  `json:"itemName"`
+	ItemIcon      *string `json:"itemIcon"`
+	ItemCategory  string  `json:"itemCategory"`
+	QuoteName     string  `json:"quoteName"`
+	QuoteIcon     *string `json:"quoteIcon"`
+	QuoteCategory string  `json:"quoteCategory"`
 }
 
 // String renders the leg with its icon pointers dereferenced, so a failed
 // comparison names the paths instead of two heap addresses.
 func (l exchangeLegBody) String() string {
-	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v fair:%v fairOk:%t tick:%v volume:%v stock:%d suspect:%t itemName:%q itemIcon:%s quoteName:%q quoteIcon:%s}",
+	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v fair:%v fairOk:%t tick:%v volume:%v stock:%d suspect:%t itemName:%q itemIcon:%s itemCategory:%q quoteName:%q quoteIcon:%s quoteCategory:%q}",
 		l.Action, l.Item, l.Quote, l.Price, l.Fair, l.FairOK, l.Tick, l.Volume, l.Stock, l.Suspect,
-		l.ItemName, quoteOrNull(l.ItemIcon), l.QuoteName, quoteOrNull(l.QuoteIcon))
+		l.ItemName, quoteOrNull(l.ItemIcon), l.ItemCategory, l.QuoteName, quoteOrNull(l.QuoteIcon), l.QuoteCategory)
 }
 
 func quoteOrNull(value *string) string {
@@ -247,6 +251,7 @@ type exchangePlaysBody struct {
 	DivineChaosRate float64            `json:"divineChaosRate"`
 	Count           int                `json:"count"`
 	Plays           []exchangePlayBody `json:"plays"`
+	Categories      []string           `json:"categories"`
 }
 
 // getPlays serves one request through a chi router, the way the server mounts
@@ -453,11 +458,15 @@ func TestCurrencyExchangePlays_warmCache_reportsTheWindowItCovers(t *testing.T) 
 	}
 }
 
-func TestCurrencyExchangePlays_legsCarryDisplayNamesAndIconPathsBesideTheRawFeedIDs(t *testing.T) {
-	// The engine deliberately carries raw ids; resolving them to in-game names and
-	// icon paths is the transport layer's addition, and the raw ids must survive
-	// it — the client keys on them. Every leg names both sides of the trade, so
-	// the item AND the quote carry a name and an icon.
+func TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs(t *testing.T) {
+	// The engine deliberately carries raw ids; resolving them to in-game names,
+	// icon paths and sidebar categories is the transport layer's addition, and the
+	// raw ids must survive it — the client keys on them. Every leg names both
+	// sides of the trade, so the item AND the quote carry all three.
+	//
+	// The scarab legs are what make the categories readable as a per-side answer:
+	// a leg that buys a Scarabs item quoted in a Currency one cannot be satisfied
+	// by a decorator that resolves one side and copies it to the other.
 	body := decodePlays(t, getPlays(t, warmExchangeCache(t), "/api/currency-exchange/plays?mode=1-hop"))
 
 	play := playByKey(t, body, oneHopPlay().Key)
@@ -465,20 +474,20 @@ func TestCurrencyExchangePlays_legsCarryDisplayNamesAndIconPathsBesideTheRawFeed
 		{
 			Action: "buy", Item: scarabID, Quote: exchange.DivineID,
 			Price: 0.0625, Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60,
-			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
-			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID),
+			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID), ItemCategory: "Scarabs",
+			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID), QuoteCategory: "Currency",
 		},
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
 			Price: 24.5, Fair: 15, FairOK: true, Tick: 0.02, Volume: 250, Stock: 25, Suspect: true,
-			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID),
-			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID),
+			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID), ItemCategory: "Scarabs",
+			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID), QuoteCategory: "Currency",
 		},
 		{
 			Action: "sell", Item: exchange.ChaosID, Quote: exchange.DivineID,
 			Price: 1.0 / 196.0, Fair: 1.0 / divineChaosRate, FairOK: true, Tick: 1.0 / 196.0, Volume: 13001051, Stock: 4564191,
-			ItemName: "Chaos Orb", ItemIcon: iconPath(exchange.ChaosID),
-			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID),
+			ItemName: "Chaos Orb", ItemIcon: iconPath(exchange.ChaosID), ItemCategory: "Currency",
+			QuoteName: "Divine Orb", QuoteIcon: iconPath(exchange.DivineID), QuoteCategory: "Currency",
 		},
 	}
 	if len(play.Legs) != len(want) {
@@ -580,6 +589,61 @@ func TestCurrencyExchangePlays_itemWithAnIcon_sendsQuoteIconAsAPath(t *testing.T
 	want := `"/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyRerollRare"`
 	if got := string(leg["quoteIcon"]); got != want {
 		t.Errorf("quoteIcon = %s, want %s", got, want)
+	}
+}
+
+func TestCurrencyExchangePlays_itemTheAssetDoesNotCover_sendsAnEmptyCategoryRatherThanGuessingOne(t *testing.T) {
+	// The name path humanizes an id the asset misses, but there is no equivalent
+	// guess for a category: the metadata bucket is not the in-game taxonomy, so
+	// inventing one would file the item under a sidebar row the player would not
+	// find it in. The empty string is the honest answer, and the client reads it
+	// as "unfiltered". It must arrive as a present, empty string — an absent key
+	// reads as undefined and would not compare equal to "".
+	//
+	// The quote is chaos, which the asset does cover, so the same leg carries the
+	// positive half: the miss is the id's, not the decoration's.
+	leg := firstLegRaw(t, getPlays(t, unknownItemCache(t), "/api/currency-exchange/plays"))
+
+	if got := string(leg["itemCategory"]); got != `""` {
+		t.Errorf("itemCategory = %s, want \"\" — the asset has no category for %q", got, unknownItemID)
+	}
+	if got := string(leg["quoteCategory"]); got != `"Currency"` {
+		t.Errorf("quoteCategory = %s, want %q", got, "Currency")
+	}
+}
+
+// sidebarCategories is the Currency Exchange sidebar as the game lists it,
+// transcribed here rather than read from exchange.Categories: a test that asks
+// the production helper what to expect agrees with it however the list is
+// reordered or truncated.
+var sidebarCategories = []string{
+	"Currency", "Essences", "Delve", "Scarabs", "Divination Cards", "Delirium",
+	"Legion", "Fragments", "Oils", "Catalysts", "Omens", "Tattoos", "Expedition",
+	"Harvest", "Runegrafts", "Allflame",
+}
+
+func TestCurrencyExchangePlays_carriesTheWholeSidebarTaxonomyInOrder(t *testing.T) {
+	// The client renders its category filter from this list verbatim, so the
+	// order is the sidebar's and the list is the whole taxonomy — not the
+	// categories the plays in this body happen to use. A cold body carries it
+	// too: the filter has to be renderable before the first recompute lands,
+	// and a list that grew and shrank with the ranking would be unusable.
+	caches := []struct {
+		name  string
+		cache *exchange.Cache
+	}{
+		{"warm", warmExchangeCache(t)},
+		{"cold", exchange.NewCache()},
+	}
+
+	for _, tc := range caches {
+		t.Run(tc.name, func(t *testing.T) {
+			body := decodePlays(t, getPlays(t, tc.cache, "/api/currency-exchange/plays"))
+
+			if !reflect.DeepEqual(body.Categories, sidebarCategories) {
+				t.Errorf("categories = %q, want %q", body.Categories, sidebarCategories)
+			}
+		})
 	}
 }
 
