@@ -23,12 +23,12 @@ import {
 	parseDensity,
 	parseHorizon,
 	parseMode,
-	parseQuantity,
 	parseSort,
 	parseUnit,
 	refetchDelay,
 	routeSlots,
-	sortPlays
+	sortPlays,
+	worthwhileScale
 } from './view';
 import type {
 	CurrencyExchangeLeg,
@@ -180,8 +180,15 @@ describe('parseSort', () => {
 		expect(parseSort('roi')).toBe('roi');
 	});
 
-	it('passes "fill" through', () => {
-		expect(parseSort('fill')).toBe('fill');
+	it('passes "fastest" through', () => {
+		expect(parseSort('fastest')).toBe('fastest');
+	});
+
+	it('reads a stored "fill" as the fastest order rather than dropping to the default', () => {
+		// The Fill order was renamed, not removed (POE-192): a reader who left the
+		// picker on it asked for the shortest wait, and falling back to ROI% would
+		// silently re-rank their table on the next launch.
+		expect(parseSort('fill')).toBe('fastest');
 	});
 
 	it('falls back to "roiPct" for an unknown sort', () => {
@@ -200,7 +207,7 @@ describe('SORT_OPTIONS', () => {
 		expect(SORT_OPTIONS).toEqual([
 			{ value: 'roiPct', label: 'ROI%' },
 			{ value: 'roi', label: 'ROI' },
-			{ value: 'fill', label: 'Fill' }
+			{ value: 'fastest', label: 'Fastest' }
 		]);
 	});
 });
@@ -240,36 +247,6 @@ describe('parseUnit', () => {
 		// Chaos is what every wire number is denominated in, so it is the one unit
 		// that stays readable when divineChaosRate is 0.
 		expect(parseUnit('')).toBe('chaos');
-	});
-});
-
-describe('parseQuantity', () => {
-	it('passes a whole count through', () => {
-		expect(parseQuantity('12')).toBe(12);
-	});
-
-	it('falls back to one for an unset preference', () => {
-		expect(parseQuantity('')).toBe(1);
-	});
-
-	it('truncates a fractional count rather than claiming a partial exchange', () => {
-		expect(parseQuantity('2.9')).toBe(2);
-	});
-
-	it('falls back to one for a zero, which would flatten every figure to nothing', () => {
-		expect(parseQuantity('0')).toBe(1);
-	});
-
-	it('falls back to one for a negative count', () => {
-		expect(parseQuantity('-4')).toBe(1);
-	});
-
-	it('falls back to one for a count that is not a number at all', () => {
-		expect(parseQuantity('lots')).toBe(1);
-	});
-
-	it('falls back to one for an infinite count', () => {
-		expect(parseQuantity('Infinity')).toBe(1);
 	});
 });
 
@@ -489,9 +466,6 @@ describe('dataAgeParts', () => {
 });
 
 describe('sortPlays', () => {
-	/** The page's own default; every non-fill case is indifferent to it. */
-	const ONE = 1;
-
 	function keys(plays: CurrencyExchangePlay[]): string[] {
 		return plays.map((p) => p.key);
 	}
@@ -505,7 +479,7 @@ describe('sortPlays', () => {
 			play({ key: 'c', roi: 50 })
 		];
 
-		expect(keys(sortPlays(served, 'roiPct', ONE))).toEqual(['a', 'b', 'c']);
+		expect(keys(sortPlays(served, 'roiPct'))).toEqual(['a', 'b', 'c']);
 	});
 
 	it('orders by chaos gained per exchange under the ROI sort', () => {
@@ -515,7 +489,7 @@ describe('sortPlays', () => {
 			play({ key: 'c', roi: 50 })
 		];
 
-		expect(keys(sortPlays(served, 'roi', ONE))).toEqual(['b', 'c', 'a']);
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['b', 'c', 'a']);
 	});
 
 	it('keeps a suspect play behind every clean one even when its ROI is the largest', () => {
@@ -527,7 +501,7 @@ describe('sortPlays', () => {
 			play({ key: 'suspect-huge', roi: 5000, suspect: true })
 		];
 
-		expect(keys(sortPlays(served, 'roi', ONE))).toEqual([
+		expect(keys(sortPlays(served, 'roi'))).toEqual([
 			'clean-big',
 			'clean-small',
 			'suspect-huge'
@@ -537,7 +511,7 @@ describe('sortPlays', () => {
 	it('keeps the server order between two plays tied on ROI', () => {
 		const served = [play({ key: 'first', roi: 40 }), play({ key: 'second', roi: 40 })];
 
-		expect(keys(sortPlays(served, 'roi', ONE))).toEqual(['first', 'second']);
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['first', 'second']);
 	});
 
 	it('sorts into a new array rather than reordering the fetched list', () => {
@@ -546,7 +520,7 @@ describe('sortPlays', () => {
 		// the server ranking without a refetch.
 		const served = [play({ key: 'a', roi: 5 }), play({ key: 'b', roi: 500 })];
 
-		sortPlays(served, 'roi', ONE);
+		sortPlays(served, 'roi');
 
 		expect(keys(served)).toEqual(['a', 'b']);
 	});
@@ -557,60 +531,106 @@ describe('sortPlays', () => {
 		// wrapping it) would otherwise write through to the fetched result.
 		const served = [play({ key: 'a' }), play({ key: 'b' })];
 
-		const sorted = sortPlays(served, 'roiPct', ONE);
+		const sorted = sortPlays(served, 'roiPct');
 
 		expect(sorted).not.toBe(served);
 		expect(keys(sorted)).toEqual(['a', 'b']);
 	});
 
-	it('puts the fastest fill first under the Fill sort', () => {
-		// Ascending, not descending: the question the column answers is how long
-		// the quantity waits, and the shortest wait is the best row.
+	it('puts the play the market absorbs soonest first under the Fastest sort', () => {
+		// Ascending, not descending: the question the Scale column answers is how
+		// long the worthwhile size waits, and the shortest wait is the best row.
+		// 100 flips at 10/h is 10 hours; 10 flips at 5/h is 2; 10 at 4000/h is 1.
 		const served = [
-			play({ key: 'slow', depth: 10 }),
-			play({ key: 'fast', depth: 4000 }),
-			play({ key: 'middling', depth: 250 })
+			play({ key: 'slow', roi: 1, depth: 10 }),
+			play({ key: 'fast', roi: 10, depth: 4000 }),
+			play({ key: 'middling', roi: 10, depth: 5 })
 		];
 
-		expect(keys(sortPlays(served, 'fill', 500))).toEqual(['fast', 'middling', 'slow']);
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'middling', 'slow']);
 	});
 
-	it('puts a play whose depth cannot be read last under the Fill sort', () => {
+	it('puts a play whose depth cannot be read last under the Fastest sort', () => {
 		// An unreadable depth is an unknown wait, not a zero one — sorting it to
 		// the front would put the least-known row at the top of the list.
 		const served = [
 			play({ key: 'unreadable', depth: 0 }),
-			play({ key: 'slow', depth: 10 }),
-			play({ key: 'fast', depth: 4000 })
+			play({ key: 'slow', roi: 1, depth: 10 }),
+			play({ key: 'fast', roi: 10, depth: 4000 })
 		];
 
-		expect(keys(sortPlays(served, 'fill', 500))).toEqual(['fast', 'slow', 'unreadable']);
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'slow', 'unreadable']);
 	});
 
-	it('keeps a suspect play behind every clean one under the Fill sort, however fast it fills', () => {
+	it('puts a play with no worthwhile scale last under the Fastest sort', () => {
+		// A play that gains nothing per exchange never reaches the target, so it
+		// has no wait to compare — the same "unknown, not instant" reading a dead
+		// depth gets, and the branch a scale-less play would otherwise sort by NaN.
 		const served = [
-			play({ key: 'clean-slow', depth: 10 }),
-			play({ key: 'suspect-instant', depth: 100_000, suspect: true }),
-			play({ key: 'clean-quick', depth: 900 })
+			play({ key: 'no-scale', roi: 0, depth: 4000 }),
+			play({ key: 'slow', roi: 1, depth: 10 }),
+			play({ key: 'fast', roi: 10, depth: 4000 })
 		];
 
-		expect(keys(sortPlays(served, 'fill', 500))).toEqual([
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'slow', 'no-scale']);
+	});
+
+	it('keeps the served order between two plays with no readable wait at all', () => {
+		// Two unknowns compare as equal — a comparator that claims either one
+		// precedes the other is non-reflexive, and the sort is free to act on
+		// the lie in any order it likes.
+		const served = [
+			play({ key: 'first-unknown', depth: 0 }),
+			play({ key: 'second-unknown', roi: 0, depth: 4000 })
+		];
+
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first-unknown', 'second-unknown']);
+	});
+
+	it('keeps a clean play with an unreadable wait ahead of every suspect one', () => {
+		// The suspect partition outranks the null-last rule: a clean unknown is
+		// still a clean row, and the flag is the reason a suspect play sits last.
+		const served = [
+			play({ key: 'suspect-fast', roi: 100, depth: 100_000, suspect: true }),
+			play({ key: 'clean-unreadable', depth: 0 })
+		];
+
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['clean-unreadable', 'suspect-fast']);
+	});
+
+	it('keeps a suspect play behind every clean one under the Fastest sort, however fast it absorbs', () => {
+		const served = [
+			play({ key: 'clean-slow', roi: 1, depth: 10 }),
+			play({ key: 'suspect-instant', roi: 100, depth: 100_000, suspect: true }),
+			play({ key: 'clean-quick', roi: 10, depth: 900 })
+		];
+
+		expect(keys(sortPlays(served, 'fastest'))).toEqual([
 			'clean-quick',
 			'clean-slow',
 			'suspect-instant'
 		]);
 	});
 
-	it('keeps the server order between two plays tied on fill', () => {
-		const served = [play({ key: 'first', depth: 250 }), play({ key: 'second', depth: 250 })];
+	it('keeps the server order between two plays the market absorbs inside the same hour', () => {
+		// The hours are whole ones, so everything under an hour ties at 1 — the
+		// deeper book does NOT out-sort the thinner one, it keeps the server's
+		// remaining tie-breaks.
+		const served = [
+			play({ key: 'first', roi: 10, depth: 900 }),
+			play({ key: 'second', roi: 10, depth: 4000 })
+		];
 
-		expect(keys(sortPlays(served, 'fill', 500))).toEqual(['first', 'second']);
+		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first', 'second']);
 	});
 
-	it('sorts into a new array under the Fill sort as well', () => {
-		const served = [play({ key: 'slow', depth: 10 }), play({ key: 'fast', depth: 4000 })];
+	it('sorts into a new array under the Fastest sort as well', () => {
+		const served = [
+			play({ key: 'slow', roi: 1, depth: 10 }),
+			play({ key: 'fast', roi: 10, depth: 4000 })
+		];
 
-		sortPlays(served, 'fill', 500);
+		sortPlays(served, 'fastest');
 
 		expect(keys(served)).toEqual(['slow', 'fast']);
 	});
@@ -816,6 +836,83 @@ describe('fillHours', () => {
 
 	it('reports null for a non-finite quantity', () => {
 		expect(fillHours(play({ depth: 40 }), Number.POSITIVE_INFINITY)).toBeNull();
+	});
+});
+
+describe('worthwhileScale', () => {
+	// Every case is stated against the 100c target the constant carries, so a
+	// change to that constant fails these tests rather than passing silently.
+
+	it('rounds the flip count up to the exchange that actually clears the target', () => {
+		// 100 ÷ 3 is 33.3 exchanges, and 33 of them pay 99c — a chaos short.
+		expect(worthwhileScale(play({ roi: 3 }))?.flips).toBe(34);
+	});
+
+	it('adds no extra flip to a return that divides the target exactly', () => {
+		// Four exchanges at 25c pay exactly 100c, so the fifth is not needed.
+		expect(worthwhileScale(play({ roi: 25 }))?.flips).toBe(4);
+	});
+
+	it('reports a single flip for a play that clears the target on its own', () => {
+		expect(worthwhileScale(play({ roi: 150 }))?.flips).toBe(1);
+	});
+
+	it('reports the chaos those flips actually pay, not the target', () => {
+		// 34 exchanges at 3c overshoot to 102c; reporting the flat 100c would put a
+		// number on screen the play does not pay.
+		expect(worthwhileScale(play({ roi: 3 }))?.gain).toBe(102);
+	});
+
+	it('reports the chaos the flips tie up, not the cost of one exchange', () => {
+		expect(worthwhileScale(play({ roi: 3, investment: 40 }))?.investment).toBe(1360);
+	});
+
+	it('rounds the hours the market needs to absorb the flips up to a whole hour', () => {
+		// 200 flips against 30 units an hour is 6.7 hours of trading, which is a
+		// seventh hour the reader spends, not a sixth.
+		expect(worthwhileScale(play({ roi: 0.5, depth: 30 }))?.hours).toBe(7);
+	});
+
+	it('reports exactly one hour for a scale the hourly volume covers whole', () => {
+		expect(worthwhileScale(play({ roi: 25, depth: 4 }))?.hours).toBe(1);
+	});
+
+	it('reports a second hour for a scale one flip past what the hour covers', () => {
+		expect(worthwhileScale(play({ roi: 25, depth: 3 }))?.hours).toBe(2);
+	});
+
+	it('reports no hours for a play whose thinnest leg traded nothing', () => {
+		// An hourly volume of 0 is an unreadable wait, not an instant one, and
+		// dividing by it would answer Infinity — which the column would print.
+		expect(worthwhileScale(play({ depth: 0 }))?.hours).toBeNull();
+	});
+
+	it('reports no hours for a negative depth', () => {
+		expect(worthwhileScale(play({ depth: -5 }))?.hours).toBeNull();
+	});
+
+	it('reports no hours for a non-finite depth', () => {
+		expect(worthwhileScale(play({ depth: Number.NaN }))?.hours).toBeNull();
+	});
+
+	it('still reports the scale for a play whose depth cannot be read', () => {
+		// The flip count and what it ties up are known whatever the book did last
+		// hour; only the wait is missing, so the row keeps its "×N → +Gc".
+		expect(worthwhileScale(play({ roi: 25, depth: 0 }))?.flips).toBe(4);
+	});
+
+	it('reports no scale for a play that gains nothing per exchange', () => {
+		// No repeat count reaches a positive target from a zero step, and dividing
+		// would answer Infinity flips.
+		expect(worthwhileScale(play({ roi: 0 }))).toBeNull();
+	});
+
+	it('reports no scale for a play that loses chaos per exchange', () => {
+		expect(worthwhileScale(play({ roi: -5 }))).toBeNull();
+	});
+
+	it('reports no scale for a non-finite return', () => {
+		expect(worthwhileScale(play({ roi: Number.NaN }))).toBeNull();
 	});
 });
 
