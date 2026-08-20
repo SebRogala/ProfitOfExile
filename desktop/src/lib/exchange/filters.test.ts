@@ -1,20 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import {
+	applyGates,
 	applyNumericFilters,
 	applyRules,
 	cycleCategoryRule,
 	effectiveRule,
+	gateDefaults,
 	itemUniverse,
 	matchesSearch,
 	overDepth,
 	overridesCategory,
 	parseCategoryRules,
+	parseGate,
+	parseGates,
 	parseItemRules,
 	playSides,
 	serializeCategoryRules,
 	serializeItemRules
 } from './filters';
-import type { CategoryRules, ItemRule, NumericFilters } from './filters';
+import type { CategoryRules, GateInputs, Gates, ItemRule, NumericFilters } from './filters';
 import type { CurrencyExchangeLeg, CurrencyExchangePlay } from '$lib/api';
 
 /**
@@ -73,8 +77,37 @@ function filters(overrides: Partial<NumericFilters> = {}): NumericFilters {
 		investMax: '',
 		unit: 'chaos',
 		divineChaosRate: 198.97,
-		minRoiPct: '',
 		minGain: '',
+		...overrides
+	};
+}
+
+/**
+ * Every gate off, so a gate test says which single gate it is about.
+ *
+ * The opposite of the shipped state on purpose: the defaults are exercised
+ * through `parseGates`, and an `applyGates` test that started from them could
+ * not tell which of five floors dropped a play.
+ */
+function gates(overrides: Partial<Gates> = {}): Gates {
+	return {
+		minRoiChaos: 0,
+		minTurnover: 0,
+		maxTickPct: 0,
+		minEdgeTickRatio: 0,
+		minRoiPct: 0,
+		...overrides
+	};
+}
+
+/** Every gate knob unset, which is the state a fresh install stores. */
+function gateInputs(overrides: Partial<GateInputs> = {}): GateInputs {
+	return {
+		minRoiChaos: '',
+		minTurnover: '',
+		maxTickPct: '',
+		minEdgeTickRatio: '',
+		minRoiPct: '',
 		...overrides
 	};
 }
@@ -402,11 +435,194 @@ describe('applyRules', () => {
 	});
 });
 
+describe('parseGate', () => {
+	it('reads an unset knob as its default rather than as off', () => {
+		// The default-on contract: a reader who has never opened the Gates row is
+		// entitled to the table the server used to hand them.
+		expect(parseGate('', 3)).toBe(3);
+	});
+
+	it('reads an explicit zero as the gate turned off', () => {
+		// The only way to say "show me the cheap fragments too" — 0 has to survive
+		// parsing rather than falling through to the default.
+		expect(parseGate('0', 3)).toBe(0);
+	});
+
+	it('reads the number the reader typed', () => {
+		expect(parseGate('1.5', 3)).toBe(1.5);
+	});
+
+	it('reads a half-typed knob as its default rather than as off', () => {
+		// Where `parseAmount` answers "no filter" for "1e", a gate answers its
+		// default: mid-typing must not drop the standing policy.
+		expect(parseGate('1e', 3)).toBe(3);
+	});
+
+	it('reads a whitespace-only knob as its default rather than as zero', () => {
+		// `Number('  ')` is 0, so without the trim a space left in the box would
+		// read as the explicit off and unbar the whole table.
+		expect(parseGate('  ', 3)).toBe(3);
+	});
+
+	it('reads an infinite knob as its default rather than as a floor nothing clears', () => {
+		// `persisted()` hands back whatever is in storage, so the read site is the
+		// only place a stored "Infinity" stops.
+		expect(parseGate('Infinity', 3)).toBe(3);
+	});
+
+	it('reads a negative knob as the gate turned off', () => {
+		// The server's positivity floor means no served play has a negative
+		// return, so a floor below zero could never drop a row.
+		expect(parseGate('-5', 3)).toBe(0);
+	});
+});
+
+describe('parseGates', () => {
+	it('reads a fresh install as the gates the server used to enforce for everyone', () => {
+		// The whole point of the move: nothing stored yet, and the table is still
+		// the table POE-191 inherited — including the 2% return floor the server
+		// applied whatever the reader had typed.
+		expect(parseGates(gateInputs())).toEqual({
+			minRoiChaos: 3,
+			minTurnover: 10000,
+			maxTickPct: 10,
+			minEdgeTickRatio: 5,
+			minRoiPct: 2
+		});
+	});
+
+	it('turns one knob off without touching the other four', () => {
+		expect(parseGates(gateInputs({ minTurnover: '0' }))).toEqual({
+			...gateDefaults,
+			minTurnover: 0
+		});
+	});
+
+	it('prefers a stored return floor over the default it inherited', () => {
+		expect(parseGates(gateInputs({ minRoiPct: '5' })).minRoiPct).toBe(5);
+	});
+});
+
+describe('applyGates', () => {
+	/** Clears all five defaults: 10c gained, a live hour, a one-step spread. */
+	const clean = play({ key: 'clean', roi: 10, turnover: 20000, tick: 0.005, roiPct: 0.05 });
+	/** A Sacrifice-fragment-shaped play: fails four of the five defaults. */
+	const fragment = play({ key: 'fragment', roi: 0.5, turnover: 4000, tick: 0.2, roiPct: 0.03 });
+
+	it('keeps a play that clears every default gate', () => {
+		expect(keys(applyGates([clean], gateDefaults))).toEqual(['clean']);
+	});
+
+	it('drops a cheap thin play under the default gates', () => {
+		expect(keys(applyGates([clean, fragment], gateDefaults))).toEqual(['clean']);
+	});
+
+	it('keeps that same play once every gate is off', () => {
+		// The acceptance case: the knobs exist so the reader can go and look at
+		// the market the defaults were hiding from them.
+		expect(keys(applyGates([fragment], gates()))).toEqual(['fragment']);
+	});
+
+	it('keeps a play gaining exactly the chaos floor', () => {
+		const exact = play({ key: 'exact', roi: 3 });
+
+		expect(keys(applyGates([exact], gates({ minRoiChaos: 3 })))).toEqual(['exact']);
+	});
+
+	it('drops a play a hundredth of a chaos under the floor', () => {
+		const under = play({ key: 'under', roi: 2.99 });
+
+		expect(keys(applyGates([under], gates({ minRoiChaos: 3 })))).toEqual([]);
+	});
+
+	it('keeps a play whose hour turned over exactly the floor', () => {
+		const exact = play({ key: 'exact', turnover: 10000 });
+
+		expect(keys(applyGates([exact], gates({ minTurnover: 10000 })))).toEqual(['exact']);
+	});
+
+	it('drops a play one chaos of turnover short of the floor', () => {
+		const under = play({ key: 'under', turnover: 9999 });
+
+		expect(keys(applyGates([under], gates({ minTurnover: 10000 })))).toEqual([]);
+	});
+
+	it('keeps a play whose spread sits exactly on the ceiling', () => {
+		const exact = play({ key: 'exact', tick: 0.1 });
+
+		expect(keys(applyGates([exact], gates({ maxTickPct: 10 })))).toEqual(['exact']);
+	});
+
+	it('drops a play whose spread is a hair over the ceiling', () => {
+		const over = play({ key: 'over', tick: 0.101 });
+
+		expect(keys(applyGates([over], gates({ maxTickPct: 10 })))).toEqual([]);
+	});
+
+	it('reads the spread ceiling as percent points against a fractional tick', () => {
+		// The input says 0.5 and the wire says 0.01 — a ceiling compared raw would
+		// pass a 1% spread as comfortably under "0.5".
+		const wide = play({ key: 'wide', tick: 0.01 });
+
+		expect(keys(applyGates([wide], gates({ maxTickPct: 0.5 })))).toEqual([]);
+	});
+
+	it('keeps a play returning exactly the ratio of its own spread', () => {
+		const exact = play({ key: 'exact', tick: 0.01, roiPct: 0.05 });
+
+		expect(keys(applyGates([exact], gates({ minEdgeTickRatio: 5 })))).toEqual(['exact']);
+	});
+
+	it('drops a play returning just under the ratio of its own spread', () => {
+		// The 1-hop case: the whole edge is one price step, so the ratio is what
+		// keeps it off the table until the reader asks for it.
+		const thin = play({ key: 'thin', tick: 0.01, roiPct: 0.049 });
+
+		expect(keys(applyGates([thin], gates({ minEdgeTickRatio: 5 })))).toEqual([]);
+	});
+
+	it('measures the ratio against the spread of the play in hand, not a fixed floor', () => {
+		// Same return, twice the spread: the wider market is the one that fails.
+		const tight = play({ key: 'tight', tick: 0.005, roiPct: 0.03 });
+		const wide = play({ key: 'wide', tick: 0.01, roiPct: 0.03 });
+
+		expect(keys(applyGates([tight, wide], gates({ minEdgeTickRatio: 5 })))).toEqual(['tight']);
+	});
+
+	it('reads the return floor as percent points against a fractional roiPct', () => {
+		// The input says 2 and the wire says 0.05 — compared raw, a 5% play would
+		// fail a 2% floor.
+		expect(keys(applyGates([clean], gates({ minRoiPct: 2 })))).toEqual(['clean']);
+	});
+
+	it('keeps a play returning exactly the floor', () => {
+		const exact = play({ key: 'exact', roiPct: 0.02 });
+
+		expect(keys(applyGates([exact], gates({ minRoiPct: 2 })))).toEqual(['exact']);
+	});
+
+	it('drops a play returning a hundredth of a percent under the floor', () => {
+		const under = play({ key: 'under', roiPct: 0.0199 });
+
+		expect(keys(applyGates([under], gates({ minRoiPct: 2 })))).toEqual([]);
+	});
+
+	it('drops a play that clears four gates and fails only the fifth', () => {
+		// One failing gate is enough — the reader who wants this play back has to
+		// turn that one off, not all of them.
+		const thinHour = play({ key: 'thin-hour', roi: 10, turnover: 9000, tick: 0.005, roiPct: 0.05 });
+
+		expect(keys(applyGates([thinHour], gateDefaults))).toEqual([]);
+	});
+});
+
 describe('applyNumericFilters', () => {
 	const cheap = play({ key: 'cheap', investment: 100, roi: 10, roiPct: 0.1 });
 	const dear = play({ key: 'dear', investment: 250, roi: 25, roiPct: 0.1 });
 
 	it('keeps every play when no bound is typed', () => {
+		// The losing play stays: the return floor is a gate now (POE-191), and
+		// nothing in this pass looks at `roiPct` at all.
 		const loss = play({ key: 'loss', investment: 0, roi: -5, roiPct: -0.5 });
 
 		expect(keys(applyNumericFilters([cheap, loss], filters()))).toEqual(['cheap', 'loss']);
@@ -417,11 +633,9 @@ describe('applyNumericFilters', () => {
 	});
 
 	it('ignores a whitespace-only bound rather than reading it as zero', () => {
-		// `Number('  ')` is 0, so without the trim a space left in Min ROI%
-		// would become a 0% floor and silently drop every negative-ROI play.
-		const loss = play({ key: 'loss', investment: 10, roi: -5, roiPct: -0.5 });
-
-		expect(keys(applyNumericFilters([loss], filters({ minRoiPct: '  ' })))).toEqual(['loss']);
+		// `Number('  ')` is 0, so without the trim a space left in Max investment
+		// would become a 0c ceiling and empty the table.
+		expect(keys(applyNumericFilters([cheap], filters({ investMax: '  ' })))).toEqual(['cheap']);
 	});
 
 	it('ignores an infinite bound rather than emptying the table', () => {
@@ -514,27 +728,6 @@ describe('applyNumericFilters', () => {
 		expect(keys(kept)).toEqual(['dear']);
 	});
 
-	it('reads the minimum ROI input as percent points against a fractional roiPct', () => {
-		// The input says 5 and the wire says 0.1 — a filter that compared them raw
-		// would drop every play on the table.
-		expect(keys(applyNumericFilters([cheap], filters({ minRoiPct: '5' })))).toEqual(['cheap']);
-	});
-
-	it('keeps a play returning exactly the minimum ROI', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ minRoiPct: '10' })))).toEqual(['cheap']);
-	});
-
-	it('drops a play returning just under the minimum ROI', () => {
-		expect(keys(applyNumericFilters([cheap], filters({ minRoiPct: '10.1' })))).toEqual([]);
-	});
-
-	it('leaves the minimum ROI unmoved by the quantity', () => {
-		// A percentage is per exchange whatever the run size; scaling it would make
-		// the filter tighten every time the reader stepped the quantity up.
-		expect(keys(applyNumericFilters([cheap], filters({ quantity: 5, minRoiPct: '10' })))).toEqual([
-			'cheap'
-		]);
-	});
 });
 
 describe('overDepth', () => {

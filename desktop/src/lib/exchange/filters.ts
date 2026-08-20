@@ -12,6 +12,13 @@
  * to. Both live in `persisted()` strings (ADR-013), which is why the parsers
  * take raw text and answer with an empty rule set rather than throwing.
  *
+ * Two ways of reading an empty input live here, and they are opposites. The
+ * quality gates (POE-191, moved out of the server) are DEFAULT-ON: an unset
+ * knob is that gate running at the value the server used to enforce for
+ * everyone. The numeric bounds are DEFAULT-OFF: an unset bound is a filter the
+ * reader is not running. `parseGate` and `parseAmount` each say why their side
+ * is the way round it is — check which one you are in before reusing either.
+ *
  * Pure TypeScript on purpose — no Svelte runes, no Tauri imports — so the whole
  * file is reachable from vitest without a component harness, the same reason
  * `view.ts` gives.
@@ -277,15 +284,161 @@ export function applyRules(
 	});
 }
 
+// -------------------------------------------------------------- the gates --
+
+/** Percent points per unit fraction — the scale the percent inputs are typed in. */
+const PERCENT_PER_FRACTION = 100;
+
+/**
+ * The five quality gates, parsed.
+ *
+ * These are the floors the SERVER used to apply before it served anything
+ * (POE-191 moved them here: the server now serves everything sane — liveness,
+ * persistence, positivity, cap — and the reader owns the quality bar). Nothing
+ * here re-derives a market number either; every gate reads a field the wire
+ * already carries per play, which is what made the move a comparison rather
+ * than a recalculation.
+ *
+ * `0` is off for every knob, `maxTickPct` included: a spread ceiling of zero
+ * would ask for a market with no spread at all, which is not a table anyone
+ * wants, so the value is free to spell "no ceiling".
+ */
+export interface Gates {
+	/** Chaos gained per exchange, floor. */
+	minRoiChaos: number;
+	/** Chaos that changed hands in the hour, floor. */
+	minTurnover: number;
+	/** Spread ceiling, typed as a PERCENT (10 = 10%). */
+	maxTickPct: number;
+	/** How many times the spread the return must be, floor. */
+	minEdgeTickRatio: number;
+	/** Return floor, typed as a PERCENT (2 = 2%). */
+	minRoiPct: number;
+}
+
+/**
+ * The gate values the server used to enforce for everyone.
+ *
+ * Data rather than five literals spread through the parsers, because three
+ * callers need the same five numbers and they must not be able to disagree:
+ * the parser's fallback, the filter bar's "Defaults" reset, and the badge that
+ * counts how many knobs the reader has moved off default.
+ *
+ * `minRoiPct` is 2 for the same reason the other four carry the server's old
+ * numbers — the server gated 2% regardless of what the reader had typed, so a
+ * reader who never set it was already looking at a 2% table.
+ */
+export const gateDefaults: Gates = {
+	minRoiChaos: 3,
+	minTurnover: 10000,
+	maxTickPct: 10,
+	minEdgeTickRatio: 5,
+	minRoiPct: 2
+};
+
+/**
+ * The gate knobs as they are stored — the raw `persisted()` strings (ADR-013),
+ * one per field of `Gates`.
+ */
+export type GateInputs = { [K in keyof Gates]: string };
+
+/**
+ * One gate knob as a number.
+ *
+ * DEFAULT-ON, which is the OPPOSITE of `parseAmount` below: blank and
+ * unparseable both answer the knob's DEFAULT here, and "off" there. The two
+ * contracts live in one file on purpose, so read which one you are in before
+ * copying either.
+ *
+ * A gate is standing policy. The reader who has never opened the Gates row is
+ * entitled to the table the server used to hand them, and a knob that read an
+ * unset preference as "off" would drop that policy on every fresh install and
+ * bury the table under fragment noise — the defaults are the trash-killer.
+ * A numeric bound is a moment filter: the reader typed it to answer one
+ * question, so an empty box means they are done asking.
+ *
+ * `0` is therefore the explicit off, and has to survive parsing: it is the only
+ * way for the reader to say "show me the cheap fragments too".
+ *
+ * A negative knob is read as off rather than kept. For the four floors the
+ * server's positivity floor means no served play carries a negative return, so
+ * a floor below zero could never drop a row — "off" is the honest name for a
+ * filter that cannot fire. For the one ceiling (maxTickPct) a negative would
+ * fire against EVERY play and empty the table; a stored negative there is
+ * garbage, not a request, and off is the recovery.
+ */
+export function parseGate(raw: string, fallback: number): number {
+	if (raw.trim() === '') return fallback;
+	const value = Number(raw);
+	if (!Number.isFinite(value)) return fallback;
+	return value < 0 ? 0 : value;
+}
+
+/** Every gate knob, read against its own default. */
+export function parseGates(inputs: GateInputs): Gates {
+	return {
+		minRoiChaos: parseGate(inputs.minRoiChaos, gateDefaults.minRoiChaos),
+		minTurnover: parseGate(inputs.minTurnover, gateDefaults.minTurnover),
+		maxTickPct: parseGate(inputs.maxTickPct, gateDefaults.maxTickPct),
+		minEdgeTickRatio: parseGate(inputs.minEdgeTickRatio, gateDefaults.minEdgeTickRatio),
+		minRoiPct: parseGate(inputs.minRoiPct, gateDefaults.minRoiPct)
+	};
+}
+
+/**
+ * Apply the quality gates.
+ *
+ * Its own function rather than five more fields on `applyNumericFilters`,
+ * because the two halves mean opposite things about an empty input: a gate
+ * unset is a gate ON at its default, a bound unset is a bound OFF. Folding them
+ * together would put both contracts inside one filter pass where the next
+ * reader has to remember which field obeys which — and the page reflects the
+ * same split, since Clear empties the bounds while Defaults restores the gates.
+ *
+ * A play passes only by clearing every gate that is on:
+ * - `roi ≥ minRoiChaos` — the chaos one exchange gains, unscaled by the
+ *   reader's quantity: a gate is about whether the market is worth trading, not
+ *   about how much of it they intend to trade.
+ * - `turnover ≥ minTurnover` — chaos that changed hands in the hour.
+ * - `tick ≤ maxTickPct / 100` — the spread ceiling.
+ * - `roiPct ≥ minEdgeTickRatio × tick` — the return has to be a multiple of the
+ *   spread it has to cross, which is what keeps a play whose whole edge is one
+ *   price step off the table.
+ * - `roiPct ≥ minRoiPct / 100` — the return floor.
+ *
+ * Every comparison is inclusive on the passing side: a play sitting exactly on
+ * a floor met it, and the server it inherits these numbers from cleared the
+ * same plays.
+ *
+ * `maxTickPct` and `minRoiPct` cross scales here and nowhere else — the inputs
+ * are percent points, the wire's `tick` and `roiPct` are fractions.
+ * `minEdgeTickRatio` does not cross anything: a bare ratio times a fraction is
+ * already a fraction.
+ */
+export function applyGates(plays: CurrencyExchangePlay[], gates: Gates): CurrencyExchangePlay[] {
+	return plays.filter((play) => {
+		if (gates.minRoiChaos > 0 && play.roi < gates.minRoiChaos) return false;
+		if (gates.minTurnover > 0 && play.turnover < gates.minTurnover) return false;
+		if (gates.maxTickPct > 0 && play.tick > gates.maxTickPct / PERCENT_PER_FRACTION) return false;
+		if (gates.minEdgeTickRatio > 0 && play.roiPct < gates.minEdgeTickRatio * play.tick) return false;
+		if (gates.minRoiPct > 0 && play.roiPct < gates.minRoiPct / PERCENT_PER_FRACTION) return false;
+		return true;
+	});
+}
+
 // ------------------------------------------------------------ the numbers --
 
 /**
  * The numeric filter bar's inputs.
  *
- * The four bounds arrive as the raw persisted strings, not as numbers: they are
- * `persisted()` values bound to text inputs, and "" (never set, or cleared) has
- * to mean "filter off" rather than 0. Parsing them here keeps that one boundary
- * in one place instead of spreading `=== ''` checks through the page.
+ * The three bounds arrive as the raw persisted strings, not as numbers: they
+ * are `persisted()` values bound to text inputs, and "" (never set, or cleared)
+ * has to mean "filter off" rather than 0. Parsing them here keeps that one
+ * boundary in one place instead of spreading `=== ''` checks through the page.
+ *
+ * The return floor is NOT one of them: it is `Gates.minRoiPct`, on the
+ * default-on side of the file, and lives there alone so the reader's 2% floor
+ * has exactly one owner.
  */
 export interface NumericFilters {
 	/** Exchanges the reader intends to run; multiplies investment and ROI. */
@@ -296,8 +449,6 @@ export interface NumericFilters {
 	unit: ExchangeUnit;
 	/** The response's newest-hour chaos value of one divine; 0 when unknown. */
 	divineChaosRate: number;
-	/** Minimum return, typed as a PERCENT (5 = 5%). */
-	minRoiPct: string;
 	/** Minimum chaos gained across the whole quantity. */
 	minGain: string;
 }
@@ -316,11 +467,8 @@ function parseAmount(raw: string): number | null {
 	return Number.isFinite(value) ? value : null;
 }
 
-/** Percent points per unit fraction — the scale the ROI% input is typed in. */
-const PERCENT_PER_FRACTION = 100;
-
 /**
- * Apply the investment, ROI% and gain bounds.
+ * Apply the investment and gain bounds.
  *
  * Investment and gain are compared AT QUANTITY: the reader sets the quantity to
  * say how many exchanges they intend to run, so "at most 500c" is a question
@@ -331,10 +479,6 @@ const PERCENT_PER_FRACTION = 100;
  * (the newest hour carried no divine/chaos trade) makes divine unconvertible,
  * so the bounds are read as chaos instead of being multiplied by nothing and
  * silently passing every play.
- *
- * `minRoiPct` crosses scales here and nowhere else: the input is percent
- * points, `play.roiPct` is a fraction, and the division lives at this boundary
- * so no caller has to remember which side it is on.
  */
 export function applyNumericFilters(
 	plays: CurrencyExchangePlay[],
@@ -345,14 +489,12 @@ export function applyNumericFilters(
 
 	const investMin = parseAmount(filters.investMin);
 	const investMax = parseAmount(filters.investMax);
-	const minRoiPct = parseAmount(filters.minRoiPct);
 	const minGain = parseAmount(filters.minGain);
 
 	return plays.filter((play) => {
 		const investment = play.investment * quantity;
 		if (investMin !== null && investment < investMin * scale) return false;
 		if (investMax !== null && investment > investMax * scale) return false;
-		if (minRoiPct !== null && play.roiPct < minRoiPct / PERCENT_PER_FRACTION) return false;
 		if (minGain !== null && play.roi * quantity < minGain) return false;
 		return true;
 	});

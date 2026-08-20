@@ -50,8 +50,10 @@
 		sortPlays
 	} from '$lib/exchange/view';
 	import {
+		applyGates,
 		applyNumericFilters,
 		applyRules,
+		parseGates,
 		itemUniverse,
 		matchesSearch,
 		overDepth,
@@ -140,7 +142,10 @@
 	const hoursWindow = $derived(result?.hours ?? 0);
 
 	/**
-	 * Rules, then numbers, then the search, then order. The two rule layers narrow
+	 * Rules, then gates, then numbers, then the search, then order. The gates run
+	 * at their defaults here apart from the reader's return floor — POE-191's
+	 * chunk 4 owns the knobs and the filter-bar row that set the other four. The
+	 * two rule layers narrow
 	 * by identity and the numeric bounds by size, so running them the other way
 	 * round would cost the same rows at more comparisons; the search runs last of
 	 * the three because it narrows what the persisted setup has already left on
@@ -152,15 +157,26 @@
 	 */
 	const rows = $derived(
 		sortPlays(
-			applyNumericFilters(applyRules(allPlays, categoryRules, itemRules), {
-				quantity,
-				investMin: investMinPref.value,
-				investMax: investMaxPref.value,
-				unit,
-				divineChaosRate: result?.divineChaosRate ?? 0,
-				minRoiPct: minRoiPctPref.value,
-				minGain: minGainPref.value
-			}).filter((play) => matchesSearch(play, search)),
+			applyNumericFilters(
+				applyGates(
+					applyRules(allPlays, categoryRules, itemRules),
+					parseGates({
+						minRoiChaos: '',
+						minTurnover: '',
+						maxTickPct: '',
+						minEdgeTickRatio: '',
+						minRoiPct: minRoiPctPref.value
+					})
+				),
+				{
+					quantity,
+					investMin: investMinPref.value,
+					investMax: investMaxPref.value,
+					unit,
+					divineChaosRate: result?.divineChaosRate ?? 0,
+					minGain: minGainPref.value
+				}
+			).filter((play) => matchesSearch(play, search)),
 			parseSort(sortPref.value),
 			quantity
 		)
