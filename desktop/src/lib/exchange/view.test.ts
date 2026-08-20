@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
+	CHAOS_ID,
 	HORIZON_OPTIONS,
 	MODE_OPTIONS,
 	REFETCH_DEBOUNCE_MS,
 	REFETCH_JITTER_MS,
 	dataAgeParts,
 	deriveState,
+	formatChaos,
 	formatLegPrice,
 	formatRoiPct,
 	formatTime,
@@ -20,6 +22,7 @@ import {
 	parseSort,
 	parseUnit,
 	refetchDelay,
+	routeSlots,
 	sortPlays
 } from './view';
 import type {
@@ -595,6 +598,38 @@ describe('formatLegPrice', () => {
 	});
 });
 
+describe('formatChaos', () => {
+	it('keeps two decimals on a whole-chaos amount', () => {
+		expect(formatChaos(50)).toBe('50.00');
+	});
+
+	it('separates the thousands of a four-figure payout', () => {
+		expect(formatChaos(5050)).toBe('5,050.00');
+	});
+
+	it('separates every group of a seven-figure payout', () => {
+		expect(formatChaos(1234567.891)).toBe('1,234,567.89');
+	});
+
+	it('keeps the significant digits of a sub-chaos amount', () => {
+		// An oil that enters at 0.0125c: two fixed decimals would print "0.01",
+		// which is a 25% cheaper play than the one on screen.
+		expect(formatChaos(0.0125)).toBe('0.0125');
+	});
+
+	it('renders zero with the two-decimal floor', () => {
+		expect(formatChaos(0)).toBe('0.00');
+	});
+
+	it('puts the minus sign outside the grouped digits', () => {
+		expect(formatChaos(-1234.5)).toBe('-1,234.50');
+	});
+
+	it('renders a non-finite amount as "0.00" rather than "NaN"', () => {
+		expect(formatChaos(Number.NaN)).toBe('0.00');
+	});
+});
+
 describe('legLabel', () => {
 	function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
 		return {
@@ -686,6 +721,156 @@ describe('iconSrc', () => {
 		expect(iconSrc(BASE, 'currency-exchange/icon/Chaos')).toBe(
 			'https://server.test/api/currency-exchange/icon/Chaos'
 		);
+	});
+});
+
+describe('routeSlots', () => {
+	const CHAOS_ICON = '/currency-exchange/icon/Chaos';
+	const DIVINE_ID = 'Metadata/Items/Currency/CurrencyModValues';
+
+	function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
+		return {
+			action: 'buy',
+			item: 'card',
+			quote: CHAOS_ID,
+			price: 1,
+			fair: 1.1,
+			fairOk: true,
+			tick: 0.01,
+			volume: 2000,
+			stock: 40,
+			suspect: false,
+			itemName: 'Imperial Legacy',
+			itemIcon: '/currency-exchange/icon/Card',
+			itemCategory: 'Divination Cards',
+			quoteName: 'Chaos Orb',
+			quoteIcon: CHAOS_ICON,
+			quoteCategory: 'Currency',
+			...overrides
+		};
+	}
+
+	/** Buy the card at 1c, sell it at 15c — the two legs the wire sends. */
+	function direct(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		return play({
+			legs: [leg(), leg({ action: 'sell', price: 15 })],
+			investment: 50,
+			roi: 700,
+			...overrides
+		});
+	}
+
+	/** Buy the astrolabe in chaos, sell it in divine, convert the divine back. */
+	function oneHop(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		return play({
+			mode: '1-hop',
+			legs: [
+				leg({ item: 'astrolabe', itemName: 'Nameless Astrolabe' }),
+				leg({
+					action: 'sell',
+					item: 'astrolabe',
+					itemName: 'Nameless Astrolabe',
+					quote: DIVINE_ID,
+					quoteName: 'Divine Orb',
+					quoteIcon: '/currency-exchange/icon/Divine',
+					price: 0.5
+				}),
+				leg({
+					action: 'sell',
+					item: DIVINE_ID,
+					itemName: 'Divine Orb',
+					itemIcon: '/currency-exchange/icon/Divine',
+					price: 204
+				})
+			],
+			investment: 50,
+			roi: 5050,
+			...overrides
+		});
+	}
+
+	it('spends what one exchange costs to enter', () => {
+		expect(routeSlots(direct())?.spend.amount).toBe('50.00');
+	});
+
+	it('gets back the entry plus the round trip’s gain', () => {
+		// Not `roi` alone (the gain is not the payout) and not a product of the
+		// leg prices (those are raw, the ends are net of the ticks).
+		expect(routeSlots(direct())?.get.amount).toBe('750.00');
+	});
+
+	it('names the item bought in step 1, at its buy price', () => {
+		const buy = routeSlots(direct())?.buy;
+
+		expect(buy?.name).toBe('Imperial Legacy');
+		expect(buy?.rate).toBe('buy @ 1.00');
+		expect(buy?.icon).toBe('/currency-exchange/icon/Card');
+	});
+
+	it('names what the sale pays out in for step 2, not the item sold', () => {
+		const sell = routeSlots(direct())?.sell;
+
+		expect(sell?.name).toBe('Chaos Orb');
+		expect(sell?.rate).toBe('sell @ 15.00');
+		expect(sell?.icon).toBe(CHAOS_ICON);
+	});
+
+	it('leaves a direct play without a convert step', () => {
+		expect(routeSlots(direct())?.convert).toBeNull();
+	});
+
+	it('sells a 1-hop play into the intermediate currency at step 2', () => {
+		expect(routeSlots(oneHop())?.sell.name).toBe('Divine Orb');
+	});
+
+	it('converts the intermediate currency back at step 3', () => {
+		// The third leg is a `sell` on the wire; on screen it is the conversion
+		// that returns the reader to the currency they started in.
+		const convert = routeSlots(oneHop())?.convert;
+
+		expect(convert?.name).toBe('Divine Orb');
+		expect(convert?.rate).toBe('convert @ 204');
+	});
+
+	it('marks only the slot whose own leg is suspect', () => {
+		const route = routeSlots(
+			direct({ legs: [leg(), leg({ action: 'sell', price: 15, suspect: true })] })
+		);
+
+		expect(route?.buy.suspect).toBe(false);
+		expect(route?.sell.suspect).toBe(true);
+	});
+
+	it('reports a gain when the round trip returns more chaos than it cost', () => {
+		expect(routeSlots(direct({ roi: 700 }))?.positive).toBe(true);
+	});
+
+	it('reports no gain when the round trip only breaks even', () => {
+		expect(routeSlots(direct({ roi: 0 }))?.positive).toBe(false);
+	});
+
+	it('takes the ends’ artwork from whichever side of the play is chaos', () => {
+		const route = routeSlots(direct());
+
+		expect(route?.spend.icon).toBe(CHAOS_ICON);
+		expect(route?.get.icon).toBe(CHAOS_ICON);
+	});
+
+	it('leaves the ends without artwork when no side of the play is chaos', () => {
+		// A round trip quoted end to end in divine is still valued in chaos, so
+		// the amounts stand and only the tile artwork is missing.
+		const divineQuoted = direct({
+			legs: [
+				leg({ quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: '/icon/Divine' }),
+				leg({ action: 'sell', quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: '/icon/Divine' })
+			]
+		});
+
+		expect(routeSlots(divineQuoted)?.spend.icon).toBeNull();
+	});
+
+	it('draws no route for a play that arrives with fewer than two legs', () => {
+		expect(routeSlots(play({ legs: [leg()] }))).toBeNull();
 	});
 });
 
