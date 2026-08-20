@@ -36,17 +36,55 @@ const iconPathPrefix = "/currency-exchange/icon/"
 // IconPath, which points at this server's cache (docs/adr/012-*.md: poewiki
 // 403s the production VPS, so the server serves its own copy). IconURL is here
 // for the cache to fetch and for the pre-seed script's map.
+//
+// Category is one of the values Categories lists. It is not derived from the
+// id at runtime: the metadata path's top bucket is not the in-game taxonomy
+// (oils, catalysts, omens, tattoos and runegrafts all sit under
+// Metadata/Items/Currency/), so the generator resolves it once, offline, and
+// fails rather than writing an entry without one. It is empty only on the zero
+// Item a missed lookup returns.
 type Item struct {
-	Name    string
-	IconURL string
+	Name     string
+	IconURL  string
+	Category string
 }
 
 // assetEntry is the on-disk shape of one asset record. icon is null for an item
 // the generator found no wiki image for, which is why it is a pointer: a
 // missing icon and an empty string must both land on Item.IconURL == "".
 type assetEntry struct {
-	Name string  `json:"name"`
-	Icon *string `json:"icon"`
+	Name     string  `json:"name"`
+	Icon     *string `json:"icon"`
+	Category string  `json:"category"`
+}
+
+// categories is the Currency Exchange sidebar, in the order the game lists it.
+//
+// It is a fixed list rather than the distinct categories the asset happens to
+// carry, because it is the taxonomy the client renders its filter from and the
+// asset is only what GGG put on the exchange this league. Expedition has no
+// asset entry at all right now — logbooks and artifacts are not traded there —
+// and a list derived from the asset would drop it, so the filter would grow a
+// row on its own the first league an expedition item appears. The order is the
+// sidebar's, not alphabetical: clients render it verbatim so the filter matches
+// what the player sees in game.
+var categories = [...]string{
+	"Currency",
+	"Essences",
+	"Delve",
+	"Scarabs",
+	"Divination Cards",
+	"Delirium",
+	"Legion",
+	"Fragments",
+	"Oils",
+	"Catalysts",
+	"Omens",
+	"Tattoos",
+	"Expedition",
+	"Harvest",
+	"Runegrafts",
+	"Allflame",
 }
 
 // itemsByID is parsed once, at package initialisation.
@@ -68,7 +106,7 @@ func parseItemData(raw []byte) map[string]Item {
 	}
 	items := make(map[string]Item, len(entries))
 	for id, entry := range entries {
-		item := Item{Name: entry.Name}
+		item := Item{Name: entry.Name, Category: entry.Category}
 		if entry.Icon != nil {
 			item.IconURL = *entry.Icon
 		}
@@ -80,12 +118,25 @@ func parseItemData(raw []byte) map[string]Item {
 // LookupItem returns the asset entry for a feed item id.
 //
 // A false result means the id is not in the asset at all — a new item GGG
-// added since the last regeneration, or an id outside the eight categories the
-// generator covers. Callers that render it should fall back through
+// added since the last regeneration, or an id outside the eight metadata
+// buckets the generator covers. Callers that render it should fall back through
 // DisplayName and record it with UnknownItems.
 func LookupItem(id string) (Item, bool) {
 	item, ok := itemsByID[id]
 	return item, ok
+}
+
+// Categories returns a fresh slice of the in-game Currency Exchange sidebar
+// categories, in sidebar order.
+//
+// The copy is deliberate, for the same reason as IconURLs: the caller is the
+// plays handler, which puts the slice on a response, and handing out a slice
+// backed by the package's own array would let any caller rewrite the taxonomy
+// for the whole process.
+func Categories() []string {
+	out := make([]string, len(categories))
+	copy(out, categories[:])
+	return out
 }
 
 // DisplayName returns the in-game name for a feed item id, falling back to
