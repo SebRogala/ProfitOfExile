@@ -34,7 +34,6 @@
 		SORT_OPTIONS,
 		dataAgeParts,
 		deriveState,
-		fillHours,
 		formatChaos,
 		formatGain,
 		formatRoiPct,
@@ -43,11 +42,11 @@
 		parseDensity,
 		parseHorizon,
 		parseMode,
-		parseQuantity,
 		parseSort,
 		parseUnit,
 		refetchDelay,
-		sortPlays
+		sortPlays,
+		worthwhileScale
 	} from '$lib/exchange/view';
 	import {
 		applyGates,
@@ -56,7 +55,6 @@
 		parseGates,
 		itemUniverse,
 		matchesSearch,
-		overDepth,
 		parseCategoryRules,
 		parseItemRules,
 		serializeCategoryRules,
@@ -81,11 +79,19 @@
 	const horizon = persisted('currencyExchangeHorizon', 'recent');
 	const sortPref = persisted('currencyExchangeSort', 'roiPct');
 	const densityPref = persisted('currencyExchangeDensity', 'comfortable');
-	const quantityPref = persisted('currencyExchangeQuantity', '1');
 	const unitPref = persisted('currencyExchangeUnit', 'chaos');
-	const investMinPref = persisted('currencyExchangeInvestMin', '');
-	const investMaxPref = persisted('currencyExchangeInvestMax', '');
-	const minGainPref = persisted('currencyExchangeMinGain', '');
+	/**
+	 * The investment bounds, under keys that carry SCALE in the name (POE-192).
+	 *
+	 * Deliberately not the `currencyExchangeInvestMin`/`Max` the reader may still
+	 * have on disk. The bounds used to be compared against ONE exchange's cost and
+	 * are now compared against what the worthwhile run ties up — a figure tens or
+	 * hundreds of times larger — so a 500c ceiling typed against the old meaning
+	 * would silently empty the new table, with nothing on screen to say why. New
+	 * keys start the reader from unset; the stale pair is simply never read again.
+	 */
+	const investMinPref = persisted('currencyExchangeScaleInvestMin', '');
+	const investMaxPref = persisted('currencyExchangeScaleInvestMax', '');
 	const categoryRulesPref = persisted('currencyExchangeCategoryRules', '{}');
 	const itemRulesPref = persisted('currencyExchangeItemRules', '[]');
 
@@ -141,7 +147,6 @@
 
 	const density = $derived(parseDensity(densityPref.value));
 	const dense = $derived(density === 'dense');
-	const quantity = $derived(parseQuantity(quantityPref.value));
 	const unit = $derived(parseUnit(unitPref.value));
 	const categoryRules = $derived(parseCategoryRules(categoryRulesPref.value));
 	const itemRules = $derived(parseItemRules(itemRulesPref.value));
@@ -201,15 +206,12 @@
 	const rows = $derived(
 		sortPlays(
 			applyNumericFilters(afterGates, {
-				quantity,
 				investMin: investMinPref.value,
 				investMax: investMaxPref.value,
 				unit,
-				divineChaosRate: result?.divineChaosRate ?? 0,
-				minGain: minGainPref.value
+				divineChaosRate: result?.divineChaosRate ?? 0
 			}).filter((play) => matchesSearch(play, search)),
-			parseSort(sortPref.value),
-			quantity
+			parseSort(sortPref.value)
 		)
 	);
 
@@ -225,10 +227,6 @@
 		hiddenByGates: afterRules.length - afterGates.length,
 		hiddenByFilters: allPlays.length - rows.length - (afterRules.length - afterGates.length)
 	});
-
-	function setQuantity(next: number) {
-		quantityPref.value = String(Math.max(1, next));
-	}
 
 	/**
 	 * A pill's new state. Neutral is stored as an absent key rather than a
@@ -266,7 +264,7 @@
 
 	/**
 	 * Clear resets the persisted setup that hides rows — the two rule layers and
-	 * the three bounds — and nothing else. Quantity, sort, mode, horizon and
+	 * the two investment bounds — and nothing else. Sort, mode, horizon and
 	 * density change what the reader is looking at, not how much of it, so
 	 * clearing a filter that emptied the table must not also throw away the way
 	 * they had it set up. The search is left alone too, for the opposite reason:
@@ -284,7 +282,6 @@
 		itemRulesPref.value = serializeItemRules([]);
 		investMinPref.value = '';
 		investMaxPref.value = '';
-		minGainPref.value = '';
 	}
 
 	// ------------------------------------------------------------- the fetch --
@@ -397,38 +394,12 @@
 		{/if}
 		<div class="spacer"></div>
 
-		<Tooltip text={EXCHANGE_TOOLTIPS.Quantity}><span class="control-label">Quantity</span></Tooltip>
-		<div class="stepper">
-			<button class="step" aria-label="One fewer exchange" onclick={() => setQuantity(quantity - 1)}
-				>&minus;</button
-			>
-			<input
-				class="qty mono"
-				type="text"
-				inputmode="numeric"
-				aria-label="Exchanges"
-				value={quantityPref.value}
-				oninput={(e) => (quantityPref.value = e.currentTarget.value)}
-				onblur={() => (quantityPref.value = String(quantity))}
-			/>
-			<!-- The blur write-back keeps the control honest: mid-typing the raw
-			     string stays (so "2" en route to "25" is not fought), but a value
-			     left behind ("abc", "2.9", "") snaps to the integer every figure
-			     in the table was actually computed at. -->
-			<button class="step" aria-label="One more exchange" onclick={() => setQuantity(quantity + 1)}
-				>+</button
-			>
-		</div>
-		<span class="control-hint">exchanges</span>
-
-		<div class="divider"></div>
-
 		<span class="control-label">Sort</span>
 		<SegmentedButtons
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by return on investment, by chaos gained per exchange, or by how long your quantity would take to fill."
+			title="Rank by return on investment, by chaos gained per exchange, or by how long the market needs to absorb the play's worthwhile scale — shortest wait first."
 		/>
 
 		<div class="divider"></div>
@@ -470,7 +441,6 @@
 			{gates}
 			investMin={investMinPref.value}
 			investMax={investMaxPref.value}
-			minGain={minGainPref.value}
 			{unit}
 			divineChaosRate={result.divineChaosRate}
 			{search}
@@ -482,7 +452,6 @@
 			ongatedefaults={resetGates}
 			oninvestmin={(v) => (investMinPref.value = v)}
 			oninvestmax={(v) => (investMaxPref.value = v)}
-			onmingain={(v) => (minGainPref.value = v)}
 			onunit={(v) => (unitPref.value = v)}
 			onsearch={(v) => (search = v)}
 			onclear={clearFilters}
@@ -509,12 +478,6 @@
 				<span class="dot">·</span>
 			{/if}
 			<span>window: {hoursWindow} hours</span>
-			{#if quantity > 1}
-				<span class="dot">·</span>
-				<span>
-					ROI and Investment are shown for <span class="mono strong">{quantity}</span> exchanges
-				</span>
-			{/if}
 			<span class="dot">·</span>
 			<span>
 				prices are the newest hour’s cheapest buy and dearest sell — every ROI below is a best case,
@@ -567,8 +530,8 @@
 						<th class="col-depth num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.Depth}>Depth</Tooltip>
 						</th>
-						<th class="col-fill num">
-							<Tooltip text={EXCHANGE_TOOLTIPS.Fill}>Fill</Tooltip>
+						<th class="col-scale num">
+							<Tooltip text={EXCHANGE_TOOLTIPS.Scale}>Scale</Tooltip>
 						</th>
 						<th class="col-hours num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.Hours}>Hours</Tooltip>
@@ -577,9 +540,8 @@
 				</thead>
 				<tbody>
 					{#each rows as play, i (play.key)}
-						{@const over = overDepth(play, quantity)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
-						{@const fill = fillHours(play, quantity)}
+						{@const scale = worthwhileScale(play)}
 						<tr>
 							<td class="num mono rank">{i + 1}</td>
 
@@ -591,20 +553,19 @@
 								<ExchangeRoute {play} {density} {apiBase} />
 							</td>
 
+							<!-- Both money columns are ONE exchange in both densities: the
+							     primary IS the per-exchange figure now, so the "each"
+							     sub-line it used to carry would only repeat it. What the
+							     play costs and pays at the size worth running is the Scale
+							     column's job. -->
 							<td class="num">
-								<div class="mono value">{formatChaos(play.investment * quantity)}c</div>
-								{#if !dense}
-									<div class="sub">{formatChaos(play.investment)}c each</div>
-								{/if}
+								<div class="mono value">{formatChaos(play.investment)}c</div>
 							</td>
 
 							<td class="num">
 								<div class="mono gain" class:flat={play.roi <= 0}>
-									{formatGain(play.roi * quantity)}c
+									{formatGain(play.roi)}c
 								</div>
-								{#if !dense}
-									<div class="sub">{formatGain(play.roi)}c each</div>
-								{/if}
 							</td>
 
 							<td class="num">
@@ -627,29 +588,36 @@
 								<span class="mono reserved">—</span>
 							</td>
 
+							<!-- Raw in both densities. Absorption is the Scale column's
+							     sub-line now: the reader types no size for a depth to be
+							     "over", and the honest reading of a thin market is how many
+							     hours the worthwhile run needs, not a warning triangle. -->
 							<td class="num">
-								<div class="cell-line">
-									{#if over}{@render warning()}{/if}
-									<span class="mono value" class:amber={over}>{formatVolume(play.depth)}/h</span>
-								</div>
-								{#if over && !dense}
-									<div class="sub amber">
-										{quantity} above this hour’s {formatVolume(play.depth)}
-									</div>
-								{/if}
+								<span class="mono value">{formatVolume(play.depth)}/h</span>
 							</td>
 
-							<!-- One line in both densities: the cell is a single duration, so
-							     there is no sub-line for dense to drop. Green is "inside the
-							     hour"; anything longer is amber because the ROI was computed
-							     on a book that will have moved by then. -->
+							<!-- What the play is worth repeating to, and what that costs in
+							     bankroll and in waiting. Dense keeps only the ×N → gain —
+							     the run's cost and wait are traded away with every other
+							     sub-line, so the Fastest sort ranks by a number dense does
+							     not print; comfortable is where the wait is read. -->
 							<td class="num">
-								{#if fill === null}
+								{#if scale === null}
 									<span class="mono reserved">—</span>
-								{:else if fill <= 1}
-									<span class="mono value fast">&lt;1 h</span>
 								{:else}
-									<span class="mono value amber">~{Math.ceil(fill)} h</span>
+									<div class="mono value">×{formatChaos(scale.flips)} → {formatGain(scale.gain)}c</div>
+									{#if !dense}
+										<div class="sub">
+											{formatChaos(scale.investment)}c in
+											{#if scale.hours === null}
+												<span class="reserved">· — h</span>
+											{:else if scale.hours <= 1}
+												<span class="fast">· &le;1 h</span>
+											{:else}
+												<span class="amber">· ~{scale.hours} h</span>
+											{/if}
+										</div>
+									{/if}
 								{/if}
 							</td>
 
@@ -680,15 +648,6 @@
 					on <strong>ROI%</strong> — one of the play's trades is priced outside its fair band: a buy
 					below fair &times; 0.67, or a sell above fair &times; 1.5. The play still ranks, after every
 					clean one; the extreme may be a real fill or one stray order, so verify the route in game.
-				</span>
-			</div>
-			<div class="footnote">
-				{@render warning()}
-				<span>
-					on <strong>Depth</strong> — your quantity is above what the play's thinnest trade saw last
-					hour.
-					The ROI still stands; filling it will take longer than an hour or move the price. Nothing
-					is capped for you.
 				</span>
 			</div>
 		</div>
@@ -756,65 +715,11 @@
 		white-space: nowrap;
 	}
 
-	.control-hint {
-		font-size: 0.6875rem;
-		color: #6b7280;
-		white-space: nowrap;
-	}
-
 	.divider {
 		width: 1px;
 		height: 20px;
 		background: var(--color-lab-border);
 		margin: 0 2px;
-	}
-
-	.stepper {
-		display: flex;
-		align-items: center;
-		border: 1px solid var(--color-lab-border);
-		border-radius: 4px;
-		overflow: hidden;
-	}
-
-	.step {
-		background: transparent;
-		border: none;
-		color: var(--color-lab-text-secondary);
-		padding: 3px 9px;
-		font-size: 0.8125rem;
-		font-family: inherit;
-		cursor: pointer;
-	}
-
-	.step:hover {
-		color: var(--color-lab-text);
-		background: rgba(255, 255, 255, 0.05);
-	}
-
-	.step:focus-visible {
-		outline: 1px solid var(--color-lab-blue);
-		outline-offset: -1px;
-	}
-
-	/* Free text rather than `type="number"`: the value is a persisted STRING and
-	   is validated by `parseQuantity` on read, so a half-typed entry has to be
-	   allowed to sit in the box without the browser rewriting it. */
-	.qty {
-		width: 52px;
-		background: transparent;
-		border: none;
-		border-left: 1px solid var(--color-lab-border);
-		border-right: 1px solid var(--color-lab-border);
-		color: var(--color-lab-text);
-		text-align: center;
-		padding: 3px 4px;
-		font-size: 0.8125rem;
-	}
-
-	.qty:focus {
-		outline: none;
-		background: var(--color-lab-bg);
 	}
 
 	.status-line {
@@ -836,10 +741,6 @@
 
 	.status-line .warn {
 		color: var(--color-lab-yellow);
-	}
-
-	.status-line .strong {
-		color: var(--color-lab-text);
 	}
 
 	.dot {
@@ -909,10 +810,13 @@
 		width: 62px;
 	}
 	.col-depth {
-		width: 148px;
+		width: 96px;
 	}
-	.col-fill {
-		width: 72px;
+	/* Wider than the Fill column it replaced: the cell carries "×34 → +102c" over
+	   "1,360c in · ~3 h", not a bare duration. The width Depth gives up is the
+	   width it no longer needs — its amber sub-line went with the quantity. */
+	.col-scale {
+		width: 168px;
 	}
 	.col-hours {
 		width: 92px;
@@ -931,10 +835,10 @@
 		width: 58px;
 	}
 	table.dense .col-depth {
-		width: 96px;
+		width: 82px;
 	}
-	table.dense .col-fill {
-		width: 64px;
+	table.dense .col-scale {
+		width: 120px;
 	}
 	table.dense .col-hours {
 		width: 62px;
@@ -1033,14 +937,15 @@
 	}
 
 	/* Trend holds its slot with a dash rather than an empty cell, and so does a
-	   Fill the depth cannot be read for: an empty cell reads as a value that went
-	   missing, a dash as a question this row has no answer to. */
+	   Scale whose flip count or whose wait cannot be read: an empty cell reads as
+	   a value that went missing, a dash as a question this row has no answer to. */
 	.reserved {
 		color: #4b5563;
 	}
 
-	/* A fill inside the hour is the only one the ROI was computed against a book
-	   that will still be there — the colour is that verdict, not a speed. */
+	/* A run the market absorbs inside the hour is the only one the ROI was
+	   computed against a book that will still be there — the colour is that
+	   verdict, not a speed. */
 	.fast {
 		color: var(--color-lab-green);
 	}

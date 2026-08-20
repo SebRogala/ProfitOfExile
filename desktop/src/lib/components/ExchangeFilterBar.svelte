@@ -52,7 +52,6 @@
 		gates,
 		investMin,
 		investMax,
-		minGain,
 		unit,
 		divineChaosRate,
 		search,
@@ -64,7 +63,6 @@
 		ongatedefaults,
 		oninvestmin,
 		oninvestmax,
-		onmingain,
 		onunit,
 		onsearch,
 		onclear
@@ -94,10 +92,16 @@
 		 * is at its default.
 		 */
 		gates: Gates;
-		/** The three bounds as their raw persisted strings; "" is "filter off". */
+		/**
+		 * The two investment bounds as their raw persisted strings; "" is "filter
+		 * off". They are compared against the play's WORTHWHILE SCALE, not against
+		 * one exchange (POE-192) — which is why the page stores them under keys that
+		 * say so, and why the row is labelled Run cost rather than Investment: the
+		 * table's Investment column is the per-exchange figure, and one word for two
+		 * sizes is how a reader types a ceiling two orders of magnitude too low.
+		 */
 		investMin: string;
 		investMax: string;
-		minGain: string;
 		unit: ExchangeUnit;
 		/** The newest hour's chaos value of one divine; 0 when that hour had none. */
 		divineChaosRate: number;
@@ -110,7 +114,9 @@
 		 * The gates are counted apart from everything else because they are the one
 		 * filter that runs without the reader having set it: "hidden by filters"
 		 * over a bar with nothing visibly on reads as a bug, and the split is what
-		 * points at the row that would give those rows back.
+		 * points at the row that would give those rows back. Everything else — the
+		 * pills, the chips, the investment bounds and the search — shares the other
+		 * figure.
 		 */
 		counts: { shown: number; total: number; hiddenByGates: number; hiddenByFilters: number };
 		apiBase: string;
@@ -128,12 +134,11 @@
 		ongatedefaults: () => void;
 		oninvestmin: (value: string) => void;
 		oninvestmax: (value: string) => void;
-		onmingain: (value: string) => void;
 		onunit: (unit: ExchangeUnit) => void;
 		/** The raw box contents; `''` is the search off. */
 		onsearch: (query: string) => void;
 		/**
-		 * Clears the rules and the bounds — never the gates, the quantity, sort,
+		 * Clears the rules and the investment bounds — never the gates, the sort,
 		 * mode or the search. The gates are standing policy rather than a question
 		 * the reader asked once, and they have their own Defaults; the search is not
 		 * persisted and has its own ×, so sweeping either up here would make Clear
@@ -382,10 +387,10 @@
 					value={gateInputs[field.knob]}
 					oninput={(e) => ongate(field.knob, e.currentTarget.value)}
 					onblur={(e) => {
-						// Same honesty rule as the Quantity stepper: mid-typing the raw
-						// string stays, but a value left behind snaps to what the gate
-						// actually runs at — "abc" showing while the default filters
-						// would be a control lying about itself.
+						// Mid-typing the raw string stays, so "1" en route to "10" is not
+						// fought; a value left behind snaps to what the gate actually runs
+						// at — "abc" showing while the default filters would be a control
+						// lying about itself.
 						const raw = e.currentTarget.value;
 						if (raw.trim() === '') return;
 						const parsed = parseGate(raw, gateDefaults[field.knob]);
@@ -406,13 +411,19 @@
 	{/if}
 
 	<div class="row">
-		<span class="label">Investment</span>
+		<!-- Run cost, not Investment: since POE-192 these bounds are compared
+		     against the Scale column's investment — what the play ties up by the
+		     time it has been repeated enough to be worth doing — while the table's
+		     Investment column is one exchange. Two sizes, two names. -->
+		<Tooltip text={EXCHANGE_TOOLTIPS['Run cost']} position="below">
+			<span class="label">Run cost</span>
+		</Tooltip>
 		<input
 			class="amount mono"
 			type="text"
 			inputmode="decimal"
 			placeholder="min"
-			aria-label="Minimum investment"
+			aria-label="Minimum investment for the worthwhile run"
 			value={investMin}
 			oninput={(e) => oninvestmin(e.currentTarget.value)}
 		/>
@@ -422,11 +433,11 @@
 			type="text"
 			inputmode="decimal"
 			placeholder="max"
-			aria-label="Maximum investment"
+			aria-label="Maximum investment for the worthwhile run"
 			value={investMax}
 			oninput={(e) => oninvestmax(e.currentTarget.value)}
 		/>
-		<div class="segmented" role="group" aria-label="Investment unit">
+		<div class="segmented" role="group" aria-label="Run cost unit">
 			<button
 				class="segment"
 				class:active={unit === 'chaos'}
@@ -445,20 +456,12 @@
 			>
 		</div>
 
-		<!-- Min ROI% is NOT here any more (POE-191): it is the fifth gate, on the
-		     default-on side of the file, so it belongs beside the four floors it
-		     shares a contract with rather than beside the bounds it does not. -->
-		<span class="label spaced">Min gain</span>
-		<input
-			class="amount mono"
-			type="text"
-			inputmode="decimal"
-			placeholder="e.g. 100"
-			aria-label="Minimum gain in chaos"
-			value={minGain}
-			oninput={(e) => onmingain(e.currentTarget.value)}
-		/>
-		<span class="unit-hint">chaos</span>
+		<!-- The two gain knobs that used to sit here are both gone. Min ROI% left in
+		     POE-191 (it is the fifth gate, on the default-on side of the file, so it
+		     belongs beside the four floors it shares a contract with); Min gain left
+		     in POE-192, when the run-level floor became the fixed 100c scale target
+		     and the per-flip floor was already the Min profit gate — a third gain
+		     knob had nothing of its own left to say. -->
 
 		<div class="spacer"></div>
 
@@ -518,7 +521,7 @@
 		</Tooltip>
 		<button
 			class="clear"
-			title="Clears the category and item rules and the investment and gain bounds. The gates, the search, the quantity, the sort and the density are left alone."
+			title="Clears the category and item rules and the run investment bounds. The gates, the search, the sort and the density are left alone."
 			onclick={onclear}>Clear</button
 		>
 	</div>
@@ -553,10 +556,6 @@
 	   other; the later labels in a row sit at their natural width. */
 	.row > .label:first-child {
 		width: 74px;
-	}
-
-	.label.spaced {
-		margin-left: 10px;
 	}
 
 	/* Each knob's label sits away from the previous knob's unit hint, so the group

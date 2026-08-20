@@ -145,35 +145,6 @@ export function parseUnit(raw: string): ExchangeUnit {
 	return UNIT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeUnit) : 'chaos';
 }
 
-/**
- * How many exchanges the row's figures are multiplied by when nothing is set.
- *
- * @deprecated POE-192 derives the scale instead of asking for it. Kept only so
- * `CurrencyExchangePage.svelte` still compiles until chunk 3 removes the
- * Quantity stepper; that chunk deletes this constant with `parseQuantity`.
- */
-export const DEFAULT_QUANTITY = 1;
-
-/**
- * Narrow a persisted or user-supplied string to a repeat count.
- *
- * Whole exchanges only, and never below one: the quantity multiplies
- * investment, ROI and the depth comparison, so a `0` would flatten the whole
- * table to zero and a fraction would claim a partial exchange the book cannot
- * fill. A typed-in decimal truncates rather than rejecting, because the stepper
- * writes while the user is still typing.
- *
- * @deprecated POE-192: the reader no longer types a size — `worthwhileScale`
- * derives one per play. Kept only for the page's still-mounted stepper; chunk 3
- * deletes the stepper, this function, `DEFAULT_QUANTITY` and the
- * `currencyExchangeQuantity` preference together.
- */
-export function parseQuantity(raw: string): number {
-	const value = Number(raw);
-	if (!Number.isFinite(value) || value < DEFAULT_QUANTITY) return DEFAULT_QUANTITY;
-	return Math.floor(value);
-}
-
 // ------------------------------------------------------------- the state --
 
 /**
@@ -379,8 +350,8 @@ export function formatLegPrice(price: number): string {
  * A sub-1c amount therefore rounds to "0", and that is the reading the owner
  * asked for: a play whose whole per-exchange investment or gain is under one
  * chaos is not flippable once the exchange's gold fee is paid, so printing four
- * significant digits of it dressed junk as precision. The min-gain filter hides
- * such rows outright when one is set.
+ * significant digits of it dressed junk as precision. The Min profit gate hides
+ * such rows outright unless the reader lowers it.
  *
  * Rounded on the MAGNITUDE and signed afterwards, so `-1234.5` and `1234.5`
  * round to the same number of orbs — `Math.round` alone breaks halves towards
@@ -426,35 +397,6 @@ export function hoursProgress(hoursSeen: number, hours: number): number {
 	return Math.min(1, Math.max(0, hoursSeen / hours));
 }
 
-/**
- * How long the reader's quantity would take to trade, in hours, at the depth of
- * the play's thinnest leg (POE-189).
- *
- * Deliberately OPTIMISTIC, and the tooltip says so: `depth` is the whole
- * market's hourly volume on that leg, so this is the time the fill would take if
- * the reader took every unit of it and no one else traded. The real number is
- * larger by however much of the book the competition holds, and larger again on
- * a direct play, which buys and sells the same item on the one market.
- *
- * Unrounded on purpose — the page rounds UP for display, and rounding here would
- * flatten every play under an hour onto the same sort key.
- *
- * `null` for a leg that traded nothing (`depth` 0, the shape a just-listed
- * market has) and for a non-finite one: both mean the hours cannot be computed,
- * and dividing would answer `Infinity`/`NaN`, which the column would print as a
- * duration.
- *
- * @deprecated POE-192: `worthwhileScale().hours` answers the same question at
- * the size the app derives instead of the size the reader typed, and rounds up
- * where this stays fractional. Kept only for the page's still-mounted Fill
- * column; chunk 3 replaces that column with Scale and deletes this.
- */
-export function fillHours(play: CurrencyExchangePlay, quantity: number): number | null {
-	if (!Number.isFinite(play.depth) || play.depth <= 0) return null;
-	if (!Number.isFinite(quantity)) return null;
-	return quantity / play.depth;
-}
-
 // --------------------------------------------------------------- the scale --
 
 /**
@@ -496,9 +438,11 @@ export interface WorthwhileScale {
  * which is why `gain` is reported rather than assumed to be 100: a play worth
  * 33c an exchange clears the bar at 102c, and the column says so.
  *
- * `hours` is the same optimistic reading `fillHours` documents — `depth` is the
+ * `hours` is deliberately OPTIMISTIC, and the tooltip says so: `depth` is the
  * WHOLE market's hourly volume on the play's thinnest leg, so this is the time
  * the fill takes if the reader takes every unit of it and no one else trades.
+ * The real wait is longer by however much of the book the competition holds, and
+ * longer again on a direct play, which buys and sells on the one market.
  * Rounded up to whole hours because that is how the column reads it, and there
  * is no cap branch: a scale the market cannot absorb inside the hour simply
  * answers 2, 5, 40 — the wait IS the warning, and a capped `flips` would quietly
@@ -549,19 +493,14 @@ export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | n
  * whole ones: everything the market swallows inside the hour reads 1 and stays
  * in the server's order behind that.
  *
- * The order reads the same `worthwhileScale` the Scale column prints, so the
- * list cannot be sorted by a number the reader is not shown.
- *
- * @param quantity Ignored since POE-192, which derives the scale instead of
- * taking one. Accepted so the page's still-passing call site compiles; chunk 3
- * drops the argument and this parameter goes with it.
+ * The order reads the same `worthwhileScale` the Scale column prints in
+ * comfortable density (dense trades the wait away with every other sub-line),
+ * so the two can never disagree about a play's hours.
  */
 export function sortPlays(
 	plays: CurrencyExchangePlay[],
-	sort: ExchangeSort,
-	quantity?: number
+	sort: ExchangeSort
 ): CurrencyExchangePlay[] {
-	void quantity;
 	if (sort === 'roiPct') return [...plays];
 	if (sort === 'fastest') {
 		return [...plays].sort((a, b) => {
