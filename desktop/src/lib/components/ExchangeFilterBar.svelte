@@ -1,28 +1,39 @@
 <script lang="ts">
 	/**
-	 * The Currency Exchange table's filter bar: the two rule layers, the numeric
-	 * bounds, and what they have left on screen.
+	 * The Currency Exchange table's filter bar: the two rule layers, the quality
+	 * gates, the numeric bounds, and what they have left on screen.
 	 *
-	 * Three rows, coarse to fine — the sixteen category pills, then the item
-	 * chips that override them, then the numbers. An item rule beats its
-	 * category and Hide beats Only (`applyRules`); the chips say so on their face
-	 * when the two layers disagree, because a chip that reads "Only" inside a
-	 * hidden category otherwise looks like a rule that is not working.
+	 * Four rows, coarse to fine — the sixteen category pills, then the item chips
+	 * that override them, then the collapsed Gates row, then the numbers. An item
+	 * rule beats its category and Hide beats Only (`applyRules`); the chips say so
+	 * on their face when the two layers disagree, because a chip that reads "Only"
+	 * inside a hidden category otherwise looks like a rule that is not working.
+	 *
+	 * The GATES row (POE-191) is the odd one out and is labelled as such: its five
+	 * knobs are DEFAULT-ON, so an empty box is the old server floor still running
+	 * while every other empty box on this bar is a filter that is off. That is
+	 * also why it collapses shut by default and badges itself with how many knobs
+	 * the reader has moved — a row nobody opens still hides rows, and the badge is
+	 * the only thing on screen that says so.
 	 *
 	 * The search box sits beside the counter on the last row because the two read
 	 * as one sentence — what the reader is looking for, and how much of the table
 	 * is left. It is a view filter and not a rule: nothing about it is persisted
 	 * and Clear does not empty it.
 	 *
-	 * Presentation only. It holds one piece of state — whether the Add popover is
-	 * open — and every rule, bound, query and count is a prop; every change leaves
-	 * through a callback so the page owns what is persisted (ADR-013).
+	 * Presentation only. It holds two pieces of state — whether the Add popover is
+	 * open, and whether the Gates row is expanded — and every rule, knob, bound,
+	 * query and count is a prop; every change leaves through a callback so the page
+	 * owns what is persisted (ADR-013). Neither piece of state is persisted: both
+	 * are where a control is on screen, not what it is set to.
 	 */
-	import { overridesCategory } from '$lib/exchange/filters';
+	import { gateDefaults, overridesCategory, parseGate } from '$lib/exchange/filters';
 	import type {
 		CategoryRuleState,
 		CategoryRules,
 		ExchangeItem,
+		Gates,
+		GateInputs,
 		ItemRule
 	} from '$lib/exchange/filters';
 	import { iconSrc, type ExchangeUnit } from '$lib/exchange/view';
@@ -37,9 +48,10 @@
 		categoryRules,
 		itemRules,
 		items,
+		gateInputs,
+		gates,
 		investMin,
 		investMax,
-		minRoiPct,
 		minGain,
 		unit,
 		divineChaosRate,
@@ -48,9 +60,10 @@
 		apiBase,
 		oncategoryrule,
 		onitemrule,
+		ongate,
+		ongatedefaults,
 		oninvestmin,
 		oninvestmax,
-		onminroipct,
 		onmingain,
 		onunit,
 		onsearch,
@@ -68,39 +81,128 @@
 		 * from nowhere but its chip.
 		 */
 		items: ExchangeItem[];
-		/** The four bounds as their raw persisted strings; "" is "filter off". */
+		/**
+		 * The five gate knobs as their raw persisted strings — what the boxes show,
+		 * so a half-typed number stays put while it is being typed.
+		 */
+		gateInputs: GateInputs;
+		/**
+		 * The same five as `parseGates` read them — what the boxes are MEASURED by.
+		 * Passed already parsed rather than re-parsed here because the page has to
+		 * parse them anyway to filter with, and a second parse in the view is a
+		 * second place for the badge and the table to disagree about whether a knob
+		 * is at its default.
+		 */
+		gates: Gates;
+		/** The three bounds as their raw persisted strings; "" is "filter off". */
 		investMin: string;
 		investMax: string;
-		minRoiPct: string;
 		minGain: string;
 		unit: ExchangeUnit;
 		/** The newest hour's chaos value of one divine; 0 when that hour had none. */
 		divineChaosRate: number;
 		/** The raw search text, as typed — `matchesSearch` owns the trimming. */
 		search: string;
-		/** Counted AFTER the search, which is one of the things hiding rows. */
-		counts: { shown: number; total: number };
+		/**
+		 * What survived, out of what arrived, and what took the difference —
+		 * counted AFTER the search, which is one of the things hiding rows.
+		 *
+		 * The gates are counted apart from everything else because they are the one
+		 * filter that runs without the reader having set it: "hidden by filters"
+		 * over a bar with nothing visibly on reads as a bug, and the split is what
+		 * points at the row that would give those rows back.
+		 */
+		counts: { shown: number; total: number; hiddenByGates: number; hiddenByFilters: number };
 		apiBase: string;
 		/** The pill's NEXT state, per `cycleCategoryRule`; `undefined` is neutral. */
 		oncategoryrule: (category: string, state: CategoryRuleState | undefined) => void;
 		/** `undefined` removes the item's rule. */
 		onitemrule: (item: { id: string; name: string }, state: CategoryRuleState | undefined) => void;
+		/**
+		 * One knob's raw box contents. Keyed rather than five `ongateminprofit`
+		 * props: the five are one control group set the same way, and the page maps
+		 * the key to a preference in one place instead of five one-line callbacks.
+		 */
+		ongate: (knob: keyof Gates, value: string) => void;
+		/** Puts all five knobs back to unset, which IS the default (`parseGate`). */
+		ongatedefaults: () => void;
 		oninvestmin: (value: string) => void;
 		oninvestmax: (value: string) => void;
-		onminroipct: (value: string) => void;
 		onmingain: (value: string) => void;
 		onunit: (unit: ExchangeUnit) => void;
 		/** The raw box contents; `''` is the search off. */
 		onsearch: (query: string) => void;
 		/**
-		 * Clears the rules and the bounds — never the quantity, sort, mode or the
-		 * search. The search is not persisted and has its own ×, so sweeping it up
-		 * here would make Clear the second control that empties the box.
+		 * Clears the rules and the bounds — never the gates, the quantity, sort,
+		 * mode or the search. The gates are standing policy rather than a question
+		 * the reader asked once, and they have their own Defaults; the search is not
+		 * persisted and has its own ×, so sweeping either up here would make Clear
+		 * the second control that undoes them.
 		 */
 		onclear: () => void;
 	} = $props();
 
+	/**
+	 * The five knobs as the row draws them, in the order a reader meets a play:
+	 * is the profit worth it, is the market real, is the price fine enough, is the
+	 * edge more than rounding, is the return enough. Labels double as the tooltip
+	 * keys so the two cannot drift apart.
+	 *
+	 * The placeholder is each knob's DEFAULT, which is the row's whole contract in
+	 * one glyph: an empty box is not an absent filter, it is that number.
+	 */
+	const GATE_FIELDS: {
+		knob: keyof Gates;
+		label: string;
+		aria: string;
+		unit: string;
+		placeholder: string;
+	}[] = [
+		{
+			knob: 'minRoiChaos',
+			label: 'Min profit',
+			aria: 'Minimum profit in chaos per exchange',
+			unit: 'c each',
+			placeholder: String(gateDefaults.minRoiChaos)
+		},
+		{
+			knob: 'minTurnover',
+			label: 'Min turnover',
+			aria: 'Minimum market turnover in chaos per hour',
+			unit: 'c/h',
+			placeholder: String(gateDefaults.minTurnover)
+		},
+		{
+			knob: 'maxTickPct',
+			label: 'Max price step',
+			aria: 'Maximum price step as a percent',
+			unit: '%',
+			placeholder: String(gateDefaults.maxTickPct)
+		},
+		{
+			knob: 'minEdgeTickRatio',
+			label: 'Edge vs step',
+			aria: 'Minimum return as a multiple of the price step',
+			unit: '× step',
+			placeholder: String(gateDefaults.minEdgeTickRatio)
+		},
+		{
+			knob: 'minRoiPct',
+			label: 'Min return',
+			aria: 'Minimum return percent',
+			unit: '%',
+			placeholder: String(gateDefaults.minRoiPct)
+		}
+	];
+
 	let pickerOpen = $state(false);
+	/**
+	 * Shut on arrival. The gates run either way, so the row is a place to go when
+	 * the table is too thin or too noisy — not a wall of five numbers between the
+	 * reader and the table on every launch. Not persisted: it is where a control
+	 * is, not what it is set to.
+	 */
+	let gatesOpen = $state(false);
 	/**
 	 * The Add button and the popover, as one dismissal root: a pointerdown on
 	 * Add must not read as "outside", or the popover would close on the same
@@ -128,6 +230,15 @@
 	function overrides(rule: ItemRule): boolean {
 		return overridesCategory(rule, known.get(rule.id)?.category, categoryRules);
 	}
+
+	/**
+	 * Which knobs the reader has moved, compared on the PARSED values rather than
+	 * on the strings: '', '3' and '3.0' are one gate at its default, and a badge
+	 * counting text would call two of them a change.
+	 */
+	const movedGates = $derived(
+		new Set(GATE_FIELDS.map((f) => f.knob).filter((knob) => gates[knob] !== gateDefaults[knob]))
+	);
 </script>
 
 <div class="filter-bar">
@@ -218,6 +329,83 @@
 	</div>
 
 	<div class="row">
+		<Tooltip text={EXCHANGE_TOOLTIPS.Gates} position="below">
+			<span class="label">Gates</span>
+		</Tooltip>
+		<!-- The badge is on the toggle, not inside the row, because it is the whole
+		     reason to open a row that is shut: it is the only thing on a collapsed
+		     bar that says the reader has moved the quality bar off its defaults. -->
+		<button class="disclose" aria-expanded={gatesOpen} onclick={() => (gatesOpen = !gatesOpen)}>
+			<svg
+				class="chevron"
+				class:open={gatesOpen}
+				width="9"
+				height="9"
+				viewBox="0 0 12 12"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.6"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M4 2 L8.5 6 L4 10" />
+			</svg>
+			<!-- One label in both states: the chevron and `aria-expanded` already say
+			     which way the row is, and a text that changes with them is a third
+			     spelling of the same fact. -->
+			Quality bar
+			{#if movedGates.size > 0}
+				<span class="badge">{movedGates.size} changed</span>
+			{/if}
+		</button>
+		{#if !gatesOpen}
+			<span class="unit-hint">
+				profit, turnover, price step, edge vs step, return — running whether or not this row is open
+			</span>
+		{/if}
+	</div>
+
+	{#if gatesOpen}
+		<div class="row gates">
+			{#each GATE_FIELDS as field (field.knob)}
+				<Tooltip text={EXCHANGE_TOOLTIPS[field.label]} position="below">
+					<span class="label gate-label" class:moved={movedGates.has(field.knob)}>{field.label}</span
+					>
+				</Tooltip>
+				<input
+					class="amount mono"
+					type="text"
+					inputmode="decimal"
+					placeholder={field.placeholder}
+					aria-label={field.aria}
+					value={gateInputs[field.knob]}
+					oninput={(e) => ongate(field.knob, e.currentTarget.value)}
+					onblur={(e) => {
+						// Same honesty rule as the Quantity stepper: mid-typing the raw
+						// string stays, but a value left behind snaps to what the gate
+						// actually runs at — "abc" showing while the default filters
+						// would be a control lying about itself.
+						const raw = e.currentTarget.value;
+						if (raw.trim() === '') return;
+						const parsed = parseGate(raw, gateDefaults[field.knob]);
+						if (String(parsed) !== raw) ongate(field.knob, String(parsed));
+					}}
+				/>
+				<span class="unit-hint gate-unit">{field.unit}</span>
+			{/each}
+
+			<div class="spacer"></div>
+
+			<button
+				class="clear"
+				title="Empties all five boxes, which puts every gate back to the value the server used to enforce."
+				onclick={ongatedefaults}>Defaults</button
+			>
+		</div>
+	{/if}
+
+	<div class="row">
 		<span class="label">Investment</span>
 		<input
 			class="amount mono"
@@ -257,18 +445,10 @@
 			>
 		</div>
 
-		<span class="label spaced">Min ROI%</span>
-		<input
-			class="amount mono"
-			type="text"
-			inputmode="decimal"
-			placeholder="e.g. 5"
-			aria-label="Minimum ROI percent"
-			value={minRoiPct}
-			oninput={(e) => onminroipct(e.currentTarget.value)}
-		/>
-
-		<span class="label">Min gain</span>
+		<!-- Min ROI% is NOT here any more (POE-191): it is the fifth gate, on the
+		     default-on side of the file, so it belongs beside the four floors it
+		     shares a contract with rather than beside the bounds it does not. -->
+		<span class="label spaced">Min gain</span>
 		<input
 			class="amount mono"
 			type="text"
@@ -321,11 +501,26 @@
 			{/if}
 		</div>
 
-		<span class="counter">
-			<span class="mono shown">{counts.shown}</span> of {counts.total} plays &middot;
-			{counts.total - counts.shown} hidden by filters
-		</span>
-		<button class="clear" onclick={onclear}>Clear</button>
+		<!-- Attribution, not one lump: the gates hide rows on a bar the reader has
+		     never touched, so "hidden by filters" over an empty bar reads as a
+		     broken table. Each clause is dropped when it is zero — a counter that
+		     says "0 hidden by gates" is noise on the common case. -->
+		<Tooltip text={EXCHANGE_TOOLTIPS.Counter} position="above">
+			<span class="counter">
+				<span class="mono shown">{counts.shown}</span> of {counts.total} plays
+				{#if counts.hiddenByGates > 0}
+					<span class="sep">&middot;</span> {counts.hiddenByGates} hidden by gates
+				{/if}
+				{#if counts.hiddenByFilters > 0}
+					<span class="sep">&middot;</span> {counts.hiddenByFilters} hidden by filters
+				{/if}
+			</span>
+		</Tooltip>
+		<button
+			class="clear"
+			title="Clears the category and item rules and the investment and gain bounds. The gates, the search, the quantity, the sort and the density are left alone."
+			onclick={onclear}>Clear</button
+		>
 	</div>
 </div>
 
@@ -362,6 +557,66 @@
 
 	.label.spaced {
 		margin-left: 10px;
+	}
+
+	/* Each knob's label sits away from the previous knob's unit hint, so the group
+	   reads as five pairs rather than ten loose controls. The first one is
+	   indented by the same amount, which lines the group up under the toggle
+	   above it. */
+	.gate-label {
+		margin-left: 10px;
+	}
+
+	/* A moved knob is named on the row as well as counted on the toggle: the
+	   badge says how many, the label says which. */
+	.gate-label.moved {
+		color: var(--color-lab-text);
+	}
+
+	.gate-unit {
+		margin-left: -2px;
+	}
+
+	.disclose {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: transparent;
+		border: 1px solid var(--color-lab-border);
+		border-radius: 3px;
+		color: var(--color-lab-text-secondary);
+		padding: 3px 9px;
+		font-size: 0.75rem;
+		font-family: inherit;
+		cursor: pointer;
+	}
+
+	.disclose:hover {
+		color: var(--color-lab-text);
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.disclose:focus-visible {
+		outline: 1px solid var(--color-lab-blue);
+		outline-offset: -1px;
+	}
+
+	.chevron {
+		transition: transform 0.12s ease;
+	}
+
+	.chevron.open {
+		transform: rotate(90deg);
+	}
+
+	.badge {
+		font-size: 0.5625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: color-mix(in oklab, var(--color-lab-blue) 70%, var(--color-lab-text));
+		border: 1px solid rgba(59, 130, 246, 0.45);
+		border-radius: 2px;
+		padding: 0 3px;
 	}
 
 	.group-label {
@@ -557,6 +812,10 @@
 
 	.counter .shown {
 		color: var(--color-lab-text);
+	}
+
+	.counter .sep {
+		opacity: 0.5;
 	}
 
 	.clear {
