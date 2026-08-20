@@ -170,38 +170,56 @@
 // Per leg per hour, in gatedLeg: at least MinVolumePerHour (10) units of the
 // leg's item traded, and stock on both sides of the market. Per candidate per
 // hour, in evaluate: a quote that cannot be valued in chaos in this hour, then
-// HideSuspect, then RoiPct >= MinEdge (0.02) — on the UNDERCUT return, so a tick
-// that eats the spread fails here — Turnover >= MinTurnoverChaos (10,000
-// chaos/hour), Tick <= MaxTick (0.10), RoiPct >= MinEdgeTickRatio * Tick (5
-// steps), and Roi >= MinROIChaos (3 chaos per exchanged unit). Then across the
-// window, in BestPlays: HoursSeen >= MinHoursSeen (2 on the base config, capped
-// at the hours actually present so a short window still returns plays, and
-// overridden per horizon), and the newest-hour rule above.
+// HideSuspect, then RoiPct >= MinEdge (0.001) — on the UNDERCUT return, so a tick
+// that eats the spread fails here — Turnover >= MinTurnoverChaos (0), Tick <=
+// MaxTick (1), RoiPct >= MinEdgeTickRatio * Tick (0 steps), and Roi >=
+// MinROIChaos (0 chaos per exchanged unit). Then across the window, in
+// BestPlays: HoursSeen >= MinHoursSeen (2 on the base config, capped at the
+// hours actually present so a short window still returns plays, and overridden
+// per horizon), and the newest-hour rule above.
 //
-// Those LEVELS come from 30,534 priced Allflame market-hours: price quantization
-// is the strongest single predictor of an apparent spread (corr(ln edge,
-// ln tick) = +0.42, p50 tick 14.3%), which is what MaxTick and MinEdgeTickRatio
-// answer, and chaos-denominated flow predicts a real edge where unit volume does
-// not (−0.30 against +0.06; p50 robust edge 242% under 100 chaos/hour and 18%
-// over 100k), which is what MinTurnoverChaos answers. They were calibrated
-// against that measurement's robust statistic — the p50 of a market's per-hour
-// edges, under which the set took 908 markets to 135 — while the engine gates one
-// hour at a time and counts the hours that cleared, so 908→135 is a calibration
-// of the levels and not a prediction of how many plays come back; the served
-// ranking was confirmed by a live check against the running stack.
+// Four of those five are deliberately at values nothing can fail. Since POE-191
+// the server serves everything sane and the QUALITY judgement is the client's:
+// the desktop carries the four levels this package used to enforce (10,000
+// chaos/hour of turnover, a tick no coarser than 10%, an edge at least 5 steps
+// wide, 3 chaos per exchanged unit) as user-editable knobs whose defaults are
+// exactly those numbers, so the out-of-the-box view is unchanged while a reader
+// who wants cheap fragments or 1-hop triangles can have them without a redeploy.
+// What stays server-side is what is not a matter of taste: liveness
+// (MinVolumePerHour), persistence (MinHoursSeen), positivity (MinEdge, the
+// sanity floor), the suspect flag, and MaxPlays (500) as a payload guard rather
+// than a gate. A losing round trip cannot be served even by setting MinEdge
+// negative: withDefaults clamps MinEdgeTickRatio and MinROIChaos to at least 0,
+// and Roi >= 0 is the sign of RoiPct because Investment is positive.
+//
+// Those four LEVELS come from 30,534 priced Allflame market-hours: price
+// quantization is the strongest single predictor of an apparent spread
+// (corr(ln edge, ln tick) = +0.42, p50 tick 14.3%), which is what MaxTick and
+// MinEdgeTickRatio answer, and chaos-denominated flow predicts a real edge where
+// unit volume does not (−0.30 against +0.06; p50 robust edge 242% under 100
+// chaos/hour and 18% over 100k), which is what MinTurnoverChaos answers. They
+// were calibrated against that measurement's robust statistic — the p50 of a
+// market's per-hour edges, under which the set took 908 markets to 135 — while
+// the engine gates one hour at a time and counts the hours that cleared, so
+// 908→135 is a calibration of the levels and not a prediction of how many plays
+// come back; the served ranking was confirmed by a live check against the
+// running stack. Enforced server-side on 2026-08-20 they took a newest hour of
+// 1368 markets (881 clearing both-side liveness) to 79 served plays, which is
+// the count POE-191 opened up.
 //
 // Ranking is clean before suspect, then RoiPct desc, then Turnover desc, then
 // direct before 1-hop (one execution risk instead of three), then Key ascending,
-// truncated to MaxPlays (100). It is a stable sort over a key-sorted list, so
+// truncated to MaxPlays (500). It is a stable sort over a key-sorted list, so
 // identical rows produce identical output whatever order they arrived in.
 //
 // One caveat governs every percentage. The feed publishes each hour's realized
 // LOW and HIGH, not a book: both are trades that happened somewhere inside the
 // same hour, and nothing says the two sides were takeable at the same instant, so
 // a play's percentage is that hour's OPTIMISTIC reading of that hour. What bounds
-// the fiction is the tick gates, the undercut the percentages are charged, Fair
-// standing beside every price, and Suspect when an extreme is too far from Fair
-// to be repeatable. Nothing is synthesized across hours: every number belongs to
+// the fiction is the undercut the percentages are charged, Fair standing beside
+// every price, Suspect when an extreme is too far from Fair to be repeatable, and
+// — at their defaults — the client's tick knobs (the server's own tick gates are
+// off since POE-191). Nothing is synthesized across hours: every number belongs to
 // the single hour LastHour names.
 //
 // Volume is a per-side TOTAL, not a split by direction: the feed publishes
@@ -453,8 +471,11 @@
 // The server reads its tuning from the environment in cmd/server, each override
 // falling back to DefaultConfig on an unparseable value with a Warn:
 // EXCHANGE_MIN_VOLUME_PER_HOUR, EXCHANGE_MIN_EDGE (may be negative),
-// EXCHANGE_MAX_PLAYS and the four gate knobs EXCHANGE_MIN_TURNOVER_CHAOS,
+// EXCHANGE_MAX_PLAYS and the four quality knobs EXCHANGE_MIN_TURNOVER_CHAOS,
 // EXCHANGE_MAX_TICK, EXCHANGE_MIN_EDGE_TICK_RATIO and EXCHANGE_MIN_ROI_CHAOS.
+// Those four default to off since POE-191 and each accepts a positive value
+// only, so a deploy can re-arm one server-side (raising the floor under every
+// client) but cannot loosen what is already open.
 // The junk flag has three of its own: EXCHANGE_SUSPECT_LOW_BAND and
 // EXCHANGE_SUSPECT_HIGH_BAND move the bands (both positive fractions of an
 // hour's VWAP; nothing enforces low < 1 < high, and inverting them flags every

@@ -185,16 +185,24 @@ type Result struct {
 
 // Config tunes the window, the gates, the junk bands and the ranking cut.
 //
-// The gates answer different failure modes, all of them measured over 26 hours
-// of Allflame: MinVolumePerHour drops legs nobody traded, MinHoursSeen drops
-// ghosts, MinTurnoverChaos drops markets too small for the edge to be real
-// (p50 robust edge is 242% under 100 chaos/hour and 18% over 100k),
-// MaxTick and MinEdgeTickRatio drop the spreads that are one integer price step
-// wide, and MinROIChaos drops plays whose percentage is fine and whose payout is
-// a rounding error. The suspect bands do not gate at all by default: they flag
-// an extreme that sits too far from its hour's VWAP to be repeatable, and only
-// HideSuspect turns the flag into a filter. QuotePriority decides which side of
-// a market reads as the currency (see orient).
+// Every gate below still exists and still binds when it is set; what changed in
+// POE-191 is which of them DefaultConfig arms. The server's job is to serve
+// everything sane and flag the rest, so its defaults keep four things:
+// MinVolumePerHour drops legs nobody traded (liveness), MinHoursSeen drops
+// ghosts (persistence), MinEdge drops the round trips that lose or break even
+// (the sanity floor), and MaxPlays bounds the payload. The four QUALITY gates —
+// MinTurnoverChaos, MaxTick, MinEdgeTickRatio, MinROIChaos — default to off and
+// are the client's call, because "too small to bother with" is a judgement about
+// the reader's bankroll and not a fact about the market. Each of them still
+// answers a real failure mode measured over 26 hours of Allflame, and the desktop
+// ships those measured levels as its own defaults: MinTurnoverChaos drops markets
+// too small for the edge to be real (p50 robust edge is 242% under 100 chaos/hour
+// and 18% over 100k), MaxTick and MinEdgeTickRatio drop the spreads that are one
+// integer price step wide, and MinROIChaos drops plays whose percentage is fine
+// and whose payout is a rounding error. The suspect bands do not gate at all by
+// default: they flag an extreme that sits too far from its hour's VWAP to be
+// repeatable, and only HideSuspect turns the flag into a filter. QuotePriority
+// decides which side of a market reads as the currency (see orient).
 type Config struct {
 	// WindowHours is how many of the newest distinct hours to aggregate. It
 	// binds only a direct BestPlays call: the served path overlays it per
@@ -203,21 +211,30 @@ type Config struct {
 	// MinVolumePerHour is the per-leg liveness floor on units traded in an
 	// hour. It is not the liquidity gate — MinTurnoverChaos is.
 	MinVolumePerHour float64
-	// MinEdge is the smallest RoiPct kept, 0.02 meaning +2%, judged on the
-	// UNDERCUT return. A zero value means "use the default"; a negative value
-	// lowers the percentage floor and surfaces the small positive returns the
-	// default hides. It cannot surface a losing route: MinEdgeTickRatio * Tick
-	// and MinROIChaos are always positive, so a negative RoiPct fails those two
-	// gates whatever MinEdge says.
+	// MinEdge is the smallest RoiPct kept, 0.001 meaning +0.1%, judged on the
+	// UNDERCUT return. It is the sanity floor rather than a quality gate: it
+	// drops the round trips that lose or barely break even, and how much gain
+	// is worth acting on is the client's call. A zero value means "use the
+	// default"; a negative value lowers the floor further. It still cannot
+	// surface a losing route, because withDefaults clamps MinEdgeTickRatio and
+	// MinROIChaos to at least 0 and Investment is positive, so a negative RoiPct
+	// makes Roi negative and fails Roi >= MinROIChaos whatever MinEdge says.
 	MinEdge float64
 	// MinTurnoverChaos is the smallest Play.Turnover kept, in chaos per hour.
+	// Default 0, which is off: no turnover can fall under it.
 	MinTurnoverChaos float64
 	// MaxTick is the coarsest Play.Tick kept, as a fraction of the price.
+	// Default 1, which is off: tickOf is 1/max of two positive integer
+	// quantities and so can never exceed 1.
 	MaxTick float64
 	// MinEdgeTickRatio is how many price steps wide a spread must be to count:
-	// RoiPct >= MinEdgeTickRatio * Tick.
+	// RoiPct >= MinEdgeTickRatio * Tick. Default 0, which is off — at a ratio of
+	// 0 the comparison degenerates to RoiPct >= 0.
 	MinEdgeTickRatio float64
 	// MinROIChaos is the smallest Play.Roi kept, in chaos per exchanged unit.
+	// Default 0, which is off for every profitable play and is also the
+	// structural bar on a losing one: Roi >= 0 is Roi's sign, and Roi and RoiPct
+	// share it because Investment is positive.
 	MinROIChaos float64
 	// SuspectLowBand is how far under an hour's VWAP a buy leg's low may sit
 	// before it reads as junk: 0.67 flags a low below two thirds of fair.
@@ -236,7 +253,9 @@ type Config struct {
 	// binds only a direct BestPlays call; the served path overlays it per
 	// horizon (see DefaultHorizons and horizonConfig in service.go).
 	MinHoursSeen int
-	// MaxPlays truncates the ranked result.
+	// MaxPlays truncates the ranked result. It is the payload guard, not a
+	// gate: with the quality gates off the served list is the whole sane set,
+	// and this only stops a feed anomaly from publishing an unbounded one.
 	MaxPlays int
 	// QuotePriority lists currency ids from most to least preferred as the
 	// quote side of a market. Only ChaosID and DivineID can be VALUED today (see
@@ -251,22 +270,43 @@ type Config struct {
 }
 
 // DefaultConfig is the engine's tuning: a six-hour window, at least ten units
-// traded per leg per hour, a two-percent ROI floor, ten thousand chaos an hour
-// of turnover, a price resolution no coarser than 10% with an ROI at least five
-// steps wide, three chaos per exchanged unit, junk bands at two thirds and one
-// and a half times fair with the flag shown rather than hidden, cleared in at
-// least two hours, the top hundred plays, quoted in divine before chaos.
+// traded per leg per hour, a 0.1% ROI floor, no turnover demand, no tick cap, no
+// edge-to-tick demand, no chaos-per-unit demand, junk bands at two thirds and
+// one and a half times fair with the flag shown rather than hidden, cleared in
+// at least two hours, the top five hundred plays, quoted in divine before chaos.
 //
-// The gate LEVELS are derived from the 26-hour Allflame measurement in POE-184,
-// whose robust edge was the MEDIAN OF PER-HOUR EDGES: that gate set takes 908
-// markets to 135, and the survivors' top 25 are all full-window with 29-71%
-// robust edge at 0.1-8.7% ticks. The engine does not gate on that statistic. It
-// gates on ONE hour's prices, hour by hour, and counts the hours that cleared —
-// which is why the SQL's 908->135 is a calibration of the levels, not a
-// prediction of how many plays come back. The served ranking is confirmed by the
-// live check against the running stack, not by those counts. Loosening any one
-// level lets a measured noise case back in — Divine Vessel returns at 109
-// chaos/hour of turnover, Delirium Scarab at a 100% tick.
+// The four quality levels this used to carry — 10,000 chaos/hour of turnover, a
+// tick no coarser than 10%, an ROI at least five steps wide, three chaos per
+// exchanged unit — moved to the client in POE-191, which ships them unchanged as
+// the desktop's own default knobs. The out-of-the-box view is therefore the same
+// view; what changed is that a user can now lower one of them and see what it
+// was hiding, without a redeploy. The measured reason to want that: on 2026-08-20
+// the newest hour carried 1368 markets, 881 of them clearing both-side liveness,
+// and the four levels served 79 plays. Sacrifice fragments failed three of them
+// at once (~0.2-1 chaos payout, ~4k chaos/hour of turnover, one-step prices) and
+// the divine leg's tick kept the 1-hop count at zero — all of it invisible to
+// the reader, because a dropped play cannot be argued with.
+//
+// What the server still refuses to serve is what no reader would want under any
+// bankroll: a leg nobody traded (MinVolumePerHour), a recipe that has not held
+// up (MinHoursSeen), a round trip that loses or breaks even (MinEdge, the
+// positivity floor — 0.1% rather than 0 so that a play whose entire "gain" is
+// float noise is not a row), and more rows than a payload should carry
+// (MaxPlays). Suspect extremes are flagged and ranked last rather than dropped.
+//
+// The levels the client inherited are derived from the 26-hour Allflame
+// measurement in POE-184, whose robust edge was the MEDIAN OF PER-HOUR EDGES:
+// that gate set takes 908 markets to 135, and the survivors' top 25 are all
+// full-window with 29-71% robust edge at 0.1-8.7% ticks. The engine does not
+// gate on that statistic. It gates on ONE hour's prices, hour by hour, and
+// counts the hours that cleared — which is why the SQL's 908->135 is a
+// calibration of the levels, not a prediction of how many plays come back.
+//
+// Turning those levels off did NOT bring the measured noise cases back. Divine
+// Vessel (109 chaos/hour) and Delirium Scarab both print a 100% tick, so their
+// undercut sell price is Price*(1-1) = 0 and the round trip returns -100%: junk
+// that coarse fails the positivity floor on its own arithmetic, which is the
+// answer to "what stops the relaxed defaults from serving POE-184's noise".
 //
 // The band levels come from the same feed read the other way round: across 221
 // liquid chaos markets over 24 hours the hour's extremes sit 11-13% off its VWAP
@@ -280,16 +320,16 @@ func DefaultConfig() Config {
 	return Config{
 		WindowHours:      6,
 		MinVolumePerHour: 10,
-		MinEdge:          0.02,
-		MinTurnoverChaos: 10000,
-		MaxTick:          0.10,
-		MinEdgeTickRatio: 5,
-		MinROIChaos:      3,
+		MinEdge:          0.001,
+		MinTurnoverChaos: 0,
+		MaxTick:          1,
+		MinEdgeTickRatio: 0,
+		MinROIChaos:      0,
 		SuspectLowBand:   0.67,
 		SuspectHighBand:  1.5,
 		HideSuspect:      false,
 		MinHoursSeen:     2,
-		MaxPlays:         100,
+		MaxPlays:         500,
 		QuotePriority:    []string{DivineID, ChaosID},
 		Horizons:         DefaultHorizons(),
 	}
@@ -302,12 +342,18 @@ func DefaultConfig() Config {
 // MinTurnoverChaos, MaxTick, MinEdgeTickRatio, MinROIChaos, SuspectLowBand,
 // SuspectHighBand, MinHoursSeen, MaxPlays) reads as unset, because none of them
 // has a meaningful negative value. MinEdge is different: only an exact 0 reads
-// as unset, so a caller can push the percentage floor below zero and see the
-// small positive returns the default hides (the other gates still bar a losing
-// route). HideSuspect is a bool and has no unset state: false is a choice, and
-// it is also the default. To run effectively without one of the other gates,
-// pass a value that cannot bind (a tiny positive floor, a huge cap) rather
-// than 0.
+// as unset, so a caller can push the percentage floor below zero and see returns
+// the floor hides (the sign bar below still applies). HideSuspect is a bool and
+// has no unset state: false is a choice, and it is also the default.
+//
+// Three of those branches no longer restore anything, and that is the point.
+// MinTurnoverChaos, MinEdgeTickRatio and MinROIChaos default to 0 since POE-191,
+// so for them "unset" and "off" are the same number and passing 0 cannot
+// resurrect an old level; MaxTick's default of 1 is likewise off, since a tick
+// can never exceed 1. What those three branches still do is CLAMP: a caller who
+// passes a negative gate value gets 0, which is what keeps MinEdgeTickRatio * Tick and
+// MinROIChaos at or above zero and so keeps a losing route unservable however
+// MinEdge is set. Do not drop them for looking like no-ops.
 func (c Config) withDefaults() Config {
 	d := DefaultConfig()
 	if c.WindowHours <= 0 {
@@ -401,17 +447,21 @@ func (c Config) withDefaults() Config {
 // return, so a coarse tick that eats the spread fails here), Turnover >=
 // MinTurnoverChaos, Tick <= MaxTick, RoiPct >= MinEdgeTickRatio * Tick, and
 // Roi >= MinROIChaos; and then, across the window, HoursSeen >= MinHoursSeen
-// (capped at the hours present). It is ranked clean before suspect, then RoiPct
-// desc, then Turnover desc, then direct before 1-hop, then Key ascending, and
-// truncated to MaxPlays. The ranking is a stable sort over a key-sorted list, so
-// identical input always produces identical output regardless of the order rows
-// arrive in.
+// (capped at the hours present). At DefaultConfig only the first of the five
+// binds — the other four are off, and the quality judgement they used to make is
+// the client's since POE-191 — so what the engine serves is every recipe that is
+// alive, has held up, and gains something. It is ranked clean before suspect,
+// then RoiPct desc, then Turnover desc, then direct before 1-hop, then Key
+// ascending, and truncated to MaxPlays. The ranking is a stable sort over a
+// key-sorted list, so identical input always produces identical output
+// regardless of the order rows arrive in.
 //
 // The caveat that governs the percentages: the feed publishes each hour's
 // realized low and high, not a book. Both prices are trades that happened inside
 // the same hour, and nothing says both were takeable at once — that is what the
-// tick gates bound, what the undercut charges for, and what Suspect flags when
-// an extreme is too far from the hour's VWAP to be repeatable. This returns raw
+// undercut charges for, what Suspect flags when an extreme is too far from the
+// hour's VWAP to be repeatable, and what the client's tick knobs bound at their
+// defaults (the server's own tick gates are off since POE-191). This returns raw
 // item ids; POE-175's handler runs them through Humanize.
 func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	cfg = cfg.withDefaults()
@@ -665,6 +715,12 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 	investment := undercut[0] * entryRate
 	roi := investment * roiPct
 
+	// The five configurable gates, all judged on this hour alone. At
+	// DefaultConfig only MinEdge binds (POE-191 moved the quality levels to the
+	// client); the other four sit at values nothing can fail, which also makes
+	// the last two read as "Roi and RoiPct are non-negative" — the floor under
+	// MinEdge that keeps a losing round trip out even when MinEdge is set below
+	// zero.
 	switch {
 	case roiPct < cfg.MinEdge,
 		turnover < cfg.MinTurnoverChaos,

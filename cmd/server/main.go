@@ -299,6 +299,12 @@ func main() {
 	// above, an unusable value here is logged loudly rather than swallowed: a
 	// typo in a threshold silently changes which plays users are shown, with no
 	// other symptom to notice it by.
+	//
+	// Since POE-191 the four quality gates below (turnover, tick, edge/tick,
+	// chaos payout) ship OFF and the desktop applies them client-side, so
+	// setting one here re-arms it for everyone and can only tighten what the
+	// server serves — envPositiveFloat rejects a zero or negative value, which
+	// is also the only way back to "off" (unset the variable).
 	exchangeCfg := exchange.DefaultConfig()
 	// WindowHours and MinHoursSeen are per horizon (below), not on the base
 	// config: the base values would be overwritten by every horizon overlay, so
@@ -319,10 +325,12 @@ func main() {
 	// HideSuspect turns the flag into a filter. Default false: a flagged row can
 	// be argued with, a missing one cannot.
 	exchangeCfg.HideSuspect = envBool("EXCHANGE_HIDE_SUSPECT", exchangeCfg.HideSuspect)
-	// MinEdge is the one knob where a negative value is meaningful (it surfaces
-	// the losing direction of a loop), so only an exact 0 is rejected — the
-	// engine reads 0 as "unset" and would restore the default behind the log
-	// line, making the configured value a lie.
+	// MinEdge is the engine's positivity floor and the one knob where a negative
+	// value is meaningful (it admits the zero-gain round trips the floor hides),
+	// so only an exact 0 is rejected — the engine reads 0 as "unset" and would
+	// restore the default behind the log line, making the configured value a
+	// lie. A negative value still cannot serve a LOSING route: the engine clamps
+	// its other two payout gates at zero (see Config.withDefaults).
 	if v := os.Getenv("EXCHANGE_MIN_EDGE"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		switch {
