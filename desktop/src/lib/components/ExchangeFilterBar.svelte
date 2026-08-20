@@ -24,6 +24,8 @@
 	import ExchangeCategoryPills from './ExchangeCategoryPills.svelte';
 	import ExchangeItemPicker from './ExchangeItemPicker.svelte';
 	import ItemIcon from './ItemIcon.svelte';
+	import Tooltip from './Tooltip.svelte';
+	import { EXCHANGE_TOOLTIPS } from '$lib/tooltips';
 
 	let {
 		categories,
@@ -114,12 +116,19 @@
 
 <div class="filter-bar">
 	<div class="row">
-		<span class="label">Categories</span>
+		<!-- The Only/Hide tooltip is the surface that carries the two-layer
+		     semantics AND the "remembered across restarts" sentence the picker's
+		     dropped footnote defers to — both layer labels carry it. -->
+		<Tooltip text={EXCHANGE_TOOLTIPS['Only / Hide']} position="below">
+			<span class="label">Categories</span>
+		</Tooltip>
 		<ExchangeCategoryPills {categories} {categoryRules} {oncategoryrule} />
 	</div>
 
 	<div class="row">
-		<span class="label">Items</span>
+		<Tooltip text={EXCHANGE_TOOLTIPS['Only / Hide']} position="below">
+			<span class="label">Items</span>
+		</Tooltip>
 		{#if onlyRules.length > 0}
 			<span class="group-label only-label">Only</span>
 			{#each onlyRules as rule (rule.id)}

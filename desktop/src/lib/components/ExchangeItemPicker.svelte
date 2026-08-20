@@ -194,10 +194,10 @@
 	</div>
 
 	<!-- Artboard deviation, deliberate: the artboard carries a fourth footnote
-	     saying the rules survive a restart. Dropped here — chunk 5's Only/Hide
-	     tooltip states it at the control the reader is actually using, and a
-	     footnote about storage is the one line in this block that is not about
-	     what the rules DO. -->
+	     saying the rules survive a restart. Dropped here — the filter bar's
+	     Categories/Items labels carry the Only/Hide tooltip that states it, and
+	     a footnote about storage is the one line in this block that is not
+	     about what the rules DO. -->
 	<div class="footnotes">
 		<span>
 			<strong>Two layers.</strong> Categories are coarse — the buckets the in-game exchange lists

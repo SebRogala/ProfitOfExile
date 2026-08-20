@@ -390,7 +390,14 @@
 			Loading…
 		{:else if viewState.kind === 'warming'}
 			Waiting for the first Currency Exchange hour…
-		{:else if viewState.kind === 'ready'}
+		{:else if viewState.kind === 'ready' || viewState.kind === 'stale'}
+			<!-- The badge and the best-case caveat describe the rows, and the rows
+			     keep rendering in the stale state — which is exactly when the
+			     prices are oldest, so the two must not disappear with the refetch. -->
+			{#if viewState.kind === 'stale'}
+				<span class="warn">stale since {viewState.staleSince} — server unreachable</span>
+				<span class="dot">·</span>
+			{/if}
 			{#if age}
 				<Tooltip text={EXCHANGE_TOOLTIPS['Data age']} position="below">
 					<span class="age">{age.label}{age.ago === '' ? '' : ` (${age.ago})`}</span>
@@ -409,8 +416,6 @@
 				prices are the newest hour’s cheapest buy and dearest sell — every ROI below is a best case,
 				not a quote
 			</span>
-		{:else if viewState.kind === 'stale'}
-			<span class="warn">stale since {viewState.staleSince} — server unreachable</span>
 		{:else}
 			<span class="warn">Couldn't reach the server</span>
 		{/if}
