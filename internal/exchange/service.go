@@ -32,20 +32,21 @@ const DefaultUpdateDebounce = 2 * time.Second
 type Horizon string
 
 const (
-	// HorizonRecent is the default: a short window, so a play needs only a few
-	// hours of clearing to qualify, which is also what a league's first days
-	// need, when nothing has been around long enough to clear a day of hours.
+	// HorizonRecent is the default: a short window, so Play.HoursSeen reads
+	// "n of 6" and answers how the recipe has behaved this evening.
 	HorizonRecent Horizon = "recent"
-	// HorizonDay is the overnight-planning window: a full day of hours, so a
-	// play has to have survived the league's daily price cycle to appear.
+	// HorizonDay is the overnight-planning window: a full day of hours, so
+	// Play.HoursSeen reads "n of 24" and answers whether the recipe survives the
+	// league's daily price cycle. Since POE-193 that is a reading rather than an
+	// entry requirement — see DefaultHorizons.
 	HorizonDay Horizon = "day"
 )
 
 // DefaultHorizon is what a request that names no horizon gets, and the horizon
 // DefaultHorizons lists first. Recent rather than day because both list the
-// newest hour's prices and differ only in how long a play must have been
-// clearing: the shorter demand keeps a young edge in the list, and a young
-// league has no day of hours to demand at all.
+// newest hour's prices and differ only in the span HoursSeen is counted over:
+// the shorter span is the one a reader checking what to do right now can read
+// without waiting a day for the denominator to fill.
 const DefaultHorizon = HorizonRecent
 
 // HorizonConfig is one horizon's overlay on the base Config: the same gates and
@@ -56,18 +57,28 @@ type HorizonConfig struct {
 	MinHoursSeen int
 }
 
-// DefaultHorizons is the served pair: six hours needing four, and twenty-four
-// hours needing eighteen.
+// DefaultHorizons is the served pair: six hours, and twenty-four hours, neither
+// demanding persistence.
 //
-// Both MinHoursSeen are about three quarters of their window, which is the
-// hours-seen gate the 26-hour measurement was taken with; in absolute terms they
-// demand very different things, and that is the point — both list the newest
-// hour's prices, but a recent play need only have been clearing for four hours
-// where a day play must have cleared in eighteen.
+// The two now differ ONLY in how far back HoursSeen is counted and how much
+// history a recipe therefore has to show — both list the newest hour's prices,
+// and both serve every recipe that cleared in it.
+//
+// Until POE-193 they demanded four of six and eighteen of twenty-four, about
+// three quarters of their window, which is the hours-seen gate the 26-hour
+// Allflame measurement was taken with. Those numbers keep that rationale as the
+// RECOMMENDED TIGHTENING (EXCHANGE_RECENT_MIN_HOURS_SEEN,
+// EXCHANGE_DAY_MIN_HOURS_SEEN) and stop being what an untouched install applies,
+// because a persistence floor hides a live market exactly the way an absolute
+// quality cutoff does: BestPlays already refuses to serve a recipe that did not
+// clear in the window's NEWEST hour, so the price on the row is current whatever
+// this is set to, and everything the old floor added was the removal of rows
+// whose Play.HoursSeen would have said "3 of 6" out loud. Serve it and let the
+// count speak — that is ADR-015's rule applied to the engine's own floors.
 func DefaultHorizons() []HorizonConfig {
 	return []HorizonConfig{
-		{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 4},
-		{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 18},
+		{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 1},
+		{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 1},
 	}
 }
 

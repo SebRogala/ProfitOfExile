@@ -66,13 +66,18 @@ and `day` (twenty-four hours) — come from the same recompute, so `?horizon=` i
 cache lookup; an unknown value of either parameter is a 400. Every price a play
 shows is the LAST SNAPSHOT's — the window's newest feed hour, which is the hour
 a served play must have been live in (every leg's market traded
-`EXCHANGE_MIN_VOLUME_PER_HOUR` units with stock on both sides) and cleared the
-`EXCHANGE_MIN_EDGE` sanity floor of +0.1% in; the window contributes
-`hoursSeen`, a count of every hour the play cleared on that hour's own prices,
-and nothing else. On the wire `roiPct` is the fractional return of one round
-trip after undercutting each leg by one of its own ticks (`edge` is its
-deprecated alias; `roiPctRaw` is the same trip at the raw extremes shown on the
-legs) and `roi` is that return in chaos for one exchanged unit, so
+`EXCHANGE_MIN_VOLUME_PER_HOUR` units — 1 by default, i.e. a trade happened —
+with stock on both sides) and cleared the `EXCHANGE_MIN_EDGE` sanity floor of
++0.1% in; the window contributes `hoursSeen`, a count of every hour the play
+cleared on that hour's own prices, and nothing else. Since POE-193 no default
+floor hides a live market: liveness is "a trade happened", persistence is
+reported through `hoursSeen` rather than demanded (`*_MIN_HOURS_SEEN` defaults
+to 1 on both horizons), and thinness shows as `simEntries`/`lowCoverage` and
+`suspect`. The old levels — 10 units an hour, 4-of-6 and 18-of-24 hours seen —
+remain what the knobs are FOR. On the wire `roiPct` is the fractional return of
+one round trip after undercutting each leg by one of its own ticks (`edge` is
+its deprecated alias; `roiPctRaw` is the same trip at the raw extremes shown on
+the legs) and `roi` is that return in chaos for one exchanged unit, so
 `roi == roiPct × investment` by construction. A leg whose extreme sits too far
 from that hour's VWAP is flagged `suspect` rather than replaced, and a suspect
 play is served ranked after every clean one. The ranking knobs are overridable

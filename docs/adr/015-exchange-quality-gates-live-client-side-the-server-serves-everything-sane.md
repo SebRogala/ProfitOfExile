@@ -7,6 +7,14 @@ the split below stands, but the second Decision bullet is superseded in whole �
 the desktop's gate knobs ship OFF and the levels are a documented recommendation.
 See the dated note at the bottom.
 
+**Amended again 2026-08-22 (POE-193):** the FIRST Decision bullet is superseded
+in whole by
+[ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md), which extends
+this ADR's principle from the four quality gates to the engine's own floors. The
+levels that bullet names as what the server keeps — MinVolumePerHour 10, a
+per-horizon MinHoursSeen, MaxPlays 500 — are not the served defaults any more.
+The split this ADR decided is unchanged and is what ADR-017 argues from.
+
 ## Context
 
 Until POE-191 the Currency Exchange engine applied five absolute quality gates

@@ -43,6 +43,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-014: Desktop features are modules with a work toggle and a view page](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md)
 - [ADR-015: Exchange quality gates live client-side; the server serves everything sane](adr/015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
 - [ADR-016: Expected ROI is a cross-hour simulation; displayed prices stay single-hour](adr/016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md)
+- [ADR-017: No default engine floor may hide a live market](adr/017-no-default-engine-floor-may-hide-a-live-market.md)
 
 Superseded:
 

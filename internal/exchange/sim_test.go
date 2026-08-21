@@ -420,12 +420,13 @@ func TestBestPlays_newestHour_isNeverASimulatedEntry(t *testing.T) {
 
 func TestBestPlays_hourWhoseLegFailedItsGate_isNotASimulatedEntry(t *testing.T) {
 	// The simulation records a candidate before the quality gates, not before the
-	// LIVENESS ones: an hour that traded nine cards observed nothing about this
-	// recipe and could not have filled an order either. The same window with that
-	// one hour alive is the control, so the fixture differs in one number.
+	// LIVENESS ones: an hour in which no card changed hands observed nothing
+	// about this recipe and could not have filled an order either. The same
+	// window with that one hour alive is the control, so the fixture differs in
+	// one number.
 	spec := liquidChaosMarket(cardID, 100, 120)
 	quiet := spec
-	quiet.volume = [2]int64{986, 9}
+	quiet.volume = [2]int64{986, 0}
 	hours := [][]Row{{spec.row()}, {quiet.row()}, {spec.row()}, {spec.row()}}
 
 	got := BestPlays("Allflame", hourlyFeed(hours...), DefaultConfig())
@@ -535,7 +536,7 @@ func TestBestPlays_fewerSimulatedEntriesThanTheGuard_flagsLowCoverage(t *testing
 	// read the same.
 	spec := liquidChaosMarket(cardID, 100, 120)
 	quiet := spec
-	quiet.volume = [2]int64{986, 9}
+	quiet.volume = [2]int64{986, 0}
 	cfg := DefaultConfig()
 	cfg.MinSimEntries = 3
 
@@ -558,7 +559,7 @@ func TestBestPlays_simulatedEntriesExactlyAtTheGuard_isNotLowCoverage(t *testing
 	// guard of three, and the play is covered.
 	spec := liquidChaosMarket(cardID, 100, 120)
 	quiet := spec
-	quiet.volume = [2]int64{986, 9}
+	quiet.volume = [2]int64{986, 0}
 	cfg := DefaultConfig()
 	cfg.MinSimEntries = 3
 

@@ -96,8 +96,13 @@ func directCandidates(rows []Row, cfg Config) []candidate {
 //
 // The gate is liveness, not liquidity: the hour must have traded at least
 // Config.MinVolumePerHour units of the leg's item on that market, and both sides
-// of the market must have carried stock. Liquidity is judged later, in chaos, on
-// the play's Turnover — unit volume alone does not predict a real edge. A leg
+// of the market must have carried stock. At the default of 1 that reads as "a
+// trade happened here this hour", which is the weakest true statement about the
+// leg and deliberately so — the old floor of 10 dropped a live card market in
+// 11 of 24 measured hours (DefaultConfig, and the measurement itself in
+// docs/adr/017-no-default-engine-floor-may-hide-a-live-market.md). Liquidity is
+// judged later, in chaos, on the play's Turnover — unit volume alone does not
+// predict a real edge. A leg
 // failing this kills the whole play — a recipe is only as executable as its
 // thinnest step — so both directCandidates and crossQuoteCandidates drop the
 // candidate on the first false.

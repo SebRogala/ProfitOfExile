@@ -349,10 +349,10 @@ func TestBestPlays_playThatStoppedClearingInTheNewestHour_isNotServed(t *testing
 
 func TestBestPlays_hourThatFailedItsGates_isNotCountedInHoursSeen(t *testing.T) {
 	// HoursSeen counts the hours the recipe CLEARED on that hour's own prices,
-	// not the hours its market appeared in: the middle hour traded nine cards,
-	// under the ten-unit liveness floor, so three sightings are two hours seen.
+	// not the hours its market appeared in: the middle hour traded no cards at
+	// all and so failed the liveness floor, making three sightings two hours seen.
 	quiet := liquidChaosMarket(cardID, 100, 120)
-	quiet.volume = [2]int64{986, 9}
+	quiet.volume = [2]int64{986, 0}
 
 	rows := append(
 		storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row()),
@@ -371,9 +371,14 @@ func TestBestPlays_hourThatFailedItsGates_isNotCountedInHoursSeen(t *testing.T) 
 }
 
 func TestBestPlays_singleHourWindow_capsMinHoursSeenAtTheHoursPresent(t *testing.T) {
-	// The default asks for two hours; only one exists. Capping is what keeps a
-	// fresh league (or a just-restarted walk) from returning nothing at all.
-	got := BestPlays("Allflame", storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row()), DefaultConfig())
+	// An armed demand for four hours against a feed holding one. Capping is what
+	// keeps a fresh league (or a just-restarted walk) from returning nothing at
+	// all, and it is armed here because the shipped default of 1 is met by every
+	// served play and would leave the cap unexercised.
+	cfg := DefaultConfig()
+	cfg.MinHoursSeen = 4
+
+	got := BestPlays("Allflame", storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row()), cfg)
 
 	play := playByKey(t, got, directKey(chaosID, cardID))
 	if play.HoursSeen != 1 {
@@ -381,18 +386,45 @@ func TestBestPlays_singleHourWindow_capsMinHoursSeenAtTheHoursPresent(t *testing
 	}
 }
 
-func TestBestPlays_playSeenInOnlyOneOfTwoHours_isDroppedAsAGhost(t *testing.T) {
+func TestBestPlays_playSeenInOnlyOneOfTwoHours_isServedWithTheCountAtDefaults(t *testing.T) {
+	// POE-193's persistence-as-information rule: the one-hour recipe is SERVED,
+	// beside the steady one, and what says they are different is HoursSeen. The
+	// newest-hour rule already guarantees both prices are current, so dropping
+	// the young one would have deleted a reading rather than a stale row.
+	steady := liquidChaosMarket(cardID, 100, 120).row()
+	young := liquidChaosMarket(hellID, 100, 200).row()
+	rows := append(
+		storedAt(feedHour, steady, young),
+		storedAt(feedHour.Add(-time.Hour), steady)...,
+	)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	if hoursSeen := playByKey(t, got, directKey(chaosID, hellID)).HoursSeen; hoursSeen != 1 {
+		t.Errorf("the one-hour play reads HoursSeen %d, want 1", hoursSeen)
+	}
+	if hoursSeen := playByKey(t, got, directKey(chaosID, cardID)).HoursSeen; hoursSeen != 2 {
+		t.Errorf("the steady play reads HoursSeen %d, want 2", hoursSeen)
+	}
+}
+
+func TestBestPlays_playSeenInOnlyOneOfTwoHours_isDroppedWhenMinHoursSeenIsArmed(t *testing.T) {
+	// The same window under the knob EXCHANGE_*_MIN_HOURS_SEEN is now FOR: a
+	// reader who wants ghosts gone can still have them gone, and this documents
+	// what arming the level does.
 	steady := liquidChaosMarket(cardID, 100, 120).row()
 	ghost := liquidChaosMarket(hellID, 100, 200).row()
 	rows := append(
 		storedAt(feedHour, steady, ghost),
 		storedAt(feedHour.Add(-time.Hour), steady)...,
 	)
+	cfg := DefaultConfig()
+	cfg.MinHoursSeen = 2
 
-	got := BestPlays("Allflame", rows, DefaultConfig())
+	got := BestPlays("Allflame", rows, cfg)
 
 	// The ghost carries by far the bigger return and is still dropped: printing
-	// once in the window is the disqualifier.
+	// once in the window is the disqualifier once the level is armed.
 	if want := []string{directKey(chaosID, cardID)}; !reflect.DeepEqual(playKeys(got.Plays), want) {
 		t.Errorf("keys = %v, want %v", playKeys(got.Plays), want)
 	}
@@ -1204,23 +1236,24 @@ func TestBestPlays_minROIChaos_cutsThePlaysWhosePayoutIsARoundingError(t *testin
 }
 
 func TestBestPlays_minVolumePerHour_stillDropsTheLegNobodyTraded(t *testing.T) {
-	// The unit-volume floor survived POE-184 as a LIVENESS gate and POE-191 as
-	// one of the four the server still arms: it is not what judges liquidity
-	// (Turnover is, client-side now), but a leg the hour did not trade at all is
-	// not executable at any depth, whatever the reader's bankroll.
+	// The unit-volume floor survived POE-184 as a LIVENESS gate and POE-193 as
+	// the weakest true statement about a leg: it is not what judges liquidity
+	// (Turnover is, client-side now) and it is not a size bar either, but a leg
+	// the hour did not trade at all is not executable at any depth, whatever the
+	// reader's bankroll.
 	tests := []struct {
 		name  string
 		units int64
 		want  []string
 	}{
 		{
-			name:  "exactly at the floor",
-			units: 10,
+			name:  "a single traded unit",
+			units: 1,
 			want:  []string{directKey(chaosID, cardID)},
 		},
 		{
-			name:  "one unit below the floor",
-			units: 9,
+			name:  "nothing traded",
+			units: 0,
 			want:  []string{},
 		},
 	}
@@ -1235,6 +1268,38 @@ func TestBestPlays_minVolumePerHour_stillDropsTheLegNobodyTraded(t *testing.T) {
 				t.Errorf("keys = %v, want %v (%d units traded)", playKeys(got.Plays), tt.want, tt.units)
 			}
 		})
+	}
+}
+
+func TestBestPlays_expensiveMarketUnderTheOldFloor_isServedAtDefaults(t *testing.T) {
+	// The market that set the rule (2026-08-22): a chaos/divination-card market
+	// turning over thousands of chaos an hour while its ITEM side moves only a
+	// handful of units, because a card is expensive enough that real money moves
+	// in few of them. Seven units an hour is under the old floor of 10 and alive
+	// on both sides, and the visibility rule says a live market is served.
+	//
+	// Both readings are asserted, because "served" and "served as a thin market"
+	// are the claim together: the play appears, and its chaos turnover — the
+	// liquidity number, which unit volume never was — is in the thousands.
+	spec := liquidChaosMarket(cardID, 1200, 1500)
+	spec.volume = [2]int64{9500, 7}
+
+	got := BestPlays("Allflame", storedAt(feedHour, spec.row()), DefaultConfig())
+
+	play := playByKey(t, got, directKey(chaosID, cardID))
+	if play.Depth != 7 {
+		t.Errorf("Depth = %v, want the 7 units the hour traded", play.Depth)
+	}
+	if play.Turnover != 9500 {
+		t.Errorf("Turnover = %v chaos/hour, want 9500 — the flow the old unit floor was hiding", play.Turnover)
+	}
+
+	// The same hour under the level the knob is now FOR, so the fixture is proved
+	// to sit under it rather than merely asserted to.
+	armed := DefaultConfig()
+	armed.MinVolumePerHour = 10
+	if keys := playKeys(BestPlays("Allflame", storedAt(feedHour, spec.row()), armed).Plays); len(keys) != 0 {
+		t.Errorf("keys = %v at an armed floor of 10, want none — the fixture no longer sits under the old floor", keys)
 	}
 }
 
@@ -1550,16 +1615,16 @@ func TestBestPlays_lowCoveragePlay_ranksBehindEveryCoveredOneAndAheadOfEverySusp
 	// could not measure this" and "we measured this and it is good" are different
 	// claims, and only the second earns a place at the top.
 	//
-	// The hell market traded nine units an hour in the three oldest hours, which
-	// is what leaves it a single simulated entry against the guard while the
-	// other two are measured over four. The guard is armed at two because the
-	// shipped twelve would be capped at this feed's four possible entries and
-	// flag every row.
+	// The hell market traded nothing in the three oldest hours, which is what
+	// leaves it a single simulated entry against the guard while the other two
+	// are measured over four. The guard is armed at two because the shipped
+	// twelve would be capped at this feed's four possible entries and flag every
+	// row.
 	card := liquidChaosMarket(cardID, 100, 120).row()
 	suspectOmen := chaosMarketAnchoredAt(omenID, 90, 400, 100).row()
 	hell := liquidChaosMarket(hellID, 100, 150)
 	quietHell := hell
-	quietHell.volume = [2]int64{1100, 9}
+	quietHell.volume = [2]int64{1100, 0}
 	rows := hourlyFeed(
 		[]Row{card, quietHell.row(), suspectOmen},
 		[]Row{card, quietHell.row(), suspectOmen},
@@ -1928,8 +1993,11 @@ func TestBestPlays_recordedHour_ranksFinitePlaysUnderTheDefaultGates(t *testing.
 }
 
 func TestBestPlays_recordedHourUnderTheOldServerLevels_yieldsNoOneHopRoutes(t *testing.T) {
-	// What the five levels this engine used to enforce actually CUT, measured on a
-	// recorded hour: arming them reproduces the pre-POE-191 answer.
+	// What the levels this engine used to enforce actually CUT, measured on a
+	// recorded hour. Every one of them is armed explicitly below, including the
+	// liveness floor: until POE-193 that one was inherited from DefaultConfig at
+	// 10, and inheriting a level that has since moved would have made this test
+	// quietly measure a different set than its name claims.
 	//
 	// This is no longer a migration invariant about the desktop. POE-191 moved the
 	// levels to the desktop's knobs and shipped them armed, so this test and
@@ -1954,6 +2022,11 @@ func TestBestPlays_recordedHourUnderTheOldServerLevels_yieldsNoOneHopRoutes(t *t
 	// client's minRoiPct knob. Armed so the result is the whole level set's, not
 	// coincidental on this fixture.
 	cfg.MinEdge = 0.02
+	// The liveness level the engine carried until POE-193. It can only tighten
+	// what the four quality levels already cut, so the no-routes assertion below
+	// is unaffected by it — what it buys is that this test names the old set
+	// completely instead of depending on a default that has moved.
+	cfg.MinVolumePerHour = 10
 
 	got := BestPlays("Allflame", storedAt(feedHour, rows...), cfg)
 
@@ -1993,13 +2066,22 @@ func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
 	// of them back here changes what every user is shown and cannot be undone
 	// from the app, which is why the whole tuning is pinned rather than described.
 	//
+	// The two floors that remained server-side are pinned for the same reason and
+	// at the bottom of their range since POE-193 (ADR-017): MinVolumePerHour 1
+	// asks only that a trade happened, and MinHoursSeen 1 — on the base config
+	// and on both horizons — cannot drop a served play at all, because a served
+	// play cleared the window's newest hour. Raising either here re-arms a floor
+	// for every user, which is what the ADR says a default may not do; the old
+	// 10 / 4-of-6 / 18-of-24 are what the env knobs are for. MaxPlays 2000 is a
+	// payload guard sized above the sane set, not a cut into it.
+	//
 	// The three sim knobs are pinned for a different reason: 24 / 3 / 12 are the
 	// parameters ExpectedRoi was calibrated at (POE-193), they take no
 	// environment override, and moving one invalidates the measurement rather
 	// than adjusting a preference.
 	want := Config{
 		WindowHours:       6,
-		MinVolumePerHour:  10,
+		MinVolumePerHour:  1,
 		MinEdge:           0.001,
 		MinTurnoverChaos:  0,
 		MaxTick:           1,
@@ -2008,15 +2090,15 @@ func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
 		SuspectLowBand:    0.67,
 		SuspectHighBand:   1.5,
 		HideSuspect:       false,
-		MinHoursSeen:      2,
+		MinHoursSeen:      1,
 		SimWindowHours:    24,
 		SimLookaheadHours: 3,
 		MinSimEntries:     12,
-		MaxPlays:          500,
+		MaxPlays:          2000,
 		QuotePriority:     []string{DivineID, ChaosID},
 		Horizons: []HorizonConfig{
-			{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 4},
-			{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 18},
+			{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 1},
+			{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 1},
 		},
 	}
 

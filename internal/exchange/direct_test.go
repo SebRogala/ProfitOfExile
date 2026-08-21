@@ -104,16 +104,14 @@ func TestDirectCandidates_key_namesTheMarketBehindTheDirectPrefix(t *testing.T) 
 }
 
 func TestDirectCandidates_rowFailingAGate_producesNoCandidate(t *testing.T) {
-	// The default floor is ten traded units per hour; the item side of this
-	// market is chaos, because divine leads the quote priority.
+	// The default floor is ONE traded unit per hour (POE-193): liveness asks
+	// whether a trade happened, so the only volume that fails it is none at all.
+	// The item side of this market is chaos, because divine leads the quote
+	// priority.
 	tests := []struct {
 		name      string
 		breakSpec func(s *rowSpec)
 	}{
-		{
-			name:      "traded item volume one unit below the floor",
-			breakSpec: func(s *rowSpec) { s.volume[0] = 9 },
-		},
 		{
 			name:      "nothing traded on the item side",
 			breakSpec: func(s *rowSpec) { s.volume[0] = 0 },
@@ -151,7 +149,28 @@ func TestDirectCandidates_rowFailingAGate_producesNoCandidate(t *testing.T) {
 	}
 }
 
-func TestDirectCandidates_itemVolumeExactlyAtTheFloor_keepsTheCandidate(t *testing.T) {
+func TestDirectCandidates_aSingleTradedUnit_keepsTheCandidateAtDefaults(t *testing.T) {
+	// The shipped floor's inclusive boundary. One unit changing hands is the
+	// weakest true statement about a leg, and POE-193 made it the whole default
+	// demand: a market that traded once this hour is a market, and how many units
+	// are worth the reader's time is the reader's call.
+	spec := chaosDivineSpec()
+	spec.volume[0] = 1
+
+	got := directCandidates([]Row{spec.row()}, DefaultConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want 1: one traded unit clears the default floor", len(got))
+	}
+	if got[0].legs[0].obs.volume != 1 {
+		t.Errorf("leg volume = %v, want 1", got[0].legs[0].obs.volume)
+	}
+}
+
+func TestDirectCandidates_itemVolumeExactlyAtAnArmedFloor_keepsTheCandidate(t *testing.T) {
+	// The knob's inclusive boundary. Ten units an hour is what the engine
+	// enforced until POE-193 and what EXCHANGE_MIN_VOLUME_PER_HOUR is now FOR, so
+	// the level is armed here rather than assumed.
 	spec := chaosDivineSpec()
 	spec.volume[0] = 10
 	cfg := DefaultConfig()
@@ -164,6 +183,19 @@ func TestDirectCandidates_itemVolumeExactlyAtTheFloor_keepsTheCandidate(t *testi
 	}
 	if got[0].legs[0].obs.volume != 10 {
 		t.Errorf("leg volume = %v, want 10", got[0].legs[0].obs.volume)
+	}
+}
+
+func TestDirectCandidates_itemVolumeOneUnitUnderAnArmedFloor_producesNoCandidate(t *testing.T) {
+	// The other side of the armed boundary: the same nine units the default now
+	// serves are dropped once a reader types the old level in.
+	spec := chaosDivineSpec()
+	spec.volume[0] = 9
+	cfg := DefaultConfig()
+	cfg.MinVolumePerHour = 10
+
+	if got := directCandidates([]Row{spec.row()}, cfg); len(got) != 0 {
+		t.Errorf("got %d candidates, want none at an armed floor of 10: %+v", len(got), got)
 	}
 }
 
