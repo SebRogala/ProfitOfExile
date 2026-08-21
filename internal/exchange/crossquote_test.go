@@ -312,16 +312,16 @@ func TestCrossQuoteCandidates_hourWithoutTheClosingMarket_producesNoRoute(t *tes
 	}
 }
 
-func TestCrossQuoteCandidates_thinLegOnOneMarket_dropsOnlyTheRoutesThatTradeIt(t *testing.T) {
-	// Nine cards traded against divine, one below the default floor. Both card
-	// routes have to trade a card on that market and die with it; the scarab
-	// routes, which are quoted against the same two currencies and never touch
-	// it, survive untouched.
-	thin := cardDivineSpec()
-	thin.volume[1] = 9
+func TestCrossQuoteCandidates_untradedLegOnOneMarket_dropsOnlyTheRoutesThatTradeIt(t *testing.T) {
+	// No card changed hands against divine this hour, so that leg fails the
+	// liveness floor. Both card routes have to trade a card on that market and
+	// die with it; the scarab routes, which are quoted against the same two
+	// currencies and never touch it, survive untouched.
+	dead := cardDivineSpec()
+	dead.volume[1] = 0
 
 	rows := []Row{
-		cardChaosSpec().row(), thin.row(), chaosDivineSpec().row(),
+		cardChaosSpec().row(), dead.row(), chaosDivineSpec().row(),
 		scarabChaosSpec().row(), scarabDivineSpec().row(),
 	}
 
@@ -356,8 +356,8 @@ func TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt(t *
 			breakSpec: func(s *rowSpec) { s.priceInvalid = true },
 		},
 		{
-			name:      "closing market traded almost nothing",
-			breakSpec: func(s *rowSpec) { s.volume = [2]int64{1, 1} },
+			name:      "closing market traded nothing",
+			breakSpec: func(s *rowSpec) { s.volume = [2]int64{0, 0} },
 		},
 	}
 

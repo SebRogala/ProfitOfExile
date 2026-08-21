@@ -220,6 +220,13 @@
 // this" and "we measured this and it loses" are different claims, both worth
 // reading, and ADR-015's serve-and-flag principle covers both.
 //
+// The guard's level is unchanged by POE-193's looser liveness floor, and the
+// interaction runs the friendly way: an hour a thin recipe would previously have
+// been dropped in now yields a candidate, and candidates are recorded BEFORE the
+// served gates, so a thin market gains simulable entries rather than losing
+// them. What it does not gain is trust — coverage is what says whether an
+// expectation was measured on enough of them, and it says so at the same 12.
+//
 // The sim window is independent of the ranking window and is NOT part of a
 // horizon's overlay, so both horizons carry the same ExpectedRoi for the same
 // recipe — the expectation is a property of the feed rather than of how long the
@@ -227,20 +234,33 @@
 // so the one hypertable read covers it.
 //
 // The gates, in the order the code applies them, with DefaultConfig's values.
-// Per leg per hour, in gatedLeg: at least MinVolumePerHour (10) units of the
+// Per leg per hour, in gatedLeg: at least MinVolumePerHour (1) unit of the
 // leg's item traded, and stock on both sides of the market. Per candidate per
 // hour, in evaluate: a quote that cannot be valued in chaos in this hour, then
 // HideSuspect, then RoiPct >= MinEdge (0.001) — on the UNDERCUT return, so a tick
 // that eats the spread fails here — Turnover >= MinTurnoverChaos (0), Tick <=
 // MaxTick (1), RoiPct >= MinEdgeTickRatio * Tick (0 steps), and Roi >=
 // MinROIChaos (0 chaos per exchanged unit). Then across the window, in
-// BestPlays: HoursSeen >= MinHoursSeen (2 on the base config, capped at the
-// hours actually present so a short window still returns plays, and overridden
-// per horizon), and the newest-hour rule above.
+// BestPlays: HoursSeen >= MinHoursSeen (1 everywhere since POE-193 — on the base
+// config and on both horizons — capped at the hours actually present, and so a
+// demand a served play meets by definition), and the newest-hour rule above.
 //
-// Four of those five are deliberately at values nothing can fail. Since POE-191
-// the server serves everything sane and the QUALITY judgement is the client's:
-// the desktop carries the four levels this package used to enforce (10,000
+// Four of those five are deliberately at values nothing can fail, and the fifth,
+// liveness, is at the weakest value that is still a statement: a trade happened.
+// The rule the defaults follow since POE-193 is that NO DEFAULT MAY HIDE A LIVE
+// MARKET. The measurement behind it, 2026-08-22: the old MinVolumePerHour of 10
+// dropped the chaos/Apocalypse-card market in 11 of 24 hours, because a card is
+// expensive enough that real money moves in few units — the turnover and unit
+// ranges are recorded in
+// docs/adr/017-no-default-engine-floor-may-hide-a-live-market.md and are not
+// restated here. Persistence went the same way: MinHoursSeen no longer removes
+// rows, it labels them, because the
+// newest-hour rule already keeps the served PRICE current and everything a
+// persistence floor added was hiding the rows whose HoursSeen would have read
+// "3 of 6" out loud.
+//
+// Since POE-191 the QUALITY judgement is likewise the client's: the desktop
+// carries the four levels this package used to enforce (10,000
 // chaos/hour of turnover, a tick no coarser than 10%, an edge at least 5 steps
 // wide, 3 chaos per exchanged unit) as user-editable knobs. POE-191 shipped
 // those knobs armed at exactly those numbers; POE-193 ships them OFF and keeps
@@ -248,14 +268,20 @@
 // everything this package serves and the reader tightens from there rather than
 // loosening. Either way a reader who wants cheap fragments or 1-hop triangles
 // can have them without a redeploy.
-// What stays server-side is what is not a matter of taste: liveness
-// (MinVolumePerHour), persistence (MinHoursSeen), positivity (MinEdge, the
-// sanity floor), the suspect flag, and MaxPlays (500) as a payload guard rather
-// than a gate. A losing round trip cannot be served even by setting MinEdge
+// What stays server-side is what no bankroll makes worth reading: a leg on which
+// nothing traded (MinVolumePerHour 1) with stock standing on both sides, and
+// positivity (MinEdge, the sanity floor). Thinness and persistence are FLAGS and
+// RANKING KEYS instead — HoursSeen, SimEntries/LowCoverage, Suspect — and
+// MaxPlays (2000) is a payload guard sized above the sane set rather than a gate;
+// the old 500 filled exactly and cut inside the flagged band on 2026-08-22.
+// A losing round trip cannot be served even by setting MinEdge
 // negative: withDefaults clamps MinEdgeTickRatio and MinROIChaos to at least 0,
 // and Roi >= 0 is the sign of RoiPct because Investment is positive.
 //
-// Those four LEVELS come from 30,534 priced Allflame market-hours: price
+// Every level POE-191 and POE-193 turned off keeps its measured rationale as the
+// RECOMMENDED TIGHTENING — what to type into the knobs, not what an untouched
+// install applies. The four quality ones come from 30,534 priced Allflame
+// market-hours: price
 // quantization is the strongest single predictor of an apparent spread
 // (corr(ln edge, ln tick) = +0.42, p50 tick 14.3%), which is what MaxTick and
 // MinEdgeTickRatio answer, and chaos-denominated flow predicts a real edge where
@@ -272,7 +298,7 @@
 //
 // Ranking is clean before suspect, then covered before low-coverage, then
 // ExpectedRoi desc, then Turnover desc, then direct before 1-hop (one execution
-// risk instead of three), then Key ascending, truncated to MaxPlays (500). The
+// risk instead of three), then Key ascending, truncated to MaxPlays (2000). The
 // third key is the SIMULATED payout rather than the hour's RoiPct, which is what
 // ranked before POE-193 and which the measurement puts 4-8x too high; RoiPct is
 // still served, still the gates' subject, and no longer what decides the order.
@@ -300,11 +326,13 @@
 //
 // BestPlays ranks ONE window; which window is the Service's call. It runs the
 // engine once per HorizonConfig (service.go) over the same loaded rows: recent,
-// six hours needing four, which is what a request naming no horizon gets, and
-// day, twenty-four hours needing eighteen. Both hours-seen demands are about
-// three quarters of their window and in absolute terms ask for very different
-// things, which is the point — a recent play has cleared in at least four hours,
-// a day play in at least eighteen. A horizon overlays Config.WindowHours and
+// six hours, which is what a request naming no horizon gets, and day,
+// twenty-four hours. Since POE-193 neither demands persistence (MinHoursSeen 1
+// on both), so the two differ only in the span HoursSeen is counted over —
+// "n of 6" against "n of 24" for the same recipe, both listing the newest hour's
+// prices. The old four-of-six and eighteen-of-twenty-four are the recommended
+// tightening, reachable through EXCHANGE_RECENT_MIN_HOURS_SEEN and
+// EXCHANGE_DAY_MIN_HOURS_SEEN. A horizon overlays Config.WindowHours and
 // Config.MinHoursSeen and nothing else; BestPlays ignores Config.Horizons itself.
 //
 // What the Result contract promises its consumers (POE-175/176): From is the
