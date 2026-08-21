@@ -72,6 +72,12 @@ func DefaultHorizons() []HorizonConfig {
 }
 
 // horizonConfig applies one horizon's overlay to a base Config.
+//
+// It overlays the window and the persistence demand and NOTHING else, which is
+// what makes the fill simulation shared: Config.SimWindowHours comes through
+// untouched, so both horizons average their ExpectedRoi over the same day of
+// entries and a recipe carries one expectation whichever window the reader asks
+// for. Widening this overlay would split that number in two.
 func horizonConfig(base Config, h HorizonConfig) Config {
 	base.WindowHours = h.WindowHours
 	base.MinHoursSeen = h.MinHoursSeen
@@ -234,10 +240,12 @@ func NewService(rows RowSource, scope league.Scope, cfg Config, cache *Cache, no
 // configured horizon's result — DefaultHorizon's, in the served configuration,
 // which is what the endpoint answers with when a request names no horizon.
 //
-// The rows are read ONCE, for the widest horizon; every horizon is then ranked
-// from that same slice, because BestPlays keeps only the newest WindowHours
-// distinct hours it is given. Two horizons therefore cost two in-memory passes,
-// not two hypertable scans, and both describe the same instant of the feed.
+// The rows are read ONCE, over the widest span any horizon needs (widestWindow,
+// which counts the fill simulation's window as well as the ranked ones); every
+// horizon is then ranked from that same slice, because BestPlays keeps only the
+// newest WindowHours distinct hours it is given. Two horizons therefore cost two
+// in-memory passes, not two hypertable scans, and both describe the same instant
+// of the feed.
 //
 // The window is anchored on the newest hour that actually HAS rows, not on the
 // clock and not on the ingest cursor: [newest − widest·1h, newest + 1h). A feed
@@ -304,14 +312,22 @@ func (s *Service) Recompute(ctx context.Context) (Result, error) {
 	return served, nil
 }
 
-// widestWindow is the longest span any configured horizon ranks, and therefore
-// how far back one read has to reach to serve all of them.
+// widestWindow is the longest span the recompute needs on the wire: the longest
+// any configured horizon RANKS, or the fill simulation's window if that reaches
+// further back.
+//
+// Config.SimWindowHours counts even though no horizon overlays it, because every
+// horizon's ExpectedRoi is simulated over it — load six hours for a six-hour
+// horizon and the simulation silently averages six hours of entries instead of a
+// day, which would show up as a plausible number rather than as an error. The
+// lookahead adds nothing: an entry's fill hours are later hours, so they sit
+// inside the sim window already.
 //
 // The base Config.WindowHours does not count: Recompute ranks the horizons and
 // nothing else, so seeding from the base would read hours no served answer looks
-// at. withDefaults guarantees at least one horizon.
+// at. withDefaults guarantees at least one horizon and a positive sim window.
 func (s *Service) widestWindow() int {
-	widest := 0
+	widest := s.cfg.SimWindowHours
 	for _, horizon := range s.cfg.Horizons {
 		if horizon.WindowHours > widest {
 			widest = horizon.WindowHours

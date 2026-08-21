@@ -15,9 +15,9 @@
 //
 // # Layers
 //
-// client.go, payload.go, normalize.go, humanize.go, items.go and the four engine files
-// pricing.go, direct.go, crossquote.go and plays.go are pure: no database, no
-// scheduler, no HTTP server, no collector. Callers fetch a payload with
+// client.go, payload.go, normalize.go, humanize.go, items.go and the five engine
+// files pricing.go, direct.go, crossquote.go, sim.go and plays.go are pure: no
+// database, no scheduler, no HTTP server, no collector. Callers fetch a payload with
 // Client.FetchHour and derive rows with Normalize; Normalize, PriceOf, Ratio and
 // pricing.go's direction mappers — priceIn, vwapIn, tickOf and the volume
 // readers — are the only places prices are computed.
@@ -39,10 +39,15 @@
 // Rows are grouped by feed hour, the newest Config.WindowHours distinct hours are
 // kept, and each of those hours is scored ALONE — candidates built from that
 // hour's rows, and evaluate turning each candidate into a finished Play (leg
-// prices, undercut return, chaos payout, every gate) out of that one hour. Hours
-// never mix. The merge by recipe key keeps exactly two things: the NEWEST cleared
-// hour's Play, which is what gets served, and a COUNT of the hours that cleared,
-// which becomes HoursSeen.
+// prices, undercut return, chaos payout, every gate) out of that one hour. No
+// PRICE mixes hours. The merge by recipe key keeps exactly two things: the NEWEST
+// cleared hour's Play, which is what gets served, and a COUNT of the hours that
+// cleared, which becomes HoursSeen.
+//
+// Beside that, over a SECOND and independent window, the fill simulation reads
+// what those orders would have realized — see "# Expected ROI" below. It is the
+// one cross-hour statistic the engine computes, it is never a price, and it is
+// what the ranking sorts on.
 //
 // A play is served only when it cleared in the window's NEWEST hour — the last
 // snapshot — so Play.LastHour is that hour for every play in the Result, and a
@@ -166,6 +171,60 @@
 // either. The warning fires only when NO hour in the window carried that market,
 // once per HORIZON and so twice per Service recompute.
 //
+// # Expected ROI
+//
+// Everything above describes one hour honestly and the future badly. Both of an
+// hour's extremes were realized somewhere inside that hour and nothing says a
+// posted order would have caught either, so RoiPct is the hour's OPTIMISTIC
+// reading. Measured over 960 top-20 play-hours across 48 hours of Allflame it
+// overstates what a player actually gets by 4-8x, and the median top play never
+// round-trips at its posted prices at all.
+//
+// So sim.go simulates the trip instead of asserting it. Per recipe, per entry
+// hour h in the newest Config.SimWindowHours (24) hours: post the buy at that
+// hour's undercut low, and if the next data hour's low did not come down to it,
+// CHASE — re-price to that hour's own undercut low, because a buyer who wants
+// the unit follows the market up. Post the sell at the entry hour's undercut
+// high and fill it in the first hour after the buy that printed a high at or
+// above it, within Config.SimLookaheadHours (3) of the entry and truncated at
+// the newest hour. What never sold is not a hold but a loss taken later: it
+// exits at the lookahead's last data hour, halfway between that hour's VWAP and
+// its undercut high. Each entry's realized fraction is valued in chaos at ITS
+// OWN hour's divine rate, per the per-hour discipline above.
+//
+// Play.ExpectedRoi is the mean of those outcomes in chaos per exchanged unit and
+// ExpectedRoiPct the mean of the fractions, over Play.SimEntries entries — the
+// sim-window hours in which the recipe produced a gated candidate whose entry
+// quote could be valued and which had a later hour to fill in. Entries are
+// counted BEFORE the served gates: an hour whose percentage was too small to
+// serve is still an hour the orders could have been posted in. The newest hour
+// is never an entry, having nothing later to fill in.
+//
+// The estimator is calibrated, not arbitrary: those parameters are the ones
+// validated against five owner-observed real outcomes at a serving-level MAE of
+// 13.1 chaos, where the displayed number sat near 122 (realized/displayed 40.7%,
+// 7.9% of entries negative). The record is POE-193 and the decision is
+// docs/adr/016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md.
+// Because they are a calibration rather than a preference, they take no
+// environment override; changing one is a deliberate redeploy that invalidates
+// the measurement. The calibration covers DIRECT plays. A 1-hop route runs the
+// same mechanics — chase the buy on leg one, post the sell on leg two, convert
+// the proceeds at the fill hour's VWAP of the A/B market, and skip the entry
+// when that hour did not price it — uncalibrated.
+//
+// Play.LowCoverage says SimEntries fell under Config.MinSimEntries (12), capped
+// at the hours that could have been entries so a young league is not flagged for
+// failing to produce entries that could not exist. It sorts a play down and
+// hides nothing, and neither does a NEGATIVE ExpectedRoi: "we could not measure
+// this" and "we measured this and it loses" are different claims, both worth
+// reading, and ADR-015's serve-and-flag principle covers both.
+//
+// The sim window is independent of the ranking window and is NOT part of a
+// horizon's overlay, so both horizons carry the same ExpectedRoi for the same
+// recipe — the expectation is a property of the feed rather than of how long the
+// reader wants a play to have been holding up. Service.widestWindow counts it,
+// so the one hypertable read covers it.
+//
 // The gates, in the order the code applies them, with DefaultConfig's values.
 // Per leg per hour, in gatedLeg: at least MinVolumePerHour (10) units of the
 // leg's item traded, and stock on both sides of the market. Per candidate per
@@ -207,10 +266,14 @@
 // 1368 markets (881 clearing both-side liveness) to 79 served plays, which is
 // the count POE-191 opened up.
 //
-// Ranking is clean before suspect, then RoiPct desc, then Turnover desc, then
-// direct before 1-hop (one execution risk instead of three), then Key ascending,
-// truncated to MaxPlays (500). It is a stable sort over a key-sorted list, so
-// identical rows produce identical output whatever order they arrived in.
+// Ranking is clean before suspect, then covered before low-coverage, then
+// ExpectedRoi desc, then Turnover desc, then direct before 1-hop (one execution
+// risk instead of three), then Key ascending, truncated to MaxPlays (500). The
+// third key is the SIMULATED payout rather than the hour's RoiPct, which is what
+// ranked before POE-193 and which the measurement puts 4-8x too high; RoiPct is
+// still served, still the gates' subject, and no longer what decides the order.
+// It is a stable sort over a key-sorted list, so identical rows produce identical
+// output whatever order they arrived in.
 //
 // One caveat governs every percentage. The feed publishes each hour's realized
 // LOW and HIGH, not a book: both are trades that happened somewhere inside the
@@ -219,8 +282,11 @@
 // the fiction is the undercut the percentages are charged, Fair standing beside
 // every price, Suspect when an extreme is too far from Fair to be repeatable, and
 // — at their defaults — the client's tick knobs (the server's own tick gates are
-// off since POE-191). Nothing is synthesized across hours: every number belongs to
-// the single hour LastHour names.
+// off since POE-191). No PRICE is synthesized across hours: every price-shaped
+// number belongs to the single hour LastHour names. The two that are not prices
+// say so — HoursSeen is a count and ExpectedRoi a simulated expectation — and
+// the second exists precisely because the first sentence of this paragraph is
+// true.
 //
 // Volume is a per-side TOTAL, not a split by direction: the feed publishes
 // volume_traded for each side of a market and says nothing about how much of it
@@ -440,11 +506,14 @@
 // every play in the list was valued at, 0 when that hour did not trade the
 // market, in which case no divine-quoted play is in the list), count and plays.
 // Each play carries key, mode, legs, roiPct, edge (its deprecated alias),
-// roiPctRaw, roi, investment, turnover, tick, depth, suspect, hoursSeen and
-// lastHour; each leg action, item, quote, price, fair, fairOk, tick, volume,
-// stock and suspect. Every served body also carries categories, the sidebar's
-// sixteen in sidebar order — the whole taxonomy, independent of the plays in
-// this one, so the client's filter is not a function of the ranking.
+// roiPctRaw, roi, investment, turnover, tick, depth, suspect, hoursSeen,
+// lastHour and the simulation's four — expectedRoi, expectedRoiPct, simEntries
+// and lowCoverage, the ranking's own key and the only fields a client cannot
+// recheck from the row, expectedRoi being signed; each leg action, item, quote,
+// price, fair, fairOk, tick, volume, stock and suspect. Every served body also
+// carries categories, the sidebar's sixteen in sidebar order — the whole
+// taxonomy, independent of the plays in this one, so the client's filter is not
+// a function of the ranking.
 // A COLD cache answers 200 with an empty plays list, warm: false and
 // lastUpdated: null rather than an error or a database fallback — the recompute
 // is the only reader, so a fallback query would just repeat it. The handler
@@ -487,7 +556,11 @@
 // EXCHANGE_DAY_MIN_HOURS_SEEN. EXCHANGE_WINDOW_HOURS and
 // EXCHANGE_MIN_HOURS_SEEN still work but bind the RECENT horizon only — they
 // leave the day window alone, and an EXCHANGE_RECENT_* name set alongside one of
-// them wins. The Warn is louder
+// them wins. The fill simulation has NO knob here and that is deliberate:
+// Config.SimWindowHours, SimLookaheadHours and MinSimEntries are the parameters
+// ExpectedRoi was calibrated at, so an environment override would let a deploy
+// silently invalidate the measurement the headline number rests on. Moving one
+// is a code change and a redeploy. The Warn is louder
 // than the silent fallbacks the collector's knobs use on purpose: a typo in a
 // ranking threshold changes what users see and has no other symptom.
 //
