@@ -224,6 +224,18 @@ describe('fetchCurrencyExchangePlays', () => {
 				// coarsest of its legs' — the shapes the server guarantees.
 				roi: 21.6,
 				investment: 180,
+				// What the fill simulation measured (POE-193), and a shape the
+				// optimistic pair above cannot take: the expectation is NEGATIVE
+				// — the play's orders lost chaos across the replayed hours — and
+				// the server serves and flags it rather than hiding it (ADR-016).
+				// No identity holds between these two the way
+				// `roi === roiPct * investment` holds above; -4.2 over 180c is not
+				// -0.019. Seven entries is under the server's twelve-entry guard,
+				// which is what `lowCoverage` reports.
+				expectedRoi: -4.2,
+				expectedRoiPct: -0.019,
+				simEntries: 7,
+				lowCoverage: true,
 				turnover: 74000,
 				tick: 0.05,
 				depth: 90,
@@ -333,6 +345,24 @@ describe('fetchCurrencyExchangePlays', () => {
 		const leg = (await fetchCurrencyExchangePlays('direct')).plays[0].legs[1];
 
 		expect(leg.itemIcon).toBeNull();
+	});
+
+	it('keeps a negative expectation negative rather than flooring it at zero', async () => {
+		// The page COLOURS this number red and drops the Scale column's answer on
+		// the strength of its sign (POE-193), and the sign is the one thing the
+		// wire's other money fields never carry: a fetcher that clamped,
+		// absolute-valued or dropped it would turn a measured loser into a
+		// break-even row the reader has no reason to distrust. The coverage flag
+		// rides with it for the same reason — "we could not measure this" is a
+		// different claim from "we measured this and it loses", and only the flag
+		// tells them apart.
+		fetchMock.mockResolvedValue({ ok: true, json: async () => structuredClone(DECORATED_RESPONSE) });
+
+		const play = (await fetchCurrencyExchangePlays('direct')).plays[0];
+
+		expect(play.expectedRoi).toBe(-4.2);
+		expect(play.simEntries).toBe(7);
+		expect(play.lowCoverage).toBe(true);
 	});
 
 	it('keeps each side of a leg in its own category field', async () => {
