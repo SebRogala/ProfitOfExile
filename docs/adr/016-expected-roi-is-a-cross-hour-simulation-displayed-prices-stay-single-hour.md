@@ -112,8 +112,8 @@ is a deliberate redeploy plus a re-calibration, not a deploy-time setting.
 - **Four fields a client cannot recheck.** `ExpectedRoi`, `ExpectedRoiPct`,
   `SimEntries` and `LowCoverage` are built from hours the row does not carry.
   `RoiPct`, `Roi`, `Investment`, `Tick` and `Depth` remain arithmetic on the
-  legs the row ships; `Turnover` and `HoursSeen` never were, and say so at the
-  field.
+  legs the row ships; `Turnover` and `HoursSeen` never were, and the `Play`
+  type's doc block says so.
 
 ## Evidence
 
