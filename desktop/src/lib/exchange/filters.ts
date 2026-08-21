@@ -368,11 +368,19 @@ export type GateInputs = { [K in keyof Gates]: string };
  * way for the reader to say "show me the cheap fragments too".
  *
  * A negative knob is read as off rather than kept. For the four floors the
- * server's positivity floor means no served play carries a negative return, so
- * a floor below zero could never drop a row — "off" is the honest name for a
- * filter that cannot fire. For the one ceiling (maxTickPct) a negative would
- * fire against EVERY play and empty the table; a stored negative there is
- * garbage, not a request, and off is the recovery.
+ * server's positivity floor means no served play carries a negative `roiPct` or
+ * `roi` — the two numbers these gates judge — so a floor below zero could never
+ * drop a row; "off" is the honest name for a filter that cannot fire. For the
+ * one ceiling (maxTickPct) a negative would fire against EVERY play and empty
+ * the table; a stored negative there is garbage, not a request, and off is the
+ * recovery.
+ *
+ * Read that as a statement about the GATE VALUES, not about the plays. Since
+ * POE-193 a served play CAN carry a negative `expectedRoi` — the fill-simulated
+ * expectation is free to measure a loss, and ADR-016 serves and flags it rather
+ * than hiding it. No gate here reads that field, so the reasoning above is
+ * untouched: the negative that cannot occur is the one on the optimistic pair
+ * these five knobs compare against.
  */
 export function parseGate(raw: string, fallback: number): number {
 	if (raw.trim() === '') return fallback;
@@ -422,6 +430,15 @@ export function parseGates(inputs: GateInputs): Gates {
  * are percent points, the wire's `tick` and `roiPct` are fractions.
  * `minEdgeTickRatio` does not cross anything: a bare ratio times a fraction is
  * already a fraction.
+ *
+ * Every gate still judges the OPTIMISTIC `roiPct`/`roi`, deliberately, even
+ * though the server now ranks on `expectedRoi` (POE-193). These five defaults
+ * are the server's old ones and were calibrated against those two fields; the
+ * Go test that pins them arms the same levels against the same numbers, so
+ * re-pointing a gate at the expectation would change what every untouched knob
+ * filters without anyone having typed anything. What the expectation is for is
+ * the ORDER and the Exp. ROI column — the reader sees the measured outcome and
+ * decides, which is ADR-015's split with the bar still on the reader's side.
  */
 export function applyGates(plays: CurrencyExchangePlay[], gates: Gates): CurrencyExchangePlay[] {
 	return plays.filter((play) => {
@@ -485,11 +502,23 @@ function parseAmount(raw: string): number | null {
  * cleared the target, and a 500c ceiling that let it through would be answering
  * about a trip the reader would never make.
  *
- * A play whose scale cannot be derived — `roi ≤ 0`, which the server's
- * positivity floor (ADR-015) never serves — falls back to its per-exchange
- * investment rather than being dropped or waved through: that is what such a
- * play demonstrably ties up, and reading it that way keeps the bound a
- * comparison against a real figure instead of a second hidden gate.
+ * A play whose scale cannot be derived falls back to its per-exchange
+ * investment rather than being dropped or waved through. Since POE-193 that
+ * condition is `expectedRoi ≤ 0`, and it is a case the table now HITS: the
+ * server's positivity floor governs the optimistic `roi`, while the simulated
+ * expectation is free to measure a loss and the play is served anyway — 7.9% of
+ * the calibration set realized negative (ADR-016). Falling back is therefore a
+ * deliberate choice about a live case and not a guard against an impossible
+ * one: dropping such a play here would be a sixth quality gate, hidden inside a
+ * bankroll bound the reader set to answer a different question, and hiding the
+ * measured losers is exactly what serve-and-flag exists to prevent.
+ *
+ * The asymmetry that buys is worth naming: a losing play is then judged by what
+ * ONE exchange costs, while every other row is judged by what its whole run
+ * ties up. A ceiling can consequently keep a negative-expectation play it would
+ * have dropped had the play been worth repeating. That is the honest reading —
+ * there is no run size for a play with nothing to run toward — and the Exp. ROI
+ * column is where the reader sees why the row is there.
  *
  * The `unit` toggle converts the bounds, never the play: the wire's
  * `investment` is always chaos. A rate of 0 (the newest hour carried no

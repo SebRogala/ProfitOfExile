@@ -77,7 +77,7 @@
 	 */
 	const mode = persisted('currencyExchangeMode', 'all');
 	const horizon = persisted('currencyExchangeHorizon', 'recent');
-	const sortPref = persisted('currencyExchangeSort', 'roiPct');
+	const sortPref = persisted('currencyExchangeSort', 'expected');
 	const densityPref = persisted('currencyExchangeDensity', 'comfortable');
 	const unitPref = persisted('currencyExchangeUnit', 'chaos');
 	/**
@@ -399,7 +399,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by return on investment, by chaos gained per exchange, or by how long the market needs to absorb the play's worthwhile scale — shortest wait first."
+			title="Rank by the simulated outcome the server ranks on, by the optimistic chaos gained per exchange, or by how long the market needs to absorb the play's worthwhile scale — shortest wait first."
 		/>
 
 		<div class="divider"></div>
@@ -480,8 +480,8 @@
 			<span>window: {hoursWindow} hours</span>
 			<span class="dot">·</span>
 			<span>
-				prices are the newest hour’s cheapest buy and dearest sell — every ROI below is a best case,
-				not a quote
+				prices are the newest hour’s cheapest buy and dearest sell, so the ROI columns are a best
+				case, not a quote — Exp. ROI is what the play would have paid across the last day
 			</span>
 		{:else}
 			<span class="warn">Couldn't reach the server</span>
@@ -520,6 +520,9 @@
 						</th>
 						<th class="col-money num">
 							<Tooltip text={EXCHANGE_TOOLTIPS.ROI}>ROI</Tooltip>
+						</th>
+						<th class="col-expected num">
+							<Tooltip text={EXCHANGE_TOOLTIPS['Exp. ROI']}>Exp. ROI</Tooltip>
 						</th>
 						<th class="col-pct num">
 							<Tooltip text={EXCHANGE_TOOLTIPS['ROI%']}>ROI%</Tooltip>
@@ -566,6 +569,47 @@
 								<div class="mono gain" class:flat={play.roi <= 0}>
 									{formatGain(play.roi)}c
 								</div>
+							</td>
+
+							<!-- The ranking's number, and the only money cell on the row that
+							     can print a MINUS: the simulation is free to measure a loss and
+							     the server serves it anyway (ADR-016), so red is a reading here
+							     and not an error state.
+							     NOTHING measured is not a wash. A recipe with no simulable entry
+							     hour carries a 0 mean over 0 entries, and printing that as "0c"
+							     would tell the reader the play was replayed and broke even. It
+							     takes the Scale column's dash instead — the same "this row has
+							     no answer to that question" the rest of the table spells that
+							     way. Below that, low coverage DIMS the number rather than
+							     replacing it: "measured over too few hours" is a caveat on a
+							     real mean, not a different reading. The sub-line names the
+							     caveat and the title carries it into dense, where every
+							     sub-line is gone. -->
+							<td class="num">
+								{#if play.simEntries === 0}
+									<span
+										class="mono reserved"
+										title="Not simulable: no hour of the last day could be replayed for this play, so there is no expectation to report."
+									>—</span
+									>
+								{:else}
+									<div
+										class="mono gain"
+										class:flat={play.expectedRoi === 0}
+										class:loss={play.expectedRoi < 0}
+										class:thin={play.lowCoverage}
+										title={play.lowCoverage
+											? `Low coverage: only ${play.simEntries} of the last day's hours could be simulated, so this mean is thin.`
+											: null}
+									>
+										{formatGain(play.expectedRoi)}c
+									</div>
+									{#if !dense}
+										<div class="mono sub">
+											n={play.simEntries}{#if play.lowCoverage}<span class="amber"> · low</span>{/if}
+										</div>
+									{/if}
+								{/if}
 							</td>
 
 							<td class="num">
@@ -803,6 +847,12 @@
 	.col-money {
 		width: 136px;
 	}
+	/* Wider than the ROI column beside it: the same chaos figure can carry a
+	   minus, and it sits over an "n=24 · low" sub-line the money columns have
+	   nothing like. */
+	.col-expected {
+		width: 148px;
+	}
 	.col-pct {
 		width: 132px;
 	}
@@ -826,6 +876,9 @@
 		width: 68px;
 	}
 	table.dense .col-money {
+		width: 116px;
+	}
+	table.dense .col-expected {
 		width: 116px;
 	}
 	table.dense .col-pct {
@@ -965,6 +1018,22 @@
 	   would put it in the same class as the plays that are. */
 	.gain.flat {
 		color: #6b7280;
+	}
+
+	/* Exp. ROI's own case, and the only one on this table: a measured LOSS.
+	   Grey would read as "no result" next to the flat rows, which is the one
+	   thing this number is not — the simulation ran and it came out negative.
+	   The palette's red (tokens.css), same one the app spends on RISKY. */
+	.gain.loss {
+		color: var(--color-lab-red);
+	}
+
+	/* Too few simulated hours to trust the mean. Dimmed rather than recoloured,
+	   so the sign still reads: the verdict on the number is unchanged, the
+	   confidence in it is what dropped. Matches how a suspect play stays in the
+	   table with a marker instead of being hidden. */
+	.thin {
+		opacity: 0.55;
 	}
 
 	.cell-line {
