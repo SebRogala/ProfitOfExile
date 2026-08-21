@@ -86,9 +86,9 @@ type Leg struct {
 // one LastHour names — and for a served play that is the window's NEWEST hour,
 // the last snapshot, because BestPlays drops any recipe that did not clear its
 // gates there. No price is blended across hours, because a blend is a trade
-// nobody could have made: Mawr Blaidd/Chaos printed lows of 62-81 chaos in four
-// consecutive hours against a VWAP near 250, which is why a price shown here
-// belongs to one hour.
+// nobody could have made: Mawr Blaidd/Chaos printed lows of 62.5-81 chaos in
+// four consecutive hours against a VWAP near 250, which is why a price shown
+// here belongs to one hour.
 //
 // Two fields are deliberately not prices and do read across hours, each labelled
 // as what it is. HoursSeen counts the window hours in which the recipe cleared
