@@ -113,9 +113,9 @@ func recordSim(series map[string]*simSeries, c candidate, hour time.Time, hourRa
 	entry, sell := c.legs[0].obs, c.legs[1].obs
 	o := simObs{
 		hour:       hour,
-		entryLow:   entry.low,
+		entryLow:   entry.low.price,
 		entryTick:  entry.tick,
-		sellHigh:   sell.high,
+		sellHigh:   sell.high.price,
 		sellTick:   sell.tick,
 		sellVwap:   sell.vwap,
 		sellVwapOK: sell.vwapOK,

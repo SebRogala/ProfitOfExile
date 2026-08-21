@@ -215,6 +215,183 @@ func TestBestPlays_threeHours_pricesBothLegsFromTheNewestHour(t *testing.T) {
 	}
 }
 
+// fractionalScarabMarket is one hour of a scarab quoted in divine whose two
+// extremes were posted as unrelated integer pairs: 16 scarabs for 1 divine at
+// the cheapest, 25 for 2 at the dearest.
+//
+// Neither pair can be guessed from the other — 0.0625 and 0.08 are the same two
+// prices a reader would otherwise see as unpostable decimals — which is what
+// makes "the buy leg carries the LOW's pair and the sell leg the HIGH's"
+// observable rather than a coincidence of a market that prints 1 on one side of
+// both pairs. The hour's mass cleared at 21/300 = 0.07 divine a scarab, between
+// the extremes and inside both suspect bands.
+func fractionalScarabMarket() rowSpec {
+	return rowSpec{
+		itemA:        divineID,
+		itemB:        scarabID,
+		volume:       [2]int64{21, 300},
+		lowestStock:  [2]int64{40, 200},
+		highestStock: [2]int64{60, 400},
+		lowestRatio:  [2]int64{1, 16},
+		highestRatio: [2]int64{2, 25},
+	}
+}
+
+func TestBestPlays_directPlay_buyLegCarriesTheLowsPairAndSellLegTheHighs(t *testing.T) {
+	// The in-game exchange posts whole quantities on both sides, so the order a
+	// player places is "buy 16 for 1 div", not "buy at 0.0625 div each". Both
+	// legs read the same market in the same hour and differ only in which end of
+	// the spread they execute on, so a leg that took its pair from the wrong
+	// extreme would render the sell as the buy at a price nobody offered.
+	rows := storedAt(feedHour, fractionalScarabMarket().row(), divineChaosAnchor().row())
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, directKey(divineID, scarabID))
+	wantPairs := []struct {
+		action   string
+		price    float64
+		itemQty  int64
+		quoteQty int64
+	}{
+		{action: "buy", price: 0.0625, itemQty: 16, quoteQty: 1},
+		{action: "sell", price: 0.08, itemQty: 25, quoteQty: 2},
+	}
+	if len(play.Legs) != len(wantPairs) {
+		t.Fatalf("got %d legs, want %d", len(play.Legs), len(wantPairs))
+	}
+	for i, want := range wantPairs {
+		leg := play.Legs[i]
+		if leg.Action != want.action || leg.Price != want.price {
+			t.Fatalf("leg %d = %s at %v, want %s at %v", i, leg.Action, leg.Price, want.action, want.price)
+		}
+		if leg.PriceItemQty != want.itemQty || leg.PriceQuoteQty != want.quoteQty {
+			t.Errorf("%s leg pair = %d for %d, want %d for %d",
+				leg.Action, leg.PriceItemQty, leg.PriceQuoteQty, want.itemQty, want.quoteQty)
+		}
+	}
+}
+
+func TestBestPlays_quotePriorityFlipped_transposesEachLegsQuantityPair(t *testing.T) {
+	// Which side of a market reads as the item is Config.QuotePriority's call,
+	// and the posted pair follows it: the SAME chaos/divine hour is "201 chaos
+	// for 1 divine" when divine is the quote and "1 divine for 196 chaos" when
+	// chaos is. The quantities move between the two fields rather than a float
+	// being inverted, so a pair copied off the row's stored A/B order would come
+	// back upside down in one of the two runs.
+	//
+	// The buy leg reads the hour's low, which is why the divine-quoted run shows
+	// 201 (the most chaos a divine ever bought) against the chaos-quoted run's
+	// 196 (the fewest chaos a divine ever cost).
+	rows := storedAt(feedHour, chaosDivineSpec().row())
+	chaosQuoted := DefaultConfig()
+	chaosQuoted.QuotePriority = []string{ChaosID, DivineID}
+
+	tests := []struct {
+		name      string
+		cfg       Config
+		wantItem  string
+		wantQuote string
+		buyItem   int64
+		buyQuote  int64
+		sellItem  int64
+		sellQuote int64
+	}{
+		{
+			name: "divine leads the priority, so chaos is the traded item",
+			cfg:  DefaultConfig(), wantItem: chaosID, wantQuote: divineID,
+			buyItem: 201, buyQuote: 1, sellItem: 196, sellQuote: 1,
+		},
+		{
+			name: "chaos leads the priority, so divine is the traded item",
+			cfg:  chaosQuoted, wantItem: divineID, wantQuote: chaosID,
+			buyItem: 1, buyQuote: 196, sellItem: 1, sellQuote: 201,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			play := playByKey(t, BestPlays("Allflame", rows, tt.cfg), directKey(chaosID, divineID))
+
+			if play.Legs[0].Item != tt.wantItem || play.Legs[0].Quote != tt.wantQuote {
+				t.Fatalf("leg 0 = %s in %s, want %s in %s",
+					play.Legs[0].Item, play.Legs[0].Quote, tt.wantItem, tt.wantQuote)
+			}
+			if play.Legs[0].PriceItemQty != tt.buyItem || play.Legs[0].PriceQuoteQty != tt.buyQuote {
+				t.Errorf("buy pair = %d for %d, want %d for %d",
+					play.Legs[0].PriceItemQty, play.Legs[0].PriceQuoteQty, tt.buyItem, tt.buyQuote)
+			}
+			if play.Legs[1].PriceItemQty != tt.sellItem || play.Legs[1].PriceQuoteQty != tt.sellQuote {
+				t.Errorf("sell pair = %d for %d, want %d for %d",
+					play.Legs[1].PriceItemQty, play.Legs[1].PriceQuoteQty, tt.sellItem, tt.sellQuote)
+			}
+		})
+	}
+}
+
+func TestBestPlays_oneHopPlay_eachLegCarriesItsOwnMarketsPair(t *testing.T) {
+	// A triangle executes three different markets, so its three pairs come from
+	// three rows and two of them are transposes of each other: the route buys
+	// one scarab for 10 chaos, sells ten scarabs for one divine, and sells that
+	// divine for 200 chaos. Leg 1 is the case a per-unit float cannot express at
+	// all — 0.1 divine a scarab is not an order the game accepts.
+	got := BestPlays("Allflame", storedAt(feedHour, triangleRows(liquidTriangle())...), DefaultConfig())
+
+	play := playByKey(t, got, oneHopKey(scarabID, chaosID, divineID))
+	wantPairs := []struct {
+		itemQty  int64
+		quoteQty int64
+	}{
+		{itemQty: 1, quoteQty: 10},
+		{itemQty: 10, quoteQty: 1},
+		{itemQty: 1, quoteQty: 200},
+	}
+	if len(play.Legs) != len(wantPairs) {
+		t.Fatalf("got %d legs, want %d", len(play.Legs), len(wantPairs))
+	}
+	for i, want := range wantPairs {
+		leg := play.Legs[i]
+		if leg.PriceItemQty != want.itemQty || leg.PriceQuoteQty != want.quoteQty {
+			t.Errorf("leg %d (%s %s in %s at %v) pair = %d for %d, want %d for %d",
+				i, leg.Action, leg.Item, leg.Quote, leg.Price,
+				leg.PriceItemQty, leg.PriceQuoteQty, want.itemQty, want.quoteQty)
+		}
+	}
+}
+
+func TestBestPlays_everyServedLeg_pairDividesExactlyIntoItsPrice(t *testing.T) {
+	// The wire invariant the desktop leans on: Ratio(PriceQuoteQty,
+	// PriceItemQty) == Price, to the bit, on every leg of every shape. It is
+	// what lets a client render the pair and rank on the float without the two
+	// ever disagreeing — and it is the assertion that would catch Price drifting
+	// to the undercut number while the pair stayed raw.
+	//
+	// The window carries both shapes and eight legs in total; a run that served
+	// nothing would pass an empty loop, so non-emptiness is asserted too.
+	rows := storedAt(feedHour, append(triangleRows(liquidTriangle()), fractionalScarabMarket().row())...)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	legs := 0
+	for _, play := range got.Plays {
+		for i, leg := range play.Legs {
+			legs++
+			want, ok := Ratio(leg.PriceQuoteQty, leg.PriceItemQty)
+			if !ok {
+				t.Errorf("%s leg %d: pair %d/%d has no price", play.Key, i, leg.PriceQuoteQty, leg.PriceItemQty)
+				continue
+			}
+			if leg.Price != want {
+				t.Errorf("%s leg %d: Price %v != Ratio(%d, %d) = %v",
+					play.Key, i, leg.Price, leg.PriceQuoteQty, leg.PriceItemQty, want)
+			}
+		}
+	}
+	if legs == 0 {
+		t.Fatal("the window served no legs; the invariant was never checked")
+	}
+}
+
 func TestBestPlays_threeHours_fairIsTheNewestHoursVolumeWeightedPrice(t *testing.T) {
 	// Fair is where the hour's MASS traded (quote units / item units), which is
 	// what says whether a Price at the edge of the spread is opportunity or
@@ -739,7 +916,11 @@ func TestBestPlays_oneHopPlayWithOneSuspectLeg_isItselfSuspect(t *testing.T) {
 // anchor to compare against — so it is exercised one layer under the window,
 // with the turnover floor set to a zero that its zero turnover cannot fail.
 func unanchoredFlip() (candidate, Config) {
-	o := obs{low: 100, high: 120, vwap: 0, vwapOK: false, tick: 0.01, quoteVolume: 0, volume: 1000, stock: 200}
+	o := obs{
+		low:  pricePoint{price: 100, itemQty: 1, quoteQty: 100},
+		high: pricePoint{price: 120, itemQty: 1, quoteQty: 120},
+		vwap: 0, vwapOK: false, tick: 0.01, quoteVolume: 0, volume: 1000, stock: 200,
+	}
 	c := candidate{
 		key:  directKey(chaosID, cardID),
 		mode: ModeDirect,
@@ -2271,8 +2452,8 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 			Key:  directKey(chaosID, cardID),
 			Mode: ModeDirect,
 			Legs: []Leg{
-				{Action: "buy", Item: cardID, Quote: chaosID, Price: 100, Fair: 110, FairOK: true, Tick: 0.01, Volume: 1000, Stock: 500},
-				{Action: "sell", Item: cardID, Quote: chaosID, Price: 200, Fair: 110, FairOK: true, Tick: 0.01, Volume: 1000, Stock: 500, Suspect: true},
+				{Action: "buy", Item: cardID, Quote: chaosID, Price: 100, PriceItemQty: 1, PriceQuoteQty: 100, Fair: 110, FairOK: true, Tick: 0.01, Volume: 1000, Stock: 500},
+				{Action: "sell", Item: cardID, Quote: chaosID, Price: 200, PriceItemQty: 1, PriceQuoteQty: 200, Fair: 110, FairOK: true, Tick: 0.01, Volume: 1000, Stock: 500, Suspect: true},
 			},
 			RoiPct:     0.96,
 			Edge:       0.96,
@@ -2321,7 +2502,8 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 		t.Fatalf("decode legs: %v", err)
 	}
 	wantKeys(t, "leg", mustMarshal(t, legs[0]),
-		"action", "item", "quote", "price", "fair", "fairOk", "tick", "volume", "stock", "suspect")
+		"action", "item", "quote", "price", "priceItemQty", "priceQuoteQty",
+		"fair", "fairOk", "tick", "volume", "stock", "suspect")
 
 	if got := string(envelope.Plays[0]["mode"]); got != `"direct"` {
 		t.Errorf("mode = %s, want %q", got, "direct")

@@ -5,7 +5,10 @@ package exchange
 // It is the unit a Play is built from: evaluate prices one hour's legs straight
 // off these, so every number a Play shows traces back to ONE of them — the hour
 // Play.LastHour names. low and high are the hour's cheapest and
-// dearest realized price of the leg's item in its quote (priceIn); vwap is the
+// dearest realized price of the leg's item in its quote, each carrying the
+// integer quantity pair the feed posted it as (priceIn); a buy leg executes on
+// the low and a sell leg on the high, so which of the two a Play shows is read
+// from the leg's action and never from the market row again. vwap is the
 // price its traded mass actually cleared at (vwapIn), and vwapOK says whether
 // the hour had one at all — an hour whose quote side reported no volume carries
 // vwap 0, which is a missing reading rather than a price of zero, and evaluate
@@ -15,8 +18,8 @@ package exchange
 // are the hour's min and max of total book size and say nothing about the
 // extreme (corr <= 0.13 against the edge), so nothing scores on them.
 type obs struct {
-	low         float64
-	high        float64
+	low         pricePoint
+	high        pricePoint
 	vwap        float64
 	vwapOK      bool
 	tick        float64
@@ -85,7 +88,7 @@ func directCandidates(rows []Row, cfg Config) []candidate {
 			key:  "direct:" + r.MarketID,
 			mode: ModeDirect,
 			legs: []candidateLeg{buy, sell},
-			edge: buy.obs.high/buy.obs.low - 1,
+			edge: buy.obs.high.price/buy.obs.low.price - 1,
 		})
 	}
 	return candidates

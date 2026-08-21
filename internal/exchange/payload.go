@@ -21,7 +21,8 @@ type HourPayload struct {
 //
 // The ratio maps are quantity pairs, not prices: LowestRatio
 // {CurrencyRerollRare: 196, CurrencyModValues: 1} means 196 chaos buys 1 divine.
-// The unit side is whichever key carries the smaller quantity, never a fixed
+// Neither side is guaranteed to be a unit — the feed stores the reduced pair,
+// and (5, 43) is a real stored ratio — and which key is which is never a fixed
 // MarketPair position. Use Normalize or PriceOf rather than dividing here.
 type Market struct {
 	League       string           `json:"league"`

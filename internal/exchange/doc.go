@@ -61,7 +61,8 @@
 //
 // What one hour observes about one leg (the obs struct in direct.go, filled by
 // gatedLeg): the hour's cheapest and dearest realized price of the item in its
-// quote (priceIn); the volume-weighted average price the hour's mass actually
+// quote, each carrying the integer quantity pair the feed posted it as
+// (priceIn); the volume-weighted average price the hour's mass actually
 // cleared at, quote units traded divided by item units traded (vwapIn); the
 // market's price resolution (tickOf — the feed quotes each side as a reduced
 // integer quantity pair, so the smallest representable step on a pair (a, b) is
@@ -98,7 +99,12 @@
 //
 // A Play's legs are that one hour's observation, unaveraged. Price is the hour's
 // LOW on a buy leg and its HIGH on a sell leg — a market maker posts at the
-// edges, and the extreme is the executable recipe. Fair is the hour's VWAP, with
+// edges, and the extreme is the executable recipe. PriceItemQty and
+// PriceQuoteQty are that same price as the feed posted it, the reduced integer
+// pair with Ratio(PriceQuoteQty, PriceItemQty) == Price exactly, oriented to the
+// leg so PriceItemQty counts Item and PriceQuoteQty counts Quote whichever side
+// of the row's A/B they came from — a buy leg carries the LOW's pair and a sell
+// leg the HIGH's, and flipping Config.QuotePriority transposes both. Fair is the hour's VWAP, with
 // FairOK saying whether the hour had one at all: an hour whose quote side
 // reported no volume carries Fair 0, which means "no anchor" and not "free".
 // Tick, Volume and Stock are the same hour's. Stock is liveness and nothing else:
@@ -110,6 +116,11 @@
 // every leg is undercut by one of its OWN ticks inside the arithmetic — buy at
 // Price*(1+Tick), sell at Price*(1-Tick) — while the leg keeps the raw number, so
 // the reader can check it against the game and rebuild the undercut from Tick.
+// The pair IS that check: the game's Currency Exchange posts whole quantities on
+// both sides and nothing else, so PriceItemQty/PriceQuoteQty are literally the
+// order the market printed — "sell 4 for 1 div" from itemQty 4 and quoteQty 1 —
+// while the per-unit 0.25 divine Price divides out to is a price no player can
+// enter. A client renders the pair and ranks on Price.
 // The play-level numbers are arithmetic over those legs, which is what makes a
 // Play reproducible from what it shows:
 //
@@ -427,7 +438,10 @@
 //     columns: the fifteen persisted Row fields plus the league and the hour.
 //     Row.LowestPriceBInA and Row.HighestPriceBInA are NOT stored, because
 //     consumers derive them with Ratio and a stored float would be a second
-//     source of truth.
+//     source of truth. The four quantity columns that survive instead —
+//     lowest_ratio_a/b and highest_ratio_a/b — are what a leg's
+//     priceItemQty/priceQuoteQty are read off, so the pair a client renders is
+//     the feed's own posting rather than anything this server computed.
 //   - currency_exchange_cursor — one row per league holding next_hour, the unix
 //     hour the runner fetches next.
 //
@@ -544,7 +558,8 @@
 // lastHour and the simulation's four — expectedRoi, expectedRoiPct, simEntries
 // and lowCoverage, the ranking's own key and the only fields a client cannot
 // recheck from the row, expectedRoi being signed; each leg action, item, quote,
-// price, fair, fairOk, tick, volume, stock and suspect. Every served body also
+// price, priceItemQty, priceQuoteQty, fair, fairOk, tick, volume, stock and
+// suspect. Every served body also
 // carries categories, the sidebar's sixteen in sidebar order — the whole
 // taxonomy, independent of the plays in this one, so the client's filter is not
 // a function of the ranking.

@@ -39,6 +39,11 @@ const (
 // how far apart two representable prices are on this market, as a fraction, so a
 // client can rebuild the undercut price: Price*(1+Tick) to buy, Price*(1-Tick)
 // to sell.
+//
+// PriceItemQty and PriceQuoteQty are that same price as the FEED posted it, and
+// they are what a client renders the order as: the game's Currency Exchange
+// trades whole quantities on both sides, so a leg reads "sell 4 for 1 div" and
+// never "sell at 0.25 div".
 type Leg struct {
 	// Action is "buy" or "sell", from the player's point of view.
 	Action string `json:"action"`
@@ -50,6 +55,33 @@ type Leg struct {
 	// Price is Quote units per one Item: the hour's low on a buy leg, the
 	// hour's high on a sell leg. Raw, not undercut.
 	Price float64 `json:"price"`
+	// PriceItemQty and PriceQuoteQty are Price as the in-game Currency Exchange
+	// would post it: the integer quantity pair behind the extreme this leg
+	// executes on, such that Ratio(PriceQuoteQty, PriceItemQty) == Price
+	// exactly. A leg with PriceItemQty 4 and PriceQuoteQty 1 quoted in divine
+	// renders as "sell 4 for 1 div"; the per-unit 0.25 divine it divides out to
+	// is not a price the game can express, which is why the pair travels beside
+	// Price rather than being left for the client to reconstruct.
+	//
+	// It is the pair the hour's extreme PRINTED at, for checking against the
+	// game — the undercut order a player should actually post sits one quantity
+	// step tighter and is not served; RoiPct already paid for that step.
+	//
+	// They are oriented to the LEG, not to the raw market row: PriceItemQty
+	// counts units of Item and PriceQuoteQty units of Quote, whichever side of
+	// the feed's A/B those turn out to be. Changing Config.QuotePriority
+	// therefore swaps the two along with Item and Quote themselves.
+	//
+	// The pair is the feed's own and is not reduced again here — the feed
+	// publishes it reduced (measured: 0 of 91,520 stored priced market-hours
+	// carried a common factor) and tickOf has read it that way since POE-184.
+	// See pricePoint in pricing.go.
+	//
+	// A buy leg carries the pair behind the hour's LOW and a sell leg the pair
+	// behind its HIGH, so a direct flip's two legs quote the same market with
+	// different pairs.
+	PriceItemQty  int64 `json:"priceItemQty"`
+	PriceQuoteQty int64 `json:"priceQuoteQty"`
 	// Fair is the hour's volume-weighted average price of one Item in Quote
 	// units — where the hour's mass traded, between the two extremes. It is 0
 	// when the hour's quote side reported no volume, which is a missing reading
@@ -854,31 +886,36 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 	for i, recipe := range c.legs {
 		o := recipe.obs
 
-		price, legSuspect, filled := o.low, false, o.low*(1+o.tick)
+		// The side of the spread the leg executes on decides BOTH the price and
+		// the quantity pair it was posted as: they travel together out of
+		// priceIn precisely so this choice cannot be made twice and disagree.
+		point, legSuspect, filled := o.low, false, o.low.price*(1+o.tick)
 		if recipe.action == "sell" {
-			price, filled = o.high, o.high*(1-o.tick)
+			point, filled = o.high, o.high.price*(1-o.tick)
 		}
 		if o.vwapOK {
 			if recipe.action == "sell" {
-				legSuspect = o.high > o.vwap*cfg.SuspectHighBand
+				legSuspect = o.high.price > o.vwap*cfg.SuspectHighBand
 			} else {
-				legSuspect = o.low < o.vwap*cfg.SuspectLowBand
+				legSuspect = o.low.price < o.vwap*cfg.SuspectLowBand
 			}
 		}
 
 		legs[i] = Leg{
-			Action:  recipe.action,
-			Item:    recipe.item,
-			Quote:   recipe.quote,
-			Price:   price,
-			Fair:    o.vwap,
-			FairOK:  o.vwapOK,
-			Tick:    o.tick,
-			Volume:  o.volume,
-			Stock:   o.stock,
-			Suspect: legSuspect,
+			Action:        recipe.action,
+			Item:          recipe.item,
+			Quote:         recipe.quote,
+			Price:         point.price,
+			PriceItemQty:  point.itemQty,
+			PriceQuoteQty: point.quoteQty,
+			Fair:          o.vwap,
+			FairOK:        o.vwapOK,
+			Tick:          o.tick,
+			Volume:        o.volume,
+			Stock:         o.stock,
+			Suspect:       legSuspect,
 		}
-		raw[i], undercut[i] = price, filled
+		raw[i], undercut[i] = point.price, filled
 		suspect = suspect || legSuspect
 
 		rate := chaosPerUnit(recipe.quote, hourRate)
