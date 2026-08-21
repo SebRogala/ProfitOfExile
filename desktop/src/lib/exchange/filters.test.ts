@@ -47,7 +47,17 @@ function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg 
 	};
 }
 
-/** A ranked play over one leg. */
+/**
+ * A ranked play over one leg.
+ *
+ * The optimistic pair (`roi`/`roiPct`) and the simulated pair
+ * (`expectedRoi`/`expectedRoiPct`) carry deliberately DIFFERENT values, and the
+ * expectation is the smaller of the two, as the calibration found it to be
+ * (POE-193). Every gate in this file judges the optimistic pair, so a gate case
+ * that overrides `roi` or `roiPct` leaves an expectation that would answer the
+ * same gate differently — which is what makes those cases able to fail if a
+ * gate is ever re-pointed at the measured number.
+ */
 function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
 	return {
 		key: 'direct:divine:chaos',
@@ -58,6 +68,10 @@ function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePl
 		roiPctRaw: 0.08,
 		roi: 10,
 		investment: 200,
+		expectedRoi: 4,
+		expectedRoiPct: 0.015,
+		simEntries: 22,
+		lowCoverage: false,
 		turnover: 5000,
 		tick: 0.005,
 		depth: 40,
@@ -510,6 +524,26 @@ describe('applyGates', () => {
 		expect(keys(applyGates([clean], gateDefaults))).toEqual(['clean']);
 	});
 
+	it('keeps a play the simulation expects to lose chaos when its optimistic numbers clear the gates', () => {
+		// The gates judge the OPTIMISTIC pair on purpose (POE-193): these five
+		// defaults are the server's old ones and were calibrated against `roi` and
+		// `roiPct`, so re-pointing any of them at the expectation would change what
+		// an untouched knob filters. The measured loser stays on the table and is
+		// ranked and coloured for what it is — serve and flag (ADR-016), not a
+		// sixth hidden gate.
+		const measuredLoss = play({
+			key: 'measured-loss',
+			roi: 10,
+			turnover: 20000,
+			tick: 0.005,
+			roiPct: 0.05,
+			expectedRoi: -6,
+			expectedRoiPct: -0.03
+		});
+
+		expect(keys(applyGates([measuredLoss], gateDefaults))).toEqual(['measured-loss']);
+	});
+
 	it('drops a cheap thin play under the default gates', () => {
 		expect(keys(applyGates([clean, fragment], gateDefaults))).toEqual(['clean']);
 	});
@@ -614,16 +648,27 @@ describe('applyGates', () => {
 });
 
 describe('applyNumericFilters', () => {
-	// 100c an exchange gaining 10c: ten flips clear the 100c scale target, so the
-	// bounds are asked about 1,000c — never about the 100c one exchange costs.
-	const cheap = play({ key: 'cheap', investment: 100, roi: 10, roiPct: 0.1 });
-	// Dearer at the same return per exchange: ten flips of 250c tie up 2,500c.
-	const dear = play({ key: 'dear', investment: 250, roi: 10, roiPct: 0.1 });
+	// 100c an exchange EXPECTED to pay 10c: ten flips clear the 100c scale
+	// target, so the bounds are asked about 1,000c — never about the 100c one
+	// exchange costs. The optimistic `roi` is deliberately 25c, which would
+	// divide the target into four flips and 400c instead: the scale counts the
+	// expectation (POE-193), and these bounds meet whatever it counts.
+	const cheap = play({ key: 'cheap', investment: 100, roi: 25, roiPct: 0.25, expectedRoi: 10 });
+	// Dearer at the same expectation per exchange: ten flips of 250c tie up
+	// 2,500c.
+	const dear = play({ key: 'dear', investment: 250, roi: 25, roiPct: 0.1, expectedRoi: 10 });
 
 	it('keeps every play when no bound is typed', () => {
 		// The losing play stays: the return floor is a gate now (POE-191), and
 		// nothing in this pass looks at `roiPct` at all.
-		const loss = play({ key: 'loss', investment: 0, roi: -5, roiPct: -0.5 });
+		const loss = play({
+			key: 'loss',
+			investment: 0,
+			roi: -5,
+			roiPct: -0.5,
+			expectedRoi: -9,
+			expectedRoiPct: -0.4
+		});
 
 		expect(keys(applyNumericFilters([cheap, loss], filters()))).toEqual(['cheap', 'loss']);
 	});
@@ -699,18 +744,23 @@ describe('applyNumericFilters', () => {
 	});
 
 	it('measures a play with no derivable scale against one exchange', () => {
-		// A play that gains nothing never reaches the target, so there is no scaled
-		// figure to compare — what it demonstrably ties up is the one exchange.
-		// (The server's positivity floor means no served play is shaped this way.)
-		const flat = play({ key: 'flat', investment: 100, roi: 0 });
+		// A play the simulation expects nothing from never reaches the target, so
+		// there is no scaled figure to compare — what it demonstrably ties up is
+		// the one exchange. Since POE-193 the table really carries such rows: the
+		// server's positivity floor governs `roi`, which is why this fixture's is
+		// healthy, while the measured expectation is free to come out negative and
+		// the play is served anyway (ADR-016).
+		const measuredLoss = play({ key: 'measured-loss', investment: 100, roi: 25, expectedRoi: -3 });
 
-		expect(keys(applyNumericFilters([flat], filters({ investMax: '100' })))).toEqual(['flat']);
+		expect(keys(applyNumericFilters([measuredLoss], filters({ investMax: '100' })))).toEqual([
+			'measured-loss'
+		]);
 	});
 
 	it('drops a play with no derivable scale whose one exchange is over the ceiling', () => {
-		const flat = play({ key: 'flat', investment: 100, roi: 0 });
+		const measuredLoss = play({ key: 'measured-loss', investment: 100, roi: 25, expectedRoi: -3 });
 
-		expect(keys(applyNumericFilters([flat], filters({ investMax: '99' })))).toEqual([]);
+		expect(keys(applyNumericFilters([measuredLoss], filters({ investMax: '99' })))).toEqual([]);
 	});
 });
 

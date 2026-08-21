@@ -79,8 +79,26 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
 }
 
 /**
- * A clean, ranked play. `sortPlays` reads only `roi` and `suspect`, so every
- * sort case overrides one of those and the `key` it is identified by.
+ * A clean, ranked play whose OPTIMISTIC `roi` (10c) and measured `expectedRoi`
+ * (4c) deliberately differ, and differ from every value a case overrides.
+ *
+ * The two re-sorting branches read different fields — `'roi'` the optimistic
+ * one, `'fastest'` the expectation through `worthwhileScale` — so a case about
+ * one of them overrides that field only, and leaves the other at the factory
+ * value across the whole fixture. A production swap between the two then reads
+ * a column that says nothing about the row, and the answer stops being the one
+ * the test asked for.
+ *
+ * The `'expected'` cases INVERT that idiom, and deliberately: that branch sorts
+ * by nothing at all, so a fixture tied on the untested field would let a
+ * mutation that lost the branch fall through to a comparator, tie, and hand
+ * back the served order anyway. Those cases vary both fields instead.
+ *
+ * `expectedRoiPct` is NOT `expectedRoi / investment` (4/200 would be 0.02): the
+ * wire's expectation pair carries no such identity — each is a mean over the
+ * simulated entries, each with its own chased outlay — unlike
+ * `roi === roiPct * investment`, which the optimistic pair does hold to
+ * (POE-193).
  */
 function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
 	return {
@@ -92,6 +110,10 @@ function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePl
 		roiPctRaw: 0.08,
 		roi: 10,
 		investment: 200,
+		expectedRoi: 4,
+		expectedRoiPct: 0.015,
+		simEntries: 22,
+		lowCoverage: false,
 		turnover: 5000,
 		tick: 0.005,
 		depth: 40,
@@ -171,8 +193,8 @@ describe('HORIZON_OPTIONS', () => {
 });
 
 describe('parseSort', () => {
-	it('passes "roiPct" through', () => {
-		expect(parseSort('roiPct')).toBe('roiPct');
+	it('passes "expected" through', () => {
+		expect(parseSort('expected')).toBe('expected');
 	});
 
 	it('passes "roi" through', () => {
@@ -185,26 +207,34 @@ describe('parseSort', () => {
 
 	it('reads a stored "fill" as the fastest order rather than dropping to the default', () => {
 		// The Fill order was renamed, not removed (POE-192): a reader who left the
-		// picker on it asked for the shortest wait, and falling back to ROI% would
-		// silently re-rank their table on the next launch.
+		// picker on it asked for the shortest wait, and falling back to the served
+		// order would silently re-rank their table on the next launch.
 		expect(parseSort('fill')).toBe('fastest');
 	});
 
-	it('falls back to "roiPct" for an unknown sort', () => {
-		expect(parseSort('turnover')).toBe('roiPct');
+	it('reads a stored "roiPct" as the served order rather than dropping to the default', () => {
+		// The same forward mapping for the other renamed pick (POE-193): that name
+		// meant "the list as the server ranked it", and the server now ranks on
+		// `expectedRoi`. Falling back would land on the same order by accident
+		// today and stop doing so the moment the default moves.
+		expect(parseSort('roiPct')).toBe('expected');
 	});
 
-	it('falls back to "roiPct" for an unset preference', () => {
+	it('falls back to "expected" for an unknown sort', () => {
+		expect(parseSort('turnover')).toBe('expected');
+	});
+
+	it('falls back to "expected" for an unset preference', () => {
 		// The server's own ranking is the default order, so an unset preference
-		// leaves the list exactly as served.
-		expect(parseSort('')).toBe('roiPct');
+		// leaves the list exactly as served — tie-breaks included.
+		expect(parseSort('')).toBe('expected');
 	});
 });
 
 describe('SORT_OPTIONS', () => {
 	it('offers the three orders the table can be read in, labelled, in picker order', () => {
 		expect(SORT_OPTIONS).toEqual([
-			{ value: 'roiPct', label: 'ROI%' },
+			{ value: 'expected', label: 'Exp. ROI' },
 			{ value: 'roi', label: 'ROI' },
 			{ value: 'fastest', label: 'Fastest' }
 		]);
@@ -469,16 +499,23 @@ describe('sortPlays', () => {
 		return plays.map((p) => p.key);
 	}
 
-	it('leaves the server ranking untouched under the ROI% sort', () => {
-		// The served order already carries roiPct desc plus turnover, direct-first
-		// and key tie-breaks; re-sorting on roiPct alone would discard them.
+	it('leaves the server ranking untouched under the Exp. ROI sort', () => {
+		// The served order already carries the low-coverage band and expectedRoi
+		// desc plus turnover, direct-first and key tie-breaks (POE-193);
+		// re-sorting on expectedRoi alone would discard them.
+		//
+		// BOTH money fields vary, and out of order in the same direction, because
+		// this case has two ways to go wrong and a tie would hide one of them:
+		// re-sorting on expectedRoi desc answers b,c,a, and losing the branch
+		// entirely — falling through to the roi comparator — answers b,c,a as
+		// well. Either way the served order is gone.
 		const served = [
-			play({ key: 'a', roi: 5 }),
-			play({ key: 'b', roi: 500 }),
-			play({ key: 'c', roi: 50 })
+			play({ key: 'a', roi: 5, expectedRoi: 2 }),
+			play({ key: 'b', roi: 500, expectedRoi: 50 }),
+			play({ key: 'c', roi: 50, expectedRoi: 20 })
 		];
 
-		expect(keys(sortPlays(served, 'roiPct'))).toEqual(['a', 'b', 'c']);
+		expect(keys(sortPlays(served, 'expected'))).toEqual(['a', 'b', 'c']);
 	});
 
 	it('orders by chaos gained per exchange under the ROI sort', () => {
@@ -515,8 +552,8 @@ describe('sortPlays', () => {
 
 	it('sorts into a new array rather than reordering the fetched list', () => {
 		// The page holds the fetched list in reactive state and re-derives the sort
-		// from it; an in-place sort would make the ROI% option unable to restore
-		// the server ranking without a refetch.
+		// from it; an in-place sort would make the Exp. ROI option unable to
+		// restore the server ranking without a refetch.
 		const served = [play({ key: 'a', roi: 5 }), play({ key: 'b', roi: 500 })];
 
 		sortPlays(served, 'roi');
@@ -524,13 +561,20 @@ describe('sortPlays', () => {
 		expect(keys(served)).toEqual(['a', 'b']);
 	});
 
-	it("hands out a copy under the ROI% sort too, never the caller's own array", () => {
-		// The ROI% branch keeps the served order but must not alias the
+	it("hands out a copy under the Exp. ROI sort too, never the caller's own array", () => {
+		// The Exp. ROI branch keeps the served order but must not alias the
 		// response's array: the page mutating the sorted list (or Svelte state
 		// wrapping it) would otherwise write through to the fetched result.
-		const served = [play({ key: 'a' }), play({ key: 'b' })];
+		//
+		// Both fields vary for the reason the order case above gives — the copy
+		// has to be a copy of the SERVED list, and a tied fixture would let a
+		// lost branch return a re-sorted array that happens to read the same.
+		const served = [
+			play({ key: 'a', roi: 5, expectedRoi: 2 }),
+			play({ key: 'b', roi: 500, expectedRoi: 50 })
+		];
 
-		const sorted = sortPlays(served, 'roiPct');
+		const sorted = sortPlays(served, 'expected');
 
 		expect(sorted).not.toBe(served);
 		expect(keys(sorted)).toEqual(['a', 'b']);
@@ -540,10 +584,17 @@ describe('sortPlays', () => {
 		// Ascending, not descending: the question the Scale column answers is how
 		// long the worthwhile size waits, and the shortest wait is the best row.
 		// 100 flips at 10/h is 10 hours; 10 flips at 5/h is 2; 10 at 4000/h is 1.
+		//
+		// The scale is counted off the EXPECTATION (POE-193), so that is the field
+		// each row varies; every one of them keeps the fixture's single `roi`, at
+		// which the target divides into ten flips for all three alike. A scale
+		// counted off that number would leave only `depth` to tell the rows apart
+		// and answer slow, fast, middling — the thin book first, because ten flips
+		// at 10/h and ten at 4000/h both round up to the same single hour.
 		const served = [
-			play({ key: 'slow', roi: 1, depth: 10 }),
-			play({ key: 'fast', roi: 10, depth: 4000 }),
-			play({ key: 'middling', roi: 10, depth: 5 })
+			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
+			play({ key: 'fast', expectedRoi: 10, depth: 4000 }),
+			play({ key: 'middling', expectedRoi: 10, depth: 5 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'middling', 'slow']);
@@ -554,21 +605,22 @@ describe('sortPlays', () => {
 		// the front would put the least-known row at the top of the list.
 		const served = [
 			play({ key: 'unreadable', depth: 0 }),
-			play({ key: 'slow', roi: 1, depth: 10 }),
-			play({ key: 'fast', roi: 10, depth: 4000 })
+			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
+			play({ key: 'fast', expectedRoi: 10, depth: 4000 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'slow', 'unreadable']);
 	});
 
 	it('puts a play with no worthwhile scale last under the Fastest sort', () => {
-		// A play that gains nothing per exchange never reaches the target, so it
-		// has no wait to compare — the same "unknown, not instant" reading a dead
-		// depth gets, and the branch a scale-less play would otherwise sort by NaN.
+		// A play the simulation expects nothing from never reaches the target, so
+		// it has no wait to compare — the same "unknown, not instant" reading a
+		// dead depth gets, and the branch a scale-less play would otherwise sort
+		// by NaN. Since POE-193 this is a row the server really serves.
 		const served = [
-			play({ key: 'no-scale', roi: 0, depth: 4000 }),
-			play({ key: 'slow', roi: 1, depth: 10 }),
-			play({ key: 'fast', roi: 10, depth: 4000 })
+			play({ key: 'no-scale', expectedRoi: 0, depth: 4000 }),
+			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
+			play({ key: 'fast', expectedRoi: 10, depth: 4000 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['fast', 'slow', 'no-scale']);
@@ -580,7 +632,7 @@ describe('sortPlays', () => {
 		// the lie in any order it likes.
 		const served = [
 			play({ key: 'first-unknown', depth: 0 }),
-			play({ key: 'second-unknown', roi: 0, depth: 4000 })
+			play({ key: 'second-unknown', expectedRoi: 0, depth: 4000 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first-unknown', 'second-unknown']);
@@ -590,7 +642,7 @@ describe('sortPlays', () => {
 		// The suspect partition outranks the null-last rule: a clean unknown is
 		// still a clean row, and the flag is the reason a suspect play sits last.
 		const served = [
-			play({ key: 'suspect-fast', roi: 100, depth: 100_000, suspect: true }),
+			play({ key: 'suspect-fast', expectedRoi: 100, depth: 100_000, suspect: true }),
 			play({ key: 'clean-unreadable', depth: 0 })
 		];
 
@@ -599,9 +651,9 @@ describe('sortPlays', () => {
 
 	it('keeps a suspect play behind every clean one under the Fastest sort, however fast it absorbs', () => {
 		const served = [
-			play({ key: 'clean-slow', roi: 1, depth: 10 }),
-			play({ key: 'suspect-instant', roi: 100, depth: 100_000, suspect: true }),
-			play({ key: 'clean-quick', roi: 10, depth: 900 })
+			play({ key: 'clean-slow', expectedRoi: 1, depth: 10 }),
+			play({ key: 'suspect-instant', expectedRoi: 100, depth: 100_000, suspect: true }),
+			play({ key: 'clean-quick', expectedRoi: 10, depth: 900 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual([
@@ -616,8 +668,8 @@ describe('sortPlays', () => {
 		// deeper book does NOT out-sort the thinner one, it keeps the server's
 		// remaining tie-breaks.
 		const served = [
-			play({ key: 'first', roi: 10, depth: 900 }),
-			play({ key: 'second', roi: 10, depth: 4000 })
+			play({ key: 'first', expectedRoi: 10, depth: 900 }),
+			play({ key: 'second', expectedRoi: 10, depth: 4000 })
 		];
 
 		expect(keys(sortPlays(served, 'fastest'))).toEqual(['first', 'second']);
@@ -625,8 +677,8 @@ describe('sortPlays', () => {
 
 	it('sorts into a new array under the Fastest sort as well', () => {
 		const served = [
-			play({ key: 'slow', roi: 1, depth: 10 }),
-			play({ key: 'fast', roi: 10, depth: 4000 })
+			play({ key: 'slow', expectedRoi: 1, depth: 10 }),
+			play({ key: 'fast', expectedRoi: 10, depth: 4000 })
 		];
 
 		sortPlays(served, 'fastest');
@@ -809,43 +861,50 @@ describe('hoursProgress', () => {
 describe('worthwhileScale', () => {
 	// Every case is stated against the 100c target the constant carries, so a
 	// change to that constant fails these tests rather than passing silently.
+	//
+	// The step the target is divided by is the EXPECTATION (POE-193), never the
+	// optimistic `roi` this used to read — so every case below, bar the last,
+	// leaves `roi` at the fixture's 10c, which divides the target into 10 flips
+	// and is therefore an answer none of the expectations here produce. The last
+	// case is the one that needs a `roi` of its own, and says why.
 
 	it('rounds the flip count up to the exchange that actually clears the target', () => {
 		// 100 ÷ 3 is 33.3 exchanges, and 33 of them pay 99c — a chaos short.
-		expect(worthwhileScale(play({ roi: 3 }))?.flips).toBe(34);
+		expect(worthwhileScale(play({ expectedRoi: 3 }))?.flips).toBe(34);
 	});
 
-	it('adds no extra flip to a return that divides the target exactly', () => {
-		// Four exchanges at 25c pay exactly 100c, so the fifth is not needed.
-		expect(worthwhileScale(play({ roi: 25 }))?.flips).toBe(4);
+	it('adds no extra flip to an expectation that divides the target exactly', () => {
+		// Four exchanges expected to pay 25c clear exactly 100c, so the fifth is
+		// not needed.
+		expect(worthwhileScale(play({ expectedRoi: 25 }))?.flips).toBe(4);
 	});
 
-	it('reports a single flip for a play that clears the target on its own', () => {
-		expect(worthwhileScale(play({ roi: 150 }))?.flips).toBe(1);
+	it('reports a single flip for a play expected to clear the target on its own', () => {
+		expect(worthwhileScale(play({ expectedRoi: 150 }))?.flips).toBe(1);
 	});
 
-	it('reports the chaos those flips actually pay, not the target', () => {
+	it('reports the chaos those flips are expected to pay, not the target', () => {
 		// 34 exchanges at 3c overshoot to 102c; reporting the flat 100c would put a
 		// number on screen the play does not pay.
-		expect(worthwhileScale(play({ roi: 3 }))?.gain).toBe(102);
+		expect(worthwhileScale(play({ expectedRoi: 3 }))?.gain).toBe(102);
 	});
 
 	it('reports the chaos the flips tie up, not the cost of one exchange', () => {
-		expect(worthwhileScale(play({ roi: 3, investment: 40 }))?.investment).toBe(1360);
+		expect(worthwhileScale(play({ expectedRoi: 3, investment: 40 }))?.investment).toBe(1360);
 	});
 
 	it('rounds the hours the market needs to absorb the flips up to a whole hour', () => {
 		// 200 flips against 30 units an hour is 6.7 hours of trading, which is a
 		// seventh hour the reader spends, not a sixth.
-		expect(worthwhileScale(play({ roi: 0.5, depth: 30 }))?.hours).toBe(7);
+		expect(worthwhileScale(play({ expectedRoi: 0.5, depth: 30 }))?.hours).toBe(7);
 	});
 
 	it('reports exactly one hour for a scale the hourly volume covers whole', () => {
-		expect(worthwhileScale(play({ roi: 25, depth: 4 }))?.hours).toBe(1);
+		expect(worthwhileScale(play({ expectedRoi: 25, depth: 4 }))?.hours).toBe(1);
 	});
 
 	it('reports a second hour for a scale one flip past what the hour covers', () => {
-		expect(worthwhileScale(play({ roi: 25, depth: 3 }))?.hours).toBe(2);
+		expect(worthwhileScale(play({ expectedRoi: 25, depth: 3 }))?.hours).toBe(2);
 	});
 
 	it('reports no hours for a play whose thinnest leg traded nothing', () => {
@@ -865,21 +924,31 @@ describe('worthwhileScale', () => {
 	it('still reports the scale for a play whose depth cannot be read', () => {
 		// The flip count and what it ties up are known whatever the book did last
 		// hour; only the wait is missing, so the row keeps its "×N → +Gc".
-		expect(worthwhileScale(play({ roi: 25, depth: 0 }))?.flips).toBe(4);
+		expect(worthwhileScale(play({ expectedRoi: 25, depth: 0 }))?.flips).toBe(4);
 	});
 
-	it('reports no scale for a play that gains nothing per exchange', () => {
+	it('reports no scale for a play the simulation expects to gain nothing', () => {
 		// No repeat count reaches a positive target from a zero step, and dividing
 		// would answer Infinity flips.
-		expect(worthwhileScale(play({ roi: 0 }))).toBeNull();
+		expect(worthwhileScale(play({ expectedRoi: 0 }))).toBeNull();
 	});
 
-	it('reports no scale for a play that loses chaos per exchange', () => {
-		expect(worthwhileScale(play({ roi: -5 }))).toBeNull();
+	it('reports no scale for a play the simulation expects to lose chaos', () => {
+		expect(worthwhileScale(play({ expectedRoi: -5 }))).toBeNull();
 	});
 
-	it('reports no scale for a non-finite return', () => {
-		expect(worthwhileScale(play({ roi: Number.NaN }))).toBeNull();
+	it('reports no scale for a non-finite expectation', () => {
+		expect(worthwhileScale(play({ expectedRoi: Number.NaN }))).toBeNull();
+	});
+
+	it('reports no scale for a measured loser however large its optimistic return', () => {
+		// The row POE-193 put on the table and the old `roi` reading could not
+		// express: the server's positivity floor (ADR-015) still keeps `roi` above
+		// zero, and the simulation is free to measure a loss anyway — so a play can
+		// carry the table's biggest ROI and no scale at all. Counting the
+		// optimistic 500c would answer ×1 rather than the dash the column owes a
+		// play with nothing to repeat toward.
+		expect(worthwhileScale(play({ roi: 500, roiPct: 2.5, expectedRoi: -6 }))).toBeNull();
 	});
 });
 
