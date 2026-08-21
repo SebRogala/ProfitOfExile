@@ -340,7 +340,7 @@ export interface CurrencyExchangeLeg {
  * UNDERCUT prices (0.123 = 12.3%), each leg paying one of its own ticks to be
  * the order that fills. Measured over 960 top-20 play-hours it overstates what
  * the play realized by 4-8x, which is why it no longer ranks anything — but it
- * is still what the client's quality gates judge, because those defaults were
+ * is still what the client's quality gates judge, because those levels were
  * calibrated against it (ADR-015). `roiPctRaw` is the same round trip at the
  * raw extremes the legs show — never below `roiPct`, and the gap between the
  * two is what the ticks cost. `roi` is chaos gained per exchange of one unit

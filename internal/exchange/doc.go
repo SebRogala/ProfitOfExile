@@ -242,9 +242,12 @@
 // the server serves everything sane and the QUALITY judgement is the client's:
 // the desktop carries the four levels this package used to enforce (10,000
 // chaos/hour of turnover, a tick no coarser than 10%, an edge at least 5 steps
-// wide, 3 chaos per exchanged unit) as user-editable knobs whose defaults are
-// exactly those numbers, so the out-of-the-box view is unchanged while a reader
-// who wants cheap fragments or 1-hop triangles can have them without a redeploy.
+// wide, 3 chaos per exchanged unit) as user-editable knobs. POE-191 shipped
+// those knobs armed at exactly those numbers; POE-193 ships them OFF and keeps
+// the levels as a documented recommendation, so the out-of-the-box view is now
+// everything this package serves and the reader tightens from there rather than
+// loosening. Either way a reader who wants cheap fragments or 1-hop triangles
+// can have them without a redeploy.
 // What stays server-side is what is not a matter of taste: liveness
 // (MinVolumePerHour), persistence (MinHoursSeen), positivity (MinEdge, the
 // sanity floor), the suspect flag, and MaxPlays (500) as a payload guard rather
@@ -282,9 +285,11 @@
 // a play's percentage is that hour's OPTIMISTIC reading of that hour. What bounds
 // the fiction is the undercut the percentages are charged, Fair standing beside
 // every price, Suspect when an extreme is too far from Fair to be repeatable, and
-// — at their defaults — the client's tick knobs (the server's own tick gates are
-// off since POE-191). No PRICE is synthesized across hours: every price-shaped
-// number belongs to the single hour LastHour names. The two that are not prices
+// — when the reader arms them — the client's tick knobs (the server's own tick
+// gates are off since POE-191, and the client's ship off since POE-193, so an
+// untouched install is bounded by the first three and the ranking's simulated
+// expectation rather than by a tick cap). No PRICE is synthesized across hours:
+// every price-shaped number belongs to the single hour LastHour names. The two that are not prices
 // say so — HoursSeen is a count and ExpectedRoi a simulated expectation — and
 // the second exists precisely because the first sentence of this paragraph is
 // true.

@@ -9,12 +9,13 @@
 	 * on their face when the two layers disagree, because a chip that reads "Only"
 	 * inside a hidden category otherwise looks like a rule that is not working.
 	 *
-	 * The GATES row (POE-191) is the odd one out and is labelled as such: its five
-	 * knobs are DEFAULT-ON, so an empty box is the old server floor still running
-	 * while every other empty box on this bar is a filter that is off. That is
-	 * also why it collapses shut by default and badges itself with how many knobs
-	 * the reader has moved — a row nobody opens still hides rows, and the badge is
-	 * the only thing on screen that says so.
+	 * The GATES row (POE-191) ships collapsed and, since POE-193, ships OFF: every
+	 * empty box on this bar now reads the same way, as a filter that is not
+	 * running, and the table out of the box is everything the server served. The
+	 * row still badges how many knobs the reader has ARMED — a row nobody opens
+	 * still hides rows once a knob is set, and the badge is the only thing on
+	 * screen that says so. The old server levels are a recommendation each knob's
+	 * tooltip names, never a state the reader inherits.
 	 *
 	 * The search box sits beside the counter on the last row because the two read
 	 * as one sentence — what the reader is looking for, and how much of the table
@@ -112,11 +113,12 @@
 		 * counted AFTER the search, which is one of the things hiding rows.
 		 *
 		 * The gates are counted apart from everything else because they are the one
-		 * filter that runs without the reader having set it: "hidden by filters"
-		 * over a bar with nothing visibly on reads as a bug, and the split is what
-		 * points at the row that would give those rows back. Everything else — the
-		 * pills, the chips, the investment bounds and the search — shares the other
-		 * figure.
+		 * filter whose controls are behind a collapsed row: the split is what points
+		 * at the row that would give those rows back, and a reader who has armed a
+		 * knob and forgotten it needs the count more than the pills need theirs.
+		 * Everything else — the pills, the chips, the investment bounds and the
+		 * search — shares the other figure. Since POE-193 the gates ship off, so
+		 * this figure is 0 until the reader arms something.
 		 */
 		counts: { shown: number; total: number; hiddenByGates: number; hiddenByFilters: number };
 		apiBase: string;
@@ -130,7 +132,10 @@
 		 * the key to a preference in one place instead of five one-line callbacks.
 		 */
 		ongate: (knob: keyof Gates, value: string) => void;
-		/** Puts all five knobs back to unset, which IS the default (`parseGate`). */
+		/**
+		 * Puts all five knobs back to unset, which IS the default (`parseGate`) and
+		 * since POE-193 means every gate off.
+		 */
 		ongatedefaults: () => void;
 		oninvestmin: (value: string) => void;
 		oninvestmax: (value: string) => void;
@@ -153,59 +158,59 @@
 	 * edge more than rounding, is the return enough. Labels double as the tooltip
 	 * keys so the two cannot drift apart.
 	 *
-	 * The placeholder is each knob's DEFAULT, which is the row's whole contract in
-	 * one glyph: an empty box is not an absent filter, it is that number.
+	 * The placeholder says what an EMPTY box does, which since POE-193 is nothing
+	 * — every gate ships off, and a placeholder showing a number would say the
+	 * opposite in the one glyph the reader is most likely to read. The level worth
+	 * typing is a suggestion rather than a state, so it sits in the tooltip beside
+	 * the reason to want it.
 	 */
 	const GATE_FIELDS: {
 		knob: keyof Gates;
 		label: string;
 		aria: string;
 		unit: string;
-		placeholder: string;
 	}[] = [
 		{
 			knob: 'minRoiChaos',
 			label: 'Min profit',
 			aria: 'Minimum profit in chaos per exchange',
-			unit: 'c each',
-			placeholder: String(gateDefaults.minRoiChaos)
+			unit: 'c each'
 		},
 		{
 			knob: 'minTurnover',
 			label: 'Min turnover',
 			aria: 'Minimum market turnover in chaos per hour',
-			unit: 'c/h',
-			placeholder: String(gateDefaults.minTurnover)
+			unit: 'c/h'
 		},
 		{
 			knob: 'maxTickPct',
 			label: 'Max price step',
 			aria: 'Maximum price step as a percent',
-			unit: '%',
-			placeholder: String(gateDefaults.maxTickPct)
+			unit: '%'
 		},
 		{
 			knob: 'minEdgeTickRatio',
 			label: 'Edge vs step',
 			aria: 'Minimum return as a multiple of the price step',
-			unit: '× step',
-			placeholder: String(gateDefaults.minEdgeTickRatio)
+			unit: '× step'
 		},
 		{
 			knob: 'minRoiPct',
 			label: 'Min return',
 			aria: 'Minimum return percent',
-			unit: '%',
-			placeholder: String(gateDefaults.minRoiPct)
+			unit: '%'
 		}
 	];
 
+	/** One spelling of "this box is doing nothing", shared by all five. */
+	const GATE_OFF_PLACEHOLDER = 'off';
+
 	let pickerOpen = $state(false);
 	/**
-	 * Shut on arrival. The gates run either way, so the row is a place to go when
-	 * the table is too thin or too noisy — not a wall of five numbers between the
-	 * reader and the table on every launch. Not persisted: it is where a control
-	 * is, not what it is set to.
+	 * Shut on arrival. An armed gate runs whether or not the row is open and the
+	 * badge says so, so the row is a place to go when the table is too noisy — not
+	 * a wall of five numbers between the reader and the table on every launch. Not
+	 * persisted: it is where a control is, not what it is set to.
 	 */
 	let gatesOpen = $state(false);
 	/**
@@ -237,9 +242,9 @@
 	}
 
 	/**
-	 * Which knobs the reader has moved, compared on the PARSED values rather than
-	 * on the strings: '', '3' and '3.0' are one gate at its default, and a badge
-	 * counting text would call two of them a change.
+	 * Which knobs the reader has ARMED, compared on the PARSED values rather than
+	 * on the strings: '', '0' and '0.0' are one gate at its default — off, since
+	 * POE-193 — and a badge counting text would call two of them a change.
 	 */
 	const movedGates = $derived(
 		new Set(GATE_FIELDS.map((f) => f.knob).filter((knob) => gates[knob] !== gateDefaults[knob]))
@@ -339,7 +344,8 @@
 		</Tooltip>
 		<!-- The badge is on the toggle, not inside the row, because it is the whole
 		     reason to open a row that is shut: it is the only thing on a collapsed
-		     bar that says the reader has moved the quality bar off its defaults. -->
+		     bar that says the reader has armed a gate. Since POE-193 a collapsed
+		     row with no badge is a row filtering nothing. -->
 		<button class="disclose" aria-expanded={gatesOpen} onclick={() => (gatesOpen = !gatesOpen)}>
 			<svg
 				class="chevron"
@@ -366,7 +372,12 @@
 		</button>
 		{#if !gatesOpen}
 			<span class="unit-hint">
-				profit, turnover, price step, edge vs step, return — running whether or not this row is open
+				{#if movedGates.size > 0}
+					profit, turnover, price step, edge vs step, return — running whether or not this row is
+					open
+				{:else}
+					profit, turnover, price step, edge vs step, return — all off until you set one
+				{/if}
 			</span>
 		{/if}
 	</div>
@@ -382,7 +393,7 @@
 					class="amount mono"
 					type="text"
 					inputmode="decimal"
-					placeholder={field.placeholder}
+					placeholder={GATE_OFF_PLACEHOLDER}
 					aria-label={field.aria}
 					value={gateInputs[field.knob]}
 					oninput={(e) => ongate(field.knob, e.currentTarget.value)}
@@ -404,7 +415,7 @@
 
 			<button
 				class="clear"
-				title="Empties all five boxes, which puts every gate back to the value the server used to enforce."
+				title="Empties all five boxes, which turns every gate off — the shipped state, where the table shows everything the server served."
 				onclick={ongatedefaults}>Defaults</button
 			>
 		</div>
@@ -457,7 +468,7 @@
 		</div>
 
 		<!-- The two gain knobs that used to sit here are both gone. Min ROI% left in
-		     POE-191 (it is the fifth gate, on the default-on side of the file, so it
+		     POE-191 (it is the fifth gate, on the gate side of the file, so it
 		     belongs beside the four floors it shares a contract with); Min gain left
 		     in POE-192, when the run-level floor became the fixed 100c scale target
 		     and the per-flip floor was already the Min profit gate — a third gain

@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (POE-191, 2026-08-20)
+Accepted (POE-191, 2026-08-20), then **amended in part 2026-08-21 (POE-193)**:
+the split below stands, but the second Decision bullet is superseded in whole —
+the desktop's gate knobs ship OFF and the levels are a documented recommendation.
+See the dated note at the bottom.
 
 ## Context
 
@@ -50,3 +53,24 @@ The server serves everything sane and the quality judgement is the reader's.
   `TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes`
   (Go) must agree for "untouched knobs show the old answer" to stay true.
   Each side carries a comment naming the other; changing one is changing both.
+
+## Note, 2026-08-21 (POE-193 follow-up)
+
+The desktop defaults moved to off — the levels remain the documented
+recommended tightening; visibility is the default. POE-193's expected-ROI
+ranking makes the quality judgement on measured expectation and flags what it
+cannot stand behind (lowCoverage, suspect, a negative expectation), so an
+absolute cutoff in front of it hid measured-real plays: on 2026-08-21 the armed
+levels hid 142 of 143 served 1-hop plays and an Apocalypse card flip at 8,532
+c/h against the 10,000 line. `gateDefaults` is therefore all zeros, the third
+consequence above no longer holds (the two languages are no longer one claim,
+and the Go test — renamed
+`TestBestPlays_recordedHourUnderTheOldServerLevels_yieldsNoOneHopRoutes` —
+now documents what the levels cut when a reader arms them), and the SECOND
+DECISION BULLET IS SUPERSEDED IN WHOLE — the knobs are not default-on, an empty
+knob does not run at the old server level, and out of the box the table shows
+everything the server serves rather than what the old server showed. What
+survives of that bullet is the knobs themselves and the spelling of off: an
+explicit `0` still turns a gate off, and now so does leaving it alone. The split
+this ADR decided is unchanged — the server serves everything sane, the quality
+bar is the reader's — with the bar now empty until the reader sets it.

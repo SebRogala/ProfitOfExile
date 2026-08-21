@@ -229,11 +229,12 @@ type Result struct {
 // are the client's call, because "too small to bother with" is a judgement about
 // the reader's bankroll and not a fact about the market. Each of them still
 // answers a real failure mode measured over 26 hours of Allflame, and the desktop
-// ships those measured levels as its own defaults: MinTurnoverChaos drops markets
-// too small for the edge to be real (p50 robust edge is 242% under 100 chaos/hour
-// and 18% over 100k), MaxTick and MinEdgeTickRatio drop the spreads that are one
-// integer price step wide, and MinROIChaos drops plays whose percentage is fine
-// and whose payout is a rounding error. The suspect bands do not gate at all by
+// documents those measured levels as the recommended tightening (it shipped them
+// armed from POE-191 until POE-193 turned its own defaults off): MinTurnoverChaos
+// drops markets too small for the edge to be real (p50 robust edge is 242% under
+// 100 chaos/hour and 18% over 100k), MaxTick and MinEdgeTickRatio drop the
+// spreads that are one integer price step wide, and MinROIChaos drops plays whose
+// percentage is fine and whose payout is a rounding error. The suspect bands do not gate at all by
 // default: they flag an extreme that sits too far from its hour's VWAP to be
 // repeatable, and only HideSuspect turns the flag into a filter. QuotePriority
 // decides which side of a market reads as the currency (see orient).
@@ -329,9 +330,11 @@ type Config struct {
 //
 // The four quality levels this used to carry — 10,000 chaos/hour of turnover, a
 // tick no coarser than 10%, an ROI at least five steps wide, three chaos per
-// exchanged unit — moved to the client in POE-191, which ships them unchanged as
-// the desktop's own default knobs. The out-of-the-box view is therefore the same
-// view; what changed is that a user can now lower one of them and see what it
+// exchanged unit — moved to the client in POE-191, which shipped them unchanged
+// as the desktop's own default knobs, and POE-193 turned those defaults off: the
+// levels are now what the desktop recommends typing, not what it applies. The
+// out-of-the-box view was therefore the same view and is now the whole served
+// set; what changed first is that a user could lower one of them and see what it
 // was hiding, without a redeploy. The measured reason to want that: on 2026-08-20
 // the newest hour carried 1368 markets, 881 of them clearing both-side liveness,
 // and the four levels served 79 plays. Sacrifice fragments failed three of them
@@ -546,9 +549,10 @@ func (c Config) withDefaults() Config {
 // realized low and high, not a book. Both prices are trades that happened inside
 // the same hour, and nothing says both were takeable at once — that is what the
 // undercut charges for, what Suspect flags when an extreme is too far from the
-// hour's VWAP to be repeatable, and what the client's tick knobs bound at their
-// defaults (the server's own tick gates are off since POE-191). This returns raw
-// item ids; POE-175's handler runs them through Humanize.
+// hour's VWAP to be repeatable, and what the client's tick knobs bound once a
+// reader arms them (the server's own tick gates are off since POE-191, the
+// client's since POE-193). This returns raw item ids; POE-175's handler runs
+// them through Humanize.
 func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	cfg = cfg.withDefaults()
 	result := Result{League: league, Plays: []Play{}}
