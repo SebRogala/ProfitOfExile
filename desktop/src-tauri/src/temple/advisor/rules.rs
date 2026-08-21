@@ -280,36 +280,42 @@ impl Reason {
 /// - The **empty set is always legal** — RU makes it optimal on Case 5, and a
 ///   zero-key incursion makes it the only option.
 ///
-/// **Known gap, measured on Case 5.** "Cannot change reachability" is not the
-/// same as "cannot change anything": opening a corridor between two rooms that
-/// already share a component still raises an adjacent upgrade room's connected
-/// degree, which is precisely what RU prices. Both of Poison Garden's closed
-/// corridors are pointless by this filter, so the advisor reaches Sebastian's
-/// answer — open nothing — by never enumerating the doors he declined, and
-/// prints [`Reason::NoUsableDoor`] where his own reason was RU. On Case 5 that
-/// is the same advice with a different explanation — but not in general: a
-/// **tier-2** upgrade room with one open corridor and a second neighbour already
-/// in its component gains a second *certain* target from a "pointless" corridor,
-/// a real move this filter cannot enumerate (tier 1 cannot produce it — one
-/// pick, already saturated at degree ≥ 1). The correct narrowing — keep a
-/// corridor whenever either endpoint is, or the kill makes it, a tier-1/2
-/// upgrade room — makes enumeration architect-dependent and moves the seam every
-/// rule reads, so it is deferred to the follow-up with POE-171 rather than done
-/// here.
-pub fn door_sets(board: &BoardState, position: Slot, keys: u8) -> Vec<BTreeSet<Edge>> {
+/// - **Degree-priced corridors survive the exclusion** — "cannot change
+///   reachability" is not the same as "cannot change anything". RU prices a
+///   tier-1/2 upgrade room's connected degree, so a corridor is kept, same
+///   component or not, whenever either endpoint is — or the kill makes it — such
+///   a room. Measured on Case 5, where the old filter reached "open nothing" by
+///   never enumerating the doors RU actually declined (printing
+///   [`Reason::NoUsableDoor`] where the reason was RU), and could not enumerate
+///   the real move at all on a tier-2 room one connection short of saturation.
+///   This narrowing is what makes enumeration architect-dependent. Whether the
+///   raise is worth a key stays RU's call: a saturated room's corridors are
+///   enumerated here and declined there.
+pub fn door_sets(
+    board: &BoardState,
+    position: Slot,
+    keys: u8,
+    architect: Option<&ArchitectChoice>,
+) -> Vec<BTreeSet<Edge>> {
     let mut sets = vec![BTreeSet::new()];
     if keys == 0 {
         return sets;
     }
     let open = board.adjacency();
     let mine = component(&open, position);
+    let position_priced = match architect {
+        Some(choice) => degree_priced(Some(&choice.line), choice.built_tier),
+        None => degree_priced(board.line(position), board.tier(position)),
+    };
+    // Every corridor from the position raises the position's own degree, so a
+    // priced position prices them all; otherwise only the far end can.
+    let priced = |far: Slot| position_priced || degree_priced(board.line(far), board.tier(far));
     let candidates: Vec<Edge> = board
         .closed_doors_from(position)
         .into_iter()
         .filter(|edge| {
-            let (a, b) = edge.ends();
-            let far = if a == position { b } else { a };
-            !mask_holds(mine, far.index())
+            let far = far_end(*edge, position);
+            !mask_holds(mine, far.index()) || priced(far)
         })
         .collect();
 
@@ -324,14 +330,21 @@ pub fn door_sets(board: &BoardState, position: Slot, keys: u8) -> Vec<BTreeSet<E
             let (p, q) = first.ends();
             trial[p.index()] |= mask_of(q);
             trial[q.index()] |= mask_of(p);
-            if mask_holds(component(&trial, a), b.index()) {
-                // The second key would buy a merge the first already bought.
+            if !priced(b) && mask_holds(component(&trial, a), b.index()) {
+                // The second key would buy a merge the first already bought,
+                // and raises no priced degree.
                 continue;
             }
             sets.push(BTreeSet::from([*first, *second]));
         }
     }
     sets
+}
+
+/// Is this room one whose connected degree RU prices — an upgrade room at tier
+/// 1 or 2? Tier 3 ignores connections entirely and tier 0 upgrades nothing.
+fn degree_priced(line: Option<&Line>, tier: Tier) -> bool {
+    line == Some(&Line::Upgrade) && matches!(tier.get(), 1 | 2)
 }
 
 /// R1-apex's predicate.
@@ -695,7 +708,7 @@ fn empty_set_reason(
     if keys == 0 {
         return Some(Reason::ZeroKey);
     }
-    let spendable: Vec<BTreeSet<Edge>> = door_sets(board, position, keys)
+    let spendable: Vec<BTreeSet<Edge>> = door_sets(board, position, keys, architect)
         .into_iter()
         .filter(|set| !set.is_empty())
         .collect();
@@ -1015,7 +1028,7 @@ mod tests {
         // C1-D1 is closed, but C1 and D1 are already one component by way of
         // D2 — so opening it cannot change reachability. C1-B0 can.
         let state = board(&[], &[(C1, D2), (D1, D2)]);
-        let offered = far(&door_sets(&state, C1, 1), C1);
+        let offered = far(&door_sets(&state, C1, 1, None), C1);
         assert!(
             !offered.contains(&vec![D1]),
             "pointless corridor offered: {offered:?}"
@@ -1030,16 +1043,16 @@ mod tests {
     // incursion makes it the only move.
     #[test]
     fn opening_nothing_is_always_among_the_legal_sets() {
-        assert_eq!(door_sets(&board(&[], &[]), C1, 0), vec![BTreeSet::new()]);
-        assert!(door_sets(&board(&[], &[]), C1, 2).contains(&BTreeSet::new()));
+        assert_eq!(door_sets(&board(&[], &[]), C1, 0, None), vec![BTreeSet::new()]);
+        assert!(door_sets(&board(&[], &[]), C1, 2, None).contains(&BTreeSet::new()));
     }
 
     // With two keys the sets grow to pairs; with one they never do.
     #[test]
     fn the_key_count_caps_the_size_of_a_door_set() {
         let state = board(&[], &[]);
-        assert!(door_sets(&state, C1, 1).iter().all(|set| set.len() <= 1));
-        assert!(door_sets(&state, C1, 2).iter().any(|set| set.len() == 2));
+        assert!(door_sets(&state, C1, 1, None).iter().all(|set| set.len() <= 1));
+        assert!(door_sets(&state, C1, 2, None).iter().any(|set| set.len() == 2));
     }
 
     // Two keys into the same component buy one merge, so the pair is dropped.
@@ -1047,7 +1060,7 @@ mod tests {
     fn a_pair_of_doors_into_one_component_is_dropped_as_redundant() {
         // D1 and D2 are joined to each other, so C1-D1 plus C1-D2 is one merge.
         let state = board(&[], &[(D1, D2)]);
-        let offered = far(&door_sets(&state, C1, 2), C1);
+        let offered = far(&door_sets(&state, C1, 2, None), C1);
         for set in &offered {
             assert!(
                 !(set.contains(&D1) && set.contains(&D2)),
@@ -1058,6 +1071,66 @@ mod tests {
         assert!(
             offered.contains(&vec![B0, D1]),
             "two distinct merges must still be offered: {offered:?}"
+        );
+    }
+
+    // RU prices a tier-1/2 upgrade room's connected degree, so a corridor that
+    // raises it is a real move even when both ends already share a component.
+    #[test]
+    fn a_same_component_corridor_into_an_unsaturated_upgrade_room_is_offered() {
+        // D1 is Sanctum of Unity II: tier 2, one open corridor (D1-D2), so a
+        // second connection buys it a second *certain* target. C1-D1 changes no
+        // component, but it is that second connection.
+        let state = board(&[(D1, "upgrade", 2)], &[(C1, D2), (D1, D2)]);
+        let offered = far(&door_sets(&state, C1, 1, None), C1);
+        assert!(
+            offered.contains(&vec![D1]),
+            "degree-raising corridor not offered: {offered:?}"
+        );
+    }
+
+    // The kill can make the CURRENT room the degree-priced one — Case 5's
+    // shape — and then every corridor from here changes what RU sees.
+    #[test]
+    fn corridors_from_a_room_the_kill_makes_an_upgrade_room_are_offered() {
+        let state = board(&[], &[(C1, D2), (D1, D2)]);
+        let kill = choice(OfferKind::Change, "upgrade", 2);
+        let offered = far(&door_sets(&state, C1, 1, Some(&kill)), C1);
+        assert!(
+            offered.contains(&vec![D1]),
+            "corridor from the killed room not offered: {offered:?}"
+        );
+    }
+
+    // Key 1 on a merge plus key 2 on upgrade degree is two real purchases, not
+    // a redundant pair.
+    #[test]
+    fn a_merge_plus_a_degree_raising_corridor_survives_as_a_pair() {
+        let state = board(&[(D1, "upgrade", 2)], &[(C1, D2), (D1, D2)]);
+        let offered = far(&door_sets(&state, C1, 2, None), C1);
+        assert!(
+            offered
+                .iter()
+                .any(|set| set.contains(&B0) && set.contains(&D1)),
+            "merge + degree pair dropped as redundant: {offered:?}"
+        );
+    }
+
+    // Case 5's real explanation: the keys were declined by RU, not unusable.
+    #[test]
+    fn keys_declined_by_ru_read_ru_declined_not_no_usable_door() {
+        // Every closed corridor from C1 stays inside its own component, and the
+        // kill makes C1 a Sanctum II already saturated at two connections — so
+        // every enumerable door is an RU violation, and the honest reason for
+        // opening nothing is RU's refusal.
+        let state = board(
+            &[],
+            &[(C1, D1), (C1, D2), (C0, D1), (B0, C0), (B1, C2), (C2, D2)],
+        );
+        let kill = choice(OfferKind::Change, "upgrade", 2);
+        assert_eq!(
+            empty_set_reason(&state, C1, Some(&kill), 1),
+            Some(Reason::RuDeclined { slot: C1 })
         );
     }
 
@@ -1137,8 +1210,8 @@ mod tests {
     #[test]
     fn rv_is_connectable_only_while_some_enumerated_set_shortens_the_walk() {
         let state = board(&[(B1, "corruption", 1)], &[(C1, D1), (D1, E1)]);
-        assert!(!rv_connectable(&state, B1, &door_sets(&state, B1, 0)));
-        assert!(rv_connectable(&state, B1, &door_sets(&state, B1, 1)));
+        assert!(!rv_connectable(&state, B1, &door_sets(&state, B1, 0, None)));
+        assert!(rv_connectable(&state, B1, &door_sets(&state, B1, 1, None)));
 
         // Every closed corridor from B1 leads back into B1's own cluster, so a
         // key buys nothing and RV again has no opinion.
@@ -1146,7 +1219,7 @@ mod tests {
             &[(B1, "corruption", 1)],
             &[(B1, C1), (C1, C2), (B0, C1), (A0, B0)],
         );
-        assert!(!rv_connectable(&boxed_in, B1, &door_sets(&boxed_in, B1, 1)));
+        assert!(!rv_connectable(&boxed_in, B1, &door_sets(&boxed_in, B1, 1, None)));
     }
 
     // Changing the room to something worthless destroys it yourself, so RV has
