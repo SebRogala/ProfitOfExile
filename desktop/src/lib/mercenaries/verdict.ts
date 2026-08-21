@@ -326,15 +326,15 @@ function evaluateGroupOver(rows: MercRow[], group: MercFilterGroup): GroupEvalua
 /**
  * Does ONE skill row satisfy this group? The single owner of row scoping.
  *
- * **Assumption A1.** Neither the fixtures nor GGG's documentation say that a
- * `mercenary` group scopes to one skill row; this is the reading the data
- * argues for. Guide B's MV search uses a `count` group (min 1 over two skills)
- * AND a `mercenary` group (min 2) in the same query, so the two types cannot
- * mean the same thing; and guide A's Manyshot search carries two nearly
- * identical `mercenary` groups (Ice Shot + Return, Vaal Ice Shot + Return)
- * which are only non-redundant if each has to be satisfied by one row on its
- * own. If A1 turns out wrong, this function is the one edit: everything
- * row-scoped goes through it.
+ * **A1 — verified 2026-08-21 against the live trade API.** A `mercenary`
+ * group scopes to one skill row. Differential searches (Allflame, status
+ * securable): a group with two skills (Spark + Conductivity) returns 0 while
+ * the same pair as an `and` group returns 9,945 — every Spark merc carries
+ * Conductivity, but never in one row; a same-row skill+support pair
+ * (Spark + Return) returns 3,404, so two-entry groups do pass when co-rowed;
+ * a cross-row pair (Conductivity + Return) returns 0. Full method and search
+ * ids in POE-165 tracker comment. Everything row-scoped goes through this
+ * function.
  */
 function rowSatisfies(row: MercRow, group: MercFilterGroup): GroupEvaluation {
 	return evaluateGroupOver([row], group);
