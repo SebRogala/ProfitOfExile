@@ -212,20 +212,33 @@ pub fn advise(
         architects.into_iter().map(Some).collect()
     };
 
-    let door_sets = rules::door_sets(board, position, keys);
-    let usable = door_sets.iter().map(|s| s.len()).max().unwrap_or(0);
+    // Enumeration is architect-dependent: the kill can make the current room a
+    // degree-priced upgrade room, which widens the corridors worth a key.
+    let door_sets_per_choice: Vec<_> = choices
+        .iter()
+        .map(|choice| rules::door_sets(board, position, keys, choice.as_ref()))
+        .collect();
+    let usable = door_sets_per_choice
+        .iter()
+        .flatten()
+        .map(|s| s.len())
+        .max()
+        .unwrap_or(0);
     if usable < keys as usize {
         warnings.push(Warning::KeysUnspendable { keys, usable });
     }
     // RV governs the passage, so it only speaks when a passage can satisfy it.
-    let connectable = rules::rv_connectable(board, position, &door_sets);
+    // Connectability reads reachability only, which no kill changes — the
+    // per-choice enumerations differ only in degree-raising corridors that stay
+    // inside one component, so any choice's sets answer it.
+    let connectable = rules::rv_connectable(board, position, &door_sets_per_choice[0]);
 
     let base = Sim::from_board(board, &valuation);
     let mut safe: Vec<Scored> = Vec::new();
     let mut risky: Vec<Scored> = Vec::new();
 
-    for architect in &choices {
-        for doors in &door_sets {
+    for (architect, door_sets) in choices.iter().zip(&door_sets_per_choice) {
+        for doors in door_sets {
             let verdict = rules::evaluate_rules(
                 board,
                 position,
@@ -756,9 +769,9 @@ mod tests {
         );
     }
 
-    // RU by way of its cheapest form: with both remaining corridors pointless
-    // there is nothing worth opening, and the kill that builds the Sanctum wins
-    // outright.
+    // RU by way of its cheapest form: every remaining corridor would dilute the
+    // Sanctum's saturated pool, so nothing is worth opening, and the kill that
+    // builds the Sanctum wins outright.
     #[test]
     fn case_five_poison_garden_builds_the_sanctum_and_opens_nothing() {
         let case = cases::case_5_poison_garden();
@@ -779,9 +792,9 @@ mod tests {
             top.reasons
         );
         assert!(
-            has_reason(top, |r| matches!(r, Reason::NoUsableDoor)),
-            "both remaining corridors are pointless, which is not the same fact \
-             as no key dropping: {:?}",
+            has_reason(top, |r| matches!(r, Reason::RuDeclined { .. })),
+            "the key was DECLINED by RU — Sebastian's own reason on this board \
+             — not unusable and not undropped: {:?}",
             top.reasons
         );
     }
@@ -1839,9 +1852,27 @@ mod tests {
     }
 
     // A key with nowhere useful to go is surfaced, not silently dropped.
+    // (Case 5 no longer demonstrates this: its corridors are enumerable now
+    // that the kill makes Poison Garden a degree-priced Sanctum — RU declines
+    // them, which is a choice, not unspendability. This board has junk kills
+    // and no upgrade room, so its same-component corridors stay unenumerable.)
     #[test]
     fn a_key_with_no_useful_corridor_is_reported_as_unspendable() {
-        let advice = advise_case(&cases::case_5_poison_garden());
+        let state = board(
+            &[],
+            &[(C1, D1), (C1, D2), (C0, D1), (B0, C0), (B1, C2), (C2, D2)],
+            C1,
+            5,
+        );
+        let advice = advise(
+            &state,
+            &junk_offers(),
+            1,
+            &rush(),
+            &TempleConfig::default(),
+            N,
+            SEED,
+        );
         assert!(advice.warnings.contains(&Warning::KeysUnspendable {
             keys: 1,
             usable: 0
@@ -1891,10 +1922,24 @@ mod tests {
             // 4 Chasm merge — one door changes anything, and it is RV that
             // makes it worth a key.
             &["RvMerge", "Rd", "R2", "R1Gradient", "Rs"],
-            // 5 Poison Garden — no corridor is worth a key (both are
-            // pointless), and the rollout separates Sanctum from Cultivar by
-            // 3+ points. `ZeroKey` here would be a lie: a key did drop.
-            &["ExpectedValue", "NoUsableDoor", "R4"],
+            // 5 Poison Garden — the Sanctum kill makes every corridor
+            // degree-priced, so the doors ARE enumerated and each is declined
+            // by RU (the top pick still opens nothing); the Cultivar kill
+            // prices none of them, so its side still reads NoUsableDoor. The
+            // rollout separates the kills by 3+ points. `ZeroKey` here would
+            // be a lie: a key did drop.
+            &[
+                "ExpectedValue",
+                "NoUsableDoor",
+                "R1Apex",
+                "R1Gradient",
+                "R2",
+                "R4",
+                "Rd",
+                "Rs",
+                "Ru",
+                "RuDeclined",
+            ],
             // 6 Cloister — the blind board, decided by R1 and R2 alone.
             &["Rd", "R2", "R1Gradient", "Rs"],
         ];
