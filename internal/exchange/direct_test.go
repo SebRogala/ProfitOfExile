@@ -16,9 +16,13 @@ func TestDirectCandidates_chaosDivineRow_observesBothLegsQuotedInDivine(t *testi
 	// stock are chaos's, and the quote volume is divine's. Both legs observe the
 	// same hour of the same market and differ only in which end of the spread
 	// they execute on, which is read from action.
+	//
+	// Each price arrives with the integer pair the feed posted it as, oriented
+	// to the LEG: chaos is the item here, so the cheapest chaos is 201 of them
+	// for 1 divine — the transpose of what the row's ItemA/ItemB order stores.
 	hour := obs{
-		low:         1.0 / 201.0,
-		high:        1.0 / 196.0,
+		low:         pricePoint{price: 1.0 / 201.0, itemQty: 201, quoteQty: 1},
+		high:        pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
 		vwap:        65361.0 / 13001051.0,
 		vwapOK:      true,
 		tick:        1.0 / 196.0,
@@ -52,9 +56,14 @@ func TestDirectCandidates_chaosPreferredAsQuote_observesBothLegsQuotedInChaos(t 
 	// divine's, and the volume-weighted price is the 198.97 chaos a divine the
 	// hour actually cleared at. The tick is a property of the quantity pairs, so
 	// it does not depend on which side is read as the quote.
+	//
+	// The posted pairs transpose with the orientation: the same market that
+	// reads as "201 chaos for 1 divine" under the default priority reads as
+	// "1 divine for 196 chaos" here. Nothing inverted a float — the other stored
+	// quantity became the item side.
 	hour := obs{
-		low:         196,
-		high:        201,
+		low:         pricePoint{price: 196, itemQty: 1, quoteQty: 196},
+		high:        pricePoint{price: 201, itemQty: 1, quoteQty: 201},
 		vwap:        13001051.0 / 65361.0,
 		vwapOK:      true,
 		tick:        1.0 / 196.0,

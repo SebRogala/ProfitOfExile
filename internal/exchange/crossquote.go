@@ -104,7 +104,7 @@ func oneHopCandidate(x, a, b string, rowXA, rowXB, rowAB Row, cfg Config) (candi
 		key:  "1-hop:" + x + "|" + a + "|" + b,
 		mode: ModeOneHop,
 		legs: []candidateLeg{buyX, sellX, sellB},
-		edge: sellX.obs.high*sellB.obs.high/buyX.obs.low - 1,
+		edge: sellX.obs.high.price*sellB.obs.high.price/buyX.obs.low.price - 1,
 	}, true
 }
 

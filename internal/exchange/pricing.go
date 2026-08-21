@@ -12,8 +12,38 @@ const (
 	ChaosID  = "Metadata/Items/Currency/CurrencyRerollRare"
 )
 
+// pricePoint is one realized extreme of an hour on one direction of a market:
+// the price, and the integer quantity pair the feed posted it as.
+//
+// The pair is what the in-game Currency Exchange actually trades in. The game
+// posts whole quantities on both sides and nothing else, so "sell 4 for 1
+// divine" is an order a player can place and "sell at 0.25 divine each" is not
+// — the same fact tickOf reads the other way round when it calls 1/max(x, y)
+// the market's smallest representable step. price is the pair divided out, for
+// comparing and ranking; the pair is what a reader types into the game.
+//
+// price is derived FROM the pair by Ratio, in pointOf and nowhere else, so
+// Ratio(quoteQty, itemQty) == price holds by construction rather than by two
+// code paths agreeing.
+//
+// The quantities are the FEED's own, oriented to the direction asked for
+// (itemQty counts the item, quoteQty the quote), and they are NOT reduced here
+// because the feed already publishes them reduced: over the 91,520 priced
+// market-hours stored on 2026-08-22 (2026-08-18 16:00 UTC onward) every lowest
+// and highest ratio pair had gcd(a, b) == 1, 0 violations. Reducing here anyway
+// would also put this file out of step with tickOf, which has read the stored
+// pair as reduced since POE-184 — 1/max(x, y) is the true step only on a
+// reduced pair — and two readings of one pair is exactly the second source of
+// truth the package refuses elsewhere.
+type pricePoint struct {
+	price    float64
+	itemQty  int64
+	quoteQty int64
+}
+
 // priceIn returns the cheapest and the dearest realized price of one item in
-// quote units on the row, or ok == false when the row cannot price that pair.
+// quote units on the row, each with the quantity pair it was posted as, or
+// ok == false when the row cannot price that pair.
 //
 // It is the one place in the engine that decides which stored quantity pair
 // belongs to which direction, so no other engine code touches LowestRatio* /
@@ -21,10 +51,16 @@ const (
 // pairs as the price of one ItemB in ItemA units, so the reverse direction
 // swaps which pair is the low and which is the high (see the Ratio doc):
 //
-//	item == ItemB, quote == ItemA -> low  = Ratio(LowestRatioA, LowestRatioB)
-//	                                 high = Ratio(HighestRatioA, HighestRatioB)
-//	item == ItemA, quote == ItemB -> low  = Ratio(HighestRatioB, HighestRatioA)
-//	                                 high = Ratio(LowestRatioB, LowestRatioA)
+//	item == ItemB, quote == ItemA -> low  = (quote LowestRatioA,  item LowestRatioB)
+//	                                 high = (quote HighestRatioA, item HighestRatioB)
+//	item == ItemA, quote == ItemB -> low  = (quote HighestRatioB, item HighestRatioA)
+//	                                 high = (quote LowestRatioB,  item LowestRatioA)
+//
+// Which of the four stored quantities is the ITEM side and which the QUOTE side
+// is therefore a property of the direction, not of the row: the same market read
+// with the two sides swapped hands back the reciprocal price and the transposed
+// pair. Config.QuotePriority is what picks the direction (orient), so flipping
+// it flips both.
 //
 // The low and the high are realized extremes of the hour's trades, not two
 // sides of a book that existed at the same instant: nobody was necessarily
@@ -35,27 +71,41 @@ const (
 // either Ratio rejects its quantities, or when the result is not a usable
 // interval (low <= 0 or high < low). Prices never come from 1/price on a stored
 // float, which would be a division by zero on an unpriced row.
-func priceIn(r Row, item, quote string) (low, high float64, ok bool) {
+func priceIn(r Row, item, quote string) (low, high pricePoint, ok bool) {
 	if !r.PriceValid {
-		return 0, 0, false
+		return pricePoint{}, pricePoint{}, false
 	}
 
 	var lowOK, highOK bool
 	switch {
 	case r.ItemB == item && r.ItemA == quote:
-		low, lowOK = Ratio(r.LowestRatioA, r.LowestRatioB)
-		high, highOK = Ratio(r.HighestRatioA, r.HighestRatioB)
+		low, lowOK = pointOf(r.LowestRatioA, r.LowestRatioB)
+		high, highOK = pointOf(r.HighestRatioA, r.HighestRatioB)
 	case r.ItemA == item && r.ItemB == quote:
-		low, lowOK = Ratio(r.HighestRatioB, r.HighestRatioA)
-		high, highOK = Ratio(r.LowestRatioB, r.LowestRatioA)
+		low, lowOK = pointOf(r.HighestRatioB, r.HighestRatioA)
+		high, highOK = pointOf(r.LowestRatioB, r.LowestRatioA)
 	default:
-		return 0, 0, false
+		return pricePoint{}, pricePoint{}, false
 	}
 
-	if !lowOK || !highOK || low <= 0 || high < low {
-		return 0, 0, false
+	if !lowOK || !highOK || low.price <= 0 || high.price < low.price {
+		return pricePoint{}, pricePoint{}, false
 	}
 	return low, high, true
+}
+
+// pointOf divides one quantity pair into its price and keeps both together.
+//
+// It is the only constructor of a pricePoint, which is what makes the pair and
+// the price inseparable: there is no way to hand a caller a price whose pair
+// says something else. A pair Ratio refuses (either quantity not positive)
+// yields the zero point and false rather than a price of 0 or +Inf.
+func pointOf(quoteQty, itemQty int64) (pricePoint, bool) {
+	price, ok := Ratio(quoteQty, itemQty)
+	if !ok {
+		return pricePoint{}, false
+	}
+	return pricePoint{price: price, itemQty: itemQty, quoteQty: quoteQty}, true
 }
 
 // vwapIn returns the hour's realized volume-weighted average price of one item

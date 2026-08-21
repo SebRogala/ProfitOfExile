@@ -94,11 +94,18 @@ func candidateKeys(candidates []candidate) []string {
 // cardInChaos, cardInDivine and divineInChaos are the three legs the triangle's
 // routes execute, as the hour observed them. They are spelled out once because
 // both routes walk the same three markets in different orders and directions.
+//
+// Each price carries the integer pair the feed posted it as, oriented to the
+// leg: the card quoted in chaos posts "1 card for 10 chaos", and the same card
+// quoted in divine posts "20 cards for 1 divine" — a route that read the pair
+// off the row's A/B order instead of off the leg would render the second one
+// upside down.
 func cardInChaos(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: cardID, quote: chaosID,
 		obs: obs{
-			low: 10, high: 12,
+			low:  pricePoint{price: 10, itemQty: 1, quoteQty: 10},
+			high: pricePoint{price: 12, itemQty: 1, quoteQty: 12},
 			vwap: 5000.0 / 300.0, vwapOK: true,
 			tick:        1.0 / 10.0,
 			quoteVolume: 5000, volume: 300, stock: 40,
@@ -110,7 +117,8 @@ func cardInDivine(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: cardID, quote: divineID,
 		obs: obs{
-			low: 1.0 / 20.0, high: 1.0 / 16.0,
+			low:  pricePoint{price: 1.0 / 20.0, itemQty: 20, quoteQty: 1},
+			high: pricePoint{price: 1.0 / 16.0, itemQty: 16, quoteQty: 1},
 			vwap: 80.0 / 250.0, vwapOK: true,
 			tick:        1.0 / 16.0,
 			quoteVolume: 80, volume: 250, stock: 35,
@@ -122,7 +130,8 @@ func divineInChaos(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: divineID, quote: chaosID,
 		obs: obs{
-			low: 196, high: 201,
+			low:  pricePoint{price: 196, itemQty: 1, quoteQty: 196},
+			high: pricePoint{price: 201, itemQty: 1, quoteQty: 201},
 			vwap: 13001051.0 / 65361.0, vwapOK: true,
 			tick:        1.0 / 196.0,
 			quoteVolume: 13001051, volume: 65361, stock: 8878,
@@ -134,7 +143,8 @@ func chaosInDivine(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: chaosID, quote: divineID,
 		obs: obs{
-			low: 1.0 / 201.0, high: 1.0 / 196.0,
+			low:  pricePoint{price: 1.0 / 201.0, itemQty: 201, quoteQty: 1},
+			high: pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
 			vwap: 65361.0 / 13001051.0, vwapOK: true,
 			tick:        1.0 / 196.0,
 			quoteVolume: 65361, volume: 13001051, stock: 4564191,
@@ -385,8 +395,8 @@ func TestCrossQuoteCandidates_secondRowForTheSamePair_isIgnored(t *testing.T) {
 	got := crossQuoteCandidates(append(triangle(), second.row()), DefaultConfig())
 
 	c := candidateByKey(t, got, oneHopKey(cardID, chaosID, divineID))
-	if c.legs[2].obs.high != 201 {
-		t.Errorf("closing leg price = %v, want the first row's 201", c.legs[2].obs.high)
+	if c.legs[2].obs.high.price != 201 {
+		t.Errorf("closing leg price = %v, want the first row's 201", c.legs[2].obs.high.price)
 	}
 }
 

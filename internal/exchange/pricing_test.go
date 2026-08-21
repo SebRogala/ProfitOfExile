@@ -114,14 +114,149 @@ func TestPriceIn_chaosDivineRow_pricesBothDirectionsOfTheSameQuantities(t *testi
 			if !ok {
 				t.Fatalf("ok = false, want true for %s priced in %s", tt.item, tt.quote)
 			}
-			if low != tt.wantLow {
-				t.Errorf("low = %v, want %v", low, tt.wantLow)
+			if low.price != tt.wantLow {
+				t.Errorf("low = %v, want %v", low.price, tt.wantLow)
 			}
-			if high != tt.wantHigh {
-				t.Errorf("high = %v, want %v", high, tt.wantHigh)
+			if high.price != tt.wantHigh {
+				t.Errorf("high = %v, want %v", high.price, tt.wantHigh)
 			}
 		})
 	}
+}
+
+func TestPriceIn_carriesTheIntegerPairEachExtremeWasPostedAs(t *testing.T) {
+	// The in-game exchange only posts whole quantities, so the pair is what a
+	// player can actually enter and the float is not: one divine for 196 chaos
+	// is an order, 0.005102 divine per chaos is not. Reading the market the
+	// other way round transposes the pair rather than inverting a float, and it
+	// takes the pair from the OTHER stored ratio map — the cheapest chaos comes
+	// out of the pair that priced divine dearest.
+	row := chaosDivineSpec().row()
+
+	tests := []struct {
+		name     string
+		item     string
+		quote    string
+		wantLow  pricePoint
+		wantHigh pricePoint
+	}{
+		{
+			name:     "buy 1 divine for 196 chaos, sell it for 201",
+			item:     divineID,
+			quote:    chaosID,
+			wantLow:  pricePoint{price: 196, itemQty: 1, quoteQty: 196},
+			wantHigh: pricePoint{price: 201, itemQty: 1, quoteQty: 201},
+		},
+		{
+			name:     "buy 201 chaos for 1 divine, sell 196 for 1",
+			item:     chaosID,
+			quote:    divineID,
+			wantLow:  pricePoint{price: 1.0 / 201.0, itemQty: 201, quoteQty: 1},
+			wantHigh: pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			low, high, ok := priceIn(row, tt.item, tt.quote)
+			if !ok {
+				t.Fatalf("ok = false, want true for %s priced in %s", tt.item, tt.quote)
+			}
+			if low != tt.wantLow {
+				t.Errorf("low = %+v, want %+v", low, tt.wantLow)
+			}
+			if high != tt.wantHigh {
+				t.Errorf("high = %+v, want %+v", high, tt.wantHigh)
+			}
+		})
+	}
+}
+
+func TestPriceIn_everyPricedFixtureRow_pairDividesExactlyIntoItsPrice(t *testing.T) {
+	// The wire contract the desktop renders from: Ratio(quoteQty, itemQty) is
+	// the leg's Price, to the bit. It holds because pointOf builds both from one
+	// division — a pair copied off the row beside a price fetched from anywhere
+	// else would drift on the first market whose quantities are not a power of
+	// two, and the fixture hour carries 23 of them in both directions.
+	rows, _ := Normalize(loadFixtureHour(t))
+
+	checked := 0
+	for _, row := range rows {
+		if !row.PriceValid {
+			continue
+		}
+		for _, direction := range []struct {
+			item  string
+			quote string
+		}{
+			{item: row.ItemB, quote: row.ItemA},
+			{item: row.ItemA, quote: row.ItemB},
+		} {
+			low, high, ok := priceIn(row, direction.item, direction.quote)
+			if !ok {
+				t.Errorf("%s: priced row refused for %s in %s", row.MarketID, direction.item, direction.quote)
+				continue
+			}
+			for _, point := range []pricePoint{low, high} {
+				checked++
+				want, ok := Ratio(point.quoteQty, point.itemQty)
+				if !ok {
+					t.Errorf("%s: pair %d/%d has no price", row.MarketID, point.quoteQty, point.itemQty)
+					continue
+				}
+				if point.price != want {
+					t.Errorf("%s: price %v != Ratio(%d, %d) = %v",
+						row.MarketID, point.price, point.quoteQty, point.itemQty, want)
+				}
+			}
+		}
+	}
+
+	// 23 priced rows, two directions, two extremes each.
+	if checked != 92 {
+		t.Errorf("checked %d price points, want 92", checked)
+	}
+}
+
+func TestPriceIn_everyPricedFixtureRow_recordedPairsAreReduced(t *testing.T) {
+	// The wire promises a REDUCED pair, and nothing in this package divides one
+	// down — the claim rests entirely on the feed publishing them that way, the
+	// same assumption tickOf has made since POE-184 (1/max(x, y) is the true
+	// price step only on a reduced pair). This test pins the RECORDED fixture
+	// hour only: it proves the pairs the direction tests read are reduced, and
+	// it cannot observe live feed drift — a frozen file never changes. The live
+	// guard, if one is wanted, is a gcd check in the ingest path (tracked
+	// follow-up), not this test.
+	//
+	// Measured beyond the fixture on 2026-08-22: 0 of 91,520 stored priced
+	// market-hours carried a common factor on either ratio pair.
+	rows, _ := Normalize(loadFixtureHour(t))
+
+	for _, row := range rows {
+		if !row.PriceValid {
+			continue
+		}
+		low, high, ok := priceIn(row, row.ItemB, row.ItemA)
+		if !ok {
+			t.Errorf("%s: priced row refused", row.MarketID)
+			continue
+		}
+		for _, point := range []pricePoint{low, high} {
+			if g := gcd(point.itemQty, point.quoteQty); g != 1 {
+				t.Errorf("%s: pair %d/%d shares a factor of %d — the recorded fixture pair is not reduced; the direction tests above read these pairs as-is",
+					row.MarketID, point.quoteQty, point.itemQty, g)
+			}
+		}
+	}
+}
+
+// gcd is the test's own reducer, deliberately not a production helper: the
+// engine does not reduce pairs, and a shared helper would read as if it did.
+func gcd(a, b int64) int64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
 }
 
 func TestPriceIn_pairTheRowDoesNotCarry_returnsNotOk(t *testing.T) {
@@ -145,8 +280,8 @@ func TestPriceIn_pairTheRowDoesNotCarry_returnsNotOk(t *testing.T) {
 				t.Errorf("ok = true, want false: the row prices %s against %s, not %s against %s",
 					row.ItemB, row.ItemA, tt.item, tt.quote)
 			}
-			if low != 0 || high != 0 {
-				t.Errorf("prices = %v/%v, want 0/0 on a refused pair", low, high)
+			if low != (pricePoint{}) || high != (pricePoint{}) {
+				t.Errorf("points = %+v/%+v, want zero points on a refused pair", low, high)
 			}
 		})
 	}
@@ -174,8 +309,8 @@ func TestPriceIn_unpricedRow_returnsNotOk(t *testing.T) {
 			if ok {
 				t.Errorf("ok = true, want false on a PriceValid = false row")
 			}
-			if low != 0 || high != 0 {
-				t.Errorf("prices = %v/%v, want 0/0", low, high)
+			if low != (pricePoint{}) || high != (pricePoint{}) {
+				t.Errorf("points = %+v/%+v, want zero points", low, high)
 			}
 		})
 	}
@@ -231,8 +366,8 @@ func TestPriceIn_zeroRatioQuantity_returnsNotOkInsteadOfDividing(t *testing.T) {
 			if ok {
 				t.Errorf("ok = true, want false: a zero quantity has no price")
 			}
-			if low != 0 || high != 0 {
-				t.Errorf("prices = %v/%v, want 0/0", low, high)
+			if low != (pricePoint{}) || high != (pricePoint{}) {
+				t.Errorf("points = %+v/%+v, want zero points", low, high)
 			}
 		})
 	}
@@ -260,10 +395,10 @@ func TestPriceIn_highestPriceBelowTheLowest_returnsNotOk(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			low, high, ok := priceIn(row, tt.item, tt.quote)
 			if ok {
-				t.Errorf("ok = true (low %v, high %v), want false when the high is below the low", low, high)
+				t.Errorf("ok = true (low %v, high %v), want false when the high is below the low", low.price, high.price)
 			}
-			if low != 0 || high != 0 {
-				t.Errorf("prices = %v/%v, want 0/0", low, high)
+			if low != (pricePoint{}) || high != (pricePoint{}) {
+				t.Errorf("points = %+v/%+v, want zero points", low, high)
 			}
 		})
 	}
@@ -280,7 +415,7 @@ func TestPriceIn_everyPricedFixtureRow_yieldsAUsableIntervalBothWays(t *testing.
 		if !row.PriceValid {
 			if forwardOK || reverseOK {
 				t.Errorf("%s: unpriced row was priced (%v/%v, %v/%v)",
-					row.MarketID, forward, forwardHigh, reverse, reverseHigh)
+					row.MarketID, forward.price, forwardHigh.price, reverse.price, reverseHigh.price)
 			}
 			continue
 		}
@@ -290,11 +425,11 @@ func TestPriceIn_everyPricedFixtureRow_yieldsAUsableIntervalBothWays(t *testing.
 			t.Errorf("%s: priced row refused (forward ok %v, reverse ok %v)", row.MarketID, forwardOK, reverseOK)
 			continue
 		}
-		if forward <= 0 || forwardHigh < forward {
-			t.Errorf("%s: forward interval = %v..%v, want 0 < low <= high", row.MarketID, forward, forwardHigh)
+		if forward.price <= 0 || forwardHigh.price < forward.price {
+			t.Errorf("%s: forward interval = %v..%v, want 0 < low <= high", row.MarketID, forward.price, forwardHigh.price)
 		}
-		if reverse <= 0 || reverseHigh < reverse {
-			t.Errorf("%s: reverse interval = %v..%v, want 0 < low <= high", row.MarketID, reverse, reverseHigh)
+		if reverse.price <= 0 || reverseHigh.price < reverse.price {
+			t.Errorf("%s: reverse interval = %v..%v, want 0 < low <= high", row.MarketID, reverse.price, reverseHigh.price)
 		}
 	}
 
