@@ -360,8 +360,11 @@ export function formatLegPrice(price: number): string {
  * A sub-1c amount therefore rounds to "0", and that is the reading the owner
  * asked for: a play whose whole per-exchange investment or gain is under one
  * chaos is not flippable once the exchange's gold fee is paid, so printing four
- * significant digits of it dressed junk as precision. The Min profit gate hides
- * such rows outright unless the reader lowers it.
+ * significant digits of it dressed junk as precision. Since POE-196 the
+ * INVESTMENT side of that reading is also a filter: the shipped `minItemPrice`
+ * floor of 0.5 drops exactly the plays whose entry cost would have printed 0
+ * here, unless the reader types 0 into the knob. (The gain side is the Min
+ * profit gate, which has shipped OFF since POE-193.)
  *
  * Rounded on the MAGNITUDE and signed afterwards, so `-1234.5` and `1234.5`
  * round to the same number of orbs — `Math.round` alone breaks halves towards

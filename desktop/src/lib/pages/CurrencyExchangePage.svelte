@@ -53,8 +53,10 @@
 		applyNumericFilters,
 		applyRules,
 		parseGates,
+		resetGateInputs,
 		itemUniverse,
 		matchesSearch,
+		movedGates,
 		parseCategoryRules,
 		parseItemRules,
 		serializeCategoryRules,
@@ -96,7 +98,8 @@
 	const itemRulesPref = persisted('currencyExchangeItemRules', '[]');
 
 	/**
-	 * The five quality gates (POE-191), one preference each.
+	 * The six quality gates (POE-191, plus POE-196's trash-price knob), one
+	 * preference each.
 	 *
 	 * Every one defaults to '' and NOT to the number it stands for, because ''
 	 * already means that number: `parseGate` reads an unset knob as its default,
@@ -107,11 +110,18 @@
 	 * file. POE-193 is that case: the defaults went to 0 and every reader who had
 	 * not typed a level got the whole served table, with no migration.
 	 *
+	 * `minItemPrice` is the reason that property still earns its keep: it is the
+	 * one knob whose default is not 0 (0.5 chaos, ADR-017's sanctioned exception),
+	 * so '' has to keep meaning "whatever this build says" rather than a number
+	 * frozen at install time. Blanking that box restores the shipped floor; only
+	 * an explicit 0 turns it off.
+	 *
 	 * `minRoiPct` keeps its original key: it is the same knob the reader has been
 	 * setting since POE-186, moved into the group rather than replaced, and
 	 * renaming it would silently drop the floor of anyone who had one.
 	 */
 	const gatePrefs: Record<keyof Gates, PersistedString> = {
+		minItemPrice: persisted('currencyExchangeGateMinItemPrice', ''),
 		minRoiChaos: persisted('currencyExchangeGateMinRoiChaos', ''),
 		minTurnover: persisted('currencyExchangeGateMinTurnover', ''),
 		maxTickPct: persisted('currencyExchangeGateMaxTickPct', ''),
@@ -161,6 +171,7 @@
 	 * cannot disagree about whether a knob is at its default.
 	 */
 	const gateInputs = $derived({
+		minItemPrice: gatePrefs.minItemPrice.value,
 		minRoiChaos: gatePrefs.minRoiChaos.value,
 		minTurnover: gatePrefs.minTurnover.value,
 		maxTickPct: gatePrefs.maxTickPct.value,
@@ -198,7 +209,10 @@
 	 * chain, because the counter has to be able to say how many rows the GATES
 	 * took: since POE-191 they are the one filter that hides rows the reader never
 	 * set, and a lump "hidden by filters" over a bar with nothing visibly on it
-	 * reads as a broken table rather than as a knob to turn.
+	 * reads as a broken table rather than as a knob to turn. POE-196 makes that
+	 * figure non-zero on a fresh install — the trash-price knob ships armed — so
+	 * the split is now what tells the reader the missing sub-chaos rows are a
+	 * default they can undo rather than rows the server never sent.
 	 *
 	 * `rows` is what the counter counts, so the shown figure is the post-search
 	 * one: a query that hides a play is one of the reasons it is not on the table.
@@ -231,6 +245,26 @@
 	});
 
 	/**
+	 * What the empty table says when the GATES are what emptied it.
+	 *
+	 * Two wordings, because "lower your gates" is wrong advice for the one gate
+	 * the reader did not set. When nothing is off its shipped default, the only
+	 * knob that can have emptied the table is POE-196's item-price floor — a
+	 * reachable state, not a theoretical one: a fresh install on a thin hour whose
+	 * served plays are all sub-floor gets exactly this. Naming the floor and the
+	 * one number that disables it is the difference between a dead end and a
+	 * control.
+	 *
+	 * `movedGates` is the same verdict the filter bar badges with, so the message
+	 * and the badge cannot disagree about whether the reader has touched anything.
+	 */
+	const gatesEmptyMessage = $derived(
+		movedGates(gates).length === 0 && gates.minItemPrice > 0
+			? `No play served this hour costs the ${gates.minItemPrice}c minimum item price to enter — that floor is the one filter this app arms for you. Type 0 into Min item price in the filter bar’s Gates row to see the cheaper plays.`
+			: 'No plays clear your gates right now — lower them in the filter bar’s Gates row.'
+	);
+
+	/**
 	 * A pill's new state. Neutral is stored as an absent key rather than a
 	 * `'neutral'` value — `parseCategoryRules` reads it back that way, and a
 	 * stored neutral would be a second spelling of the same fact.
@@ -255,14 +289,19 @@
 	}
 
 	/**
-	 * Every knob back to its default, which is spelled '' and not the number:
-	 * `parseGate` reads unset as the default, so emptying the boxes IS the reset,
-	 * and it leaves the reader on whatever this build's defaults are rather than
-	 * on a snapshot of them. Since POE-193 that lands every gate OFF — the reset
-	 * gives the reader the whole served table back, which is the point of it.
+	 * Every knob back to its default. What that is spelled as is `resetGateInputs`'
+	 * business, not this function's: the strings it hands back go straight into
+	 * the preferences, and the reason they are blanks rather than numbers lives
+	 * beside the parser that reads them. That lands five gates OFF and
+	 * `minItemPrice` back at its shipped floor (POE-196) — the shipped state, not
+	 * a blank one — which makes this also the only way BACK to the trash-price
+	 * floor for a reader who typed 0 into it.
 	 */
 	function resetGates() {
-		for (const pref of Object.values(gatePrefs)) pref.value = '';
+		const inputs = resetGateInputs();
+		for (const knob of Object.keys(gatePrefs) as (keyof Gates)[]) {
+			gatePrefs[knob].value = inputs[knob];
+		}
 	}
 
 	/**
@@ -274,11 +313,13 @@
 	 * it is not part of the setup, it is visibly in its own box, and that box has
 	 * its own × for the reader who wants it gone.
 	 *
-	 * The GATES are left alone for a third reason (POE-191): since POE-193 they
-	 * ship off, so a gate that is running is one the reader deliberately armed —
-	 * a standing choice rather than the question Clear is here to undo. The Gates
-	 * row has its own Defaults, which empties the boxes and is the way back to
-	 * off; sweeping them up here would make Clear a second control undoing it.
+	 * The GATES are left alone for a third reason (POE-191): five of the six ship
+	 * off, so a gate that is running is one the reader deliberately armed — a
+	 * standing choice rather than the question Clear is here to undo. The sixth,
+	 * `minItemPrice`, is the shipped trash-price floor and is not the reader's
+	 * question either. The Gates row has its own Defaults, which empties the boxes
+	 * and is the way back to the shipped state; sweeping them up here would make
+	 * Clear a second control undoing it.
 	 */
 	function clearFilters() {
 		categoryRulesPref.value = serializeCategoryRules({});
@@ -707,13 +748,16 @@
 		<!-- The gates are named separately here for the reason the counter splits
 		     them: they hide rows on a bar the reader may never have opened, so
 		     "your filters" alone would point at controls that are all visibly
-		     off. -->
+		     off. `gatesEmptyMessage` splits that branch again, because since
+		     POE-196 the gate that emptied the table may be one the reader never
+		     set. -->
+
 		<div class="empty">
 			{allPlays.length > 0
 				? search.trim() !== ''
 					? 'No plays match your search, gates and filters right now.'
 					: counts.hiddenByGates > 0 && counts.hiddenByFilters === 0
-						? 'No plays clear your gates right now — lower them in the filter bar’s Gates row.'
+						? gatesEmptyMessage
 						: counts.hiddenByFilters > 0 && counts.hiddenByGates === 0
 							? 'No plays pass your filters right now.'
 							: 'No plays pass your gates and filters right now.'
