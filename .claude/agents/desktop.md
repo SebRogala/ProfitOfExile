@@ -32,3 +32,9 @@ until they are explicitly superseded with evidence.
 
 Run desktop Svelte checks/unit tests and focused Rust tests. Use `make
 desktop-check` and `make desktop-test` for broad Rust verification.
+
+Never run prettier (or any formatter not in desktop/package.json) on this
+repo: no prettier dependency or config exists, the TS/Svelte sources are
+hand-formatted (tabs, single quotes, no trailing commas), and an `npx
+prettier --write` will install itself and reflow whole files. Formatting
+verification is `npm run check` plus reading the surrounding code.
