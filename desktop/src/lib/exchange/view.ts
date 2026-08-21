@@ -379,6 +379,34 @@ export function formatChaos(amount: number): string {
 }
 
 /**
+ * A NON-CHAOS orb amount, always to the hundredth: `0.50`, `3.16`, `1,204.75`.
+ *
+ * The sibling of `formatChaos` for the currency at the other end of the scale.
+ * Chaos rounds to whole orbs because a fraction of one is not a holding; divine
+ * is worth two hundred of them, so the same rounding would erase a 100c slice of
+ * a run — and the precision has to hold at EVERY magnitude, which is what
+ * separates this from `formatLegPrice`. That one drops to `toFixed(0)` above
+ * 100, which is right for a rate (the scale carries the meaning) and wrong here:
+ * a 101.5-divine run printed "102" beside a profit line reading "keep ≈ 100c
+ * (≈ 0.50 div)" contradicts itself twice over — the total moved by more than the
+ * profit that produced it, and the two numbers disagree about how precise the
+ * page is being.
+ *
+ * Grouping and the signed-zero rule are `formatChaos`'s, for `formatChaos`'s
+ * reasons: hand-grouped so a locale that separates with "." cannot turn 1,204
+ * into one point two, and the sign taken from the rounded magnitude so an amount
+ * too small to print never comes out as "-0.00".
+ */
+function formatFractionalOrbs(amount: number): string {
+	if (!Number.isFinite(amount)) return '0.00';
+	const fixed = Math.abs(amount).toFixed(2);
+	const [whole, fraction] = fixed.split('.');
+	const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+	const sign = Number(fixed) !== 0 && amount < 0 ? '-' : '';
+	return `${sign}${grouped}.${fraction}`;
+}
+
+/**
  * A chaos gain as the ROI column prints it: `+700`, `+5,050`, `0`.
  *
  * The sign is explicit on anything that moved, because the column sits beside
@@ -598,40 +626,118 @@ export function iconSrc(apiBase: string, path: string | null): string | null {
 export const CHAOS_ID = 'Metadata/Items/Currency/CurrencyRerollRare';
 
 /**
- * The API-relative artwork path for Chaos Orbs (POE-189).
+ * The Currency Exchange's id for Divine Orbs, mirroring `DivineID` in
+ * `internal/exchange/pricing.go`.
+ *
+ * Held for the same reason as `CHAOS_ID` and used for one more: chaos and divine
+ * are the only two currencies a leg is ever QUOTED in, so a leg's `quote` is
+ * enough to name the unit its price is in. A rename upstream costs a rate its
+ * "div" suffix and an end tile its artwork; it can move no number.
+ */
+export const DIVINE_ID = 'Metadata/Items/Currency/CurrencyModValues';
+
+/**
+ * The API-relative artwork path for any exchange asset id (POE-189).
  *
  * Built rather than scavenged off a leg. The server's icon route serves ANY
  * asset id (`IconPath` in `internal/exchange/items.go`), so the path exists
- * whether or not this particular play happens to quote a leg in chaos — and the
- * plays that do not are exactly the ones the old leg-scavenging version left
- * with two empty tiles, on a row whose ends are still denominated in chaos.
+ * whether or not this particular play happens to carry the artwork on a leg —
+ * and a `quoteIcon` the server sent as `null` is exactly what left the row's two
+ * end tiles empty before this was built.
  *
  * `encodeURIComponent` is the mirror of the server's `url.PathEscape`: the id
  * carries slashes, Go escapes them as `%2F` in a path SEGMENT, and so does this.
  * Verified against a running server — the escaped URL answers 200, not the 404 a
  * mismatched escaping would give.
  */
+export function currencyIconPath(id: string): string {
+	return `/currency-exchange/icon/${encodeURIComponent(id)}`;
+}
+
+/** The API-relative artwork path for Chaos Orbs. */
 export function chaosIconPath(): string {
-	return `/currency-exchange/icon/${encodeURIComponent(CHAOS_ID)}`;
+	return currencyIconPath(CHAOS_ID);
+}
+
+/**
+ * The short suffix a rate quoted in `quoteId` carries: `c`, `div`, or `''`.
+ *
+ * Chaos and divine are the only two quote currencies the exchange ranks against
+ * (`QuotePriority` in `internal/exchange`), so the map is closed. An id that is
+ * neither answers `''` and the rate prints its bare number rather than being
+ * labelled with a currency nobody checked — a wrong unit beside a real price is
+ * the bug this whole rework exists to remove, so an unknown one says nothing.
+ */
+export function quoteUnit(quoteId: string): string {
+	if (quoteId === CHAOS_ID) return 'c';
+	if (quoteId === DIVINE_ID) return 'div';
+	return '';
+}
+
+/**
+ * What one unit of `quoteId` is worth in chaos, or `null` when this response
+ * cannot say.
+ *
+ * `null` is not a served shape: `divineChaosRate` is 0 only in an hour that
+ * carried no divine/chaos trade, and no divine-quoted play is served in such an
+ * hour at all. It is guarded anyway because the alternative is a division by
+ * zero printed as an amount.
+ */
+function chaosPerQuote(quoteId: string, divineChaosRate: number): number | null {
+	if (quoteId === CHAOS_ID) return 1;
+	if (quoteId === DIVINE_ID && divineChaosRate > 0) return divineChaosRate;
+	return null;
+}
+
+/**
+ * One leg's rate as the slot prints it, in the leg's OWN quote currency:
+ * `buy 26 @ 0.0625 div`, `sell @ 0.10 div`, `convert @ 196 c`.
+ *
+ * The price is the leg's POSTED extreme, unchanged from what the wire sends and
+ * unchanged from what this printed before the rework — the undercut lives in the
+ * end amounts, and showing it here would put a number on screen that no order
+ * book ever displayed. What is new is the unit: without it a 0.0625 beside a
+ * 196 reads as two prices in the same currency when it is a divine price beside
+ * a chaos one, which is how a mirror route came to read chaos → chaos → chaos.
+ *
+ * `count` is the run size, and only step 1 carries one: the reader buys N items
+ * once, then sells and converts whatever that purchase became, so repeating N on
+ * every step would invite it to be read as a per-step quantity. It goes through
+ * `formatChaos` for the thousands separator alone — a flip count is already a
+ * whole number, so nothing there rounds it.
+ */
+function legRate(verb: string, leg: CurrencyExchangeLeg, count?: number): string {
+	const head = count === undefined ? verb : `${verb} ${formatChaos(count)}`;
+	const price = formatLegPrice(leg.price);
+	const unit = quoteUnit(leg.quote);
+	return unit === '' ? `${head} @ ${price}` : `${head} @ ${price} ${unit}`;
 }
 
 /** One traded step of a route: what it moves, at what price. */
 export interface RouteStep {
-	/** The item the step is about — bought, received, or converted. */
+	/** The item the step acts on — bought, sold, or converted. */
 	name: string;
 	/** Its API-relative icon path, for `iconSrc`; `null` when it has none. */
 	icon: string | null;
-	/** `buy @ 1.00`, `sell @ 0.50`, `convert @ 204`. */
+	/** `buy 26 @ 0.0625 div`, `sell @ 0.10 div`, `convert @ 196 c`. */
 	rate: string;
 	/** The leg's price sits outside its fair band — the tile is marked. */
 	suspect: boolean;
 }
 
-/** The chaos in and the chaos out, per exchange. */
+/** What goes in at the start of a run and what comes back out at the end. */
 export interface RouteEnd {
+	/** The total, in `unit`. Whole orbs for chaos, fractional otherwise. */
 	amount: string;
-	/** Always the chaos artwork — `chaosIconPath()`, never `null` (POE-189). */
+	/** The unit's artwork — always a built path, never `null` (POE-189). */
 	icon: string;
+	/** The unit the amount is counted in: `chaos`, `divine`. */
+	unit: string;
+	/**
+	 * The slot's second line: `≈ 5,050c` under a non-chaos Spend, and the
+	 * `keep ≈ 102c` profit line under Get. `null` when there is nothing to add.
+	 */
+	sub: string | null;
 }
 
 /**
@@ -642,59 +748,87 @@ export interface RouteView {
 	spend: RouteEnd;
 	/** Step 1 — the item bought with the entry currency. */
 	buy: RouteStep;
-	/** Step 2 — what selling it pays out in. */
+	/** Step 2 — the same item being sold. */
 	sell: RouteStep;
 	/** Step 3 — the intermediate currency converted back; `null` on a direct play. */
 	convert: RouteStep | null;
 	get: RouteEnd;
-	/** The play gains chaos, so the Get amount is drawn as a gain. */
+	/** The run is expected to gain, so the Get amount is drawn as a gain. */
 	positive: boolean;
 }
 
 /**
- * The five route slots of one play.
+ * The five route slots of one play, at the size the play is worth running
+ * (POE-193).
  *
- * The legs arrive in execution order — two for direct (buy X, sell X), three
- * for 1-hop (buy X in A, sell X in B, sell B in A) — so the slots are read off
- * by position, not by `action`: the third leg is a `sell` on the wire and a
- * *convert* on screen, because what it does for the reader is turn the
+ * The row reads as one sentence: buy N items for X divine → sell those items for
+ * chaos → convert the chaos back → keep the difference. Three things it used to
+ * get wrong are fixed here, and each is a rule rather than a tweak:
+ *
+ * 1. EVERY STEP NAMES THE THING IT ACTS ON. Step 2 used to name the sell leg's
+ *    QUOTE — "Divine Orb" beside the SCARAB's 0.10 price — which put a currency's
+ *    name and artwork on a number that was the item's. All three steps now take
+ *    `itemName`/`itemIcon`; no slot shows a quote as if it were the traded thing.
+ * 2. EVERY RATE CARRIES ITS UNIT. A leg is quoted in chaos or in divine and the
+ *    slot never said which, so a route entered in divine read chaos → chaos →
+ *    chaos and the divine appeared nowhere on the row. See `legRate`.
+ * 3. THE ENDS ARE IN THE CURRENCY THE READER ACTUALLY SPENDS. `investment` and
+ *    `roi` are chaos figures whatever the legs are quoted in, so a divine-entry
+ *    play printed "spend 14 chaos" beside a flow denominated in divine. Spend is
+ *    now the buy leg's quote — its icon, its name, its number — with the chaos
+ *    reading kept as a sub-line rather than as the headline.
+ *
+ * The legs still arrive in execution order — two for direct (buy X, sell X),
+ * three for 1-hop (buy X in A, sell X in B, sell B in A) — and the slots are
+ * still read off by POSITION, not by `action`: the third leg is a `sell` on the
+ * wire and a *convert* on screen, because what it does for the reader is turn the
  * intermediate currency back into the one they started in.
  *
- * Which half of each leg the slot names follows what the reader receives at
- * that step: step 1 is the leg's item (the thing bought), step 2 is the leg's
- * QUOTE (what the sale pays in — chaos on a direct play, the intermediate on a
- * 1-hop), and step 3 the leg's item again (the intermediate being converted).
+ * SIZE. The amounts are the whole worthwhile RUN, not one exchange:
+ * `worthwhileScale(play).flips` is the same derived size the Scale column prints
+ * and the Run cost bounds are compared against, so the three cannot disagree
+ * about how big this play is. Spend is `flips × price × (1 + tick)` — the
+ * UNDERCUT entry, the price an order that actually fills is posted at, which is
+ * what `investment` and `expectedRoi` are already priced at (POE-188). Rebuilding
+ * it from `price` alone would print the raw best case under a net expectation.
+ * Get is Spend plus the run's expected profit, and the profit line under it says
+ * that profit in chaos, because chaos is the currency `expectedRoi` is measured
+ * in and the one a reader compares plays across.
  *
- * The ends are the play's own chaos figures rather than a product of the leg
- * prices: `investment` is what one exchange costs at the undercut entry and
- * `investment + roi` what it returns, both already net of the ticks the legs
- * do not show (POE-188). Rebuilding them from `price` here would print the raw
- * best case beside an ROI that is not. Both wear the chaos artwork
- * unconditionally, because both are chaos figures whatever the legs are quoted
- * in — see `chaosIconPath`.
+ * NO SIZE. `worthwhileScale` answers `null` for a play whose measured
+ * expectation is not positive — a live case, since ADR-016 serves the measured
+ * losers — and there is no run size to render. The ends then fall back to the
+ * PER-EXCHANGE chaos figures this drew before, which are the two numbers the wire
+ * guarantees for such a play; the steps keep their units and their item icons,
+ * so the two fixes that are not about size still apply. `positive` follows the
+ * `roi` those ends are built from, not the expectation: the flag styles the
+ * numbers on screen, and this branch's Get is visibly larger than its Spend
+ * (the server's positivity floor sees to that), so flagging it as no gain would
+ * read as broken arithmetic rather than as a warning. The warning has its own
+ * two homes — the red Exp. ROI cell and the Scale column's dash.
  *
  * `null` for a play with fewer than two legs — a shape the server does not
  * send. Nothing drops such a play: `ExchangeRoute` guards on this answer and
  * renders an empty route cell, so the row is still there with its rank, ROI and
  * depth, and only the route is missing.
  */
-export function routeSlots(play: CurrencyExchangePlay): RouteView | null {
+export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number): RouteView | null {
 	const [buyLeg, sellLeg, convertLeg] = play.legs;
 	if (buyLeg === undefined || sellLeg === undefined) return null;
 
-	const chaos = chaosIconPath();
-	return {
-		spend: { amount: formatChaos(play.investment), icon: chaos },
+	const scale = worthwhileScale(play);
+
+	const steps = {
 		buy: {
 			name: buyLeg.itemName,
 			icon: buyLeg.itemIcon,
-			rate: `buy @ ${formatLegPrice(buyLeg.price)}`,
+			rate: legRate('buy', buyLeg, scale?.flips),
 			suspect: buyLeg.suspect
 		},
 		sell: {
-			name: sellLeg.quoteName,
-			icon: sellLeg.quoteIcon,
-			rate: `sell @ ${formatLegPrice(sellLeg.price)}`,
+			name: sellLeg.itemName,
+			icon: sellLeg.itemIcon,
+			rate: legRate('sell', sellLeg),
 			suspect: sellLeg.suspect
 		},
 		convert:
@@ -703,11 +837,92 @@ export function routeSlots(play: CurrencyExchangePlay): RouteView | null {
 				: {
 						name: convertLeg.itemName,
 						icon: convertLeg.itemIcon,
-						rate: `convert @ ${formatLegPrice(convertLeg.price)}`,
+						rate: legRate('convert', convertLeg),
 						suspect: convertLeg.suspect
-					},
-		get: { amount: formatChaos(play.investment + play.roi), icon: chaos },
-		positive: play.roi > 0
+					}
+	};
+
+	// No derivable run size: the per-exchange chaos ends, exactly as before.
+	if (scale === null) {
+		const chaos = chaosIconPath();
+		return {
+			spend: { amount: formatChaos(play.investment), icon: chaos, unit: 'chaos', sub: null },
+			...steps,
+			get: {
+				amount: formatChaos(play.investment + play.roi),
+				icon: chaos,
+				unit: 'chaos',
+				sub: null
+			},
+			// The flag describes the two numbers ON SCREEN, and this branch renders
+			// the optimistic pair. Saying "no gain" over a Get that is visibly
+			// larger than its Spend would read as a bug in the arithmetic; the
+			// measured verdict is already carried where it belongs, by the red
+			// Exp. ROI cell and the Scale column's dash.
+			positive: play.roi > 0
+		};
+	}
+
+	const keep = `keep ≈ ${formatChaos(scale.gain)}c`;
+	const chaosPerEntry = chaosPerQuote(buyLeg.quote, divineChaosRate);
+
+	// An entry currency this response cannot value in chaos. Unreachable on a
+	// served body — see `chaosPerQuote` — so the ends answer in the currency the
+	// run's own figures are already in rather than dividing by a rate that is not
+	// there. The run size, its profit line and the units on every rate all stand.
+	if (chaosPerEntry === null) {
+		const chaos = chaosIconPath();
+		return {
+			spend: { amount: formatChaos(scale.investment), icon: chaos, unit: 'chaos', sub: null },
+			...steps,
+			get: {
+				amount: formatChaos(scale.investment + scale.gain),
+				icon: chaos,
+				unit: 'chaos',
+				sub: keep
+			},
+			positive: true
+		};
+	}
+
+	// Only chaos and divine get past `chaosPerQuote`, so the entry is one of the
+	// two here and the unit words are a pair rather than a lookup.
+	const entryIsChaos = buyLeg.quote === CHAOS_ID;
+	const entryUnit = entryIsChaos ? 'chaos' : 'divine';
+	// Whole orbs are the honest precision for chaos (POE-189) and nonsense for
+	// divine, where a whole run can cost a fraction of one.
+	const amount = (value: number) =>
+		entryIsChaos ? formatChaos(value) : formatFractionalOrbs(value);
+
+	const spend = scale.flips * buyLeg.price * (1 + buyLeg.tick);
+	const profit = scale.gain / chaosPerEntry;
+
+	return {
+		spend: {
+			amount: amount(spend),
+			icon: currencyIconPath(buyLeg.quote),
+			unit: entryUnit,
+			// `scale.investment` rather than `spend × chaosPerEntry`: the two are
+			// the same run at the same undercut, and this is the exact figure the
+			// filter bar's Run cost bounds compare against, so reading it directly
+			// leaves no seam for the sub-line and the bound to disagree across.
+			sub: entryIsChaos ? null : `≈ ${formatChaos(scale.investment)}c`
+		},
+		...steps,
+		get: {
+			amount: amount(spend + profit),
+			icon: currencyIconPath(buyLeg.quote),
+			unit: entryUnit,
+			// One rule for every non-chaos orb amount on the row, tail included: at
+			// a realistic rate the ~100c profit lands near half a divine, where
+			// this and `formatLegPrice` agree — so the choice buys no visible
+			// difference today and costs nothing, and it means the tail cannot
+			// drift into a different precision from the total right above it.
+			sub: entryIsChaos ? keep : `${keep} (≈ ${formatFractionalOrbs(profit)} div)`
+		},
+		// A derivable scale IS a positive expectation, and `gain` is that
+		// expectation multiplied by a positive flip count.
+		positive: true
 	};
 }
 

@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
 	CHAOS_ID,
+	DIVINE_ID,
 	HORIZON_OPTIONS,
 	MODE_OPTIONS,
 	REFETCH_DEBOUNCE_MS,
 	REFETCH_JITTER_MS,
 	SORT_OPTIONS,
 	chaosIconPath,
+	currencyIconPath,
 	dataAgeParts,
 	deriveState,
 	formatChaos,
@@ -24,6 +26,7 @@ import {
 	parseMode,
 	parseSort,
 	parseUnit,
+	quoteUnit,
 	refetchDelay,
 	routeSlots,
 	sortPlays,
@@ -1057,9 +1060,44 @@ describe('chaosIconPath', () => {
 	});
 });
 
+describe('currencyIconPath', () => {
+	it('escapes an id’s slashes the way the server’s path escaping does', () => {
+		expect(currencyIconPath(DIVINE_ID)).toBe(
+			'/currency-exchange/icon/Metadata%2FItems%2FCurrency%2FCurrencyModValues'
+		);
+	});
+});
+
+describe('quoteUnit', () => {
+	it('abbreviates a chaos-quoted price to c', () => {
+		expect(quoteUnit(CHAOS_ID)).toBe('c');
+	});
+
+	it('abbreviates a divine-quoted price to div', () => {
+		expect(quoteUnit(DIVINE_ID)).toBe('div');
+	});
+
+	it('gives no unit to a currency it cannot name', () => {
+		// A wrong unit beside a real price is the bug the units were added to
+		// remove, so an id nobody checked prints nothing rather than "c".
+		expect(quoteUnit('Metadata/Items/Currency/CurrencyUpgradeToRare')).toBe('');
+	});
+});
+
 describe('routeSlots', () => {
 	const CHAOS_ICON = '/currency-exchange/icon/Chaos';
-	const DIVINE_ID = 'Metadata/Items/Currency/CurrencyModValues';
+	const DIVINE_ICON = '/currency-exchange/icon/Divine';
+	/** The rate the divine-entry cases are read back into chaos with. */
+	const DIVINE_RATE = 200;
+	/** A scarab leg quoted in divine — the entry side of every mirror-route case. */
+	const DIVINE_SIDE = {
+		quote: DIVINE_ID,
+		quoteName: 'Divine Orb',
+		quoteIcon: DIVINE_ICON,
+		item: 'scarab',
+		itemName: 'Ambush Scarab',
+		itemIcon: '/icon/Scarab'
+	};
 
 	function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
 		return {
@@ -1083,12 +1121,101 @@ describe('routeSlots', () => {
 		};
 	}
 
-	/** Buy the card at 1c, sell it at 15c — the two legs the wire sends. */
-	function direct(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+	/**
+	 * The chaos-entry screenshot case: a scarab bought at 19c and sold at 21c on
+	 * the one market.
+	 *
+	 * The arithmetic every case below is checked against, worked independently of
+	 * the production code: `expectedRoi` 0.5 needs `ceil(100 / 0.5)` = 200 flips
+	 * to clear the 100c target, so the run is expected to gain `0.5 × 200` = 100c
+	 * and costs `200 × 19 × 1.01` = 3,838c at the undercut entry — the +1% tick
+	 * being the step an order that actually fills is posted above the extreme.
+	 * It returns 3,838 + 100 = 3,938c.
+	 */
+	function chaosScarab(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
 		return play({
-			legs: [leg(), leg({ action: 'sell', price: 15 })],
-			investment: 50,
-			roi: 700,
+			legs: [
+				leg({ item: 'scarab', itemName: 'Ambush Scarab', itemIcon: '/icon/Scarab', price: 19 }),
+				leg({
+					action: 'sell',
+					item: 'scarab',
+					itemName: 'Ambush Scarab',
+					itemIcon: '/icon/Scarab',
+					price: 21
+				})
+			],
+			investment: 19.19,
+			roi: 1.5,
+			expectedRoi: 0.5,
+			...overrides
+		});
+	}
+
+	/**
+	 * The divine-entry screenshot case: the same scarab traded against divine on
+	 * both sides — the mirror route that used to read chaos → chaos → chaos with
+	 * the divine appearing nowhere on the row.
+	 *
+	 * Worked independently: `expectedRoi` 2c needs `ceil(100 / 2)` = 50 flips,
+	 * gaining 100c. The run costs `50 × 0.0625 × 1.01` = 3.15625 divine, which at
+	 * 200c a divine is 631.25c — and `investment` is that chaos figure per
+	 * exchange, 12.625c. The profit is `100 / 200` = 0.5 divine, so the run
+	 * returns 3.65625 divine.
+	 */
+	function divineScarab(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		return play({
+			legs: [
+				leg({ ...DIVINE_SIDE, price: 0.0625 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.1 })
+			],
+			investment: 12.625,
+			roi: 0.4,
+			expectedRoi: 2,
+			...overrides
+		});
+	}
+
+	/**
+	 * The divine-entry 1-hop: buy the scarab against DIVINE, sell it against
+	 * chaos, then convert the chaos back into divine. The triangle whose every
+	 * step is quoted in a different currency from the step before it, which is
+	 * what makes it the one shape that can catch a convert slot reading its leg's
+	 * quote instead of its item.
+	 *
+	 * Worked independently of the production code: `expectedRoi` 2c needs
+	 * `ceil(100 / 2)` = 50 flips and gains 100c, so the run costs
+	 * `50 × 0.0625 × 1.01` = 3.15625 divine — 631.25c at 200c a divine, which is
+	 * the per-exchange `investment` of 12.625c across those 50 flips. The profit
+	 * is `100 / 200` = 0.5 divine, so the run returns 3.65625 divine. The convert
+	 * leg prices chaos in divine at `1 / 196` = 0.005102 divine an orb.
+	 */
+	function divineOneHop(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		const scarab = { item: 'scarab', itemName: 'Ambush Scarab', itemIcon: '/icon/Scarab' };
+		return play({
+			mode: '1-hop',
+			legs: [
+				leg({
+					...scarab,
+					quote: DIVINE_ID,
+					quoteName: 'Divine Orb',
+					quoteIcon: DIVINE_ICON,
+					price: 0.0625
+				}),
+				leg({ ...scarab, action: 'sell', price: 14 }),
+				leg({
+					action: 'sell',
+					item: CHAOS_ID,
+					itemName: 'Chaos Orb',
+					itemIcon: CHAOS_ICON,
+					quote: DIVINE_ID,
+					quoteName: 'Divine Orb',
+					quoteIcon: DIVINE_ICON,
+					price: 1 / 196
+				})
+			],
+			investment: 12.625,
+			roi: 0.4,
+			expectedRoi: 2,
 			...overrides
 		});
 	}
@@ -1105,14 +1232,14 @@ describe('routeSlots', () => {
 					itemName: 'Nameless Astrolabe',
 					quote: DIVINE_ID,
 					quoteName: 'Divine Orb',
-					quoteIcon: '/currency-exchange/icon/Divine',
+					quoteIcon: DIVINE_ICON,
 					price: 0.5
 				}),
 				leg({
 					action: 'sell',
 					item: DIVINE_ID,
 					itemName: 'Divine Orb',
-					itemIcon: '/currency-exchange/icon/Divine',
+					itemIcon: DIVINE_ICON,
 					price: 204
 				})
 			],
@@ -1122,96 +1249,259 @@ describe('routeSlots', () => {
 		});
 	}
 
-	it('spends what one exchange costs to enter', () => {
-		expect(routeSlots(direct())?.spend.amount).toBe('50');
+	it('spends the whole worthwhile run at the undercut buy price', () => {
+		// 200 flips × 19c × 1.01, not 200 × 19 and not the per-exchange 19.19.
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.spend.amount).toBe('3,838');
 	});
 
-	it('gets back the entry plus the round trip’s gain', () => {
-		// Not `roi` alone (the gain is not the payout) and not a product of the
-		// leg prices (those are raw, the ends are net of the ticks).
-		expect(routeSlots(direct())?.get.amount).toBe('750');
+	it('counts the run size into the buy step’s rate', () => {
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 200 @ 19.00 c');
 	});
 
-	it('names the item bought in step 1, at its buy price', () => {
-		const buy = routeSlots(direct())?.buy;
-
-		expect(buy?.name).toBe('Imperial Legacy');
-		expect(buy?.rate).toBe('buy @ 1.00');
-		expect(buy?.icon).toBe('/currency-exchange/icon/Card');
+	it('gets the run’s spend back plus the profit it is expected to make', () => {
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.get.amount).toBe('3,938');
 	});
 
-	it('names what the sale pays out in for step 2, not the item sold', () => {
-		const sell = routeSlots(direct())?.sell;
+	it('keeps the run’s expected profit in chaos alone when the entry is chaos', () => {
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.get.sub).toBe('keep ≈ 100c');
+	});
 
-		expect(sell?.name).toBe('Chaos Orb');
-		expect(sell?.rate).toBe('sell @ 15.00');
-		expect(sell?.icon).toBe(CHAOS_ICON);
+	it('adds no chaos reading under a spend that is already chaos', () => {
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.spend.sub).toBeNull();
+	});
+
+	it('names the item bought at step 1, at its posted buy price', () => {
+		const buy = routeSlots(chaosScarab(), DIVINE_RATE)?.buy;
+
+		expect(buy?.name).toBe('Ambush Scarab');
+		expect(buy?.icon).toBe('/icon/Scarab');
+	});
+
+	it('names the item sold at step 2 rather than the currency it is sold for', () => {
+		// The headline bug: the sell leg's QUOTE — "Divine Orb", with the divine
+		// artwork — sat beside the SCARAB's 0.10 price.
+		const sell = routeSlots(divineScarab(), DIVINE_RATE)?.sell;
+
+		expect(sell?.name).toBe('Ambush Scarab');
+		expect(sell?.icon).toBe('/icon/Scarab');
+	});
+
+	it('quotes the sell step in the currency its own leg is priced in', () => {
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.sell.rate).toBe('sell @ 0.10 div');
+	});
+
+	it('quotes the buy step of a divine-entry run in divine', () => {
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 50 @ 0.0625 div');
+	});
+
+	it('spends a divine-entry run in divine rather than in chaos', () => {
+		const spend = routeSlots(divineScarab(), DIVINE_RATE)?.spend;
+
+		expect(spend?.amount).toBe('3.16');
+		expect(spend?.unit).toBe('divine');
+	});
+
+	it('reads a divine spend back into chaos on its sub-line', () => {
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.sub).toBe('≈ 631c');
+	});
+
+	it('returns a divine-entry run in divine', () => {
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.amount).toBe('3.66');
+	});
+
+	it('gives a divine-entry profit line the divine equivalent of its chaos', () => {
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
+	});
+
+	it('keeps a divine end precise to the hundredth above a hundred orbs', () => {
+		// A leg-price formatter drops to whole numbers above 100, which here would
+		// print 101 spent and 102 returned on a run that keeps half a divine — the
+		// total moving by four times the profit that produced it.
+		// 50 flips × 2.005 × 1.01 = 101.2525 divine, plus 100c / 200 = 0.5.
+		const big = divineScarab({
+			legs: [
+				leg({ ...DIVINE_SIDE, price: 2.005 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 3 })
+			],
+			investment: 405
+		});
+
+		const route = routeSlots(big, DIVINE_RATE);
+
+		expect(route?.spend.amount).toBe('101.25');
+		expect(route?.get.amount).toBe('101.75');
+		expect(route?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
+	});
+
+	it('groups a divine end into thousands', () => {
+		// 50 flips × 20 × 1.01 = 1,010 divine. Grouped by hand, for the reason
+		// `formatChaos` groups by hand: a locale that separates with "." would
+		// print 1.010 beside an English sentence.
+		const huge = divineScarab({
+			legs: [
+				leg({ ...DIVINE_SIDE, price: 20 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 25 })
+			],
+			investment: 4040
+		});
+
+		expect(routeSlots(huge, DIVINE_RATE)?.spend.amount).toBe('1,010.00');
+	});
+
+	it('gives the end tiles the built artwork of the currency the run is entered with', () => {
+		// Built from the id, never scavenged off `quoteIcon` — a leg served with
+		// no artwork left both ends as empty tiles (POE-189).
+		const route = routeSlots(divineScarab(), DIVINE_RATE);
+
+		expect(route?.spend.icon).toBe(currencyIconPath(DIVINE_ID));
+		expect(route?.get.icon).toBe(currencyIconPath(DIVINE_ID));
+		expect(route?.spend.icon).not.toBe(DIVINE_ICON);
+	});
+
+	it('gives a chaos-entry run the built chaos artwork', () => {
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.spend.icon).toBe(chaosIconPath());
+	});
+
+	it('falls back to chaos ends when the hour published no divine rate', () => {
+		// Not a served shape — a hour with no divine trade serves no divine-quoted
+		// play — but the alternative to the guard is a division by zero printed as
+		// an amount. 50 flips × 12.625c invested, plus the same 100c gain.
+		const route = routeSlots(divineScarab(), 0);
+
+		expect(route?.spend.unit).toBe('chaos');
+		expect(route?.spend.amount).toBe('631');
+		expect(route?.get.amount).toBe('731');
 	});
 
 	it('leaves a direct play without a convert step', () => {
-		expect(routeSlots(direct())?.convert).toBeNull();
-	});
-
-	it('sells a 1-hop play into the intermediate currency at step 2', () => {
-		expect(routeSlots(oneHop())?.sell.name).toBe('Divine Orb');
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.convert).toBeNull();
 	});
 
 	it('converts the intermediate currency back at step 3', () => {
 		// The third leg is a `sell` on the wire; on screen it is the conversion
 		// that returns the reader to the currency they started in.
-		const convert = routeSlots(oneHop())?.convert;
+		const convert = routeSlots(oneHop(), DIVINE_RATE)?.convert;
 
 		expect(convert?.name).toBe('Divine Orb');
-		expect(convert?.rate).toBe('convert @ 204');
+		expect(convert?.rate).toBe('convert @ 204 c');
+	});
+
+	it('sells the bought item at step 2 of a 1-hop play, not the currency it lands in', () => {
+		expect(routeSlots(oneHop(), DIVINE_RATE)?.sell.name).toBe('Nameless Astrolabe');
+	});
+
+	it('names the currency being converted at step 3, not the one it is converted into', () => {
+		// The convert leg's ITEM is the intermediate chaos being spent; its QUOTE
+		// is the divine coming back. Reading the quote here would print "Divine
+		// Orb" over the price of a chaos orb.
+		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.name).toBe('Chaos Orb');
+	});
+
+	it('quotes the convert step of a divine-entry triangle in divine', () => {
+		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.rate).toBe('convert @ 0.005102 div');
+	});
+
+	it('quotes each step of a divine-entry triangle in that step’s own currency', () => {
+		// Three steps, two currencies, and the row used to show neither: buying in
+		// divine, selling in chaos and converting back read as one undifferentiated
+		// sequence of bare numbers.
+		const route = routeSlots(divineOneHop(), DIVINE_RATE);
+
+		expect(route?.buy.rate).toBe('buy 50 @ 0.0625 div');
+		expect(route?.sell.rate).toBe('sell @ 14.00 c');
+	});
+
+	it('enters a divine-entry triangle in divine', () => {
+		const route = routeSlots(divineOneHop(), DIVINE_RATE);
+
+		expect(route?.spend.unit).toBe('divine');
+		expect(route?.spend.amount).toBe('3.16');
+		expect(route?.spend.sub).toBe('≈ 631c');
+	});
+
+	it('returns a divine-entry triangle in divine', () => {
+		const route = routeSlots(divineOneHop(), DIVINE_RATE);
+
+		expect(route?.get.amount).toBe('3.66');
+		expect(route?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
 	});
 
 	it('marks only the slot whose own leg is suspect', () => {
 		const route = routeSlots(
-			direct({ legs: [leg(), leg({ action: 'sell', price: 15, suspect: true })] })
+			chaosScarab({
+				legs: [
+					leg({ price: 19 }),
+					leg({ action: 'sell', price: 21, suspect: true })
+				]
+			}),
+			DIVINE_RATE
 		);
 
 		expect(route?.buy.suspect).toBe(false);
 		expect(route?.sell.suspect).toBe(true);
 	});
 
-	it('reports a gain when the round trip returns more chaos than it cost', () => {
-		expect(routeSlots(direct({ roi: 700 }))?.positive).toBe(true);
+	it('reports a gain when the run is expected to profit', () => {
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.positive).toBe(true);
 	});
 
-	it('reports no gain when the round trip only breaks even', () => {
-		expect(routeSlots(direct({ roi: 0 }))?.positive).toBe(false);
+	it('still reports a gain on a measured loser, whose ends are its optimistic pair', () => {
+		// `expectedRoi` negative means no run size, so the ends fall back to
+		// `investment` and `investment + roi` — and that Get is visibly the larger
+		// of the two. The flag styles what is on screen; the measured verdict is
+		// the Exp. ROI cell's and the Scale column's to carry.
+		const route = routeSlots(chaosScarab({ expectedRoi: -3, investment: 50, roi: 700 }), 0);
+
+		expect(route?.get.amount).toBe('750');
+		expect(route?.positive).toBe(true);
 	});
 
-	it('gives both ends the built chaos artwork, not the path a leg happens to carry', () => {
-		// The legs here ARE quoted in chaos and carry their own icon path; the ends
-		// still take `chaosIconPath()`, so the two tiles cannot depend on which
-		// artwork this particular play was served with.
-		const route = routeSlots(direct());
-
-		expect(route?.spend.icon).toBe(chaosIconPath());
-		expect(route?.get.icon).toBe(chaosIconPath());
-		expect(route?.spend.icon).not.toBe(CHAOS_ICON);
+	it('reports no gain when a play with no run size returns exactly what it cost', () => {
+		expect(routeSlots(chaosScarab({ expectedRoi: -3, roi: 0 }), DIVINE_RATE)?.positive).toBe(
+			false
+		);
 	});
 
-	it('still gives both ends chaos artwork when no leg of the play is quoted in chaos', () => {
-		// The black-square bug (POE-189): a round trip quoted end to end in divine
-		// is still valued in chaos, so the ends must wear the chaos icon rather
-		// than render as two empty tiles.
-		const divineQuoted = direct({
+	it('falls back to what one exchange costs when there is no run size to draw', () => {
+		// `expectedRoi <= 0` has no repeat count that reaches the target, and
+		// ADR-016 serves such a play anyway — the ends drop to the two chaos
+		// figures the wire guarantees.
+		const route = routeSlots(chaosScarab({ expectedRoi: 0, investment: 50, roi: 700 }), DIVINE_RATE);
+
+		expect(route?.spend.amount).toBe('50');
+		expect(route?.get.amount).toBe('750');
+		expect(route?.spend.unit).toBe('chaos');
+	});
+
+	it('drops the run size from the buy rate when there is no run size', () => {
+		expect(routeSlots(chaosScarab({ expectedRoi: 0 }), DIVINE_RATE)?.buy.rate).toBe('buy @ 19.00 c');
+	});
+
+	it('keeps the unit on a rate of a play with no run size', () => {
+		// The mirror-route fix does not depend on the scale: a divine price stays
+		// labelled divine on a play the simulation could not measure.
+		expect(routeSlots(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.sell.rate).toBe(
+			'sell @ 0.10 div'
+		);
+	});
+
+	it('promises no profit under a play with no run size', () => {
+		expect(routeSlots(chaosScarab({ expectedRoi: 0 }), DIVINE_RATE)?.get.sub).toBeNull();
+	});
+
+	it('leaves a rate quoted in neither chaos nor divine without a unit', () => {
+		const exotic = chaosScarab({
 			legs: [
-				leg({ quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: '/icon/Divine' }),
-				leg({ action: 'sell', quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: '/icon/Divine' })
+				leg({ price: 19 }),
+				leg({ action: 'sell', price: 21, quote: 'Metadata/Items/Currency/CurrencyUpgradeToRare' })
 			]
 		});
 
-		const route = routeSlots(divineQuoted);
-
-		expect(route?.spend.icon).toBe(chaosIconPath());
-		expect(route?.get.icon).toBe(chaosIconPath());
+		expect(routeSlots(exotic, DIVINE_RATE)?.sell.rate).toBe('sell @ 21.00');
 	});
 
 	it('draws no route for a play that arrives with fewer than two legs', () => {
-		expect(routeSlots(play({ legs: [leg()] }))).toBeNull();
+		expect(routeSlots(play({ legs: [leg()] }), DIVINE_RATE)).toBeNull();
 	});
 });
 

@@ -11,30 +11,47 @@
 	 *
 	 * Presentation only. Every string, icon path and flag comes from
 	 * `routeSlots`, which is pure and unit-tested — this file decides nothing
-	 * about the market and computes no amount.
+	 * about the market and computes no amount. Since POE-193 the amounts are the
+	 * whole worthwhile RUN and the ends are in the currency the run is entered
+	 * with, so the end slots carry a unit word and a sub-line that comfortable
+	 * shows and dense drops.
 	 *
 	 * SLOT GEOMETRY, mirrored by the table header in `CurrencyExchangePage`: the
 	 * header's label spans must carry the same widths as `.slot-*` below
-	 * (comfortable 92 / 196 / 164 / 164 / 92 with 22px arrows and a 7px gap;
-	 * dense 70 / 220 / 140 / 140 / 70 with 18px arrows and a 6px gap), or the
+	 * (comfortable 168 / 196 / 164 / 164 / 168 with 22px arrows and a 7px gap;
+	 * dense 96 / 220 / 140 / 140 / 96 with 18px arrows and a 6px gap), or the
 	 * labels drift off the tiles they name.
 	 */
 	import type { CurrencyExchangePlay } from '$lib/api';
-	import { iconSrc, routeSlots, type ExchangeDensity, type RouteStep } from '$lib/exchange/view';
+	import {
+		iconSrc,
+		routeSlots,
+		type ExchangeDensity,
+		type RouteEnd,
+		type RouteStep
+	} from '$lib/exchange/view';
 	import ItemIcon from './ItemIcon.svelte';
 
 	let {
 		play,
 		density,
-		apiBase
+		apiBase,
+		divineChaosRate
 	}: {
 		play: CurrencyExchangePlay;
 		density: ExchangeDensity;
 		/** `getApiBase()` — the origin the legs' relative icon paths hang off. */
 		apiBase: string;
+		/**
+		 * The response's newest-hour chaos value of one divine — what a run entered
+		 * in divine is read back in chaos with. 0 when that hour carried no
+		 * divine/chaos trade, which drops the chaos sub-lines rather than printing
+		 * a zero.
+		 */
+		divineChaosRate: number;
 	} = $props();
 
-	const route = $derived(routeSlots(play));
+	const route = $derived(routeSlots(play, divineChaosRate));
 	const dense = $derived(density === 'dense');
 	/** 24px inside a 30px tile when comfortable; a bare 20px glyph when dense. */
 	const iconSize = $derived(dense ? 20 : 24);
@@ -72,17 +89,23 @@
 	</span>
 {/snippet}
 
-{#snippet end(amount: string, icon: string | null, gain: boolean)}
-	{@render tile(icon, false)}
-	<span class="lines">
-		<span class="amount mono" class:gain>{amount}</span>
-		<span class="unit">chaos</span>
+{#snippet end(slot: RouteEnd, gain: boolean)}
+	{@render tile(slot.icon, false)}
+	<!-- The sub-line rides on the wrapper's `title` as well as its own span,
+	     because dense hides the span and the profit line is the one thing on the
+	     row a dense reader still has to be able to reach. -->
+	<span class="lines" title={slot.sub ?? undefined}>
+		<span class="amount mono" class:gain>{slot.amount}</span>
+		<span class="unit">{slot.unit}</span>
+		{#if slot.sub}
+			<span class="sub">{slot.sub}</span>
+		{/if}
 	</span>
 {/snippet}
 
 {#if route}
 	<div class="route" class:dense>
-		<span class="slot slot-end">{@render end(route.spend.amount, route.spend.icon, false)}</span>
+		<span class="slot slot-end">{@render end(route.spend, false)}</span>
 
 		{@render arrow(false)}
 
@@ -108,7 +131,7 @@
 		{@render arrow(false)}
 
 		<span class="slot slot-end">
-			{@render end(route.get.amount, route.get.icon, route.positive)}
+			{@render end(route.get, route.positive)}
 		</span>
 	</div>
 {/if}
@@ -138,8 +161,15 @@
 
 	/* The fixed geometry. Mirrored by the page's header row — see the file
 	   comment before changing a number here. */
+	/* Sized off the longest string the row can hold rather than off the tiles:
+	   `keep ≈ 102c (≈ 0.51 div)` is 24 characters at 0.625rem, so the text column
+	   needs ~126px and the slot needs that plus the 30px tile and the 7px gap.
+	   The tail in parentheses is the whole point of the line — it is what tells a
+	   divine-entry reader what they keep in the currency they are holding — so it
+	   is not a candidate for the ellipsis, and a table that already scrolls
+	   sideways by design can afford the width. */
 	.slot-end {
-		width: 92px;
+		width: 168px;
 	}
 	.slot-buy {
 		width: 196px;
@@ -150,7 +180,7 @@
 	}
 
 	.route.dense .slot-end {
-		width: 70px;
+		width: 96px;
 	}
 	.route.dense .slot-buy {
 		width: 220px;
@@ -230,7 +260,8 @@
 	.name,
 	.amount,
 	.rate,
-	.unit {
+	.unit,
+	.sub {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -252,7 +283,8 @@
 	}
 
 	.rate,
-	.unit {
+	.unit,
+	.sub {
 		font-size: 0.625rem;
 		color: #6b7280;
 	}
@@ -261,9 +293,19 @@
 		flex-shrink: 0;
 	}
 
-	/* The unit label is what makes the bare number in the end slots readable as
-	   chaos; dense has no second line to put it on. */
+	/* The unit label survives into dense, unlike every other sub-line: since
+	   POE-193 the end amounts are in the currency the run is ENTERED with, so a
+	   bare 0.51 is 0.51 divine on one row and 5,050 is chaos on the next. Dense
+	   lays `.lines` out as a row, so it costs a word beside the number rather
+	   than a second line. */
 	.route.dense .unit {
+		flex-shrink: 0;
+	}
+
+	/* The chaos reading of a divine spend, and the run's profit line. Dense drops
+	   both, the way it drops every other sub-line; the string stays on the
+	   wrapper's `title`, so it is a hover away. */
+	.route.dense .sub {
 		display: none;
 	}
 

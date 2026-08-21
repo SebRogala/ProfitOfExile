@@ -556,7 +556,12 @@
 							</td>
 
 							<td class="route-cell">
-								<ExchangeRoute {play} {density} {apiBase} />
+								<ExchangeRoute
+									{play}
+									{density}
+									{apiBase}
+									divineChaosRate={result?.divineChaosRate ?? 0}
+								/>
 							</td>
 
 							<!-- Both money columns are ONE exchange in both densities: the
@@ -926,7 +931,7 @@
 		width: 22px;
 	}
 	.route-head .slot-end {
-		width: 92px;
+		width: 168px;
 	}
 	.route-head .slot-buy {
 		width: 196px;
@@ -940,7 +945,7 @@
 		width: 18px;
 	}
 	.route-head.dense .slot-end {
-		width: 70px;
+		width: 96px;
 	}
 	.route-head.dense .slot-buy {
 		width: 220px;
