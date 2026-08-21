@@ -1412,11 +1412,64 @@ func TestBestPlays_maxPlays_truncatesToTheHighestRanked(t *testing.T) {
 	}
 }
 
-func TestBestPlays_ranksByRoiPctThenTurnoverThenKey(t *testing.T) {
-	// Three of the four markets are crafted to the same return, and two of those
-	// to the same turnover, so each tie-break decides exactly one position. The
-	// second-placed market is also the THINNEST in units traded, which is what
-	// proves the tie-break moved from depth to chaos turnover.
+func TestBestPlays_ranksByExpectedRoiThenTurnoverThenKey(t *testing.T) {
+	// The ranking sorts on what the orders would have REALIZED, not on what the
+	// served hour printed, and the hell market is here to keep the two apart: its
+	// newest hour reads +96%, the biggest displayed return of the four, and it
+	// ranks LAST because an entry made an hour earlier at 300 chaos exits into
+	// that hour at a loss. Sorting on RoiPct instead would put it first.
+	//
+	// The other three print the same hour and the same prices an hour before it,
+	// so their entries realize identically; the card's market moved twice the
+	// volume on both sides, which raises its Turnover without touching the
+	// volume-weighted price the exit is read from. That leaves each tie-break
+	// deciding exactly one position.
+	thickInChaos := liquidChaosMarket(cardID, 100, 130)
+	thickInChaos.volume = [2]int64{thickInChaos.volume[0] * 2, thickInChaos.volume[1] * 2}
+
+	rows := append(
+		storedAt(feedHour,
+			liquidChaosMarket(scarabID, 100, 130).row(),
+			liquidChaosMarket(omenID, 100, 130).row(),
+			thickInChaos.row(),
+			liquidChaosMarket(hellID, 100, 200).row(),
+		),
+		storedAt(feedHour.Add(-time.Hour),
+			liquidChaosMarket(scarabID, 100, 120).row(),
+			liquidChaosMarket(omenID, 100, 120).row(),
+			liquidChaosMarket(cardID, 100, 120).row(),
+			liquidChaosMarket(hellID, 300, 360).row(),
+		)...,
+	)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	want := []string{
+		directKey(chaosID, cardID),   // tied on the simulated payout, most chaos through it
+		directKey(chaosID, omenID),   // tied on payout and turnover, smaller key
+		directKey(chaosID, scarabID), // tied on payout and turnover, bigger key
+		directKey(chaosID, hellID),   // the biggest printed return, a simulated loss
+	}
+	if !reflect.DeepEqual(playKeys(got.Plays), want) {
+		t.Errorf("keys = %v, want %v", playKeys(got.Plays), want)
+	}
+	card, omen, hell := playByKey(t, got, want[0]), playByKey(t, got, want[1]), playByKey(t, got, want[3])
+	if card.ExpectedRoi != omen.ExpectedRoi || !(card.Turnover > omen.Turnover) {
+		t.Errorf("the runner-up pair reads %v/%v chaos of expectation on %v/%v of turnover — the fixture no longer isolates the turnover tie-break",
+			card.ExpectedRoi, omen.ExpectedRoi, card.Turnover, omen.Turnover)
+	}
+	if !(hell.RoiPct > card.RoiPct) || !(hell.ExpectedRoi < card.ExpectedRoi) {
+		t.Errorf("the last-placed play reads %v printed / %v simulated against the winner's %v / %v — the fixture no longer separates the two numbers",
+			hell.RoiPct, hell.ExpectedRoi, card.RoiPct, card.ExpectedRoi)
+	}
+}
+
+func TestBestPlays_playsWithNothingSimulated_rankByTurnoverRatherThanDepth(t *testing.T) {
+	// One hour of feed: no entry can be simulated in it, so every play carries the
+	// same zero expectation and the ranking falls through to the tie-break under
+	// it. What that tie-break reads is the chaos that FLOWED through the market,
+	// not the units that changed hands — the runner-up here is the THINNEST of
+	// the four in units traded, so a comparator reading Depth would rank it last.
 	thickInChaos := liquidChaosMarket(cardID, 100, 120)
 	thickInChaos.volume = [2]int64{115000, 800}
 
@@ -1424,23 +1477,116 @@ func TestBestPlays_ranksByRoiPctThenTurnoverThenKey(t *testing.T) {
 		liquidChaosMarket(scarabID, 100, 120).row(), // 109,545 chaos an hour on 1000 units
 		liquidChaosMarket(omenID, 100, 120).row(),   // the same
 		thickInChaos.row(),                          // 115,000 chaos an hour on 800 units
-		liquidChaosMarket(hellID, 100, 150).row(),   // the biggest return
+		liquidChaosMarket(hellID, 100, 150).row(),   // 122,474 chaos an hour on 1000 units
 	)
 
 	got := BestPlays("Allflame", rows, DefaultConfig())
 
 	want := []string{
-		directKey(chaosID, hellID),   // biggest return
-		directKey(chaosID, cardID),   // same return as the rest, most chaos through it
-		directKey(chaosID, omenID),   // tied on return and turnover, smaller key
-		directKey(chaosID, scarabID), // tied on return and turnover, bigger key
+		directKey(chaosID, hellID),   // most chaos through it
+		directKey(chaosID, cardID),   // second most, on the fewest units
+		directKey(chaosID, omenID),   // tied on turnover, smaller key
+		directKey(chaosID, scarabID), // tied on turnover, bigger key
 	}
 	if !reflect.DeepEqual(playKeys(got.Plays), want) {
 		t.Errorf("keys = %v, want %v", playKeys(got.Plays), want)
 	}
+	for _, play := range got.Plays {
+		if play.SimEntries != 0 || play.ExpectedRoi != 0 {
+			t.Fatalf("%s reads %d simulated entries at %v chaos — the fixture no longer falls through to the turnover tie-break",
+				play.Key, play.SimEntries, play.ExpectedRoi)
+		}
+	}
 	if card, omen := playByKey(t, got, want[1]), playByKey(t, got, want[2]); card.Depth >= omen.Depth {
 		t.Errorf("the runner-up's Depth is %v against %v — the fixture no longer separates turnover from depth",
 			card.Depth, omen.Depth)
+	}
+}
+
+func TestBestPlays_biggerSimulatedFractionOnASmallerStake_ranksBehindTheBiggerChaosPayout(t *testing.T) {
+	// ExpectedRoi and ExpectedRoiPct are two readings of the same entries and the
+	// ranking sorts on the CHAOS one, the same way MinROIChaos judges a payout
+	// rather than a percentage: a card bought for 4.25 chaos that comes back 55%
+	// up made two chaos, and one bought for 401 that came back 14% up made
+	// fifty-seven. Sorting on the fraction would put the small one first, which is
+	// how a reader ends up chasing rounding errors.
+	//
+	// The cheap market is quoted in sixteenths so its price can be small without
+	// its tick being coarse — 4 to 8 chaos on a 1/16 step, which clears the same
+	// gates the expensive one does.
+	cheap := rowSpec{
+		itemA:        chaosID,
+		itemB:        cardID,
+		volume:       [2]int64{5657, 1000}, // a volume-weighted 5.657, between the two extremes
+		lowestStock:  [2]int64{2000, 200},
+		highestStock: [2]int64{5000, 500},
+		lowestRatio:  [2]int64{16, 4}, // 4 chaos a card, tick 1/16
+		highestRatio: [2]int64{32, 4}, // 8 chaos a card
+	}
+	dear := liquidChaosMarket(hellID, 400, 480)
+	rows := hourlyFeed(
+		[]Row{cheap.row(), dear.row()},
+		[]Row{cheap.row(), dear.row()},
+	)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	want := []string{directKey(chaosID, hellID), directKey(chaosID, cardID)}
+	if !reflect.DeepEqual(playKeys(got.Plays), want) {
+		t.Errorf("keys = %v, want the bigger payout first %v", playKeys(got.Plays), want)
+	}
+	small, big := playByKey(t, got, want[1]), playByKey(t, got, want[0])
+	if !(small.ExpectedRoiPct > big.ExpectedRoiPct) || !(big.ExpectedRoi > small.ExpectedRoi) {
+		t.Errorf("the pair reads %v/%v as fractions and %v/%v as chaos — the fixture no longer crosses the two readings",
+			small.ExpectedRoiPct, big.ExpectedRoiPct, small.ExpectedRoi, big.ExpectedRoi)
+	}
+}
+
+func TestBestPlays_lowCoveragePlay_ranksBehindEveryCoveredOneAndAheadOfEverySuspect(t *testing.T) {
+	// The three bands, in the order the ranking reads them, each holding the play
+	// that would win on the number below it: the suspect market carries the
+	// biggest simulated payout of the three and still ranks last, and the
+	// low-coverage market outpays the covered one and still ranks second. "We
+	// could not measure this" and "we measured this and it is good" are different
+	// claims, and only the second earns a place at the top.
+	//
+	// The hell market traded nine units an hour in the three oldest hours, which
+	// is what leaves it a single simulated entry against the guard while the
+	// other two are measured over four. The guard is armed at two because the
+	// shipped twelve would be capped at this feed's four possible entries and
+	// flag every row.
+	card := liquidChaosMarket(cardID, 100, 120).row()
+	suspectOmen := chaosMarketAnchoredAt(omenID, 90, 400, 100).row()
+	hell := liquidChaosMarket(hellID, 100, 150)
+	quietHell := hell
+	quietHell.volume = [2]int64{1100, 9}
+	rows := hourlyFeed(
+		[]Row{card, quietHell.row(), suspectOmen},
+		[]Row{card, quietHell.row(), suspectOmen},
+		[]Row{card, quietHell.row(), suspectOmen},
+		[]Row{card, hell.row(), suspectOmen},
+		[]Row{card, hell.row(), suspectOmen},
+	)
+	cfg := DefaultConfig()
+	cfg.MinSimEntries = 2
+
+	got := BestPlays("Allflame", rows, cfg)
+
+	want := []string{directKey(chaosID, cardID), directKey(chaosID, hellID), directKey(chaosID, omenID)}
+	if !reflect.DeepEqual(playKeys(got.Plays), want) {
+		t.Fatalf("keys = %v, want covered, then low-coverage, then suspect %v", playKeys(got.Plays), want)
+	}
+	covered, thin, suspect := playByKey(t, got, want[0]), playByKey(t, got, want[1]), playByKey(t, got, want[2])
+	if covered.LowCoverage || covered.Suspect {
+		t.Fatalf("the leader reads lowCoverage %v / suspect %v, want a clean covered play", covered.LowCoverage, covered.Suspect)
+	}
+	if !thin.LowCoverage || thin.Suspect || !(thin.ExpectedRoi > covered.ExpectedRoi) {
+		t.Fatalf("the runner-up reads lowCoverage %v / suspect %v on %v chaos against the leader's %v — the fixture no longer proves the flag outranks the payout",
+			thin.LowCoverage, thin.Suspect, thin.ExpectedRoi, covered.ExpectedRoi)
+	}
+	if !suspect.Suspect || !(suspect.ExpectedRoi > thin.ExpectedRoi) {
+		t.Fatalf("the last play reads suspect %v on %v chaos against the low-coverage %v — the fixture no longer proves the suspect band is read first",
+			suspect.Suspect, suspect.ExpectedRoi, thin.ExpectedRoi)
 	}
 }
 
@@ -1840,20 +1986,28 @@ func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
 	// with the desktop applying 10,000 / 0.10 / 5 / 3 client-side. Changing one
 	// of them back here changes what every user is shown and cannot be undone
 	// from the app, which is why the whole tuning is pinned rather than described.
+	//
+	// The three sim knobs are pinned for a different reason: 24 / 3 / 12 are the
+	// parameters ExpectedRoi was calibrated at (POE-193), they take no
+	// environment override, and moving one invalidates the measurement rather
+	// than adjusting a preference.
 	want := Config{
-		WindowHours:      6,
-		MinVolumePerHour: 10,
-		MinEdge:          0.001,
-		MinTurnoverChaos: 0,
-		MaxTick:          1,
-		MinEdgeTickRatio: 0,
-		MinROIChaos:      0,
-		SuspectLowBand:   0.67,
-		SuspectHighBand:  1.5,
-		HideSuspect:      false,
-		MinHoursSeen:     2,
-		MaxPlays:         500,
-		QuotePriority:    []string{DivineID, ChaosID},
+		WindowHours:       6,
+		MinVolumePerHour:  10,
+		MinEdge:           0.001,
+		MinTurnoverChaos:  0,
+		MaxTick:           1,
+		MinEdgeTickRatio:  0,
+		MinROIChaos:       0,
+		SuspectLowBand:    0.67,
+		SuspectHighBand:   1.5,
+		HideSuspect:       false,
+		MinHoursSeen:      2,
+		SimWindowHours:    24,
+		SimLookaheadHours: 3,
+		MinSimEntries:     12,
+		MaxPlays:          500,
+		QuotePriority:     []string{DivineID, ChaosID},
 		Horizons: []HorizonConfig{
 			{Horizon: HorizonRecent, WindowHours: 6, MinHoursSeen: 4},
 			{Horizon: HorizonDay, WindowHours: 24, MinHoursSeen: 18},
@@ -1938,6 +2092,21 @@ func TestConfigWithDefaults_fillsTheUnsetFieldsIndependently(t *testing.T) {
 			want: withField(func(c *Config) { c.MinHoursSeen = 4 }),
 		},
 		{
+			name: "only SimWindowHours set",
+			cfg:  Config{SimWindowHours: 48},
+			want: withField(func(c *Config) { c.SimWindowHours = 48 }),
+		},
+		{
+			name: "only SimLookaheadHours set",
+			cfg:  Config{SimLookaheadHours: 6},
+			want: withField(func(c *Config) { c.SimLookaheadHours = 6 }),
+		},
+		{
+			name: "only MinSimEntries set",
+			cfg:  Config{MinSimEntries: 20},
+			want: withField(func(c *Config) { c.MinSimEntries = 20 }),
+		},
+		{
 			name: "only QuotePriority set",
 			cfg:  Config{QuotePriority: []string{ChaosID}},
 			want: withField(func(c *Config) { c.QuotePriority = []string{ChaosID} }),
@@ -1975,16 +2144,19 @@ func TestConfigWithDefaults_nonPositiveCount_fallsBackToTheDefault(t *testing.T)
 	// which is the bar under MinEdge (see
 	// TestBestPlays_undercutReturnBelowZero_isNotServedEvenWithANegativeMinEdge).
 	cfg := Config{
-		WindowHours:      -1,
-		MinVolumePerHour: -1,
-		MinTurnoverChaos: -1,
-		MaxTick:          -1,
-		MinEdgeTickRatio: -1,
-		MinROIChaos:      -1,
-		SuspectLowBand:   -1,
-		SuspectHighBand:  -1,
-		MinHoursSeen:     -1,
-		MaxPlays:         -1,
+		WindowHours:       -1,
+		MinVolumePerHour:  -1,
+		MinTurnoverChaos:  -1,
+		MaxTick:           -1,
+		MinEdgeTickRatio:  -1,
+		MinROIChaos:       -1,
+		SuspectLowBand:    -1,
+		SuspectHighBand:   -1,
+		MinHoursSeen:      -1,
+		SimWindowHours:    -1,
+		SimLookaheadHours: -1,
+		MinSimEntries:     -1,
+		MaxPlays:          -1,
 	}
 
 	if got, want := cfg.withDefaults(), DefaultConfig(); !reflect.DeepEqual(got, want) {
@@ -2024,7 +2196,15 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 			Depth:      1000,
 			Suspect:    true,
 			HoursSeen:  1,
-			LastHour:   feedHour,
+			// The simulation's four, and the shape they take on a play whose
+			// optimistic hour reads +96%: a measured LOSS over three entries, too
+			// few to lean on. A round trip that drops any of them would drop the
+			// only numbers the ranking sorts on.
+			ExpectedRoi:    -12.5,
+			ExpectedRoiPct: -0.1238,
+			SimEntries:     3,
+			LowCoverage:    true,
+			LastHour:       feedHour,
 		}},
 	}
 
@@ -2045,7 +2225,8 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	wantKeys(t, "result", data, "league", "horizon", "from", "to", "hours", "divineChaosRate", "plays")
 	wantKeys(t, "play", mustMarshal(t, envelope.Plays[0]),
 		"key", "mode", "legs", "roiPct", "edge", "roiPctRaw", "roi", "investment",
-		"turnover", "tick", "depth", "suspect", "hoursSeen", "lastHour")
+		"turnover", "tick", "depth", "suspect", "hoursSeen", "expectedRoi",
+		"expectedRoiPct", "simEntries", "lowCoverage", "lastHour")
 
 	var legs []map[string]json.RawMessage
 	if err := json.Unmarshal(envelope.Plays[0]["legs"], &legs); err != nil {
