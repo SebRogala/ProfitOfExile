@@ -202,8 +202,9 @@
 //
 // The estimator is calibrated, not arbitrary: those parameters are the ones
 // validated against five owner-observed real outcomes at a serving-level MAE of
-// 13.1 chaos, where the displayed number sat near 122 (realized/displayed 40.7%,
-// 7.9% of entries negative). The record is POE-193 and the decision is
+// 13.1 chaos, where the displayed number sat near 122 (across the whole
+// calibration set, realized/displayed 40.7% and 7.9% of PLAYS negative in
+// aggregate). The record is POE-193 and the decision is
 // docs/adr/016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md.
 // Because they are a calibration rather than a preference, they take no
 // environment override; changing one is a deliberate redeploy that invalidates

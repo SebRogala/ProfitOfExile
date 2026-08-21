@@ -42,6 +42,7 @@ The three are interdependent: league identity scopes events and data, Mercure de
 - [ADR-013: UI picks persist in a schema-less prefs map](adr/013-ui-picks-persist-in-a-schema-less-prefs-map.md)
 - [ADR-014: Desktop features are modules with a work toggle and a view page](adr/014-desktop-features-are-modules-with-a-work-toggle-and-a-view-page.md)
 - [ADR-015: Exchange quality gates live client-side; the server serves everything sane](adr/015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
+- [ADR-016: Expected ROI is a cross-hour simulation; displayed prices stay single-hour](adr/016-expected-roi-is-a-cross-hour-simulation-displayed-prices-stay-single-hour.md)
 
 Superseded:
 

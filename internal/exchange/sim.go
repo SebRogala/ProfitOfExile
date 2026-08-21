@@ -210,8 +210,9 @@ func simulate(series map[string]*simSeries, entryHoursPresent int, cfg Config) m
 //  3. FIRE-SALE EXIT. An unsold unit is not a hold, it is a loss taken later:
 //     the exit prices at the lookahead's LAST data hour, halfway between that
 //     hour's VWAP and its undercut high — a seller who has stopped waiting meets
-//     the market between fair and the top. The realized fraction goes negative
-//     here, which is the point: 7.9% of the calibration's entries did.
+//     the market between fair and the top. The realized fraction is allowed to
+//     go negative, which is the point: across the calibration set 7.9% of PLAYS
+//     came out negative in aggregate.
 //
 //  4. VALUATION. The fraction is turned into chaos at the ENTRY hour's own
 //     divine/chaos rate, per this package's per-hour discipline: the outlay was
