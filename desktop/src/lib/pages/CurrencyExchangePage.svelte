@@ -100,10 +100,12 @@
 	 *
 	 * Every one defaults to '' and NOT to the number it stands for, because ''
 	 * already means that number: `parseGate` reads an unset knob as its default,
-	 * so an empty preference and a preference holding "3" filter identically. The
-	 * empty one has the property the literal lacks — a default this build changes
-	 * reaches the reader who never touched the knob, instead of leaving them
-	 * pinned to a number an older build wrote into their settings file.
+	 * so an empty preference and a preference holding that default filter
+	 * identically. The empty one has the property the literal lacks — a default
+	 * this build changes reaches the reader who never touched the knob, instead of
+	 * leaving them pinned to a number an older build wrote into their settings
+	 * file. POE-193 is that case: the defaults went to 0 and every reader who had
+	 * not typed a level got the whole served table, with no migration.
 	 *
 	 * `minRoiPct` keeps its original key: it is the same knob the reader has been
 	 * setting since POE-186, moved into the group rather than replaced, and
@@ -218,8 +220,8 @@
 	/**
 	 * The counter's attribution. Gates get their own figure; the rules, the
 	 * bounds and the search share the other, because those three are all things
-	 * the reader can see they set — the rows they take are not a surprise the way
-	 * a default-on gate's are.
+	 * the reader can see they set on a bar that is always open — a gate's controls
+	 * are behind a collapsed row, so its rows are the ones that need pointing at.
 	 */
 	const counts = $derived({
 		shown: rows.length,
@@ -256,7 +258,8 @@
 	 * Every knob back to its default, which is spelled '' and not the number:
 	 * `parseGate` reads unset as the default, so emptying the boxes IS the reset,
 	 * and it leaves the reader on whatever this build's defaults are rather than
-	 * on a snapshot of them.
+	 * on a snapshot of them. Since POE-193 that lands every gate OFF — the reset
+	 * gives the reader the whole served table back, which is the point of it.
 	 */
 	function resetGates() {
 		for (const pref of Object.values(gatePrefs)) pref.value = '';
@@ -271,11 +274,11 @@
 	 * it is not part of the setup, it is visibly in its own box, and that box has
 	 * its own × for the reader who wants it gone.
 	 *
-	 * The GATES are left alone for a third reason (POE-191): they are standing
-	 * policy rather than a question asked once, "clearing" them would have to mean
-	 * setting five zeroes rather than emptying five boxes — emptying them is what
-	 * turns them back ON — and the Gates row has its own Defaults for the reader
-	 * who wants them where they started.
+	 * The GATES are left alone for a third reason (POE-191): since POE-193 they
+	 * ship off, so a gate that is running is one the reader deliberately armed —
+	 * a standing choice rather than the question Clear is here to undo. The Gates
+	 * row has its own Defaults, which empties the boxes and is the way back to
+	 * off; sweeping them up here would make Clear a second control undoing it.
 	 */
 	function clearFilters() {
 		categoryRulesPref.value = serializeCategoryRules({});

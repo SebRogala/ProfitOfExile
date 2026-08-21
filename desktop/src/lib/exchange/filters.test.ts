@@ -96,9 +96,10 @@ function filters(overrides: Partial<NumericFilters> = {}): NumericFilters {
 /**
  * Every gate off, so a gate test says which single gate it is about.
  *
- * The opposite of the shipped state on purpose: the defaults are exercised
- * through `parseGates`, and an `applyGates` test that started from them could
- * not tell which of five floors dropped a play.
+ * Written out rather than spread from `gateDefaults`, even though POE-193 made
+ * the two agree: a per-gate test wants a stated baseline of nothing, and reading
+ * it from the shipped defaults would make every one of these cases silently
+ * change meaning the day a default is armed again.
  */
 function gates(overrides: Partial<Gates> = {}): Gates {
 	return {
@@ -447,9 +448,11 @@ describe('applyRules', () => {
 });
 
 describe('parseGate', () => {
-	it('reads an unset knob as its default rather than as off', () => {
-		// The default-on contract: a reader who has never opened the Gates row is
-		// entitled to the table the server used to hand them.
+	it('reads an unset knob as the default it was handed, not as a hard-coded off', () => {
+		// The fallback is the mechanism, not the value: an unset knob resolves
+		// through `gateDefaults`, which is what lets a build move what unset means
+		// without rewriting settings files. POE-193 moved it to 0; these cases pass
+		// 3 so they keep testing the routing rather than today's number.
 		expect(parseGate('', 3)).toBe(3);
 	});
 
@@ -463,9 +466,9 @@ describe('parseGate', () => {
 		expect(parseGate('1.5', 3)).toBe(1.5);
 	});
 
-	it('reads a half-typed knob as its default rather than as off', () => {
+	it('reads a half-typed knob as its default rather than as a number', () => {
 		// Where `parseAmount` answers "no filter" for "1e", a gate answers its
-		// default: mid-typing must not drop the standing policy.
+		// default: a knob mid-typing must not filter on whatever prefix parsed.
 		expect(parseGate('1e', 3)).toBe(3);
 	});
 
@@ -489,48 +492,66 @@ describe('parseGate', () => {
 });
 
 describe('parseGates', () => {
-	it('reads a fresh install as the gates the server used to enforce for everyone', () => {
-		// The whole point of the move: nothing stored yet, and the table is still
-		// the table POE-191 inherited — including the 2% return floor the server
-		// applied whatever the reader had typed.
+	it('reads a fresh install as every gate off', () => {
+		// POE-193's visibility rule: nothing stored yet, so nothing is filtered and
+		// the reader sees everything the server served. The old server levels are a
+		// recommendation the reader types, not a state they inherit.
 		expect(parseGates(gateInputs())).toEqual({
-			minRoiChaos: 3,
-			minTurnover: 10000,
-			maxTickPct: 10,
-			minEdgeTickRatio: 5,
-			minRoiPct: 2
+			minRoiChaos: 0,
+			minTurnover: 0,
+			maxTickPct: 0,
+			minEdgeTickRatio: 0,
+			minRoiPct: 0
 		});
 	});
 
-	it('turns one knob off without touching the other four', () => {
-		expect(parseGates(gateInputs({ minTurnover: '0' }))).toEqual({
+	it('arms one knob without arming the other four', () => {
+		expect(parseGates(gateInputs({ minTurnover: '10000' }))).toEqual({
 			...gateDefaults,
-			minTurnover: 0
+			minTurnover: 10000
 		});
 	});
 
-	it('prefers a stored return floor over the default it inherited', () => {
+	it('prefers a stored return floor over the off it defaults to', () => {
 		expect(parseGates(gateInputs({ minRoiPct: '5' })).minRoiPct).toBe(5);
 	});
 });
 
 describe('applyGates', () => {
-	/** Clears all five defaults: 10c gained, a live hour, a one-step spread. */
+	/** Clears every recommended level: 10c gained, a live hour, a one-step spread. */
 	const clean = play({ key: 'clean', roi: 10, turnover: 20000, tick: 0.005, roiPct: 0.05 });
-	/** A Sacrifice-fragment-shaped play: fails four of the five defaults. */
+	/** A Sacrifice-fragment-shaped play: fails four of the five recommended levels. */
 	const fragment = play({ key: 'fragment', roi: 0.5, turnover: 4000, tick: 0.2, roiPct: 0.03 });
 
-	it('keeps a play that clears every default gate', () => {
-		expect(keys(applyGates([clean], gateDefaults))).toEqual(['clean']);
+	/**
+	 * The levels the server used to enforce for everyone, which the desktop shipped
+	 * armed until POE-193 and now only recommends (POE-184's calibration, ADR-015).
+	 * Spelled here rather than imported because they are no longer a value the
+	 * source exports — the point of these tests is that typing them brings the old
+	 * table back, so a copy that could not drift with `gateDefaults` is the honest
+	 * fixture.
+	 */
+	const oldServerLevels: Gates = {
+		minRoiChaos: 3,
+		minTurnover: 10000,
+		maxTickPct: 10,
+		minEdgeTickRatio: 5,
+		minRoiPct: 2
+	};
+
+	it('shows a play nothing about it would have cleared, because nothing is armed', () => {
+		// POE-193's whole change: the fragment fails four of the old levels and is
+		// on the table anyway, because the reader has not asked for any of them.
+		expect(keys(applyGates([clean, fragment], gateDefaults))).toEqual(['clean', 'fragment']);
 	});
 
-	it('keeps a play the simulation expects to lose chaos when its optimistic numbers clear the gates', () => {
-		// The gates judge the OPTIMISTIC pair on purpose (POE-193): these five
-		// defaults are the server's old ones and were calibrated against `roi` and
-		// `roiPct`, so re-pointing any of them at the expectation would change what
-		// an untouched knob filters. The measured loser stays on the table and is
-		// ranked and coloured for what it is — serve and flag (ADR-016), not a
-		// sixth hidden gate.
+	it('keeps a play the simulation expects to lose chaos', () => {
+		// The gates judge the OPTIMISTIC pair on purpose (POE-193): the levels a
+		// reader arms were calibrated against `roi` and `roiPct`, so re-pointing one
+		// at the expectation would change what a typed level cuts. The measured
+		// loser stays on the table and is ranked and coloured for what it is —
+		// serve and flag (ADR-016), not a sixth hidden gate — and it survives the
+		// armed levels too, not just the empty ones.
 		const measuredLoss = play({
 			key: 'measured-loss',
 			roi: 10,
@@ -542,16 +563,29 @@ describe('applyGates', () => {
 		});
 
 		expect(keys(applyGates([measuredLoss], gateDefaults))).toEqual(['measured-loss']);
+		expect(keys(applyGates([measuredLoss], oldServerLevels))).toEqual(['measured-loss']);
 	});
 
-	it('drops a cheap thin play under the default gates', () => {
-		expect(keys(applyGates([clean, fragment], gateDefaults))).toEqual(['clean']);
+	it('drops that cheap thin play again once the old server levels are typed in', () => {
+		// The other half of the contract: the levels still mean what they meant, so
+		// a reader who wants the pre-POE-193 table types five numbers and has it.
+		expect(keys(applyGates([clean, fragment], oldServerLevels))).toEqual(['clean']);
 	});
 
-	it('keeps that same play once every gate is off', () => {
-		// The acceptance case: the knobs exist so the reader can go and look at
-		// the market the defaults were hiding from them.
+	it('keeps a play that fails four levels when all five gates are explicitly 0', () => {
+		// The explicit-off contract, stated against a written-out baseline rather
+		// than against `gateDefaults`: 0 disables every comparison, `maxTickPct`
+		// included — the fragment's 20% spread would fail any ceiling that ran at
+		// all. This is what makes 0 usable as the shipped default, and it stays
+		// true (and stays tested) the day a default is armed again.
 		expect(keys(applyGates([fragment], gates()))).toEqual(['fragment']);
+	});
+
+	it('drops it on one armed knob alone, leaving the other four off', () => {
+		// A knob is armed one at a time in practice — the turnover line is the one
+		// that hid a real 8.5k-chaos-an-hour flip, and arming it alone is enough to
+		// hide the fragment without the reader having touched the rest.
+		expect(keys(applyGates([clean, fragment], gates({ minTurnover: 10000 })))).toEqual(['clean']);
 	});
 
 	it('keeps a play gaining exactly the chaos floor', () => {
@@ -638,12 +672,13 @@ describe('applyGates', () => {
 		expect(keys(applyGates([under], gates({ minRoiPct: 2 })))).toEqual([]);
 	});
 
-	it('drops a play that clears four gates and fails only the fifth', () => {
+	it('drops a play that clears four armed gates and fails only the fifth', () => {
 		// One failing gate is enough — the reader who wants this play back has to
 		// turn that one off, not all of them.
 		const thinHour = play({ key: 'thin-hour', roi: 10, turnover: 9000, tick: 0.005, roiPct: 0.05 });
 
-		expect(keys(applyGates([thinHour], gateDefaults))).toEqual([]);
+		expect(keys(applyGates([thinHour], oldServerLevels))).toEqual([]);
+		expect(keys(applyGates([thinHour], gateDefaults))).toEqual(['thin-hour']);
 	});
 });
 

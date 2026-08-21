@@ -110,19 +110,19 @@ export const EXCHANGE_TOOLTIPS: Record<string, string> = {
 	'Run cost':
 		'What the worthwhile run ties up — the Scale column’s investment, not the cost of one exchange. Set the min/max to see only what your bankroll covers; the divine toggle converts the bounds at the newest hour’s rate.',
 	Gates:
-		'The quality bar — four floors and one ceiling the SERVER used to apply to everybody before it sent anything (POE-191 handed them to you). An EMPTY box is that gate running at the old server value, NOT off: the opposite of the run-cost bounds beside them, where empty means no filter at all. Type 0 to turn one off. Clear leaves all five alone — Defaults is what puts them back.',
+		'The quality bar — four floors and one ceiling the SERVER used to apply to everybody before it sent anything (POE-191 handed them to you). All five now ship OFF: an empty box filters nothing, so the table shows everything the server served and the ranking does the judging. Each tooltip names the level worth typing if you want the old, stricter table back. Clear leaves all five alone; Defaults empties them, which is off.',
 	'Min profit':
-		'The least chaos a play must gain on ONE exchange, read off the ROI column and not off Exp. ROI — a gate asks whether the market is worth trading at all, never how far the play has to be repeated to pay, which is the Scale column’s answer. Empty = 3c, the old server floor. Lower it (or 0) to see the cheap plays: sacrifice fragments and the like gain a fraction of a chaos each and only add up on volume.',
+		'The least chaos a play must gain on ONE exchange, read off the ROI column and not off Exp. ROI — a gate asks whether the market is worth trading at all, never how far the play has to be repeated to pay, which is the Scale column’s answer. Empty (or 0) is off, which is how the cheap plays stay visible: sacrifice fragments and the like gain a fraction of a chaos each and only add up on volume. Type 3 for the old server floor.',
 	'Min turnover':
-		'How much chaos had to change hands on the play’s market during the feed hour. Empty = 10,000c, the old server floor — below that you are not joining a market so much as being one, and your own order sets the price. Lower it (or 0) to see the quiet corners of the exchange.',
+		'How much chaos had to change hands on the play’s market during the feed hour. Empty (or 0) is off, so the quiet corners of the exchange are on the table. Type 10000 for the old server floor — below that you are not joining a market so much as being one, and your own order sets the price. It is a blunt line: a real flip turning over 8,500c an hour fails it.',
 	'Max price step':
-		'The coarsest price step the play’s market may quote in, as a percent of the price. A market that only moves in 25% jumps cannot be undercut finely, so the entry you planned is not the entry you get. Empty = 10%. 0 means no ceiling.',
+		'The coarsest price step the play’s market may quote in, as a percent of the price. A market that only moves in 25% jumps cannot be undercut finely, so the entry you planned is not the entry you get. Empty (or 0) means no ceiling. Type 10 for the old server level.',
 	'Edge vs step':
-		'How many price steps wide the play’s return has to be. At 5 the return must be five times the market’s own step, which keeps a play whose entire edge is one step of rounding off the table — most 1-hop routes fail here, because the divine step alone eats them. Empty = 5. 0 turns it off and they appear.',
+		'How many price steps wide the play’s return has to be. At 5 the return must be five times the market’s own step, which keeps a play whose entire edge is one step of rounding off the table — but it also takes nearly every 1-hop route with it, because the divine step alone eats them. Empty (or 0) is off, which is why they are on the table. Type 5 for the old server level.',
 	'Min return':
-		'The least return a play must show, as a percent of what one exchange costs — the same NET figure the ROI% column prints. Empty = 2%, which the server used to apply to everyone regardless of what was typed here. 0 shows everything above the server’s +0.1% sanity floor — it never serves a play that loses money or gains only float noise.',
+		'The least return a play must show, as a percent of what one exchange costs — the same NET figure the ROI% column prints. Empty (or 0) is off, which shows everything above the server’s +0.1% sanity floor — it never serves a play that loses money or gains only float noise. Type 2 for the floor the server used to apply to everyone.',
 	Counter:
-		'What is left of the response, and what took the rest. Gates are counted apart from everything else because they run whether or not you have opened that row — an unset gate is the old server default, not an absent filter. Everything else is counted together: the category pills, the item chips, the run-cost bounds, and the search box.'
+		'What is left of the response, and what took the rest. Gates are counted apart from everything else because their controls sit behind a collapsed row — the split points at the row that would give those rows back. They ship off, so this reads 0 until you set one. Everything else is counted together: the category pills, the item chips, the run-cost bounds, and the search box.'
 };
 
 export const SELL_CONFIDENCE_TOOLTIPS: Record<string, string> = {

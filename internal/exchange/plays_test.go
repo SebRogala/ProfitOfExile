@@ -997,8 +997,8 @@ func TestBestPlays_minTurnoverChaos_cutsTheMarketsTooSmallForTheSpreadToBeReal(t
 	// The measured floor: under 100 chaos an hour the median robust edge is
 	// 242%, over 100k it is 18%. The gate is inclusive at the floor.
 	//
-	// It ships OFF since POE-191 — the desktop applies it, with 10,000 as its own
-	// default — so the level is armed here rather than inherited. What the test
+	// It ships OFF since POE-191 — the desktop offers it as a knob and recommends
+	// 10,000 — so the level is armed here rather than inherited. What the test
 	// pins is the arithmetic the client's knob rides on: the comparison is
 	// Turnover >= the floor, in chaos, and one chaos short of it is out.
 	cfg := DefaultConfig()
@@ -1039,7 +1039,7 @@ func TestBestPlays_maxTick_cutsTheSpreadsThatAreOneIntegerPriceStepWide(t *testi
 	// move in tenths — exactly the cap. Nine chaos to the item cannot.
 	//
 	// The cap ships OFF since POE-191 (DefaultConfig sets 1, which no tick can
-	// exceed) and the desktop applies 10% as its own default, so the level is
+	// exceed) and the desktop offers 10% as a recommended knob, so the level is
 	// armed here. The comparison it pins is Tick <= the cap, inclusive.
 	cfg := DefaultConfig()
 	cfg.MaxTick = 0.10
@@ -1082,9 +1082,9 @@ func TestBestPlays_minEdgeTickRatio_cutsTheSpreadsNarrowerThanFivePriceSteps(t *
 	// of the comparison are the SAME double and the case sits ON the gate
 	// instead of a rounding above it.
 	//
-	// The ratio ships OFF since POE-191 and the desktop applies 5 as its own
-	// default, so it is armed here; the tick cap is armed at 0.5 as well, because
-	// a market this coarse is exactly what the client's 10% default would drop
+	// The ratio ships OFF since POE-191 and the desktop offers 5 as a recommended
+	// knob, so it is armed here; the tick cap is armed at 0.5 as well, because a
+	// market this coarse is exactly what the client's recommended 10% would drop
 	// and the point here is the ratio, not the cap.
 	cfg := DefaultConfig()
 	cfg.MinEdgeTickRatio = 5
@@ -1164,8 +1164,8 @@ func TestBestPlays_minROIChaos_cutsThePlaysWhosePayoutIsARoundingError(t *testin
 	// a return well over five steps — so only the chaos per exchanged unit
 	// separates them.
 	//
-	// The floor ships OFF since POE-191 and the desktop applies 3 chaos as its
-	// own default, so it is armed here. What the test pins is that the gate reads
+	// The floor ships OFF since POE-191 and the desktop offers 3 chaos as a
+	// recommended knob, so it is armed here. What the test pins is that the gate reads
 	// Roi (the chaos an exchange pays) and not RoiPct: the two markets differ by
 	// a quarter of a chaos on the same percentage-shaped fixture.
 	cfg := DefaultConfig()
@@ -1927,13 +1927,18 @@ func TestBestPlays_recordedHour_ranksFinitePlaysUnderTheDefaultGates(t *testing.
 	}
 }
 
-func TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes(t *testing.T) {
-	// POE-191's migration invariant: applying the four levels this engine used to
-	// enforce — and which the desktop now ships as its own default knobs — gives
-	// back the pre-POE-191 answer on the same recorded hour. A user who never
-	// touches the knobs sees what the old server served. The same five levels
-	// live as gateDefaults in desktop/src/lib/exchange/filters.ts (ADR-015);
-	// changing either side is changing both.
+func TestBestPlays_recordedHourUnderTheOldServerLevels_yieldsNoOneHopRoutes(t *testing.T) {
+	// What the five levels this engine used to enforce actually CUT, measured on a
+	// recorded hour: arming them reproduces the pre-POE-191 answer.
+	//
+	// This is no longer a migration invariant about the desktop. POE-191 moved the
+	// levels to the desktop's knobs and shipped them armed, so this test and
+	// gateDefaults were one claim in two languages; POE-193 turned those defaults
+	// off — the levels are the documented RECOMMENDED tightening now, and the
+	// desktop's out-of-the-box table is everything the server serves. The test
+	// stays because the levels stay: it is the evidence for what a reader who
+	// types them gets, and the reason "most 1-hop routes fail Edge vs step" is a
+	// measurement rather than a claim.
 	//
 	// The route is the case that decides it: its coarsest leg steps 9.1%, inside
 	// the 10% tick cap, and its undercut return is 29.6% — three ticks rather
@@ -1946,7 +1951,7 @@ func TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes
 	cfg.MinTurnoverChaos, cfg.MaxTick = 10000, 0.10
 	cfg.MinEdgeTickRatio, cfg.MinROIChaos = 5, 3
 	// The fifth old level: the server enforced 2% before POE-191 made it the
-	// client's minRoiPct default. Armed so the invariant is pinned, not
+	// client's minRoiPct knob. Armed so the result is the whole level set's, not
 	// coincidental on this fixture.
 	cfg.MinEdge = 0.02
 
@@ -1983,7 +1988,8 @@ func TestBestPlays_zeroValueConfig_scoresTheHourLikeDefaultConfig(t *testing.T) 
 
 func TestDefaultConfig_isTheDocumentedTuning(t *testing.T) {
 	// The four quality levels are 0 / 1 / 0 / 0 on purpose since POE-191: off,
-	// with the desktop applying 10,000 / 0.10 / 5 / 3 client-side. Changing one
+	// with 10,000 / 0.10 / 5 / 3 offered as the desktop's knobs — armed by
+	// default until POE-193, recommended rather than applied since. Changing one
 	// of them back here changes what every user is shown and cannot be undone
 	// from the app, which is why the whole tuning is pinned rather than described.
 	//

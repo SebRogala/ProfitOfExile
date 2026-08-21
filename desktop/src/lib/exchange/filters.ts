@@ -13,12 +13,15 @@
  * to. Both live in `persisted()` strings (ADR-013), which is why the parsers
  * take raw text and answer with an empty rule set rather than throwing.
  *
- * Two ways of reading an empty input live here, and they are opposites. The
- * quality gates (POE-191, moved out of the server) are DEFAULT-ON: an unset
- * knob is that gate running at the value the server used to enforce for
- * everyone. The numeric bounds are DEFAULT-OFF: an unset bound is a filter the
- * reader is not running. `parseGate` and `parseAmount` each say why their side
- * is the way round it is — check which one you are in before reusing either.
+ * Two ways of reading an empty input live here, and since POE-193 they agree on
+ * the answer without agreeing on the reasoning. The quality gates (POE-191,
+ * moved out of the server) ship OFF: an unset knob is a gate the reader has not
+ * armed, and `gateDefaults` is the one place a build says what unset runs at.
+ * The numeric bounds are off by construction: they have no default to consult,
+ * because an unset bound is a filter the reader is not running. `parseGate` and
+ * `parseAmount` each say what their side does with input that is NOT blank —
+ * that is where the two still differ, so check which one you are in before
+ * reusing either.
  *
  * Pure TypeScript on purpose — no Svelte runes, no Tauri imports — so the whole
  * file is reachable from vitest without a component harness, the same reason
@@ -303,7 +306,8 @@ const PERCENT_PER_FRACTION = 100;
  *
  * `0` is off for every knob, `maxTickPct` included: a spread ceiling of zero
  * would ask for a market with no spread at all, which is not a table anyone
- * wants, so the value is free to spell "no ceiling".
+ * wants, so the value is free to spell "no ceiling". `applyGates` spells that
+ * out as a `> 0` guard per comparison, which is what lets all five ship at 0.
  */
 export interface Gates {
 	/** Chaos gained per exchange, floor. */
@@ -319,28 +323,46 @@ export interface Gates {
 }
 
 /**
- * The gate values the server used to enforce for everyone.
+ * What an unset knob runs at: nothing. All five gates ship OFF (POE-193).
  *
  * Data rather than five literals spread through the parsers, because three
  * callers need the same five numbers and they must not be able to disagree:
  * the parser's fallback, the filter bar's "Defaults" reset, and the badge that
  * counts how many knobs the reader has moved off default.
  *
- * `minRoiPct` is 2 for the same reason the other four carry the server's old
- * numbers — the server gated 2% regardless of what the reader had typed, so a
- * reader who never set it was already looking at a 2% table.
+ * Until POE-193 these carried the levels the server used to enforce for
+ * everyone (3 / 10,000 / 10% / 5× / 2%) and shipped them armed, so the
+ * out-of-the-box table was the old server's table. The rule now is that
+ * everything the server serves is VISIBLE out of the box, because the judgement
+ * those levels stood in for is made honestly one layer down: the ranking is the
+ * per-play simulated expectation, and lowCoverage, suspect and a negative
+ * expectation are flagged and sunk rather than hidden (ADR-016). An absolute
+ * cutoff in front of a measured ranking hides plays the measurement says are
+ * real — measured against the live stack on 2026-08-21, the armed levels hid
+ * 142 of the 143 served 1-hop plays, and hid an Apocalypse card flip for
+ * turning over 8,532 chaos in the hour against a 10,000 line.
  *
- * These five numbers are pinned in Go too:
- * TestBestPlays_recordedHourUnderTheClientsDefaultLevels_yieldsNoOneHopRoutes
- * arms the same levels to prove untouched knobs give the old server's answer
- * (ADR-015). Changing a default here is changing that test.
+ * The levels are not gone, they are RECOMMENDED rather than shipped, and the
+ * meaning is what a reader arms rather than the number:
+ * - `minRoiChaos` 3 — a payout under a few chaos is a rounding error.
+ * - `minTurnover` 10,000 — under it you are not joining a market, you are it.
+ * - `maxTickPct` 10 — a coarser price step cannot be undercut finely.
+ * - `minEdgeTickRatio` 5 — a return narrower than five steps is quantization.
+ * - `minRoiPct` 2 — the return floor the server applied to everyone.
+ * They come from POE-184's 30,534 priced market-hours (ADR-015); typing all
+ * five reproduces the pre-POE-193 table exactly.
+ *
+ * Go arms the same five on a recorded hour —
+ * TestBestPlays_recordedHourUnderTheOldServerLevels_yieldsNoOneHopRoutes — but
+ * that is no longer the same claim as this constant. It documents what the
+ * levels CUT when a reader arms them; it does not pin what this file ships.
  */
 export const gateDefaults: Gates = {
-	minRoiChaos: 3,
-	minTurnover: 10000,
-	maxTickPct: 10,
-	minEdgeTickRatio: 5,
-	minRoiPct: 2
+	minRoiChaos: 0,
+	minTurnover: 0,
+	maxTickPct: 0,
+	minEdgeTickRatio: 0,
+	minRoiPct: 0
 };
 
 /**
@@ -352,20 +374,18 @@ export type GateInputs = { [K in keyof Gates]: string };
 /**
  * One gate knob as a number.
  *
- * DEFAULT-ON, which is the OPPOSITE of `parseAmount` below: blank and
- * unparseable both answer the knob's DEFAULT here, and "off" there. The two
- * contracts live in one file on purpose, so read which one you are in before
- * copying either.
+ * Blank and unparseable both answer the knob's DEFAULT, which since POE-193 is
+ * 0 — off — for all five. That reaches the same place `parseAmount` reaches by
+ * a different route, and the route is the part worth keeping: this side asks a
+ * BUILD what an unset knob runs at, the other side has no such value to ask
+ * for. Keep the fallback rather than hard-coding 0 here. The knobs persist as
+ * `''` precisely so a build that changes what unset means reaches the reader
+ * who never touched one, instead of leaving them on a number an older build
+ * wrote into their settings file.
  *
- * A gate is standing policy. The reader who has never opened the Gates row is
- * entitled to the table the server used to hand them, and a knob that read an
- * unset preference as "off" would drop that policy on every fresh install and
- * bury the table under fragment noise — the defaults are the trash-killer.
- * A numeric bound is a moment filter: the reader typed it to answer one
- * question, so an empty box means they are done asking.
- *
- * `0` is therefore the explicit off, and has to survive parsing: it is the only
- * way for the reader to say "show me the cheap fragments too".
+ * `0` still has to survive parsing rather than reading as unset: a reader who
+ * typed it is saying "show me the cheap fragments too", and the box they typed
+ * it into has to keep saying so.
  *
  * A negative knob is read as off rather than kept. For the four floors the
  * server's positivity floor means no served play carries a negative `roiPct` or
@@ -404,11 +424,13 @@ export function parseGates(inputs: GateInputs): Gates {
  * Apply the quality gates.
  *
  * Its own function rather than five more fields on `applyNumericFilters`,
- * because the two halves mean opposite things about an empty input: a gate
- * unset is a gate ON at its default, a bound unset is a bound OFF. Folding them
- * together would put both contracts inside one filter pass where the next
- * reader has to remember which field obeys which — and the page reflects the
- * same split, since Clear empties the bounds while Defaults restores the gates.
+ * because the two halves are set and unset by different controls: the gates are
+ * a standing quality bar with their own Defaults reset and their own explicit
+ * off (`0`), the bounds are a question the reader asked once and Clear sweeps
+ * up. Folding them together would put both contracts inside one filter pass
+ * where the next reader has to remember which field obeys which — and the page
+ * reflects the same split, since Clear empties the bounds and leaves the gates
+ * where the reader put them.
  *
  * A play passes only by clearing every gate that is on:
  * - `roi ≥ minRoiChaos` — the chaos ONE exchange gains, never the scaled figure:
@@ -422,9 +444,13 @@ export function parseGates(inputs: GateInputs): Gates {
  *   price step off the table.
  * - `roiPct ≥ minRoiPct / 100` — the return floor.
  *
+ * A gate at 0 does not run at all, which is what makes 0 the shipped default
+ * (`gateDefaults`) as well as the reader's explicit off — the `> 0` guard is
+ * the off switch, one per comparison, `maxTickPct` included.
+ *
  * Every comparison is inclusive on the passing side: a play sitting exactly on
- * a floor met it, and the server it inherits these numbers from cleared the
- * same plays.
+ * a floor met it, and the server these numbers were taken from cleared the same
+ * plays when it enforced them.
  *
  * `maxTickPct` and `minRoiPct` cross scales here and nowhere else — the inputs
  * are percent points, the wire's `tick` and `roiPct` are fractions.
@@ -432,13 +458,14 @@ export function parseGates(inputs: GateInputs): Gates {
  * already a fraction.
  *
  * Every gate still judges the OPTIMISTIC `roiPct`/`roi`, deliberately, even
- * though the server now ranks on `expectedRoi` (POE-193). These five defaults
- * are the server's old ones and were calibrated against those two fields; the
- * Go test that pins them arms the same levels against the same numbers, so
- * re-pointing a gate at the expectation would change what every untouched knob
- * filters without anyone having typed anything. What the expectation is for is
- * the ORDER and the Exp. ROI column — the reader sees the measured outcome and
- * decides, which is ADR-015's split with the bar still on the reader's side.
+ * though the server now ranks on `expectedRoi` (POE-193). The levels a reader
+ * arms are the server's old ones and were calibrated against those two fields;
+ * the Go test that arms them measures the same numbers, so re-pointing a gate
+ * at the expectation would silently change what a typed level cuts. What the
+ * expectation is for is the ORDER and the Exp. ROI column — the reader sees the
+ * measured outcome and decides, which is ADR-015's split with the bar still on
+ * the reader's side, and since POE-193 with nothing on that bar until they put
+ * it there.
  */
 export function applyGates(plays: CurrencyExchangePlay[], gates: Gates): CurrencyExchangePlay[] {
 	return plays.filter((play) => {
@@ -461,9 +488,9 @@ export function applyGates(plays: CurrencyExchangePlay[], gates: Gates): Currenc
  * has to mean "filter off" rather than 0. Parsing them here keeps that one
  * boundary in one place instead of spreading `=== ''` checks through the page.
  *
- * The return floor is NOT one of them: it is `Gates.minRoiPct`, on the
- * default-on side of the file, and lives there alone so the reader's 2% floor
- * has exactly one owner.
+ * The return floor is NOT one of them: it is `Gates.minRoiPct`, on the gate
+ * side of the file, and lives there alone so the reader's return floor has
+ * exactly one owner.
  */
 export interface NumericFilters {
 	/**
