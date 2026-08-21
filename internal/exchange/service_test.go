@@ -209,6 +209,11 @@ func TestRecompute_readsOneWindowSizedToTheWidestHorizon(t *testing.T) {
 	// and half-open so the newest hour is in and the next one is out. One read
 	// serves every horizon, because BestPlays keeps only the newest WindowHours
 	// distinct hours of whatever it is handed.
+	//
+	// Widest is a maximum over two independent demands since POE-193: the horizon
+	// that RANKS furthest back, and the day of entries every horizon's ExpectedRoi
+	// is simulated over. Either can be the binding one, so the cases below pin
+	// each of them winning.
 	tests := []struct {
 		name     string
 		cfg      Config
@@ -220,25 +225,41 @@ func TestRecompute_readsOneWindowSizedToTheWidestHorizon(t *testing.T) {
 			wantFrom: feedHour.Add(-24 * time.Hour),
 		},
 		{
-			name: "configured horizons decide the span",
+			name: "a horizon wider than the sim window decides the span",
+			cfg: Config{Horizons: []HorizonConfig{
+				{Horizon: HorizonRecent, WindowHours: 30, MinHoursSeen: 1},
+				{Horizon: HorizonDay, WindowHours: 27, MinHoursSeen: 1},
+			}},
+			wantFrom: feedHour.Add(-30 * time.Hour),
+		},
+		{
+			name: "the widest horizon is a maximum, not the last one listed",
+			cfg: Config{Horizons: []HorizonConfig{
+				{Horizon: HorizonRecent, WindowHours: 33, MinHoursSeen: 1},
+				{Horizon: HorizonDay, WindowHours: 27, MinHoursSeen: 1},
+			}},
+			wantFrom: feedHour.Add(-33 * time.Hour),
+		},
+		{
+			name: "horizons narrower than the sim window still read the day it averages over",
 			cfg: Config{Horizons: []HorizonConfig{
 				{Horizon: HorizonRecent, WindowHours: 2, MinHoursSeen: 1},
 				{Horizon: HorizonDay, WindowHours: 5, MinHoursSeen: 1},
 			}},
-			wantFrom: feedHour.Add(-5 * time.Hour),
+			wantFrom: feedHour.Add(-24 * time.Hour),
 		},
 		{
-			name: "the widest is a maximum, not the last one listed",
-			cfg: Config{Horizons: []HorizonConfig{
+			name: "a widened sim window reaches back past every horizon",
+			cfg: Config{SimWindowHours: 40, Horizons: []HorizonConfig{
 				{Horizon: HorizonRecent, WindowHours: 9, MinHoursSeen: 1},
 				{Horizon: HorizonDay, WindowHours: 3, MinHoursSeen: 1},
 			}},
-			wantFrom: feedHour.Add(-9 * time.Hour),
+			wantFrom: feedHour.Add(-40 * time.Hour),
 		},
 		{
 			name:     "the base window is not a horizon, however wide",
-			cfg:      Config{WindowHours: 48},
-			wantFrom: feedHour.Add(-24 * time.Hour),
+			cfg:      Config{WindowHours: 48, SimWindowHours: 30},
+			wantFrom: feedHour.Add(-30 * time.Hour),
 		},
 	}
 

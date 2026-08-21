@@ -38,6 +38,11 @@ const divineChaosRate = 198.97
 // directDivinePlay is the fixture's headline flip: buy a divine for 196 chaos,
 // sell it for 201 — 197 and 199.97 once each side has paid its tick, which is
 // why roiPct is under half of roiPctRaw.
+//
+// Its simulated numbers deliberately disagree with its displayed ones: five
+// entries averaged a LOSS of 0.83 chaos where the hour prints a 2.97-chaos gain,
+// and five is under the coverage guard. Both are shapes a real play takes
+// (POE-193), and both are shapes a transport could quietly flatten to zero.
 func directDivinePlay() exchange.Play {
 	return exchange.Play{
 		Key:  "direct:" + exchange.ChaosID + "|" + exchange.DivineID,
@@ -46,16 +51,20 @@ func directDivinePlay() exchange.Play {
 			{Action: "buy", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 196, Fair: 198.97, FairOK: true, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
 			{Action: "sell", Item: exchange.DivineID, Quote: exchange.ChaosID, Price: 201, Fair: 198.97, FairOK: true, Tick: 1.0 / 196.0, Volume: 65361, Stock: 8878},
 		},
-		RoiPct:     0.0151,
-		Edge:       0.0151,
-		RoiPctRaw:  0.0255,
-		Roi:        2.9745,
-		Investment: 197,
-		Turnover:   13001051,
-		Tick:       1.0 / 196.0,
-		Depth:      65361,
-		HoursSeen:  6,
-		LastHour:   fixtureLastHour,
+		RoiPct:         0.0151,
+		Edge:           0.0151,
+		RoiPctRaw:      0.0255,
+		Roi:            2.9745,
+		Investment:     197,
+		Turnover:       13001051,
+		Tick:           1.0 / 196.0,
+		Depth:          65361,
+		HoursSeen:      6,
+		ExpectedRoi:    -0.8312,
+		ExpectedRoiPct: -0.0042,
+		SimEntries:     5,
+		LowCoverage:    true,
+		LastHour:       fixtureLastHour,
 	}
 }
 
@@ -223,20 +232,24 @@ func iconPath(id string) *string {
 }
 
 type exchangePlayBody struct {
-	Key        string            `json:"key"`
-	Mode       string            `json:"mode"`
-	RoiPct     float64           `json:"roiPct"`
-	Edge       float64           `json:"edge"`
-	RoiPctRaw  float64           `json:"roiPctRaw"`
-	Roi        float64           `json:"roi"`
-	Investment float64           `json:"investment"`
-	Turnover   float64           `json:"turnover"`
-	Tick       float64           `json:"tick"`
-	Depth      float64           `json:"depth"`
-	Suspect    bool              `json:"suspect"`
-	HoursSeen  int               `json:"hoursSeen"`
-	LastHour   time.Time         `json:"lastHour"`
-	Legs       []exchangeLegBody `json:"legs"`
+	Key            string            `json:"key"`
+	Mode           string            `json:"mode"`
+	RoiPct         float64           `json:"roiPct"`
+	Edge           float64           `json:"edge"`
+	RoiPctRaw      float64           `json:"roiPctRaw"`
+	Roi            float64           `json:"roi"`
+	Investment     float64           `json:"investment"`
+	Turnover       float64           `json:"turnover"`
+	Tick           float64           `json:"tick"`
+	Depth          float64           `json:"depth"`
+	Suspect        bool              `json:"suspect"`
+	HoursSeen      int               `json:"hoursSeen"`
+	ExpectedRoi    float64           `json:"expectedRoi"`
+	ExpectedRoiPct float64           `json:"expectedRoiPct"`
+	SimEntries     int               `json:"simEntries"`
+	LowCoverage    bool              `json:"lowCoverage"`
+	LastHour       time.Time         `json:"lastHour"`
+	Legs           []exchangeLegBody `json:"legs"`
 }
 
 type exchangePlaysBody struct {
@@ -756,6 +769,12 @@ func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
 		{"turnover", got.Turnover, want.Turnover},
 		{"tick", got.Tick, want.Tick},
 		{"depth", got.Depth, want.Depth},
+		// The two the ranking actually sorts on since POE-193, and the pair the
+		// desktop renders beside them. A negative expectation has to survive the
+		// transport with its sign: it is the honest counterpart of roi, and a
+		// clamp or a dropped field would render this row as a gain.
+		{"expectedRoi", got.ExpectedRoi, want.ExpectedRoi},
+		{"expectedRoiPct", got.ExpectedRoiPct, want.ExpectedRoiPct},
 	}
 	for _, n := range numbers {
 		if n.got != n.want {
@@ -764,6 +783,12 @@ func TestCurrencyExchangePlays_playKeepsEveryEngineField(t *testing.T) {
 	}
 	if got.HoursSeen != want.HoursSeen {
 		t.Errorf("hoursSeen = %d, want %d", got.HoursSeen, want.HoursSeen)
+	}
+	if got.SimEntries != want.SimEntries {
+		t.Errorf("simEntries = %d, want %d — the sample size the expectation is a mean over", got.SimEntries, want.SimEntries)
+	}
+	if got.LowCoverage != want.LowCoverage {
+		t.Errorf("lowCoverage = %v, want %v — the flag that says the expectation is too thin to lean on", got.LowCoverage, want.LowCoverage)
 	}
 	if !got.LastHour.Equal(want.LastHour) {
 		t.Errorf("lastHour = %s, want %s", got.LastHour, want.LastHour)
