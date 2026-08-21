@@ -79,26 +79,33 @@ type Leg struct {
 	Suspect bool `json:"suspect"`
 }
 
-// Play is one ranked opportunity: ONE hour's prices, plus how many hours the
-// recipe has been holding up.
+// Play is one ranked opportunity: ONE hour's PRICES, plus two cross-hour
+// readings of how the recipe has been behaving.
 //
 // Every price-shaped number a Play carries comes from a single feed hour, the
 // one LastHour names — and for a served play that is the window's NEWEST hour,
 // the last snapshot, because BestPlays drops any recipe that did not clear its
-// gates there. Nothing is blended across hours, because a blend is a trade
+// gates there. No price is blended across hours, because a blend is a trade
 // nobody could have made: Mawr Blaidd/Chaos printed lows of 62-81 chaos in four
 // consecutive hours against a VWAP near 250, which is why a price shown here
 // belongs to one hour.
 //
-// The only cross-hour thing left is persistence: HoursSeen counts the window
-// hours in which the recipe cleared the gates on that hour's own prices, so a
-// one-hour ghost and a play that has held all day are told apart by a count
-// rather than by an averaged price.
+// Two fields are deliberately not prices and do read across hours, each labelled
+// as what it is. HoursSeen counts the window hours in which the recipe cleared
+// the gates on that hour's own prices, so a one-hour ghost and a play that has
+// held all day are told apart by a count. ExpectedRoi is the fill simulation's
+// mean outcome over the last day of entries (sim.go): what posting these orders
+// would have realized, as opposed to what the hour printed. Neither is a price
+// and neither replaces one — the legs, RoiPct, Roi and Investment stay the last
+// snapshot's, and ADR-016 scopes the exception.
 //
 // RoiPct, Roi, Investment, Tick and Depth are arithmetic on that one hour's
 // legs — a ratio, a product, a min or a max across them — so a client can
 // recheck them from what it shows; Turnover is the same hour's quote-side volume
-// valued in chaos, which the legs do not carry.
+// valued in chaos, which the legs do not carry. The simulation's four —
+// ExpectedRoi, ExpectedRoiPct, SimEntries and LowCoverage — are the fields a
+// client CANNOT recheck from the row, because their inputs are hours the row
+// does not carry.
 type Play struct {
 	// Key identifies the recipe across hours: "direct:<marketID>" or
 	// "1-hop:<item>|<buyQuote>|<sellQuote>".
@@ -152,6 +159,33 @@ type Play struct {
 	// on THAT hour's own prices. A low count on a wide window is a ghost: an
 	// edge that showed up once.
 	HoursSeen int `json:"hoursSeen"`
+	// ExpectedRoi is the chaos one exchanged unit ACTUALLY returned, averaged
+	// over the simulated entries of the last Config.SimWindowHours hours: post
+	// this play's undercut orders in each of those hours, chase the buy, wait for
+	// the sell, fire-sale what never sold, and value each entry's outcome at its
+	// OWN hour's divine rate (sim.go). It is the ranking's headline number and
+	// the honest counterpart of Roi, which is one hour's optimistic reading —
+	// measured over 960 top-20 play-hours the displayed number overstates the
+	// outcome by 4-8x. It can be NEGATIVE, and such plays are still served and
+	// ranked rather than hidden, per ADR-015's serve-and-flag principle.
+	ExpectedRoi float64 `json:"expectedRoi"`
+	// ExpectedRoiPct is the same mean expressed as a fraction, 0.05 meaning +5%:
+	// the fractional counterpart of RoiPct. It is a mean of per-entry fractions
+	// rather than ExpectedRoi divided by Investment, so the RoiPct/Roi identity
+	// does NOT carry over — each entry has its own chased outlay, and the two
+	// means are taken separately.
+	ExpectedRoiPct float64 `json:"expectedRoiPct"`
+	// SimEntries is how many hours the two means are averaged over: the sim
+	// window's hours in which this recipe produced a gated candidate that could
+	// be valued and had at least one later hour to fill in. It is the sample
+	// size, and a mean of one entry is a story rather than an expectation.
+	SimEntries int `json:"simEntries"`
+	// LowCoverage says SimEntries fell under Config.MinSimEntries (capped at the
+	// hours that could have been entries). The play is served either way — it
+	// simply ranks after every covered one, because "we could not measure this"
+	// and "we measured this and it is bad" are different claims and only the
+	// second deserves a place in the order.
+	LowCoverage bool `json:"lowCoverage"`
 	// LastHour is the hour every price above was read from, UTC. For a served
 	// play it is always the window's NEWEST hour: BestPlays drops a recipe that
 	// did not clear in the last snapshot, so a stale row can never present
@@ -253,6 +287,24 @@ type Config struct {
 	// binds only a direct BestPlays call; the served path overlays it per
 	// horizon (see DefaultHorizons and horizonConfig in service.go).
 	MinHoursSeen int
+	// SimWindowHours is how many of the newest distinct hours the fill
+	// simulation draws its entry hours from. It is INDEPENDENT of WindowHours:
+	// the ranking window says how long a recipe must have been clearing, the sim
+	// window says how much history the expectation is averaged over, and the
+	// horizons deliberately share the second one so both serve the same
+	// ExpectedRoi for the same recipe.
+	SimWindowHours int
+	// SimLookaheadHours is how far past an entry hour the simulation looks for
+	// the fills, h+1..h+SimLookaheadHours truncated at the newest hour. An entry
+	// needs at least one later data hour inside it, which is why the newest hour
+	// is never an entry.
+	SimLookaheadHours int
+	// MinSimEntries is how many simulated entries a play needs before its
+	// expectation is treated as covered; below it Play.LowCoverage is true and
+	// the play ranks after the covered ones. It is capped at the number of hours
+	// that could have been entries, the same way MinHoursSeen is capped at the
+	// hours present, so a young league does not flag everything.
+	MinSimEntries int
 	// MaxPlays truncates the ranked result. It is the payload guard, not a
 	// gate: with the quality gates off the served list is the whole sane set,
 	// and this only stops a feed anomaly from publishing an unbounded one.
@@ -316,6 +368,13 @@ type Config struct {
 //
 // WindowHours is the base window, which the Service overrides per horizon (see
 // Horizons); the ranking a client sees comes from one of those, not from this.
+//
+// The three sim knobs are the odd ones out: a day of entry hours, a three-hour
+// lookahead and a twelve-entry coverage guard are CALIBRATION-LOCKED, not
+// tuning. They are the parameters ExpectedRoi was validated at against five real
+// owner outcomes (POE-193), so changing one invalidates the measurement rather
+// than adjusting a preference — which is why, unlike every knob above, they take
+// no environment override and moving them is a deliberate redeploy.
 func DefaultConfig() Config {
 	return Config{
 		WindowHours:      6,
@@ -332,6 +391,10 @@ func DefaultConfig() Config {
 		MaxPlays:         500,
 		QuotePriority:    []string{DivineID, ChaosID},
 		Horizons:         DefaultHorizons(),
+
+		SimWindowHours:    24,
+		SimLookaheadHours: 3,
+		MinSimEntries:     12,
 	}
 }
 
@@ -340,8 +403,9 @@ func DefaultConfig() Config {
 //
 // A non-positive count, floor or cap (WindowHours, MinVolumePerHour,
 // MinTurnoverChaos, MaxTick, MinEdgeTickRatio, MinROIChaos, SuspectLowBand,
-// SuspectHighBand, MinHoursSeen, MaxPlays) reads as unset, because none of them
-// has a meaningful negative value. MinEdge is different: only an exact 0 reads
+// SuspectHighBand, MinHoursSeen, SimWindowHours, SimLookaheadHours,
+// MinSimEntries, MaxPlays) reads as unset, because none of them has a meaningful
+// negative value. MinEdge is different: only an exact 0 reads
 // as unset, so a caller can push the percentage floor below zero and see returns
 // the floor hides (the sign bar below still applies). HideSuspect is a bool and
 // has no unset state: false is a choice, and it is also the default.
@@ -386,6 +450,15 @@ func (c Config) withDefaults() Config {
 	if c.MinHoursSeen <= 0 {
 		c.MinHoursSeen = d.MinHoursSeen
 	}
+	if c.SimWindowHours <= 0 {
+		c.SimWindowHours = d.SimWindowHours
+	}
+	if c.SimLookaheadHours <= 0 {
+		c.SimLookaheadHours = d.SimLookaheadHours
+	}
+	if c.MinSimEntries <= 0 {
+		c.MinSimEntries = d.MinSimEntries
+	}
 	if c.MaxPlays <= 0 {
 		c.MaxPlays = d.MaxPlays
 	}
@@ -413,19 +486,29 @@ func (c Config) withDefaults() Config {
 // are built from that hour's rows, each leg gated on that hour's traded volume
 // and stock, and evaluate turns each surviving candidate into a whole Play — leg
 // prices, undercut return, chaos payout, gates and all — out of that one hour.
-// Hours never mix. The merge by recipe key keeps two things and nothing else:
-// the NEWEST hour's Play, which is what gets served, and a COUNT of the hours
-// that cleared, which becomes HoursSeen and is what MinHoursSeen judges.
+// No PRICE mixes hours. The merge by recipe key keeps two things and nothing
+// else: the NEWEST hour's Play, which is what gets served, and a COUNT of the
+// hours that cleared, which becomes HoursSeen and is what MinHoursSeen judges.
+//
+// One reading is deliberately taken across hours, and it is not a price. Over a
+// SECOND window — the newest Config.SimWindowHours hours, independent of the
+// ranking one — sim.go posts each recipe's undercut orders hour by hour and
+// reads the fills out of the hours that followed; the mean outcome becomes
+// ExpectedRoi/ExpectedRoiPct over SimEntries entries, and it is what the ranking
+// sorts on. The two windows are cut from the same newest-first list and share
+// nothing else, so both horizons serve the same expectation for the same recipe
+// (ADR-016).
 //
 // A play is then served only if it cleared in the window's newest hour — the
-// last snapshot. The two cross-hour readings are deliberately separate: the
-// PRICES are the last snapshot's and nothing older, while PERSISTENCE is a
-// separate count over the whole window. A recipe that cleared four hours ago and
-// has not cleared since is not a current price and does not appear, however many
-// hours it once held; one that cleared in the last snapshot appears with
-// HoursSeen saying how long it has been holding up. Because the newest-hour
-// check compares against the window's newest hour rather than against whatever
-// arrived last, the result does not depend on the order rows come in.
+// last snapshot. The readings are deliberately separate: the PRICES are the last
+// snapshot's and nothing older, while PERSISTENCE is a count over the whole
+// window and the EXPECTATION is a simulation over the sim window. A recipe that
+// cleared four hours ago and has not cleared since is not a current price and
+// does not appear, however many hours it once held; one that cleared in the
+// last snapshot appears with HoursSeen saying how long it has been holding up.
+// Because the newest-hour check compares against the window's newest hour
+// rather than against whatever arrived last, the result does not depend on the
+// order rows come in.
 //
 // The measured reason for that split: four consecutive hours on Mawr
 // Blaidd/Chaos printed lows of 62.5-81 chaos against a VWAP near 250, which is
@@ -450,11 +533,14 @@ func (c Config) withDefaults() Config {
 // (capped at the hours present). At DefaultConfig only the first of the five
 // binds — the other four are off, and the quality judgement they used to make is
 // the client's since POE-191 — so what the engine serves is every recipe that is
-// alive, has held up, and gains something. It is ranked clean before suspect,
-// then RoiPct desc, then Turnover desc, then direct before 1-hop, then Key
-// ascending, and truncated to MaxPlays. The ranking is a stable sort over a
-// key-sorted list, so identical input always produces identical output
-// regardless of the order rows arrive in.
+// alive, has held up, and gains something in its hour. It is ranked clean before
+// suspect, then covered before low-coverage, then ExpectedRoi desc, then
+// Turnover desc, then direct before 1-hop, then Key ascending, and truncated to
+// MaxPlays. Neither LowCoverage nor a negative ExpectedRoi hides a play: both
+// sort it down and leave it readable, which is ADR-015's serve-and-flag rule
+// applied to the simulation. The ranking is a stable sort over a key-sorted
+// list, so identical input always produces identical output regardless of the
+// order rows arrive in.
 //
 // The caveat that governs the percentages: the feed publishes each hour's
 // realized low and high, not a book. Both prices are trades that happened inside
@@ -486,27 +572,40 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 		stamps = append(stamps, stamp)
 	}
 	// Newest hour first, so stamps[0] names the hour Result.DivineChaosRate is
-	// read from and the window cut below keeps the newest WindowHours.
+	// read from and both cuts below count back from the last snapshot.
 	sort.Slice(stamps, func(i, j int) bool { return stamps[i] > stamps[j] })
-	if len(stamps) > cfg.WindowHours {
-		stamps = stamps[:cfg.WindowHours]
-	}
 
-	n := len(stamps)
-	result.Hours = n
-	result.From = hourAt[stamps[n-1]]
+	// Two windows are cut from that one list, and they are read INDEPENDENTLY.
+	// The RANKING window is the newest WindowHours hours: which recipes clear,
+	// how many hours they cleared in, and whose prices are served. The SIM window
+	// is the newest SimWindowHours hours and feeds nothing but the fill
+	// simulation, which is why a six-hour horizon and a day horizon carry the
+	// SAME ExpectedRoi for a recipe — the expectation is a property of the feed,
+	// not of how long the reader wants a play to have been holding up. span is
+	// whichever window reaches further, so the hours are walked once.
+	rankHours := min(len(stamps), cfg.WindowHours)
+	simHours := min(len(stamps), cfg.SimWindowHours)
+	span := stamps[:max(rankHours, simHours)]
+
+	result.Hours = rankHours
+	result.From = hourAt[stamps[rankHours-1]]
 	result.To = hourAt[stamps[0]].Add(time.Hour)
 
 	anyRate := false
 	merged := make(map[string]*aggregate)
-	for _, stamp := range stamps {
+	series := make(map[string]*simSeries)
+	for i, stamp := range span {
 		hour, hourRows := hourAt[stamp], byHour[stamp]
+		// An hour past the ranking window is here for the simulation alone: it
+		// contributes fill prices and nothing to HoursSeen, to the served prices
+		// or to the rate warning below, whose subject is the ranked window.
+		ranking := i < rankHours
 
 		hourRate, hourRateOK := divineRateOf(hourRows)
-		if hourRateOK {
+		if ranking && hourRateOK {
 			anyRate = true
 		}
-		if stamp == stamps[0] {
+		if i == 0 {
 			result.DivineChaosRate = hourRate
 		}
 
@@ -519,6 +618,22 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 				continue
 			}
 			seen[c.key] = true
+
+			// The simulation records the candidate BEFORE the gates: an hour
+			// whose percentage was too small to serve is still an hour the orders
+			// could have been posted in, and skipping it would average only the
+			// flattering hours. It records only the sim window's own hours: span
+			// is the WIDER of the two cuts, so when the ranking window is the
+			// longer one the hours past simHours are here for the ranking alone
+			// and feeding them to the simulation would widen the sim window with
+			// the horizon — the one thing the shared expectation depends on not
+			// happening.
+			if i < simHours {
+				recordSim(series, c, hour, hourRate, hourRateOK)
+			}
+			if !ranking {
+				continue
+			}
 
 			play, ok := evaluate(c, hour, hourRate, hourRateOK, cfg)
 			if !ok {
@@ -534,12 +649,17 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 	}
 	if !anyRate {
 		slog.Warn("currency-exchange: no divine/chaos market in the window; divine-quoted plays are dropped",
-			"league", league, "hours", n)
+			"league", league, "hours", rankHours)
 	}
 
+	// An entry needs a later hour to fill in, so the sim window's newest hour can
+	// never be one: the hours that COULD have been entries are one fewer than the
+	// hours present, and that is what caps the coverage guard.
+	sims := simulate(series, simHours-1, cfg)
+
 	minHoursSeen := cfg.MinHoursSeen
-	if minHoursSeen > n {
-		minHoursSeen = n
+	if minHoursSeen > rankHours {
+		minHoursSeen = rankHours
 	}
 	// stamps[0] is the window's newest hour, fixed before any aggregation, so
 	// this cut is order-independent.
@@ -557,16 +677,30 @@ func BestPlays(league string, rows []StoredRow, cfg Config) Result {
 		}
 		play := a.newest
 		play.HoursSeen = a.hoursCleared
+		// A served play cleared evaluate in the newest hour, so it produced a
+		// gated, valuable candidate there and simulate holds an outcome under its
+		// key. That outcome may report no entries, which is a measured fact about
+		// the recipe (LowCoverage) rather than a missing lookup.
+		outcome := sims[key]
+		play.ExpectedRoi = outcome.expectedRoi
+		play.ExpectedRoiPct = outcome.expectedRoiPct
+		play.SimEntries = outcome.simEntries
+		play.LowCoverage = outcome.lowCoverage
 		result.Plays = append(result.Plays, play)
 	}
 
+	// Clean before suspect, measured before unmeasured, then the best SIMULATED
+	// payout — not the hour's optimistic one, which is what the ranking used
+	// before POE-193 and which the measurement puts 4-8x too high.
 	sort.SliceStable(result.Plays, func(i, j int) bool {
 		a, b := result.Plays[i], result.Plays[j]
 		switch {
 		case a.Suspect != b.Suspect:
 			return !a.Suspect
-		case a.RoiPct != b.RoiPct:
-			return a.RoiPct > b.RoiPct
+		case a.LowCoverage != b.LowCoverage:
+			return !a.LowCoverage
+		case a.ExpectedRoi != b.ExpectedRoi:
+			return a.ExpectedRoi > b.ExpectedRoi
 		case a.Turnover != b.Turnover:
 			return a.Turnover > b.Turnover
 		case a.Mode != b.Mode:
@@ -776,8 +910,11 @@ func roiPctOf(mode Mode, prices []float64) (float64, bool) {
 //
 // It holds no prices of its own. Every hour is already a complete answer by the
 // time it gets here (evaluate ran the whole arithmetic and every gate on that
-// hour alone), so there is nothing left to blend — only to pick the newest and
-// to count.
+// hour alone), so there is nothing to blend — only to pick the newest and to
+// count. The one thing that does read across hours, the fill simulation, runs
+// BESIDE this rather than through it, on its own window and on candidates that
+// never had to clear a gate (sim.go): keeping it out of the aggregate is what
+// stops a simulated outcome from leaking into a served price.
 type aggregate struct {
 	newest       Play
 	hoursCleared int
