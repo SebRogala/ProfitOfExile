@@ -323,18 +323,33 @@ export interface CurrencyExchangeLeg {
 }
 
 /**
- * A ranked arbitrage play: ONE hour's prices, plus how many hours the recipe
- * has been holding up. `direct` swaps back through the same market; `1-hop`
- * routes through an intermediate currency.
+ * A ranked arbitrage play: ONE hour's prices, plus the cross-hour readings of
+ * how the recipe has actually behaved. `direct` swaps back through the same
+ * market; `1-hop` routes through an intermediate currency.
  *
- * `roiPct` is the round trip's fractional gain at the UNDERCUT prices (0.123 =
- * 12.3%): each leg pays one of its own ticks to be the order that fills, which
- * makes it the return an order that actually gets taken can expect, and it is
- * what the server gates and ranks on. `roiPctRaw` is the same round trip at the
+ * `expectedRoi` is the number the server RANKS on (POE-193, ADR-016): the mean
+ * chaos one exchanged unit actually returned across the simulated entries of
+ * the last day — post this play's undercut orders in each of those hours, chase
+ * the buy, wait for the sell, fire-sale whatever never sold. It can be
+ * NEGATIVE, and such a play is still served and still ranked, after every play
+ * that measured well. The served order is clean before `suspect`, then covered
+ * before `lowCoverage`, then `expectedRoi` desc — a chaos payout, so a bigger
+ * stake outranks a better rate.
+ *
+ * `roiPct` is the OPTIMISTIC reading: that one hour's round trip at the
+ * UNDERCUT prices (0.123 = 12.3%), each leg paying one of its own ticks to be
+ * the order that fills. Measured over 960 top-20 play-hours it overstates what
+ * the play realized by 4-8x, which is why it no longer ranks anything — but it
+ * is still what the client's quality gates judge, because those defaults were
+ * calibrated against it (ADR-015). `roiPctRaw` is the same round trip at the
  * raw extremes the legs show — never below `roiPct`, and the gap between the
  * two is what the ticks cost. `roi` is chaos gained per exchange of one unit
  * and `investment` the chaos that one unit costs to enter, both priced at the
- * undercut entry, so `roi === roiPct * investment` holds by construction.
+ * undercut entry, so `roi === roiPct * investment` still holds by construction
+ * for that optimistic pair. `expectedRoiPct` carries no such identity: it is a
+ * mean of per-entry fractions, each with its own chased outlay, and NOT
+ * `expectedRoi` divided by `investment`.
+ *
  * `turnover` is chaos per hour through the play's thinnest leg, which is the
  * liquidity reading — `depth` (units per hour) is not one. `tick` is the
  * coarsest leg tick, the worst price step the recipe has to live with.
@@ -344,6 +359,17 @@ export interface CurrencyExchangeLeg {
  * `lastHour` is the hour every price above was read from: always the window's
  * newest, because a recipe that did not clear in the last snapshot is not
  * served at all.
+ *
+ * `simEntries` is how many entry hours the two expectations are averaged over
+ * and `lowCoverage` says that count fell under the server's guard — "we could
+ * not measure this", which is a different claim from "we measured this and it
+ * loses" and ranks ahead of neither. Those two and the two expectations are
+ * fields a client CANNOT recheck from the row it is shown in: their inputs are
+ * hours the row does not carry. Neither can `turnover` or `hoursSeen`, for
+ * their own reasons — the first is the hour's quote-side volume, which the legs
+ * do not ship, and the second counts hours. What IS recheckable is the price
+ * arithmetic: `roiPct`, `roi`, `investment`, `tick` and `depth` are a ratio, a
+ * product, a min or a max over the legs on this row.
  */
 export interface CurrencyExchangePlay {
 	key: string;
@@ -355,6 +381,10 @@ export interface CurrencyExchangePlay {
 	roiPctRaw: number;
 	roi: number;
 	investment: number;
+	expectedRoi: number;
+	expectedRoiPct: number;
+	simEntries: number;
+	lowCoverage: boolean;
 	turnover: number;
 	tick: number;
 	depth: number;

@@ -69,9 +69,12 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
  * Pointing a gem tooltip at this table would word the number wrongly by a
  * factor of a hundred.
  *
- * Every figure these describe is the LAST SETTLED feed hour (POE-188), not the
- * live book — which is why each entry ends where it does: with what to do about
- * that, rather than with the number as if it were a quote.
+ * Every PRICE-shaped figure these describe is the LAST SETTLED feed hour
+ * (POE-188), not the live book — which is why each entry ends where it does:
+ * with what to do about that, rather than with the number as if it were a
+ * quote. Exp. ROI and Hours are the two exceptions and both say so in their own
+ * words: they read across the window on purpose (ADR-016), which is the whole
+ * reason they are worth more than the hour beside them.
  *
  * Written for a reader who plays the game, not one who trades for a living
  * (POE-191): a play is a round trip made of TRADES or STEPS, never of "legs".
@@ -79,9 +82,11 @@ export const METRIC_TOOLTIPS: Record<string, string> = {
  * reader can see it.
  */
 export const EXCHANGE_TOOLTIPS: Record<string, string> = {
-	ROI: 'Absolute profit in chaos orbs on ONE exchange — chaos in, chaos out. What you get back minus what you spent, net of one price step of undercut on each of the play’s trades, the price an order that actually fills pays. The Scale column carries what the same play pays once it has been repeated enough times to be worth the trip. Higher = more profit, but every figure here is the last settled hour: verify the route in game before committing.',
+	ROI: 'Absolute profit in chaos orbs on ONE exchange — chaos in, chaos out — if BOTH of the hour’s extreme prices had been there for you, net of one price step of undercut on each of the play’s trades. That is the hour’s best case, not what the play pays: Exp. ROI beside it is the measured answer, and it is what the Scale column and the ranking use. Every figure here is the last settled hour, so verify the route in game before committing.',
 	'ROI%':
-		'Return on investment as a percentage — ROI divided by what one exchange costs. Scale-free, so it compares plays across price tiers. NET is net of one price step of undercut on every one of the play’s trades, the return an order that actually gets taken can expect, and it is what the ranking uses. RAW is the same round trip at the hour’s raw extremes — never below NET, and the gap between them is what those steps cost.',
+		'Return on investment as a percentage — ROI divided by what one exchange costs. Scale-free, so it compares plays across price tiers. NET is net of one price step of undercut on every one of the play’s trades, the best case an order that actually gets taken could have had in that hour. RAW is the same round trip at the hour’s raw extremes — never below NET, and the gap between them is what those steps cost. Neither is what the table is ranked by any more: Exp. ROI is. NET is still what your Gates row judges.',
+	'Exp. ROI':
+		'What posting this play’s orders would have paid, in chaos per exchange — the ranking’s number. Every hour of the last day is replayed: your buy goes up one step above the hour’s cheapest buy price and chases the market up if it does not fill, your sell sits one step under the dearest sell price and waits up to three hours for someone to take it, and whatever never sold is dumped at the last hour of that wait, halfway between its average price and one step under its dearest. The mean of those outcomes is this figure. It CAN be negative — the play is still shown and simply ranks below the ones that measured well. n is how many hours were replayed; LOW COVERAGE means too few of them to trust the mean, not that the play is bad. Measured across 960 top-20 play-hours the ROI column overstates this by four to eight times, and that measurement is of DIRECT flips: a 1-hop route is replayed the same way but nothing has checked that a triangle behaves like a flip.',
 	Investment:
 		'Chaos you need liquid for ONE exchange — the cost at the undercut entry. What the whole worthwhile run ties up is in the Scale column, and that run figure is what the filter bar’s Run cost bounds are compared against: a bankroll ceiling there is about the trip, not about a single flip. Switch those bounds to divine for the large ones — converted at the divine/chaos rate from the same feed hour.',
 	Gold: '(column hidden until computable) The in-game currency exchange charges gold per trade. Nothing here is net of it yet, and a reserved column of dashes promised a number the page could not give, so the column is gone until the per-trade cost is known and ROI can be shown net of gold.',
@@ -92,7 +97,7 @@ export const EXCHANGE_TOOLTIPS: Record<string, string> = {
 	Depth:
 		'Units per hour the thinnest of the play’s trades saw — the hourly ceiling. This is the whole market’s volume, not your share, and a direct play buys and sells the same item on one market, so its real ceiling is lower still. It is what the Scale column divides the worthwhile flip count by to answer how long the market needs.',
 	Scale:
-		'The flip count at which this play clears about 100 chaos, what those flips tie up, and how long the market needs to absorb them. The app derives the size so you never type one: a play that gains 3c an exchange reads ×34, a play that gains 150c reads ×1. The hours are optimistic — they assume the WHOLE hourly volume on the play’s thinnest trade is yours and nobody else is competing for it — so read the wait as the floor on the time, not the time. Green is inside the hour, which is the only case where the ROI was computed against a book that will still be there.',
+		'The flip count at which this play clears about 100 chaos of EXPECTED gain, what those flips tie up, and how long the market needs to absorb them. It counts Exp. ROI and not ROI, so the size is the one you would actually have had to run: a play whose expectation is 3c an exchange reads ×34, one worth 150c reads ×1, and a play that is not expected to gain at all shows a dash — there is no number of repeats that turns a loss into 100c. The hours are optimistic — they assume the WHOLE hourly volume on the play’s thinnest trade is yours and nobody else is competing for it — so read the wait as the floor on the time, not the time. Green is inside the hour, which is the only case where the ROI was computed against a book that will still be there.',
 	Hours:
 		'How many of the window’s hours this play held — the persistence count. An hour counts when the play was ALIVE in it (at least ten units of each traded item changed hands, with orders standing on both sides) and its return cleared the server’s +0.1% sanity floor. That is the whole test since POE-191: the quality bar moved to your Gates row, so these hours no longer ask a play to have been worth trading, only to have existed and paid. Expect the fraction to read higher than it used to. The server still needs a minimum before it serves a play at all — four of the recent window’s six hours, eighteen of the day window’s twenty-four — so the full count is a spread that stood all window and the minimum is one that only just persisted.',
 	'Only / Hide':
@@ -107,7 +112,7 @@ export const EXCHANGE_TOOLTIPS: Record<string, string> = {
 	Gates:
 		'The quality bar — four floors and one ceiling the SERVER used to apply to everybody before it sent anything (POE-191 handed them to you). An EMPTY box is that gate running at the old server value, NOT off: the opposite of the run-cost bounds beside them, where empty means no filter at all. Type 0 to turn one off. Clear leaves all five alone — Defaults is what puts them back.',
 	'Min profit':
-		'The least chaos a play must gain on ONE exchange — a gate asks whether the market is worth trading at all, never how far the play has to be repeated to pay, which is the Scale column’s answer. Empty = 3c, the old server floor. Lower it (or 0) to see the cheap plays: sacrifice fragments and the like gain a fraction of a chaos each and only add up on volume.',
+		'The least chaos a play must gain on ONE exchange, read off the ROI column and not off Exp. ROI — a gate asks whether the market is worth trading at all, never how far the play has to be repeated to pay, which is the Scale column’s answer. Empty = 3c, the old server floor. Lower it (or 0) to see the cheap plays: sacrifice fragments and the like gain a fraction of a chaos each and only add up on volume.',
 	'Min turnover':
 		'How much chaos had to change hands on the play’s market during the feed hour. Empty = 10,000c, the old server floor — below that you are not joining a market so much as being one, and your own order sets the price. Lower it (or 0) to see the quiet corners of the exchange.',
 	'Max price step':

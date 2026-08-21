@@ -75,33 +75,43 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
 }
 
 /**
- * Which number the table is ordered by. `'roiPct'` is the server's own
- * ranking; `'roi'` re-orders by chaos gained per exchange, which is a different
- * question — a 40% return on 2c is not the play a stocked account wants; and
- * `'fastest'` by how long the market needs to absorb the play's worthwhile
- * scale (`worthwhileScale().hours`), which is the question a big return on a
- * thin market answers badly.
+ * Which number the table is ordered by. `'expected'` is the server's own
+ * ranking, which since POE-193 is the fill-simulated `expectedRoi` (ADR-016);
+ * `'roi'` re-orders by the OPTIMISTIC chaos gained per exchange, which is a
+ * different question — a 40% best case on 2c is not the play a stocked account
+ * wants; and `'fastest'` by how long the market needs to absorb the play's
+ * worthwhile scale (`worthwhileScale().hours`), which is the question a big
+ * return on a thin market answers badly.
  */
-export type ExchangeSort = 'roiPct' | 'roi' | 'fastest';
+export type ExchangeSort = 'expected' | 'roi' | 'fastest';
 
 /** The sort picker's entries, in display order. */
 export const SORT_OPTIONS: { value: ExchangeSort; label: string }[] = [
-	{ value: 'roiPct', label: 'ROI%' },
+	{ value: 'expected', label: 'Exp. ROI' },
 	{ value: 'roi', label: 'ROI' },
 	{ value: 'fastest', label: 'Fastest' }
 ];
 
 /**
- * Narrow a persisted or user-supplied string to a sort; default `'roiPct'`.
+ * Narrow a persisted or user-supplied string to a sort; default `'expected'`.
  *
- * `'fill'` — what `'fastest'` was called while the table scaled by a typed
- * Quantity (POE-192 replaced that with the derived scale) — maps forward rather
- * than falling back: a reader who left the picker on the fill order asked for
- * the fastest-to-absorb list, and that order still exists under its new name.
+ * Two older spellings map FORWARD rather than falling back, because in both
+ * cases the order the reader picked still exists under a new name. `'fill'` is
+ * what `'fastest'` was called while the table scaled by a typed Quantity
+ * (POE-192 replaced that with the derived scale). `'roiPct'` is what the
+ * served order was called while the server ranked on the optimistic
+ * percentage; POE-193 re-based that ranking on `expectedRoi`, and the pick has
+ * always meant "the list as the server ranked it", so it resolves to
+ * `'expected'` rather than to a percentage sort that no longer exists.
+ *
+ * Everything else — a mode from a build this one has never seen, an empty
+ * preference — also answers `'expected'`, which is the one order that carries
+ * the server's full set of tie-breaks.
  */
 export function parseSort(raw: string): ExchangeSort {
 	if (raw === 'fill') return 'fastest';
-	return SORT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeSort) : 'roiPct';
+	if (raw === 'roiPct') return 'expected';
+	return SORT_OPTIONS.some((option) => option.value === raw) ? (raw as ExchangeSort) : 'expected';
 }
 
 /**
@@ -417,7 +427,7 @@ export const SCALE_TARGET_CHAOS = 100;
 export interface WorthwhileScale {
 	/** Whole exchanges needed to clear the target — the `×N` the column leads with. */
 	flips: number;
-	/** Chaos gained across those flips: `roi × flips`, so at least the target. */
+	/** Chaos expected across those flips: `expectedRoi × flips`, so at least the target. */
 	gain: number;
 	/** Chaos tied up across those flips: `investment × flips`. */
 	investment: number;
@@ -430,6 +440,14 @@ export interface WorthwhileScale {
 
 /**
  * How far a play has to be repeated to be worth doing, and what that costs.
+ *
+ * Scaled on `expectedRoi` and NOT on `roi` (POE-193): the question the column
+ * answers is how many exchanges it takes to make the trip worth the clicking,
+ * and the optimistic per-hour figure overstates that by 4-8x, so scaling on it
+ * answered with a flip count the play would never have paid off at. The
+ * exchange count grows accordingly — a play whose best case gains 30c but whose
+ * simulated mean is 6c now reads ×17 rather than ×4, which is the size the
+ * reader would actually have had to run.
  *
  * The app derives the size so the reader does not type one. `flips` is rounded
  * UP — a play that reaches 99c in three exchanges has not cleared the target, so
@@ -448,20 +466,24 @@ export interface WorthwhileScale {
  * answers 2, 5, 40 — the wait IS the warning, and a capped `flips` would quietly
  * report a scale that does not clear the target.
  *
- * `null` for a play that gains nothing or less than nothing per exchange: there
- * is no repeat count that reaches a positive target from a non-positive step,
- * and dividing would answer `Infinity` or a negative count. The server's
- * positivity floor (ADR-015) means no served play is shaped that way — the guard
- * is for type honesty, not for a case the page is expected to hit.
+ * `null` for a play whose expectation is nothing or less than nothing: there is
+ * no repeat count that reaches a positive target from a non-positive step, and
+ * dividing would answer `Infinity` or a negative count. Unlike the `roi` this
+ * used to read, that is a case the page IS expected to hit — the server's
+ * positivity floor applies to the optimistic number, while a measured
+ * expectation is free to come out negative and the play is served anyway
+ * (ADR-016). The row keeps its rank, its ROI and its depth; the Scale column
+ * shows a dash, because "repeat this until it pays 100c" is not advice a losing
+ * expectation has an answer to.
  */
 export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | null {
-	if (!Number.isFinite(play.roi) || play.roi <= 0) return null;
+	if (!Number.isFinite(play.expectedRoi) || play.expectedRoi <= 0) return null;
 
-	const flips = Math.ceil(SCALE_TARGET_CHAOS / play.roi);
+	const flips = Math.ceil(SCALE_TARGET_CHAOS / play.expectedRoi);
 	const readableDepth = Number.isFinite(play.depth) && play.depth > 0;
 	return {
 		flips,
-		gain: play.roi * flips,
+		gain: play.expectedRoi * flips,
 		investment: play.investment * flips,
 		hours: readableDepth ? Math.ceil(flips / play.depth) : null
 	};
@@ -472,17 +494,21 @@ export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | n
 /**
  * The table's rows in the order the sort picker asks for.
  *
- * `'roiPct'` is the list exactly as served: the server already ranks clean
- * before suspect, then `roiPct` desc, then turnover, then direct-first, then
- * key (POE-188). Re-sorting it here on `roiPct` alone would throw away those
- * tie-breaks, so the ROI% sort keeps the served order — copied, so a caller
- * holding the result can never mutate the response's own array through it.
+ * `'expected'` is the list exactly as served: the server already ranks clean
+ * before suspect, then covered before low-coverage, then `expectedRoi` desc,
+ * then turnover, then direct-first, then key (POE-193). Re-sorting it here on
+ * `expectedRoi` alone would throw away those tie-breaks — and the low-coverage
+ * band in particular, which is the one the reader cannot reconstruct from a
+ * single number — so the Exp. ROI sort keeps the served order, copied, so a
+ * caller holding the result can never mutate the response's own array through
+ * it.
  *
- * `'roi'` re-sorts by chaos per exchange, and `'fastest'` by how long the market
- * needs to absorb the play's worthwhile scale — ascending, because the shortest
- * wait is the best row, and a play whose hours cannot be read (`worthwhileScale`
- * `null`, or its `hours` `null`) sits at the end of its partition rather than
- * being dropped or treated as instant.
+ * `'roi'` re-sorts by the OPTIMISTIC chaos per exchange, and `'fastest'` by how
+ * long the market needs to absorb the play's worthwhile scale — ascending,
+ * because the shortest wait is the best row, and a play whose hours cannot be
+ * read (`worthwhileScale` `null`, which since POE-193 includes every play whose
+ * expectation is not positive, or its `hours` `null`) sits at the end of its
+ * partition rather than being dropped or treated as instant.
  *
  * Both re-sorts keep the one property the server ordering exists to carry: every
  * suspect play stays after every clean one, however large its ROI or however
@@ -501,7 +527,7 @@ export function sortPlays(
 	plays: CurrencyExchangePlay[],
 	sort: ExchangeSort
 ): CurrencyExchangePlay[] {
-	if (sort === 'roiPct') return [...plays];
+	if (sort === 'expected') return [...plays];
 	if (sort === 'fastest') {
 		return [...plays].sort((a, b) => {
 			if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
