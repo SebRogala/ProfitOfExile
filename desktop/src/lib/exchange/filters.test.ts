@@ -8,12 +8,14 @@ import {
 	gateDefaults,
 	itemUniverse,
 	matchesSearch,
+	movedGates,
 	overridesCategory,
 	parseCategoryRules,
 	parseGate,
 	parseGates,
 	parseItemRules,
 	playSides,
+	resetGateInputs,
 	serializeCategoryRules,
 	serializeItemRules
 } from './filters';
@@ -96,13 +98,14 @@ function filters(overrides: Partial<NumericFilters> = {}): NumericFilters {
 /**
  * Every gate off, so a gate test says which single gate it is about.
  *
- * Written out rather than spread from `gateDefaults`, even though POE-193 made
- * the two agree: a per-gate test wants a stated baseline of nothing, and reading
- * it from the shipped defaults would make every one of these cases silently
- * change meaning the day a default is armed again.
+ * Written out rather than spread from `gateDefaults`, which POE-196 turned from
+ * a stylistic choice into a necessary one: `minItemPrice` now ships armed, and a
+ * baseline spread from the shipped defaults would put a live floor under every
+ * per-gate case. A per-gate test wants a stated baseline of nothing.
  */
 function gates(overrides: Partial<Gates> = {}): Gates {
 	return {
+		minItemPrice: 0,
 		minRoiChaos: 0,
 		minTurnover: 0,
 		maxTickPct: 0,
@@ -115,6 +118,7 @@ function gates(overrides: Partial<Gates> = {}): Gates {
 /** Every gate knob unset, which is the state a fresh install stores. */
 function gateInputs(overrides: Partial<GateInputs> = {}): GateInputs {
 	return {
+		minItemPrice: '',
 		minRoiChaos: '',
 		minTurnover: '',
 		maxTickPct: '',
@@ -492,17 +496,38 @@ describe('parseGate', () => {
 });
 
 describe('parseGates', () => {
-	it('reads a fresh install as every gate off', () => {
-		// POE-193's visibility rule: nothing stored yet, so nothing is filtered and
-		// the reader sees everything the server served. The old server levels are a
-		// recommendation the reader types, not a state they inherit.
+	it('reads a fresh install as the trash-price floor armed and every other gate off', () => {
+		// POE-193's visibility rule with POE-196's one sanctioned exception: nothing
+		// is stored yet, so the reader sees everything the server served above the
+		// sub-chaos tier. The old server levels are a recommendation the reader
+		// types, not a state they inherit; the 0.5c floor is the opposite — a state
+		// they inherit and have to type 0 to leave.
 		expect(parseGates(gateInputs())).toEqual({
+			minItemPrice: 0.5,
 			minRoiChaos: 0,
 			minTurnover: 0,
 			maxTickPct: 0,
 			minEdgeTickRatio: 0,
 			minRoiPct: 0
 		});
+	});
+
+	it('reads a blanked trash-price box as the shipped floor rather than as off', () => {
+		// The whole reason the knobs persist as '' — a reader who empties the box is
+		// asking for whatever this build ships, not for no filter. Distinct from the
+		// fresh install above in intent: this is the state after Defaults, which is
+		// the only way BACK to the floor once 0 has been typed into it.
+		expect(parseGates(gateInputs({ minItemPrice: '' })).minItemPrice).toBe(0.5);
+	});
+
+	it('reads an explicit zero in the trash-price box as the floor turned off', () => {
+		// The documented way to disable the one default-on gate. It must not fall
+		// through to the default the blank case resolves to.
+		expect(parseGates(gateInputs({ minItemPrice: '0' })).minItemPrice).toBe(0);
+	});
+
+	it('reads a typed trash-price floor as the level the reader asked for', () => {
+		expect(parseGates(gateInputs({ minItemPrice: '5' })).minItemPrice).toBe(5);
 	});
 
 	it('arms one knob without arming the other four', () => {
@@ -517,11 +542,86 @@ describe('parseGates', () => {
 	});
 });
 
+describe('movedGates', () => {
+	it('counts nothing on a fresh install, so the collapsed row badges nothing', () => {
+		// The badge exists to say the table is not showing this build's answer. An
+		// untouched install IS that answer, armed floor included, so a count that
+		// read 1 here would badge every reader on first launch.
+		expect(movedGates(parseGates(gateInputs()))).toEqual([]);
+	});
+
+	it('counts a knob the reader armed', () => {
+		expect(movedGates(parseGates(gateInputs({ minTurnover: '10000' })))).toEqual(['minTurnover']);
+	});
+
+	it('counts the trash-price floor as moved when the reader turns it off', () => {
+		// Moved, not armed — POE-196 split those. Disarming the shipped floor
+		// changes what the table shows as surely as arming a knob does, so the
+		// reader gets the same badge pointing at the same row.
+		expect(movedGates(parseGates(gateInputs({ minItemPrice: '0' })))).toEqual(['minItemPrice']);
+	});
+
+	it('does not count a knob re-typed at the level it already ships at', () => {
+		// Compared on the parsed numbers, not the strings: '' and '0.5' are one
+		// floor, and a count over text would badge a reader who typed the default
+		// back in.
+		expect(movedGates(parseGates(gateInputs({ minItemPrice: '0.5' })))).toEqual([]);
+	});
+});
+
+describe('resetGateInputs', () => {
+	it('restores the shipped state, not a blank bar', () => {
+		// What the Gates row's Defaults button writes into the preferences. Every
+		// box gets '' and never the number it stands for, because '' means whatever
+		// this build ships — so the reset must land the five off AND the price floor
+		// back at 0.5. A reset that wrote '0' would look identical for the five and
+		// would quietly hand the reader the trash tier for good.
+		expect(parseGates(resetGateInputs())).toEqual(gateDefaults);
+	});
+
+	it('leaves no knob counted as moved', () => {
+		// The badge's end of the same contract: after Defaults the collapsed row is
+		// bare, which is only true if the reset agreed with `gateDefaults` on all
+		// six.
+		expect(movedGates(parseGates(resetGateInputs()))).toEqual([]);
+	});
+
+	it('takes the sub-chaos tier back off the table', () => {
+		// The reset's observable end, not just its parsed one: a reader who typed 0,
+		// saw the fractional rows and pressed Defaults gets the clean table back.
+		const oil = play({ key: 'oil', investment: 0.4 });
+		const disarmed = parseGates(gateInputs({ minItemPrice: '0' }));
+
+		expect(keys(applyGates([oil], disarmed))).toEqual(['oil']);
+		expect(keys(applyGates([oil], parseGates(resetGateInputs())))).toEqual([]);
+	});
+});
+
 describe('applyGates', () => {
 	/** Clears every recommended level: 10c gained, a live hour, a one-step spread. */
 	const clean = play({ key: 'clean', roi: 10, turnover: 20000, tick: 0.005, roiPct: 0.05 });
-	/** A Sacrifice-fragment-shaped play: fails four of the five recommended levels. */
+	/**
+	 * A Sacrifice-fragment-shaped play: fails four of the five RECOMMENDED levels.
+	 *
+	 * Its entry price is the fixture's 200c and deliberately not a fragment's real
+	 * fraction of a chaos: these cases are about the four old levels, and a
+	 * sub-chaos entry would put POE-196's shipped floor underneath every one of
+	 * them. The trash-price knob has its own fixture (`oil`) for that.
+	 */
 	const fragment = play({ key: 'fragment', roi: 0.5, turnover: 4000, tick: 0.2, roiPct: 0.03 });
+	/**
+	 * Clear Oil: the tier POE-196 exists to remove. Entered at 0.4 chaos, and
+	 * otherwise a play the five recommended levels have no quarrel with, so a case
+	 * built on it can only be answered by the item-price floor.
+	 */
+	const oil = play({
+		key: 'oil',
+		investment: 0.4,
+		roi: 10,
+		turnover: 20000,
+		tick: 0.005,
+		roiPct: 0.05
+	});
 
 	/**
 	 * The levels the server used to enforce for everyone, which the desktop shipped
@@ -532,6 +632,9 @@ describe('applyGates', () => {
 	 * fixture.
 	 */
 	const oldServerLevels: Gates = {
+		// Off: the server never had a price floor, so it is not one of the levels
+		// typing brings back. POE-196 added it on this side alone.
+		minItemPrice: 0,
 		minRoiChaos: 3,
 		minTurnover: 10000,
 		maxTickPct: 10,
@@ -539,10 +642,76 @@ describe('applyGates', () => {
 		minRoiPct: 2
 	};
 
-	it('shows a play nothing about it would have cleared, because nothing is armed', () => {
+	it('shows a play that fails four old levels, because none of the five is armed', () => {
 		// POE-193's whole change: the fragment fails four of the old levels and is
 		// on the table anyway, because the reader has not asked for any of them.
+		// POE-196's floor is armed here and does not reach it — a 200c entry is not
+		// the trash tier — so this stays a statement about the five.
 		expect(keys(applyGates([clean, fragment], gateDefaults))).toEqual(['clean', 'fragment']);
+	});
+
+	it('drops a sub-chaos play at the shipped defaults', () => {
+		// The one filter armed out of the box (POE-196, ADR-017's sole sanctioned
+		// exception). Nothing else about the oil play is objectionable — it clears
+		// every recommended level — so its absence is the price floor and nothing
+		// else.
+		expect(keys(applyGates([clean, oil], gateDefaults))).toEqual(['clean']);
+	});
+
+	it('keeps a play entered at exactly the shipped floor', () => {
+		// Inclusive on the passing side, like every other gate here: 0.5c is in.
+		// This is the case a `<=` slipped into the comparison fails.
+		const exact = play({ key: 'exact', investment: 0.5 });
+
+		expect(keys(applyGates([exact], gateDefaults))).toEqual(['exact']);
+	});
+
+	it('drops a play entered a hundredth of a chaos under the shipped floor', () => {
+		// The other side of that boundary, which is what catches the comparison
+		// being inverted — a `>` here would keep the row its sibling keeps and this
+		// pair would agree on everything.
+		const under = play({ key: 'under', investment: 0.49 });
+
+		expect(keys(applyGates([under], gateDefaults))).toEqual([]);
+	});
+
+	it('keeps the sub-chaos play once the floor is explicitly turned off', () => {
+		// Typing 0 is the documented way out of the one default-on gate, and it has
+		// to give the reader the fractional tier back rather than fall through to
+		// the shipped floor.
+		expect(keys(applyGates([oil], gates({ minItemPrice: 0 })))).toEqual(['oil']);
+	});
+
+	it('measures the price floor on the entry cost, not on what the play returns', () => {
+		// A cheap entry that pays well is still the trash tier by this gate's
+		// question, and a dear entry that pays nothing still clears it. Pointing the
+		// floor at `roi` — the neighbouring per-exchange chaos figure — would answer
+		// both the other way round.
+		const cheapButRich = play({ key: 'cheap-but-rich', investment: 0.4, roi: 50 });
+		const dearButPoor = play({ key: 'dear-but-poor', investment: 400, roi: 0.1 });
+
+		expect(keys(applyGates([cheapButRich, dearButPoor], gateDefaults))).toEqual(['dear-but-poor']);
+	});
+
+	it('judges a 1-hop route on the same entry cost as a direct one', () => {
+		// No special-casing by mode: `investment` is the chaos an exchange costs to
+		// enter whichever shape the route is, which is why the gate reads it rather
+		// than a leg price quoted in whatever that leg trades against.
+		const hop = play({
+			key: 'hop',
+			mode: '1-hop',
+			legs: [leg(), leg({ item: 'oil', quote: 'divine' }), leg({ item: 'divine' })],
+			investment: 0.4
+		});
+
+		expect(keys(applyGates([hop], gateDefaults))).toEqual([]);
+	});
+
+	it('leaves the sub-chaos play on the table when only the old server levels are typed', () => {
+		// The levels a reader arms are the SERVER's five; none of them is a price
+		// floor, so a fixture spelling them out must not be able to answer this
+		// gate's question by accident.
+		expect(keys(applyGates([oil], oldServerLevels))).toEqual(['oil']);
 	});
 
 	it('keeps a play the simulation expects to lose chaos', () => {

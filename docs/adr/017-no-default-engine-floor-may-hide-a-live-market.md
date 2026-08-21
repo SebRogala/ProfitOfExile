@@ -93,9 +93,32 @@ binds is a gate under another name.
   `BestPlays` pass buys one integer per row. Whether to collapse the two or to
   differentiate them again (a different sim window, a different ranking key) is
   open follow-up work, not settled here.
-- **No client-side price floor exists today.** Keeping sub-chaos noise out of a
-  view is a reader-side concern by ADR-015's split — it filters what one reader
-  is shown and changes nothing about what the server hands the next one — and
-  the sanctioned home for it is the desktop's existing filter chain. Building
-  one is open work under POE-196; until it lands, a reader who wants that cut
-  has the client gate knobs and nothing purpose-built.
+- **A client-side price floor now exists, and it is the one sanctioned default
+  filter** (POE-196, 2026-08-22). Keeping sub-chaos noise out of a view is a
+  reader-side concern by ADR-015's split — it filters what one reader is shown
+  and changes nothing about what the server hands the next one — and the
+  sanctioned home for it is the desktop's existing filter chain, where it landed
+  as a sixth Gates knob, `minItemPrice` in
+  `desktop/src/lib/exchange/filters.ts`. It ships at **0.5 chaos** and is the
+  ONLY default-on filter on either side of the wire: it drops a play whose
+  `investment` — the per-unit chaos cost of entering one exchange — is under
+  that, which removes the bottom of the sub-chaos tier from the out-of-the-box
+  table. The rule above is not weakened by it. What the rule bars is a default
+  that hides a market the reader could ACT ON, and the claim here is about
+  absolute size, not about the market being fake: the predicate never reads
+  `tick`, a sub-chaos market quotes as finely as any other, and an entry under
+  half a chaos is simply a payout per flip too small to be worth the repeats it
+  would take. The exception is bounded by being visible and undoable, which is
+  the price of it: the knob sits on the Gates row with the other five, its
+  placeholder shows the shipped level where theirs show `off`, the counter
+  attributes the rows it takes, the empty-table message names the floor by
+  number when the floor is what emptied it, and typing 0 turns it off. Blanking
+  the box restores the shipped level — `''` means "whatever this build ships"
+  for every gate knob, and this is the knob that makes that property
+  load-bearing.
+- **The level is 0.5 and not 1, deliberately** (owner call, 2026-08-22).
+  ADR-015's own motivating example was Sacrifice fragments at ~0.2–1c — the
+  owner's real flips, which that ADR moved the gates client-side to stop hiding.
+  A 1c floor would have hidden them again by default. At 0.5 the fragment and
+  oil tier stays on the table from half a chaos up, and only its bottom goes;
+  the reader who wants that bottom back types 0.

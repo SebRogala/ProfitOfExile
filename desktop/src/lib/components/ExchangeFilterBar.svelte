@@ -9,13 +9,15 @@
 	 * on their face when the two layers disagree, because a chip that reads "Only"
 	 * inside a hidden category otherwise looks like a rule that is not working.
 	 *
-	 * The GATES row (POE-191) ships collapsed and, since POE-193, ships OFF: every
-	 * empty box on this bar now reads the same way, as a filter that is not
-	 * running, and the table out of the box is everything the server served. The
-	 * row still badges how many knobs the reader has ARMED — a row nobody opens
-	 * still hides rows once a knob is set, and the badge is the only thing on
-	 * screen that says so. The old server levels are a recommendation each knob's
-	 * tooltip names, never a state the reader inherits.
+	 * The GATES row (POE-191) ships collapsed and, since POE-193, ships OFF —
+	 * with the single exception POE-196 added, the trash-price knob. Five of
+	 * the six empty boxes on this bar therefore read the same way, as a filter
+	 * that is not running; the sixth is the one place the bar has to say a
+	 * DIFFERENT thing out loud, which it does by showing its default in the
+	 * placeholder where the others show `off`. The row badges how many knobs the
+	 * reader has moved off default — a row nobody opens still hides rows, and the
+	 * badge is the only thing on screen that says so. The old server levels are a
+	 * recommendation each knob's tooltip names, never a state the reader inherits.
 	 *
 	 * The search box sits beside the counter on the last row because the two read
 	 * as one sentence — what the reader is looking for, and how much of the table
@@ -28,7 +30,7 @@
 	 * owns what is persisted (ADR-013). Neither piece of state is persisted: both
 	 * are where a control is on screen, not what it is set to.
 	 */
-	import { gateDefaults, overridesCategory, parseGate } from '$lib/exchange/filters';
+	import { gateDefaults, movedGates, overridesCategory, parseGate } from '$lib/exchange/filters';
 	import type {
 		CategoryRuleState,
 		CategoryRules,
@@ -81,12 +83,12 @@
 		 */
 		items: ExchangeItem[];
 		/**
-		 * The five gate knobs as their raw persisted strings — what the boxes show,
+		 * The six gate knobs as their raw persisted strings — what the boxes show,
 		 * so a half-typed number stays put while it is being typed.
 		 */
 		gateInputs: GateInputs;
 		/**
-		 * The same five as `parseGates` read them — what the boxes are MEASURED by.
+		 * The same six as `parseGates` read them — what the boxes are MEASURED by.
 		 * Passed already parsed rather than re-parsed here because the page has to
 		 * parse them anyway to filter with, and a second parse in the view is a
 		 * second place for the badge and the table to disagree about whether a knob
@@ -117,8 +119,9 @@
 		 * at the row that would give those rows back, and a reader who has armed a
 		 * knob and forgotten it needs the count more than the pills need theirs.
 		 * Everything else — the pills, the chips, the investment bounds and the
-		 * search — shares the other figure. Since POE-193 the gates ship off, so
-		 * this figure is 0 until the reader arms something.
+		 * search — shares the other figure. Since POE-196 this one is non-zero out
+		 * of the box: the trash-price knob ships armed, and its rows are exactly
+		 * the ones a reader has to be told are a default rather than an absence.
 		 */
 		counts: { shown: number; total: number; hiddenByGates: number; hiddenByFilters: number };
 		apiBase: string;
@@ -127,14 +130,15 @@
 		/** `undefined` removes the item's rule. */
 		onitemrule: (item: { id: string; name: string }, state: CategoryRuleState | undefined) => void;
 		/**
-		 * One knob's raw box contents. Keyed rather than five `ongateminprofit`
-		 * props: the five are one control group set the same way, and the page maps
-		 * the key to a preference in one place instead of five one-line callbacks.
+		 * One knob's raw box contents. Keyed rather than six `ongateminprofit`
+		 * props: the six are one control group set the same way, and the page maps
+		 * the key to a preference in one place instead of six one-line callbacks.
 		 */
 		ongate: (knob: keyof Gates, value: string) => void;
 		/**
-		 * Puts all five knobs back to unset, which IS the default (`parseGate`) and
-		 * since POE-193 means every gate off.
+		 * Puts all six knobs back to unset, which IS the default (`parseGate`):
+		 * five gates off and the trash-price floor back at its shipped level
+		 * (POE-196). The shipped state, not a blank one.
 		 */
 		ongatedefaults: () => void;
 		oninvestmin: (value: string) => void;
@@ -153,16 +157,24 @@
 	} = $props();
 
 	/**
-	 * The five knobs as the row draws them, in the order a reader meets a play:
-	 * is the profit worth it, is the market real, is the price fine enough, is the
-	 * edge more than rounding, is the return enough. Labels double as the tooltip
-	 * keys so the two cannot drift apart.
+	 * The six knobs as the row draws them, in the order a reader meets a play: is
+	 * the thing worth anything at all, is the profit worth it, is the market real,
+	 * is the price fine enough, is the edge more than rounding, is the return
+	 * enough. Labels double as the tooltip keys so the two cannot drift apart.
 	 *
-	 * The placeholder says what an EMPTY box does, which since POE-193 is nothing
-	 * — every gate ships off, and a placeholder showing a number would say the
-	 * opposite in the one glyph the reader is most likely to read. The level worth
-	 * typing is a suggestion rather than a state, so it sits in the tooltip beside
-	 * the reason to want it.
+	 * The trash-price knob leads because it is the only one that is already doing
+	 * something when the row is first opened: a reader who came here to find out
+	 * why a sub-chaos play is missing should meet that box before the five that
+	 * are empty.
+	 *
+	 * The placeholder says what an EMPTY box does — `off` for the five that ship
+	 * unarmed, and the actual default for the one that does not (`gatePlaceholder`
+	 * reads it from `gateDefaults` rather than restating it, so the box cannot
+	 * come to claim a level the build has moved). A number in that glyph is what
+	 * makes the shipped floor discoverable; a `off` there would be the bar lying
+	 * about the one filter the reader did not set. The levels worth typing into
+	 * the other five are suggestions rather than states, so they stay in the
+	 * tooltips beside the reason to want them.
 	 */
 	const GATE_FIELDS: {
 		knob: keyof Gates;
@@ -170,6 +182,12 @@
 		aria: string;
 		unit: string;
 	}[] = [
+		{
+			knob: 'minItemPrice',
+			label: 'Min item price',
+			aria: 'Minimum entry price in chaos per exchange',
+			unit: 'c each'
+		},
 		{
 			knob: 'minRoiChaos',
 			label: 'Min profit',
@@ -202,8 +220,31 @@
 		}
 	];
 
-	/** One spelling of "this box is doing nothing", shared by all five. */
+	/** One spelling of "this box is doing nothing", shared by the five that are. */
 	const GATE_OFF_PLACEHOLDER = 'off';
+
+	/**
+	 * What an empty box actually does, in the box. Derived from `gateDefaults`
+	 * rather than written per field: the constant is the single owner of what
+	 * unset runs at, and a hand-written `1` here would be a second place to change
+	 * when it moves — the exact drift the empty-string persistence exists to
+	 * prevent.
+	 */
+	function gatePlaceholder(knob: keyof Gates): string {
+		const shipped = gateDefaults[knob];
+		return shipped > 0 ? String(shipped) : GATE_OFF_PLACEHOLDER;
+	}
+
+	/**
+	 * The shipped trash-price floor, or `null` when this build does not ship one.
+	 *
+	 * The same guard `gatePlaceholder` applies, hoisted so the collapsed hint
+	 * cannot contradict the boxes: if POE-196's level is ever taken back to 0 the
+	 * bar is wholly off again, and a hint naming a "0c floor" would be the one
+	 * line on a shut row claiming a filter that is not running. A plain const —
+	 * `gateDefaults` is a module constant and nothing reactive reaches it.
+	 */
+	const SHIPPED_ITEM_FLOOR = gateDefaults.minItemPrice > 0 ? gateDefaults.minItemPrice : null;
 
 	let pickerOpen = $state(false);
 	/**
@@ -242,13 +283,14 @@
 	}
 
 	/**
-	 * Which knobs the reader has ARMED, compared on the PARSED values rather than
-	 * on the strings: '', '0' and '0.0' are one gate at its default — off, since
-	 * POE-193 — and a badge counting text would call two of them a change.
+	 * The knobs that are not where this build ships them, as a set for the
+	 * per-label lookup. The verdict itself is `movedGates` in `filters.ts` — it
+	 * shares `gateDefaults` with the parser and the Defaults reset, and it is
+	 * MOVED rather than ARMED since POE-196: a reader who typed 0 into the
+	 * trash-price knob turned a shipped filter off and is counted, because the
+	 * badge exists to say the table is not showing the shipped answer.
 	 */
-	const movedGates = $derived(
-		new Set(GATE_FIELDS.map((f) => f.knob).filter((knob) => gates[knob] !== gateDefaults[knob]))
-	);
+	const movedKnobs = $derived(new Set(movedGates(gates)));
 </script>
 
 <div class="filter-bar">
@@ -344,8 +386,10 @@
 		</Tooltip>
 		<!-- The badge is on the toggle, not inside the row, because it is the whole
 		     reason to open a row that is shut: it is the only thing on a collapsed
-		     bar that says the reader has armed a gate. Since POE-193 a collapsed
-		     row with no badge is a row filtering nothing. -->
+		     bar that says a knob is somewhere other than where the build put it.
+		     A collapsed row with no badge is the shipped bar, which since POE-196
+		     is the trash-price floor and nothing else — so the hint beside it names
+		     that floor rather than claiming the row filters nothing. -->
 		<button class="disclose" aria-expanded={gatesOpen} onclick={() => (gatesOpen = !gatesOpen)}>
 			<svg
 				class="chevron"
@@ -366,17 +410,20 @@
 			     which way the row is, and a text that changes with them is a third
 			     spelling of the same fact. -->
 			Quality bar
-			{#if movedGates.size > 0}
-				<span class="badge">{movedGates.size} changed</span>
+			{#if movedKnobs.size > 0}
+				<span class="badge">{movedKnobs.size} changed</span>
 			{/if}
 		</button>
 		{#if !gatesOpen}
 			<span class="unit-hint">
-				{#if movedGates.size > 0}
-					profit, turnover, price step, edge vs step, return — running whether or not this row is
-					open
+				{#if movedKnobs.size > 0}
+					item price, profit, turnover, price step, edge vs step, return — your settings run
+					whether or not this row is open
+				{:else if SHIPPED_ITEM_FLOOR !== null}
+					item price, profit, turnover, price step, edge vs step, return — only the {SHIPPED_ITEM_FLOOR}c
+					item-price floor is on
 				{:else}
-					profit, turnover, price step, edge vs step, return — all off until you set one
+					item price, profit, turnover, price step, edge vs step, return — all off until you set one
 				{/if}
 			</span>
 		{/if}
@@ -386,14 +433,14 @@
 		<div class="row gates">
 			{#each GATE_FIELDS as field (field.knob)}
 				<Tooltip text={EXCHANGE_TOOLTIPS[field.label]} position="below">
-					<span class="label gate-label" class:moved={movedGates.has(field.knob)}>{field.label}</span
+					<span class="label gate-label" class:moved={movedKnobs.has(field.knob)}>{field.label}</span
 					>
 				</Tooltip>
 				<input
 					class="amount mono"
 					type="text"
 					inputmode="decimal"
-					placeholder={GATE_OFF_PLACEHOLDER}
+					placeholder={gatePlaceholder(field.knob)}
 					aria-label={field.aria}
 					value={gateInputs[field.knob]}
 					oninput={(e) => ongate(field.knob, e.currentTarget.value)}
@@ -415,7 +462,9 @@
 
 			<button
 				class="clear"
-				title="Empties all five boxes, which turns every gate off — the shipped state, where the table shows everything the server served."
+				title={SHIPPED_ITEM_FLOOR !== null
+					? `Empties all six boxes, back to the shipped state: the ${SHIPPED_ITEM_FLOOR}c item-price floor on, the other five off — the table shows everything the server served above the trash tier.`
+					: 'Empties all six boxes, which turns every gate off — the table shows everything the server served.'}
 				onclick={ongatedefaults}>Defaults</button
 			>
 		</div>
