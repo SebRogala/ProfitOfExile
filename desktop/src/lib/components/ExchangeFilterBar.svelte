@@ -101,14 +101,18 @@
 		 * one exchange (POE-192) — which is why the page stores them under keys that
 		 * say so.
 		 *
-		 * The table's Investment column reports that SAME run figure, and since
-		 * POE-193 off the same call: `applyNumericFilters` and the column both read
-		 * `moneyColumns(play).investment`, so the bound cannot admit a row whose
-		 * printed Investment sits above it. The label stays "Run cost" anyway, and
-		 * not because the two disagree: the GATES row directly above this one still
-		 * judges PER-EXCHANGE numbers (Min item price, Min profit), so calling this
-		 * bound "Investment" would read as the same size as those. See the inline
-		 * comment beside the label, which is the live reason.
+		 * The bound reads `runInvestment(play)` — the run's cost — while the table's
+		 * Investment column reads `moneyColumns(play).investment`, the size the ROW
+		 * displays. On a DIVINE-entry row those are one number. On a CHAOS-entry row
+		 * they are not: since the owner ruling of 2026-08-22 such a row renders one
+		 * posting of its buy market, and the run's cost is printed in the Scale
+		 * column's "N c in" sub-line instead. The bound follows the MEANING —
+		 * a bankroll ceiling is a run-sized question whatever the row prints — and
+		 * the Run cost tooltip says which cell carries the figure it compares
+		 * against. The label stays "Run cost" for a second reason too: the GATES row
+		 * directly above this one judges PER-EXCHANGE numbers (Min item price, Min
+		 * profit), so calling this bound "Investment" would read as the same size as
+		 * those. See the inline comment beside the label, which is the live reason.
 		 */
 		investMin: string;
 		investMax: string;
@@ -480,10 +484,14 @@
 	<div class="row">
 		<!-- Run cost, not Investment: these bounds are compared against what the
 		     play ties up by the time it has been repeated enough to be worth
-		     doing (POE-192). The table's Investment column now reports that same
-		     run figure, so the two agree — but the GATES row directly above still
-		     judges per-exchange numbers (Min item price, Min profit), and calling
-		     this one "Investment" would read as the same size as those. -->
+		     doing (POE-192) — the figure the SCALE column's "N c in" sub-line
+		     prints on every row, and the one the Investment column prints only on
+		     a divine-entry row, since a chaos-entry row displays one posting of
+		     its buy market instead (owner ruling, 2026-08-22). The label is
+		     load-bearing for that reason and for one more: the GATES row directly
+		     above still judges per-exchange numbers (Min item price, Min profit),
+		     and calling this one "Investment" would read as the same size as
+		     those. -->
 		<Tooltip text={EXCHANGE_TOOLTIPS['Run cost']} position="below">
 			<span class="label">Run cost</span>
 		</Tooltip>

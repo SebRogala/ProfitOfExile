@@ -457,7 +457,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by the simulated outcome the server ranks on, by the hour's best-case chaos the ROI column shows for the whole run, or by how long the market needs to absorb the play's worthwhile scale — shortest wait first."
+			title="Rank by the simulated outcome the server ranks on, by the hour's best-case chaos the ROI column shows — which orders the number each row prints, a posting on a chaos-entry row against a whole run on a divine one, so the two sizes rank against each other — or by how long the market needs to absorb the play's worthwhile scale, shortest wait first."
 		/>
 
 		<div class="divider"></div>
@@ -540,8 +540,10 @@
 			<span>
 				prices are the newest hour’s cheapest buy and dearest sell, so the ROI columns are a best
 				case, not a quote — Exp. ROI is what the play would have paid across the last day, and
-				every money figure on a row counts the whole worthwhile run, or one exchange on a row the
-				simulation expects no gain from, which has no size worth repeating it to — and the route is
+				every money figure on a row counts one posting of the market you enter on when that market
+				prices in chaos, the whole worthwhile run when it prices in divine, and one exchange on a
+				divine row the simulation expects no gain from, which has no run left to count — the Scale
+				column shows that run wherever there is one and a dash where there is not — and the route is
 				priced at that best case throughout except its Get end, which is the spend plus Exp. ROI,
 				so the last step’s total and Get differ by the gap between those two columns; both
 				identities are in chaos, and a divine-entry route prints them at the divine rate
@@ -642,13 +644,13 @@
 							</td>
 
 							<!-- ONE SCALE PER ROW. All three money columns come from
-							     `moneyColumns`, which is the worthwhile RUN whenever the play
-							     has one and one exchange when it does not — the same two
-							     branches the route slots take, so Spend/Get/keep and these
-							     three are never about different trips. No "each" sub-line:
-							     what one exchange costs is not a second reading the row owes,
-							     and the Scale column already says how many exchanges the run
-							     is. -->
+							     `moneyColumns`, which is `displayScale` — one posting of the
+							     buy market on a chaos entry, the worthwhile RUN on a divine
+							     one (owner ruling, 2026-08-22) — and the route slots read the
+							     same decision, so Spend/Get/keep and these three are never
+							     about different trips. No "each" sub-line: what one exchange
+							     costs is not a second reading the row owes, and the Scale
+							     column says how many exchanges the run is. -->
 							<td class="num">
 								<div class="mono value">{formatChaos(money.investment)}c</div>
 							</td>
@@ -659,11 +661,14 @@
 								</div>
 							</td>
 
-							<!-- What the run is measured to pay — the same chaos the Get slot's
-							     "keep ≈" line carries, off the same `scale.gain` — and the only
-							     money cell on the row that can print a MINUS. A run only exists
-							     for a positive expectation, so the minus is always the
-							     per-exchange branch: the simulation is free to measure a loss
+							<!-- What the row is measured to pay at the size it displays — the
+							     same chaos the Get slot's "keep ≈" line carries, off the same
+							     `moneyColumns` call — and the only money cell on the row that
+							     can print a MINUS. On a divine row that is the run's gain; on a
+							     chaos row it is one posting's, and the run's gain is what the
+							     Scale column's "→ +Xc" prints instead. A run only exists
+							     for a positive expectation, so the minus is always a row with
+							     no run: the simulation is free to measure a loss
 							     and the server serves it anyway (ADR-016), so red is a reading
 							     here and not an error state. The ranking is still the
 							     PER-EXCHANGE expectation this scales, which is why the Exp. ROI
@@ -759,20 +764,20 @@
 							     sub-line, so the Fastest sort ranks by a number dense does
 							     not print; comfortable is where the wait is read.
 
-							     `scale.gain` and `scale.investment` are not this cell's own
-							     arithmetic: whenever `scale` is non-null they ARE
-							     `money.expectedRoi` and `money.investment`, the two figures
-							     the Exp. ROI and Investment cells above print, because
-							     `moneyColumns` reads them off this very object. That makes two
-							     variables, not four calculations that agree: `scale.gain` is
-							     what the "→ +Xc" here, the Exp. ROI cell and the route's
-							     `keep ≈` line all render, and `scale.investment` is what the
-							     "N c in" below, the Investment cell and the filter bar's
-							     Run-cost bound all render
+							     THIS CELL IS ALWAYS THE RUN, and since the owner ruling of
+							     2026-08-22 it is the only cell on the row that always is. On a
+							     DIVINE-entry row `scale.gain` and `scale.investment` are the
+							     same two numbers `money.expectedRoi` and `money.investment`
+							     carry, because the display scale IS the run there. On a
+							     CHAOS-entry row the cells above count one posting of the buy
+							     market, so this cell is where the run lives: the ×N, what it
+							     ties up — the exact figure the filter bar's Run-cost bound
+							     compares against, through `runInvestment` — and how long the
+							     market needs
 							     (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1, SCALE, and §5).
 							     Reaching for `play.expectedRoi` or `play.investment` here
-							     would print the per-exchange figure beside run-sized
-							     neighbours, which is the bug that document exists to close. -->
+							     would print a per-exchange figure under a run-sized ×N, which
+							     is the bug that document exists to close. -->
 							<td class="num">
 								{#if scale === null}
 									<span class="mono reserved">—</span>
