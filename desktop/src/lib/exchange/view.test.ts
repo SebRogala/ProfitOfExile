@@ -30,6 +30,7 @@ import {
 	quoteUnit,
 	refetchDelay,
 	routeSlots,
+	runLedger,
 	sortPlays,
 	worthwhileScale
 } from './view';
@@ -1017,6 +1018,417 @@ describe('moneyColumns', () => {
 		// The boundary `worthwhileScale` refuses: no repeat count reaches a
 		// positive target from a zero step.
 		expect(moneyColumns(play({ expectedRoi: 0, investment: 40 })).investment).toBe(40);
+	});
+});
+
+describe('runLedger', () => {
+	// The rate every divine-entry fixture here is read back into chaos with.
+	const DIVINE_RATE = 200;
+
+	/**
+	 * A wire leg. The pair and the price are ONE fact on the wire —
+	 * `priceQuoteQty / priceItemQty === price` exactly — so every fixture below
+	 * overrides all three together.
+	 */
+	function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
+		return {
+			action: 'buy',
+			item: 'scarab',
+			quote: CHAOS_ID,
+			price: 1,
+			priceItemQty: 1,
+			priceQuoteQty: 1,
+			fair: 1.1,
+			fairOk: true,
+			tick: 0.01,
+			volume: 2000,
+			stock: 40,
+			suspect: false,
+			itemName: 'Ambush Scarab',
+			itemIcon: '/icon/Scarab',
+			itemCategory: 'Scarabs',
+			quoteName: 'Chaos Orb',
+			quoteIcon: '/currency-exchange/icon/Chaos',
+			quoteCategory: 'Currency',
+			...overrides
+		};
+	}
+
+	// These fixtures are WIRE-CONSISTENT, per §7 of
+	// `docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md`: `investment` is `u0 · r`,
+	// `roiPct` is the server's own formula over the legs' UNDERCUT prices
+	// (`internal/exchange/plays.go:1083-1092`), and `roi` is `investment ·
+	// roiPct`. A fixture that contradicted those identities could make a ledger
+	// assertion pass or fail for a reason that has nothing to do with the code.
+	//
+	// The PAIR is pinned from the readable end: each fixture states `roi` as the
+	// round decimal it wants the ledger to carry, and `roiPct` is `roi /
+	// investment` — the back-solve, so that `investment · roiPct` returns exactly
+	// that `roi` in float. Stating `roiPct` as the float `u1/u0 − 1` instead
+	// would land an ulp away from the back-solved literal on two of the three
+	// fixtures, and the product would then miss the round `roi` by an ulp too.
+	// Each fixture's comment shows the formula the wire computes and the value it
+	// lands on, to the digits where the two agree.
+
+	/**
+	 * Chaos-entry direct: a scarab bought at 19c and sold back at 21c on the one
+	 * market.
+	 *
+	 * Worked by hand: `u0 = 19 × 1.01 = 19.19`, `u1 = 21 × 0.99 = 20.79`, and the
+	 * entry is chaos so `r = 1` and `investment = u0 = 19.19`.
+	 * `roiPct = u1/u0 − 1 = 0.0833767…`, and the gain the fixture pins is
+	 * `roi = 1.6`, so the literal `roiPct` carries is `1.6 / 19.19` — the same
+	 * value to the digits shown, an ulp off the float division.
+	 * `expectedRoi` 0.5 needs `ceil(100 / 0.5)` = 200 exchanges to clear the 100c
+	 * target, gaining `0.5 × 200` = 100c.
+	 */
+	function chaosScarab(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		return play({
+			key: 'direct:scarab:chaos',
+			legs: [
+				leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19 }),
+				leg({ action: 'sell', price: 21, priceItemQty: 1, priceQuoteQty: 21 })
+			],
+			roiPct: 0.08337675872850443,
+			edge: 0.08337675872850443,
+			roiPctRaw: 0.10526315789473684,
+			investment: 19.19,
+			roi: 1.6,
+			expectedRoi: 0.5,
+			...overrides
+		});
+	}
+
+	/**
+	 * Divine-entry direct: the same scarab, quoted in divine on both sides.
+	 *
+	 * `u0 = 0.0625 × 1.01 = 0.063125` div, `u1 = 0.1 × 0.99 = 0.099` div, and at
+	 * `r = 200` chaos a divine `investment = u0 · r = 12.625`c.
+	 * `roiPct = u1/u0 − 1 = 0.5683168…`, and the gain the fixture pins is
+	 * `roi = 7.175`c — the same figure `r · (u1 − u0)` states — so the literal
+	 * `roiPct` carries is `7.175 / 12.625`. Both float routes to the gain miss
+	 * 7.175 by an ulp in opposite directions, which is why the round gain is the
+	 * pinned end of the pair. `expectedRoi` 2 needs 50 exchanges, gaining 100c.
+	 */
+	function divineScarab(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		const side = { quote: DIVINE_ID, quoteName: 'Divine Orb', quoteIcon: '/icon/Divine' };
+		return play({
+			key: 'direct:scarab:divine',
+			legs: [
+				leg({ ...side, price: 0.0625, priceItemQty: 16, priceQuoteQty: 1 }),
+				leg({ ...side, action: 'sell', price: 0.1, priceItemQty: 10, priceQuoteQty: 1 })
+			],
+			roiPct: 0.5683168316831683,
+			edge: 0.5683168316831683,
+			roiPctRaw: 0.6,
+			investment: 12.625,
+			roi: 7.175,
+			expectedRoi: 2,
+			...overrides
+		});
+	}
+
+	/**
+	 * Chaos-entry 1-hop: buy the omen for chaos, sell it against divine, convert
+	 * the divine back into chaos. The triangle, whose third leg is the only place
+	 * `u2` is read.
+	 *
+	 * `u0 = 35 × 1.01 = 35.35`c, `u1 = 0.25 × 0.99 = 0.2475` div,
+	 * `u2 = 209 × 0.99 = 206.91`c a divine — leg 3 is a `sell` on the wire, which
+	 * is why its undercut takes the minus form. `r = 1`, so
+	 * `investment = 35.35`, `roiPct = u1·u2/u0 − 1 = 0.4486626…` and
+	 * `roi = investment · roiPct = 15.860225`. `roiPctRaw` is that same formula
+	 * over the RAW prices, `0.25 × 209 / 35 − 1 = 0.4928571…`. `expectedRoi` 8.5
+	 * needs `ceil(100 / 8.5)` = 12 exchanges, gaining `8.5 × 12` = 102c.
+	 */
+	function omen(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		const item = { item: 'omen', itemName: 'Omen of Amelioration', itemIcon: '/icon/Omen' };
+		return play({
+			key: '1-hop:omen:divine',
+			mode: '1-hop',
+			legs: [
+				leg({ ...item, price: 35, priceItemQty: 1, priceQuoteQty: 35 }),
+				leg({
+					...item,
+					action: 'sell',
+					quote: DIVINE_ID,
+					quoteName: 'Divine Orb',
+					quoteIcon: '/icon/Divine',
+					price: 0.25,
+					priceItemQty: 4,
+					priceQuoteQty: 1
+				}),
+				leg({
+					action: 'sell',
+					item: DIVINE_ID,
+					itemName: 'Divine Orb',
+					itemIcon: '/icon/Divine',
+					itemCategory: 'Currency',
+					price: 209,
+					priceItemQty: 1,
+					priceQuoteQty: 209
+				})
+			],
+			roiPct: 0.44866265912305514,
+			edge: 0.44866265912305514,
+			roiPctRaw: 0.4928571428571429,
+			investment: 35.35,
+			roi: 15.860225,
+			expectedRoi: 8.5,
+			...overrides
+		});
+	}
+
+	/**
+	 * The same triangle with a convert leg that came through with no usable
+	 * price — the version skew the forward fallback exists for.
+	 *
+	 * The money fields stay the consistent ones: `roiPct`, `roi` and `investment`
+	 * are what the server computed in the hour it DID price that leg, and the
+	 * skew is on the leg alone. `chainEnd` is `I + R` and never touched `u2`, so
+	 * it is unaffected; only the sale's own total loses its backward reading.
+	 *
+	 * The quantity pair goes with the price, per `unpriced` below.
+	 */
+	function skewedConvert(price: number): CurrencyExchangePlay {
+		const legs = omen().legs;
+		return omen({ legs: [legs[0]!, legs[1]!, unpriced(legs[2]!, price)] });
+	}
+
+	/**
+	 * A leg whose price came through unusable, with the quantity pair dropped
+	 * alongside it: the pair and the price are ONE fact (see `leg`), so a leg
+	 * that lost its price lost the market ratio the pair states too. Leaving the
+	 * priced fixture's 1-for-209 behind would put a readable ratio on the very
+	 * leg the fixture is calling unpriced.
+	 */
+	function unpriced(base: CurrencyExchangeLeg, price: number): CurrencyExchangeLeg {
+		return leg({ ...base, price, priceItemQty: 0, priceQuoteQty: 0 });
+	}
+
+	it('counts the exchanges of the worthwhile run', () => {
+		// `ceil(100 / 0.5)`.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.flips).toBe(200);
+	});
+
+	it('says the row is scaled when a worthwhile run exists', () => {
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.scaled).toBe(true);
+	});
+
+	it('counts one exchange when the expectation is not worth repeating', () => {
+		// A measured loser is served and ranked (ADR-016); it simply has no repeat
+		// count that reaches a positive target, so the row counts a single trip.
+		expect(runLedger(chaosScarab({ expectedRoi: -3 }), DIVINE_RATE)?.flips).toBe(1);
+	});
+
+	it('counts one exchange at an expectation of exactly zero', () => {
+		// The boundary `worthwhileScale` refuses.
+		expect(runLedger(chaosScarab({ expectedRoi: 0 }), DIVINE_RATE)?.flips).toBe(1);
+	});
+
+	it('says the row is unscaled when there is no worthwhile run', () => {
+		expect(runLedger(chaosScarab({ expectedRoi: -3 }), DIVINE_RATE)?.scaled).toBe(false);
+	});
+
+	it('ties up the chaos the Investment column reports for the run', () => {
+		// `19.19 × 200`, which in float is 3838.0000000000005 — NOT the 3838 that
+		// `200 × 19 × 1.01` answers. The two differ in the last ulp precisely
+		// because they associate the same product differently, so this literal is
+		// what tells a ledger reading the Investment column apart from one
+		// re-pricing the run off the buy leg.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.investmentChaos).toBe(3838.0000000000005);
+	});
+
+	it('carries the chaos the ROI column reports for the run', () => {
+		// `1.6 × 200`, the best case at the run's size.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.roiChaos).toBe(320);
+	});
+
+	it('carries the chaos the Exp. ROI column reports for the run', () => {
+		// `0.5 × 200` — the scale's own gain, and the only root that can go
+		// negative.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.expectedRoiChaos).toBe(100);
+	});
+
+	it('roots an unscaled row in the wire’s per-exchange figures', () => {
+		// One branch, so one wrong change loses all three at once.
+		const ledger = runLedger(chaosScarab({ expectedRoi: -3 }), DIVINE_RATE);
+
+		expect(ledger?.investmentChaos).toBe(19.19);
+		expect(ledger?.roiChaos).toBe(1.6);
+		expect(ledger?.expectedRoiChaos).toBe(-3);
+	});
+
+	it('ends the chain on the investment plus the best case', () => {
+		// 3838.0000000000005 + 320, which lands back on a round 4158.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.chainEndChaos).toBe(4158);
+	});
+
+	it('ends the row on the investment plus the measured expectation', () => {
+		// 3838.0000000000005 + 100. The Get end is the Spend end plus the Exp. ROI
+		// column and nothing else — E5.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.getChaos).toBe(3938.0000000000005);
+	});
+
+	it('ends an unscaled row below its spend when the expectation is a loss', () => {
+		// 19.19 − 3. The measurement, not broken arithmetic: the best case is still
+		// on the row, as the chain end of 20.79.
+		expect(runLedger(chaosScarab({ expectedRoi: -3 }), DIVINE_RATE)?.getChaos).toBe(16.19);
+	});
+
+	it('values a chaos entry at one chaos per unit', () => {
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.entryRate).toBe(1);
+	});
+
+	it('values a divine entry at the response’s divine rate', () => {
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.entryRate).toBe(200);
+	});
+
+	it('names a divine entry as the currency both ends are rendered in', () => {
+		// Leg 1's quote, and not chaos by default: this is what the reader pays
+		// with.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.entryQuote).toBe(DIVINE_ID);
+	});
+
+	it('names the entry quote of a row whose sale is quoted elsewhere', () => {
+		// The omen enters in chaos and sells against divine, so a ledger reading
+		// the SELL leg's quote — the one currency on this row that is neither the
+		// entry nor the end — answers divine here.
+		expect(runLedger(omen(), DIVINE_RATE)?.entryQuote).toBe(CHAOS_ID);
+	});
+
+	it('spends the investment column itself on a chaos entry', () => {
+		// Same ulp as `investmentChaos`, and the same discriminator: a Spend
+		// recomputed as `flips × price × (1 + tick)` answers a flat 3838.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.spend).toBe(3838.0000000000005);
+	});
+
+	it('spends the chaos investment divided by the entry rate', () => {
+		// 631.25c of investment at 200c a divine. A Spend left in chaos would read
+		// 631.25 on a row whose unit word says divine.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.spend).toBe(3.15625);
+	});
+
+	it('renders the chain end in the entry currency', () => {
+		// (631.25 + 358.75) / 200.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.chainEnd).toBe(4.95);
+	});
+
+	it('renders what the row gets in the entry currency', () => {
+		// (631.25 + 100) / 200.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.get).toBe(3.65625);
+	});
+
+	it('sells a direct play’s run for the chain end itself', () => {
+		// A direct play's key is `direct:<marketID>` — one market, so both legs
+		// carry the same quote and the sale is already in the entry currency.
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.sellTotal).toBe(4158);
+	});
+
+	it('sells a divine-entry direct play’s run in the entry currency', () => {
+		// 4.95 div — the chain end the row renders, NOT the 990c it was built
+		// from. Only a divine entry tells those two apart: at `r = 1` the chaos
+		// root and the entry-currency rendering are the same number, so the chaos
+		// fixture above passes either way.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.sellTotal).toBe(4.95);
+	});
+
+	it('derives no forward sale on a direct play', () => {
+		expect(runLedger(chaosScarab(), DIVINE_RATE)?.sellForward).toBe(false);
+	});
+
+	it('divides a 1-hop’s chain end by the undercut convert price', () => {
+		// 614.5227 / 206.91 = 2.97 div exactly. The two wrong divisors are both
+		// visible from here: the RAW 209 answers 2.9403, and the forward figure
+		// `12 × 0.2475` answers 2.9699999999999998 — a different float from 2.97.
+		expect(runLedger(omen(), DIVINE_RATE)?.sellTotal).toBe(2.97);
+	});
+
+	it('derives no forward sale while the convert leg carries a price', () => {
+		expect(runLedger(omen(), DIVINE_RATE)?.sellForward).toBe(false);
+	});
+
+	it('falls forward to the sell leg’s own run total when the convert leg has no price', () => {
+		// `12 × (0.25 × 0.99)` = 2.9699999999999998, which is NOT the 2.97 the
+		// backward reading answers — so this pins the route, not just the value.
+		expect(runLedger(skewedConvert(0), DIVINE_RATE)?.sellTotal).toBe(2.9699999999999998);
+	});
+
+	it('says the sale was derived forwards when the convert leg had no price', () => {
+		// The flag is what tells the convert step to print the market's ratio: two
+		// amounts derived by different routes would not be in this market's ratio.
+		expect(runLedger(skewedConvert(0), DIVINE_RATE)?.sellForward).toBe(true);
+	});
+
+	it('falls forward on a convert price that is not a finite number', () => {
+		// `Infinity > 0` is true, so only the finiteness half of the guard catches
+		// this one — without it the sale would total a clean 0.
+		expect(runLedger(skewedConvert(Number.POSITIVE_INFINITY), DIVINE_RATE)?.sellTotal).toBe(
+			2.9699999999999998
+		);
+	});
+
+	it('falls forward on a convert price below zero', () => {
+		// −206.91 is a finite number, so only the sign half of the guard catches
+		// it. A guard reading `!== 0` would divide the chain end by it and print a
+		// negative 2.97 as the sale.
+		expect(runLedger(skewedConvert(-209), DIVINE_RATE)?.sellTotal).toBe(2.9699999999999998);
+	});
+
+	it('reports no sale total when neither the convert nor the sell leg can price it', () => {
+		const legs = omen().legs;
+		const blind = omen({
+			legs: [legs[0]!, unpriced(legs[1]!, 0), unpriced(legs[2]!, 0)]
+		});
+
+		expect(runLedger(blind, DIVINE_RATE)?.sellTotal).toBeNull();
+	});
+
+	it('refuses a forward sale on a sell price that is not a finite number', () => {
+		// One guard, so one wrong change loses both facts: `Infinity > 0` is true,
+		// so without the finiteness half the run would total Infinity AND claim
+		// the total was derived forwards.
+		const legs = omen().legs;
+		const blind = omen({
+			legs: [legs[0]!, unpriced(legs[1]!, Number.POSITIVE_INFINITY), unpriced(legs[2]!, 0)]
+		});
+		const ledger = runLedger(blind, DIVINE_RATE);
+
+		expect(ledger?.sellTotal).toBeNull();
+		expect(ledger?.sellForward).toBe(false);
+	});
+
+	it('reports no sale total on a sell price below zero', () => {
+		// The sign half of the forward guard, the twin of the convert case above:
+		// −0.2475 is finite, and a guard reading `!== 0` would total the run at a
+		// negative 2.97 and print it as the sale.
+		const legs = omen().legs;
+		const blind = omen({
+			legs: [legs[0]!, unpriced(legs[1]!, -0.25), unpriced(legs[2]!, 0)]
+		});
+
+		expect(runLedger(blind, DIVINE_RATE)?.sellTotal).toBeNull();
+	});
+
+	it('claims no forward derivation when there was no sale left to derive', () => {
+		const legs = omen().legs;
+		const blind = omen({
+			legs: [legs[0]!, unpriced(legs[1]!, 0), unpriced(legs[2]!, 0)]
+		});
+
+		expect(runLedger(blind, DIVINE_RATE)?.sellForward).toBe(false);
+	});
+
+	it('draws no ledger for a body with fewer than two legs', () => {
+		expect(runLedger(chaosScarab({ legs: [leg()] }), DIVINE_RATE)).toBeNull();
+	});
+
+	it('draws no ledger for a divine entry the hour cannot value in chaos', () => {
+		// The one exempt branch of the invariant: no `r`, so no entry-currency
+		// rendering exists to state the chain in. Unreachable on a served body and
+		// guarded anyway, because the alternative is a division by zero printed as
+		// an amount.
+		expect(runLedger(divineScarab(), 0)).toBeNull();
 	});
 });
 

@@ -587,6 +587,159 @@ export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
 	};
 }
 
+// ------------------------------------------------------------- the ledger --
+
+/**
+ * One row's mechanical numbers, derived once (POE-193).
+ *
+ * The row's ends, its step totals, its three money columns and the filter bar's
+ * Run-cost bound are all renderings of the fields below, which is what
+ * `docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1 means by CLOSURE BY
+ * CONSTRUCTION: two figures that must agree are one variable, not two
+ * calculations that happen to land on the same number.
+ */
+export interface RunLedger {
+	/** Exchanges the row counts: the worthwhile run, or 1 when there is none. */
+	flips: number;
+	/** Whether a worthwhile run exists — the branch every emitter takes together. */
+	scaled: boolean;
+	/** Chaos per unit of the entry quote: 1 for chaos, the response's rate for divine. */
+	entryRate: number;
+	/** The entry quote's id — the currency both ends are rendered in. */
+	entryQuote: string;
+	/** CHAOS ROOTS. `moneyColumns`' three figures, unmodified. */
+	investmentChaos: number;
+	roiChaos: number;
+	expectedRoiChaos: number;
+	/** The mechanical end of the row, in chaos: I + R. One addition, no second path. */
+	chainEndChaos: number;
+	/** What the row ends with, in chaos: I + X. */
+	getChaos: number;
+	/** ENTRY-CURRENCY RENDERINGS. One division each from the chaos roots above. */
+	spend: number;
+	chainEnd: number;
+	get: number;
+	/**
+	 * What step 2 sells, in the SELL leg's own quote: `chainEnd` on a direct play,
+	 * `chainEnd / u2` on a 1-hop. Falls FORWARD to `flips * u1` — and only there —
+	 * when the convert leg carries no usable price; `sellForward` says so.
+	 * `null` only when that forward derivation is unusable too.
+	 */
+	sellTotal: number | null;
+	/**
+	 * `sellTotal` was derived forwards from the sell leg rather than backwards
+	 * from `chainEnd`, because the convert leg had no usable price. The convert
+	 * step must then print the market ratio instead of a total — the two amounts
+	 * of a convert line derived by different routes would not be in this market's
+	 * ratio, which is exactly the fact that made the fallback necessary.
+	 */
+	sellForward: boolean;
+}
+
+/**
+ * The row's mechanical numbers, read once from the wire and the money columns.
+ *
+ * `null` on a body with fewer than two legs — the same guard `routeSlots` keeps,
+ * because a row with no round trip has no chain to total — and on an entry quote
+ * this response cannot value in chaos. That second case is the row's ONE exempt
+ * branch (spec §3, "The one exempt branch"). `chaosPerQuote` answers `null` in
+ * two shapes: a quote that is neither chaos nor divine, and a divine entry in an
+ * hour whose `divineChaosRate` is 0. Neither reaches a served body — a play
+ * quoted in anything but those two is dropped outright
+ * (`internal/exchange/plays.go:678-681`), and no divine-quoted play is served in
+ * an hour that carried no divine/chaos trade. It is guarded anyway because the
+ * alternative is a division by zero printed as an amount, and a caller that gets
+ * `null` here renders both ends in chaos instead.
+ *
+ * `entryRate` is therefore never 0: `chaosPerQuote` answers `null` rather than 0
+ * for an unreadable divine rate, and that `null` has already left this function.
+ *
+ * THE SCALE IS TAKEN ONCE. `flips` and the three chaos roots come from
+ * `worthwhileScale` and `moneyColumns` and are not recomputed here — that single
+ * call is what makes the ends, the columns and the Run-cost bound take the same
+ * branch at the same moment, rather than each deciding for itself whether this
+ * row counts a run or one exchange.
+ *
+ * `chainEndChaos` and `getChaos` are single additions of those roots, and
+ * deliberately not `spend + roiChaos / entryRate`: reassociating the division
+ * across the addition costs exactness for nothing, and the whole point of the
+ * field is that there is no second expression for it to drift against.
+ */
+export function runLedger(
+	play: CurrencyExchangePlay,
+	divineChaosRate: number
+): RunLedger | null {
+	const [buyLeg, sellLeg, convertLeg] = play.legs;
+	if (buyLeg === undefined || sellLeg === undefined) return null;
+
+	const entryRate = chaosPerQuote(buyLeg.quote, divineChaosRate);
+	if (entryRate === null) return null;
+
+	const scale = worthwhileScale(play);
+	const flips = scale?.flips ?? 1;
+	const money = moneyColumns(play);
+	const chainEndChaos = money.investment + money.roi;
+	const getChaos = money.investment + money.expectedRoi;
+	const chainEnd = chainEndChaos / entryRate;
+
+	return {
+		flips,
+		scaled: scale !== null,
+		entryRate,
+		entryQuote: buyLeg.quote,
+		investmentChaos: money.investment,
+		roiChaos: money.roi,
+		expectedRoiChaos: money.expectedRoi,
+		chainEndChaos,
+		getChaos,
+		spend: money.investment / entryRate,
+		chainEnd,
+		get: getChaos / entryRate,
+		...saleTotal(chainEnd, flips, sellLeg, convertLeg)
+	};
+}
+
+/**
+ * What step 2 sells, in its own quote, and by which route it was derived.
+ *
+ * A DIRECT play has no third leg, and its sell total is `chainEnd` itself. That
+ * is legitimate rather than a coincidence: a direct play's key is
+ * `direct:<marketID>` (`internal/exchange/plays.go:149-151`), one market, so both
+ * legs carry the same `quote` and the total is already in the entry currency.
+ * Nothing here re-checks that — the wire's own key shape is the guarantee.
+ *
+ * On a 1-HOP the total is recovered BACKWARDS, `chainEnd / u2`, where `u2` is
+ * leg 3's UNDERCUT price. Leg 3 is read by POSITION and is a `sell` on the wire
+ * — this file consults `action` nowhere — which is why the undercut takes the
+ * minus form. Backwards and not forwards because `chainEnd` is built from the
+ * wire's own `roiPct`, which already contains `u2`; a forward figure would print
+ * a second answer to one question beside it (spec §3).
+ *
+ * THE ONE PERMITTED FORWARD DERIVATION. When leg 3 arrives with no usable price
+ * (version skew), `chainEnd / u2` is not a reading, and the total falls forward
+ * to `flips * u1`. It is the only forward-derived mechanical total on the row,
+ * and it exists because the alternative prints the market's LOT quantity on a
+ * step whose two ends count a run (spec §3, "The one permitted forward
+ * derivation"). With `u1` unusable too there is nothing left to print a total
+ * from, so the answer is `null` and the caller shows the market's ratio instead.
+ */
+function saleTotal(
+	chainEnd: number,
+	flips: number,
+	sellLeg: CurrencyExchangeLeg,
+	convertLeg: CurrencyExchangeLeg | undefined
+): { sellTotal: number | null; sellForward: boolean } {
+	if (convertLeg === undefined) return { sellTotal: chainEnd, sellForward: false };
+
+	const u2 = convertLeg.price * (1 - convertLeg.tick);
+	if (Number.isFinite(u2) && u2 > 0) return { sellTotal: chainEnd / u2, sellForward: false };
+
+	const u1 = sellLeg.price * (1 - sellLeg.tick);
+	if (Number.isFinite(u1) && u1 > 0) return { sellTotal: flips * u1, sellForward: true };
+
+	return { sellTotal: null, sellForward: false };
+}
+
 // -------------------------------------------------------------- the order --
 
 /**
