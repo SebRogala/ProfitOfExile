@@ -547,7 +547,7 @@
 							     width there and the labels here drift off the tiles. -->
 							<Tooltip text={EXCHANGE_TOOLTIPS.Route}>
 								<div class="route-head" class:dense>
-									<span class="slot-end">Spend</span>
+									<span class="slot-spend">Spend</span>
 									<span class="gap"></span>
 									<span class="slot-buy">{dense ? 'Buy' : 'Step 1 — buy'}</span>
 									<span class="gap"></span>
@@ -555,7 +555,7 @@
 									<span class="gap"></span>
 									<span class="slot-convert">{dense ? 'Convert' : 'Step 3 — convert'}</span>
 									<span class="gap"></span>
-									<span class="slot-end">Get</span>
+									<span class="slot-get">Get</span>
 								</div>
 							</Tooltip>
 						</th>
@@ -974,7 +974,12 @@
 	.route-head .gap {
 		width: 22px;
 	}
-	.route-head .slot-end {
+	/* Spend is narrower than Get, and deliberately: only Get carries the profit
+	   line the comfortable end geometry is sized around. */
+	.route-head .slot-spend {
+		width: 120px;
+	}
+	.route-head .slot-get {
 		width: 168px;
 	}
 	.route-head .slot-buy {
@@ -988,8 +993,11 @@
 	.route-head.dense .gap {
 		width: 18px;
 	}
-	.route-head.dense .slot-end {
-		width: 96px;
+	/* Dense drops the unit word from both ends, so both hold a bare number and
+	   take the one width again. */
+	.route-head.dense .slot-spend,
+	.route-head.dense .slot-get {
+		width: 80px;
 	}
 	.route-head.dense .slot-buy {
 		width: 220px;

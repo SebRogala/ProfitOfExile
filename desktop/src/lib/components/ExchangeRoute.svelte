@@ -11,20 +11,23 @@
 	 *
 	 * Presentation only. Every string, icon path and flag comes from
 	 * `routeSlots`, which is pure and unit-tested — this file decides nothing
-	 * about the market and computes no amount. Since POE-193 the amounts are the
-	 * whole worthwhile RUN and the ends are in the currency the run is entered
-	 * with, so the end slots carry a unit word and a sub-line that comfortable
-	 * shows and dense drops. Each step's rate is a whole-quantity ORDER — "buy 12
-	 * for 420c" — rather than a per-unit decimal the in-game exchange has no field
-	 * for, and it carries a `title` whenever the printed quantity is not the one
-	 * the step was asked for (a market posting in lots that quantity does not
-	 * divide by).
+	 * about the market and computes no amount, the end slots' hover included.
+	 * Since POE-193 the amounts are the whole worthwhile RUN and the ends are in
+	 * the currency the run is entered with, so the end slots carry a unit word and
+	 * a sub-line; comfortable shows both, dense shows neither and hands them back
+	 * through the wrapper's `title`. Steps 1 and 2 read as whole-quantity ORDERS —
+	 * "buy 12 for 420c" — rather than the per-unit decimal the in-game exchange has
+	 * no field for, and carry a `title` whenever the printed quantity is not the
+	 * one the step was asked for (a market posting in lots that quantity does not
+	 * divide by). Step 3 reads as the run's TOTAL — "≈ 2.52 div → 526c" — and has
+	 * no name line, its icon naming the currency instead.
 	 *
 	 * SLOT GEOMETRY, mirrored by the table header in `CurrencyExchangePage`: the
 	 * header's label spans must carry the same widths as `.slot-*` below
-	 * (comfortable 168 / 196 / 164 / 164 / 168 with 22px arrows and a 7px gap;
-	 * dense 96 / 220 / 140 / 140 / 96 with 18px arrows and a 6px gap), or the
-	 * labels drift off the tiles they name.
+	 * (comfortable 120 / 196 / 164 / 164 / 168 with 22px arrows and a 7px gap;
+	 * dense 80 / 220 / 140 / 140 / 80 with 18px arrows and a 6px gap), or the
+	 * labels drift off the tiles they name. The two ends are NOT one width: only
+	 * Get carries the profit line the comfortable geometry is sized around.
 	 */
 	import type { CurrencyExchangePlay } from '$lib/api';
 	import {
@@ -88,7 +91,12 @@
 {#snippet step(slot: RouteStep)}
 	{@render tile(slot.icon, slot.suspect)}
 	<span class="lines">
-		<span class="name" title={slot.name}>{slot.name}</span>
+		<!-- A step with no name is the convert step showing a run total, whose line
+		     names both currencies already and whose tile carries the artwork of the
+		     one being converted; the name is on its `rateTitle`. -->
+		{#if slot.name}
+			<span class="name" title={slot.name}>{slot.name}</span>
+		{/if}
 		<!-- `rateTitle` is set only when the printed order is not the quantity the
 		     step was asked for, because the market posts in lots that quantity does
 		     not divide by — the one case where the numbers on screen and the
@@ -102,10 +110,11 @@
 
 {#snippet end(slot: RouteEnd, gain: boolean)}
 	{@render tile(slot.icon, false)}
-	<!-- The sub-line rides on the wrapper's `title` as well as its own span,
-	     because dense hides the span and the profit line is the one thing on the
-	     row a dense reader still has to be able to reach. -->
-	<span class="lines" title={slot.sub ?? undefined}>
+	<!-- The unit word and the sub-line ride on the wrapper's `title` as well as
+	     their own spans, because dense hides both — and a bare 3.66 with no way to
+	     learn it is divine, or a run with no way to reach its profit line, is not
+	     a row a dense reader can act on. `routeSlots` composes the string. -->
+	<span class="lines" title={slot.title}>
 		<span class="amount mono" class:gain>{slot.amount}</span>
 		<span class="unit">{slot.unit}</span>
 		{#if slot.sub}
@@ -116,7 +125,7 @@
 
 {#if route}
 	<div class="route" class:dense>
-		<span class="slot slot-end">{@render end(route.spend, false)}</span>
+		<span class="slot slot-spend">{@render end(route.spend, false)}</span>
 
 		{@render arrow(false)}
 
@@ -141,7 +150,7 @@
 
 		{@render arrow(false)}
 
-		<span class="slot slot-end">
+		<span class="slot slot-get">
 			{@render end(route.get, route.positive)}
 		</span>
 	</div>
@@ -185,8 +194,19 @@
 	   divine-entry reader what they keep in the currency they are holding — so it
 	   is not a candidate for the ellipsis, and a table that already scrolls
 	   sideways by design can afford the width. */
-	.slot-end {
+	.slot-get {
 		width: 168px;
+	}
+	/* The two ends are NOT the same width, though they hold the same kind of
+	   thing. Only Get carries the profit line above; the widest Spend can print is
+	   its amount over a bare `≈ 181,338c` chaos reading — ~57px of mono amount and
+	   ~54px of sub-line — so the text column needs ~83px and the slot that plus
+	   the tile and its gap. Held at the width of its own content rather than
+	   Get's: the route is the widest cell in a table that already scrolls
+	   sideways, and 48px of blank tile on every row is 48px the reader pans past
+	   to reach the money columns. */
+	.slot-spend {
+		width: 120px;
 	}
 	.slot-buy {
 		width: 196px;
@@ -196,8 +216,13 @@
 		width: 164px;
 	}
 
-	.route.dense .slot-end {
-		width: 96px;
+	/* Dense drops the unit word as well as the sub-line, so both ends hold a bare
+	   number and take one width again: 20px tile, 5px gap, and ~55px of 0.75rem
+	   mono — enough for the eight characters of a grouped `1,010.00`, which is
+	   more than the old 96px left once the unit word had taken its share. */
+	.route.dense .slot-spend,
+	.route.dense .slot-get {
+		width: 80px;
 	}
 	.route.dense .slot-buy {
 		width: 220px;
@@ -310,13 +335,19 @@
 		flex-shrink: 0;
 	}
 
-	/* The unit label survives into dense, unlike every other sub-line: since
-	   POE-193 the end amounts are in the currency the run is ENTERED with, so a
-	   bare 0.51 is 0.51 divine on one row and 5,050 is chaos on the next. Dense
-	   lays `.lines` out as a row, so it costs a word beside the number rather
-	   than a second line. */
+	/* The unit word goes the way of the sub-lines in dense, reversing the call
+	   POE-193 made when it kept it. The fact behind that call still holds — the
+	   end amounts are in the currency the run is ENTERED with, so a bare 0.51 is
+	   divine on one row where 5,050 is chaos on the next — but the word is not the
+	   only thing that says so: the end tile beside it carries that currency's own
+	   artwork, which a dense reader scanning a column of rows reads faster than a
+	   six-letter word repeated down it. What the word costs is width on the widest
+	   cell in the table, twice per row, and dense exists to buy exactly that back.
+	   The trade is the same one every other sub-line makes here, and it is paid
+	   for the same way: the word is on the slot's `title`, a hover from the number
+	   it belongs to. */
 	.route.dense .unit {
-		flex-shrink: 0;
+		display: none;
 	}
 
 	/* The chaos reading of a divine spend, and the run's profit line. Dense drops
