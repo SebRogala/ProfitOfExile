@@ -471,10 +471,12 @@
 	{/if}
 
 	<div class="row">
-		<!-- Run cost, not Investment: since POE-192 these bounds are compared
-		     against the Scale column's investment — what the play ties up by the
-		     time it has been repeated enough to be worth doing — while the table's
-		     Investment column is one exchange. Two sizes, two names. -->
+		<!-- Run cost, not Investment: these bounds are compared against what the
+		     play ties up by the time it has been repeated enough to be worth
+		     doing (POE-192). The table's Investment column now reports that same
+		     run figure, so the two agree — but the GATES row directly above still
+		     judges per-exchange numbers (Min item price, Min profit), and calling
+		     this one "Investment" would read as the same size as those. -->
 		<Tooltip text={EXCHANGE_TOOLTIPS['Run cost']} position="below">
 			<span class="label">Run cost</span>
 		</Tooltip>

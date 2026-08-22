@@ -21,6 +21,7 @@ import {
 	formatVolume,
 	hoursProgress,
 	iconSrc,
+	moneyColumns,
 	parseDensity,
 	parseHorizon,
 	parseMode,
@@ -531,6 +532,20 @@ describe('sortPlays', () => {
 		expect(keys(sortPlays(served, 'roi'))).toEqual(['b', 'c', 'a']);
 	});
 
+	it('orders by the run-priced ROI the column shows, not by the per-exchange one', () => {
+		// The two orders genuinely disagree here, which is the whole point: `a`
+		// gains 5c an exchange but its 1c expectation takes 100 flips to clear the
+		// target, so its ROI column reads +500c; `b` gains ten times as much per
+		// exchange and clears in 2, so its column reads +100c. A table ordered by
+		// the wire's `roi` would put `b` on top of a number half `a`'s.
+		const served = [
+			play({ key: 'a', roi: 5, expectedRoi: 1 }),
+			play({ key: 'b', roi: 50, expectedRoi: 50 })
+		];
+
+		expect(keys(sortPlays(served, 'roi'))).toEqual(['a', 'b']);
+	});
+
 	it('keeps a suspect play behind every clean one even when its ROI is the largest', () => {
 		// The flag is the reason the server ranks it last: its price sits outside
 		// the fair band, so the big number is the part not to trust.
@@ -955,6 +970,56 @@ describe('worthwhileScale', () => {
 	});
 });
 
+describe('moneyColumns', () => {
+	// The invariant under test is ONE SCALE PER ROW: the three money columns are
+	// the worthwhile RUN's figures whenever the play has a run, and one
+	// exchange's when it does not — the same two branches `routeSlots` takes.
+	//
+	// Every scaled case runs on an `expectedRoi` of 3, which is 34 flips to clear
+	// the 100c target. That count is deliberately not the one the fixture's other
+	// fields produce: the optimistic `roi` of 10 would divide the target into 10,
+	// so a production swap onto the wrong field answers a number no case here
+	// expects. It is also not a divisor of the target, so the scaled gain
+	// overshoots to 102c and cannot be confused with `SCALE_TARGET_CHAOS` itself.
+
+	it('reports the chaos the whole run ties up, not the cost of one exchange', () => {
+		// 34 flips at 40c each.
+		expect(moneyColumns(play({ expectedRoi: 3, investment: 40 })).investment).toBe(1360);
+	});
+
+	it('reports the optimistic return across the whole run', () => {
+		// The column stays the RAW best case (the NET/RAW convention the ROI%
+		// column spells out) and is simply told at the run's size: 34 × 10c.
+		expect(moneyColumns(play({ expectedRoi: 3, roi: 10 })).roi).toBe(340);
+	});
+
+	it('reports the chaos the run is expected to pay, not the per-exchange mean', () => {
+		expect(moneyColumns(play({ expectedRoi: 3 })).expectedRoi).toBe(102);
+	});
+
+	it('falls back to the cost of one exchange for a play with no worthwhile run', () => {
+		// A measured loser is served and flagged (ADR-016), and has no run to
+		// repeat toward — so the fallback is a live branch, not a guard.
+		expect(moneyColumns(play({ expectedRoi: -6, investment: 40 })).investment).toBe(40);
+	});
+
+	it('falls back to the optimistic return on one exchange for a play with no run', () => {
+		expect(moneyColumns(play({ expectedRoi: -6, roi: 500 })).roi).toBe(500);
+	});
+
+	it('falls back to the per-exchange expectation for a play with no run', () => {
+		// The one money figure on the row that can print a minus, and this is the
+		// branch it prints in: scaling only ever happens above zero.
+		expect(moneyColumns(play({ expectedRoi: -6 })).expectedRoi).toBe(-6);
+	});
+
+	it('falls back on an expectation of exactly zero', () => {
+		// The boundary `worthwhileScale` refuses: no repeat count reaches a
+		// positive target from a zero step.
+		expect(moneyColumns(play({ expectedRoi: 0, investment: 40 })).investment).toBe(40);
+	});
+});
+
 describe('iconSrc', () => {
 	// What `getApiBase()` hands the page: an origin plus the `/api` mount.
 	const BASE = 'https://server.test/api';
@@ -1304,6 +1369,18 @@ describe('routeSlots', () => {
 
 	it('keeps the run’s expected profit in chaos alone when the entry is chaos', () => {
 		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.get.sub).toBe('keep ≈ 100c');
+	});
+
+	it('keeps exactly the chaos the Exp. ROI column reports for the same play', () => {
+		// The two are one number by construction, not two agreeing calculations,
+		// and this is the case that can tell the difference: a 3c expectation
+		// takes 34 flips and overshoots the target to 102c, so neither the wire
+		// field (3) nor the target constant (100) can produce the answer.
+		const scarab = chaosScarab({ expectedRoi: 3 });
+		const column = moneyColumns(scarab).expectedRoi;
+
+		expect(column).toBe(102);
+		expect(routeSlots(scarab, DIVINE_RATE)?.get.sub).toBe(`keep ≈ ${formatChaos(column)}c`);
 	});
 
 	it('adds no chaos reading under a spend that is already chaos', () => {

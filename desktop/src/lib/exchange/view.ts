@@ -77,7 +77,7 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
 /**
  * Which number the table is ordered by. `'expected'` is the server's own
  * ranking, which since POE-193 is the fill-simulated `expectedRoi` (ADR-016);
- * `'roi'` re-orders by the OPTIMISTIC chaos gained per exchange, which is a
+ * `'roi'` re-orders by the OPTIMISTIC chaos the ROI column prints, which is a
  * different question — a 40% best case on 2c is not the play a stocked account
  * wants; and `'fastest'` by how long the market needs to absorb the play's
  * worthwhile scale (`worthwhileScale().hours`), which is the question a big
@@ -520,6 +520,64 @@ export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | n
 	};
 }
 
+// ------------------------------------------------------------- the money --
+
+/** The three money columns of one row, all priced at one scale. */
+export interface MoneyColumns {
+	/** Chaos the row ties up — the Investment column. */
+	investment: number;
+	/** OPTIMISTIC chaos gained — the ROI column. */
+	roi: number;
+	/** Measured chaos expected — the Exp. ROI column. */
+	expectedRoi: number;
+}
+
+/**
+ * The row's three money figures, at the size the row is worth running
+ * (POE-193).
+ *
+ * THE INVARIANT: every money figure on a row is on ONE scale — the same scale
+ * the route slots print. The row used to mix three of them. Spend/Get/`keep ≈`
+ * were the run (`routeSlots`), the step rates were run-sized orders, and these
+ * three columns were the server's PER-EXCHANGE fields — so a two-flip play read
+ * "Spend 450 / Get 579 / keep ≈ 129" beside "Investment 225c, ROI +173c,
+ * Exp. ROI +64c", six numbers about two different trips with nothing on screen
+ * saying which was which.
+ *
+ * So both branches here mirror `routeSlots`' own two branches exactly:
+ *
+ * - A play with a worthwhile scale reports the RUN. `investment` is
+ *   `scale.investment` read directly — the same figure the filter bar's Run cost
+ *   bounds compare against (`applyNumericFilters`) and the same one the Scale
+ *   column's "N c in" sub-line prints, so a bound, a sub-line and a column
+ *   cannot disagree about what the trip costs. `expectedRoi` is `scale.gain`,
+ *   which is the number behind the Get slot's `keep ≈` line for the same reason:
+ *   one source, not two agreeing calculations.
+ * - A play with none reports the PER-EXCHANGE fields, exactly as the wire sends
+ *   them — which is what `routeSlots` falls back to as well. The row stays on one
+ *   scale in BOTH branches; that is the invariant, not "always the run".
+ *
+ * `roi` is scaled by MULTIPLYING the wire's per-exchange figure by the flip
+ * count rather than being read off the scale, because `WorthwhileScale` carries
+ * no optimistic total and should not: the scale exists to answer how far the
+ * MEASURED expectation has to be repeated. Multiplying keeps the column what it
+ * has always been — the raw best case, the RAW half of the NET/RAW pair the
+ * ROI% column spells out — now told at the run's size instead of one exchange's.
+ * The flip count is a positive integer, so the sign of the column is the wire's
+ * sign and a losing raw return still reads as one.
+ */
+export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
+	const scale = worthwhileScale(play);
+	if (scale === null) {
+		return { investment: play.investment, roi: play.roi, expectedRoi: play.expectedRoi };
+	}
+	return {
+		investment: scale.investment,
+		roi: play.roi * scale.flips,
+		expectedRoi: scale.gain
+	};
+}
+
 // -------------------------------------------------------------- the order --
 
 /**
@@ -534,7 +592,26 @@ export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | n
  * caller holding the result can never mutate the response's own array through
  * it.
  *
- * `'roi'` re-sorts by the OPTIMISTIC chaos per exchange, and `'fastest'` by how
+ * That option is deliberately NOT re-pointed at the Exp. ROI column's run-scaled
+ * figure, and the reason is what that figure is: `scale.gain` is the expectation
+ * repeated until it clears about 100c, so every play whose expectation is under
+ * 100c lands in [100, 200) and ordering by it would rank the table on the
+ * remainder of a division. The served order stays the ranking; the column tells
+ * the reader what the run pays. The seam is that the Exp. ROI column is not
+ * monotonic in the order it sits in — a 101c expectation runs once for 101c and
+ * ranks above a 99c one that runs twice for 198c. It is a seam by choice: the
+ * alternative throws away the clean/suspect partition and the coverage band for
+ * an order nobody asked for.
+ *
+ * `'roi'` re-sorts by the OPTIMISTIC chaos the ROI COLUMN prints — which since
+ * the money columns moved to run pricing is `moneyColumns().roi`, the per-run
+ * total, and no longer the wire's per-exchange `roi`. The two orders genuinely
+ * differ (the flip count is `ceil(100 / expectedRoi)`, so a small optimistic
+ * return repeated forty times out-totals a large one that runs once), and a
+ * table ordered by a number it does not show reads as broken. The Investment
+ * column has no sort of its own; if it ever gets one it reads the same helper.
+ *
+ * `'fastest'` sorts by how
  * long the market needs to absorb the play's worthwhile scale — ascending,
  * because the shortest wait is the best row, and a play whose hours cannot be
  * read (`worthwhileScale` `null`, which since POE-193 includes every play whose
@@ -573,7 +650,7 @@ export function sortPlays(
 	}
 	return [...plays].sort((a, b) => {
 		if (a.suspect !== b.suspect) return a.suspect ? 1 : -1;
-		return b.roi - a.roi;
+		return moneyColumns(b).roi - moneyColumns(a).roi;
 	});
 }
 
@@ -1187,6 +1264,9 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 		};
 	}
 
+	// `scale.gain` and nothing derived from it: this is the same figure the Exp.
+	// ROI column reports through `moneyColumns`, so the profit line under Get and
+	// the column two cells to its right are one number by construction.
 	const keep = `keep ≈ ${formatChaos(scale.gain)}c`;
 	const chaosPerEntry = chaosPerQuote(buyLeg.quote, divineChaosRate);
 
