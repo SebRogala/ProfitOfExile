@@ -218,15 +218,26 @@ through two different formatters does not close for the reader.
    same pair of facts the snap's two hovers carried (`view.ts:957-965` and
    `view.ts:972-975`), moved off the line and onto the hover with the pair.
 
-7. **A step with no total prints the market's ratio, and says so.** Two places
-   have no total to print: the exempt branch of §3, and a 1-hop convert step
-   whose leg carries no usable price. Both fall back to one shared helper that
-   renders the leg's own posted pair (`buy 16 for 1 div`, `convert 1 div for
-   209c`), or the decimal rate when even the pair is unusable (`convert @ 0.00
-   c`). Such a line prints the MARKET'S LOT QUANTITY and not the run, which is
-   the mixed-quantity reading the rest of this document exists to end — so it
-   carries a hover that says the row's ends count the run while this line counts
-   one order of this market, and it is confined to those two places.
+7. **A step with no total prints the market's ratio, and says so.** Three places
+   have no total to print: the exempt branch of §3, a 1-hop convert step whose
+   leg carries no usable price, and the sell step of a 1-hop whose sale could be
+   priced from neither the convert leg nor its own. All three fall back to one
+   shared helper that renders the leg's own posted pair (`buy 16 for 1 div`,
+   `convert 1 div for 209c`), or the decimal rate when even the pair is unusable
+   (`convert @ 0.00 c`). A fourth caller of that helper prints no line at all —
+   the convert step's run-total hover quotes the market's posted pair inside its
+   own sentence, from the same helper, so the hover and the fallback line cannot
+   word one market's order two ways. Such a line prints the MARKET'S LOT
+   QUANTITY and not the run, which is the mixed-quantity reading the rest of
+   this document exists to end — so it carries a hover that says the row's ends
+   count the run while this line counts one order of this market, and line
+   emission is confined to those three places.
+
+   The hover FOLLOWS THE BRANCH the line took. A line that fell all the way
+   through to the decimal rate posted no pair, so its caveat names the per-unit
+   rate rather than a quantity pair that is nowhere on screen; the run-versus-lot
+   half of the sentence is unchanged, because the ends beside it count the run
+   either way.
 
 ---
 
