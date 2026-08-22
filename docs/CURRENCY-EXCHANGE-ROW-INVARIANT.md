@@ -107,7 +107,7 @@ cannot be subtracted from the buy total at all.
 **Why E7 derives the sell total backwards from `chainEnd` rather than forwards
 from `legs[1].price`.** Because `roiPct` is the WIRE'S ANSWER to what the round
 trip returns, and the client must not be able to disagree with it. `roiPct` is
-served (`plays.go:1012`, computed at `plays.go:958-1006` from the same undercut
+served (`plays.go:1056`, computed at `plays.go:1012` from the `plays.go:958-1006` undercut
 prices the legs carry), `R` is built from it, and `chainEnd` is built from `R`.
 A forward derivation (`N · u1`) recomputes the served answer from the served
 inputs and then prints its own result beside it — so the moment the server's
@@ -384,8 +384,11 @@ honest move is to label the assumption, which is what is done.
 the row used for the best-case price basis. Two different senses of one word on
 one row is how numbers come to disagree in a reader's head, so the word is
 retired from this surface. The price basis is **BEST CASE**. The whole-book
-hours are **UNCONTESTED**. Neither word is used for the other meaning anywhere
-in `tooltips.ts`, `view.ts` doc comments, or the page caption.
+hours are **UNCONTESTED**. The retired word appears nowhere on the row surface:
+`tooltips.ts`, `view.ts` and its tests, `filters.ts` and its tests, the page
+caption, `ExchangeRoute.svelte` and `ExchangeFilterBar.svelte` are all swept to
+zero hits. The one recorded exclusion is `api.ts`'s wire-type docs, which
+mirror the Go wire docs and say so in place.
 
 ### 6.5 A basis note that is not an exception
 
