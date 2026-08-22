@@ -20,6 +20,7 @@ import {
 	serializeItemRules
 } from './filters';
 import type { CategoryRules, GateInputs, Gates, ItemRule, NumericFilters } from './filters';
+import { moneyColumns } from './view';
 import type { CurrencyExchangeLeg, CurrencyExchangePlay } from '$lib/api';
 
 /**
@@ -925,6 +926,26 @@ describe('applyNumericFilters', () => {
 
 	it('drops a play whose scale is one chaos over the investment ceiling', () => {
 		expect(keys(applyNumericFilters([cheap], filters({ investMax: '999' })))).toEqual([]);
+	});
+
+	it('bounds the very figure the Investment column shows the reader', () => {
+		// The bound and the column are one number, so a ceiling the reader types
+		// cannot admit a row whose printed Investment sits above it. Told across
+		// both branches at once — `cheap` has a run, `measuredLoss` has none — so
+		// a change that re-anchored either side of either branch shows up here as
+		// a row admitted above its own printed cost.
+		const measuredLoss = play({ key: 'loss', investment: 100, roi: 25, expectedRoi: -3 });
+		const ceiling = 1000;
+
+		const kept = applyNumericFilters(
+			[cheap, dear, measuredLoss],
+			filters({ investMax: String(ceiling) })
+		);
+
+		expect(keys(kept)).toEqual(['cheap', 'loss']);
+		for (const row of kept) {
+			expect(moneyColumns(row).investment).toBeLessThanOrEqual(ceiling);
+		}
 	});
 
 	it('reads the investment bounds as divine when the unit says divine', () => {

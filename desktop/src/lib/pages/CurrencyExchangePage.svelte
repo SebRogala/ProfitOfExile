@@ -40,6 +40,7 @@
 		formatRoiPct,
 		formatVolume,
 		hoursProgress,
+		moneyColumns,
 		parseDensity,
 		parseHorizon,
 		parseMode,
@@ -538,7 +539,8 @@
 			<span class="dot">·</span>
 			<span>
 				prices are the newest hour’s cheapest buy and dearest sell, so the ROI columns are a best
-				case, not a quote — Exp. ROI is what the play would have paid across the last day
+				case, not a quote — Exp. ROI is what the play would have paid across the last day, and
+				every money figure on a row counts the whole worthwhile run
 			</span>
 		{:else}
 			<span class="warn">Couldn't reach the server</span>
@@ -607,6 +609,7 @@
 					{#each rows as play, i (play.key)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						{@const scale = worthwhileScale(play)}
+						{@const money = moneyColumns(play)}
 						<!-- The thin-hour reading is the play's, not one step's — the ROUND
 						     TRIP returned no spread worth taking in the newest hour — but a
 						     row-wide ring turned solid red below some rank, where nearly
@@ -634,25 +637,33 @@
 								/>
 							</td>
 
-							<!-- Both money columns are ONE exchange in both densities: the
-							     primary IS the per-exchange figure now, so the "each"
-							     sub-line it used to carry would only repeat it. What the
-							     play costs and pays at the size worth running is the Scale
-							     column's job. -->
+							<!-- ONE SCALE PER ROW. All three money columns come from
+							     `moneyColumns`, which is the worthwhile RUN whenever the play
+							     has one and one exchange when it does not — the same two
+							     branches the route slots take, so Spend/Get/keep and these
+							     three are never about different trips. No "each" sub-line:
+							     what one exchange costs is not a second reading the row owes,
+							     and the Scale column already says how many exchanges the run
+							     is. -->
 							<td class="num">
-								<div class="mono value">{formatChaos(play.investment)}c</div>
+								<div class="mono value">{formatChaos(money.investment)}c</div>
 							</td>
 
 							<td class="num">
-								<div class="mono gain" class:flat={play.roi <= 0}>
-									{formatGain(play.roi)}c
+								<div class="mono gain" class:flat={money.roi <= 0}>
+									{formatGain(money.roi)}c
 								</div>
 							</td>
 
-							<!-- The ranking's number, and the only money cell on the row that
-							     can print a MINUS: the simulation is free to measure a loss and
-							     the server serves it anyway (ADR-016), so red is a reading here
-							     and not an error state.
+							<!-- What the run is measured to pay — the same chaos the Get slot's
+							     "keep ≈" line carries, off the same `scale.gain` — and the only
+							     money cell on the row that can print a MINUS. A run only exists
+							     for a positive expectation, so the minus is always the
+							     per-exchange branch: the simulation is free to measure a loss
+							     and the server serves it anyway (ADR-016), so red is a reading
+							     here and not an error state. The ranking is still the
+							     PER-EXCHANGE expectation this scales, which is why the Exp. ROI
+							     sort keeps the served order rather than re-reading the column.
 							     NOTHING measured is not a wash. A recipe with no simulable entry
 							     hour carries a 0 mean over 0 entries, and printing that as "0c"
 							     would tell the reader the play was replayed and broke even. It
@@ -673,14 +684,14 @@
 								{:else}
 									<div
 										class="mono gain"
-										class:flat={play.expectedRoi === 0}
-										class:loss={play.expectedRoi < 0}
+										class:flat={money.expectedRoi === 0}
+										class:loss={money.expectedRoi < 0}
 										class:thin={play.lowCoverage}
 										title={play.lowCoverage
 											? `Low coverage: only ${play.simEntries} of the last day's hours could be simulated, so this mean is thin.`
 											: null}
 									>
-										{formatGain(play.expectedRoi)}c
+										{formatGain(money.expectedRoi)}c
 									</div>
 									{#if !dense}
 										<div class="mono sub">
