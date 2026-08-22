@@ -254,6 +254,7 @@ type exchangePlayBody struct {
 	Tick           float64           `json:"tick"`
 	Depth          float64           `json:"depth"`
 	Suspect        bool              `json:"suspect"`
+	LowLiquidity   bool              `json:"lowLiquidity"`
 	HoursSeen      int               `json:"hoursSeen"`
 	ExpectedRoi    float64           `json:"expectedRoi"`
 	ExpectedRoiPct float64           `json:"expectedRoiPct"`
@@ -834,6 +835,68 @@ func TestCurrencyExchangePlays_flaggedPlay_publishesTheSuspectFlagBesideTheRawPr
 
 	if !play.Suspect {
 		t.Error("suspect = false, want true — the engine flagged this play")
+	}
+}
+
+// spreadlessPlay is what the engine serves when the newest hour PRICED a recipe
+// and printed no spread worth taking: the divine market at one price all hour,
+// so the round trip pays two ticks against nothing and returns a LOSS, carried
+// with LowLiquidity set (ADR-017's 2026-08-22 amendment). No other fixture here
+// is a losing row, and none of the others is flagged this way.
+func spreadlessPlay() exchange.Play {
+	play := directDivinePlay()
+	play.Legs[1].Price, play.Legs[1].PriceQuoteQty = 196, 196
+	play.RoiPct, play.Edge, play.RoiPctRaw = -0.0102, -0.0102, 0
+	play.Roi = -2.0094
+	play.LowLiquidity = true
+	return play
+}
+
+// spreadlessCache holds that one row, so a test about it cannot pass on another
+// play's numbers.
+func spreadlessCache(t *testing.T) *exchange.Cache {
+	t.Helper()
+	cache := exchange.NewCache()
+	cache.Set(exchange.DefaultHorizon, exchange.Result{
+		League:          "Mirage",
+		Horizon:         string(exchange.DefaultHorizon),
+		From:            fixtureFrom,
+		To:              fixtureTo,
+		Hours:           6,
+		DivineChaosRate: divineChaosRate,
+		Plays:           []exchange.Play{spreadlessPlay()},
+	})
+	return cache
+}
+
+func TestCurrencyExchangePlays_spreadlessPlay_publishesTheLowLiquidityFlag(t *testing.T) {
+	// The flag is the only thing on the row that says WHY a served play shows no
+	// gain — the server stopped hiding these on 2026-08-22 precisely so a reader
+	// could judge them, and a body that dropped the field would put the row back
+	// to being unexplainable.
+	body := decodePlays(t, getPlays(t, spreadlessCache(t), "/api/currency-exchange/plays"))
+
+	play := playByKey(t, body, spreadlessPlay().Key)
+
+	if !play.LowLiquidity {
+		t.Error("lowLiquidity = false, want true — the engine flagged this play's newest hour as spreadless")
+	}
+}
+
+func TestCurrencyExchangePlays_spreadlessPlay_publishesItsNegativeReturn(t *testing.T) {
+	// roiPct and roi can be negative on a served row since the same change, and
+	// the sign is the whole reading: a transport that clamped or dropped it would
+	// render this row as a wash rather than as the loss it measures.
+	body := decodePlays(t, getPlays(t, spreadlessCache(t), "/api/currency-exchange/plays"))
+
+	want := spreadlessPlay()
+	play := playByKey(t, body, want.Key)
+
+	if play.RoiPct != want.RoiPct {
+		t.Errorf("roiPct = %v, want %v", play.RoiPct, want.RoiPct)
+	}
+	if play.Roi != want.Roi {
+		t.Errorf("roi = %v, want %v", play.Roi, want.Roi)
 	}
 }
 

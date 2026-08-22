@@ -116,16 +116,17 @@ type Leg struct {
 //
 // Every price-shaped number a Play carries comes from a single feed hour, the
 // one LastHour names — and for a served play that is the window's NEWEST hour,
-// the last snapshot, because BestPlays drops any recipe that did not clear its
-// gates there. No price is blended across hours, because a blend is a trade
+// the last snapshot, because BestPlays drops any recipe the feed did not price
+// there. No price is blended across hours, because a blend is a trade
 // nobody could have made: Mawr Blaidd/Chaos printed lows of 62.5-81 chaos in
 // four consecutive hours against a VWAP near 250, which is why a price shown
 // here belongs to one hour.
 //
 // Two fields are deliberately not prices and do read across hours, each labelled
-// as what it is. HoursSeen counts the window hours in which the recipe cleared
-// the gates on that hour's own prices, so a one-hour ghost and a play that has
-// held all day are told apart by a count. ExpectedRoi is the fill simulation's
+// as what it is. HoursSeen counts the window hours in which the recipe produced
+// a servable play on that hour's own prices, so a one-hour ghost and a play that
+// has held all day are told apart by a count. ExpectedRoi is the fill
+// simulation's
 // mean outcome over the last day of entries (sim.go): what posting these orders
 // would have realized, as opposed to what the hour printed. Neither is a price
 // and neither replaces one — the legs, RoiPct, Roi and Investment stay the last
@@ -137,7 +138,13 @@ type Leg struct {
 // valued in chaos, which the legs do not carry. The simulation's four —
 // ExpectedRoi, ExpectedRoiPct, SimEntries and LowCoverage — are the fields a
 // client CANNOT recheck from the row, because their inputs are hours the row
-// does not carry.
+// does not carry. LowLiquidity is the odd one: its input is this row's own
+// RoiPct, read against a server-side level the row does not ship.
+//
+// RoiPct, Roi and ExpectedRoi can all be NEGATIVE on a served row. Since
+// 2026-08-22 a newest hour that priced the recipe and showed no spread is
+// flagged rather than dropped (see LowLiquidity), so a minus is a reading and
+// never an error state.
 type Play struct {
 	// Key identifies the recipe across hours: "direct:<marketID>" or
 	// "1-hop:<item>|<buyQuote>|<sellQuote>".
@@ -187,9 +194,37 @@ type Play struct {
 	// make the whole percentage a story. Suspect plays rank after every clean
 	// one, and Config.HideSuspect drops them instead.
 	Suspect bool `json:"suspect"`
-	// HoursSeen counts the window hours in which the recipe cleared every gate
-	// on THAT hour's own prices. A low count on a wide window is a ghost: an
-	// edge that showed up once.
+	// LowLiquidity says the newest hour PRICED this recipe and printed no
+	// exploitable spread: the round trip at that hour's undercut prices returned
+	// less than Config.MinEdge. RoiPct is that measured return and not a
+	// placeholder — it can be NEGATIVE, and the play is served either way.
+	//
+	// It was a DROP until 2026-08-22, and one measured case is why it is a flag.
+	// The Apocalypse card against chaos traded 2 cards at a single 223:1 print in
+	// the 07:00 hour, which undercuts to -0.89%; the drop removed the candidate,
+	// the newest-hour rule below then removed the whole recipe, and what vanished
+	// was a market showing 70-92% in five of the window's other six hours that the
+	// owner was flipping by hand at the time. One quiet hour is not a dead market,
+	// and a row that is not served cannot be argued with (ADR-017).
+	//
+	// The name is the cause the measured case showed — an hour too thin to print
+	// two sides worth trading between — while the predicate is the spread itself,
+	// which is the thing the engine can see.
+	//
+	// It is not a ranking key. ExpectedRoi already reads the hours this one
+	// lacks, so a recipe whose quiet hour is an exception keeps its place and a
+	// recipe that never had a spread sinks on its own.
+	LowLiquidity bool `json:"lowLiquidity"`
+	// HoursSeen counts the window hours in which the recipe produced a servable
+	// play on THAT hour's own prices: every leg traded and carried stock, the
+	// entry quote could be valued in chaos, and no ARMED gate rejected it. A low
+	// count on a wide window is a ghost — a recipe the feed priced once.
+	//
+	// Since MinEdge became a flag (2026-08-22) an hour whose spread was too small
+	// to act on counts here too, so the number reads "hours the feed priced this
+	// recipe" rather than "hours it was worth acting on". The narrower reading is
+	// no longer reported by any field; ExpectedRoi is what says whether the hours
+	// were worth anything, over its own window.
 	HoursSeen int `json:"hoursSeen"`
 	// ExpectedRoi is the chaos one exchanged unit ACTUALLY returned, averaged
 	// over the simulated entries of the last Config.SimWindowHours hours: post
@@ -252,11 +287,14 @@ type Result struct {
 // Config tunes the window, the gates, the junk bands and the ranking cut.
 //
 // Every gate below still exists and still binds when it is set; what changed in
-// POE-191 and again in POE-193 is which of them DefaultConfig arms. The rule the
-// defaults now follow is the VISIBILITY RULE: no default may hide a live market.
-// Exactly two of them still drop anything out of the box — MinVolumePerHour 1,
-// which asks only that a trade happened on the leg this hour, and MinEdge, which
-// drops the round trips that lose or gain nothing but float noise. MinHoursSeen
+// POE-191, again in POE-193 and again on 2026-08-22 is which of them
+// DefaultConfig arms. The rule the defaults now follow is the VISIBILITY RULE:
+// no default may hide a live market. Exactly ONE of them still drops anything
+// out of the box — MinVolumePerHour 1, which asks only that a trade happened on
+// the leg this hour. MinEdge was the last of the others and is now a flag
+// threshold: an hour that priced the recipe and showed no exploitable spread is
+// served with Play.LowLiquidity set and its measured, possibly negative, RoiPct.
+// MinHoursSeen
 // defaults to 1, which cannot drop a served play at all (a served play cleared
 // the newest hour, so its count is at least one): persistence is REPORTED, in
 // Play.HoursSeen, rather than enforced. MaxPlays is a payload guard sized above
@@ -287,14 +325,19 @@ type Config struct {
 	// opt into the tighter reading; gatedLeg's stock demand on BOTH sides stands
 	// whatever this is set to.
 	MinVolumePerHour float64
-	// MinEdge is the smallest RoiPct kept, 0.001 meaning +0.1%, judged on the
-	// UNDERCUT return. It is the sanity floor rather than a quality gate: it
-	// drops the round trips that lose or barely break even, and how much gain
-	// is worth acting on is the client's call. A zero value means "use the
-	// default"; a negative value lowers the floor further. It still cannot
-	// surface a losing route, because withDefaults clamps MinEdgeTickRatio and
-	// MinROIChaos to at least 0 and Investment is positive, so a negative RoiPct
-	// makes Roi negative and fails Roi >= MinROIChaos whatever MinEdge says.
+	// MinEdge is the RoiPct at which an hour stops counting as an exploitable
+	// spread, 0.001 meaning +0.1%, judged on the UNDERCUT return.
+	//
+	// It is a FLAG THRESHOLD and no longer a floor. Since 2026-08-22 a play whose
+	// newest hour returns less than this is served with Play.LowLiquidity set and
+	// its measured RoiPct, which may be negative; raising this knob flags more
+	// plays and hides none. How much gain is worth acting on stays the client's
+	// call, and it now gets to make that call on rows it can see.
+	//
+	// A zero value means "use the default"; a negative value narrows what gets
+	// flagged. Nothing under it is structural any more — the positivity floor the
+	// payout gates used to hold at 0 was the same judgement in disguise, and
+	// evaluate reads those two as armed-only for that reason.
 	MinEdge float64
 	// MinTurnoverChaos is the smallest Play.Turnover kept, in chaos per hour.
 	// Default 0, which is off: no turnover can fall under it.
@@ -304,13 +347,16 @@ type Config struct {
 	// quantities and so can never exceed 1.
 	MaxTick float64
 	// MinEdgeTickRatio is how many price steps wide a spread must be to count:
-	// RoiPct >= MinEdgeTickRatio * Tick. Default 0, which is off — at a ratio of
-	// 0 the comparison degenerates to RoiPct >= 0.
+	// RoiPct >= MinEdgeTickRatio * Tick. Default 0, which is off — and off means
+	// off since 2026-08-22: evaluate applies it only above 0, because at 0 the
+	// comparison degenerates to RoiPct >= 0 and would keep hiding the losing
+	// hours Play.LowLiquidity exists to show.
 	MinEdgeTickRatio float64
 	// MinROIChaos is the smallest Play.Roi kept, in chaos per exchanged unit.
-	// Default 0, which is off for every profitable play and is also the
-	// structural bar on a losing one: Roi >= 0 is Roi's sign, and Roi and RoiPct
-	// share it because Investment is positive.
+	// Default 0, which is off, and evaluate applies it only above 0 for the same
+	// reason as MinEdgeTickRatio: Roi carries RoiPct's sign (Investment is
+	// positive), so an unguarded Roi >= 0 is the positivity floor under another
+	// name.
 	MinROIChaos float64
 	// SuspectLowBand is how far under an hour's VWAP a buy leg's low may sit
 	// before it reads as junk: 0.67 flags a low below two thirds of fair.
@@ -377,7 +423,8 @@ type Config struct {
 }
 
 // DefaultConfig is the engine's tuning: a six-hour window, at least one unit of
-// the leg's item traded per hour, a 0.1% ROI floor, no turnover demand, no tick
+// the leg's item traded per hour, a 0.1% ROI level under which a play is FLAGGED
+// rather than dropped, no turnover demand, no tick
 // cap, no edge-to-tick demand, no chaos-per-unit demand, junk bands at two thirds
 // and one and a half times fair with the flag shown rather than hidden, no
 // persistence demand, a two-thousand-row payload cap, quoted in divine before
@@ -385,14 +432,20 @@ type Config struct {
 //
 // The rule these defaults answer to is that NO DEFAULT MAY HIDE A LIVE MARKET.
 // A default that drops a market the reader could have traded is invisible by
-// construction — a dropped play cannot be argued with — so the only things the
-// engine refuses to serve are the ones that are not opportunities at all: a leg
-// on which nothing changed hands this hour (MinVolumePerHour 1, beside gatedLeg's
-// demand for stock on BOTH sides), and a round trip that loses or whose entire
-// "gain" is float noise (MinEdge 0.001). Persistence and thinness are expressed
-// by RANKING and FLAGS instead — HoursSeen counts the hours the recipe held,
-// SimEntries and LowCoverage say how well the expectation could be measured, and
-// Suspect marks an extreme too far from its hour's VWAP to repeat. MaxPlays
+// construction — a dropped play cannot be argued with — so what the engine
+// refuses to serve is only what it cannot PRICE: an hour in which nothing
+// changed hands on a leg, or which carried no stock on one side of the market
+// (MinVolumePerHour 1, beside gatedLeg's demand for stock on BOTH sides), or
+// whose entry currency has no chaos rate to value it at.
+//
+// MinEdge 0.001 is the one that used to sit beside those and does not any more
+// (2026-08-22). It is now the level Play.LowLiquidity flags at, so a round trip
+// that gains nothing but float noise — or that loses — is served, flagged, and
+// left to sink in the ranking. Persistence, thinness and now the spread itself
+// are all expressed by RANKING and FLAGS — HoursSeen counts the hours the feed
+// priced the recipe, SimEntries and LowCoverage say how well the expectation
+// could be measured, Suspect marks an extreme too far from its hour's VWAP to
+// repeat, and LowLiquidity marks a newest hour with no spread to take. MaxPlays
 // bounds the payload above the sane set rather than cutting into it.
 //
 // The measurement that set that rule, 2026-08-22: a ten-unit liveness floor
@@ -438,11 +491,16 @@ type Config struct {
 // too few entries, through LowCoverage, which ranks the play down and hides
 // nothing.
 //
-// Turning those levels off did NOT bring the measured noise cases back. Divine
-// Vessel (109 chaos/hour) and Delirium Scarab both print a 100% tick, so their
-// undercut sell price is Price*(1-1) = 0 and the round trip returns -100%: junk
-// that coarse fails the positivity floor on its own arithmetic, which is the
-// answer to "what stops the relaxed defaults from serving POE-184's noise".
+// The measured noise cases are now SERVED AND FLAGGED rather than dropped, and
+// that is the visible cost of the 2026-08-22 demotion. Divine Vessel (109
+// chaos/hour) and Delirium Scarab both print a 100% tick, so their undercut sell
+// price is Price*(1-1) = 0 and the round trip returns -100%. Until the demotion
+// that arithmetic failed the positivity floor and was the answer to "what stops
+// the relaxed defaults from serving POE-184's noise"; now such a market appears
+// with RoiPct -1 and LowLiquidity true, and what keeps it off the top of the
+// table is the ranking — a -100% hour drags its ExpectedRoi down, and a reader
+// who wants the class gone arms MinEdgeTickRatio or MinROIChaos, which are the
+// gates that were doing this work by accident.
 //
 // The band levels come from the same feed read the other way round: across 221
 // liquid chaos markets over 24 hours the hour's extremes sit 11-13% off its VWAP
@@ -490,18 +548,21 @@ func DefaultConfig() Config {
 // SuspectHighBand, MinHoursSeen, SimWindowHours, SimLookaheadHours,
 // MinSimEntries, MaxPlays) reads as unset, because none of them has a meaningful
 // negative value. MinEdge is different: only an exact 0 reads
-// as unset, so a caller can push the percentage floor below zero and see returns
-// the floor hides (the sign bar below still applies). HideSuspect is a bool and
-// has no unset state: false is a choice, and it is also the default.
+// as unset, so a caller can push the flag level below zero and stop flagging the
+// small gains it would otherwise mark. HideSuspect is a bool and has no unset
+// state: false is a choice, and it is also the default.
 //
 // Three of those branches no longer restore anything, and that is the point.
 // MinTurnoverChaos, MinEdgeTickRatio and MinROIChaos default to 0 since POE-191,
 // so for them "unset" and "off" are the same number and passing 0 cannot
 // resurrect an old level; MaxTick's default of 1 is likewise off, since a tick
-// can never exceed 1. What those three branches still do is CLAMP: a caller who
-// passes a negative gate value gets 0, which is what keeps MinEdgeTickRatio * Tick and
-// MinROIChaos at or above zero and so keeps a losing route unservable however
-// MinEdge is set. Do not drop them for looking like no-ops.
+// can never exceed 1. What those three branches still do is CLAMP a negative to
+// 0, which is what keeps "off" and "unset" the same value: evaluate arms the two
+// payout gates only ABOVE 0, so a negative surviving here would read as
+// configured and gate at a level nothing can fail. What the clamp no longer
+// holds is a positivity floor — since 2026-08-22 a losing round trip is served
+// with Play.LowLiquidity set rather than kept out. Do not drop these branches
+// for looking like no-ops.
 //
 // MinVolumePerHour and MinHoursSeen are the same shape since POE-193 without
 // being no-ops: 1 is both their default and the loosest value that changes
@@ -618,21 +679,27 @@ func (c Config) withDefaults() Config {
 // when NO hour in the window carried that market — once per HORIZON, so twice
 // per Service recompute.
 //
-// What comes back has passed, per hour: RoiPct >= MinEdge (on the UNDERCUT
-// return, so a coarse tick that eats the spread fails here), Turnover >=
-// MinTurnoverChaos, Tick <= MaxTick, RoiPct >= MinEdgeTickRatio * Tick, and
-// Roi >= MinROIChaos; and then, across the window, HoursSeen >= MinHoursSeen
-// (capped at the hours present). At DefaultConfig only the first of the five
-// binds — the other four are off, and the quality judgement they used to make is
-// the client's since POE-191 — and MinHoursSeen's default of 1 cannot drop a
-// served play either, so what the engine serves is every recipe that traded at
-// all and gained something in its hour, with how long it has been holding up
-// reported rather than demanded. It is ranked clean before
+// What comes back has passed, per hour: Turnover >= MinTurnoverChaos, Tick <=
+// MaxTick, and — only where the reader armed them — RoiPct >= MinEdgeTickRatio *
+// Tick and Roi >= MinROIChaos; and then, across the window, HoursSeen >=
+// MinHoursSeen (capped at the hours present). At DefaultConfig NONE of those
+// binds: the quality judgement has been the client's since POE-191, and
+// MinHoursSeen's default of 1 cannot drop a served play either. What the engine
+// serves is therefore every recipe the feed PRICED in its newest hour, with how
+// long it has been holding up reported rather than demanded.
+//
+// MinEdge left that list on 2026-08-22. It is now where Play.LowLiquidity flips:
+// an hour that priced the recipe and showed no spread worth taking is served
+// with its measured RoiPct — negative included — and flagged, because the
+// alternative deletes the recipe outright and takes with it the five other hours
+// that did show one. It is ranked clean before
 // suspect, then covered before low-coverage, then ExpectedRoi desc, then
 // Turnover desc, then direct before 1-hop, then Key ascending, and truncated to
 // MaxPlays. Neither LowCoverage nor a negative ExpectedRoi hides a play: both
 // sort it down and leave it readable, which is ADR-015's serve-and-flag rule
-// applied to the simulation. The ranking is a stable sort over a key-sorted
+// applied to the simulation. LowLiquidity is not even a sort key — a spreadless
+// newest hour is one hour, and ExpectedRoi is already the reading across the
+// others. The ranking is a stable sort over a key-sorted
 // list, so identical input always produces identical output regardless of the
 // order rows arrive in.
 //
@@ -949,35 +1016,49 @@ func evaluate(c candidate, hour time.Time, hourRate float64, hourRateOK bool, cf
 	investment := undercut[0] * entryRate
 	roi := investment * roiPct
 
-	// The five configurable gates, all judged on this hour alone. At
-	// DefaultConfig only MinEdge binds (POE-191 moved the quality levels to the
-	// client); the other four sit at values nothing can fail, which also makes
-	// the last two read as "Roi and RoiPct are non-negative" — the floor under
-	// MinEdge that keeps a losing round trip out even when MinEdge is set below
-	// zero.
+	// MinEdge is no longer a gate. An hour that priced the recipe and returned
+	// less than the floor — a round trip that loses included — is SERVED with
+	// LowLiquidity set, because dropping it deletes the whole recipe on the
+	// newest hour and takes a market the reader is trading with it (see
+	// Play.LowLiquidity for the case that moved it, 2026-08-22).
+	lowLiquidity := roiPct < cfg.MinEdge
+
+	// What still drops is what no reader asked to see: the four QUALITY gates,
+	// judged on this hour alone, and every one of them ARMED-ONLY. At
+	// DefaultConfig none of them can reject anything.
+	//
+	// The last two carry the arming test explicitly rather than by their level.
+	// At their default of 0 the comparisons spell "RoiPct >= 0" and "Roi >= 0",
+	// which is the positivity floor MinEdge used to hold under another name: left
+	// unguarded they would go on hiding exactly the hours the flag above exists to
+	// show, so the demotion would not have demoted anything. Armed, they mean what
+	// they always meant, and a reader who types one is asking for a spread of a
+	// stated width or a payout of a stated size — a losing hour fails that on
+	// purpose. withDefaults still clamps a negative to 0, so "off" and "unset"
+	// remain the same value.
 	switch {
-	case roiPct < cfg.MinEdge,
-		turnover < cfg.MinTurnoverChaos,
+	case turnover < cfg.MinTurnoverChaos,
 		tick > cfg.MaxTick,
-		roiPct < cfg.MinEdgeTickRatio*tick,
-		roi < cfg.MinROIChaos:
+		cfg.MinEdgeTickRatio > 0 && roiPct < cfg.MinEdgeTickRatio*tick,
+		cfg.MinROIChaos > 0 && roi < cfg.MinROIChaos:
 		return Play{}, false
 	}
 
 	return Play{
-		Key:        c.key,
-		Mode:       c.mode,
-		Legs:       legs,
-		RoiPct:     roiPct,
-		Edge:       roiPct,
-		RoiPctRaw:  roiPctRaw,
-		Roi:        roi,
-		Investment: investment,
-		Turnover:   turnover,
-		Tick:       tick,
-		Depth:      depth,
-		Suspect:    suspect,
-		LastHour:   hour,
+		Key:          c.key,
+		Mode:         c.mode,
+		Legs:         legs,
+		RoiPct:       roiPct,
+		Edge:         roiPct,
+		RoiPctRaw:    roiPctRaw,
+		Roi:          roi,
+		Investment:   investment,
+		Turnover:     turnover,
+		Tick:         tick,
+		Depth:        depth,
+		Suspect:      suspect,
+		LowLiquidity: lowLiquidity,
+		LastHour:     hour,
 	}, true
 }
 

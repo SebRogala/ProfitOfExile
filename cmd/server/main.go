@@ -325,12 +325,14 @@ func main() {
 	// HideSuspect turns the flag into a filter. Default false: a flagged row can
 	// be argued with, a missing one cannot.
 	exchangeCfg.HideSuspect = envBool("EXCHANGE_HIDE_SUSPECT", exchangeCfg.HideSuspect)
-	// MinEdge is the engine's positivity floor and the one knob where a negative
-	// value is meaningful (it admits the zero-gain round trips the floor hides),
-	// so only an exact 0 is rejected — the engine reads 0 as "unset" and would
-	// restore the default behind the log line, making the configured value a
-	// lie. A negative value still cannot serve a LOSING route: the engine clamps
-	// its other two payout gates at zero (see Config.withDefaults).
+	// MinEdge is where the engine FLAGS a play as having no spread worth taking
+	// (Play.LowLiquidity), not a floor it drops below — since 2026-08-22 raising
+	// this marks more rows and hides none, and an operator who wants rows GONE
+	// arms EXCHANGE_MIN_EDGE_TICK_RATIO or EXCHANGE_MIN_ROI_CHAOS instead. It is
+	// the one knob where a negative value is meaningful (it stops the small gains
+	// from being marked), so only an exact 0 is rejected — the engine reads 0 as
+	// "unset" and would restore the default behind the log line, making the
+	// configured value a lie.
 	if v := os.Getenv("EXCHANGE_MIN_EDGE"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		switch {
@@ -338,7 +340,7 @@ func main() {
 			slog.Warn("ignoring unparseable environment override; keeping the default",
 				"var", "EXCHANGE_MIN_EDGE", "value", v, "default", exchangeCfg.MinEdge)
 		case f == 0:
-			slog.Warn("EXCHANGE_MIN_EDGE=0 reads as unset by the engine; keeping the default (pass a small negative value to disable the floor)",
+			slog.Warn("EXCHANGE_MIN_EDGE=0 reads as unset by the engine; keeping the default (pass a small negative value to stop flagging small gains)",
 				"default", exchangeCfg.MinEdge)
 		default:
 			exchangeCfg.MinEdge = f

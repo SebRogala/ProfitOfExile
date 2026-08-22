@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (POE-193, 2026-08-22). Extends
+Accepted (POE-193, 2026-08-22), **amended the same day** — see
+[Amendment: MinEdge is a flag](#amendment-minedge-is-a-flag-2026-08-22), which
+completes the rule by demoting the last default-on drop and therefore replaces
+the final Decision bullet below. Extends
 [ADR-015](015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
 from the four QUALITY gates to the engine's own remaining floors, and
 **supersedes ADR-015's first Decision bullet in whole** — the floor levels that
@@ -63,6 +66,8 @@ binds is a gate under another name.
   round trip that loses or gains nothing but float noise (`MinEdge` 0.001, with
   `withDefaults` clamping the payout gates at ≥ 0 so a negative `EXCHANGE_MIN_EDGE`
   still cannot surface a losing route).
+  **Superseded hours later by the amendment below: only the first of the two
+  remains, and `MinEdge` is now a flag.**
 
 ## Consequences
 
@@ -122,3 +127,89 @@ binds is a gate under another name.
   A 1c floor would have hidden them again by default. At 0.5 the fragment and
   oil tier stays on the table from half a chaos up, and only its bottom goes;
   the reader who wants that bottom back types 0.
+
+## Amendment: MinEdge is a flag (2026-08-22)
+
+The decision above kept `MinEdge` as one of two surviving default-on drops, on
+the reading that a round trip which loses or gains nothing but float noise "is
+not an opportunity at all". Measured against a live market the same day, that
+reading was wrong, and the rule this ADR is named for was the thing it broke.
+
+### The incident
+
+The Apocalypse card recipe
+(`Metadata/Items/DivinationCards/DivinationCardApocalypse` against
+`CurrencyRerollRare`) vanished from `/api/currency-exchange/plays` while the
+owner was flipping it by hand. In the 07:00 hour the market traded **2 cards at a
+single 223:1 print**. One price for the whole hour means the round trip pays two
+ticks against no spread, so the newest hour's undercut return was **−0.89%**;
+`case roiPct < cfg.MinEdge` dropped that hour's candidate, and the newest-hour
+rule — which refuses to serve a recipe that did not clear in the last snapshot —
+then deleted the whole recipe. **Five of the window's other six hours had shown
+70–92%.** The row a reader would have judged in a second was gone, with no
+symptom to notice it by.
+
+This is the same failure class as the `MinVolumePerHour` and `MinHoursSeen`
+findings above: an absolute floor answering a question about a whole market with
+one hour's number, in a market that is expensive enough to be quiet.
+
+### Decision
+
+**`MinEdge` is demoted from a drop to a flag, and it was the last default that
+could hide a market.**
+
+- A play whose newest hour PRICED the recipe and printed no exploitable spread
+  is **served**, carrying its **measured** `roiPct` — which may be negative — and
+  `Play.LowLiquidity` / `lowLiquidity: true` on the wire. The threshold is
+  unchanged at 0.001 and `EXCHANGE_MIN_EDGE` still sets it; what changed is that
+  raising it now MARKS more rows and hides none.
+- **No replacement drop was added.** A recipe that never clears `MinEdge` in any
+  window hour is served too. `ExpectedRoi` is what ranks it, and a recipe whose
+  quiet hour is the exception keeps its place because the simulation reads the
+  hours the flag does not.
+- **The two payout gates apply only when armed above 0.** `MinEdgeTickRatio` and
+  `MinROIChaos` default to 0, where the comparisons spell `RoiPct >= 0` and
+  `Roi >= 0` — the positivity floor `MinEdge` was holding, under a second name.
+  Left unguarded they would have gone on dropping exactly the −0.89% hour this
+  amendment exists to show, and the demotion would have demoted nothing. Armed,
+  they mean what they always meant, and a reader who types one is asking for a
+  spread of a stated width or a payout of a stated size.
+- **What still drops is only what cannot be PRICED**: nothing traded on a leg
+  this hour, no stock on one side of the market (`gatedLeg`, `MinVolumePerHour`
+  1), or an entry currency with no chaos rate that hour. `HideSuspect` remains
+  opt-in and off.
+
+### Consequences
+
+- **A served row can now carry a negative `roiPct`, `roi` and `investment`-relative
+  loss.** Clients must render a minus rather than treat it as an error state,
+  which is the same contract `expectedRoi` already had under ADR-016.
+- **POE-184's measured noise markets are served flagged rather than cut, and
+  that is the accepted cost.** Divine Vessel (109 chaos/hour) and Delirium
+  Scarab both print a 100% tick, so their undercut sell price is `Price*(1-1) = 0`
+  and the round trip reads −100%. That arithmetic used to fail the positivity
+  floor and was the standing answer to "what stops the relaxed defaults from
+  serving POE-184's noise"; the answer is now the ranking, plus the two payout
+  gates for a reader who wants the class gone.
+- **`HoursSeen` widened.** It counts the window hours in which the recipe
+  produced a servable play, and an hour with no spread now counts among them, so
+  it reads "hours the feed priced this recipe" rather than "hours it was worth
+  acting on". The narrower count is no longer reported by any field. It stays on
+  one counter deliberately: `MinHoursSeen` judges the number the row displays, and
+  a knob whose subject differed from the displayed count would contradict itself
+  in front of the reader. Reporting the edge-hour count beside it is open
+  follow-up work.
+- **`EXCHANGE_MIN_EDGE` changed kind, not just level.** A deploy that had set it
+  to tighten the served list now gets flags instead of removals. The removal knobs
+  are `EXCHANGE_MIN_EDGE_TICK_RATIO` and `EXCHANGE_MIN_ROI_CHAOS`, and
+  `cmd/server/main.go` says so at the override.
+- **The Go tests that documented the old floor now document the flag**, in
+  `internal/exchange/plays_test.go`: `..._minEdge_flagsTheReturnsUnderItWithoutDroppingThem`,
+  `..._recipeWhoseNewestHourLostItsSpread_isStillServedFlagged` (the incident
+  above, in miniature), `..._undercutReturnBelowZero_isServedFlaggedWithItsMeasuredLoss`,
+  `..._losingRoundTrip_isRemovedOnlyByAnArmedPayoutGate` and
+  `..._measuredNoiseMarkets_areServedFlaggedRatherThanCut`. The drop that remains
+  keeps its own test, `..._recipeThatTradedNothingInTheNewestHour_isNotServed`.
+- **ADR-016 is unaffected.** The simulation already recorded candidates BEFORE
+  the served gates, so the quiet hours were always in the expectation; what
+  changes is that the recipe they belong to now reaches the reader.

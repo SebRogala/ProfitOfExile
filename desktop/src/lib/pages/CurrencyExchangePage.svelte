@@ -32,6 +32,7 @@
 		HORIZON_OPTIONS,
 		MODE_OPTIONS,
 		SORT_OPTIONS,
+		anyConvertStep,
 		dataAgeParts,
 		deriveState,
 		formatChaos,
@@ -230,6 +231,18 @@
 			parseSort(sortPref.value)
 		)
 	);
+
+	/**
+	 * Whether the route's convert slot is drawn, for the whole table at once.
+	 *
+	 * Taken over `rows` — what is actually rendered — and not over `allPlays`: a
+	 * reader who has filtered down to direct plays is looking at a column of empty
+	 * dashed tiles, and the response still holding a 1-hop they cannot see is no
+	 * reason to keep spending the width on it. Both the header spans and every
+	 * `ExchangeRoute` read this one value, which is what keeps the two geometries
+	 * mirrored; the rule against deciding it per row lives with `anyConvertStep`.
+	 */
+	const showConvert = $derived(anyConvertStep(rows));
 
 	/**
 	 * The counter's attribution. Gates get their own figure; the rules, the
@@ -544,7 +557,10 @@
 						<th class="col-route">
 							<!-- The label spans mirror `ExchangeRoute`'s slot geometry exactly
 							     (see the contract in that file's header comment): change a
-							     width there and the labels here drift off the tiles. -->
+							     width there and the labels here drift off the tiles. The
+							     convert label and its arrow gap are behind the SAME
+							     `showConvert` the routes below read, so the collapsed form
+							     stays mirrored too. -->
 							<Tooltip text={EXCHANGE_TOOLTIPS.Route}>
 								<div class="route-head" class:dense>
 									<span class="slot-spend">Spend</span>
@@ -552,8 +568,10 @@
 									<span class="slot-buy">{dense ? 'Buy' : 'Step 1 — buy'}</span>
 									<span class="gap"></span>
 									<span class="slot-sell">{dense ? 'Sell' : 'Step 2 — sell'}</span>
-									<span class="gap"></span>
-									<span class="slot-convert">{dense ? 'Convert' : 'Step 3 — convert'}</span>
+									{#if showConvert}
+										<span class="gap"></span>
+										<span class="slot-convert">{dense ? 'Convert' : 'Step 3 — convert'}</span>
+									{/if}
 									<span class="gap"></span>
 									<span class="slot-get">Get</span>
 								</div>
@@ -589,7 +607,13 @@
 					{#each rows as play, i (play.key)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						{@const scale = worthwhileScale(play)}
-						<tr>
+						<!-- The thin-hour mark is on the ROW because the reading is the
+						     play's, not one step's: the ROUND TRIP returned no spread worth
+						     taking in the newest hour. That is what separates it from the
+						     golden tile border, which marks WHICH leg is doubtful. The row is
+						     never hidden or dimmed for it — Exp. ROI still measures the whole
+						     day, and the ranking is untouched. -->
+						<tr class:low-liquidity={play.lowLiquidity}>
 							<td class="num mono rank">{i + 1}</td>
 
 							<td>
@@ -601,6 +625,7 @@
 									{play}
 									{density}
 									{apiBase}
+									{showConvert}
 									divineChaosRate={result?.divineChaosRate ?? 0}
 								/>
 							</td>
@@ -684,9 +709,28 @@
 							<!-- Raw in both densities. Absorption is the Scale column's
 							     sub-line now: the reader types no size for a depth to be
 							     "over", and the honest reading of a thin market is how many
-							     hours the worthwhile run needs, not a warning triangle. -->
-							<td class="num">
+							     hours the worthwhile run needs, not a warning triangle.
+							     The thin-hour label lands HERE and not by the mode chip: the
+							     flag is a liquidity reading about the hour these prices came
+							     from, and this is the liquidity column — a row marked low
+							     liquidity is usually one whose depth figure is already tiny,
+							     and the two belong under one another. Comfortable has the
+							     sub-line for free (every other cell on the row carries one,
+							     so the height is already paid for); dense drops every
+							     sub-line in the table, so there the red row border carries
+							     the mark and the same copy rides on this cell's title. -->
+							<td
+								class="num"
+								title={dense && play.lowLiquidity ? EXCHANGE_TOOLTIPS['Low liquidity'] : null}
+							>
 								<span class="mono value">{formatVolume(play.depth)}/h</span>
+								{#if play.lowLiquidity && !dense}
+									<div class="sub">
+										<Tooltip text={EXCHANGE_TOOLTIPS['Low liquidity']}>
+											<span class="low-liq">low liquidity</span>
+										</Tooltip>
+									</div>
+								{/if}
 							</td>
 
 							<!-- What the play is worth repeating to, and what that costs in
@@ -734,15 +778,82 @@
 			</table>
 		</div>
 
-		<div class="footnotes">
-			<div class="footnote">
-				{@render warning()}
-				<span>
-					on <strong>ROI%</strong> — one of the play's trades is priced outside its fair band: a buy
-					below fair &times; 0.67, or a sell above fair &times; 1.5. The play still ranks, after every
-					clean one; the extreme may be a real fill or one stray order, so verify the route in game.
+		<!-- THE LEGEND — one strip, every mark the table draws.
+		     It replaces the single suspect footnote this block used to hold rather
+		     than sitting beside it: two homes for "what the gold border means"
+		     would have drifted the moment either was edited. Each entry is a
+		     SAMPLE of the real mark (the same `.pill`, `.gain`, `.thin`,
+		     `.reserved` classes the rows use, so a colour changed in one place
+		     changes both) plus two to four words, with the explanation on hover
+		     from `EXCHANGE_TOOLTIPS` — the same source the column headers read, so
+		     the legend cannot contradict a column about its own mark.
+		     Both densities: the strip shrinks a step in dense but keeps every
+		     entry, because dense is where the marks carry MORE of the meaning —
+		     every sub-line that would have spelled it out is gone. -->
+		<div class="legend" class:dense>
+			<span class="legend-label">Marks</span>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS.Mode}>
+				<span class="key"><span class="pill hop">1-hop</span>three trades</span>
+			</Tooltip>
+
+			<!-- Both homes of the one fact: the golden tile on the doubtful STEP and
+			     the triangle on the row's ROI%. The footnote this legend replaced
+			     taught only the triangle, and a reader who met the tile first had
+			     nothing on screen to name it. -->
+			<Tooltip text={EXCHANGE_TOOLTIPS.Suspect}>
+				<span class="key">
+					<span class="sw sw-suspect"></span>{@render warning()}suspect price
 				</span>
-			</div>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['Low liquidity']}>
+				<span class="key"><span class="sw sw-low-liq"></span>low liquidity</span>
+			</Tooltip>
+
+			<!-- Only while the column is on screen: with every rendered play direct,
+			     the convert slot is gone and a legend entry for its dashed tile would
+			     explain a mark the reader cannot find. -->
+			{#if showConvert}
+				<Tooltip text={EXCHANGE_TOOLTIPS['Step not used']}>
+					<span class="key"><span class="sw sw-empty"></span>step not used</span>
+				</Tooltip>
+			{/if}
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['Expected gain']}>
+				<span class="key"><span class="mono gain">+102c</span>expected gain</span>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['Measured loss']}>
+				<span class="key"><span class="mono gain loss">&minus;4c</span>measured loss</span>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['Low coverage']}>
+				<span class="key">
+					<span class="mono gain thin">4c</span><span class="amber">· low</span>thin coverage
+				</span>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['No reading']}>
+				<span class="key"><span class="mono reserved">&mdash;</span>no reading</span>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['ROI%']}>
+				<span class="key">
+					<span class="cap">Net</span><span class="cap">Raw</span>after / before undercut
+				</span>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS.Scale}>
+				<span class="key"><span class="mono fast">&le;1 h</span>absorbed this hour</span>
+			</Tooltip>
+
+			<Tooltip text={EXCHANGE_TOOLTIPS['Full window']}>
+				<span class="key">
+					<span class="bar"><span class="bar-fill full" style="width: 100%"></span></span>held
+					every hour
+				</span>
+			</Tooltip>
 		</div>
 	{:else if viewState.kind === 'ready'}
 		<!-- The gates are named separately here for the reason the counter splits
@@ -1151,6 +1262,52 @@
 		background: rgba(255, 255, 255, 0.02);
 	}
 
+	/* The play's newest hour printed no exploitable spread — a RED outline around
+	   the whole row, in both densities.
+
+	   Deliberately not the golden tile border: that one is per-leg and says which
+	   half of the round trip is doubtful, this one is per-play and belongs to no
+	   single step, so the two must not be the same colour on the same row.
+
+	   Drawn as inset shadows rather than as borders because the row's cells carry
+	   the route's fixed slot geometry: a real 1px border on the first and last
+	   cell would take two pixels out of the auto-sized route cell on marked rows
+	   only, and the header labels would drift off the tiles of exactly those rows.
+	   A shadow costs no layout. The top and bottom edges sit on every cell so the
+	   line is unbroken across the row; the sides are the first and last cell's.
+
+	   No opacity, no dimming, no filter: ADR-016's rule that a measured reading is
+	   shown rather than hidden applies here too, and this reading is weaker than
+	   most — it is about ONE hour, while the ranking and Exp. ROI still speak for
+	   the whole day. */
+	tr.low-liquidity > td {
+		box-shadow:
+			inset 0 1px 0 var(--color-lab-red),
+			inset 0 -1px 0 var(--color-lab-red);
+	}
+
+	tr.low-liquidity > td:first-child {
+		box-shadow:
+			inset 0 1px 0 var(--color-lab-red),
+			inset 0 -1px 0 var(--color-lab-red),
+			inset 1px 0 0 var(--color-lab-red);
+	}
+
+	tr.low-liquidity > td:last-child {
+		box-shadow:
+			inset 0 1px 0 var(--color-lab-red),
+			inset 0 -1px 0 var(--color-lab-red),
+			inset -1px 0 0 var(--color-lab-red);
+	}
+
+	/* The words, under the depth figure. Muted rather than full-strength red: the
+	   outline is what catches the eye and the label is what names it, so a second
+	   loud red would only compete with the row's own numbers. */
+	.low-liq {
+		color: var(--color-lab-red);
+		opacity: 0.8;
+	}
+
 	.pill {
 		display: inline-block;
 		font-size: 0.6rem;
@@ -1174,23 +1331,81 @@
 		color: var(--color-lab-purple);
 	}
 
-	.footnotes {
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-		padding: 0 2px;
-	}
+	/* ---------------------------------------------------------- the legend -- */
 
-	.footnote {
+	.legend {
 		display: flex;
-		align-items: flex-start;
-		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
+		column-gap: 14px;
+		row-gap: 5px;
+		padding: 0 2px;
 		font-size: 0.6875rem;
 		color: #6b7280;
 	}
 
-	.footnote strong {
-		color: var(--color-lab-text-secondary);
+	.legend.dense {
+		column-gap: 11px;
+		font-size: 0.625rem;
+	}
+
+	.legend-label {
+		font-size: 0.5625rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: #4b5563;
+	}
+
+	.key {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		white-space: nowrap;
+	}
+
+	/* Every sample below is the row's OWN class, sized down — the legend must not
+	   hold a second definition of a colour the table already owns, or the two
+	   drift and the strip starts lying about the marks it names. Only the
+	   dimensions are local. */
+	.legend .gain {
+		font-size: 0.6875rem;
+	}
+
+	.legend .bar {
+		width: 22px;
+	}
+
+	.sw {
+		display: inline-block;
+		width: 13px;
+		height: 13px;
+		border: 1px solid var(--color-lab-border);
+		border-radius: 3px;
+		background: var(--color-lab-bg);
+		flex-shrink: 0;
+	}
+
+	/* The route tile's own mark. */
+	.sw-suspect {
+		border-color: var(--color-lab-yellow);
+	}
+
+	/* Wider than tall and unfilled: the low-liquidity mark is a ROW outline, and a
+	   square swatch would read as one more tile border beside the golden one it
+	   has to be told apart from. */
+	.sw-low-liq {
+		width: 26px;
+		height: 11px;
+		border-radius: 2px;
+		border-color: var(--color-lab-red);
+		background: transparent;
+	}
+
+	.sw-empty {
+		background: transparent;
+		border-style: dashed;
+		/* The empty tile's own dash colour, from `ExchangeRoute`. */
+		border-color: #23262f;
 	}
 
 	.empty {

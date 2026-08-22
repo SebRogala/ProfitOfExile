@@ -129,6 +129,16 @@ func playKeys(plays []Play) []string {
 }
 
 // playByKey returns the single ranked play carrying key.
+// indexOf is where a key sits in a ranked list, or -1.
+func indexOf(keys []string, key string) int {
+	for i, k := range keys {
+		if k == key {
+			return i
+		}
+	}
+	return -1
+}
+
 func playByKey(t *testing.T, result Result, key string) Play {
 	t.Helper()
 	for _, play := range result.Plays {
@@ -499,15 +509,20 @@ func TestBestPlays_playSeenInThreeHours_reportsTheNewestHourAsLastHour(t *testin
 	}
 }
 
-func TestBestPlays_playThatStoppedClearingInTheNewestHour_isNotServed(t *testing.T) {
+func TestBestPlays_recipeThatTradedNothingInTheNewestHour_isNotServed(t *testing.T) {
 	// Persistence is not a licence to serve a stale price. The card cleared in
-	// the two older hours — enough for MinHoursSeen — and then its spread CLOSED
-	// in the last snapshot: one price all hour, so the round trip loses its two
-	// ticks and the sanity floor cuts it. There is no current price to show, so
-	// the row is dropped rather than served at an hour-old one. The hell market
-	// clears in all three and proves the window itself is alive.
+	// the two older hours — enough for MinHoursSeen — and then nothing changed
+	// hands in the last snapshot, so that hour has no price to read at all and
+	// the recipe is dropped rather than served at an hour-old one. The hell
+	// market clears in all three and proves the window itself is alive.
+	//
+	// UNPRICEABLE is the whole of what this drop covers since MinEdge became a
+	// flag (2026-08-22). An hour that priced the market and merely showed no
+	// spread worth taking is served flagged instead — see
+	// TestBestPlays_recipeWhoseNewestHourLostItsSpread_isStillServedFlagged,
+	// which is this test's fixture with the last hour's trade put back.
 	closed := liquidChaosMarket(cardID, 100, 120)
-	closed.highestRatio = [2]int64{100, 1}
+	closed.volume = [2]int64{0, 0}
 
 	rows := append(
 		storedAt(feedHour, closed.row(), liquidChaosMarket(hellID, 100, 120).row()),
@@ -520,7 +535,48 @@ func TestBestPlays_playThatStoppedClearingInTheNewestHour_isNotServed(t *testing
 	got := BestPlays("Allflame", rows, DefaultConfig())
 
 	if want := []string{directKey(chaosID, hellID)}; !reflect.DeepEqual(playKeys(got.Plays), want) {
-		t.Errorf("keys = %v, want %v — the card last cleared an hour ago", playKeys(got.Plays), want)
+		t.Errorf("keys = %v, want %v — the card last traded an hour ago", playKeys(got.Plays), want)
+	}
+}
+
+func TestBestPlays_recipeWhoseNewestHourLostItsSpread_isStillServedFlagged(t *testing.T) {
+	// The incident this flag exists for, in miniature (2026-08-22): the
+	// chaos/Apocalypse-card market printed 70-92% in five of the window's six
+	// hours, and in the newest one it traded 2 cards at a single 223:1 print. One
+	// price for the whole hour means the round trip pays two ticks against no
+	// spread, which undercuts to a small LOSS — and until this change that loss
+	// failed MinEdge, which took the newest hour's candidate, which took the
+	// whole recipe with it under the newest-hour rule. The owner was flipping
+	// that market by hand while the server was answering that it did not exist.
+	//
+	// The card below is that shape: two healthy hours and a newest hour whose
+	// low and high are the same price.
+	closed := liquidChaosMarket(cardID, 100, 120)
+	closed.highestRatio = [2]int64{100, 1}
+
+	rows := append(
+		storedAt(feedHour, closed.row()),
+		append(
+			storedAt(feedHour.Add(-time.Hour), liquidChaosMarket(cardID, 100, 120).row()),
+			storedAt(feedHour.Add(-2*time.Hour), liquidChaosMarket(cardID, 100, 120).row())...,
+		)...,
+	)
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, directKey(chaosID, cardID))
+	if !play.LowLiquidity {
+		t.Errorf("LowLiquidity = false at a newest-hour return of %v, want true — the hour priced the market and showed no spread", play.RoiPct)
+	}
+	// The served percentage is the newest hour's own measurement, negative and
+	// unaltered: a flagged row still has to be recheckable against the game.
+	tick := 1.0 / 100.0
+	wantClose(t, "RoiPct", play.RoiPct, undercutRoi(100, tick, [2]float64{100, tick}))
+	if play.RoiPct >= 0 {
+		t.Errorf("RoiPct = %v, want the negative return two ticks against a closed spread produce", play.RoiPct)
+	}
+	if !play.LastHour.Equal(feedHour) {
+		t.Errorf("LastHour = %v, want the newest hour %v", play.LastHour, feedHour)
 	}
 }
 
@@ -1484,41 +1540,46 @@ func TestBestPlays_expensiveMarketUnderTheOldFloor_isServedAtDefaults(t *testing
 	}
 }
 
-func TestBestPlays_minEdge_cutsThePlaysBelowTheFloor(t *testing.T) {
+func TestBestPlays_minEdge_flagsTheReturnsUnderItWithoutDroppingThem(t *testing.T) {
 	rows := storedAt(feedHour,
 		liquidChaosMarket(hellID, 100, 200).row(),
 		liquidChaosMarket(cardID, 100, 150).row(),
 	)
-	// The floor is judged on the UNDERCUT return, so the boundary is spelled the
+	// The level is judged on the UNDERCUT return, so the boundary is spelled the
 	// way the engine reaches it rather than as the raw 50% the card's extremes
 	// suggest.
 	tick := 1.0 / 100.0
 	cardRoiPct := undercutRoi(100, tick, [2]float64{150, tick})
 
+	// Both markets are served in every case below — that is the point of the
+	// demotion, and a level that emptied the list again would fail here before
+	// it reached the flag assertions.
+	served := []string{directKey(chaosID, hellID), directKey(chaosID, cardID)}
+
 	tests := []struct {
 		name    string
 		minEdge float64
-		want    []string
+		flagged []string
 	}{
 		{
-			name:    "floor below both returns keeps both",
+			name:    "a level below both returns flags neither",
 			minEdge: 0.25,
-			want:    []string{directKey(chaosID, hellID), directKey(chaosID, cardID)},
+			flagged: nil,
 		},
 		{
-			name:    "floor exactly on the smaller return keeps it",
+			name:    "a level exactly on the smaller return leaves it unflagged",
 			minEdge: cardRoiPct,
-			want:    []string{directKey(chaosID, hellID), directKey(chaosID, cardID)},
+			flagged: nil,
 		},
 		{
-			name:    "floor one representable step above the smaller return drops it",
+			name:    "a level one representable step above the smaller return flags it",
 			minEdge: math.Nextafter(cardRoiPct, 1),
-			want:    []string{directKey(chaosID, hellID)},
+			flagged: []string{directKey(chaosID, cardID)},
 		},
 		{
-			name:    "floor above both returns keeps nothing",
+			name:    "a level above both returns flags both",
 			minEdge: 1.5,
-			want:    []string{},
+			flagged: []string{directKey(chaosID, hellID), directKey(chaosID, cardID)},
 		},
 	}
 
@@ -1528,15 +1589,28 @@ func TestBestPlays_minEdge_cutsThePlaysBelowTheFloor(t *testing.T) {
 			cfg.MinEdge = tt.minEdge
 
 			got := BestPlays("Allflame", rows, cfg)
-			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
-				t.Errorf("keys = %v, want %v", playKeys(got.Plays), tt.want)
+			if !reflect.DeepEqual(playKeys(got.Plays), served) {
+				t.Fatalf("keys = %v, want %v — MinEdge must not remove a row", playKeys(got.Plays), served)
+			}
+
+			var flagged []string
+			for _, play := range got.Plays {
+				if play.LowLiquidity {
+					flagged = append(flagged, play.Key)
+				}
+			}
+			sort.Strings(flagged)
+			want := append([]string(nil), tt.flagged...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(flagged, want) {
+				t.Errorf("LowLiquidity on %v, want on %v", flagged, want)
 			}
 		})
 	}
 }
 
 // barelyProfitableFlip is one hour of a market whose UNDERCUT round trip gains
-// about 0.05% — positive, and under DefaultConfig's 0.1% sanity floor. The market
+// about 0.05% — positive, and under DefaultConfig's 0.1% flag level. The market
 // quotes 10,000 chaos to the card at the hour's cheapest and 10,007 at its
 // dearest, so its tick is 1/10,000 and the two ticks the round trip pays eat
 // almost all of the seven-chaos spread.
@@ -1544,63 +1618,68 @@ func barelyProfitableFlip() rowSpec {
 	return liquidChaosMarket(cardID, 10000, 10007)
 }
 
-func TestBestPlays_negativeMinEdge_surfacesTheReturnsTheSanityFloorHides(t *testing.T) {
-	// An explicitly negative MinEdge is a choice rather than an unset field, and
-	// this is what it buys after POE-191: the gains that are real and smaller
-	// than the floor. The floor is all that stands between this play and the
-	// list — every other gate is off by default — so the two runs below differ
-	// in exactly one number.
-	rows := storedAt(feedHour, barelyProfitableFlip().row())
+func TestBestPlays_gainUnderTheDefaultMinEdge_isServedFlagged(t *testing.T) {
+	// A real gain too small to be worth the two orders it takes. It is SERVED
+	// since 2026-08-22 — the reader is the one who decides whether 0.05% is worth
+	// acting on, and can only decide it on a row that is there.
+	got := BestPlays("Allflame", storedAt(feedHour, barelyProfitableFlip().row()), DefaultConfig())
 
-	if got := BestPlays("Allflame", rows, DefaultConfig()); len(got.Plays) != 0 {
-		play := got.Plays[0]
-		t.Fatalf("the sanity floor kept a play returning %v, want the fixture's return under DefaultConfig().MinEdge of %v",
-			play.RoiPct, DefaultConfig().MinEdge)
+	play := playByKey(t, got, directKey(chaosID, cardID))
+	if !play.LowLiquidity {
+		t.Errorf("LowLiquidity = false at a return of %v, want true under the 0.1%% level", play.RoiPct)
 	}
-
-	cfg := DefaultConfig()
-	cfg.MinEdge = -1
-
-	got := BestPlays("Allflame", rows, cfg)
-
-	if want := []string{directKey(chaosID, cardID)}; !reflect.DeepEqual(playKeys(got.Plays), want) {
-		t.Fatalf("keys = %v, want %v", playKeys(got.Plays), want)
-	}
-	// The fixture has to be a GAIN the floor hid, not a loss the floor caught —
-	// otherwise the test above would pass for the wrong reason.
-	if play := got.Plays[0]; !(play.RoiPct > 0 && play.RoiPct < DefaultConfig().MinEdge) {
-		t.Errorf("RoiPct = %v, want a positive return under the 0.1%% floor", play.RoiPct)
+	// The fixture has to be a GAIN under the level, not a loss: a test that
+	// passed on a losing fixture would not be about the level at all.
+	if !(play.RoiPct > 0 && play.RoiPct < DefaultConfig().MinEdge) {
+		t.Errorf("RoiPct = %v, want a positive return under the 0.1%% level", play.RoiPct)
 	}
 }
 
-func TestBestPlays_undercutReturnBelowZero_isNotServedUnderTheDefaults(t *testing.T) {
-	// The floor POE-191 kept when it handed the quality gates to the client: the
-	// server serves everything sane, and a round trip that ends with less than it
-	// started is not sane under any bankroll.
+func TestBestPlays_negativeMinEdge_leavesTheSmallGainsUnflagged(t *testing.T) {
+	// An explicitly negative MinEdge is a choice rather than an unset field
+	// (withDefaults reads only an exact 0 as unset), and this is what it buys now
+	// that the level flags instead of dropping: the small gains stop being
+	// marked. Same fixture as the test above, one number different.
+	cfg := DefaultConfig()
+	cfg.MinEdge = -1
+
+	got := BestPlays("Allflame", storedAt(feedHour, barelyProfitableFlip().row()), cfg)
+
+	if play := playByKey(t, got, directKey(chaosID, cardID)); play.LowLiquidity {
+		t.Errorf("LowLiquidity = true at MinEdge -1 on a return of %v, want false", play.RoiPct)
+	}
+}
+
+func TestBestPlays_undercutReturnBelowZero_isServedFlaggedWithItsMeasuredLoss(t *testing.T) {
+	// The last default-on drop, demoted 2026-08-22: a round trip that ends with
+	// less than it started is served, flagged, and left to sink in the ranking.
+	// Hiding it deletes the recipe on its quiet hour and takes the hours that DID
+	// pay with it (see
+	// TestBestPlays_recipeWhoseNewestHourLostItsSpread_isStillServedFlagged).
 	//
 	// Both markets below print the same +10% RAW spread and differ only in price
 	// resolution. Ten chaos to the card can only move in tenths, so the two ticks
 	// the round trip pays turn that spread into a 10% LOSS; a thousand chaos to
 	// the card moves in thousandths and the same spread survives as a +9.8% gain.
-	// The pair is what keeps the failing case honest — the loss is cut for being
-	// a loss, not for being an unpriceable or dead market.
+	// The pair is what keeps the flag honest: it is set for the loss and clear
+	// for the gain, on fixtures that differ in nothing else.
 	tests := []struct {
-		name string
-		low  int64
-		high int64
-		want []string
+		name             string
+		low              int64
+		high             int64
+		wantLowLiquidity bool
 	}{
 		{
-			name: "a tenth-of-a-chaos tick turns the spread into a loss",
-			low:  10,
-			high: 11,
-			want: []string{},
+			name:             "a tenth-of-a-chaos tick turns the spread into a loss",
+			low:              10,
+			high:             11,
+			wantLowLiquidity: true,
 		},
 		{
-			name: "the same spread on a thousandth-of-a-chaos tick still gains",
-			low:  1000,
-			high: 1100,
-			want: []string{directKey(chaosID, cardID)},
+			name:             "the same spread on a thousandth-of-a-chaos tick still gains",
+			low:              1000,
+			high:             1100,
+			wantLowLiquidity: false,
 		},
 	}
 
@@ -1609,34 +1688,68 @@ func TestBestPlays_undercutReturnBelowZero_isNotServedUnderTheDefaults(t *testin
 			rows := storedAt(feedHour, liquidChaosMarket(cardID, tt.low, tt.high).row())
 
 			got := BestPlays("Allflame", rows, DefaultConfig())
-			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
-				tick := 1 / float64(tt.low)
-				t.Errorf("keys = %v, want %v (undercut return %v)",
-					playKeys(got.Plays), tt.want, undercutRoi(float64(tt.low), tick, [2]float64{float64(tt.high), tick}))
+
+			play := playByKey(t, got, directKey(chaosID, cardID))
+			if play.LowLiquidity != tt.wantLowLiquidity {
+				t.Errorf("LowLiquidity = %v, want %v", play.LowLiquidity, tt.wantLowLiquidity)
 			}
+			tick := 1 / float64(tt.low)
+			wantClose(t, "RoiPct", play.RoiPct, undercutRoi(float64(tt.low), tick, [2]float64{float64(tt.high), tick}))
 		})
 	}
 }
 
-func TestBestPlays_undercutReturnBelowZero_isNotServedEvenWithANegativeMinEdge(t *testing.T) {
-	// MinEdge is the floor a deploy can lower (EXCHANGE_MIN_EDGE); the bar under
-	// it is structural. withDefaults clamps MinEdgeTickRatio and MinROIChaos to
-	// at least 0, and Roi carries RoiPct's sign because Investment is positive,
-	// so Roi >= MinROIChaos rejects a losing route however low MinEdge goes.
-	// Losing the clamp — or the gate — is what this test is here to catch.
+func TestBestPlays_losingRoundTrip_isRemovedOnlyByAnArmedPayoutGate(t *testing.T) {
+	// What replaced the positivity floor: nothing by default, and the two payout
+	// gates once a reader arms one. evaluate applies them only ABOVE 0 on
+	// purpose — at their default of 0 they read "RoiPct >= 0" and "Roi >= 0",
+	// which is the floor this change removed wearing another name, and leaving
+	// them unguarded would have kept hiding exactly the hours the flag exists to
+	// show.
 	//
-	// The caller below asks for the loosest gates it can express: -1 on all
-	// three. The fixture is a two-chaos card at a half-chaos tick, so the losing
-	// round trip returns -16.7% on a payout of -0.50 chaos — inside every one of
-	// those -1s, and served the moment the clamp stops turning them into zeroes.
+	// The fixture is a two-chaos card at a half-chaos tick, so the losing round
+	// trip returns -16.7% on a payout of -0.50 chaos: inside every level below.
 	rows := storedAt(feedHour, liquidChaosMarket(cardID, 2, 5).row())
-	cfg := DefaultConfig()
-	cfg.MinEdge = -1
-	cfg.MinEdgeTickRatio, cfg.MinROIChaos = -1, -1
 
-	if got := BestPlays("Allflame", rows, cfg); len(got.Plays) != 0 {
-		t.Errorf("keys = %v, want none — the round trip returns %v",
-			playKeys(got.Plays), got.Plays[0].RoiPct)
+	tests := []struct {
+		name     string
+		arm      func(*Config)
+		wantKeys []string
+	}{
+		{
+			name:     "the defaults serve it",
+			arm:      func(*Config) {},
+			wantKeys: []string{directKey(chaosID, cardID)},
+		},
+		{
+			name:     "an armed chaos payout removes it",
+			arm:      func(c *Config) { c.MinROIChaos = 0.01 },
+			wantKeys: []string{},
+		},
+		{
+			name:     "an armed edge-to-tick ratio removes it",
+			arm:      func(c *Config) { c.MinEdgeTickRatio = 1 },
+			wantKeys: []string{},
+		},
+		{
+			// withDefaults clamps a negative gate to 0, which is off — so asking
+			// for less than nothing cannot arm a gate at a level nothing fails.
+			name:     "a negative payout gate is off, not armed",
+			arm:      func(c *Config) { c.MinEdgeTickRatio, c.MinROIChaos = -1, -1 },
+			wantKeys: []string{directKey(chaosID, cardID)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.arm(&cfg)
+
+			got := BestPlays("Allflame", rows, cfg)
+			if !reflect.DeepEqual(playKeys(got.Plays), tt.wantKeys) {
+				t.Errorf("keys = %v, want %v", playKeys(got.Plays), tt.wantKeys)
+			}
+		})
 	}
 }
 
@@ -1895,18 +2008,31 @@ func TestBestPlays_directPlayTiedWithAOneHop_isRankedFirst(t *testing.T) {
 	// it carries one execution risk instead of three. The route's key sorts
 	// AHEAD of the flip's ("1-hop:" before "direct:"), which is how this proves
 	// the mode tie-break outranks the key tie-break.
+	//
+	// The fixture's other markets — the two legs and the divine anchor, all of
+	// them flat-priced — are served flagged since MinEdge became a flag
+	// (2026-08-22), so the assertion is on the two shapes' ORDER rather than on
+	// the whole list. The tie check below is what makes that order attributable
+	// to modeRank and nothing else: with every earlier key equal, Key ascending
+	// would have put "1-hop:" AHEAD of "direct:".
 	flip, buyLeg, sellLeg, anchor := tiedShapes()
 
 	got := BestPlays("Allflame", storedAt(feedHour, flip.row(), buyLeg.row(), sellLeg.row(), anchor.row()), DefaultConfig())
 
-	want := []string{directKey(chaosID, hellID), oneHopKey(scarabID, chaosID, divineID)}
-	if !reflect.DeepEqual(playKeys(got.Plays), want) {
-		t.Fatalf("keys = %v, want the flip ahead of the route %v", playKeys(got.Plays), want)
+	keys := playKeys(got.Plays)
+	directAt, routeAt := indexOf(keys, directKey(chaosID, hellID)), indexOf(keys, oneHopKey(scarabID, chaosID, divineID))
+	if directAt < 0 || routeAt < 0 {
+		t.Fatalf("keys = %v, want both the flip and the route served", keys)
 	}
-	direct, route := got.Plays[0], got.Plays[1]
-	if direct.RoiPct != route.RoiPct || direct.Turnover != route.Turnover {
-		t.Errorf("the two shapes read %v/%v chaos and %v/%v chaos — the fixture no longer ties them",
-			direct.RoiPct, route.RoiPct, direct.Turnover, route.Turnover)
+	direct, route := got.Plays[directAt], got.Plays[routeAt]
+	if direct.Suspect != route.Suspect || direct.LowCoverage != route.LowCoverage ||
+		direct.ExpectedRoi != route.ExpectedRoi || direct.Turnover != route.Turnover || direct.RoiPct != route.RoiPct {
+		t.Fatalf("the fixture no longer ties the two shapes: flip suspect=%v lowCoverage=%v expectedRoi=%v turnover=%v roiPct=%v, route suspect=%v lowCoverage=%v expectedRoi=%v turnover=%v roiPct=%v",
+			direct.Suspect, direct.LowCoverage, direct.ExpectedRoi, direct.Turnover, direct.RoiPct,
+			route.Suspect, route.LowCoverage, route.ExpectedRoi, route.Turnover, route.RoiPct)
+	}
+	if directAt > routeAt {
+		t.Errorf("keys = %v, want the flip (at %d) ahead of the route (at %d)", keys, directAt, routeAt)
 	}
 }
 
@@ -1955,21 +2081,24 @@ func astrolabeInChaos() rowSpec {
 	}
 }
 
-func TestBestPlays_measuredNoiseMarkets_areCutByTheGates(t *testing.T) {
+func TestBestPlays_measuredNoiseMarkets_areServedFlaggedRatherThanCut(t *testing.T) {
 	// The three markets that motivated POE-184, rebuilt from the 26-hour
 	// Allflame measurement. Each row is one hour of a real market; what has to
 	// hold is the OUTCOME — the levels themselves are pinned one at a time by the
 	// boundary tests above.
 	//
-	// The two noise markets are still cut with the quality gates off, and the
-	// reason is worth stating: both print a 100% tick, so the sell leg's undercut
-	// price is Price*(1-1) = 0 and the round trip returns -100%. Junk that coarse
-	// fails the sanity floor on its own arithmetic, which is why relaxing the
-	// defaults did not let it back in.
+	// This is the visible cost of the 2026-08-22 demotion, recorded rather than
+	// hidden. Both noise markets print a 100% tick, so the sell leg's undercut
+	// price is Price*(1-1) = 0 and the round trip returns -100%; until MinEdge
+	// became a flag that arithmetic kept them out of the list, and now they are
+	// in it with LowLiquidity set. What keeps them off the top is the ranking,
+	// and a reader who wants the class gone arms a payout gate (see
+	// TestBestPlays_losingRoundTrip_isRemovedOnlyByAnArmedPayoutGate).
 	tests := []struct {
-		name string
-		spec rowSpec
-		want []string
+		name             string
+		spec             rowSpec
+		want             []string
+		wantLowLiquidity bool
 	}{
 		{
 			// VWAP 0.219c against a 0.0286 / 1.00 extreme pair: a whole chaos of
@@ -1983,7 +2112,8 @@ func TestBestPlays_measuredNoiseMarkets_areCutByTheGates(t *testing.T) {
 				lowestRatio:  [2]int64{1, 35},
 				highestRatio: [2]int64{1, 1},
 			},
-			want: []string{},
+			want:             []string{directKey(chaosID, cardID)},
+			wantLowLiquidity: true,
 		},
 		{
 			// 1:2 and 1:1 in the same hour is a 100% "edge" that is one integer
@@ -1997,13 +2127,17 @@ func TestBestPlays_measuredNoiseMarkets_areCutByTheGates(t *testing.T) {
 				lowestRatio:  [2]int64{1, 2},
 				highestRatio: [2]int64{1, 1},
 			},
-			want: []string{},
+			want:             []string{directKey(chaosID, scarabID)},
+			wantLowLiquidity: true,
 		},
 		{
-			// The one that should survive.
-			name: "Astrolabe quoted in chaos",
-			spec: astrolabeInChaos(),
-			want: []string{directKey(chaosID, omenID)},
+			// The one that was always real, and the control on the flag: it is
+			// served UNMARKED, so a LowLiquidity that was simply always true
+			// would fail here.
+			name:             "Astrolabe quoted in chaos",
+			spec:             astrolabeInChaos(),
+			want:             []string{directKey(chaosID, omenID)},
+			wantLowLiquidity: false,
 		},
 	}
 
@@ -2011,7 +2145,11 @@ func TestBestPlays_measuredNoiseMarkets_areCutByTheGates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := BestPlays("Allflame", storedAt(feedHour, tt.spec.row()), DefaultConfig())
 			if !reflect.DeepEqual(playKeys(got.Plays), tt.want) {
-				t.Errorf("keys = %v, want %v", playKeys(got.Plays), tt.want)
+				t.Fatalf("keys = %v, want %v", playKeys(got.Plays), tt.want)
+			}
+			if got.Plays[0].LowLiquidity != tt.wantLowLiquidity {
+				t.Errorf("LowLiquidity = %v at a return of %v, want %v",
+					got.Plays[0].LowLiquidity, got.Plays[0].RoiPct, tt.wantLowLiquidity)
 			}
 		})
 	}
@@ -2408,10 +2546,10 @@ func TestConfigWithDefaults_nonPositiveCount_fallsBackToTheDefault(t *testing.T)
 	// unset — the one exception being MinEdge, which the table above pins.
 	//
 	// For the three levels DefaultConfig now leaves at 0 this is a CLAMP rather
-	// than a restoration, and it is load-bearing: a negative MinEdgeTickRatio or
-	// MinROIChaos would make evaluate's last two gates admit a losing round trip,
-	// which is the bar under MinEdge (see
-	// TestBestPlays_undercutReturnBelowZero_isNotServedEvenWithANegativeMinEdge).
+	// than a restoration, and it is load-bearing for a different reason since
+	// 2026-08-22: evaluate arms the two payout gates only ABOVE 0, so a negative
+	// surviving here would read as configured while gating at a level nothing can
+	// fail (see TestBestPlays_losingRoundTrip_isRemovedOnlyByAnArmedPayoutGate).
 	cfg := Config{
 		WindowHours:       -1,
 		MinVolumePerHour:  -1,
@@ -2494,7 +2632,7 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	wantKeys(t, "result", data, "league", "horizon", "from", "to", "hours", "divineChaosRate", "plays")
 	wantKeys(t, "play", mustMarshal(t, envelope.Plays[0]),
 		"key", "mode", "legs", "roiPct", "edge", "roiPctRaw", "roi", "investment",
-		"turnover", "tick", "depth", "suspect", "hoursSeen", "expectedRoi",
+		"turnover", "tick", "depth", "suspect", "lowLiquidity", "hoursSeen", "expectedRoi",
 		"expectedRoiPct", "simEntries", "lowCoverage", "lastHour")
 
 	var legs []map[string]json.RawMessage

@@ -105,6 +105,20 @@ export const EXCHANGE_TOOLTIPS: Record<string, string> = {
 	Mode: 'DIRECT buys and sells the same item on one market — market making, two trades. 1-HOP buys an item against one currency, sells it against another, then converts back — three trades, three chances to be beaten to the fill.',
 	Suspect:
 		'One of the play’s trades is priced outside its fair band: a buy below fair × 0.67, or a sell above fair × 1.5. The play is still served and still ranked, after every clean one, because the extreme may be a real fill or a single stray order and only the book can say which. Read the row as a signal, not a quote — verify the route in game before committing.',
+	'Low liquidity':
+		'The newest hour printed no spread worth taking on this play: the round trip at that hour’s undercut prices returned less than the server’s floor. The ROI% beside it is that measured return and not a placeholder — it can be negative, and a market whose whole price step is 100% reads −100% there. The usual cause is a THIN HOUR, an hour so quiet that the little which traded all cleared at one ratio, which is not the same thing as a dead market: this was a reason to drop the play until 2026-08-22, and a card flipping at 70–92% in five of the window’s other six hours vanished from the table for one 2-item hour. So it is a mark now, never a hiding: Exp. ROI beside it still measures the whole day and still ranks the row, so a play whose quiet hour is an exception keeps its place and one that never had a spread sinks on its own. Read the entry prices on this row as its weakest part and check the book in game before posting.',
+	'Step not used':
+		'The dashed tile is the convert step a DIRECT play does not take — it buys and sells the same item on one market, so there is nothing to turn back into the currency it started in. The slot is held open rather than closed up so the Get column never lands under the row above’s sell; when no play on screen converts at all, the column goes away entirely.',
+	'Expected gain':
+		'Green is what the run is EXPECTED to end with above what it cost — the Get amount on a play whose measured expectation is positive, and the profit line under it.',
+	'Measured loss':
+		'Red on Exp. ROI is a READING, not an error: the simulation replayed the play across the last day and it came out negative. Such a play is still served and still ranked, after every one that measured well (ADR-016) — hiding it would be hiding the measurement.',
+	'Low coverage':
+		'A dimmed Exp. ROI with a “low” marker means too few of the last day’s hours could be replayed to trust the mean. The verdict on the number is unchanged; the confidence in it is what dropped.',
+	'No reading':
+		'A dash is a question this row has no answer to — a column that computes nothing yet, a play with no simulable hour, or a scale that cannot be derived. It is never a zero: printing 0 would claim the play was measured and came out flat.',
+	'Full window':
+		'A full green bar is a play that held EVERY hour of the window. The colour is the persistence verdict, not a progress indicator — a partial bar is grey however close to full it is.',
 	'Data age':
 		'Every figure on this page is the last SETTLED feed hour, not the live book. The feed publishes 40–60 minutes after an hour closes, so these prices can be up to about two hours behind what the exchange is showing you right now. Check the route in game before committing to it.',
 	'Run cost':

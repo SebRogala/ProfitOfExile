@@ -28,6 +28,18 @@
 	 * dense 80 / 220 / 140 / 140 / 80 with 18px arrows and a 6px gap), or the
 	 * labels drift off the tiles they name. The two ends are NOT one width: only
 	 * Get carries the profit line the comfortable geometry is sized around.
+	 *
+	 * COLLAPSED VARIANT. `showConvert` false drops the convert slot AND the arrow
+	 * that led into it, leaving four slots and three arrows — comfortable
+	 * 120 / 196 / 164 / 168, dense 80 / 220 / 140 / 80, at the same arrow and gap
+	 * widths. No remaining slot changes size, so the contract with the header is
+	 * one `{#if}` on each side rather than a second set of numbers. The arrow
+	 * between sell and Get is a NORMAL arrow there, not the muted one: nothing is
+	 * being skipped in the collapsed form, the step is simply not part of any
+	 * route on screen. The call is the page's, taken over the whole rendered set
+	 * (`anyConvertStep`) — this file never asks it per row, because a row that
+	 * collapsed on its own would put its Get under the next row's sell, which is
+	 * the one thing the fixed geometry exists to prevent.
 	 */
 	import type { CurrencyExchangePlay } from '$lib/api';
 	import {
@@ -43,7 +55,8 @@
 		play,
 		density,
 		apiBase,
-		divineChaosRate
+		divineChaosRate,
+		showConvert
 	}: {
 		play: CurrencyExchangePlay;
 		density: ExchangeDensity;
@@ -56,6 +69,13 @@
 		 * a zero.
 		 */
 		divineChaosRate: number;
+		/**
+		 * Whether the convert slot is drawn at all — the page's `anyConvertStep`
+		 * over the RENDERED set, so every row on screen collapses together or none
+		 * does. False on a table showing direct plays only, where the slot would be
+		 * an empty dashed tile on every row. See the geometry contract above.
+		 */
+		showConvert: boolean;
 	} = $props();
 
 	const route = $derived(routeSlots(play, divineChaosRate));
@@ -135,18 +155,23 @@
 
 		<span class="slot slot-sell">{@render step(route.sell)}</span>
 
-		{@render arrow(route.convert === null)}
+		<!-- The slot is here for the rows that USE it. When no play in the rendered
+		     set converts, the page collapses the column for all of them and the
+		     arrow into it goes with the slot — see the geometry contract above. -->
+		{#if showConvert}
+			{@render arrow(route.convert === null)}
 
-		<span class="slot slot-convert">
-			{#if route.convert}
-				{@render step(route.convert)}
-			{:else}
-				<!-- The step a direct play does not take, held open so the Get slot
-				     never moves under the sell column of the row above. -->
-				<span class="tile empty"></span>
-				<span class="not-used">not used</span>
-			{/if}
-		</span>
+			<span class="slot slot-convert">
+				{#if route.convert}
+					{@render step(route.convert)}
+				{:else}
+					<!-- The step a direct play does not take, held open so the Get slot
+					     never moves under the sell column of the row above. -->
+					<span class="tile empty"></span>
+					<span class="not-used">not used</span>
+				{/if}
+			</span>
+		{/if}
 
 		{@render arrow(false)}
 

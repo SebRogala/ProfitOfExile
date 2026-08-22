@@ -7,6 +7,7 @@ import {
 	REFETCH_DEBOUNCE_MS,
 	REFETCH_JITTER_MS,
 	SORT_OPTIONS,
+	anyConvertStep,
 	chaosIconPath,
 	currencyIconPath,
 	dataAgeParts,
@@ -1826,6 +1827,69 @@ describe('routeSlots', () => {
 
 	it('draws no route for a play that arrives with fewer than two legs', () => {
 		expect(routeSlots(play({ legs: [leg()] }), DIVINE_RATE)).toBeNull();
+	});
+});
+
+describe('anyConvertStep', () => {
+	/**
+	 * One fully-shaped leg, reused for every position. `anyConvertStep` reads the
+	 * LENGTH of the leg list and nothing inside a leg, so the cases below vary the
+	 * count and hold the contents fixed — a fixture that also varied the contents
+	 * would leave it unclear which of the two the answer came from.
+	 */
+	const someLeg: CurrencyExchangeLeg = {
+		action: 'buy',
+		item: 'scarab',
+		quote: CHAOS_ID,
+		price: 19,
+		priceItemQty: 1,
+		priceQuoteQty: 19,
+		fair: 19.5,
+		fairOk: true,
+		tick: 0.01,
+		volume: 2000,
+		stock: 40,
+		suspect: false,
+		itemName: 'Ambush Scarab',
+		itemIcon: '/icon/Scarab',
+		itemCategory: 'Scarabs',
+		quoteName: 'Chaos Orb',
+		quoteIcon: '/currency-exchange/icon/Chaos',
+		quoteCategory: 'Currency'
+	};
+
+	/** A play with `count` legs — two is a direct flip, three a 1-hop route. */
+	function withLegs(count: number, overrides: Partial<CurrencyExchangePlay> = {}) {
+		return play({ legs: Array.from({ length: count }, () => someLeg), ...overrides });
+	}
+
+	it('collapses the column when every rendered play is a direct flip', () => {
+		// The case the collapse exists for: a table filtered to direct plays draws
+		// an empty dashed tile and two arrows on every row, and the convert column
+		// is dead width down the whole table.
+		expect(anyConvertStep([withLegs(2), withLegs(2), withLegs(2)])).toBe(false);
+	});
+
+	it('shows the column when one rendered play converts', () => {
+		// All-or-nothing over the set: the single 1-hop row needs the slot, so
+		// every direct row around it keeps holding it open. Collapsing the rest
+		// per-row would slide their Get under this row's sell.
+		expect(anyConvertStep([withLegs(2), withLegs(3), withLegs(2)])).toBe(true);
+	});
+
+	it('reads the legs and not the mode label a play carries', () => {
+		// `routeSlots` draws the convert slot off the THIRD LEG, by position. A
+		// play labelled 1-hop that arrived with two legs has no third step to put
+		// in the slot, so reserving one would spend the width on a tile nothing
+		// can fill.
+		expect(anyConvertStep([withLegs(2, { mode: '1-hop' })])).toBe(false);
+	});
+
+	it('collapses on an empty set rather than reserving a slot for no row', () => {
+		// Unobservable in practice — the table is not rendered when nothing
+		// survives the filters — but the answer is pinned so the collapse cannot
+		// flip to "shown" on the way through an empty render.
+		expect(anyConvertStep([])).toBe(false);
 	});
 });
 
