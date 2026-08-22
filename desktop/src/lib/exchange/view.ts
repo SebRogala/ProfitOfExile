@@ -13,6 +13,15 @@
  *
  * Pure TypeScript on purpose — no Svelte runes, no Tauri imports — so the
  * whole file is reachable from vitest without a component harness.
+ *
+ * This file is the ONLY emitter of a Currency Exchange row's mechanical
+ * numbers — the route's ends, its step totals and the three money columns. What
+ * those numbers must mean and how they must agree is specified in
+ * `docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md`, which is normative because the
+ * invariant also reaches `filters.ts`, the page, `ExchangeRoute.svelte`,
+ * `tooltips.ts` and the wire's own field docs. Enforcement belongs in the
+ * closure tests in `view.test.ts`, not in the document: a change to an equation
+ * there and a change to those tests travel together, in one commit.
  */
 import type {
 	CurrencyExchangeHorizon,
