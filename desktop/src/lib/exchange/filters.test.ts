@@ -956,13 +956,14 @@ describe('applyNumericFilters', () => {
 		expect(runInvestment(dear)).toBe(2500);
 	});
 
-	it('bounds the RUN of a chaos-entry play, not the posting its columns print', () => {
+	it('bounds the RUN of a play, not the posting its columns print', () => {
 		// THE SEAM (spec §6.1), and the case that would silently pass if the bound
-		// were left reading `moneyColumns`. This play enters on a chaos market that
-		// posts four at a time, so its Investment COLUMN prints 4c — while the run
-		// it has to be repeated to is 10 flips tying up 10c. A 5c ceiling covers the
+		// were left reading `moneyColumns`. This play enters on a market that posts
+		// four at a time, so its Investment COLUMN prints 4c — while the run it has
+		// to be repeated to is 10 flips tying up 10c. A 5c ceiling covers the
 		// posting and does not cover the run, and a bankroll ceiling is asking about
-		// the run.
+		// the run. Since the owner rulings of 2026-08-22 every row displays a
+		// posting, so this seam is on every row and not only the chaos ones.
 		const trash = play({
 			key: 'trash',
 			legs: [leg({ quote: CHAOS_ID, price: 1, priceItemQty: 4, priceQuoteQty: 4 })],

@@ -634,27 +634,25 @@ function parseAmount(raw: string): number | null {
  *
  * THE SEAM, STATED. The bound reads `runInvestment(play)` — the RUN's cost —
  * and the Investment column reads `moneyColumns(play).investment`, which since
- * the owner ruling of 2026-08-22 is the DISPLAY scale: one posting of the buy
- * market on a chaos-entry row, the run on a divine one. On a divine row those
- * are the same number. On a chaos row they are not, and the divergence is
- * deliberate rather than accidental — which is why this reads a function named
- * for the run instead of the one the column reads
- * (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §6.1, "the exception's own
- * exception").
+ * the owner rulings of 2026-08-22 is the DISPLAY scale: one posting of the buy
+ * market, on every row and in every entry currency. The two are different
+ * questions now, and the divergence is deliberate rather than accidental —
+ * which is why this reads a function named for the run instead of the one the
+ * column reads (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §6.1, "the
+ * exception's own exception").
  *
  * Left pointing at `moneyColumns` the bound would have become a per-posting
  * ceiling the moment the display scale moved, silently: the code would still
- * have compiled, the tests that only exercise divine rows would still have
- * passed, and a reader typing 500 to mean "500c of bankroll" would have been
- * filtering on what one trash-market order costs. A bankroll ceiling is a
+ * have compiled, and a reader typing 500 to mean "500c of bankroll" would have
+ * been filtering on what one trash-market order costs. A bankroll ceiling is a
  * run-sized question whatever the row prints, so the bound follows the meaning
  * and not the column.
  *
- * What that costs is a real reading: on a chaos row the number this compares
- * against is printed in the SCALE column ("N c in") and not in the Investment
- * column beside it. That is the same shape §6.1's per-exchange gates already
- * carry — a control whose figure lives elsewhere on the row — and the Run cost
- * tooltip names the Scale column for it.
+ * What that costs is a real reading: the number this compares against is
+ * printed in the SCALE column ("N c in") and not in the Investment column
+ * beside it. That is the same shape §6.1's per-exchange gates already carry —
+ * a control whose figure lives elsewhere on the row — and the Run cost tooltip
+ * names the Scale column for it.
  *
  * A play whose scale cannot be derived falls back to its per-exchange
  * investment rather than being dropped or waved through — that fallback lives

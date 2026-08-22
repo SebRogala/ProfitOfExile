@@ -103,8 +103,8 @@
 		 *
 		 * The bound reads `runInvestment(play)` — the run's cost — while the table's
 		 * Investment column reads `moneyColumns(play).investment`, the size the ROW
-		 * displays. On a DIVINE-entry row those are one number. On a CHAOS-entry row
-		 * they are not: since the owner ruling of 2026-08-22 such a row renders one
+		 * displays. Since the owner rulings of 2026-08-22 those are different
+		 * questions on EVERY row, divine entries included: the row renders one
 		 * posting of its buy market, and the run's cost is printed in the Scale
 		 * column's "N c in" sub-line instead. The bound follows the MEANING —
 		 * a bankroll ceiling is a run-sized question whatever the row prints — and
@@ -485,9 +485,9 @@
 		<!-- Run cost, not Investment: these bounds are compared against what the
 		     play ties up by the time it has been repeated enough to be worth
 		     doing (POE-192) — the figure the SCALE column's "N c in" sub-line
-		     prints on every row, and the one the Investment column prints only on
-		     a divine-entry row, since a chaos-entry row displays one posting of
-		     its buy market instead (owner ruling, 2026-08-22). The label is
+		     prints on every row, and NOT the one the Investment column prints,
+		     since every row displays one posting of its buy market instead
+		     (owner rulings, 2026-08-22). The label is
 		     load-bearing for that reason and for one more: the GATES row directly
 		     above still judges per-exchange numbers (Min item price, Min profit),
 		     and calling this one "Investment" would read as the same size as

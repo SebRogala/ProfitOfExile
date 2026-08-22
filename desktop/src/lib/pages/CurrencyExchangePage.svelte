@@ -457,7 +457,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by the simulated outcome the server ranks on, by the hour's best-case chaos the ROI column shows — which orders the number each row prints, a posting on a chaos-entry row against a whole run on a divine one, so the two sizes rank against each other — or by how long the market needs to absorb the play's worthwhile scale, shortest wait first."
+			title="Rank by the simulated outcome the server ranks on, by the hour's best-case chaos the ROI column shows — which orders the number each row prints, one posting of the market it enters on, so a market that posts a thousand at a time ranks above one that posts a single item at ten times the price — or by how long the market needs to absorb the play's worthwhile scale, shortest wait first."
 		/>
 
 		<div class="divider"></div>
@@ -540,10 +540,9 @@
 			<span>
 				prices are the newest hour’s cheapest buy and dearest sell, so the ROI columns are a best
 				case, not a quote — Exp. ROI is what the play would have paid across the last day, and
-				every money figure on a row counts one posting of the market you enter on when that market
-				prices in chaos, the whole worthwhile run when it prices in divine, and one exchange on a
-				divine row the simulation expects no gain from, which has no run left to count — the Scale
-				column shows that run wherever there is one and a dash where there is not — and the route is
+				every money figure on a row counts one posting of the market you enter on, whatever currency
+				that market prices in, and one item where it posted no quantity pair at all — the Scale
+				column shows the worthwhile run wherever there is one and a dash where there is not — and the route is
 				priced at that best case throughout except its Get end, which is the spend plus Exp. ROI,
 				so the last step’s total and Get differ by the gap between those two columns; both
 				identities are in chaos, and a divine-entry route prints them at the divine rate
@@ -645,12 +644,12 @@
 
 							<!-- ONE SCALE PER ROW. All three money columns come from
 							     `moneyColumns`, which is `displayScale` — one posting of the
-							     buy market on a chaos entry, the worthwhile RUN on a divine
-							     one (owner ruling, 2026-08-22) — and the route slots read the
-							     same decision, so Spend/Get/keep and these three are never
-							     about different trips. No "each" sub-line: what one exchange
-							     costs is not a second reading the row owes, and the Scale
-							     column says how many exchanges the run is. -->
+							     buy market, whatever currency it prices in (owner rulings,
+							     2026-08-22) — and the route slots read the same decision, so
+							     Spend/Get/keep and these three are never about different
+							     trips. No "each" sub-line: what one exchange costs is not a
+							     second reading the row owes, and the Scale column says how
+							     many exchanges the run is. -->
 							<td class="num">
 								<div class="mono value">{formatChaos(money.investment)}c</div>
 							</td>
@@ -664,11 +663,11 @@
 							<!-- What the row is measured to pay at the size it displays — the
 							     same chaos the Get slot's "keep ≈" line carries, off the same
 							     `moneyColumns` call — and the only money cell on the row that
-							     can print a MINUS. On a divine row that is the run's gain; on a
-							     chaos row it is one posting's, and the run's gain is what the
-							     Scale column's "→ +Xc" prints instead. A run only exists
-							     for a positive expectation, so the minus is always a row with
-							     no run: the simulation is free to measure a loss
+							     can print a MINUS. It is one POSTING's gain on every row; the
+							     RUN's gain is what the Scale column's "→ +Xc" prints instead,
+							     and the two are deliberately different numbers. A run only
+							     exists for a positive expectation, so the minus is always a row
+							     with no run: the simulation is free to measure a loss
 							     and the server serves it anyway (ADR-016), so red is a reading
 							     here and not an error state. The ranking is still the
 							     PER-EXCHANGE expectation this scales, which is why the Exp. ROI
@@ -764,16 +763,13 @@
 							     sub-line, so the Fastest sort ranks by a number dense does
 							     not print; comfortable is where the wait is read.
 
-							     THIS CELL IS ALWAYS THE RUN, and since the owner ruling of
-							     2026-08-22 it is the only cell on the row that always is. On a
-							     DIVINE-entry row `scale.gain` and `scale.investment` are the
-							     same two numbers `money.expectedRoi` and `money.investment`
-							     carry, because the display scale IS the run there. On a
-							     CHAOS-entry row the cells above count one posting of the buy
-							     market, so this cell is where the run lives: the ×N, what it
-							     ties up — the exact figure the filter bar's Run-cost bound
-							     compares against, through `runInvestment` — and how long the
-							     market needs
+							     THIS CELL IS ALWAYS THE RUN, and since the owner rulings of
+							     2026-08-22 it is the ONLY cell on the row that ever is. The
+							     cells above count one posting of the buy market on every row,
+							     divine entries included, so this cell is the run's whole home:
+							     the ×N, what it ties up — the exact figure the filter bar's
+							     Run-cost bound compares against, through `runInvestment` — and
+							     how long the market needs
 							     (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1, SCALE, and §5).
 							     Reaching for `play.expectedRoi` or `play.investment` here
 							     would print a per-exchange figure under a run-sized ×N, which
@@ -1139,7 +1135,7 @@
 	.route-head .slot-get {
 		width: 168px;
 	}
-	/* The step slots are the ones that moved when the lines became `≈` run
+	/* The step slots are the ones that moved when the lines became `≈` step
 	   totals: 196 → 208 and 164 → 176. At their worst case it is the RATE that
 	   binds them rather than the item name above it, which is the derivation
 	   `ExchangeRoute`'s CSS carries. The ends did not move. */
