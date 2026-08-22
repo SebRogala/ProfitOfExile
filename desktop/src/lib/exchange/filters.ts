@@ -429,21 +429,19 @@ export type GateInputs = { [K in keyof Gates]: string };
  * which is why the two readings of an empty box must not be allowed to merge —
  * blanking that one box restores the shipped floor.
  *
- * A negative knob is read as off rather than kept. For the four ROI-and-volume
- * floors the server's positivity floor means no served play carries a negative
- * `roiPct` or `roi` — the two numbers those gates judge — so a floor below zero
- * could never drop a row; "off" is the honest name for a filter that cannot
- * fire. Same for `minItemPrice`, against a different number: `investment` is
- * what an exchange COSTS and is never negative. For the one ceiling
- * (maxTickPct) a negative would fire against EVERY play and empty the table; a
- * stored negative there is garbage, not a request, and off is the recovery.
- *
- * Read that as a statement about the GATE VALUES, not about the plays. Since
- * POE-193 a served play CAN carry a negative `expectedRoi` — the fill-simulated
- * expectation is free to measure a loss, and ADR-016 serves and flags it rather
- * than hiding it. No gate here reads that field, so the reasoning above is
- * untouched: the negative that cannot occur is the one on the optimistic pair
- * these knobs compare against.
+ * A negative knob is read as off rather than kept, and the reason is the
+ * server's arming convention, not the plays: since the MinEdge demotion (ADR-017
+ * amendment, 2026-08-22) a served play CAN carry a negative `roiPct` or `roi` —
+ * a spreadless hour is served flagged `lowLiquidity` with its measured loss —
+ * so a floor below zero could genuinely drop rows. The server treats 0 and
+ * below as "unset" on its own gates for the same knobs, and a client that let a
+ * stored negative fire would remove rows the server deliberately serves; "off"
+ * keeps the two ends of the contract saying the same thing. `minItemPrice`
+ * judges `investment`, what an exchange COSTS, which is never negative. For
+ * the one ceiling (maxTickPct) a negative would fire against EVERY play and
+ * empty the table; a stored negative there is garbage, not a request, and off
+ * is the recovery. (`expectedRoi` has been free to go negative since POE-193 —
+ * ADR-016 serves and flags the measured losers; no gate here reads it.)
  */
 export function parseGate(raw: string, fallback: number): number {
 	if (raw.trim() === '') return fallback;
