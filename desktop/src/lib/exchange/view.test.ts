@@ -1379,6 +1379,21 @@ describe('routeSlots', () => {
 		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
 	});
 
+	it('hands the unit word and the profit line back on one hover', () => {
+		// Dense hides both the unit beside the number and the sub-line under it, so
+		// this title is the only route back to either — a bare 3.66 with no way to
+		// learn it counts divine is not a row anyone can act on.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.title).toBe(
+			'divine — keep ≈ 100c (≈ 0.50 div)'
+		);
+	});
+
+	it('hovers an end with nothing under it with its unit word alone', () => {
+		// A chaos spend carries no sub-line, and a title ending in a dash with
+		// nothing after it reads as a string that lost its tail.
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.spend.title).toBe('chaos');
+	});
+
 	it('keeps a divine end precise to the hundredth above a hundred orbs', () => {
 		// A leg-price formatter drops to whole numbers above 100, which here would
 		// print 101 spent and 102 returned on a run that keeps half a divine — the
@@ -1445,26 +1460,36 @@ describe('routeSlots', () => {
 
 	it('converts the intermediate currency back at step 3', () => {
 		// The third leg is a `sell` on the wire; on screen it is the conversion
-		// that returns the reader to the currency they started in.
+		// that returns the reader to the currency they started in. 25 flips gaining
+		// 100c cost 25.25c and come back as 125.25c, and this market prices a divine
+		// at 204c — so what the run converts is 125.25 / 204 = 0.61 divine.
 		const convert = routeSlots(oneHop(), DIVINE_RATE)?.convert;
 
-		expect(convert?.name).toBe('Divine Orb');
-		expect(convert?.rate).toBe('convert 1 div for 204c');
+		expect(convert?.rate).toBe('≈ 0.61 div → 125c');
+		expect(convert?.icon).toBe(DIVINE_ICON);
 	});
 
 	it('sells the bought item at step 2 of a 1-hop play, not the currency it lands in', () => {
 		expect(routeSlots(oneHop(), DIVINE_RATE)?.sell.name).toBe('Nameless Astrolabe');
 	});
 
-	it('names the currency being converted at step 3, not the one it is converted into', () => {
+	it('marks step 3 with the currency being converted, not the one it is converted into', () => {
 		// The convert leg's ITEM is the intermediate chaos being spent; its QUOTE
-		// is the divine coming back. Reading the quote here would print "Divine
-		// Orb" over the price of a chaos orb.
-		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.name).toBe('Chaos Orb');
+		// is the divine coming back. The tile is what names the currency now that
+		// the run total has taken the name line's place, so reading the quote here
+		// would put the divine artwork over a quantity of chaos orbs.
+		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.icon).toBe(CHAOS_ICON);
 	});
 
-	it('quotes the convert step of a divine-entry triangle in divine', () => {
-		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.rate).toBe('convert 196c for 1 div');
+	it('ends a divine-entry triangle’s convert line on the amount its Get slot shows', () => {
+		// The tail is the Get amount itself, at the precision the ENDS use — the
+		// hundredth of a divine, not the whole orbs a postable order counts in. The
+		// chaos being converted is that same total read back through this market's
+		// own price: 3.65625 × 196 = 716.6, which rounds to 717 whole orbs.
+		const route = routeSlots(divineOneHop(), DIVINE_RATE);
+
+		expect(route?.convert?.rate).toBe('≈ 717c → 3.66 div');
+		expect(route?.get.amount).toBe('3.66');
 	});
 
 	it('quotes each step of a divine-entry triangle in that step’s own currency', () => {
@@ -1640,11 +1665,63 @@ describe('routeSlots', () => {
 		expect(routeSlots(omen(), DIVINE_RATE)?.sell.rateTitle).toBeNull();
 	});
 
-	it('shows the bare market pair on the convert step rather than a run quantity', () => {
-		// Step 3 moves the SALE's proceeds, not a count of items the reader chose:
-		// 3 divine on this run, a fraction on the next. The market's own ratio is
-		// the only thing that stays true across both.
-		expect(routeSlots(omen(), DIVINE_RATE)?.convert?.rate).toBe('convert 1 div for 209c');
+	it('totals the whole run at step 3 rather than one lot of its market', () => {
+		// "convert 1 div for 209c" read as an order to convert ONE divine on a row
+		// whose other four slots all count the 12-flip run. What step 3 actually
+		// moves is that run's proceeds: the 526c Get read back through this
+		// market's own price, 526.2 / 209 = 2.52 div.
+		expect(routeSlots(omen(), DIVINE_RATE)?.convert?.rate).toBe('≈ 2.52 div → 526c');
+	});
+
+	it('ends the convert line on exactly the Get amount the row finishes with', () => {
+		// The two are one figure by construction, not two agreeing calculations:
+		// re-deriving the total from the quantities the buy and sell steps print
+		// would use numbers deliberately snapped to their markets' lots (3 div ×
+		// 209c = 627c here) and put a third, disagreeing total on the row.
+		const route = routeSlots(omen(), DIVINE_RATE);
+
+		expect(route?.get.amount).toBe('526');
+		expect(route?.convert?.rate.endsWith(`→ ${route?.get.amount}c`)).toBe(true);
+	});
+
+	it('moves step 3’s item name off the line and onto its hover', () => {
+		// The total names both currencies and the tile carries the artwork, so a
+		// "Divine Orb" heading over it repeats the tile and costs a line the row
+		// has no height for. It is not dropped — it leads the hover.
+		const convert = routeSlots(omen(), DIVINE_RATE)?.convert;
+
+		expect(convert?.name).toBeNull();
+		expect(convert?.rateTitle).toContain('Divine Orb');
+	});
+
+	it('keeps the market’s own ratio on the convert step’s hover', () => {
+		// The line is a total now, so the order this market actually posts appears
+		// nowhere else on the row: a reader who wants to know what one divine
+		// fetches has only the hover to ask.
+		expect(routeSlots(omen(), DIVINE_RATE)?.convert?.rateTitle).toContain(
+			'convert 1 div for 209c'
+		);
+	});
+
+	it('shows the market’s ratio at step 3 of a play with no run to total', () => {
+		// `worthwhileScale` answered null, so the ends are what ONE exchange costs
+		// and there are no run proceeds for step 3 to total. The market's own order
+		// is what is left that stays true, and it keeps its name line with it.
+		const unscaled = routeSlots(omen({ expectedRoi: 0 }), DIVINE_RATE);
+
+		expect(unscaled?.convert?.rate).toBe('convert 1 div for 209c');
+		expect(unscaled?.convert?.name).toBe('Divine Orb');
+	});
+
+	it('shows no run total at step 3 when the convert leg came through without a price', () => {
+		// Version skew, the shape the buy and sell steps already guard against. The
+		// run's Get divided by a price of 0 is not a quantity, and printing it as
+		// "≈ 0.00 div → 526c" would put a total on the row that no market backs.
+		const priceless = omen({
+			legs: [omenBuy(), omenSell(), omenConvert({ price: 0, priceItemQty: 0, priceQuoteQty: 0 })]
+		});
+
+		expect(routeSlots(priceless, DIVINE_RATE)?.convert?.rate).toBe('convert @ 0.00 c');
 	});
 
 	it('snaps a displayed order down to the largest lot the market can post', () => {

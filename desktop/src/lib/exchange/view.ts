@@ -701,6 +701,38 @@ function withUnit(quantity: number, unit: string): string {
 	return unit === 'c' ? `${amount}${unit}` : `${amount} ${unit}`;
 }
 
+/**
+ * The same shorthand for an amount that is NOT a whole count of posted items:
+ * `526c`, `2.52 div`.
+ *
+ * `withUnit`'s sibling, at the route ends' precision. Everything `withUnit`
+ * prints is an integer multiple of a market's own pair, so nothing it does
+ * rounds; the convert step's two figures are a run total and the proceeds that
+ * produced it, and neither lands on an orb boundary. So the precision
+ * follows the ENDS rather than the orders: whole orbs for chaos, which is the
+ * only holding chaos comes in (POE-189), and the hundredth for anything else,
+ * where a whole run can cost a fraction of one orb. That is exactly the rule
+ * `routeSlots` prints Spend and Get with, which is what lets the convert line's
+ * tail be the same string as the Get amount rather than a second rendering of
+ * the same number.
+ */
+function withOrbUnit(quantity: number, unit: string): string {
+	const amount = unit === 'c' ? formatChaos(quantity) : formatFractionalOrbs(quantity);
+	if (unit === '') return amount;
+	return unit === 'c' ? `${amount}${unit}` : `${amount} ${unit}`;
+}
+
+/**
+ * An end slot's hover: its unit word, and its sub-line when it has one.
+ *
+ * Both, in one string, because dense hides both — the unit word beside the
+ * number and the sub-line under it — and a hover that carried only the second
+ * would leave a dense reader with a bare 3.66 and no way to learn it is divine.
+ */
+function endTitle(unit: string, sub: string | null): string {
+	return sub === null ? unit : `${unit} — ${sub}`;
+}
+
 /** A step's rate line, plus the hover it needs when the two disagree. */
 interface LegRate {
 	/** `buy 12 for 420c` — the order, or the decimal fallback. */
@@ -783,11 +815,12 @@ interface RunOrder {
  * reading, and the honest alternative is telling the reader the smallest order
  * this market accepts.
  *
- * Step 3 passes no `order` and prints the BARE pair. What the convert step moves
- * is the proceeds of step 2 — a quantity of the intermediate currency, not of
- * items — which is not an integer and not predictable from the pair, so the
- * honest thing to show is the market's own ratio and let the ends carry the
- * total.
+ * Step 3 passes no `order` and answers the BARE pair. What the convert step
+ * moves is the proceeds of step 2 — a quantity of the intermediate currency, not
+ * of items — which is not an integer and not predictable from the pair, so there
+ * is no order to scale here. `routeSlots` totals that quantity from the run's own
+ * ends instead and prints THAT on the slot; this string becomes the ratio behind
+ * its hover, and stays the slot's own line on a play with no run to total.
  *
  * The unit words come from `quoteUnit` on BOTH sides. The quote side always has
  * one (chaos or divine); the item side has one only when the item is itself one
@@ -863,11 +896,20 @@ function legRate(verb: string, leg: CurrencyExchangeLeg, order?: RunOrder): LegR
 
 /** One traded step of a route: what it moves, at what price. */
 export interface RouteStep {
-	/** The item the step acts on — bought, sold, or converted. */
-	name: string;
+	/**
+	 * The item the step acts on — bought, sold, or converted.
+	 *
+	 * `null` on a convert step that prints a RUN TOTAL, and only there. That line
+	 * already names both currencies ("≈ 2.52 div → 526c") and the tile already
+	 * carries the artwork of the one being converted, so a "Divine Orb" heading
+	 * above it says nothing a reader cannot see — while the height it costs is the
+	 * one thing a three-step row has none of. The name is not lost: it leads the
+	 * step's `rateTitle`.
+	 */
+	name: string | null;
 	/** Its API-relative icon path, for `iconSrc`; `null` when it has none. */
 	icon: string | null;
-	/** `buy 12 for 420c`, `sell 12 for 3 div`, `convert 1 div for 209c`. */
+	/** `buy 12 for 420c`, `sell 12 for 3 div`, `≈ 2.52 div → 526c`. */
 	rate: string;
 	/**
 	 * The hover behind a rate whose printed quantity is not the run's, because
@@ -892,6 +934,16 @@ export interface RouteEnd {
 	 * `keep ≈ 102c` profit line under Get. `null` when there is nothing to add.
 	 */
 	sub: string | null;
+	/**
+	 * The whole slot's hover: the unit word, and the sub-line behind it when there
+	 * is one — `"divine — keep ≈ 100c (≈ 0.50 div)"`.
+	 *
+	 * Dense hides BOTH of those, so this is the only way back to either from a
+	 * dense row. The unit is on it in comfortable too, where the word is already
+	 * on screen: a hover that changed its content with the density would be a
+	 * second contract to keep, for no reading the reader does not already have.
+	 */
+	title: string;
 }
 
 /**
@@ -944,7 +996,11 @@ export interface RouteView {
  * SIZE. The amounts are the whole worthwhile RUN, not one exchange:
  * `worthwhileScale(play).flips` is the same derived size the Scale column prints
  * and the Run cost bounds are compared against, so the three cannot disagree
- * about how big this play is. Spend is `flips × price × (1 + tick)` — the
+ * about how big this play is. Step 3 is sized the same way and reads as a total
+ * rather than as an order (`convertStep` below): it is the only step whose
+ * quantity the reader does not choose, so a per-lot ratio there told them to
+ * convert one orb of a run that converts hundreds. Spend is
+ * `flips × price × (1 + tick)` — the
  * UNDERCUT entry, the price an order that actually fills is posted at, which is
  * what `investment` and `expectedRoi` are already priced at (POE-188). Rebuilding
  * it from `price` alone would print the raw best case under a net expectation.
@@ -1020,21 +1076,78 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 
 	const steps = {
 		buy: step(buyLeg, buyRate, unscaled),
-		sell: step(sellLeg, legRate('sell', sellLeg, sellOrder), unscaled),
-		convert: convertLeg === undefined ? null : step(convertLeg, legRate('convert', convertLeg))
+		sell: step(sellLeg, legRate('sell', sellLeg, sellOrder), unscaled)
+	};
+
+	// The convert step's market ratio, derived once: it is what step 3 prints when
+	// there is no run to total, and the hover behind the total when there is.
+	const convertRatio = convertLeg === undefined ? null : legRate('convert', convertLeg);
+
+	/**
+	 * Step 3 as the RUN TOTAL it moves — `≈ 2.52 div → 526c` — or the market's own
+	 * ratio when `entry` is `null`.
+	 *
+	 * What step 3 converts is the proceeds of step 2 for the whole worthwhile run,
+	 * and what it yields is the run's Get. The per-lot ratio this replaced read as
+	 * an instruction to convert ONE orb ("convert 1 div for 209c") on a row whose
+	 * other four slots are all counting the run, and how much of the run that one
+	 * orb is depends entirely on how large the proceeds happen to be — which is
+	 * the number the reader came to the slot for and the one it did not show.
+	 *
+	 * Both figures come off the SAME numbers the ends are built from — `entry.get`
+	 * is the Get amount itself, and the proceeds are that amount divided by this
+	 * leg's own price — rather than being re-derived from the quantities the buy
+	 * and sell steps printed. Those quantities are snapped to their markets' lots
+	 * and are deliberately not the run (see `legRate`), so multiplying them back
+	 * up would put a third, disagreeing total on a row that already has one.
+	 *
+	 * The bare `price` and not `price × (1 + tick)`: the undercut every leg of the
+	 * run is filled at is already inside `expectedRoi`, which is what `entry.get`
+	 * is built from, so charging it a second time here would shrink the proceeds
+	 * against the very total they are divided out of.
+	 *
+	 * `entry` is `null` in the two branches whose ends are not the entry-currency
+	 * run pair — no worthwhile size, and an entry this response cannot value in
+	 * chaos — and a non-positive `price` (version skew, a leg served without one)
+	 * falls back the same way, since a total divided by nothing is not a reading.
+	 */
+	const convertStep = (entry: { get: number; unit: string } | null): RouteStep | null => {
+		if (convertLeg === undefined || convertRatio === null) return null;
+		if (entry === null || !Number.isFinite(convertLeg.price) || convertLeg.price <= 0) {
+			return step(convertLeg, convertRatio);
+		}
+		const proceeds = entry.get / convertLeg.price;
+		return {
+			// The line names both currencies and the tile carries the artwork of the
+			// one being converted, so the name would only repeat the tile. It leads
+			// the hover instead, where the ratio it replaced also lives.
+			name: null,
+			icon: convertLeg.itemIcon,
+			rate: `≈ ${withOrbUnit(proceeds, quoteUnit(convertLeg.item))} → ${withOrbUnit(entry.get, entry.unit)}`,
+			rateTitle: `${convertLeg.itemName} — this market posts "${convertRatio.text}". The line totals the whole run instead: the step-2 proceeds it converts, and what they come back as, which is the Get amount at the end of the row.`,
+			suspect: convertLeg.suspect
+		};
 	};
 
 	// No derivable run size: the per-exchange chaos ends, exactly as before.
 	if (scale === null) {
 		const chaos = chaosIconPath();
 		return {
-			spend: { amount: formatChaos(play.investment), icon: chaos, unit: 'chaos', sub: null },
+			spend: {
+				amount: formatChaos(play.investment),
+				icon: chaos,
+				unit: 'chaos',
+				sub: null,
+				title: endTitle('chaos', null)
+			},
 			...steps,
+			convert: convertStep(null),
 			get: {
 				amount: formatChaos(play.investment + play.roi),
 				icon: chaos,
 				unit: 'chaos',
-				sub: null
+				sub: null,
+				title: endTitle('chaos', null)
 			},
 			// The flag describes the two numbers ON SCREEN, and this branch renders
 			// the optimistic pair. Saying "no gain" over a Get that is visibly
@@ -1055,13 +1168,24 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 	if (chaosPerEntry === null) {
 		const chaos = chaosIconPath();
 		return {
-			spend: { amount: formatChaos(scale.investment), icon: chaos, unit: 'chaos', sub: null },
+			spend: {
+				amount: formatChaos(scale.investment),
+				icon: chaos,
+				unit: 'chaos',
+				sub: null,
+				title: endTitle('chaos', null)
+			},
 			...steps,
+			// These ends are chaos and the entry currency is not, so the Get amount is
+			// not what this leg's price converts INTO — the one figure a run total
+			// would have to end on. The market ratio is the honest line here.
+			convert: convertStep(null),
 			get: {
 				amount: formatChaos(scale.investment + scale.gain),
 				icon: chaos,
 				unit: 'chaos',
-				sub: keep
+				sub: keep,
+				title: endTitle('chaos', keep)
 			},
 			positive: true
 		};
@@ -1078,6 +1202,8 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 
 	const spend = scale.flips * buyLeg.price * (1 + buyLeg.tick);
 	const profit = scale.gain / chaosPerEntry;
+	const spendSub = entryIsChaos ? null : `≈ ${formatChaos(scale.investment)}c`;
+	const getSub = entryIsChaos ? keep : `${keep} (≈ ${formatFractionalOrbs(profit)} div)`;
 
 	return {
 		spend: {
@@ -1088,9 +1214,14 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			// the same run at the same undercut, and this is the exact figure the
 			// filter bar's Run cost bounds compare against, so reading it directly
 			// leaves no seam for the sub-line and the bound to disagree across.
-			sub: entryIsChaos ? null : `≈ ${formatChaos(scale.investment)}c`
+			sub: spendSub,
+			title: endTitle(entryUnit, spendSub)
 		},
 		...steps,
+		// The one branch with a run to total: `spend + profit` is the Get amount
+		// itself, so the convert line's tail and the slot at the end of the row are
+		// the same string by construction and not by two agreeing calculations.
+		convert: convertStep({ get: spend + profit, unit: entryIsChaos ? 'c' : 'div' }),
 		get: {
 			amount: amount(spend + profit),
 			icon: currencyIconPath(buyLeg.quote),
@@ -1100,7 +1231,8 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			// this and `formatLegPrice` agree — so the choice buys no visible
 			// difference today and costs nothing, and it means the tail cannot
 			// drift into a different precision from the total right above it.
-			sub: entryIsChaos ? keep : `${keep} (≈ ${formatFractionalOrbs(profit)} div)`
+			sub: getSub,
+			title: endTitle(entryUnit, getSub)
 		},
 		// A derivable scale IS a positive expectation, and `gain` is that
 		// expectation multiplied by a positive flip count.
