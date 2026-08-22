@@ -2,7 +2,7 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-08-22 against `main@50ec6ff` — `desktop/src/lib/exchange/view.ts`,
+Last verified: 2026-08-22 against `main@d7732e3` — `desktop/src/lib/exchange/view.ts`,
 `filters.ts`, `internal/exchange/plays.go`, `desktop/src/lib/tooltips.ts`.
 
 This document is the single normative statement of what the numbers on one
@@ -42,7 +42,7 @@ fallback.
 **BASIS.** Every MECHANICAL number on a row is priced at the UNDERCUT FILL
 PRICES — the price an order that actually gets taken is posted at:
 `Price*(1+Tick)` on a buy leg, `Price*(1-Tick)` on a sell leg
-(`internal/exchange/plays.go:47-84`, computed at `plays.go:963-967`). The raw
+(`internal/exchange/plays.go:38-41`, computed at `plays.go:964-966`). The raw
 hourly extremes appear on the row in exactly one place, the step hovers, worded
 as what the market PRINTED rather than as what to post.
 
@@ -60,14 +60,14 @@ For one play, with `divineChaosRate` from the same response:
 
 | Symbol | Definition | Source |
 | --- | --- | --- |
-| `N` | flips: `worthwhileScale(play).flips`, or `1` when there is no worthwhile scale | `view.ts:519-530` |
-| `r` | chaos per unit of the ENTRY quote: `1` for chaos, `divineChaosRate` for divine | `chaosPerQuote`, `view.ts:768-772` |
+| `N` | flips: `worthwhileScale(play).flips`, or `1` when there is no worthwhile scale | `view.ts:525-536` |
+| `r` | chaos per unit of the ENTRY quote: `1` for chaos, `divineChaosRate` for divine | `chaosPerQuote`, `view.ts:933-937` |
 | `u0` | undercut buy price of leg 1, in entry-quote units per item: `legs[0].price * (1 + legs[0].tick)` | wire |
 | `u1` | undercut sell price of leg 2, in leg 2's own quote per item: `legs[1].price * (1 - legs[1].tick)` | wire |
 | `u2` | undercut price of leg 3 (1-hop only), entry-quote per unit of the intermediate: `legs[2].price * (1 - legs[2].tick)` | wire |
-| `I` | `moneyColumns(play).investment` — chaos the run ties up | `view.ts:578-588` |
-| `R` | `moneyColumns(play).roi` — chaos the run gains at the hour's BEST-CASE prices | `view.ts:578-588` |
-| `X` | `moneyColumns(play).expectedRoi` — chaos the run is MEASURED to pay | `view.ts:578-588` |
+| `I` | `moneyColumns(play).investment` — chaos the run ties up | `view.ts:590-600` |
+| `R` | `moneyColumns(play).roi` — chaos the run gains at the hour's BEST-CASE prices | `view.ts:590-600` |
+| `X` | `moneyColumns(play).expectedRoi` — chaos the run is MEASURED to pay | `view.ts:590-600` |
 
 `r` is the client's mirror of the server's `entryRate` and is bit-identical to
 it: `Result.DivineChaosRate` is the newest hour's divine/chaos VWAP
@@ -107,7 +107,7 @@ cannot be subtracted from the buy total at all.
 **Why E7 derives the sell total backwards from `chainEnd` rather than forwards
 from `legs[1].price`.** Because `roiPct` is the WIRE'S ANSWER to what the round
 trip returns, and the client must not be able to disagree with it. `roiPct` is
-served (`plays.go:1012`, computed at `plays.go:963-1006` from the same undercut
+served (`plays.go:1012`, computed at `plays.go:958-1006` from the same undercut
 prices the legs carry), `R` is built from it, and `chainEnd` is built from `R`.
 A forward derivation (`N · u1`) recomputes the served answer from the served
 inputs and then prints its own result beside it — so the moment the server's
@@ -140,23 +140,25 @@ replaced, and the convert step drops its total for the market ratio line and
 says why in its hover.
 
 This is also why the convert step's divisor changes from the RAW price to `u2`.
-The old rationale (`view.ts:1219-1222`) — bare `price`, because the undercut is
-already inside `expectedRoi` — was correct only while the convert line's
-numerator was Get. Under E3 the numerator is `chainEnd`, which is built from
-`R`, which is built from `roiPct`, which already contains `u2`. Recovering the
-proceeds from `chainEnd` therefore requires dividing by `u2`; dividing by the
-raw price would print a proceeds figure the wire's own `roiPct` contradicts.
+The old rationale (a `convertStep` comment this change deleted; the reasoning
+now sits at `view.ts:1456-1463`) — bare `price`,
+because the undercut is already inside `expectedRoi` — was correct only while
+the convert line's numerator was Get. Under E3 the numerator is `chainEnd`,
+which is built from `R`, which is built from `roiPct`, which already contains
+`u2`. Recovering the proceeds from `chainEnd` therefore requires dividing by
+`u2`; dividing by the raw price would print a proceeds figure the wire's own
+`roiPct` contradicts.
 
 **The single scale rule, restated as code.** `N` and the three money roots come
 from `moneyColumns(play)` and nowhere else. `moneyColumns` has two branches — the
 run and the single exchange — and every emitter takes the SAME branch at the
 same time because they all read the same function. The route ends, the three
 money columns, the Scale column, the Run cost bounds
-(`filters.ts:663-679`) and the step totals are one set of numbers.
+(`filters.ts:673-690`) and the step totals are one set of numbers.
 
 **The one exempt branch: an entry currency this response cannot value in chaos.**
 `chaosPerQuote` answers `null` when the entry quote is divine and the response's
-`divineChaosRate` is 0 (`view.ts:759-772`). There is then no `r`, so E1–E4 and
+`divineChaosRate` is 0 (`view.ts:933-937`). There is then no `r`, so E1–E4 and
 E7 have no entry-currency rendering to be stated in and the row cannot carry a
 mechanical chain at all. That branch renders both ends in CHAOS from
 `moneyColumns` and prints the markets' own ratios on the steps. E5 survives
@@ -215,8 +217,9 @@ through two different formatters does not close for the reader.
    whole orders" — with the unsold-residue sentence when the division leaves a
    remainder on a SELL step ("2 of the 12 bought stay unsold"), and the
    smaller-than-one-lot sentence when the run is under a single lot. That is the
-   same pair of facts the snap's two hovers carried (`view.ts:957-965` and
-   `view.ts:972-975`), moved off the line and onto the hover with the pair.
+   same pair of facts the snap's two hovers carried (both deleted with the
+   snap), moved off the line and onto the hover with the pair — where they now
+   live, in `marketPair` (`view.ts:1074-1096`).
 
 7. **A step with no total prints the market's ratio, and says so.** Three places
    have no total to print: the exempt branch of §3, a 1-hop convert step whose
@@ -281,7 +284,7 @@ the row, as the last step's total.
 closes the row the other way round — the route stays wholly mechanical, both
 ends and every step on the one best-case basis, and `keep ≈ X` moves off the
 Get slot onto the Exp. ROI cell's existing sub-line, which already renders `n=`
-and `low` (`CurrencyExchangePage.svelte:677-702`). It is a genuinely smaller
+and `low` (`CurrencyExchangePage.svelte:681-706`). It is a genuinely smaller
 change: no red Get, no verb over a loss, no `positive` flip, no rendering change
 to the fallback rows at all.
 
@@ -296,7 +299,7 @@ measurement inverts which of the two the row asserts. The cost of the choice
 made is real and is paid here: the deviation of §5 exists at all, the fallback
 branch's Get can print below its Spend, and the shipped
 `keep ≈ 102c (≈ 0.51 div)` string — the one the width contract is sized around
-(`ExchangeRoute.svelte:220-232`) — has to stay on the row and be sized for.
+(`ExchangeRoute.svelte:242-251`) — has to stay on the row and be sized for.
 
 ---
 
@@ -307,7 +310,7 @@ rule it is outside of and why.
 
 ### 6.1 The per-exchange gate knobs (outside the SCALE rule)
 
-`filters.ts:565-590` — `minItemPrice` vs `play.investment`, `minRoiChaos` vs
+`filters.ts:572-582` — `minItemPrice` vs `play.investment`, `minRoiChaos` vs
 `play.roi`, `minTurnover`, `maxTickPct`, `minEdgeTickRatio`, `minRoiPct` — all
 read the wire's PER-EXCHANGE fields, never the run.
 
@@ -330,7 +333,7 @@ uncomfortable half out loud: *no column prints the figure this compares
 against*. That sentence is load-bearing and must not be edited away.
 
 **The exception's own exception:** the filter bar's **Run cost** bounds
-(`filters.ts:663-679`) DO read the run, because a bankroll ceiling is a run-sized
+(`filters.ts:673-690`) DO read the run, because a bankroll ceiling is a run-sized
 quantity — the reader is asking what they can afford to have tied up, not what
 one exchange costs. That bound reads `moneyColumns(play).investment`, the exact
 figure the Investment column prints and the Scale column's "N c in" sub-line
@@ -338,7 +341,7 @@ repeats, so it is INSIDE the scale rule rather than exempt from it.
 
 ### 6.2 ROI% (outside the SCALE rule and outside the BASIS rule)
 
-`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:704-718`.
+`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:708-722`.
 
 *Why exempt from SCALE:* it is a ratio. The run multiplies numerator and
 denominator by the same `N`, so the per-exchange percentage and the per-run
@@ -357,7 +360,7 @@ is what the Gates row judges — both already stated at `tooltips.ts:86-87`.
 
 ### 6.3 Depth (outside SCALE and BASIS)
 
-`play.depth`, rendered at `CurrencyExchangePage.svelte:738-750`.
+`play.depth`, rendered at `CurrencyExchangePage.svelte:742-754`.
 
 *Why exempt:* it is a MARKET reading, not a figure of the play — units per hour
 that changed hands on the play's thinnest leg. It is the whole book's volume and
@@ -367,7 +370,7 @@ gets deeper the more the reader wants to trade.
 
 ### 6.4 `Scale.hours` (outside the BASIS rule)
 
-`worthwhileScale().hours = ceil(flips / depth)` (`view.ts:528`).
+`worthwhileScale().hours = ceil(flips / depth)` (`view.ts:534`).
 
 *Why exempt:* it is a TIME, and a time has no price basis. It inherits the run
 scale correctly (its numerator is `flips`) but its denominator is §6.3's
@@ -386,7 +389,7 @@ in `tooltips.ts`, `view.ts` doc comments, or the page caption.
 
 ### 6.5 A basis note that is not an exception
 
-`moneyColumns(play).roi = play.roi * flips` (`view.ts:585`) has been read as
+`moneyColumns(play).roi = play.roi * flips` (`view.ts:597`) has been read as
 mixing bases — a fill-simulation-derived flip count multiplying a best-case
 per-exchange figure. It does not. **A flip count is a SCALE, not a BASIS.**
 `flips` is a dimensionless repeat count; the only price basis inside `roi` is
@@ -416,7 +419,7 @@ Four assertion tiers, with the tolerance rule for each:
   compared with `toBe` on the whole string, with no tolerance. Covers:
   - the buy step's total against the Spend amount. The step line carries a unit
     and the end does not (`RouteEnd.amount` is bare, its unit word being a
-    separate span — `ExchangeRoute.svelte:143-144`), so the pin is two
+    separate span — `ExchangeRoute.svelte:162-163`), so the pin is two
     assertions and not one: the line ENDS WITH `for ≈ ${withOrbUnit(spend,
     entryUnitShort)}`, and the numeric head of that tail is character-identical
     to `route.spend.amount`. Either one alone can pass while the two numbers
@@ -438,7 +441,8 @@ Four assertion tiers, with the tolerance rule for each:
   comparing it to `moneyColumns(play).investment`, which is the expression the
   field is assigned from and would assert nothing.
 - **T3 — cross-check against the wire and against hand-worked arithmetic
-  (relative tolerance 1e-9).** `R === play.roi * N`, and the forward derivations
+  (relative tolerance 1e-9).** The entry-currency run cost `spend ≈ N·u0`, the
+  §5 deviation `chainEndChaos − getChaos ≈ R − X`, and the forward derivations
   `chainEnd ≈ N·u1` (direct), `sellStepTotal ≈ N·u1` (1-hop) and
   `chainEnd ≈ N·u1·u2` (1-hop) cross the wire's `roiPct` multiplication and
   therefore reassociate: `19*1.01*200` and `19.19*200` differ in the last ulp.
@@ -494,6 +498,6 @@ it by overriding `expectedRoi`.
 ## 8. Out of scope for this document
 
 Gate semantics and levels; the server's pricing and simulation arithmetic; the
-Exp. ROI column's non-monotonicity in the served order (`view.ts:604-613`, a
+Exp. ROI column's non-monotonicity in the served order (`view.ts:769-778`, a
 seam by choice); the Gold column; the gem-flip ROI domain, which shares the
-words and means percentage points (`tooltips.ts:70-83`).
+words and means percentage points (`tooltips.ts:50-53`).
