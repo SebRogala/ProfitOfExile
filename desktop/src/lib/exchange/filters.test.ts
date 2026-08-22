@@ -55,10 +55,10 @@ function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg 
 /**
  * A ranked play over one leg.
  *
- * The optimistic pair (`roi`/`roiPct`) and the simulated pair
+ * The best-case pair (`roi`/`roiPct`) and the simulated pair
  * (`expectedRoi`/`expectedRoiPct`) carry deliberately DIFFERENT values, and the
  * expectation is the smaller of the two, as the calibration found it to be
- * (POE-193). Every gate in this file judges the optimistic pair, so a gate case
+ * (POE-193). Every gate in this file judges the best-case pair, so a gate case
  * that overrides `roi` or `roiPct` leaves an expectation that would answer the
  * same gate differently — which is what makes those cases able to fail if a
  * gate is ever re-pointed at the measured number.
@@ -718,7 +718,7 @@ describe('applyGates', () => {
 	});
 
 	it('keeps a play the simulation expects to lose chaos', () => {
-		// The gates judge the OPTIMISTIC pair on purpose (POE-193): the levels a
+		// The gates judge the BEST-CASE pair on purpose (POE-193): the levels a
 		// reader arms were calibrated against `roi` and `roiPct`, so re-pointing one
 		// at the expectation would change what a typed level cuts. The measured
 		// loser stays on the table and is ranked and coloured for what it is —
@@ -857,7 +857,7 @@ describe('applyGates', () => {
 describe('applyNumericFilters', () => {
 	// 100c an exchange EXPECTED to pay 10c: ten flips clear the 100c scale
 	// target, so the bounds are asked about 1,000c — never about the 100c one
-	// exchange costs. The optimistic `roi` is deliberately 25c, which would
+	// exchange costs. The best-case `roi` is deliberately 25c, which would
 	// divide the target into four flips and 400c instead: the scale counts the
 	// expectation (POE-193), and these bounds meet whatever it counts.
 	const cheap = play({ key: 'cheap', investment: 100, roi: 25, roiPct: 0.25, expectedRoi: 10 });
@@ -929,11 +929,19 @@ describe('applyNumericFilters', () => {
 	});
 
 	it('bounds the very figure the Investment column shows the reader', () => {
-		// The bound and the column are one number, so a ceiling the reader types
-		// cannot admit a row whose printed Investment sits above it. Told across
-		// both branches at once — `cheap` has a run, `measuredLoss` has none — so
-		// a change that re-anchored either side of either branch shows up here as
-		// a row admitted above its own printed cost.
+		// The bound and the column are one FUNCTION, not two agreeing expressions:
+		// `applyNumericFilters` calls `moneyColumns(play).investment`, which is the
+		// call the Investment cell renders. So a ceiling the reader types cannot
+		// admit a row whose printed Investment sits above it. Told across both
+		// branches at once — `cheap` has a run, `measuredLoss` has none — so a
+		// change that re-anchored either side of either branch shows up here as a
+		// row admitted above its own printed cost.
+		//
+		// The printed figures are pinned as LITERALS rather than by re-calling the
+		// shared function: since the filter now calls it too, asserting the bound
+		// against that same call would compare the production expression with
+		// itself. `dear` is the discriminator — its per-exchange 250c clears the
+		// ceiling that its printed 2,500c does not.
 		const measuredLoss = play({ key: 'loss', investment: 100, roi: 25, expectedRoi: -3 });
 		const ceiling = 1000;
 
@@ -943,9 +951,9 @@ describe('applyNumericFilters', () => {
 		);
 
 		expect(keys(kept)).toEqual(['cheap', 'loss']);
-		for (const row of kept) {
-			expect(moneyColumns(row).investment).toBeLessThanOrEqual(ceiling);
-		}
+		expect(moneyColumns(cheap).investment).toBe(1000);
+		expect(moneyColumns(measuredLoss).investment).toBe(100);
+		expect(moneyColumns(dear).investment).toBe(2500);
 	});
 
 	it('reads the investment bounds as divine when the unit says divine', () => {

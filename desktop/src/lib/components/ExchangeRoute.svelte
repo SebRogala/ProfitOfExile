@@ -15,12 +15,18 @@
 	 * Since POE-193 the amounts are the whole worthwhile RUN and the ends are in
 	 * the currency the run is entered with, so the end slots carry a unit word and
 	 * a sub-line; comfortable shows both, dense shows neither and hands them back
-	 * through the wrapper's `title`. Steps 1 and 2 read as whole-quantity ORDERS —
-	 * "buy 12 for 420c" — rather than the per-unit decimal the in-game exchange has
-	 * no field for, and carry a `title` whenever the printed quantity is not the
-	 * one the step was asked for (a market posting in lots that quantity does not
-	 * divide by). Step 3 reads as the run's TOTAL — "≈ 2.52 div → 526c" — and has
-	 * no name line, its icon naming the currency instead.
+	 * through the wrapper's `title`. Steps 1 and 2 read as RUN TOTALS carrying
+	 * `≈` — "buy 12 for ≈ 424c" — rather than the whole-quantity ORDER they used
+	 * to print, and rather than the per-unit decimal the in-game exchange has no
+	 * field for. The market's own posted pair moved to the `title`: on a step that
+	 * prints a run total the hover is what that market printed plus what its lot
+	 * does to a run of this size, and it is `null` only there — when such a leg
+	 * arrives with no usable pair to word. A step that shows its market's LINE
+	 * instead of a run total always has a `title`, pair or no pair: the caveat that
+	 * the line counts one order while the row's ends count the run, worded for the
+	 * pairless fallback too. Step 3 reads as the run's TOTAL — "≈ 2.97 div →
+	 * 615c" — and only there has no name line, its icon naming the currency
+	 * instead.
 	 *
 	 * SLOT GEOMETRY, mirrored by the table header in `CurrencyExchangePage`: the
 	 * header's label spans must carry the same widths as `.slot-*` below

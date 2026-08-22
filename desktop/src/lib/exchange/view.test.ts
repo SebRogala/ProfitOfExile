@@ -84,10 +84,10 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
 }
 
 /**
- * A clean, ranked play whose OPTIMISTIC `roi` (10c) and measured `expectedRoi`
+ * A clean, ranked play whose BEST-CASE `roi` (10c) and measured `expectedRoi`
  * (4c) deliberately differ, and differ from every value a case overrides.
  *
- * The two re-sorting branches read different fields — `'roi'` the optimistic
+ * The two re-sorting branches read different fields — `'roi'` the best-case
  * one, `'fastest'` the expectation through `worthwhileScale` — so a case about
  * one of them overrides that field only, and leaves the other at the factory
  * value across the whole fixture. A production swap between the two then reads
@@ -102,7 +102,7 @@ function response(overrides: Partial<CurrencyExchangeResponse> = {}): CurrencyEx
  * `expectedRoiPct` is NOT `expectedRoi / investment` (4/200 would be 0.02): the
  * wire's expectation pair carries no such identity — each is a mean over the
  * simulated entries, each with its own chased outlay — unlike
- * `roi === roiPct * investment`, which the optimistic pair does hold to
+ * `roi === roiPct * investment`, which the best-case pair does hold to
  * (POE-193).
  */
 function play(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
@@ -1222,7 +1222,7 @@ describe('worthwhileScale', () => {
 	// change to that constant fails these tests rather than passing silently.
 	//
 	// The step the target is divided by is the EXPECTATION (POE-193), never the
-	// optimistic `roi` this used to read — so every case below, bar the last,
+	// best-case `roi` this used to read — so every case below, bar the last,
 	// leaves `roi` at the fixture's 10c, which divides the target into 10 flips
 	// and is therefore an answer none of the expectations here produce. The last
 	// case is the one that needs a `roi` of its own, and says why.
@@ -1300,12 +1300,12 @@ describe('worthwhileScale', () => {
 		expect(worthwhileScale(play({ expectedRoi: Number.NaN }))).toBeNull();
 	});
 
-	it('reports no scale for a measured loser however large its optimistic return', () => {
+	it('reports no scale for a measured loser however large its best-case return', () => {
 		// The row POE-193 put on the table and the old `roi` reading could not
 		// express: the server's positivity floor (ADR-015) still keeps `roi` above
 		// zero, and the simulation is free to measure a loss anyway — so a play can
 		// carry the table's biggest ROI and no scale at all. Counting the
-		// optimistic 500c would answer ×1 rather than the dash the column owes a
+		// best-case 500c would answer ×1 rather than the dash the column owes a
 		// play with nothing to repeat toward.
 		expect(worthwhileScale(play({ roi: 500, roiPct: 2.5, expectedRoi: -6 }))).toBeNull();
 	});
@@ -1318,7 +1318,7 @@ describe('moneyColumns', () => {
 	//
 	// Every scaled case runs on an `expectedRoi` of 3, which is 34 flips to clear
 	// the 100c target. That count is deliberately not the one the fixture's other
-	// fields produce: the optimistic `roi` of 10 would divide the target into 10,
+	// fields produce: the best-case `roi` of 10 would divide the target into 10,
 	// so a production swap onto the wrong field answers a number no case here
 	// expects. It is also not a divisor of the target, so the scaled gain
 	// overshoots to 102c and cannot be confused with `SCALE_TARGET_CHAOS` itself.
@@ -1328,7 +1328,7 @@ describe('moneyColumns', () => {
 		expect(moneyColumns(play({ expectedRoi: 3, investment: 40 })).investment).toBe(1360);
 	});
 
-	it('reports the optimistic return across the whole run', () => {
+	it('reports the best-case return across the whole run', () => {
 		// The column stays the RAW best case (the NET/RAW convention the ROI%
 		// column spells out) and is simply told at the run's size: 34 × 10c.
 		expect(moneyColumns(play({ expectedRoi: 3, roi: 10 })).roi).toBe(340);
@@ -1344,7 +1344,7 @@ describe('moneyColumns', () => {
 		expect(moneyColumns(play({ expectedRoi: -6, investment: 40 })).investment).toBe(40);
 	});
 
-	it('falls back to the optimistic return on one exchange for a play with no run', () => {
+	it('falls back to the best-case return on one exchange for a play with no run', () => {
 		expect(moneyColumns(play({ expectedRoi: -6, roi: 500 })).roi).toBe(500);
 	});
 
@@ -2165,6 +2165,10 @@ describe('routeSlots', () => {
 		expect(title).toContain(
 			'The Get slot at the end of the row is the Spend plus the Exp. ROI column'
 		);
+		// The identities are chaos identities, and the columns are chaos while a
+		// divine route's ends are not — the qualifying clause is what keeps the
+		// hover true on that route, so it is pinned with the identities it guards.
+		expect(title).toContain('at the divine rate');
 	});
 
 	it('shows the market’s ratio at step 3 of a row it cannot value in chaos', () => {

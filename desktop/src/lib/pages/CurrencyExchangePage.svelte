@@ -457,7 +457,7 @@
 			value={parseSort(sortPref.value)}
 			options={SORT_OPTIONS}
 			onselect={(v) => (sortPref.value = parseSort(v))}
-			title="Rank by the simulated outcome the server ranks on, by the optimistic chaos gained per exchange, or by how long the market needs to absorb the play's worthwhile scale — shortest wait first."
+			title="Rank by the simulated outcome the server ranks on, by the hour's best-case chaos the ROI column shows for the whole run, or by how long the market needs to absorb the play's worthwhile scale — shortest wait first."
 		/>
 
 		<div class="divider"></div>
@@ -540,7 +540,11 @@
 			<span>
 				prices are the newest hour’s cheapest buy and dearest sell, so the ROI columns are a best
 				case, not a quote — Exp. ROI is what the play would have paid across the last day, and
-				every money figure on a row counts the whole worthwhile run
+				every money figure on a row counts the whole worthwhile run, or one exchange on a row the
+				simulation expects to lose, which has no size worth repeating it to — and the route is
+				priced at that best case throughout except its Get end, which is the spend plus Exp. ROI,
+				so the last step’s total and Get differ by the gap between those two columns; both
+				identities are in chaos, and a divine-entry route prints them at the divine rate
 			</span>
 		{:else}
 			<span class="warn">Couldn't reach the server</span>
@@ -753,7 +757,22 @@
 							     bankroll and in waiting. Dense keeps only the ×N → gain —
 							     the run's cost and wait are traded away with every other
 							     sub-line, so the Fastest sort ranks by a number dense does
-							     not print; comfortable is where the wait is read. -->
+							     not print; comfortable is where the wait is read.
+
+							     `scale.gain` and `scale.investment` are not this cell's own
+							     arithmetic: whenever `scale` is non-null they ARE
+							     `money.expectedRoi` and `money.investment`, the two figures
+							     the Exp. ROI and Investment cells above print, because
+							     `moneyColumns` reads them off this very object. That makes two
+							     variables, not four calculations that agree: `scale.gain` is
+							     what the "→ +Xc" here, the Exp. ROI cell and the route's
+							     `keep ≈` line all render, and `scale.investment` is what the
+							     "N c in" below, the Investment cell and the filter bar's
+							     Run-cost bound all render
+							     (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1, SCALE, and §5).
+							     Reaching for `play.expectedRoi` or `play.investment` here
+							     would print the per-exchange figure beside run-sized
+							     neighbours, which is the bug that document exists to close. -->
 							<td class="num">
 								{#if scale === null}
 									<span class="mono reserved">—</span>
