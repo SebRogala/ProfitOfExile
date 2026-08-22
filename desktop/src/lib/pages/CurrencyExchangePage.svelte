@@ -1102,7 +1102,13 @@
 		display: block;
 	}
 
-	/* Mirrors `ExchangeRoute`'s slot widths, arrows and gap. Both densities. */
+	/* Mirrors `ExchangeRoute`'s slot widths, arrows and gap. Both densities:
+	   comfortable 120 / 208 / 176 / 176 / 168 with 22px arrow gaps and a 7px
+	   gap, dense 80 / 220 / 140 / 140 / 80 with 18px arrow gaps and a 6px gap;
+	   collapsed, comfortable 120 / 208 / 176 / 168 and dense 80 / 220 / 140 / 80,
+	   which is the same set less the convert slot and the arrow gap before it.
+	   The numbers are DERIVED there, off the longest string each slot can hold —
+	   change one there, copy it here, and never the other way round. */
 	.route-head {
 		display: flex;
 		align-items: center;
@@ -1128,12 +1134,16 @@
 	.route-head .slot-get {
 		width: 168px;
 	}
+	/* The step slots are the ones that moved when the lines became `≈` run
+	   totals: 196 → 208 and 164 → 176. At their worst case it is the RATE that
+	   binds them rather than the item name above it, which is the derivation
+	   `ExchangeRoute`'s CSS carries. The ends did not move. */
 	.route-head .slot-buy {
-		width: 196px;
+		width: 208px;
 	}
 	.route-head .slot-sell,
 	.route-head .slot-convert {
-		width: 164px;
+		width: 176px;
 	}
 
 	.route-head.dense .gap {

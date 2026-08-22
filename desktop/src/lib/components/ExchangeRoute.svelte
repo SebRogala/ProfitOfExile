@@ -30,14 +30,20 @@
 	 *
 	 * SLOT GEOMETRY, mirrored by the table header in `CurrencyExchangePage`: the
 	 * header's label spans must carry the same widths as `.slot-*` below
-	 * (comfortable 120 / 196 / 164 / 164 / 168 with 22px arrows and a 7px gap;
+	 * (comfortable 120 / 208 / 176 / 176 / 168 with 22px arrows and a 7px gap;
 	 * dense 80 / 220 / 140 / 140 / 80 with 18px arrows and a 6px gap), or the
 	 * labels drift off the tiles they name. The two ends are NOT one width: only
-	 * Get carries the profit line the comfortable geometry is sized around.
+	 * Get carries the profit line the comfortable geometry is sized around. The
+	 * three step slots each grew 12px when the lines became `≈` run totals; the
+	 * two ends did not move, because the shapes they print did not. Dense did not
+	 * move at all: a rate too long for its dense slot ellipsizes there instead,
+	 * the name beside it yielding its width first. The measured arithmetic for both
+	 * densities is in the CSS, above `.slot-buy` and above `.route.dense
+	 * .slot-buy`.
 	 *
 	 * COLLAPSED VARIANT. `showConvert` false drops the convert slot AND the arrow
 	 * that led into it, leaving four slots and three arrows — comfortable
-	 * 120 / 196 / 164 / 168, dense 80 / 220 / 140 / 80, at the same arrow and gap
+	 * 120 / 208 / 176 / 168, dense 80 / 220 / 140 / 80, at the same arrow and gap
 	 * widths. No remaining slot changes size, so the contract with the header is
 	 * one `{#if}` on each side rather than a second set of numbers. The arrow
 	 * between sell and Get is a NORMAL arrow there, not the muted one: nothing is
@@ -128,13 +134,20 @@
 		{#if slot.name}
 			<span class="name" title={slot.name}>{slot.name}</span>
 		{/if}
-		<!-- `rateTitle` is set only when the printed order is not the quantity the
-		     step was asked for, because the market posts in lots that quantity does
-		     not divide by — the one case where the numbers on screen and the
-		     amounts at the ends deliberately disagree, and the reader is owed the
-		     reason. The rate itself is the fallback title rather than nothing: the
-		     slot ellipsizes, and the tail it drops is the unit word, so a hover
-		     that recovers the whole string is the only way back to it. -->
+		<!-- `rateTitle` carries what the line itself no longer claims: on a step
+		     that printed a run total it is the market's own posted pair plus what
+		     that market's lot does to a run of this size, and it is `null` only
+		     when such a leg arrived with no usable pair to word; on a step showing
+		     its market's LINE instead it is always set, saying that the line counts
+		     one market's lot — or, where no pair was posted, its bare per-unit
+		     rate — while the row's ends count the run. See the header comment.
+		     The rate is its own fallback title, but ONLY on that pairless leg: on
+		     every other step the hover prints the market's posted pair, never the
+		     total the line printed. So a run-total line cut short by its slot is
+		     not recoverable on hover — there is nowhere the printed total is
+		     written down a second time — which is why the cut has to be MARKED
+		     rather than silent. That is what `.route.dense .name` in the CSS
+		     below buys. -->
 		<span class="rate mono" title={slot.rateTitle ?? slot.rate}>{slot.rate}</span>
 	</span>
 {/snippet}
@@ -212,8 +225,11 @@
 		/* The fixed widths below are a contract with the page header, so a string
 		   too long for its slot has to be clipped rather than allowed to push the
 		   next tile out of its column — dense is where it bites, its 140px convert
-		   slot being narrower than a long three-currency order. The rate carries
-		   its own `title` in every case, so what the clip takes is a hover away. */
+		   slot being narrower than a long three-currency order. What the clip takes
+		   is not always a hover away: a step's `title` is its market's posted pair,
+		   not the run total the line printed. So the dense step lines ellipsise
+		   rather than being sliced, and the mark is the reader's only warning —
+		   see `.route.dense .name`. */
 		overflow: hidden;
 	}
 
@@ -244,12 +260,55 @@
 	.slot-spend {
 		width: 120px;
 	}
+	/* THE STEP SLOTS, and the model they are sized on — which is NOT the ends'.
+	   `.lines` is a COLUMN here, so a step slot holds the item NAME over the
+	   RATE and is bound by the WIDER of the two. Both bases are MEASURED, in
+	   Chrome, against the two fonts the app actually renders in: the name is
+	   0.8125rem Segoe UI at 6.40px a character on "Omen of Amelioration", and
+	   the rate is 0.625rem Consolas at 5.498px a character — a shade wider than
+	   the ~5.25px the end slots above were sized on, because those measure a
+	   PROPORTIONAL sub-line and this is mono. Text budget is the width less the
+	   30px tile and the 7px gap.
+
+	   On an ordinary row the name binds and the rate has room to spare: "Omen of
+	   Amelioration" alone wants 128px against `buy 12 for ≈ 424c`'s 93.5px. The
+	   rate binds only where a long quantity and a fractional divine total meet,
+	   which is what the worst cases below are. So the widths chosen below are
+	   RATE-derived while the constraint that binds a realistic row is the item
+	   NAME — "Ambush Scarab of Discernment" measures 180.3px against buy's 171px
+	   text budget and ellipsizes, recovered by its own `title` exactly as it was
+	   before. That is deliberate rather than an oversight: the name has no upper
+	   bound the geometry could be sized to, so the widths are derived from the
+	   shape that does have one.
+
+	   Every step line gained `≈ ` — 2 characters, ~11px — when it became a run
+	   total, and the convert line's right amount moved from the Get to the CHAIN
+	   END, which is larger by the ROI column less the Exp. ROI column and can
+	   therefore carry an extra digit. Sized against those, at a text budget of
+	   171px for buy and 139px for sell/convert:
+
+	   - buy: `buy 12,345 for ≈ 1,234.56 div`, 29 chars → 159.5px. Fits, with
+	     11.5px — two characters — of slack. The old 196px offered 159px, which
+	     did not fit it at all;
+	   - sell: `sell 12,345 for ≈ 1,234.56 div`, 30 chars → 165px. Still clips,
+	     as it did before this change (the 28-char pre-`≈` form wanted 154px in
+	     127px). The whole string stays reachable through the rate's own `title`;
+	   - convert: `≈ 1,234.56 div → 181,338c`, 25 chars → 137.5px, which 139px
+	     holds by a hair where 127px clipped it. The digit-longer chain end,
+	     `≈ 1,234.56 div → 1,181,338c` at 148.5px, still clips by 9.5px — a
+	     million-chaos chain end is bought back by the hover rather than by
+	     another 12px on the widest cell in the table;
+	   - flip counts have no bound: `ceil(100 / expectedRoi)` reaches ×10,000 on
+	     a 0.01c expectation. The six characters of `12,345` above already cover
+	     a five-digit count, so nothing further is owed;
+	   - the two `pairLine` forms — `buy 16 for 1 div`, `convert @ 0.00 c`, ~16
+	     characters, ~88px — are inside every budget and never bind. */
 	.slot-buy {
-		width: 196px;
+		width: 208px;
 	}
 	.slot-sell,
 	.slot-convert {
-		width: 164px;
+		width: 176px;
 	}
 
 	/* Dense drops the unit word as well as the sub-line, so both ends hold a bare
@@ -260,6 +319,34 @@
 	.route.dense .slot-get {
 		width: 80px;
 	}
+	/* Dense step slots did NOT move when the lines gained their `≈`, and the
+	   trade that decision makes is measured rather than assumed. `.lines` is a
+	   ROW here and the name is zero-base flex (see `.route.dense .name` below),
+	   so the name yields its width first and the rate takes what is left. Text
+	   budget is the width less the 20px tile and the 5px gap: 195px on buy,
+	   115px on sell/convert.
+
+	   Buy absorbs it — 195px holds ~35 characters. Sell and convert do not, and
+	   not only at the arithmetic extremes: `sell 12 for ≈ 2.97 div` is 121px,
+	   which is over the 115px budget BEFORE the name is given anything, so the
+	   name collapses to nothing and the rate is still 11px over the 110px that
+	   collapse leaves it (the 5px inter-line gap is charged even at a zero-width
+	   name). The same string fitted before this row printed run totals (`sell 12
+	   for 3 div`, 93.5px), so the overrun is new, and it lands on an ordinary
+	   chaos-entry 1-hop rather than on a contrived one.
+
+	   The widths are kept anyway, because no width removes the class of failure:
+	   the rate is unbounded (`ceil(100 / expectedRoi)` reaches five digits), so a
+	   wider dense slot only moves which strings overrun, and dense exists to buy
+	   width back. What the width cannot fix, the SIGNAL does — the overrun is
+	   ellipsised inside the rate rather than sliced off by the slot's `overflow:
+	   hidden`, so the line reads `sell 12 for ≈ 2.97 …` and not `sell 12 for ≈
+	   2.97 d`: still short by its unit word, but visibly short. That mark is
+	   load-bearing here in a way it is not on the ends. The ends hand their whole
+	   string back through the wrapper's `title`; a step's hover is its market's
+	   posted PAIR, never the run total the line printed, so a truncated total is
+	   not recoverable by hovering it and the ellipsis is the only warning the
+	   reader gets. */
 	.route.dense .slot-buy {
 		width: 220px;
 	}
@@ -382,8 +469,41 @@
 		color: #6b7280;
 	}
 
-	.route.dense .rate {
-		flex-shrink: 0;
+	/* Which of the two dense lines gives way. `.lines` is a ROW in dense, holding
+	   the item name beside the rate, and this rule makes the name ZERO-BASE flex:
+	   `flex: 1 1 0` gives it a flex base size of 0, so it claims no width of its
+	   own and merely grows into whatever the rate leaves.
+
+	   Wherever the RATE fits, this changes nothing measurable — the name still
+	   lands on exactly the width it landed on before, by the opposite route. It
+	   used to shrink DOWN to the leftover from an `auto` basis, because the rate
+	   was `flex-shrink: 0` and would not give any of its own width up; it now
+	   grows UP to that same leftover from a basis of 0. Measured against the
+	   shipped stylesheet, `sell 50 for ≈ 693c` beside `Chaos Orb` renders name
+	   11.031px / rate 98.969px before AND after, and so do the two buy rows
+	   (74.531 / 115.469 and 96.531 / 93.469). Pixel-identical, not merely close.
+
+	   On a row that OVERRUNS it changes the failure. Flex shrink is scaled by flex
+	   base size, and the name's base is 0, so the name absorbs none of the
+	   shortfall and the rate absorbs all of it — by SHRINKING, which with the
+	   `text-overflow: ellipsis` above means the rate ellipsizes at its own edge.
+	   Previously the rate was `flex-shrink: 0`, kept its full width, and the
+	   surplus was sliced off by the slot's `overflow: hidden` — an unmarked cut
+	   mid-number. The convert worst case is the clearest reading: `≈ 1,234.56 div
+	   → 181,338c` wants 137.5px against a 115px budget, and where it used to leave
+	   22px hanging outside the slot it now renders inside it, ellipsised, at slot
+	   overflow 0.
+
+	   Zero base is doing real work here and a large `flex-shrink` on the name is
+	   NOT the same fix. A name with a non-zero base still leaves the rate a share
+	   of any subpixel shortfall: at `flex-shrink: 1000` the FITTING row above
+	   hands the name 11.11px instead of 11.03px and takes that ~0.08px off the
+	   rate — enough to trip the ellipsis and render `sell 50 for ≈ 69…` on a line
+	   that fits. A zero base has no share to give, so fitting rows stay pixel-
+	   identical. The rate needs nothing added: `overflow: hidden` above already
+	   zeroes its automatic minimum size, so it can shrink the whole way. */
+	.route.dense .name {
+		flex: 1 1 0;
 	}
 
 	/* The unit word goes the way of the sub-lines in dense, reversing the call
