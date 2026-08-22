@@ -607,13 +607,17 @@
 					{#each rows as play, i (play.key)}
 						{@const progress = hoursProgress(play.hoursSeen, hoursWindow)}
 						{@const scale = worthwhileScale(play)}
-						<!-- The thin-hour mark is on the ROW because the reading is the
-						     play's, not one step's: the ROUND TRIP returned no spread worth
-						     taking in the newest hour. That is what separates it from the
-						     golden tile border, which marks WHICH leg is doubtful. The row is
-						     never hidden or dimmed for it — Exp. ROI still measures the whole
-						     day, and the ranking is untouched. -->
-						<tr class:low-liquidity={play.lowLiquidity}>
+						<!-- The thin-hour reading is the play's, not one step's — the ROUND
+						     TRIP returned no spread worth taking in the newest hour — but a
+						     row-wide ring turned solid red below some rank, where nearly
+						     every play is flagged. `ExchangeRoute` now marks the traded
+						     item's own tiles (buy + sell) instead, the same red-border
+						     language the golden suspect mark uses on a doubtful leg. Nothing
+						     on the row itself carries the flag any more, so there is no class
+						     to bind here; the row is never hidden, dimmed or reordered for
+						     it — Exp. ROI still measures the whole day, and the ranking is
+						     untouched. -->
+						<tr>
 							<td class="num mono rank">{i + 1}</td>
 
 							<td>
@@ -712,13 +716,14 @@
 							     hours the worthwhile run needs, not a warning triangle.
 							     The thin-hour label lands HERE and not by the mode chip: the
 							     flag is a liquidity reading about the hour these prices came
-							     from, and this is the liquidity column — a row marked low
+							     from, and this is the liquidity column — a play marked low
 							     liquidity is usually one whose depth figure is already tiny,
 							     and the two belong under one another. Comfortable has the
 							     sub-line for free (every other cell on the row carries one,
 							     so the height is already paid for); dense drops every
-							     sub-line in the table, so there the red row border carries
-							     the mark and the same copy rides on this cell's title. -->
+							     sub-line in the table, so there the buy/sell tile borders in
+							     `ExchangeRoute` carry the mark and the same copy rides on
+							     this cell's title. -->
 							<td
 								class="num"
 								title={dense && play.lowLiquidity ? EXCHANGE_TOOLTIPS['Low liquidity'] : null}
@@ -1262,47 +1267,17 @@
 		background: rgba(255, 255, 255, 0.02);
 	}
 
-	/* The play's newest hour printed no exploitable spread — a RED outline around
-	   the whole row, in both densities.
+	/* The play's newest hour printed no exploitable spread. The mark used to be a
+	   red inset ring around the whole row (box-shadows, so the route cell's fixed
+	   slot geometry never shifted on a marked row) but below some rank nearly
+	   every row was flagged, and the viewport turned solid red frames. The mark
+	   now lives on the traded item's tiles in `ExchangeRoute` — the same red-
+	   border language the golden suspect mark already uses — so there is nothing
+	   to draw at the row level here.
 
-	   Deliberately not the golden tile border: that one is per-leg and says which
-	   half of the round trip is doubtful, this one is per-play and belongs to no
-	   single step, so the two must not be the same colour on the same row.
-
-	   Drawn as inset shadows rather than as borders because the row's cells carry
-	   the route's fixed slot geometry: a real 1px border on the first and last
-	   cell would take two pixels out of the auto-sized route cell on marked rows
-	   only, and the header labels would drift off the tiles of exactly those rows.
-	   A shadow costs no layout. The top and bottom edges sit on every cell so the
-	   line is unbroken across the row; the sides are the first and last cell's.
-
-	   No opacity, no dimming, no filter: ADR-016's rule that a measured reading is
-	   shown rather than hidden applies here too, and this reading is weaker than
-	   most — it is about ONE hour, while the ranking and Exp. ROI still speak for
-	   the whole day. */
-	tr.low-liquidity > td {
-		box-shadow:
-			inset 0 1px 0 var(--color-lab-red),
-			inset 0 -1px 0 var(--color-lab-red);
-	}
-
-	tr.low-liquidity > td:first-child {
-		box-shadow:
-			inset 0 1px 0 var(--color-lab-red),
-			inset 0 -1px 0 var(--color-lab-red),
-			inset 1px 0 0 var(--color-lab-red);
-	}
-
-	tr.low-liquidity > td:last-child {
-		box-shadow:
-			inset 0 1px 0 var(--color-lab-red),
-			inset 0 -1px 0 var(--color-lab-red),
-			inset -1px 0 0 var(--color-lab-red);
-	}
-
-	/* The words, under the depth figure. Muted rather than full-strength red: the
-	   outline is what catches the eye and the label is what names it, so a second
-	   loud red would only compete with the row's own numbers. */
+	   The words, under the depth figure. Muted rather than full-strength red: the
+	   tile border is what catches the eye and the label is what names it, so a
+	   second loud red would only compete with the row's own numbers. */
 	.low-liq {
 		color: var(--color-lab-red);
 		opacity: 0.8;
@@ -1390,15 +1365,10 @@
 		border-color: var(--color-lab-yellow);
 	}
 
-	/* Wider than tall and unfilled: the low-liquidity mark is a ROW outline, and a
-	   square swatch would read as one more tile border beside the golden one it
-	   has to be told apart from. */
+	/* The route tile's own mark, same shape as the golden one above it now that
+	   both live on a step tile rather than one being a row outline. */
 	.sw-low-liq {
-		width: 26px;
-		height: 11px;
-		border-radius: 2px;
 		border-color: var(--color-lab-red);
-		background: transparent;
 	}
 
 	.sw-empty {

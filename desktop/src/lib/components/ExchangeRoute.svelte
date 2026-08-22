@@ -102,14 +102,19 @@
 	</svg>
 {/snippet}
 
-{#snippet tile(icon: string | null, suspect: boolean)}
-	<span class="tile" class:suspect>
+{#snippet tile(icon: string | null, suspect: boolean, lowLiquidity: boolean = false)}
+	<span class="tile" class:suspect class:low-liquidity={lowLiquidity}>
 		<ItemIcon src={iconSrc(apiBase, icon)} alt="" size={iconSize} />
 	</span>
 {/snippet}
 
-{#snippet step(slot: RouteStep)}
-	{@render tile(slot.icon, slot.suspect)}
+<!-- `lowLiquidity` is the PLAY's flag (POE-196), not the leg's — it is passed
+     in by the caller rather than read off `slot`, and only the buy and sell
+     calls below pass it. The convert step never does: the flag is about the
+     traded item's own two legs, not the currency it happened to route
+     through. -->
+{#snippet step(slot: RouteStep, lowLiquidity: boolean = false)}
+	{@render tile(slot.icon, slot.suspect, lowLiquidity)}
 	<span class="lines">
 		<!-- A step with no name is the convert step showing a run total, whose line
 		     names both currencies already and whose tile carries the artwork of the
@@ -149,11 +154,11 @@
 
 		{@render arrow(false)}
 
-		<span class="slot slot-buy">{@render step(route.buy)}</span>
+		<span class="slot slot-buy">{@render step(route.buy, !!play.lowLiquidity)}</span>
 
 		{@render arrow(false)}
 
-		<span class="slot slot-sell">{@render step(route.sell)}</span>
+		<span class="slot slot-sell">{@render step(route.sell, !!play.lowLiquidity)}</span>
 
 		<!-- The slot is here for the rows that USE it. When no play in the rendered
 		     set converts, the page collapses the column for all of them and the
@@ -287,6 +292,21 @@
 		height: 20px;
 		background: transparent;
 		border-color: transparent;
+	}
+
+	/* The play's newest hour printed no exploitable spread (POE-196). A play-level
+	   reading, but drawn on the traded item's own tiles — buy and sell — rather
+	   than a ring around the whole row: below some rank nearly every play was
+	   flagged, and a row-wide ring turned solid red frames. `:not(.suspect)`
+	   is the precedence rule, not a cascade accident: a tile that is BOTH
+	   suspect and low-liquidity shows GOLD, because the per-leg warning is the
+	   more specific reading and wins on that tile. */
+	.tile.low-liquidity:not(.suspect) {
+		border-color: var(--color-lab-red);
+	}
+
+	.route.dense .tile.low-liquidity:not(.suspect) {
+		border-color: var(--color-lab-red);
 	}
 
 	/* The leg's price sits outside its fair band (POE-188). The mark is on the
