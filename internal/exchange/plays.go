@@ -12,8 +12,8 @@ import (
 // A direct play is a same-market flip (buy low, sell high, roiPctRaw =
 // high/low - 1). A one-hop play is a three-leg triangle through a second quote
 // currency (roiPctRaw = highXinB * highBinA / lowXinA - 1). Both formulas are
-// the RAW return on the hour's observed extremes; RoiPct, what the gates and the
-// ranking use, is the same round trip after each leg pays its tick. Ranking
+// the RAW return on the hour's observed extremes; RoiPct, what the gates use,
+// is the same round trip after each leg pays its tick. Ranking
 // prefers the direct shape when everything else ties, because it carries one
 // execution risk instead of three.
 type Mode string
@@ -155,9 +155,14 @@ type Play struct {
 	Legs []Leg `json:"legs"`
 	// RoiPct is the fractional gain of one round trip at the UNDERCUT prices,
 	// 0.05 meaning +5%: each leg pays one of its own ticks to be the order that
-	// fills (buy at Price*(1+Tick), sell at Price*(1-Tick)). It is what the
-	// gates and the ranking use, because it is the return an order that
-	// actually gets taken can expect.
+	// fills (buy at Price*(1+Tick), sell at Price*(1-Tick)). It is the return
+	// an order that actually gets taken can expect, and its readers are Roi
+	// (= Investment * RoiPct), the LowLiquidity flag (RoiPct under
+	// Config.MinEdge — a flag and not a drop since 2026-08-22), the gates
+	// (server-side Config.MinEdgeTickRatio when armed, and the client's
+	// minRoiPct/minEdgeTickRatio in applyGates), and the NET half of the ROI%
+	// column. It does NOT decide the served order: the ranking has sorted on
+	// ExpectedRoi since POE-193.
 	RoiPct float64 `json:"roiPct"`
 	// Edge is RoiPct under its old name, kept on the wire for clients written
 	// before POE-184.

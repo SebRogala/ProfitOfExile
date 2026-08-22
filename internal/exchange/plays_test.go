@@ -724,8 +724,8 @@ func TestBestPlays_oneHopPlay_roiPctUndercutsEachLegOnItsOwnTick(t *testing.T) {
 
 func TestBestPlays_edge_carriesTheSameValueAsRoiPct(t *testing.T) {
 	// edge is the pre-POE-184 name kept on the wire for the desktop build that
-	// still reads it; it must carry the UNDERCUT return the ranking used, not
-	// the raw spread. The fixture's 1% tick keeps the two apart.
+	// still reads it; it must carry the UNDERCUT return RoiPct holds, not the
+	// raw spread. The fixture's 1% tick keeps the two apart.
 	got := BestPlays("Allflame", storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row()), DefaultConfig())
 
 	play := playByKey(t, got, directKey(chaosID, cardID))

@@ -42,7 +42,7 @@ fallback.
 **BASIS.** Every MECHANICAL number on a row is priced at the UNDERCUT FILL
 PRICES — the price an order that actually gets taken is posted at:
 `Price*(1+Tick)` on a buy leg, `Price*(1-Tick)` on a sell leg
-(`internal/exchange/plays.go:47-84`, computed at `plays.go:958-962`). The raw
+(`internal/exchange/plays.go:47-84`, computed at `plays.go:963-967`). The raw
 hourly extremes appear on the row in exactly one place, the step hovers, worded
 as what the market PRINTED rather than as what to post.
 
@@ -71,8 +71,8 @@ For one play, with `divineChaosRate` from the same response:
 
 `r` is the client's mirror of the server's `entryRate` and is bit-identical to
 it: `Result.DivineChaosRate` is the newest hour's divine/chaos VWAP
-(`plays.go:771`) and every served play cleared in that hour
-(`plays.go:676-681`), so `chaosPerQuote(legs[0].quote, divineChaosRate)` is the
+(`plays.go:776`) and every served play cleared in that hour
+(`plays.go:681-686`), so `chaosPerQuote(legs[0].quote, divineChaosRate)` is the
 same float the server valued `Investment` at.
 
 Legs are read BY POSITION, never by `action` — leg 3 is a `sell` on the wire and
@@ -107,7 +107,7 @@ cannot be subtracted from the buy total at all.
 **Why E7 derives the sell total backwards from `chainEnd` rather than forwards
 from `legs[1].price`.** Because `roiPct` is the WIRE'S ANSWER to what the round
 trip returns, and the client must not be able to disagree with it. `roiPct` is
-served (`plays.go:1007`, computed at `plays.go:958-1001` from the same undercut
+served (`plays.go:1012`, computed at `plays.go:963-1006` from the same undercut
 prices the legs carry), `R` is built from it, and `chainEnd` is built from `R`.
 A forward derivation (`N · u1`) recomputes the served answer from the served
 inputs and then prints its own result beside it — so the moment the server's
@@ -121,7 +121,7 @@ wire's `roiPct` rendered.
 
 Forward derivation is also the same number only in real arithmetic — `roiPct` is
 `u1/u0 − 1` for a direct play and `u1·u2/u0 − 1` for a 1-hop
-(`plays.go:1078-1087`), so `I·(1+roiPct) = N·u1·r` exactly on paper, while in
+(`plays.go:1083-1092`), so `I·(1+roiPct) = N·u1·r` exactly on paper, while in
 float `200·19·1.01` and `19.19·200` differ in the last ulp. That is a real
 effect and it is why the CROSS-CHECKS in §7 carry a tolerance, but it is about
 one ulp and is invisible to the reader; it is a supporting detail, not the
@@ -164,7 +164,7 @@ there and is the reason the branch is still a closed row: the ends are
 `I` and `I + X` in chaos, so Get is still Spend plus the Exp. ROI column. E2,
 E3, E4 and E7 are suspended, and the suspension is the branch's whole content.
 It is unreachable on a served body — no divine-quoted play is served in an hour
-that carried no divine/chaos trade (`plays.go:676-681`, `plays.go:771`) — and it
+that carried no divine/chaos trade (`plays.go:681-686`, `plays.go:776`) — and it
 is guarded anyway, because the alternative is a division by zero printed as an
 amount.
 
@@ -465,7 +465,7 @@ Four assertion tiers, with the tolerance rule for each:
 
 **Fixture rule.** A closure fixture must be WIRE-CONSISTENT: `investment` =
 `u0 · r`, `roiPct` = the server's own formula over the legs' undercut prices
-(`plays.go:1078-1087`), and `roi` = `investment · roiPct`. A fixture that
+(`plays.go:1083-1092`), and `roi` = `investment · roiPct`. A fixture that
 contradicts those identities can make a closure test pass or fail for a reason
 that has nothing to do with the code. Fixture INPUTS may be derived from the leg
 prices in the test file, with the hand-worked value in a comment; EXPECTED

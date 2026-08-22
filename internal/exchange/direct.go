@@ -61,8 +61,8 @@ type candidate struct {
 //
 // Both extremes are realized trades from the same hour rather than two live
 // sides of a book, so this hour's edge is the optimistic reading (see priceIn):
-// it reaches the Play as RoiPctRaw, while what the Play ranks on is the same
-// round trip after one tick of undercut per leg (Play.RoiPct). It is also
+// it reaches the Play as RoiPctRaw, beside the same round trip after one tick
+// of undercut per leg (Play.RoiPct — the ranking is ExpectedRoi's). It is also
 // orientation-independent: pricing the market the other way round inverts both
 // prices and leaves the ratio unchanged.
 //
