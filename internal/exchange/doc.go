@@ -126,10 +126,11 @@
 //
 //   - RoiPct is the round trip at the UNDERCUT prices: sell/buy − 1 for a direct
 //     flip, (sellXinB * sellBinA)/buyXinA − 1 for a triangle. It is what the
-//     gates and the ranking judge, because it is the return an order that
-//     actually gets taken can expect. Edge is the same value under its
-//     pre-POE-184 name, kept for clients written before the rename and deprecated
-//     in favour of RoiPct.
+//     gates judge, because it is the return an order that actually gets taken
+//     can expect, and not what decides the served order — the ranking has
+//     sorted on ExpectedRoi since POE-193. Edge is the same value under its
+//     pre-POE-184 name, kept for clients written before the rename and
+//     deprecated in favour of RoiPct.
 //   - RoiPctRaw is the same round trip at the RAW extremes — what the hour
 //     printed, with nothing paid for the fill. It never sits below RoiPct, and
 //     the gap between the two is what the ticks cost: on a coarse market that gap
