@@ -381,6 +381,24 @@ export interface CurrencyExchangeLeg {
  * newest, because a recipe that did not clear in the last snapshot is not
  * served at all.
  *
+ * `lowLiquidity` is the play-level thin-hour flag, and it is about `lastHour`
+ * alone: that hour printed no spread worth taking, the round trip at its
+ * undercut prices returning less than the server's floor. The PREDICATE is that
+ * spread and the name is the cause the measured case showed — an hour so quiet
+ * that the little which traded all cleared at one ratio — so `roiPct` on such a
+ * play is a real measurement and may be NEGATIVE, down to the -1 a market whose
+ * whole price step is 100% arithmetically returns.
+ *
+ * It is not a verdict on the market and it is not a ranking key. `expectedRoi`
+ * reads the hours this flag lacks, so a recipe whose quiet hour is an exception
+ * keeps its place and one that never had a spread sinks on its own — which is
+ * why the flag marks the ROW, replaces no number on it, and is never a reason to
+ * hide the play (it was a DROP until 2026-08-22, and what the drop removed was a
+ * card flipping at 70-92% in five of the window's other six hours).
+ *
+ * OPTIONAL on the wire — a server older than the field omits it, and an absent
+ * field means false, so no client may distinguish "not sent" from "clean".
+ *
  * `simEntries` is how many entry hours the two expectations are averaged over
  * and `lowCoverage` says that count fell under the server's guard — "we could
  * not measure this", which is a different claim from "we measured this and it
@@ -410,6 +428,8 @@ export interface CurrencyExchangePlay {
 	tick: number;
 	depth: number;
 	suspect: boolean;
+	/** Optional: absent on a server older than the field, and absent means false. */
+	lowLiquidity?: boolean;
 	hoursSeen: number;
 	lastHour: string;
 }

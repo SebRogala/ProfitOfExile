@@ -13,7 +13,11 @@ in whole by
 this ADR's principle from the four quality gates to the engine's own floors. The
 levels that bullet names as what the server keeps — MinVolumePerHour 10, a
 per-horizon MinHoursSeen, MaxPlays 500 — are not the served defaults any more.
-The split this ADR decided is unchanged and is what ADR-017 argues from.
+ADR-017's own same-day amendment finishes that bullet off: **the positivity
+floor is gone too.** MinEdge is now where a play is FLAGGED (`lowLiquidity`), a
+losing round trip IS served with its measured negative return, and `hoursSeen`
+widened again to count every hour the feed priced the recipe. The split this ADR
+decided is unchanged and is what ADR-017 argues from.
 
 ## Context
 

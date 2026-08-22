@@ -964,6 +964,35 @@ export interface RouteView {
 }
 
 /**
+ * Does the RENDERED set of plays need the convert slot at all?
+ *
+ * The route's slots are fixed-width so a column holds the same kind of step on
+ * every row, and a direct play holds its convert slot open with an empty dashed
+ * tile rather than letting Get slide left under the row above's sell. That
+ * reserved width earns its keep only while some row on screen actually converts:
+ * a table filtered down to direct plays alone spends the slot and both of its
+ * arrows on a column that is empty top to bottom, on the widest cell in a table
+ * that already scrolls sideways.
+ *
+ * So the answer is taken over the whole rendered set and applied to every row —
+ * never per row, which would reintroduce the drift the fixed geometry exists to
+ * prevent. The page hands this to `ExchangeRoute` and to its own header spans
+ * together, because those two carry the same widths and must collapse as one.
+ *
+ * Read off the LEGS and not off `mode`: `routeSlots` reads the slots by
+ * position, so the third leg is what draws the convert step, and a play whose
+ * `mode` says `1-hop` on a two-leg body would otherwise reserve a slot nothing
+ * can fill.
+ *
+ * An empty list answers false. The table is not rendered at all when nothing
+ * survives the filters, so the answer is unobservable there — and false is the
+ * honest one of the two: no play on screen has a step to put in the slot.
+ */
+export function anyConvertStep(plays: CurrencyExchangePlay[]): boolean {
+	return plays.some((play) => play.legs.length > 2);
+}
+
+/**
  * The five route slots of one play, at the size the play is worth running
  * (POE-193).
  *

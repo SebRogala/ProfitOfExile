@@ -248,18 +248,19 @@
 // Per leg per hour, in gatedLeg: at least MinVolumePerHour (1) unit of the
 // leg's item traded, and stock on both sides of the market. Per candidate per
 // hour, in evaluate: a quote that cannot be valued in chaos in this hour, then
-// HideSuspect, then RoiPct >= MinEdge (0.001) — on the UNDERCUT return, so a tick
-// that eats the spread fails here — Turnover >= MinTurnoverChaos (0), Tick <=
-// MaxTick (1), RoiPct >= MinEdgeTickRatio * Tick (0 steps), and Roi >=
-// MinROIChaos (0 chaos per exchanged unit). Then across the window, in
+// HideSuspect, then Turnover >= MinTurnoverChaos (0), Tick <= MaxTick (1), and —
+// only when a reader has armed them above 0 — RoiPct >= MinEdgeTickRatio * Tick
+// (0 steps, off) and Roi >= MinROIChaos (0 chaos per exchanged unit, off). Then
+// across the window, in
 // BestPlays: HoursSeen >= MinHoursSeen (1 everywhere since POE-193 — on the base
 // config and on both horizons — capped at the hours actually present, and so a
 // demand a served play meets by definition), and the newest-hour rule above.
 //
-// Four of those five are deliberately at values nothing can fail, and the fifth,
-// liveness, is at the weakest value that is still a statement: a trade happened.
-// The rule the defaults follow since POE-193 is that NO DEFAULT MAY HIDE A LIVE
-// MARKET. The measurement behind it, 2026-08-22: the old MinVolumePerHour of 10
+// Every one of those is at a value nothing can fail; the only default that still
+// removes anything is liveness, at the weakest value that is still a statement:
+// a trade happened. The rule the defaults follow since POE-193 is that NO
+// DEFAULT MAY HIDE A LIVE MARKET. The measurement behind it, 2026-08-22: the old
+// MinVolumePerHour of 10
 // dropped the chaos/Apocalypse-card market in 11 of 24 hours, because a card is
 // expensive enough that real money moves in few units — the turnover and unit
 // ranges are recorded in
@@ -270,6 +271,17 @@
 // persistence floor added was hiding the rows whose HoursSeen would have read
 // "3 of 6" out loud.
 //
+// MinEdge (0.001) went the same way on 2026-08-22, and it was the last default
+// that could hide a market. It is now the level Play.LowLiquidity flags at: a
+// newest hour that PRICED the recipe and printed no spread worth taking is
+// served with its measured RoiPct — negative included — rather than dropped. The
+// same card market is why: at 07:00 it traded 2 cards at a single 223:1 print,
+// which undercuts to -0.89%, and the floor plus the newest-hour rule between
+// them deleted a recipe that had shown 70-92% in five of the window's other six
+// hours and that the owner was flipping by hand at the time. The two payout
+// gates read as armed-only for the same reason — at 0 they spell "RoiPct >= 0"
+// and "Roi >= 0", which is the same floor wearing a different name.
+//
 // Since POE-191 the QUALITY judgement is likewise the client's: the desktop
 // carries the four levels this package used to enforce (10,000
 // chaos/hour of turnover, a tick no coarser than 10%, an edge at least 5 steps
@@ -279,15 +291,15 @@
 // everything this package serves and the reader tightens from there rather than
 // loosening. Either way a reader who wants cheap fragments or 1-hop triangles
 // can have them without a redeploy.
-// What stays server-side is what no bankroll makes worth reading: a leg on which
-// nothing traded (MinVolumePerHour 1) with stock standing on both sides, and
-// positivity (MinEdge, the sanity floor). Thinness and persistence are FLAGS and
-// RANKING KEYS instead — HoursSeen, SimEntries/LowCoverage, Suspect — and
+// What stays server-side is only what cannot be PRICED: a leg on which nothing
+// traded (MinVolumePerHour 1) or with no stock on one side, and an entry
+// currency with no chaos rate that hour. Thinness, persistence and the spread
+// itself are FLAGS and RANKING KEYS instead — HoursSeen, SimEntries/LowCoverage,
+// Suspect, LowLiquidity — and
 // MaxPlays (2000) is a payload guard sized above the sane set rather than a gate;
 // the old 500 filled exactly and cut inside the flagged band on 2026-08-22.
-// A losing round trip cannot be served even by setting MinEdge
-// negative: withDefaults clamps MinEdgeTickRatio and MinROIChaos to at least 0,
-// and Roi >= 0 is the sign of RoiPct because Investment is positive.
+// A losing round trip IS served, flagged LowLiquidity and carrying its negative
+// RoiPct, and the ranking is what puts it at the bottom.
 //
 // Every level POE-191 and POE-193 turned off keeps its measured rationale as the
 // RECOMMENDED TIGHTENING — what to type into the knobs, not what an untouched
@@ -554,10 +566,15 @@
 // every play in the list was valued at, 0 when that hour did not trade the
 // market, in which case no divine-quoted play is in the list), count and plays.
 // Each play carries key, mode, legs, roiPct, edge (its deprecated alias),
-// roiPctRaw, roi, investment, turnover, tick, depth, suspect, hoursSeen,
+// roiPctRaw, roi, investment, turnover, tick, depth, suspect, lowLiquidity,
+// hoursSeen,
 // lastHour and the simulation's four — expectedRoi, expectedRoiPct, simEntries
 // and lowCoverage, the ranking's own key and the only fields a client cannot
-// recheck from the row, expectedRoi being signed; each leg action, item, quote,
+// recheck from the row, expectedRoi being signed. lowLiquidity says the newest
+// hour priced the recipe and printed no spread worth taking (roiPct under the
+// server's MinEdge, so roiPct can be negative on a served row); it is a reading
+// of the row's own hour against a server-side level the row does not carry, and
+// it hides nothing. Each leg carries action, item, quote,
 // price, priceItemQty, priceQuoteQty, fair, fairOk, tick, volume, stock and
 // suspect. Every served body also
 // carries categories, the sidebar's sixteen in sidebar order — the whole
