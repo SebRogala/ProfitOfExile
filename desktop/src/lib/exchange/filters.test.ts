@@ -33,6 +33,8 @@ function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg 
 		item: 'divine',
 		quote: 'chaos',
 		price: 196,
+		priceItemQty: 1,
+		priceQuoteQty: 196,
 		fair: 197.4,
 		fairOk: true,
 		tick: 0.005,

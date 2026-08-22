@@ -14,7 +14,11 @@
 	 * about the market and computes no amount. Since POE-193 the amounts are the
 	 * whole worthwhile RUN and the ends are in the currency the run is entered
 	 * with, so the end slots carry a unit word and a sub-line that comfortable
-	 * shows and dense drops.
+	 * shows and dense drops. Each step's rate is a whole-quantity ORDER — "buy 12
+	 * for 420c" — rather than a per-unit decimal the in-game exchange has no field
+	 * for, and it carries a `title` whenever the printed quantity is not the one
+	 * the step was asked for (a market posting in lots that quantity does not
+	 * divide by).
 	 *
 	 * SLOT GEOMETRY, mirrored by the table header in `CurrencyExchangePage`: the
 	 * header's label spans must carry the same widths as `.slot-*` below
@@ -85,7 +89,14 @@
 	{@render tile(slot.icon, slot.suspect)}
 	<span class="lines">
 		<span class="name" title={slot.name}>{slot.name}</span>
-		<span class="rate mono">{slot.rate}</span>
+		<!-- `rateTitle` is set only when the printed order is not the quantity the
+		     step was asked for, because the market posts in lots that quantity does
+		     not divide by — the one case where the numbers on screen and the
+		     amounts at the ends deliberately disagree, and the reader is owed the
+		     reason. The rate itself is the fallback title rather than nothing: the
+		     slot ellipsizes, and the tail it drops is the unit word, so a hover
+		     that recovers the whole string is the only way back to it. -->
+		<span class="rate mono" title={slot.rateTitle ?? slot.rate}>{slot.rate}</span>
 	</span>
 {/snippet}
 
@@ -153,6 +164,12 @@
 		gap: 7px;
 		flex-shrink: 0;
 		min-width: 0;
+		/* The fixed widths below are a contract with the page header, so a string
+		   too long for its slot has to be clipped rather than allowed to push the
+		   next tile out of its column — dense is where it bites, its 140px convert
+		   slot being narrower than a long three-currency order. The rate carries
+		   its own `title` in every case, so what the clip takes is a hover away. */
+		overflow: hidden;
 	}
 
 	.route.dense .slot {
