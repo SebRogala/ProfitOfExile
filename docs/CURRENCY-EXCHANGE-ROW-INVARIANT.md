@@ -2,8 +2,8 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-08-22 against `main@faee045` plus the uncommitted display-scale
-change — `desktop/src/lib/exchange/view.ts`, `filters.ts`,
+Last verified: 2026-08-22 against `main@c3958c4` plus the uncommitted
+universal-posting change — `desktop/src/lib/exchange/view.ts`, `filters.ts`,
 `internal/exchange/plays.go`, `desktop/src/lib/tooltips.ts`.
 
 This document is the single normative statement of what the numbers on one
@@ -34,40 +34,34 @@ engine floor may hide a live market).
 ## 1. The three rules
 
 **SCALE.** Every money figure on a row counts the SAME number of exchanges.
-That number is `displayScale(play).units` (`view.ts:622-631`), and it is chosen
-by ENTRY CURRENCY:
-
-- a CHAOS entry counts ONE MINIMAL POSTING of the market it buys on — the buy
-  leg's own `priceItemQty` when that pair is usable, and ONE item when it is not
-  (version skew, `hasQuantityPair`);
-- a DIVINE entry counts the WORTHWHILE RUN, `worthwhileScale(play).flips` — the
-  repeat count at which the play's measured expectation clears
-  `SCALE_TARGET_CHAOS` (100c) — or ONE exchange when the play has no positive
-  expectation and therefore no such count.
+That number is `displayScale(play).units` (`view.ts`), and ONE RULE chooses it
+on every row: ONE MINIMAL POSTING of the market the play buys on — the buy leg's
+own `priceItemQty` when that pair is usable, and ONE item when it is not
+(version skew, `hasQuantityPair`). The entry currency does not enter into it.
 
 Whichever branch is taken, every emitter takes it at the same moment, because
 they all read the one function. There is no per-emitter fallback.
 
-*Why the entry currency decides* (owner ruling, Sebastian, 2026-08-22, after
-seeing run-priced chaos rows). A run-scaled chaos row deceives: a 30c card whose
+*Why the posting, and only the posting* (owner rulings, Sebastian, 2026-08-22 —
+two of them, a day's work apart). A run-scaled row deceives: a 30c card whose
 worthwhile run is sixteen exchanges rendered "buy 16 for ≈ 384c", which reads at
 a glance as a 384c blockbuster and fakes the ranking's first glance — while
-buying sixteen of anything on a chaos market is slow and, at the depths these
-markets carry, unrealistic. Chaos markets post either X-items-for-1c (trash) or
+buying sixteen of anything on such a market is slow and, at the depths these
+markets carry, unrealistic. Markets post either X-items-for-1c (trash) or
 Xc-per-item, and the row must read at that minimal posting.
 
-Divine-entry rows keep the run for now, and NOT because their legs carry mixed
-pairs. A buy lot that disagrees with its sell lot is not a divine-side shape:
-the twelve-for-3c card sold on a five-at-a-time market is a CHAOS row and
-carries exactly that mismatch, and on both sides the mismatch is an accepted
-cost, disclosed on the sell step's hover rather than resolved (§4.6). What
-separates the two is WHERE the deception was. The buy market's posting is the
-ENTRY order — the one quantity the reader can place, once — and the inflated
-headline lived on the chaos entries, whose Spend is read as a chaos figure at a
-glance. A divine entry's Spend is a fraction of an orb whatever count it
-carries, so the run there fakes no size. The divine side is therefore UNTREATED
-rather than exempt on a principle, and it gets its own treatment later. This
-document is the spec FOLLOWING the decision, not preceding it.
+The FIRST ruling took the run off the chaos entries and left the divine ones
+alone, on the reasoning that a divine Spend is a fraction of an orb whatever
+count it carries and so fakes no size at a glance. The SECOND ruling struck that
+exemption out. In the owner's words: *noone will buy 159 for ≈ 2.72 div — that
+is not measurable price*. A run counted in divine is exactly the same deception
+as a run counted in chaos — an unplaceable quantity beside a price nobody can
+post, taking the top of the ranking on a number no order backs. The fraction of
+an orb was never what made it honest.
+
+So the divine exemption is GONE and there is one rule. Every row renders the buy
+market's own minimal posting; the run lives in the Scale column and nowhere
+else. This document is the spec FOLLOWING both decisions, not preceding them.
 
 **N > F is a legitimate reading, and is assumed rather than guarded.** The
 posting can count MORE exchanges than the worthwhile run: a market that posts a
@@ -84,21 +78,21 @@ arithmetic being honest: one order of that market really does clear the target
 several times over.
 
 **The ordering consequence, stated rather than fixed.** The `'roi'` sort orders
-by `moneyColumns(play).roi` (`view.ts`, `sortPlays`), which since the ruling is a
-POSTING-sized gain on a chaos row and a RUN-sized one on a divine row. So that
-order compares two different questions across rows — what one postable order
-gains against what a hundred-chaos run gains — and two adjacent rows under it are
-not comparable to each other. It will bunch the divine entries at the top,
-because a run is the larger of the two sizes on almost every play. The rule that
-the table is ordered by the number it SHOWS is what holds the sort where it is:
-re-pointing it at `play.roi` would order the table by a figure printed on no row.
-This is INTERIM, and it ends when the divine entries get the treatment §1 defers
-— after which both sides read at one posting and the order is comparable again.
+by `moneyColumns(play).roi` (`view.ts`, `sortPlays`), which is a POSTING-sized
+gain on every row. So the order no longer mixes two SIZE RULES across rows — but
+it does still compare postings of different sizes, because a market's lot is a
+fact about that market: a market posting a thousand at a time ranks above one
+posting a single item at ten times the price. That is the same reading the chaos
+rows already carried before the second ruling, it is disclosed where it is
+caused — on each buy step's hover, which says what that market posts — and the
+rule that the table is ordered by the number it SHOWS is what holds the sort
+where it is. Re-pointing it at `play.roi` would order the table by a figure
+printed on no row.
 
 *What did not move.* `worthwhileScale` itself is untouched: the run is still
 derived, still what the Scale column prints (×N, its cost, its hours), still
-what the Fastest sort orders by. On a chaos row the Scale column becomes the ONE
-place the run appears on the surface. The BASIS rule below is untouched too —
+what the Fastest sort orders by. The Scale column is now the ONE place the run
+appears on the surface, on every row. The BASIS rule below is untouched too —
 only the scale moved, so the `≈` and the undercut fill prices stay exactly as
 they were.
 
@@ -123,16 +117,16 @@ For one play, with `divineChaosRate` from the same response:
 
 | Symbol | Definition | Source |
 | --- | --- | --- |
-| `N` | `displayScale(play).units`: the buy market's posting on a chaos entry, `worthwhileScale(play).flips` on a divine one, `1` where neither is readable | `view.ts:622-631` |
-| `F` | `worthwhileScale(play).flips` — the RUN, which the Scale column prints on every row and which equals `N` only on a divine entry | `view.ts:525-536` |
-| `r` | chaos per unit of the ENTRY quote: `1` for chaos, `divineChaosRate` for divine | `chaosPerQuote`, `view.ts:1038-1042` |
+| `N` | `displayScale(play).units`: the buy market's own posting, or `1` where that market posted no usable pair | `view.ts:633-638` |
+| `F` | `worthwhileScale(play).flips` — the RUN, which the Scale column prints on every row and which no rule makes equal to `N` any more; where the two coincide it is a market's lot happening to land on a flip count | `view.ts:525-536` |
+| `r` | chaos per unit of the ENTRY quote: `1` for chaos, `divineChaosRate` for divine | `chaosPerQuote`, `view.ts:1037-1041` |
 | `u0` | undercut buy price of leg 1, in entry-quote units per item: `legs[0].price * (1 + legs[0].tick)` | wire |
 | `u1` | undercut sell price of leg 2, in leg 2's own quote per item: `legs[1].price * (1 - legs[1].tick)` | wire |
 | `u2` | undercut price of leg 3 (1-hop only), entry-quote per unit of the intermediate: `legs[2].price * (1 - legs[2].tick)` | wire |
-| `I` | `moneyColumns(play).investment` = `play.investment · N` — chaos the row ties up | `view.ts:681-687` |
-| `R` | `moneyColumns(play).roi` = `play.roi · N` — chaos the row gains at the hour's BEST-CASE prices | `view.ts:681-687` |
-| `X` | `moneyColumns(play).expectedRoi` = `play.expectedRoi · N` — chaos the row is MEASURED to pay | `view.ts:681-687` |
-| `I_run` | `runInvestment(play)` = `worthwhileScale(play).investment`, or `play.investment` with no run — what the RUN ties up, and the only figure on the surface still sized by `F` on every row | `view.ts:558-560` |
+| `I` | `moneyColumns(play).investment` = `play.investment · N` — chaos the row ties up | `view.ts:684-691` |
+| `R` | `moneyColumns(play).roi` = `play.roi · N` — chaos the row gains at the hour's BEST-CASE prices | `view.ts:684-691` |
+| `X` | `moneyColumns(play).expectedRoi` = `play.expectedRoi · N` — chaos the row is MEASURED to pay | `view.ts:684-691` |
+| `I_run` | `runInvestment(play)` = `worthwhileScale(play).investment`, or `play.investment` with no run — what the RUN ties up, sized by `F` on every row and the only money figure outside the Scale column that still is | `view.ts:558-560` |
 
 `r` is the client's mirror of the server's `entryRate` and is bit-identical to
 it: `Result.DivineChaosRate` is the newest hour's divine/chaos VWAP
@@ -162,17 +156,18 @@ E7  direct:  sellStepTotal = chainEnd
     1-hop:   sellStepTotal = chainEnd / u2   and   convert step prints
              sellStepTotal → chainEnd
 E8  Scale column  =  ×F  →  +(play.expectedRoi · F)c,  "I_run c in"
-    and  E8 = E6's X  only when  N = F  (a divine entry with a run)
+    and  E8 ≠ E6's X  as a rule; they coincide only where a market's lot
+    happens to equal F, which no rule arranges and nothing may rely on
 ```
 
-**E6 and E8 are two different questions, and on a chaos row they have two
+**E6 and E8 are two different questions, and on every row they have two
 different answers.** The Exp. ROI column and the Get slot's `keep ≈` line are
 what ONE POSTING is measured to pay; the Scale column is what the WHOLE RUN
-would pay and what it would tie up. Before the display scale went
-per-entry-currency they were one number in three homes; now they are one number
-in two homes (the column and the line) beside a third that answers the run. The
-Scale column is the row's only disclosure of the run, which is why it is stated
-as an equation of its own rather than left implicit.
+would pay and what it would tie up. Before the display scale moved they were one
+number in three homes; now they are one number in two homes (the column and the
+line) beside a third that answers the run. The Scale column is the row's only
+disclosure of the run, which is why it is stated as an equation of its own
+rather than left implicit.
 
 `chainEnd` is the last mechanical total the row emits: the sell step's total on
 a direct play, the convert step's right-hand amount on a 1-hop. E4 is Sebastian's
@@ -217,7 +212,7 @@ says why in its hover.
 
 This is also why the convert step's divisor changes from the RAW price to `u2`.
 The old rationale (a `convertStep` comment this change deleted; the reasoning
-now sits at `view.ts:1580-1587`) — bare `price`, because the undercut is
+now sits at `view.ts:1622-1629`) — bare `price`, because the undercut is
 already inside `expectedRoi` — was correct only while
 the convert line's numerator was Get. Under E3 the numerator is `chainEnd`,
 which is built from `R`, which is built from `roiPct`, which already contains
@@ -236,7 +231,7 @@ where it lives:
 
 - the **Scale column** (`CurrencyExchangePage.svelte`), which reads
   `worthwhileScale(play)` and is `F`-sized on every row (E8);
-- the **Run cost bounds** (`filters.ts:688-704`), which read `runInvestment(play)`
+- the **Run cost bounds** (`filters.ts:686-703`), which read `runInvestment(play)`
   — `I_run`, the Scale column's own "N c in" figure — because a bankroll ceiling
   is a run-sized question whatever the row prints (§6.1).
 
@@ -249,7 +244,7 @@ reader which cell carries the figure it compares against.
 
 **The one exempt branch: an entry currency this response cannot value in chaos.**
 `chaosPerQuote` answers `null` when the entry quote is divine and the response's
-`divineChaosRate` is 0 (`view.ts:1038-1042`). There is then no `r`, so E1–E4 and
+`divineChaosRate` is 0 (`view.ts:1037-1041`). There is then no `r`, so E1–E4 and
 E7 have no entry-currency rendering to be stated in and the row cannot carry a
 mechanical chain at all. That branch renders both ends in CHAOS from
 `moneyColumns` and prints the markets' own ratios on the steps. E5 survives
@@ -277,14 +272,14 @@ through two different formatters does not close for the reader.
    unit, so they are the same STRING and not merely the same number. Likewise the
    1-hop sell total and the convert line's left amount.
 3. **A step total carries `≈ `** — space included — because the PRICE is the
-   undercut fill price and not the extreme the market printed: `buy 50 for ≈ 3.16
+   undercut fill price and not the extreme the market printed: `buy 16 for ≈ 1.01
    div`, `buy 4 for ≈ 1c`. The item count before it is exact and carries no `≈`.
-   On a chaos row whose buy leg posted a usable pair that count is exactly one
-   postable order; on a chaos row whose buy leg posted NONE (version skew, basis
-   `single`) it is ONE item — the smallest claim the row can make that is still
-   true, and not a quantity any market vouched for. The
+   Where the buy leg posted a usable pair that count is exactly one postable
+   order; where it posted NONE (version skew, basis `single`) it is ONE item —
+   the smallest claim the row can make that is still true, and not a quantity any
+   market vouched for. The
    convert line keeps its single leading `≈`, which governs both of its amounts:
-   `≈ 2.97 div → 615c`.
+   `≈ 222c → 1.10 div`.
    The space after `≈` is deliberate and matches the two strings already shipped
    (`keep ≈ 102c`, `≈ 2.52 div → 526c`). Do not close it up.
 4. **The ends carry no `≈`.** They never claimed to be orders. The
@@ -315,14 +310,16 @@ through two different formatters does not close for the reader.
    smaller-than-one-lot sentence when `N` is under a single lot. That is the same
    pair of facts the snap's two hovers carried (both deleted with the snap),
    moved off the line and onto the hover with the pair — where they now live, in
-   `marketPair` (`view.ts:1191-1213`).
+   `marketPair` (`view.ts:1211-1252`).
 
-   The clauses say "the N this row counts" and never "the run". On a chaos row
-   `N` is the BUY market's posting and this same hover words the SELL market
-   beside it, whose lot has no reason to match; calling that count a run would
-   name a quantity the row does not print. It is also why the buy step's hover
-   on a chaos row never carries a LOT clause at all: `N` IS that market's lot, so
-   the division is exact by construction.
+   The clauses say "the N this row counts" and never "the run". `N` is the BUY
+   market's posting and this same hover words the SELL market beside it, whose
+   lot has no reason to match; calling that count a run would name a quantity no
+   row prints. It is also why the buy step's hover never carries a LOT clause at
+   all: `N` IS that market's lot, so the division is exact by construction and
+   the smaller-than-one-lot and multiples clauses are reachable from the SELL
+   step alone. They are kept on both, because a clause dropped by a future scale
+   rule is a fact the reader loses silently.
 
    The BUY step's hover carries one clause the sell step's cannot, and it is the
    `N > F` disclosure of §1: when the posting counts past the worthwhile run, the
@@ -332,6 +329,11 @@ through two different formatters does not close for the reader.
    the ENTRY order's own lot against the run, and the sell market's lot has no
    claim on that comparison. `marketPair` takes the run for that step only and
    `null` for the other, so the sentence cannot appear where it would be false.
+
+   The clause is CURRENCY-AGNOSTIC and needs no divine wording of its own: it
+   compares two counts and neither carries a unit. It became reachable on a
+   divine row with the second ruling — while such a row counted its run, `N` and
+   `F` were the same number and the sentence could never fire on one.
 
 7. **A step with no total prints the market's ratio, and says so.** Three places
    have no total to print: the exempt branch of §3, a 1-hop convert step whose
@@ -377,12 +379,12 @@ The deviation is permitted, bounded and labelled:
   is the magnitude). Two renderings of one variable, never two calculations.
 
   The **Scale column's `→ +Xc`** used to be a third home and is now a separate
-  figure, `play.expectedRoi · F` (E8). It coincides with `X` exactly when
-  `N = F`, which is a divine entry with a run; on a chaos row it deliberately
-  does not, and it is that row's only disclosure of what the run would pay.
-  Reading the two as one number is the mistake this bullet now exists to
-  prevent, and the closure suite asserts the DIVERGENCE on every chaos case
-  rather than skipping the assertion.
+  figure, `play.expectedRoi · F` (E8). No rule makes it equal `X` any more — it
+  would take a market whose lot happened to be exactly `F` — and it is the row's
+  only disclosure of what the run would pay. Reading the two as one number is
+  the mistake this bullet now exists to prevent, and the closure suite asserts
+  the DIVERGENCE on every case that has a run at all, rather than skipping the
+  assertion.
 - Nothing else on the row deviates. Every other printed figure is on the
   mechanical chain, at `N`.
 - The reader can close the gap from the columns: the last step's total is
@@ -402,7 +404,7 @@ the row, as the last step's total.
 closes the row the other way round — the route stays wholly mechanical, both
 ends and every step on the one best-case basis, and `keep ≈ X` moves off the
 Get slot onto the Exp. ROI cell's existing sub-line, which already renders `n=`
-and `low` (`CurrencyExchangePage.svelte:685-706`). It is a genuinely smaller
+and `low` (`CurrencyExchangePage.svelte:685-708`). It is a genuinely smaller
 change: no red Get, no verb over a loss, no `positive` flip, no rendering change
 to the fallback rows at all.
 
@@ -417,7 +419,7 @@ measurement inverts which of the two the row asserts. The cost of the choice
 made is real and is paid here: the deviation of §5 exists at all, the fallback
 branch's Get can print below its Spend, and the shipped
 `keep ≈ 102c (≈ 0.51 div)` string — the one the width contract is sized around
-(`ExchangeRoute.svelte:243-251`) — has to stay on the row and be sized for.
+(`ExchangeRoute.svelte:245-252`) — has to stay on the row and be sized for.
 
 ---
 
@@ -450,36 +452,36 @@ right answers, and the tooltips for `Min item price` and `Min profit`
 the figure this compares against*. That sentence is load-bearing and must not be
 edited away — and the display-scale change narrowed rather than removed its
 scope, on BOTH of those gates and by one rule. A row whose display scale is ONE
-exchange prints the gates' own per-exchange figures: `Min item price` reads
+item prints the gates' own per-exchange figures: `Min item price` reads
 `play.investment` and the Investment column is `play.investment · 1`, `Min
-profit` reads `play.roi` and the ROI column is `play.roi · 1`. Three shapes land
-there — a chaos market that posts one item at a time, a leg served without a
-usable pair, and a divine entry with no worthwhile run. On every other row the
-count is not 1 and neither figure is anywhere on screen, which is the state the
-sentence was written for.
+profit` reads `play.roi` and the ROI column is `play.roi · 1`. Two shapes land
+there — a market that posts one item at a time, and a buy leg served without a
+usable pair. On every other row the count is not 1 and neither figure is
+anywhere on screen, which is the state the sentence was written for.
 
 **The exception's own exception:** the filter bar's **Run cost** bounds
-(`filters.ts:688-704`) DO read the run, because a bankroll ceiling is a run-sized
+(`filters.ts:686-703`) DO read the run, because a bankroll ceiling is a run-sized
 quantity — the reader is asking what they can afford to have tied up, not what
 one order costs. That bound reads `runInvestment(play)` — `I_run`, the exact
 figure the Scale column's "N c in" sub-line prints — and NOT
 `moneyColumns(play).investment`, which since the display-scale change is what the
-row DISPLAYS and on a chaos row is one posting.
+row DISPLAYS and is one posting on every row.
 
 **That seam is explicit on purpose, and it is the one this section exists to
-name.** On a divine-entry row the two are the same number and nothing shows.
-On a chaos-entry row the Investment column prints what one order costs while the
-bound judges what the whole run ties up, so the figure the bound compares
-against lives in the SCALE column and not in the column beside it — the same
-shape the per-exchange gates above already carry, and the Run cost tooltip says
-which cell holds it. Left reading `moneyColumns`, the bound would have become a
-per-posting ceiling silently: the code compiles, every divine-row test stays
-green, and a reader typing 500 to mean 500c of bankroll would be filtering on
-what one trash-market order costs.
+name.** The Investment column prints what one order costs while the bound judges
+what the whole run ties up, so the figure the bound compares against lives in the
+SCALE column and not in the column beside it — the same shape the per-exchange
+gates above already carry, and the Run cost tooltip says which cell holds it.
+Left reading `moneyColumns`, the bound would have become a per-posting ceiling
+silently: the code compiles, nothing on screen changes, and a reader typing 500
+to mean 500c of bankroll would be filtering on what one trash-market order
+costs. The first ruling left divine rows agreeing with the column, so every
+divine-row test stayed green through it; the second removed even that cover,
+which is why the seam is now pinned on a divine fixture as well as a chaos one.
 
 ### 6.2 ROI% (outside the SCALE rule and outside the BASIS rule)
 
-`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:712-726`.
+`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:714-726`.
 
 *Why exempt from SCALE:* it is a ratio. Whatever the row is sized at multiplies
 numerator and denominator by the same `N`, so the per-exchange percentage, the
@@ -499,7 +501,7 @@ is what the Gates row judges — both already stated at `tooltips.ts:86-87`.
 
 ### 6.3 Depth (outside SCALE and BASIS)
 
-`play.depth`, rendered at `CurrencyExchangePage.svelte:749-751`.
+`play.depth`, rendered at `CurrencyExchangePage.svelte:748-751`.
 
 *Why exempt:* it is a MARKET reading, not a figure of the play — units per hour
 that changed hands on the play's thinnest leg. It is the whole book's volume and
@@ -531,11 +533,13 @@ mirror the Go wire docs and say so in place.
 
 ### 6.5 A basis note that is not an exception
 
-`moneyColumns(play).roi = play.roi * units` (`view.ts:681-687`) has been read as
-mixing bases — on a divine row, a fill-simulation-derived flip count multiplying
-a best-case per-exchange figure. It does not. **A count is a SCALE, not a
-BASIS.** `units` is a dimensionless count, whether it came from a market's
-posted pair or from a flip count; the only price basis inside `roi` is `roiPct`,
+`moneyColumns(play).roi = play.roi * units` (`view.ts:684-691`) has been read as
+mixing bases — while `units` could be a flip count, a fill-simulation-derived
+number multiplying a best-case per-exchange figure. It did not, and the reading
+is now moot besides: `units` is a market's posted pair on every row. **A count
+is a SCALE, not a BASIS.** `units` is a dimensionless count, whether it came
+from a market's posted pair or from a flip count; the only price basis inside
+`roi` is `roiPct`,
 which is the undercut round trip and nothing else. The ROI and Exp. ROI columns
 are on the SAME scale and on their own declared bases, which is exactly what §1
 asks for. `WorthwhileScale` carries no best-case total and should not: it exists
@@ -550,24 +554,32 @@ suite** in `desktop/src/lib/exchange/view.test.ts`. **Eleven cases**, ten of the
 running the shared equation battery and one (F7) asserting a suspension instead:
 
 - **F1–F4** — all four of `{direct, 1-hop} × {chaos entry, divine entry}` with a
-  worthwhile run.
+  worthwhile run. The two divine cases post SIXTEEN for a divine, so they price
+  that posting and carry a 50-flip run in the Scale column alone.
 - **F5, F6** — two of those four repeated with NO run, one of each shape and one
-  of each entry currency; the remaining two vary nothing these do not.
+  of each entry currency; the remaining two vary nothing these do not. Their
+  COUNTS are unchanged from F1 and F4, which is the point: a market's lot does
+  not depend on the measurement, so losing the run empties the Scale column and
+  moves nothing else. F6 is the divine-entry LOSS — a `lose ≈ 80c (≈ 0.40 div)`
+  profit line and a Get printing below its Spend in divine, neither of which a
+  chaos case can reach.
 - **F7** — the exempt branch of §3, which asserts the SUSPENSION of E2/E3/E4/E7
   and the survival of E5 rather than the equations. It is described on its own
   and does not run the battery.
-- **F8** — the chaos posting that is neither one item nor the run: a market that
-  posts TWELVE whose sell market posts five, so the row carries a count no other
-  case can produce and a lot that cannot divide it.
+- **F8** — the posting that is neither one item nor the run: a market that posts
+  TWELVE whose sell market posts five, so the row carries a count no other case
+  can produce and a lot that cannot divide it.
 - **F9** — the `N > F` row of §1: a market that posts a THOUSAND at a time on a
-  play whose worthwhile run is 167 exchanges. It is the only case where the
-  posting counts past the run, so it is the only one that can pin the buy step's
-  overshoot clause and the Exp. ROI column standing ABOVE the Scale column's own
-  gain.
-- **F10** — the `single` basis on a CHAOS entry: a buy leg served with no usable
-  pair, so the row counts ONE item without a market having vouched for it (§4.3).
-  Its equations run at `N = 1` on the entry currency the other single-basis case
-  (F6) cannot reach, since F6 is divine.
+  play whose worthwhile run is 167 exchanges. It is the only case in the matrix
+  where the posting counts past the run, so it is the only one that can pin the
+  buy step's overshoot clause and the Exp. ROI column standing ABOVE the Scale
+  column's own gain. (The clause's reachability on a DIVINE entry is pinned
+  outside the matrix, in the `routeSlots` suite, because the clause is
+  currency-agnostic and needs no second equation battery to say so.)
+- **F10** — the `single` basis: a buy leg served with no usable pair, so the row
+  counts ONE item without a market having vouched for it (§4.3). Its equations
+  run at `N = 1`, which no other case in the matrix reaches now that the divine
+  no-run row keeps its posting.
 - **F11** — the trash tier, whose money columns ROUND AWAY: a sub-chaos market
   posting four for a chaos, where the ROI and Exp. ROI columns both print `0`
   while the row is still drawn as a gain. That rendering is specified, not a bug —
@@ -590,7 +602,7 @@ Four assertion tiers, with the tolerance rule for each:
   compared with `toBe` on the whole string, with no tolerance. Covers:
   - the buy step's total against the Spend amount. The step line carries a unit
     and the end does not (`RouteEnd.amount` is bare, its unit word being a
-    separate span — `ExchangeRoute.svelte:164-166`), so the pin is two
+    separate span — `ExchangeRoute.svelte:163-166`), so the pin is two
     assertions and not one: the line ENDS WITH `for ≈ ${withOrbUnit(spend,
     entryUnitShort)}`, and the numeric head of that tail is character-identical
     to `route.spend.amount`. Either one alone can pass while the two numbers
@@ -600,17 +612,17 @@ Four assertion tiers, with the tolerance rule for each:
   - the Get slot's profit line against the Exp. ROI cell's value — including its
     VERB, which is `keep` for `X > 0` and `lose` for `X < 0` (§4.5), so the pin
     is sign-aware and runs on the losing fixtures too.
-  - the Scale column's `→ +Xc` against the Exp. ROI cell — scoped to the
-    fixtures the RUN sizes, which since the display-scale change means the
-    divine entries with a run. `worthwhileScale` answers `null` on a play with no
-    positive expectation, so the expression throws on the fallback rows; and on
-    a chaos row the two are deliberately DIFFERENT numbers (E8), so the identity
-    would be false rather than merely unassertable.
-  - the same pair on a CHAOS row, asserted as a DIVERGENCE rather than skipped:
-    the Scale column prints the run's gain, the Exp. ROI column prints one
-    posting's, and the two must not be equal. That is the pin that dies if the
-    money columns are ever re-multiplied by the flip count, and it is stated in
-    the ruling's own words — ROI is per single trade, not per batch.
+  - the Scale column's `→ +Xc` against the Exp. ROI cell, asserted as a
+    DIVERGENCE and never as an identity: the Scale column prints the run's gain,
+    the Exp. ROI column prints one posting's, and the two must not be equal.
+    That is the pin that dies if the money columns are ever re-multiplied by the
+    flip count, and it is stated in the ruling's own words — ROI is per single
+    trade, not per batch. It runs on every case that HAS a run (the divine
+    entries included, which is the second ruling's whole content) and is skipped
+    where `worthwhileScale` answers `null`, since the expression has nothing to
+    read there. A CASE-level guard asserts the two literals differ, so a future
+    edit that set them equal fails rather than passing on a fixture that pins
+    nothing.
 - **T2 — ledger identity (exact).** `chainEndChaos === I + R` and
   `getChaos === I + X` are single float additions of the ledger's own roots and
   are compared with `toBe`. This is what "closure by construction" means
@@ -679,11 +691,22 @@ read out of `investment`, `roi` and the legs together, a fixture whose
 There is one fixture set, wire-consistent, and the closure matrix is built from
 it by overriding `expectedRoi`.
 
+A case that needs a different POSTING has to override the legs, and the rule
+then binds the override: since `N` is now read off the buy leg's pair, changing
+that pair changes the row's whole arithmetic, so `investment`, `roi` and
+`roiPct` are re-derived with it and the hand-worked derivation goes in the
+case's comment. Four cases in the `routeSlots` and `runLedger` suites do that —
+the hundredths-above-a-hundred end, the thousands grouping, the read-not-recompute
+ulp check, and the divine overshoot — and each one states its `u0`, `u1` and
+back-solved `roiPct` above the fixture. An override that changed only the pair
+would pin a row no server could send, and would pin it at the very size the case
+is about.
+
 ---
 
 ## 8. Out of scope for this document
 
 Gate semantics and levels; the server's pricing and simulation arithmetic; the
-Exp. ROI column's non-monotonicity in the served order (`view.ts:863-875`, a
+Exp. ROI column's non-monotonicity in the served order (`view.ts:862-872`, a
 seam by choice); the Gold column; the gem-flip ROI domain, which shares the
 words and means percentage points (`tooltips.ts:50-53`).

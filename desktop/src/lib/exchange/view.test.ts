@@ -421,8 +421,8 @@ function chaosOvershoot(overrides: Partial<CurrencyExchangePlay> = {}): Currency
  * gone, which is enough to move the row off the `posting` branch. The count
  * falls to ONE ITEM, and that one is not a postable order the way a posting is:
  * no market vouched for it, it is simply the smallest claim the row can make
- * that is still true (spec §4.3). Its equations run at `N = 1` on the entry
- * currency the other single-basis case cannot reach — F6 is divine.
+ * that is still true (spec §4.3). Its equations run at `N = 1`, which no other
+ * case in the matrix reaches now that the divine no-run row keeps its posting.
  *
  * The pair is dropped and the price kept, which is the arrival shape `unpriced`
  * refuses to fake the other way round: a pre-POE-193 server prices its legs and
@@ -1008,34 +1008,32 @@ describe('sortPlays', () => {
 		expect(keys(sortPlays(served, 'roi'))).toEqual(['b', 'c', 'a']);
 	});
 
-	it('orders by the run-priced ROI the column shows, not by the per-exchange one', () => {
+	it('orders by the posting-priced ROI the column shows, not by the per-exchange one', () => {
 		// The two orders genuinely disagree here, which is the whole point: `a`
-		// gains 5c an exchange but its 1c expectation takes 100 flips to clear the
-		// target, so its ROI column reads +500c; `b` gains ten times as much per
-		// exchange and clears in 2, so its column reads +100c. A table ordered by
-		// the wire's `roi` would put `b` on top of a number half `a`'s.
+		// gains 5c an exchange on a market that posts TWENTY at a time, so its ROI
+		// column reads +100c; `b` gains ten times as much per exchange on a market
+		// that posts one, so its column reads +50c. A table ordered by the wire's
+		// `roi` would put `b` on top of a number half `a`'s.
 		const served = [
-			play({ key: 'a', roi: 5, expectedRoi: 1 }),
-			play({ key: 'b', roi: 50, expectedRoi: 50 })
+			play({ key: 'a', roi: 5, legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })] }),
+			play({ key: 'b', roi: 50, legs: [leg({ priceItemQty: 1, priceQuoteQty: 1 })] })
 		];
 
 		expect(keys(sortPlays(served, 'roi'))).toEqual(['a', 'b']);
 	});
 
-	it('orders a chaos-entry row by the posting its ROI column shows', () => {
+	it('orders a divine-entry row by its posting too, never by its run', () => {
 		// The rule is that the table is ordered by the number it SHOWS, and since
-		// the ruling that number is a POSTING on a chaos-entry row. `chaosLot`'s
-		// column reads +2 (twelve cards at 0.1435c each), so it sorts under a
-		// divine-entry row whose column reads +359 — and a sort still reaching for
-		// the flip count would rank it on +287 and put it first.
-		//
-		// The consequence is real and interim: this order compares a posting
-		// against a run across rows, and will bunch the divine entries at the top
-		// until they move to a posting of their own.
+		// the second owner ruling of 2026-08-22 that number is one POSTING on every
+		// row, the divine entries included. `chaosLot` posts twelve cards at
+		// 0.1435c each and reads +2; `divineScarab` posts sixteen scarabs at 7.175c
+		// each and reads +115. A sort still reaching for the flip count would rank
+		// the two on +287 and +359 — the same ORDER for two numbers neither row
+		// prints, which is why both columns are pinned here beside the order.
 		const served = [chaosLot(), divineScarab()];
 
 		expect(formatGain(moneyColumns(chaosLot()).roi)).toBe('+2');
-		expect(formatGain(moneyColumns(divineScarab()).roi)).toBe('+359');
+		expect(formatGain(moneyColumns(divineScarab()).roi)).toBe('+115');
 		expect(keys(sortPlays(served, 'roi'))).toEqual(['direct:scarab:divine', 'direct:card:chaos']);
 	});
 
@@ -1464,8 +1462,8 @@ describe('worthwhileScale', () => {
 });
 
 describe('runInvestment', () => {
-	// The RUN's cost, which since the display scale went per-entry-currency is no
-	// longer what `moneyColumns` answers on every row. The filter bar's Run cost
+	// The RUN's cost, which since the display scale became one posting is no
+	// longer what `moneyColumns` answers on ANY row. The filter bar's Run cost
 	// bound is its only caller, and the seam is deliberate (spec §6.1): a
 	// bankroll ceiling asks a run-sized question whatever the row prints.
 
@@ -1475,13 +1473,23 @@ describe('runInvestment', () => {
 		expect(runInvestment(play({ expectedRoi: 3, investment: 40 }))).toBe(1360);
 	});
 
-	it('reports the run’s cost on a chaos-entry row, not the posting the row shows', () => {
+	it('reports the run’s cost, not the posting the row shows', () => {
 		// THE SEAM, pinned. `chaosLot` displays one posting of its buy market —
 		// twelve cards for 3c — while the run behind it is 2,000 exchanges costing
 		// 505c. A bound reading `moneyColumns` would compare a 500c bankroll
 		// ceiling against 3c and let every trash row through.
 		expect(runInvestment(chaosLot())).toBe(505);
 		expect(moneyColumns(chaosLot()).investment).toBe(3.0300000000000002);
+	});
+
+	it('reports the run’s cost on a DIVINE-entry row too, not its posting', () => {
+		// The seam is no longer a chaos-only reading: since the second ruling a
+		// divine row displays one posting as well, so the Investment column prints
+		// 202c while the run it has to be repeated to ties up 631.25c. A bound left
+		// reading `moneyColumns` would have gone silently wrong on THESE rows —
+		// the ones every earlier test of this seam left green.
+		expect(runInvestment(divineScarab())).toBe(631.25);
+		expect(moneyColumns(divineScarab()).investment).toBe(202);
 	});
 
 	it('falls back to one exchange’s cost for a play with no worthwhile run', () => {
@@ -1498,18 +1506,19 @@ describe('runInvestment', () => {
 });
 
 describe('displayScale', () => {
-	// The one decision every money figure and both step quantities are sized by
-	// (owner ruling, 2026-08-22). Read by ENTRY CURRENCY: a chaos entry counts one
-	// minimal posting of its buy market, a divine entry counts the worthwhile run.
+	// The one decision every money figure and both step quantities are sized by,
+	// and since the second owner ruling of 2026-08-22 it is ONE RULE on every row:
+	// the minimal posting of the buy market, whatever currency that market quotes
+	// in. The entry currency decides nothing here.
 
-	it('counts one posting of the buy market on a chaos entry', () => {
+	it('counts one posting of the buy market', () => {
 		// The market posts twelve at a time, so twelve is the order the reader can
 		// actually place — and the run behind this row is 2,000 exchanges, a count
 		// nothing on the row may claim.
 		expect(displayScale(chaosLot())).toEqual({ units: 12, basis: 'posting' });
 	});
 
-	it('counts a single item on a chaos market that posts one at a time', () => {
+	it('counts a single item on a market that posts one at a time', () => {
 		// The same rule, at the lot size most chaos markets actually carry: the
 		// posting IS one item, and `basis` says the count came from the pair rather
 		// than from the pairless fallback beside it.
@@ -1524,39 +1533,53 @@ describe('displayScale', () => {
 		expect(displayScale(chaosScarab()).units).toBe(1);
 	});
 
-	it('counts the worthwhile run on a divine entry', () => {
-		// The branch every row took before the ruling, kept for divine entries
-		// because their legs carry MIXED pairs — a buy lot of 16 against a sell lot
-		// of 10 — so "the posting" is not one quantity on such a row.
-		expect(displayScale(divineScarab())).toEqual({ units: 50, basis: 'run' });
+	it('counts one posting of a DIVINE buy market rather than the run', () => {
+		// THE SECOND RULING, in one assertion. This market posts sixteen scarabs
+		// for a divine and the play's worthwhile run is 50 exchanges: an
+		// entry-currency branch reaching for the run answers `{ units: 50, basis:
+		// 'run' }` here, which is the "buy 159 for ≈ 2.72 div" the owner refused —
+		// not a measurable price, and not an order anyone places.
+		expect(worthwhileScale(divineScarab())?.flips).toBe(50);
+		expect(displayScale(divineScarab())).toEqual({ units: 16, basis: 'posting' });
 	});
 
-	it('counts a single exchange on a divine entry with no worthwhile run', () => {
+	it('keeps a divine row’s posting when the expectation measures a loss', () => {
+		// A market's lot does not depend on the measurement, so the branch that
+		// empties the Scale column moves nothing here. The old rule dropped such a
+		// row to a single exchange; the posting is what it always was.
+		expect(worthwhileScale(divineScarab({ expectedRoi: -3 }))).toBeNull();
 		expect(displayScale(divineScarab({ expectedRoi: -3 }))).toEqual({
-			units: 1,
-			basis: 'single'
+			units: 16,
+			basis: 'posting'
 		});
 	});
 
-	it('counts a single item on a chaos entry whose buy leg posted no pair', () => {
+	it('counts a single item on a row whose buy leg posted no pair', () => {
 		// Version skew: there is no posting to read, and one item is the smallest
 		// claim the row can make that is still true. `basis` separates it from the
 		// posting that happens to be one — the units agree, the reason does not.
-		const skewed = chaosScarab({
+		expect(displayScale(chaosNoPair())).toEqual({ units: 1, basis: 'single' });
+	});
+
+	it('counts a single item on a DIVINE row whose buy leg posted no pair', () => {
+		// The pairless fallback is the same rule on both entry currencies, and this
+		// is the case that says so: a divine buy leg with no usable pair reaches it
+		// too, rather than dropping through to a run the way it used to.
+		const skewed = divineScarab({
 			legs: [
-				leg({ price: 19, priceItemQty: 0, priceQuoteQty: 0 }),
-				leg({ action: 'sell', price: 21, priceItemQty: 1, priceQuoteQty: 21 })
+				leg({ ...DIVINE_SIDE, price: 0.0625, priceItemQty: 0, priceQuoteQty: 0 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.1, priceItemQty: 10, priceQuoteQty: 1 })
 			]
 		});
 
 		expect(displayScale(skewed)).toEqual({ units: 1, basis: 'single' });
 	});
 
-	it('counts the run for a play that arrives with no legs at all', () => {
+	it('counts a single item for a play that arrives with no legs at all', () => {
 		// Not a served shape, and not renderable either — `runLedger` and
 		// `routeSlots` both refuse a body with fewer than two legs. The branch
-		// exists so the entry-currency read cannot throw before they do.
-		expect(displayScale(play({ expectedRoi: 3 }))).toEqual({ units: 34, basis: 'run' });
+		// exists so the buy-leg read cannot throw before they do.
+		expect(displayScale(play({ expectedRoi: 3 }))).toEqual({ units: 1, basis: 'single' });
 	});
 });
 
@@ -1565,28 +1588,54 @@ describe('moneyColumns', () => {
 	// `displayScale(play).units` and nothing else, so the columns and the route
 	// slots can never be about different trips.
 	//
-	// The `play()` factory carries no legs, which reads as a non-chaos entry and
-	// takes the RUN branch — that is what the first cases below exercise. Every
-	// one of them runs on an `expectedRoi` of 3, which is 34 flips to clear the
-	// 100c target. That count is deliberately not the one the fixture's other
-	// fields produce: the best-case `roi` of 10 would divide the target into 10,
-	// so a production swap onto the wrong field answers a number no case here
-	// expects. It is also not a divisor of the target, so the scaled gain
-	// overshoots to 102c and cannot be confused with `SCALE_TARGET_CHAOS` itself.
+	// The `play()` factory carries no legs, so it has no posting to read and falls
+	// to a single item — that is what the fallback cases at the foot of this block
+	// exercise. Every case that means to price a POSTING carries legs.
 
-	it('reports the chaos the whole run ties up on a row scaled by the run', () => {
-		// 34 flips at 40c each.
-		expect(moneyColumns(play({ expectedRoi: 3, investment: 40 })).investment).toBe(1360);
+	it('reports the chaos one posting ties up', () => {
+		// Twenty items at 40c each, on a market that posts twenty at a time.
+		const posted = play({
+			investment: 40,
+			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
+		});
+
+		expect(moneyColumns(posted).investment).toBe(800);
 	});
 
-	it('reports the best-case return across the whole run', () => {
+	it('reports the best-case return across that same posting', () => {
 		// The column stays the RAW best case (the NET/RAW convention the ROI%
-		// column spells out) and is simply told at the row's size: 34 × 10c.
-		expect(moneyColumns(play({ expectedRoi: 3, roi: 10 })).roi).toBe(340);
+		// column spells out) and is simply told at the row's size: 20 × 10c.
+		const posted = play({ roi: 10, legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })] });
+
+		expect(moneyColumns(posted).roi).toBe(200);
 	});
 
-	it('reports the chaos the run is expected to pay, not the per-exchange mean', () => {
-		expect(moneyColumns(play({ expectedRoi: 3 })).expectedRoi).toBe(102);
+	it('reports the chaos the posting is expected to pay, not the per-exchange mean', () => {
+		const posted = play({
+			expectedRoi: 3,
+			legs: [leg({ priceItemQty: 20, priceQuoteQty: 20 })]
+		});
+
+		expect(moneyColumns(posted).expectedRoi).toBe(60);
+	});
+
+	it('prices a DIVINE-entry row at ONE POSTING and never at the run', () => {
+		// THE SECOND OWNER RULING on the three columns at once. `divineScarab`
+		// posts sixteen scarabs for a divine and its run is 50 exchanges, so a
+		// column that multiplied by the flip count would read 631.25 / +359 / +100
+		// here instead of 202 / +115 / +32. The run is real and is not on these
+		// three: it is the Scale column's.
+		const money = moneyColumns(divineScarab());
+
+		expect(money.investment).toBe(202);
+		expect(money.roi).toBe(114.8);
+		expect(money.expectedRoi).toBe(32);
+		expect(worthwhileScale(divineScarab())).toEqual({
+			flips: 50,
+			gain: 100,
+			investment: 631.25,
+			hours: 2
+		});
 	});
 
 	it('prices a chaos-entry row at ONE POSTING and never at the run', () => {
@@ -1615,37 +1664,38 @@ describe('moneyColumns', () => {
 		expect(moneyColumns(chaosScarab()).expectedRoi).toBe(0.5);
 	});
 
-	it('falls back to the cost of one exchange for a play with no worthwhile run', () => {
-		// A measured loser is served and flagged (ADR-016), and has no run to
-		// repeat toward — so the fallback is a live branch, not a guard.
-		expect(moneyColumns(play({ expectedRoi: -6, investment: 40 })).investment).toBe(40);
+	it('falls back to the cost of one exchange when there is no posting to read', () => {
+		// Version skew: a buy leg served with no usable pair leaves nothing for the
+		// row to count but a single item.
+		expect(moneyColumns(chaosNoPair()).investment).toBe(19.19);
 	});
 
-	it('falls back to the best-case return on one exchange for a play with no run', () => {
-		expect(moneyColumns(play({ expectedRoi: -6, roi: 500 })).roi).toBe(500);
+	it('falls back to the best-case return on one exchange with no posting to read', () => {
+		expect(moneyColumns(chaosNoPair({ roi: 500 })).roi).toBe(500);
 	});
 
-	it('falls back to the per-exchange expectation for a play with no run', () => {
-		// The one money figure on the row that can print a minus, and this is the
-		// branch it prints in: a run only exists above zero.
-		expect(moneyColumns(play({ expectedRoi: -6 })).expectedRoi).toBe(-6);
+	it('carries the wire’s sign through the count on a measured loser', () => {
+		// The one money figure on the row that can print a minus. The count is a
+		// positive integer, so the sign is the wire's and a losing measurement is
+		// still a losing one at four items: 4 × −6.
+		expect(moneyColumns(chaosTrash({ expectedRoi: -6 })).expectedRoi).toBe(-24);
 	});
 
-	it('falls back on an expectation of exactly zero', () => {
-		// The boundary `worthwhileScale` refuses: no repeat count reaches a
-		// positive target from a zero step.
-		expect(moneyColumns(play({ expectedRoi: 0, investment: 40 })).investment).toBe(40);
+	it('keeps the posting when the expectation is exactly zero', () => {
+		// The boundary `worthwhileScale` refuses — and the display scale does not
+		// care: a market's lot is not a function of the measurement, so the columns
+		// stay at the twelve this market posts.
+		expect(moneyColumns(chaosLot({ expectedRoi: 0 })).investment).toBe(3.0300000000000002);
 	});
 });
 
 describe('runLedger', () => {
-	it('counts the exchanges of the worthwhile run on a divine entry', () => {
-		// `ceil(100 / 2)`.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.units).toBe(50);
-	});
-
-	it('names the run as the rule that chose a divine entry’s count', () => {
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.basis).toBe('run');
+	it('counts one posting of the buy market on a divine entry', () => {
+		// The second owner ruling, at the ledger: this market posts sixteen scarabs
+		// for a divine, and the 50-flip run behind the play is the Scale column's
+		// alone. A ledger still branching on the entry currency answers 50 / 'run'.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.units).toBe(16);
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.basis).toBe('posting');
 	});
 
 	it('counts one posting of the buy market on a chaos entry', () => {
@@ -1654,56 +1704,77 @@ describe('runLedger', () => {
 		expect(runLedger(chaosLot(), DIVINE_RATE)?.basis).toBe('posting');
 	});
 
-	it('counts one exchange when the expectation is not worth repeating', () => {
-		// A measured loser is served and ranked (ADR-016); it simply has no repeat
-		// count that reaches a positive target, so a divine-entry row counts a
-		// single trip.
-		expect(runLedger(divineScarab({ expectedRoi: -3 }), DIVINE_RATE)?.units).toBe(1);
+	it('keeps the posting when the expectation is not worth repeating', () => {
+		// A measured loser is served and ranked (ADR-016) and has no repeat count
+		// that reaches a positive target — which used to drop such a row to one
+		// exchange. A market's lot does not depend on the measurement, so the count
+		// no longer moves and only the Scale column empties.
+		expect(runLedger(divineScarab({ expectedRoi: -3 }), DIVINE_RATE)?.units).toBe(16);
 	});
 
-	it('counts one exchange at an expectation of exactly zero', () => {
-		// The boundary `worthwhileScale` refuses.
-		expect(runLedger(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.units).toBe(1);
+	it('keeps the posting at an expectation of exactly zero', () => {
+		// The boundary `worthwhileScale` refuses, and the display scale ignores.
+		expect(runLedger(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.units).toBe(16);
 	});
 
-	it('names the single exchange as the rule when there is no worthwhile run', () => {
-		expect(runLedger(divineScarab({ expectedRoi: -3 }), DIVINE_RATE)?.basis).toBe('single');
+	it('names the single item as the rule when the buy market posted no pair', () => {
+		// The only surviving route to a count of one: version skew, not a
+		// measurement.
+		expect(runLedger(chaosNoPair(), DIVINE_RATE)?.units).toBe(1);
+		expect(runLedger(chaosNoPair(), DIVINE_RATE)?.basis).toBe('single');
 	});
 
-	it('ties up the chaos the Investment column reports for the run', () => {
-		// `12.625 × 50`.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.investmentChaos).toBe(631.25);
+	it('ties up the chaos the Investment column reports for the posting', () => {
+		// `12.625 × 16`.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.investmentChaos).toBe(202);
 	});
 
-	it('reads the Investment column rather than re-pricing the run off the buy leg', () => {
+	it('reads the Investment column rather than re-pricing the posting off the buy leg', () => {
 		// The two routes to one quantity differ in the last ulp because they
-		// associate the same product differently, and `expectedRoi` 3 is the flip
-		// count where this fixture shows it: `12.625 × 34` is a round 429.25, while
-		// `34 × 0.0625 × 1.01 × 200` answers 429.25000000000006. The literal is
-		// therefore what tells the two derivations apart, which is the whole point
-		// of E1 being read and not recomputed.
-		expect(runLedger(divineScarab({ expectedRoi: 3 }), DIVINE_RATE)?.investmentChaos).toBe(
-			429.25
-		);
+		// associate the same product differently, and a market posting FIVE for one
+		// divine is where this shows: `40.400000000000006 × 5` is
+		// 202.00000000000003, while `5 × 0.2 × 1.01 × 200` associates to a round
+		// 202. The literal is therefore what tells the two derivations apart, which
+		// is the whole point of E1 being read and not recomputed.
+		//
+		// Wire-consistent, as §7 requires: `u0 = 0.2 × 1.01 = 0.20200000000000004`
+		// div and `r = 200`, so `investment = u0 · r = 40.400000000000006`;
+		// `u1 = 0.25 × 0.99 = 0.2475` div, `roiPct = u1/u0 − 1 = 0.2252475…` and the
+		// pinned gain `roi = 9.1` back-solves that same `roiPct` as `9.1 /
+		// 40.400000000000006`. `roiPctRaw` is `0.25 / 0.2 − 1 = 0.25`.
+		const posted = divineScarab({
+			legs: [
+				leg({ ...DIVINE_SIDE, price: 0.2, priceItemQty: 5, priceQuoteQty: 1 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.25, priceItemQty: 4, priceQuoteQty: 1 })
+			],
+			roiPct: 0.2252475247524752,
+			edge: 0.2252475247524752,
+			roiPctRaw: 0.25,
+			investment: 40.400000000000006,
+			roi: 9.1
+		});
+
+		expect(runLedger(posted, DIVINE_RATE)?.investmentChaos).toBe(202.00000000000003);
 	});
 
-	it('carries the chaos the ROI column reports for the run', () => {
-		// `7.175 × 50`, the best case at the run's size.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.roiChaos).toBe(358.75);
+	it('carries the chaos the ROI column reports for the posting', () => {
+		// `7.175 × 16`, the best case at the posting's size.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.roiChaos).toBe(114.8);
 	});
 
-	it('carries the chaos the Exp. ROI column reports for the run', () => {
-		// `2 × 50` — the scale's own gain, and the only root that can go negative.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.expectedRoiChaos).toBe(100);
+	it('carries the chaos the Exp. ROI column reports for the posting', () => {
+		// `2 × 16` — the only root that can go negative.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.expectedRoiChaos).toBe(32);
 	});
 
-	it('roots a single-exchange row in the wire’s per-exchange figures', () => {
-		// One branch, so one wrong change loses all three at once.
-		const ledger = runLedger(divineScarab({ expectedRoi: -3 }), DIVINE_RATE);
+	it('roots a single-item row in the wire’s per-exchange figures', () => {
+		// One branch, so one wrong change loses all three at once. `chaosNoPair` is
+		// the shape that reaches it: a buy leg served with no usable pair.
+		const ledger = runLedger(chaosNoPair(), DIVINE_RATE);
 
-		expect(ledger?.investmentChaos).toBe(12.625);
-		expect(ledger?.roiChaos).toBe(7.175);
-		expect(ledger?.expectedRoiChaos).toBe(-3);
+		expect(ledger?.investmentChaos).toBe(19.19);
+		expect(ledger?.roiChaos).toBe(1.6);
+		expect(ledger?.expectedRoiChaos).toBe(0.5);
 	});
 
 	it('roots a chaos-entry row in the wire’s figures times its posting', () => {
@@ -1718,20 +1789,21 @@ describe('runLedger', () => {
 	});
 
 	it('ends the chain on the investment plus the best case', () => {
-		// 631.25 + 358.75.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.chainEndChaos).toBe(990);
+		// 202 + 114.8.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.chainEndChaos).toBe(316.8);
 	});
 
 	it('ends the row on the investment plus the measured expectation', () => {
-		// 631.25 + 100. The Get end is the Spend end plus the Exp. ROI column and
+		// 202 + 32. The Get end is the Spend end plus the Exp. ROI column and
 		// nothing else — E5.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.getChaos).toBe(731.25);
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.getChaos).toBe(234);
 	});
 
-	it('ends a single-exchange row below its spend when the expectation is a loss', () => {
-		// 12.625 − 3. The measurement, not broken arithmetic: the best case is still
-		// on the row, as the chain end of 19.8.
-		expect(runLedger(divineScarab({ expectedRoi: -3 }), DIVINE_RATE)?.getChaos).toBe(9.625);
+	it('ends a row below its spend when the expectation is a loss', () => {
+		// 202 − 48, the loss told at the same sixteen the entry counts. The
+		// measurement, not broken arithmetic: the best case is still on the row, as
+		// the chain end of 316.8.
+		expect(runLedger(divineScarab({ expectedRoi: -3 }), DIVINE_RATE)?.getChaos).toBe(154);
 	});
 
 	it('values a chaos entry at one chaos per unit', () => {
@@ -1764,19 +1836,19 @@ describe('runLedger', () => {
 	});
 
 	it('spends the chaos investment divided by the entry rate', () => {
-		// 631.25c of investment at 200c a divine. A Spend left in chaos would read
-		// 631.25 on a row whose unit word says divine.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.spend).toBe(3.15625);
+		// 202c of investment at 200c a divine. A Spend left in chaos would read 202
+		// on a row whose unit word says divine.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.spend).toBe(1.01);
 	});
 
 	it('renders the chain end in the entry currency', () => {
-		// (631.25 + 358.75) / 200.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.chainEnd).toBe(4.95);
+		// (202 + 114.8) / 200.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.chainEnd).toBe(1.584);
 	});
 
 	it('renders what the row gets in the entry currency', () => {
-		// (631.25 + 100) / 200.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.get).toBe(3.65625);
+		// (202 + 32) / 200.
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.get).toBe(1.17);
 	});
 
 	it('sells a direct play for the chain end itself', () => {
@@ -1785,12 +1857,12 @@ describe('runLedger', () => {
 		expect(runLedger(chaosScarab(), DIVINE_RATE)?.sellTotal).toBe(20.790000000000003);
 	});
 
-	it('sells a divine-entry direct play’s run in the entry currency', () => {
-		// 4.95 div — the chain end the row renders, NOT the 990c it was built
+	it('sells a divine-entry direct play’s posting in the entry currency', () => {
+		// 1.584 div — the chain end the row renders, NOT the 316.8c it was built
 		// from. Only a divine entry tells those two apart: at `r = 1` the chaos
 		// root and the entry-currency rendering are the same number, so the chaos
 		// fixture above passes either way.
-		expect(runLedger(divineScarab(), DIVINE_RATE)?.sellTotal).toBe(4.95);
+		expect(runLedger(divineScarab(), DIVINE_RATE)?.sellTotal).toBe(1.584);
 	});
 
 	it('derives no forward sale on a direct play', () => {
@@ -1817,15 +1889,15 @@ describe('runLedger', () => {
 
 	it('falls forward at the row’s own count and not at one exchange', () => {
 		// The forward fallback multiplies `units`, and only a row whose count is not
-		// 1 can say so — which since the ruling means a DIVINE entry. `divineOneHop`
-		// counts its 50-flip run, so the sale totals `50 × 13.86` = 693c; a fallback
-		// that lost the count answers 13.86, and one that reached for the buy
-		// market's pair answers `16 × 13.86`.
+		// 1 can say so. `divineOneHop`'s buy market posts sixteen scarabs for a
+		// divine, so the sale totals `16 × 13.86` = 221.76c; a fallback that lost
+		// the count answers 13.86, and one that reached for the 50-flip run answers
+		// 693.
 		const legs = divineOneHop().legs;
 		const skewed = divineOneHop({ legs: [legs[0]!, legs[1]!, unpriced(legs[2]!, 0)] });
 		const ledger = runLedger(skewed, DIVINE_RATE);
 
-		expect(ledger?.sellTotal).toBe(693);
+		expect(ledger?.sellTotal).toBe(221.76);
 		expect(ledger?.sellForward).toBe(true);
 	});
 
@@ -1991,10 +2063,11 @@ describe('quoteUnit', () => {
 });
 
 describe('routeSlots', () => {
-	it('spends the whole worthwhile run at the undercut buy price on a divine entry', () => {
-		// 50 flips of the 12.625c the Investment column reports per exchange — read
-		// through `moneyColumns().investment`, not re-priced here off the buy leg.
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.sub).toBe('≈ 631c');
+	it('spends one posting at the undercut buy price on a divine entry', () => {
+		// Sixteen scarabs — one order of this market — at the 12.625c the Investment
+		// column reports per exchange, read through `moneyColumns().investment` and
+		// not re-priced here off the buy leg. The 50-flip run would read 631c.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.sub).toBe('≈ 202c');
 	});
 
 	it('spends one posting of the buy market on a chaos entry', () => {
@@ -2031,14 +2104,14 @@ describe('routeSlots', () => {
 	it('keeps exactly the chaos the Exp. ROI column reports for the same play', () => {
 		// The two are one number by construction, not two agreeing calculations,
 		// and this is the case that can tell the difference: a 2c expectation on a
-		// divine entry takes 50 flips and pays exactly 100c, so neither the wire
-		// field (2) nor a mis-scaled count can produce the answer.
+		// market posting sixteen pays 32c, which neither the wire field (2) nor the
+		// 50-flip run's 100c can produce.
 		const scarab = divineScarab();
 		const column = moneyColumns(scarab).expectedRoi;
 
-		expect(column).toBe(100);
+		expect(column).toBe(32);
 		expect(routeSlots(scarab, DIVINE_RATE)?.get.sub).toBe(
-			`keep ≈ ${formatChaos(column)}c (≈ 0.50 div)`
+			`keep ≈ ${formatChaos(column)}c (≈ 0.16 div)`
 		);
 	});
 
@@ -2064,11 +2137,11 @@ describe('routeSlots', () => {
 
 	it('quotes the sell step in the currency its own leg is priced in', () => {
 		// The 0.1 divine this used to print is not a price the exchange can hold,
-		// and the 40 that replaced it was not the run: the line snapped down to the
-		// four whole 10-for-1 lots that 48 bought scarabs covered. It is a TOTAL
-		// now — all 50 flips, at the chain end the ROI column is built from — so the
-		// quantity is the run's and the unit is still the leg's own.
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.sell.rate).toBe('sell 50 for ≈ 4.95 div');
+		// and the 40 that replaced it was the four whole 10-for-1 lots a snapped
+		// order covered. It is a TOTAL now — the sixteen the buy market posts, at
+		// the chain end the ROI column is built from — so the quantity is the row's
+		// and the unit is still the leg's own.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.sell.rate).toBe('sell 16 for ≈ 1.58 div');
 	});
 
 	it('names the stock a sell lot leaves behind', () => {
@@ -2081,60 +2154,127 @@ describe('routeSlots', () => {
 		);
 	});
 
-	it('leaves the residue clause off a sell lot that divides the run exactly', () => {
-		// The sibling of the case above: this market posts 10 at a time and the run
-		// is 50, so there is no remainder to disclose and the hover is the printed
-		// pair alone.
+	it('names the stock a DIVINE row’s sell lot leaves behind too', () => {
+		// The clause is not a chaos-side reading. This row counts the sixteen its
+		// buy market posts while the sell market posts tens, so six scarabs are
+		// stock no order takes — a residue the old run-sized divine row (50 against
+		// a lot of 10) could not produce at all.
 		const title = routeSlots(divineScarab(), DIVINE_RATE)?.sell.rateTitle;
+
+		expect(title).toContain('6 of the 16 bought stay unsold');
+		// Sixteen against a lot of ten is ONE whole order and a remainder, so the
+		// same sentence carries the SINGULAR of the order count — the side of the
+		// plural the twelve-against-fives row above cannot reach.
+		expect(title).toContain('is 1 whole order and');
+	});
+
+	it('agrees the residue verb with a lot that leaves exactly one item unsold', () => {
+		// The singular of the residue clause, which every other lot fixture here
+		// misses: this row's buy market posts THREE cards for 3c and its sell
+		// market TWO for 3c, so the row counts 3 against a lot of 2 and exactly one
+		// card is stock — the one count whose subject is a single item.
+		//
+		// Worked by hand per §7, since overriding the pair moves the whole row's
+		// arithmetic: `u0 = 1 × 1.01 = 1.01`c, `u1 = 1.5 × 0.99 = 1.485`c, the
+		// entry is chaos so `r = 1` and `investment = u0 = 1.01`. The gain the
+		// fixture pins is `roi = u1 − u0 = 0.475`, so the literal `roiPct` is the
+		// back-solve `0.475 / 1.01`, and `roiPctRaw` is `1.5 / 1 − 1 = 0.5`.
+		const card = { item: 'card', itemName: 'Rain of Chaos', itemIcon: '/icon/Card' };
+		const oddLot = chaosLot({
+			legs: [
+				leg({ ...card, price: 1, priceItemQty: 3, priceQuoteQty: 3 }),
+				leg({ ...card, action: 'sell', price: 1.5, priceItemQty: 2, priceQuoteQty: 3 })
+			],
+			roiPct: 0.4702970297029703,
+			edge: 0.4702970297029703,
+			roiPctRaw: 0.5,
+			investment: 1.01,
+			roi: 0.475
+		});
+
+		expect(routeSlots(oddLot, DIVINE_RATE)?.sell.rateTitle).toContain(
+			'1 of the 3 bought stays unsold'
+		);
+	});
+
+	it('leaves the residue clause off a sell lot that divides the row’s count exactly', () => {
+		// The sibling of the cases above: this row's two markets both post a
+		// thousand at a time, so there is no remainder to disclose and the hover is
+		// the printed pair alone.
+		const title = routeSlots(chaosOvershoot(), DIVINE_RATE)?.sell.rateTitle;
 
 		expect(title).toContain('This market printed');
 		expect(title).not.toContain('unsold');
 	});
 
-	it('leaves the unsold clause off a buy step, which bought no stock to leave', () => {
-		// The buy market posts 16 at a time and the run is 50, so two of them are
-		// left over — but they were never bought, and "2 of the 50 bought stay
-		// unsold" would invent a holding.
+	it('leaves every lot clause off a buy step, whose count IS that market’s lot', () => {
+		// Since the row counts one posting of the BUY market, that step's count and
+		// that market's lot are the same number by construction — so no
+		// divisibility clause can reach a buy hover, whatever the play's run is.
+		// Under the old divine rule this row counted 50 against a lot of 16 and the
+		// hover read "multiples of 16 ... 2 left over".
 		const title = routeSlots(divineScarab(), DIVINE_RATE)?.buy.rateTitle;
 
-		expect(title).toContain('multiples of 16');
-		expect(title).toContain('2 left over');
-		expect(title).not.toContain('unsold');
+		expect(title).toContain('This market printed 16 for 1 div');
+		expect(title).not.toContain('multiples of');
+		expect(title).not.toContain('left over');
+		expect(title).not.toContain('bigger than the whole play');
 	});
 
-	it('quotes the buy step of a divine-entry run in divine', () => {
-		// The whole 50-flip run at the investment the row is priced for, in the
-		// currency the reader pays with. It used to read "buy 48 for 3 div" — the
-		// three whole 16-for-1 lots the market posts — which is neither the run nor
-		// what the Spend slot beside it says.
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 50 for ≈ 3.16 div');
+	it('quotes the buy step of a divine-entry posting in divine', () => {
+		// One order of this market at the investment the row is priced for, in the
+		// currency the reader pays with. It used to read "buy 50 for ≈ 3.16 div" —
+		// the worthwhile run — which the owner refused as a price nobody can post.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 16 for ≈ 1.01 div');
 	});
 
-	it('spends a divine-entry run in divine rather than in chaos', () => {
+	it('spends a divine-entry posting in divine rather than in chaos', () => {
 		const spend = routeSlots(divineScarab(), DIVINE_RATE)?.spend;
 
-		expect(spend?.amount).toBe('3.16');
+		expect(spend?.amount).toBe('1.01');
 		expect(spend?.unit).toBe('divine');
 	});
 
 	it('reads a divine spend back into chaos on its sub-line', () => {
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.sub).toBe('≈ 631c');
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.sub).toBe('≈ 202c');
 	});
 
-	it('returns a divine-entry run in divine', () => {
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.amount).toBe('3.66');
+	it('reads a SUB-DIVINE spend back into chaos on its sub-line', () => {
+		// The only surviving route to an end under one divine, and the case the
+		// hundredth-of-an-orb precision exists for: a divine buy leg with no usable
+		// pair counts a single item, whose 0.06 div says almost nothing on its own.
+		//
+		// A divine POSTING cannot land here. The row buys exactly one order of the
+		// buy market, which costs that order's quote quantity plus one price step —
+		// and the quote quantity is a positive INTEGER — so the smallest posting any
+		// divine market can sell the reader is 1.01 divine.
+		const skewed = divineScarab({
+			legs: [
+				leg({ ...DIVINE_SIDE, price: 0.0625, priceItemQty: 0, priceQuoteQty: 0 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.1, priceItemQty: 10, priceQuoteQty: 1 })
+			]
+		});
+
+		const route = routeSlots(skewed, DIVINE_RATE);
+
+		expect(route?.spend.amount).toBe('0.06');
+		expect(route?.spend.sub).toBe('≈ 13c');
+	});
+
+	it('returns a divine-entry posting in divine', () => {
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.amount).toBe('1.17');
 	});
 
 	it('gives a divine-entry profit line the divine equivalent of its chaos', () => {
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.sub).toBe('keep ≈ 32c (≈ 0.16 div)');
 	});
 
 	it('hands the unit word and the profit line back on one hover', () => {
 		// Dense hides both the unit beside the number and the sub-line under it, so
-		// this title is the only route back to either — a bare 3.66 with no way to
+		// this title is the only route back to either — a bare 1.17 with no way to
 		// learn it counts divine is not a row anyone can act on.
 		expect(routeSlots(divineScarab(), DIVINE_RATE)?.get.title).toBe(
-			'divine — keep ≈ 100c (≈ 0.50 div)'
+			'divine — keep ≈ 32c (≈ 0.16 div)'
 		);
 	});
 
@@ -2146,41 +2286,65 @@ describe('routeSlots', () => {
 
 	it('keeps a divine end precise to the hundredth above a hundred orbs', () => {
 		// A leg-price formatter drops to whole numbers above 100, which here would
-		// print 101 spent and 102 returned on a run that keeps half a divine — the
-		// total moving by four times the profit that produced it.
-		// The ends read `moneyColumns().investment`, so the figure is 50 flips ×
-		// 405c = 20,250c at 200c a divine = 101.25, plus 100c / 200 = 0.5.
+		// print 102 spent and 103 returned on a posting that keeps half a divine —
+		// the total moving by twice the profit that produced it.
+		//
+		// Wire-consistent: this market posts 200 items for 101 div, so `price =
+		// 0.505` and `u0 = 0.505 × 1.01 = 0.51005` div; at `r = 200`,
+		// `investment = 102.01`c. The sell market posts 5 for 3 div, so `price =
+		// 0.6` and `u1 = 0.594` div; `roiPct = u1/u0 − 1 = 0.1645917…` and the
+		// pinned gain `roi = 16.79` back-solves that same ratio.
+		// `roiPctRaw = 0.6 / 0.505 − 1 = 0.1881188…`.
+		//
+		// The ends read `moneyColumns().investment`, so the figure is 200 items ×
+		// 102.01c = 20,402c at 200c a divine = 102.01, plus `0.5 × 200` = 100c over
+		// 200 = 0.5.
 		const big = divineScarab({
 			legs: [
-				leg({ ...DIVINE_SIDE, price: 2.005, priceItemQty: 200, priceQuoteQty: 401 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 3, priceItemQty: 1, priceQuoteQty: 3 })
+				leg({ ...DIVINE_SIDE, price: 0.505, priceItemQty: 200, priceQuoteQty: 101 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.6, priceItemQty: 5, priceQuoteQty: 3 })
 			],
-			investment: 405
+			roiPct: 0.164591706695422,
+			edge: 0.164591706695422,
+			roiPctRaw: 0.18811881188118806,
+			investment: 102.01,
+			roi: 16.79,
+			expectedRoi: 0.5
 		});
 
 		const route = routeSlots(big, DIVINE_RATE);
 
-		expect(route?.spend.amount).toBe('101.25');
-		expect(route?.get.amount).toBe('101.75');
+		expect(route?.spend.amount).toBe('102.01');
+		expect(route?.get.amount).toBe('102.51');
 		expect(route?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
 	});
 
 	it('groups a divine end into thousands', () => {
-		// 50 flips × 4,040c = 202,000c, which at 200c a divine is 1,010. Grouped by
-		// hand, for the reason `formatChaos` groups by hand: a locale that
-		// separates with "." would print 1.010 beside an English sentence.
+		// One posting of a market that posts a single item for 1,000 div:
+		// `u0 = 1,010` div, so at `r = 200` the investment is 202,000c, which is
+		// 1,010 divine. Grouped by hand, for the reason `formatChaos` groups by
+		// hand: a locale that separates with "." would print 1.010 beside an
+		// English sentence.
+		//
+		// Wire-consistent: the sell market posts one for 1,200 div, so
+		// `u1 = 1,188` and `roi = r · (u1 − u0) = 35,600`c, whose back-solved
+		// `roiPct` is `35,600 / 202,000`. `roiPctRaw = 1,200 / 1,000 − 1 = 0.2`.
 		const huge = divineScarab({
 			legs: [
-				leg({ ...DIVINE_SIDE, price: 20, priceItemQty: 1, priceQuoteQty: 20 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 25, priceItemQty: 1, priceQuoteQty: 25 })
+				leg({ ...DIVINE_SIDE, price: 1000, priceItemQty: 1, priceQuoteQty: 1000 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 1200, priceItemQty: 1, priceQuoteQty: 1200 })
 			],
-			investment: 4040
+			roiPct: 0.17623762376237623,
+			edge: 0.17623762376237623,
+			roiPctRaw: 0.19999999999999996,
+			investment: 202000,
+			roi: 35600
 		});
 
 		expect(routeSlots(huge, DIVINE_RATE)?.spend.amount).toBe('1,010.00');
 	});
 
-	it('gives the end tiles the built artwork of the currency the run is entered with', () => {
+	it('gives the end tiles the built artwork of the currency the row is entered with', () => {
 		// Built from the id, never scavenged off `quoteIcon` — a leg served with
 		// no artwork left both ends as empty tiles (POE-189).
 		const route = routeSlots(divineScarab(), DIVINE_RATE);
@@ -2190,20 +2354,20 @@ describe('routeSlots', () => {
 		expect(route?.spend.icon).not.toBe(DIVINE_ICON);
 	});
 
-	it('gives a chaos-entry run the built chaos artwork', () => {
+	it('gives a chaos-entry row the built chaos artwork', () => {
 		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.spend.icon).toBe(chaosIconPath());
 	});
 
 	it('falls back to chaos ends when the hour published no divine rate', () => {
 		// Not a served shape — an hour with no divine trade serves no divine-quoted
 		// play — but the alternative to the guard is a division by zero printed as
-		// an amount. 50 flips × 12.625c invested, plus the same 100c gain, and the
-		// Get is `investment + expectedRoi` here as it is everywhere else (E5).
+		// an amount. 16 items × 12.625c invested, plus 16 × 2c of gain, and the Get
+		// is `investment + expectedRoi` here as it is everywhere else (E5).
 		const route = routeSlots(divineScarab(), 0);
 
 		expect(route?.spend.unit).toBe('chaos');
-		expect(route?.spend.amount).toBe('631');
-		expect(route?.get.amount).toBe('731');
+		expect(route?.spend.amount).toBe('202');
+		expect(route?.get.amount).toBe('234');
 	});
 
 	it('leaves a direct play without a convert step', () => {
@@ -2231,21 +2395,21 @@ describe('routeSlots', () => {
 	it('marks step 3 with the currency being converted, not the one it is converted into', () => {
 		// The convert leg's ITEM is the intermediate chaos being spent; its QUOTE
 		// is the divine coming back. The tile is what names the currency now that
-		// the run total has taken the name line's place, so reading the quote here
-		// would put the divine artwork over a quantity of chaos orbs.
+		// the step's own total has taken the name line's place, so reading the
+		// quote here would put the divine artwork over a quantity of chaos orbs.
 		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.icon).toBe(CHAOS_ICON);
 	});
 
 	it('ends a divine-entry triangle’s convert line below the Get slot beside it', () => {
 		// The premise INVERTED with the chain: the line now ends on `I + R`, the
 		// hour's best case, while Get is `I + X`, the measurement. On this fixture
-		// the deviation of §5 runs the other way — its ROI (55c) is BELOW its
-		// Exp. ROI (100c) — so the chain end (3.43 div) prints BELOW the Get (3.66),
+		// the deviation of §5 runs the other way — its ROI (17.5c) is BELOW its
+		// Exp. ROI (32c) — so the chain end (1.10 div) prints BELOW the Get (1.17),
 		// and nothing in the arithmetic guarantees which way round that lands.
 		const route = routeSlots(divineOneHop(), DIVINE_RATE);
 
-		expect(route?.convert?.rate).toBe('≈ 693c → 3.43 div');
-		expect(route?.get.amount).toBe('3.66');
+		expect(route?.convert?.rate).toBe('≈ 222c → 1.10 div');
+		expect(route?.get.amount).toBe('1.17');
 	});
 
 	it('quotes each step of a divine-entry triangle in that step’s own currency', () => {
@@ -2254,26 +2418,26 @@ describe('routeSlots', () => {
 		// sequence of bare numbers.
 		const route = routeSlots(divineOneHop(), DIVINE_RATE);
 
-		// The whole 50-flip run on both steps: 3.16 divine in, and the sale that
-		// backs the chain end totals 693c — `50 × 13.86`, the run at the sell leg's
-		// undercut price.
-		expect(route?.buy.rate).toBe('buy 50 for ≈ 3.16 div');
-		expect(route?.sell.rate).toBe('sell 50 for ≈ 693c');
+		// One posting of the buy market on both steps: 1.01 divine in, and the sale
+		// that backs the chain end totals 222c — `16 × 13.86`, that same posting at
+		// the sell leg's undercut price.
+		expect(route?.buy.rate).toBe('buy 16 for ≈ 1.01 div');
+		expect(route?.sell.rate).toBe('sell 16 for ≈ 222c');
 	});
 
 	it('enters a divine-entry triangle in divine', () => {
 		const route = routeSlots(divineOneHop(), DIVINE_RATE);
 
 		expect(route?.spend.unit).toBe('divine');
-		expect(route?.spend.amount).toBe('3.16');
-		expect(route?.spend.sub).toBe('≈ 631c');
+		expect(route?.spend.amount).toBe('1.01');
+		expect(route?.spend.sub).toBe('≈ 202c');
 	});
 
 	it('returns a divine-entry triangle in divine', () => {
 		const route = routeSlots(divineOneHop(), DIVINE_RATE);
 
-		expect(route?.get.amount).toBe('3.66');
-		expect(route?.get.sub).toBe('keep ≈ 100c (≈ 0.50 div)');
+		expect(route?.get.amount).toBe('1.17');
+		expect(route?.get.sub).toBe('keep ≈ 32c (≈ 0.16 div)');
 	});
 
 	it('marks only the slot whose own leg is suspect', () => {
@@ -2291,7 +2455,7 @@ describe('routeSlots', () => {
 		expect(route?.sell.suspect).toBe(true);
 	});
 
-	it('reports a gain when the run is expected to profit', () => {
+	it('reports a gain when the row is expected to profit', () => {
 		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.positive).toBe(true);
 	});
 
@@ -2319,35 +2483,34 @@ describe('routeSlots', () => {
 		expect(route?.get.amount).toBe(route?.spend.amount);
 	});
 
-	it('drops the ends from the run’s cost to one exchange’s when the scale disappears', () => {
-		// ONE fixture, both branches, which is what makes this a case about the
-		// branch rather than about either number. `divineScarab`'s 2c expectation
-		// needs 50 exchanges, so its ends price the whole run at 3.16 div; at an
-		// expectation of zero there is no repeat count that reaches the target,
-		// ADR-016 serves the play anyway, and the ends fall back to the wire's own
-		// per-exchange 12.625c — the same undercut entry, once.
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.amount).toBe('3.16');
-		expect(routeSlots(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.spend.amount).toBe('0.06');
+	it('leaves a divine row’s ends where they are when its scale disappears', () => {
+		// ONE fixture, both expectations, which is what makes this a case about the
+		// branch rather than about either number. A row is priced at its POSTING,
+		// which no expectation moves — so the branch that empties the Scale column
+		// changes nothing at either end. A route still reaching for the flip count
+		// would swing from 3.16 div to 0.06 div across these two calls.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.spend.amount).toBe('1.01');
+		expect(routeSlots(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.spend.amount).toBe('1.01');
 	});
 
 	it('leaves a chaos row’s ends where they are when its scale disappears', () => {
-		// The other half of the ruling: a chaos row is priced at its POSTING, which
-		// no expectation moves. So the branch that empties the Scale column changes
-		// nothing at either end here — and a route that still reached for the flip
-		// count would swing from 505c to 0.25c across these two calls.
+		// The same rule on the other entry currency — and a route that still
+		// reached for the flip count would swing from 505c to 0.25c across these
+		// two calls.
 		expect(routeSlots(chaosLot(), DIVINE_RATE)?.spend.amount).toBe('3');
 		expect(routeSlots(chaosLot({ expectedRoi: 0 }), DIVINE_RATE)?.spend.amount).toBe('3');
 	});
 
-	it('totals the single exchange on the buy step when there is no run size', () => {
-		// The quantity is the ONE EXCHANGE the row falls back to, and the total is
-		// that exchange's investment, `≈` and all.
+	it('leaves the buy step’s total on its posting when the scale disappears', () => {
+		// The step side of the same invariant the two cases above pin at the ends:
+		// the quantity is the market's own posting, and the total is that posting's
+		// investment, `≈` and all. The old rule printed "buy 1 for ≈ 0.06 div".
 		expect(routeSlots(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.buy.rate).toBe(
-			'buy 1 for ≈ 0.06 div'
+			'buy 16 for ≈ 1.01 div'
 		);
 	});
 
-	it('totals every step of a play with no run size at the same single exchange', () => {
+	it('totals every step of a play with no run at its buy market’s one-item posting', () => {
 		// What replaced the no-worthwhile-size note. That branch rendered "buy 1 for
 		// 35c → sell 4 for 1 div" — a 4:1 divergence between two steps of one row —
 		// and apologised for it in a hover. Both steps now print 1, so there is
@@ -2390,12 +2553,12 @@ describe('routeSlots', () => {
 		expect(routeSlots(skewed, DIVINE_RATE)?.buy.rateTitle).toBeNull();
 	});
 
-	it('keeps the unit on a rate of a play with no run size', () => {
+	it('keeps the unit on a rate of a play whose scale disappeared', () => {
 		// The mirror-route fix does not depend on the scale: a divine total stays
 		// labelled divine on a play the simulation could not measure. The chain end
-		// is `(12.625 + 7.175) / 200` = 0.099 divine, which prints 0.10.
+		// is `(202 + 114.8) / 200` = 1.584 divine, which prints 1.58.
 		expect(routeSlots(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.sell.rate).toBe(
-			'sell 1 for ≈ 0.10 div'
+			'sell 16 for ≈ 1.58 div'
 		);
 	});
 
@@ -2461,7 +2624,7 @@ describe('routeSlots', () => {
 		expect(title).not.toContain('multiples of');
 	});
 
-	it('totals the whole run at step 3 rather than one lot of its market', () => {
+	it('totals the row’s own posting at step 3 rather than one lot of its market', () => {
 		// "convert 1 div for 209c" read as an order to convert ONE divine on a row
 		// whose other four slots count something else entirely. What step 3 actually
 		// moves is this row's proceeds, 0.25 div, and what they come back as is the
@@ -2471,7 +2634,7 @@ describe('routeSlots', () => {
 
 	it('ends the convert line on the chain end and not on the Get beside it', () => {
 		// The premise INVERTED. The line ends on `I + R` — what the hour's best case
-		// would have paid — while Get is `I + X`, what the run is measured to
+		// would have paid — while Get is `I + X`, what the row is measured to
 		// return, so the two are deliberately different numbers sitting one slot
 		// apart. The gap between them is the gap between the ROI and Exp. ROI
 		// columns: 15.860225 − 8.5.
@@ -2523,7 +2686,7 @@ describe('routeSlots', () => {
 	it('shows the market’s ratio at step 3 of a row it cannot value in chaos', () => {
 		// The exempt branch is one of the three places with no total to print
 		// (§4.7), so step 3 falls back to the pair its market posts — and keeps its
-		// name line, which a run total gives up.
+		// name line, which a step that prints a total gives up.
 		const exempt = routeSlots(divineOneHop(), 0);
 
 		expect(exempt?.convert?.rate).toBe('convert 200c for 1 div');
@@ -2650,6 +2813,38 @@ describe('routeSlots', () => {
 		expect(title).toContain('one order is the smallest trade it accepts');
 	});
 
+	it('says the same on a DIVINE buy step that posts past its run', () => {
+		// The overshoot clause compares two COUNTS, neither of which carries a
+		// unit, so it needs no per-currency wording — and this is the case that
+		// says so. It is also newly reachable: while a divine row counted its run,
+		// `units` and `flips` were the same number and the sentence could never
+		// fire on one.
+		//
+		// Wire-consistent: this market posts a HUNDRED for one divine, so
+		// `price = 0.01` and `u0 = 0.0101` div; at `r = 200`, `investment = 2.02`c.
+		// The sell market posts 50 for one divine, so `u1 = 0.0198` div;
+		// `roiPct = u1/u0 − 1 = 0.9603960…` and the pinned gain `roi = 1.94`
+		// back-solves that same ratio. `roiPctRaw = 0.02 / 0.01 − 1 = 1`. Its 2c
+		// expectation needs 50 exchanges, half what one order of this market moves.
+		const posted = divineScarab({
+			legs: [
+				leg({ ...DIVINE_SIDE, price: 0.01, priceItemQty: 100, priceQuoteQty: 1 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.02, priceItemQty: 50, priceQuoteQty: 1 })
+			],
+			roiPct: 0.9603960396039604,
+			edge: 0.9603960396039604,
+			roiPctRaw: 1,
+			investment: 2.02,
+			roi: 1.94
+		});
+
+		const title = routeSlots(posted, DIVINE_RATE)?.buy.rateTitle;
+
+		expect(title).toContain('This market printed 100 for 1 div');
+		expect(title).toContain('This market posts 100 at a time, more than the ×50 run');
+		expect(title).toContain('one order is the smallest trade it accepts');
+	});
+
 	it('claims no overshoot on a buy step whose posting sits inside the run', () => {
 		// The twelve-at-a-time market against a 2,000-exchange run: the posting is
 		// a fraction of the run, so there is nothing to disclose and the hover is
@@ -2752,9 +2947,9 @@ describe('routeSlots', () => {
 		it(`reads no market pair off a buy leg served with ${label}`, () => {
 			// ONE fixture through BOTH emitters of the guard. `divineScarab` is the
 			// play that changes branch on the response's divine rate alone, so the
-			// same broken leg can be read once where a run total is printed and once
-			// where there is none — and a guard that drifted between the two would
-			// have the line claiming a pair the hover denies.
+			// same broken leg can be read once where a step total is printed and
+			// once where there is none — and a guard that drifted between the two
+			// would have the line claiming a pair the hover denies.
 			const broken = divineScarab({
 				legs: [
 					leg({ ...DIVINE_SIDE, price: 0.0625, priceItemQty: 16, priceQuoteQty: 1, ...pair }),
@@ -2762,8 +2957,8 @@ describe('routeSlots', () => {
 				]
 			});
 
-			// `marketPair`, on the branch that totals the run: no pair to word, so
-			// the step carries no hover while its line prints exactly as before.
+			// `marketPair`, on the branch that totals the row's posting: no pair to
+			// word, so the step carries no hover while its line prints as before.
 			expect(routeSlots(broken, DIVINE_RATE)?.buy.rateTitle).toBeNull();
 			// `pairLine`, on the exempt branch, which has no total to print: the line
 			// falls all the way through to the leg's own decimal rate.
@@ -2802,10 +2997,13 @@ describe('routeSlots', () => {
  * The document states the invariant; this suite is what enforces it, which is why
  * a change to an equation there and a change here travel together.
  *
- * Since the display scale went per-entry-currency (owner ruling, 2026-08-22) the
- * matrix carries the SIZE per case rather than deriving it: `units` and `basis`
- * are literals, pinned before anything else is read, so a case cannot assert its
- * own arithmetic at whatever scale the code happened to choose.
+ * Since the display scale became ONE POSTING on every row (owner rulings,
+ * 2026-08-22) the matrix carries the SIZE per case rather than deriving it:
+ * `units` and `basis` are literals, pinned before anything else is read, so a
+ * case cannot assert its own arithmetic at whatever scale the code happened to
+ * choose. No case is sized by the RUN any more, which is why every one of them
+ * that has a run asserts the Scale column's DIVERGENCE from the Exp. ROI column
+ * rather than an identity with it.
  */
 describe('row closure', () => {
 	/**
@@ -2845,17 +3043,10 @@ describe('row closure', () => {
 		entryIsChaos: boolean;
 		/** The unit the STEP totals carry beside the entry-currency amount. */
 		suffix: string;
-		/**
-		 * The display scale IS the worthwhile run, so the Scale column's `→ +Xc`
-		 * and the Exp. ROI column are one number. False on every chaos-entry row,
-		 * whose columns count one posting while the Scale column still counts the
-		 * run — the divergence the ruling introduced, asserted in its own case.
-		 */
-		runScaled: boolean;
 		/** `displayScale(play).units` — what every figure on the row counts. */
 		units: number;
 		/** `displayScale(play).basis` — the rule that chose that count. */
-		basis: 'posting' | 'run' | 'single';
+		basis: 'posting' | 'single';
 		/** The worthwhile run's own gain, as `formatGain` prints it in the Scale column. */
 		scaleGain: string | null;
 		/** Undercut buy price of leg 1, in entry-quote units per item. */
@@ -2899,7 +3090,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 1,
 			basis: 'posting',
 			scaleGain: '+100',
@@ -2919,31 +3109,33 @@ describe('row closure', () => {
 		},
 		{
 			// F2. Both legs quoted in divine: `u0 = 0.063125`, `u1 = 0.099`,
-			// `r = 200`; `investment 12.625`, `roi 7.175`, `expectedRoi 2` → 50
-			// flips, and a divine entry counts that run. `I = 631.25`,
-			// `R = 358.75`, `X = 100`; `chainEndChaos = 990`, `getChaos = 731.25`,
-			// so `spend = 3.15625`, `chainEnd = 4.95` and `get = 3.65625` divine.
+			// `r = 200`; `investment 12.625`, `roi 7.175`, `expectedRoi 2`. The buy
+			// market posts SIXTEEN scarabs for a divine, so the row counts 16 — its
+			// 50-flip run lives in the Scale column and nowhere else, which is the
+			// second owner ruling: "noone will buy 159 for ≈ 2.72 div — that is not
+			// measurable price". `I = 202`, `R = 114.8`, `X = 32`;
+			// `chainEndChaos = 316.8`, `getChaos = 234`, so `spend = 1.01`,
+			// `chainEnd = 1.584` and `get = 1.17` divine.
 			label: 'F2 — a divine-entry direct flip with a run',
 			play: () => divineScarab(),
 			rate: DIVINE_RATE,
 			entryIsChaos: false,
 			suffix: ' div',
-			runScaled: true,
-			units: 50,
-			basis: 'run',
+			units: 16,
+			basis: 'posting',
 			scaleGain: '+100',
 			u0: 0.063125,
 			u1: 0.099,
 			u2: null,
-			spend: '3.16',
-			spendSub: '≈ 631c',
-			buyRate: 'buy 50 for ≈ 3.16 div',
-			sellRate: 'sell 50 for ≈ 4.95 div',
+			spend: '1.01',
+			spendSub: '≈ 202c',
+			buyRate: 'buy 16 for ≈ 1.01 div',
+			sellRate: 'sell 16 for ≈ 1.58 div',
 			convertRate: null,
-			get: '3.66',
-			getSub: 'keep ≈ 100c (≈ 0.50 div)',
-			roiColumn: '+359',
-			expColumn: '+100',
+			get: '1.17',
+			getSub: 'keep ≈ 32c (≈ 0.16 div)',
+			roiColumn: '+115',
+			expColumn: '+32',
 			positive: true
 		},
 		{
@@ -2959,7 +3151,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 1,
 			basis: 'posting',
 			scaleGain: '+102',
@@ -2981,13 +3172,14 @@ describe('row closure', () => {
 			// F4. The divine-entry triangle: buy the scarab against divine, sell it
 			// against chaos, convert the chaos back. `u0 = 0.063125` div,
 			// `u1 = 13.86`c, `u2 = 0.00495` div a chaos, `r = 200`;
-			// `investment 12.625`, `roi 1.0964`, `expectedRoi 2` → 50 flips, which
-			// a divine entry counts. `I = 631.25`, `R = 54.82`, `X = 100`;
-			// `chainEndChaos = 686.07` and `getChaos = 731.25`, so the sale totals
-			// `3.43035 / 0.00495 = 693`c, which is `50 × 13.86` exactly.
+			// `investment 12.625`, `roi 1.0964`, `expectedRoi 2`. Its buy market
+			// posts SIXTEEN for a divine, so the row counts 16 while its 50-flip run
+			// stays in the Scale column. `I = 202`, `R = 17.5424`, `X = 32`;
+			// `chainEndChaos = 219.5424` and `getChaos = 234`, so the sale totals
+			// `1.097712 / 0.00495 = 221.76`c, which is `16 × 13.86` exactly.
 			//
-			// Its ROI (55c) is BELOW its Exp. ROI (100c), so its chain end (3.43 div)
-			// prints BELOW its Get (3.66 div) — the deviation of §5 running the other
+			// Its ROI (17.5c) is BELOW its Exp. ROI (32c), so its chain end (1.10 div)
+			// prints BELOW its Get (1.17 div) — the deviation of §5 running the other
 			// way. Deliberate: field measurement has the best case overstating the
 			// measurement four to eight times, but nothing in the arithmetic
 			// guarantees the sign, and this is the case that catches any emitter,
@@ -2997,22 +3189,21 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: false,
 			suffix: ' div',
-			runScaled: true,
-			units: 50,
-			basis: 'run',
+			units: 16,
+			basis: 'posting',
 			scaleGain: '+100',
 			u0: 0.063125,
 			u1: 13.86,
 			u2: 0.00495,
-			spend: '3.16',
-			spendSub: '≈ 631c',
-			buyRate: 'buy 50 for ≈ 3.16 div',
-			sellRate: 'sell 50 for ≈ 693c',
-			convertRate: '≈ 693c → 3.43 div',
-			get: '3.66',
-			getSub: 'keep ≈ 100c (≈ 0.50 div)',
-			roiColumn: '+55',
-			expColumn: '+100',
+			spend: '1.01',
+			spendSub: '≈ 202c',
+			buyRate: 'buy 16 for ≈ 1.01 div',
+			sellRate: 'sell 16 for ≈ 222c',
+			convertRate: '≈ 222c → 1.10 div',
+			get: '1.17',
+			getSub: 'keep ≈ 32c (≈ 0.16 div)',
+			roiColumn: '+18',
+			expColumn: '+32',
 			positive: true
 		},
 		{
@@ -3028,7 +3219,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 1,
 			basis: 'posting',
 			scaleGain: null,
@@ -3047,35 +3237,37 @@ describe('row closure', () => {
 			positive: false
 		},
 		{
-			// F6. F4's legs with no run: a divine entry falls back to ONE exchange,
-			// so `I = 12.625`, `R = 1.0964`, `X = -5`; `chainEndChaos = 13.7214` and
-			// `getChaos = 7.625`, so at `r = 200` the spend is 0.063125 div, the
-			// chain end 0.068607 and the get 0.038125. Both ends land under one
-			// divine, where the entry-currency reading is nearly useless — which is
-			// what the chaos sub-line is for, and is why the fallback branch of a
-			// divine-entry play is where the hundredth-of-an-orb precision earns or
-			// loses its keep.
+			// F6. F4's legs with an expectation that measures a LOSS. Its count is
+			// unchanged from F4 at 16, and that is the case: a market's lot does not
+			// depend on the measurement, so losing the run changes the Scale column
+			// and nothing else — the same rule F5 states on a chaos entry, now that
+			// the divine entries follow it too. `I = 202`, `R = 17.5424`, `X = -80`;
+			// `chainEndChaos = 219.5424` and `getChaos = 122`, so at `r = 200` the
+			// spend is 1.01 div, the chain end 1.097712 and the get 0.61.
+			//
+			// It is the divine-entry LOSS: the profit line carries its magnitude in
+			// both currencies (`lose ≈ 80c (≈ 0.40 div)`), which no chaos fixture can
+			// reach, and the Get end prints below the Spend in divine.
 			label: 'F6 — a divine-entry triangle with no run',
 			play: () => divineOneHop({ expectedRoi: -5 }),
 			rate: DIVINE_RATE,
 			entryIsChaos: false,
 			suffix: ' div',
-			runScaled: false,
-			units: 1,
-			basis: 'single',
+			units: 16,
+			basis: 'posting',
 			scaleGain: null,
 			u0: 0.063125,
 			u1: 13.86,
 			u2: 0.00495,
-			spend: '0.06',
-			spendSub: '≈ 13c',
-			buyRate: 'buy 1 for ≈ 0.06 div',
-			sellRate: 'sell 1 for ≈ 14c',
-			convertRate: '≈ 14c → 0.07 div',
-			get: '0.04',
-			getSub: 'lose ≈ 5c (≈ 0.03 div)',
-			roiColumn: '+1',
-			expColumn: '-5',
+			spend: '1.01',
+			spendSub: '≈ 202c',
+			buyRate: 'buy 16 for ≈ 1.01 div',
+			sellRate: 'sell 16 for ≈ 222c',
+			convertRate: '≈ 222c → 1.10 div',
+			get: '0.61',
+			getSub: 'lose ≈ 80c (≈ 0.40 div)',
+			roiColumn: '+18',
+			expColumn: '-80',
 			positive: false
 		},
 		{
@@ -3093,7 +3285,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 12,
 			basis: 'posting',
 			scaleGain: '+100',
@@ -3128,7 +3319,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 1000,
 			basis: 'posting',
 			scaleGain: '+100',
@@ -3162,7 +3352,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 1,
 			basis: 'single',
 			scaleGain: '+100',
@@ -3198,7 +3387,6 @@ describe('row closure', () => {
 			rate: DIVINE_RATE,
 			entryIsChaos: true,
 			suffix: 'c',
-			runScaled: false,
 			units: 4,
 			basis: 'posting',
 			scaleGain: '+100',
@@ -3281,24 +3469,16 @@ describe('row closure', () => {
 				expect(runLedger(play, c.rate)?.units).toBe(c.units);
 			});
 
-			if (c.runScaled) {
-				it('shows the Scale column’s gain and the Exp. ROI column as one number', () => {
-					// Scoped to the rows the RUN sizes, which since the ruling is the
-					// divine entries: there, and only there, the Scale column's `→ +Xc`
-					// and the Exp. ROI column are one variable.
-					const play = c.play();
-
-					expect(worthwhileScale(play)!.gain).toBe(moneyColumns(play).expectedRoi);
-					expect(formatGain(worthwhileScale(play)!.gain)).toBe(c.expColumn);
-				});
-			} else if (c.scaleGain !== null) {
+			if (c.scaleGain !== null) {
 				it('keeps the run in the Scale column while the row prices one posting', () => {
-					// THE OWNER RULING, as a divergence rather than an identity: ROI is
-					// per single trade, not per batch. The Scale column still answers
-					// with the whole run's gain, the Exp. ROI column answers with what
-					// one posting is measured to pay, and the two are deliberately
-					// different numbers. Re-introducing the run multiplier on the money
-					// columns collapses them and fails here.
+					// THE OWNER RULING, as a divergence rather than an identity, and now
+					// on EVERY row that has a run at all — the divine entries included,
+					// which is the second ruling's whole content. ROI is per single
+					// trade, not per batch. The Scale column still answers with the whole
+					// run's gain, the Exp. ROI column answers with what one posting is
+					// measured to pay, and the two are deliberately different numbers.
+					// Re-introducing the run multiplier on the money columns collapses
+					// them and fails here.
 					const play = c.play();
 
 					expect(formatGain(worthwhileScale(play)!.gain)).toBe(c.scaleGain);
@@ -3475,7 +3655,7 @@ describe('row closure', () => {
 		// trade — and guarded anyway, because the alternative is a division by zero
 		// printed as an amount.
 		//
-		// `divineScarab()` at `flips 50`: `I = 631.25`, `X = 100`.
+		// `divineScarab()` at its posting of 16: `I = 202`, `X = 32`.
 		it('draws no ledger, because there is no rate to state the chain in', () => {
 			expect(runLedger(divineScarab(), 0)).toBeNull();
 		});
@@ -3484,7 +3664,7 @@ describe('row closure', () => {
 			const route = routeSlots(divineScarab(), 0);
 
 			expect(route?.spend.amount).toBe(formatChaos(moneyColumns(divineScarab()).investment));
-			expect(route?.spend.amount).toBe('631');
+			expect(route?.spend.amount).toBe('202');
 			expect(route?.spend.unit).toBe('chaos');
 		});
 
@@ -3495,7 +3675,7 @@ describe('row closure', () => {
 			const route = routeSlots(divineScarab(), 0);
 
 			expect(route?.get.amount).toBe(formatChaos(money.investment + money.expectedRoi));
-			expect(route?.get.amount).toBe('731');
+			expect(route?.get.amount).toBe('234');
 		});
 
 		it('gives both ends the chaos artwork the amounts are actually counted in', () => {
@@ -3518,10 +3698,10 @@ describe('row closure', () => {
 
 			expect(route?.spend.sub).toBeNull();
 			expect(route?.spend.title).toBe('chaos');
-			expect(route?.get.title).toBe('chaos — keep ≈ 100c');
+			expect(route?.get.title).toBe('chaos — keep ≈ 32c');
 		});
 
-		it('prints each step’s own market ratio rather than a run total', () => {
+		it('prints each step’s own market ratio rather than a step total', () => {
 			// §4.7. There is no chain to total, so the honest line is the pair the
 			// market posts — the buy market 16 scarabs for a divine, the sell market
 			// 10 for one.
@@ -3531,9 +3711,10 @@ describe('row closure', () => {
 			expect(route?.sell.rate).toBe('sell 10 for 1 div');
 		});
 
-		it('says on each step that its line counts a lot and the ends count the run', () => {
+		it('says on each step that its line counts a lot and the ends count the row', () => {
 			// The caveat §4.7 requires of every `pairLine` caller: the line prints
-			// this market's LOT quantity while the ends beside it count the run.
+			// this market's LOT quantity while the ends beside it count the
+			// exchanges the row is priced for.
 			const route = routeSlots(divineScarab(), 0);
 
 			expect(route?.buy.rateTitle).toContain('one order of this market');

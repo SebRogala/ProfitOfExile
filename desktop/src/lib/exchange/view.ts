@@ -544,12 +544,12 @@ export function worthwhileScale(play: CurrencyExchangePlay): WorthwhileScale | n
  * already holds for the ×N and the hours.
  *
  * It exists as a named export so that bound reads the run DELIBERATELY rather
- * than by happening to share a function with the Investment column. Since the
- * display scale of a chaos-entry row is one posting, `moneyColumns` no longer
- * answers the run's cost, and a bound left pointing at it would have become a
- * per-posting ceiling silently — the code compiles, every divine-row test stays
- * green, and a reader typing 500 to mean 500c of bankroll ends up filtering on
- * what one trash-market order costs (spec §6.1).
+ * than by happening to share a function with the Investment column. Since every
+ * row's display scale is one posting, `moneyColumns` no longer answers the run's
+ * cost on any row, and a bound left pointing at it would have become a
+ * per-posting ceiling silently — the code compiles, nothing on screen changes,
+ * and a reader typing 500 to mean 500c of bankroll ends up filtering on what one
+ * trash-market order costs (spec §6.1).
  *
  * A play with no worthwhile run falls back to the wire's per-exchange
  * `investment`, which is what the bound compared such a play against before this
@@ -566,10 +566,14 @@ export function runInvestment(play: CurrencyExchangePlay): number {
  *
  * - `posting` — one minimal order of the BUY market: the quantity pair that
  *   market actually posts.
- * - `run` — the worthwhile run, `worthwhileScale().flips`.
- * - `single` — one item, because neither of the above is readable.
+ * - `single` — one item, because that market posted no usable pair.
+ *
+ * There is no third member. A `run` basis existed while divine entries were
+ * sized by `worthwhileScale().flips`, and the second owner ruling of 2026-08-22
+ * removed that branch — the run now lives only in the Scale column, so a basis
+ * naming it would name a size no row displays.
  */
-export type DisplayBasis = 'posting' | 'run' | 'single';
+export type DisplayBasis = 'posting' | 'single';
 
 /** The size every money figure and both step quantities on one row count. */
 export interface DisplayScale {
@@ -580,70 +584,57 @@ export interface DisplayScale {
 }
 
 /**
- * The size the ROW READS AT — one decision, taken once, by ENTRY CURRENCY
- * (owner ruling, 2026-08-22).
+ * The size the ROW READS AT — ONE RULE, the same on every row: the MINIMAL
+ * POSTING of the market the play enters on (owner ruling, Sebastian,
+ * 2026-08-22).
  *
- * The run used to size every row, and on a chaos entry it deceived. A 30c card
- * whose worthwhile run is sixteen exchanges rendered "buy 16 for ≈ 384c", which
- * reads at a glance as a 384c blockbuster and ranks in the reader's eye as one —
- * while buying sixteen of anything on a chaos market is slow and, at the depths
- * these markets carry, not realistic. Chaos markets post either X-items-for-1c
- * or Xc-per-item, so the honest size for such a row is the MINIMAL POSTING of
- * the market it enters on: the order the reader can actually place, once.
+ * The run used to size every row, and it deceived. A 30c card whose worthwhile
+ * run is sixteen exchanges rendered "buy 16 for ≈ 384c", which reads at a
+ * glance as a 384c blockbuster and ranks in the reader's eye as one — while
+ * buying sixteen of anything on such a market is slow and, at the depths these
+ * markets carry, not realistic. The first ruling took the run off the CHAOS
+ * entries; the second took it off the divine ones too, in the owner's words:
+ * *noone will buy 159 for ≈ 2.72 div — that is not measurable price*. A run
+ * counted in divine fakes a size exactly as a run counted in chaos does; the
+ * fraction of an orb it costs is not what made it honest.
  *
- * DIVINE-entry rows keep the run for now, and NOT because their legs carry
- * mixed pairs. A buy lot that disagrees with its sell lot is not a divine-side
- * shape at all — the twelve-for-3c card sold on a five-at-a-time market is a
- * chaos row and carries the same mismatch — and on both sides that mismatch is
- * an accepted cost, disclosed on the sell step's hover rather than resolved
- * (spec §4.6). What actually separates the two is WHERE the deception was. The
- * buy market's posting is the ENTRY order, the one quantity the reader can
- * place once, and the inflated headline lived on the CHAOS entries: "buy 16 for
- * ≈ 384c" on a 30c card reads as a 384c blockbuster. A divine entry's Spend is
- * a fraction of an orb whatever count it carries, so the run there does not
- * fake a size at a glance. The divine side is therefore UNTREATED rather than
- * exempt on a principle, and it gets its own treatment later.
+ * So the entry currency decides NOTHING here any more. What a row prices is the
+ * order the reader can actually place, once: the quantity pair the BUY market
+ * posts, whatever it quotes in.
  *
  * N > F IS A LEGITIMATE READING, not a case to guard against. A market that
  * posts a thousand at a time on a play whose worthwhile run is 167 exchanges
  * gives a row counting 1,000 beside a Scale column reading ×167. The posting is
  * the minimal executable trade, so there is no smaller order to print and no
  * honest way to shrink the row to the run; the row prints the posting whole and
- * the buy step's hover discloses the overshoot (`marketPair`, spec §1).
+ * the buy step's hover discloses the overshoot (`marketPair`, spec §1). The
+ * hover is currency-agnostic, so a divine-entry posting that counts past its own
+ * run discloses it in the same sentence.
  *
  * What this does NOT touch: `worthwhileScale` itself. The run is still derived,
  * still what the Scale column prints (×N, its cost, its hours), still what the
- * Fastest sort orders by, and on a chaos row the Scale column becomes the ONE
- * place the run appears. The display scale decides what the money figures and
+ * Fastest sort orders by, and the Scale column is now the ONLY place on any row
+ * where the run appears. The display scale decides what the money figures and
  * the step quantities count, and nothing else.
  *
- * Three branches, in the order they are read:
+ * Two branches:
  *
- * 1. A CHAOS entry with a usable pair on its buy leg counts that pair's item
- *    quantity — `buy 1 for ≈ 24c` on a market that posts one at a time,
- *    `buy 4 for ≈ 1c` on a trash market that posts four.
- * 2. A chaos entry whose buy leg carries no usable pair (version skew) counts
- *    ONE item. There is no posting to read, and one item is the smallest claim
- *    the row can make that is still true.
- * 3. Anything else — a divine entry — counts the worthwhile run, or ONE when
- *    there is none, which is the branch every row took before this rule.
+ * 1. A buy leg with a usable pair counts that pair's item quantity —
+ *    `buy 1 for ≈ 24c` on a market that posts one at a time, `buy 4 for ≈ 1c` on
+ *    a trash market that posts four, `buy 16 for ≈ 1.01 div` on a divine market
+ *    that posts sixteen.
+ * 2. A buy leg with no usable pair (version skew) counts ONE item. There is no
+ *    posting to read, and one item is the smallest claim the row can make that
+ *    is still true — not a postable order any market vouched for.
  *
- * The entry currency is read off the buy leg's `quote`, the same field
- * `chaosPerQuote` reads, so a row's display scale and its entry-currency
- * rendering can never disagree about which currency the reader pays with. A play
- * with no legs at all answers the run branch; `runLedger` and `routeSlots` both
- * refuse such a body before any of this is rendered.
+ * A play with no legs at all takes the second branch; `runLedger` and
+ * `routeSlots` both refuse such a body before any of this is rendered.
  */
 export function displayScale(play: CurrencyExchangePlay): DisplayScale {
 	const buyLeg = play.legs[0];
-	if (buyLeg !== undefined && buyLeg.quote === CHAOS_ID) {
-		return hasQuantityPair(buyLeg)
-			? { units: buyLeg.priceItemQty, basis: 'posting' }
-			: { units: 1, basis: 'single' };
-	}
-
-	const scale = worthwhileScale(play);
-	return scale === null ? { units: 1, basis: 'single' } : { units: scale.flips, basis: 'run' };
+	return buyLeg !== undefined && hasQuantityPair(buyLeg)
+		? { units: buyLeg.priceItemQty, basis: 'posting' }
+		: { units: 1, basis: 'single' };
 }
 
 // ------------------------------------------------------------- the money --
@@ -660,7 +651,7 @@ export interface MoneyColumns {
 
 /**
  * The row's three money figures, at the size the row DISPLAYS (POE-193, rescaled
- * by the owner ruling of 2026-08-22).
+ * by the two owner rulings of 2026-08-22).
  *
  * THE INVARIANT: every money figure on a row is on ONE scale — the same scale
  * the route slots print. The row used to mix three of them. Spend/Get/`keep ≈`
@@ -671,27 +662,24 @@ export interface MoneyColumns {
  * saying which was which.
  *
  * The size comes from `displayScale`, which decides it ONCE per row: one minimal
- * posting of the buy market on a chaos entry, the worthwhile run on a divine
- * one. `runLedger` reads the same function, so the route ends, the step totals
- * and these three columns take the same branch at the same moment rather than
- * each deciding for itself what this row counts
+ * posting of the buy market, whatever currency that market quotes in.
+ * `runLedger` reads the same function, so the route ends, the step totals and
+ * these three columns take the same branch at the same moment rather than each
+ * deciding for itself what this row counts
  * (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1, SCALE).
  *
  * All three are the wire's PER-EXCHANGE field multiplied by that count, and
  * `WorthwhileScale`'s own `investment`/`gain` are deliberately not read here any
- * more: they are the RUN's totals, which on a chaos row is no longer the size
- * this answers. The multiplication is the same expression `worthwhileScale`
- * itself uses, so a divine row's figures are bit-identical to the ones it
- * carries — the Scale column's "N c in" and the Investment column still print
- * one number on those rows, and on a chaos row the Scale column is the run's
- * lone home and says `×N` beside it.
+ * more: they are the RUN's totals, which is no longer the size this answers on
+ * any row. The Scale column is the run's lone home and says `×N` beside these
+ * three.
  *
  * The count is a positive integer, so the sign of each column is the wire's sign
  * and a losing raw return still reads as one.
  *
- * The one figure that stayed the run's is the filter bar's Run cost bound, which
- * reads `runInvestment` and not this — a bankroll ceiling is a run-sized
- * question whatever the row prints (spec §6.1).
+ * The two figures that stayed the run's are the Scale column and the filter
+ * bar's Run cost bound, which reads `runInvestment` and not this — a bankroll
+ * ceiling is a run-sized question whatever the row prints (spec §6.1).
  */
 export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
 	const { units } = displayScale(play);
@@ -716,7 +704,7 @@ export function moneyColumns(play: CurrencyExchangePlay): MoneyColumns {
 export interface RunLedger {
 	/**
 	 * Items the row counts — `displayScale().units`: one posting of the buy
-	 * market on a chaos entry, the worthwhile run on a divine one.
+	 * market, or one item where that market posted no usable pair.
 	 */
 	units: number;
 	/** Which rule chose that count — the branch every emitter takes together. */
@@ -776,10 +764,9 @@ export interface RunLedger {
  * `displayScale` and `moneyColumns` and are not recomputed here — that single
  * decision is what makes the ends, the step totals and the columns take the same
  * branch at the same moment, rather than each deciding for itself whether this
- * row counts a posting, a run or one exchange. The filter bar's Run-cost bound
- * is the deliberate exception and reads `runInvestment` instead: it is the one
- * question on the surface that is about bankroll rather than about the row
- * (spec §6.1).
+ * row counts a posting or one item. The filter bar's Run-cost bound is the
+ * deliberate exception and reads `runInvestment` instead: it is the one question
+ * on the surface that is about bankroll rather than about the row (spec §6.1).
  *
  * `chainEndChaos` and `getChaos` are single additions of those roots, and
  * deliberately not `spend + roiChaos / entryRate`: reassociating the division
@@ -876,36 +863,31 @@ function saleTotal(
  * it.
  *
  * That option is deliberately NOT re-pointed at the Exp. ROI COLUMN, and the
- * reason is what that column is. On a divine-entry row it is `scale.gain`, the
- * expectation repeated until it clears about 100c, so every such play lands in
- * [100, 200) and ordering by it would rank the table on the remainder of a
- * division. On a chaos-entry row it is one posting's expectation, which is a
- * different question again — so the column mixes two sizes across rows and is
- * not an order at all. The served order stays the ranking; the column tells the
- * reader what the row in front of them pays. The seam is that the Exp. ROI
- * column is not monotonic in the order it sits in — a 101c expectation runs once
- * for 101c and ranks above a 99c one that runs twice for 198c, and a chaos row's
- * single posting ranks wherever its per-exchange mean put it. It is a seam by
- * choice: the alternative throws away the clean/suspect partition and the
- * coverage band for an order nobody asked for.
+ * reason is what that column is: one POSTING's expectation, which is a market's
+ * own lot size and not a ranking key. The served order stays the ranking; the
+ * column tells the reader what the row in front of them pays. The seam is that
+ * the Exp. ROI column is not monotonic in the order it sits in — a row's single
+ * posting ranks wherever its per-exchange mean put it, so a market that posts a
+ * thousand at a time sits below one that posts one and prints a larger number.
+ * It is a seam by choice: the alternative throws away the clean/suspect
+ * partition and the coverage band for an order nobody asked for.
  *
  * `'roi'` re-sorts by the BEST-CASE chaos the ROI COLUMN prints, `moneyColumns().roi`,
  * and not by the wire's per-exchange `roi`. The rule is that the table is
  * ordered by the number it SHOWS: a table ordered by a figure printed nowhere on
  * it reads as broken, and the two orders genuinely differ.
  *
- * Since the display scale went per-entry-currency (owner ruling, 2026-08-22)
- * that column is a per-posting figure on a chaos row and a per-run one on a
- * divine row, so this order compares two sizes across rows and will bunch the
- * divine entries at the top. Two adjacent rows under it are not comparable: one
- * says what a single postable order gains, the next what a hundred-chaos run
- * does. That is the honest consequence of the column being what it is, and it
- * is INTERIM — the divine entries keep the run only until they get their own
- * treatment, after which both sides read at one posting and the order is
- * comparable again (spec §8). Re-pointing the sort at
- * `play.roi` to dodge it would order the table by a number no column prints,
- * which is the failure this option exists to avoid. The Investment column has no
- * sort of its own; if it ever gets one it reads the same helper.
+ * Every row is posting-sized since the second owner ruling of 2026-08-22, so the
+ * order no longer compares a posting against a run across rows. What it still
+ * compares is postings of DIFFERENT SIZES — a market that posts a thousand at a
+ * time against one that posts one — because a market's lot is a fact about that
+ * market and not a choice the table makes. That is the same reading chaos rows
+ * already carried before the second ruling, and it is disclosed where it is
+ * caused: on each buy step's hover, which says what that market posts.
+ * Re-pointing the sort at `play.roi` to dodge it would order the table by a
+ * number no column prints, which is the failure this option exists to avoid. The
+ * Investment column has no sort of its own; if it ever gets one it reads the
+ * same helper.
  *
  * `'fastest'` sorts by how
  * long the market needs to absorb the play's worthwhile scale — ascending,
@@ -1122,10 +1104,10 @@ function endTitle(unit: string, sub: string | null): string {
  * order anyone posts; the item count before it is exact and carries no `≈`. What
  * the market actually posts moves to the hover, in `marketPair`.
  *
- * The `≈` survives even on a chaos row, whose count IS one posting of the buy
- * market: the posting is exact, the PRICE beside it is the undercut fill price
- * and not the extreme the market printed, and that is what the `≈` has always
- * been about (spec §1, BASIS).
+ * The `≈` survives even though the count IS one posting of the buy market: the
+ * posting is exact, the PRICE beside it is the undercut fill price and not the
+ * extreme the market printed, and that is what the `≈` has always been about
+ * (spec §1, BASIS).
  *
  * This replaced a POSTABLE-ORDER rendering that snapped the printed quantity
  * down to a whole multiple of the market's lot. The snap bought exact
@@ -1192,14 +1174,19 @@ function hasQuantityPair(leg: CurrencyExchangeLeg): boolean {
  * move onto the hover with the pair rather than being dropped.
  *
  * The clauses name "the N this row counts" and never "the run", because since
- * the owner ruling of 2026-08-22 that count is a run only on a divine-entry row
- * — a chaos row counts one posting of its BUY market, and this same hover words
- * the SELL market beside it, whose lot has no reason to match. Saying "run"
- * there would name a quantity the row does not print.
+ * the owner ruling of 2026-08-22 no row's count is a run: every row counts one
+ * posting of its BUY market, and this same hover words the SELL market beside
+ * it, whose lot has no reason to match. Saying "run" would name a quantity no
+ * row prints.
  *
  * `bought` is the sell step's flag, and it is what licenses the "stay unsold"
  * clause: units a SELL lot cannot cover are stock nobody takes off the reader's
- * hands, while units a BUY lot cannot cover were simply never bought.
+ * hands, while units a BUY lot cannot cover were simply never bought. Its
+ * `false` arm is UNREACHABLE under the current scale rule — a buy step's units
+ * ARE that market's lot by construction, so its remainder is always zero and
+ * the residue sentence is never reached from there — and it is kept anyway for
+ * the reason spec §4.6 gives for keeping both clauses on both steps: a clause
+ * dropped by a future scale rule is a fact the reader loses silently.
  *
  * `runFlips` is the worthwhile run, and it is the BUY step's alone — `null`
  * everywhere else. It words the N > F case: a buy market whose minimal posting
@@ -1210,6 +1197,12 @@ function hasQuantityPair(leg: CurrencyExchangeLeg): boolean {
  * overshoot rather than to shrink the row to a quantity nobody can order. The
  * SELL step is not told the run, because the sentence names the ENTRY order's
  * own lot and that market's lot has no reason to match it.
+ *
+ * The clause is CURRENCY-AGNOSTIC and always was: it compares two counts, and
+ * neither of them carries a unit. Since the second ruling of 2026-08-22 sized
+ * the divine entries by their postings too, a divine buy market that posts past
+ * its own run reaches this sentence and is worded by it unchanged — there is no
+ * per-currency string, because there is no per-currency fact to tell.
  *
  * `null` for a leg served without a usable pair (version skew) — there is no
  * pair to word, and the line above it does not depend on one any more, so the
@@ -1249,10 +1242,13 @@ function marketPair(
 	const rest = units % itemQty;
 	if (rest === 0) return `${printed}${overshoot}`;
 
+	// The verb follows the RESIDUE and not the count beside it: a lot that leaves
+	// one item over reads "1 of the 3 bought stays unsold".
 	const residue = bought
-		? ` and ${formatChaos(rest)} of the ${formatChaos(units)} bought stay unsold.`
+		? ` and ${formatChaos(rest)} of the ${formatChaos(units)} bought ${rest === 1 ? 'stays' : 'stay'} unsold.`
 		: ` with ${formatChaos(rest)} left over.`;
-	return `${printed} This market posts in multiples of ${formatChaos(itemQty)}, so the ${formatChaos(units)} this row counts is ${formatChaos(Math.floor(units / itemQty))} whole orders${residue}${overshoot}`;
+	const whole = Math.floor(units / itemQty);
+	return `${printed} This market posts in multiples of ${formatChaos(itemQty)}, so the ${formatChaos(units)} this row counts is ${formatChaos(whole)} whole ${whole === 1 ? 'order' : 'orders'}${residue}${overshoot}`;
 }
 
 /**
@@ -1298,9 +1294,10 @@ function pairLine(verb: string, leg: CurrencyExchangeLeg): string {
  * (spec §4.7).
  *
  * It is the note the deleted no-scale branch used to carry, told about the one
- * thing that is actually true of these lines: they print a market's LOT while
+ * thing that is actually true of these lines: they print THIS market's LOT while
  * the amounts at both ends of the row count the exchanges the row is priced for
- * — a run on a divine entry, one posting of the buy market on a chaos one.
+ * — one posting of the BUY market, which this line's own market has no reason to
+ * match.
  */
 const LOT_NOT_SCALE_PAIR =
 	'This step has no total to print, so the line shows one order of this market — the quantity pair it posts — while the amounts at both ends of the row count the exchanges the row is priced for.';
@@ -1493,22 +1490,24 @@ export function anyConvertStep(plays: CurrencyExchangePlay[]): boolean {
  * step totals are those same figures rendered per step (E2, E3, E7).
  *
  * The scale that sizes all of it is `displayScale(play).units` — one posting of
- * the buy market on a chaos entry, the worthwhile run on a divine one — and that
- * is not a branch of this function. A row that counts a single item takes
- * exactly this code path at `units === 1`, which is what "in every emitter
- * simultaneously" means structurally: a fallback with its own rendering rules is
- * a second place for the row to disagree with itself.
+ * the buy market on every row — and that is not a branch of this function. A row
+ * that counts a single item takes exactly this code path at `units === 1`, which
+ * is what "in every emitter simultaneously" means structurally: a fallback with
+ * its own rendering rules is a second place for the row to disagree with itself.
  *
- * On a chaos row the RUN is not gone, it has moved: the Scale column still
- * prints it (×N, its cost, its hours), and the filter bar's Run cost bound still
- * compares against it through `runInvestment`. What the route slots stopped
- * doing is claiming it — "buy 16 for ≈ 384c" read as a 384c blockbuster on a
- * card worth 30c (owner ruling, 2026-08-22).
+ * The RUN is not gone, it has moved: the Scale column still prints it (×N, its
+ * cost, its hours), and the filter bar's Run cost bound still compares against it
+ * through `runInvestment`. What the route slots stopped doing is claiming it —
+ * "buy 16 for ≈ 384c" read as a 384c blockbuster on a card worth 30c, and "buy
+ * 159 for ≈ 2.72 div" is the same deception in the other currency (owner rulings,
+ * 2026-08-22).
  *
  * NO RUN. `worthwhileScale` answers `null` for a play whose measured expectation
- * is not positive — a live case, since ADR-016 serves the measured losers. Its
- * Get is then `investment + expectedRoi` with a non-positive expectation, so it
- * can print BELOW its Spend, and `positive` says so. That is the MEASUREMENT and
+ * is not positive — a live case, since ADR-016 serves the measured losers. That
+ * no longer moves the row's SIZE at all: a market's lot does not depend on the
+ * measurement, so such a row keeps its posting and only the Scale column empties.
+ * Its Get is then `investment + expectedRoi` with a non-positive expectation, so
+ * it can print BELOW its Spend, and `positive` says so. That is the MEASUREMENT and
  * not broken arithmetic: the row reads 19 in, 16 back, and the hour's best case
  * is still on it as the last step's total of 21. Reading `positive` off `roi`
  * instead — which this did — drew a red Exp. ROI cell beside a Get the row

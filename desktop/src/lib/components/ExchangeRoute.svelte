@@ -16,9 +16,9 @@
 	 * are in the currency that size is entered with, so the end slots carry a unit
 	 * word and a sub-line; comfortable shows both, dense shows neither and hands
 	 * them back through the wrapper's `title`. That size is `displayScale` — one
-	 * posting of the buy market on a chaos entry, the worthwhile run on a divine
-	 * one (owner ruling, 2026-08-22). Steps 1 and 2 read as TOTALS carrying
-	 * `≈` — "buy 50 for ≈ 3.16 div", "buy 4 for ≈ 1c" — rather than the
+	 * posting of the buy market on EVERY row, whatever currency it prices in
+	 * (owner rulings, 2026-08-22). Steps 1 and 2 read as TOTALS carrying
+	 * `≈` — "buy 16 for ≈ 1.01 div", "buy 4 for ≈ 1c" — rather than the
 	 * whole-quantity ORDER they used to print, and rather than the per-unit decimal
 	 * the in-game exchange has no field for. The market's own posted pair moved to
 	 * the `title`: on a step that prints a total the hover is what that market
@@ -36,7 +36,7 @@
 	 * dense 80 / 220 / 140 / 140 / 80 with 18px arrows and a 6px gap), or the
 	 * labels drift off the tiles they name. The two ends are NOT one width: only
 	 * Get carries the profit line the comfortable geometry is sized around. The
-	 * three step slots each grew 12px when the lines became `≈` run totals; the
+	 * three step slots each grew 12px when the lines became `≈` step totals; the
 	 * two ends did not move, because the shapes they print did not. Dense did not
 	 * move at all: a rate too long for its dense slot ellipsizes there instead,
 	 * the name beside it yielding its width first. The measured arithmetic for both
@@ -77,7 +77,7 @@
 		/** `getApiBase()` — the origin the legs' relative icon paths hang off. */
 		apiBase: string;
 		/**
-		 * The response's newest-hour chaos value of one divine — what a run entered
+		 * The response's newest-hour chaos value of one divine — what a row entered
 		 * in divine is read back in chaos with. 0 when that hour carried no
 		 * divine/chaos trade, which drops the chaos sub-lines rather than printing
 		 * a zero.
@@ -159,7 +159,7 @@
 	{@render tile(slot.icon, false)}
 	<!-- The unit word and the sub-line ride on the wrapper's `title` as well as
 	     their own spans, because dense hides both — and a bare 3.66 with no way to
-	     learn it is divine, or a run with no way to reach its profit line, is not
+	     learn it is divine, or a Get with no way to reach its profit line, is not
 	     a row a dense reader can act on. `routeSlots` composes the string. -->
 	<span class="lines" title={slot.title}>
 		<span class="amount mono" class:gain>{slot.amount}</span>
@@ -284,7 +284,7 @@
 	   bound the geometry could be sized to, so the widths are derived from the
 	   shape that does have one.
 
-	   Every step line gained `≈ ` — 2 characters, ~11px — when it became a run
+	   Every step line gained `≈ ` — 2 characters, ~11px — when it became a step
 	   total, and the convert line's right amount moved from the Get to the CHAIN
 	   END, which is larger by the ROI column less the Exp. ROI column and can
 	   therefore carry an extra digit. Sized against those, at a text budget of
@@ -334,12 +334,12 @@
 	   which is over the 115px budget BEFORE the name is given anything, so the
 	   name collapses to nothing and the rate is still 11px over the 110px that
 	   collapse leaves it (the 5px inter-line gap is charged even at a zero-width
-	   name). The same string fitted before this row printed run totals (`sell 12
-	   for 3 div`, 93.5px), so the overrun is new, and it lands on an ordinary
+	   name). The same string fitted before these lines printed step totals (`sell
+	   12 for 3 div`, 93.5px), so the overrun is new, and it lands on an ordinary
 	   chaos-entry 1-hop rather than on a contrived one.
 
 	   The widths are kept anyway, because no width removes the class of failure:
-	   the rate is unbounded (`ceil(100 / expectedRoi)` reaches five digits), so a
+	   the rate is unbounded (a market's own posted lot reaches five digits), so a
 	   wider dense slot only moves which strings overrun, and dense exists to buy
 	   width back. What the width cannot fix, the SIGNAL does — the overrun is
 	   ellipsised inside the rate rather than sliced off by the slot's `overflow:
@@ -511,7 +511,7 @@
 
 	/* The unit word goes the way of the sub-lines in dense, reversing the call
 	   POE-193 made when it kept it. The fact behind that call still holds — the
-	   end amounts are in the currency the run is ENTERED with, so a bare 0.51 is
+	   end amounts are in the currency the row is ENTERED with, so a bare 0.51 is
 	   divine on one row where 5,050 is chaos on the next — but the word is not the
 	   only thing that says so: the end tile beside it carries that currency's own
 	   artwork, which a dense reader scanning a column of rows reads faster than a
@@ -524,8 +524,8 @@
 		display: none;
 	}
 
-	/* The chaos reading of a divine spend, and the run's profit line. Dense drops
-	   both, the way it drops every other sub-line; the string stays on the
+	/* The chaos reading of a divine spend, and the Get slot's profit line. Dense
+	   drops both, the way it drops every other sub-line; the string stays on the
 	   wrapper's `title`, so it is a hover away. */
 	.route.dense .sub {
 		display: none;
