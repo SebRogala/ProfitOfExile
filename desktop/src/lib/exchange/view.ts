@@ -86,7 +86,7 @@ export function parseHorizon(raw: string): CurrencyExchangeHorizon {
 /**
  * Which number the table is ordered by. `'expected'` is the server's own
  * ranking, which since POE-193 is the fill-simulated `expectedRoi` (ADR-016);
- * `'roi'` re-orders by the OPTIMISTIC chaos the ROI column prints, which is a
+ * `'roi'` re-orders by the BEST-CASE chaos the ROI column prints, which is a
  * different question — a 40% best case on 2c is not the play a stocked account
  * wants; and `'fastest'` by how long the market needs to absorb the play's
  * worthwhile scale (`worthwhileScale().hours`), which is the question a big
@@ -108,7 +108,7 @@ export const SORT_OPTIONS: { value: ExchangeSort; label: string }[] = [
  * cases the order the reader picked still exists under a new name. `'fill'` is
  * what `'fastest'` was called while the table scaled by a typed Quantity
  * (POE-192 replaced that with the derived scale). `'roiPct'` is what the
- * served order was called while the server ranked on the optimistic
+ * served order was called while the server ranked on the best-case
  * percentage; POE-193 re-based that ranking on `expectedRoi`, and the pick has
  * always meant "the list as the server ranked it", so it resolves to
  * `'expected'` rather than to a percentage sort that no longer exists.
@@ -483,7 +483,7 @@ export interface WorthwhileScale {
  *
  * Scaled on `expectedRoi` and NOT on `roi` (POE-193): the question the column
  * answers is how many exchanges it takes to make the trip worth the clicking,
- * and the optimistic per-hour figure overstates that by 4-8x, so scaling on it
+ * and the best-case per-hour figure overstates that by 4-8x, so scaling on it
  * answered with a flip count the play would never have paid off at. The
  * exchange count grows accordingly — a play whose best case gains 30c but whose
  * simulated mean is 6c now reads ×17 rather than ×4, which is the size the
@@ -496,9 +496,15 @@ export interface WorthwhileScale {
  * which is why `gain` is reported rather than assumed to be 100: a play worth
  * 33c an exchange clears the bar at 102c, and the column says so.
  *
- * `hours` is deliberately OPTIMISTIC, and the tooltip says so: `depth` is the
+ * `hours` is deliberately UNCONTESTED, and the tooltip says so: `depth` is the
  * WHOLE market's hourly volume on the play's thinnest leg, so this is the time
  * the fill takes if the reader takes every unit of it and no one else trades.
+ * UNCONTESTED is the word on purpose. The row's other favourable assumption —
+ * the hour's extreme prices — is BEST CASE, and the two used to share one word
+ * across this surface; a single word carrying a price basis in one comment and
+ * a volume assumption in the next is how two numbers come to disagree in a
+ * reader's head, so that word is retired here
+ * (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §6.4).
  * The real wait is longer by however much of the book the competition holds, and
  * longer again on a direct play, which buys and sells on the one market.
  * Rounded up to whole hours because that is how the column reads it, and there
@@ -510,7 +516,7 @@ export interface WorthwhileScale {
  * no repeat count that reaches a positive target from a non-positive step, and
  * dividing would answer `Infinity` or a negative count. Unlike the `roi` this
  * used to read, that is a case the page IS expected to hit — the server's
- * positivity floor applies to the optimistic number, while a measured
+ * positivity floor applies to the best-case number, while a measured
  * expectation is free to come out negative and the play is served anyway
  * (ADR-016). The row keeps its rank, its ROI and its depth; the Scale column
  * shows a dash, because "repeat this until it pays 100c" is not advice a losing
@@ -574,7 +580,7 @@ export interface MoneyColumns {
  *
  * `roi` is scaled by MULTIPLYING the wire's per-exchange figure by the flip
  * count rather than being read off the scale, because `WorthwhileScale` carries
- * no optimistic total and should not: the scale exists to answer how far the
+ * no best-case total and should not: the scale exists to answer how far the
  * MEASURED expectation has to be repeated. Multiplying keeps the column what it
  * has always been — the raw best case, the RAW half of the NET/RAW pair the
  * ROI% column spells out — now told at the run's size instead of one exchange's.
@@ -771,10 +777,10 @@ function saleTotal(
  * alternative throws away the clean/suspect partition and the coverage band for
  * an order nobody asked for.
  *
- * `'roi'` re-sorts by the OPTIMISTIC chaos the ROI COLUMN prints — which since
+ * `'roi'` re-sorts by the BEST-CASE chaos the ROI COLUMN prints — which since
  * the money columns moved to run pricing is `moneyColumns().roi`, the per-run
  * total, and no longer the wire's per-exchange `roi`. The two orders genuinely
- * differ (the flip count is `ceil(100 / expectedRoi)`, so a small optimistic
+ * differ (the flip count is `ceil(100 / expectedRoi)`, so a small best-case
  * return repeated forty times out-totals a large one that runs once), and a
  * table ordered by a number it does not show reads as broken. The Investment
  * column has no sort of its own; if it ever gets one it reads the same helper.
@@ -1438,12 +1444,14 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 	 * re-derived from the quantities the other steps print, so the sell line's
 	 * tail and this line's head are the same string by construction (E7).
 	 *
-	 * The line's right amount is `chainEnd = I + R` and NOT the Get, which is
-	 * `I + X` — so it sits immediately left of a Get slot showing a materially
-	 * different number, and the hover is what labels the gap: the line ends on
-	 * what the hour's BEST CASE would have paid, Get is what the run is MEASURED
-	 * to return, and the difference between them is the difference between the ROI
-	 * and Exp. ROI columns (spec §5).
+	 * The line's right amount is `chainEnd` and NOT the Get: the two identities are
+	 * `I + R` and `I + X`, both in CHAOS, each divided by the entry rate for the
+	 * rendering — so this line sits immediately left of a Get slot showing a
+	 * materially different number, and the hover is what labels the gap: the line
+	 * ends on what the hour's BEST CASE would have paid, Get is what the run is
+	 * MEASURED to return, and the difference between them is the difference
+	 * between the ROI and Exp. ROI columns (spec §5) — that gap in chaos too, so a
+	 * divine-entry row shows it at the divine rate like everything else on the row.
 	 *
 	 * The proceeds are `chainEnd / u2` and not `chainEnd / price` — the UNDERCUT
 	 * divisor, derived in `saleTotal`, whose doc carries the reasoning. The old
@@ -1476,7 +1484,7 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			name: null,
 			icon: convertLeg.itemIcon,
 			rate: `≈ ${withOrbUnit(ledger.sellTotal, quoteUnit(convertLeg.item))} → ${withOrbUnit(ledger.chainEnd, entryUnitShort)}`,
-			rateTitle: `${convertLeg.itemName} — this market posts "${pairLine('convert', convertLeg)}". The line totals the whole run instead: the step-2 proceeds it converts, and what the hour's best case would have paid for them — the Spend plus the ROI column. The Get slot at the end of the row is the Spend plus the Exp. ROI column, and the gap between the two amounts is the gap between those two columns.`,
+			rateTitle: `${convertLeg.itemName} — this market posts "${pairLine('convert', convertLeg)}". The line totals the whole run instead: the step-2 proceeds it converts, and what the hour's best case would have paid for them — the Spend plus the ROI column. The Get slot at the end of the row is the Spend plus the Exp. ROI column, and the gap between the two amounts is the gap between those two columns. Both identities are in chaos, and a divine-entry route prints them at the divine rate.`,
 			suspect: convertLeg.suspect
 		};
 	};

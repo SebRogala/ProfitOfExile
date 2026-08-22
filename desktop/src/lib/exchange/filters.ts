@@ -3,7 +3,7 @@
  *
  * The server ranks; this file only narrows what the reader looks at. Every
  * predicate reads a wire field or the one derived figure the page is built
- * around — `worthwhileScale` from `./view`, this file's single runtime import
+ * around — `moneyColumns` from `./view`, this file's single runtime import
  * of it — and nothing here is fetched: the filters run over the list already
  * on screen, so a rule that empties the table is a rule the reader can undo
  * without a round trip.
@@ -30,7 +30,7 @@
  * `view.ts` gives.
  */
 import type { CurrencyExchangePlay } from '$lib/api';
-import { worthwhileScale } from './view';
+import { moneyColumns } from './view';
 import type { ExchangeUnit } from './view';
 
 // -------------------------------------------------------------- the rules --
@@ -557,7 +557,7 @@ export function movedGates(gates: Gates): (keyof Gates)[] {
  * `minEdgeTickRatio` does not cross anything: a bare ratio times a fraction is
  * already a fraction.
  *
- * Every gate that reads a RETURN judges the OPTIMISTIC `roiPct`/`roi`,
+ * Every gate that reads a RETURN judges the BEST-CASE `roiPct`/`roi`,
  * deliberately, even though the server now ranks on `expectedRoi` (POE-193). The
  * levels a reader arms are the server's old ones and were calibrated against
  * those two fields; the Go test that arms them measures the same numbers, so
@@ -632,10 +632,20 @@ function parseAmount(raw: string): number | null {
  * cleared the target, and a 500c ceiling that let it through would be answering
  * about a trip the reader would never make.
  *
+ * The bound reads `moneyColumns(play).investment` — the SAME function the
+ * Investment column, the Scale column's "N c in" sub-line and the route's Spend
+ * end read (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §1, SCALE, and §6.1's
+ * "exception's own exception"). Not a matching expression: the same one. This is
+ * the one filter-bar bound that is INSIDE the scale rule rather than exempt from
+ * it, and reading the shared function is what makes it structurally impossible
+ * for the bound and the column to take different branches for one row — a
+ * ceiling can no longer admit a row whose printed Investment sits above it.
+ *
  * A play whose scale cannot be derived falls back to its per-exchange
- * investment rather than being dropped or waved through. Since POE-193 that
+ * investment rather than being dropped or waved through — that fallback now
+ * happens inside `moneyColumns` rather than here. Since POE-193 that
  * condition is `expectedRoi ≤ 0`, and it is a case the table now HITS: the
- * server's positivity floor governs the optimistic `roi`, while the simulated
+ * server's positivity floor governs the best-case `roi`, while the simulated
  * expectation is free to measure a loss and the play is served anyway — 7.9% of
  * the calibration set realized negative (ADR-016). Falling back is therefore a
  * deliberate choice about a live case and not a guard against an impossible
@@ -672,7 +682,7 @@ export function applyNumericFilters(
 	if (investMin === null && investMax === null) return [...plays];
 
 	return plays.filter((play) => {
-		const investment = worthwhileScale(play)?.investment ?? play.investment;
+		const investment = moneyColumns(play).investment;
 		if (investMin !== null && investment < investMin * rate) return false;
 		if (investMax !== null && investment > investMax * rate) return false;
 		return true;

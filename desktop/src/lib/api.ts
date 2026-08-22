@@ -357,6 +357,13 @@ export interface CurrencyExchangeLeg {
  * before `lowCoverage`, then `expectedRoi` desc — a chaos payout, so a bigger
  * stake outranks a better rate.
  *
+ * OPTIMISTIC is the word here on purpose: this block words the WIRE, and its
+ * wording mirrors the Go docs on the fields it describes. The desktop-surface
+ * BEST CASE / UNCONTESTED sweep (`docs/CURRENCY-EXCHANGE-ROW-INVARIANT.md` §6.4,
+ * which scopes itself to `tooltips.ts`, `view.ts` and the page caption)
+ * deliberately stops here — align this with `internal/exchange/plays.go` if that
+ * side is ever renamed, rather than with the row's reader-facing vocabulary.
+ *
  * `roiPct` is the OPTIMISTIC reading: that one hour's round trip at the
  * UNDERCUT prices (0.123 = 12.3%), each leg paying one of its own ticks to be
  * the order that fills. Measured over 960 top-20 play-hours it overstates what

@@ -99,9 +99,16 @@
 		 * The two investment bounds as their raw persisted strings; "" is "filter
 		 * off". They are compared against the play's WORTHWHILE SCALE, not against
 		 * one exchange (POE-192) — which is why the page stores them under keys that
-		 * say so, and why the row is labelled Run cost rather than Investment: the
-		 * table's Investment column is the per-exchange figure, and one word for two
-		 * sizes is how a reader types a ceiling two orders of magnitude too low.
+		 * say so.
+		 *
+		 * The table's Investment column reports that SAME run figure, and since
+		 * POE-193 off the same call: `applyNumericFilters` and the column both read
+		 * `moneyColumns(play).investment`, so the bound cannot admit a row whose
+		 * printed Investment sits above it. The label stays "Run cost" anyway, and
+		 * not because the two disagree: the GATES row directly above this one still
+		 * judges PER-EXCHANGE numbers (Min item price, Min profit), so calling this
+		 * bound "Investment" would read as the same size as those. See the inline
+		 * comment beside the label, which is the live reason.
 		 */
 		investMin: string;
 		investMax: string;
