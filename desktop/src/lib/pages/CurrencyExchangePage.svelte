@@ -541,7 +541,7 @@
 				prices are the newest hour’s cheapest buy and dearest sell, so the ROI columns are a best
 				case, not a quote — Exp. ROI is what the play would have paid across the last day, and
 				every money figure on a row counts the whole worthwhile run, or one exchange on a row the
-				simulation expects to lose, which has no size worth repeating it to — and the route is
+				simulation expects no gain from, which has no size worth repeating it to — and the route is
 				priced at that best case throughout except its Get end, which is the spend plus Exp. ROI,
 				so the last step’s total and Get differ by the gap between those two columns; both
 				identities are in chaos, and a divine-entry route prints them at the divine rate
