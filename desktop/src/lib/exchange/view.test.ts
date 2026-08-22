@@ -20,7 +20,6 @@ import {
 	formatVolume,
 	hoursProgress,
 	iconSrc,
-	legLabel,
 	parseDensity,
 	parseHorizon,
 	parseMode,
@@ -955,52 +954,6 @@ describe('worthwhileScale', () => {
 	});
 });
 
-describe('legLabel', () => {
-	function leg(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
-		return {
-			action: 'buy',
-			item: 'divine',
-			quote: 'chaos',
-			price: 196,
-			fair: 197.4,
-			fairOk: true,
-			tick: 0.005,
-			volume: 1200,
-			stock: 40,
-			suspect: false,
-			itemName: 'Mod Values',
-			itemIcon: null,
-			itemCategory: 'Currency',
-			quoteName: 'Reroll Rare',
-			quoteIcon: null,
-			quoteCategory: 'Currency',
-			...overrides
-		};
-	}
-
-	it('words a buy leg as buying the item with the quote currency', () => {
-		expect(legLabel(leg())).toBe('buy Mod Values with Reroll Rare @ 196');
-	});
-
-	it('words a sell leg as selling the item for the quote currency', () => {
-		expect(legLabel(leg({ action: 'sell' }))).toBe('sell Mod Values for Reroll Rare @ 196');
-	});
-
-	it('names the display names, not the raw exchange ids', () => {
-		// The ids stay on the row's `title` attribute; a chip reading
-		// "buy divine with chaos" would be the wrong vocabulary on screen.
-		const label = legLabel(leg({ itemName: 'Mod Values', quoteName: 'Reroll Rare' }));
-		expect(label).not.toContain('divine');
-		expect(label).not.toContain('chaos');
-	});
-
-	it('prices the leg through formatLegPrice rather than printing the raw number', () => {
-		expect(legLabel(leg({ price: 0.004975 }))).toBe(
-			'buy Mod Values with Reroll Rare @ 0.004975'
-		);
-	});
-});
-
 describe('iconSrc', () => {
 	// What `getApiBase()` hands the page: an origin plus the `/api` mount.
 	const BASE = 'https://server.test/api';
@@ -1104,7 +1057,14 @@ describe('routeSlots', () => {
 			action: 'buy',
 			item: 'card',
 			quote: CHAOS_ID,
+			// The pair and the price are one fact on the wire — the server builds
+			// them together and `priceQuoteQty / priceItemQty === price` exactly —
+			// so every case that overrides one overrides the other, and the
+			// factory's default 1-for-1 is 1c. A fixture whose pair contradicted
+			// its price would let a rate read right for the wrong reason.
 			price: 1,
+			priceItemQty: 1,
+			priceQuoteQty: 1,
 			fair: 1.1,
 			fairOk: true,
 			tick: 0.01,
@@ -1135,13 +1095,22 @@ describe('routeSlots', () => {
 	function chaosScarab(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
 		return play({
 			legs: [
-				leg({ item: 'scarab', itemName: 'Ambush Scarab', itemIcon: '/icon/Scarab', price: 19 }),
+				leg({
+					item: 'scarab',
+					itemName: 'Ambush Scarab',
+					itemIcon: '/icon/Scarab',
+					price: 19,
+					priceItemQty: 1,
+					priceQuoteQty: 19
+				}),
 				leg({
 					action: 'sell',
 					item: 'scarab',
 					itemName: 'Ambush Scarab',
 					itemIcon: '/icon/Scarab',
-					price: 21
+					price: 21,
+					priceItemQty: 1,
+					priceQuoteQty: 21
 				})
 			],
 			investment: 19.19,
@@ -1165,8 +1134,8 @@ describe('routeSlots', () => {
 	function divineScarab(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
 		return play({
 			legs: [
-				leg({ ...DIVINE_SIDE, price: 0.0625 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.1 })
+				leg({ ...DIVINE_SIDE, price: 0.0625, priceItemQty: 16, priceQuoteQty: 1 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 0.1, priceItemQty: 10, priceQuoteQty: 1 })
 			],
 			investment: 12.625,
 			roi: 0.4,
@@ -1199,9 +1168,11 @@ describe('routeSlots', () => {
 					quote: DIVINE_ID,
 					quoteName: 'Divine Orb',
 					quoteIcon: DIVINE_ICON,
-					price: 0.0625
+					price: 0.0625,
+					priceItemQty: 16,
+					priceQuoteQty: 1
 				}),
-				leg({ ...scarab, action: 'sell', price: 14 }),
+				leg({ ...scarab, action: 'sell', price: 14, priceItemQty: 1, priceQuoteQty: 14 }),
 				leg({
 					action: 'sell',
 					item: CHAOS_ID,
@@ -1210,7 +1181,9 @@ describe('routeSlots', () => {
 					quote: DIVINE_ID,
 					quoteName: 'Divine Orb',
 					quoteIcon: DIVINE_ICON,
-					price: 1 / 196
+					price: 1 / 196,
+					priceItemQty: 196,
+					priceQuoteQty: 1
 				})
 			],
 			investment: 12.625,
@@ -1233,18 +1206,83 @@ describe('routeSlots', () => {
 					quote: DIVINE_ID,
 					quoteName: 'Divine Orb',
 					quoteIcon: DIVINE_ICON,
-					price: 0.5
+					price: 0.5,
+					priceItemQty: 2,
+					priceQuoteQty: 1
 				}),
 				leg({
 					action: 'sell',
 					item: DIVINE_ID,
 					itemName: 'Divine Orb',
 					itemIcon: DIVINE_ICON,
-					price: 204
+					price: 204,
+					priceItemQty: 1,
+					priceQuoteQty: 204
 				})
 			],
 			investment: 50,
 			roi: 5050,
+			...overrides
+		});
+	}
+
+	/** The omen the screenshot case trades, on all three of its markets. */
+	const OMEN = { item: 'omen', itemName: 'Omen of Amelioration', itemIcon: '/icon/Omen' };
+
+	/** Bought with chaos on a market that posts one omen at a time for 35c. */
+	function omenBuy(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
+		return leg({ ...OMEN, price: 35, priceItemQty: 1, priceQuoteQty: 35, ...overrides });
+	}
+
+	/** Sold against divine on a market that posts four omens for one divine. */
+	function omenSell(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
+		return leg({
+			...OMEN,
+			action: 'sell',
+			quote: DIVINE_ID,
+			quoteName: 'Divine Orb',
+			quoteIcon: DIVINE_ICON,
+			price: 0.25,
+			priceItemQty: 4,
+			priceQuoteQty: 1,
+			...overrides
+		});
+	}
+
+	/** The divine proceeds turned back into chaos: one divine for 209c. */
+	function omenConvert(overrides: Partial<CurrencyExchangeLeg> = {}): CurrencyExchangeLeg {
+		return leg({
+			action: 'sell',
+			item: DIVINE_ID,
+			itemName: 'Divine Orb',
+			itemIcon: DIVINE_ICON,
+			price: 209,
+			priceItemQty: 1,
+			priceQuoteQty: 209,
+			...overrides
+		});
+	}
+
+	/**
+	 * The omen screenshot case — the row the postable-order rendering was written
+	 * for, and the one shape whose three steps carry three different pairs.
+	 *
+	 * Worked independently of the production code: `expectedRoi` 8.5c needs
+	 * `ceil(100 / 8.5)` = `ceil(11.764…)` = 12 flips. The buy market posts one
+	 * omen for 35c, so twelve flips is twelve of that order — `12 × 35` = 420c.
+	 * The sell market posts four omens for one divine and 12 is exactly three of
+	 * those lots, so it prints `12 for 3 div` with nothing to snap. The convert
+	 * market posts one divine for 209c and carries no run at all: what step 3
+	 * moves is the sale's proceeds, which is 3 divine here and a fraction on any
+	 * run the sell lot does not divide.
+	 */
+	function omen(overrides: Partial<CurrencyExchangePlay> = {}): CurrencyExchangePlay {
+		return play({
+			mode: '1-hop',
+			legs: [omenBuy(), omenSell(), omenConvert()],
+			investment: 35.35,
+			roi: 12,
+			expectedRoi: 8.5,
 			...overrides
 		});
 	}
@@ -1254,8 +1292,9 @@ describe('routeSlots', () => {
 		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.spend.amount).toBe('3,838');
 	});
 
-	it('counts the run size into the buy step’s rate', () => {
-		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 200 @ 19.00 c');
+	it('counts the run size into the buy step’s order', () => {
+		// 200 flips of a market that posts one at a time for 19c: 200 × 19 = 3,800c.
+		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 200 for 3,800c');
 	});
 
 	it('gets the run’s spend back plus the profit it is expected to make', () => {
@@ -1287,11 +1326,38 @@ describe('routeSlots', () => {
 	});
 
 	it('quotes the sell step in the currency its own leg is priced in', () => {
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.sell.rate).toBe('sell @ 0.10 div');
+		// The 0.1 divine this used to print is not a price the exchange can hold:
+		// the market posts 10 scarabs for 1 divine. It sells FOUR of those lots,
+		// not five — the buy step could only fill 48 of the 50-flip run, and
+		// `floor(48 / 10)` = 4 is the largest sell order 48 scarabs covers. The
+		// leftover 8 stay in the stash; the ends still price all 50 flips.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.sell.rate).toBe('sell 40 for 4 div');
+	});
+
+	it('names the stock a sell lot leaves behind', () => {
+		// 48 bought, 40 sold. The ends price all 50 flips and the rate prints 40,
+		// so the 8 in between appear nowhere else on the row — without this clause
+		// the reader has to derive the shortfall from two numbers in different
+		// slots.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.sell.rateTitle).toContain(
+			'8 of the 48 bought stay unsold'
+		);
+	});
+
+	it('leaves the unsold clause off a buy step, which bought no stock to leave', () => {
+		// The buy step snaps 50 down to 48 for the same reason, but the 2 it drops
+		// were never bought — the run the ends price already accounts for them, and
+		// "2 of the 50 bought stay unsold" would invent a holding.
+		const title = routeSlots(divineScarab(), DIVINE_RATE)?.buy.rateTitle;
+
+		expect(title).toContain('multiples of 16');
+		expect(title).not.toContain('unsold');
 	});
 
 	it('quotes the buy step of a divine-entry run in divine', () => {
-		expect(routeSlots(divineScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 50 @ 0.0625 div');
+		// The buy market posts 16 for 1 div, and 50 is not a multiple of 16, so the
+		// order snaps down to the three whole lots that fit: 48 for 3 div.
+		expect(routeSlots(divineScarab(), DIVINE_RATE)?.buy.rate).toBe('buy 48 for 3 div');
 	});
 
 	it('spends a divine-entry run in divine rather than in chaos', () => {
@@ -1320,8 +1386,8 @@ describe('routeSlots', () => {
 		// 50 flips × 2.005 × 1.01 = 101.2525 divine, plus 100c / 200 = 0.5.
 		const big = divineScarab({
 			legs: [
-				leg({ ...DIVINE_SIDE, price: 2.005 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 3 })
+				leg({ ...DIVINE_SIDE, price: 2.005, priceItemQty: 200, priceQuoteQty: 401 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 3, priceItemQty: 1, priceQuoteQty: 3 })
 			],
 			investment: 405
 		});
@@ -1339,8 +1405,8 @@ describe('routeSlots', () => {
 		// print 1.010 beside an English sentence.
 		const huge = divineScarab({
 			legs: [
-				leg({ ...DIVINE_SIDE, price: 20 }),
-				leg({ ...DIVINE_SIDE, action: 'sell', price: 25 })
+				leg({ ...DIVINE_SIDE, price: 20, priceItemQty: 1, priceQuoteQty: 20 }),
+				leg({ ...DIVINE_SIDE, action: 'sell', price: 25, priceItemQty: 1, priceQuoteQty: 25 })
 			],
 			investment: 4040
 		});
@@ -1383,7 +1449,7 @@ describe('routeSlots', () => {
 		const convert = routeSlots(oneHop(), DIVINE_RATE)?.convert;
 
 		expect(convert?.name).toBe('Divine Orb');
-		expect(convert?.rate).toBe('convert @ 204 c');
+		expect(convert?.rate).toBe('convert 1 div for 204c');
 	});
 
 	it('sells the bought item at step 2 of a 1-hop play, not the currency it lands in', () => {
@@ -1398,7 +1464,7 @@ describe('routeSlots', () => {
 	});
 
 	it('quotes the convert step of a divine-entry triangle in divine', () => {
-		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.rate).toBe('convert @ 0.005102 div');
+		expect(routeSlots(divineOneHop(), DIVINE_RATE)?.convert?.rate).toBe('convert 196c for 1 div');
 	});
 
 	it('quotes each step of a divine-entry triangle in that step’s own currency', () => {
@@ -1407,8 +1473,10 @@ describe('routeSlots', () => {
 		// sequence of bare numbers.
 		const route = routeSlots(divineOneHop(), DIVINE_RATE);
 
-		expect(route?.buy.rate).toBe('buy 50 @ 0.0625 div');
-		expect(route?.sell.rate).toBe('sell @ 14.00 c');
+		// 48 bought, so 48 sold — `floor(48 / 1)` on a one-at-a-time chaos market
+		// is 48, at 14c each: 672c.
+		expect(route?.buy.rate).toBe('buy 48 for 3 div');
+		expect(route?.sell.rate).toBe('sell 48 for 672c');
 	});
 
 	it('enters a divine-entry triangle in divine', () => {
@@ -1430,8 +1498,8 @@ describe('routeSlots', () => {
 		const route = routeSlots(
 			chaosScarab({
 				legs: [
-					leg({ price: 19 }),
-					leg({ action: 'sell', price: 21, suspect: true })
+					leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19 }),
+					leg({ action: 'sell', price: 21, priceItemQty: 1, priceQuoteQty: 21, suspect: true })
 				]
 			}),
 			DIVINE_RATE
@@ -1473,15 +1541,57 @@ describe('routeSlots', () => {
 		expect(route?.spend.unit).toBe('chaos');
 	});
 
-	it('drops the run size from the buy rate when there is no run size', () => {
-		expect(routeSlots(chaosScarab({ expectedRoi: 0 }), DIVINE_RATE)?.buy.rate).toBe('buy @ 19.00 c');
+	it('shows one bare lot on the buy step when there is no run size', () => {
+		// No run to scale to, so the step is the market's own pair: one for 19c.
+		expect(routeSlots(chaosScarab({ expectedRoi: 0 }), DIVINE_RATE)?.buy.rate).toBe(
+			'buy 1 for 19c'
+		);
+	});
+
+	it('says on every step of an unscaled play why it shows one lot', () => {
+		// The two markets post in different lots, so this branch renders "buy 1 for
+		// 35c → sell 4 for 1 div" — a 4:1 divergence that is no snap and that
+		// nothing else on the row accounts for, the ends having dropped to what ONE
+		// exchange costs. Both steps carry the note; only step 3 is silent, its bare
+		// pair being what a convert always shows.
+		const unscaled = routeSlots(omen({ expectedRoi: 0 }), DIVINE_RATE);
+
+		expect(unscaled?.buy.rate).toBe('buy 1 for 35c');
+		expect(unscaled?.sell.rate).toBe('sell 4 for 1 div');
+		expect(unscaled?.buy.rateTitle).toContain('no worthwhile size');
+		expect(unscaled?.sell.rateTitle).toContain('one lot of its own market');
+		expect(unscaled?.convert?.rateTitle).toBeNull();
+	});
+
+	it('claims no lot mismatch on an unscaled row whose two markets post alike', () => {
+		// The note goes on every unscaled step, including a row where the counts do
+		// line up (1 for 19c → 1 for 21c) — so it may not assert that the two lots
+		// differ, only that agreeing is a coincidence of the two markets.
+		const alike = routeSlots(chaosScarab({ expectedRoi: 0 }), DIVINE_RATE);
+
+		expect(alike?.buy.rate).toBe('buy 1 for 19c');
+		expect(alike?.sell.rate).toBe('sell 1 for 21c');
+		expect(alike?.buy.rateTitle).toContain('agree only where the two markets happen to post the same lot');
+	});
+
+	it('leaves the unscaled note off a step that printed no lot to explain', () => {
+		// Version skew on top of a losing expectation: the buy step shows a decimal,
+		// so "this step shows one lot of its own market" would describe a line that
+		// is not on screen.
+		const skewed = omen({
+			expectedRoi: 0,
+			legs: [omenBuy({ priceItemQty: 0, priceQuoteQty: 0 }), omenSell(), omenConvert()]
+		});
+
+		expect(routeSlots(skewed, DIVINE_RATE)?.buy.rate).toBe('buy @ 35.00 c');
+		expect(routeSlots(skewed, DIVINE_RATE)?.buy.rateTitle).toBeNull();
 	});
 
 	it('keeps the unit on a rate of a play with no run size', () => {
 		// The mirror-route fix does not depend on the scale: a divine price stays
 		// labelled divine on a play the simulation could not measure.
 		expect(routeSlots(divineScarab({ expectedRoi: 0 }), DIVINE_RATE)?.sell.rate).toBe(
-			'sell @ 0.10 div'
+			'sell 10 for 1 div'
 		);
 	});
 
@@ -1492,12 +1602,149 @@ describe('routeSlots', () => {
 	it('leaves a rate quoted in neither chaos nor divine without a unit', () => {
 		const exotic = chaosScarab({
 			legs: [
-				leg({ price: 19 }),
-				leg({ action: 'sell', price: 21, quote: 'Metadata/Items/Currency/CurrencyUpgradeToRare' })
+				leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19 }),
+				leg({
+					action: 'sell',
+					price: 21,
+					priceItemQty: 1,
+					priceQuoteQty: 21,
+					quote: 'Metadata/Items/Currency/CurrencyUpgradeToRare'
+				})
 			]
 		});
 
-		expect(routeSlots(exotic, DIVINE_RATE)?.sell.rate).toBe('sell @ 21.00');
+		// 200 flips of a one-for-21 market — the quantities still scale, and only
+		// the unit word is withheld, because a wrong currency beside a real number
+		// is worse than none.
+		expect(routeSlots(exotic, DIVINE_RATE)?.sell.rate).toBe('sell 200 for 4,200');
+	});
+
+	it('posts the buy step as a whole order rather than a per-unit price', () => {
+		// The rendering this replaced said "buy 12 @ 35.00 c", which is a number
+		// the in-game exchange has no field for. Twelve omens for 420 chaos is an
+		// order: 12 × 35c.
+		expect(routeSlots(omen(), DIVINE_RATE)?.buy.rate).toBe('buy 12 for 420c');
+	});
+
+	it('posts the sell step at the run quantity when the market’s lot divides it', () => {
+		// 12 omens is three of the market's four-for-one-divine lots, so the run
+		// and the postable order are the same quantity — and the divine side is a
+		// whole 3, never the 0.25 each the decimal reading implied.
+		expect(routeSlots(omen(), DIVINE_RATE)?.sell.rate).toBe('sell 12 for 3 div');
+	});
+
+	it('adds no hover to a step whose posted order is the whole run', () => {
+		// The hover is the snap's explanation; on an exact multiple there is
+		// nothing to explain, and a title on every rate would train the reader to
+		// ignore the one that matters.
+		expect(routeSlots(omen(), DIVINE_RATE)?.sell.rateTitle).toBeNull();
+	});
+
+	it('shows the bare market pair on the convert step rather than a run quantity', () => {
+		// Step 3 moves the SALE's proceeds, not a count of items the reader chose:
+		// 3 divine on this run, a fraction on the next. The market's own ratio is
+		// the only thing that stays true across both.
+		expect(routeSlots(omen(), DIVINE_RATE)?.convert?.rate).toBe('convert 1 div for 209c');
+	});
+
+	it('snaps a displayed order down to the largest lot the market can post', () => {
+		// A market that posts five omens for two divine cannot be told 12:
+		// `floor(12 / 5)` = 2 lots, so the order shown is 10 for 4 div — short of
+		// the run, and exactly postable, which is the trade this rendering makes.
+		const chunky = omen({
+			legs: [omenBuy(), omenSell({ price: 0.4, priceItemQty: 5, priceQuoteQty: 2 }), omenConvert()]
+		});
+
+		expect(routeSlots(chunky, DIVINE_RATE)?.sell.rate).toBe('sell 10 for 4 div');
+	});
+
+	it('says on a snapped step why its quantity is not the run’s', () => {
+		// The route's ends still count all 12 flips, so the row deliberately shows
+		// two different quantities and owes the reader the reason.
+		const chunky = omen({
+			legs: [omenBuy(), omenSell({ price: 0.4, priceItemQty: 5, priceQuoteQty: 2 }), omenConvert()]
+		});
+
+		const title = routeSlots(chunky, DIVINE_RATE)?.sell.rateTitle;
+
+		expect(title).toContain('multiples of 5');
+		expect(title).toContain('12 is not one order');
+		expect(title).toContain('the largest order that fits');
+		expect(title).toContain('still count the whole run of 12');
+		expect(title).toContain('2 of the 12 bought stay unsold');
+	});
+
+	it('buys the whole run when the buy market posts one at a time', () => {
+		// `expectedRoi` 40c needs `ceil(100 / 40)` = 3 flips, and a one-for-35c
+		// market posts any count: 3 for 105c, exactly the run.
+		const tiny = omen({ expectedRoi: 40 });
+
+		expect(routeSlots(tiny, DIVINE_RATE)?.buy.rate).toBe('buy 3 for 105c');
+		expect(routeSlots(tiny, DIVINE_RATE)?.buy.rateTitle).toBeNull();
+	});
+
+	it('posts one whole lot when the quantity bought is under the market’s lot', () => {
+		// 3 omens against a four-for-one-divine market: `floor(3 / 4)` is 0, and
+		// "sell 0 for 0 div" is not a reading. One whole lot is the smallest order
+		// this market accepts, even though it is more than the play holds.
+		const tiny = omen({ expectedRoi: 40 });
+
+		expect(routeSlots(tiny, DIVINE_RATE)?.sell.rate).toBe('sell 4 for 1 div');
+	});
+
+	it('says on an overshooting step that its lot is bigger than the play', () => {
+		// The undershoot wording ("the ends still count the whole run") would be a
+		// lie here — the ORDER is the larger of the two, and a reader who acts on
+		// it needs a fourth omen the run never bought.
+		const tiny = omen({ expectedRoi: 40 });
+
+		const title = routeSlots(tiny, DIVINE_RATE)?.sell.rateTitle;
+
+		expect(title).toContain('posts 4 at a time');
+		expect(title).toContain('more than the 3 this step moves');
+		expect(title).toContain('bigger than the run the two ends are priced for');
+	});
+
+	it('falls back to the decimal rate for a leg whose pair came through zeroed', () => {
+		// Version skew — this app caches no response, but it does point at a
+		// configurable server, so a build carrying these fields can be aimed at one
+		// from before POE-193. "buy 12 for 0" would be a wrong order; the decimal
+		// the page printed before is merely an awkward one.
+		const skewed = omen({
+			legs: [omenBuy({ priceItemQty: 0, priceQuoteQty: 0 }), omenSell(), omenConvert()]
+		});
+
+		expect(routeSlots(skewed, DIVINE_RATE)?.buy.rate).toBe('buy 12 @ 35.00 c');
+	});
+
+	it('falls back to the decimal rate for a leg whose pair is absent entirely', () => {
+		// The shape an older server actually sends: no such keys in the JSON at
+		// all, which reaches the renderer as `undefined` however the type reads.
+		// The cast is the point of the case — a guard written as `=== 0` would let
+		// this through and multiply `undefined` into a NaN order.
+		const skewed = omen({
+			legs: [
+				omenBuy({
+					priceItemQty: undefined as unknown as number,
+					priceQuoteQty: undefined as unknown as number
+				}),
+				omenSell(),
+				omenConvert()
+			]
+		});
+
+		expect(routeSlots(skewed, DIVINE_RATE)?.buy.rate).toBe('buy 12 @ 35.00 c');
+	});
+
+	it('sells against the run itself when the buy step could post no quantity', () => {
+		// A skewed buy leg posts nothing, so there is no bought quantity for step 2
+		// to be capped by — the run is the only target left, and dropping the sell
+		// quantity along with the buy one would lose the step's whole order.
+		const skewed = omen({
+			legs: [omenBuy({ priceItemQty: 0, priceQuoteQty: 0 }), omenSell(), omenConvert()]
+		});
+
+		expect(routeSlots(skewed, DIVINE_RATE)?.sell.rate).toBe('sell 12 for 3 div');
 	});
 
 	it('draws no route for a play that arrives with fewer than two legs', () => {

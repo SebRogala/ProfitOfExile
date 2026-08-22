@@ -580,19 +580,6 @@ export function sortPlays(
 // --------------------------------------------------------------- the legs --
 
 /**
- * One leg as a sentence: `buy Mod Values with Reroll Rare @ 0.004975`.
- *
- * Wording follows the direction of the swap — you buy an item *with* a quote
- * currency and sell it *for* one — so a two-leg play reads as the sequence the
- * player performs. Display names only; the raw ids stay in the row's `title`
- * attribute, where they are available without cluttering the chip.
- */
-export function legLabel(leg: CurrencyExchangeLeg): string {
-	const preposition = leg.action === 'buy' ? 'with' : 'for';
-	return `${leg.action} ${leg.itemName} ${preposition} ${leg.quoteName} @ ${formatLegPrice(leg.price)}`;
-}
-
-/**
  * A leg's `itemIcon`/`quoteIcon` as a URL the browser can fetch.
  *
  * The server sends API-relative paths (`/currency-exchange/icon/<escaped id>`)
@@ -670,6 +657,12 @@ export function chaosIconPath(): string {
  * neither answers `''` and the rate prints its bare number rather than being
  * labelled with a currency nobody checked — a wrong unit beside a real price is
  * the bug this whole rework exists to remove, so an unknown one says nothing.
+ *
+ * Since POE-193 it is also asked about a leg's ITEM side, where the closed map
+ * does the same job for a different question. An item is a currency only on a
+ * convert step, whose item IS the intermediate chaos or divine; a scarab or a
+ * card is not in the map and correctly takes no unit word, so `''` reads as
+ * "count these, do not name them" on that side rather than as a gap.
  */
 export function quoteUnit(quoteId: string): string {
 	if (quoteId === CHAOS_ID) return 'c';
@@ -693,27 +686,179 @@ function chaosPerQuote(quoteId: string, divineChaosRate: number): number | null 
 }
 
 /**
- * One leg's rate as the slot prints it, in the leg's OWN quote currency:
- * `buy 26 @ 0.0625 div`, `sell @ 0.10 div`, `convert @ 196 c`.
+ * A whole quantity beside its currency, in the shorthand the game's own trade
+ * talk uses: `420c`, `3 div`, and a bare `12` for a unit nothing here names.
  *
- * The price is the leg's POSTED extreme, unchanged from what the wire sends and
- * unchanged from what this printed before the rework — the undercut lives in the
- * end amounts, and showing it here would put a number on screen that no order
- * book ever displayed. What is new is the unit: without it a 0.0625 beside a
- * 196 reads as two prices in the same currency when it is a divine price beside
- * a chaos one, which is how a mirror route came to read chaos → chaos → chaos.
- *
- * `count` is the run size, and only step 1 carries one: the reader buys N items
- * once, then sells and converts whatever that purchase became, so repeating N on
- * every step would invite it to be read as a per-step quantity. It goes through
- * `formatChaos` for the thousands separator alone — a flip count is already a
- * whole number, so nothing there rounds it.
+ * The space is a rule, not an inconsistency: "420c" is one token wherever chaos
+ * is written down and "3div" is not, so the chaos suffix binds to its number
+ * and the divine one stands off it. `formatChaos` is borrowed for its hand-rolled
+ * thousands grouping alone — every quantity that reaches here is an integer
+ * multiple of the feed's own pair, so nothing it does rounds.
  */
-function legRate(verb: string, leg: CurrencyExchangeLeg, count?: number): string {
-	const head = count === undefined ? verb : `${verb} ${formatChaos(count)}`;
-	const price = formatLegPrice(leg.price);
-	const unit = quoteUnit(leg.quote);
-	return unit === '' ? `${head} @ ${price}` : `${head} @ ${price} ${unit}`;
+function withUnit(quantity: number, unit: string): string {
+	const amount = formatChaos(quantity);
+	if (unit === '') return amount;
+	return unit === 'c' ? `${amount}${unit}` : `${amount} ${unit}`;
+}
+
+/** A step's rate line, plus the hover it needs when the two disagree. */
+interface LegRate {
+	/** `buy 12 for 420c` — the order, or the decimal fallback. */
+	text: string;
+	/** Why the printed quantity is not the one asked for; `null` when it is. */
+	title: string | null;
+	/**
+	 * Units of the leg's item the printed order moves — what step 2 is allowed to
+	 * sell, since it can only sell what step 1 bought. `null` on the decimal
+	 * fallback, which posts no quantity at all.
+	 */
+	posted: number | null;
+}
+
+/** What a step is being asked to move, and the run that asked for it. */
+interface RunOrder {
+	/**
+	 * Units this step should cover: the run for step 1, and for step 2 the
+	 * quantity step 1 actually bought — which is not the same number whenever the
+	 * two markets post in different lots.
+	 */
+	target: number;
+	/** The whole worthwhile run, which is what both END amounts are priced at. */
+	run: number;
+	/**
+	 * `target` is stock the row has already BOUGHT — true for step 2 behind a buy
+	 * step that posted a quantity, false for step 1 and for a step 2 whose buy leg
+	 * fell back to the decimal and so bought nothing on screen.
+	 *
+	 * It is what licenses the "stay unsold" clause: units a sell lot cannot cover
+	 * are stock left in the stash, while units a BUY lot cannot cover were simply
+	 * never bought and are already accounted for by the run the ends price. Keyed
+	 * on this rather than on `target !== run`, which would have disclosed the
+	 * residue on a row whose buy market happens to post one at a time and hidden
+	 * it on one whose lots merely coincide — the same fact, told or not told by an
+	 * accident of the buy side.
+	 */
+	bought: boolean;
+}
+
+/**
+ * One leg's rate as the slot prints it: a POSTABLE ORDER, quantities on both
+ * sides — `buy 12 for 420c`, `sell 12 for 3 div`, `convert 1 div for 209c`.
+ *
+ * The in-game Currency Exchange trades whole quantities against whole
+ * quantities. It has no field for a per-unit price, so "sell @ 0.25 div" — what
+ * this printed before POE-193 — is an instruction the reader cannot carry out;
+ * the same trade posts as "sell 4 for 1 div". The wire now carries that pair
+ * (`priceItemQty`/`priceQuoteQty`, exactly the leg's `price`), so the rate is
+ * rendered FROM it rather than from the decimal.
+ *
+ * The pair is the extreme the hour PRINTED at, which is not quite the order to
+ * post: the one that fills sits a step tighter, and the end amounts already pay
+ * for that step. So the step is worded as the market's shape and never as
+ * "post this" — the `Route` tooltip carries the caveat in words.
+ *
+ * Steps 1 and 2 both carry an `order`, because an order with no quantity is not
+ * an order. The pair is scaled by the largest whole multiple that fits
+ * `order.target`, so the printed order is always exactly postable —
+ * `integer × pair`, never a rounded quantity the exchange would refuse — and
+ * when the target is not a multiple of `priceItemQty` the displayed quantity
+ * SNAPS to the largest one that is (a target of 12 on a 5-for-2 market shows 10
+ * for 4) with the hover saying so. The run's own arithmetic is untouched: the
+ * route ends are computed from `price` and the true flip count, never from this
+ * string.
+ *
+ * The two steps DO NOT snap independently. `routeSlots` derives the traded
+ * quantity once — step 1 snaps against the buy market's lot, and step 2's target
+ * is then what step 1 actually bought — because the reader can only sell what
+ * they hold, and two independent snaps against different lots printed rows like
+ * "buy 48 for 3 div → sell 50 for 5 div" on a single fixture. Whatever step 2's
+ * own lot cannot cover stays in the stash; that residue is the market's, not an
+ * arithmetic slip, and it never touches the ends — which is exactly why the sell
+ * step's hover has to name it (`order.bought`), since the ends price the whole
+ * run and nothing else on the row would show the reader the unsold remainder.
+ *
+ * The one exception to "step 2 sells no more than step 1 bought" is a target
+ * BELOW a single lot, where the floor would be zero. There the step posts one
+ * whole lot and the hover says it overshoots — "sell 0 for 0 div" is not a
+ * reading, and the honest alternative is telling the reader the smallest order
+ * this market accepts.
+ *
+ * Step 3 passes no `order` and prints the BARE pair. What the convert step moves
+ * is the proceeds of step 2 — a quantity of the intermediate currency, not of
+ * items — which is not an integer and not predictable from the pair, so the
+ * honest thing to show is the market's own ratio and let the ends carry the
+ * total.
+ *
+ * The unit words come from `quoteUnit` on BOTH sides. The quote side always has
+ * one (chaos or divine); the item side has one only when the item is itself one
+ * of those two, which is exactly the convert step, whose item is the
+ * intermediate currency. A scarab or a card gets a bare count, as it should.
+ *
+ * A leg whose pair is missing or not a positive integer pair falls back to the
+ * decimal rate this printed before, unit and all — "buy 12 for 0" would be worse
+ * than a price the reader has to divide themselves. The reachable cause is
+ * VERSION SKEW and not a stale cache (this app holds no response cache): the
+ * desktop points at a configurable server, so a build shipped with these fields
+ * can be aimed at a server from before POE-193 that never sends them. That
+ * fallback is the old FORM and not the old output exactly: step 2 now carries a
+ * quantity in either branch, so a skewed sell leg reads `sell 12 @ 0.25 div`
+ * where it once read `sell @ 0.25 div`.
+ */
+function legRate(verb: string, leg: CurrencyExchangeLeg, order?: RunOrder): LegRate {
+	const quote = quoteUnit(leg.quote);
+	const itemQty = leg.priceItemQty;
+	const quoteQty = leg.priceQuoteQty;
+
+	if (!(Number.isInteger(itemQty) && Number.isInteger(quoteQty) && itemQty > 0 && quoteQty > 0)) {
+		const head = order === undefined ? verb : `${verb} ${formatChaos(order.target)}`;
+		const price = formatLegPrice(leg.price);
+		return {
+			text: quote === '' ? `${head} @ ${price}` : `${head} @ ${price} ${quote}`,
+			title: null,
+			posted: null
+		};
+	}
+
+	// At least one whole lot: a target under the market's own lot has no postable
+	// order beneath it, and printing zero of the item would be worse than printing
+	// the smallest order the market will take.
+	const multiple = order === undefined ? 1 : Math.max(1, Math.floor(order.target / itemQty));
+	const posted = multiple * itemQty;
+	const text = `${verb} ${withUnit(posted, quoteUnit(leg.item))} for ${withUnit(multiple * quoteQty, quote)}`;
+
+	if (order === undefined || posted === order.target) return { text, title: null, posted };
+
+	// Both titles are told against `target` — the quantity THIS step was asked to
+	// move — because that is the number the printed order diverges from. The run
+	// is named too, but only where it is a second number: on step 1 the two are
+	// the same, and citing both would invent a distinction the row does not have.
+	const ofTheRun =
+		order.target === order.run ? '' : ` of the run of ${formatChaos(order.run)}`;
+
+	if (posted > order.target) {
+		return {
+			text,
+			// Not "bigger than the amounts at either end": the ends are chaos and
+			// divine totals and the order is a count of items, so the comparison has
+			// to be made against the run those ends are priced for.
+			title: `This market posts ${formatChaos(itemQty)} at a time, which is more than the ${formatChaos(order.target)}${ofTheRun} this step moves — the order shown is one whole lot, bigger than the run the two ends are priced for.`,
+			posted
+		};
+	}
+
+	// Units a SELL lot cannot cover are bought stock nobody takes off the reader's
+	// hands, and the row says so nowhere else — the ends price the whole run, so
+	// without this the residue is invisible. Units a BUY lot cannot cover need no
+	// such clause: they were never bought.
+	const unsold =
+		order.bought && order.target > posted
+			? ` ${formatChaos(order.target - posted)} of the ${formatChaos(order.target)} bought stay unsold.`
+			: '';
+	return {
+		text,
+		title: `This market posts in multiples of ${formatChaos(itemQty)}, so ${formatChaos(order.target)} is not one order — the step shows the largest order that fits, and the amounts at both ends still count the whole run of ${formatChaos(order.run)}.${unsold}`,
+		posted
+	};
 }
 
 /** One traded step of a route: what it moves, at what price. */
@@ -722,8 +867,14 @@ export interface RouteStep {
 	name: string;
 	/** Its API-relative icon path, for `iconSrc`; `null` when it has none. */
 	icon: string | null;
-	/** `buy 26 @ 0.0625 div`, `sell @ 0.10 div`, `convert @ 196 c`. */
+	/** `buy 12 for 420c`, `sell 12 for 3 div`, `convert 1 div for 209c`. */
 	rate: string;
+	/**
+	 * The hover behind a rate whose printed quantity is not the run's, because
+	 * the market only posts in lots the run does not divide by; `null` whenever
+	 * the two agree, which is the ordinary case.
+	 */
+	rateTitle: string | null;
 	/** The leg's price sits outside its fair band — the tile is marked. */
 	suspect: boolean;
 }
@@ -772,9 +923,12 @@ export interface RouteView {
  *    QUOTE — "Divine Orb" beside the SCARAB's 0.10 price — which put a currency's
  *    name and artwork on a number that was the item's. All three steps now take
  *    `itemName`/`itemIcon`; no slot shows a quote as if it were the traded thing.
- * 2. EVERY RATE CARRIES ITS UNIT. A leg is quoted in chaos or in divine and the
- *    slot never said which, so a route entered in divine read chaos → chaos →
- *    chaos and the divine appeared nowhere on the row. See `legRate`.
+ * 2. EVERY RATE IS A WHOLE-QUANTITY ORDER, unit and all. A leg is quoted
+ *    in chaos or in divine and the slot never said which, so a route entered in
+ *    divine read chaos → chaos → chaos and the divine appeared nowhere on the
+ *    row; and the price was a per-unit decimal, which the in-game exchange
+ *    cannot express at all — "sell @ 0.25 div" is not a trade anyone can make.
+ *    Both are `legRate`'s, which words the leg's quantity pair instead.
  * 3. THE ENDS ARE IN THE CURRENCY THE READER ACTUALLY SPENDS. `investment` and
  *    `roi` are chaos figures whatever the legs are quoted in, so a divine-entry
  *    play printed "spend 14 chaos" beside a flow denominated in divine. Spend is
@@ -821,28 +975,53 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 
 	const scale = worthwhileScale(play);
 
+	const step = (leg: CurrencyExchangeLeg, rate: LegRate, unscaled?: string): RouteStep => ({
+		name: leg.itemName,
+		icon: leg.itemIcon,
+		rate: rate.text,
+		// `unscaled` is the no-worthwhile-size note, and it applies only to a step
+		// that actually printed a lot: a decimal fallback shows no lot to explain,
+		// and a step with its own snap note has the more specific thing to say.
+		rateTitle: rate.title ?? (rate.posted === null ? null : (unscaled ?? null)),
+		suspect: leg.suspect
+	});
+
+	// ONE traded quantity for the whole row, derived buy-first. Step 1 snaps the
+	// run against the buy market's lot; step 2 then targets what step 1 actually
+	// bought, because the reader cannot sell what they did not buy — two steps
+	// snapping independently against different lots printed "buy 48 → sell 50" on
+	// a single fixture. A buy leg that fell back to the decimal posted no
+	// quantity, so the sell step targets the run itself rather than nothing.
+	// Step 3 gets no quantity at all: what it converts is the sale's proceeds.
+	const run = scale?.flips;
+	const buyRate = legRate(
+		'buy',
+		buyLeg,
+		run === undefined ? undefined : { target: run, run, bought: false }
+	);
+	const sellOrder =
+		run === undefined
+			? undefined
+			: { target: buyRate.posted ?? run, run, bought: buyRate.posted !== null };
+
+	// NO SCALE, and the steps say so. `worthwhileScale` answered `null`, so there
+	// is no run to scale toward and each step falls back to one lot of its OWN
+	// market — which on a row whose two markets post in different lots reads as a
+	// divergence ("buy 1 for 35c → sell 4 for 1 div") with nothing on screen to
+	// explain it. The note is the explanation; it is not a snap, so `legRate`
+	// leaves the title empty and this branch fills it.
+	const unscaled =
+		run === undefined
+			? // Told without asserting that the two lots DIFFER: they line up on a
+				// row whose markets happen to post the same lot, and the note is on
+				// every unscaled step rather than only the mismatched ones.
+				'This play has no worthwhile size to repeat toward, so each step shows one lot of its own market rather than a run quantity — two counts that agree only where the two markets happen to post the same lot. The ends fall back to what ONE exchange costs and returns.'
+			: undefined;
+
 	const steps = {
-		buy: {
-			name: buyLeg.itemName,
-			icon: buyLeg.itemIcon,
-			rate: legRate('buy', buyLeg, scale?.flips),
-			suspect: buyLeg.suspect
-		},
-		sell: {
-			name: sellLeg.itemName,
-			icon: sellLeg.itemIcon,
-			rate: legRate('sell', sellLeg),
-			suspect: sellLeg.suspect
-		},
-		convert:
-			convertLeg === undefined
-				? null
-				: {
-						name: convertLeg.itemName,
-						icon: convertLeg.itemIcon,
-						rate: legRate('convert', convertLeg),
-						suspect: convertLeg.suspect
-					}
+		buy: step(buyLeg, buyRate, unscaled),
+		sell: step(sellLeg, legRate('sell', sellLeg, sellOrder), unscaled),
+		convert: convertLeg === undefined ? null : step(convertLeg, legRate('convert', convertLeg))
 	};
 
 	// No derivable run size: the per-exchange chaos ends, exactly as before.

@@ -143,7 +143,11 @@ describe('fetchCurrencyExchangePlays', () => {
 		action: 'buy',
 		item: 'Metadata/Items/Currency/CurrencyRerollRare',
 		quote: 'Metadata/Items/Currency/CurrencyAddModToRare',
-		price: 0.004975,
+		// The pair the hour's extreme printed at, and the price it divides out
+		// to exactly: 200 chaos for 1 exalt.
+		price: 0.005,
+		priceItemQty: 200,
+		priceQuoteQty: 1,
 		fair: 0.00512,
 		fairOk: true,
 		tick: 0.02,
@@ -166,6 +170,8 @@ describe('fetchCurrencyExchangePlays', () => {
 		// 1.5x band, so this leg carries the junk flag — the payload the page has
 		// to render mixes a clean leg with a suspect one, as a real one does.
 		price: 3.5,
+		priceItemQty: 2,
+		priceQuoteQty: 7,
 		fair: 2,
 		fairOk: true,
 		tick: 0.05,
@@ -193,6 +199,8 @@ describe('fetchCurrencyExchangePlays', () => {
 		item: 'Metadata/Items/Currency/CurrencyNewLeagueOrb',
 		quote: 'Metadata/Items/Currency/CurrencyRerollRare',
 		price: 12,
+		priceItemQty: 1,
+		priceQuoteQty: 12,
 		fair: 11.5,
 		fairOk: true,
 		tick: 0.01,

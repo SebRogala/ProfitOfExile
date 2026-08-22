@@ -287,6 +287,25 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
  * client rebuild the undercut price: `price × (1 + tick)` to buy,
  * `price × (1 − tick)` to sell.
  *
+ * `priceItemQty`/`priceQuoteQty` are that same price as the in-game Currency
+ * Exchange posts it: the reduced integer quantity pair behind this hour's
+ * extreme, with `priceQuoteQty / priceItemQty === price` EXACTLY — the server
+ * builds the pair beside the price and never re-derives either from the other.
+ * The game trades whole quantities on both sides, so a leg with `priceItemQty`
+ * 4 and `priceQuoteQty` 1 quoted in divine is an order reading "sell 4 for 1
+ * div"; the 0.25 divine it divides out to is not a price the exchange can
+ * express, which is why the pair travels rather than being reconstructed here.
+ * They are oriented to the LEG — `priceItemQty` counts units of `item` and
+ * `priceQuoteQty` units of `quote`, whichever side of the raw feed row those
+ * turn out to be — so a direct flip's two legs quote one market with two
+ * different pairs, the buy leg carrying the hour's low and the sell leg its
+ * high.
+ *
+ * It is the pair the extreme PRINTED at, and not the order to post: the order
+ * that actually fills sits one quantity step tighter, is not served, and is
+ * already paid for in `roiPct`/`roi`. Client copy must not promise that posting
+ * this exact pair is the play.
+ *
  * `itemIcon`/`quoteIcon` are API-RELATIVE paths into this server's icon route
  * (`/currency-exchange/icon/<escaped id>`), not upstream poewiki URLs —
  * production cannot reach poewiki (ADR-012). Join them onto `getApiBase()` with
@@ -308,6 +327,8 @@ export interface CurrencyExchangeLeg {
 	item: string;
 	quote: string;
 	price: number;
+	priceItemQty: number;
+	priceQuoteQty: number;
 	fair: number;
 	fairOk: boolean;
 	tick: number;
