@@ -20,7 +20,7 @@ import {
 	serializeItemRules
 } from './filters';
 import type { CategoryRules, GateInputs, Gates, ItemRule, NumericFilters } from './filters';
-import { moneyColumns } from './view';
+import { CHAOS_ID, moneyColumns, runInvestment } from './view';
 import type { CurrencyExchangeLeg, CurrencyExchangePlay } from '$lib/api';
 
 /**
@@ -928,11 +928,11 @@ describe('applyNumericFilters', () => {
 		expect(keys(applyNumericFilters([cheap], filters({ investMax: '999' })))).toEqual([]);
 	});
 
-	it('bounds the very figure the Investment column shows the reader', () => {
-		// The bound and the column are one FUNCTION, not two agreeing expressions:
-		// `applyNumericFilters` calls `moneyColumns(play).investment`, which is the
-		// call the Investment cell renders. So a ceiling the reader types cannot
-		// admit a row whose printed Investment sits above it. Told across both
+	it('bounds the very figure the Scale column shows the reader', () => {
+		// The bound and the Scale column's "N c in" sub-line are one FUNCTION, not
+		// two agreeing expressions: `applyNumericFilters` calls `runInvestment`,
+		// which is what that sub-line renders. So a ceiling the reader types cannot
+		// admit a row whose printed run cost sits above it. Told across both
 		// branches at once — `cheap` has a run, `measuredLoss` has none — so a
 		// change that re-anchored either side of either branch shows up here as a
 		// row admitted above its own printed cost.
@@ -951,9 +951,30 @@ describe('applyNumericFilters', () => {
 		);
 
 		expect(keys(kept)).toEqual(['cheap', 'loss']);
-		expect(moneyColumns(cheap).investment).toBe(1000);
-		expect(moneyColumns(measuredLoss).investment).toBe(100);
-		expect(moneyColumns(dear).investment).toBe(2500);
+		expect(runInvestment(cheap)).toBe(1000);
+		expect(runInvestment(measuredLoss)).toBe(100);
+		expect(runInvestment(dear)).toBe(2500);
+	});
+
+	it('bounds the RUN of a chaos-entry play, not the posting its columns print', () => {
+		// THE SEAM (spec §6.1), and the case that would silently pass if the bound
+		// were left reading `moneyColumns`. This play enters on a chaos market that
+		// posts four at a time, so its Investment COLUMN prints 4c — while the run
+		// it has to be repeated to is 10 flips tying up 10c. A 5c ceiling covers the
+		// posting and does not cover the run, and a bankroll ceiling is asking about
+		// the run.
+		const trash = play({
+			key: 'trash',
+			legs: [leg({ quote: CHAOS_ID, price: 1, priceItemQty: 4, priceQuoteQty: 4 })],
+			investment: 1,
+			roi: 0.25,
+			expectedRoi: 10
+		});
+
+		expect(moneyColumns(trash).investment).toBe(4);
+		expect(runInvestment(trash)).toBe(10);
+		expect(keys(applyNumericFilters([trash], filters({ investMax: '5' })))).toEqual([]);
+		expect(keys(applyNumericFilters([trash], filters({ investMax: '10' })))).toEqual(['trash']);
 	});
 
 	it('reads the investment bounds as divine when the unit says divine', () => {

@@ -12,21 +12,23 @@
 	 * Presentation only. Every string, icon path and flag comes from
 	 * `routeSlots`, which is pure and unit-tested — this file decides nothing
 	 * about the market and computes no amount, the end slots' hover included.
-	 * Since POE-193 the amounts are the whole worthwhile RUN and the ends are in
-	 * the currency the run is entered with, so the end slots carry a unit word and
-	 * a sub-line; comfortable shows both, dense shows neither and hands them back
-	 * through the wrapper's `title`. Steps 1 and 2 read as RUN TOTALS carrying
-	 * `≈` — "buy 12 for ≈ 424c" — rather than the whole-quantity ORDER they used
-	 * to print, and rather than the per-unit decimal the in-game exchange has no
-	 * field for. The market's own posted pair moved to the `title`: on a step that
-	 * prints a run total the hover is what that market printed plus what its lot
-	 * does to a run of this size, and it is `null` only there — when such a leg
-	 * arrives with no usable pair to word. A step that shows its market's LINE
-	 * instead of a run total always has a `title`, pair or no pair: the caveat that
-	 * the line counts one order while the row's ends count the run, worded for the
-	 * pairless fallback too. Step 3 reads as the run's TOTAL — "≈ 2.97 div →
-	 * 615c" — and only there has no name line, its icon naming the currency
-	 * instead.
+	 * Since POE-193 the amounts count ONE SIZE across the whole row and the ends
+	 * are in the currency that size is entered with, so the end slots carry a unit
+	 * word and a sub-line; comfortable shows both, dense shows neither and hands
+	 * them back through the wrapper's `title`. That size is `displayScale` — one
+	 * posting of the buy market on a chaos entry, the worthwhile run on a divine
+	 * one (owner ruling, 2026-08-22). Steps 1 and 2 read as TOTALS carrying
+	 * `≈` — "buy 50 for ≈ 3.16 div", "buy 4 for ≈ 1c" — rather than the
+	 * whole-quantity ORDER they used to print, and rather than the per-unit decimal
+	 * the in-game exchange has no field for. The market's own posted pair moved to
+	 * the `title`: on a step that prints a total the hover is what that market
+	 * printed plus what its lot does to a quantity of this size, and it is `null`
+	 * only there — when such a leg arrives with no usable pair to word. A step that
+	 * shows its market's LINE instead of a total always has a `title`, pair or no
+	 * pair: the caveat that the line counts one order while the row's ends count
+	 * the row's own size, worded for the pairless fallback too. Step 3 reads as
+	 * that size's TOTAL — "≈ 2.97 div → 615c" — and only there has no name line,
+	 * its icon naming the currency instead.
 	 *
 	 * SLOT GEOMETRY, mirrored by the table header in `CurrencyExchangePage`: the
 	 * header's label spans must carry the same widths as `.slot-*` below
@@ -128,22 +130,23 @@
 {#snippet step(slot: RouteStep, lowLiquidity: boolean = false)}
 	{@render tile(slot.icon, slot.suspect, lowLiquidity)}
 	<span class="lines">
-		<!-- A step with no name is the convert step showing a run total, whose line
+		<!-- A step with no name is the convert step showing a total, whose line
 		     names both currencies already and whose tile carries the artwork of the
 		     one being converted; the name is on its `rateTitle`. -->
 		{#if slot.name}
 			<span class="name" title={slot.name}>{slot.name}</span>
 		{/if}
 		<!-- `rateTitle` carries what the line itself no longer claims: on a step
-		     that printed a run total it is the market's own posted pair plus what
-		     that market's lot does to a run of this size, and it is `null` only
+		     that printed a total it is the market's own posted pair plus what
+		     that market's lot does to a quantity of this size, and it is `null` only
 		     when such a leg arrived with no usable pair to word; on a step showing
 		     its market's LINE instead it is always set, saying that the line counts
 		     one market's lot — or, where no pair was posted, its bare per-unit
-		     rate — while the row's ends count the run. See the header comment.
+		     rate — while the row's ends count the row's own size. See the header
+		     comment.
 		     The rate is its own fallback title, but ONLY on that pairless leg: on
 		     every other step the hover prints the market's posted pair, never the
-		     total the line printed. So a run-total line cut short by its slot is
+		     total the line printed. So a total line cut short by its slot is
 		     not recoverable on hover — there is nowhere the printed total is
 		     written down a second time — which is why the cut has to be MARKED
 		     rather than silent. That is what `.route.dense .name` in the CSS
@@ -227,7 +230,7 @@
 		   next tile out of its column — dense is where it bites, its 140px convert
 		   slot being narrower than a long three-currency order. What the clip takes
 		   is not always a hover away: a step's `title` is its market's posted pair,
-		   not the run total the line printed. So the dense step lines ellipsise
+		   not the total the line printed. So the dense step lines ellipsise
 		   rather than being sliced, and the mark is the reader's only warning —
 		   see `.route.dense .name`. */
 		overflow: hidden;
@@ -344,7 +347,7 @@
 	   2.97 d`: still short by its unit word, but visibly short. That mark is
 	   load-bearing here in a way it is not on the ends. The ends hand their whole
 	   string back through the wrapper's `title`; a step's hover is its market's
-	   posted PAIR, never the run total the line printed, so a truncated total is
+	   posted PAIR, never the total the line printed, so a truncated total is
 	   not recoverable by hovering it and the ellipsis is the only warning the
 	   reader gets. */
 	.route.dense .slot-buy {
