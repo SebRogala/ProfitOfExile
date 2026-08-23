@@ -100,8 +100,8 @@
 	const itemRulesPref = persisted('currencyExchangeItemRules', '[]');
 
 	/**
-	 * The six quality gates (POE-191, plus POE-196's trash-price knob), one
-	 * preference each.
+	 * The seven quality gates (POE-191, plus the two trash-price knobs — POE-196's
+	 * chaos floor and the divine twin of 2026-08-23), one preference each.
 	 *
 	 * Every one defaults to '' and NOT to the number it stands for, because ''
 	 * already means that number: `parseGate` reads an unset knob as its default,
@@ -112,11 +112,11 @@
 	 * file. POE-193 is that case: the defaults went to 0 and every reader who had
 	 * not typed a level got the whole served table, with no migration.
 	 *
-	 * `minItemPrice` is the reason that property still earns its keep: it is the
-	 * one knob whose default is not 0 (0.5 chaos, ADR-017's sanctioned exception),
-	 * so '' has to keep meaning "whatever this build says" rather than a number
-	 * frozen at install time. Blanking that box restores the shipped floor; only
-	 * an explicit 0 turns it off.
+	 * The two trash-price knobs are the reason that property still earns its keep:
+	 * they are the knobs whose defaults are not 0 (0.5 chaos and 0.4 divine,
+	 * ADR-017's sanctioned exceptions), so '' has to keep meaning "whatever this
+	 * build says" rather than a number frozen at install time. Blanking either box
+	 * restores that build's shipped floor; only an explicit 0 turns one off.
 	 *
 	 * `minRoiPct` keeps its original key: it is the same knob the reader has been
 	 * setting since POE-186, moved into the group rather than replaced, and
@@ -124,6 +124,7 @@
 	 */
 	const gatePrefs: Record<keyof Gates, PersistedString> = {
 		minItemPrice: persisted('currencyExchangeGateMinItemPrice', ''),
+		minItemPriceDiv: persisted('currencyExchangeGateMinItemPriceDiv', ''),
 		minRoiChaos: persisted('currencyExchangeGateMinRoiChaos', ''),
 		minTurnover: persisted('currencyExchangeGateMinTurnover', ''),
 		maxTickPct: persisted('currencyExchangeGateMaxTickPct', ''),
@@ -174,6 +175,7 @@
 	 */
 	const gateInputs = $derived({
 		minItemPrice: gatePrefs.minItemPrice.value,
+		minItemPriceDiv: gatePrefs.minItemPriceDiv.value,
 		minRoiChaos: gatePrefs.minRoiChaos.value,
 		minTurnover: gatePrefs.minTurnover.value,
 		maxTickPct: gatePrefs.maxTickPct.value,
@@ -198,6 +200,19 @@
 	const allPlays = $derived(result?.plays ?? []);
 	const items = $derived(itemUniverse(allPlays));
 	const hoursWindow = $derived(result?.hours ?? 0);
+	/**
+	 * The newest hour's chaos value of one divine, 0 when that hour carried no
+	 * divine/chaos trade — and 0 before the first response arrives, which is the
+	 * same answer for the same reason: nothing on screen can be valued in divine.
+	 *
+	 * Held once because THREE consumers read it and none of them may see a
+	 * different rate from the others: the divine trash-price gate reads it to
+	 * un-convert an entry cost, the Run cost bounds read it to convert a typed
+	 * divine bound, and every row's route renders its ends with it. A second
+	 * `?? 0` written at one of those call sites is a second place for the fallback
+	 * to drift.
+	 */
+	const divineChaosRate = $derived(result?.divineChaosRate ?? 0);
 
 	/**
 	 * Rules, then gates, then numbers, then the search, then order. The two rule
@@ -212,22 +227,23 @@
 	 * took: since POE-191 they are the one filter that hides rows the reader never
 	 * set, and a lump "hidden by filters" over a bar with nothing visibly on it
 	 * reads as a broken table rather than as a knob to turn. POE-196 makes that
-	 * figure non-zero on a fresh install — the trash-price knob ships armed — so
-	 * the split is now what tells the reader the missing sub-chaos rows are a
-	 * default they can undo rather than rows the server never sent.
+	 * figure non-zero on a fresh install — both trash-price knobs ship armed — so
+	 * the split is now what tells the reader the missing sub-chaos and
+	 * hundreds-per-divine rows are a default they can undo rather than rows the
+	 * server never sent.
 	 *
 	 * `rows` is what the counter counts, so the shown figure is the post-search
 	 * one: a query that hides a play is one of the reasons it is not on the table.
 	 */
 	const afterRules = $derived(applyRules(allPlays, categoryRules, itemRules));
-	const afterGates = $derived(applyGates(afterRules, gates));
+	const afterGates = $derived(applyGates(afterRules, gates, divineChaosRate));
 	const rows = $derived(
 		sortPlays(
 			applyNumericFilters(afterGates, {
 				investMin: investMinPref.value,
 				investMax: investMaxPref.value,
 				unit,
-				divineChaosRate: result?.divineChaosRate ?? 0
+				divineChaosRate
 			}).filter((play) => matchesSearch(play, search)),
 			parseSort(sortPref.value)
 		)
@@ -261,20 +277,28 @@
 	/**
 	 * What the empty table says when the GATES are what emptied it.
 	 *
-	 * Two wordings, because "lower your gates" is wrong advice for the one gate
-	 * the reader did not set. When nothing is off its shipped default, the only
-	 * knob that can have emptied the table is POE-196's item-price floor — a
-	 * reachable state, not a theoretical one: a fresh install on a thin hour whose
-	 * served plays are all sub-floor gets exactly this. Naming the floor and the
-	 * one number that disables it is the difference between a dead end and a
-	 * control.
+	 * Two wordings, because "lower your gates" is wrong advice for the gates the
+	 * reader did not set. When nothing is off its shipped default, the only knobs
+	 * that can have emptied the table are the two trash-price floors — a reachable
+	 * state, not a theoretical one: a fresh install on a thin hour whose served
+	 * plays are all sub-floor gets exactly this. Naming the floors and the number
+	 * that disables them is the difference between a dead end and a control.
+	 *
+	 * BOTH floors are named rather than whichever one did it, because the page
+	 * cannot tell them apart from here: `applyGates` runs once and `hiddenByGates`
+	 * is one count over that one pass, so which knob took the last row is not a
+	 * fact this page holds, and a table emptied by the two of them together has no
+	 * single culprit to name at all. Naming one would be a guess printed as a
+	 * fact, and would leave a reader who disarmed it still looking at an empty
+	 * table. The knobs are listed as they are labelled on the Gates row, which is
+	 * what a reader following this sentence has to find.
 	 *
 	 * `movedGates` is the same verdict the filter bar badges with, so the message
 	 * and the badge cannot disagree about whether the reader has touched anything.
 	 */
 	const gatesEmptyMessage = $derived(
-		movedGates(gates).length === 0 && gates.minItemPrice > 0
-			? `No play served this hour costs the ${gates.minItemPrice}c minimum item price to enter — that floor is the one filter this app arms for you. Type 0 into Min item price in the filter bar’s Gates row to see the cheaper plays.`
+		movedGates(gates).length === 0 && (gates.minItemPrice > 0 || gates.minItemPriceDiv > 0)
+			? `No play served this hour costs the ${gates.minItemPrice}c (or ${gates.minItemPriceDiv} div, on a divine-quoted entry) minimum item price — those floors are the filters this app arms for you. Type 0 into Min item price and Min item price (div) in the filter bar’s Gates row to see the cheaper plays.`
 			: 'No plays clear your gates right now — lower them in the filter bar’s Gates row.'
 	);
 
@@ -306,10 +330,10 @@
 	 * Every knob back to its default. What that is spelled as is `resetGateInputs`'
 	 * business, not this function's: the strings it hands back go straight into
 	 * the preferences, and the reason they are blanks rather than numbers lives
-	 * beside the parser that reads them. That lands five gates OFF and
-	 * `minItemPrice` back at its shipped floor (POE-196) — the shipped state, not
-	 * a blank one — which makes this also the only way BACK to the trash-price
-	 * floor for a reader who typed 0 into it.
+	 * beside the parser that reads them. That lands five gates OFF and both
+	 * trash-price knobs back at their shipped floors (0.5c, POE-196; 0.4 div,
+	 * 2026-08-23) — the shipped state, not a blank one — which makes this also the
+	 * only way BACK to either floor for a reader who typed 0 into it.
 	 */
 	function resetGates() {
 		const inputs = resetGateInputs();
@@ -327,13 +351,13 @@
 	 * it is not part of the setup, it is visibly in its own box, and that box has
 	 * its own × for the reader who wants it gone.
 	 *
-	 * The GATES are left alone for a third reason (POE-191): five of the six ship
+	 * The GATES are left alone for a third reason (POE-191): five of the seven ship
 	 * off, so a gate that is running is one the reader deliberately armed — a
-	 * standing choice rather than the question Clear is here to undo. The sixth,
-	 * `minItemPrice`, is the shipped trash-price floor and is not the reader's
-	 * question either. The Gates row has its own Defaults, which empties the boxes
-	 * and is the way back to the shipped state; sweeping them up here would make
-	 * Clear a second control undoing it.
+	 * standing choice rather than the question Clear is here to undo. The other
+	 * two are the shipped trash-price floors and are not the reader's question
+	 * either. The Gates row has its own Defaults, which empties the boxes and is
+	 * the way back to the shipped state; sweeping them up here would make Clear a
+	 * second control undoing it.
 	 */
 	function clearFilters() {
 		categoryRulesPref.value = serializeCategoryRules({});
@@ -500,7 +524,7 @@
 			investMin={investMinPref.value}
 			investMax={investMaxPref.value}
 			{unit}
-			divineChaosRate={result.divineChaosRate}
+			{divineChaosRate}
 			{search}
 			{counts}
 			{apiBase}
@@ -638,7 +662,7 @@
 									{density}
 									{apiBase}
 									{showConvert}
-									divineChaosRate={result?.divineChaosRate ?? 0}
+									{divineChaosRate}
 								/>
 							</td>
 

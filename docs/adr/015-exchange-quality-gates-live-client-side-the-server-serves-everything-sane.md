@@ -75,9 +75,10 @@ cannot stand behind (lowCoverage, suspect, a negative expectation), so an
 absolute cutoff in front of it hid measured-real plays: on 2026-08-21 the armed
 levels hid 142 of 143 served 1-hop plays and an Apocalypse card flip at 8,532
 c/h against the 10,000 line. `gateDefaults` is therefore all zeros — until
-POE-196 added a sixth knob, `minItemPrice`, shipping at 0.5c as the one
-sanctioned default-on client filter (see
-[ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md)'s last two
+POE-196 added a sixth knob, `minItemPrice`, shipping at 0.5c, and the owner
+ruling of 2026-08-23 added a seventh, `minItemPriceDiv`, shipping at 0.4 div on
+divine-quoted entries only — the two sanctioned default-on client filters (see
+[ADR-017](017-no-default-engine-floor-may-hide-a-live-market.md)'s last four
 Consequences bullets); the five this ADR is about remain zero — the third
 consequence above no longer holds (the two languages are no longer one claim,
 and the Go test — renamed
