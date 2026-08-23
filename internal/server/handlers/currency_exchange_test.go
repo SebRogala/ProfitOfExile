@@ -103,7 +103,10 @@ func directScarabPlay() exchange.Play {
 //
 // Its middle leg sold at 24.5 chaos against a fair of 15, so the leg AND the
 // play carry the suspect flag — the handler is a transport and has to pass both
-// through untouched.
+// through untouched. That same leg sold into a market with no scarab on offer,
+// which is the one-sided book ADR-017 serves and marks, so it carries
+// DepletedSide too: the two per-leg flags are independent and a transport that
+// collapsed them would be visible here.
 //
 // The numbers are the ones those legs imply: 24.5 * (1/196) / 0.0625 - 1 is the
 // raw 100%, and 0.8353 is the same round trip once each leg has paid its own
@@ -114,7 +117,7 @@ func oneHopPlay() exchange.Play {
 		Mode: exchange.ModeOneHop,
 		Legs: []exchange.Leg{
 			{Action: "buy", Item: scarabID, Quote: exchange.DivineID, Price: 0.0625, PriceItemQty: 16, PriceQuoteQty: 1, Fair: 0.07, FairOK: true, Tick: 0.0625, Volume: 300, Stock: 60},
-			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 24.5, PriceItemQty: 2, PriceQuoteQty: 49, Fair: 15, FairOK: true, Tick: 0.02040816326530612, Volume: 250, Stock: 25, Suspect: true},
+			{Action: "sell", Item: scarabID, Quote: exchange.ChaosID, Price: 24.5, PriceItemQty: 2, PriceQuoteQty: 49, Fair: 15, FairOK: true, Tick: 0.02040816326530612, Volume: 250, Stock: 25, DepletedSide: true, Suspect: true},
 			{Action: "sell", Item: exchange.ChaosID, Quote: exchange.DivineID, Price: 1.0 / 196.0, PriceItemQty: 196, PriceQuoteQty: 1, Fair: 1.0 / divineChaosRate, FairOK: true, Tick: 1.0 / 196.0, Volume: 13001051, Stock: 4564191},
 		},
 		RoiPct:     0.8353,
@@ -208,7 +211,11 @@ type exchangeLegBody struct {
 	FairOK        bool    `json:"fairOk"`
 	Tick          float64 `json:"tick"`
 	Volume        float64 `json:"volume"`
+	// Stock counts the book side the leg executes against, and DepletedSide says
+	// the OPPOSITE side stood empty in the hour — the one-sided market ADR-017's
+	// 2026-08-23 amendment serves and marks rather than dropping.
 	Stock         int64   `json:"stock"`
+	DepletedSide  bool    `json:"depletedSide"`
 	Suspect       bool    `json:"suspect"`
 	ItemName      string  `json:"itemName"`
 	ItemIcon      *string `json:"itemIcon"`
@@ -221,9 +228,9 @@ type exchangeLegBody struct {
 // String renders the leg with its icon pointers dereferenced, so a failed
 // comparison names the paths instead of two heap addresses.
 func (l exchangeLegBody) String() string {
-	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v pair:%d-for-%d fair:%v fairOk:%t tick:%v volume:%v stock:%d suspect:%t itemName:%q itemIcon:%s itemCategory:%q quoteName:%q quoteIcon:%s quoteCategory:%q}",
+	return fmt.Sprintf("{action:%s item:%s quote:%s price:%v pair:%d-for-%d fair:%v fairOk:%t tick:%v volume:%v stock:%d depletedSide:%t suspect:%t itemName:%q itemIcon:%s itemCategory:%q quoteName:%q quoteIcon:%s quoteCategory:%q}",
 		l.Action, l.Item, l.Quote, l.Price, l.PriceItemQty, l.PriceQuoteQty,
-		l.Fair, l.FairOK, l.Tick, l.Volume, l.Stock, l.Suspect,
+		l.Fair, l.FairOK, l.Tick, l.Volume, l.Stock, l.DepletedSide, l.Suspect,
 		l.ItemName, quoteOrNull(l.ItemIcon), l.ItemCategory, l.QuoteName, quoteOrNull(l.QuoteIcon), l.QuoteCategory)
 }
 
@@ -506,7 +513,7 @@ func TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs(t *testin
 		{
 			Action: "sell", Item: scarabID, Quote: exchange.ChaosID,
 			Price: 24.5, PriceItemQty: 2, PriceQuoteQty: 49,
-			Fair: 15, FairOK: true, Tick: 0.02040816326530612, Volume: 250, Stock: 25, Suspect: true,
+			Fair: 15, FairOK: true, Tick: 0.02040816326530612, Volume: 250, Stock: 25, DepletedSide: true, Suspect: true,
 			ItemName: "Domination Scarab of Evolution", ItemIcon: iconPath(scarabID), ItemCategory: "Scarabs",
 			QuoteName: "Chaos Orb", QuoteIcon: iconPath(exchange.ChaosID), QuoteCategory: "Currency",
 		},

@@ -2,10 +2,13 @@
 
 ## Status
 
-Accepted (POE-193, 2026-08-22), **amended the same day** — see
+Accepted (POE-193, 2026-08-22), **amended twice**. First the same day — see
 [Amendment: MinEdge is a flag](#amendment-minedge-is-a-flag-2026-08-22), which
-completes the rule by demoting the last default-on drop and therefore replaces
-the final Decision bullet below. Extends
+demotes the last default-on drop anyone had counted and therefore replaces the
+final Decision bullet below. Then on 2026-08-23 — see
+[Amendment: the stock gate follows the action](#amendment-the-stock-gate-follows-the-action-2026-08-23),
+which demotes one nobody had counted, and supersedes every "stock on BOTH sides"
+reading in this document, the first Decision bullet's included. Extends
 [ADR-015](015-exchange-quality-gates-live-client-side-the-server-serves-everything-sane.md)
 from the four QUALITY gates to the engine's own remaining floors, and
 **supersedes ADR-015's first Decision bullet in whole** — the floor levels that
@@ -48,6 +51,8 @@ binds is a gate under another name.
 - **Liveness = a trade happened.** `DefaultConfig().MinVolumePerHour` is **1**,
   beside `gatedLeg`'s unchanged demand for stock on BOTH sides of the market.
   Anything above 1 is a size preference and belongs to the reader.
+  **The "BOTH sides" half was superseded on 2026-08-23** — see the second
+  amendment: the demand follows the leg's action, and the other side is marked.
 - **Persistence and thinness are expressed by RANKING and FLAGS, never by
   default-on drops.** `hoursSeen`, `simEntries`/`lowCoverage` and `suspect` are
   served for every play; `MinHoursSeen` defaults to **1** on the base config and
@@ -178,6 +183,10 @@ could hide a market.**
   this hour, no stock on one side of the market (`gatedLeg`, `MinVolumePerHour`
   1), or an entry currency with no chaos rate that hour. `HideSuspect` remains
   opt-in and off.
+  **Superseded the next day by the second amendment below**: the stock half of
+  that reads "no stock on the side the leg EXECUTES AGAINST", and the opposite
+  side is marked rather than gated on. The both-sides demand this bullet
+  restated was itself a default that hid a live market.
 
 ### Consequences
 
@@ -213,3 +222,98 @@ could hide a market.**
 - **ADR-016 is unaffected.** The simulation already recorded candidates BEFORE
   the served gates, so the quiet hours were always in the expectation; what
   changes is that the recipe they belong to now reaches the reader.
+
+## Amendment: the stock gate follows the action (2026-08-23)
+
+The amendment above closed on "what still drops is only what cannot be PRICED",
+and listed `gatedLeg`'s stock demand among those. It was carrying a second
+default-on drop that nobody had read as one: the demand was for stock on BOTH
+sides of the market, on EVERY leg, whatever that leg was going to do there.
+
+### The incident
+
+Journey Tattoo against `CurrencyRerollRare` stood at **1121 chaos of bids and
+zero asks** — nobody offering a tattoo, real money standing behind the ones that
+were wanted. That is not a dead market. It is the shape a SELLER wants most, and
+it carried the largest edge of its hour.
+
+`gatedLeg` dropped the sell leg for the empty ASK side, which the sell was never
+going to trade on. That deleted the newest hour's candidate, and the newest-hour
+rule then deleted the whole recipe — **despite it clearing in 5 of the window's 8
+hours**. Same mechanism as the `MinEdge` incident one section up, and the same
+symptom: no row, and nothing to notice its absence by.
+
+What that deletion took is a specific shape, and naming it is what keeps the fix
+from reading as "the gate went away": the recipe rescued here is the **1-hop
+that bought the tattoo against divine and sold it into those chaos bids**, whose
+every leg executes against a side that had stock. The **direct flip on the
+one-sided market itself stays dropped** — its buy leg would have to take an ask,
+and there were none.
+
+### Decision
+
+**The stock gate follows the ACTION, and the opposite side is reported instead
+of gated on.**
+
+- **A buy leg demands ITEM-side stock; a sell leg demands QUOTE-side stock.** A
+  buy takes units off the item side of the book, a sell hands units to the quote
+  side, and a leg is postable when the side it executes against is alive. The
+  side it does not touch is not its business.
+- **`Leg.DepletedSide` / `depletedSide: true` marks a leg whose OPPOSITE side
+  carried no stock that hour** — no asks behind a sell, no bids behind a buy. It
+  is set on every served leg in both modes. The name is deliberately semantic
+  rather than a colour: what it states is a fact about the book, and how alarming
+  that fact is depends on what the reader is doing (a one-sided book is where a
+  seller's edge is largest, and it is also where nothing says the return trip
+  exists).
+- **A direct flip still demands both sides, and gets that without a case for the
+  shape.** `directCandidates` gates its buy and its sell separately on the one
+  row, so between them they ask for the item side and the quote side. A served
+  flip therefore never carries `depletedSide`.
+- **`Leg.Stock` is reoriented to match the predicate**: it now counts the book
+  side the leg EXECUTES AGAINST, where it previously reported the item side for
+  both legs. A sell leg's `stock` had been naming a side its order never touches.
+  No client computed on the old orientation — the desktop declares it in
+  `desktop/src/lib/api.ts` and renders it, and nothing in `filters.ts` or
+  `view.ts` reads it — so the change is a correction rather than a break.
+
+### Consequences
+
+- **Measured cost, 2026-08-23: at most +215 rows, 51 of them with positive
+  expectation.** That is the whole of what the both-sides demand had been
+  removing. The rest rank where they rank.
+- **The fill simulation refeeds itself.** `recordSim` files whatever `gatedLeg`
+  produced, so the hours this amendment stops dropping become simulable entry
+  hours automatically and `simEntries` rises for the affected recipes.
+  **Nothing in the simulation's thresholds changes** — `MinSimEntries` stays 12
+  and the estimator stays as calibrated (ADR-016). That reaches rows that were
+  ALREADY being served: a 1-hop whose leg 2 or leg 3 hours were one-sided but
+  action-valid now contributes those hours as entries, so its `expectedRoi` can
+  MOVE without the estimator or its calibration changing — what widened is the
+  sample the mean is taken over. `lowCoverage` goes on doing
+  the trust labeling on a larger sample, which is the same behaviour ADR-017's
+  first Consequences section recorded for the liveness demotion.
+- **A one-sided market can now reach the ranking on its own.** `expectedRoi` is
+  what places it: the simulation reads later hours, and a book that only ever has
+  one side does not round-trip, so a recipe that is one-sided in general sinks
+  without a gate being written for it.
+- **Clients must render `depletedSide` as information, not as an error.** The
+  row is served, its prices are the newest hour's, and the flag says the book was
+  one-sided while they were printed.
+- **The Go tests carrying this**, in `internal/exchange`:
+  `TestBestPlays_sellLegIntoAMarketWithNoAsksStanding_isServedAndMarkedDepleted`
+  (the incident in miniature),
+  `TestBestPlays_buyLegOnTheSameOneSidedMarket_isNotServed` and
+  `TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isStillDropped` (the
+  action-orientation boundary — the gate followed the action, it was not
+  deleted),
+  `TestBestPlays_buyLegInAMarketWithNoBidsStanding_isServedAndMarkedDepleted`
+  (the flag on the other action),
+  `TestDirectCandidates_servedFlip_neverMarksALegDepleted` and the two
+  `no stock on the ... side` subtests of
+  `TestDirectCandidates_rowFailingAGate_producesNoCandidate` (a flip still needs
+  both sides), and
+  `TestBestPlays_directPlay_eachLegStocksTheSideItExecutesAgainst` (the `Stock`
+  reorientation). The wire shape is pinned in
+  `TestResult_marshalsWithTheFieldNamesTheHandlerPublishes` and
+  `TestCurrencyExchangePlays_legsCarryDisplayDataBesideTheRawFeedIDs`.

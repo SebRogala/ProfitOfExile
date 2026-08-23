@@ -287,6 +287,20 @@ export type CurrencyExchangeHorizon = 'recent' | 'day';
  * client rebuild the undercut price: `price × (1 + tick)` to buy,
  * `price × (1 − tick)` to sell.
  *
+ * `depletedSide` is a reading of the OPPOSITE side of this leg's book: true when
+ * nothing stood there in the hour — no asks facing a sell, no bids facing a buy
+ * — so the order this leg describes would have been alone on its side of the
+ * market. It is the SHAPE of the book and not a verdict on the price: an empty
+ * facing side is part of why the extreme was reachable at all, and it is equally
+ * why an order posted into it may stand unmatched. It is a per-leg fact like
+ * `suspect`, and the two are independent — a leg can be one-sided at a perfectly
+ * ordinary price, and a leg far outside its fair band can have had a full book
+ * on both sides.
+ *
+ * OPTIONAL on the wire — a server older than the field omits it, and an absent
+ * field means false, so no client may distinguish "not sent" from "both sides
+ * stood".
+ *
  * `priceItemQty`/`priceQuoteQty` are that same price as the in-game Currency
  * Exchange posts it: the reduced integer quantity pair behind this hour's
  * extreme, with `priceQuoteQty / priceItemQty === price` EXACTLY — the server
@@ -335,6 +349,8 @@ export interface CurrencyExchangeLeg {
 	volume: number;
 	stock: number;
 	suspect: boolean;
+	/** Optional: absent on a server older than the field, and absent means false. */
+	depletedSide?: boolean;
 	itemName: string;
 	itemIcon: string | null;
 	itemCategory: string;
