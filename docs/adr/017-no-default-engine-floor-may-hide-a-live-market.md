@@ -103,14 +103,13 @@ binds is a gate under another name.
   `BestPlays` pass buys one integer per row. Whether to collapse the two or to
   differentiate them again (a different sim window, a different ranking key) is
   open follow-up work, not settled here.
-- **A client-side price floor now exists, and it is the one sanctioned default
-  filter** (POE-196, 2026-08-22). Keeping sub-chaos noise out of a view is a
+- **A client-side price floor now exists, and it is the first of the two
+  sanctioned default filters** (POE-196, 2026-08-22). Keeping sub-chaos noise out of a view is a
   reader-side concern by ADR-015's split — it filters what one reader is shown
   and changes nothing about what the server hands the next one — and the
   sanctioned home for it is the desktop's existing filter chain, where it landed
   as a sixth Gates knob, `minItemPrice` in
-  `desktop/src/lib/exchange/filters.ts`. It ships at **0.5 chaos** and is the
-  ONLY default-on filter on either side of the wire: it drops a play whose
+  `desktop/src/lib/exchange/filters.ts`. It ships at **0.5 chaos**: it drops a play whose
   `investment` — the per-unit chaos cost of entering one exchange — is under
   that, which removes the bottom of the sub-chaos tier from the out-of-the-box
   table. The rule above is not weakened by it. What the rule bars is a default
@@ -132,6 +131,35 @@ binds is a gate under another name.
   A 1c floor would have hidden them again by default. At 0.5 the fragment and
   oil tier stays on the table from half a chaos up, and only its bottom goes;
   the reader who wants that bottom back types 0.
+- **A DIVINE twin of that floor is the second — and so far last — sanctioned
+  default filter** (owner ruling, Sebastian, 2026-08-23). It landed as a seventh
+  Gates knob, `minItemPriceDiv` in the same file, shipping at **0.4 divine**, and
+  the two together are now the ONLY default-on filters on either side of the
+  wire. SCOPE, which is the whole of what makes it a second exception and not a
+  widening of the first: it judges a play ONLY when the play's ENTRY quote — the
+  buy leg's `quote`, `legs[0]` — is the divine id. A chaos-quoted row is governed
+  by `minItemPrice` alone, at any price, so nothing about the chaos side of the
+  table changed. FIGURE: the same per-exchange `investment` the chaos knob reads,
+  divided by the response's own `divineChaosRate` — the rate the server valued
+  that `investment` with, so the division recovers rather than re-reads the
+  market. The justification is the ONE this ADR already sanctioned,
+  applied to the other denomination: not that hundreds-per-divine markets are
+  fake (they quote as finely as any other, and nothing here reads `tick`) but
+  that an item worth a few hundredths of an orb is a payout too small to act on,
+  so those rows crowd out the ones the reader would take — and the undercutting
+  on such a market is a war inside one price step. The level is the owner's:
+  items priced in real fractional divines are interesting from about four tenths
+  of an orb each. It carries the same bounding as its twin — on the Gates row,
+  placeholder showing the shipped level, counted by the counter, named in the
+  empty-table message, 0 to disarm, blanking restores — and the two disarm
+  SEPARATELY, since asking for the fractional-chaos tier back is not asking for
+  the hundreds-per-divine tier with it.
+- **Two is the count, and a third would need its own ruling.** The rule this ADR
+  is named for is not weakened by either, because both are claims about absolute
+  size and neither reads a market's spread or its liveness. A future default-on
+  filter that hides a live market on any OTHER ground is barred by the rule
+  above; one that hides on absolute size in a third denomination has no third
+  denomination to hide in, the exchange quoting only chaos and divine.
 
 ## Amendment: MinEdge is a flag (2026-08-22)
 

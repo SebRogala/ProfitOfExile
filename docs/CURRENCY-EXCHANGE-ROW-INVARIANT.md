@@ -2,8 +2,8 @@
 
 Status: CURRENT. Normative for the desktop Currency Exchange table.
 
-Last verified: 2026-08-22 against `main@c3958c4` plus the uncommitted
-universal-posting change — `desktop/src/lib/exchange/view.ts`, `filters.ts`,
+Last verified: 2026-08-23 against `main@346c2c2` plus the uncommitted divine
+trash-price knob — `desktop/src/lib/exchange/view.ts`, `filters.ts`,
 `internal/exchange/plays.go`, `desktop/src/lib/tooltips.ts`.
 
 This document is the single normative statement of what the numbers on one
@@ -231,7 +231,7 @@ where it lives:
 
 - the **Scale column** (`CurrencyExchangePage.svelte`), which reads
   `worthwhileScale(play)` and is `F`-sized on every row (E8);
-- the **Run cost bounds** (`filters.ts:686-703`), which read `runInvestment(play)`
+- the **Run cost bounds** (`filters.ts:805-822`), which read `runInvestment(play)`
   — `I_run`, the Scale column's own "N c in" figure — because a bankroll ceiling
   is a run-sized question whatever the row prints (§6.1).
 
@@ -404,7 +404,7 @@ the row, as the last step's total.
 closes the row the other way round — the route stays wholly mechanical, both
 ends and every step on the one best-case basis, and `keep ≈ X` moves off the
 Get slot onto the Exp. ROI cell's existing sub-line, which already renders `n=`
-and `low` (`CurrencyExchangePage.svelte:685-708`). It is a genuinely smaller
+and `low` (`CurrencyExchangePage.svelte:709-734`). It is a genuinely smaller
 change: no red Get, no verb over a loss, no `positive` flip, no rendering change
 to the fallback rows at all.
 
@@ -430,7 +430,8 @@ rule it is outside of and why.
 
 ### 6.1 The per-exchange gate knobs (outside the SCALE rule)
 
-`filters.ts:572-582` — `minItemPrice` vs `play.investment`, `minRoiChaos` vs
+`filters.ts`, `applyGates` — `minItemPrice` vs `play.investment`,
+`minItemPriceDiv` vs `play.investment / divineChaosRate`, `minRoiChaos` vs
 `play.roi`, `minTurnover`, `maxTickPct`, `minEdgeTickRatio`, `minRoiPct` — all
 read the wire's PER-EXCHANGE fields, never `N` and never `F`.
 
@@ -459,8 +460,26 @@ there — a market that posts one item at a time, and a buy leg served without a
 usable pair. On every other row the count is not 1 and neither figure is
 anywhere on screen, which is the state the sentence was written for.
 
+**`Min item price (div)` is the same shape with a different cell** (owner ruling,
+2026-08-23). It compares `play.investment / divineChaosRate` — the same
+per-exchange entry cost as its chaos twin, un-converted by the response's own
+rate — on plays whose BUY LEG quotes in divine, and nothing else. Where it
+lands on a `N = 1` row it is the ROUTE's **Spend** slot that prints it, not the
+Investment column: `runLedger.spend = moneyColumns(play).investment / entryRate`
+and the Investment column is always chaos (`{formatChaos(money.investment)}c`).
+So the narrowing sentence holds for this knob too, and points at a different
+cell than the two above it.
+
+*Why the figure is `investment` and not the buy leg's own divine-denominated
+`price`:* `price` is the hour's printed EXTREME and `investment` is the UNDERCUT
+entry the row is priced at, one tick apart. The two knobs are one line drawn in
+two currencies, so a pair judging two different price bases would answer a
+boundary differently on the same row for no reader-visible reason. Rebuilding
+the undercut from the leg (`price · (1 + tick)`) would avoid the rate but would
+re-derive a market number, which `filters.ts` does not do.
+
 **The exception's own exception:** the filter bar's **Run cost** bounds
-(`filters.ts:686-703`) DO read the run, because a bankroll ceiling is a run-sized
+(`filters.ts:805-822`) DO read the run, because a bankroll ceiling is a run-sized
 quantity — the reader is asking what they can afford to have tied up, not what
 one order costs. That bound reads `runInvestment(play)` — `I_run`, the exact
 figure the Scale column's "N c in" sub-line prints — and NOT
@@ -481,7 +500,7 @@ which is why the seam is now pinned on a divine fixture as well as a chaos one.
 
 ### 6.2 ROI% (outside the SCALE rule and outside the BASIS rule)
 
-`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:714-726`.
+`play.roiPct` / `play.roiPctRaw`, rendered at `CurrencyExchangePage.svelte:736-750`.
 
 *Why exempt from SCALE:* it is a ratio. Whatever the row is sized at multiplies
 numerator and denominator by the same `N`, so the per-exchange percentage, the
@@ -501,7 +520,7 @@ is what the Gates row judges — both already stated at `tooltips.ts:86-87`.
 
 ### 6.3 Depth (outside SCALE and BASIS)
 
-`play.depth`, rendered at `CurrencyExchangePage.svelte:748-751`.
+`play.depth`, rendered at `CurrencyExchangePage.svelte:770-774`.
 
 *Why exempt:* it is a MARKET reading, not a figure of the play — units per hour
 that changed hands on the play's thinnest leg. It is the whole book's volume and
