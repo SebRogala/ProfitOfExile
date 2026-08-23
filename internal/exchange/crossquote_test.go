@@ -100,6 +100,11 @@ func candidateKeys(candidates []candidate) []string {
 // quoted in divine posts "20 cards for 1 divine" — a route that read the pair
 // off the row's A/B order instead of off the leg would render the second one
 // upside down.
+//
+// The stock is oriented to the leg as well, and unlike the pair it depends on
+// the ACTION: a buy leg executes against the item side of the book and a sell
+// leg against the quote side, so the same market observed by the two routes
+// reports two different numbers.
 func cardInChaos(action string) candidateLeg {
 	return candidateLeg{
 		action: action, item: cardID, quote: chaosID,
@@ -108,7 +113,7 @@ func cardInChaos(action string) candidateLeg {
 			high: pricePoint{price: 12, itemQty: 1, quoteQty: 12},
 			vwap: 5000.0 / 300.0, vwapOK: true,
 			tick:        1.0 / 10.0,
-			quoteVolume: 5000, volume: 300, stock: 40,
+			quoteVolume: 5000, volume: 300, stock: executedStock(action, 40, 900),
 		},
 	}
 }
@@ -121,7 +126,7 @@ func cardInDivine(action string) candidateLeg {
 			high: pricePoint{price: 1.0 / 16.0, itemQty: 16, quoteQty: 1},
 			vwap: 80.0 / 250.0, vwapOK: true,
 			tick:        1.0 / 16.0,
-			quoteVolume: 80, volume: 250, stock: 35,
+			quoteVolume: 80, volume: 250, stock: executedStock(action, 35, 70),
 		},
 	}
 }
@@ -134,7 +139,7 @@ func divineInChaos(action string) candidateLeg {
 			high: pricePoint{price: 201, itemQty: 1, quoteQty: 201},
 			vwap: 13001051.0 / 65361.0, vwapOK: true,
 			tick:        1.0 / 196.0,
-			quoteVolume: 13001051, volume: 65361, stock: 8878,
+			quoteVolume: 13001051, volume: 65361, stock: executedStock(action, 8878, 4564191),
 		},
 	}
 }
@@ -147,9 +152,19 @@ func chaosInDivine(action string) candidateLeg {
 			high: pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
 			vwap: 65361.0 / 13001051.0, vwapOK: true,
 			tick:        1.0 / 196.0,
-			quoteVolume: 65361, volume: 13001051, stock: 4564191,
+			quoteVolume: 65361, volume: 13001051, stock: executedStock(action, 4564191, 8878),
 		},
 	}
+}
+
+// executedStock picks the book side an action executes against, so the leg
+// fixtures above spell the market's two stock numbers once and let the action
+// choose — the same choice gatedLeg makes.
+func executedStock(action string, itemSide, quoteSide int64) int64 {
+	if action == "sell" {
+		return quoteSide
+	}
+	return itemSide
 }
 
 func TestCrossQuoteCandidates_cardBoughtInChaos_observesTheThreeMarketsItWalks(t *testing.T) {
@@ -354,14 +369,6 @@ func TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt(t *
 		breakSpec func(s *rowSpec)
 	}{
 		{
-			name:      "no stock of divine to sell back",
-			breakSpec: func(s *rowSpec) { s.highestStock[1] = 0 },
-		},
-		{
-			name:      "no stock of chaos to sell back",
-			breakSpec: func(s *rowSpec) { s.highestStock[0] = 0 },
-		},
-		{
 			name:      "closing market carries no usable price",
 			breakSpec: func(s *rowSpec) { s.priceInvalid = true },
 		},
@@ -381,6 +388,81 @@ func TestCrossQuoteCandidates_unusableClosingMarket_dropsEveryRouteThroughIt(t *
 				t.Errorf("got %v, want no routes", candidateKeys(got))
 			}
 		})
+	}
+}
+
+func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingSold_dropsOnlyThatDirection(t *testing.T) {
+	// The closing leg SELLS one currency for the other, so what it needs on the
+	// book is stock of the currency it is paid in — the quote side. The chaos
+	// side of the chaos/divine market standing empty therefore kills only the
+	// route whose last leg is paid in chaos, and leaves its mirror, whose last
+	// leg sells chaos and is paid in divine, executable.
+	closing := chaosDivineSpec()
+	closing.highestStock[0] = 0
+
+	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, DefaultConfig())
+
+	want := []string{oneHopKey(cardID, divineID, chaosID)}
+	if !reflect.DeepEqual(candidateKeys(got), want) {
+		t.Errorf("keys = %v, want %v", candidateKeys(got), want)
+	}
+}
+
+func TestCrossQuoteCandidates_closingMarketWithNoStockOfTheCurrencyBeingBought_dropsTheMirrorDirection(t *testing.T) {
+	// The other half of the same rule, so neither direction can be passing by
+	// accident: with the divine side of the closing market empty, the route paid
+	// in divine dies and the one paid in chaos survives.
+	closing := chaosDivineSpec()
+	closing.highestStock[1] = 0
+
+	got := crossQuoteCandidates([]Row{cardChaosSpec().row(), cardDivineSpec().row(), closing.row()}, DefaultConfig())
+
+	want := []string{oneHopKey(cardID, chaosID, divineID)}
+	if !reflect.DeepEqual(candidateKeys(got), want) {
+		t.Errorf("keys = %v, want %v", candidateKeys(got), want)
+	}
+}
+
+func TestCrossQuoteCandidates_sellLegIntoAMarketWithNoAsksStanding_isGatedAndMarkedDepleted(t *testing.T) {
+	// The Journey Tattoo shape (2026-08-23), in miniature: the card's chaos
+	// market carries bids and no asks — nobody offering a card, 900 chaos
+	// standing behind the ones that are wanted. That is the one-sided book a
+	// SELLER wants, and the gate used to drop it for the side the sell leg was
+	// never going to trade on, which took the whole recipe with it.
+	//
+	// The route that BUYS the card in divine and sells it into those bids is
+	// therefore constructed, and its sell leg reports the executable depth (900
+	// chaos) with depletedSide marking the empty other half.
+	oneSided := cardChaosSpec()
+	oneSided.highestStock[1] = 0
+
+	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, DefaultConfig())
+
+	c := candidateByKey(t, got, oneHopKey(cardID, divineID, chaosID))
+	sell := c.legs[1]
+	if sell.action != "sell" || sell.quote != chaosID {
+		t.Fatalf("leg 1 = %s %s in %s, want the sell into chaos", sell.action, sell.item, sell.quote)
+	}
+	if sell.obs.stock != 900 {
+		t.Errorf("sell leg stock = %d, want the 900 chaos it executes against", sell.obs.stock)
+	}
+	if !sell.obs.depletedSide {
+		t.Errorf("sell leg depletedSide = false, want true — no card was on offer this hour")
+	}
+}
+
+func TestCrossQuoteCandidates_buyLegOnTheSameOneSidedMarket_isStillDropped(t *testing.T) {
+	// The mirror of the case above, and the boundary that says the gate followed
+	// the action rather than being deleted: the route that would BUY the card in
+	// chaos needs a card on offer, there is none, and no depth on the chaos side
+	// substitutes for it.
+	oneSided := cardChaosSpec()
+	oneSided.highestStock[1] = 0
+
+	got := crossQuoteCandidates([]Row{oneSided.row(), cardDivineSpec().row(), chaosDivineSpec().row()}, DefaultConfig())
+
+	if key := oneHopKey(cardID, chaosID, divineID); indexOf(candidateKeys(got), key) >= 0 {
+		t.Errorf("keys = %v, want no route buying the card off an empty ask side", candidateKeys(got))
 	}
 }
 

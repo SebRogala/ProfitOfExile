@@ -1372,6 +1372,21 @@ export interface RouteStep {
 	rateTitle: string | null;
 	/** The leg's price sits outside its fair band — the tile is marked. */
 	suspect: boolean;
+	/**
+	 * The opposite side of this step's book stood empty in the hour — the tile is
+	 * marked.
+	 *
+	 * A per-STEP reading like `suspect`, and independent of it: the two answer
+	 * different questions about the same trade (is the price repeatable, was
+	 * anyone facing it), so a step can carry either, both or neither. Which of
+	 * the two the tile actually draws when both land is the component's
+	 * precedence rule, not this field's business.
+	 *
+	 * Always a boolean here, never `undefined`: the wire field is optional and an
+	 * absent one means false (`CurrencyExchangeLeg.depletedSide`), so the
+	 * coercion happens once, at the derivation, rather than at every reader.
+	 */
+	depletedSide: boolean;
 }
 
 /** What goes in at the start of a run and what comes back out at the end. */
@@ -1529,7 +1544,8 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 		icon: leg.itemIcon,
 		rate,
 		rateTitle,
-		suspect: leg.suspect
+		suspect: leg.suspect,
+		depletedSide: leg.depletedSide === true
 	});
 
 	// THE ONE EXEMPT BRANCH (spec §3). The response cannot value this row's entry
@@ -1651,7 +1667,12 @@ export function routeSlots(play: CurrencyExchangePlay, divineChaosRate: number):
 			icon: convertLeg.itemIcon,
 			rate: `≈ ${withOrbUnit(ledger.sellTotal, quoteUnit(convertLeg.item))} → ${withOrbUnit(ledger.chainEnd, entryUnitShort)}`,
 			rateTitle: `${convertLeg.itemName} — this market posts "${pairLine('convert', convertLeg)}". The line totals what this row counts instead: the step-2 proceeds it converts, and what the hour's best case would have paid for them — the Spend plus the ROI column. The Get slot at the end of the row is the Spend plus the Exp. ROI column, and the gap between the two amounts is the gap between those two columns. Both identities are in chaos, and a divine-entry route prints them at the divine rate.`,
-			suspect: convertLeg.suspect
+			suspect: convertLeg.suspect,
+			// The convert step carries its own book-shape flag for the same reason it
+			// carries its own `suspect`: the third trade is a real order against a
+			// real market, and a one-sided book there is the reader's problem as much
+			// as a one-sided book on the item's own two trades.
+			depletedSide: convertLeg.depletedSide === true
 		};
 	};
 

@@ -474,21 +474,44 @@ func TestBestPlays_threeHours_volumeIsTheNewestHoursTradedUnits(t *testing.T) {
 
 func TestBestPlays_threeHours_stocksTheNewestHour(t *testing.T) {
 	// Stock is liveness only — "is this side on the book right now" — so it is
-	// the newest hour's reading and not an aggregate of the window.
+	// the newest hour's reading and not an aggregate of the window. BOTH sides
+	// vary across the three hours, because the two legs read different ones: the
+	// buy executes against the item side and the sell against the quote side, so
+	// a window aggregate hiding on either side would go unseen if only one were
+	// moved. Each side's newest value is also not its median, so an aggregate
+	// cannot coincide with the right answer.
 	rows := []StoredRow{}
-	for i, stock := range []int64{111, 999, 777} {
+	for i, stock := range [][2]int64{{6000, 111}, {2000, 999}, {4000, 777}} {
 		spec := liquidChaosMarket(cardID, 100, 120)
-		spec.highestStock = [2]int64{5000, stock}
+		spec.highestStock = stock
 		rows = append(rows, storedAt(feedHour.Add(-time.Duration(i)*time.Hour), spec.row())...)
 	}
 
 	got := BestPlays("Allflame", rows, DefaultConfig())
 
 	play := playByKey(t, got, directKey(chaosID, cardID))
-	for i, leg := range play.Legs {
-		if leg.Stock != 111 {
-			t.Errorf("leg %d stock = %d, want the newest hour's 111 (median would be 777)", i, leg.Stock)
-		}
+	if play.Legs[0].Stock != 111 {
+		t.Errorf("buy leg stock = %d, want the newest hour's 111 cards (median would be 777)", play.Legs[0].Stock)
+	}
+	if play.Legs[1].Stock != 6000 {
+		t.Errorf("sell leg stock = %d, want the newest hour's 6000 chaos (median would be 4000)", play.Legs[1].Stock)
+	}
+}
+
+func TestBestPlays_directPlay_eachLegStocksTheSideItExecutesAgainst(t *testing.T) {
+	// Before 2026-08-23 both legs reported the item side, so a sell leg named a
+	// book side its order never touches. The two sides are given unmistakably
+	// different numbers here: 5000 chaos standing against 500 cards.
+	rows := storedAt(feedHour, liquidChaosMarket(cardID, 100, 120).row())
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, directKey(chaosID, cardID))
+	if play.Legs[0].Stock != 500 {
+		t.Errorf("buy leg stock = %d, want the 500 cards it takes off the book", play.Legs[0].Stock)
+	}
+	if play.Legs[1].Stock != 5000 {
+		t.Errorf("sell leg stock = %d, want the 5000 chaos it is paid out of", play.Legs[1].Stock)
 	}
 }
 
@@ -577,6 +600,127 @@ func TestBestPlays_recipeWhoseNewestHourLostItsSpread_isStillServedFlagged(t *te
 	}
 	if !play.LastHour.Equal(feedHour) {
 		t.Errorf("LastHour = %v, want the newest hour %v", play.LastHour, feedHour)
+	}
+}
+
+// oneSidedTriangle is the liquid triangle with one side of one market emptied,
+// stamped across a three-hour window whose two older hours are untouched.
+//
+// It is the Journey Tattoo shape (2026-08-23): the newest hour's book is
+// one-sided, and until the stock gate followed the action that hour produced no
+// candidate, which took the whole recipe with it under the newest-hour rule.
+// The older hours are there because the recipe surviving them is not the
+// question — being deleted DESPITE them is what the incident was.
+func oneSidedTriangle(empty func(chaosLeg, divineLeg, anchor *rowSpec)) []StoredRow {
+	chaosLeg, divineLeg, anchor := liquidTriangle()
+	empty(&chaosLeg, &divineLeg, &anchor)
+
+	rows := storedAt(feedHour, triangleRows(chaosLeg, divineLeg, anchor)...)
+	for i := 1; i <= 2; i++ {
+		rows = append(rows, storedAt(feedHour.Add(-time.Duration(i)*time.Hour), triangleRows(liquidTriangle())...)...)
+	}
+	return rows
+}
+
+func TestBestPlays_sellLegIntoAMarketWithNoAsksStanding_isServedAndMarkedDepleted(t *testing.T) {
+	// No scarab was on offer against divine in the newest hour, but 400 divine
+	// stood behind the ones that were wanted — bids and no asks, the largest-edge
+	// shape and the one a seller wants. The route that sells INTO those bids is
+	// therefore served, at its own hour's prices, with the empty half reported on
+	// the leg rather than deleted with the recipe.
+	rows := oneSidedTriangle(func(_, divineLeg, _ *rowSpec) { divineLeg.highestStock[1] = 0 })
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, oneHopKey(scarabID, chaosID, divineID))
+	sell := play.Legs[1]
+	if sell.Action != "sell" || sell.Quote != divineID {
+		t.Fatalf("leg 1 = %s %s in %s, want the sell into divine", sell.Action, sell.Item, sell.Quote)
+	}
+	if !sell.DepletedSide {
+		t.Errorf("sell leg DepletedSide = false, want true — no scarab was on offer this hour")
+	}
+	if sell.Stock != 400 {
+		t.Errorf("sell leg Stock = %d, want the 400 divine it is paid out of", sell.Stock)
+	}
+	if !play.LastHour.Equal(feedHour) {
+		t.Errorf("LastHour = %v, want the newest hour %v — the recipe must clear the last snapshot to be served", play.LastHour, feedHour)
+	}
+	// The "DESPITE clearing older hours" half of the incident: the two untouched
+	// hours cleared before the one-sided one did, and it was the newest hour's
+	// deletion that took all three with it. All three are counted here.
+	if play.HoursSeen != 3 {
+		t.Errorf("HoursSeen = %d, want all 3 window hours — the two liquid ones plus the one-sided newest", play.HoursSeen)
+	}
+}
+
+func TestBestPlays_convertLegPaidOutOfAOneSidedClosingMarket_isServedAndMarkedDepleted(t *testing.T) {
+	// The same rule on the leg no other test reaches: the CLOSING market, where a
+	// one-hop route converts its proceeds back. No divine was on offer against
+	// chaos in the newest hour, and 100,000 chaos stood bid for the ones that
+	// were. Selling divine INTO those bids is paid out of a live side, so this
+	// direction is the one that survives and it carries the mark; the mirror
+	// route, which would close by selling chaos for a divine nobody is offering,
+	// has no side to execute against and is not served at all.
+	rows := oneSidedTriangle(func(_, _, anchor *rowSpec) { anchor.highestStock[1] = 0 })
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, oneHopKey(scarabID, chaosID, divineID))
+	convert := play.Legs[2]
+	if convert.Action != "sell" || convert.Item != divineID || convert.Quote != chaosID {
+		t.Fatalf("leg 2 = %s %s in %s, want the divine sold back into chaos", convert.Action, convert.Item, convert.Quote)
+	}
+	if !convert.DepletedSide {
+		t.Errorf("convert leg DepletedSide = false, want true — no divine was on offer this hour")
+	}
+	if convert.Stock != 100000 {
+		t.Errorf("convert leg Stock = %d, want the 100000 chaos it is paid out of", convert.Stock)
+	}
+}
+
+func TestBestPlays_buyLegOnTheSameOneSidedMarket_isNotServed(t *testing.T) {
+	// The boundary that says the gate FOLLOWED the action rather than being
+	// deleted. The mirror route would buy the scarab off that same empty ask
+	// side, and 400 divine of bids buys nobody a scarab, so it stays dropped —
+	// as does the divine-quoted flip, whose buy leg is the same step.
+	rows := oneSidedTriangle(func(_, divineLeg, _ *rowSpec) { divineLeg.highestStock[1] = 0 })
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	for _, key := range []string{oneHopKey(scarabID, divineID, chaosID), directKey(divineID, scarabID)} {
+		if indexOf(playKeys(got.Plays), key) >= 0 {
+			t.Errorf("%s was served; nothing may buy off an empty ask side (got %v)", key, playKeys(got.Plays))
+		}
+	}
+}
+
+func TestBestPlays_buyLegInAMarketWithNoBidsStanding_isServedAndMarkedDepleted(t *testing.T) {
+	// The flag on the other action, so it cannot be reading the item side under
+	// another name: this time the CHAOS side of the chaos/scarab market is empty
+	// — 500 scarabs on offer and nobody bidding chaos for them. A buyer executes
+	// against the scarabs, so the entry leg is postable and carries the mark.
+	rows := oneSidedTriangle(func(chaosLeg, _, _ *rowSpec) { chaosLeg.highestStock[0] = 0 })
+
+	got := BestPlays("Allflame", rows, DefaultConfig())
+
+	play := playByKey(t, got, oneHopKey(scarabID, chaosID, divineID))
+	buy := play.Legs[0]
+	if buy.Action != "buy" || buy.Quote != chaosID {
+		t.Fatalf("leg 0 = %s %s in %s, want the buy in chaos", buy.Action, buy.Item, buy.Quote)
+	}
+	if !buy.DepletedSide {
+		t.Errorf("buy leg DepletedSide = false, want true — no chaos was bid for a scarab this hour")
+	}
+	if buy.Stock != 500 {
+		t.Errorf("buy leg Stock = %d, want the 500 scarabs it takes off the book", buy.Stock)
+	}
+	// The route's other two legs execute against live sides, so the mark stays on
+	// the one leg it describes.
+	for i := 1; i < len(play.Legs); i++ {
+		if play.Legs[i].DepletedSide {
+			t.Errorf("leg %d (%s %s in %s) DepletedSide = true, want false", i, play.Legs[i].Action, play.Legs[i].Item, play.Legs[i].Quote)
+		}
 	}
 }
 
@@ -2641,7 +2785,7 @@ func TestResult_marshalsWithTheFieldNamesTheHandlerPublishes(t *testing.T) {
 	}
 	wantKeys(t, "leg", mustMarshal(t, legs[0]),
 		"action", "item", "quote", "price", "priceItemQty", "priceQuoteQty",
-		"fair", "fairOk", "tick", "volume", "stock", "suspect")
+		"fair", "fairOk", "tick", "volume", "stock", "depletedSide", "suspect")
 
 	if got := string(envelope.Plays[0]["mode"]); got != `"direct"` {
 		t.Errorf("mode = %s, want %q", got, "direct")

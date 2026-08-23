@@ -12,27 +12,32 @@ func TestDirectCandidates_chaosDivineRow_observesBothLegsQuotedInDivine(t *testi
 		t.Fatalf("got %d candidates, want 1", len(got))
 	}
 	// Divine leads the default quote priority, so the market reads as "chaos
-	// priced in divine": both legs trade the chaos side, the traded volume and
-	// stock are chaos's, and the quote volume is divine's. Both legs observe the
-	// same hour of the same market and differ only in which end of the spread
-	// they execute on, which is read from action.
+	// priced in divine": both legs trade the chaos side, the traded volume is
+	// chaos's, and the quote volume is divine's. Both legs observe the same hour
+	// of the same market and differ only in which end of the spread they execute
+	// on and which side of the book they take it from — both read from action.
 	//
 	// Each price arrives with the integer pair the feed posted it as, oriented
 	// to the LEG: chaos is the item here, so the cheapest chaos is 201 of them
 	// for 1 divine — the transpose of what the row's ItemA/ItemB order stores.
-	hour := obs{
-		low:         pricePoint{price: 1.0 / 201.0, itemQty: 201, quoteQty: 1},
-		high:        pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
-		vwap:        65361.0 / 13001051.0,
-		vwapOK:      true,
-		tick:        1.0 / 196.0,
-		quoteVolume: 65361,
-		volume:      13001051,
-		stock:       4564191,
+	hour := func(stock int64) obs {
+		return obs{
+			low:         pricePoint{price: 1.0 / 201.0, itemQty: 201, quoteQty: 1},
+			high:        pricePoint{price: 1.0 / 196.0, itemQty: 196, quoteQty: 1},
+			vwap:        65361.0 / 13001051.0,
+			vwapOK:      true,
+			tick:        1.0 / 196.0,
+			quoteVolume: 65361,
+			volume:      13001051,
+			stock:       stock,
+		}
 	}
+	// The buy takes chaos off the book (4,564,191 of it), the sell hands chaos
+	// over for divine (8,878 of it) — the two sides of the one market, each
+	// named by the leg that executes against it.
 	wantLegs := []candidateLeg{
-		{action: "buy", item: chaosID, quote: divineID, obs: hour},
-		{action: "sell", item: chaosID, quote: divineID, obs: hour},
+		{action: "buy", item: chaosID, quote: divineID, obs: hour(4564191)},
+		{action: "sell", item: chaosID, quote: divineID, obs: hour(8878)},
 	}
 	if !reflect.DeepEqual(got[0].legs, wantLegs) {
 		t.Errorf("legs = %+v, want %+v", got[0].legs, wantLegs)
@@ -52,28 +57,31 @@ func TestDirectCandidates_chaosPreferredAsQuote_observesBothLegsQuotedInChaos(t 
 		t.Fatalf("got %d candidates, want 1", len(got))
 	}
 	// The same market, read the other way round: divine is the traded item, so
-	// the prices are the feed's own 196 and 201, the depth and the stock are
-	// divine's, and the volume-weighted price is the 198.97 chaos a divine the
-	// hour actually cleared at. The tick is a property of the quantity pairs, so
-	// it does not depend on which side is read as the quote.
+	// the prices are the feed's own 196 and 201, the depth is divine's, and the
+	// volume-weighted price is the 198.97 chaos a divine the hour actually
+	// cleared at. The tick is a property of the quantity pairs, so it does not
+	// depend on which side is read as the quote.
 	//
 	// The posted pairs transpose with the orientation: the same market that
 	// reads as "201 chaos for 1 divine" under the default priority reads as
 	// "1 divine for 196 chaos" here. Nothing inverted a float — the other stored
-	// quantity became the item side.
-	hour := obs{
-		low:         pricePoint{price: 196, itemQty: 1, quoteQty: 196},
-		high:        pricePoint{price: 201, itemQty: 1, quoteQty: 201},
-		vwap:        13001051.0 / 65361.0,
-		vwapOK:      true,
-		tick:        1.0 / 196.0,
-		quoteVolume: 13001051,
-		volume:      65361,
-		stock:       8878,
+	// quantity became the item side. The stocks transpose with it, each leg
+	// still naming the side it executes against.
+	hour := func(stock int64) obs {
+		return obs{
+			low:         pricePoint{price: 196, itemQty: 1, quoteQty: 196},
+			high:        pricePoint{price: 201, itemQty: 1, quoteQty: 201},
+			vwap:        13001051.0 / 65361.0,
+			vwapOK:      true,
+			tick:        1.0 / 196.0,
+			quoteVolume: 13001051,
+			volume:      65361,
+			stock:       stock,
+		}
 	}
 	wantLegs := []candidateLeg{
-		{action: "buy", item: divineID, quote: chaosID, obs: hour},
-		{action: "sell", item: divineID, quote: chaosID, obs: hour},
+		{action: "buy", item: divineID, quote: chaosID, obs: hour(8878)},
+		{action: "sell", item: divineID, quote: chaosID, obs: hour(4564191)},
 	}
 	if !reflect.DeepEqual(got[0].legs, wantLegs) {
 		t.Errorf("legs = %+v, want %+v", got[0].legs, wantLegs)
@@ -126,11 +134,17 @@ func TestDirectCandidates_rowFailingAGate_producesNoCandidate(t *testing.T) {
 			breakSpec: func(s *rowSpec) { s.volume[0] = 0 },
 		},
 		{
-			name:      "no stock on the item side",
+			// The buy leg executes against the item side, so an empty one
+			// leaves it nothing to take and the flip dies with it.
+			name:      "no stock on the item side, which the buy leg executes against",
 			breakSpec: func(s *rowSpec) { s.highestStock[0] = 0 },
 		},
 		{
-			name:      "no stock on the quote side",
+			// And the sell leg executes against the quote side. Gating the two
+			// legs separately is what keeps a FLIP demanding both sides after
+			// the gate started following the action (2026-08-23): neither leg
+			// asks for the other's side, and the pair of them asks for each.
+			name:      "no stock on the quote side, which the sell leg executes against",
 			breakSpec: func(s *rowSpec) { s.highestStock[1] = 0 },
 		},
 		{
@@ -221,6 +235,25 @@ func TestDirectCandidates_untradedQuoteSide_stillProducesACandidate(t *testing.T
 	}
 	if got[0].legs[0].item != chaosID {
 		t.Errorf("traded item = %s, want %s", got[0].legs[0].item, chaosID)
+	}
+}
+
+func TestDirectCandidates_servedFlip_neverMarksALegDepleted(t *testing.T) {
+	// A flip's two legs execute against opposite sides of one market, so each
+	// leg's "other side" is the side the other leg already had to find stock on.
+	// A candidate that got this far therefore cannot carry the mark, and the
+	// property is asserted rather than assumed because the flag is set in the
+	// shared gatedLeg and would otherwise be one wrong comparison away from
+	// appearing on every flip.
+	got := directCandidates([]Row{chaosDivineSpec().row()}, DefaultConfig())
+
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates, want 1", len(got))
+	}
+	for i, leg := range got[0].legs {
+		if leg.obs.depletedSide {
+			t.Errorf("leg %d (%s) depletedSide = true, want false — a served flip has stock on both sides", i, leg.action)
+		}
 	}
 }
 

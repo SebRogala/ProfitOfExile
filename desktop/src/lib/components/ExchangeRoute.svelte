@@ -116,8 +116,18 @@
 	</svg>
 {/snippet}
 
-{#snippet tile(icon: string | null, suspect: boolean, lowLiquidity: boolean = false)}
-	<span class="tile" class:suspect class:low-liquidity={lowLiquidity}>
+<!-- THE TILE, and the three marks it can carry. Only ONE border colour is ever
+     drawn: the CSS decides which through a `:not()` chain, under the ONE TILE,
+     THREE MARKS heading in the stylesheet below. The end slots pass none of them,
+     because a mark is about a TRADE and the ends are the currency going in and
+     coming out. -->
+{#snippet tile(
+	icon: string | null,
+	suspect: boolean,
+	depleted: boolean = false,
+	lowLiquidity: boolean = false
+)}
+	<span class="tile" class:suspect class:depleted class:low-liquidity={lowLiquidity}>
 		<ItemIcon src={iconSrc(apiBase, icon)} alt="" size={iconSize} />
 	</span>
 {/snippet}
@@ -126,9 +136,12 @@
      in by the caller rather than read off `slot`, and only the buy and sell
      calls below pass it. The convert step never does: the flag is about the
      traded item's own two legs, not the currency it happened to route
-     through. -->
+     through.
+     `depletedSide` is the opposite case and is read off `slot` like `suspect`:
+     it is a fact about THIS step's own book, so every step carries its own,
+     the convert step included. -->
 {#snippet step(slot: RouteStep, lowLiquidity: boolean = false)}
-	{@render tile(slot.icon, slot.suspect, lowLiquidity)}
+	{@render tile(slot.icon, slot.suspect, slot.depletedSide, lowLiquidity)}
 	<span class="lines">
 		<!-- A step with no name is the convert step showing a total, whose line
 		     names both currencies already and whose tile carries the artwork of the
@@ -390,31 +403,74 @@
 		border-color: transparent;
 	}
 
-	/* The play's newest hour printed no exploitable spread (POE-196). A play-level
-	   reading, but drawn on the traded item's own tiles — buy and sell — rather
-	   than a ring around the whole row: below some rank nearly every play was
-	   flagged, and a row-wide ring turned solid red frames. `:not(.suspect)`
-	   is the precedence rule, not a cascade accident: a tile that is BOTH
-	   suspect and low-liquidity shows GOLD, because the per-leg warning is the
-	   more specific reading and wins on that tile. */
-	.tile.low-liquidity:not(.suspect) {
+	/* ONE TILE, THREE MARKS, ONE BORDER — the precedence rule, and a CONSTRAINT
+	   rather than a cascade accident. A tile has one border colour to spend, so
+	   when two or three of these land on the same tile exactly one has to win,
+	   and the order is:
+
+	       GOLD suspect  >  PURPLE depleted side  >  RED low liquidity
+
+	   which is "the price is fake" beating "the book was one-sided" beating "the
+	   play's hour was thin". It reads down from the most specific claim to the
+	   least: gold is about THIS step's own price and says the number beside it
+	   may not be real, purple is about THIS step's own book and says the number
+	   is real but nobody was facing it, and red is the PLAY's flag about the
+	   whole hour, drawn on the item's two tiles only because a row-wide ring
+	   turned solid red frames below some rank. A doubtful price is worth more to
+	   the reader than the book shape behind it, and both are worth more than an
+	   hour-level reading the tile does not even own.
+
+	   It is implemented STRUCTURALLY, through the `:not()` chain below, and not
+	   through source order. Written plainly, `.tile.suspect` and
+	   `.tile.low-liquidity` are both (0,2,0) selectors, so which one a
+	   doubly-marked tile draws would be decided by which was typed last — a
+	   ranking no reader of either rule can see, and one that a re-order or an
+	   extracted block silently inverts. Each rule below instead EXCLUDES every
+	   mark that outranks it, so the three are mutually exclusive by construction:
+	   at most one matches any tile, specificity and position never enter, and
+	   moving a block does nothing. Adding a fourth mark means adding it to the
+	   `:not()` chain of everything it outranks — that is the maintenance cost
+	   this shape charges, and it is charged on purpose.
+
+	   Every rule is also RESTATED at dense's specificity, because
+	   `.route.dense .tile` strips the frame to transparent and would otherwise
+	   take the mark with it — and dense is where the marks carry the most, every
+	   sub-line that would have spelled them out being gone. */
+
+	/* The play's newest hour printed no exploitable spread (POE-196). A
+	   play-level reading on the traded item's own tiles — buy and sell. Last in
+	   precedence, so it yields to both per-step marks. */
+	.tile.low-liquidity:not(.suspect):not(.depleted) {
 		border-color: var(--color-lab-red);
 	}
 
-	.route.dense .tile.low-liquidity:not(.suspect) {
+	.route.dense .tile.low-liquidity:not(.suspect):not(.depleted) {
 		border-color: var(--color-lab-red);
+	}
+
+	/* The opposite side of this step's book stood empty in the hour: nobody was
+	   standing against the order this step posts. The mark is on the step's own
+	   tile, so a reader can see WHICH half of the round trip had nobody facing
+	   it. Purple is the 1-HOP pill's colour, reused here deliberately (owner
+	   ruling, 2026-08-23) — the two never meet on one element, the pill being a
+	   row-level chip and this a tile border, and a fourth hue on a table that
+	   already spends gold, red and green would buy less than it costs. */
+	.tile.depleted:not(.suspect) {
+		border-color: var(--color-lab-purple);
+	}
+
+	.route.dense .tile.depleted:not(.suspect) {
+		border-color: var(--color-lab-purple);
 	}
 
 	/* The leg's price sits outside its fair band (POE-188). The mark is on the
 	   tile of the step it belongs to, not on the row, so a reader can see WHICH
-	   half of the round trip is the doubtful one. */
+	   half of the round trip is the doubtful one. First in precedence — it
+	   excludes nothing. */
 	.tile.suspect {
 		border-color: var(--color-lab-yellow);
 	}
 
-	/* Restated at dense's specificity: the rule that strips the frame above would
-	   otherwise take the mark with it, and dense is where a reader most needs to
-	   know which leg is doubtful. */
 	.route.dense .tile.suspect {
 		border-color: var(--color-lab-yellow);
 	}

@@ -65,15 +65,19 @@ each recompute burst. Both horizons — `recent` (the default, a six-hour window
 and `day` (twenty-four hours) — come from the same recompute, so `?horizon=` is a
 cache lookup; an unknown value of either parameter is a 400. Every price a play
 shows is the LAST SNAPSHOT's — the window's newest feed hour, which is the hour
-a served play must have been live in (every leg's market traded
+a served play must have been live in: every leg's market traded
 `EXCHANGE_MIN_VOLUME_PER_HOUR` units — 1 by default, i.e. a trade happened —
-with stock on both sides) and cleared the `EXCHANGE_MIN_EDGE` sanity floor of
-+0.1% in; the window contributes `hoursSeen`, a count of every hour the play
+and carried stock on the side that leg EXECUTES AGAINST, which is the item side
+behind a buy and the quote side behind a sell (the side its own order has to
+find; the other side is reported, not demanded). The window contributes
+`hoursSeen`, a count of every hour the play
 cleared on that hour's own prices, and nothing else. Since POE-193 no default
 floor hides a live market: liveness is "a trade happened", persistence is
 reported through `hoursSeen` rather than demanded (`*_MIN_HOURS_SEEN` defaults
-to 1 on both horizons), and thinness shows as `simEntries`/`lowCoverage` and
-`suspect`. The old levels — 10 units an hour, 4-of-6 and 18-of-24 hours seen —
+to 1 on both horizons), `EXCHANGE_MIN_EDGE` is a served `lowLiquidity` flag
+rather than a drop since 2026-08-22, and thinness shows as
+`simEntries`/`lowCoverage` and `suspect`, beside `depletedSide` for a leg whose
+OPPOSITE book side stood empty that hour. The old levels — 10 units an hour, 4-of-6 and 18-of-24 hours seen —
 remain what the knobs are FOR. On the wire `roiPct` is the fractional return of
 one round trip after undercutting each leg by one of its own ticks (`edge` is
 its deprecated alias; `roiPctRaw` is the same trip at the raw extremes shown on

@@ -2455,6 +2455,69 @@ describe('routeSlots', () => {
 		expect(route?.sell.suspect).toBe(true);
 	});
 
+	it('marks only the slot whose own leg had a depleted book side', () => {
+		const route = routeSlots(
+			chaosScarab({
+				legs: [
+					leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19, depletedSide: true }),
+					leg({ action: 'sell', price: 21, priceItemQty: 1, priceQuoteQty: 21 })
+				]
+			}),
+			DIVINE_RATE
+		);
+
+		expect(route?.buy.depletedSide).toBe(true);
+		expect(route?.sell.depletedSide).toBe(false);
+	});
+
+	it('never reads a leg’s suspect price as a depleted book side', () => {
+		// The two flags answer different questions about one leg — is the price
+		// repeatable, was anyone facing it — and the tile draws a different colour
+		// for each, so a slot that took one of them from the other would mark the
+		// wrong half of the round trip in the wrong hue. Here they land on OPPOSITE
+		// legs, at an ordinary price on the depleted one, which neither crossing the
+		// two fields nor folding them together can survive.
+		const route = routeSlots(
+			chaosScarab({
+				legs: [
+					leg({ price: 19, priceItemQty: 1, priceQuoteQty: 19, depletedSide: true }),
+					leg({ action: 'sell', price: 21, priceItemQty: 1, priceQuoteQty: 21, suspect: true })
+				]
+			}),
+			DIVINE_RATE
+		);
+
+		expect(route?.sell.depletedSide).toBe(false);
+		expect(route?.buy.depletedSide).toBe(true);
+		expect(route?.buy.suspect).toBe(false);
+	});
+
+	it('reads a leg served without the depleted flag as a standing book', () => {
+		// A server older than the field omits it, and absent means false. The slot
+		// carries a boolean either way, so the tile's `class:` never sees an
+		// `undefined` it would have to guess at.
+		const route = routeSlots(chaosScarab(), DIVINE_RATE);
+
+		expect(route?.buy.depletedSide).toBe(false);
+		expect(route?.sell.depletedSide).toBe(false);
+	});
+
+	it('marks a one-sided convert leg on the convert slot it belongs to', () => {
+		// The third trade of a triangle is a real order against a real market, and
+		// the slot that prints a run TOTAL builds its own object rather than going
+		// through the shared `step` helper — so it is the one place the flag can be
+		// dropped or read off the wrong leg without the buy and sell slots noticing.
+		// `omen()` is the fixture that reaches that branch: the test above pinning
+		// its convert line to `≈ 0.25 div → 51c` is what says so.
+		const route = routeSlots(
+			omen({ legs: [omenBuy(), omenSell(), omenConvert({ depletedSide: true })] }),
+			DIVINE_RATE
+		);
+
+		expect(route?.convert?.depletedSide).toBe(true);
+		expect(route?.buy.depletedSide).toBe(false);
+	});
+
 	it('reports a gain when the row is expected to profit', () => {
 		expect(routeSlots(chaosScarab(), DIVINE_RATE)?.positive).toBe(true);
 	});

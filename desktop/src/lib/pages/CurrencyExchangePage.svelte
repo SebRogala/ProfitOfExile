@@ -843,6 +843,14 @@
 				</span>
 			</Tooltip>
 
+			<!-- The three tile marks are listed in the order they OUTRANK one another
+			     on a shared tile — gold, then purple, then red (the `:not()` chain in
+			     `ExchangeRoute`) — so a reader meeting a tile that carries two of them
+			     finds the winner first. -->
+			<Tooltip text={EXCHANGE_TOOLTIPS['Depleted side']}>
+				<span class="key"><span class="sw sw-depleted"></span>depleted side</span>
+			</Tooltip>
+
 			<Tooltip text={EXCHANGE_TOOLTIPS['Low liquidity']}>
 				<span class="key"><span class="sw sw-low-liq"></span>low liquidity</span>
 			</Tooltip>
@@ -1404,6 +1412,13 @@
 	/* The route tile's own mark. */
 	.sw-suspect {
 		border-color: var(--color-lab-yellow);
+	}
+
+	/* The route tile's own mark — the step's book was one-sided. Purple is the
+	   1-hop pill's colour above, reused rather than a fourth hue added; the two
+	   never share an element. */
+	.sw-depleted {
+		border-color: var(--color-lab-purple);
 	}
 
 	/* The route tile's own mark, same shape as the golden one above it now that
