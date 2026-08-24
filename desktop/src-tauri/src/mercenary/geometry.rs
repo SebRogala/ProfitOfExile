@@ -248,7 +248,7 @@ pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Opti
         scale,
         column_x0: column_x0.round() as i32,
         row_pitch,
-        header: parse_header(lines, first_centre),
+        header: parse_header(lines, first_centre, &rows, column_x0, row_pitch.max(g.row_pitch * scale)),
         rows,
     })
 }
@@ -300,10 +300,31 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
 
 /// Best-effort header parse (D2 step 5). Every field is independently
 /// optional: a missing one is `None`, never inferred from a neighbour.
-fn parse_header(lines: &[OcrLineBox], first_row_centre: f32) -> MercHeader {
+fn parse_header(
+    lines: &[OcrLineBox],
+    first_row_centre: f32,
+    rows: &[MercLayoutRow],
+    column_x0: f32,
+    row_pitch: f32,
+) -> MercHeader {
+    // Header lines sit above row 1 AND within the panel's width: the quest
+    // tracker to the right of the window carries tall text of its own, and
+    // it was read as the name (measured 2026-08-24). The panel's width is
+    // the span from the skill column to the rightmost support cell, widened
+    // by a few pitches for the header's own margins.
+    let right = rows
+        .iter()
+        .flat_map(|r| r.cells.iter().map(|c| c[0] + c[2]))
+        .max()
+        .unwrap_or(column_x0 as i32) as f32;
+    let margin = 4.0 * row_pitch;
     let above: Vec<&OcrLineBox> = lines
         .iter()
         .filter(|l| l.centre_y() < first_row_centre)
+        .filter(|l| {
+            let cx = l.x as f32 + l.w as f32 / 2.0;
+            cx >= column_x0 - margin && cx <= right + margin
+        })
         .collect();
 
     // "Lvl 83" — OCR reads the small-caps "Lvl" as `LVI`, `Lvi` or `LvI`
@@ -728,6 +749,12 @@ mod tests {
         assert_eq!(layout.header.name.as_deref(), Some("Nytra, the Cyaxan Loner"));
         assert_eq!(layout.header.level, Some(83));
         assert_eq!(layout.header.class.as_deref(), Some("Infamous Frosthand"));
+        // The quest tracker's "Speak to Johan for a reward" (x 1647) is
+        // outside the panel and must not win the name.
+        let mut lines = lines;
+        lines.push(OcrLineBox { text: "SpeakrgVohÅn for a reward".into(), x: 1520, y: 350, w: 300, h: 30 });
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        assert_eq!(layout.header.name.as_deref(), Some("Nytra, the Cyaxan Loner"));
         assert!((layout.scale - 1.0).abs() < 0.05, "scale {}", layout.scale);
     }
 

@@ -915,7 +915,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
             // The crop is the DETECT frame's, cached before the cursor ever
             // reached this cell (D5): a hovered cell may be drawn highlighted,
             // and a template learned from the highlight matches nothing later.
-            let learned = store.learn(&family, tier, sig, raw);
+            let learned = store.learn(&family, tier, sig, raw, &session.geometry.thresholds);
             let err = session
                 .icons_dir
                 .as_ref()
