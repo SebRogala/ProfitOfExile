@@ -307,6 +307,20 @@ func isQualityRollCandidate(g GemPrice) bool {
 	return !g.IsCorrupted && !isHeistOnlyGemName(g.Name)
 }
 
+// isDoubleCorruptInput reports whether a gem can be handed to the Doryani's
+// Institute altar for the double-corruption analysis (POE-125).
+//
+// Same stance as isQualityRollCandidate, and for the same reason: the altar
+// transforms the gem you feed it rather than handing out a random one, so
+// support gems and colourless gems are legitimate subjects and are deliberately
+// NOT excluded. Only three rules apply — the Heist rule, corruption (the altar
+// takes an uncorrupted gem), and the Vaal rule: an uncorrupted "Vaal X" row is
+// poe.ninja's market identity for a gem that has already spent its corruption,
+// never a feedable input.
+func isDoubleCorruptInput(g GemPrice) bool {
+	return isQualityRollCandidate(g) && !isVaalGemName(g.Name)
+}
+
 // isTransfigurePairCandidate reports whether a gem may take either side of a
 // base→transfigured ROI pair.
 //
