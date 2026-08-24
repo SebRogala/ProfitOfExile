@@ -807,11 +807,14 @@ type compareRow struct {
 	// not from GGG, and the UI must badge them rather than present them as
 	// confirmed. DoubleCorruptTiebreak marks the one recommendation decided by
 	// double-corrupt profit instead of by the Font score.
-	DoubleCorruptEV       float64                  `json:"doubleCorruptEv,omitempty"`
-	DoubleCorruptProfit   float64                  `json:"doubleCorruptProfit,omitempty"`
-	DoubleCorruptModel    string                   `json:"doubleCorruptModel,omitempty"`
-	DoubleCorruptTiebreak bool                     `json:"doubleCorruptTiebreak,omitempty"`
-	Trade                 *trade.TradeLookupResult `json:"trade,omitempty"`
+	// DoubleCorruptPricedProbability is the share of the outcome distribution the
+	// EV is computed over; the rest is mass the corrupted market does not price.
+	DoubleCorruptEV                float64                  `json:"doubleCorruptEv,omitempty"`
+	DoubleCorruptProfit            float64                  `json:"doubleCorruptProfit,omitempty"`
+	DoubleCorruptModel             string                   `json:"doubleCorruptModel,omitempty"`
+	DoubleCorruptTiebreak          bool                     `json:"doubleCorruptTiebreak,omitempty"`
+	DoubleCorruptPricedProbability float64                  `json:"doubleCorruptPricedProbability,omitempty"`
+	Trade                          *trade.TradeLookupResult `json:"trade,omitempty"`
 }
 
 // buildCompareRows converts CompareResult slices into the JSON-serializable row format.
@@ -856,10 +859,11 @@ func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache,
 			QuickSellPrice:       cr.QuickSellPrice,
 			RiskAdjustedPrice:    cr.RiskAdjustedPrice,
 
-			DoubleCorruptEV:       cr.DoubleCorruptEV,
-			DoubleCorruptProfit:   cr.DoubleCorruptProfit,
-			DoubleCorruptModel:    cr.DoubleCorruptModel,
-			DoubleCorruptTiebreak: cr.DoubleCorruptTiebreak,
+			DoubleCorruptEV:                cr.DoubleCorruptEV,
+			DoubleCorruptProfit:            cr.DoubleCorruptProfit,
+			DoubleCorruptModel:             cr.DoubleCorruptModel,
+			DoubleCorruptTiebreak:          cr.DoubleCorruptTiebreak,
+			DoubleCorruptPricedProbability: cr.DoubleCorruptPricedProbability,
 		}
 
 		// Enrich with cached trade data when available.

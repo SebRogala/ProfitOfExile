@@ -248,8 +248,17 @@ export interface CompareGem {
 	 * model this gem at this variant — that is the flag to test before showing
 	 * anything, since an unmodelled gem carries a 0 EV that means "unknown".
 	 *
-	 * `doubleCorruptProfit` is EV minus the gem's own price at this variant: the
-	 * claim "the corrupted market pays more than selling it here does".
+	 * `doubleCorruptEv` and `doubleCorruptProfit` share one basis — both are
+	 * risk-adjusted. The profit is the EV minus the gem's own price at this
+	 * variant: the claim "the corrupted market pays more than selling it here
+	 * does". Two bases would let a card show a profit larger than the estimate
+	 * it came from.
+	 *
+	 * `doubleCorruptPricedProbability` is the share of the outcome distribution
+	 * that EV covers (0-1). The remainder is mass the corrupted market prices
+	 * nowhere — largely structural, since poe.ninja publishes no corrupted
+	 * variant below level 20 — so the EV is a floor, not a full expectation, and
+	 * must not be shown without it.
 	 *
 	 * `doubleCorruptTiebreak` marks the one candidate whose BEST was decided by
 	 * that profit rather than by the Font score — nothing in the comparison sold
@@ -261,6 +270,7 @@ export interface CompareGem {
 	doubleCorruptProfit: number;
 	doubleCorruptModel: string;
 	doubleCorruptTiebreak: boolean;
+	doubleCorruptPricedProbability: number;
 	trade?: TradeLookupResult;
 }
 
@@ -674,6 +684,7 @@ export function mapCompareRow(r: any): CompareGem {
 		doubleCorruptProfit: r.doubleCorruptProfit || 0,
 		doubleCorruptModel: r.doubleCorruptModel || '',
 		doubleCorruptTiebreak: r.doubleCorruptTiebreak === true,
+		doubleCorruptPricedProbability: r.doubleCorruptPricedProbability || 0,
 		trade: r.trade ?? undefined,
 	};
 }

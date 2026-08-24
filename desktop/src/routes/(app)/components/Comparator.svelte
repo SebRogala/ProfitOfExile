@@ -4,6 +4,7 @@
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
+	import { showsDoubleCorruptCard, doubleCorruptHeadline } from '$lib/double-corrupt-card';
 	import { store } from '$lib/stores/status.svelte';
 	import { ssot, setNormalVariant, setDedicationSelection } from '$lib/stores/ssot.svelte';
 	import { listen } from '@tauri-apps/api/event';
@@ -720,14 +721,16 @@
 						Double-corruption (POE-125). Shown on every gem the server priced
 						at a profit, tiebreak winner or not: a gem that is weak at this
 						variant but strong corrupted is the whole case this feature
-						exists for. doubleCorruptModel is the gate rather than the number,
-						because an unmodelled gem's EV is 0 for lack of data, not because
-						the craft is worth nothing.
+						exists for. The visibility rule and the headline's wording live in
+						$lib/double-corrupt-card, where they are tested.
 					-->
-					{#if gem.doubleCorruptModel && gem.doubleCorruptProfit > 0}
+					{#if showsDoubleCorruptCard(gem)}
 						<div class="dc-candidate">
-							<span class="dc-headline">Weak as {gem.variant}, strong double-corrupt candidate</span>
+							<span class="dc-headline">{doubleCorruptHeadline(gem)}</span>
 							<Tooltip text="Estimated: double-corruption odds come from community documentation, not from GGG. Read it as a rough expected value, not a price."><span class="dc-numbers">est. ~{formatPrice(gem.doubleCorruptEv)} corrupted &middot; {formatPriceSigned(gem.doubleCorruptProfit)} vs selling here</span></Tooltip>
+							{#if gem.doubleCorruptPricedProbability > 0}
+								<Tooltip text="The estimate only counts outcomes the corrupted market prices. The rest is mostly structural — poe.ninja lists no corrupted gem below level 20, and a bad quality roll lands there."><span class="dc-coverage">covers {Math.round(gem.doubleCorruptPricedProbability * 100)}% of outcomes</span></Tooltip>
+							{/if}
 						</div>
 					{/if}
 
@@ -1344,17 +1347,21 @@
 		gap: 2px;
 		margin-bottom: 6px;
 		padding: 6px 10px;
-		background: rgba(192, 132, 252, 0.1);
-		border-left: 3px solid #c084fc;
+		background: color-mix(in srgb, var(--color-lab-purple) 10%, transparent);
+		border-left: 3px solid var(--color-lab-purple);
 	}
 	.dc-headline {
 		font-size: 0.8125rem;
 		font-weight: 700;
-		color: #c084fc;
+		color: var(--color-lab-purple);
 	}
 	.dc-numbers {
 		font-size: 0.8125rem;
 		color: var(--color-lab-text-secondary);
+	}
+	.dc-coverage {
+		font-size: 0.75rem;
+		color: var(--color-lab-text-muted);
 	}
 
 	.rec-best { color: var(--color-lab-green); }
@@ -1362,7 +1369,7 @@
 	.rec-avoid { color: var(--color-lab-red); }
 	/* Purple, not green: a tiebreak pick is a gamble the server took because
 	   nothing here sold well, and it must not read as an ordinary BEST. */
-	.rec-gamble { color: #c084fc; }
+	.rec-gamble { color: var(--color-lab-purple); }
 	.rec-gamble-why {
 		font-size: 0.75rem;
 		color: var(--color-lab-text-secondary);
