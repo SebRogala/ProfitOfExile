@@ -239,6 +239,28 @@ export interface CompareGem {
 	sellConfidenceReason: string;
 	quickSellPrice: number;
 	riskAdjustedPrice: number;
+	/**
+	 * Double-corruption at Doryani's Institute (POE-125), in chaos.
+	 *
+	 * `doubleCorruptModel` is the server's honesty marker ('estimated'): the odds
+	 * behind these numbers come from community documentation, not from GGG, so no
+	 * surface may render them as a settled price. Empty when the server did not
+	 * model this gem at this variant — that is the flag to test before showing
+	 * anything, since an unmodelled gem carries a 0 EV that means "unknown".
+	 *
+	 * `doubleCorruptProfit` is EV minus the gem's own price at this variant: the
+	 * claim "the corrupted market pays more than selling it here does".
+	 *
+	 * `doubleCorruptTiebreak` marks the one candidate whose BEST was decided by
+	 * that profit rather than by the Font score — nothing in the comparison sold
+	 * well, so the server promoted a gamble. It ships as a separate flag rather
+	 * than a recommendation value precisely so the badge can be rendered
+	 * differently from an ordinary win.
+	 */
+	doubleCorruptEv: number;
+	doubleCorruptProfit: number;
+	doubleCorruptModel: string;
+	doubleCorruptTiebreak: boolean;
 	trade?: TradeLookupResult;
 }
 
@@ -600,8 +622,14 @@ function mapCollectiveRow(r: any): GemPlay {
 	};
 }
 
-/** Map a backend compare row to frontend CompareGem. */
-function mapCompareRow(r: any): CompareGem {
+/**
+ * Map a backend compare row to frontend CompareGem.
+ *
+ * Exported for its unit test: this is the only place the server's JSON field
+ * names are spelled out, so a silent rename on either side shows up here or not
+ * at all.
+ */
+export function mapCompareRow(r: any): CompareGem {
 	const sparkline = Array.isArray(r.sparkline)
 		? r.sparkline.map((p: any) => p.price ?? p)
 		: [];
@@ -639,6 +667,13 @@ function mapCompareRow(r: any): CompareGem {
 		sellConfidenceReason: r.sellConfidenceReason || '',
 		quickSellPrice: Math.round(r.quickSellPrice || 0),
 		riskAdjustedPrice: Math.round(r.riskAdjustedPrice || 0),
+		// Not rounded, unlike the prices above: the server promotes a tiebreak
+		// winner on profit > 0, so rounding a 0.4c profit down to 0 here would let
+		// the card contradict the badge the same payload already carries.
+		doubleCorruptEv: r.doubleCorruptEv || 0,
+		doubleCorruptProfit: r.doubleCorruptProfit || 0,
+		doubleCorruptModel: r.doubleCorruptModel || '',
+		doubleCorruptTiebreak: r.doubleCorruptTiebreak === true,
 		trade: r.trade ?? undefined,
 	};
 }
