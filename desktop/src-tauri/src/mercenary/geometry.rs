@@ -87,9 +87,14 @@ fn median(values: &mut [f32]) -> f32 {
 ///
 /// Returns `None` — never a partial guess — when any of the D2 preconditions
 /// fails: fewer than [`MercGeometry::min_skill_candidates`] skill-name
-/// candidates, or no "Wager" anchor above the panel. The anchor is the
-/// discriminator against every other PoE surface that lists skill names (a gem
-/// tooltip, the character panel): those have skill text but no wager.
+/// candidates, or no panel anchor. The anchor is the discriminator against
+/// every other PoE surface that lists skill names (a gem tooltip, the
+/// character panel): those have skill text but no wager and no recruit
+/// buttons. Either chrome line anchors: "Wager" above row 1, or a
+/// "TAKE ITEM" / "REMATCH" button below the last row. Measured 2026-08-24 on
+/// a 1920×1200 screen: Windows OCR returned NO line for `Wager: 8 831` (small
+/// gold text on the dark panel) while both buttons read cleanly, so the wager
+/// alone is not a reliable anchor.
 pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Option<MercLayout> {
     // 1. Skill-name candidates seed the column.
     let candidates: Vec<&OcrLineBox> = lines
@@ -184,9 +189,11 @@ pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Opti
         return None;
     }
 
-    // 4. The Wager anchor, checked once the pitch is known: some line above
-    //    row 1, within `wager_search_pitches` of it, reading "Wager".
+    // 4. The panel anchor, checked once the pitch is known: a line above row 1
+    //    within `wager_search_pitches` of it reading "Wager", or a button line
+    //    below the last row within the same reach.
     let first_centre = centres[0];
+    let last_centre = centres[centres.len() - 1];
     let reach = if row_pitch > 0.0 {
         g.wager_search_pitches * row_pitch
     } else {
@@ -194,7 +201,8 @@ pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Opti
     };
     let anchor = lines.iter().find(|l| {
         let c = l.centre_y();
-        c < first_centre && first_centre - c <= reach && is_wager_line(&l.text, g)
+        (c < first_centre && first_centre - c <= reach && is_wager_line(&l.text, g))
+            || (c > last_centre && c - last_centre <= reach && is_button_line(&l.text, g))
     });
     anchor?;
 
@@ -273,6 +281,23 @@ pub fn is_wager_line(text: &str, g: &MercGeometry) -> bool {
     strsim::jaro_winkler(&head, "wager") as f32 >= g.thresholds.wager_anchor
 }
 
+/// Whether a line reads as one of the panel's footer buttons, "TAKE ITEM" or
+/// "REMATCH". Exact after case and whitespace normalisation: these are
+/// single-purpose labels that OCR returns clean or not at all, and
+/// Jaro-Winkler's prefix bonus would pass "Take items" at any usable bar.
+pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
+    let lower: String = text
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if lower.is_empty() {
+        return false;
+    }
+    lower == "take item" || lower == "rematch"
+}
+
 /// Best-effort header parse (D2 step 5). Every field is independently
 /// optional: a missing one is `None`, never inferred from a neighbour.
 fn parse_header(lines: &[OcrLineBox], first_row_centre: f32) -> MercHeader {
@@ -281,9 +306,19 @@ fn parse_header(lines: &[OcrLineBox], first_row_centre: f32) -> MercHeader {
         .filter(|l| l.centre_y() < first_row_centre)
         .collect();
 
-    let level_line = above
-        .iter()
-        .find(|l| l.text.trim().to_lowercase().starts_with("lvl"));
+    // "Lvl 83" — OCR reads the small-caps "Lvl" as `LVI`, `Lvi` or `LvI`
+    // (measured 2026-08-24: `LVI 83`), so the l/I confusion is folded away.
+    let level_line = above.iter().find(|l| {
+        let head: String = l
+            .text
+            .trim()
+            .to_lowercase()
+            .chars()
+            .take(3)
+            .map(|c| if c == 'i' { 'l' } else { c })
+            .collect();
+        head == "lvl"
+    });
     let level = level_line.and_then(|l| parse_trailing_number(&l.text)).map(|n| n as u32);
 
     // The class sits to the LEFT of the level on the same header line.
@@ -601,6 +636,88 @@ mod tests {
             .collect();
 
         assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+    }
+
+    /// Without a readable wager line, a recruit button under the rows anchors
+    /// the panel instead — the 2026-08-24 Windows case, where OCR dropped the
+    /// wager line entirely and read both buttons.
+    #[test]
+    fn a_recruit_button_below_the_rows_anchors_when_the_wager_line_is_missing() {
+        let mut lines: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+        // Last row centre is ~814 + 7; the buttons sit about one pitch below.
+        lines.push(line("TAKE ITEM", 250, 880));
+        lines.push(line("REMATCH", 420, 880));
+
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("anchored by button");
+        assert_eq!(layout.header.wager, None, "no wager line was read");
+        assert!(layout.rows.len() >= 3);
+    }
+
+    /// A button line far below the panel (past the reach) is not an anchor,
+    /// and a near-miss word is not a button.
+    #[test]
+    fn a_far_or_near_miss_button_line_is_not_an_anchor() {
+        let g = MercGeometry::default();
+        let mut lines: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+        lines.push(line("REMATCH", 420, 814 + (20.0 * 48.0) as i32));
+        assert!(detect(&lines, &g, &vocab()).is_none(), "out of reach");
+
+        assert!(!is_button_line("Take items", &g));
+        assert!(!is_button_line("Rematches", &g));
+        assert!(is_button_line("take  item", &g));
+        assert!(is_button_line("REMATCH", &g));
+    }
+
+    /// The 2026-08-24 Windows dump (1920×1200, merc-debug/1787604709231):
+    /// the wager line is absent from OCR, both buttons are present, six rows.
+    #[test]
+    fn the_first_windows_dump_detects_by_the_recruit_buttons() {
+        let lines = vec![
+            OcrLineBox { text: "Nytra, the Cyaxan Loner".into(), x: 813, y: 84, w: 273, h: 26 },
+            OcrLineBox { text: "Infamous Frosthand".into(), x: 775, y: 129, w: 164, h: 15 },
+            OcrLineBox { text: "LVI 83".into(), x: 980, y: 129, w: 44, h: 16 },
+            OcrLineBox { text: "NOCTURNAL HIDEOUT".into(), x: 306, y: 134, w: 192, h: 15 },
+            OcrLineBox { text: "22:51".into(), x: 368, y: 1049, w: 37, h: 15 },
+            OcrLineBox { text: "MENU".into(), x: 265, y: 1155, w: 55, h: 18 },
+            OcrLineBox { text: "Int".into(), x: 1150, y: 131, w: 23, h: 13 },
+            OcrLineBox { text: "Life".into(), x: 53, y: 901, w: 31, h: 17 },
+            OcrLineBox { text: "2 5031?".into(), x: 118, y: 902, w: 60, h: 26 },
+            OcrLineBox { text: "Shield 2229120229".into(), x: 52, y: 925, w: 159, h: 29 },
+            OcrLineBox { text: "It wasn't people Nytra Cyaxan loathed, but the frailties they wore so".into(), x: 769, y: 161, w: 467, h: 17 },
+            OcrLineBox { text: "proudly: need, artifice, expectation.".into(), x: 881, y: 180, w: 242, h: 17 },
+            OcrLineBox { text: "Should Recruit".into(), x: 1073, y: 228, w: 135, h: 17 },
+            OcrLineBox { text: "FROST BOMB".into(), x: 719, y: 678, w: 87, h: 13 },
+            OcrLineBox { text: "FROSTBITE".into(), x: 719, y: 726, w: 69, h: 13 },
+            OcrLineBox { text: "VORTEX".into(), x: 718, y: 775, w: 52, h: 13 },
+            OcrLineBox { text: "EYE OF WINTER".into(), x: 719, y: 823, w: 103, h: 13 },
+            OcrLineBox { text: "FLAME DASH".into(), x: 719, y: 871, w: 86, h: 13 },
+            OcrLineBox { text: "DISCIPLINE".into(), x: 719, y: 920, w: 74, h: 13 },
+            OcrLineBox { text: "28".into(), x: 1771, y: 73, w: 15, h: 13 },
+            OcrLineBox { text: "0:03".into(), x: 1602, y: 80, w: 28, h: 12 },
+            OcrLineBox { text: "0:05".into(), x: 1683, y: 84, w: 27, h: 12 },
+            OcrLineBox { text: "KINGSÜARCH.PQOSPECTlNd(OPTlONAL)".into(), x: 1491, y: 329, w: 344, h: 24 },
+            OcrLineBox { text: "for a reward".into(), x: 1647, y: 355, w: 100, h: 15 },
+            OcrLineBox { text: "HREADS Of THE ORIGINATOR".into(), x: 1502, y: 379, w: 246, h: 17 },
+            OcrLineBox { text: "Explore Memory Vaults in differentAtlas".into(), x: 1518, y: 400, w: 331, h: 19 },
+            OcrLineBox { text: "Quadrapts (214)".into(), x: 1518, y: 421, w: 123, h: 21 },
+            OcrLineBox { text: "9218010".into(), x: 1814, y: 902, w: 59, h: 21 },
+            OcrLineBox { text: "Mana".into(), x: 1712, y: 903, w: 49, h: 15 },
+            OcrLineBox { text: "Reserved".into(), x: 1712, y: 925, w: 80, h: 17 },
+            OcrLineBox { text: "709".into(), x: 1837, y: 928, w: 31, h: 15 },
+            OcrLineBox { text: "TAKE ITEM".into(), x: 830, y: 979, w: 87, h: 13 },
+            OcrLineBox { text: "REMATCH".into(), x: 989, y: 979, w: 81, h: 13 },
+        ];
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        assert_eq!(layout.rows.len(), 6);
+        assert_eq!(layout.header.name.as_deref(), Some("Nytra, the Cyaxan Loner"));
+        assert_eq!(layout.header.level, Some(83));
+        assert!((layout.scale - 1.0).abs() < 0.05, "scale {}", layout.scale);
     }
 
     /// The anchor must be ABOVE the rows and NEAR them. A wager line far up
