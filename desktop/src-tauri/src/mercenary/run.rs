@@ -661,9 +661,12 @@ fn unavailable(app: &AppHandle, cancel: &watch::Receiver<bool>, reason: String) 
 }
 
 fn game_focused(app: &AppHandle) -> bool {
-    let state = app.state::<AppState>();
-    let focused = *state.game_focused.lock().unwrap_or_else(|e| e.into_inner());
-    focused
+    // The RAW foreground read, not `game_focused`: that one is held over our
+    // own windows so overlay clicks keep the overlays up, and under it this
+    // loop captured the app itself.
+    app.state::<AppState>()
+        .game_in_foreground
+        .load(std::sync::atomic::Ordering::SeqCst)
 }
 
 fn learned_keys(app: &AppHandle) -> Vec<String> {
