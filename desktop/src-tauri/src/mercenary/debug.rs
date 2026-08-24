@@ -217,8 +217,18 @@ pub fn summary_line(r: &MercDebugReport) -> String {
 #[tauri::command]
 pub async fn merc_debug_capture(
     image_path: Option<String>,
+    delay_ms: Option<u64>,
     app: AppHandle,
 ) -> Result<MercDebugReport, String> {
+    // The delay is the single-screen path: press the button, alt-tab to the
+    // game, and the grab happens once the game is in front. Capped so a bad
+    // argument cannot park the thread.
+    if image_path.is_none() {
+        let delay = delay_ms.unwrap_or(0).min(30_000);
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        }
+    }
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let _ = tx.send(debug_capture_blocking(image_path, app));
