@@ -501,4 +501,12 @@ describe('mapCompareRow — double corruption', () => {
 
 		expect(gem.doubleCorruptTiebreak).toBe(true);
 	});
+
+	it('carries the share of outcomes the EV covers', () => {
+		// The EV is a floor over the priced share of the outcome distribution.
+		// Dropped here, the card would print it as a full expectation.
+		const gem = mapCompareRow({ doubleCorruptModel: 'estimated', doubleCorruptPricedProbability: 0.79 });
+
+		expect(gem.doubleCorruptPricedProbability).toBe(0.79);
+	});
 });

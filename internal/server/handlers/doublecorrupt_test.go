@@ -29,6 +29,7 @@ func dcRow(name, inputVariant string, profit float64) lab.DoubleCorruptResult {
 	return lab.DoubleCorruptResult{
 		Time: time.Now(), Name: name, InputVariant: inputVariant, Color: "BLUE",
 		InputCost: 10, EV: profit + 10, EVRaw: profit + 10, Profit: profit,
+		PricedProbability: 0.79, UnpricedProbability: 0.21,
 		LiquidityRisk: "LOW", Model: lab.DoubleCorruptModelEstimated,
 	}
 }
@@ -123,11 +124,12 @@ func TestDoubleCorruptAnalysis_NarrowsToTheRequestedInputVariant(t *testing.T) {
 // --- compare tiebreaker join ------------------------------------------------
 
 type dcCompareRow struct {
-	TransfiguredName      string  `json:"transfiguredName"`
-	Recommendation        string  `json:"recommendation"`
-	DoubleCorruptProfit   float64 `json:"doubleCorruptProfit"`
-	DoubleCorruptModel    string  `json:"doubleCorruptModel"`
-	DoubleCorruptTiebreak bool    `json:"doubleCorruptTiebreak"`
+	TransfiguredName               string  `json:"transfiguredName"`
+	Recommendation                 string  `json:"recommendation"`
+	DoubleCorruptProfit            float64 `json:"doubleCorruptProfit"`
+	DoubleCorruptModel             string  `json:"doubleCorruptModel"`
+	DoubleCorruptTiebreak          bool    `json:"doubleCorruptTiebreak"`
+	DoubleCorruptPricedProbability float64 `json:"doubleCorruptPricedProbability"`
 }
 
 func decodeDCCompareRows(t *testing.T, w *httptest.ResponseRecorder) map[string]dcCompareRow {
@@ -168,6 +170,27 @@ func TestCompareAnalysis_ServesDoubleCorruptFieldsFromTheWarmCorpus(t *testing.T
 	}
 	if row.DoubleCorruptModel != lab.DoubleCorruptModelEstimated {
 		t.Errorf("doubleCorruptModel = %q, want %q", row.DoubleCorruptModel, lab.DoubleCorruptModelEstimated)
+	}
+}
+
+// The EV covers only the share of the outcome distribution the corrupted market
+// prices, so the share travels with it to the UI. Dropped in the row mapping,
+// the estimate reads as a full expectation.
+func TestCompareAnalysis_ServesTheShareOfOutcomesTheEstimateCovers(t *testing.T) {
+	cache := warmAnalysisCache(t, sparklineGem{name: "Spark of Nova", variant: "20/20", roi: 40})
+	warmSparklines(t, cache, nil, nil)
+	cache.For(sparklineScope).SetDoubleCorrupt(lab.BuildDoubleCorruptCorpus(
+		[]lab.DoubleCorruptResult{dcRow("Spark of Nova", "20/20", 750)}))
+
+	w := serveWithoutRepository(t, CompareAnalysis(nil, cache, nil, sparklineScope),
+		"/api/analysis/compare?gems=Spark+of+Nova&variant=20/20")
+
+	row, ok := decodeDCCompareRows(t, w)["Spark of Nova"]
+	if !ok {
+		t.Fatal("no compare row for the requested gem")
+	}
+	if row.DoubleCorruptPricedProbability != 0.79 {
+		t.Errorf("doubleCorruptPricedProbability = %v, want 0.79", row.DoubleCorruptPricedProbability)
 	}
 }
 
