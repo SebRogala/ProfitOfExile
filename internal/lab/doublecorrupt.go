@@ -111,8 +111,15 @@ type DoubleCorruptOutcome struct {
 	Chaos       float64 `json:"chaos"`       // raw listed price; 0 when unpriced
 	Adjusted    float64 `json:"adjusted"`    // risk-adjusted price (sell probability × stability)
 	Listings    int     `json:"listings"`
-	Priced      bool    `json:"priced"` // false = the market carries no row for this cell
+	Priced      bool    `json:"priced"` // false = no usable price; see LowConfidence for the reason
 	Thin        bool    `json:"thin"`   // priced but < 5 listings
+	// LowConfidence marks a cell the market carries a row for that the
+	// confidence gate refused to price: its listing depth is under 40% of the
+	// median depth of its own corrupted variant. Priced is false on such a cell
+	// and its mass lands in UnpricedProbability — the field exists so the
+	// breakdown can say "a row exists but is too thin to believe" rather than
+	// leaving it indistinguishable from a cell nobody lists at all.
+	LowConfidence bool `json:"lowConfidence,omitempty"`
 }
 
 // DoubleCorruptResult holds the computed double-corruption EV for one gem at
@@ -125,9 +132,9 @@ type DoubleCorruptResult struct {
 	InputCost           float64                `json:"inputCost"` // the gem's own uncorrupted price at InputVariant
 	TempleOverheadChaos float64                `json:"templeOverheadChaos"`
 	HasVaalVersion      bool                   `json:"hasVaalVersion"`
-	EV                  float64                `json:"ev"`    // risk-adjusted expected outcome value
-	EVRaw               float64                `json:"evRaw"` // raw-listed-price expected outcome value
-	Profit              float64                `json:"profit"`
+	EV                  float64                `json:"ev"`                  // risk-adjusted expected outcome value
+	EVRaw               float64                `json:"evRaw"`               // raw-listed-price expected outcome value
+	Profit              float64                `json:"profit"`              // EV - InputCost - TempleOverheadChaos (risk-adjusted, never EVRaw)
 	PricedProbability   float64                `json:"pricedProbability"`   // mass of the distribution the market prices
 	UnpricedProbability float64                `json:"unpricedProbability"` // mass contributing 0 to EV for lack of a priced row
 	ThinOutcomeCells    int                    `json:"thinOutcomeCells"`    // priced cells with < 5 listings
@@ -205,9 +212,18 @@ func FilterDoubleCorruptVariant(results []DoubleCorruptResult, inputVariant stri
 //
 // Market presence is therefore the proxy for existence: a gem whose Vaal
 // version nobody lists reads as having none, which folds the transform weight
-// into no-change rather than inventing a price. That is the conservative
-// direction (no phantom Vaal EV), but it is an approximation, not a game rule.
-func buildVaalIdentityIndex(gems []GemPrice) map[string]string {
+// into no-change rather than inventing a price. That is an approximation, not a
+// game rule.
+//
+// listedCorrupted is the set of names the corrupted market actually carries a
+// row for, and it gates the DERIVED base-gem entry only. The base gem's Vaal
+// name is the one entry no row states outright — it is cut out of a
+// parenthesised row by string surgery — so without the gate a base gem inherits
+// a Vaal identity the market has never listed, and the result reports
+// HasVaalVersion for a name it can never price. The direct entries are not
+// gated: those names came off a row, which is the market presence the paragraph
+// above describes.
+func buildVaalIdentityIndex(gems []GemPrice, listedCorrupted map[string]bool) map[string]string {
 	index := make(map[string]string)
 	for i := range gems {
 		name := gems[i].Name
@@ -223,7 +239,7 @@ func buildVaalIdentityIndex(gems []GemPrice) map[string]string {
 		vaalBase := name[:open]             // "Vaal Domination"
 		inner := name[open+2 : len(name)-1] // "Dominating Blow of Inspiring"
 		index[inner] = name
-		if cut := strings.LastIndex(inner, " of "); cut >= 0 {
+		if cut := strings.LastIndex(inner, " of "); cut >= 0 && listedCorrupted[vaalBase] {
 			// Only fill in the base gem's identity if a "Vaal <base>" row has
 			// not already stated it directly — the direct row is the stronger
 			// source.
@@ -353,18 +369,48 @@ func dcInputLevelQuality(variant string) (level, quality int, ok bool) {
 // Every result is per (name, input variant): outcome cells are looked up at
 // the gem's own name (or its Vaal identity) at exact corrupted variants, so no
 // other gem's and no other variant's market can leak into an EV.
+//
+// THE CONFIDENCE GATE. A listed price standing on a couple of listings is not a
+// price, and at the top of a profit ranking it is the *only* thing there: the
+// gems that rank first are exactly the ones carrying one freakish outlier cell.
+// Both sides of the subtraction are therefore gated by the same rule the Font
+// and Dedication classifiers use — detectLowConfidenceFiltered, per variant,
+// flagging any row whose listing depth is under 40% of its variant's median.
+//
+//   - An outcome cell whose corrupted row is low-confidence is treated as
+//     UNPRICED. Its mass flows into UnpricedProbability instead of being
+//     discounted, because a discount still lets an outlier dominate an EV once
+//     it is large enough. Exclusion is the only gate an outlier cannot outgrow.
+//   - An input whose own uncorrupted row is low-confidence produces no result at
+//     all. InputCost is subtracted from EV, so a thin input price is a thin
+//     profit number, and there is no half-answer to serve for it.
+//
+// The two pools are separate on purpose (per-variant rule): a corrupted 21/23c
+// row's depth is judged against other corrupted 21/23c rows, never against the
+// uncorrupted 20/20 market it came from.
+//
+// Knock-on: ThinOutcomeCells and LiquidityRisk now count only cells that
+// cleared the gate, so a variant whose median depth is above ~12 listings can
+// no longer report a thin cell at all — the gate removes those rows before the
+// < 5 listings flag sees them. The flag still marks a shallow cell in a shallow
+// variant, which is the case it was reading for.
 func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFeature, templeOverheadChaos float64) []DoubleCorruptResult {
 	type priceKey struct{ name, variant string }
 
 	// Corrupted rows index — the outcome cells' price source.
 	corrupted := make(map[priceKey]*GemPrice)
+	listedCorrupted := make(map[string]bool)
 	for i := range gems {
 		g := &gems[i]
 		if g.IsCorrupted {
 			corrupted[priceKey{g.Name, g.Variant}] = g
+			listedCorrupted[g.Name] = true
 		}
 	}
-	vaalIdentity := buildVaalIdentityIndex(gems)
+	vaalIdentity := buildVaalIdentityIndex(gems, listedCorrupted)
+
+	lowConfOutcome := detectLowConfidenceFiltered(gems, func(g GemPrice) bool { return g.IsCorrupted })
+	lowConfInput := detectLowConfidenceFiltered(gems, isDoubleCorruptInput)
 
 	featureLookup := make(map[priceKey]*GemFeature, len(features))
 	for i := range features {
@@ -392,13 +438,14 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 			if g.Variant != inputVariant || !isDoubleCorruptInput(*g) || g.Chaos <= 0 {
 				continue
 			}
+			if lowConfInput[g.Name+"|"+g.Variant] {
+				continue
+			}
 
 			vaalName, hasVaal := vaalIdentity[g.Name]
 			cellDist := distByVaal[hasVaal]
 
 			outcomes := make([]DoubleCorruptOutcome, 0, len(cellDist))
-			var ev, evRaw, pricedProb, unpricedProb float64
-			var thinCells, pricedCells int
 
 			for cell, prob := range cellDist {
 				name := g.Name
@@ -411,41 +458,36 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 					Probability: prob,
 				}
 
-				if row, priced := corrupted[priceKey{name, cell.variant}]; priced && row.Chaos > 0 {
-					out.Priced = true
-					out.Chaos = row.Chaos
+				if row, listed := corrupted[priceKey{name, cell.variant}]; listed && row.Chaos > 0 {
 					out.Listings = row.Listings
-					out.Thin = row.Listings < 5
+					out.LowConfidence = lowConfOutcome[name+"|"+cell.variant]
+					if !out.LowConfidence {
+						out.Priced = true
+						out.Chaos = row.Chaos
+						out.Thin = row.Listings < 5
 
-					// Risk adjustment, mirroring Dedication's no-feature
-					// defaults for corrupted rows.
-					sellProb := sellProbabilityFactor(row.Listings, 0, row.Chaos)
-					stabDisc := 1.0
-					if feat := featureLookup[priceKey{name, cell.variant}]; feat != nil {
-						sellProb = sellProbabilityFactor(row.Listings, feat.Low7Days, row.Chaos)
-						stabDisc = stabilityDiscount(feat.CVShort)
+						// Risk adjustment, mirroring Dedication's no-feature
+						// defaults for corrupted rows.
+						sellProb := sellProbabilityFactor(row.Listings, 0, row.Chaos)
+						stabDisc := 1.0
+						if feat := featureLookup[priceKey{name, cell.variant}]; feat != nil {
+							sellProb = sellProbabilityFactor(row.Listings, feat.Low7Days, row.Chaos)
+							stabDisc = stabilityDiscount(feat.CVShort)
+						}
+						out.Adjusted = row.Chaos * sellProb * stabDisc
 					}
-					out.Adjusted = row.Chaos * sellProb * stabDisc
-
-					ev += prob * out.Adjusted
-					evRaw += prob * row.Chaos
-					pricedProb += prob
-					pricedCells++
-					if out.Thin {
-						thinCells++
-					}
-				} else {
-					// Unpriced cell: contributes 0 to EV, but never silently —
-					// the mass is reported so the EV reads as a floor over the
-					// priced share of the distribution, not as the full
-					// expectation.
-					unpricedProb += prob
 				}
 
 				outcomes = append(outcomes, out)
 			}
 
 			// Deterministic order: probability descending, then name/variant.
+			// The accumulation below walks the SORTED slice rather than the
+			// cell map: float addition is not associative, so summing in Go's
+			// randomized map order would hand two runs over identical data
+			// EVs that differ in the last bits — and the ranking those EVs
+			// feed is served from a cache one run filled and another compares
+			// against.
 			sort.Slice(outcomes, func(a, b int) bool {
 				if outcomes[a].Probability != outcomes[b].Probability {
 					return outcomes[a].Probability > outcomes[b].Probability
@@ -455,6 +497,27 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 				}
 				return outcomes[a].Variant < outcomes[b].Variant
 			})
+
+			var ev, evRaw, pricedProb, unpricedProb float64
+			var thinCells, pricedCells int
+			for _, out := range outcomes {
+				if !out.Priced {
+					// Unpriced cell — nobody lists it, or the confidence gate
+					// refused the row it has. Either way it contributes 0 to
+					// EV, but never silently: the mass is reported so the EV
+					// reads as a floor over the priced share of the
+					// distribution, not as the full expectation.
+					unpricedProb += out.Probability
+					continue
+				}
+				ev += out.Probability * out.Adjusted
+				evRaw += out.Probability * out.Chaos
+				pricedProb += out.Probability
+				pricedCells++
+				if out.Thin {
+					thinCells++
+				}
+			}
 
 			results = append(results, DoubleCorruptResult{
 				Time:                snapTime,
@@ -466,7 +529,13 @@ func AnalyzeDoubleCorrupt(snapTime time.Time, gems []GemPrice, features []GemFea
 				HasVaalVersion:      hasVaal,
 				EV:                  ev,
 				EVRaw:               evRaw,
-				Profit:              evRaw - g.Chaos - templeOverheadChaos,
+				// Profit is measured off EV, not EVRaw. Both numbers reach the
+				// same card in the comparator ("est. ~X corrupted · +Y vs
+				// selling here"), so a raw profit beside a risk-adjusted
+				// estimate would let Y exceed X and read as two claims about
+				// one craft. EVRaw stays on the result as the undiscounted
+				// reference, and nothing ranks or gates on it.
+				Profit:              ev - g.Chaos - templeOverheadChaos,
 				PricedProbability:   pricedProb,
 				UnpricedProbability: unpricedProb,
 				ThinOutcomeCells:    thinCells,

@@ -127,8 +127,10 @@ func TestAnalyzeDoubleCorrupt_EVRawIsProbabilityWeightedSumOverPricedCells(t *te
 		t.Errorf("EV = %v, want EVRaw %v — 50+ listings must not be discounted", r.EV, r.EVRaw)
 	}
 	// Input cost is the gem's own uncorrupted 20/20 price; the room is sunk.
+	// (EV and EVRaw coincide here, so the basis is pinned by
+	// TestAnalyzeDoubleCorrupt_ProfitIsMeasuredOffTheRiskAdjustedEV instead.)
 	if math.Abs(r.Profit-(162.421875-100)) > dcEps {
-		t.Errorf("Profit = %v, want EVRaw - 100 input cost", r.Profit)
+		t.Errorf("Profit = %v, want EV - 100 input cost", r.Profit)
 	}
 	if math.Abs(r.PricedProbability-1.0) > dcEps || r.UnpricedProbability > dcEps {
 		t.Errorf("fully priced set: priced/unpriced mass = %v/%v, want 1/0",
@@ -294,6 +296,24 @@ func TestAnalyzeDoubleCorrupt_ThinOutcomeCellIsDownWeighted(t *testing.T) {
 	}
 }
 
+func TestAnalyzeDoubleCorrupt_ProfitIsMeasuredOffTheRiskAdjustedEV(t *testing.T) {
+	// The same snapshot as the thin-cell test, chosen because EV (9.609375)
+	// and EVRaw (32.03125) differ there: profit off EVRaw would read -17.97
+	// and turn a losing craft into a smaller-looking loss — and on richer gems
+	// into a headline profit larger than the estimate printed beside it.
+	gems := []GemPrice{
+		makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30),
+		makeDCCorrupted("Rolling Magma of Nothing", "20/20c", 100, 2),
+	}
+
+	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Rolling Magma of Nothing")
+
+	if math.Abs(r.Profit-(9.609375-50)) > dcEps {
+		t.Errorf("Profit = %v, want EV - input cost = -40.390625 (not EVRaw - input cost = -17.96875)", r.Profit)
+	}
+}
+
 func TestAnalyzeDoubleCorrupt_FiveListingCellIsNotThin(t *testing.T) {
 	// The thin flag's boundary: 5 listings is the first non-thin count, the
 	// same floor Font and Dedication use.
@@ -313,6 +333,103 @@ func TestAnalyzeDoubleCorrupt_FiveListingCellIsNotThin(t *testing.T) {
 	}
 	if r.LiquidityRisk != "LOW" {
 		t.Errorf("LiquidityRisk = %q, want LOW with no thin cells", r.LiquidityRisk)
+	}
+}
+
+// deepCorrupted21x23 returns filler rows that set the 21/23c pool's median
+// listing depth to 50, so a test row's depth is judged against a real cohort
+// rather than against itself (a lone row is always its own median, depth 1.0).
+func deepCorrupted21x23() []GemPrice {
+	return []GemPrice{
+		makeDCCorrupted("Filler One of Depth", "21/23c", 400, 40),
+		makeDCCorrupted("Filler Two of Depth", "21/23c", 400, 50),
+		makeDCCorrupted("Filler Three of Depth", "21/23c", 400, 60),
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_LowConfidenceOutcomeCellIsExcludedRatherThanDiscounted(t *testing.T) {
+	// The failure this gate exists for: one 21/23c row at 36,960c standing on 2
+	// listings against a 50-listing median. Its mass is only 1/384, but the
+	// price is large enough that any discount short of exclusion still lifts the
+	// gem to the top of the profit ranking.
+	gems := append(deepCorrupted21x23(),
+		makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30),
+		makeDCCorrupted("Rolling Magma of Nothing", "20/20c", 100, 50),
+		makeDCCorrupted("Rolling Magma of Nothing", "21/23c", 36960, 2),
+	)
+
+	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Rolling Magma of Nothing")
+
+	outlier := outcomeCell(t, r, "Rolling Magma of Nothing", "21/23c")
+	if outlier.Priced || outlier.Chaos != 0 {
+		t.Errorf("outlier cell priced=%v chaos=%v, want excluded with 0 chaos", outlier.Priced, outlier.Chaos)
+	}
+	if !outlier.LowConfidence {
+		t.Error("LowConfidence = false — the breakdown must say the row was refused, not that none exists")
+	}
+	if outlier.Listings != 2 {
+		t.Errorf("Listings = %d, want the refused row's 2 kept for the explanation", outlier.Listings)
+	}
+	// Only the 20/20c cell survives: 41/128 · 100. Pricing the outlier at face
+	// value would add 1/384 · 36960 = 96.25 and nearly quadruple the EV.
+	if math.Abs(r.EVRaw-32.03125) > dcEps {
+		t.Errorf("EVRaw = %v, want 32.03125 over the confident cells only", r.EVRaw)
+	}
+	if math.Abs(r.PricedProbability-41.0/128) > dcEps {
+		t.Errorf("PricedProbability = %v, want 41/128 — the refused mass belongs to unpriced", r.PricedProbability)
+	}
+	if math.Abs(r.PricedProbability+r.UnpricedProbability-1.0) > dcEps {
+		t.Errorf("priced + unpriced = %v, want 1 — refused mass must be accounted, not dropped",
+			r.PricedProbability+r.UnpricedProbability)
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_OutcomeCellAtExactlyFortyPercentOfMedianDepthIsStillPriced(t *testing.T) {
+	// The gate's boundary: depth < 0.4 of the variant's median is refused, so 20
+	// listings against a median of 50 is the first depth that survives.
+	gems := append(deepCorrupted21x23(),
+		makeDCInput("Rolling Magma of Nothing", "BLUE", 50, 30),
+		makeDCCorrupted("Rolling Magma of Nothing", "21/23c", 3840, 20),
+	)
+
+	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
+	r := singleDCResult(t, results, "Rolling Magma of Nothing")
+
+	cell := outcomeCell(t, r, "Rolling Magma of Nothing", "21/23c")
+	if cell.LowConfidence || !cell.Priced {
+		t.Errorf("cell lowConfidence=%v priced=%v, want priced at exactly 0.4 depth",
+			cell.LowConfidence, cell.Priced)
+	}
+	// 1/384 · 3840 = 10.
+	if math.Abs(r.EVRaw-10) > dcEps {
+		t.Errorf("EVRaw = %v, want 10", r.EVRaw)
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_LowConfidenceInputProducesNoResult(t *testing.T) {
+	// InputCost is subtracted from EV, so an input price standing on 2 listings
+	// against a 40-listing median makes the profit as untrustworthy as the price.
+	// There is no half-answer to serve, so the gem is dropped.
+	gems := []GemPrice{
+		makeDCInput("Deep One of Alpha", "BLUE", 100, 30),
+		makeDCInput("Deep Two of Beta", "BLUE", 100, 40),
+		makeDCInput("Deep Three of Gamma", "BLUE", 100, 50),
+		makeDCInput("Thin One of Delta", "BLUE", 100, 2),
+		makeDCCorrupted("Thin One of Delta", "20/20c", 5000, 50),
+	}
+
+	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
+
+	for _, r := range results {
+		if r.Name == "Thin One of Delta" {
+			t.Errorf("a 2-listing input produced a result at profit %v", r.Profit)
+		}
+	}
+	// The three confident inputs still answer — the gate excludes a gem, not the
+	// variant it belongs to.
+	if len(results) != 3 {
+		t.Errorf("got %d results, want the 3 confidently priced inputs", len(results))
 	}
 }
 
@@ -486,12 +603,39 @@ func TestAnalyzeDoubleCorrupt_BaseGemInheritsTheVaalIdentityNamedByItsTransfigur
 	}
 }
 
-func TestAnalyzeDoubleCorrupt_InheritedVaalIdentityStripsOnlyTheTransfiguredSuffix(t *testing.T) {
-	// The transfigured row is the only source naming the base gem's Vaal
-	// identity here — no bare "Vaal Rain of Arrows" row to read it off.
-	// Recovering "Rain of Arrows" from "Rain of Arrows of Saturation" means
-	// dropping only the last " of " segment; cutting at the first one files the
-	// identity under a gem called "Rain" and the base gem loses its Vaal branch.
+func TestBuildVaalIdentityIndex_InheritedBaseIdentityStripsOnlyTheTransfiguredSuffix(t *testing.T) {
+	// Recovering the base gem "Rain of Arrows" from the parenthesised row
+	// "Vaal Rain of Arrows (Rain of Arrows of Saturation)" means dropping only
+	// the LAST " of " segment; cutting at the first one files the identity under
+	// a gem called "Rain" and the base gem loses its Vaal branch entirely.
+	//
+	// The index is exercised directly because the presence gate below makes this
+	// path unreachable from a snapshot that also carries a bare "Vaal Rain of
+	// Arrows" row — that row would answer for the base gem through the direct
+	// branch and hide a wrong suffix cut.
+	gems := []GemPrice{
+		makeDCCorrupted("Vaal Rain of Arrows (Rain of Arrows of Saturation)", "20/20c", 900, 50),
+	}
+	listed := map[string]bool{
+		"Vaal Rain of Arrows (Rain of Arrows of Saturation)": true,
+		"Vaal Rain of Arrows":                                true,
+	}
+
+	index := buildVaalIdentityIndex(gems, listed)
+
+	if got := index["Rain of Arrows"]; got != "Vaal Rain of Arrows" {
+		t.Errorf("index[\"Rain of Arrows\"] = %q, want \"Vaal Rain of Arrows\"", got)
+	}
+	if got, ok := index["Rain"]; ok {
+		t.Errorf("index[\"Rain\"] = %q — the cut took the first \" of \", not the last", got)
+	}
+}
+
+func TestAnalyzeDoubleCorrupt_InheritedVaalIdentityTheMarketNeverListsIsNotAVaalVersion(t *testing.T) {
+	// "Vaal Rain of Arrows" here is cut out of a parenthesised row by string
+	// surgery — no corrupted row carries that name. Market presence is the
+	// calculator's proxy for existence, so an identity nobody lists must not set
+	// HasVaalVersion and must not open a Vaal branch the EV can never price.
 	gems := []GemPrice{
 		makeDCBaseInput("Rain of Arrows", "GREEN", 20, 30),
 		makeDCCorrupted("Vaal Rain of Arrows (Rain of Arrows of Saturation)", "20/20c", 900, 50),
@@ -500,11 +644,14 @@ func TestAnalyzeDoubleCorrupt_InheritedVaalIdentityStripsOnlyTheTransfiguredSuff
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	r := singleDCResult(t, results, "Rain of Arrows")
 
-	if !r.HasVaalVersion {
-		t.Fatal("HasVaalVersion = false — the transfigured row pairs \"Rain of Arrows\" with \"Vaal Rain of Arrows\"")
+	if r.HasVaalVersion {
+		t.Error("HasVaalVersion = true for a Vaal identity no row in the snapshot carries")
 	}
-	// The base gem's own Vaal identity is the un-parenthesised family name.
-	outcomeCell(t, r, "Vaal Rain of Arrows", "20/20c")
+	for _, o := range r.Outcomes {
+		if strings.HasPrefix(o.Name, "Vaal ") {
+			t.Errorf("outcome %q exists for an unlisted Vaal identity", o.Name)
+		}
+	}
 }
 
 func TestAnalyzeDoubleCorrupt_TempleOverheadReducesProfitFlat(t *testing.T) {
@@ -553,10 +700,16 @@ func TestAnalyzeDoubleCorrupt_ExcludesIneligibleInputs(t *testing.T) {
 
 func TestAnalyzeDoubleCorrupt_SupportGemsAreLegitimateInputs(t *testing.T) {
 	// Same stance as the quality roll: the altar transforms what you feed it,
-	// and corrupted support markets (e.g. awakened +1 outcomes) are real.
+	// and the corrupted support market is real — a 21/20 support is the outcome
+	// the craft is fed one for.
+	//
+	// The input is a normal support, which is the shape poe.ninja publishes at
+	// 20/20. Empower/Enlighten/Enhance are the exception (they list at levels
+	// 1-4 and never reach 20), so using one here would assert eligibility over a
+	// row that cannot exist.
 	gems := []GemPrice{
-		makeDCInput("Empower Support", "RED", 900, 30),
-		makeDCCorrupted("Empower Support", "20/20c", 1000, 50),
+		makeDCInput("Increased Critical Damage Support", "RED", 20, 30),
+		makeDCCorrupted("Increased Critical Damage Support", "21/20c", 90, 50),
 	}
 	results := AnalyzeDoubleCorrupt(time.Now(), gems, nil, DefaultTempleOverheadChaos)
 	if len(results) != 1 {
