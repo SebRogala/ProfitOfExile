@@ -337,11 +337,21 @@ fn parse_header(lines: &[OcrLineBox], first_row_centre: f32) -> MercHeader {
 
     // The title is the tallest line above the panel — it is set in a bigger
     // face than every other header field.
+    // The "Should Recruit" verdict sits on the wager line in a face as tall
+    // as the title, and OCR folds its tick icon into the text ("Should
+    // Recruit@") — measured 2026-08-24. It is excluded by its leading word,
+    // and trailing non-letters are cut off the winner for the same reason.
     let name = above
         .iter()
         .filter(|l| !l.text.trim().is_empty())
+        .filter(|l| !l.text.trim().to_lowercase().starts_with("should "))
         .max_by_key(|l| l.h)
-        .map(|l| l.text.trim().to_string());
+        .map(|l| {
+            l.text
+                .trim()
+                .trim_end_matches(|c: char| !c.is_alphanumeric())
+                .to_string()
+        });
 
     MercHeader { name, class, level, wager }
 }
@@ -717,7 +727,24 @@ mod tests {
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.header.name.as_deref(), Some("Nytra, the Cyaxan Loner"));
         assert_eq!(layout.header.level, Some(83));
+        assert_eq!(layout.header.class.as_deref(), Some("Infamous Frosthand"));
         assert!((layout.scale - 1.0).abs() < 0.05, "scale {}", layout.scale);
+    }
+
+    /// The verdict line is never the name, however tall OCR boxes it, and the
+    /// tick icon OCR glues onto it must not survive as a trailing glyph.
+    #[test]
+    fn the_verdict_line_is_not_the_name_and_icon_glyphs_are_trimmed() {
+        let mut lines = reference_lines();
+        lines.push(OcrLineBox { text: "Should Recruit@".into(), x: 500, y: 165, w: 140, h: 40 });
+        for l in lines.iter_mut() {
+            if l.text.starts_with("Cai") {
+                l.text = "Cai, the Lout@".into();
+                l.h = 30;
+            }
+        }
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
     }
 
     /// The anchor must be ABOVE the rows and NEAR them. A wager line far up
