@@ -130,6 +130,12 @@ pub struct AppState {
     /// True when player is inside the labyrinth (between PlazaEntered and LabExited).
     /// Used by lab_navigation to determine if a non-lab area entry is a lab exit.
     pub in_lab: AtomicBool,
+    /// Whether the foreground window IS the game right now — the raw focus
+    /// read, unlike `game_focused`, which is held over our own windows so
+    /// overlay clicks do not blank the overlays. Screen-capture modules
+    /// (merc OCR) read this one: over our own window they would otherwise
+    /// capture the app itself (measured 2026-08-24).
+    pub game_in_foreground: AtomicBool,
     pub compass_mode: Mutex<String>,
     pub compass_strategy: Mutex<String>,
     pub compass_difficulty: Mutex<String>,
@@ -2702,6 +2708,9 @@ fn spawn_focus_poller(app: AppHandle) {
                     }
                 };
 
+                app.state::<AppState>()
+                    .game_in_foreground
+                    .store(matches!(focus_state, FocusState::Game), Ordering::SeqCst);
                 // When foreground is our own window (overlay button click, main app),
                 // don't change game_focused — preserve the last known state.
                 if matches!(focus_state, FocusState::OwnWindow) {
@@ -3130,6 +3139,7 @@ pub fn run() {
         aspirant_trial_count: AtomicU32::new(0),
         font_session: Mutex::new(FontSessionData::default()),
         in_lab: AtomicBool::new(false),
+        game_in_foreground: AtomicBool::new(false),
         compass_mode: Mutex::new(String::from("minimap")),
         compass_strategy: Mutex::new(String::from("shortest")),
         compass_difficulty: Mutex::new(String::from("Uber")),

@@ -427,6 +427,7 @@ mod tests {
             aspirant_trial_count: AtomicU32::new(0),
             font_session: Mutex::new(crate::FontSessionData::default()),
             in_lab: AtomicBool::new(false),
+            game_in_foreground: AtomicBool::new(false),
             compass_mode: Mutex::new(String::new()),
             compass_strategy: Mutex::new(String::new()),
             compass_difficulty: Mutex::new(String::new()),
