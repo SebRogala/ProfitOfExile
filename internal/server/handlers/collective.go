@@ -634,7 +634,30 @@ func CompareAnalysis(repo *lab.Repository, cache *lab.Cache, tradeCache *trade.T
 
 		// Sparkline normalization removed — temporal coefficients create edge artifacts
 
-		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant)
+		// Double-corruption EV for the tiebreaker (POE-125). Only for the input
+		// variants the calculator models — every other variant gets the
+		// pre-POE-125 comparison unchanged, with no query paid for it.
+		//
+		// A failure here degrades the comparison rather than failing it: the EV
+		// is an enhancement on top of a complete answer, so the request carries
+		// a warning and drops the tiebreaker.
+		var doubleCorrupt map[string]lab.DoubleCorruptResult
+		if lab.IsDoubleCorruptVariant(variant) {
+			if cache != nil && cache.For(scope).HasDoubleCorrupt() {
+				doubleCorrupt = lab.SelectDoubleCorruptByNames(
+					cache.For(scope).DoubleCorruptByVariant(variant), names)
+			} else {
+				dcResults, err := repo.DoubleCorruptResultsByNames(r.Context(), scope, variant, names)
+				if err != nil {
+					slog.Error("compare analysis: double corrupt query failed", "error", err)
+					warnings = append(warnings, "Double-corruption data temporarily unavailable")
+				} else {
+					doubleCorrupt = lab.SelectDoubleCorruptByNames(dcResults, names)
+				}
+			}
+		}
+
+		results := lab.BuildCompareResults(names, transfigure, signals, features, sparklines, variant, doubleCorrupt)
 
 		rows := buildCompareRows(results, tradeCache, scope)
 		rowCount = len(rows)
@@ -744,42 +767,51 @@ func serveDedicationCompare(w http.ResponseWriter, r *http.Request, repo *lab.Re
 // compareRow is the JSON response shape for the compare endpoint (shared between
 // normal and dedication modes).
 type compareRow struct {
-	TransfiguredName     string                   `json:"transfiguredName"`
-	BaseName             string                   `json:"baseName"`
-	Variant              string                   `json:"variant"`
-	GemColor             string                   `json:"gemColor"`
-	ROI                  float64                  `json:"roi"`
-	ROIPct               float64                  `json:"roiPct"`
-	BasePrice            float64                  `json:"basePrice"`
-	TransfiguredPrice    float64                  `json:"transfiguredPrice"`
-	Confidence           string                   `json:"confidence"`
-	Signal               string                   `json:"signal"`
-	CV                   float64                  `json:"cv"`
-	PriceVelocity        float64                  `json:"priceVelocity"`
-	ListingVelocity      float64                  `json:"listingVelocity"`
-	HistPosition         float64                  `json:"histPosition"`
-	Sparkline            []lab.SparklinePoint     `json:"sparkline"`
-	Recommendation       string                   `json:"recommendation"`
-	SellUrgency          string                   `json:"sellUrgency"`
-	SellReason           string                   `json:"sellReason"`
-	Sellability          int                      `json:"sellability"`
-	SellabilityLabel     string                   `json:"sellabilityLabel"`
-	PriceTier            string                   `json:"priceTier"`
-	TierAction           string                   `json:"tierAction"`
-	WindowSignal         string                   `json:"windowSignal"`
-	BaseListings         int                      `json:"baseListings"`
-	LiquidityTier        string                   `json:"liquidityTier"`
-	TransListings        int                      `json:"transListings"`
-	TransfiguredListings int                      `json:"transfiguredListings"`
-	WeightedROI          float64                  `json:"weightedRoi"`
-	WeightedROIPct       float64                  `json:"weightedRoiPct"`
-	Low7Days             float64                  `json:"low7d"`
-	High7Days            float64                  `json:"high7d"`
-	SellConfidence       string                   `json:"sellConfidence"`
-	SellConfidenceReason string                   `json:"sellConfidenceReason"`
-	QuickSellPrice       float64                  `json:"quickSellPrice"`
-	RiskAdjustedPrice    float64                  `json:"riskAdjustedPrice"`
-	Trade                *trade.TradeLookupResult `json:"trade,omitempty"`
+	TransfiguredName     string               `json:"transfiguredName"`
+	BaseName             string               `json:"baseName"`
+	Variant              string               `json:"variant"`
+	GemColor             string               `json:"gemColor"`
+	ROI                  float64              `json:"roi"`
+	ROIPct               float64              `json:"roiPct"`
+	BasePrice            float64              `json:"basePrice"`
+	TransfiguredPrice    float64              `json:"transfiguredPrice"`
+	Confidence           string               `json:"confidence"`
+	Signal               string               `json:"signal"`
+	CV                   float64              `json:"cv"`
+	PriceVelocity        float64              `json:"priceVelocity"`
+	ListingVelocity      float64              `json:"listingVelocity"`
+	HistPosition         float64              `json:"histPosition"`
+	Sparkline            []lab.SparklinePoint `json:"sparkline"`
+	Recommendation       string               `json:"recommendation"`
+	SellUrgency          string               `json:"sellUrgency"`
+	SellReason           string               `json:"sellReason"`
+	Sellability          int                  `json:"sellability"`
+	SellabilityLabel     string               `json:"sellabilityLabel"`
+	PriceTier            string               `json:"priceTier"`
+	TierAction           string               `json:"tierAction"`
+	WindowSignal         string               `json:"windowSignal"`
+	BaseListings         int                  `json:"baseListings"`
+	LiquidityTier        string               `json:"liquidityTier"`
+	TransListings        int                  `json:"transListings"`
+	TransfiguredListings int                  `json:"transfiguredListings"`
+	WeightedROI          float64              `json:"weightedRoi"`
+	WeightedROIPct       float64              `json:"weightedRoiPct"`
+	Low7Days             float64              `json:"low7d"`
+	High7Days            float64              `json:"high7d"`
+	SellConfidence       string               `json:"sellConfidence"`
+	SellConfidenceReason string               `json:"sellConfidenceReason"`
+	QuickSellPrice       float64              `json:"quickSellPrice"`
+	RiskAdjustedPrice    float64              `json:"riskAdjustedPrice"`
+	// Double-corruption (POE-125). DoubleCorruptModel is the estimated-model
+	// marker — the odds behind these numbers come from community documentation,
+	// not from GGG, and the UI must badge them rather than present them as
+	// confirmed. DoubleCorruptTiebreak marks the one recommendation decided by
+	// double-corrupt profit instead of by the Font score.
+	DoubleCorruptEV       float64                  `json:"doubleCorruptEv,omitempty"`
+	DoubleCorruptProfit   float64                  `json:"doubleCorruptProfit,omitempty"`
+	DoubleCorruptModel    string                   `json:"doubleCorruptModel,omitempty"`
+	DoubleCorruptTiebreak bool                     `json:"doubleCorruptTiebreak,omitempty"`
+	Trade                 *trade.TradeLookupResult `json:"trade,omitempty"`
 }
 
 // buildCompareRows converts CompareResult slices into the JSON-serializable row format.
@@ -823,6 +855,11 @@ func buildCompareRows(results []lab.CompareResult, tradeCache *trade.TradeCache,
 			SellConfidenceReason: cr.SellConfidenceReason,
 			QuickSellPrice:       cr.QuickSellPrice,
 			RiskAdjustedPrice:    cr.RiskAdjustedPrice,
+
+			DoubleCorruptEV:       cr.DoubleCorruptEV,
+			DoubleCorruptProfit:   cr.DoubleCorruptProfit,
+			DoubleCorruptModel:    cr.DoubleCorruptModel,
+			DoubleCorruptTiebreak: cr.DoubleCorruptTiebreak,
 		}
 
 		// Enrich with cached trade data when available.

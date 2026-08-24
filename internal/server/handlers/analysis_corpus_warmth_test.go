@@ -39,6 +39,7 @@ func warmEmptyCorpora(t *testing.T) *lab.Cache {
 	x.SetQuality(nil)
 	x.SetGemFeatures(nil)
 	x.SetGemSignals(nil)
+	x.SetDoubleCorrupt(lab.BuildDoubleCorruptCorpus(nil))
 	return c
 }
 

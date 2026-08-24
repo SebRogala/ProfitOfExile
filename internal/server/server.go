@@ -177,6 +177,7 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/analysis/transfigure", handlers.TransfigureAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/font", handlers.FontAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/dedication", handlers.DedicationAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
+		r.Get("/api/analysis/double-corrupt", handlers.DoubleCorruptAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/quality", handlers.QualityAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/trends", handlers.TrendAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))
 		r.Get("/api/analysis/collective", handlers.CollectiveAnalysis(cfg.LabRepo, cfg.LabCache, cfg.League))

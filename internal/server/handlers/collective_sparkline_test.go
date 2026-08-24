@@ -90,6 +90,12 @@ func warmAnalysisCache(t *testing.T, gems ...sparklineGem) *lab.Cache {
 	c.For(sparklineScope).SetTransfigure(transfigure)
 	c.For(sparklineScope).SetGemSignals(signals)
 	c.For(sparklineScope).SetGemFeatures(features)
+	// CompareAnalysis reads a fourth corpus since POE-125: the double-corruption
+	// EV behind the tiebreaker, for the input variants the calculator models. A
+	// cold one sends the compare path to the database like any other, so it is
+	// warmed here (empty is a real, authoritative answer) rather than left cold
+	// under a "no database call" assertion.
+	c.For(sparklineScope).SetDoubleCorrupt(lab.BuildDoubleCorruptCorpus(nil))
 	return c
 }
 

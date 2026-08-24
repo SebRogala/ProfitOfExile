@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -196,6 +197,116 @@ func filterTransfigure(all []lab.TransfigureResult, variant string, limit int) [
 		filtered = filtered[:limit]
 	}
 	return filtered
+}
+
+// DoubleCorruptAnalysis returns the latest double-corruption (Doryani's
+// Institute) EV results, ranked most profitable first — "which gems are most
+// profitable to double-corrupt right now" (POE-125).
+//
+// Query params: variant (optional, the UNCORRUPTED input variant fed to the
+// altar, e.g. "20/20"; must be one the calculator models), limit (default 50,
+// max 500). Uses in-memory cache when available, falls back to DB query.
+//
+// Every row carries `model`. The outcome probabilities behind these numbers come
+// from community documentation, not from GGG — a consumer must present them as
+// estimates.
+func DoubleCorruptAnalysis(repo *lab.Repository, cache *lab.Cache, scope league.Scope) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		variant := normalizeVariant(r.URL.Query().Get("variant"))
+		if variant != "" && !lab.IsDoubleCorruptVariant(variant) {
+			// Named but unmodelled: answering with every variant would silently
+			// serve a different market than the one asked for.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("variant must be one of %v", lab.DoubleCorruptVariants),
+			})
+			return
+		}
+
+		limit, ok := parseLimit(w, r, 50, 500)
+		if !ok {
+			return
+		}
+
+		var results []lab.DoubleCorruptResult
+		cacheHit := false
+
+		// Fast path: serve from cache. Warmth is the tick's own flag — a run that
+		// priced nothing still ran, and that empty answer is authoritative.
+		if cache != nil && cache.For(scope).HasDoubleCorrupt() {
+			if variant != "" {
+				results = cache.For(scope).DoubleCorruptByVariant(variant)
+			} else {
+				results, _ = cache.For(scope).DoubleCorrupt()
+			}
+			if len(results) > limit {
+				results = results[:limit]
+			}
+			cacheHit = true
+		}
+
+		// Slow path: fall back to DB query.
+		if !cacheHit {
+			var err error
+			results, err = repo.LatestDoubleCorruptResults(r.Context(), scope, variant, limit)
+			if err != nil {
+				slog.Error("double corrupt analysis: query failed", "error", err, "variant", variant)
+				http.Error(w, `{"error":"query failed"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+
+		type row struct {
+			Time                string                     `json:"time"`
+			Name                string                     `json:"name"`
+			Color               string                     `json:"color"`
+			InputVariant        string                     `json:"inputVariant"`
+			InputCost           float64                    `json:"inputCost"`
+			TempleOverheadChaos float64                    `json:"templeOverheadChaos"`
+			HasVaalVersion      bool                       `json:"hasVaalVersion"`
+			EV                  float64                    `json:"ev"`
+			EVRaw               float64                    `json:"evRaw"`
+			Profit              float64                    `json:"profit"`
+			PricedProbability   float64                    `json:"pricedProbability"`
+			UnpricedProbability float64                    `json:"unpricedProbability"`
+			ThinOutcomeCells    int                        `json:"thinOutcomeCells"`
+			LiquidityRisk       string                     `json:"liquidityRisk"`
+			Model               string                     `json:"model"`
+			Outcomes            []lab.DoubleCorruptOutcome `json:"outcomes,omitempty"`
+		}
+
+		rows := make([]row, 0, len(results))
+		for _, dc := range results {
+			rows = append(rows, row{
+				Time:                dc.Time.UTC().Format(time.RFC3339),
+				Name:                dc.Name,
+				Color:               dc.Color,
+				InputVariant:        dc.InputVariant,
+				InputCost:           dc.InputCost,
+				TempleOverheadChaos: dc.TempleOverheadChaos,
+				HasVaalVersion:      dc.HasVaalVersion,
+				EV:                  dc.EV,
+				EVRaw:               dc.EVRaw,
+				Profit:              dc.Profit,
+				PricedProbability:   dc.PricedProbability,
+				UnpricedProbability: dc.UnpricedProbability,
+				ThinOutcomeCells:    dc.ThinOutcomeCells,
+				LiquidityRisk:       dc.LiquidityRisk,
+				Model:               dc.Model,
+				Outcomes:            dc.Outcomes,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"count":   len(rows),
+			"variant": variant,
+			"data":    rows,
+		}); err != nil {
+			slog.Error("double corrupt analysis: encode response", "error", err)
+		}
+	}
 }
 
 // FontAnalysis returns the latest Font of Divine Skill EV results in three modes:

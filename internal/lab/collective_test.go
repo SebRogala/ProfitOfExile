@@ -231,7 +231,7 @@ func TestBuildCompareResults_Recommendations(t *testing.T) {
 	}
 
 	names := []string{"Best Gem", "OK Gem", "Dump Gem"}
-	results := BuildCompareResults(names, transfigure, signals, nil, sparklines, "20/20")
+	results := BuildCompareResults(names, transfigure, signals, nil, sparklines, "20/20", nil)
 
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want 3", len(results))
@@ -276,7 +276,7 @@ func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
 	names := []string{"Spark of Nova"}
 	// Run multiple times to confirm determinism.
 	for i := 0; i < 10; i++ {
-		results := BuildCompareResults(names, transfigure, nil, nil, nil, "")
+		results := BuildCompareResults(names, transfigure, nil, nil, nil, "", nil)
 		if len(results) != 1 {
 			t.Fatalf("got %d results, want 1", len(results))
 		}
@@ -294,7 +294,7 @@ func TestBuildCompareResults_SelectsHighestROIVariant(t *testing.T) {
 
 func TestBuildCompareResults_GemNotFoundInTransfigure(t *testing.T) {
 	names := []string{"Unknown Gem"}
-	results := BuildCompareResults(names, nil, nil, nil, nil, "20/20")
+	results := BuildCompareResults(names, nil, nil, nil, nil, "20/20", nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -447,7 +447,7 @@ func TestBuildCompareResults_DUMPINGLiquidNotAvoided(t *testing.T) {
 		{Name: "Liquid Gem", Variant: "20/20", Listings: 30},
 	}
 
-	results := BuildCompareResults([]string{"Liquid Gem"}, transfigure, signals, features, nil, "20/20")
+	results := BuildCompareResults([]string{"Liquid Gem"}, transfigure, signals, features, nil, "20/20", nil)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -466,7 +466,7 @@ func TestBuildCompareResults_ColorBaseROI(t *testing.T) {
 			GemColor: "RED", BasePrice: 5, TransfiguredPrice: 200, ROI: 195, ROIPct: 3900, Confidence: "OK"},
 	}
 
-	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil, nil, "20/20")
+	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil, nil, "20/20", nil)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
@@ -555,7 +555,7 @@ func TestBuildCompareResults_SellConfidenceFromSignal(t *testing.T) {
 			QuickSellPrice: 170, RiskAdjustedValue: 150},
 	}
 
-	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, signals, nil, nil, "20/20")
+	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, signals, nil, nil, "20/20", nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -703,7 +703,7 @@ func TestBuildCompareResults_NoBaseRowDoesNotBecomeTheCheapestBase(t *testing.T)
 			GemColor: "RED", BasePrice: 5, TransfiguredPrice: 200, ROI: 195, ROIPct: 3900, Confidence: "OK"},
 	}
 
-	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil, nil, "20/20")
+	results := BuildCompareResults([]string{"Expensive Trans"}, transfigure, nil, nil, nil, "20/20", nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -730,7 +730,7 @@ func TestBuildCompareResults_PrefersAVariantWithRealDataOverNoBase(t *testing.T)
 			TransfiguredPrice: 12, Confidence: ConfidenceNoBase},
 	}
 
-	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, nil, nil, nil, "")
+	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, nil, nil, nil, "", nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
@@ -751,7 +751,7 @@ func TestBuildCompareResults_NoBaseGemWithAColorBaseIsNoLongerLabelledNoBase(t *
 			BasePrice: 20, TransfiguredPrice: 90, ROI: 70, ROIPct: 350, Confidence: "OK"},
 	}
 
-	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, nil, nil, nil, "20/20")
+	results := BuildCompareResults([]string{"Spark of Nova"}, transfigure, nil, nil, nil, "20/20", nil)
 
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
