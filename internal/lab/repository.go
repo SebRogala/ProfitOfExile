@@ -1654,6 +1654,194 @@ func (r *Repository) LatestDedicationResults(ctx context.Context, scope league.S
 	return results, nil
 }
 
+// SaveDoubleCorruptResults persists one tick's double-corruption EV results.
+//
+// ON CONFLICT DO NOTHING makes the write idempotent against the primary key
+// (league, time, name, input_variant), which is what lets the tick run twice for
+// one snapshot without duplicating or rewriting history — the same contract the
+// sibling result writers keep.
+func (r *Repository) SaveDoubleCorruptResults(ctx context.Context, scope league.Scope, results []DoubleCorruptResult) (int, error) {
+	if err := scope.Validate(); err != nil {
+		return 0, fmt.Errorf("lab repo: save double corrupt results: %w", err)
+	}
+	if len(results) == 0 {
+		return 0, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("lab repo: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, dc := range results {
+		outcomesJSON, err := json.Marshal(dc.Outcomes)
+		if err != nil {
+			slog.Warn("lab repo: marshal double corrupt outcomes failed, using empty array",
+				"name", dc.Name, "error", err)
+			outcomesJSON = []byte("[]")
+		}
+
+		inputVariant := dc.InputVariant
+		if inputVariant == "" {
+			inputVariant = DefaultDoubleCorruptVariant
+		}
+
+		batch.Queue(
+			`INSERT INTO double_corrupt_snapshots
+			 (league, time, name, input_variant, color, input_cost, temple_overhead_chaos,
+			  has_vaal_version, ev, ev_raw, profit, priced_probability, unpriced_probability,
+			  thin_outcome_cells, liquidity_risk, model, outcomes)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			 ON CONFLICT DO NOTHING`,
+			scope.ID(), dc.Time, dc.Name, inputVariant, dc.Color, dc.InputCost,
+			dc.TempleOverheadChaos, dc.HasVaalVersion, dc.EV, dc.EVRaw, dc.Profit,
+			dc.PricedProbability, dc.UnpricedProbability, dc.ThinOutcomeCells,
+			dc.LiquidityRisk, dc.Model, outcomesJSON,
+		)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+	inserted := 0
+	for range results {
+		ct, err := br.Exec()
+		if err != nil {
+			br.Close()
+			return 0, fmt.Errorf("lab repo: insert double corrupt result: %w", err)
+		}
+		inserted += int(ct.RowsAffected())
+	}
+	if err := br.Close(); err != nil {
+		return 0, fmt.Errorf("lab repo: close batch: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("lab repo: commit double corrupt results: %w", err)
+	}
+
+	return inserted, nil
+}
+
+// LatestDoubleCorruptResults returns the most recent double-corruption results,
+// profit-descending. An empty inputVariant returns every analyzed input variant;
+// pass one to keep a caller inside a single market (the per-variant rule).
+//
+// This is the cold path behind the ranking view and the compare tiebreaker — the
+// warm path reads the cache. It is bounded by the latest tick's timestamp rather
+// than by a time window, so it never scans the hypertable.
+func (r *Repository) LatestDoubleCorruptResults(ctx context.Context, scope league.Scope, inputVariant string, limit int) ([]DoubleCorruptResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: latest double corrupt results: %w", err)
+	}
+	query := `
+		SELECT time, name, input_variant, color, input_cost, temple_overhead_chaos,
+		       has_vaal_version, ev, ev_raw, profit, priced_probability,
+		       unpriced_probability, thin_outcome_cells, liquidity_risk, model,
+		       COALESCE(outcomes, '[]'::jsonb)
+		FROM double_corrupt_snapshots
+		WHERE league = $1
+		  AND time = (SELECT MAX(time) FROM double_corrupt_snapshots WHERE league = $1)`
+	args := []any{scope.ID()}
+	argIdx := 2
+
+	if inputVariant != "" {
+		query += fmt.Sprintf(` AND input_variant = $%d`, argIdx)
+		args = append(args, inputVariant)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` ORDER BY profit DESC, name ASC LIMIT $%d`, argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query double corrupt results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []DoubleCorruptResult
+	for rows.Next() {
+		var dc DoubleCorruptResult
+		var outcomesJSON []byte
+		if err := rows.Scan(&dc.Time, &dc.Name, &dc.InputVariant, &dc.Color, &dc.InputCost,
+			&dc.TempleOverheadChaos, &dc.HasVaalVersion, &dc.EV, &dc.EVRaw, &dc.Profit,
+			&dc.PricedProbability, &dc.UnpricedProbability, &dc.ThinOutcomeCells,
+			&dc.LiquidityRisk, &dc.Model, &outcomesJSON); err != nil {
+			return nil, fmt.Errorf("lab repo: scan double corrupt result: %w", err)
+		}
+		if len(outcomesJSON) > 0 {
+			if err := json.Unmarshal(outcomesJSON, &dc.Outcomes); err != nil {
+				return nil, fmt.Errorf("lab repo: unmarshal double corrupt outcomes: %w", err)
+			}
+		}
+		results = append(results, dc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: double corrupt rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
+// DoubleCorruptResultsByNames returns the latest results for named gems at one
+// input variant — the compare path's cold join, answering only for the two or
+// three gems a Font offered rather than loading the whole corpus.
+//
+// inputVariant is required here, unlike LatestDoubleCorruptResults: a compare
+// request is always about one market, and letting it default would mix input
+// variants under one gem name.
+func (r *Repository) DoubleCorruptResultsByNames(ctx context.Context, scope league.Scope, inputVariant string, names []string) ([]DoubleCorruptResult, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, fmt.Errorf("lab repo: double corrupt results by names: %w", err)
+	}
+	if inputVariant == "" {
+		return nil, fmt.Errorf("lab repo: double corrupt results by names: input variant is required")
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT time, name, input_variant, color, input_cost, temple_overhead_chaos,
+		       has_vaal_version, ev, ev_raw, profit, priced_probability,
+		       unpriced_probability, thin_outcome_cells, liquidity_risk, model,
+		       COALESCE(outcomes, '[]'::jsonb)
+		FROM double_corrupt_snapshots
+		WHERE league = $1
+		  AND time = (SELECT MAX(time) FROM double_corrupt_snapshots WHERE league = $1)
+		  AND input_variant = $2
+		  AND name = ANY($3)
+		ORDER BY profit DESC, name ASC`, scope.ID(), inputVariant, names)
+	if err != nil {
+		return nil, fmt.Errorf("lab repo: query double corrupt results by names: %w", err)
+	}
+	defer rows.Close()
+
+	var results []DoubleCorruptResult
+	for rows.Next() {
+		var dc DoubleCorruptResult
+		var outcomesJSON []byte
+		if err := rows.Scan(&dc.Time, &dc.Name, &dc.InputVariant, &dc.Color, &dc.InputCost,
+			&dc.TempleOverheadChaos, &dc.HasVaalVersion, &dc.EV, &dc.EVRaw, &dc.Profit,
+			&dc.PricedProbability, &dc.UnpricedProbability, &dc.ThinOutcomeCells,
+			&dc.LiquidityRisk, &dc.Model, &outcomesJSON); err != nil {
+			return nil, fmt.Errorf("lab repo: scan double corrupt result: %w", err)
+		}
+		if len(outcomesJSON) > 0 {
+			if err := json.Unmarshal(outcomesJSON, &dc.Outcomes); err != nil {
+				return nil, fmt.Errorf("lab repo: unmarshal double corrupt outcomes: %w", err)
+			}
+		}
+		results = append(results, dc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lab repo: double corrupt by-names rows iteration: %w", err)
+	}
+
+	return results, nil
+}
+
 // CorruptedGemNamesAutocomplete returns distinct corrupted gem names for the
 // Dedication picker. When isTransfigured is true, returns only transfigured
 // corrupted gems; when false, only non-transfigured corrupted gems.

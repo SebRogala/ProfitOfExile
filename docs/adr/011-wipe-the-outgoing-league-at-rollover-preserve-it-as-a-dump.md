@@ -40,6 +40,10 @@ dominates). Neither half is small, and the computed half is the larger.
 
 ## Decision
 
+**Amended 2026-08-24 (POE-125):** `double_corrupt_snapshots` joins the wipe set
+(now fifteen scoped tables). Every table added to the league-scoped schema joins
+it at creation.
+
 At each league rollover, deliberately **wipe** the outgoing league's fourteen scoped
 tables (`TRUNCATE`) rather than keeping them live, and **preserve** that league's
 data as a dedicated dump stored outside the nightly rotation. Analysis of a past

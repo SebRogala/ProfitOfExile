@@ -23,6 +23,7 @@ type Analyzer struct {
 	muFont        sync.Mutex
 	muQuality     sync.Mutex
 	muDedication  sync.Mutex
+	muDoubleCrpt  sync.Mutex
 	muV2          sync.Mutex
 }
 
@@ -171,6 +172,68 @@ func (a *Analyzer) RunFont(ctx context.Context, scope league.Scope) error {
 		"safe", len(analysis.Safe),
 		"premium", len(analysis.Premium),
 		"jackpot", len(analysis.Jackpot),
+		"inserted", inserted,
+	)
+	a.throttler.Signal()
+	return nil
+}
+
+// RunDoubleCorrupt fetches the latest gem snapshot and computes the
+// double-corruption (Doryani's Institute) EV for every input variant in
+// DoubleCorruptVariants.
+//
+// It runs after RunFont in the tick chain: it reads GemFeature data for the same
+// risk-adjustment Font and Dedication apply to outcome prices, and the compare
+// path needs its corpus warm before a Font request can use it as a tiebreaker.
+//
+// It is safe to call from multiple goroutines; concurrent runs are serialized.
+func (a *Analyzer) RunDoubleCorrupt(ctx context.Context, scope league.Scope) error {
+	a.muDoubleCrpt.Lock()
+	defer a.muDoubleCrpt.Unlock()
+
+	gems, snapTime, err := a.repo.LatestGemPrices(ctx, scope)
+	if err != nil {
+		a.logger.Error("double corrupt: failed to load gem prices", "error", err)
+		return err
+	}
+	if len(gems) == 0 {
+		a.logger.Info("double corrupt: no gem snapshots available yet, skipping")
+		return nil
+	}
+
+	// Load gem features: try cache first, fall back to DB. See RunFont for why
+	// warmth is the flag rather than the count.
+	var features []GemFeature
+	warmFeatures := false
+	if a.cache != nil {
+		features, warmFeatures = a.cache.For(scope).GemFeatures()
+	}
+	if !warmFeatures {
+		features, err = a.repo.LatestGemFeatures(ctx, scope, "", "", 50000)
+		if err != nil {
+			a.logger.Error("double corrupt: failed to load gem features", "error", err)
+			return err
+		}
+	}
+	// Like Dedication, this can still run without features: the outcome cells
+	// are corrupted rows, which carry no features today anyway, so the risk
+	// adjustment falls back to its listings-only defaults.
+
+	results := AnalyzeDoubleCorrupt(snapTime, gems, features, DefaultTempleOverheadChaos)
+
+	inserted, err := a.repo.SaveDoubleCorruptResults(ctx, scope, results)
+	if err != nil {
+		a.logger.Error("double corrupt: failed to save results", "error", err)
+		return err
+	}
+
+	if a.cache != nil {
+		a.cache.For(scope).SetDoubleCorrupt(BuildDoubleCorruptCorpus(results))
+	}
+
+	a.logger.Info("double corrupt analysis complete",
+		"snapTime", snapTime,
+		"results", len(results),
 		"inserted", inserted,
 	)
 	a.throttler.Signal()

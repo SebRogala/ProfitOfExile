@@ -14,6 +14,10 @@ not only the twelve POE-119 retrofitted. The set is now fourteen —
 `league TEXT NOT NULL REFERENCES leagues(id)` and are read and written only
 through `internal/exchange`'s scope-taking repository.
 
+**Amended 2026-08-24 (POE-125):** `double_corrupt_snapshots` joins the set (now
+fifteen), created with `league TEXT NOT NULL REFERENCES leagues(id)` and read
+and written only through `internal/lab`'s scope-taking repository.
+
 ## Context
 
 POE-119 adds a league column to its twelve historical data tables and introduces

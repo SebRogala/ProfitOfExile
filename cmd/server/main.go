@@ -64,6 +64,10 @@ func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer, scope league.
 		slog.Error("admin recompute: font failed", "error", err)
 		failures++
 	}
+	if err := analyzer.RunDoubleCorrupt(ctx, scope); err != nil {
+		slog.Error("admin recompute: double corrupt failed", "error", err)
+		failures++
+	}
 	if err := analyzer.RunDedication(ctx, scope); err != nil {
 		slog.Error("admin recompute: dedication failed", "error", err)
 		failures++
@@ -71,7 +75,7 @@ func runFullRecompute(ctx context.Context, analyzer *lab.Analyzer, scope league.
 	if failures == 0 {
 		slog.Info("admin recompute: complete")
 	} else {
-		slog.Warn("admin recompute: finished with failures", "failed_steps", failures, "total_steps", 5)
+		slog.Warn("admin recompute: finished with failures", "failed_steps", failures, "total_steps", 6)
 	}
 }
 
@@ -589,6 +593,11 @@ func main() {
 		if err := analyzer.RunFont(ctx, scope); err != nil {
 			slog.Warn("startup font analysis failed (non-fatal)", "error", err)
 		}
+		// Double corrupt runs after Font: the compare path uses its EV as the
+		// tiebreaker when no Font candidate wins on 20/20 value.
+		if err := analyzer.RunDoubleCorrupt(ctx, scope); err != nil {
+			slog.Warn("startup double corrupt analysis failed (non-fatal)", "error", err)
+		}
 		// Dedication runs after V2 for risk-adjustment features.
 		if err := analyzer.RunDedication(ctx, scope); err != nil {
 			slog.Warn("startup dedication analysis failed (non-fatal)", "error", err)
@@ -808,6 +817,13 @@ func main() {
 					// Font runs after V2 so it reads fresh GemFeatures with current tier classification.
 					if err := analyzer.RunFont(subCtx, scope); err != nil {
 						slog.Warn("font analysis failed", "error", err)
+					}
+					// Double corrupt runs after Font: the compare path uses its
+					// EV as the tiebreaker when no Font candidate wins on 20/20
+					// value, so its corpus must be warm by the time a compare
+					// request lands.
+					if err := analyzer.RunDoubleCorrupt(subCtx, scope); err != nil {
+						slog.Warn("double corrupt analysis failed", "error", err)
 					}
 					// Dedication runs after V2 for risk-adjustment features.
 					if err := analyzer.RunDedication(subCtx, scope); err != nil {

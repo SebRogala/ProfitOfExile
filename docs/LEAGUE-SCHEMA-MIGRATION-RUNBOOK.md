@@ -100,13 +100,13 @@ run the rehearsal against the live database.
    migration and health checks pass. Confirm server and collector startup
    health, then dispose of the rehearsal database.
 
-## Fourteen-table count manifest
+## Fifteen-table count manifest
 
 Capture a `COUNT(*)` for each relation before and after the migration. The
-manifest is complete only with all fourteen rows. The last two rows postdate the
-POE-119 migration (added 2026-08-19 by POE-173): for a POE-119 rehearsal their
-pre/post-migration and null-`league` columns are `n/a`; for a league rollover
-they count like every other row.
+manifest is complete only with all fifteen rows. The last three rows postdate the
+POE-119 migration (two added 2026-08-19 by POE-173, one 2026-08-24 by POE-125):
+for a POE-119 rehearsal their pre/post-migration and null-`league` columns are
+`n/a`; for a league rollover they count like every other row.
 
 | Relation | Pre-migration count | Post-migration count | Null `league` count |
 | --- | ---: | ---: | ---: |
@@ -124,6 +124,7 @@ they count like every other row.
 | `market_context` |  |  |  |
 | `currency_exchange_markets` |  |  |  |
 | `currency_exchange_cursor` |  |  |  |
+| `double_corrupt_snapshots` |  |  |  |
 
 ## Production execution (wipe-first — the chosen rollover)
 
@@ -155,14 +156,15 @@ steps in order; each line is one action or one check.
 3. Stop the collector.
 4. Stop the current (old) server revision.
 5. Confirm both are stopped and nothing is writing.
-6. On the production database (old schema, pre-migration), truncate the fourteen
+6. On the production database (old schema, pre-migration), truncate the fifteen
    league-scoped tables in one statement:
-   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor;`
+   `TRUNCATE gem_snapshots, currency_snapshots, fragment_snapshots, font_snapshots, transfigure_results, quality_results, trend_results, gem_features, gem_signals, dedication_snapshots, trade_lookups, market_context, currency_exchange_markets, currency_exchange_cursor, double_corrupt_snapshots;`
    (Plain `TRUNCATE` works directly on the compressed hypertables — no decompress
    step; ~3.5 s for 27M rows in rehearsal. `currency_exchange_markets` and
-   `currency_exchange_cursor` exist only from the POE-173 migration onward; drop
-   them from the statement when running against an older schema.)
-7. Confirm all fourteen tables report zero rows.
+   `currency_exchange_cursor` exist only from the POE-173 migration onward, and
+   `double_corrupt_snapshots` from the POE-125 migration onward; drop absent
+   tables from the statement when running against an older schema.)
+7. Confirm all fifteen tables report zero rows.
 8. Deploy the staged 119–121 revision (the atomic merge). The server migrates on
    boot against the now-empty tables — expect a near-instant apply.
 9. Verify migration state + server health: every table has a `NOT NULL` `league`

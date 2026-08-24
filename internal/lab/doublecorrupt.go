@@ -147,6 +147,28 @@ func IsDoubleCorruptVariant(variant string) bool {
 	return false
 }
 
+// SelectDoubleCorruptByNames indexes results by gem name for the compare path,
+// which asks about the two or three gems a Font offered rather than the whole
+// corpus. results must already be narrowed to one input variant — the map is
+// keyed by name alone, so mixing input variants here would let one market's EV
+// answer for another's.
+func SelectDoubleCorruptByNames(results []DoubleCorruptResult, names []string) map[string]DoubleCorruptResult {
+	if len(results) == 0 || len(names) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		wanted[n] = struct{}{}
+	}
+	out := make(map[string]DoubleCorruptResult, len(names))
+	for _, dc := range results {
+		if _, ok := wanted[dc.Name]; ok {
+			out[dc.Name] = dc
+		}
+	}
+	return out
+}
+
 // FilterDoubleCorruptVariant returns the subset of results computed for one
 // input variant.
 func FilterDoubleCorruptVariant(results []DoubleCorruptResult, inputVariant string) []DoubleCorruptResult {
