@@ -89,6 +89,13 @@ type CompareResult struct {
 	DoubleCorruptEV     float64 `json:"doubleCorruptEv,omitempty"`
 	DoubleCorruptProfit float64 `json:"doubleCorruptProfit,omitempty"`
 	DoubleCorruptModel  string  `json:"doubleCorruptModel,omitempty"`
+	// DoubleCorruptPricedProbability is the share of the outcome distribution
+	// the corrupted market actually prices — the rest contributes 0 to the EV.
+	// It travels with the EV because roughly a fifth of the mass is
+	// structurally unpriceable (poe.ninja publishes no corrupted variant below
+	// level 20, and the quality reroll lands there often), so an EV shown alone
+	// reads as a full expectation when it is a floor over the priced share.
+	DoubleCorruptPricedProbability float64 `json:"doubleCorruptPricedProbability,omitempty"`
 	// DoubleCorruptTiebreak marks the one candidate this recommendation was
 	// decided by double-corrupt profit rather than by the Font score. It is a
 	// separate field rather than a Recommendation value so the badge the UI
@@ -460,10 +467,14 @@ func BuildCompareResults(
 		// that is weak at this variant but strong double-corrupted is the case
 		// this feature exists for, and the UI wants to say so whether or not the
 		// tiebreaker below fires.
+		// EV and Profit are both risk-adjusted at source (AnalyzeDoubleCorrupt):
+		// they are two readings of one number, so the card cannot show a profit
+		// larger than the estimate it is derived from.
 		if dc, ok := doubleCorrupt[name]; ok {
 			cr.DoubleCorruptEV = dc.EV
 			cr.DoubleCorruptProfit = dc.Profit
 			cr.DoubleCorruptModel = dc.Model
+			cr.DoubleCorruptPricedProbability = dc.PricedProbability
 		}
 
 		// Attach sparkline.
@@ -537,11 +548,14 @@ func BuildCompareResults(
 //     named a winner is not a tie, and this must never overturn one.
 //   - Only a non-AVOID candidate can be promoted. The disqualifiers above are
 //     about the gem's own market, not about the craft, and they still bind.
-//   - Only a positive double-corrupt profit qualifies. Profit is EVRaw minus the
-//     gem's own price at this variant, so a positive number is exactly the claim
-//     "the corrupted market pays more for this gem than selling it here does" —
-//     the opportunity cost the player is choosing between. A negative one is a
-//     reason not to corrupt, never a reason to pick a gem.
+//   - Only a positive double-corrupt profit qualifies. Profit is the
+//     risk-adjusted EV minus the gem's own price at this variant, so a positive
+//     number is exactly the claim "the corrupted market pays more for this gem,
+//     at the rate it actually clears, than selling it here does" — the
+//     opportunity cost the player is choosing between. A negative one is a
+//     reason not to corrupt, never a reason to pick a gem. Measuring it off
+//     EVRaw instead would promote gems whose corrupted upside sits in cells
+//     nobody buys.
 //
 // The winner is tagged with DoubleCorruptTiebreak as well as BEST, so the reason
 // travels with the recommendation instead of disappearing into a shared enum

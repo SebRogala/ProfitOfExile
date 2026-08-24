@@ -13,7 +13,7 @@ application implementation.
 ## Gate
 
 POE-119 cannot deploy independently. Its migrations make `league` mandatory
-on the twelve tables it scopes, while the pre-POE-120/POE-121 writers do not supply it
+on the twelve pre-existing data tables, while the pre-POE-120/POE-121 writers do not supply it
 and server analysis is not yet scoped. Before starting, an operator must
 confirm all of the following in the change record:
 
@@ -37,8 +37,8 @@ POE-119, POE-120, and POE-121 are developed as **stacked branches**
 deploy** — every push to `main` auto-deploys to production.
 
 - **Do not merge POE-119 to `main` on its own.** Alone it makes `league`
-  `NOT NULL` on the twelve tables it scopes while the still-deployed pre-POE-120
-  writers omit it, so production writes begin failing on the next collector tick.
+  `NOT NULL` on those twelve tables while the still-deployed pre-POE-120 writers omit
+  it, so production writes begin failing on the next collector tick.
 - Land them together. Recommended: collapse POE-120 and POE-121 onto the
   POE-119 branch (rebase each onto its parent so the branch carries all three),
   then open and merge **one** PR to `main`. That single merge is the single
@@ -106,7 +106,9 @@ Capture a `COUNT(*)` for each relation before and after the migration. The
 manifest is complete only with all fifteen rows. The last three rows postdate the
 POE-119 migration (two added 2026-08-19 by POE-173, one 2026-08-24 by POE-125):
 for a POE-119 rehearsal their pre/post-migration and null-`league` columns are
-`n/a`; for a league rollover they count like every other row.
+`n/a`; for a league rollover they count like every other row. A rehearsal
+restored from a backup older than a table's migration records that row as
+absent rather than zero.
 
 | Relation | Pre-migration count | Post-migration count | Null `league` count |
 | --- | ---: | ---: | ---: |

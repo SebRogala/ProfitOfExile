@@ -39,6 +39,7 @@ func tiebreakInput(gems ...tiebreakGem) ([]string, []TransfigureResult, []GemSig
 			dc[g.name] = DoubleCorruptResult{
 				Name: g.name, InputVariant: "20/20",
 				EV: g.dcProfit + 10, EVRaw: g.dcProfit + 10, Profit: g.dcProfit,
+				PricedProbability: 0.79, UnpricedProbability: 0.21,
 				Model: DoubleCorruptModelEstimated,
 			}
 		}
@@ -188,6 +189,22 @@ func TestBuildCompareResults_CarriesDoubleCorruptEVOnEveryPricedCandidate(t *tes
 	if winner := byName["Clean Winner"]; winner.DoubleCorruptProfit != 0 || winner.DoubleCorruptModel != "" {
 		t.Errorf("a gem the calculator did not price carries profit %v model %q, want zero values",
 			winner.DoubleCorruptProfit, winner.DoubleCorruptModel)
+	}
+}
+
+func TestBuildCompareResults_CarriesTheShareOfOutcomesTheEVCovers(t *testing.T) {
+	// The EV is a floor over the priced share of the distribution, not the whole
+	// expectation, so the share has to travel with it. Left behind here, the
+	// comparator has no honest way to qualify the number it prints.
+	names, transfigure, signals, dc := tiebreakInput(
+		tiebreakGem{name: "Corrupt Candidate", roi: 10, dcProfit: 700},
+	)
+
+	results := BuildCompareResults(names, transfigure, signals, nil, nil, "20/20", dc)
+
+	candidate := compareByName(t, results)["Corrupt Candidate"]
+	if candidate.DoubleCorruptPricedProbability != 0.79 {
+		t.Errorf("DoubleCorruptPricedProbability = %v, want 0.79", candidate.DoubleCorruptPricedProbability)
 	}
 }
 
