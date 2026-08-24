@@ -81,6 +81,19 @@ type CompareResult struct {
 	SellConfidenceReason string  `json:"sellConfidenceReason"`
 	QuickSellPrice       float64 `json:"quickSellPrice"`
 	RiskAdjustedPrice    float64 `json:"riskAdjustedPrice"`
+	// Double-corruption (POE-125). Present on every candidate the calculator
+	// priced, so the UI can flag "weak as this variant, strong double-corrupt
+	// candidate" whether or not the tiebreaker fired. DoubleCorruptModel carries
+	// the estimated-model marker: these odds come from community documentation,
+	// not from GGG, and no surface may present them as confirmed.
+	DoubleCorruptEV     float64 `json:"doubleCorruptEv,omitempty"`
+	DoubleCorruptProfit float64 `json:"doubleCorruptProfit,omitempty"`
+	DoubleCorruptModel  string  `json:"doubleCorruptModel,omitempty"`
+	// DoubleCorruptTiebreak marks the one candidate this recommendation was
+	// decided by double-corrupt profit rather than by the Font score. It is a
+	// separate field rather than a Recommendation value so the badge the UI
+	// already renders keeps working, and never reads as an ordinary win.
+	DoubleCorruptTiebreak bool `json:"doubleCorruptTiebreak,omitempty"`
 }
 
 // SparklinePoint is a single data point for sparkline charts.
@@ -285,6 +298,12 @@ func RankCollective(transfigure []TransfigureResult, signals []GemSignal, featur
 // requestedVariant is the user's chosen variant (e.g. "20/20"). When a gem has
 // no transfigure data for this variant, the result preserves the requested variant
 // instead of falling back to a different one or leaving it empty.
+//
+// doubleCorrupt is the double-corruption result for each compared gem, keyed by
+// name and already narrowed to the requested variant as an INPUT variant (see
+// SelectDoubleCorruptByNames). It may be nil — the calculator only models the
+// input variants in DoubleCorruptVariants, and every other request gets the
+// pre-POE-125 behaviour unchanged. Its role is the tiebreaker below.
 func BuildCompareResults(
 	names []string,
 	transfigure []TransfigureResult,
@@ -292,6 +311,7 @@ func BuildCompareResults(
 	features []GemFeature,
 	sparklines map[string][]SparklinePoint,
 	requestedVariant string,
+	doubleCorrupt map[string]DoubleCorruptResult,
 ) []CompareResult {
 	// Index transfigure by transfigured name + variant.
 	type trKey struct{ name, variant string }
@@ -436,6 +456,16 @@ func BuildCompareResults(
 			cr.High7Days = f.High7Days
 		}
 
+		// Join the double-corruption EV. Informational on every candidate: a gem
+		// that is weak at this variant but strong double-corrupted is the case
+		// this feature exists for, and the UI wants to say so whether or not the
+		// tiebreaker below fires.
+		if dc, ok := doubleCorrupt[name]; ok {
+			cr.DoubleCorruptEV = dc.EV
+			cr.DoubleCorruptProfit = dc.Profit
+			cr.DoubleCorruptModel = dc.Model
+		}
+
 		// Attach sparkline.
 		if pts, ok := sparklines[name]; ok {
 			cr.Sparkline = pts
@@ -484,9 +514,72 @@ func BuildCompareResults(
 				results[r.idx].Recommendation = "OK"
 			}
 		}
+
+		applyDoubleCorruptTiebreak(results)
 	}
 
 	return results
+}
+
+// applyDoubleCorruptTiebreak decides the Font pick by double-corruption profit
+// when the score-based pass decided nothing (POE-125).
+//
+// The gap it fills: the pass above only promotes the top-RANKED candidate, and
+// promotes it only if that candidate cleared every disqualifier. When the
+// top-ranked gem is disqualified into AVOID, no candidate is promoted at all and
+// the player is left with a comparison that names no winner — even though one of
+// the survivors may be a strong double-corrupt candidate precisely because it is
+// weak at this variant.
+//
+// Three rules keep it narrow:
+//
+//   - It fires ONLY when the pass produced no BEST. A comparison that already
+//     named a winner is not a tie, and this must never overturn one.
+//   - Only a non-AVOID candidate can be promoted. The disqualifiers above are
+//     about the gem's own market, not about the craft, and they still bind.
+//   - Only a positive double-corrupt profit qualifies. Profit is EVRaw minus the
+//     gem's own price at this variant, so a positive number is exactly the claim
+//     "the corrupted market pays more for this gem than selling it here does" —
+//     the opportunity cost the player is choosing between. A negative one is a
+//     reason not to corrupt, never a reason to pick a gem.
+//
+// The winner is tagged with DoubleCorruptTiebreak as well as BEST, so the reason
+// travels with the recommendation instead of disappearing into a shared enum
+// value the UI already renders as an ordinary win.
+//
+// This lives in the Font compare path only, deliberately. Dedication feeds an
+// already-corrupted gem in for another corrupted gem, and a corrupted gem cannot
+// be double-corrupted at all — so BuildDedicationCompareResults has no tie of
+// this kind to break.
+func applyDoubleCorruptTiebreak(results []CompareResult) {
+	for _, cr := range results {
+		if cr.Recommendation == "BEST" {
+			return
+		}
+	}
+
+	winner := -1
+	for i, cr := range results {
+		if cr.Recommendation == "AVOID" || cr.DoubleCorruptProfit <= 0 {
+			continue
+		}
+		if winner < 0 {
+			winner = i
+			continue
+		}
+		best := results[winner]
+		if cr.DoubleCorruptProfit > best.DoubleCorruptProfit ||
+			(cr.DoubleCorruptProfit == best.DoubleCorruptProfit &&
+				cr.TransfiguredName < best.TransfiguredName) {
+			winner = i
+		}
+	}
+	if winner < 0 {
+		return
+	}
+
+	results[winner].Recommendation = "BEST"
+	results[winner].DoubleCorruptTiebreak = true
 }
 
 // BuildDedicationCompareResults builds compare results for Dedication lab mode.
