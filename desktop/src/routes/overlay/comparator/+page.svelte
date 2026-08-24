@@ -38,6 +38,14 @@
 		AVOID: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' },
 	};
 
+	/**
+	 * A double-corrupt tiebreak (POE-125) ships as BEST, but the server only
+	 * reaches for it when nothing on offer sold well — it is a gamble on the
+	 * corrupted market, not a win. The overlay is the surface the player actually
+	 * reads mid-run, so green here would be the worst place to blur the two.
+	 */
+	const REC_GAMBLE = { color: '#c084fc', bg: 'rgba(192, 132, 252, 0.15)' };
+
 	let results = $state<CompareGem[]>([]);
 	let selectedGem = $state<string | null>(null);
 
@@ -256,7 +264,8 @@
 		<div class="layout">
 			<div class="table">
 				{#each results as gem (gem.name)}
-					{@const rec = REC_COLORS[gem.recommendation] ?? REC_COLORS.OK}
+					{@const gamble = gem.doubleCorruptTiebreak === true}
+					{@const rec = gamble ? REC_GAMBLE : (REC_COLORS[gem.recommendation] ?? REC_COLORS.OK)}
 					{@const tierColor = TIER_COLORS[gem.priceTier] ?? '#94a3b8'}
 					{@const sigColor = SIGNAL_COLORS[gem.signal] ?? '#9ca3af'}
 					{@const trade = tradeData[gem.name]}
@@ -265,7 +274,7 @@
 						<div class="row-top">
 							<GemIcon name={gem.name} size={24} />
 							<span class="gem-name" style="color: {rec.color}">{gem.name}</span>
-							<span class="rec" style="color: {rec.color}; background: {rec.bg}">{gem.recommendation}</span>
+							<span class="rec" style="color: {rec.color}; background: {rec.bg}" title={gamble ? 'No clear sale here — picked on estimated double-corrupt profit' : ''}>{gamble ? 'GAMBLE' : gem.recommendation}</span>
 							{#if noData}
 								<span class="anomaly">no ninja data</span>
 							{:else}

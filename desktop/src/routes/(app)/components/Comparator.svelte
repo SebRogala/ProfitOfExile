@@ -471,19 +471,30 @@
 		}
 	}
 
-	function recLabel(rec: string): string {
+	/**
+	 * A double-corrupt tiebreak (POE-125) arrives as BEST like any other pick, but
+	 * it is not the same claim. The server only reaches for it when the score pass
+	 * named no winner (nothing on offer sells well) and it then picks whichever
+	 * survivor the corrupted market pays most for. That is a gamble on a craft,
+	 * not a gem worth taking to the trade site, so it gets its own label, icon and
+	 * colour. Sharing the green tick would tell the player they found a winner.
+	 */
+	function recLabel(rec: string, tiebreak = false): string {
+		if (tiebreak) return 'BEST GAMBLE';
 		if (rec === 'BEST') return 'BEST';
 		if (rec === 'AVOID') return 'AVOID';
 		return 'OK';
 	}
 
-	function recIcon(rec: string): string {
+	function recIcon(rec: string, tiebreak = false): string {
+		if (tiebreak) return '\ud83c\udfb2';
 		if (rec === 'BEST') return '\u2713';
 		if (rec === 'AVOID') return '\u2717';
 		return '\u2022';
 	}
 
-	function recClass(rec: string): string {
+	function recClass(rec: string, tiebreak = false): string {
+		if (tiebreak) return 'rec-gamble';
 		if (rec === 'BEST') return 'rec-best';
 		if (rec === 'AVOID') return 'rec-avoid';
 		return 'rec-ok';
@@ -705,6 +716,21 @@
 						<div class="tier-action">{gem.tierAction}</div>
 					{/if}
 
+					<!--
+						Double-corruption (POE-125). Shown on every gem the server priced
+						at a profit, tiebreak winner or not: a gem that is weak at this
+						variant but strong corrupted is the whole case this feature
+						exists for. doubleCorruptModel is the gate rather than the number,
+						because an unmodelled gem's EV is 0 for lack of data, not because
+						the craft is worth nothing.
+					-->
+					{#if gem.doubleCorruptModel && gem.doubleCorruptProfit > 0}
+						<div class="dc-candidate">
+							<span class="dc-headline">Weak as {gem.variant}, strong double-corrupt candidate</span>
+							<Tooltip text="Estimated: double-corruption odds come from community documentation, not from GGG. Read it as a rough expected value, not a price."><span class="dc-numbers">est. ~{formatPrice(gem.doubleCorruptEv)} corrupted &middot; {formatPriceSigned(gem.doubleCorruptProfit)} vs selling here</span></Tooltip>
+						</div>
+					{/if}
+
 					<!-- Trade Data Section -->
 					<div class="trade-section">
 						{#if tradeLoading[gem.name] && !tradeData[gem.name]}
@@ -818,9 +844,12 @@
 							</div>
 						{/each}
 					</div>
-					<div class="card-rec {recClass(gem.recommendation)}">
-						<span class="rec-icon">{recIcon(gem.recommendation)}</span> {recLabel(gem.recommendation)}
+					<div class="card-rec {recClass(gem.recommendation, gem.doubleCorruptTiebreak)}">
+						<span class="rec-icon">{recIcon(gem.recommendation, gem.doubleCorruptTiebreak)}</span> {recLabel(gem.recommendation, gem.doubleCorruptTiebreak)}
 					</div>
+					{#if gem.doubleCorruptTiebreak}
+						<div class="rec-gamble-why">No clear sale here — picked on double-corrupt profit</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -1308,9 +1337,38 @@
 		margin-bottom: 6px;
 	}
 
+	/* Double-corrupt candidate (POE-125) */
+	.dc-candidate {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-bottom: 6px;
+		padding: 6px 10px;
+		background: rgba(192, 132, 252, 0.1);
+		border-left: 3px solid #c084fc;
+	}
+	.dc-headline {
+		font-size: 0.8125rem;
+		font-weight: 700;
+		color: #c084fc;
+	}
+	.dc-numbers {
+		font-size: 0.8125rem;
+		color: var(--color-lab-text-secondary);
+	}
+
 	.rec-best { color: var(--color-lab-green); }
 	.rec-ok { color: var(--color-lab-yellow); }
 	.rec-avoid { color: var(--color-lab-red); }
+	/* Purple, not green: a tiebreak pick is a gamble the server took because
+	   nothing here sold well, and it must not read as an ordinary BEST. */
+	.rec-gamble { color: #c084fc; }
+	.rec-gamble-why {
+		font-size: 0.75rem;
+		color: var(--color-lab-text-secondary);
+		font-style: italic;
+		margin-top: -4px;
+	}
 
 	/* Trade data section */
 	.trade-section {

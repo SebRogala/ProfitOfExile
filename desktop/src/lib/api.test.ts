@@ -8,7 +8,7 @@ vi.mock('$lib/stores/status.svelte', () => ({
 	store: { status: { server_url: 'https://server.test', device_id: 'device-abc123' } }
 }));
 
-const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays } = await import('./api');
+const { displayVariant, signalTransitionLabel, fetchCurrencyExchangePlays, mapCompareRow } = await import('./api');
 
 import type { CurrencyExchangeLeg, CurrencyExchangeResponse } from './api';
 
@@ -448,5 +448,57 @@ describe('fetchCurrencyExchangePlays', () => {
 		fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
 		await expect(fetchCurrencyExchangePlays('all')).rejects.toThrow('Failed to fetch');
+	});
+});
+
+/**
+ * The double-corruption fields (POE-125) are serialized with `omitempty`
+ * (internal/server/handlers/collective.go, compareRow), so a gem the calculator
+ * never modelled arrives with the keys simply missing. The comparator gates its
+ * badge on the model marker and its EV line on a positive profit, which makes
+ * this mapping the only thing standing between "unmodelled" and "worth 0c".
+ */
+describe('mapCompareRow — double corruption', () => {
+	it('carries the double-corrupt EV, profit and model marker off the wire', () => {
+		const gem = mapCompareRow({
+			transfiguredName: 'Arc of Oscillating',
+			variant: '20/20',
+			doubleCorruptEv: 412.5,
+			doubleCorruptProfit: 137.5,
+			doubleCorruptModel: 'estimated',
+		});
+
+		expect(gem.doubleCorruptEv).toBe(412.5);
+		expect(gem.doubleCorruptProfit).toBe(137.5);
+		// The server's honesty marker: the odds are community-sourced, and the UI
+		// renders the number as an estimate because this string says to.
+		expect(gem.doubleCorruptModel).toBe('estimated');
+	});
+
+	it('leaves the model marker empty for a gem the calculator never priced', () => {
+		// No doubleCorrupt* keys at all — the omitempty shape of an unmodelled gem.
+		const gem = mapCompareRow({ transfiguredName: 'Arc of Oscillating', variant: '1/0' });
+
+		expect(gem.doubleCorruptModel).toBe('');
+	});
+
+	it('keeps a sub-chaos profit off zero so the card cannot contradict the badge', () => {
+		// The server promotes a tiebreak winner on profit > 0 (applyDoubleCorruptTiebreak).
+		// Rounding 0.4c to 0 here would hide the EV line under a BEST GAMBLE badge.
+		const gem = mapCompareRow({ doubleCorruptProfit: 0.4, doubleCorruptModel: 'estimated' });
+
+		expect(gem.doubleCorruptProfit).toBeGreaterThan(0);
+	});
+
+	it('reads an absent tiebreak flag as an ordinary recommendation', () => {
+		const gem = mapCompareRow({ recommendation: 'BEST' });
+
+		expect(gem.doubleCorruptTiebreak).toBe(false);
+	});
+
+	it('flags the pick the server decided on double-corrupt profit', () => {
+		const gem = mapCompareRow({ recommendation: 'BEST', doubleCorruptTiebreak: true });
+
+		expect(gem.doubleCorruptTiebreak).toBe(true);
 	});
 });
