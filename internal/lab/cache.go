@@ -64,8 +64,8 @@ import (
 // any narrowing. When ok is true the value is authoritative *including when it
 // is empty* and the caller must not fall back; when ok is false the value is
 // empty and the fallback is the only correct move. Transfigure, Font, Quality,
-// GemFeatures, GemSignals, Dedication, GemDictionary, GemNamesSearch and
-// CorruptedGemNamesSearch all take this shape.
+// GemFeatures, GemSignals, Dedication, DoubleCorrupt, GemDictionary,
+// GemNamesSearch and CorruptedGemNamesSearch all take this shape.
 //
 // Keyed read — the caller asks for one key of a map. Comma-ok is wrong here.
 // ok would report "this key is present", a different question, and a caller
@@ -159,6 +159,12 @@ type Cache struct {
 	dedicationTransfigured []DedicationResult
 	dedicationRankings     map[string][]CollectiveResult // variant -> price-ranked corrupted gems
 	dedicationGemPrices    map[string][]GemPrice         // variant -> that variant's corrupted gems
+	// Double-corruption (Doryani's Institute) EV results, plus the per-input-
+	// variant view derived from the same pass. doubleCorruptSet is the
+	// COLD/WARM discriminator for both fields — see SetDoubleCorrupt.
+	doubleCorruptSet       bool
+	doubleCorruptResults   []DoubleCorruptResult
+	doubleCorruptByVariant map[string][]DoubleCorruptResult // input variant -> profit-ranked results
 	// Corrupted autocomplete pools. Two queries fill these, either of which can
 	// fail on its own, so each pool carries its own flag — see
 	// SetCorruptedGemNamePool.
@@ -596,6 +602,95 @@ func (c *Cache) CorruptedGemPrices(variant string) []GemPrice {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.dedicationGemPrices[variant]
+}
+
+// DoubleCorruptCorpus is everything one double-corruption tick fills as a unit:
+// the profit-ranked results behind the ranking read, and the same results split
+// by input variant for the request paths that must stay inside one market.
+//
+// The two are one corpus, not two. ByVariant is a partition of Results computed
+// in the same pass from the same snapshot, so there is no outcome where one is
+// authoritative and the other is not — which is why they share one warmth flag.
+// See BuildDoubleCorruptCorpus.
+//
+// ByVariant carries a key for every DoubleCorruptVariants entry, so an input
+// variant a caller may legitimately ask for is always addressable, and an empty
+// value under it means "this snapshot priced no gems at that variant" rather
+// than "not computed".
+type DoubleCorruptCorpus struct {
+	Results   []DoubleCorruptResult
+	ByVariant map[string][]DoubleCorruptResult
+}
+
+// BuildDoubleCorruptCorpus partitions one analysis pass into the corpus the
+// cache stores. Every DoubleCorruptVariants entry gets a key even when no gem
+// priced at it, so a keyed read can never confuse "no gems" with "not computed".
+func BuildDoubleCorruptCorpus(results []DoubleCorruptResult) DoubleCorruptCorpus {
+	byVariant := make(map[string][]DoubleCorruptResult, len(DoubleCorruptVariants))
+	for _, v := range DoubleCorruptVariants {
+		byVariant[v] = nil
+	}
+	for _, dc := range results {
+		byVariant[dc.InputVariant] = append(byVariant[dc.InputVariant], dc)
+	}
+	return DoubleCorruptCorpus{Results: results, ByVariant: byVariant}
+}
+
+// SetDoubleCorrupt replaces the whole cached double-corruption corpus and marks
+// it warm.
+//
+// It stores the tick's answer as it stands, including a corpus with no results.
+// That is the writer half of the cache-state contract: skipping the store on an
+// empty result would leave the cache COLD, and every request would then take the
+// database fallback forever for an answer the tick already computed.
+func (c *Cache) SetDoubleCorrupt(corpus DoubleCorruptCorpus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.doubleCorruptSet = true
+	c.doubleCorruptResults = corpus.Results
+	c.doubleCorruptByVariant = corpus.ByVariant
+	c.lastUpdated = time.Now()
+}
+
+// DoubleCorrupt returns every cached double-corruption result, profit-ranked
+// across all analyzed input variants.
+//
+// ok reports whether a double-corruption tick has stored a corpus, and is the
+// caller's cold-cache signal. It is deliberately not derived from the returned
+// slice: an empty analysis is a real answer, and reading it as COLD sends every
+// request back to the database for the rest of the tick. When ok is true the
+// results are authoritative — including when empty — and a caller wanting one
+// market must narrow with DoubleCorruptByVariant rather than fall back; when ok
+// is false the slice is nil and the fallback is the only correct move.
+func (c *Cache) DoubleCorrupt() ([]DoubleCorruptResult, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.doubleCorruptResults, c.doubleCorruptSet
+}
+
+// HasDoubleCorrupt reports whether a double-corruption tick has stored a corpus.
+// It is the warmth predicate for the keyed read below — check it first, then
+// read.
+//
+// It covers all of DoubleCorruptCorpus because one tick fills all of it from one
+// snapshot.
+func (c *Cache) HasDoubleCorrupt() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.doubleCorruptSet
+}
+
+// DoubleCorruptByVariant returns the profit-ranked results for one uncorrupted
+// input variant. Callers narrow to the gem names they asked about with
+// SelectDoubleCorruptByNames.
+//
+// Keyed read: check HasDoubleCorrupt first. A nil result from a warm cache means
+// this snapshot priced no gems at that input variant, which the database would
+// answer identically.
+func (c *Cache) DoubleCorruptByVariant(inputVariant string) []DoubleCorruptResult {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.doubleCorruptByVariant[inputVariant]
 }
 
 // SetCorruptedGemNamePool stores one corrupted-gem autocomplete pool and marks

@@ -19,6 +19,11 @@ retention policy.
 
 ## Context
 
+**Amended 2026-08-24 (POE-125):** the no-retention rule binds new league-scoped
+hypertables at creation, not just the eleven that carried a policy.
+`double_corrupt_snapshots` was created with a compression policy and no retention
+policy.
+
 POE-119 scopes its twelve data tables by league and introduces `league.Historical`
 so research can select an archived league. The same tables carried TimescaleDB
 retention policies from POE-15 onward: 90 days on the observation tables and
