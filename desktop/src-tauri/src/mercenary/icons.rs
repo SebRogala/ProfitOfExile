@@ -17,6 +17,7 @@
 //! best one's family, so a family learned at one tier immediately recognises
 //! its other tiers — the tier comes from the badge, not from the template.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use image::{DynamicImage, GenericImageView, GrayImage, RgbaImage};
@@ -260,27 +261,58 @@ impl TemplateStore {
             .map(|t| format!("{}--{}", t.family, t.tier))
             .collect();
         out.sort();
+        out.dedup();
         out
     }
 
+    /// Samples kept per `(family, tier)`. The first Windows session
+    /// (2026-08-24) saved templates that later matched nothing, and with one
+    /// slot per key every further confirm was refused as "already known"; a
+    /// few extra samples let a confirm repair that, and the cap keeps a
+    /// jittery hover from filling the store.
+    pub const MAX_SAMPLES_PER_KEY: usize = 3;
+
     /// Record a confirmed sample.
     ///
-    /// Returns `false` and changes nothing when `(family, tier)` is already
-    /// known: a confirmed sample is never overwritten, because the second
-    /// write could be the mistimed hover (the cursor moved between the crop
-    /// and the tooltip). The un-poison path is [`Self::forget`], which the
-    /// page exposes per template.
-    pub fn learn(&mut self, family: &str, tier: u8, sig: CellSig, raw: Option<RgbaImage>) -> bool {
-        if self.get(family, tier).is_some() {
+    /// Returns `false` and changes nothing when a sample already stored under
+    /// `(family, tier)` MATCHES this one (at `t.icon_match`), or when the key
+    /// already holds [`Self::MAX_SAMPLES_PER_KEY`] samples. A sample that no
+    /// stored one reaches is ADDED, never overwriting: the existing sample may
+    /// be good art from another session, and this may be the mistimed hover —
+    /// or the reverse. Matching searches every sample, so either way the cell
+    /// is recognised next time. The un-poison path is [`Self::forget`], which
+    /// drops the whole key.
+    pub fn learn(
+        &mut self,
+        family: &str,
+        tier: u8,
+        sig: CellSig,
+        raw: Option<RgbaImage>,
+        t: &Thresholds,
+    ) -> bool {
+        let same_key: Vec<&Template> = self
+            .templates
+            .iter()
+            .filter(|s| s.family == family && s.tier == tier)
+            .collect();
+        if same_key.len() >= Self::MAX_SAMPLES_PER_KEY
+            || same_key.iter().any(|s| s.sig.ncc(&sig) >= t.icon_match)
+        {
             return false;
         }
+        self.push_sample(family, tier, sig, raw);
+        true
+    }
+
+    /// Store a sample unconditionally — the load path, where every index
+    /// entry is a sample that was accepted when it was learned.
+    fn push_sample(&mut self, family: &str, tier: u8, sig: CellSig, raw: Option<RgbaImage>) {
         self.templates.push(Template {
             family: family.to_string(),
             tier,
             sig,
             raw,
         });
-        true
     }
 
     pub fn get(&self, family: &str, tier: u8) -> Option<&Template> {
@@ -355,14 +387,20 @@ impl TemplateStore {
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut index = Vec::with_capacity(self.templates.len());
+        let mut seen: HashMap<(String, u8), usize> = HashMap::new();
         for t in &self.templates {
-            let file = format!("{}--t{}.png", slug(&t.family), t.tier);
+            // Samples of one key are numbered from the second on, so the first
+            // keeps the file name earlier stores wrote.
+            let n = seen.entry((t.family.clone(), t.tier)).or_insert(0);
+            *n += 1;
+            let suffix = if *n == 1 { String::new() } else { format!("-{n}") };
+            let file = format!("{}--t{}{suffix}.png", slug(&t.family), t.tier);
             t.sig
                 .to_image()
                 .save(dir.join(&file))
                 .map_err(|e| format!("{file}: {e}"))?;
             if let Some(raw) = &t.raw {
-                let raw_file = format!("{}--t{}-raw.png", slug(&t.family), t.tier);
+                let raw_file = format!("{}--t{}{suffix}-raw.png", slug(&t.family), t.tier);
                 raw.save(dir.join(&raw_file))
                     .map_err(|e| format!("{raw_file}: {e}"))?;
             }
@@ -399,7 +437,7 @@ impl TemplateStore {
                     let gray = img.to_luma8();
                     match CellSig::from_gray(gray.into_raw()) {
                         Some(sig) => {
-                            store.learn(&entry.family, entry.tier, sig, None);
+                            store.push_sample(&entry.family, entry.tier, sig, None);
                         }
                         None => problems.push(format!(
                             "{}: not a {SIG_DIM}×{SIG_DIM} template",
@@ -1040,7 +1078,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
         let m = store.match_family(&sig_of(&img, 1, 0), &t);
 
@@ -1056,7 +1094,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
         let m = store.match_family(&sig_of(&img, 2, 2), &t);
 
@@ -1085,8 +1123,8 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None);
-        store.learn("Chain", 3, sig_of(&img, 1, 0), None);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 3, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
         let m = store.match_family(&sig_of(&img, 1, 0), &t);
 
@@ -1101,27 +1139,44 @@ mod tests {
         let img = fixture();
         let mut store = TemplateStore::new();
 
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None);
-        store.learn("Chain", 3, sig_of(&img, 2, 2), None);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
 
         assert_eq!(store.len(), 2);
         assert_eq!(store.learned_keys(), ["Chain--1", "Chain--3"]);
     }
 
-    /// A confirmed sample is never overwritten — a mistimed second hover must
-    /// not replace good art with the cell the cursor moved onto.
+    /// A confirmed sample is never overwritten. A second confirm of the same
+    /// art is refused; art the stored sample does not reach is ADDED as a
+    /// further sample, and the first stays — so a mistimed hover cannot
+    /// replace good art, and good art can repair a mistimed first sample.
     #[test]
-    fn relearning_a_known_key_is_refused_and_keeps_the_first_sample() {
+    fn relearning_a_known_key_keeps_the_first_sample() {
         let img = fixture();
+        let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
-        store.learn("Chain", 2, sig_of(&img, 1, 0), None);
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
         let first = store.get("Chain", 2).unwrap().sig.clone();
 
-        let accepted = store.learn("Chain", 2, sig_of(&img, 2, 2), None);
-
-        assert!(!accepted, "a second learn on a known key must be refused");
+        let same = store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        assert!(!same, "the same art again is refused");
         assert_eq!(store.len(), 1);
-        assert_eq!(store.get("Chain", 2).unwrap().sig, first);
+
+        let accepted = store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
+        assert!(accepted, "unreached art is added as a second sample");
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.learned_keys(), ["Chain--2"], "one key, two samples");
+        assert_eq!(
+            store.match_family(&sig_of(&img, 2, 2), &t).family.as_deref(),
+            Some("Chain"),
+            "the second sample is matched"
+        );
+
+        for _ in 0..3 {
+            store.learn("Chain", 2, sig_of(&img, 0, 0), None, &t);
+        }
+        assert_eq!(store.len(), TemplateStore::MAX_SAMPLES_PER_KEY, "capped per key");
+        assert_eq!(store.get("Chain", 2).unwrap().sig, first, "the first sample stays");
     }
 
     /// Forget is the un-poison path — it must remove the named key and only
@@ -1130,8 +1185,8 @@ mod tests {
     fn forget_removes_only_the_named_key() {
         let img = fixture();
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None);
-        store.learn("Chain", 3, sig_of(&img, 2, 2), None);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Chain", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
 
         assert!(store.forget("Chain", 1));
 
@@ -1153,8 +1208,8 @@ mod tests {
     fn reset_empties_the_store() {
         let img = fixture();
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None);
-        store.learn("Pierce", 3, sig_of(&img, 2, 2), None);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Pierce", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
 
         store.reset();
 
@@ -1182,7 +1237,7 @@ mod tests {
         let t = MercGeometry::default().thresholds;
         let dir = temp_dir("roundtrip");
         let mut store = TemplateStore::new();
-        store.learn("Caustic Conversion", 3, sig_of(&img, 2, 2), None);
+        store.learn("Caustic Conversion", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
         store.save(&dir).expect("save");
 
         let (loaded, problems) = TemplateStore::load(&dir);
@@ -1213,8 +1268,8 @@ mod tests {
         let img = fixture();
         let dir = temp_dir("corrupt");
         let mut store = TemplateStore::new();
-        store.learn("Chain", 1, sig_of(&img, 1, 0), None);
-        store.learn("Pierce", 3, sig_of(&img, 2, 2), None);
+        store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.learn("Pierce", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
         store.save(&dir).expect("save");
         std::fs::write(dir.join("chain--t1.png"), b"not a png").expect("corrupt one file");
 
@@ -1303,8 +1358,8 @@ mod tests {
     fn learned_keys_are_family_double_dash_tier_sorted() {
         let img = fixture();
         let mut store = TemplateStore::new();
-        store.learn("Return", 3, sig_of(&img, 2, 2), None);
-        store.learn("Caustic Conversion", 1, sig_of(&img, 1, 0), None);
+        store.learn("Return", 3, sig_of(&img, 2, 2), None, &MercGeometry::default().thresholds);
+        store.learn("Caustic Conversion", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
         let keys = store.learned_keys();
 
