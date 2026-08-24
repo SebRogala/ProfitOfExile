@@ -493,6 +493,10 @@ struct Session {
     template_generation: u64,
     /// Where the template store lives, when there is an app data dir at all.
     icons_dir: Option<std::path::PathBuf>,
+    /// Whether the first clean miss of this focus session has been logged.
+    /// Reset when the game loses focus, so each return to the game says once
+    /// what the loop saw.
+    miss_logged: bool,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -561,6 +565,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         confirmed: HashMap::new(),
         template_generation: template_generation(&app),
         icons_dir,
+        miss_logged: false,
     };
 
     // Backdated so the first iteration detects immediately rather than after a
@@ -576,6 +581,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         if !game_focused(&app) {
             // No capture while alt-tabbed: the recruit window is not on screen,
             // and a full-screen OCR every second would be pure heat.
+            session.miss_logged = false;
             if !nap(&cancel, UNFOCUSED_NAP) {
                 break;
             }
@@ -747,6 +753,26 @@ fn detect_tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<
     };
 
     let Some(layout) = geometry::detect(&lines, &session.geometry, &session.vocab) else {
+        // Logged once per focus session: a loop that never detects would
+        // otherwise leave no trace of having looked at all.
+        if !session.miss_logged {
+            session.miss_logged = true;
+            let skills = lines
+                .iter()
+                .filter(|l| {
+                    session.vocab.match_skill(&l.text, &session.geometry.thresholds).state
+                        != ReadState::Unknown
+                })
+                .count();
+            crate::app_log(
+                app,
+                format!(
+                    "Merc: looked, no recruit window — {} OCR lines, {} skill candidates",
+                    lines.len(),
+                    skills
+                ),
+            );
+        }
         return miss(app, session, false);
     };
 

@@ -152,16 +152,28 @@
 	/** Take a debug dump on demand — the channel that turns the first Windows run
 	 *  into calibration data. The report is shown verbatim, and so is the error:
 	 *  a silent failure here is the one outcome that teaches nothing. */
+	const DEBUG_DELAY_MS = 5000;
+	let debugCountdown = $state(0);
 	async function runDebugCapture(): Promise<void> {
 		debugBusy = true;
 		debugReport = null;
 		debugFailed = false;
+		// The delay is for a single screen: alt-tab to the game and the grab
+		// happens once it is in front. The countdown is cosmetic; Rust sleeps.
+		debugCountdown = DEBUG_DELAY_MS / 1000;
+		const ticker = setInterval(() => {
+			debugCountdown = Math.max(0, debugCountdown - 1);
+		}, 1000);
 		try {
-			debugReport = describeDebugResult(await invoke('merc_debug_capture', { imagePath: null }));
+			debugReport = describeDebugResult(
+				await invoke('merc_debug_capture', { imagePath: null, delayMs: DEBUG_DELAY_MS })
+			);
 		} catch (e) {
 			debugFailed = true;
 			debugReport = `${e}`;
 		} finally {
+			clearInterval(ticker);
+			debugCountdown = 0;
 			debugBusy = false;
 		}
 	}
@@ -279,9 +291,9 @@
 			<Button
 				onclick={runDebugCapture}
 				disabled={debugBusy}
-				title="Capture the screen now and write a debug dump (screenshot, row crops, cell crops, report.json)."
+				title="Wait 5 s (alt-tab to the game), then capture the screen and write a debug dump (screenshot, row crops, cell crops, report.json)."
 			>
-				{debugBusy ? 'Capturing…' : 'Debug capture'}
+				{debugBusy ? (debugCountdown > 0 ? `Capturing in ${debugCountdown}…` : 'Capturing…') : 'Debug capture (5 s)'}
 			</Button>
 		</div>
 
