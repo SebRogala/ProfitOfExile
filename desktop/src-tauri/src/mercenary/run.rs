@@ -17,6 +17,15 @@
 //! `crate::capture_mouse_position` — so the loop body itself carries no `cfg`
 //! and compiles identically on both hosts.
 //!
+//! # Nothing runs until something asks
+//!
+//! The loop does NO screen work of its own (POE-198). A Client.txt voice line
+//! or the page's Scan now button arms a burst in [`super::trigger`]; only then
+//! does the detect cadence run, and only while the game is the foreground
+//! window. The first detected window disarms the burst and the live behaviour
+//! below takes over unchanged; a burst that finds nothing expires and the loop
+//! goes back to waiting.
+//!
 //! # Read-only, always
 //!
 //! Hover-confirm READS the cursor position; it never moves it and never sends
@@ -36,6 +45,7 @@ use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, TemplateStore};
 use super::read::{build_capture, pass2_texts};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
+use super::trigger;
 use super::{
     MercCapture, MercGeometry, MercSkillRead, MercStatus, MercSupportRead, MercenarySlice,
     ReadState,
@@ -44,7 +54,11 @@ use super::{
 /// Loop quantum. Every wait is built out of these so a stop signal is honoured
 /// within one of them, whatever the cadence above it says.
 const TICK: Duration = Duration::from_millis(100);
-/// Detect cadence while no window is captured (D6).
+/// Detect cadence while a burst is armed and no window is captured (D6).
+///
+/// Since POE-198 this cadence only runs INSIDE a burst — the loop no longer
+/// hunts for a window on its own. A burst that finds nothing therefore costs
+/// [`trigger::BURST_TTL_MS`] / this, and only while the game is in front.
 const DETECT_INTERVAL: Duration = Duration::from_millis(1000);
 /// Detect cadence after the backoff has fired.
 const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
@@ -57,6 +71,10 @@ const HOVER_INTERVAL: Duration = Duration::from_millis(400);
 const SLOW_TICK: Duration = Duration::from_millis(1500);
 /// How long to idle between focus checks while the game is not focused.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
+/// How long to idle between gate checks while nothing has asked for a scan
+/// (POE-198). Short because it is the latency a burst pays before its first
+/// detect, and cheap because the check is one mutex read — no screen, no OCR.
+const IDLE_NAP: Duration = Duration::from_millis(250);
 /// Consecutive failed detections that retire a live capture (D6).
 const RETIRE_AFTER: u8 = 2;
 /// Distinct error messages logged before the loop starts suppressing them.
@@ -156,6 +174,49 @@ impl LoopState {
             false
         }
     }
+}
+
+/// What the loop does with one iteration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopStep {
+    /// The game is not the foreground window — nothing on screen to read.
+    Unfocused,
+    /// The game is in front, but nothing has asked for a scan.
+    Idle,
+    /// Detect (and hover-confirm) this iteration.
+    Work,
+}
+
+/// Whether this iteration does any screen work, and why not when it does not.
+///
+/// The two negative answers are deliberately different states rather than one
+/// "skip": they nap for different lengths (a focus check can wait a second, an
+/// armed burst cannot), and they are the whole of POE-198's promise — no OCR
+/// runs unless a burst is armed or a capture is already live. A predicate
+/// rather than an `if` chain in the loop body so that promise is testable
+/// without a screen.
+pub fn next_step(live: bool, scanning: bool, focused: bool) -> LoopStep {
+    if !focused {
+        LoopStep::Unfocused
+    } else if live || scanning {
+        LoopStep::Work
+    } else {
+        LoopStep::Idle
+    }
+}
+
+/// Whether a detect tick's outcome means the armed burst found what it was
+/// armed for.
+///
+/// NOT `LoopState::live`, which is still true after the first of the two misses
+/// that retire a capture: a burst armed for a SECOND mercenary while the first
+/// one's window was still on screen would disarm itself on a tick that found
+/// nothing. `None` is a tick that bailed on the stop signal without detecting.
+pub fn burst_satisfied(outcome: Option<DetectOutcome>) -> bool {
+    matches!(
+        outcome,
+        Some(DetectOutcome::Captured) | Some(DetectOutcome::Refreshed)
+    )
 }
 
 /// A log sink that says each distinct thing once.
@@ -578,15 +639,56 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             break;
         }
 
-        if !game_focused(&app) {
+        // Burst bookkeeping runs BEFORE the focus gate: a burst armed while the
+        // player is reading this app must still expire on its own schedule, and
+        // the badge must say "scanning" while it waits for the game to come
+        // back — that wait is the alt-tab case the trigger exists to cover.
+        let now = now_ms();
+        if let Some(expired) = trigger::take_expired(&app, now) {
+            crate::app_log(&app, expired.expiry_line());
+        }
+        let scanning = trigger::scanning(&app, now);
+        if !session.state.live {
+            // Read before writing: `publish` clones the whole slice to tell
+            // whether anything changed, and this runs several times a second in
+            // the state where the module is supposed to be doing nothing.
+            let want = if scanning {
+                MercStatus::Scanning
+            } else {
+                MercStatus::Idle
+            };
+            if status(&app) != want {
+                publish(&app, |slice| slice.status = want);
+            }
+        }
+
+        match next_step(session.state.live, scanning, game_focused(&app)) {
             // No capture while alt-tabbed: the recruit window is not on screen,
             // and a full-screen OCR every second would be pure heat.
-            session.miss_logged = false;
-            if !nap(&cancel, UNFOCUSED_NAP) {
-                break;
+            LoopStep::Unfocused => {
+                session.miss_logged = false;
+                if !nap(&cancel, UNFOCUSED_NAP) {
+                    break;
+                }
+                continue;
             }
-            continue;
+            // Nothing on screen and nobody asking: no grab, no OCR. This is the
+            // module's resting state, and it is the whole point of POE-198.
+            LoopStep::Idle => {
+                session.miss_logged = false;
+                if !nap(&cancel, IDLE_NAP) {
+                    break;
+                }
+                continue;
+            }
+            LoopStep::Work => {}
         }
+
+        // The game is in front. A Scan-now burst has been waiting for exactly
+        // this to start counting — the click that armed it put OUR window in
+        // front, so its window would otherwise have burned down while the loop
+        // napped on the focus gate above.
+        trigger::begin(&app, now);
 
         // Timed from before the detect to after the hover: they are one tick's
         // work, two screen grabs and two OCR calls, and the backoff is about
@@ -594,8 +696,15 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         let mut tick_started = None;
         if last_detect.elapsed() >= session.state.detect_interval() {
             tick_started = Some(Instant::now());
-            detect_tick(&app, &mut session, &cancel);
+            let outcome = detect_tick(&app, &mut session, &cancel);
             last_detect = Instant::now();
+            trigger::note_looked(&app);
+            if burst_satisfied(outcome) {
+                // The burst did its job. Disarming here rather than letting it
+                // run out is what keeps the expiry log honest, and what sends
+                // the loop back to waiting once this window retires.
+                trigger::disarm(&app);
+            }
         }
 
         // A stop that arrived during the detect must not buy another screen
@@ -669,6 +778,18 @@ fn game_focused(app: &AppHandle) -> bool {
         .load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// The status as last published — one enum out from under the lock, so the
+/// waiting states can be reconciled without cloning the capture behind them.
+pub fn status(app: &AppHandle) -> MercStatus {
+    let state = app.state::<AppState>();
+    let status = state
+        .mercenary
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .status;
+    status
+}
+
 fn learned_keys(app: &AppHandle) -> Vec<String> {
     let state = app.state::<AppState>();
     let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
@@ -706,8 +827,9 @@ fn fail(app: &AppHandle, session: &mut Session, msg: String) {
 /// alive through repeated failures would leave the page showing a verdict for a
 /// window that closed two minutes ago. The error itself is already in
 /// `last_error` and in the log.
-fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
-    let retired = session.state.on_detect(false) == DetectOutcome::Retired;
+fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome {
+    let outcome = session.state.on_detect(false);
+    let retired = outcome == DetectOutcome::Retired;
     if retired {
         session.current = None;
         session.sigs.clear();
@@ -717,7 +839,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
     if !retired && errored {
         // Nothing to say: the error is already in `last_error`, and the capture
         // stands until it has been missed twice.
-        return;
+        return outcome;
     }
     publish(app, |slice| {
         if retired {
@@ -733,10 +855,19 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) {
             slice.last_error = None;
         }
     });
+    outcome
 }
 
 /// One detect tick: grab the screen, OCR it, and publish what it holds.
-fn detect_tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<bool>) {
+///
+/// `None` when the tick bailed on the stop signal after pass 1 — the loop's
+/// capture state was not touched, so it is neither a hit nor a miss and must
+/// not be read as either (see [`burst_satisfied`]).
+fn detect_tick(
+    app: &AppHandle,
+    session: &mut Session,
+    cancel: &watch::Receiver<bool>,
+) -> Option<DetectOutcome> {
     // Read the cursor BEFORE the grab, so the crop-merge rule below judges the
     // frame by where the cursor was while it was being taken.
     let cursor = crate::capture_mouse_position().ok();
@@ -744,14 +875,14 @@ fn detect_tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<
         Ok(img) => img,
         Err(e) => {
             fail(app, session, format!("Merc: screen capture failed — {e}"));
-            return miss(app, session, true);
+            return Some(miss(app, session, true));
         }
     };
     let lines = match crate::ocr::recognize_lines(&img) {
         Ok(lines) => lines,
         Err(e) => {
             fail(app, session, format!("Merc: OCR failed — {e}"));
-            return miss(app, session, true);
+            return Some(miss(app, session, true));
         }
     };
 
@@ -776,13 +907,13 @@ fn detect_tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<
                 ),
             );
         }
-        return miss(app, session, false);
+        return Some(miss(app, session, false));
     };
 
     // Pass 2 is up to `max_rows` more OCR calls. A stop signal that arrived
     // during pass 1 stops here, leaving the state exactly as it was.
     if *cancel.borrow() {
-        return;
+        return None;
     }
     let texts = pass2_texts(&img, &layout, &session.geometry);
     let mut result = {
@@ -828,6 +959,7 @@ fn detect_tick(app: &AppHandle, session: &mut Session, cancel: &watch::Receiver<
         slice.capture = Some(result.capture);
         slice.last_error = None;
     });
+    Some(outcome)
 }
 
 /// One hover tick: if the cursor sits in an unconfirmed captured cell, read the
@@ -1535,22 +1667,99 @@ mod tests {
 
     /// The registry's rule for thread modules: no single blocking call may
     /// outlast the poll ceiling, because a detached thread cannot be aborted.
-    /// Every wait in this loop is built out of `TICK`, so this is the whole
-    /// compliance argument in one assertion.
+    /// `nap` slices every wait into `TICK`s and clamps the last one, so TICK
+    /// under the ceiling is the compliance argument. The per-constant check is
+    /// the backstop for a wait that is ever slept RAW rather than through
+    /// `nap` — that one blocks for its whole length.
     #[test]
-    fn every_wait_is_built_out_of_slices_under_the_module_poll_ceiling() {
-        assert!(
-            TICK < crate::modules::MODULE_THREAD_POLL_CEILING,
-            "TICK {TICK:?} must stay well under the {:?} ceiling",
-            crate::modules::MODULE_THREAD_POLL_CEILING,
-        );
-        for cadence in [DETECT_INTERVAL, DETECT_INTERVAL_SLOW, REDETECT_INTERVAL, UNFOCUSED_NAP] {
-            assert_eq!(
-                cadence.as_millis() % TICK.as_millis(),
-                0,
-                "{cadence:?} must divide into whole TICK slices, or the last slice overshoots",
-            );
+    fn every_wait_stays_under_the_module_poll_ceiling() {
+        let ceiling = crate::modules::MODULE_THREAD_POLL_CEILING;
+        assert!(TICK < ceiling, "TICK {TICK:?} must stay well under {ceiling:?}");
+        for wait in [
+            TICK,
+            IDLE_NAP,
+            UNFOCUSED_NAP,
+            HOVER_INTERVAL,
+            DETECT_INTERVAL,
+            DETECT_INTERVAL_SLOW,
+            REDETECT_INTERVAL,
+        ] {
+            assert!(wait < ceiling, "{wait:?} must stay under the {ceiling:?} ceiling");
         }
+    }
+
+    /// POE-198's promise in one assertion: with no capture live and no burst
+    /// armed, the loop does no screen work at all.
+    #[test]
+    fn a_focused_loop_with_nothing_asked_of_it_does_no_work() {
+        assert_eq!(next_step(false, false, true), LoopStep::Idle);
+    }
+
+    #[test]
+    fn an_armed_burst_makes_a_focused_loop_work() {
+        assert_eq!(next_step(false, true, true), LoopStep::Work);
+    }
+
+    /// The burst waits for the game rather than being spent on our own window —
+    /// the alt-tab case the trigger exists to cover.
+    #[test]
+    fn an_armed_burst_does_not_work_while_the_game_is_not_in_front() {
+        assert_eq!(next_step(false, true, false), LoopStep::Unfocused);
+    }
+
+    /// A live capture keeps its own cadence with no burst behind it: retirement
+    /// takes two misses, and dropping to Idle after one would strand it.
+    #[test]
+    fn a_live_capture_keeps_working_without_a_burst() {
+        assert_eq!(next_step(true, false, true), LoopStep::Work);
+    }
+
+    #[test]
+    fn an_unfocused_game_stops_a_live_capture_too() {
+        assert_eq!(next_step(true, true, false), LoopStep::Unfocused);
+    }
+
+    /// A burst armed for a SECOND mercenary while the first one's window is
+    /// still live must survive a tick that found nothing: after one miss the
+    /// capture is STILL live, so liveness cannot stand in for a hit.
+    #[test]
+    fn a_missed_tick_under_a_live_capture_does_not_satisfy_the_burst() {
+        let mut state = LoopState { live: true, misses: 0, backed_off: false };
+
+        let outcome = state.on_detect(false);
+
+        assert_eq!(outcome, DetectOutcome::Missed);
+        assert!(state.live, "one miss must not retire the capture");
+        assert!(!burst_satisfied(Some(outcome)));
+    }
+
+    #[test]
+    fn a_detected_window_satisfies_the_burst() {
+        let mut state = LoopState::default();
+
+        assert!(burst_satisfied(Some(state.on_detect(true))));
+    }
+
+    #[test]
+    fn a_re_read_of_a_live_window_satisfies_the_burst() {
+        let mut state = LoopState { live: true, misses: 0, backed_off: false };
+
+        assert!(burst_satisfied(Some(state.on_detect(true))));
+    }
+
+    #[test]
+    fn a_retiring_tick_does_not_satisfy_the_burst() {
+        let mut state = LoopState { live: true, misses: RETIRE_AFTER - 1, backed_off: false };
+
+        assert_eq!(state.on_detect(false), DetectOutcome::Retired);
+        assert!(!burst_satisfied(Some(DetectOutcome::Retired)));
+    }
+
+    /// A tick that bailed on the stop signal detected nothing and missed
+    /// nothing; treating it as a hit would disarm a burst that never looked.
+    #[test]
+    fn a_cancelled_tick_does_not_satisfy_the_burst() {
+        assert!(!burst_satisfied(None));
     }
 
     /// A row whose skill did not resolve still needs a stable identity, or its
