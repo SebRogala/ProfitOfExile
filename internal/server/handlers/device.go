@@ -69,3 +69,46 @@ func DeviceIdentify(repo device.AliasSetter) http.HandlerFunc {
 		})
 	}
 }
+
+// deviceMeResponse is the JSON body of GET /api/device/me. Features is always
+// encoded, and always as an array — see device.Entitlements.
+type deviceMeResponse struct {
+	Role     string   `json:"role"`
+	Channel  string   `json:"channel"`
+	Features []string `json:"features"`
+}
+
+// DeviceMe handles GET /api/device/me. It reports the calling device's role
+// together with the update channel and hidden features that role entitles it
+// to, so the desktop app can gate its beta module and updater on one answer.
+//
+// It needs no repository: the device record is whatever DeviceMiddleware
+// attached to the context. A request with no X-Device-ID header — and a server
+// started without a device repository, where the middleware is not installed at
+// all — therefore reads as no device, which maps to the same stable channel and
+// empty feature list an unrecognised role gets. That is deliberate: the handler
+// itself has no error path, so a missing or unknown device is answered rather
+// than rejected. DeviceMiddleware can still reject the request before the
+// handler runs — 400 for a malformed X-Device-ID, 403 for a banned device (see
+// internal/server/middleware/device.go).
+//
+// The answer is per-device, so it is sent Cache-Control: no-store to keep a
+// proxy from handing one device's entitlements to another.
+func DeviceMe() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		role := ""
+		if d := middleware.DeviceFromContext(r.Context()); d != nil {
+			role = d.Role
+		}
+
+		channel, features := device.Entitlements(role)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(deviceMeResponse{
+			Role:     role,
+			Channel:  channel,
+			Features: features,
+		})
+	}
+}

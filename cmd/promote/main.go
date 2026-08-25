@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,11 +26,10 @@ import (
 	"profitofexile/internal/device"
 )
 
-var validRoles = map[string]bool{
-	"user":   true,
-	"editor": true,
-	"admin":  true,
-}
+// validRoles is the role vocabulary this CLI accepts. The values come from
+// internal/device so the roles the CLI can assign and the roles Entitlements
+// recognises cannot drift apart.
+var validRoles = []string{device.RoleUser, device.RoleEditor, device.RoleAdmin}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -128,8 +128,8 @@ func runPromote(ctx context.Context, repo *device.Repository, args []string) err
 		alias = args[2]
 	}
 
-	if !validRoles[role] {
-		return fmt.Errorf("invalid role %q — must be one of: user, editor, admin", role)
+	if !slices.Contains(validRoles, role) {
+		return fmt.Errorf("invalid role %q — must be one of: %s", role, strings.Join(validRoles, ", "))
 	}
 
 	d, err := repo.GetByPrefix(ctx, prefix)

@@ -271,3 +271,40 @@ func TestNewRouter_CurrencyExchangeIconRouteIsDisabledWithoutACacheDir(t *testin
 		t.Errorf("Cache-Control = %q, want none — an unconfigured icon route must not be registered at all", got)
 	}
 }
+
+func TestNewRouter_DeviceMeRouteIsRegisteredWithoutADeviceRepo(t *testing.T) {
+	// A server started without device identity leaves DeviceRepo nil, so the
+	// device middleware is never installed. The route is registered anyway and
+	// answers with the unentitled defaults — the desktop app gates its beta
+	// module on this reply, so a 404 would be a distinct failure mode for the
+	// same "nothing hidden is available" outcome.
+	router := NewRouter(handlers.NopPinger{}, nil, RouterConfig{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/me", nil)
+	req.Header.Set("X-Device-ID", "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /api/device/me status = %d, want %d (body: %s)",
+			w.Code, http.StatusOK, w.Body.String())
+	}
+	var body struct {
+		Role     string   `json:"role"`
+		Channel  string   `json:"channel"`
+		Features []string `json:"features"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if body.Role != "" {
+		t.Errorf("role = %q, want empty", body.Role)
+	}
+	if body.Channel != "stable" {
+		t.Errorf("channel = %q, want %q", body.Channel, "stable")
+	}
+	if len(body.Features) != 0 {
+		t.Errorf("features = %#v, want empty", body.Features)
+	}
+}
