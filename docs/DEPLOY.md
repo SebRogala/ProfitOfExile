@@ -146,6 +146,35 @@ would mask a newer stable one. The client must therefore issue two separate
 `check()` calls, each against a single distinct endpoint, and compare the two
 returned versions by semver itself.
 
+### Who is on the beta channel, and what "hidden" means in a public repo
+
+A device is on the beta channel when its server-side role is `editor` or
+`admin`; the same role unlocks the hidden desktop modules (currently the
+mercenary triage module) via `GET /api/device/me`. Promotion is a server-side
+operation — no build, no config, no restart on the tester's side:
+
+```
+docker exec <server-container> /promote list
+docker exec <server-container> /promote <fingerprint-prefix> editor "<alias>"
+```
+
+The tester finds their short device id in the app (Ctrl+Shift+F11 → identify
+dialog) and sends it to you. A running app picks the new role up on its next
+entitlements refresh (startup, then every 30 minutes); it does not need a
+reinstall.
+
+This is **hiding, not securing**, and the repository is **public**:
+
+- The hidden module's code ships in every build and its source is on GitHub.
+  Anyone can find it; the gate only keeps it out of the UI and the stable
+  update stream. Do not put anything behind this gate that must stay secret.
+- `generate_release_notes: true` publishes the commit subjects of every tag,
+  prerelease included. A beta's release notes are public — treat them as such.
+- Never commit, tag, or write into a release note, an issue, or a doc a
+  tester's fingerprint, alias, or name. Promotion commands live in shell
+  history and the database only. (AGENTS.md carries the general rule; this is
+  its beta-channel instance.)
+
 ## Desktop <-> server ordering
 
 The two halves ship on separate pipelines — the server on merge to `main`

@@ -66,3 +66,17 @@ Example: `/release 0.1.2` (stable), `/release 0.1.3-beta.1` (beta channel).
   suffix routes the build to the beta channel instead of stable
 - All three version files MUST match — Tauri updater compares installed version against update manifest
 - Always ask before pushing — push to main auto-deploys the server
+- Beta testers are not a build concern: a device gets beta updates (and the
+  hidden modules) when its server-side role is `editor`/`admin`, set with
+  `/promote` on the server. No per-tester build, no fingerprint in the repo.
+  Procedure and the public-repo rules: docs/DEPLOY.md → *Who is on the beta
+  channel*.
+- The repository and every release page are public. Release notes are
+  generated from commit subjects, for prereleases too — never put a tester's
+  alias/fingerprint/name in a commit, tag, or release note, and don't describe
+  a beta feature in a commit as if the gate made it private (it doesn't).
+- First beta tag ever: three things are unproven until it runs — GitHub's
+  `/releases/latest` skipping the prerelease, the rolling `desktop-beta`
+  release accepting an overwritten `latest.json`, and NSIS building a
+  `-beta.N` version. Check the release page and a stable device's update
+  check afterwards; do not assume.
