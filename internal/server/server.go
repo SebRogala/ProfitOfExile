@@ -16,6 +16,7 @@ import (
 	"profitofexile/internal/gemicon"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercenary"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server/handlers"
 	devmw "profitofexile/internal/server/middleware"
@@ -82,6 +83,11 @@ type RouterConfig struct {
 	// GemIconCacheDir is the persistent directory where fetched gem icons are
 	// cached. Empty falls back to gemicon.DefaultCacheDir.
 	GemIconCacheDir string
+	// MercTemplateRepo is the shared mercenary icon-template pool (POE-200).
+	// May be nil — the /api/desktop/merc-templates routes are then not
+	// registered, which the desktop's pull already treats as "keep the local
+	// store" rather than as an error.
+	MercTemplateRepo *mercenary.Repository
 	// CurrencyExchangeIconCacheDir is the persistent directory where fetched
 	// currency-exchange item icons are cached. It must not share
 	// GemIconCacheDir: the two maps have separate key spaces and a shared
@@ -244,6 +250,23 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 		r.Get("/api/lab/layout/{difficulty}", handlers.GetLayout(cfg.LayoutRepo))
 		r.Post("/api/lab/layout/{difficulty}", handlers.UploadLayout(cfg.LayoutRepo, layoutPub))
 		r.Patch("/api/lab/layout/{difficulty}/room/{roomId}", handlers.PatchRoom(cfg.LayoutRepo, layoutPub))
+	}
+
+	if cfg.MercTemplateRepo != nil {
+		// One limiter for the whole process, shared by both writes: a device
+		// that has spent its budget spamming uploads must not get free
+		// tombstones with what is left.
+		mercLimiter := mercenary.NewRateLimiter(
+			mercenary.DefaultUploadBudget,
+			mercenary.DefaultUploadWindow,
+			mercenary.DefaultRateLimitDevices,
+		)
+		// One cache shared by all three routes: the writes are what invalidate
+		// the read, so they have to be looking at the same entry.
+		mercCorpus := handlers.NewMercCorpusCache(handlers.DefaultMercCorpusTTL)
+		r.Get("/api/desktop/merc-templates", handlers.MercTemplatesServe(cfg.MercTemplateRepo, mercCorpus))
+		r.Post("/api/desktop/merc-templates", handlers.MercTemplatesUpload(cfg.MercTemplateRepo, mercLimiter, mercCorpus))
+		r.Post("/api/desktop/merc-templates/tombstone", handlers.MercTemplatesTombstone(cfg.MercTemplateRepo, mercLimiter, mercCorpus))
 	}
 
 	if cfg.DevMode {
