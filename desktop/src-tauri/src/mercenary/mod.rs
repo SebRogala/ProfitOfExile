@@ -38,6 +38,7 @@ pub mod icons;
 pub mod read;
 pub mod run;
 pub mod sources;
+pub mod sync;
 pub mod trigger;
 pub mod vocab;
 
@@ -184,6 +185,13 @@ pub struct MercenarySlice {
     /// `merc_forget_template(family, tier)`, which is how a mistimed
     /// hover-confirm gets un-poisoned. Prettifying this breaks that button.
     pub learned_families: Vec<String>,
+    /// The subset of [`Self::learned_families`] this device knows only because
+    /// the shared pool taught it — no local hover confirmed any of them
+    /// (POE-201). Exactly [`icons::TemplateStore::pooled_keys`], same shape and
+    /// same parse, so the page can mark a chip without a second list to keep in
+    /// step.
+    #[serde(default)]
+    pub pooled_families: Vec<String>,
     pub last_error: Option<String>,
     /// `"default"` or `"file"` — which [`MercGeometry`] the module is running.
     pub geometry_source: String,
@@ -198,6 +206,16 @@ pub struct MercenarySlice {
     /// evaluate one capture against two different guide sets.
     #[serde(default)]
     pub sources_off: Vec<String>,
+    /// The shared template pool's state (POE-201) — when it was last pulled,
+    /// how that went, how many samples came from it, and how many local ones
+    /// are still waiting to be offered.
+    ///
+    /// A settings-style ECHO like [`Self::sources_off`], and for the same
+    /// reason: the pull and the uploader run on their own tasks, so composing
+    /// it at read time from `AppState.merc_sync` keeps the slice's only writer
+    /// the capture loop.
+    #[serde(default)]
+    pub sync: sync::MercSyncStatus,
 }
 
 impl Default for MercenarySlice {
@@ -209,9 +227,11 @@ impl Default for MercenarySlice {
             status: MercStatus::Off,
             capture: None,
             learned_families: Vec::new(),
+            pooled_families: Vec::new(),
             last_error: None,
             geometry_source: GEOMETRY_SOURCE_DEFAULT.to_string(),
             sources_off: Vec::new(),
+            sync: sync::MercSyncStatus::default(),
         }
     }
 }
@@ -549,9 +569,17 @@ mod tests {
                 }],
             }),
             learned_families: vec!["Pierce--3".into()],
+            pooled_families: vec!["Pierce--3".into()],
             last_error: None,
             geometry_source: GEOMETRY_SOURCE_FILE.into(),
             sources_off: vec!["guide-a".into()],
+            sync: sync::MercSyncStatus {
+                last_pull_ms: Some(1_700_000_000_000),
+                last_pull: sync::PullResult::Unchanged,
+                pooled_samples: 4,
+                queued_uploads: 2,
+                last_error: None,
+            },
         };
 
         let v = serde_json::to_value(&slice).expect("slice serializes");
@@ -562,6 +590,15 @@ mod tests {
         // The enabled-guide echo (POE-199): the overlay and the page both read
         // `sourcesOff` off this slice, so the key's spelling is a contract.
         assert_eq!(v["sourcesOff"], serde_json::json!(["guide-a"]));
+        // The shared pool's two contracts (POE-201): which chips the page marks
+        // as the pool's, and what it says about the last pull. `unchanged` is a
+        // wire string the page branches on, so a variant rename must fail here
+        // and not on screen.
+        assert_eq!(v["pooledFamilies"], serde_json::json!(["Pierce--3"]));
+        assert_eq!(v["sync"]["lastPull"], "unchanged");
+        assert_eq!(v["sync"]["lastPullMs"], 1_700_000_000_000u64);
+        assert_eq!(v["sync"]["pooledSamples"], 4);
+        assert_eq!(v["sync"]["queuedUploads"], 2);
         assert_eq!(v["lastError"], serde_json::Value::Null);
         let cap = &v["capture"];
         assert_eq!(cap["capturedAtMs"], 1_700_000_000_000u64);

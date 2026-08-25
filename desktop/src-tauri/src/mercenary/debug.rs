@@ -462,13 +462,20 @@ pub fn merc_scan_now(app: AppHandle) -> Result<(), String> {
 /// Forget one learned icon template — the un-poison path for a mistimed hover
 /// (D10 §1). `tier` is `Option` because the page parses it out of a store key;
 /// a key it could not parse must fail loudly rather than forget something else.
+///
+/// The forget also reaches the shared pool as a tombstone (POE-201). Without
+/// that, pull-on-start would put the disowned art straight back on the next
+/// module start — either from this device's own upload or from another device
+/// that pulled it before the user threw it out. The POST is fire-and-forget and
+/// the key is suppressed locally until it lands, so the button answers
+/// immediately and the forget holds either way.
 #[tauri::command]
 pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) -> Result<(), String> {
     let Some(tier) = tier else {
         return Err(format!("template key for {family:?} carries no tier"));
     };
     let dir = templates_dir(&app)?;
-    let learned = {
+    let (learned, pooled) = {
         let state = app.state::<AppState>();
         let mut store = state
             .merc_templates
@@ -478,11 +485,15 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
             return Err(format!("no learned template for {family} (tier {tier})"));
         }
         store.save(&dir)?;
-        store.learned_keys()
+        (store.learned_keys(), store.pooled_keys())
     };
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: forgot template {family} (tier {tier})"));
-    publish(&app, |slice| slice.learned_families = learned);
+    super::sync::spawn_tombstone(&app, family, tier);
+    publish(&app, |slice| {
+        slice.learned_families = learned;
+        slice.pooled_families = pooled;
+    });
     Ok(())
 }
 
@@ -492,6 +503,13 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
 /// rewritten empty, and the store loads from the index, so they are inert. They
 /// are left rather than deleted because a wrongly-reset store is otherwise
 /// unrecoverable, and the directory is a debug surface anyway.
+///
+/// **Local only** (POE-201): nothing is tombstoned and nothing is sent. A reset
+/// says "start my store over", not "this art is wrong for everyone" — the
+/// per-key ✕ is the button that carries that claim, and one wrongly-clicked
+/// reset must not retire the whole pool. The one server-facing effect is that
+/// the cached pull ETag is dropped, because otherwise the next pull would
+/// answer 304 and leave the emptied store empty forever.
 #[tauri::command]
 pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
     let dir = templates_dir(&app)?;
@@ -506,9 +524,13 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
         store.save(&dir)?;
         count
     };
+    super::sync::forget_etag(&app);
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: reset {count} learned templates"));
-    publish(&app, |slice| slice.learned_families = Vec::new());
+    publish(&app, |slice| {
+        slice.learned_families = Vec::new();
+        slice.pooled_families = Vec::new();
+    });
     Ok(())
 }
 
@@ -518,7 +540,7 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
 /// CONFIRMATION in memory and re-applies it to every later capture, so without
 /// this the forgotten cell keeps showing the identity the user just disowned
 /// until the recruit window closes.
-fn bump_generation(app: &AppHandle) {
+pub(super) fn bump_generation(app: &AppHandle) {
     let state = app.state::<AppState>();
     state
         .merc_template_generation

@@ -38,12 +38,14 @@
 		indexGroups,
 		indexPositions,
 		notInRulesNames,
-		parseLearnedTemplate,
+		POOLED_CHIP_MARK,
+		poolSyncView,
 		positionKey,
 		skillText,
 		skillTitle,
 		supportText,
 		supportTitle,
+		templateChip,
 	} from '$lib/mercenaries/capture-view';
 	import { enabledSources, withSourceEnabled } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
@@ -128,9 +130,14 @@
 
 	// --- Module commands ------------------------------------------------------
 
+	const pooledKeys = $derived(new Set(merc.pooledFamilies));
 	const templates = $derived(
-		merc.learnedFamilies.map((raw) => ({ raw, ...parseLearnedTemplate(raw) }))
+		merc.learnedFamilies.map((raw) => ({ raw, ...templateChip(raw, pooledKeys) }))
 	);
+	/** The shared pool's line (POE-201). `Date.now()` is read here rather than
+	 *  kept in state: the slice is re-polled every 3 s and the age is worded to
+	 *  the minute, so a ticking clock would buy nothing and churn the DOM. */
+	const pool = $derived(poolSyncView(merc.sync, Date.now()));
 
 	/** The manual half of the trigger (POE-198): the Client.txt voice line arms a
 	 *  burst on its own, and this arms one for the window that was already open.
@@ -314,6 +321,9 @@
 
 		<div class="templates">
 			<span class="templates-head">Learned icon templates ({templates.length})</span>
+			<span class="pool" class:pool-ok={pool.tone === 'pass'} title={pool.detail ?? undefined}>
+				{pool.label}
+			</span>
 			<!-- Where they live is a fact about the store, not about it being empty:
 			     the un-poison path needs it most when the list is NOT empty. -->
 			<span class="meta">stored under merc-icons/ in the app data directory</span>
@@ -322,13 +332,20 @@
 			{:else}
 				<ul class="template-list">
 					{#each templates as template (template.raw)}
-						<li class="template">
+						<li class="template" class:pooled={template.pooled} title={template.hint}>
+							{#if template.pooled}
+								<!-- The marker says "shared", the title says what that means. A
+								     glyph alone would be a private code; the title is the channel
+								     a screen reader gets. -->
+								<span class="pooled-mark" aria-hidden="true">{POOLED_CHIP_MARK}</span>
+								<span class="sr-only">from the shared pool:</span>
+							{/if}
 							<span>{template.label}</span>
 							<button
 								class="forget"
 								onclick={() => forgetTemplate(template.family, template.tier)}
 								aria-label="forget the learned template for {template.label}"
-								title="Forget this template — the next hover relearns it."
+								title={template.hint}
 							>
 								✕
 							</button>
@@ -870,6 +887,38 @@
 		gap: 0.35rem;
 		list-style: none;
 		padding-left: 0;
+	}
+
+	.pool {
+		font-size: 0.68rem;
+		color: var(--color-lab-text-muted);
+	}
+
+	.pool-ok {
+		color: var(--color-lab-text-secondary);
+	}
+
+	.pooled-mark {
+		font-size: 0.65rem;
+		color: var(--color-lab-text-muted);
+	}
+
+	.template.pooled {
+		border-style: dashed;
+	}
+
+	/* Visually hidden, still read aloud — the provenance must not be a
+	   glyph-only fact. */
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.template {

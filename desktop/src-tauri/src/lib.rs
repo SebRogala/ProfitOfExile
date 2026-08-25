@@ -188,6 +188,12 @@ pub struct AppState {
     /// so the page and the verdict overlay evaluate one capture against one
     /// set. Acquired alone, like every other merc-owned Mutex.
     pub merc_sources_off: Mutex<Vec<String>>,
+    /// The shared icon-template pool conversation (POE-201) — the upload queue,
+    /// the single-flight pull flags, and the status the page shows. Its own
+    /// owner rather than a corner of `merc_templates` because the uploader and
+    /// the pull run on tasks that must not hold the store's mutex across a
+    /// network round-trip. Acquired alone, like every other merc-owned Mutex.
+    pub merc_sync: Mutex<mercenary::sync::SyncState>,
     /// The merc OCR burst gate (POE-198) — the single owner of "should the
     /// capture loop be looking right now". Armed by the Client.txt log watcher
     /// (a mercenary's voice line) or by `merc_scan_now`, read and disarmed by
@@ -3236,6 +3242,7 @@ pub fn run() {
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
         merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
         merc_sources_off: Mutex::new(Vec::new()),
+        merc_sync: Mutex::new(mercenary::sync::SyncState::default()),
         merc_burst: Mutex::new(mercenary::trigger::BurstGate::default()),
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),

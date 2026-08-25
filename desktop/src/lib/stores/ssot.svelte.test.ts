@@ -576,9 +576,17 @@ describe('mercenary slice', () => {
 				],
 			},
 			learnedFamilies: ['Return--3'],
+			pooledFamilies: ['Return--3'],
 			lastError: 'ocr engine slow',
 			geometrySource: 'file',
 			sourcesOff: ['guide-a'],
+			sync: {
+				lastPullMs: 1_700_000_000_000,
+				lastPull: 'merged',
+				pooledSamples: 1,
+				queuedUploads: 0,
+				lastError: null,
+			},
 		};
 	}
 
@@ -602,6 +610,11 @@ describe('mercenary slice', () => {
 		expect(mod.ssot.mercenary.capture?.rows[0].skill.name).toBe('Ice Shot');
 		expect(mod.ssot.mercenary.geometrySource).toBe('file');
 		expect(mod.ssot.mercenary.learnedFamilies).toEqual(['Return--3']);
+		// The pool's two fields ride the same whole-slice apply as the rest —
+		// they are what the page's chips and its pool line read.
+		expect(mod.ssot.mercenary.pooledFamilies).toEqual(['Return--3']);
+		expect(mod.ssot.mercenary.sync.lastPull).toBe('merged');
+		expect(mod.ssot.mercenary.sync.pooledSamples).toBe(1);
 	});
 
 	it('keeps the last known slice when the snapshot carries no mercenary field', () => {
@@ -622,14 +635,27 @@ describe('mercenary slice', () => {
 				status: 'idle',
 				capture: null,
 				learnedFamilies: [],
+				pooledFamilies: [],
 				lastError: null,
 				geometrySource: 'default',
 				sourcesOff: [],
+				sync: {
+					lastPullMs: null,
+					lastPull: 'never',
+					pooledSamples: 0,
+					queuedUploads: 0,
+					lastError: null,
+				},
 			},
 		});
 		expect(mod.ssot.mercenary.status).toBe('idle');
 		expect(mod.ssot.mercenary.capture).toBeNull();
 		expect(mod.ssot.mercenary.lastError).toBeNull();
+		// The pool's two fields are part of the whole-slice replacement too: a
+		// field-wise merge would leave the previous device's pooled chips and a
+		// stale "merged" line standing under the new slice.
+		expect(mod.ssot.mercenary.pooledFamilies).toEqual([]);
+		expect(mod.ssot.mercenary.sync.lastPull).toBe('never');
 		expect(mod.ssot.mercenary.learnedFamilies).toEqual([]);
 		expect(mod.ssot.mercenary.sourcesOff).toEqual([]);
 	});

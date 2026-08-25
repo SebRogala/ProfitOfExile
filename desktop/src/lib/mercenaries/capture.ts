@@ -92,12 +92,44 @@ export interface MercCapture {
 /** Where the runtime geometry came from — the debug report names the same two. */
 export type MercGeometrySource = 'default' | 'file';
 
+/**
+ * How the last shared-pool pull ended (POE-201).
+ *
+ * `failed` is not an error state for the module — the pool is an optimisation,
+ * and a device that cannot reach it runs on its own templates exactly as it did
+ * before the pool existed.
+ */
+export type MercPullResult = 'never' | 'merged' | 'unchanged' | 'failed';
+
+/** What the page says about the shared icon-template pool (POE-201). */
+export interface MercSyncStatus {
+	/** Unix ms of the last finished pull, or null when none has finished. */
+	lastPullMs: number | null;
+	lastPull: MercPullResult;
+	/** Samples in the store that came from the pool rather than from a hover. */
+	pooledSamples: number;
+	/** Local samples still waiting to be offered to the pool. */
+	queuedUploads: number;
+	/**
+	 * Why the last pool call failed. Deliberately separate from the slice's own
+	 * `lastError`: a pool the app cannot reach is not a capture failure, and
+	 * showing it as one would send the user looking for an OCR problem.
+	 */
+	lastError: string | null;
+}
+
 export interface MercenarySlice {
 	status: MercStatus;
 	/** The last capture, live or retired. Null until the module has seen one. */
 	capture: MercCapture | null;
 	/** Icon families the template store has learned, from hover confirmations. */
 	learnedFamilies: string[];
+	/**
+	 * The subset of `learnedFamilies` this device knows only from the shared
+	 * pool — no local hover taught them (POE-201). Same `"<family>--<tier>"`
+	 * shape, so one parse serves both lists.
+	 */
+	pooledFamilies: string[];
 	lastError: string | null;
 	/** Whether `merc-geometry.json` overrode the built-in reference numbers. */
 	geometrySource: MercGeometrySource;
@@ -112,6 +144,13 @@ export interface MercenarySlice {
 	 * never locally.
 	 */
 	sourcesOff: string[];
+	/**
+	 * The shared template pool's state (POE-201) — Rust's echo, composed onto
+	 * the slice at read time from `AppState.merc_sync` for the same reason
+	 * `sourcesOff` is: the pull and the uploader are tasks, not the capture
+	 * loop, so the slice keeps a single writer.
+	 */
+	sync: MercSyncStatus;
 }
 
 /** What the store shows before Rust has answered a poll. */
@@ -120,8 +159,16 @@ export function mercenarySliceDefault(): MercenarySlice {
 		status: 'off',
 		capture: null,
 		learnedFamilies: [],
+		pooledFamilies: [],
 		lastError: null,
 		geometrySource: 'default',
-		sourcesOff: []
+		sourcesOff: [],
+		sync: {
+			lastPullMs: null,
+			lastPull: 'never',
+			pooledSamples: 0,
+			queuedUploads: 0,
+			lastError: null
+		}
 	};
 }

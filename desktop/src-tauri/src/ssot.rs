@@ -144,6 +144,7 @@ fn compose_snapshot(
     modules: std::collections::HashMap<String, bool>,
     mut mercenary: crate::mercenary::MercenarySlice,
     merc_sources_off: Vec<String>,
+    merc_sync: crate::mercenary::sync::MercSyncStatus,
     mut temple: crate::temple::slice::TempleSlice,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
@@ -154,6 +155,11 @@ fn compose_snapshot(
     // something the module read, and the page renders its guide toggles from
     // it while the module is switched off.
     mercenary.sources_off = merc_sources_off;
+    // The pool's status, composed for the same reason and after the same
+    // force-off: the pull and the uploader are tasks, not the capture loop, so
+    // the slice keeps one writer and this is where their state joins it. Kept
+    // when the module is off so the page can still say what the last pull did.
+    mercenary.sync = merc_sync;
     if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
         crate::temple::slice::force_off(&mut temple);
     }
@@ -201,6 +207,9 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
+    // Its own lone acquisition too — `sync::status` takes and drops the
+    // `merc_sync` guard inside one statement.
+    let merc_sync = crate::mercenary::sync::status(state);
     // Same discipline again: the temple guard ends with this statement, so it
     // is never held alongside the merc one or across the compose.
     let temple = state.temple.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -212,6 +221,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         modules,
         mercenary,
         merc_sources_off,
+        merc_sync,
         temple,
     )
 }
@@ -701,6 +711,7 @@ mod tests {
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -725,6 +736,7 @@ mod tests {
             modules,
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -755,6 +767,7 @@ mod tests {
             modules,
             slice,
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -784,6 +797,7 @@ mod tests {
             modules,
             slice,
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -810,6 +824,7 @@ mod tests {
             modules,
             crate::mercenary::MercenarySlice::default(),
             vec!["guide-a".to_string()],
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -833,6 +848,7 @@ mod tests {
             modules,
             crate::mercenary::MercenarySlice::default(),
             vec!["guide-b".to_string()],
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -858,6 +874,7 @@ mod tests {
             std::collections::HashMap::new(),
             slice,
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -888,6 +905,7 @@ mod tests {
             modules,
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             slice,
         );
 
@@ -925,6 +943,7 @@ mod tests {
             modules,
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             slice,
         );
 
@@ -950,6 +969,7 @@ mod tests {
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice {
                 status: crate::temple::slice::TempleStatus::Read,
                 ..Default::default()
@@ -1001,6 +1021,7 @@ mod tests {
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -1022,6 +1043,7 @@ mod tests {
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
             crate::temple::slice::TempleSlice::default(),
         );
 

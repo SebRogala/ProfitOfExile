@@ -131,6 +131,17 @@ impl CellSig {
         dot / self.active as f32
     }
 
+    /// The stored grayscale — masked positions zeroed, exactly the bytes a
+    /// reload reproduces the signature from.
+    ///
+    /// This is also the ONLY thing that goes on the wire to the shared pool
+    /// (POE-201): the upload payload is built from these bytes in memory, so
+    /// the colour crop `save` writes next to a template never leaves the
+    /// device and no code path has to walk the store directory to publish.
+    pub fn gray(&self) -> &[u8] {
+        &self.gray
+    }
+
     /// The stored grayscale as an image, for `save` and for eyeballing.
     pub fn to_image(&self) -> GrayImage {
         GrayImage::from_raw(SIG_DIM, SIG_DIM, self.gray.clone())
@@ -172,6 +183,23 @@ pub fn normalize_cell(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> O
     CellSig::from_gray(resized.into_raw())
 }
 
+/// Where a stored sample came from (POE-201).
+///
+/// Matching does not care — a pooled sample recognises a cell exactly as well
+/// as a hovered one. Two other things do: only `Local` samples are ever
+/// uploaded (a pooled sample re-offered to the pool it came from is pure
+/// traffic), and the page distinguishes the two so "I taught this" and "the
+/// pool gave me this" are not the same chip.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    /// Learned on this device from a hover confirmation.
+    #[default]
+    Local,
+    /// Merged in from the shared pool.
+    Pooled,
+}
+
 /// One learned sample.
 #[derive(Debug, Clone)]
 pub struct Template {
@@ -179,8 +207,17 @@ pub struct Template {
     pub tier: u8,
     pub sig: CellSig,
     /// The colour crop the sample was learned from, kept so the debug dump can
-    /// show what the store actually holds. Never used in matching.
+    /// show what the store actually holds. Never used in matching, and never
+    /// uploaded — see [`CellSig::gray`].
     pub raw: Option<RgbaImage>,
+    pub origin: Origin,
+    /// Whether this sample has been offered to the shared pool.
+    ///
+    /// Persisted, and only ever meaningful for a `Local` sample: it is what
+    /// makes the offer survive a restart. A batch the uploader could not place
+    /// is left `false` on disk, so the next module start offers it again
+    /// instead of the retry budget having to outlive the session.
+    pub uploaded: bool,
 }
 
 /// What a template lookup concluded.
@@ -216,6 +253,65 @@ struct IndexEntry {
     family: String,
     tier: u8,
     file: String,
+    /// Both POE-201 fields default, so an `index.json` written before the
+    /// shared pool existed still loads: every sample already on disk was
+    /// hover-learned (`Local`) and was never offered to a pool that did not
+    /// exist (`uploaded: false`), which is exactly what the defaults say and
+    /// exactly what the first module start after the upgrade should act on.
+    #[serde(default)]
+    origin: Origin,
+    #[serde(default)]
+    uploaded: bool,
+}
+
+/// One sample as the shared pool served it (POE-201).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PooledSample {
+    pub family: String,
+    pub tier: u8,
+    pub sig: CellSig,
+}
+
+/// What one pull brought back.
+///
+/// Decoded from the wire by [`super::sync`] and handed here as plain data, so
+/// the merge rules can be exercised without a server: this type carries no
+/// transport, no ETag and no device identity — the corpus deliberately names
+/// nobody.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PooledCorpus {
+    pub format_version: u16,
+    pub samples: Vec<PooledSample>,
+    /// Keys something was retired from. NOT "keys that are gone" — see
+    /// [`TemplateStore::merge_pulled`].
+    pub tombstones: Vec<(String, u8)>,
+}
+
+/// What one [`TemplateStore::merge_pulled`] did, for the log line and the
+/// "does this need saving" question.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MergeOutcome {
+    /// Served samples added to the store.
+    pub added: usize,
+    /// Local samples dropped because their key was tombstoned.
+    pub replaced: usize,
+    /// Served samples the store already had, or that would have gone past the
+    /// per-key cap.
+    pub skipped: usize,
+    /// Served entries held back by a local forget the server has not
+    /// acknowledged.
+    pub suppressed: usize,
+    /// The corpus declared a format version this build cannot read — nothing
+    /// was merged.
+    pub foreign_version: bool,
+}
+
+impl MergeOutcome {
+    /// Whether the store actually moved, and therefore whether a save and a
+    /// generation bump are owed.
+    pub fn changed(&self) -> bool {
+        self.added > 0 || self.replaced > 0
+    }
 }
 
 /// The learned icon templates, keyed by `(family, tier)`.
@@ -300,19 +396,187 @@ impl TemplateStore {
         {
             return false;
         }
-        self.push_sample(family, tier, sig, raw);
+        self.push_sample(family, tier, sig, raw, Origin::Local, false);
         true
     }
 
     /// Store a sample unconditionally — the load path, where every index
     /// entry is a sample that was accepted when it was learned.
-    fn push_sample(&mut self, family: &str, tier: u8, sig: CellSig, raw: Option<RgbaImage>) {
+    fn push_sample(
+        &mut self,
+        family: &str,
+        tier: u8,
+        sig: CellSig,
+        raw: Option<RgbaImage>,
+        origin: Origin,
+        uploaded: bool,
+    ) {
         self.templates.push(Template {
             family: family.to_string(),
             tier,
             sig,
             raw,
+            origin,
+            uploaded,
         });
+    }
+
+    /// `"<family>--<tier>"` for the keys holding NO locally-learned sample —
+    /// the ones this device knows only because the pool taught it.
+    ///
+    /// A subset of [`Self::learned_keys`], in the same shape and for the same
+    /// reason: the page renders one chip per learned key and marks the ones
+    /// listed here. A key the user hovered stays off this list even after the
+    /// pool adds samples to it, because the question the chip answers is "did
+    /// I teach this", not "does the pool also have it".
+    pub fn pooled_keys(&self) -> Vec<String> {
+        let local: std::collections::HashSet<(&str, u8)> = self
+            .templates
+            .iter()
+            .filter(|t| t.origin == Origin::Local)
+            .map(|t| (t.family.as_str(), t.tier))
+            .collect();
+        let mut out: Vec<String> = self
+            .templates
+            .iter()
+            .filter(|t| !local.contains(&(t.family.as_str(), t.tier)))
+            .map(|t| format!("{}--{}", t.family, t.tier))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// How many samples came from the pool. The page shows it next to the
+    /// learned count so "23 templates" can be read as "3 of mine, 20 shared".
+    pub fn pooled_samples(&self) -> usize {
+        self.templates
+            .iter()
+            .filter(|t| t.origin == Origin::Pooled)
+            .count()
+    }
+
+    /// Every local sample the pool has not been offered yet, as
+    /// `(family, tier, signature bytes)`.
+    ///
+    /// Built from the in-memory signatures, never from the directory: the
+    /// colour crops sitting next to them on disk are GGG's art and must not
+    /// leave the device (POE-201 L4).
+    pub fn pending_uploads(&self) -> Vec<(String, u8, Vec<u8>)> {
+        self.templates
+            .iter()
+            .filter(|t| t.origin == Origin::Local && !t.uploaded)
+            .map(|t| (t.family.clone(), t.tier, t.sig.gray().to_vec()))
+            .collect()
+    }
+
+    /// Record that the pool has seen this exact sample. `true` when something
+    /// was marked, so the caller knows whether a save is owed.
+    ///
+    /// Matched on the signature bytes rather than on the key: a key can hold
+    /// three samples offered in three different requests, and marking the key
+    /// would tell the next module start that samples the pool never saw are
+    /// already published.
+    pub fn mark_uploaded(&mut self, family: &str, tier: u8, gray: &[u8]) -> bool {
+        let mut marked = false;
+        for sample in &mut self.templates {
+            if sample.family == family
+                && sample.tier == tier
+                && sample.origin == Origin::Local
+                && !sample.uploaded
+                && sample.sig.gray() == gray
+            {
+                sample.uploaded = true;
+                marked = true;
+            }
+        }
+        marked
+    }
+
+    /// Fold a pulled corpus into the store (POE-201).
+    ///
+    /// Three rules, in this order:
+    ///
+    /// 1. **A foreign format version is never merged.** Signatures from two
+    ///    versions are not comparable, so merging them would not "mostly work"
+    ///    — it would put art into the matcher that correlates against nothing
+    ///    and drag every score with it.
+    /// 2. **A tombstoned key is REPLACED, not unioned.** The server listing a
+    ///    key means somebody retired art from it; the local copies go and the
+    ///    served ones take their place. This is what makes a forget durable:
+    ///    without it, the device that still holds the bad sample would union it
+    ///    straight back in on its next pull. A tombstoned key may still carry
+    ///    live samples — retiring bad art does not close the key.
+    /// 3. **Everything else is a union**, deduped by the same NCC the local
+    ///    `learn` uses and capped by the same [`Self::MAX_SAMPLES_PER_KEY`]:
+    ///    the cap applies to the MERGED set, so a pull cannot push a key past
+    ///    what the matcher was sized for.
+    ///
+    /// `suppressed` names keys this device forgot whose tombstone the server
+    /// has not acknowledged yet. They are skipped entirely — local samples
+    /// left alone, served ones not installed — because until the tombstone
+    /// lands the corpus still carries the art the user just disowned, and
+    /// installing it would undo the forget on every pull.
+    pub fn merge_pulled(
+        &mut self,
+        corpus: &PooledCorpus,
+        suppressed: &[(String, u8)],
+        t: &Thresholds,
+    ) -> MergeOutcome {
+        let mut out = MergeOutcome::default();
+        if corpus.format_version != super::sync::FORMAT_VERSION {
+            out.foreign_version = true;
+            return out;
+        }
+        let held = |family: &str, tier: u8| {
+            suppressed
+                .iter()
+                .any(|(f, ti)| f.as_str() == family && *ti == tier)
+        };
+
+        for (family, tier) in &corpus.tombstones {
+            if held(family, *tier) {
+                out.suppressed += 1;
+                continue;
+            }
+            let before = self.templates.len();
+            self.templates
+                .retain(|s| !(s.family == *family && s.tier == *tier));
+            out.replaced += before - self.templates.len();
+        }
+
+        for sample in &corpus.samples {
+            if held(&sample.family, sample.tier) {
+                out.suppressed += 1;
+                continue;
+            }
+            let same_key = self
+                .templates
+                .iter()
+                .filter(|s| s.family == sample.family && s.tier == sample.tier);
+            let mut count = 0usize;
+            let mut known = false;
+            for existing in same_key {
+                count += 1;
+                if existing.sig.ncc(&sample.sig) >= t.icon_match {
+                    known = true;
+                }
+            }
+            if known || count >= Self::MAX_SAMPLES_PER_KEY {
+                out.skipped += 1;
+                continue;
+            }
+            self.push_sample(
+                &sample.family,
+                sample.tier,
+                sample.sig.clone(),
+                None,
+                Origin::Pooled,
+                false,
+            );
+            out.added += 1;
+        }
+        out
     }
 
     pub fn get(&self, family: &str, tier: u8) -> Option<&Template> {
@@ -408,6 +672,8 @@ impl TemplateStore {
                 family: t.family.clone(),
                 tier: t.tier,
                 file,
+                origin: t.origin,
+                uploaded: t.uploaded,
             });
         }
         let json = serde_json::to_string_pretty(&index).map_err(|e| e.to_string())?;
@@ -437,7 +703,14 @@ impl TemplateStore {
                     let gray = img.to_luma8();
                     match CellSig::from_gray(gray.into_raw()) {
                         Some(sig) => {
-                            store.push_sample(&entry.family, entry.tier, sig, None);
+                            store.push_sample(
+                                &entry.family,
+                                entry.tier,
+                                sig,
+                                None,
+                                entry.origin,
+                                entry.uploaded,
+                            );
                         }
                         None => problems.push(format!(
                             "{}: not a {SIG_DIM}×{SIG_DIM} template",
@@ -1403,5 +1676,389 @@ mod tests {
         assert_eq!(slug("Caustic Conversion"), "caustic-conversion");
         assert_eq!(slug("Exposure on Hit"), "exposure-on-hit");
         assert_eq!(slug(""), "unnamed");
+    }
+
+    // -----------------------------------------------------------------------
+    // POE-201 — the shared pool merge
+    // -----------------------------------------------------------------------
+
+    fn pooled(family: &str, tier: u8, sig: CellSig) -> PooledSample {
+        PooledSample {
+            family: family.to_string(),
+            tier,
+            sig,
+        }
+    }
+
+    fn corpus(samples: Vec<PooledSample>, tombstones: Vec<(&str, u8)>) -> PooledCorpus {
+        PooledCorpus {
+            format_version: super::super::sync::FORMAT_VERSION,
+            samples,
+            tombstones: tombstones
+                .into_iter()
+                .map(|(f, t)| (f.to_string(), t))
+                .collect(),
+        }
+    }
+
+    /// The pool teaches a key this device never hovered — the whole point of
+    /// the feature, and the acceptance criterion "only new icons need a hover".
+    #[test]
+    fn merging_adds_art_the_store_has_never_seen() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+
+        let out = store.merge_pulled(
+            &corpus(vec![pooled("Chain", 2, sig_of(&img, 1, 0))], vec![]),
+            &[],
+            &t,
+        );
+
+        assert_eq!(out.added, 1);
+        assert_eq!(store.learned_keys(), ["Chain--2"]);
+        assert_eq!(
+            store.match_family(&sig_of(&img, 1, 0), &t).family.as_deref(),
+            Some("Chain"),
+            "a pooled sample matches exactly like a hovered one"
+        );
+    }
+
+    /// A pooled sample the store already holds is not stored twice. Deduped by
+    /// the SAME correlation `learn` uses, so a device does not accumulate three
+    /// copies of its own upload coming back.
+    #[test]
+    fn merging_skips_art_the_store_already_holds() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+
+        let out = store.merge_pulled(
+            &corpus(vec![pooled("Chain", 2, sig_of(&img, 1, 0))], vec![]),
+            &[],
+            &t,
+        );
+
+        assert_eq!(out.skipped, 1);
+        assert_eq!(out.added, 0);
+        assert_eq!(store.len(), 1);
+    }
+
+    /// The cap applies to the MERGED set, not to what the pull brought: a key
+    /// already at three samples takes none, whatever the corpus offers.
+    #[test]
+    fn merging_respects_the_per_key_cap() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 0, 0), None, &t);
+        assert_eq!(store.len(), TemplateStore::MAX_SAMPLES_PER_KEY);
+
+        let out = store.merge_pulled(
+            &corpus(vec![pooled("Chain", 2, sig_of(&img, 3, 0))], vec![]),
+            &[],
+            &t,
+        );
+
+        assert_eq!(out.added, 0);
+        assert_eq!(out.skipped, 1);
+        assert_eq!(store.len(), TemplateStore::MAX_SAMPLES_PER_KEY);
+    }
+
+    /// A tombstoned key is REPLACED: the local sample goes and the served one
+    /// takes its place. This is the edge case "device A tombstones key K,
+    /// device B learned K offline" — B loses the sample on its next pull.
+    #[test]
+    fn a_tombstoned_key_replaces_the_local_samples_with_the_served_ones() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+
+        let out = store.merge_pulled(
+            &corpus(
+                vec![pooled("Chain", 2, sig_of(&img, 2, 2))],
+                vec![("Chain", 2)],
+            ),
+            &[],
+            &t,
+        );
+
+        assert_eq!(out.replaced, 1, "the local sample was dropped");
+        assert_eq!(out.added, 1, "the served one took its place");
+        assert_eq!(store.len(), 1);
+        assert_eq!(
+            store.match_family(&sig_of(&img, 2, 2), &t).family.as_deref(),
+            Some("Chain"),
+            "the served art is what matches now"
+        );
+    }
+
+    /// A tombstone with nothing left to serve empties the key — the forget
+    /// reaching a second device.
+    #[test]
+    fn a_tombstoned_key_with_no_served_samples_is_emptied() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+
+        store.merge_pulled(&corpus(vec![], vec![("Chain", 2)]), &[], &t);
+
+        assert!(store.learned_keys().is_empty());
+    }
+
+    /// A tombstone names ONE key. The neighbouring tier is a different market
+    /// of art and must survive.
+    #[test]
+    fn a_tombstone_leaves_the_other_tiers_of_the_family_alone() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 3, sig_of(&img, 2, 2), None, &t);
+
+        store.merge_pulled(&corpus(vec![], vec![("Chain", 2)]), &[], &t);
+
+        assert_eq!(store.learned_keys(), ["Chain--3"]);
+    }
+
+    /// A key this device forgot whose tombstone has not been acknowledged is
+    /// skipped entirely — otherwise the corpus, which still serves the
+    /// disowned art, would undo the forget on every module start.
+    #[test]
+    fn a_key_awaiting_its_tombstone_takes_nothing_from_the_pool() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+
+        let out = store.merge_pulled(
+            &corpus(vec![pooled("Chain", 2, sig_of(&img, 1, 0))], vec![]),
+            &[("Chain".to_string(), 2)],
+            &t,
+        );
+
+        assert_eq!(out.suppressed, 1);
+        assert_eq!(out.added, 0);
+        assert!(store.is_empty());
+    }
+
+    /// A suppressed key must not have its LOCAL samples cleared either: the
+    /// user forgot one key, and a pull is not licence to touch what they kept.
+    #[test]
+    fn a_key_awaiting_its_tombstone_keeps_its_local_samples() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+
+        store.merge_pulled(
+            &corpus(vec![], vec![("Chain", 2)]),
+            &[("Chain".to_string(), 2)],
+            &t,
+        );
+
+        assert_eq!(store.learned_keys(), ["Chain--2"]);
+    }
+
+    /// Signatures from two format versions do not correlate, so a foreign
+    /// corpus must reach the matcher as nothing at all — not "mostly".
+    #[test]
+    fn a_corpus_from_another_format_version_is_never_merged() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        let foreign = PooledCorpus {
+            format_version: super::super::sync::FORMAT_VERSION + 1,
+            samples: vec![pooled("Pierce", 1, sig_of(&img, 2, 2))],
+            tombstones: vec![("Chain".to_string(), 2)],
+        };
+
+        let out = store.merge_pulled(&foreign, &[], &t);
+
+        assert!(out.foreign_version);
+        assert_eq!(out.added, 0);
+        assert_eq!(out.replaced, 0, "a foreign tombstone must not delete either");
+        assert_eq!(store.learned_keys(), ["Chain--2"]);
+    }
+
+    /// Provenance is what tells the page "you taught this" from "the pool did",
+    /// and what keeps a pooled sample from being offered back to the pool it
+    /// came from.
+    #[test]
+    fn a_merged_sample_is_marked_pooled_and_is_never_offered_back() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+
+        store.merge_pulled(
+            &corpus(vec![pooled("Chain", 2, sig_of(&img, 1, 0))], vec![]),
+            &[],
+            &t,
+        );
+
+        assert_eq!(store.pooled_keys(), ["Chain--2"]);
+        assert_eq!(store.pooled_samples(), 1);
+        assert!(
+            store.pending_uploads().is_empty(),
+            "a pooled sample is not this device's to publish"
+        );
+    }
+
+    /// A key the user hovered is theirs even after the pool adds a second
+    /// sample to it — the chip answers "did I teach this", not "does the pool
+    /// have it too".
+    #[test]
+    fn a_key_with_a_local_sample_is_not_listed_as_pooled() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+
+        store.merge_pulled(
+            &corpus(vec![pooled("Chain", 2, sig_of(&img, 2, 2))], vec![]),
+            &[],
+            &t,
+        );
+
+        assert_eq!(store.len(), 2, "the pool added a second sample");
+        assert!(store.pooled_keys().is_empty());
+        assert_eq!(store.pooled_samples(), 1);
+    }
+
+    /// A hover-learned sample is owed to the pool until it is placed.
+    #[test]
+    fn a_freshly_learned_sample_is_owed_to_the_pool() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+
+        let pending = store.pending_uploads();
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].0, "Chain");
+        assert_eq!(pending[0].1, 2);
+        assert_eq!(pending[0].2.len(), 576, "the wire payload is the signature");
+    }
+
+    /// Marking is per SAMPLE, not per key: three samples offered in three
+    /// requests must not be closed out by the first acknowledgement.
+    #[test]
+    fn marking_one_sample_uploaded_leaves_the_keys_other_samples_owed() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
+        let first = sig_of(&img, 1, 0).gray().to_vec();
+
+        assert!(store.mark_uploaded("Chain", 2, &first));
+
+        let owed = store.pending_uploads();
+        assert_eq!(owed.len(), 1, "the second sample is still owed");
+        assert_ne!(owed[0].2, first);
+    }
+
+    /// Acknowledging something the store does not hold changes nothing and
+    /// says so, so the uploader does not write the index for a no-op.
+    #[test]
+    fn marking_a_sample_the_store_does_not_hold_reports_false() {
+        let img = fixture();
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Chain",
+            2,
+            sig_of(&img, 1, 0),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+
+        assert!(!store.mark_uploaded("Chain", 2, &[0u8; 576]));
+    }
+
+    /// Provenance and the upload flag survive a restart. Without this an app
+    /// restart re-offers the whole store to the pool and marks every pooled
+    /// sample as the user's own work.
+    #[test]
+    fn provenance_and_the_upload_flag_survive_a_save_and_load() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let dir = temp_dir("provenance");
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
+        store.merge_pulled(
+            &corpus(vec![pooled("Pierce", 1, sig_of(&img, 2, 2))], vec![]),
+            &[],
+            &t,
+        );
+        store.mark_uploaded("Chain", 2, &sig_of(&img, 1, 0).gray().to_vec());
+        store.save(&dir).expect("save");
+
+        let (loaded, problems) = TemplateStore::load(&dir);
+
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(loaded.pooled_keys(), ["Pierce--1"]);
+        assert!(
+            loaded.pending_uploads().is_empty(),
+            "an acknowledged sample is not re-offered after a restart"
+        );
+    }
+
+    /// An unplaced sample stays owed across a restart — that is the durable
+    /// retry, and it is why the uploader may drop a batch it could not place.
+    #[test]
+    fn an_unplaced_sample_is_still_owed_after_a_restart() {
+        let img = fixture();
+        let dir = temp_dir("still-owed");
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Chain",
+            2,
+            sig_of(&img, 1, 0),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+        store.save(&dir).expect("save");
+
+        let (loaded, _) = TemplateStore::load(&dir);
+
+        assert_eq!(loaded.pending_uploads().len(), 1);
+    }
+
+    /// An `index.json` written before the shared pool existed must load as
+    /// "mine, and the pool has never seen it" — the state that makes the first
+    /// module start after the upgrade publish the store instead of disowning
+    /// it.
+    #[test]
+    fn an_index_without_the_pool_fields_loads_as_an_unpublished_local_sample() {
+        let img = fixture();
+        let dir = temp_dir("legacy-index");
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Chain",
+            2,
+            sig_of(&img, 1, 0),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+        store.save(&dir).expect("save");
+        // Exactly the shape POE-165 shipped: three fields, no provenance.
+        std::fs::write(
+            dir.join("index.json"),
+            r#"[{"family":"Chain","tier":2,"file":"chain--t2.png"}]"#,
+        )
+        .expect("rewrite the index in the old shape");
+
+        let (loaded, problems) = TemplateStore::load(&dir);
+
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(loaded.learned_keys(), ["Chain--2"]);
+        assert!(loaded.pooled_keys().is_empty(), "an old sample is the user's own");
+        assert_eq!(loaded.pending_uploads().len(), 1, "and is owed to the pool");
     }
 }

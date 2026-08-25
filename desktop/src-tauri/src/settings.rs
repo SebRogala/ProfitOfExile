@@ -480,6 +480,7 @@ mod tests {
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
             merc_sources_off: Mutex::new(Vec::new()),
+            merc_sync: Mutex::new(crate::mercenary::sync::SyncState::default()),
             merc_burst: Mutex::new(crate::mercenary::trigger::BurstGate::default()),
             merc_template_generation: AtomicU64::new(0),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
