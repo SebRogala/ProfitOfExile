@@ -108,8 +108,8 @@ pub struct AppSsotSnapshot {
     /// Merc OCR capture state (POE-165), projected from the owner
     /// `AppState.mercenary` (see src/mercenary/mod.rs). `status` is forced to
     /// `Off` here when the module is disabled — the composer owns that one
-    /// precedence step (off > unavailable > live > scanning > idle), the
-    /// capture loop owns the other four. `Default` is the `Off` slice, which the page
+    /// precedence step (off > unavailable > live > done > scanning > idle), the
+    /// capture loop owns the other five. `Default` is the `Off` slice, which the page
     /// renders as "module off".
     pub mercenary: crate::mercenary::MercenarySlice,
     /// Temple builder state (POE-171), projected from the owner
@@ -149,6 +149,12 @@ fn compose_snapshot(
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
         mercenary.status = crate::mercenary::MercStatus::Off;
+        // The speaker belongs to `scanning` and to nothing else: it is what the
+        // strip prints beside "scanning for the recruit window", so leaving it
+        // on a forced-`off` slice would hand the windows a name attached to a
+        // scan that is not running. The loop clears it on every other exit from
+        // `scanning`; the force-off is the one path the loop never gets to run.
+        mercenary.burst_speaker = None;
     }
     // The settings echo, written AFTER the force-off for the reason the temple
     // slice keeps its own echo through `force_off`: what the user set is not
@@ -776,15 +782,18 @@ mod tests {
         assert_eq!(out.mercenary.geometry_source, "file");
     }
 
-    /// `off` beats every other status (D6 precedence off > unavailable > live
-    /// > idle). A module switched off mid-capture must publish `off`, or the
-    /// page keeps rendering a live verdict for a loop that has stopped.
+    /// `off` beats every other status (precedence off > unavailable > live >
+    /// done > scanning > idle). A module switched off mid-capture must publish
+    /// `off`, or the page keeps rendering a live verdict for a loop that has
+    /// stopped — and the burst speaker goes with it, because a name beside a
+    /// scan that is not running is a claim about a loop that no longer exists.
     #[test]
     fn a_disabled_module_forces_the_mercenary_status_to_off() {
         let modules: std::collections::HashMap<String, bool> =
             [("mercenary".to_string(), false)].into_iter().collect();
         let slice = crate::mercenary::MercenarySlice {
-            status: crate::mercenary::MercStatus::Live,
+            status: crate::mercenary::MercStatus::Scanning,
+            burst_speaker: Some("Fennik, of Unshakeable Faith".to_string()),
             capture: Some(crate::mercenary::MercCapture::default()),
             ..Default::default()
         };
@@ -802,6 +811,10 @@ mod tests {
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
+        assert_eq!(
+            out.mercenary.burst_speaker, None,
+            "the speaker belongs to a scan that is no longer running",
+        );
         assert!(
             out.mercenary.capture.is_some(),
             "only the status is forced — the last capture stays readable",

@@ -343,13 +343,15 @@ fn parse_header(
     let level = level_line.and_then(|l| parse_trailing_number(&l.text)).map(|n| n as u32);
 
     // The class sits to the LEFT of the level on the same header line.
-    let class = level_line.and_then(|lvl| {
-        above
-            .iter()
-            .filter(|l| l.x < lvl.x && vertically_overlaps(l, lvl))
-            .min_by_key(|l| lvl.x - l.x)
-            .map(|l| l.text.trim().to_string())
-    });
+    let class = level_line
+        .and_then(|lvl| {
+            above
+                .iter()
+                .filter(|l| l.x < lvl.x && vertically_overlaps(l, lvl))
+                .min_by_key(|l| lvl.x - l.x)
+                .map(|l| clean_header_text(&l.text))
+        })
+        .filter(|text| !text.is_empty());
 
     let wager = above
         .iter()
@@ -361,20 +363,50 @@ fn parse_header(
     // The "Should Recruit" verdict sits on the wager line in a face as tall
     // as the title, and OCR folds its tick icon into the text ("Should
     // Recruit@") — measured 2026-08-24. It is excluded by its leading word,
-    // and trailing non-letters are cut off the winner for the same reason.
-    let name = above
+    // and glyphs are cut off both ends of the winner for the same reason.
+    //
+    // **The name is never the class.** Measured on the 2026-08-25 Windows
+    // smoke: the header blinked between `Fennik, of Unshakeable Faith · class
+    // not read` and `@ Fallen Reverend · @ Fallen Reverend` across re-detects.
+    // On the ticks where the title read badly, the tallest line above the
+    // panel WAS the class line, so the same string was published as both
+    // fields — a claim the recruit window never makes. The tallest line that
+    // is not the class wins instead, which is the next candidate down the same
+    // ordering rather than a second rule about where a name lives.
+    let class_key = class.as_deref().map(str::to_lowercase);
+    let mut candidates: Vec<(usize, &&OcrLineBox)> = above
         .iter()
-        .filter(|l| !l.text.trim().is_empty())
-        .filter(|l| !l.text.trim().to_lowercase().starts_with("should "))
-        .max_by_key(|l| l.h)
-        .map(|l| {
-            l.text
-                .trim()
-                .trim_end_matches(|c: char| !c.is_alphanumeric())
-                .to_string()
-        });
+        .enumerate()
+        .filter(|(_, l)| !l.text.trim().to_lowercase().starts_with("should "))
+        .collect();
+    // Tallest first. Ties keep the LAST line of the OCR order, which is what
+    // `max_by_key` did before this became a ranking.
+    candidates.sort_by(|a, b| b.1.h.cmp(&a.1.h).then(b.0.cmp(&a.0)));
+    let name = candidates
+        .into_iter()
+        .map(|(_, l)| clean_header_text(&l.text))
+        .filter(|text| !text.is_empty())
+        .find(|text| class_key.as_deref() != Some(text.to_lowercase().as_str()));
 
     MercHeader { name, class, level, wager }
+}
+
+/// One header field's OCR text with the glyph noise cut off both ends.
+///
+/// MEASURED 2026-08-25 (Windows smoke): the class icon left of the class name
+/// is OCR'd as a character, so the header published `@ Fallen Reverend`. The
+/// tick beside "Should Recruit" does the same at the other end (2026-08-24).
+/// Neither is text the recruit window shows, and both survive into the strip
+/// over the game and into the header's own stickiness rule, where a leading
+/// glyph is exactly what marks a read as the WORSE one
+/// ([`super::read::merge_header`]).
+///
+/// Inner punctuation is untouched: `Cai, the Lout` and `Al-Hezmin` are names.
+pub fn clean_header_text(text: &str) -> String {
+    text.trim()
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim_end_matches(|c: char| !c.is_alphanumeric())
+        .to_string()
 }
 
 fn vertically_overlaps(a: &OcrLineBox, b: &OcrLineBox) -> bool {
@@ -943,6 +975,63 @@ mod tests {
 
         let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
 
+        assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
+    }
+
+    /// MEASURED 2026-08-25 (Windows smoke): the strip published `@ Fallen
+    /// Reverend` as the class. The `@` is the class ICON, OCR'd as a glyph —
+    /// text the recruit window never shows.
+    #[test]
+    fn a_leading_icon_glyph_is_not_part_of_the_class() {
+        let mut lines = reference_lines();
+        for l in lines.iter_mut() {
+            if l.text == "Shock Ambusher" {
+                l.text = "@ Shock Ambusher".into();
+            }
+        }
+
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+
+        assert_eq!(layout.header.class.as_deref(), Some("Shock Ambusher"));
+    }
+
+    /// The same glyph on the title line. The name is what the strip's first
+    /// field prints, so a leading `@` there is what the player reads.
+    #[test]
+    fn a_leading_icon_glyph_is_not_part_of_the_name() {
+        let mut lines = reference_lines();
+        for l in lines.iter_mut() {
+            if l.text == "Cai, the Lout" {
+                l.text = "@ Cai, the Lout".into();
+                l.h = 30;
+            }
+        }
+
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+
+        assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
+    }
+
+    /// MEASURED 2026-08-25: on the ticks where the title read badly, the
+    /// TALLEST line above the panel was the class line, and the strip printed
+    /// `@ Fallen Reverend · @ Fallen Reverend` — the same string as both
+    /// fields. A mercenary is never its own class; the next candidate down the
+    /// same tallest-first ordering is.
+    #[test]
+    fn the_name_is_never_the_class_line() {
+        let mut lines = reference_lines();
+        for l in lines.iter_mut() {
+            match l.text.as_str() {
+                // OCR boxed the class line taller than the title this tick.
+                "Shock Ambusher" => l.h = 30,
+                "Cai, the Lout" => l.h = 26,
+                _ => {}
+            }
+        }
+
+        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+
+        assert_eq!(layout.header.class.as_deref(), Some("Shock Ambusher"));
         assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
     }
 

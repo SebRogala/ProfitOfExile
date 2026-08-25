@@ -16,6 +16,7 @@ import {
 	skillTitle,
 	STATUS_LABEL,
 	STATUS_TONE,
+	captureOnScreen,
 	supportText,
 	supportTitle,
 	templateChip
@@ -464,6 +465,28 @@ describe('the module status wording', () => {
 	it('keeps the captured-window colour for a captured window', () => {
 		expect(STATUS_TONE.live).toBe('pass');
 		expect(STATUS_TONE.scanning).not.toBe('pass');
+	});
+
+	/** A paused read is still a window on screen. The page words its capture
+	 *  header off this, so a `done` capture must not read as "window gone" —
+	 *  and a retired one must still say so. */
+	it('counts a finished read as a window still on screen', () => {
+		expect(captureOnScreen('done')).toBe(true);
+		expect(captureOnScreen('live')).toBe(true);
+		expect(captureOnScreen('idle')).toBe(false);
+		expect(captureOnScreen('scanning')).toBe(false);
+		expect(captureOnScreen('off')).toBe(false);
+		expect(captureOnScreen('unavailable')).toBe(false);
+	});
+
+	/** `done` is a live window with nothing left to read (2026-08-25). The page
+	 *  has to say the OCR paused WITHOUT reading as a module that stopped
+	 *  working or a window that went away — both would send the reader to press
+	 *  Scan now over a window that is already fully read. */
+	it('words a finished read as a paused capture, not as a lost one', () => {
+		expect(STATUS_LABEL.done).toMatch(/paused/i);
+		expect(STATUS_LABEL.done).not.toMatch(/gone|off|unavailable|waiting/i);
+		expect(STATUS_TONE.done).toBe('pass');
 	});
 });
 

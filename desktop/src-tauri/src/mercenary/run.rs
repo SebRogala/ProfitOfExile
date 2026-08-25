@@ -43,7 +43,7 @@ use crate::AppState;
 
 use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, TemplateStore};
-use super::read::{build_capture, pass2_texts};
+use super::read::{build_capture, capture_complete, fold_header, pass2_texts};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
 use super::sync;
 use super::trigger;
@@ -65,6 +65,15 @@ const DETECT_INTERVAL: Duration = Duration::from_millis(1000);
 const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
 /// Re-detect cadence while a window IS captured.
 const REDETECT_INTERVAL: Duration = Duration::from_millis(2000);
+/// Detect cadence while a captured window is fully read (2026-08-25).
+///
+/// A complete capture ([`super::read::capture_complete`]) has nothing left for
+/// another pass to improve, so the only question left is whether the window is
+/// still on screen — and that is worth one detect every ten seconds, not one
+/// every two. The cost of the slower answer is bounded and stated: a window
+/// that closes is noticed up to `2 × this` late (two misses retire it), which
+/// delays the strip's "recruit window gone" marker and nothing else.
+const LIVENESS_INTERVAL: Duration = Duration::from_millis(10_000);
 /// Hover-confirm cadence while a window is captured.
 const HOVER_INTERVAL: Duration = Duration::from_millis(400);
 /// A capture tick (detect, plus the hover confirm that follows it in the same
@@ -121,6 +130,12 @@ pub struct LoopState {
     /// 1.5 s to OCR a screen", which does not become false again. Flapping
     /// between cadences would also flap the log line that announces it.
     pub backed_off: bool,
+    /// The live capture is fully read — every row, every cell, the header.
+    ///
+    /// NOT sticky, unlike [`Self::backed_off`]: it is a statement about the
+    /// capture on screen, so it is cleared when that capture retires and when a
+    /// new burst asks for another look ([`Self::resume`]).
+    pub complete: bool,
 }
 
 impl LoopState {
@@ -129,8 +144,15 @@ impl LoopState {
     /// A live capture re-detects on its own cadence (2 s) and is NOT subject to
     /// the backoff: the backoff exists to stop a slow machine spending all its
     /// time hunting for a window, and a live window has already been found.
+    ///
+    /// A live capture that is COMPLETE drops to the liveness cadence — the
+    /// re-read has nothing left to improve, and the 2026-08-25 smoke showed
+    /// what the pointless re-reads cost: the header blinked between two OCR
+    /// readings of the same unchanged pixels every two seconds.
     pub fn detect_interval(&self) -> Duration {
-        if self.live {
+        if self.live && self.complete {
+            LIVENESS_INTERVAL
+        } else if self.live {
             REDETECT_INTERVAL
         } else if self.backed_off {
             DETECT_INTERVAL_SLOW
@@ -156,11 +178,36 @@ impl LoopState {
             if self.misses >= RETIRE_AFTER {
                 self.live = false;
                 self.misses = 0;
+                // The completeness belonged to the capture that just went
+                // away. Carrying it would leave the next window being hunted
+                // at the liveness cadence.
+                self.complete = false;
                 DetectOutcome::Retired
             } else {
                 DetectOutcome::Missed
             }
         }
+    }
+
+    /// Fold the completeness of the capture just published into the state.
+    ///
+    /// `true` the one tick it BECOMES complete, so the caller says so once
+    /// rather than on every liveness check. A capture that stops being complete
+    /// (a cell the player hovered away from, a re-read that lost the class)
+    /// puts the loop straight back on the working cadence.
+    pub fn note_complete(&mut self, complete: bool) -> bool {
+        let became = complete && !self.complete;
+        self.complete = complete;
+        became
+    }
+
+    /// Something asked for another look at the captured window — a voice line
+    /// or Scan now. `true` when this actually resumed a paused read, so the
+    /// caller logs the transition and not every armed tick.
+    pub fn resume(&mut self) -> bool {
+        let was = self.complete;
+        self.complete = false;
+        was
     }
 
     /// Record how long a whole capture tick took — the detect AND the hover
@@ -218,6 +265,65 @@ pub fn burst_satisfied(outcome: Option<DetectOutcome>) -> bool {
         outcome,
         Some(DetectOutcome::Captured) | Some(DetectOutcome::Refreshed)
     )
+}
+
+/// How many times a cell that ALREADY reads as `Matched` may be re-OCR'd by the
+/// hover tick, per capture.
+///
+/// Three, not one: the first read can land while the tooltip is still fading in
+/// and the useful confirmation comes a tick later. Not unbounded, because a
+/// cursor parked on a matched cell would otherwise buy a full screen grab plus
+/// an OCR every 400 ms for as long as the player leaves it there — the cost the
+/// completed-capture pause exists to remove.
+pub const MATCHED_HOVER_ATTEMPTS: u8 = 3;
+
+/// The per-cell hover budget (2026-08-25).
+///
+/// The tick keeps running over a completed capture so a hover can still CORRECT
+/// a confident wrong read — a matched cell is the module's opinion, and the
+/// tooltip is the game's. What is bounded is how often that opinion is
+/// re-litigated, per `(row key, slot)` so a budget spent on one cell never
+/// silences another.
+///
+/// The states are treated differently on purpose:
+///
+/// - `Confirmed` — the user already told us; nothing to buy;
+/// - `Matched` — re-readable, up to [`MATCHED_HOVER_ATTEMPTS`];
+/// - everything else — unbounded, because those are the cells the hover exists
+///   for and the player is looking at one BECAUSE the strip asked them to.
+///
+/// Keyed on `row_key` (the skill's vocabulary id) rather than the row index, so
+/// it survives a re-detect that renumbers the rows — the same key
+/// `Session::confirmed` uses.
+#[derive(Debug, Default)]
+pub struct HoverBudget {
+    spent: HashMap<(String, u8), u8>,
+}
+
+impl HoverBudget {
+    /// Whether this hover may run the tooltip OCR — and charge it if it may.
+    pub fn take(&mut self, cell: (String, u8), state: ReadState) -> bool {
+        match state {
+            ReadState::Confirmed => false,
+            ReadState::Matched => {
+                let spent = self.spent.entry(cell).or_insert(0);
+                if *spent >= MATCHED_HOVER_ATTEMPTS {
+                    return false;
+                }
+                *spent += 1;
+                true
+            }
+            _ => true,
+        }
+    }
+
+    /// Forget every charge. Called when the capture this budget was counted
+    /// against is gone — retired, replaced, or invalidated by a template
+    /// forget/reset, which is exactly when a re-read becomes worth buying
+    /// again.
+    pub fn clear(&mut self) {
+        self.spent.clear();
+    }
 }
 
 /// A log sink that says each distinct thing once.
@@ -526,6 +632,53 @@ fn nap(cancel: &watch::Receiver<bool>, total: Duration) -> bool {
 /// window, so emitting an identical snapshot 2-3× a second would be pure churn.
 /// The `mercenary` guard is dropped before `emit_ssot` — it locks the same
 /// mutex to compose the snapshot.
+/// The status a CAPTURED window is in, from the loop's own state.
+///
+/// One owner for the `live` / `done` choice, because three places make it — the
+/// detect that publishes a capture, the burst-expiry reconciliation, and any
+/// future path that has to restate the status of a window already on screen. A
+/// second copy is how a strip ends up saying `scanning` over a window it
+/// finished reading.
+pub fn live_status(complete: bool) -> MercStatus {
+    if complete {
+        MercStatus::Done
+    } else {
+        MercStatus::Live
+    }
+}
+
+/// Publish `Scanning` together with the mercenary the burst heard.
+///
+/// The reconciliation path's counterpart to the arming site's own publish. A
+/// retire drops the slice back to a waiting status and clears the speaker, so a
+/// burst that was armed WHILE a window was still on screen — the ordinary case
+/// for a mercenary who speaks twice — would otherwise come back as an anonymous
+/// "scanning" even though the loop knows exactly who it is looking for. The
+/// name is read off the gate rather than remembered here, so it cannot outlive
+/// the burst it belongs to.
+pub fn publish_scanning(app: &AppHandle, speaker: Option<String>) {
+    publish(app, |slice| {
+        slice.status = MercStatus::Scanning;
+        slice.burst_speaker = speaker;
+    });
+}
+
+/// Publish a status, keeping the burst speaker attached to the one status it
+/// qualifies.
+///
+/// `burst_speaker` names who the module HEARD, which is only a statement about
+/// a scan that is running. Clearing it anywhere else would leave the strip
+/// saying "heard Fennik…" over a window it is already reading, or over nothing
+/// at all.
+pub fn publish_status(app: &AppHandle, want: MercStatus) {
+    publish(app, |slice| {
+        slice.status = want;
+        if want != MercStatus::Scanning {
+            slice.burst_speaker = None;
+        }
+    });
+}
+
 pub fn publish(app: &AppHandle, mutate: impl FnOnce(&mut MercenarySlice)) {
     let changed = {
         let state = app.state::<AppState>();
@@ -550,6 +703,8 @@ struct Session {
     /// Pre-hover cell crops from the most recent detect, keyed `(row, slot)`.
     sigs: SigCache,
     confirmed: HashMap<(String, u8), ConfirmedCell>,
+    /// How much tooltip OCR each already-read cell has been allowed.
+    hover_budget: HoverBudget,
     /// The template-store generation this session's `confirmed` map agrees
     /// with. See [`generation_changed`].
     template_generation: u64,
@@ -669,6 +824,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         current: None,
         sigs: SigCache::new(),
         confirmed: HashMap::new(),
+        hover_budget: HoverBudget::default(),
         template_generation: template_generation(&app),
         icons_dir,
         miss_logged: false,
@@ -691,8 +847,28 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         let now = now_ms();
         if let Some(expired) = trigger::take_expired(&app, now) {
             crate::app_log(&app, expired.expiry_line());
+            // A burst can expire while a window is on screen — a manual scan
+            // armed over a capture, or a voice line from a mercenary the player
+            // never opened. The waiting-status reconciliation below only runs
+            // when nothing is live, so without this the slice would keep
+            // whatever the burst left behind and the strip would go on
+            // reporting a scan that is over.
+            if session.state.live {
+                publish_status(&app, live_status(session.state.complete));
+            }
         }
         let scanning = trigger::scanning(&app, now);
+        // A burst armed over a fully-read window means something changed on
+        // screen that the paused loop would not have looked for — the player
+        // recruited, rematched, or a second mercenary spoke. Resuming here
+        // rather than in the detect keeps the pause a property of the STATE
+        // machine, which is where its cadence is decided.
+        if scanning && session.state.resume() {
+            crate::app_log(
+                &app,
+                "Merc: new burst over a completed capture — OCR resumed".to_string(),
+            );
+        }
         if !session.state.live {
             // Read before writing: `publish` clones the whole slice to tell
             // whether anything changed, and this runs several times a second in
@@ -703,7 +879,14 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
                 MercStatus::Idle
             };
             if status(&app) != want {
-                publish(&app, |slice| slice.status = want);
+                if want == MercStatus::Scanning {
+                    // Off the GATE, not remembered: this branch is reached
+                    // after a retire cleared the speaker, and the burst that is
+                    // still armed is the one that knows whose voice line it is.
+                    publish_scanning(&app, trigger::speaker(&app, now));
+                } else {
+                    publish_status(&app, want);
+                }
             }
         }
 
@@ -759,6 +942,12 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             break;
         }
 
+        // The hover tick keeps running over a COMPLETED capture, unlike the
+        // detect: "every cell was read" is not "every cell was read right", and
+        // the tooltip is the only thing that can correct a confident wrong
+        // match. Its idle cost is one cursor read per 400 ms — the grab and the
+        // OCR are behind the cursor hit-test — and the re-read of a cell that
+        // already matched is bounded by [`HoverBudget`].
         if session.state.live && last_hover.elapsed() >= HOVER_INTERVAL {
             hover_tick(&app, &mut session);
             last_hover = Instant::now();
@@ -789,6 +978,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     // disabled — is what the page trusts.
     publish(&app, |slice| {
         slice.status = MercStatus::Idle;
+        slice.burst_speaker = None;
         if let Some(capture) = slice.capture.as_mut() {
             capture.live = false;
         }
@@ -805,6 +995,7 @@ fn unavailable(app: &AppHandle, cancel: &watch::Receiver<bool>, reason: String) 
     crate::app_log(app, format!("Merc: capture unavailable — {reason}"));
     publish(app, |slice| {
         slice.status = MercStatus::Unavailable;
+        slice.burst_speaker = None;
         slice.last_error = Some(reason.clone());
         if let Some(capture) = slice.capture.as_mut() {
             capture.live = false;
@@ -886,6 +1077,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
         session.current = None;
         session.sigs.clear();
         session.confirmed.clear();
+        session.hover_budget.clear();
         crate::app_log(app, "Merc: window gone".to_string());
     }
     if !retired && errored {
@@ -896,6 +1088,9 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
     publish(app, |slice| {
         if retired {
             slice.status = MercStatus::Idle;
+            // The window this scan was armed for is gone; a name beside a
+            // status that is no longer `scanning` belongs to nothing.
+            slice.burst_speaker = None;
             if let Some(capture) = slice.capture.as_mut() {
                 capture.live = false;
             }
@@ -986,10 +1181,36 @@ fn detect_tick(
     // was pressed to stop.
     if generation_changed(&mut session.template_generation, template_generation(app)) {
         session.confirmed.clear();
+        session.hover_budget.clear();
     }
+
+    // IDENTITY FIRST, then everything the loop remembered. The header merge and
+    // the remembered confirmations are both statements about ONE recruit
+    // window, and a REMATCH swaps the mercenary behind a panel that looks the
+    // same — with the liveness pause the loop can take ~20 s to notice a window
+    // that closed, so "a capture exists" is not evidence it is the same one.
+    // A different panel therefore drops the lot rather than merging into it.
+    let (header, replaced) = fold_header(session.current.as_ref(), &result.capture);
+    result.capture.header = header;
+    if replaced {
+        crate::app_log(app, "Merc: recruit window replaced — reading it fresh".to_string());
+        session.current = None;
+        session.confirmed.clear();
+        session.hover_budget.clear();
+        session.sigs.clear();
+    }
+    // AFTER the identity check: a confirmation belongs to the window it was
+    // made on, and re-applying the old window's cells to a new mercenary's rows
+    // is the same inheritance bug one layer down.
     apply_confirmed(&mut result.capture, &session.confirmed);
 
-    let outcome = session.state.on_detect(true);
+    // A replaced panel is a NEW window however the state machine reads: the
+    // loop was live for the panel that is gone, so `on_detect` would call this
+    // a refresh and the log would never say a different mercenary is on screen.
+    let outcome = match session.state.on_detect(true) {
+        _ if replaced => DetectOutcome::Captured,
+        outcome => outcome,
+    };
     if outcome == DetectOutcome::Captured {
         crate::app_log(
             app,
@@ -1006,8 +1227,24 @@ fn detect_tick(
         hovered_key(&result.capture, cursor),
     );
     session.current = Some(result.capture.clone());
+
+    // Nothing left for a DETECT to find: the cadence drops to the liveness
+    // check (2026-08-25 smoke). The hover tick stays on — it is the only path
+    // that can correct a confident wrong match.
+    let complete = capture_complete(&result.capture);
+    if session.state.note_complete(complete) {
+        crate::app_log(
+            app,
+            format!(
+                "Merc: capture complete — OCR paused (liveness every {} s)",
+                LIVENESS_INTERVAL.as_secs()
+            ),
+        );
+    }
     publish(app, |slice| {
-        slice.status = MercStatus::Live;
+        slice.status = live_status(complete);
+        // Whatever armed this scan has been answered by the window on screen.
+        slice.burst_speaker = None;
         slice.capture = Some(result.capture);
         slice.last_error = None;
     });
@@ -1027,7 +1264,14 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
     let Some((ri, si)) = cell_at(&capture, cursor) else {
         return;
     };
-    if capture.rows[ri].supports[si].state == ReadState::Confirmed {
+    // The budget is charged HERE, before the screen grab and the OCR that
+    // follow it — everything above this line is one cursor read, which is what
+    // makes leaving the tick running over a finished capture cheap.
+    let cell_key = (row_key(&capture.rows[ri].skill), capture.rows[ri].supports[si].slot);
+    if !session
+        .hover_budget
+        .take(cell_key, capture.rows[ri].supports[si].state)
+    {
         return;
     }
     let Some(region) = hover_region(cursor, capture.scale, &session.geometry.thresholds, capture.screen)
@@ -1371,6 +1615,158 @@ mod tests {
         st.on_detect(true);
 
         assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
+    }
+
+    /// The 2026-08-25 fix: a capture with nothing left to read drops from the
+    /// 2 s re-read to the 10 s liveness check. Those re-reads are what made the
+    /// header blink between two OCR readings of the same unchanged pixels.
+    #[test]
+    fn a_completed_capture_drops_to_the_liveness_cadence() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
+
+        assert!(st.note_complete(true), "the pause is announced on the tick it starts");
+
+        assert_eq!(st.detect_interval(), LIVENESS_INTERVAL);
+    }
+
+    /// Said once, not on every liveness check — the loop keeps publishing a
+    /// complete capture for as long as the window is on screen.
+    #[test]
+    fn a_capture_that_is_still_complete_is_not_announced_again() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        st.note_complete(true);
+
+        assert!(!st.note_complete(true));
+    }
+
+    /// Not sticky, unlike the backoff: a re-read that lost a field has
+    /// something to find again, so the working cadence comes back.
+    #[test]
+    fn a_capture_that_stops_being_complete_returns_to_the_working_cadence() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        st.note_complete(true);
+
+        st.note_complete(false);
+
+        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
+    }
+
+    /// A voice line or Scan now over a completed capture means something on
+    /// screen changed that the paused loop would not have looked for.
+    #[test]
+    fn a_new_burst_resumes_a_paused_capture() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        st.note_complete(true);
+
+        assert!(st.resume(), "the resume is announced only when it resumed something");
+
+        assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
+        assert!(!st.resume(), "a burst over a capture already being read says nothing");
+    }
+
+    /// The completeness belongs to the capture, not to the thread: the next
+    /// window must be hunted at the hunting cadence, not at the liveness one.
+    #[test]
+    fn retiring_a_completed_capture_clears_the_pause() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        st.note_complete(true);
+
+        for _ in 0..RETIRE_AFTER {
+            st.on_detect(false);
+        }
+
+        assert!(!st.complete);
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL);
+    }
+
+    /// The status of a window already on screen, from the loop's own state.
+    /// One owner, because three paths publish it and a second copy is how a
+    /// strip ends up saying `scanning` over a window it finished reading.
+    #[test]
+    fn a_captured_window_is_done_when_it_is_complete_and_live_otherwise() {
+        assert_eq!(live_status(true), MercStatus::Done);
+        assert_eq!(live_status(false), MercStatus::Live);
+    }
+
+    /// The cell the strip asked the player to hover. This is what the tick
+    /// exists for, so it is never charged — the player is looking at it BECAUSE
+    /// the strip said it was unread.
+    #[test]
+    fn an_unread_cell_may_be_hovered_without_limit() {
+        let mut budget = HoverBudget::default();
+
+        for _ in 0..MATCHED_HOVER_ATTEMPTS as u32 * 4 {
+            assert!(budget.take(("mercenary.skill_1".into(), 0), ReadState::Unknown));
+        }
+        assert!(budget.take(("mercenary.skill_1".into(), 0), ReadState::LowConfidence));
+        assert!(budget.take(("mercenary.skill_1".into(), 0), ReadState::Ambiguous));
+    }
+
+    /// A matched cell IS re-readable — "every cell was read" is not "every cell
+    /// was read right", and the tooltip is the only thing that can correct a
+    /// confident wrong match. What is bounded is how often.
+    #[test]
+    fn a_matched_cell_is_re_read_a_few_times_and_then_left_alone() {
+        let mut budget = HoverBudget::default();
+        let cell = ("mercenary.skill_1".to_string(), 0);
+
+        for attempt in 0..MATCHED_HOVER_ATTEMPTS {
+            assert!(
+                budget.take(cell.clone(), ReadState::Matched),
+                "attempt {attempt} is inside the budget",
+            );
+        }
+
+        assert!(
+            !budget.take(cell, ReadState::Matched),
+            "a cursor parked on a matched cell must stop buying screen grabs",
+        );
+    }
+
+    /// The user already told us what this cell is. Re-reading it could only
+    /// disagree with them.
+    #[test]
+    fn a_confirmed_cell_is_never_re_read() {
+        let mut budget = HoverBudget::default();
+
+        assert!(!budget.take(("mercenary.skill_1".into(), 0), ReadState::Confirmed));
+    }
+
+    /// Per cell, not per capture: a budget spent on one icon must not silence
+    /// the one next to it.
+    #[test]
+    fn each_cell_carries_its_own_budget() {
+        let mut budget = HoverBudget::default();
+        for _ in 0..MATCHED_HOVER_ATTEMPTS {
+            budget.take(("mercenary.skill_1".into(), 0), ReadState::Matched);
+        }
+
+        assert!(budget.take(("mercenary.skill_1".into(), 1), ReadState::Matched), "other slot");
+        assert!(budget.take(("mercenary.skill_2".into(), 0), ReadState::Matched), "other row");
+    }
+
+    /// The charges belong to the capture they were counted against. A template
+    /// forget/reset, a retire or a replaced panel all mean the read is worth
+    /// buying again — and a budget that outlived its capture would leave the
+    /// cell unre-readable for the rest of the session.
+    #[test]
+    fn clearing_the_budget_makes_a_spent_cell_readable_again() {
+        let mut budget = HoverBudget::default();
+        let cell = ("mercenary.skill_1".to_string(), 0);
+        for _ in 0..MATCHED_HOVER_ATTEMPTS {
+            budget.take(cell.clone(), ReadState::Matched);
+        }
+        assert!(!budget.take(cell.clone(), ReadState::Matched));
+
+        budget.clear();
+
+        assert!(budget.take(cell, ReadState::Matched));
     }
 
     #[test]
@@ -1746,6 +2142,13 @@ mod tests {
     /// under the ceiling is the compliance argument. The per-constant check is
     /// the backstop for a wait that is ever slept RAW rather than through
     /// `nap` — that one blocks for its whole length.
+    ///
+    /// [`LIVENESS_INTERVAL`] is deliberately NOT in the list, and it is the
+    /// constant that shows what the list actually means: at 10 s it is over the
+    /// ceiling, and it is safe anyway because a CADENCE is not a wait. The loop
+    /// naps `TICK` at a time and asks at each wake whether the cadence has
+    /// elapsed, so a longer cadence costs a stop signal nothing. Sleeping one
+    /// raw is what the rule forbids.
     #[test]
     fn every_wait_stays_under_the_module_poll_ceiling() {
         let ceiling = crate::modules::MODULE_THREAD_POLL_CEILING;
@@ -1794,12 +2197,23 @@ mod tests {
         assert_eq!(next_step(true, true, false), LoopStep::Unfocused);
     }
 
+    /// A paused capture still WORKS — the liveness check is a detect tick like
+    /// any other, and what makes it cheap is its cadence, not a skipped step.
+    /// Idling here instead would leave a retired window on screen for good.
+    #[test]
+    fn a_completed_capture_still_works_so_the_liveness_check_can_run() {
+        let paused = LoopState { live: true, misses: 0, backed_off: false, complete: true };
+
+        assert_eq!(next_step(paused.live, false, true), LoopStep::Work);
+        assert_eq!(paused.detect_interval(), LIVENESS_INTERVAL);
+    }
+
     /// A burst armed for a SECOND mercenary while the first one's window is
     /// still live must survive a tick that found nothing: after one miss the
     /// capture is STILL live, so liveness cannot stand in for a hit.
     #[test]
     fn a_missed_tick_under_a_live_capture_does_not_satisfy_the_burst() {
-        let mut state = LoopState { live: true, misses: 0, backed_off: false };
+        let mut state = LoopState { live: true, misses: 0, backed_off: false, complete: false };
 
         let outcome = state.on_detect(false);
 
@@ -1817,14 +2231,14 @@ mod tests {
 
     #[test]
     fn a_re_read_of_a_live_window_satisfies_the_burst() {
-        let mut state = LoopState { live: true, misses: 0, backed_off: false };
+        let mut state = LoopState { live: true, misses: 0, backed_off: false, complete: false };
 
         assert!(burst_satisfied(Some(state.on_detect(true))));
     }
 
     #[test]
     fn a_retiring_tick_does_not_satisfy_the_burst() {
-        let mut state = LoopState { live: true, misses: RETIRE_AFTER - 1, backed_off: false };
+        let mut state = LoopState { live: true, misses: RETIRE_AFTER - 1, backed_off: false, complete: false };
 
         assert_eq!(state.on_detect(false), DetectOutcome::Retired);
         assert!(!burst_satisfied(Some(DetectOutcome::Retired)));

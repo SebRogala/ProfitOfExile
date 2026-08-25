@@ -356,6 +356,28 @@ impl ArmedBurst {
     }
 }
 
+/// Whether arming a burst may publish `Scanning` over this status.
+///
+/// The precedence rule ([`MercStatus`]) in the one form the arming site needs,
+/// pulled out of the glue because it is the part that can be wrong quietly: a
+/// scan announcing itself over `Live` would replace "a recruit window is on
+/// screen" with "looking for one", and over `Off` / `Unavailable` it would
+/// claim a loop that is not running.
+///
+/// **`Done` is NOT overwritten either**, and that is the difference between
+/// this and a plain reading of the precedence order. `Done` is a window ON
+/// SCREEN whose verdict the player is reading right now; the overlay treats
+/// every status but `live`/`done` as a capture that is no longer current, so
+/// publishing `scanning` over it would mark a live verdict stale and drop the
+/// per-row glyphs under it. The burst still does its work — the capture loop
+/// resumes the paused read the moment it sees the armed gate
+/// (`run::LoopState::resume`) and republishes `live`/`done` from the detect.
+/// Only the ANNOUNCEMENT is withheld, because there is nothing to announce that
+/// the window on screen does not already say.
+pub fn scan_outranks(status: MercStatus) -> bool {
+    matches!(status, MercStatus::Idle)
+}
+
 /// The gate the capture loop asks "should I be looking at all?".
 ///
 /// Three transitions, and the log lines hang off two of them: arming an idle
@@ -416,6 +438,20 @@ impl BurstGate {
         self.armed.as_ref().is_some_and(|b| !b.expired(now_ms))
     }
 
+    /// Who the LIVE burst heard, for the strip to name.
+    ///
+    /// Gated on the same expiry [`Self::scanning`] uses, so a name can never
+    /// outlive the scan it belongs to: the gate holds an expired burst until
+    /// something takes it, and reading the speaker straight off `armed` would
+    /// print that dead burst's mercenary. `None` for a Scan-now burst, which
+    /// heard nobody.
+    pub fn speaker(&self, now_ms: u64) -> Option<&str> {
+        self.armed
+            .as_ref()
+            .filter(|b| !b.expired(now_ms))
+            .and_then(|b| b.speaker.as_deref())
+    }
+
     /// Take the burst if its window has closed. Returning it CLEARS it, so the
     /// expiry is reported exactly once.
     pub fn take_expired(&mut self, now_ms: u64) -> Option<ArmedBurst> {
@@ -450,17 +486,36 @@ fn module_enabled(app: &AppHandle) -> bool {
     enabled
 }
 
-/// Arm a burst and log it if it started one.
+/// Arm a burst, publish the scan it started, and log it if it started one.
+///
+/// **The publish happens HERE, not on the loop's next tick.** Reported on the
+/// 2026-08-25 smoke: the strip sat on "waiting for a mercenary" for seconds
+/// after the voice line and then jumped to "reading", which reads as a module
+/// that missed the trigger. The loop's own reconciliation is up to a
+/// [`super::run::IDLE_NAP`] behind — and behind the focus gate, so a player who
+/// arms a scan from our own window waits for their own alt-tab before anything
+/// on screen changes. Arming is the event; this is where it is announced.
+///
+/// The speaker rides along so the strip can name who it heard. Both are written
+/// only over the module's one RESTING status ([`scan_outranks`]): announcing a
+/// scan over a window that is already on screen would take the verdict the
+/// player is reading and mark it stale.
 fn arm(app: &AppHandle, source: BurstSource, speaker: Option<String>) {
     let armed = {
         let state = app.state::<AppState>();
         let mut gate = state.merc_burst.lock().unwrap_or_else(|e| e.into_inner());
-        let fresh = gate.arm(source, speaker, now_ms());
+        let fresh = gate.arm(source, speaker.clone(), now_ms());
         match (fresh, gate.armed.as_ref()) {
             (true, Some(burst)) => Some(burst.describe()),
             _ => None,
         }
     };
+    publish(app, |slice| {
+        if scan_outranks(slice.status) {
+            slice.status = MercStatus::Scanning;
+            slice.burst_speaker = speaker;
+        }
+    });
     if let Some(what) = armed {
         crate::app_log(app, format!("Merc: OCR burst armed — {what}"));
     }
@@ -489,6 +544,19 @@ pub fn scanning(app: &AppHandle, now_ms: u64) -> bool {
         .unwrap_or_else(|e| e.into_inner())
         .scanning(now_ms);
     scanning
+}
+
+/// Who the armed burst heard, or `None` when nothing is armed or it heard
+/// nobody. See [`BurstGate::speaker`].
+pub fn speaker(app: &AppHandle, now_ms: u64) -> Option<String> {
+    let state = app.state::<AppState>();
+    let speaker = state
+        .merc_burst
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .speaker(now_ms)
+        .map(str::to_string);
+    speaker
 }
 
 /// Report an expired burst, once. `Some` only when it found nothing.
@@ -542,6 +610,16 @@ pub fn disarm(app: &AppHandle) {
 /// The burst it arms does NOT start counting here — clicking this button put
 /// our own window in front, so the loop is napping on the focus gate. See
 /// [`MANUAL_ARM_GRACE_MS`].
+///
+/// **One case is deliberately silent: a scan asked for over a `Done` capture.**
+/// [`scan_outranks`] withholds the `scanning` announcement while a window is on
+/// screen, so a player who presses this without alt-tabbing sees no status
+/// change — the strip goes on saying `done` until the resumed read publishes,
+/// which needs the game in front like every other detect. It is accepted rather
+/// than papered over: the alternative is announcing a scan over a verdict the
+/// player is reading, which marks it stale and drops its glyph rows (the
+/// regression this rule exists to prevent). The button did arm the burst, and
+/// the capture on screen is the answer it would have given.
 pub fn scan_now(app: &AppHandle) -> Result<(), String> {
     if !module_enabled(app) {
         return Err("Merc OCR is switched off — turn the module on first".to_string());
@@ -549,21 +627,57 @@ pub fn scan_now(app: &AppHandle) -> Result<(), String> {
     if status(app) == MercStatus::Unavailable {
         return Err("Merc OCR is unavailable on this machine".to_string());
     }
+    // `arm` publishes the scan itself, so the button's own click is what
+    // changes the badge rather than the loop's next iteration.
     arm(app, BurstSource::Manual, None);
-    // The loop publishes `scanning` on its next iteration anyway; doing it here
-    // means the button's own click is what changes the badge, rather than a
-    // quarter-second of nothing.
-    publish(app, |slice| {
-        if slice.status == MercStatus::Idle {
-            slice.status = MercStatus::Scanning;
-        }
-    });
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A scan announces itself over the two RESTING statuses and nothing else.
+    /// Over `Live` it would replace a window on screen with a hunt for one.
+    /// The strip names who it heard, so the name has to come off the burst
+    /// that is actually running. A Scan-now burst heard nobody and must not
+    /// borrow the last voice line's mercenary.
+    #[test]
+    fn the_gate_names_the_speaker_of_the_burst_that_is_running() {
+        let mut gate = BurstGate::default();
+        gate.arm(BurstSource::ClientTxt, Some("Fennik, of Unshakeable Faith".into()), 1_000);
+
+        assert_eq!(gate.speaker(1_000), Some("Fennik, of Unshakeable Faith"));
+
+        gate.arm(BurstSource::Manual, None, 2_000);
+        assert_eq!(gate.speaker(2_000), None, "Scan now heard nobody");
+    }
+
+    /// The gate holds an expired burst until something takes it, so reading the
+    /// speaker straight off `armed` would print a dead burst's mercenary beside
+    /// a scan that is over.
+    #[test]
+    fn an_expired_burst_names_nobody() {
+        let mut gate = BurstGate::default();
+        gate.arm(BurstSource::ClientTxt, Some("Fennik, of Unshakeable Faith".into()), 1_000);
+
+        assert_eq!(gate.speaker(1_000 + BURST_TTL_MS), None);
+    }
+
+    #[test]
+    fn arming_a_scan_only_announces_itself_over_a_resting_module() {
+        assert!(scan_outranks(MercStatus::Idle));
+        assert!(!scan_outranks(MercStatus::Live));
+        // The one that bit: `done` is a window ON SCREEN. The overlay marks any
+        // capture outside live/done as a previous read, so announcing a scan
+        // here would mark the verdict the player is reading stale and drop its
+        // glyph rows. The loop still resumes the read; only the announcement is
+        // withheld.
+        assert!(!scan_outranks(MercStatus::Done));
+        assert!(!scan_outranks(MercStatus::Scanning), "a re-arm changes nothing on the strip");
+        assert!(!scan_outranks(MercStatus::Off));
+        assert!(!scan_outranks(MercStatus::Unavailable));
+    }
 
     /// A real line, verbatim from the measurement session (2026-08-24 22:51).
     const MERC_LINE: &str =

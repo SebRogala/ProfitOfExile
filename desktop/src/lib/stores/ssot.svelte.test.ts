@@ -555,6 +555,7 @@ describe('mercenary slice', () => {
 	function liveSlice(): MercenarySlice {
 		return {
 			status: 'live',
+			burstSpeaker: null,
 			capture: {
 				capturedAtMs: 1_700_000_000_000,
 				live: true,
@@ -633,6 +634,7 @@ describe('mercenary slice', () => {
 			league,
 			mercenary: {
 				status: 'idle',
+				burstSpeaker: null,
 				capture: null,
 				learnedFamilies: [],
 				pooledFamilies: [],
