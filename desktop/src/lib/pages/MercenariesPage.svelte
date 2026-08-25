@@ -29,6 +29,10 @@
 		READ_TONE,
 		RULESET_OUTCOME_LABEL,
 		RULESET_OUTCOME_TONE,
+		SCAN_NOW_LABEL,
+		SCAN_NOW_TITLE,
+		STATUS_LABEL,
+		STATUS_TONE,
 		capturedAt,
 		describeDebugResult,
 		groupKey,
@@ -41,11 +45,9 @@
 		skillTitle,
 		supportText,
 		supportTitle,
-		type OutcomeTone,
 	} from '$lib/mercenaries/capture-view';
 	import { MERC_SOURCES_OFF_PREF_KEY, enabledSources, parseSourcesOff } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
-	import type { MercStatus } from '$lib/mercenaries/capture';
 	import { savedSearchUrl } from '$lib/mercenaries/trade-links';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -71,22 +73,6 @@
 		forbidden: '✕',
 		bonus: '＋',
 		absent: '·',
-	};
-
-	/** Module status in words. `status` outranks `capture.live`: a retired capture
-	 *  is left behind with `live: false`, and nothing clears it on app exit. */
-	const STATUS_LABEL: Record<MercStatus, string> = {
-		off: 'module off',
-		idle: 'watching for a recruit window',
-		live: 'recruit window on screen',
-		unavailable: 'capture unavailable here',
-	};
-
-	const STATUS_TONE: Record<MercStatus, OutcomeTone> = {
-		off: 'muted',
-		idle: 'muted',
-		live: 'pass',
-		unavailable: 'fail',
 	};
 
 	const SOURCE_OPTIONS = MERC_SOURCES.map((s) => ({ value: s.id, label: s.label }));
@@ -143,6 +129,20 @@
 	const templates = $derived(
 		merc.learnedFamilies.map((raw) => ({ raw, ...parseLearnedTemplate(raw) }))
 	);
+
+	/** The manual half of the trigger (POE-198): the Client.txt voice line arms a
+	 *  burst on its own, and this arms one for the window that was already open.
+	 *  Rust refuses when the module is off or capture is unavailable, and the
+	 *  refusal is shown — a button that silently does nothing teaches nothing. */
+	let scanError = $state<string | null>(null);
+	async function scanNow(): Promise<void> {
+		scanError = null;
+		try {
+			await invoke('merc_scan_now');
+		} catch (e) {
+			scanError = `${e}`;
+		}
+	}
 
 	let debugBusy = $state(false);
 	let debugReport = $state<string | null>(null);
@@ -288,6 +288,7 @@
 				geometry: {merc.geometrySource === 'file' ? 'merc-geometry.json' : 'built-in reference'}
 			</span>
 			<span class="spacer"></span>
+			<Button onclick={scanNow} title={SCAN_NOW_TITLE}>{SCAN_NOW_LABEL}</Button>
 			<Button
 				onclick={runDebugCapture}
 				disabled={debugBusy}
@@ -296,6 +297,10 @@
 				{debugBusy ? (debugCountdown > 0 ? `Capturing in ${debugCountdown}…` : 'Capturing…') : 'Debug capture (5 s)'}
 			</Button>
 		</div>
+
+		{#if scanError}
+			<p class="error">{scanError}</p>
+		{/if}
 
 		{#if merc.lastError}
 			<p class="error">Last error: {merc.lastError}</p>

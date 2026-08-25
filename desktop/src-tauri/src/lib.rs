@@ -182,6 +182,11 @@ pub struct AppState {
     /// un-poison path a user reaches for while that loop is running. Acquired
     /// alone, never inside a module lock (lock order — see src/modules.rs).
     pub merc_templates: Mutex<mercenary::icons::TemplateStore>,
+    /// The merc OCR burst gate (POE-198) — the single owner of "should the
+    /// capture loop be looking right now". Armed by the Client.txt log watcher
+    /// (a mercenary's voice line) or by `merc_scan_now`, read and disarmed by
+    /// the capture loop. Acquired alone, like every other module-owned Mutex.
+    pub merc_burst: Mutex<mercenary::trigger::BurstGate>,
     /// Bumped whenever the template store is EDITED by the user
     /// (`merc_forget_template` / `merc_reset_templates`). The capture loop
     /// watches it to drop the confirmations it is still re-applying from
@@ -2841,6 +2846,24 @@ fn spawn_log_watcher(app: AppHandle) {
 
         emit_status(&app);
 
+        // The merc OCR trigger's NPC denylist (POE-198). Loaded once here
+        // because this task is the only Client.txt reader in the app — the
+        // trigger must not add a second tailer. An edited override file is
+        // picked up when the watcher restarts (app restart, or a Client.txt
+        // path change in Settings).
+        let merc_denylist = {
+            let dir = app.path().app_data_dir().ok();
+            let (list, added, error) = mercenary::trigger::NpcDenylist::load(dir.as_deref());
+            if let Some(error) = error {
+                app_log(&app, format!("Merc: NPC denylist override — {}", error));
+            }
+            app_log(
+                &app,
+                format!("Merc: NPC denylist {} names ({} from override)", list.len(), added),
+            );
+            list
+        };
+
         let mut state_machine = lab_state::LabStateMachine::new();
         let mut detected_gems: Vec<String> = Vec::new();
         let _matcher = gem_matcher::GemMatcher::new(vec![]); // TODO: fetch from server
@@ -2887,6 +2910,12 @@ fn spawn_log_watcher(app: AppHandle) {
                             }
                         }
                     }
+
+                    // --- Merc OCR trigger (POE-198) ---
+                    // A mercenary's voice line arms an OCR burst. Cheap by
+                    // construction: two string searches reject every other line
+                    // before anything is locked.
+                    mercenary::trigger::on_client_line(&app, &line, &merc_denylist);
 
                     // --- Lab navigation events (outside state machine) ---
                     {
@@ -3161,6 +3190,7 @@ pub fn run() {
         modules_shutting_down: AtomicBool::new(false),
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
         merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
+        merc_burst: Mutex::new(mercenary::trigger::BurstGate::default()),
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
         temple_settings: Mutex::new(temple::slice::TempleSettings::shipped()),
@@ -3204,6 +3234,7 @@ pub fn run() {
             send_test_gems,
             test_ocr_on_image,
             mercenary::debug::merc_debug_capture,
+            mercenary::debug::merc_scan_now,
             mercenary::debug::merc_forget_template,
             mercenary::debug::merc_reset_templates,
             temple::commands::temple_set_keys,

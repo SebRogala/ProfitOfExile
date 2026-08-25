@@ -8,8 +8,11 @@ import {
 	parseLearnedTemplate,
 	positionKey,
 	positionOutcomeLabel,
+	SCAN_NOW_TITLE,
 	skillText,
 	skillTitle,
+	STATUS_LABEL,
+	STATUS_TONE,
 	supportText,
 	supportTitle
 } from './capture-view';
@@ -416,5 +419,40 @@ describe('notInRulesNames', () => {
 
 	it('reports nothing when every ruleset accounted for the capture', () => {
 		expect(notInRulesNames([withNotInRules('mv', [])])).toEqual([]);
+	});
+});
+
+describe('the module status wording', () => {
+	/**
+	 * The states differ in how much work the module is doing, which is the whole
+	 * point of trigger-only capture (POE-198): `idle` runs no OCR, `scanning` is
+	 * an armed burst, `live` has the window. Two states sharing a label would
+	 * leave the page unable to say which — and "waiting" and "scanning" are the
+	 * pair most likely to be copy-pasted into one.
+	 */
+	it('gives every status its own words', () => {
+		const labels = Object.values(STATUS_LABEL);
+
+		expect(new Set(labels).size).toBe(labels.length);
+		expect(labels.every((label) => label.length > 0)).toBe(true);
+	});
+
+	it('does not word an idle module as one that is looking', () => {
+		// `idle` means the loop is asleep. Calling it "watching for a recruit
+		// window" (which it was before POE-198) would promise the OCR that was
+		// removed, and hide a trigger that never fires.
+		expect(STATUS_LABEL.idle).not.toMatch(/watch|scan|look/i);
+	});
+
+	/** The button cannot do anything until the game is the foreground window —
+	 *  a tooltip that promised an immediate scan would read as a broken button
+	 *  to anyone who clicked it and watched nothing happen. */
+	it('tells the reader that Scan now waits for the game to be in front', () => {
+		expect(SCAN_NOW_TITLE).toMatch(/alt-tab/i);
+	});
+
+	it('keeps the captured-window colour for a captured window', () => {
+		expect(STATUS_TONE.live).toBe('pass');
+		expect(STATUS_TONE.scanning).not.toBe('pass');
 	});
 });

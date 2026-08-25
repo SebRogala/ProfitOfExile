@@ -37,6 +37,7 @@ pub mod geometry;
 pub mod icons;
 pub mod read;
 pub mod run;
+pub mod trigger;
 pub mod vocab;
 
 use std::path::Path;
@@ -47,7 +48,8 @@ use serde::{Deserialize, Serialize};
 // D7 — the `mercenary` SSOT slice wire types
 // ---------------------------------------------------------------------------
 
-/// Module status, in precedence order **off > unavailable > live > idle**.
+/// Module status, in precedence order **off > unavailable > live > scanning >
+/// idle**.
 ///
 /// `Off` is applied by the SSOT composer (the module is disabled); the other
 /// three are owned by the capture loop. The page treats this as authoritative
@@ -57,8 +59,10 @@ use serde::{Deserialize, Serialize};
 pub enum MercStatus {
     /// The module is disabled — no work runs.
     Off,
-    /// Running, but no recruit window is on screen.
+    /// Running, and waiting for a trigger — no OCR is happening (POE-198).
     Idle,
+    /// A burst is armed: the loop is looking for a recruit window right now.
+    Scanning,
     /// A recruit window is captured right now.
     Live,
     /// Not Windows, or the OCR engine is missing.
@@ -205,6 +209,15 @@ pub const GEOMETRY_SOURCE_DEFAULT: &str = "default";
 pub const GEOMETRY_SOURCE_FILE: &str = "file";
 /// The override file's name inside the app data directory.
 pub const GEOMETRY_OVERRIDE_FILE: &str = "merc-geometry.json";
+/// The NPC-denylist override file's name inside the app data directory
+/// (POE-198) — one speaker per line, merged over the shipped fixture.
+pub const DENYLIST_OVERRIDE_FILE: &str = "merc-npc-denylist.txt";
+/// This module's registry id.
+///
+/// `modules.rs` still spells it as a literal on purpose: `manager.test.ts`
+/// parses the `MODULES` array for `id: "..."` and a constant would read as a
+/// renamed-away registry entry.
+pub const MODULE_ID: &str = "mercenary";
 /// The learned icon templates' directory inside the app data directory.
 pub const ICONS_DIR: &str = "merc-icons";
 /// Where `merc_debug_capture` writes its per-capture dump directories.
@@ -569,6 +582,7 @@ mod tests {
         let statuses = [
             (MercStatus::Off, "off"),
             (MercStatus::Idle, "idle"),
+            (MercStatus::Scanning, "scanning"),
             (MercStatus::Live, "live"),
             (MercStatus::Unavailable, "unavailable"),
         ];

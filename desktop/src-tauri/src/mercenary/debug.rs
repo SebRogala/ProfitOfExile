@@ -449,6 +449,16 @@ fn timing(label: &str, started: Instant) -> DebugTiming {
     }
 }
 
+/// Scan now: arm one OCR burst by hand (POE-198).
+///
+/// The safety net for the trigger, and the answer to a recruit window that is
+/// already open when the module is switched on: the voice line for it fired
+/// before anything was listening, so nothing else would ever look at it.
+#[tauri::command]
+pub fn merc_scan_now(app: AppHandle) -> Result<(), String> {
+    super::trigger::scan_now(&app)
+}
+
 /// Forget one learned icon template — the un-poison path for a mistimed hover
 /// (D10 §1). `tier` is `Option` because the page parses it out of a store key;
 /// a key it could not parse must fail loudly rather than forget something else.

@@ -18,11 +18,15 @@
  * Whether the OCR module is running and whether it can see a recruit window.
  *
  * `off` (module disabled) and `unavailable` (non-Windows, or no OCR engine)
- * outrank the two running states: the page treats `status` as authoritative
+ * outrank the three running states: the page treats `status` as authoritative
  * over `capture.live`, because a capture is left behind with `live: false`
  * when the window goes away and is NOT cleaned up when the app exits.
+ *
+ * The running three are the trigger's own states (POE-198): `idle` is waiting
+ * for a mercenary and runs NO OCR at all, `scanning` is an armed burst looking
+ * for the window, `live` has one. `idle` therefore does not mean "watching".
  */
-export type MercStatus = 'off' | 'idle' | 'live' | 'unavailable';
+export type MercStatus = 'off' | 'idle' | 'scanning' | 'live' | 'unavailable';
 
 /**
  * How much the reader trusts one skill name or one support cell.

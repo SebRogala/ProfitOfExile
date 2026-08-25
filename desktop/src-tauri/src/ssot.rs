@@ -108,8 +108,8 @@ pub struct AppSsotSnapshot {
     /// Merc OCR capture state (POE-165), projected from the owner
     /// `AppState.mercenary` (see src/mercenary/mod.rs). `status` is forced to
     /// `Off` here when the module is disabled — the composer owns that one
-    /// precedence step (off > unavailable > live > idle), the capture loop
-    /// owns the other three. `Default` is the `Off` slice, which the page
+    /// precedence step (off > unavailable > live > scanning > idle), the
+    /// capture loop owns the other four. `Default` is the `Off` slice, which the page
     /// renders as "module off".
     pub mercenary: crate::mercenary::MercenarySlice,
     /// Temple builder state (POE-171), projected from the owner

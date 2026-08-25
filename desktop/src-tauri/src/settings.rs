@@ -449,6 +449,7 @@ mod tests {
             modules_shutting_down: AtomicBool::new(false),
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
+            merc_burst: Mutex::new(crate::mercenary::trigger::BurstGate::default()),
             merc_template_generation: AtomicU64::new(0),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::shipped()),

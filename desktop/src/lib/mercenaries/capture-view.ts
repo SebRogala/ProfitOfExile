@@ -17,7 +17,7 @@
  * screen reader both get.
  */
 
-import type { MercCapture, MercSkillRead, MercSupportRead, ReadState } from './capture';
+import type { MercCapture, MercSkillRead, MercStatus, MercSupportRead, ReadState } from './capture';
 import type {
 	CaptureSite,
 	GroupOutcome,
@@ -181,6 +181,49 @@ export function indexGroups(rulesets: MercRulesetResult[]): Map<string, MercGrou
 
 /** Colour bucket for an outcome badge — the page's CSS class suffix. */
 export type OutcomeTone = 'pass' | 'fail' | 'unknown' | 'bonus' | 'muted';
+
+/**
+ * What the module is doing, in words. `status` outranks `capture.live`: a
+ * retired capture is left behind with `live: false`, and nothing clears it on
+ * app exit.
+ *
+ * Since POE-198 the three running states are three different amounts of work,
+ * and the page says which: `idle` runs no OCR at all and is waiting for a
+ * mercenary to speak, `scanning` is a burst looking for the window, `live` has
+ * it. Wording `idle` as "watching" would claim the OCR that trigger-only
+ * capture exists to NOT do.
+ */
+export const STATUS_LABEL: Record<MercStatus, string> = {
+	off: 'module off',
+	idle: 'waiting for a mercenary',
+	scanning: 'looking for the recruit window — alt-tab to the game',
+	live: 'recruit window on screen',
+	unavailable: 'capture unavailable here'
+};
+
+/** `pass` is reserved for a window that is actually captured. */
+export const STATUS_TONE: Record<MercStatus, OutcomeTone> = {
+	off: 'muted',
+	idle: 'muted',
+	scanning: 'unknown',
+	live: 'pass',
+	unavailable: 'fail'
+};
+
+/** The manual trigger, next to the debug capture. */
+export const SCAN_NOW_LABEL = 'Scan now';
+
+/**
+ * Why it exists, in the tooltip: the voice line that normally arms a burst has
+ * already gone by for a window that was open before the module was switched on.
+ *
+ * It also has to say to alt-tab, because clicking the button puts THIS window
+ * in front and the capture loop only reads the screen while the GAME is the
+ * foreground window. The scan waits for that; the reader has to know it is
+ * waiting on them.
+ */
+export const SCAN_NOW_TITLE =
+	'Look for a recruit window — for one that is already open, or a voice line that was missed. Alt-tab to the game: the scan starts when the game is in front and runs about 10 seconds.';
 
 const POSITION_OUTCOME_LABEL: Record<PositionOutcome, string> = {
 	pass: 'present',
