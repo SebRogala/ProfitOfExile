@@ -1582,6 +1582,179 @@ fn move_overlay(label: String, x: i32, y: i32, w: u32, h: u32, app: AppHandle) -
     Ok(())
 }
 
+/// The overlay windows `fit_overlay_height` will act on.
+///
+/// An allowlist rather than "any label the app knows", because this command
+/// resizes a window on a caller's say-so and the caller is a webview. `main` is
+/// the app itself and the `overlay-*-pos` config windows are dragged and sized
+/// by the user — a content-driven refit would fight both.
+const RESIZABLE_OVERLAY_LABELS: [&str; 6] = [
+    "comparator",
+    "compass",
+    "pathstrip",
+    "timer",
+    "temple",
+    "mercenary",
+];
+
+/// Whether `fit_overlay_height` may touch this window.
+fn is_resizable_overlay_label(label: &str) -> bool {
+    RESIZABLE_OVERLAY_LABELS.contains(&label)
+}
+
+/// The floor a content-driven resize may never go under, in CSS pixels.
+///
+/// One line of text plus the panel's padding. A content height of 0 is what an
+/// overlay reports for exactly one frame while its route is mounting, and
+/// applying it would collapse the window before the first paint could restore
+/// it.
+const MIN_OVERLAY_HEIGHT_CSS: f64 = 24.0;
+
+/// The floor in PHYSICAL pixels, for a display at `scale`.
+///
+/// The floor is reasoned in CSS pixels — it is a line of text — but everything
+/// it is compared against here is physical, and on a 150 % display 24 physical
+/// pixels is two thirds of a line. Same class of unit error as the shipped
+/// height this command replaced, so it gets the same conversion.
+fn min_overlay_height(scale: f64) -> u32 {
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    (MIN_OVERLAY_HEIGHT_CSS * scale).round() as u32
+}
+
+/// The tallest an overlay at `window_top` may be without leaving the work area.
+///
+/// Pure, so the one rule that can silently ruin a screen — a panel that grows
+/// off the bottom of the monitor and takes the taskbar with it — is testable
+/// without a window.
+///
+/// `work_area_bottom` is exclusive (position + size, the Win32 convention Tauri
+/// hands back). A window already sitting below the work area gets `floor`
+/// rather than 0: a zero-height window is invisible and indistinguishable from
+/// a crashed overlay, and the user's own placement is not ours to correct here.
+///
+/// `floor` is a parameter rather than the constant so the caller can pass the
+/// scaled one — see [`min_overlay_height`].
+fn clamp_overlay_height(requested: u32, window_top: i32, work_area_bottom: i32, floor: u32) -> u32 {
+    let room = work_area_bottom.saturating_sub(window_top);
+    let room = if room < 0 { 0 } else { room as u32 };
+    requested.min(room).max(floor)
+}
+
+/// Resize an overlay to fit its own rendered content, keeping x, y and width.
+///
+/// The height of the merc verdict strip is not a setting — it is however tall
+/// the strip's content happens to be, which varies with the row count, the
+/// guide count and whether a status line is the only thing drawn. A persisted
+/// height was wrong on two axes at once: it clipped the last glyph row (the one
+/// the player still has to hover) and it was reasoned in CSS pixels while being
+/// applied as physical ones, so it clipped worse the more the display scaled.
+///
+/// `content_height` is LOGICAL (CSS) pixels, straight from the webview's own
+/// `ResizeObserver`. The conversion to physical happens here rather than in the
+/// route because the window's `scale_factor()` is the authority and asking it
+/// on this side means the two numbers cannot be read a frame apart.
+///
+/// Position is re-applied along with the size, not because it changed but
+/// because it can: the WebView2 transparency resize workaround has been
+/// observed to disturb position (see `docs/OVERLAY-GUIDE.md`), and this command
+/// runs on every content change rather than once at startup.
+///
+/// Returns the height actually applied, converted BACK to CSS pixels, so the
+/// caller can compare it against what it asked for and report a strip the work
+/// area would not fit. Same unit in and out, deliberately: a physical number
+/// returned to a caller that thinks in CSS is the unit bug this command exists
+/// to stop, reintroduced on the way out.
+#[tauri::command]
+fn fit_overlay_height(label: String, content_height: f64, app: AppHandle) -> Result<f64, String> {
+    if !is_resizable_overlay_label(&label) {
+        return Err(format!("'{}' is not a resizable overlay", label));
+    }
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("Window '{}' not found", label))?;
+
+    let scale = window
+        .scale_factor()
+        .map_err(|e| format!("scale_factor failed: {}", e))?;
+    let position = window
+        .outer_position()
+        .map_err(|e| format!("outer_position failed: {}", e))?;
+    let size = window
+        .outer_size()
+        .map_err(|e| format!("outer_size failed: {}", e))?;
+
+    let requested = (content_height.max(0.0) * scale).ceil() as u32;
+    let floor = min_overlay_height(scale);
+
+    // A monitor we cannot read is not a reason to refuse the resize — it is a
+    // reason not to clamp. Refusing would leave the strip at whatever height it
+    // was built with, which is the bug this command exists to fix; growing
+    // unclamped on a display we know nothing about is the smaller failure and
+    // it is logged.
+    let bottom = match window.current_monitor() {
+        Ok(Some(monitor)) => {
+            let area = monitor.work_area();
+            Some(area.position.y + area.size.height as i32)
+        }
+        Ok(None) => {
+            log::warn!("fit_overlay_height({label}): no current monitor, growing unclamped");
+            None
+        }
+        Err(e) => {
+            log::warn!("fit_overlay_height({label}): current_monitor failed ({e}), growing unclamped");
+            None
+        }
+    };
+    let height = match bottom {
+        Some(bottom) => clamp_overlay_height(requested, position.y, bottom, floor),
+        None => requested.max(floor),
+    };
+
+    let applied_css = height as f64 / scale;
+    if height == size.height {
+        return Ok(applied_css);
+    }
+
+    window
+        .set_size(tauri::PhysicalSize::new(size.width, height))
+        .map_err(|e| format!("set_size failed: {}", e))?;
+    window
+        .set_position(tauri::PhysicalPosition::new(position.x, position.y))
+        .map_err(|e| format!("set_position failed: {}", e))?;
+
+    // MEASURED, and the reason this is not just a resize: WebView2 strips
+    // WS_EX_TRANSPARENT when it creates or updates child windows (stated at the
+    // click-through system's module comment, and re-applied per mouse event by
+    // the hook at the WS_EX_TRANSPARENT re-apply block). The hook is the ONLY
+    // thing that repairs it, and it repairs exactly one window —
+    // `OVERLAY_HWND`, which is the comparator's. The merc strip is not tracked
+    // by it, so a resize that made WebView2 rebuild its children would leave
+    // this window opaque to the mouse: clicks stop reaching the game, and a
+    // click landing here takes focus, drops `game_in_foreground` and stops the
+    // capture loop producing the verdict on screen.
+    //
+    // Both calls are idempotent, so re-asserting after every resize costs a
+    // couple of Win32 calls on a path that only runs when the content actually
+    // changed height.
+    if let Err(e) = window.set_ignore_cursor_events(true) {
+        log::warn!("fit_overlay_height({label}): re-arming click-through failed: {e}");
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        match window.hwnd() {
+            Ok(hwnd) => unsafe {
+                overlay_clickthrough::set_noactivate(HWND(hwnd.0 as *mut _));
+            },
+            Err(e) => {
+                log::warn!("fit_overlay_height({label}): HWND unavailable, WS_EX_NOACTIVATE not re-applied: {e}");
+            }
+        }
+    }
+
+    Ok(applied_css)
+}
+
 #[tauri::command]
 fn comparator_moved(x: i32, y: i32, w: u32, h: u32, app: AppHandle) {
     let mut s = settings::load(&app);
@@ -3305,6 +3478,7 @@ pub fn run() {
             set_overlay_clickthrough,
             request_trade_refresh,
             move_overlay,
+            fit_overlay_height,
             comparator_moved,
             get_comparator_overlay_settings,
             set_comparator_overlay_settings,
@@ -3563,7 +3737,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{body_excerpt, dictionary_reject_reason, ocr_warning_field, retry_after_delay};
+    use super::{
+        body_excerpt, clamp_overlay_height, dictionary_reject_reason, is_resizable_overlay_label,
+        min_overlay_height, ocr_warning_field, retry_after_delay,
+    };
     use std::time::Duration;
 
     #[test]
@@ -3581,6 +3758,91 @@ mod tests {
         let cached = crate::ocr::language_warning();
         assert!(cached.is_some(), "recording must leave a warning cached");
         assert_eq!(ocr_warning_field(), cached);
+    }
+
+    /// The floor used by the clamp tests: the CSS floor at 100 % scaling.
+    const FLOOR: u32 = 24;
+
+    #[test]
+    fn a_height_that_fits_the_work_area_is_applied_unchanged() {
+        assert_eq!(clamp_overlay_height(240, 300, 1400, FLOOR), 240);
+    }
+
+    #[test]
+    fn a_height_that_would_run_off_the_bottom_is_cut_to_the_work_area() {
+        assert_eq!(clamp_overlay_height(400, 1200, 1400, FLOOR), 200);
+    }
+
+    /// The taskbar is outside the work area, and this is the assertion that
+    /// says the strip may never grow over it.
+    #[test]
+    fn the_work_area_bottom_is_the_limit_not_the_screen_bottom() {
+        // 1440-px screen, 40-px taskbar: the work area ends at 1400.
+        assert_eq!(clamp_overlay_height(1_000, 700, 1400, FLOOR), 700);
+    }
+
+    /// One frame while the route mounts reports a content height of 0. Applying
+    /// it would collapse the window to nothing, which is indistinguishable from
+    /// a crashed overlay.
+    #[test]
+    fn a_zero_content_height_falls_back_to_the_floor() {
+        assert_eq!(clamp_overlay_height(0, 300, 1400, FLOOR), FLOOR);
+    }
+
+    #[test]
+    fn a_window_already_below_the_work_area_still_gets_the_floor() {
+        assert_eq!(clamp_overlay_height(240, 1500, 1400, FLOOR), FLOOR);
+    }
+
+    /// A monitor whose work area starts at a negative y — a second display
+    /// placed above the primary one. Saturating rather than wrapping is what
+    /// keeps the subtraction from producing a huge unsigned height.
+    #[test]
+    fn a_monitor_above_the_primary_one_measures_its_room_the_same_way() {
+        assert_eq!(clamp_overlay_height(400, -900, -700, FLOOR), 200);
+    }
+
+    #[test]
+    fn the_floor_is_one_line_of_text_on_an_unscaled_display() {
+        assert_eq!(min_overlay_height(1.0), 24);
+    }
+
+    /// The floor is a line of TEXT, so it scales with the display like every
+    /// other CSS measurement. Leaving it physical made it two thirds of a line
+    /// at 150 % — the same unit error the shipped height had.
+    #[test]
+    fn the_floor_scales_with_the_display() {
+        assert_eq!(min_overlay_height(1.5), 36);
+        assert_eq!(min_overlay_height(2.0), 48);
+    }
+
+    #[test]
+    fn a_nonsensical_scale_factor_leaves_the_floor_unscaled() {
+        assert_eq!(min_overlay_height(0.0), 24);
+    }
+
+    #[test]
+    fn the_merc_strip_is_a_window_the_fit_command_may_resize() {
+        assert!(is_resizable_overlay_label("mercenary"));
+    }
+
+    /// The app's own window is not an overlay, and a webview asking to resize
+    /// it is the reason this is an allowlist rather than a lookup.
+    #[test]
+    fn the_main_window_is_not_a_resizable_overlay() {
+        assert!(!is_resizable_overlay_label("main"));
+    }
+
+    /// The position config windows are dragged and sized by the USER — a
+    /// content-driven refit would fight them.
+    #[test]
+    fn a_position_config_window_is_not_a_resizable_overlay() {
+        assert!(!is_resizable_overlay_label("overlay-mercenary-pos"));
+    }
+
+    #[test]
+    fn an_unknown_label_is_not_a_resizable_overlay() {
+        assert!(!is_resizable_overlay_label("nonsense"));
     }
 
     #[test]

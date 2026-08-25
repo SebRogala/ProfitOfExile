@@ -3,29 +3,31 @@
 # Blank lines and lines starting with # are ignored; matching is
 # case-insensitive and trims surrounding whitespace.
 #
-# Provenance: measured from Sebastian's Client.txt, 2026-08-25 (POE-198).
+# Provenance: measured from Sebastian's Client.txt, 2026-08-25, rescanned with
+# the `, <lowercase joiner> ` shape (POE-198).
 
-Varashta, the Winter Sekhema
-Valerie, the Corsair
-Raulf, the Recruiter
-Karst, the Lockpick
-Zana, the Originator
-Johan, the King's Hand
-Brutus, the Warden
-Maligaro, the Inquisitor
-Tujen, the Haggler
-Tujen, the Harbourmaster
-Huck, the Soldier
-Rog, the Disenchanter
-Rog, the Dealer
-Gwennen, the Gambler
-Dannig, the Blacksmith
-Faustus, the Financier
-Hillock, the Blacksmith
-Isla, the Engineer
 Adiyah, the Wayfinder
-Tora, the Culler
+Al-Hezmin, the Hunter
 Aukuna, the Black Sekhema
 Baran, the Crusader
+Brutus, the Warden
+Dannig, the Blacksmith
 Drox, the Warlord
+Faustus, the Financier
+Gwennen, the Gambler
+Hillock, the Blacksmith
+Huck, the Soldier
+Isla, the Engineer
+Johan, the King's Hand
+Karst, the Lockpick
+Maligaro, the Inquisitor
+Raulf, the Recruiter
+Rog, the Dealer
+Rog, the Disenchanter
+Tora, the Culler
+Tujen, the Haggler
+Tujen, the Harbourmaster
+Valerie, the Corsair
+Varashta, the Winter Sekhema
 Veritania, the Redeemer
+Zana, the Originator
