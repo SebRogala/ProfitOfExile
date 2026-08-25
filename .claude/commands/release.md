@@ -34,7 +34,17 @@ Example: `/release 0.1.2`
    git tag v-desktop-<version>
    ```
 
-6. **Push** (ask user for confirmation first — push auto-deploys server):
+6. **Push** (ask user for confirmation first — push auto-deploys server).
+
+   **Ordering warning — check before pushing:** if this desktop version calls a
+   server API that is not in production yet, or if the release contains a change
+   to `desktop/src/lib/mercenaries/__fixtures__/mercenary-stats.json` (the
+   families gate — `internal/mercenary/families.go` is generated from that
+   fixture and refuses uploads naming a family it does not carry), the server
+   must be LIVE first. Merged is not live: the Coolify swap takes minutes and
+   the deploy step is fire-and-forget. Push the server commit, verify it landed
+   (docs/DEPLOY.md → *Verifying a deploy landed*), then push the tag.
+
    ```
    git push origin main --tags
    ```

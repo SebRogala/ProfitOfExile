@@ -23,6 +23,7 @@
 //! offline is worse than one that says nothing.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -276,6 +277,26 @@ pub struct SyncFile {
     pub pending_tombstones: Vec<WireKey>,
 }
 
+/// Serialises every read-modify-write of `pool-sync.json`.
+///
+/// Four writers touch that file, and each of them is a load → mutate → save:
+/// [`persist_etag`] (the pull task), [`record_pending_in`] and
+/// [`clear_pending_in`] (the tombstone task), and [`forget_etag`] (the reset
+/// command). They run on different threads, so without this two of them can
+/// load the same bytes and the later save silently drops the earlier mutation
+/// — a forget that never becomes a tombstone, or a cleared ETag that comes
+/// back and earns a 304 the suppressed key can never be delivered by.
+///
+/// A process-wide `static` rather than a field of [`SyncState`] because the
+/// resource being guarded is the FILE, and two of these writers
+/// (`record_pending_in`, `clear_pending_in`) are deliberately app-free so the
+/// record → offer → clear cycle stays testable without a server.
+///
+/// Readers ([`SyncFile::load`], [`pending_tombstones`]) do not take it: with
+/// [`SyncFile::save`] writing through a rename, a read sees one whole file or
+/// the other, never a half-written one.
+static SYNC_FILE_LOCK: Mutex<()> = Mutex::new(());
+
 impl SyncFile {
     /// Read the file, or a fresh one.
     ///
@@ -302,10 +323,20 @@ impl SyncFile {
         }
     }
 
+    /// Write the file whole, through a temporary.
+    ///
+    /// Write-temp-then-rename, the same shape as `settings::save`: a plain
+    /// `fs::write` truncates first, so a process that dies mid-write leaves a
+    /// `pool-sync.json` that [`SyncFile::load`] discards — taking the ETag and
+    /// every owed tombstone with it. The rename is what makes a reader see one
+    /// whole file or the other.
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join(SYNC_FILE), json).map_err(|e| e.to_string())
+        let path = dir.join(SYNC_FILE);
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// The suppression list [`super::icons::TemplateStore::merge_pulled`] takes.
@@ -699,6 +730,7 @@ pub fn persist_etag(app: &AppHandle, dir: &Path, tag: Option<String>, suppressed
     if suppressed > 0 {
         return;
     }
+    let _guard = SYNC_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut file = SyncFile::load(dir);
     file.etag = Some(tag);
     if let Err(e) = file.save(dir) {
@@ -904,6 +936,22 @@ async fn drain_queue(app: AppHandle) {
     }
 }
 
+/// Read an acknowledgement out of a 2xx body. `None` when the bytes are not one.
+///
+/// Pure, and separate from the request, because the `None` is load-bearing: a
+/// 2xx whose body this build cannot read is NOT an acknowledgement. Defaulting
+/// it would produce an all-zero [`UploadAck`], which [`should_mark_published`]
+/// reads as settled — so a proxy's HTML error page, a truncated response or an
+/// empty body would mark the whole batch `uploaded: true` on disk and retire
+/// art the pool never took, permanently and silently.
+///
+/// Every field of [`UploadAck`] already defaults on its own, so a server that
+/// merely grew or dropped a counter still parses here. What reaches this `None`
+/// is a body that is not the ack shape at all.
+fn ack_from_body(bytes: &[u8]) -> Option<UploadAck> {
+    serde_json::from_slice(bytes).ok()
+}
+
 /// Whether an acknowledged batch may be recorded as published.
 ///
 /// Two outcomes are NOT settled and must leave the samples owed:
@@ -946,8 +994,23 @@ async fn send_batch(app: &AppHandle, batch: &[PendingSample]) -> Option<UploadAc
             .await;
         match response {
             Ok(res) if res.status().is_success() => {
+                // An empty default here is a body that never fully arrived,
+                // which `ack_from_body` refuses like any other non-ack — the
+                // batch stays owed rather than being closed out on a status
+                // line alone.
+                let raw = res.bytes().await.unwrap_or_default();
+                let Some(ack) = ack_from_body(&raw) else {
+                    // Deliberately BEFORE `note_success`: a 2xx this build
+                    // cannot read is a failed call, and calling it a success
+                    // first would re-arm the once-per-session log gate and
+                    // spend the line every batch.
+                    note_failure(
+                        app,
+                        "upload: 2xx whose body is not an acknowledgement".to_string(),
+                    );
+                    return None;
+                };
                 note_success(app);
-                let ack: UploadAck = res.json().await.unwrap_or_default();
                 if ack.rejected_unknown_family > 0 {
                     crate::app_log(app, format!(
                         "Merc: the pool refused {} template(s) as unknown families — its support vocabulary is older than this build's; they are not retried",
@@ -1139,6 +1202,7 @@ pub fn pending_tombstones(dir: &Path) -> Vec<(String, u8)> {
 /// Record a forget as owed. `true` when the file changed. App-free so the
 /// record → offer → clear cycle is testable without a server.
 fn record_pending_in(dir: &Path, family: &str, tier: u8) -> Result<bool, String> {
+    let _guard = SYNC_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut file = SyncFile::load(dir);
     let key = WireKey {
         family: family.to_string(),
@@ -1159,6 +1223,7 @@ fn record_pending_in(dir: &Path, family: &str, tier: u8) -> Result<bool, String>
 /// last pull skipped the key's served samples on account of it. Keeping the tag
 /// would earn a 304 that can never deliver them.
 fn clear_pending_in(dir: &Path, family: &str, tier: u8) -> Result<bool, String> {
+    let _guard = SYNC_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut file = SyncFile::load(dir);
     let before = file.pending_tombstones.len();
     file.pending_tombstones
@@ -1246,6 +1311,7 @@ pub fn forget_etag(app: &AppHandle) {
     let Some(dir) = icons_dir(app) else {
         return;
     };
+    let _guard = SYNC_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut file = SyncFile::load(&dir);
     if file.etag.is_none() {
         return;
@@ -1476,9 +1542,10 @@ mod tests {
     /// error the day the server deploys.
     #[test]
     fn an_upload_ack_parses_without_the_newer_counters() {
-        let ack: UploadAck =
-            serde_json::from_str(r#"{"stored":2,"duplicate":1,"capped":0,"tombstoned":0,"rejected":0}"#)
-                .expect("parses");
+        let ack = ack_from_body(
+            br#"{"stored":2,"duplicate":1,"capped":0,"tombstoned":0,"rejected":0}"#,
+        )
+        .expect("parses");
 
         assert_eq!(ack.stored, 2);
         assert_eq!(ack.rejected_unknown_family, 0);
@@ -1486,13 +1553,32 @@ mod tests {
 
     #[test]
     fn an_upload_ack_reads_the_unknown_family_count() {
-        let ack: UploadAck = serde_json::from_str(
-            r#"{"stored":0,"duplicate":0,"capped":0,"tombstoned":0,"rejected":1,"rejected_unknown_family":3}"#,
+        let ack = ack_from_body(
+            br#"{"stored":0,"duplicate":0,"capped":0,"tombstoned":0,"rejected":1,"rejected_unknown_family":3}"#,
         )
         .expect("parses");
 
         assert_eq!(ack.rejected_unknown_family, 3);
         assert_eq!(ack.rejected, 1, "malformed and unknown-family stay separate");
+    }
+
+    /// A 2xx carrying something other than an ack — a proxy's error page — is
+    /// not an acknowledgement. Reading it as a default one would hand
+    /// `should_mark_published` an all-zero ack, which settles, and the batch
+    /// would be marked uploaded on disk without the pool ever holding it.
+    #[test]
+    fn a_2xx_body_that_is_not_an_ack_yields_no_acknowledgement() {
+        assert_eq!(
+            ack_from_body(b"<html><body>502 Bad Gateway</body></html>"),
+            None,
+        );
+    }
+
+    /// The body a failed `bytes()` read defaults to, and what a server answering
+    /// 200 with nothing sends. Same rule: not an acknowledgement.
+    #[test]
+    fn an_empty_2xx_body_yields_no_acknowledgement() {
+        assert_eq!(ack_from_body(b""), None);
     }
 
     /// The corpus envelope grew `known_family_count` next to the threshold;

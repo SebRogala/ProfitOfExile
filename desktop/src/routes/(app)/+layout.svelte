@@ -465,6 +465,11 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
+			// Built without stealing the foreground. Tauri focuses a new window
+			// by default, and this one is created while the game may be in
+			// front — taking focus would pull the player out of PoE for the
+			// second before the click-through thread below runs.
+			focus: false,
 			width: Math.round(TEMPLE_OVERLAY_W / sf),
 			height: Math.round(TEMPLE_OVERLAY_H / sf),
 		});
@@ -643,6 +648,12 @@
 			resizable: false,
 			shadow: false,
 			skipTaskbar: true,
+			// Built without stealing the foreground. Tauri focuses a new window
+			// by default, and this one has teeth: activation makes the game stop
+			// being the foreground window, which drops `game_in_foreground` and
+			// stops the capture loop — the same failure the click-through note
+			// below describes, on the creation path rather than on a click.
+			focus: false,
 			width: Math.round(geometry.w / sf),
 			height: Math.round(geometry.h / sf),
 		});
@@ -673,7 +684,10 @@
 					// focus, drops `game_in_foreground`, and stops the capture
 					// loop producing the verdict. Left as-is deliberately — the
 					// fix belongs in the Rust command (make it await and report),
-					// not in a second copy of the wait here.
+					// not in a second copy of the wait here. `focus: false` on
+					// the constructor covers only the OTHER half of that second:
+					// the window no longer ACTIVATES itself on creation, but a
+					// click that lands in it still does.
 					await invoke('set_overlay_clickthrough', {
 						label: MERCENARY_WINDOW_LABEL,
 						interactiveWidth: 0,

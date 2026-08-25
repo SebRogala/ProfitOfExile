@@ -14,9 +14,21 @@
 -- the wipe set at creation — this one is the stated exception, not a
 -- precedent for skipping the league column.
 --
--- Plain table, not a hypertable: the corpus has a hard ceiling of
--- 264 (family, tier) keys x 3 samples = 792 rows per format version, it is not
--- a time series, and every read is "the whole live corpus for one version".
+-- Plain table, not a hypertable: it is not a time series, and every read is
+-- "the whole live corpus for one version".
+--
+-- The corpus that is SERVED is small and bounded — 264 (family, tier) keys x
+-- MaxSamplesPerKey (3) = 792 live rows per format version. That ceiling bounds
+-- live rows only, not the table. The cap counts `tombstoned_at IS NULL` rows
+-- (mercenary.Decide, internal/mercenary/pool.go), a tombstone is an UPDATE that
+-- keeps the row so the retired art can still be recognised and refused, and
+-- nothing in the server ever issues a DELETE against this table. So a key that
+-- is retired and re-learned repeatedly accumulates rows without bound in
+-- principle; the practical brakes are the per-device write rate limit and the
+-- fact that a retirement is a deliberate user action. If the table ever needs
+-- trimming, the row to reap is one tombstoned longer than
+-- mercenary.RetiredMatchWindow — past that window it has already stopped
+-- voting on new uploads.
 --
 -- `signature` is the FIRST bytea column in this schema. It holds exactly 576
 -- bytes: the 24x24 grayscale signature (SIG_DIM^2) that

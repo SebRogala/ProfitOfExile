@@ -55,10 +55,25 @@ const SHIPPED_DENYLIST: &str = include_str!("assets/npc-denylist.txt");
 
 /// How long a burst keeps looking, once it has started looking.
 ///
-/// For a Client.txt burst the clock starts at the LINE, not when the game
-/// returns to the foreground: a player who alt-tabs to read the page and comes
-/// back within the window still gets the capture, and one who wanders off does
-/// not come back to a loop that has been OCR'ing the screen since.
+/// For a Client.txt burst the clock starts when the line is DELIVERED, not when
+/// the game returns to the foreground: a player who alt-tabs to read the page
+/// and comes back within the window still gets the capture, and one who wanders
+/// off does not come back to a loop that has been OCR'ing the screen since.
+///
+/// MEASURED, and the reason the wording is "delivered" rather than "the line":
+/// the module-level `arm` stamps the gate with `now_ms()` — the wall clock at
+/// the moment the watcher hands this module the line. The `[INFO Client …]`
+/// timestamp the line itself carries is never read; nothing on this path parses
+/// it. So the TTL actually begins one watcher hop late: `log_watcher` blocks on
+/// a notify event with a 5 s `recv_timeout` fallback, so a line that arrives
+/// without a filesystem event costs up to that whole fallback before the burst
+/// is armed.
+///
+/// Accepted, not worked around. Reading the file's own timestamp would mean
+/// parsing a local-time string with no zone against a clock that may not agree
+/// with it — and getting that wrong shortens or lengthens every burst silently,
+/// which is worse than a delay bounded by a constant one file away. The TTL is
+/// sized with that hop inside it.
 pub const BURST_TTL_MS: u64 = 10_000;
 
 /// How long a Scan-now burst waits for the game before giving up.
