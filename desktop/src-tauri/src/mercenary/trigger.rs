@@ -7,7 +7,7 @@
 //! look, and the ask is an event:
 //!
 //! - a **Client.txt voice line** whose speaker is shaped like a mercenary's
-//!   (`<Name>, the <Epithet>`) and is not a known NPC, or
+//!   (`<Name>, <joiner> <Epithet>`) and is not a known NPC, or
 //! - the page's **Scan now** button.
 //!
 //! Either arms a [`BurstGate`] for [`BURST_TTL_MS`]. While it is armed and the
@@ -20,13 +20,24 @@
 //! # Why a denylist and not a pattern
 //!
 //! Merc names are generated (first name × epithet), so there is no list to
-//! match against. `<Name>, the <Epithet>` is the shape, but PoE's own NPCs use
-//! it too — measured on Sebastian's Client.txt (2026-08-25): 93 distinct
-//! `, the ` speakers over 1263 lines, of which 24 are NPCs (`Varashta, the
-//! Winter Sekhema` alone accounts for 416 lines). The positive pattern ALONE
-//! was measured to fail; the 24 ship in `assets/npc-denylist.txt` and
-//! `<app_data>/merc-npc-denylist.txt` extends them without a rebuild, the same
-//! shape as `merc-geometry.json`.
+//! match against. `<Name>, <joiner> <Epithet>` is the shape, but PoE's own NPCs
+//! use it too, so the positive pattern ALONE was measured to fail. The NPCs
+//! ship in `assets/npc-denylist.txt`, and `<app_data>/merc-npc-denylist.txt`
+//! extends them without a rebuild, the same shape as `merc-geometry.json`.
+//!
+//! MEASURED on Sebastian's Client.txt, 2026-08-25, rescanned with this shape:
+//! joiners `the` ×94 and `of` ×1, 25 NPC speakers (`Varashta, the Winter
+//! Sekhema` alone accounts for 416 lines), and the 70 speakers left after the
+//! denylist are all generated mercenary names. NO NPC in that file uses a
+//! lowercase joiner other than `the`.
+//!
+//! The joiner is a variable rather than the literal `the` because `of` is real
+//! on both measured machines: `Swain, of Fractured Faith` is the one on the PC,
+//! and on the LAPTOP file the same day — a smaller, merc-heavier sample — the
+//! joiners ran `of` ×8 against `the` ×7 (`Fennik, of Unshakeable Faith`). A
+//! `, the ` rule silently drops every one of them. See [`is_dialogue_speaker`]
+//! for the lowercase requirement that keeps `Alva, Master Explorer` out, and
+//! for the trade-off it leaves behind.
 //!
 //! # The cost of being wrong
 //!
@@ -50,7 +61,7 @@ use super::run::{now_ms, publish, status};
 use super::{MercStatus, DENYLIST_OVERRIDE_FILE, MODULE_ID};
 use crate::AppState;
 
-/// The 24 measured NPC speakers. See `assets/README.md` for provenance.
+/// The 25 measured NPC speakers. See `assets/README.md` for provenance.
 const SHIPPED_DENYLIST: &str = include_str!("assets/npc-denylist.txt");
 
 /// How long a burst keeps looking, once it has started looking.
@@ -87,8 +98,8 @@ pub const BURST_TTL_MS: u64 = 10_000;
 /// not leave the module armed for the rest of the session.
 pub const MANUAL_ARM_GRACE_MS: u64 = 60_000;
 
-/// The infix that makes a Client.txt speaker dialogue rather than chat.
-const SPEAKER_INFIX: &str = ", the ";
+/// The separator that splits a dialogue speaker into its name and its title.
+const SPEAKER_SEPARATOR: &str = ", ";
 
 /// Sigils PoE puts in front of a PLAYER's name: whisper, guild, global, trade,
 /// party. A speaker starting with one of these is a person typing, whatever it
@@ -117,19 +128,59 @@ pub fn speaker_of(line: &str) -> Option<&str> {
 }
 
 /// Whether a speaker is shaped like a mercenary's or an NPC's: one whitespace-
-/// free name, `", the "`, then a non-empty epithet (`^\S+, the ` plus the
-/// requirement that something follows).
+/// free name, `", "`, one all-lowercase joiner word, then a non-empty epithet
+/// (`^\S+, [a-z]+ ` plus the requirement that something follows).
+///
+/// MEASURED, and the reason this is no longer `", the "`. Two Client.txt files,
+/// both 2026-08-25: the LAPTOP one caught `Fennik, of Unshakeable Faith` with
+/// joiners running `of` ×8 against `the` ×7, and a rescan of the PC one caught
+/// `Swain, of Fractured Faith` (`the` ×94, `of` ×1). The epithet is a title,
+/// and PoE builds titles with more than one preposition, so a `, the ` rule
+/// silently drops every `of` mercenary — on the laptop file, most of them.
+///
+/// The name is `\S+` and the hyphen in `Al-Hezmin, the Hunter` is inside it:
+/// the constraint is NO WHITESPACE, not "letters only". A rule that required
+/// letters would have let that NPC past the denylist, which matches on the
+/// whole speaker string.
+///
+/// The joiner is required to be LOWERCASE because that is what separates a
+/// title from a two-part name: `Alva, Master Explorer` (the laptop file's only
+/// comma-carrying NPC) has a capitalised `Master` that is part of the NAME.
+/// Matching any word there would have armed on every one of her lines.
+///
+/// **A second cost, on a different axis:** `is_ascii_lowercase` is an ENGLISH
+/// rule. A client running in another language writes its joiner in that
+/// language, and where that word is non-ASCII (or is capitalised by that
+/// language's convention) no voice line on that machine will ever arm a burst.
+/// Such a player is not broken, only unautomated: **Scan now** covers every
+/// capture by hand, which is the same fallback a mercenary who says nothing
+/// gets. Widening to `char::is_lowercase` would admit non-ASCII joiners but
+/// still not a language that capitalises them, so it buys part of a fix for a
+/// case nobody has measured — left until someone runs a non-English client.
+///
+/// **The trade-off, stated:** the shape is wider than the 25 measured NPCs it
+/// is tuned against, all of which use `, the ` — no NPC with a lowercase joiner
+/// other than `the` was found in either file. An NPC introduced with one
+/// (`Someone, of Somewhere`) would match this shape and would have to be
+/// suppressed by name — [`NpcDenylist`], and the override file when a rebuild
+/// is not wanted. That is the cheap failure by design (see the module header):
+/// a false trigger costs one silent burst, a missed one costs the capture.
 ///
 /// Shape only — it says nothing about whether the speaker is a mercenary. That
 /// is [`NpcDenylist`]'s job, because the names are generated and there is no
 /// positive list to match.
 pub fn is_dialogue_speaker(speaker: &str) -> bool {
-    let Some((name, epithet)) = speaker.split_once(SPEAKER_INFIX) else {
+    let Some((name, title)) = speaker.split_once(SPEAKER_SEPARATOR) else {
         return false;
     };
-    !name.is_empty()
-        && !name.contains(char::is_whitespace)
-        && !name.starts_with(CHAT_SIGILS)
+    if name.is_empty() || name.contains(char::is_whitespace) || name.starts_with(CHAT_SIGILS) {
+        return false;
+    }
+    let Some((joiner, epithet)) = title.split_once(' ') else {
+        return false;
+    };
+    !joiner.is_empty()
+        && joiner.chars().all(|c| c.is_ascii_lowercase())
         && !epithet.trim().is_empty()
 }
 
@@ -150,7 +201,7 @@ pub struct NpcDenylist {
 
 #[allow(clippy::len_without_is_empty)]
 impl NpcDenylist {
-    /// The shipped list — the 24 measured NPCs, and nothing else.
+    /// The shipped list — the 25 measured NPCs, and nothing else.
     pub fn shipped() -> Self {
         Self::parse(SHIPPED_DENYLIST)
     }
@@ -545,6 +596,36 @@ mod tests {
         assert!(is_dialogue_speaker("Nytra, the Cyaxan Loner"));
     }
 
+    /// MEASURED on the laptop Client.txt (2026-08-25): this is the line that
+    /// showed the `, the ` rule never arming. `of` outnumbered `the` in that
+    /// file's dialogue speakers.
+    #[test]
+    fn is_dialogue_speaker_accepts_an_of_joiner() {
+        assert!(is_dialogue_speaker("Fennik, of Unshakeable Faith"));
+    }
+
+    /// The one comma-carrying NPC in the same file. `Master` is part of her
+    /// NAME, not a joiner, and its capital is what says so — a rule that took
+    /// any word there would arm on every line Alva speaks.
+    #[test]
+    fn is_dialogue_speaker_rejects_a_capitalised_joiner() {
+        assert!(!is_dialogue_speaker("Alva, Master Explorer"));
+    }
+
+    #[test]
+    fn is_dialogue_speaker_rejects_a_joiner_with_nothing_after_it() {
+        assert!(!is_dialogue_speaker("Fennik, of"));
+    }
+
+    /// The name is `\S+`, not `[A-Za-z]+`. `Al-Hezmin, the Hunter` is a
+    /// denylisted NPC, and a shape that rejected the hyphen would never reach
+    /// the denylist to be suppressed by it — it would look like a name nobody
+    /// had ever listed.
+    #[test]
+    fn is_dialogue_speaker_accepts_a_hyphenated_name() {
+        assert!(is_dialogue_speaker("Al-Hezmin, the Hunter"));
+    }
+
     #[test]
     fn is_dialogue_speaker_rejects_a_multi_word_name() {
         assert!(!is_dialogue_speaker("Some Guy, the Lout"));
@@ -570,6 +651,7 @@ mod tests {
         assert!(list.len() > 0, "the shipped fixture parsed into nothing");
         assert!(list.contains("Varashta, the Winter Sekhema"));
         assert!(list.contains("Tujen, the Haggler"));
+        assert!(list.contains("Al-Hezmin, the Hunter"));
     }
 
     #[test]
@@ -580,6 +662,16 @@ mod tests {
     #[test]
     fn the_denylist_does_not_match_a_mercenary() {
         assert!(!NpcDenylist::shipped().contains("Nytra, the Cyaxan Loner"));
+    }
+
+    /// The shape admits the hyphen (see `is_dialogue_speaker_accepts_a_
+    /// hyphenated_name`); this is the other half — the denylist is what
+    /// actually stops the Hunter, so the two must agree on the same string.
+    #[test]
+    fn a_hyphenated_npc_name_is_suppressed_by_the_shipped_list() {
+        let line = "2026/08/25 19:04:31 105432578 cffb0716 [INFO Client 12345] Al-Hezmin, the Hunter: You will not escape.";
+        assert!(is_dialogue_speaker("Al-Hezmin, the Hunter"));
+        assert_eq!(trigger_speaker(line, &NpcDenylist::shipped()), None);
     }
 
     #[test]
@@ -631,6 +723,30 @@ mod tests {
             trigger_speaker(MERC_LINE, &NpcDenylist::shipped()),
             Some("Nytra, the Cyaxan Loner")
         );
+    }
+
+    /// Both measured `of` mercenaries, one per machine — the laptop's and the
+    /// PC's. Neither armed under the old `, the ` rule.
+    #[test]
+    fn a_mercenary_whose_title_uses_of_names_its_speaker() {
+        for name in ["Fennik, of Unshakeable Faith", "Swain, of Fractured Faith"] {
+            let line = format!(
+                "2026/08/25 19:04:31 105432578 cffb0716 [INFO Client 12345] {name}: I am ready."
+            );
+            assert_eq!(
+                trigger_speaker(&line, &NpcDenylist::shipped()),
+                Some(name),
+                "{name} must arm a burst"
+            );
+        }
+    }
+
+    /// Alva is not on the denylist and does not need to be: the shape rejects
+    /// her, because her comma is followed by a capitalised name-part.
+    #[test]
+    fn an_npc_whose_comma_carries_a_name_and_not_a_title_triggers_nothing() {
+        let line = "2026/08/25 19:04:31 105432578 cffb0716 [INFO Client 12345] Alva, Master Explorer: Another incursion awaits.";
+        assert_eq!(trigger_speaker(line, &NpcDenylist::shipped()), None);
     }
 
     #[test]

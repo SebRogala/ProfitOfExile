@@ -19,6 +19,7 @@
 		readOverlayRegion
 	} from '$lib/overlay/manager';
 	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
+	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import MercenariesPage from '$lib/pages/MercenariesPage.svelte';
@@ -583,10 +584,13 @@
 	// that are deliberately never unified (see the focus poller in `lib.rs`). A
 	// click landing here would take focus, drop the raw flag, and stop the loop
 	// that produces the verdict on screen. Hence `interactiveWidth: 0`.
-	const MERC_OVERLAY_DEFAULT_X = 40;
-	const MERC_OVERLAY_DEFAULT_Y = 300;
-	const MERC_OVERLAY_DEFAULT_W = 460;
-	const MERC_OVERLAY_DEFAULT_H = 150;
+	// The shipped placement lives in `$lib/overlay/overlay-defaults` because the
+	// Settings position flow builds a config window from the SAME numbers and
+	// persists whatever it is saved at. Two copies meant a Save from Settings
+	// could write the older size back over the newer default forever.
+	//
+	// They are CSS pixels; everything below this line is physical. See
+	// `physicalGeometry`.
 
 	/**
 	 * Guard 6's channel — see `logTemple`.
@@ -604,17 +608,37 @@
 			.catch(e => console.error('[overlay] merc: app log unreachable:', e));
 	}
 
-	/** The persisted geometry, or the shipped placement when nothing is stored. */
+	/**
+	 * The persisted geometry, or the shipped placement when nothing is stored.
+	 *
+	 * PHYSICAL pixels either way, which is what the two units in play make
+	 * non-obvious: persisted settings are already physical and are returned
+	 * untouched, while the shipped defaults are reasoned in CSS pixels (a height
+	 * budget is a sum of font sizes) and are converted here. Shipping the CSS
+	 * figure as a physical one made the strip a third short of its own budget on
+	 * a 150 %-scaled display — the machines where the clipping mattered most.
+	 *
+	 * The fields mix per-field, deliberately: a user who has saved a position
+	 * but whose height Rust never stored gets their x/y and the scaled default
+	 * height, rather than one wholesale choice between the two sources.
+	 */
 	async function mercOverlayGeometry(): Promise<{ x: number; y: number; w: number; h: number }> {
 		const settings = await invoke<any>('get_mercenary_overlay_settings').catch(e => {
 			logMerc(`settings load failed, using the default placement: ${e}`);
 			return null;
 		});
+		const sf = await getCurrentWebviewWindow()
+			.scaleFactor()
+			.catch((e: any) => {
+				logMerc(`scaleFactor failed while sizing the default placement, using 1: ${e}`);
+				return 1;
+			});
+		const shipped = physicalGeometry(MERC_OVERLAY_DEFAULTS, sf);
 		return {
-			x: settings?.x ?? MERC_OVERLAY_DEFAULT_X,
-			y: settings?.y ?? MERC_OVERLAY_DEFAULT_Y,
-			w: settings?.width ?? MERC_OVERLAY_DEFAULT_W,
-			h: settings?.height ?? MERC_OVERLAY_DEFAULT_H,
+			x: settings?.x ?? shipped.x,
+			y: settings?.y ?? shipped.y,
+			w: settings?.width ?? shipped.w,
+			h: settings?.height ?? shipped.h,
 		};
 	}
 

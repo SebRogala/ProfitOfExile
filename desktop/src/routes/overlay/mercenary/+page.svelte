@@ -2,6 +2,13 @@
 	/**
 	 * Merc verdict overlay (POE-199) — a DISPLAY-ONLY overlay window.
 	 *
+	 * It draws in two parts, and the split is the 2026-08-25 smoke fix. The
+	 * STATUS line draws for every running status, capture or not ("I have no
+	 * idea whether something is being captured or not, and I have to constantly
+	 * alt-tab"); the verdict block draws on top of it once there is a capture.
+	 * Both gates and every word live in `$lib/mercenaries/overlay-view`, which
+	 * has a unit-test harness this file does not.
+	 *
 	 * Read `docs/OVERLAY-GUIDE.md` before changing anything here. The guards this
 	 * window is bound by, and where each is satisfied:
 	 *
@@ -23,10 +30,11 @@
 	 *    `test_overlay_settings_survive_persist_cycle`). Unlike the temple
 	 *    overlay, this strip is placed by the user and must come back where they
 	 *    left it.
-	 * 6. **Error visibility** — this file has no failure path of its own: it
-	 *    invokes nothing and listens to nothing. Every operation that CAN fail
-	 *    (build, position, click-through, teardown) belongs to the owning window
-	 *    and logs there, through `app_log_from_frontend`.
+	 * 6. **Error visibility** — this file has exactly ONE failure path, the
+	 *    content-height resize below, and it logs through
+	 *    `app_log_from_frontend` like every other overlay path. Everything else
+	 *    that CAN fail (build, position, click-through, teardown) belongs to the
+	 *    owning window and logs there.
 	 *
 	 * **Click-through is not a detail here, it is the feature working.** The
 	 * capture loop gates on `AppState.game_in_foreground` — the RAW foreground
@@ -43,7 +51,27 @@
 	 * `onMount` is not reliable in an overlay window and cross-window JS state is
 	 * not either, so everything comes from the Rust-backed `get_ssot` poll that
 	 * `routes/overlay/+layout.svelte` starts for every overlay route — this file
-	 * only reads the rune.
+	 * reads the rune, and uses a `$effect` rather than `onMount` for the one
+	 * piece of setup it owns.
+	 *
+	 * # Height follows content
+	 *
+	 * The strip has NO persisted height (owner decision, 2026-08-25). It draws a
+	 * status line, a header, a line per guide and a line per row, so its height
+	 * is a function of what the read found; and a shipped number is additionally
+	 * wrong on every display that scales, because a height budget is reasoned in
+	 * CSS pixels and Tauri applies physical ones. So the panel measures itself
+	 * and Rust resizes the window to fit — `fit_overlay_height`, which converts
+	 * with the WINDOW's own scale factor, clamps to the monitor work area so the
+	 * strip can never grow over the taskbar, and re-applies the position because
+	 * the WebView2 transparency resize workaround has been observed to disturb
+	 * it. Width and position are never touched by this path; they stay whatever
+	 * the user set in Settings → Overlay Positions.
+	 *
+	 * This cannot oscillate. The panel's height is content-driven and its width
+	 * comes from the fixed-inset root, so a height change never re-wraps text
+	 * and never feeds back into the measurement. The guard against a resize
+	 * storm is `overlayHeightRequest`, not that argument.
 	 *
 	 * The verdict itself is computed HERE, from the same pure engine the page
 	 * uses (`evaluateCapture`), against the same enabled-guide set (Rust's
@@ -52,56 +80,143 @@
 	 * copy would be one poll away from lying. Same inputs on both windows is
 	 * what makes the page and this strip agree (POE-199 L5).
 	 */
+	import { invoke } from '@tauri-apps/api/core';
 	import { ssot } from '$lib/stores/ssot.svelte';
+	import { MERCENARY_WINDOW_LABEL } from '$lib/overlay/manager';
+	import { overlayHeightRequest } from '$lib/overlay/content-height';
 	import { MERC_SOURCES } from '$lib/mercenaries/rulesets';
 	import { enabledSources } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
 	import {
-		WINDOW_GONE_NOTE,
-		captureRetired,
 		guideLines,
 		headerLine,
 		overlayShowsVerdict,
+		overlayVisible,
+		liveRowGlyphs,
+		statusLine,
 		unreadNote
 	} from '$lib/mercenaries/overlay-view';
 
 	const merc = $derived(ssot.mercenary);
 	const capture = $derived(merc.capture);
-	const visible = $derived(overlayShowsVerdict(merc));
+	const visible = $derived(overlayVisible(merc));
+	const showsVerdict = $derived(overlayShowsVerdict(merc));
+	const status = $derived(statusLine(merc));
 	const enabled = $derived(enabledSources(merc.sourcesOff));
 	const verdict = $derived(
 		capture === null ? null : evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
 	);
 	const lines = $derived(guideLines(verdict));
-	const retired = $derived(captureRetired(merc));
-	const unread = $derived(capture === null ? null : unreadNote(capture));
+	const unread = $derived(unreadNote(merc));
+	// WHICH cells still need a hover, not just how many. The live-only gate is
+	// inside `liveRowGlyphs`, where it is tested.
+	const glyphRows = $derived(liveRowGlyphs(merc));
+
+	// --- Height follows content (see the header) ---
+
+	let panelEl = $state<HTMLElement | null>(null);
+	/** The last CSS height this window ASKED Rust for. See `overlayHeightRequest`. */
+	let lastSentHeight: number | null = null;
+	/** Whether a measurement is already queued for the next frame. */
+	let framePending = false;
+
+	function logMerc(msg: string): void {
+		console.warn(`[overlay] merc strip: ${msg}`);
+		invoke('app_log_from_frontend', { msg: `[merc-overlay] ${msg}` })
+			.catch(e => console.error('[overlay] merc strip: app log unreachable:', e));
+	}
+
+	/**
+	 * Measure and, if it moved, ask Rust to refit. Runs at most once per frame.
+	 *
+	 * Measured inside the animation frame rather than from the observer entry so
+	 * a burst of mutations in one tick produces ONE reading of the settled
+	 * layout instead of one call per mutation.
+	 */
+	function refit(): void {
+		framePending = false;
+		if (panelEl === null) return;
+		const request = overlayHeightRequest(panelEl.getBoundingClientRect().height, lastSentHeight);
+		if (request === null) return;
+		lastSentHeight = request;
+		invoke<number>('fit_overlay_height', {
+			label: MERCENARY_WINDOW_LABEL,
+			contentHeight: request
+		}).then(applied => {
+			// The command answers with the height it actually applied, back in
+			// CSS pixels. A smaller one means the monitor work area would not fit
+			// the strip, so the last rows ARE clipped — the player is looking at
+			// a partial verdict and nothing else on screen would say so. Reported
+			// once, not per frame: `overlayHeightRequest` only lets a genuinely
+			// changed height get this far.
+			if (applied < request - 1) {
+				logMerc(
+					`content wants ${Math.round(request)} css px, work area allows ${Math.round(applied)} — the last rows are clipped`
+				);
+			}
+		}).catch(e => {
+			// Guard 6. A strip stuck at its constructor seed is a clipped verdict,
+			// which looks like a bad OCR read rather than a window that failed to
+			// resize — so this must not be silent. The failed height is cleared so
+			// the next observation retries rather than being deduped away.
+			lastSentHeight = null;
+			logMerc(`fit_overlay_height(${request}) failed: ${e}`);
+		});
+	}
+
+	$effect(() => {
+		const el = panelEl;
+		if (el === null) return;
+		const observer = new ResizeObserver(() => {
+			if (framePending) return;
+			framePending = true;
+			requestAnimationFrame(refit);
+		});
+		observer.observe(el);
+		return () => {
+			observer.disconnect();
+			framePending = false;
+		};
+	});
 </script>
 
 <div class="overlay-root">
-	{#if visible && capture}
-		<div class="panel">
-			<p class="header">{headerLine(capture)}</p>
-
-			{#each lines as line (line.id)}
-				<p class="guide">
-					<span class="guide-name">{line.label}</span>
-					<span class="badge tone-{line.tone}">{line.headline}</span>
-					{#if line.detail}<span class="detail">{line.detail}</span>{/if}
-				</p>
-			{/each}
-			{#if lines.length === 0}
-				<!-- Every guide switched off: the strip says so rather than
-				     drawing an empty panel that looks like a broken read. -->
-				<p class="note">every guide switched off — no verdict</p>
+	{#if visible}
+		<div class="panel" bind:this={panelEl}>
+			<!-- The module's pulse. Drawn for every running status, capture or
+			     not — an empty overlay and a dead one used to look the same. -->
+			{#if status}
+				<p class="status">{status}</p>
 			{/if}
 
-			<!-- What the read could not settle, on the surface the player decides
-			     from. Compact, but never dropped. -->
-			{#if unread}
-				<p class="note">{unread}</p>
-			{/if}
-			{#if retired}
-				<p class="note">{WINDOW_GONE_NOTE}</p>
+			{#if showsVerdict && capture}
+				<p class="header">{headerLine(capture)}</p>
+
+				{#each lines as line (line.id)}
+					<p class="guide">
+						<span class="guide-name">{line.label}</span>
+						<span class="badge tone-{line.tone}">{line.headline}</span>
+						{#if line.detail}<span class="detail">{line.detail}</span>{/if}
+					</p>
+				{/each}
+				{#if lines.length === 0}
+					<!-- Every guide switched off: the strip says so rather than
+					     drawing an empty panel that looks like a broken read. -->
+					<p class="note">every guide switched off — no verdict</p>
+				{/if}
+
+				{#each glyphRows as glyphRow (glyphRow.index)}
+					<p class="row">
+						<span class="row-skill">{glyphRow.skill}</span>
+						<span class="row-glyphs">{glyphRow.glyphs}</span>
+					</p>
+				{/each}
+
+				<!-- What the read could not settle, on the surface the player
+				     decides from. Compact, but never dropped. -->
+				{#if unread}
+					<p class="note">{unread}</p>
+				{/if}
 			{/if}
 		</div>
 	{/if}
@@ -134,6 +249,41 @@
 	.header {
 		font-size: 14px;
 		font-weight: 700;
+		color: var(--color-lab-text);
+	}
+
+	/* The pulse line. Muted rather than coloured: it is always present, so a
+	   colour here would compete with the badges and the honesty notes, which
+	   are the two things on this strip that mean act now. */
+	.status {
+		font-size: 11px;
+		line-height: 1.3;
+		color: var(--color-lab-text-secondary);
+	}
+
+	.row {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.row-skill {
+		flex: 1 1 auto;
+		min-width: 0;
+		font-size: 11px;
+		color: var(--color-lab-text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	/* The glyphs must never be the part that gets ellipsised — they are the
+	   answer the row exists to give. */
+	.row-glyphs {
+		flex: 0 0 auto;
+		font-size: 11px;
+		letter-spacing: 0.08em;
 		color: var(--color-lab-text);
 	}
 

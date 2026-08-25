@@ -59,6 +59,36 @@ always-on-top window. They still appear in the Rust focus poller's game-focus
 show/hide list and in `force_show_overlays`. Persisted geometry is independent
 of the coupling: temple has none, the merc strip has `mercenary_overlay`.
 
+The merc strip's **height follows content; width and position are persisted**
+(owner decision, 2026-08-25). Its route observes its own panel with a
+`ResizeObserver` and calls the Rust `fit_overlay_height` command, which converts
+the measured CSS height with the WINDOW's own `scale_factor()`, clamps it to the
+monitor work area so the strip can never grow over the taskbar, and re-applies
+the position along with the size — a resize can disturb position, so the guard
+belongs on every call and not just on startup. Width and position are never
+touched by that path. `mercenary_overlay.height` is still written (Settings
+saves the whole rect) and is then ignored by the real window, which refits on
+first paint; the constructor seed in `desktop/src/lib/overlay/overlay-defaults.ts`
+only decides what that first frame looks like. A shipped height was wrong twice
+over: it clipped the last row, and it was reasoned in CSS pixels while being
+applied as physical ones, so it clipped worse the more the display scaled.
+Settings → Overlay Positions configures the merc row for **position and width
+only**; its config window is given the live overlay's height when one is running
+and the seed when the module is off, and that height is LOCKED with
+`setSizeConstraints` (width stays draggable — Tauri's `resizable` flag has no
+per-axis form, and the guide detail line ellipsises, so width is a real
+setting).
+
+`fit_overlay_height` re-asserts click-through after every resize —
+`set_ignore_cursor_events(true)` plus `set_noactivate` on Windows, both
+idempotent. This is not belt-and-braces: WebView2 strips `WS_EX_TRANSPARENT`
+when it creates or updates child windows, and the only thing that repairs it is
+the `WH_MOUSE_LL` hook, which repairs exactly one window — `OVERLAY_HWND`, the
+comparator's. The merc strip is not tracked by it, so a resize that made
+WebView2 rebuild its children would leave the strip opaque to the mouse: clicks
+stop reaching the game, and a click landing on the strip takes focus, drops
+`game_in_foreground` and stops the capture loop.
+
 For the merc overlay, click-through is a correctness requirement, not a
 preference. The capture loop reads the screen only while the game is the RAW
 foreground window (`AppState.game_in_foreground`), while overlay visibility
@@ -115,6 +145,21 @@ runtime failure mode:
 Do not delete these observations merely because a future code path appears
 simpler; reproduce the Windows behavior first or supersede them with a dated
 regression test/decision.
+
+## Windows smoke checks
+
+Static gates cannot reach these; run them on a Windows build after touching the
+named path.
+
+- **Merc strip, after a row-count change** (the content-driven resize path): let
+  the strip redraw at a different height — open a recruit window with a
+  different number of rows, or let a live capture retire — then sweep the mouse
+  across the strip and left-click on it. The click must reach the game and the
+  module status must stay `live`/`scanning`. A click that selects something in
+  our window instead, or a status that drops to `idle`, means the resize lost
+  `WS_EX_TRANSPARENT` and the re-assert in `fit_overlay_height` is not working.
+- **Merc strip, first paint**: starting the module must not flash a large empty
+  panel. The constructor seed is one line tall and the content replaces it.
 
 ## Adding an overlay
 
