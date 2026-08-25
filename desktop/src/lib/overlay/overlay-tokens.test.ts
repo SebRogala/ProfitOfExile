@@ -1,5 +1,5 @@
 /**
- * The temple overlay's palette must actually resolve in the overlay window.
+ * EVERY overlay route's palette must actually resolve in the overlay window.
  *
  * This is a static check, not a behaviour test, and it exists because the bug
  * it pins is invisible in every other gate: `--color-lab-*` used to be declared
@@ -12,7 +12,13 @@
  *
  * So the assertion follows the real chain: which stylesheets does the OVERLAY
  * layout import, which custom properties do they declare, and does every
- * property the temple's overlay surfaces reference appear among them.
+ * property each overlay surface references appear among them.
+ *
+ * The route list is a GLOB, not a list of imports, so an overlay added later is
+ * covered the day it is added rather than the day someone remembers this file —
+ * which is how the merc verdict overlay (POE-199) reached review drawing four
+ * tokens nothing here had ever checked. That is also why the file now lives
+ * under `lib/overlay/` instead of `lib/temple/`: it is not the temple's test.
  *
  * Sources are read through Vite's `?raw` rather than through `node:fs` — this
  * app has no `@types/node`, and the bundler already has every one of these
@@ -20,13 +26,32 @@
  */
 import { describe, expect, it } from 'vitest';
 import overlayLayoutSource from '../../routes/overlay/+layout.svelte?raw';
-import overlayPageSource from '../../routes/overlay/temple/+page.svelte?raw';
 
 /** The directory the overlay layout's own imports resolve against. */
 const OVERLAY_LAYOUT_DIR = '/src/routes/overlay';
 
-/** Every component in this directory — all of them draw inside the overlay. */
-const templeComponents = import.meta.glob('./*.svelte', {
+/**
+ * Every overlay ROUTE page, by root-relative path — the windows themselves.
+ *
+ * `/src/routes/overlay/*` + `+page.svelte`, so a new `/overlay/<name>` route is
+ * picked up automatically. `routes/overlay/+page.svelte` (the capture/config
+ * overlay) matches too, which is correct: it draws in the same window shell.
+ */
+const overlayPages = import.meta.glob('/src/routes/overlay/**/+page.svelte', {
+	query: '?raw',
+	import: 'default',
+	eager: true
+}) as Record<string, string>;
+
+/**
+ * Every component an overlay route draws WITH.
+ *
+ * Only `lib/temple/` today (`TempleLattice.svelte`, shared with the page), and
+ * it is listed by directory rather than globbed app-wide because most `$lib`
+ * components never enter an overlay window and would fail this check for tokens
+ * only `app.css` declares — correctly, since they are never drawn out here.
+ */
+const overlayComponents = import.meta.glob('/src/lib/temple/*.svelte', {
 	query: '?raw',
 	import: 'default',
 	eager: true
@@ -41,8 +66,8 @@ const stylesheets = import.meta.glob('/src/**/*.css', {
 
 /** The surfaces drawn INSIDE the overlay window, and nothing else. */
 const overlaySurfaces: [string, string][] = [
-	['routes/overlay/temple/+page.svelte', overlayPageSource],
-	...Object.entries(templeComponents)
+	...Object.entries(overlayPages),
+	...Object.entries(overlayComponents)
 ];
 
 /** Resolve a relative import specifier against a root-relative directory. */
@@ -82,7 +107,7 @@ function referencedIn(source: string): string[] {
 	return [...new Set([...source.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]))];
 }
 
-describe('the temple overlay palette', () => {
+describe('the overlay palette', () => {
 	const imported = cssImportsOf(overlayLayoutSource, OVERLAY_LAYOUT_DIR);
 	const declared = new Set<string>();
 	for (const sheet of imported) {
@@ -102,11 +127,24 @@ describe('the temple overlay palette', () => {
 		expect(missing).toEqual([]);
 	});
 
-	it('reads a palette from the temple surfaces rather than passing on an empty set', () => {
+	it('reads a palette from the overlay surfaces rather than passing on an empty set', () => {
 		// The check above is vacuously true if the sources ever stop matching
 		// (a renamed route, a moved component), so the reference set being
 		// non-empty is asserted rather than assumed.
 		const referenced = overlaySurfaces.flatMap(([, source]) => referencedIn(source));
 		expect(referenced.length).toBeGreaterThan(0);
+	});
+
+	it('covers every overlay route, not a hand-kept list of them', () => {
+		// The glob is what makes the check above true for an overlay added
+		// later. Naming the two module-coupled routes explicitly is the part
+		// that would have caught the merc window: it drew tokens nothing
+		// checked, because the old version of this file imported one route by
+		// path. A route renamed or removed fails here rather than silently
+		// shrinking the coverage of every assertion above.
+		const covered = Object.keys(overlayPages);
+		expect(covered).toContain('/src/routes/overlay/temple/+page.svelte');
+		expect(covered).toContain('/src/routes/overlay/mercenary/+page.svelte');
+		expect(covered.length).toBeGreaterThanOrEqual(6);
 	});
 });

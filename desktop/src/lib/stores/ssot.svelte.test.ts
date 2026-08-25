@@ -578,6 +578,7 @@ describe('mercenary slice', () => {
 			learnedFamilies: ['Return--3'],
 			lastError: 'ocr engine slow',
 			geometrySource: 'file',
+			sourcesOff: ['guide-a'],
 		};
 	}
 
@@ -623,12 +624,68 @@ describe('mercenary slice', () => {
 				learnedFamilies: [],
 				lastError: null,
 				geometrySource: 'default',
+				sourcesOff: [],
 			},
 		});
 		expect(mod.ssot.mercenary.status).toBe('idle');
 		expect(mod.ssot.mercenary.capture).toBeNull();
 		expect(mod.ssot.mercenary.lastError).toBeNull();
 		expect(mod.ssot.mercenary.learnedFamilies).toEqual([]);
+		expect(mod.ssot.mercenary.sourcesOff).toEqual([]);
+	});
+
+	/**
+	 * The enabled-guide echo (POE-199) is what the page and the verdict overlay
+	 * both evaluate against, so it has to survive the apply like any other
+	 * field of the slice — a dropped echo would silently re-enable a guide the
+	 * user switched off, on both windows at once.
+	 */
+	it('applies the enabled-guide echo the snapshot carries', () => {
+		mod.applySnapshot({ league, mercenary: liveSlice() });
+		expect(mod.ssot.mercenary.sourcesOff).toEqual(['guide-a']);
+	});
+
+	/**
+	 * Writing goes through Rust, not through the rune: the command carries the
+	 * off-list, and the store re-fetches so the echo Rust accepted is what both
+	 * windows read. A local optimistic write would put the page one poll ahead
+	 * of the overlay, which is the disagreement POE-199 exists to end.
+	 */
+	it('sends the off-list to Rust and re-fetches rather than writing the rune', async () => {
+		const core = await import('@tauri-apps/api/core');
+		const invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockResolvedValue({ league });
+
+		const rejection = await mod.setMercSourcesOff(['guide-b']);
+
+		expect(rejection).toBeNull();
+		expect(invokeMock.mock.calls.filter((c) => c[0] === 'merc_set_sources_off')).toEqual([
+			['merc_set_sources_off', { sourcesOff: ['guide-b'] }],
+		]);
+		expect(invokeMock.mock.calls.some((c) => c[0] === 'get_ssot')).toBe(true);
+	});
+
+	/**
+	 * Rust VALIDATES the ids, so a refusal is a thing the user did and has to
+	 * come back to the caller AND reach the app log — the only error channel a
+	 * shipped build can open. Throwing, or warning to a console nobody sees,
+	 * would leave a toggle that silently does nothing.
+	 */
+	it('returns the rejection and logs it when Rust refuses the off-list', async () => {
+		const core = await import('@tauri-apps/api/core');
+		const invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockImplementation(async (command: string) => {
+			if (command === 'merc_set_sources_off') throw new Error('"guide-zzz" is not a guide');
+			return { league };
+		});
+
+		const rejection = await mod.setMercSourcesOff(['guide-zzz']);
+
+		expect(rejection).toContain('guide-zzz');
+		const logged = invokeMock.mock.calls.find((c) => c[0] === 'app_log_from_frontend');
+		expect(logged?.[1]).toMatchObject({
+			msg: expect.stringContaining('merc_set_sources_off failed'),
+		});
 	});
 });
 

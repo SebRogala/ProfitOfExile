@@ -182,6 +182,12 @@ pub struct AppState {
     /// un-poison path a user reaches for while that loop is running. Acquired
     /// alone, never inside a module lock (lock order — see src/modules.rs).
     pub merc_templates: Mutex<mercenary::icons::TemplateStore>,
+    /// Which guides take NO part in the merc verdict (POE-199) — the single
+    /// owner of the enabled-guide set, in `mercenary::sources::SOURCE_IDS`
+    /// order. Echoed onto the `mercenary` slice by `ssot::compose_snapshot`,
+    /// so the page and the verdict overlay evaluate one capture against one
+    /// set. Acquired alone, like every other merc-owned Mutex.
+    pub merc_sources_off: Mutex<Vec<String>>,
     /// The merc OCR burst gate (POE-198) — the single owner of "should the
     /// capture loop be looking right now". Armed by the Client.txt log watcher
     /// (a mercenary's voice line) or by `merc_scan_now`, read and disarmed by
@@ -1494,6 +1500,13 @@ fn force_show_overlays(app: AppHandle) {
                 log::warn!("Failed to force-show temple: {}", e);
             }
         }
+        // Same reason as the temple: the focus poller hides the merc verdict
+        // overlay with the game, so debug mode must force it up too.
+        if let Some(win) = app.get_webview_window("mercenary") {
+            if let Err(e) = win.show() {
+                log::warn!("Failed to force-show mercenary: {}", e);
+            }
+        }
         log::info!("Debug mode ON — overlays force-shown");
     } else {
         log::info!("Debug mode OFF");
@@ -1630,6 +1643,28 @@ fn get_timer_overlay_settings(app: AppHandle) -> Option<settings::OverlaySetting
 fn set_timer_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
     let mut s = settings::load(&app);
     s.timer_overlay = Some(settings::OverlaySettings {
+        x, y, width: w, height: h, enabled,
+    });
+    settings::save(&app, &s);
+}
+
+/// The merc verdict overlay's persisted geometry (POE-199).
+///
+/// Pattern A, unlike the temple overlay next to it: the strip is placed by the
+/// user (Settings → Overlay Positions) and has to come back where they left it,
+/// so it carries an `OverlaySettings` like the comparator. `enabled` is NOT the
+/// switch — the `mercenary` MODULE flag creates and destroys this window — and
+/// is written `true` alongside the geometry only so the shape stays the one
+/// `persist_overlay_settings` and the settings page already speak.
+#[tauri::command]
+fn get_mercenary_overlay_settings(app: AppHandle) -> Option<settings::OverlaySettings> {
+    settings::load(&app).mercenary_overlay
+}
+
+#[tauri::command]
+fn set_mercenary_overlay_settings(x: i32, y: i32, w: u32, h: u32, enabled: bool, app: AppHandle) {
+    let mut s = settings::load(&app);
+    s.mercenary_overlay = Some(settings::OverlaySettings {
         x, y, width: w, height: h, enabled,
     });
     settings::save(&app, &s);
@@ -2747,8 +2782,18 @@ fn spawn_focus_poller(app: AppHandle) {
                     // list because its board is read from the Atlas/map UI, which
                     // has nothing to do with the labyrinth lifecycle; its route
                     // still gates on the module's own status, so a shown window
-                    // with no board on screen draws nothing.
-                    for overlay_name in &["comparator", "temple"] {
+                    // with no board on screen draws nothing. The merc verdict
+                    // overlay (POE-199) joins them for the same reason — a
+                    // recruit window has nothing to do with the lab either.
+                    //
+                    // This list runs on `game_focused`, the HELD read, while the
+                    // merc capture loop gates on the raw `game_in_foreground`
+                    // (see the two fields on `AppState`). The two are never
+                    // unified: holding the flag over our own windows is what
+                    // stops an overlay click from blanking every overlay, and
+                    // NOT holding it is what stops the capture loop from
+                    // photographing our own window instead of the game.
+                    for overlay_name in &["comparator", "temple", "mercenary"] {
                         if let Some(win) = app.get_webview_window(overlay_name) {
                             if is_focused {
                                 if let Err(e) = win.show() {
@@ -3190,6 +3235,7 @@ pub fn run() {
         modules_shutting_down: AtomicBool::new(false),
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
         merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
+        merc_sources_off: Mutex::new(Vec::new()),
         merc_burst: Mutex::new(mercenary::trigger::BurstGate::default()),
         merc_template_generation: AtomicU64::new(0),
         temple: Mutex::new(temple::slice::TempleSlice::default()),
@@ -3237,6 +3283,7 @@ pub fn run() {
             mercenary::debug::merc_scan_now,
             mercenary::debug::merc_forget_template,
             mercenary::debug::merc_reset_templates,
+            mercenary::sources::merc_set_sources_off,
             temple::commands::temple_set_keys,
             temple::commands::temple_set_config,
             temple::commands::temple_set_profile,
@@ -3260,6 +3307,8 @@ pub fn run() {
             set_pathstrip_overlay_settings,
             get_timer_overlay_settings,
             set_timer_overlay_settings,
+            get_mercenary_overlay_settings,
+            set_mercenary_overlay_settings,
             get_timer_appearance,
             set_timer_appearance,
             get_lab_overlays_enabled,

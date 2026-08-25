@@ -39,6 +39,10 @@ The boundary rule: **a typed `Settings` field is added only when Rust itself
 reads the value.** Everything else goes in the map. Transient inputs (the gem
 search query) persist nowhere.
 
+**Amendment (2026-08-25, POE-199):** cross-window view state does not go in the
+map either — a value that two windows must agree on belongs in the Rust-owned
+SSOT, echoed into its slice, however little Rust branches on it.
+
 Key naming: camelCase, surface-prefixed — `rankingsSort`, `rankingsColor`,
 `rankingsLimit`, `rankingsBudget`, `rankingsTabView`, `runsDifficulty`.
 
@@ -54,6 +58,12 @@ Key naming: camelCase, surface-prefixed — `rankingsSort`, `rankingsColor`,
 - `show_low_confidence` predates this decision and keeps its typed field; the
   migration is not worth the settings-file churn. New view-only picks must not
   follow its pattern.
+- The 2026-08-25 amendment has one instance: `mercSourcesOff` (which guides take
+  part in the merc verdict) became `Settings.merc_sources_off`, echoed into the
+  `mercenary` SSOT slice, when the verdict overlay started reading it. The map's
+  fetch-once-per-webview, notify-nobody delivery is the reason — the page and the
+  overlay could have printed different headlines for one mercenary. The old key
+  seeds the new field once and is ignored afterwards.
 - The desktop map loads asynchronously after mount, so components start on
   defaults and snap to the stored value when the load lands (the same
   start-default-then-overwrite pattern the low-confidence toggle established).

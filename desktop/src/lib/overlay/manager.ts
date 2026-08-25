@@ -34,6 +34,26 @@ export const TEMPLE_WINDOW_LABEL = 'temple';
  */
 export const TEMPLE_MODULE_ID = 'temple';
 
+/**
+ * The merc verdict overlay's WINDOW LABEL (POE-199).
+ *
+ * Same two-constant shape as the temple pair above and for the same reasons:
+ * this one names a Tauri window and the `/overlay/mercenary` route under it,
+ * and must appear in `src-tauri/capabilities/default.json`'s `windows` list.
+ */
+export const MERCENARY_WINDOW_LABEL = 'mercenary';
+
+/**
+ * The merc OCR MODULE's registry id — `src-tauri/src/modules.rs`'s spelling.
+ *
+ * One switch, three things since POE-199: the capture loop, the page's data and
+ * this overlay window. A rename on the Rust side would leave
+ * `ssot.modules[…]` permanently `undefined`, which the lifecycle reads
+ * (correctly) as "not polled yet" — an overlay that never appears, with nothing
+ * failing. `manager.test.ts` pins it against the registry source.
+ */
+export const MERCENARY_MODULE_ID = 'mercenary';
+
 /** Active overlay window references, keyed by overlay name. */
 const activeOverlays = new Map<string, any>();
 

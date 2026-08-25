@@ -4,7 +4,7 @@
 	// `tokens.css` is the shared `:root` block both layouts declare from, so a
 	// component drawn in both windows (`temple/TempleLattice.svelte`) resolves
 	// the same colours in each instead of rendering with unset custom properties
-	// out here. `src/lib/temple/overlay-tokens.test.ts` fails if this import
+	// out here. `src/lib/overlay/overlay-tokens.test.ts` fails if this import
 	// goes away.
 	import '../../tokens.css';
 	import { startSsotStore } from '$lib/stores/ssot.svelte';

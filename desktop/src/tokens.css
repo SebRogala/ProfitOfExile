@@ -9,8 +9,8 @@
  * alone, so an overlay gets the palette without the background that would paint
  * a grey rectangle over the game.
  *
- * `src/lib/temple/overlay-tokens.test.ts` fails if a `var(--color-…)` drawn by
- * the temple overlay is not declared here, or if the overlay layout stops
+ * `src/lib/overlay/overlay-tokens.test.ts` fails if a `var(--color-…)` drawn by
+ * ANY overlay route is not declared here, or if the overlay layout stops
  * importing it.
  */
 :root {
