@@ -26,6 +26,23 @@
 //! below takes over unchanged; a burst that finds nothing expires and the loop
 //! goes back to waiting.
 //!
+//! # A tooltip is not a closed window
+//!
+//! Hovering a cell opens a game tooltip ON the panel, and the rows underneath
+//! it stop being readable — so the detect that follows a hover finds no layout
+//! at all. Two of those retire the capture. Two rules keep the player's work
+//! through that (2026-08-25 smoke):
+//!
+//! - a detect that finds nothing while the cursor is inside the live capture's
+//!   panel rect is [`DetectOutcome::Occluded`] — no miss counted, nothing
+//!   published, the capture held — until [`OCCLUDED_MAX`] of CONTINUOUS
+//!   occlusion, after which every tick counts again and the ordinary two-miss
+//!   retire lands one cadence later ([`OcclusionRun`]);
+//! - a retire hands its confirmations AND its header to a one-slot
+//!   [`Retained`] instead of dropping them, and the next detect takes them back
+//!   only on positive evidence that the panel is the same one
+//!   ([`same_panel_positive`], not the live path's abstaining rule).
+//!
 //! # Read-only, always
 //!
 //! Hover-confirm READS the cursor position; it never moves it and never sends
@@ -43,7 +60,7 @@ use crate::AppState;
 
 use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, TemplateStore};
-use super::read::{build_capture, capture_complete, fold_header, pass2_texts};
+use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
 use super::sync;
 use super::trigger;
@@ -87,6 +104,22 @@ const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
 const IDLE_NAP: Duration = Duration::from_millis(250);
 /// Consecutive failed detections that retire a live capture (D6).
 const RETIRE_AFTER: u8 = 2;
+/// How long a live capture may be held through detects that find nothing while
+/// the cursor sits inside the panel (2026-08-25 smoke).
+///
+/// The tolerance cannot be unbounded: a window closed with the cursor parked
+/// where it used to be would never retire, and the strip would show a verdict
+/// for a panel that is not on screen. Fifteen seconds is far longer than any
+/// tooltip read and far shorter than a session, so the visible cost of the cap
+/// firing is the ordinary two-miss retire arriving late.
+const OCCLUDED_MAX: Duration = Duration::from_secs(15);
+/// How long a retired capture's confirmations stay available to a re-detect of
+/// the SAME panel (2026-08-25 smoke).
+///
+/// Long enough to cover a retire the player caused by hovering (~4 s from
+/// tooltip to re-detect), short enough that a panel reopened much later is read
+/// fresh rather than inheriting a stale session's opinions.
+const RETAINED_TTL: Duration = Duration::from_secs(60);
 /// Distinct error messages logged before the loop starts suppressing them.
 const MAX_DISTINCT_ERRORS: usize = 12;
 
@@ -110,6 +143,130 @@ pub enum DetectOutcome {
     Missed,
     /// The live capture just retired after [`RETIRE_AFTER`] misses.
     Retired,
+    /// Nothing found, but the cursor is inside the live capture's panel — the
+    /// game has drawn something over it. The capture is untouched: no miss
+    /// counted, nothing published. See [`miss_kind`].
+    Occluded,
+}
+
+/// What a detect that found no layout means for the live capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissKind {
+    /// Count it: advance the retire counter and publish it.
+    Miss,
+    /// Hold the capture and count nothing.
+    Occluded,
+}
+
+/// Whether a detect that found nothing is evidence the window is gone.
+///
+/// MEASURED 2026-08-25 (app.log 19:03): hovering a support cell opened a
+/// tooltip ON the panel, the next two detects read 55 OCR lines and 14 skill
+/// candidates but no layout, [`RETIRE_AFTER`] fired, and the confirmation the
+/// hover had just made went away with the capture — the cell flipped back to ✕
+/// while the player was still looking at it.
+///
+/// The cursor is the proof. The game only opens a tooltip under the cursor, so
+/// a cursor inside the panel's own bounds is the one thing that separates "the
+/// panel is covered" from "the panel is gone" without another screen grab.
+///
+/// `occluded_for` is how long the CURRENT occlusion run has been going, and
+/// [`OCCLUDED_MAX`] caps it so a window closed with the cursor parked over it
+/// still retires. A cursor outside the panel, or no live capture, is an
+/// ordinary miss whatever the clock says.
+pub fn miss_kind(live: bool, cursor_in_panel: bool, occluded_for: Duration) -> MissKind {
+    if live && cursor_in_panel && occluded_for < OCCLUDED_MAX {
+        MissKind::Occluded
+    } else {
+        MissKind::Miss
+    }
+}
+
+/// One continuous run of detects that found nothing while the cursor sat on the
+/// panel — the clock [`miss_kind`] measures against, and the once-per-run gate
+/// for the log line.
+///
+/// A type rather than a field on [`Session`] because the run has exactly one
+/// subtle rule and it was got wrong the first time: **a run that hits the cap
+/// stays OPEN.** Clearing it on the miss it just produced restarts the clock,
+/// so the next tick is occluded again and the two-miss retire needs two full
+/// caps to land — ~30 s at the 2 s re-detect cadence and ~50 s at the liveness
+/// cadence. TAKE ITEM sits inside [`super::geometry::panel_bounds`], so that
+/// bug left a closed window's `done` verdict on screen for the better part of a
+/// minute while the cursor rested on the button that closed it.
+///
+/// The run ends on the four things that actually end it: the panel is found
+/// again ([`Self::on_hit`]), the cursor leaves the panel (handled inside
+/// [`Self::on_occluded`], which is already told where the cursor is), the
+/// capture retires ([`Self::on_retired`]), and the game goes behind us
+/// ([`Self::on_focus_lost`], because no detect runs there and the clock would
+/// otherwise count minutes nothing looked at).
+#[derive(Debug, Default)]
+pub struct OcclusionRun {
+    /// When the open run started. `None` — no run open.
+    started: Option<Instant>,
+    /// Whether the open run has had its log line.
+    announced: bool,
+}
+
+impl OcclusionRun {
+    /// Fold one detect that found no layout into the run.
+    ///
+    /// `now` is a parameter rather than an `Instant::now()` inside so the cap
+    /// and its aftermath are testable as a sequence without sleeping.
+    pub fn on_occluded(&mut self, live: bool, cursor_in_panel: bool, now: Instant) -> MissKind {
+        let elapsed = self
+            .started
+            .map(|since| now.saturating_duration_since(since))
+            .unwrap_or_default();
+        match miss_kind(live, cursor_in_panel, elapsed) {
+            MissKind::Occluded => {
+                self.started.get_or_insert(now);
+                MissKind::Occluded
+            }
+            // The cursor is still on the panel, so this Miss is the CAP firing.
+            // The run stays open: every later tick must count too, or the
+            // retire this cap exists to allow never arrives.
+            MissKind::Miss if live && cursor_in_panel => MissKind::Miss,
+            // The cursor left (or nothing is live) — whatever was covering the
+            // panel is no longer the explanation, so the next occlusion is a
+            // new run with a fresh cap.
+            MissKind::Miss => {
+                self.reset();
+                MissKind::Miss
+            }
+        }
+    }
+
+    /// The panel was detected: whatever was covering it is gone.
+    pub fn on_hit(&mut self) {
+        self.reset();
+    }
+
+    /// The capture retired. There is no panel left to be occluded.
+    pub fn on_retired(&mut self) {
+        self.reset();
+    }
+
+    /// The game is no longer the foreground window, so no detect runs.
+    pub fn on_focus_lost(&mut self) {
+        self.reset();
+    }
+
+    /// The once-per-run log gate: `true` the first time it is asked in each
+    /// run, `false` for every later tick of that same run.
+    pub fn announce(&mut self) -> bool {
+        if self.started.is_none() || self.announced {
+            return false;
+        }
+        self.announced = true;
+        true
+    }
+
+    fn reset(&mut self) {
+        self.started = None;
+        self.announced = false;
+    }
 }
 
 /// The loop's capture state machine: what cadence to run at, and when a live
@@ -398,8 +555,7 @@ pub fn hover_region(
 pub fn cell_at(capture: &MercCapture, cursor: (i32, i32)) -> Option<(usize, usize)> {
     for (ri, row) in capture.rows.iter().enumerate() {
         for (si, cell) in row.supports.iter().enumerate() {
-            let [x, y, w, h] = cell.rect;
-            if cursor.0 >= x && cursor.0 < x + w && cursor.1 >= y && cursor.1 < y + h {
+            if geometry::contains(cell.rect, cursor) {
                 return Some((ri, si));
             }
         }
@@ -692,6 +848,23 @@ pub fn publish(app: &AppHandle, mutate: impl FnOnce(&mut MercenarySlice)) {
     }
 }
 
+/// What a retired capture left behind for a re-detect of the same panel.
+///
+/// One slot, replaced by each retire. The 2026-08-25 smoke is the whole reason
+/// it exists: a tooltip retires the capture, the mercenary's voice line re-arms
+/// a burst two seconds later, and the SAME window is detected fresh — so
+/// without this the player's confirmations are gone every time they hover.
+struct Retained {
+    /// The capture as last published. Its header and named-skill set are the
+    /// key: `read::same_panel_positive` weighs them against the next detect.
+    capture: MercCapture,
+    confirmed: HashMap<(String, u8), ConfirmedCell>,
+    /// Carried with the confirmations so a cell that already spent its re-read
+    /// budget does not get a fresh one out of the retire.
+    hover_budget: HoverBudget,
+    at: Instant,
+}
+
 /// Everything the loop carries between ticks.
 struct Session {
     geometry: MercGeometry,
@@ -714,6 +887,13 @@ struct Session {
     /// Reset when the game loses focus, so each return to the game says once
     /// what the loop saw.
     miss_logged: bool,
+    /// The live capture's panel rect in screen px, from the layout that
+    /// produced it. `None` when nothing is captured. See [`miss_kind`].
+    panel: Option<[i32; 4]>,
+    /// The open run of detects the panel was covered for. See [`OcclusionRun`].
+    occlusion: OcclusionRun,
+    /// What the last retire left for a re-detect of the same panel.
+    retained: Option<Retained>,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -828,6 +1008,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         template_generation: template_generation(&app),
         icons_dir,
         miss_logged: false,
+        panel: None,
+        occlusion: OcclusionRun::default(),
+        retained: None,
     };
 
     // Backdated so the first iteration detects immediately rather than after a
@@ -895,6 +1078,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             // and a full-screen OCR every second would be pure heat.
             LoopStep::Unfocused => {
                 session.miss_logged = false;
+                session.occlusion.on_focus_lost();
                 if !nap(&cancel, UNFOCUSED_NAP) {
                     break;
                 }
@@ -1074,10 +1258,31 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
     let outcome = session.state.on_detect(false);
     let retired = outcome == DetectOutcome::Retired;
     if retired {
-        session.current = None;
+        // ONLY here, and never on a counted miss that did not retire: a run
+        // that hit the cap must stay open so its second miss lands one cadence
+        // later. See [`OcclusionRun`].
+        session.occlusion.on_retired();
+        let capture = session.current.take();
+        let confirmed = std::mem::take(&mut session.confirmed);
+        let hover_budget = std::mem::take(&mut session.hover_budget);
+        // The confirmations move to the retained slot rather than being
+        // dropped: a retire is very often a tooltip the loop could not see
+        // past, and the SAME window is re-detected seconds later (2026-08-25
+        // smoke). They only come back onto a panel something POSITIVELY says
+        // is this one — see [`restore_retained`]. Nothing confirmed
+        // means nothing to protect, and the slot holds a whole capture for
+        // [`RETAINED_TTL`], so that case keeps the old drop-everything path.
+        session.retained = match (capture, confirmed.is_empty()) {
+            (Some(capture), false) => Some(Retained {
+                capture,
+                confirmed,
+                hover_budget,
+                at: Instant::now(),
+            }),
+            _ => None,
+        };
+        session.panel = None;
         session.sigs.clear();
-        session.confirmed.clear();
-        session.hover_budget.clear();
         crate::app_log(app, "Merc: window gone".to_string());
     }
     if !retired && errored {
@@ -1134,6 +1339,23 @@ fn detect_tick(
     };
 
     let Some(layout) = geometry::detect(&lines, &session.geometry, &session.vocab) else {
+        // A tooltip the player just opened sits ON the panel and hides the rows
+        // the detect needs. The cursor is the proof — the game opens one only
+        // under it — so this tick is not evidence the window closed.
+        let in_panel = match (session.panel, cursor) {
+            (Some(rect), Some(c)) => geometry::contains(rect, c),
+            _ => false,
+        };
+        let live = session.state.live;
+        if session.occlusion.on_occluded(live, in_panel, Instant::now()) == MissKind::Occluded {
+            if session.occlusion.announce() {
+                crate::app_log(
+                    app,
+                    "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
+                );
+            }
+            return Some(DetectOutcome::Occluded);
+        }
         // Logged once per focus session: a loop that never detects would
         // otherwise leave no trace of having looked at all.
         if !session.miss_logged {
@@ -1182,6 +1404,19 @@ fn detect_tick(
     if generation_changed(&mut session.template_generation, template_generation(app)) {
         session.confirmed.clear();
         session.hover_budget.clear();
+        // The retained slot holds the same disowned confirmations one retire
+        // back. Leaving it would let the un-poison button be undone by the next
+        // re-detect.
+        session.retained = None;
+    }
+
+    // Nothing live means this is the first look at a panel since the last
+    // retire — the moment the retained slot exists for. Before the header fold,
+    // because `apply_confirmed` below reads what this restores.
+    if session.current.is_none() {
+        if let Some(line) = restore_retained(session, &result.capture).log_line() {
+            crate::app_log(app, line);
+        }
     }
 
     // IDENTITY FIRST, then everything the loop remembered. The header merge and
@@ -1227,6 +1462,10 @@ fn detect_tick(
         hovered_key(&result.capture, cursor),
     );
     session.current = Some(result.capture.clone());
+    // From the LAYOUT, not the capture: the capture drops the cells past the
+    // first empty slot, and the panel is as wide as its grid either way.
+    session.panel = geometry::panel_bounds(&layout, &session.geometry);
+    session.occlusion.on_hit();
 
     // Nothing left for a DETECT to find: the cadence drops to the liveness
     // check (2026-08-25 smoke). The hover tick stays on — it is the only path
@@ -1249,6 +1488,82 @@ fn detect_tick(
         slice.last_error = None;
     });
     Some(outcome)
+}
+
+/// Whether a retired capture's confirmations may be re-applied to `next`.
+///
+/// The identity rule is [`same_panel_positive`], NOT the live path's
+/// [`panel_replaced`]. The live path abstains on absence and re-detects two
+/// seconds later; across a retire the same abstention would write one
+/// mercenary's supports onto another's rows as `Confirmed`, which no hover can
+/// undo. The retained slot therefore restores only on positive evidence.
+///
+/// `age` bounds it: past [`RETAINED_TTL`] the panel is read fresh, because a
+/// window reopened a minute later is no longer the one the player was working
+/// on even when it looks identical.
+pub fn retained_applies(retired: &MercCapture, next: &MercCapture, age: Duration) -> bool {
+    age <= RETAINED_TTL && same_panel_positive(retired, next)
+}
+
+/// What a detect did with the retained slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Restore {
+    /// No slot was held — the ordinary first detect.
+    Nothing,
+    /// The slot applied: this many confirmations, plus the retired capture's
+    /// header, are back on the session.
+    Applied(usize),
+    /// The slot was dropped, for the stated reason.
+    Dropped(&'static str),
+}
+
+impl Restore {
+    /// The line to log, or `None` when there is nothing to say.
+    fn log_line(self) -> Option<String> {
+        match self {
+            Restore::Nothing => None,
+            Restore::Applied(n) => Some(format!(
+                "Merc: same recruit window as the retired one — {n} confirmation(s) and its header restored"
+            )),
+            Restore::Dropped(why) => Some(format!(
+                "Merc: the retired confirmations were dropped — {why}"
+            )),
+        }
+    }
+}
+
+/// Put a retired capture's confirmations back, if [`retained_applies`] says so.
+///
+/// The slot is CONSUMED either way: it holds one retire's worth of state, and a
+/// detect that rejected it has answered the only question it was kept for.
+///
+/// Takes no [`AppHandle`] and returns what it did, so the whole rule — the
+/// identity gate, the TTL, and what lands back on the session — is testable off
+/// Windows. The caller does the logging.
+fn restore_retained(session: &mut Session, next: &MercCapture) -> Restore {
+    let Some(retained) = session.retained.take() else {
+        return Restore::Nothing;
+    };
+    // One reading of the clock, so the decision and the reason it reports
+    // cannot land on opposite sides of the TTL.
+    let age = retained.at.elapsed();
+    if !retained_applies(&retained.capture, next, age) {
+        return Restore::Dropped(if age > RETAINED_TTL {
+            "the slot expired"
+        } else {
+            "nothing positively says it is the same recruit window"
+        });
+    }
+    let restored = retained.confirmed.len();
+    session.confirmed = retained.confirmed;
+    session.hover_budget = retained.hover_budget;
+    // The retired capture goes back as `current` so the header fold downstream
+    // SEES it. Name, class and level are as much a property of one window as
+    // the confirmations are, and `fold_header` is already the single rule that
+    // merges them — its own `panel_replaced` gate cannot fire here, because
+    // `same_panel_positive` just required that rule to say no.
+    session.current = Some(retained.capture);
+    Restore::Applied(restored)
 }
 
 /// One hover tick: if the cursor sits in an unconfirmed captured cell, read the
@@ -2264,5 +2579,426 @@ mod tests {
         };
 
         assert_eq!(row_key(&skill), "ba11 lightning");
+    }
+
+    // -- occlusion: a tooltip is not a closed window -----------------------
+
+    /// MEASURED 2026-08-25: the hover the user just made opened a tooltip over
+    /// the panel, the detect under it read no layout, and two of those retired
+    /// the capture — taking the confirmation with it. The cursor is what tells
+    /// the two apart.
+    #[test]
+    fn a_detect_that_fails_under_the_cursor_holds_the_capture() {
+        assert_eq!(
+            miss_kind(true, true, Duration::ZERO),
+            MissKind::Occluded
+        );
+    }
+
+    /// Nothing is covering the panel from over there, so this tick really is
+    /// evidence the window went away.
+    #[test]
+    fn a_detect_that_fails_away_from_the_panel_is_an_ordinary_miss() {
+        assert_eq!(miss_kind(true, false, Duration::ZERO), MissKind::Miss);
+    }
+
+    /// The cap, at its boundary: a window closed with the cursor parked where
+    /// it used to be must still retire, or the strip shows a verdict for a
+    /// panel that is not on screen.
+    #[test]
+    fn an_occlusion_run_at_the_cap_stops_holding_the_capture() {
+        assert_eq!(miss_kind(true, true, OCCLUDED_MAX), MissKind::Miss);
+    }
+
+    /// One tick under the cap is still held — the boundary is exclusive, and
+    /// without this the cap would be off by one whole tick.
+    #[test]
+    fn an_occlusion_run_just_under_the_cap_still_holds_the_capture() {
+        assert_eq!(
+            miss_kind(true, true, OCCLUDED_MAX - TICK),
+            MissKind::Occluded
+        );
+    }
+
+    /// With no capture live there is nothing to occlude: the cursor happens to
+    /// be where a panel USED to be, which is not a reason to invent one.
+    #[test]
+    fn a_cursor_over_no_capture_is_never_occluded() {
+        assert_eq!(miss_kind(false, true, Duration::ZERO), MissKind::Miss);
+    }
+
+    /// An occluded tick found no window, so a burst armed for a second
+    /// mercenary must keep looking.
+    #[test]
+    fn an_occluded_tick_does_not_satisfy_the_burst() {
+        assert!(!burst_satisfied(Some(DetectOutcome::Occluded)));
+    }
+
+    // -- confirmations across a retire -------------------------------------
+
+    /// A panel whose rows carry DISTINCT skill names, which is what
+    /// `same_panel_positive` reasons over.
+    fn merc_panel(skills: &[&str], level: Option<u32>) -> MercCapture {
+        let mut capture = capture_with(
+            skills
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let mut r = row(
+                        i as u8,
+                        &name.to_lowercase(),
+                        vec![cell(0, [100, 100 + 50 * i as i32, 44, 44])],
+                    );
+                    r.skill.raw = (*name).to_string();
+                    r.skill.name = Some((*name).to_string());
+                    r
+                })
+                .collect(),
+        );
+        capture.header.level = level;
+        capture
+    }
+
+    fn confirmation() -> ConfirmedCell {
+        ConfirmedCell {
+            family: "Added Fire Damage".into(),
+            tier: 2,
+            ids: vec!["support-added-fire-2".into()],
+            name: Some("Added Fire Damage".into()),
+            score: 0.97,
+        }
+    }
+
+    /// A session with nothing in it, for the restore path. Every field is a
+    /// default the loop would itself start from.
+    fn bare_session() -> Session {
+        Session {
+            geometry: MercGeometry::default(),
+            vocab: vocab(),
+            state: LoopState::default(),
+            errors: OnceLog::default(),
+            current: None,
+            sigs: SigCache::new(),
+            confirmed: HashMap::new(),
+            hover_budget: HoverBudget::default(),
+            template_generation: 0,
+            icons_dir: None,
+            miss_logged: false,
+            panel: None,
+            occlusion: OcclusionRun::default(),
+            retained: None,
+        }
+    }
+
+    fn slot_of(capture: MercCapture, age: Duration) -> Retained {
+        let mut confirmed = HashMap::new();
+        confirmed.insert(("ice shot".to_string(), 0u8), confirmation());
+        Retained {
+            capture,
+            confirmed,
+            hover_budget: HoverBudget::default(),
+            at: Instant::now() - age,
+        }
+    }
+
+    /// The smoke's complaint, as the identity question alone: the capture
+    /// retired under a tooltip and the SAME window came back seconds later.
+    #[test]
+    fn a_re_detect_of_the_retired_panel_is_the_same_panel() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+
+        assert!(retained_applies(&retired, &fresh, Duration::from_secs(3)));
+    }
+
+    /// …and the same question at the far edge of the slot's life. Inclusive,
+    /// so the boundary is not off by one whole tick.
+    #[test]
+    fn a_slot_exactly_at_the_ttl_is_still_restored() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+
+        assert!(retained_applies(&retired, &fresh, RETAINED_TTL));
+    }
+
+    /// A panel reopened a minute later is not the one the player was working
+    /// on, however identical it reads.
+    #[test]
+    fn a_slot_older_than_the_ttl_is_not_restored() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+
+        assert!(!retained_applies(
+            &retired,
+            &fresh,
+            RETAINED_TTL + Duration::from_secs(1)
+        ));
+    }
+
+    /// THE REMATCH, one layer down from `fold_header`'s: the panel looks the
+    /// same and the mercenary behind it is not. Restoring here would put the
+    /// previous mercenary's supports on the new one's rows — a confident wrong
+    /// read on the surface the player pays from, and one no hover can correct.
+    #[test]
+    fn a_re_detect_of_a_different_mercenary_does_not_get_them_back() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(68));
+
+        assert!(!retained_applies(&retired, &fresh, Duration::from_secs(3)));
+    }
+
+    /// The other half of the same evidence: a rematch rolls a whole new skill
+    /// list, so two disjoint sets are a different window even at the same
+    /// level.
+    #[test]
+    fn a_re_detect_with_a_disjoint_skill_list_does_not_get_them_back() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], None);
+        let fresh = merc_panel(&["Cyclone", "Enfeeble"], None);
+
+        assert!(!retained_applies(&retired, &fresh, Duration::from_secs(3)));
+    }
+
+    /// The burden FLIP, at the retained path's own boundary: a first tick that
+    /// named nothing and read no level keeps a LIVE capture (the abstention
+    /// rule) but must not restore a retired one.
+    #[test]
+    fn a_first_tick_that_read_nothing_at_all_does_not_get_them_back() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let mut fresh = merc_panel(&["Ice Shot", "Conductivity"], None);
+        for row in &mut fresh.rows {
+            row.skill.name = None;
+            row.skill.state = ReadState::Unknown;
+        }
+
+        assert!(!retained_applies(&retired, &fresh, Duration::from_secs(3)));
+    }
+
+    /// …and the same thin tick WITH the header line read does restore: the
+    /// level is the positive fact, and this is the ordinary first tick after a
+    /// re-detect.
+    #[test]
+    fn a_first_tick_that_read_only_the_level_gets_them_back() {
+        let retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let mut fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        for row in &mut fresh.rows {
+            row.skill.name = None;
+            row.skill.state = ReadState::Unknown;
+        }
+
+        assert!(retained_applies(&retired, &fresh, Duration::from_secs(3)));
+    }
+
+    // -- what a restore actually puts back ---------------------------------
+
+    #[test]
+    fn restoring_a_slot_puts_the_confirmations_back_on_the_session() {
+        let mut session = bare_session();
+        session.retained = Some(slot_of(
+            merc_panel(&["Ice Shot", "Conductivity"], Some(83)),
+            Duration::from_secs(3),
+        ));
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+
+        assert_eq!(restore_retained(&mut session, &fresh), Restore::Applied(1));
+        assert_eq!(
+            session.confirmed[&("ice shot".to_string(), 0u8)].family,
+            "Added Fire Damage"
+        );
+    }
+
+    /// The header travels with them. The retired capture goes back as
+    /// `current` precisely so the fold downstream has something to merge — a
+    /// restore that dropped it would leave the strip's name and level blank
+    /// over a window the module has already read.
+    #[test]
+    fn restoring_a_slot_hands_the_header_fold_the_retired_capture() {
+        let mut retired = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        retired.header.name = Some("Fennik, of Unshakeable Faith".into());
+        retired.header.class = Some("Fallen Reverend".into());
+        let mut session = bare_session();
+        session.retained = Some(slot_of(retired, Duration::from_secs(3)));
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], None);
+
+        restore_retained(&mut session, &fresh);
+        let (header, replaced) = fold_header(session.current.as_ref(), &fresh);
+
+        assert!(!replaced);
+        assert_eq!(header.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+        assert_eq!(header.class.as_deref(), Some("Fallen Reverend"));
+        assert_eq!(header.level, Some(83));
+    }
+
+    /// A rejected slot must leave the session exactly as it found it — and be
+    /// consumed, so the next detect is not asked the same question again.
+    #[test]
+    fn a_rejected_slot_leaves_the_session_untouched_and_is_consumed() {
+        let mut session = bare_session();
+        session.retained = Some(slot_of(
+            merc_panel(&["Ice Shot", "Conductivity"], Some(83)),
+            Duration::from_secs(3),
+        ));
+        let fresh = merc_panel(&["Cyclone", "Enfeeble"], Some(68));
+
+        let outcome = restore_retained(&mut session, &fresh);
+
+        assert!(matches!(outcome, Restore::Dropped(_)));
+        assert!(session.confirmed.is_empty());
+        assert!(session.current.is_none());
+        assert!(session.retained.is_none(), "the slot holds one retire, not a queue");
+    }
+
+    #[test]
+    fn a_detect_with_no_slot_held_restores_nothing() {
+        let mut session = bare_session();
+        let fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+
+        assert_eq!(restore_retained(&mut session, &fresh), Restore::Nothing);
+    }
+
+    /// A restored confirmation outranks whatever the icon store said this tick.
+    #[test]
+    fn a_restored_confirmation_marks_its_cell_confirmed() {
+        let mut fresh = merc_panel(&["Ice Shot", "Conductivity"], Some(83));
+        let mut confirmed = HashMap::new();
+        confirmed.insert(("ice shot".to_string(), 0u8), confirmation());
+
+        apply_confirmed(&mut fresh, &confirmed);
+
+        assert_eq!(fresh.rows[0].supports[0].state, ReadState::Confirmed);
+        assert_eq!(
+            fresh.rows[0].supports[0].name.as_deref(),
+            Some("Added Fire Damage")
+        );
+    }
+
+    // -- the occlusion run, as a sequence ----------------------------------
+
+    #[test]
+    fn the_first_occluded_detect_holds_the_capture() {
+        let mut run = OcclusionRun::default();
+
+        assert_eq!(
+            run.on_occluded(true, true, Instant::now()),
+            MissKind::Occluded
+        );
+    }
+
+    /// The cap, measured from the run's START and not from this tick.
+    #[test]
+    fn a_run_that_reaches_the_cap_counts_the_miss() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        run.on_occluded(true, true, t0 + Duration::from_secs(2));
+
+        assert_eq!(run.on_occluded(true, true, t0 + OCCLUDED_MAX), MissKind::Miss);
+    }
+
+    /// THE REGRESSION THIS TYPE EXISTS FOR. Clearing the run on the miss it
+    /// just produced restarts the clock, so the next tick is occluded again and
+    /// the two-miss retire needs TWO full caps — ~30 s at the re-detect cadence
+    /// and ~50 s at the liveness one. TAKE ITEM is inside the panel rect, so
+    /// that left a closed window's verdict on screen while the cursor rested on
+    /// the button that closed it.
+    #[test]
+    fn a_capped_run_stays_capped_so_the_second_miss_lands_one_cadence_later() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        assert_eq!(run.on_occluded(true, true, t0 + OCCLUDED_MAX), MissKind::Miss);
+
+        assert_eq!(
+            run.on_occluded(true, true, t0 + OCCLUDED_MAX + Duration::from_secs(2)),
+            MissKind::Miss
+        );
+    }
+
+    /// The cursor leaving the panel ends the run, so a later hover starts with
+    /// a full cap rather than inheriting a spent one.
+    #[test]
+    fn a_cursor_that_left_the_panel_ends_the_run() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        run.on_occluded(true, false, t0 + Duration::from_secs(1));
+
+        assert_eq!(
+            run.on_occluded(true, true, t0 + Duration::from_secs(20)),
+            MissKind::Occluded
+        );
+    }
+
+    /// Finding the panel again ends it too — whatever was covering it is gone.
+    #[test]
+    fn a_detected_panel_ends_the_run() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        run.on_hit();
+
+        assert_eq!(
+            run.on_occluded(true, true, t0 + Duration::from_secs(20)),
+            MissKind::Occluded
+        );
+    }
+
+    /// No detect runs while the game is behind us, so the clock must not count
+    /// the alt-tab.
+    #[test]
+    fn losing_focus_ends_the_run() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        run.on_focus_lost();
+
+        assert_eq!(
+            run.on_occluded(true, true, t0 + Duration::from_secs(20)),
+            MissKind::Occluded
+        );
+    }
+
+    /// A retire ends it: there is no panel left to be occluded.
+    #[test]
+    fn a_retire_ends_the_run() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        run.on_retired();
+
+        assert_eq!(
+            run.on_occluded(true, true, t0 + Duration::from_secs(20)),
+            MissKind::Occluded
+        );
+    }
+
+    /// The log says it once per run, not once per tick — the loop re-runs this
+    /// path every cadence and would otherwise fill the 50-entry buffer.
+    #[test]
+    fn the_occlusion_line_is_announced_once_per_run() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+
+        assert!(run.announce());
+        assert!(!run.announce());
+    }
+
+    /// …and a NEW run says it again, or a second hover would go unlogged.
+    #[test]
+    fn a_new_run_is_announced_again() {
+        let t0 = Instant::now();
+        let mut run = OcclusionRun::default();
+        run.on_occluded(true, true, t0);
+        run.announce();
+        run.on_hit();
+        run.on_occluded(true, true, t0 + Duration::from_secs(20));
+
+        assert!(run.announce());
+    }
+
+    /// Nothing to announce before a run has opened.
+    #[test]
+    fn a_closed_run_announces_nothing() {
+        assert!(!OcclusionRun::default().announce());
     }
 }
