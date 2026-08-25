@@ -33,6 +33,10 @@ sha2 = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+# Only for RFC3339-formatting the updater manifest's pub_date in
+# `updater_channel`; `tauri-plugin-updater` hands that field over as a
+# `time::OffsetDateTime`, so the same crate has to do the formatting.
+time = { version = "0.3", features = ["formatting"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

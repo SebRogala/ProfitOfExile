@@ -691,6 +691,21 @@ export function mapCompareRow(r: any): CompareGem {
 
 // --- Public API functions ---
 
+/**
+ * What the server says THIS device is entitled to (POE-203).
+ *
+ * Goes through `get`, so it carries the same `X-Device-ID` header
+ * `/api/device/identify` does — that header IS the question, and without it
+ * the server can only answer for an anonymous device.
+ *
+ * The body is `{ role: string, channel: "stable" | "beta", features: string[] }`,
+ * returned UNVALIDATED: `stores/entitlements.svelte.ts` narrows it, because it
+ * is also the module that owns what an unreadable answer falls back to.
+ */
+export async function fetchDeviceMe(): Promise<unknown> {
+	return get<unknown>('/device/me');
+}
+
 export async function fetchStatus(): Promise<StatusData> {
 	try {
 		const status = await get<any>('/analysis/status');

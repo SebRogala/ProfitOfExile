@@ -3809,6 +3809,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "time",
  "tokio",
  "uuid",
  "windows 0.58.0",

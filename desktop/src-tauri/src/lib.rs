@@ -14,6 +14,7 @@ mod settings;
 mod ssot;
 mod temple;
 mod trade;
+mod updater_channel;
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -3515,6 +3516,7 @@ pub fn run() {
             get_ui_prefs,
             set_ui_pref,
             discard_font_session,
+            updater_channel::check_update_from_endpoint,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
