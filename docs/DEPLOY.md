@@ -1,6 +1,7 @@
 # Deployment
 
-Status: current. Last verified 2026-07-26.
+Status: current. Last verified 2026-07-26; the desktop <-> server ordering
+section was added and verified 2026-08-25.
 
 Canonical for: how `main` reaches production, why the deploy is path-filtered, and
 what a green pipeline does and does not tell you.
@@ -92,6 +93,32 @@ origin/main`. `Up <n> minutes` should be small if the deploy just ran.
 it. Passing `GIT_SHA` in the Coolify build configuration would make
 `curl -s https://profitofexile.top/api/health` a one-line deploy check. Not done;
 recorded here as the cheapest path if that ever becomes worth it.
+
+## Desktop <-> server ordering
+
+The two halves ship on separate pipelines — the server on merge to `main`
+(`deploy.yml`), the desktop on a `v-desktop-X.Y.Z` tag (`desktop.yml`) — so a
+release that spans both has an order, and it is always the same one:
+
+**The server must be live in production BEFORE the desktop tag that calls a new
+API is pushed.** A desktop build released first talks to an endpoint that is not
+there yet. Since both are pushed from the same `git push origin main --tags`,
+"merged" is not "live": the Coolify swap takes minutes and the deploy step is
+fire-and-forget (see *What a green run actually means* above). Push the server
+commit, verify it landed, then push the tag.
+
+**Concretely, for the mercenary support vocabulary:** the server must ship no
+later than a change to
+`desktop/src/lib/mercenaries/__fixtures__/mercenary-stats.json`. That fixture is
+the single source both sides derive their family list from —
+`internal/mercenary/families.go` is generated from it (and `families_test.go`
+re-derives it, so the two cannot drift silently), and the desktop's
+`vocab.rs` parses the same file. A desktop released first knows families the
+server's `knownFamilies` map does not, and every template upload naming one is
+refused. That is a degradation rather than an outage — the shared icon pool
+simply does not learn the new families — and it is visible, not silent: the
+upload response carries `rejected_unknown_family` and the served corpus carries
+`known_family_count`. `families.go` states the same rule at its declaration.
 
 ## When you need a manual deploy
 
