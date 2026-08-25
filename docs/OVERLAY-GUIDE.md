@@ -180,7 +180,35 @@ named path.
   replaces it — the detect is what paused, not the hover. The re-read of an
   already-matched cell is capped per cell (`HoverBudget`, 3 per capture), so the
   correction has to land within the first few ticks of the hover; moving off the
-  cell and back does NOT refill it.
+  cell and back does NOT refill it, and neither does a retire the module
+  restored from — the budget rides along with the confirmations in the retained
+  slot, so a spent cell stays spent across a retire and re-detect of the same
+  panel. Only a genuinely new window refills it.
+- **Merc hover, the occluded panel** (added after the 2026-08-25 smoke, where
+  hovering a cell retired the capture two ticks later and the cell flipped back
+  to `✕`): with a recruit window open, park the cursor on a support cell for at
+  least 5 s so the game tooltip covers the panel, then move off it. The log must
+  say `panel occluded (cursor over it) — holding the capture` ONCE per hover and
+  must NOT say `window gone`, and the cell must still read `✓` after the tooltip
+  closes. A `window gone` under the cursor means the panel rect
+  (`geometry.rs`'s `panel_bounds`, stored on the session at detect) is wrong or
+  is not being consulted by `miss_kind`. The hold is CONTINUOUS occlusion, not a
+  budget that resets per miss: park the cursor on TAKE ITEM and close the window
+  with it. Retire lands at the 15 s cap rounded UP to the next detect tick, plus
+  one more tick for the second miss — **so check which cadence you are in
+  first**, because it dominates the number. A window still being read
+  re-detects every 2 s, so it retires ≈20 s after the close; a window the strip
+  already calls `done` is on the 10 s liveness cadence, so it retires ≈40 s
+  after the close (up to 10 s to notice, misses at +20 s and +30 s). Time it
+  from the close and compare against the cadence you are actually in — a `done`
+  window still on screen at 60 s, or a live one past ~25 s, means
+  `OcclusionRun` is clearing its run on a counted miss and each cap is
+  restarting the clock. If the capture does retire — the window really
+  closed, or the cap fired — the next detect of the SAME panel must log
+  `confirmation(s) and its header restored` and bring back both the `✓` and the
+  mercenary's name and level; a `confirmations were dropped` line there means
+  `same_panel_positive` found no positive evidence, which a tick that read
+  neither a level nor two skill names is expected to produce.
 - **Merc rematch / fast swap**: with a capture on screen, press REMATCH (or
   close the window and open a different mercenary within ~20 s, before the
   liveness check retires the first). The header must switch to the NEW

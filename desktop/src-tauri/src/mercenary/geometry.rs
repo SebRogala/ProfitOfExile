@@ -298,6 +298,72 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
     lower == "take item" || lower == "rematch"
 }
 
+/// How far past the skill column and the last cell the panel rect reaches, in
+/// cell widths. Half a cell at the reference scale is ~22 px — enough to cover
+/// the panel's frame either side of the grid without claiming screen the panel
+/// does not own.
+const PANEL_MARGIN_CELLS: f32 = 0.5;
+
+/// Whether `p` lies inside `rect` (`[x, y, w, h]`), right/bottom exclusive.
+pub fn contains(rect: [i32; 4], p: (i32, i32)) -> bool {
+    let [x, y, w, h] = rect;
+    p.0 >= x && p.0 < x + w && p.1 >= y && p.1 < y + h
+}
+
+/// The screen rect the recruit panel occupies, from a detected layout.
+///
+/// Its one consumer is the occlusion rule (`run.rs`'s `miss_kind`): a detect
+/// that found nothing while the cursor was inside this rect is a tooltip drawn
+/// OVER the panel, not a window that closed. `None` for a layout with no rows,
+/// which [`detect`] never produces.
+///
+/// Horizontally the rect spans the skill column's left edge to the rightmost
+/// candidate cell — ALL slots, occupied or not, because the panel is as wide as
+/// its grid whether or not the mercenary filled it — plus
+/// [`PANEL_MARGIN_CELLS`] either side, scaled with the capture.
+///
+/// Vertically it runs one row pitch above the first row to one pitch below the
+/// last, which UNDER-reaches the real panel: the wager line can sit up to
+/// `wager_search_pitches` (12) above row 1, and the buttons sit below the last.
+/// The asymmetry is deliberate. This rect is evidence that the cursor is over
+/// the panel, and the two errors cost differently — under-reaching costs a
+/// tolerated miss on a cursor parked in the chrome, while over-reaching would
+/// hold a dead capture alive for every cursor that happens to rest in the band
+/// where the panel used to be.
+pub fn panel_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32; 4]> {
+    if layout.rows.is_empty() {
+        return None;
+    }
+    // The observed pitch is 0.0 for a single-row layout — `detect` has no
+    // inter-row gap to measure there — so fall back to the reference pitch at
+    // this capture's scale, the same substitution the anchor search makes.
+    let pitch = if layout.row_pitch > 0.0 {
+        layout.row_pitch
+    } else {
+        g.row_pitch * layout.scale
+    };
+    let margin = (g.cell_size * layout.scale * PANEL_MARGIN_CELLS).round() as i32;
+
+    let mut top = i32::MAX;
+    let mut bottom = i32::MIN;
+    let mut right = layout.column_x0;
+    for row in &layout.rows {
+        top = top.min(row.name_rect[1]);
+        bottom = bottom.max(row.name_rect[1] + row.name_rect[3]);
+        for cell in &row.cells {
+            top = top.min(cell[1]);
+            bottom = bottom.max(cell[1] + cell[3]);
+            right = right.max(cell[0] + cell[2]);
+        }
+    }
+
+    let x0 = (layout.column_x0 - margin).max(0);
+    let y0 = ((top as f32 - pitch).round() as i32).max(0);
+    let x1 = right + margin;
+    let y1 = (bottom as f32 + pitch).round() as i32;
+    Some([x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)])
+}
+
 /// Best-effort header parse (D2 step 5). Every field is independently
 /// optional: a missing one is `None`, never inferred from a neighbour.
 fn parse_header(
@@ -1127,5 +1193,107 @@ mod tests {
         let img = DynamicImage::ImageRgba8(img);
 
         assert!(!occupied(&img, rect, &g), "the frame must be inset away");
+    }
+
+    // -- the panel rect the occlusion rule tests against -------------------
+
+    /// A layout the way `detect` builds one: cells laid out from the column x
+    /// at the reference offsets, all `max_slots` of them.
+    fn layout_of(centres: &[f32], row_pitch: f32, column_x0: i32, g: &MercGeometry) -> MercLayout {
+        let cell_size = g.cell_size as i32;
+        MercLayout {
+            scale: 1.0,
+            column_x0,
+            row_pitch,
+            rows: centres
+                .iter()
+                .enumerate()
+                .map(|(i, &centre)| MercLayoutRow {
+                    index: i as u8,
+                    centre_y: centre,
+                    name_rect: [column_x0, centre as i32 - 8, 90, 16],
+                    text: "Ice Shot".into(),
+                    cells: (0..g.max_slots)
+                        .map(|slot| {
+                            [
+                                column_x0 + g.cell_offset_x as i32 + slot as i32 * g.cell_pitch as i32,
+                                centre as i32 - cell_size / 2,
+                                cell_size,
+                                cell_size,
+                            ]
+                        })
+                        .collect(),
+                })
+                .collect(),
+            header: MercHeader::default(),
+        }
+    }
+
+    /// The rect, edge by edge: half a cell either side of the grid, one row
+    /// pitch above the first row and below the last. Written out because every
+    /// edge is a separate decision the occlusion rule depends on — a rect that
+    /// stops at the skill text would call a cursor on a support cell "outside".
+    #[test]
+    fn the_panel_rect_wraps_the_grid_by_a_margin_and_a_pitch() {
+        let g = MercGeometry::default();
+        let layout = layout_of(&[200.0, 249.0], 49.0, 100, &g);
+
+        let rect = panel_bounds(&layout, &g).expect("a two-row layout has bounds");
+
+        // column 100 − 22 margin; row-0 cell top 178 − 49 pitch.
+        // last cell right 583 + 44 + 22; row-1 cell bottom 271 + 49.
+        assert_eq!(rect, [78, 129, 571, 191]);
+    }
+
+    /// The consumer's question, asked directly: the cursor that provokes the
+    /// tooltip is on a SUPPORT CELL, including the last slot — which the
+    /// published capture drops when the slot is empty, and which is why the
+    /// rect is measured off the layout's full grid.
+    #[test]
+    fn a_cursor_on_the_last_support_slot_is_inside_the_panel() {
+        let g = MercGeometry::default();
+        let layout = layout_of(&[200.0, 249.0], 49.0, 100, &g);
+        let last = *layout.rows[1].cells.last().expect("six slots");
+
+        let rect = panel_bounds(&layout, &g).expect("a two-row layout has bounds");
+
+        assert!(contains(rect, (last[0] + last[2] / 2, last[1] + last[3] / 2)));
+    }
+
+    /// …and it does not swallow the screen beside the panel, which is what
+    /// would keep a closed window's capture alive for any parked cursor.
+    #[test]
+    fn a_cursor_well_right_of_the_grid_is_outside_the_panel() {
+        let g = MercGeometry::default();
+        let layout = layout_of(&[200.0, 249.0], 49.0, 100, &g);
+        let last = *layout.rows[1].cells.last().expect("six slots");
+
+        let rect = panel_bounds(&layout, &g).expect("a two-row layout has bounds");
+
+        assert!(!contains(rect, (last[0] + last[2] + 200, last[1])));
+    }
+
+    /// A ONE-row panel has no inter-row gap, so `detect` reports `row_pitch`
+    /// 0.0 and the vertical band has to come from the reference pitch at this
+    /// capture's scale. Without the fallback the rect would hug the row and a
+    /// cursor in the header would read as "off the panel".
+    #[test]
+    fn a_single_row_layout_still_gets_a_vertical_band() {
+        let g = MercGeometry::default();
+        let layout = layout_of(&[200.0], 0.0, 100, &g);
+        let cell_top = layout.rows[0].cells[0][1];
+
+        let rect = panel_bounds(&layout, &g).expect("a one-row layout has bounds");
+
+        assert!(contains(rect, (layout.column_x0, cell_top - g.row_pitch as i32 + 1)));
+        assert!(!contains(rect, (layout.column_x0, cell_top - g.row_pitch as i32 - 5)));
+    }
+
+    #[test]
+    fn a_layout_with_no_rows_has_no_panel_rect() {
+        let g = MercGeometry::default();
+        let layout = layout_of(&[], 0.0, 100, &g);
+
+        assert_eq!(panel_bounds(&layout, &g), None);
     }
 }

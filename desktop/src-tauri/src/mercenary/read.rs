@@ -361,6 +361,61 @@ fn named_skills(capture: &MercCapture) -> std::collections::HashSet<&str> {
         .collect()
 }
 
+/// Whether `next` is POSITIVELY a read of the SAME recruit window as `retired`.
+///
+/// The companion to [`panel_replaced`], and deliberately NOT its negation.
+/// That rule ABSTAINS on absence — an unreadable tick keeps the window — which
+/// is right for a LIVE capture: the alternative is throwing a session's
+/// confirmations away on one bad tick, and the next tick two seconds later can
+/// put them back either way.
+///
+/// It is wrong across a RETIRE. There the gap is a window that left the screen
+/// and up to a minute of wall clock, so abstention is no longer a cheap bet: a
+/// single shared skill (Flame Dash sits on more than one reference panel) plus
+/// a level neither read named would abstain its way into writing one
+/// mercenary's supports onto another's rows as `Confirmed` — and a confirmed
+/// cell is never re-read, so no hover can correct it.
+///
+/// The burden therefore flips. Two conditions, both required:
+///
+/// - nothing may CONTRADICT sameness — [`panel_replaced`] owns that half, so
+///   the two rules cannot drift apart and the live path keeps its abstention;
+/// - and something must POSITIVELY say it is the same panel: two levels that
+///   were both read and agree, or skill sets overlapping on at least HALF of
+///   what the new read named, with [`REPLACEMENT_ROW_EVIDENCE`] named rows on
+///   each side.
+///
+/// The level disjunct is what lets the ordinary case through: the first tick
+/// after a re-detect often names no skill at all but does read the header line,
+/// and requiring both facts would drop every such restore.
+///
+/// But a level is only allowed to speak for rows nobody read. Once BOTH sides
+/// have named [`REPLACEMENT_ROW_EVIDENCE`] rows, a sub-half overlap is a
+/// present, positive DISAGREEMENT — and two mercenaries sharing a level is
+/// ordinary, so the skills outvote it. Without that the level disjunct would
+/// restore across `Flame Dash` plus a level collision, which is the exact
+/// mis-restore this rule exists to prevent.
+pub fn same_panel_positive(retired: &MercCapture, next: &MercCapture) -> bool {
+    if panel_replaced(retired, next) {
+        return false;
+    }
+    let levels_agree = matches!(
+        (retired.header.level, next.header.level),
+        (Some(before), Some(now)) if before == now
+    );
+    let before = named_skills(retired);
+    let now = named_skills(next);
+    let shared = before.intersection(&now).count();
+    let both_read_enough_rows =
+        before.len() >= REPLACEMENT_ROW_EVIDENCE && now.len() >= REPLACEMENT_ROW_EVIDENCE;
+    let skills_agree = both_read_enough_rows && shared * 2 >= now.len();
+    // Not merely "skills_agree is false": absence still abstains, so this is
+    // true only when both reads named enough rows to be arguing about the
+    // same thing and the overlap came out short.
+    let skills_contradict = both_read_enough_rows && shared * 2 < now.len();
+    !skills_contradict && (levels_agree || skills_agree)
+}
+
 /// One text field's sticky rule. See [`merge_header`].
 fn merge_text(prev: Option<&str>, next: Option<&str>) -> Option<String> {
     match (prev, next) {
@@ -1247,5 +1302,130 @@ mod tests {
         );
 
         assert!(capture_complete(&capture));
+    }
+    // -- positive sameness, for the retained slot --------------------------
+
+    /// The divergence from the live rule, stated as one assertion pair: a tick
+    /// that named nothing and read no level ABSTAINS for the live capture (it
+    /// keeps the window) and FAILS for the retained slot. Across a retire there
+    /// is no cheap next tick to correct a wrong restore — the cells land
+    /// `Confirmed`, which nothing re-reads.
+    #[test]
+    fn a_tick_that_read_nothing_is_not_positive_evidence_of_the_same_panel() {
+        let retired = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        let mut next = panel(&["Ice Shot", "Conductivity"], header(None, None, None));
+        for row in &mut next.rows {
+            row.skill.name = None;
+            row.skill.state = ReadState::Unknown;
+        }
+
+        assert!(!panel_replaced(&retired, &next), "the live rule still abstains");
+        assert!(!same_panel_positive(&retired, &next));
+    }
+
+    /// THE FLAME DASH CASE. Two different mercenaries can share one skill, and
+    /// with no level on either side the live rule abstains its way into calling
+    /// them the same window. One name out of three is not evidence.
+    #[test]
+    fn one_shared_skill_out_of_three_is_not_enough_overlap() {
+        let retired = panel(
+            &["Flame Dash", "Ice Shot", "Conductivity"],
+            header(None, None, None),
+        );
+        let next = panel(&["Flame Dash", "Cyclone", "Enfeeble"], header(None, None, None));
+
+        assert!(!panel_replaced(&retired, &next), "the live rule abstains on the overlap");
+        assert!(!same_panel_positive(&retired, &next));
+    }
+
+    /// The veto keeps the SAME evidence bar the replacement rule has: ONE named
+    /// row on the new side is a misread, not a disagreement. Without the bar a
+    /// single garbled name would outvote a level both sides read and drop a
+    /// restore that should stand.
+    #[test]
+    fn one_garbled_name_on_the_new_side_does_not_veto_an_agreed_level() {
+        let retired = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        let mut next = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        next.rows[0].skill.name = Some("Bal1 Lightning".into());
+        next.rows[1].skill.name = None;
+        next.rows[1].skill.state = ReadState::Unknown;
+
+        assert!(same_panel_positive(&retired, &next));
+    }
+
+    /// The level is only allowed to speak for rows nobody read. Here both reads
+    /// named three and share one, which is a present DISAGREEMENT — and two
+    /// mercenaries sharing a level is ordinary, so the skills outvote it.
+    /// Letting the level win would restore one merc's supports onto another's
+    /// rows as `Confirmed`, which no hover can correct.
+    #[test]
+    fn a_shortfall_in_the_overlap_outvotes_two_levels_that_agree() {
+        let retired = panel(
+            &["Flame Dash", "Ice Shot", "Conductivity"],
+            header(None, None, Some(83)),
+        );
+        let next = panel(
+            &["Flame Dash", "Cyclone", "Enfeeble"],
+            header(None, None, Some(83)),
+        );
+
+        assert!(!panel_replaced(&retired, &next), "the live rule still abstains");
+        assert!(!same_panel_positive(&retired, &next));
+    }
+
+    /// …and two out of three carries it: a rematch rolls a whole new list, so
+    /// a majority overlap is the same mercenary read twice.
+    #[test]
+    fn two_shared_skills_out_of_three_carry_the_panel() {
+        let retired = panel(
+            &["Flame Dash", "Ice Shot", "Conductivity"],
+            header(None, None, None),
+        );
+        let next = panel(&["Flame Dash", "Ice Shot", "Enfeeble"], header(None, None, None));
+
+        assert!(same_panel_positive(&retired, &next));
+    }
+
+    /// The other disjunct, and the reason it exists: the first tick after a
+    /// re-detect often names no skill at all but does read the header line.
+    /// Requiring both facts would drop every restore that matters.
+    #[test]
+    fn two_levels_that_were_both_read_and_agree_carry_the_panel() {
+        let retired = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        let mut next = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        for row in &mut next.rows {
+            row.skill.name = None;
+            row.skill.state = ReadState::Unknown;
+        }
+
+        assert!(same_panel_positive(&retired, &next));
+    }
+
+    /// A level that DISAGREES is a contradiction, and a contradiction outranks
+    /// any amount of positive evidence — otherwise a rematch that kept most of
+    /// its skill list would restore the previous mercenary's supports.
+    #[test]
+    fn a_level_that_disagrees_beats_a_matching_skill_list() {
+        let retired = panel(
+            &["Ice Shot", "Conductivity", "Frostbolt"],
+            header(None, None, Some(83)),
+        );
+        let next = panel(
+            &["Ice Shot", "Conductivity", "Frostbolt"],
+            header(None, None, Some(68)),
+        );
+
+        assert!(!same_panel_positive(&retired, &next));
+    }
+
+    /// A rematch at the SAME level with a whole new list must not ride the
+    /// level disjunct in: the disjuncts are `or`, but the contradiction gate
+    /// runs first.
+    #[test]
+    fn a_same_level_rematch_with_a_new_skill_list_is_not_the_same_panel() {
+        let retired = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        let next = panel(&["Cyclone", "Enfeeble"], header(None, None, Some(83)));
+
+        assert!(!same_panel_positive(&retired, &next));
     }
 }
