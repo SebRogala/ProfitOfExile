@@ -7,10 +7,16 @@ const (
 	ChannelBeta   = "beta"
 )
 
-// FeatureMerc gates visibility of the mercenary triage module in the desktop
-// app. The module's code ships in every build — this only controls whether the
-// client renders it.
-const FeatureMerc = "merc"
+// Hidden feature ids. Each gates visibility of one desktop feature: the
+// mercenary triage module, the Currency Exchange page (server-backed, no
+// desktop module), and the Temple of Atzoatl tools. The code behind every
+// feature ships in every build — these only control whether the client
+// renders it.
+const (
+	FeatureMerc     = "merc"
+	FeatureExchange = "exchange"
+	FeatureTemple   = "temple"
+)
 
 // Device roles. This is the whole role vocabulary: Entitlements switches on it
 // and the promote CLI validates against it (cmd/promote), so a new role is
@@ -24,9 +30,9 @@ const (
 
 // Entitlements maps a device role to its update channel and the hidden features
 // it may see. Editor is the beta tier for now, so editor and admin get beta
-// builds and the merc module and everything else — including an unknown role
-// and a device the server has never identified — gets the stable channel with
-// no hidden features.
+// builds and every hidden module (merc, exchange, temple), and everything else
+// — including an unknown role and a device the server has never identified —
+// gets the stable channel with no hidden features.
 //
 // This is hiding, not security: the gate controls visibility and update
 // channel, nothing more.
@@ -37,7 +43,7 @@ const (
 func Entitlements(role string) (channel string, features []string) {
 	switch role {
 	case RoleEditor, RoleAdmin:
-		return ChannelBeta, []string{FeatureMerc}
+		return ChannelBeta, []string{FeatureMerc, FeatureExchange, FeatureTemple}
 	default:
 		return ChannelStable, []string{}
 	}

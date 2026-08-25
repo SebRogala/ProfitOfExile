@@ -3,7 +3,8 @@
  *
  * The server answers `GET /api/device/me` for the device identity POE-102
  * already attaches to every request: `{ role, channel, features[] }`, with
- * editor and admin devices getting `channel: "beta"` and `features: ["merc"]`.
+ * editor and admin devices getting `channel: "beta"` and the hidden feature
+ * ids — `merc`, `exchange`, `temple`.
  *
  * **The device id is a precondition, not a detail.** `X-Device-ID` IS the
  * question; without it the server can only answer for an anonymous device, and
@@ -19,8 +20,8 @@
  * from its 30-minute update tick, so a promote on the server reaches a running
  * app without a restart.
  *
- * **Hiding, not securing.** The gated module ships in every build; this only
- * decides whether the app draws it. Nothing here is a permission check.
+ * **Hiding, not securing.** Every gated module ships in every build; this only
+ * decides whether the app draws them. Nothing here is a permission check.
  *
  * **The default is the quiet one.** Until an answer lands — and on a device
  * that is simply offline, that is the whole session — the device is on `stable`
@@ -40,6 +41,12 @@ export type Channel = 'stable' | 'beta';
 
 /** The feature id that reveals the mercenaries module. */
 export const MERC_FEATURE = 'merc';
+
+/** The feature id that reveals the Currency Exchange module. */
+export const EXCHANGE_FEATURE = 'exchange';
+
+/** The feature id that reveals the Temple of Atzoatl module. */
+export const TEMPLE_FEATURE = 'temple';
 
 /** A validated `/api/device/me` answer. */
 export interface Entitlements {
