@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { ssot, setModuleEnabled } from '$lib/stores/ssot.svelte';
-	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
+	import {
+		hasFeature,
+		MERC_FEATURE,
+		EXCHANGE_FEATURE,
+		TEMPLE_FEATURE
+	} from '$lib/stores/entitlements.svelte';
 
 	// --- Modules (SSOT) ---
 	// User-facing names for the Rust module registry (src-tauri/src/modules.rs).
@@ -24,14 +29,23 @@
 	/**
 	 * The feature a module's controls are hidden behind, when it has one
 	 * (POE-203). A module absent from this map is visible to every device; the
-	 * merc module is visible only where the server granted `merc`.
+	 * two listed here are visible only where the server granted the named
+	 * feature. The Currency Exchange has no module — it runs on the server — so
+	 * it is gated at its nav entry only.
 	 */
 	const MODULE_FEATURES: Record<string, string> = {
 		mercenary: MERC_FEATURE,
+		temple: TEMPLE_FEATURE,
 	};
 
 	/** Whether this device may see the Mercenaries page and the Merc OCR switch. */
 	const mercGranted = $derived(hasFeature(MERC_FEATURE));
+
+	/** Whether this device may see the Temple page and the Temple reader switch. */
+	const templeGranted = $derived(hasFeature(TEMPLE_FEATURE));
+
+	/** Whether this device may see the Currency Exchange page. */
+	const exchangeGranted = $derived(hasFeature(EXCHANGE_FEATURE));
 
 	/**
 	 * The module switches this device may see, in registry order. Derived rather
@@ -96,19 +110,23 @@
 		<button class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming" onclick={() => nav.go('/')}>
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
 		</button>
-		<!-- Outside the DEV block on purpose: this one ships — to the devices the
-		     server granted `merc` (POE-203). -->
+		<!-- Outside the DEV block on purpose: these three ship — to the devices
+		     the server granted `merc` / `temple` / `exchange` (POE-203). -->
 		{#if mercGranted}
 			<button class="collapsed-item" class:active={currentPath === '/mercenaries'} title="Mercenaries" onclick={() => nav.go('/mercenaries')}>
 				<span class="icon">&#x2694;&#xFE0F;</span>
 			</button>
 		{/if}
-		<button class="collapsed-item" class:active={currentPath === '/temple'} title="Temple of Atzoatl" onclick={() => nav.go('/temple')}>
-			<span class="icon">&#x1F3DB;&#xFE0F;</span>
-		</button>
-		<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange" onclick={() => nav.go('/currency-exchange')}>
-			<span class="icon">&#x1F4B1;</span>
-		</button>
+		{#if templeGranted}
+			<button class="collapsed-item" class:active={currentPath === '/temple'} title="Temple of Atzoatl" onclick={() => nav.go('/temple')}>
+				<span class="icon">&#x1F3DB;&#xFE0F;</span>
+			</button>
+		{/if}
+		{#if exchangeGranted}
+			<button class="collapsed-item" class:active={currentPath === '/currency-exchange'} title="Currency Exchange" onclick={() => nav.go('/currency-exchange')}>
+				<span class="icon">&#x1F4B1;</span>
+			</button>
+		{/if}
 		{#if import.meta.env.DEV}
 			<div class="collapsed-item disabled" title="Mapping (soon)">
 				<span class="icon">&#x1F5FA;&#xFE0F;</span>
@@ -178,14 +196,18 @@
 					<span>Mercenaries</span>
 				</button>
 			{/if}
-			<button class="nav-item" class:active={currentPath === '/temple'} onclick={() => nav.go('/temple')}>
-				<span class="icon">&#x1F3DB;&#xFE0F;</span>
-				<span>Temple</span>
-			</button>
-			<button class="nav-item" class:active={currentPath === '/currency-exchange'} onclick={() => nav.go('/currency-exchange')}>
-				<span class="icon">&#x1F4B1;</span>
-				<span>Currency Exchange</span>
-			</button>
+			{#if templeGranted}
+				<button class="nav-item" class:active={currentPath === '/temple'} onclick={() => nav.go('/temple')}>
+					<span class="icon">&#x1F3DB;&#xFE0F;</span>
+					<span>Temple</span>
+				</button>
+			{/if}
+			{#if exchangeGranted}
+				<button class="nav-item" class:active={currentPath === '/currency-exchange'} onclick={() => nav.go('/currency-exchange')}>
+					<span class="icon">&#x1F4B1;</span>
+					<span>Currency Exchange</span>
+				</button>
+			{/if}
 			{#if import.meta.env.DEV}
 				<div class="nav-item disabled">
 					<span class="icon">&#x1F5FA;&#xFE0F;</span>

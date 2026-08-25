@@ -8,8 +8,13 @@
 	import { store, initStatusStore } from '$lib/stores/status.svelte';
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
-	import { nav, viewToPath } from '$lib/stores/navigation.svelte';
-	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
+	import { nav, viewToPath, type View } from '$lib/stores/navigation.svelte';
+	import {
+		hasFeature,
+		MERC_FEATURE,
+		EXCHANGE_FEATURE,
+		TEMPLE_FEATURE
+	} from '$lib/stores/entitlements.svelte';
 	import {
 		MERCENARY_MODULE_ID,
 		MERCENARY_WINDOW_LABEL,
@@ -35,11 +40,33 @@
 	let sidebarOpen = $derived(store.status?.sidebar_open ?? true);
 
 	/**
-	 * Whether the server granted this device the merc feature (POE-203). Gates
-	 * the Mercenaries page, its nav entry (in `Sidebar`) and the verdict overlay
-	 * — hiding, not securing: the code ships in every build.
+	 * The feature each hidden view is gated on (POE-203). A view absent from this
+	 * map is visible to every device; the three listed here are drawn only where
+	 * the server granted the named feature — hiding, not securing: the code ships
+	 * in every build.
+	 *
+	 * ONE table, read by both the per-view flags below and by `visibleView`, so a
+	 * page mount and the route fallback that protects it cannot disagree about
+	 * which feature a view needs.
 	 */
-	let mercGranted = $derived(hasFeature(MERC_FEATURE));
+	const VIEW_FEATURES: Partial<Record<View, string>> = {
+		mercenaries: MERC_FEATURE,
+		temple: TEMPLE_FEATURE,
+		'currency-exchange': EXCHANGE_FEATURE
+	};
+
+	/** Whether this device may see a view. Reactive — `hasFeature` reads the store. */
+	function viewGranted(view: View): boolean {
+		const feature = VIEW_FEATURES[view];
+		return !feature || hasFeature(feature);
+	}
+
+	/** Gates the Mercenaries page and the verdict overlay. */
+	let mercGranted = $derived(viewGranted('mercenaries'));
+	/** Gates the Temple page and the temple overlay. */
+	let templeGranted = $derived(viewGranted('temple'));
+	/** Gates the Currency Exchange page (no overlay, no module). */
+	let exchangeGranted = $derived(viewGranted('currency-exchange'));
 
 	/**
 	 * The view actually on screen.
@@ -51,7 +78,7 @@
 	 * a write would persist the fallback and cost an entitled user their last
 	 * tool the first time they launched offline.
 	 */
-	let visibleView = $derived(nav.view === 'mercenaries' && !mercGranted ? 'lab' : nav.view);
+	let visibleView = $derived(viewGranted(nav.view) ? nav.view : 'lab');
 
 	function toggleSidebar() {
 		const next = !sidebarOpen;
@@ -585,7 +612,12 @@
 	$effect(() => {
 		const enabled = ssot.modules[TEMPLE_MODULE_ID];
 		if (enabled === undefined) return;
-		templeOverlay.setDesired(enabled);
+		// The feature gate is ANDed in rather than short-circuiting the effect:
+		// a device that loses the grant with the module flag still set must have
+		// the window taken down, not left standing (POE-203). This takes the
+		// WINDOW down, not the module — the Rust temple module keeps running on
+		// its own flag, because the gate is hiding and not securing.
+		templeOverlay.setDesired(enabled && templeGranted);
 	});
 
 	// --- Merc verdict overlay (POE-199) ---
@@ -1125,12 +1157,16 @@
 					<MercenariesPage />
 				</div>
 			{/if}
-			<div class:view-hidden={visibleView !== 'temple'}>
-				<TemplePage />
-			</div>
-			<div class:view-hidden={visibleView !== 'currency-exchange'}>
-				<CurrencyExchangePage />
-			</div>
+			{#if templeGranted}
+				<div class:view-hidden={visibleView !== 'temple'}>
+					<TemplePage />
+				</div>
+			{/if}
+			{#if exchangeGranted}
+				<div class:view-hidden={visibleView !== 'currency-exchange'}>
+					<CurrencyExchangePage />
+				</div>
+			{/if}
 			{#if import.meta.env.DEV}
 				<div class:view-hidden={visibleView !== 'dev'}>
 					<DevPage />

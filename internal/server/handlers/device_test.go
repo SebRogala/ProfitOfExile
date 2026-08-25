@@ -365,8 +365,8 @@ func TestDeviceMe_RoleDeterminesChannelAndFeatures(t *testing.T) {
 		wantChannel  string
 		wantFeatures []string
 	}{
-		{"editor is a beta device with merc", "editor", "beta", []string{"merc"}},
-		{"admin is a beta device with merc", "admin", "beta", []string{"merc"}},
+		{"editor is a beta device with every hidden feature", "editor", "beta", []string{"merc", "exchange", "temple"}},
+		{"admin is a beta device with every hidden feature", "admin", "beta", []string{"merc", "exchange", "temple"}},
 		{"user is a stable device with no features", "user", "stable", []string{}},
 		{"unset role is a stable device with no features", "", "stable", []string{}},
 	}
