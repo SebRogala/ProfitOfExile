@@ -3,6 +3,8 @@ name: Desktop Build
 on:
   push:
     tags:
+      # Matches stable v-desktop-X.Y.Z and beta v-desktop-X.Y.Z-beta.N alike:
+      # the glob is unanchored at the end and * spans dots and dashes.
       - 'v-desktop-*'
 
 jobs:
@@ -71,6 +73,15 @@ jobs:
     needs: build-desktop
     if: startsWith(github.ref, 'refs/tags/v-desktop-')
     runs-on: ubuntu-latest
+    # Two beta tags in flight would race for the last write to the rolling
+    # desktop-beta manifest, and the loser's latest.json is what beta devices
+    # would keep polling. Serialize the job so the newer tag lands last.
+    # Deliberately no cancel-in-progress: the older run still owns publishing
+    # its own versioned release and must be allowed to finish. Accepted
+    # trade-off: with 3+ runs queued, GitHub cancels the pending middle one
+    # (whole job, stable tags included) — re-push that tag if it happens.
+    concurrency:
+      group: desktop-beta-manifest
     permissions:
       contents: write
 
@@ -94,12 +105,30 @@ jobs:
           path: artifacts/exe
 
       - name: Prepare release assets
+        id: prep
         env:
           GH_REPO: ${{ github.repository }}
           GH_REF: ${{ github.ref }}
         run: |
           TAG="${GH_REF#refs/tags/}"
           VERSION="${TAG#v-desktop-}"
+
+          # Beta channel: any version carrying a semver prerelease suffix.
+          # The convention is -beta.N, but the match is the general `-<any>`
+          # so an -rc.1 tag — or a typo — fails closed into the beta channel
+          # instead of shipping as stable/latest. VERSION keeps the suffix and
+          # goes verbatim into latest.json, because the Tauri updater compares
+          # semver and 1.2.0-beta.1 sorts BELOW 1.2.0 — that is what lets a
+          # beta device roll forward onto the stable release.
+          IS_BETA=false
+          case "$VERSION" in
+            *-*) IS_BETA=true ;;
+          esac
+          {
+            echo "is_beta=${IS_BETA}"
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+          } >> "$GITHUB_OUTPUT"
 
           # Read the signature for latest.json
           SIG=$(cat artifacts/sig/*.sig)
@@ -134,6 +163,44 @@ jobs:
             artifacts/ProfitOfExile-standalone.exe
             artifacts/latest.json
           generate_release_notes: true
+          # A beta tag ships as a GitHub prerelease so /releases/latest — which
+          # the stable updater endpoint resolves through — keeps pointing at
+          # the newest stable release. GitHub's release docs state that drafts
+          # and prereleases cannot be set as the latest release, so the
+          # prerelease flag alone decides this. make_latest is left unset: the
+          # action's default is already true for a stable tag, and passing it
+          # explicitly on a release this action may create as a draft is
+          # behaviour we have not verified.
+          prerelease: ${{ steps.prep.outputs.is_beta }}
+
+      # Beta devices poll a fixed URL instead of /releases/latest, so the beta
+      # manifest lives on a rolling release under the constant tag desktop-beta.
+      # The manifest is the tag build's own latest.json — its url field already
+      # points at THIS tag's setup exe — so only latest.json is re-published
+      # here; the binaries stay on the versioned prerelease.
+      - name: Publish beta manifest to rolling desktop-beta release
+        if: steps.prep.outputs.is_beta == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-beta
+          name: Desktop beta channel (rolling)
+          body: |
+            Rolling update manifest for the desktop beta channel.
+
+            Current beta build: `${{ steps.prep.outputs.tag }}`
+            (release notes and installers live on that tag's own release).
+
+            This release exists only to serve `latest.json` at a stable URL and
+            is overwritten by every beta tag. Do not download from here.
+          files: artifacts/latest.json
+          # Pinned explicitly on every run: action-gh-release leaves an
+          # existing release's metadata untouched for keys it is not given, so
+          # these would silently decay to whatever the first run created. Per
+          # GitHub's docs a prerelease cannot be latest anyway; stating it here
+          # means every run asserts it rather than inheriting it.
+          prerelease: true
+          make_latest: 'false'
+          overwrite_files: true
 
       # Discord announcement handled via manual dispatch workflow (discord-announce.yml)
       # so desktop + backend changes can be combined into one quality message.

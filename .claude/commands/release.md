@@ -6,13 +6,16 @@ Release a new version of the desktop app. Bumps version in all required files, c
 ```
 /release <version>
 ```
-Example: `/release 0.1.2`
+Example: `/release 0.1.2` (stable), `/release 0.1.3-beta.1` (beta channel).
 
 ## Steps
 
-1. **Parse the version** from the argument (e.g., `0.1.2`). If no argument provided, ask the user.
+1. **Parse the version** from the argument (e.g., `0.1.2`, or `0.1.3-beta.1`
+   for a beta). If no argument provided, ask the user. A version carrying a
+   `-<prerelease>` suffix ships on the beta channel — see step 5.
 
-2. **Bump version** in all three files:
+2. **Bump version** in all three files — the `-beta.N` suffix is part of the
+   version and goes into all three verbatim:
    - `desktop/src-tauri/tauri.conf.json` → `"version": "<version>"`
    - `desktop/src-tauri/Cargo.toml` → `version = "<version>"` (first occurrence under `[package]`)
    - `desktop/package.json` → `"version": "<version>"`
@@ -33,6 +36,12 @@ Example: `/release 0.1.2`
    ```
    git tag v-desktop-<version>
    ```
+   Stable: `v-desktop-X.Y.Z`. Beta: `v-desktop-X.Y.Z-beta.N` — same tag prefix,
+   same workflow. CI publishes a beta tag as a GitHub **prerelease** (so
+   `/releases/latest`, which stable devices poll, keeps pointing at the newest
+   stable release) and additionally re-publishes that build's `latest.json`
+   onto the rolling `desktop-beta` release, which is the fixed URL beta devices
+   poll. Details in docs/DEPLOY.md → *Desktop release channels*.
 
 6. **Push** (ask user for confirmation first — push auto-deploys server).
 
@@ -52,6 +61,8 @@ Example: `/release 0.1.2`
 7. **Confirm** the tag was pushed and CI should trigger the desktop build.
 
 ## Important
-- Tag format MUST be `v-desktop-X.Y.Z` — CI only triggers on this pattern
+- Tag format MUST be `v-desktop-X.Y.Z` (stable) or `v-desktop-X.Y.Z-beta.N`
+  (beta) — CI only triggers on the `v-desktop-` prefix, and any `-<prerelease>`
+  suffix routes the build to the beta channel instead of stable
 - All three version files MUST match — Tauri updater compares installed version against update manifest
 - Always ask before pushing — push to main auto-deploys the server

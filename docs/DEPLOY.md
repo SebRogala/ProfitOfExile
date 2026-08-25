@@ -1,7 +1,8 @@
 # Deployment
 
 Status: current. Last verified 2026-07-26; the desktop <-> server ordering
-section was added and verified 2026-08-25.
+section was added and verified 2026-08-25, and the desktop release channels
+section 2026-08-25 (beta channel not yet exercised by a real tag; the client-side dual-manifest check ships with POE-203 WI-2).
 
 Canonical for: how `main` reaches production, why the deploy is path-filtered, and
 what a green pipeline does and does not tell you.
@@ -94,11 +95,63 @@ it. Passing `GIT_SHA` in the Coolify build configuration would make
 `curl -s https://profitofexile.top/api/health` a one-line deploy check. Not done;
 recorded here as the cheapest path if that ever becomes worth it.
 
+## Desktop release channels
+
+`desktop.yml` triggers on `v-desktop-*` and serves two channels off one tag
+pattern:
+
+- **Stable — `v-desktop-X.Y.Z`.** A normal GitHub release carrying the
+  installer, the standalone exe, and `latest.json`. `/releases/latest` resolves
+  to it, which is the endpoint pinned in `tauri.conf.json`, so every device is
+  offered it.
+- **Beta — `v-desktop-X.Y.Z-beta.N`.** Any tag whose version carries a semver
+  prerelease suffix — `X.Y.Z-<prerelease>` — is a beta-channel tag; `-beta.N`
+  is the convention, and the workflow matches the general form so an `-rc.1`
+  tag or a typo fails closed into beta rather than shipping as stable. The same
+  build, published as a GitHub **prerelease** so `/releases/latest` skips it
+  entirely and stable devices never see it. The job additionally re-publishes
+  that build's `latest.json` onto a rolling release under the fixed tag
+  `desktop-beta`, giving beta devices a constant manifest URL:
+  `https://github.com/SebRogala/ProfitOfExile/releases/download/desktop-beta/latest.json`.
+  The `desktop-beta` release is itself a prerelease, and its `latest.json` is
+  overwritten on every beta tag; the binaries stay on the versioned release the
+  manifest's `url` points at.
+
+  The `desktop-beta` **git tag** is created at default-branch HEAD by the first
+  beta run and never moves afterwards — only the release assets hanging off it
+  roll. That is harmless (nothing reads the tag's commit) and is written down
+  here so nobody "fixes" it later.
+
+`tauri.conf.json` sets `bundle.targets` to `["nsis"]` rather than `"all"`.
+This is a hard requirement of the beta channel, not a preference: the WiX/MSI
+bundler runs the version through a `convert_version` step that rejects
+non-numeric semver prerelease identifiers, so a `-beta.N` version fails the
+whole `tauri build` before NSIS is reached. Nothing was lost — the workflow has
+only ever uploaded and published the NSIS installer and the standalone exe; the
+MSI was built and discarded.
+
+The version written into `latest.json` is the tag with `v-desktop-` stripped,
+so a beta manifest advertises `X.Y.Z-beta.N`. That suffix is load-bearing: the
+Tauri updater compares semver, and `1.2.0-beta.1` sorts *below* `1.2.0`, which
+is what lets a beta device roll forward onto the stable release rather than
+stranding on the beta manifest. A beta device must therefore check both manifests
+and install the higher version.
+
+That comparison has to be done by the client, not by the updater plugin's
+endpoint list. `tauri-plugin-updater` treats `endpoints` as **failover, not
+fan-out**: it walks the list and stops at the first endpoint that returns a
+parseable manifest (`updater.rs` around line 496), so a two-entry list would
+only ever report whichever manifest answered first — a stale beta manifest
+would mask a newer stable one. The client must therefore issue two separate
+`check()` calls, each against a single distinct endpoint, and compare the two
+returned versions by semver itself.
+
 ## Desktop <-> server ordering
 
 The two halves ship on separate pipelines — the server on merge to `main`
-(`deploy.yml`), the desktop on a `v-desktop-X.Y.Z` tag (`desktop.yml`) — so a
-release that spans both has an order, and it is always the same one:
+(`deploy.yml`), the desktop on a `v-desktop-X.Y.Z` or `v-desktop-X.Y.Z-beta.N`
+tag (`desktop.yml`) — so a release that spans both has an order, and it is
+always the same one:
 
 **The server must be live in production BEFORE the desktop tag that calls a new
 API is pushed.** A desktop build released first talks to an endpoint that is not
