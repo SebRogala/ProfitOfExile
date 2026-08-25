@@ -45,6 +45,7 @@ use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, TemplateStore};
 use super::read::{build_capture, pass2_texts};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
+use super::sync;
 use super::trigger;
 use super::{
     MercCapture, MercGeometry, MercSkillRead, MercStatus, MercSupportRead, MercenarySlice,
@@ -586,27 +587,71 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     let icons_dir = data_dir.as_ref().map(|d| d.join(super::ICONS_DIR));
     let mut template_problems = Vec::new();
     if let Some(dir) = &icons_dir {
+        // Ask the shared pool BEFORE reading the disk, so the round-trip
+        // overlaps the load instead of following it (POE-201). One pull per
+        // module start, single-flight inside `spawn_pull`.
+        sync::begin_session(&app);
+        sync::spawn_pull(&app);
+
         let (store, problems) = TemplateStore::load(dir);
         template_problems = problems;
-        let learned = store.learned_keys();
+        let loaded = store.len();
+
+        // INSTALL FIRST, MERGE SECOND. The whole-store write happens here, while
+        // the seam still holds its pull claim, and every merge — this start's or
+        // a later task's — then runs against the INSTALLED store under its
+        // mutex. Merging into the local copy first and installing afterwards is
+        // what made this seam a second writer: a corpus that landed in the gap
+        // was saved to disk and then erased by the assignment below, taking its
+        // ETag with it (the next pull answering 304 for art the store no longer
+        // held).
         {
             let state = app.state::<AppState>();
             *state.merc_templates.lock().unwrap_or_else(|e| e.into_inner()) = store;
         }
-        crate::app_log(&app, format!("Merc: {} learned templates loaded", learned.len()));
+        crate::app_log(&app, format!("Merc: {loaded} learned templates loaded"));
+
+        // Bounded, and it releases the seam claim whether or not a corpus
+        // arrives — after this line a later corpus applies itself.
+        if let Some((corpus, etag)) = sync::wait_for_pull(&app, &cancel) {
+            sync::apply_corpus(&app, dir, &corpus, etag, &geometry.thresholds, false);
+        }
+        let pooled_samples = {
+            let state = app.state::<AppState>();
+            let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+            store.pooled_samples()
+        };
+        sync::set_pooled_samples(&app, pooled_samples);
+        if pooled_samples > 0 {
+            crate::app_log(
+                &app,
+                format!("Merc: {pooled_samples} of them came from the shared pool"),
+            );
+        }
     }
     for problem in &template_problems {
         crate::app_log(&app, format!("Merc: template store — {problem}"));
     }
 
     let learned = learned_keys(&app);
+    let pooled = pooled_keys(&app);
     let source = geometry_source.to_string();
     publish(&app, |slice| {
         slice.status = MercStatus::Idle;
         slice.geometry_source = source;
         slice.learned_families = learned;
+        slice.pooled_families = pooled;
         slice.last_error = geometry_err;
     });
+
+    // Anything hover-learned that the pool has not seen — including a whole
+    // store learned before the pool existed. Off-tick like every other upload.
+    sync::enqueue_backfill(&app);
+    // And every forget whose tombstone never landed. Without this a POST that
+    // failed three times is never retried: the key stays suppressed on this
+    // device for good, and each start re-downloads the corpus and re-runs the
+    // tombstone replace it can never finish.
+    sync::retry_pending_tombstones(&app);
 
     let vocab = match MercVocab::load() {
         Ok(v) => v,
@@ -794,6 +839,13 @@ fn learned_keys(app: &AppHandle) -> Vec<String> {
     let state = app.state::<AppState>();
     let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
     store.learned_keys()
+}
+
+/// The keys no local hover taught — the pool's contribution (POE-201).
+fn pooled_keys(app: &AppHandle) -> Vec<String> {
+    let state = app.state::<AppState>();
+    let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+    store.pooled_keys()
 }
 
 /// The template store's edit counter — bumped by the forget/reset commands.
@@ -1040,8 +1092,13 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
 
     let row_index = capture.rows[ri].index;
     let cached = session.sigs.get(&(row_index, cell.slot)).cloned();
-    let (learned, save_err) = match cached {
+    let (learned, save_err, offer) = match cached {
         Some((sig, raw)) => {
+            // The bytes the pool gets, taken before the signature is moved into
+            // the store. Copied here rather than read back out of the store so
+            // the payload is built from memory on the one path that has it
+            // (POE-201 L4) — the store directory is never walked.
+            let gray = sig.gray().to_vec();
             let state = app.state::<AppState>();
             let mut store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
             // The crop is the DETECT frame's, cached before the cursor ever
@@ -1060,15 +1117,28 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
                     Learned::AlreadyKnown
                 },
                 err,
+                // Only a sample the store actually took: art it already had was
+                // offered to the pool when it was first learned.
+                learned.then(|| sync::PendingSample {
+                    family: family.clone(),
+                    tier,
+                    gray,
+                }),
             )
         }
         // The confirmation still stands — it names the cell. Only the template
         // is missing, and saying so is the difference between "we already knew
         // this art" and "we never had the crop".
-        None => (Learned::NoCrop, None),
+        None => (Learned::NoCrop, None, None),
     };
     if let Some(e) = save_err {
         fail(app, session, format!("Merc: template store save failed — {e}"));
+    }
+    // Off the tick: `enqueue` parks the sample and returns, the POST happens on
+    // a task. A synchronous upload here would stall the read the user is
+    // waiting on — the first Windows smoke already measured a 4 s tick.
+    if let Some(sample) = offer {
+        sync::enqueue(app, vec![sample]);
     }
 
     crate::app_log(
@@ -1088,9 +1158,14 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
     apply_one(&mut updated.rows[ri].supports[si], &confirmation);
     session.current = Some(updated.clone());
     let learned_families = learned_keys(app);
+    // A hover on a key the pool taught makes it locally-known, so the pooled
+    // list has to move with the learned one — they are two readings of one
+    // store and a stale second list would leave the chip claiming otherwise.
+    let pooled_families = pooled_keys(app);
     publish(app, |slice| {
         slice.capture = Some(updated);
         slice.learned_families = learned_families;
+        slice.pooled_families = pooled_families;
     });
 }
 

@@ -4,8 +4,11 @@ import {
 	describeDebugResult,
 	indexGroups,
 	indexPositions,
+	describeAge,
 	notInRulesNames,
 	parseLearnedTemplate,
+	POOLED_CHIP_MARK,
+	poolSyncView,
 	positionKey,
 	positionOutcomeLabel,
 	SCAN_NOW_TITLE,
@@ -14,9 +17,16 @@ import {
 	STATUS_LABEL,
 	STATUS_TONE,
 	supportText,
-	supportTitle
+	supportTitle,
+	templateChip
 } from './capture-view';
-import type { MercCapture, MercSkillRead, MercSupportRead, ReadState } from './capture';
+import type {
+	MercCapture,
+	MercSkillRead,
+	MercSupportRead,
+	MercSyncStatus,
+	ReadState
+} from './capture';
 import type { MercGroupResult, MercPosition, MercRulesetResult } from './verdict';
 
 /**
@@ -454,5 +464,178 @@ describe('the module status wording', () => {
 	it('keeps the captured-window colour for a captured window', () => {
 		expect(STATUS_TONE.live).toBe('pass');
 		expect(STATUS_TONE.scanning).not.toBe('pass');
+	});
+});
+
+/**
+ * The shared icon-template pool's wording (POE-201).
+ *
+ * What these pin is the promise the page makes about a pool it cannot reach:
+ * the module still works, and the line has to say so without dressing an
+ * optional optimisation up as a capture failure.
+ */
+function sync(overrides: Partial<MercSyncStatus> = {}): MercSyncStatus {
+	return {
+		lastPullMs: null,
+		lastPull: 'never',
+		pooledSamples: 0,
+		queuedUploads: 0,
+		lastError: null,
+		...overrides
+	};
+}
+
+describe('poolSyncView', () => {
+	it('says the pool has not been checked before the first pull finishes', () => {
+		const view = poolSyncView(sync(), 1_000_000);
+
+		expect(view.label).toMatch(/not checked/i);
+		expect(view.tone).toBe('muted');
+	});
+
+	it('tells the reader the module is running on local templates when the pool is unreachable', () => {
+		// The acceptance criterion: with the server down the module works fully.
+		// A line that only said "pool unreachable" would read as a broken module.
+		const view = poolSyncView(sync({ lastPull: 'failed', lastPullMs: 1_000_000 }), 1_000_000);
+
+		expect(view.label).toMatch(/local templates/i);
+	});
+
+	it('does not colour an unreachable pool as a failure', () => {
+		// `fail` is the capture-unavailable colour. The pool is optional, and
+		// borrowing that colour sends the reader hunting for an OCR problem.
+		const view = poolSyncView(sync({ lastPull: 'failed' }), 1_000_000);
+
+		expect(view.tone).not.toBe('fail');
+	});
+
+	it('surfaces why the last pool call failed as the detail', () => {
+		const view = poolSyncView(
+			sync({ lastPull: 'failed', lastError: 'pull: server returned 502' }),
+			1_000_000
+		);
+
+		expect(view.detail).toBe('pull: server returned 502');
+	});
+
+	it('reports a merged pull with how long ago it happened', () => {
+		const view = poolSyncView(
+			sync({ lastPull: 'merged', lastPullMs: 1_000_000, pooledSamples: 12 }),
+			1_000_000 + 120_000
+		);
+
+		expect(view.label).toBe('shared pool merged 2 minutes ago');
+		expect(view.detail).toBe('12 samples from the pool');
+	});
+
+	it('distinguishes an up-to-date pool from one that merged something', () => {
+		// 304 and "merged nothing new" are the same store but not the same
+		// event, and only one of them means the device asked and was told no.
+		const merged = poolSyncView(sync({ lastPull: 'merged', lastPullMs: 5 }), 5);
+		const unchanged = poolSyncView(sync({ lastPull: 'unchanged', lastPullMs: 5 }), 5);
+
+		expect(unchanged.label).toMatch(/up to date/i);
+		expect(unchanged.label).not.toBe(merged.label);
+	});
+
+	it('counts the samples still waiting to be shared', () => {
+		const view = poolSyncView(
+			sync({ lastPull: 'merged', lastPullMs: 5, pooledSamples: 3, queuedUploads: 2 }),
+			5
+		);
+
+		expect(view.detail).toBe('3 samples from the pool, 2 waiting to be shared');
+	});
+
+	it('says nothing about a queue that is empty', () => {
+		const view = poolSyncView(
+			sync({ lastPull: 'merged', lastPullMs: 5, pooledSamples: 3 }),
+			5
+		);
+
+		expect(view.detail).not.toMatch(/waiting/);
+	});
+
+	it('reports a queue before the first pull has finished', () => {
+		// A hover-learned sample is queued the moment it is learned, which can
+		// be before any pull lands. Saying nothing would look like a lost upload.
+		const view = poolSyncView(sync({ queuedUploads: 1 }), 5);
+
+		expect(view.detail).toBe('1 waiting to be shared');
+	});
+
+	it('says one sample without a plural', () => {
+		const view = poolSyncView(
+			sync({ lastPull: 'merged', lastPullMs: 5, pooledSamples: 1, queuedUploads: 1 }),
+			5
+		);
+
+		expect(view.detail).toBe('1 sample from the pool, 1 waiting to be shared');
+	});
+});
+
+describe('describeAge', () => {
+	it('has nothing to say about something that never happened', () => {
+		expect(describeAge(null, 1_000_000)).toBeNull();
+	});
+
+	it('calls the last minute just now', () => {
+		expect(describeAge(1_000_000, 1_000_000 + 59_000)).toBe('just now');
+	});
+
+	it('starts counting minutes at the minute boundary', () => {
+		expect(describeAge(1_000_000, 1_000_000 + 60_000)).toBe('1 minute ago');
+	});
+
+	it('switches to hours at the hour boundary', () => {
+		expect(describeAge(1_000_000, 1_000_000 + 3_600_000)).toBe('1 hour ago');
+		expect(describeAge(1_000_000, 1_000_000 + 3_599_000)).toBe('59 minutes ago');
+	});
+
+	it('does not print a negative age when the clock moved backwards', () => {
+		// A resync or a resume from suspend can put `now` behind the stamp.
+		expect(describeAge(2_000_000, 1_000_000)).toBe('just now');
+	});
+});
+
+describe('templateChip', () => {
+	it('marks a key no local hover taught as the pool\'s', () => {
+		const chip = templateChip('Chain--2', new Set(['Chain--2']));
+
+		expect(chip.pooled).toBe(true);
+		expect(chip.hint).toMatch(/another device/i);
+	});
+
+	it('does not mark a key this device learned', () => {
+		const chip = templateChip('Chain--2', new Set(['Pierce--1']));
+
+		expect(chip.pooled).toBe(false);
+		expect(chip.hint).toMatch(/hover confirmation/i);
+	});
+
+	it('keeps the family and tier the forget button needs', () => {
+		// The chip is also the argument source for `merc_forget_template`;
+		// wrapping the parse must not lose the pair it produced.
+		const chip = templateChip('Caustic Conversion--3', new Set());
+
+		expect(chip.family).toBe('Caustic Conversion');
+		expect(chip.tier).toBe(3);
+		expect(chip.label).toBe('Caustic Conversion (Tier 3)');
+	});
+
+	it('tells the reader that forgetting also retires the template for everyone', () => {
+		// The ✕ used to be purely local. It now posts a tombstone, and a button
+		// whose effect reaches other people has to say so before it is clicked.
+		const chip = templateChip('Chain--2', new Set());
+
+		expect(chip.hint).toMatch(/pool/i);
+		expect(chip.hint).toMatch(/retire/i);
+	});
+
+	it('carries a marker that is not the forget glyph', () => {
+		// The chip already prints ✕ for "forget". A shared marker that collided
+		// with it would read as two buttons.
+		expect(POOLED_CHIP_MARK).not.toBe('✕');
+		expect(POOLED_CHIP_MARK.length).toBeGreaterThan(0);
 	});
 });

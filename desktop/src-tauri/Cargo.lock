@@ -3789,6 +3789,7 @@ name = "profitofexile-desktop"
 version = "0.7.6"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "env_logger",
  "hex",

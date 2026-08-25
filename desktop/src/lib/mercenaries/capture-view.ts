@@ -17,7 +17,14 @@
  * screen reader both get.
  */
 
-import type { MercCapture, MercSkillRead, MercStatus, MercSupportRead, ReadState } from './capture';
+import type {
+	MercCapture,
+	MercSkillRead,
+	MercStatus,
+	MercSupportRead,
+	MercSyncStatus,
+	ReadState
+} from './capture';
 import type {
 	CaptureSite,
 	GroupOutcome,
@@ -297,6 +304,109 @@ export interface LearnedTemplate {
 	/** Null when the store entry carries no tier — `merc_forget_template` gets the null. */
 	tier: number | null;
 	label: string;
+}
+
+/** How the page words one template chip's provenance (POE-201). */
+export interface TemplateChip extends LearnedTemplate {
+	/** No local hover taught this key — the shared pool did. */
+	pooled: boolean;
+	/** The chip's `title`, which is where the provenance is spelled out. */
+	hint: string;
+}
+
+/** What a chip's ✕ does, said in full so the shared consequence is not a surprise. */
+const FORGET_HINT = 'Forget this template — the next hover relearns it, and the pool is told to retire it.';
+
+/**
+ * Word one template chip.
+ *
+ * The provenance is a `title`, not a second glyph, for the reason the read
+ * glyphs are text: the marker is the fast channel, the words are the channel a
+ * screen reader gets. A pooled chip says where it came from because "I never
+ * hovered this and it is still here" is otherwise indistinguishable from a bug.
+ */
+export function templateChip(raw: string, pooledKeys: ReadonlySet<string>): TemplateChip {
+	const parsed = parseLearnedTemplate(raw);
+	const pooled = pooledKeys.has(raw);
+	return {
+		...parsed,
+		pooled,
+		hint: pooled
+			? `Learned by another device and shared through the pool. ${FORGET_HINT}`
+			: `Learned here from a hover confirmation. ${FORGET_HINT}`
+	};
+}
+
+/** The marker a pooled chip carries. */
+export const POOLED_CHIP_MARK = '⇄';
+
+/** What the page prints about the shared pool. */
+export interface PoolSyncView {
+	label: string;
+	tone: OutcomeTone;
+	/** A second line, or null when there is nothing further to say. */
+	detail: string | null;
+}
+
+/**
+ * Word the shared pool's state (POE-201).
+ *
+ * `failed` is `muted`, not `fail`: the module is fully functional on local
+ * templates when the pool is unreachable, and colouring it as a failure would
+ * send the user hunting for a capture problem that does not exist. `unavailable`
+ * capture is a real failure; an unreachable optional pool is not.
+ */
+export function poolSyncView(sync: MercSyncStatus, nowMs: number): PoolSyncView {
+	const shared =
+		sync.pooledSamples === 1 ? '1 sample from the pool' : `${sync.pooledSamples} samples from the pool`;
+	const queued =
+		sync.queuedUploads === 0
+			? null
+			: sync.queuedUploads === 1
+				? '1 waiting to be shared'
+				: `${sync.queuedUploads} waiting to be shared`;
+
+	if (sync.lastPull === 'never') {
+		return {
+			label: 'shared pool — not checked yet',
+			tone: 'muted',
+			detail: queued
+		};
+	}
+	if (sync.lastPull === 'failed') {
+		return {
+			label: 'shared pool unreachable — running on local templates',
+			tone: 'muted',
+			detail: sync.lastError
+		};
+	}
+	const when = describeAge(sync.lastPullMs, nowMs);
+	const label =
+		sync.lastPull === 'unchanged'
+			? `shared pool up to date${when ? ` — checked ${when}` : ''}`
+			: `shared pool merged${when ? ` ${when}` : ''}`;
+	return {
+		label,
+		tone: 'pass',
+		detail: queued ? `${shared}, ${queued}` : shared
+	};
+}
+
+/**
+ * How long ago something happened, in words, or null when there is no
+ * timestamp to age. Coarse on purpose: the pull happens once per module start,
+ * so a minute's precision is all the page can honestly claim.
+ */
+export function describeAge(atMs: number | null, nowMs: number): string | null {
+	if (atMs === null) return null;
+	const seconds = Math.floor((nowMs - atMs) / 1000);
+	// A clock that moved backwards (a resync, a suspend) must not print a
+	// negative age — "just now" is the honest reading of "not in the past".
+	if (seconds < 60) return 'just now';
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
+	const hours = Math.floor(minutes / 60);
+	return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
 }
 
 /**
