@@ -110,6 +110,12 @@ for a POE-119 rehearsal their pre/post-migration and null-`league` columns are
 restored from a backup older than a table's migration records that row as
 absent rather than zero.
 
+`merc_icon_templates` (2026-08-25, POE-200) is deliberately NOT in this manifest
+and NOT in the `TRUNCATE` below: mercenary icon art is league-invariant, so the
+table is excluded from the rollover wipe by decision, not by oversight — see the
+2026-08-25 amendment in
+[ADR-011](adr/011-wipe-the-outgoing-league-at-rollover-preserve-it-as-a-dump.md).
+
 | Relation | Pre-migration count | Post-migration count | Null `league` count |
 | --- | ---: | ---: | ---: |
 | `gem_snapshots` |  |  |  |

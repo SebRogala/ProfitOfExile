@@ -24,6 +24,7 @@ import (
 	"profitofexile/internal/exchange"
 	"profitofexile/internal/lab"
 	"profitofexile/internal/league"
+	"profitofexile/internal/mercenary"
 	"profitofexile/internal/mercure"
 	"profitofexile/internal/server"
 	"profitofexile/internal/server/handlers"
@@ -505,6 +506,7 @@ func main() {
 	}
 
 	deviceRepo := device.NewRepository(pool)
+	mercTemplateRepo := mercenary.NewRepository(pool)
 
 	routerCfg := server.RouterConfig{
 		MercureURL:           mercureURL,
@@ -525,6 +527,7 @@ func main() {
 		Analyzer:             analyzer,
 		AllowedOrigins:       corsOrigins(),
 		DeviceRepo:           deviceRepo,
+		MercTemplateRepo:     mercTemplateRepo,
 		FenceChecker:         serverLock,
 		// PROD: these dirs must be persistent Coolify volumes, else every
 		// redeploy starts empty and re-fetches every icon from poewiki — which

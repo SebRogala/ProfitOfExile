@@ -44,6 +44,17 @@ dominates). Neither half is small, and the computed half is the larger.
 (now fifteen scoped tables). Every table added to the league-scoped schema joins
 it at creation.
 
+**Amended 2026-08-25 (POE-200):** `merc_icon_templates` is the first table
+deliberately **excluded** from the wipe set, and the set stays at fifteen. It
+carries no `league` column because mercenary support-icon art is
+league-invariant — the same support gem draws the same picture in the next
+league — so wiping it would discard a still-correct corpus and make every
+device relearn 264 keys by hovering. The exclusion is stated in the migration
+header as well, so a rollover edit that walks the schema finds the reason
+without reading this ADR. The rule it does not change: a table carrying
+league-dependent observations joins the wipe set at creation, and an exclusion
+has to argue league-invariance the way this one does.
+
 At each league rollover, deliberately **wipe** the outgoing league's fourteen scoped
 tables (`TRUNCATE`) rather than keeping them live, and **preserve** that league's
 data as a dedicated dump stored outside the nightly rotation. Analysis of a past
