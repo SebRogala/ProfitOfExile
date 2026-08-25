@@ -327,14 +327,19 @@
 		compass: { label: 'overlay-compass-pos', syncParam: 'compass', getCommand: 'get_compass_overlay_settings', setCommand: 'set_compass_overlay_settings', defaultW: 300, defaultH: 280 },
 		pathstrip: { label: 'overlay-pathstrip-pos', syncParam: 'pathstrip', getCommand: 'get_pathstrip_overlay_settings', setCommand: 'set_pathstrip_overlay_settings', defaultW: 450, defaultH: 180 },
 		timer: { label: 'overlay-timer-pos', syncParam: 'timer', getCommand: 'get_timer_overlay_settings', setCommand: 'set_timer_overlay_settings', defaultW: 160, defaultH: 50 },
+		// The merc verdict strip (POE-199). It is module-coupled, not toggled
+		// here — this row only places it. Configuring while the Merc OCR module
+		// is off works and is the normal case: the config window is the one you
+		// drag, and the real window picks the geometry up when it is next built.
+		mercenary: { label: 'overlay-mercenary-pos', syncParam: 'mercenary', getCommand: 'get_mercenary_overlay_settings', setCommand: 'set_mercenary_overlay_settings', defaultW: 460, defaultH: 150 },
 	};
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
-		comparator: null, compass: null, pathstrip: null, timer: null,
+		comparator: null, compass: null, pathstrip: null, timer: null, mercenary: null,
 	});
 	let positionOverlays = $state<Record<string, any>>({
-		comparator: null, compass: null, pathstrip: null, timer: null,
+		comparator: null, compass: null, pathstrip: null, timer: null, mercenary: null,
 	});
 
 	// --- Timer appearance ---
@@ -410,7 +415,7 @@
 		const win = new WebviewWindow(cfg.label, {
 			url: `/overlay?sync=${cfg.syncParam}`,
 			transparent: true, decorations: false, alwaysOnTop: true,
-			resizable: ['compass', 'pathstrip', 'timer'].includes(name), shadow: false, skipTaskbar: true,
+			resizable: ['compass', 'pathstrip', 'timer', 'mercenary'].includes(name), shadow: false, skipTaskbar: true,
 			width: Math.round(physW / sf), height: Math.round(physH / sf),
 		});
 		win.once('tauri://created', async () => {
@@ -617,6 +622,7 @@
 				{ name: 'compass', label: 'Lab Compass' },
 				{ name: 'pathstrip', label: 'Lab Map' },
 				{ name: 'timer', label: 'Lab Timer' },
+				{ name: 'mercenary', label: 'Merc Verdict' },
 			] as cfg (cfg.name)}
 				<div class="setting-row">
 					<span class="setting-label">{cfg.label}</span>

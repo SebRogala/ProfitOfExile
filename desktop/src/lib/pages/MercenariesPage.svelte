@@ -2,7 +2,6 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import {
 		MERC_SOURCES,
-		SOURCE_IDS,
 		entryKind,
 		kinetistLadder,
 		type MercRuleset,
@@ -46,13 +45,12 @@
 		supportText,
 		supportTitle,
 	} from '$lib/mercenaries/capture-view';
-	import { MERC_SOURCES_OFF_PREF_KEY, enabledSources, parseSourcesOff } from '$lib/mercenaries/merc-prefs';
+	import { enabledSources, withSourceEnabled } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
 	import { savedSearchUrl } from '$lib/mercenaries/trade-links';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Button from '$lib/components/Button.svelte';
-	import { persisted } from '$lib/prefs.svelte';
-	import { ssot } from '$lib/stores/ssot.svelte';
+	import { setMercSourcesOff, ssot } from '$lib/stores/ssot.svelte';
 
 	// Every rule shown here is read from `$lib/mercenaries/rulesets` — the page
 	// renders the rulesets, it never re-derives them. In particular the glyph and
@@ -88,8 +86,10 @@
 	/** Display-only liveness: the status is what decides, the flag only agrees. */
 	const captureLive = $derived(merc.status === 'live' && capture?.live === true);
 
-	const sourcesOff = persisted(MERC_SOURCES_OFF_PREF_KEY, '');
-	const enabled = $derived(enabledSources(sourcesOff.value));
+	/** Rust's echo, not a local pref: the verdict overlay reads the same field,
+	 *  so the two windows cannot evaluate one capture against two guide sets
+	 *  (POE-199). Written through `setMercSourcesOff`, never assigned here. */
+	const enabled = $derived(enabledSources(merc.sourcesOff));
 
 	/** The verdict is derived, never stored: it is a function of the capture, the
 	 *  rulesets, the source toggles and the active league, and any copy of it
@@ -115,13 +115,15 @@
 
 	// --- Settings -------------------------------------------------------------
 
-	/** Write the off-list back in `SOURCE_IDS` order so the stored value is stable
-	 *  whatever order the user clicked in. */
-	function setSourceEnabled(id: MercSourceId, on: boolean): void {
-		const off = parseSourcesOff(sourcesOff.value);
-		if (on) off.delete(id);
-		else off.add(id);
-		sourcesOff.value = SOURCE_IDS.filter((candidate) => off.has(candidate)).join(',');
+	/** What Rust said no to, shown next to the toggles that produced it. Rust
+	 *  validates the ids, so a refusal is a thing to render, not to swallow. */
+	let sourcesError = $state<string | null>(null);
+
+	/** Write the off-list through Rust. The checkbox does not move until the
+	 *  echo comes back — the value is the SSOT's, and an optimistic local flip
+	 *  would put this page one poll ahead of the overlay. */
+	async function setSourceEnabled(id: MercSourceId, on: boolean): Promise<void> {
+		sourcesError = await setMercSourcesOff(withSourceEnabled(merc.sourcesOff, id, on));
 	}
 
 	// --- Module commands ------------------------------------------------------
@@ -717,7 +719,8 @@
 		<h2 class="card-title">Settings</h2>
 		<p class="meta">
 			A source switched off keeps its rules on the page but takes no part in the verdict — its
-			headline reads OFF.
+			headline reads OFF. The choice is shared with the verdict overlay, so both always judge a
+			mercenary by the same guides.
 		</p>
 		<ul class="source-toggles">
 			{#each MERC_SOURCES as toggleSource (toggleSource.id)}
@@ -733,10 +736,19 @@
 				</li>
 			{/each}
 		</ul>
+		{#if sourcesError}
+			<p class="settings-error">{sourcesError}</p>
+		{/if}
 	</section>
 </div>
 
 <style>
+	.settings-error {
+		margin-top: 0.5rem;
+		font-size: 0.8rem;
+		color: var(--color-lab-red);
+	}
+
 	.merc-page {
 		max-width: 1400px;
 		margin: 0 auto;

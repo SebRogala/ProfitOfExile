@@ -9,18 +9,16 @@
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath } from '$lib/stores/navigation.svelte';
-	import { TEMPLE_MODULE_ID, TEMPLE_WINDOW_LABEL, destroyOverlay, isOverlayActive, readOverlayRegion } from '$lib/overlay/manager';
 	import {
-		TEMPLE_CREATE_TIMEOUT_MS,
-		TEMPLE_GAVE_UP_NOTE,
-		templeBegin,
-		templeCreateWithTimeout,
-		templeDesired,
-		templeLifecycleInit,
-		templeNextAction,
-		templeRetryDelayMs,
-		templeSettle
-	} from '$lib/overlay/temple-lifecycle';
+		MERCENARY_MODULE_ID,
+		MERCENARY_WINDOW_LABEL,
+		TEMPLE_MODULE_ID,
+		TEMPLE_WINDOW_LABEL,
+		destroyOverlay,
+		isOverlayActive,
+		readOverlayRegion
+	} from '$lib/overlay/manager';
+	import { moduleOverlayDriver } from '$lib/overlay/module-lifecycle';
 	import LabPage from '$lib/pages/LabPage.svelte';
 	import SettingsPage from '$lib/pages/SettingsPage.svelte';
 	import MercenariesPage from '$lib/pages/MercenariesPage.svelte';
@@ -390,12 +388,12 @@
 	//  4. move, not recreate — this window is never repositioned, so there is
 	//    no destroy/recreate cycle to avoid. It is built and torn down only on
 	//    the module flag's transitions and on the bounded creation retry, and
-	//    `temple-lifecycle.ts` orders all of them so two never overlap.
+	//    `module-lifecycle.ts` orders all of them so two never overlap.
 	//  5. settings survival — DELIBERATELY not applicable: the temple overlay
 	//    persists nothing, so `persist_overlay_settings` has no field of ours to
-	//    copy and its survival test has nothing to cover. Making the position
-	//    persistent means a settings field, a getter/setter pair and an entry in
-	//    that regression test, all Rust — deferred, not forgotten.
+	//    copy and its survival test has nothing to cover. The merc verdict
+	//    overlay below is the same shape with that decision taken the other way
+	//    — see it for what persisting the position costs.
 	//  6. error visibility — every failure below goes through `logTemple`, so it
 	//    reaches `app_log_from_frontend` (the LOGS channel, and the only one
 	//    readable in a shipped build) with the console as a second copy. Nothing
@@ -425,94 +423,23 @@
 			.catch(e => console.error('[overlay] temple: app log unreachable:', e));
 	}
 
-	/** Ordering state — see `$lib/overlay/temple-lifecycle`. Deliberately NOT a
-	 *  rune: nothing renders from it, and the effect below must depend on the
-	 *  module flag alone. */
-	let templeLifecycle = templeLifecycleInit();
-	/** Serialises create/destroy so two fast module toggles cannot interleave. */
-	let templeOverlayWork: Promise<void> = Promise.resolve();
-	/** The pending creation retry, so a module toggle can cancel it. */
-	let templeRetryTimer: ReturnType<typeof setTimeout> | null = null;
-
-	function cancelTempleRetry(): void {
-		if (templeRetryTimer === null) return;
-		clearTimeout(templeRetryTimer);
-		templeRetryTimer = null;
-	}
-
-	/**
-	 * Queue another creation attempt, or say out loud that we have stopped.
-	 *
-	 * A failed creation used to be terminal and silent — the module read as on,
-	 * the window was never built, and nothing said so.
-	 */
-	function scheduleTempleRetry(): void {
-		if (templeLifecycle.gaveUp) {
-			logTemple(
-				`creation failed ${templeLifecycle.attempts} times — ${TEMPLE_GAVE_UP_NOTE}`
-			);
-			return;
-		}
-		if (templeNextAction(templeLifecycle) !== 'create') return;
-		const delay = templeRetryDelayMs(templeLifecycle.attempts);
-		logTemple(`creation attempt ${templeLifecycle.attempts} failed — retrying in ${delay} ms`);
-		cancelTempleRetry();
-		templeRetryTimer = setTimeout(() => {
-			templeRetryTimer = null;
-			pumpTempleOverlay();
-		}, delay);
-	}
-
-	/**
-	 * Run whatever the scheduler asks for next, then ask again.
-	 *
-	 * Every step is appended to `templeOverlayWork`, so the Tauri calls happen
-	 * one at a time however fast the flag moves.
-	 */
-	function pumpTempleOverlay(): void {
-		const action = templeNextAction(templeLifecycle);
-		if (action === 'none') return;
-		templeLifecycle = templeBegin(templeLifecycle, action);
-		templeOverlayWork = templeOverlayWork
-			.then(async () => {
-				const ok =
-					action === 'create'
-						? // Bounded, not awaited forever: `createTempleOverlay`
-							// settles from a Tauri event, and an event that never
-							// arrives would leave `pending` set to `'create'` for
-							// the life of the process — after which no module-off
-							// could tear the window down. See the constant.
-							await templeCreateWithTimeout(createTempleOverlay, () =>
-								logTemple(
-									`creation did not settle within ${TEMPLE_CREATE_TIMEOUT_MS} ms — counting it as failed`
-								)
-							)
-						: await destroyTempleWindow();
-				templeLifecycle = templeSettle(templeLifecycle, ok);
-				if (action === 'create' && !ok) {
-					scheduleTempleRetry();
-					return;
-				}
-				pumpTempleOverlay();
-			})
-			.catch(e => {
-				// Neither step throws by contract — both report failure as
-				// `false`. If one ever does, the action still has to be settled
-				// or `pending` would stay set and no window would be built again.
-				templeLifecycle = templeSettle(templeLifecycle, false);
-				logTemple(`lifecycle step '${action}' threw: ${e}`);
-			});
-	}
+	/** The create/destroy ordering, and the bounded retry — see
+	 *  `$lib/overlay/module-lifecycle`. The driver owns the mutable state; this
+	 *  file owns the Tauri work it orders. */
+	const templeOverlay = moduleOverlayDriver(
+		{ label: TEMPLE_WINDOW_LABEL, moduleId: TEMPLE_MODULE_ID },
+		{ create: createTempleOverlay, destroy: destroyTempleWindow, log: logTemple }
+	);
 
 	/**
 	 * Build the window. Resolves true only once it is positioned, sized and
 	 * click-through — a half-built one resolves false and is torn down.
 	 *
 	 * The promise settles from `tauri://created` / `tauri://error` rather than
-	 * from the constructor returning, which is what makes the serialisation
-	 * above real: the previous code resolved as soon as the constructor had been
-	 * called, so an off toggle could run its destroy sweep before the window it
-	 * was meant to remove existed.
+	 * from the constructor returning, which is what makes the driver's
+	 * serialisation real: the previous code resolved as soon as the constructor
+	 * had been called, so an off toggle could run its destroy sweep before the
+	 * window it was meant to remove existed.
 	 */
 	async function createTempleOverlay(): Promise<boolean> {
 		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -556,6 +483,15 @@
 					await win.setSize(new PhysicalSize(TEMPLE_OVERLAY_W, TEMPLE_OVERLAY_H));
 					// Display-only: interactive width 0, like compass/pathstrip/timer.
 					// Do NOT copy the comparator's 48px right-edge zone here.
+					//
+					// MEASURED: this command is fire-and-forget. Rust spawns a
+					// thread that sleeps ~1 s before `set_ignore_cursor_events`
+					// (the WebView2 HWND is not available sooner — see the guide's
+					// runtime-earned observations), so the await below returns
+					// long before click-through is installed and this try/catch
+					// cannot see a failure in it. The window is briefly
+					// INTERACTIVE after creation; a click landing in that second
+					// hits the board instead of the game.
 					await invoke('set_overlay_clickthrough', {
 						label: TEMPLE_WINDOW_LABEL,
 						interactiveWidth: 0,
@@ -619,16 +555,205 @@
 	// The module flag is the single switch. `undefined` means the first poll has
 	// not answered yet, and is treated as "not yet known" rather than as off —
 	// tearing a window down on a value nobody has reported would fight the
-	// startup poll.
+	// startup poll. Re-reporting the same flag is a no-op inside the driver.
 	$effect(() => {
 		const enabled = ssot.modules[TEMPLE_MODULE_ID];
 		if (enabled === undefined) return;
-		if (templeLifecycle.desired === enabled) return;
-		templeLifecycle = templeDesired(templeLifecycle, enabled);
-		// A toggle is the one thing that clears a spent retry budget, so a
-		// scheduled attempt from the previous flag value has nothing left to do.
-		cancelTempleRetry();
-		pumpTempleOverlay();
+		templeOverlay.setDesired(enabled);
+	});
+
+	// --- Merc verdict overlay (POE-199) ---
+	//
+	// The temple overlay's sibling: display-only, coupled to the `mercenary`
+	// MODULE flag rather than to an overlay toggle, and driven by the same
+	// lifecycle. It differs in ONE thing — its geometry is persisted
+	// (`mercenary_overlay` in Rust settings), because the strip is placed by the
+	// user in Settings → Overlay Positions and has to come back where they left
+	// it. That is guide guard 5, and it is met: `persist_overlay_settings` copies
+	// the field and `test_overlay_settings_survive_persist_cycle` covers it.
+	//
+	// The window is NEVER interactive. The capture loop reads the screen only
+	// while the game is the RAW foreground window (`game_in_foreground`), while
+	// this window is shown and hidden on the HELD `game_focused` — two reads
+	// that are deliberately never unified (see the focus poller in `lib.rs`). A
+	// click landing here would take focus, drop the raw flag, and stop the loop
+	// that produces the verdict on screen. Hence `interactiveWidth: 0`.
+	const MERC_OVERLAY_DEFAULT_X = 40;
+	const MERC_OVERLAY_DEFAULT_Y = 300;
+	const MERC_OVERLAY_DEFAULT_W = 460;
+	const MERC_OVERLAY_DEFAULT_H = 150;
+
+	/**
+	 * Guard 6's channel — see `logTemple`.
+	 *
+	 * This prefix is the ONLY one a line carries: the driver deliberately does
+	 * not add the window label on top of it (`[merc-overlay] mercenary: …` says
+	 * the same word twice), and the label has to live here rather than there
+	 * because the lines below — a failed `scaleFactor`, a half-built window —
+	 * are this file's, not the driver's, and would otherwise be unattributable
+	 * in a log with two overlays failing.
+	 */
+	function logMerc(msg: string): void {
+		console.warn(`[overlay] merc: ${msg}`);
+		invoke('app_log_from_frontend', { msg: `[merc-overlay] ${msg}` })
+			.catch(e => console.error('[overlay] merc: app log unreachable:', e));
+	}
+
+	/** The persisted geometry, or the shipped placement when nothing is stored. */
+	async function mercOverlayGeometry(): Promise<{ x: number; y: number; w: number; h: number }> {
+		const settings = await invoke<any>('get_mercenary_overlay_settings').catch(e => {
+			logMerc(`settings load failed, using the default placement: ${e}`);
+			return null;
+		});
+		return {
+			x: settings?.x ?? MERC_OVERLAY_DEFAULT_X,
+			y: settings?.y ?? MERC_OVERLAY_DEFAULT_Y,
+			w: settings?.width ?? MERC_OVERLAY_DEFAULT_W,
+			h: settings?.height ?? MERC_OVERLAY_DEFAULT_H,
+		};
+	}
+
+	/**
+	 * Build the window at its persisted geometry. Resolves true only once it is
+	 * positioned, sized and click-through — a half-built one is torn down.
+	 */
+	async function createMercenaryOverlay(): Promise<boolean> {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+
+		await destroyMercenaryWindow();
+
+		const geometry = await mercOverlayGeometry();
+		// Constructor dimensions are LOGICAL; the persisted ones are physical.
+		const sf = await getCurrentWebviewWindow()
+			.scaleFactor()
+			.catch((e: any) => {
+				logMerc(`scaleFactor failed, using 1: ${e}`);
+				return 1;
+			});
+		const win = new WebviewWindow(MERCENARY_WINDOW_LABEL, {
+			url: `/overlay/${MERCENARY_WINDOW_LABEL}`,
+			transparent: true,
+			decorations: false,
+			alwaysOnTop: true,
+			// Nothing drags or resizes this window directly — it is click-through,
+			// so a resize edge would never receive the mouse. The size is changed
+			// through the Settings position overlay, which applies it with
+			// `move_overlay` (guide guard 4: move, never recreate).
+			resizable: false,
+			shadow: false,
+			skipTaskbar: true,
+			width: Math.round(geometry.w / sf),
+			height: Math.round(geometry.h / sf),
+		});
+
+		return await new Promise<boolean>((resolve) => {
+			let settled = false;
+			const finish = (ok: boolean) => {
+				if (settled) return;
+				settled = true;
+				resolve(ok);
+			};
+
+			win.once('tauri://created', async () => {
+				try {
+					await win.setPosition(new PhysicalPosition(geometry.x, geometry.y));
+					await win.setSize(new PhysicalSize(geometry.w, geometry.h));
+					// Display-only: interactive width 0, like compass/pathstrip/timer
+					// and the temple. Do NOT copy the comparator's right-edge zone —
+					// a focused own-window stops the capture loop.
+					//
+					// MEASURED: this command is fire-and-forget. Rust spawns a
+					// thread that sleeps ~1 s before `set_ignore_cursor_events`
+					// (the WebView2 HWND is not available sooner), so the await
+					// returns long before click-through is installed and the
+					// catch below cannot observe a failure in it. For this
+					// overlay that second has teeth: the window IS interactive
+					// until the thread runs, and a click landing on it takes
+					// focus, drops `game_in_foreground`, and stops the capture
+					// loop producing the verdict. Left as-is deliberately — the
+					// fix belongs in the Rust command (make it await and report),
+					// not in a second copy of the wait here.
+					await invoke('set_overlay_clickthrough', {
+						label: MERCENARY_WINDOW_LABEL,
+						interactiveWidth: 0,
+					});
+				} catch (e) {
+					// Transparent, always-on-top and NOT click-through eats clicks
+					// over the game with nothing visible to explain why. Half-built
+					// is worse than absent.
+					logMerc(`setup failed, destroying the half-built window: ${e}`);
+					await destroyMercenaryWindow();
+					finish(false);
+					return;
+				}
+				// Soft step: the focus poller only acts on transitions, so a window
+				// built while PoE is not in the foreground would sit on the desktop
+				// until the next alt-tab. Failing this leaves a visible window, not
+				// a broken one — logged, not fatal.
+				try {
+					const status = await invoke<any>('get_status');
+					if (!status?.game_focused) await win.hide();
+				} catch (e) {
+					logMerc(`initial focus check failed, window left visible: ${e}`);
+				}
+				finish(true);
+			}).catch(e => {
+				logMerc(`could not listen for tauri://created: ${e}`);
+				finish(false);
+			});
+
+			win.once('tauri://error', (e: any) => {
+				logMerc(`creation failed: ${JSON.stringify(e?.payload ?? e)}`);
+				finish(false);
+			}).catch(e => {
+				logMerc(`could not listen for tauri://error: ${e}`);
+				finish(false);
+			});
+		});
+	}
+
+	/**
+	 * Tear the window down. Returns whether the label is gone afterwards.
+	 *
+	 * It reads NO geometry on the way out. **`mercenary_overlay` in settings is
+	 * the only writer of this overlay's geometry**, and the Settings position
+	 * flow already writes it — Save persists the config window's rect and Cancel
+	 * restores the pre-configure one, both BEFORE `reclaimMouse()` emits the
+	 * move — so there is no live placement that settings do not already hold.
+	 * A save here would be worse than redundant: this function is also the
+	 * pre-create sweep and the half-built rollback, so a creation that timed out
+	 * and retried would persist the constructor's own placement over the
+	 * position the user chose.
+	 */
+	async function destroyMercenaryWindow(): Promise<boolean> {
+		const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+		for (let i = 0; i < 5; i++) {
+			const win = await WebviewWindow.getByLabel(MERCENARY_WINDOW_LABEL).catch(e => {
+				logMerc(`lookup during destroy failed: ${e}`);
+				return null;
+			});
+			if (!win) return true;
+			// Both are attempted: `close` is the polite path and `destroy` the one
+			// that actually frees the label. Tauri's cleanup is async, hence the
+			// re-check rather than a single call.
+			try { await win.close(); } catch (e) { logMerc(`close attempt ${i + 1} failed: ${e}`); }
+			try { await win.destroy(); } catch (e) { logMerc(`destroy attempt ${i + 1} failed: ${e}`); }
+			await new Promise(r => setTimeout(r, 100));
+		}
+		logMerc('window still present after 5 close/destroy rounds — giving the label up');
+		return false;
+	}
+
+	const mercenaryOverlay = moduleOverlayDriver(
+		{ label: MERCENARY_WINDOW_LABEL, moduleId: MERCENARY_MODULE_ID },
+		{ create: createMercenaryOverlay, destroy: destroyMercenaryWindow, log: logMerc }
+	);
+
+	$effect(() => {
+		const enabled = ssot.modules[MERCENARY_MODULE_ID];
+		if (enabled === undefined) return;
+		mercenaryOverlay.setDesired(enabled);
 	});
 
 	// --- Lab overlays category toggle ---
@@ -763,6 +888,15 @@
 					await invoke('move_overlay', { label: 'timer', x: timerSettings.x, y: timerSettings.y, w: timerSettings.width ?? 160, h: timerSettings.height ?? 50 })
 						.catch(e => console.warn('[overlay] timer move failed:', e));
 				}
+			}
+			// The merc strip is here for the same reason as the four above: the
+			// config window's Cancel restores the pre-configure geometry into
+			// settings, and the live window has to be moved back onto it —
+			// with `move_overlay`, never a destroy/recreate (guard 4).
+			if (mercenaryOverlay.built()) {
+				const mercSettings = await mercOverlayGeometry();
+				await invoke('move_overlay', { label: MERCENARY_WINDOW_LABEL, x: mercSettings.x, y: mercSettings.y, w: mercSettings.w, h: mercSettings.h })
+					.catch(e => logMerc(`move after config failed: ${e}`));
 			}
 		});
 		configOverlayCleanup = unlisten;

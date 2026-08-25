@@ -25,10 +25,11 @@
  *   // Read: ssot.league  (string | null; null until first successful get_ssot)
  *   // Read: ssot.normalVariant / ssot.dedicationVariant / ssot.dedicationPool
  *   // Read: ssot.modules['mercenary'] ?? false  (absent key = not yet known)
- *   // Read: ssot.mercenary  (Merc OCR status + last capture; no write path)
+ *   // Read: ssot.mercenary  (Merc OCR status, last capture, enabled-guide echo)
  *   // Read: ssot.temple  (temple board, advice and settings echo; no direct write)
  *   // Write: setNormalVariant(v) / setDedicationSelection(variant, pool)
  *   // Write: setModuleEnabled(id, enabled)
+ *   // Write: setMercSourcesOff(offList) — which guides take part in the verdict
  *   // Write: setTempleKeys(n) / setTempleConfig(c) / setTempleProfile(p) / rearmTemple()
  *   //   (these four return the rejection message instead of throwing — Rust
  *   //    validates them, so the page renders what it said no to)
@@ -115,10 +116,12 @@ export const ssot = $state({
 	 *  the registry, not this file, owns which modules exist and what they
 	 *  default to. Intent, not liveness. */
 	modules: {} as Record<string, boolean>,
-	/** Merc OCR module state and its last capture (POE-165). Rust owns every
-	 *  field — there is no setter here and no surface writes it, so the
-	 *  poll-vs-write guard the other slices need does not apply. Until the first
-	 *  poll answers, this is `mercenarySliceDefault()`: module off, no capture. */
+	/** Merc OCR module state, its last capture and the enabled-guide echo
+	 *  (POE-165, POE-199). Rust owns every field; `setMercSourcesOff` writes
+	 *  through a command and re-fetches rather than assigning here, so there is
+	 *  no optimistic local value and no poll-vs-write guard to keep. Until the
+	 *  first poll answers, this is `mercenarySliceDefault()`: module off, no
+	 *  capture, every guide on. */
 	mercenary: mercenarySliceDefault() as MercenarySlice,
 	/** Temple builder module state and its last board read (POE-171). Rust owns
 	 *  every field; the setters below never write it, so it needs no
@@ -284,7 +287,8 @@ function applyTemple(incoming: TempleSlice | undefined): void {
 		const seen = JSON.stringify(incoming.status) ?? 'undefined';
 		if (seen !== reportedBadTempleStatus) {
 			reportedBadTempleStatus = seen;
-			void templeFailed(
+			void sliceCommandFailed(
+				'temple',
 				'get_ssot',
 				`temple slice carried an unknown status ${seen} — payload ignored, keeping the last known board`
 			);
@@ -485,24 +489,28 @@ export async function setModuleEnabled(id: string, enabled: boolean): Promise<vo
 	}
 }
 
-// ------------------------------------------------------- temple settings --
+// ------------------------------------------------- validated slice setters --
 
 /**
- * Report a failed temple command everywhere it can be read.
+ * Report a failed slice-setter command everywhere it can be read.
  *
  * `console.warn` alone is what the market setters do, and it is enough for
- * them: their only failure mode is IPC. The temple commands are different —
- * Rust REJECTS values (`validate_keys`, `TempleProfileSettings::validate`), so
- * a failure here is a thing the user did and must be told about. So the message
- * goes to the persistent app log (the LOGS channel the README names as the one
- * place a desktop error must reach) AND comes back to the caller, which is how
- * the page renders it next to the control that produced it.
+ * them: their only failure mode is IPC. These commands are different — Rust
+ * REJECTS values (`validate_keys`, `TempleProfileSettings::validate`,
+ * `validate_sources_off`), so a failure here is a thing the user did and must
+ * be told about. So the message goes to the persistent app log (the LOGS
+ * channel the README names as the one place a desktop error must reach) AND
+ * comes back to the caller, which is how the page renders it next to the
+ * control that produced it.
+ *
+ * `tag` is the module the line belongs to (`temple`, `merc`), so a log dump
+ * says which feature refused rather than only which command.
  */
-async function templeFailed(command: string, e: unknown): Promise<string> {
+async function sliceCommandFailed(tag: string, command: string, e: unknown): Promise<string> {
 	const message = `${e}`;
 	console.warn(`[ssot] ${command} failed:`, e);
 	try {
-		await invoke('app_log_from_frontend', { msg: `[temple] ${command} failed: ${message}` });
+		await invoke('app_log_from_frontend', { msg: `[${tag}] ${command} failed: ${message}` });
 	} catch (logError) {
 		// The log channel itself is down. There is nowhere left to put this, so
 		// the console is the last resort rather than a silent swallow.
@@ -512,26 +520,47 @@ async function templeFailed(command: string, e: unknown): Promise<string> {
 }
 
 /**
- * Run one temple command and bring the echo back.
+ * Run one validated command and bring the echo back.
  *
  * Returns null on success and the rejection message on failure — NOT void like
  * the market setters, because Rust validates these and the page has to show
  * what it said no to.
  *
- * On success it re-fetches immediately rather than mutating the rune: the slice
- * is Rust-owned and whole-replace, so an optimistic local write would have to
- * be reconciled with the next poll's whole slice. Rust echoes `keys`, `config`
- * and `profile` onto the slice in the same command, so one `get_ssot` is the
+ * On success it re-fetches immediately rather than mutating the rune: the
+ * slices are Rust-owned and whole-replace, so an optimistic local write would
+ * have to be reconciled with the next poll's whole slice. Rust echoes the
+ * accepted value onto the slice in the same command, so one `get_ssot` is the
  * whole round trip and the control moves without waiting out a poll interval.
  */
-async function templeCommand(command: string, args: Record<string, unknown>): Promise<string | null> {
+async function sliceCommand(
+	tag: string,
+	command: string,
+	args: Record<string, unknown>
+): Promise<string | null> {
 	try {
 		await invoke(command, args);
 	} catch (e) {
-		return templeFailed(command, e);
+		return sliceCommandFailed(tag, command, e);
 	}
 	await fetchSsot();
 	return null;
+}
+
+/**
+ * Set which guides take NO part in the merc verdict (POE-199).
+ *
+ * The one merc writer in this file. It goes through Rust rather than through
+ * the ADR-013 prefs map because the verdict overlay reads the same value: the
+ * page writes, Rust echoes it onto `ssot.mercenary.sourcesOff`, and the
+ * overlay's next poll evaluates the same capture against the same set. Rust
+ * validates the ids, so this returns the rejection instead of throwing.
+ */
+export function setMercSourcesOff(sourcesOff: string[]): Promise<string | null> {
+	return sliceCommand('merc', 'merc_set_sources_off', { sourcesOff });
+}
+
+function templeCommand(command: string, args: Record<string, unknown>): Promise<string | null> {
+	return sliceCommand('temple', command, args);
 }
 
 /** Set how many opening stones this incursion dropped (0, 1 or 2). */
@@ -567,7 +596,10 @@ export async function templeDebugCapture(
 	try {
 		return { report: await invoke<TempleDebugReport>('temple_debug_capture', { imagePath }), error: null };
 	} catch (e) {
-		return { report: null, error: await templeFailed('temple_debug_capture', e) };
+		return {
+			report: null,
+			error: await sliceCommandFailed('temple', 'temple_debug_capture', e)
+		};
 	}
 }
 

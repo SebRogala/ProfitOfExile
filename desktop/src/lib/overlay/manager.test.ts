@@ -1,6 +1,7 @@
 /**
  * The one thing about the overlay manager that cannot be checked from inside
- * TypeScript: `TEMPLE_MODULE_ID` names a module in the RUST registry.
+ * TypeScript: the module-coupled overlays' ids name modules in the RUST
+ * registry.
  *
  * `ssot.modules` is keyed by the ids `src-tauri/src/modules.rs` declares, and a
  * key that does not exist reads as `undefined` — which the temple lifecycle
@@ -14,7 +15,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import modulesSource from '../../../src-tauri/src/modules.rs?raw';
-import { TEMPLE_MODULE_ID, TEMPLE_WINDOW_LABEL } from './manager';
+import {
+	MERCENARY_MODULE_ID,
+	MERCENARY_WINDOW_LABEL,
+	TEMPLE_MODULE_ID,
+	TEMPLE_WINDOW_LABEL
+} from './manager';
 
 /**
  * The `id:` literals the `MODULES` array registers, in declaration order.
@@ -42,5 +48,19 @@ describe('the temple constants', () => {
 		// route directory are written for that spelling, so a divergence is a
 		// deliberate act that has to update this test and those two places.
 		expect(TEMPLE_WINDOW_LABEL).toBe(TEMPLE_MODULE_ID);
+	});
+});
+
+describe('the mercenary constants', () => {
+	it('names a module the Rust registry actually declares', () => {
+		expect(rustModuleIds()).toContain(MERCENARY_MODULE_ID);
+	});
+
+	it('keeps the window label and the module id spelled the same', () => {
+		// Separate constants for separate things — one is a Tauri window label
+		// and a route segment, the other is Rust's — equal today, and the
+		// capability entry plus the `/overlay/mercenary` route directory are
+		// written for that spelling.
+		expect(MERCENARY_WINDOW_LABEL).toBe(MERCENARY_MODULE_ID);
 	});
 });

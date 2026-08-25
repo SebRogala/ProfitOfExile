@@ -51,6 +51,31 @@ comparator button/hook assumptions into these overlays.
 The capture/configuration overlay is deliberately interactive and has different
 drag, resize, save, and cancel behavior. Treat it as a third type.
 
+Temple (`temple`) and merc verdict (`mercenary`) are display-only overlays
+COUPLED TO A MODULE FLAG rather than to an overlay setting: the module toggle
+creates and destroys the window, and `desktop/src/lib/overlay/module-lifecycle.ts`
+orders those transitions so a fast off→on→off cannot strand a transparent
+always-on-top window. They still appear in the Rust focus poller's game-focus
+show/hide list and in `force_show_overlays`. Persisted geometry is independent
+of the coupling: temple has none, the merc strip has `mercenary_overlay`.
+
+For the merc overlay, click-through is a correctness requirement, not a
+preference. The capture loop reads the screen only while the game is the RAW
+foreground window (`AppState.game_in_foreground`), while overlay visibility
+follows `game_focused`, which is HELD over our own windows. The two reads are
+deliberately never unified — so a click that focused the verdict overlay would
+drop the raw flag and stop the loop producing the verdict on screen.
+
+Known exposure (measured, not fixed): `set_overlay_clickthrough` is
+fire-and-forget. It spawns a thread that sleeps ~1 s before calling
+`set_ignore_cursor_events`, because the WebView2 HWND is not available sooner,
+so a newly created overlay is INTERACTIVE for about a second and the caller's
+`await` cannot observe a failure in that setup. For display-only overlays this
+is a stray click on the panel; for the merc verdict overlay that click also
+takes focus and stops the capture loop until the game is in front again.
+Closing it means making the command await its own setup and report, which is a
+change to the Rust command rather than a second wait in each creation path.
+
 ## Current data and lifecycle behavior
 
 - Shared main-window status is event-driven through `status.svelte.ts`.

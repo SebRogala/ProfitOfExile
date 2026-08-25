@@ -8,8 +8,10 @@
 	// flag and a background task but no way for the user to reach it. The flags
 	// themselves live in `ssot.modules`; this map only supplies labels.
 	const MODULE_LABELS: Record<string, string> = {
-		// The work toggle for the OCR module, not the Mercenaries view page — the
-		// page is a nav item and stays reachable with the module switched off.
+		// One switch, three things since POE-199: the capture loop, the page's
+		// capture + verdict, AND the verdict overlay window. The Mercenaries
+		// PAGE is a nav item and stays reachable with this off — it just has no
+		// live capture to judge.
 		mercenary: '👁️ Merc OCR',
 		// One switch, two things: the temple capture loop AND the temple overlay
 		// window. They are deliberately not separable — an overlay with no reader
@@ -20,6 +22,7 @@
 
 	/** The longer tooltip for a module whose one-line label cannot say it all. */
 	const MODULE_TITLES: Record<string, string> = {
+		mercenary: 'Merc OCR: watches for a recruit window AND spawns the verdict overlay — one switch for the loop, the page data and the strip over the game. The Mercenaries page stays browsable either way.',
 		temple: 'Temple reader: reads the layout panel AND spawns the temple overlay — one switch for both. The Temple page stays browsable either way.',
 	};
 

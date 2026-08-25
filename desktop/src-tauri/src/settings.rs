@@ -25,6 +25,10 @@ pub struct Settings {
     pub compass_overlay: Option<OverlaySettings>,
     pub pathstrip_overlay: Option<OverlaySettings>,
     pub timer_overlay: Option<OverlaySettings>,
+    /// The merc verdict overlay's geometry (POE-199). Placed by the user in
+    /// Settings → Overlay Positions; the `mercenary` MODULE flag, not
+    /// `enabled`, decides whether the window exists.
+    pub mercenary_overlay: Option<OverlaySettings>,
     /// Master toggle for all lab overlays (compass + pathstrip + timer).
     pub lab_overlays_enabled: bool,
     /// Yellow indicator threshold for trade data age (seconds).
@@ -108,6 +112,20 @@ pub struct Settings {
     /// so it is the one board fact the user supplies.
     #[serde(default = "default_temple_keys")]
     pub temple_keys: u8,
+    /// The guides taking NO part in the merc verdict (POE-199).
+    ///
+    /// A TYPED field rather than a `ui_prefs` entry, and deliberately against
+    /// ADR-013's default: two windows read this value, so the map — fetched
+    /// once per webview and written back with no notification — could leave
+    /// the page and the overlay printing different headlines for one
+    /// mercenary. Rust owns it and `ssot::compose_snapshot` echoes it.
+    ///
+    /// `None` means NEVER WRITTEN, which is what the one-time migration from
+    /// the old `mercSourcesOff` preference keys on — see
+    /// `mercenary::sources::migrate_sources_off`. It is not the same as
+    /// `Some(vec![])`, which means the user chose "every guide on".
+    #[serde(default)]
+    pub merc_sources_off: Option<Vec<String>>,
 }
 
 /// The common case: one opening stone. `u8`'s own default is 0, which is a
@@ -201,6 +219,7 @@ impl Default for Settings {
             compass_overlay: None,
             pathstrip_overlay: None,
             timer_overlay: None,
+            mercenary_overlay: None,
             lab_overlays_enabled: true,
             trade_stale_warn_secs: DEFAULT_TRADE_STALE_WARN_SECS,
             trade_stale_critical_secs: DEFAULT_TRADE_STALE_CRITICAL_SECS,
@@ -230,6 +249,9 @@ impl Default for Settings {
             temple_profile: Default::default(),
             temple_config: Default::default(),
             temple_keys: default_temple_keys(),
+            // `None`, not the empty list: never written is what the one-time
+            // migration from the `mercSourcesOff` preference keys on.
+            merc_sources_off: None,
         }
     }
 }
@@ -336,6 +358,7 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         compass_overlay: None,    // Overlay settings saved separately, not from AppState
         pathstrip_overlay: None,  // Overlay settings saved separately, not from AppState
         timer_overlay: None,     // Overlay settings saved separately, not from AppState
+        mercenary_overlay: None, // Overlay settings saved separately, not from AppState
         lab_overlays_enabled: *state.lab_overlays_enabled.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_warn_secs: *state.trade_stale_warn_secs.lock().unwrap_or_else(|e| e.into_inner()),
         trade_stale_critical_secs: *state.trade_stale_critical_secs.lock().unwrap_or_else(|e| e.into_inner()),
@@ -370,6 +393,12 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         temple_profile: temple.profile,
         temple_config: temple.config,
         temple_keys: temple.keys,
+        // Written from the owner, so the first save after the migration turns
+        // the `None` that keeps re-reading the old preference into a real
+        // value — which is what ends the migration.
+        merc_sources_off: Some(
+            state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        ),
     }
 }
 
@@ -381,6 +410,7 @@ pub fn persist_overlay_settings(existing: &Settings, target: &mut Settings) {
     target.compass_overlay = existing.compass_overlay.clone();
     target.pathstrip_overlay = existing.pathstrip_overlay.clone();
     target.timer_overlay = existing.timer_overlay.clone();
+    target.mercenary_overlay = existing.mercenary_overlay.clone();
     target.timer_bg_opacity = existing.timer_bg_opacity;
     target.timer_text_stroke = existing.timer_text_stroke;
 }
@@ -449,6 +479,7 @@ mod tests {
             modules_shutting_down: AtomicBool::new(false),
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
+            merc_sources_off: Mutex::new(Vec::new()),
             merc_burst: Mutex::new(crate::mercenary::trigger::BurstGate::default()),
             merc_template_generation: AtomicU64::new(0),
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
@@ -597,6 +628,80 @@ mod tests {
         assert_eq!(slice.keys, 2);
         assert_eq!(slice.config, settings.temple_config);
         assert_eq!(slice.profile, settings.temple_profile);
+    }
+
+    /// A settings file written before POE-199 carries the guide set only in
+    /// the ADR-013 preference map. Loading it must move the user's choice
+    /// across once, or every guide they switched off comes back on.
+    #[test]
+    fn a_pre_poe199_file_migrates_the_guide_set_out_of_the_prefs_map() {
+        let settings = Settings {
+            ui_prefs: [(
+                crate::mercenary::sources::LEGACY_PREF_KEY.to_string(),
+                "guide-a".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..Settings::default()
+        };
+        let state = test_app_state();
+
+        let _ = apply_to_state(&settings, &state);
+
+        assert_eq!(
+            *state.merc_sources_off.lock().unwrap(),
+            vec!["guide-a".to_string()],
+        );
+    }
+
+    /// And it happens exactly once: the first save writes the typed field, and
+    /// from then on the stale preference must not switch a guide the user has
+    /// since turned back on off again.
+    #[test]
+    fn a_written_guide_set_outranks_the_stale_preference_on_the_next_load() {
+        let state = test_app_state();
+        *state.merc_sources_off.lock().unwrap() = Vec::new();
+        let mut saved = from_state(&state);
+        saved.ui_prefs.insert(
+            crate::mercenary::sources::LEGACY_PREF_KEY.to_string(),
+            "guide-a".to_string(),
+        );
+        assert_eq!(
+            saved.merc_sources_off,
+            Some(Vec::new()),
+            "saving must turn the never-written None into a real value",
+        );
+
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        assert!(
+            reloaded.merc_sources_off.lock().unwrap().is_empty(),
+            "the typed field said every guide is on — the old pref is ignored",
+        );
+    }
+
+    /// A guide id this build does not know is dropped rather than failing the
+    /// load, and the rejection is reported so the file and the running value
+    /// disagreeing is visible.
+    #[test]
+    fn an_unknown_guide_in_the_file_is_dropped_and_reported() {
+        let settings = Settings {
+            merc_sources_off: Some(vec!["guide-b".to_string(), "guide-zzz".to_string()]),
+            ..Settings::default()
+        };
+        let state = test_app_state();
+
+        let rejected = apply_to_state(&settings, &state);
+
+        assert_eq!(
+            *state.merc_sources_off.lock().unwrap(),
+            vec!["guide-b".to_string()],
+        );
+        assert!(
+            rejected.iter().any(|line| line.contains("guide-zzz")),
+            "the dropped id must be reported, got {rejected:?}",
+        );
     }
 
     /// The echo is the value IN FORCE, not the value on disk.
@@ -764,6 +869,7 @@ mod tests {
             pathstrip_overlay: Some(OverlaySettings { x: 100, y: 200, width: 500, height: 200, enabled: true }),
             comparator_overlay: Some(OverlaySettings { x: 10, y: 20, width: 630, height: 250, enabled: false }),
             timer_overlay: Some(OverlaySettings { x: 200, y: 500, width: 160, height: 50, enabled: true }),
+            mercenary_overlay: Some(OverlaySettings { x: 300, y: 40, width: 460, height: 150, enabled: true }),
             ..Settings::default()
         };
 
@@ -772,6 +878,7 @@ mod tests {
         assert!(target.compass_overlay.is_none());
         assert!(target.pathstrip_overlay.is_none());
         assert!(target.timer_overlay.is_none());
+        assert!(target.mercenary_overlay.is_none());
 
         // persist_overlay_settings must restore them
         super::persist_overlay_settings(&existing, &mut target);
@@ -795,6 +902,13 @@ mod tests {
         assert_eq!(timer.x, 200);
         assert_eq!(timer.width, 160);
         assert!(timer.enabled);
+
+        let mercenary = target
+            .mercenary_overlay
+            .expect("mercenary_overlay lost during persist cycle");
+        assert_eq!(mercenary.x, 300);
+        assert_eq!(mercenary.width, 460);
+        assert!(mercenary.enabled);
     }
 
     /// Window settings must not overwrite overlay settings in the save cycle.
@@ -894,6 +1008,26 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
                 }
             },
         };
+
+    // The enabled-guide set (POE-199), with its one-time migration from the
+    // ADR-013 preference. A stored id this build does not know is dropped
+    // rather than failing the load, and says so — the file and the running
+    // value now disagree, which is exactly what `rejected` is for.
+    {
+        let legacy = settings
+            .ui_prefs
+            .get(crate::mercenary::sources::LEGACY_PREF_KEY);
+        let (accepted, refused) = crate::mercenary::sources::migrate_sources_off(
+            settings.merc_sources_off.as_ref(),
+            legacy,
+        );
+        for id in refused {
+            rejected.push(format!(
+                "merc settings: {id:?} is not a guide, ignoring it in the off-list"
+            ));
+        }
+        *state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()) = accepted;
+    }
 
     // Seed the slice's settings echo, so the page and the overlay render the
     // persisted key count, flags and profile from the first poll — including

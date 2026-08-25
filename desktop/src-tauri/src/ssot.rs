@@ -124,6 +124,10 @@ pub struct AppSsotSnapshot {
 /// Return `base` with the three market fields, the module map and the
 /// mercenary slice replaced by the given values.
 ///
+/// The enabled-guide set (`merc_sources_off`, POE-199) is composed onto the
+/// mercenary slice here rather than stored in it — the owner is
+/// `AppState.merc_sources_off`, exactly as `normal_variant` owns its market.
+///
 /// The mercenary slice's `status` is forced to `Off` when the module is
 /// disabled. This is the single place module enablement reaches that slice, so
 /// the page never has to read `ssot.modules` to know whether the toggle is on
@@ -139,11 +143,17 @@ fn compose_snapshot(
     dedication_pool: String,
     modules: std::collections::HashMap<String, bool>,
     mut mercenary: crate::mercenary::MercenarySlice,
+    merc_sources_off: Vec<String>,
     mut temple: crate::temple::slice::TempleSlice,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
         mercenary.status = crate::mercenary::MercStatus::Off;
     }
+    // The settings echo, written AFTER the force-off for the reason the temple
+    // slice keeps its own echo through `force_off`: what the user set is not
+    // something the module read, and the page renders its guide toggles from
+    // it while the module is switched off.
+    mercenary.sources_off = merc_sources_off;
     if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
         crate::temple::slice::force_off(&mut temple);
     }
@@ -185,6 +195,12 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // Same lock-then-drop discipline: the guard ends with this statement, so
     // the merc mutex is never held while another is taken or while emitting.
     let mercenary = state.mercenary.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Its own lone acquisition, like every other owner read here.
+    let merc_sources_off = state
+        .merc_sources_off
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     // Same discipline again: the temple guard ends with this statement, so it
     // is never held alongside the merc one or across the compose.
     let temple = state.temple.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -195,6 +211,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         dedication_pool,
         modules,
         mercenary,
+        merc_sources_off,
         temple,
     )
 }
@@ -683,6 +700,7 @@ mod tests {
             "transfigured".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -706,6 +724,7 @@ mod tests {
             "skill".to_string(),
             modules,
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -735,6 +754,7 @@ mod tests {
             "skill".to_string(),
             modules,
             slice,
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -763,6 +783,7 @@ mod tests {
             "skill".to_string(),
             modules,
             slice,
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -771,6 +792,52 @@ mod tests {
             out.mercenary.capture.is_some(),
             "only the status is forced — the last capture stays readable",
         );
+    }
+
+    /// The enabled-guide set is what the page and the overlay both evaluate
+    /// against (POE-199 L5), so it must reach the snapshot from the OWNER —
+    /// not from the stored slice, which nothing ever writes it into.
+    #[test]
+    fn compose_snapshot_echoes_the_enabled_guide_set_onto_the_mercenary_slice() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("mercenary".to_string(), true)].into_iter().collect();
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+            crate::mercenary::MercenarySlice::default(),
+            vec!["guide-a".to_string()],
+            crate::temple::slice::TempleSlice::default(),
+        );
+
+        assert_eq!(out.mercenary.sources_off, vec!["guide-a".to_string()]);
+    }
+
+    /// The echo survives the module being switched off, for the reason the
+    /// temple's `keys`/`config` echo does: it is what the USER set, and the
+    /// page renders its guide toggles from it while the module is off
+    /// (ADR-014 — the page reads the slice, never `ssot.modules`).
+    #[test]
+    fn a_disabled_module_keeps_the_enabled_guide_set() {
+        let modules: std::collections::HashMap<String, bool> =
+            [("mercenary".to_string(), false)].into_iter().collect();
+
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            modules,
+            crate::mercenary::MercenarySlice::default(),
+            vec!["guide-b".to_string()],
+            crate::temple::slice::TempleSlice::default(),
+        );
+
+        assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
+        assert_eq!(out.mercenary.sources_off, vec!["guide-b".to_string()]);
     }
 
     /// A module map that does not mention the module yet (nothing has written
@@ -790,6 +857,7 @@ mod tests {
             "skill".to_string(),
             std::collections::HashMap::new(),
             slice,
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -819,6 +887,7 @@ mod tests {
             "skill".to_string(),
             modules,
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             slice,
         );
 
@@ -855,6 +924,7 @@ mod tests {
             "skill".to_string(),
             modules,
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             slice,
         );
 
@@ -879,6 +949,7 @@ mod tests {
             "skill".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             crate::temple::slice::TempleSlice {
                 status: crate::temple::slice::TempleStatus::Read,
                 ..Default::default()
@@ -929,6 +1000,7 @@ mod tests {
             "skill".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -949,6 +1021,7 @@ mod tests {
             "transfigured".to_string(),
             std::collections::HashMap::new(),
             crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
             crate::temple::slice::TempleSlice::default(),
         );
 

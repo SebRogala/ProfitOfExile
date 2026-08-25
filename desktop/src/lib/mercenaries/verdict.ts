@@ -144,9 +144,15 @@ export interface MercVerdict {
 	sources: MercSourceVerdict[];
 }
 
-const CONFIDENT_STATES: ReadState[] = ['matched', 'confirmed'];
+/**
+ * The two states a read is TRUSTED in. Exported because the overlay counts the
+ * cells that are not in them (`overlay-view.ts`) and a second list of the same
+ * two strings is how the engine and the count would drift apart.
+ */
+export const CONFIDENT_STATES: ReadState[] = ['matched', 'confirmed'];
 
-function isConfident(state: ReadState): boolean {
+/** Whether a read proves what it says. Everything else is UNKNOWN, not absent. */
+export function isConfident(state: ReadState): boolean {
 	return CONFIDENT_STATES.includes(state);
 }
 

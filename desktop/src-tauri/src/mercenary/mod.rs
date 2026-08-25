@@ -37,6 +37,7 @@ pub mod geometry;
 pub mod icons;
 pub mod read;
 pub mod run;
+pub mod sources;
 pub mod trigger;
 pub mod vocab;
 
@@ -186,6 +187,17 @@ pub struct MercenarySlice {
     pub last_error: Option<String>,
     /// `"default"` or `"file"` — which [`MercGeometry`] the module is running.
     pub geometry_source: String,
+    /// The guides taking NO part in the verdict, in [`sources::SOURCE_IDS`]
+    /// order (POE-199).
+    ///
+    /// A settings ECHO, not a reading: the capture loop never writes it, and
+    /// the stored slice always holds the empty default. It is composed onto
+    /// every snapshot at read time from `AppState.merc_sources_off`
+    /// (`ssot::compose_snapshot`, the same way `normal_variant` is), so there
+    /// is no second copy to keep in step and the page and the overlay cannot
+    /// evaluate one capture against two different guide sets.
+    #[serde(default)]
+    pub sources_off: Vec<String>,
 }
 
 impl Default for MercenarySlice {
@@ -199,6 +211,7 @@ impl Default for MercenarySlice {
             learned_families: Vec::new(),
             last_error: None,
             geometry_source: GEOMETRY_SOURCE_DEFAULT.to_string(),
+            sources_off: Vec::new(),
         }
     }
 }
@@ -538,6 +551,7 @@ mod tests {
             learned_families: vec!["Pierce--3".into()],
             last_error: None,
             geometry_source: GEOMETRY_SOURCE_FILE.into(),
+            sources_off: vec!["guide-a".into()],
         };
 
         let v = serde_json::to_value(&slice).expect("slice serializes");
@@ -545,6 +559,9 @@ mod tests {
         assert_eq!(v["status"], "live");
         assert_eq!(v["geometrySource"], "file");
         assert_eq!(v["learnedFamilies"][0], "Pierce--3");
+        // The enabled-guide echo (POE-199): the overlay and the page both read
+        // `sourcesOff` off this slice, so the key's spelling is a contract.
+        assert_eq!(v["sourcesOff"], serde_json::json!(["guide-a"]));
         assert_eq!(v["lastError"], serde_json::Value::Null);
         let cap = &v["capture"];
         assert_eq!(cap["capturedAtMs"], 1_700_000_000_000u64);
