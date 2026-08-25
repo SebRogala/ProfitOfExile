@@ -50,12 +50,12 @@ use serde::{Deserialize, Serialize};
 // D7 — the `mercenary` SSOT slice wire types
 // ---------------------------------------------------------------------------
 
-/// Module status, in precedence order **off > unavailable > live > scanning >
-/// idle**.
+/// Module status, in precedence order **off > unavailable > live > done >
+/// scanning > idle**.
 ///
-/// `Off` is applied by the SSOT composer (the module is disabled); the other
-/// three are owned by the capture loop. The page treats this as authoritative
-/// over `MercCapture::live`, because loop cleanup never runs on app exit.
+/// `Off` is applied by the SSOT composer (the module is disabled); the rest are
+/// owned by the capture loop. The page treats this as authoritative over
+/// `MercCapture::live`, because loop cleanup never runs on app exit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MercStatus {
@@ -67,6 +67,24 @@ pub enum MercStatus {
     Scanning,
     /// A recruit window is captured right now.
     Live,
+    /// The captured window is fully read and the OCR is PAUSED (2026-08-25).
+    ///
+    /// Still live — the window is on screen and the capture on the page is the
+    /// current one — but every row, every cell and the header have been read,
+    /// so another DETECT has nothing left to find. The loop drops to a 10 s
+    /// liveness check (is the window still there?).
+    ///
+    /// The hover tick keeps running: "every cell was read" is not "every cell
+    /// was read right", and the tooltip is the only thing that can correct a
+    /// confident wrong match. Its idle cost is one cursor read per 400 ms, and
+    /// re-reading a cell that already matched is bounded per cell
+    /// (`run::HoverBudget`).
+    ///
+    /// It ranks BELOW `Live` because it is a narrower claim, and above
+    /// `Scanning` because a fully-read window outranks a burst looking for one.
+    /// Nothing publishes `Scanning` over it: the strip's verdict is on screen
+    /// and current (`trigger::scan_outranks`).
+    Done,
     /// Not Windows, or the OCR engine is missing.
     Unavailable,
 }
@@ -193,6 +211,20 @@ pub struct MercenarySlice {
     #[serde(default)]
     pub pooled_families: Vec<String>,
     pub last_error: Option<String>,
+    /// Who the module HEARD, for the burst it is scanning under (2026-08-25).
+    ///
+    /// `Some` only alongside [`MercStatus::Scanning`], and only for a
+    /// Client.txt burst — Scan now names nobody. Written by the same publish
+    /// that arms the status ([`trigger::arm`]) so the strip can say "heard
+    /// Fennik, of Unshakeable Faith · scanning…" the moment the voice line
+    /// lands, instead of "waiting" until the loop's next tick.
+    ///
+    /// Not an echo of the gate: the gate is a burst state machine with its own
+    /// expiry and the slice is what the windows read, so the speaker is written
+    /// and cleared with the status it qualifies. A speaker without `Scanning`
+    /// would be a name the strip attaches to the wrong thing.
+    #[serde(default)]
+    pub burst_speaker: Option<String>,
     /// `"default"` or `"file"` — which [`MercGeometry`] the module is running.
     pub geometry_source: String,
     /// The guides taking NO part in the verdict, in [`sources::SOURCE_IDS`]
@@ -229,6 +261,7 @@ impl Default for MercenarySlice {
             learned_families: Vec::new(),
             pooled_families: Vec::new(),
             last_error: None,
+            burst_speaker: None,
             geometry_source: GEOMETRY_SOURCE_DEFAULT.to_string(),
             sources_off: Vec::new(),
             sync: sync::MercSyncStatus::default(),
@@ -571,6 +604,7 @@ mod tests {
             learned_families: vec!["Pierce--3".into()],
             pooled_families: vec!["Pierce--3".into()],
             last_error: None,
+            burst_speaker: Some("Fennik, of Unshakeable Faith".into()),
             geometry_source: GEOMETRY_SOURCE_FILE.into(),
             sources_off: vec!["guide-a".into()],
             sync: sync::MercSyncStatus {
@@ -595,6 +629,8 @@ mod tests {
         // wire string the page branches on, so a variant rename must fail here
         // and not on screen.
         assert_eq!(v["pooledFamilies"], serde_json::json!(["Pierce--3"]));
+        // The speaker the strip prints beside "scanning" (2026-08-25 smoke).
+        assert_eq!(v["burstSpeaker"], "Fennik, of Unshakeable Faith");
         assert_eq!(v["sync"]["lastPull"], "unchanged");
         assert_eq!(v["sync"]["lastPullMs"], 1_700_000_000_000u64);
         assert_eq!(v["sync"]["pooledSamples"], 4);
@@ -638,6 +674,7 @@ mod tests {
             (MercStatus::Idle, "idle"),
             (MercStatus::Scanning, "scanning"),
             (MercStatus::Live, "live"),
+            (MercStatus::Done, "done"),
             (MercStatus::Unavailable, "unavailable"),
         ];
         for (status, wire) in statuses {

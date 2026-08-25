@@ -205,17 +205,40 @@ export const STATUS_LABEL: Record<MercStatus, string> = {
 	idle: 'waiting for a mercenary',
 	scanning: 'looking for the recruit window — alt-tab to the game',
 	live: 'recruit window on screen',
+	done: 'recruit window read — OCR paused',
 	unavailable: 'capture unavailable here'
 };
 
-/** `pass` is reserved for a window that is actually captured. */
+/**
+ * `pass` is reserved for a window that is actually captured — which `done` is:
+ * it is a `live` window with nothing left to read, so the OCR paused itself
+ * (2026-08-25 smoke). Wording it as anything cooler would read as a capture
+ * that stopped working.
+ */
 export const STATUS_TONE: Record<MercStatus, OutcomeTone> = {
 	off: 'muted',
 	idle: 'muted',
 	scanning: 'unknown',
 	live: 'pass',
+	done: 'pass',
 	unavailable: 'fail'
 };
+
+/**
+ * The statuses in which the captured window is ON SCREEN.
+ *
+ * `done` is a live window the module has finished reading, not a window that
+ * went away (2026-08-25): the OCR paused, the window did not close. Everything
+ * that asks "can the player still look at / hover this?" asks THIS rather than
+ * comparing to `live`, so the page and the strip cannot end up disagreeing
+ * about whether a paused read is still on screen.
+ */
+export const CAPTURE_ON_SCREEN_STATUSES: MercStatus[] = ['live', 'done'];
+
+/** Whether the capture belonging to this status is a window still on screen. */
+export function captureOnScreen(status: MercStatus): boolean {
+	return CAPTURE_ON_SCREEN_STATUSES.includes(status);
+}
 
 /** The manual trigger, next to the debug capture. */
 export const SCAN_NOW_LABEL = 'Scan now';

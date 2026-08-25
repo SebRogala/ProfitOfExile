@@ -32,6 +32,7 @@
 		SCAN_NOW_TITLE,
 		STATUS_LABEL,
 		STATUS_TONE,
+		captureOnScreen,
 		capturedAt,
 		describeDebugResult,
 		groupKey,
@@ -85,8 +86,11 @@
 
 	const merc = $derived(ssot.mercenary);
 	const capture = $derived(merc.capture);
-	/** Display-only liveness: the status is what decides, the flag only agrees. */
-	const captureLive = $derived(merc.status === 'live' && capture?.live === true);
+	/** Display-only liveness: the status is what decides, the flag only agrees.
+	 *  `done` counts as on screen — the OCR paused, the window did not close
+	 *  (2026-08-25), and "window gone" over a window the player is looking at
+	 *  is the same lie as the other way round. */
+	const captureLive = $derived(captureOnScreen(merc.status) && capture?.live === true);
 
 	/** Rust's echo, not a local pref: the verdict overlay reads the same field,
 	 *  so the two windows cannot evaluate one capture against two guide sets

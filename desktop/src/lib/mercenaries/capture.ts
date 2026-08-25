@@ -22,11 +22,16 @@
  * over `capture.live`, because a capture is left behind with `live: false`
  * when the window goes away and is NOT cleaned up when the app exits.
  *
- * The running three are the trigger's own states (POE-198): `idle` is waiting
- * for a mercenary and runs NO OCR at all, `scanning` is an armed burst looking
- * for the window, `live` has one. `idle` therefore does not mean "watching".
+ * The running four are the trigger's own states (POE-198 + the 2026-08-25
+ * smoke): `idle` is waiting for a mercenary and runs NO OCR at all, `scanning`
+ * is an armed burst looking for the window, `live` has one and is still reading
+ * it, and `done` has one that is fully read — the re-detect is PAUSED down to a
+ * 10 s liveness check, while the hover tick keeps running so a tooltip can
+ * still correct a confident wrong match. `idle` therefore does not mean
+ * "watching", and `done` does not mean the window is gone: a `done` capture is
+ * on screen exactly as a `live` one is.
  */
-export type MercStatus = 'off' | 'idle' | 'scanning' | 'live' | 'unavailable';
+export type MercStatus = 'off' | 'idle' | 'scanning' | 'live' | 'done' | 'unavailable';
 
 /**
  * How much the reader trusts one skill name or one support cell.
@@ -131,6 +136,15 @@ export interface MercenarySlice {
 	 */
 	pooledFamilies: string[];
 	lastError: string | null;
+	/**
+	 * Who the module HEARD, for the burst it is scanning under (2026-08-25).
+	 *
+	 * Non-null only alongside `scanning`, and only for a Client.txt burst —
+	 * Scan now names nobody. Rust writes it in the same publish that arms the
+	 * status, which is what lets the strip say "heard Fennik, of Unshakeable
+	 * Faith · scanning…" the moment the voice line lands.
+	 */
+	burstSpeaker: string | null;
 	/** Whether `merc-geometry.json` overrode the built-in reference numbers. */
 	geometrySource: MercGeometrySource;
 	/**
@@ -161,6 +175,7 @@ export function mercenarySliceDefault(): MercenarySlice {
 		learnedFamilies: [],
 		pooledFamilies: [],
 		lastError: null,
+		burstSpeaker: null,
 		geometrySource: 'default',
 		sourcesOff: [],
 		sync: {

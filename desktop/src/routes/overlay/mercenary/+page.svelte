@@ -88,7 +88,7 @@
 	import { enabledSources } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
 	import {
-		guideLines,
+		guidesLine,
 		headerLine,
 		overlayShowsVerdict,
 		overlayVisible,
@@ -106,7 +106,10 @@
 	const verdict = $derived(
 		capture === null ? null : evaluateCapture(capture, MERC_SOURCES, enabled, ssot.league)
 	);
-	const lines = $derived(guideLines(verdict));
+	// ONE line for every enabled guide, not one per guide: the strip used to
+	// spend two lines saying SKIP twice (2026-08-25 smoke). The page keeps the
+	// full per-guide view.
+	const guides = $derived(guidesLine(verdict, capture));
 	const unread = $derived(unreadNote(merc));
 	// WHICH cells still need a hover, not just how many. The live-only gate is
 	// inside `liveRowGlyphs`, where it is tested.
@@ -192,23 +195,23 @@
 			{#if showsVerdict && capture}
 				<p class="header">{headerLine(capture)}</p>
 
-				{#each lines as line (line.id)}
-					<p class="guide">
-						<span class="guide-name">{line.label}</span>
-						<span class="badge tone-{line.tone}">{line.headline}</span>
-						{#if line.detail}<span class="detail">{line.detail}</span>{/if}
-					</p>
-				{/each}
-				{#if lines.length === 0}
-					<!-- Every guide switched off: the strip says so rather than
-					     drawing an empty panel that looks like a broken read. -->
-					<p class="note">every guide switched off — no verdict</p>
+				<!-- The verdict, in one line. Every case it can be in — including
+				     "no guides enabled" — is worded in `overlay-view`. -->
+				{#if guides}
+					<p class="guide"><span class="badge tone-{guides.tone}">{guides.text}</span></p>
 				{/if}
 
 				{#each glyphRows as glyphRow (glyphRow.index)}
 					<p class="row">
 						<span class="row-skill">{glyphRow.skill}</span>
-						<span class="row-glyphs">{glyphRow.glyphs}</span>
+						<span class="row-glyphs">
+							<!-- One span per cell so each glyph carries its own
+							     tone: ✓ read, ? would be settled by a hover, ✕
+							     not read at all. -->
+							{#each glyphRow.glyphs as cell, slot (slot)}<span
+									class="tone-{cell.tone}">{cell.glyph}</span
+								>{/each}{#if glyphRow.note}<span class="row-note">{glyphRow.note}</span>{/if}
+						</span>
 					</p>
 				{/each}
 
@@ -281,10 +284,18 @@
 	/* The glyphs must never be the part that gets ellipsised — they are the
 	   answer the row exists to give. */
 	.row-glyphs {
+		display: flex;
 		flex: 0 0 auto;
+		gap: 3px;
 		font-size: 11px;
-		letter-spacing: 0.08em;
 		color: var(--color-lab-text);
+	}
+
+	/* A row the panel shows with no supports. Muted, because nothing failed
+	   here — the `✕` next to it is what "there is a cell I could not read"
+	   looks like. */
+	.row-note {
+		color: var(--color-lab-text-muted);
 	}
 
 	.guide {
@@ -294,23 +305,10 @@
 		min-width: 0;
 	}
 
-	.guide-name {
-		font-size: 12px;
-		color: var(--color-lab-text-secondary);
-	}
-
 	.badge {
 		font-size: 12px;
 		font-weight: 700;
 		letter-spacing: 0.05em;
-	}
-
-	.detail {
-		font-size: 11px;
-		color: var(--color-lab-text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	/* The same three buckets the page paints its headlines in. */

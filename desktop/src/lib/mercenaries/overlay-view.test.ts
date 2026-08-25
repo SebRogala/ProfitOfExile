@@ -2,11 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
 	IDLE_LINE,
 	NO_CELLS_NOTE,
+	NO_GUIDES_NOTE,
 	SCANNING_LINE,
+	SKIP_LINE,
 	STALE_VERDICT_SUFFIX,
+	UNKNOWN_LINE,
 	WINDOW_GONE_NOTE,
 	captureRetired,
-	guideLines,
+	guidesLine,
 	headerLine,
 	liveRowGlyphs,
 	overlayShowsVerdict,
@@ -66,8 +69,12 @@ function capture(rows: MercRow[], header: Partial<MercCapture['header']> = {}): 
 	};
 }
 
-function slice(status: MercStatus, taken: MercCapture | null): MercenarySlice {
-	return { ...mercenarySliceDefault(), status, capture: taken };
+function slice(
+	status: MercStatus,
+	taken: MercCapture | null,
+	burstSpeaker: string | null = null
+): MercenarySlice {
+	return { ...mercenarySliceDefault(), status, capture: taken, burstSpeaker };
 }
 
 function ruleset(id: string, label: string, tier: string | null): MercRulesetResult {
@@ -109,6 +116,13 @@ describe('whether the strip draws at all', () => {
 
 	it('draws while a burst is looking', () => {
 		expect(overlayVisible(slice('scanning', null))).toBe(true);
+	});
+
+	// The OCR paused; the window and the verdict did not go anywhere. Hiding
+	// the strip here would take the finished read off screen at the moment the
+	// player is acting on it.
+	it('draws while a fully-read window is still on screen', () => {
+		expect(overlayVisible(slice('done', capture([row(0, ['matched'])])))).toBe(true);
 	});
 
 	// A module the user switched off keeps its last capture in the slice. Drawing
@@ -157,6 +171,50 @@ describe('the status line', () => {
 
 	it('says a burst is looking', () => {
 		expect(statusLine(slice('scanning', null))).toBe(SCANNING_LINE);
+	});
+
+	// The 2026-08-25 report: the strip sat on "waiting" through the voice line
+	// and then jumped to reading, which looks like a missed trigger. Naming the
+	// speaker is what tells the player THEIR mercenary was the one heard.
+	it('names the mercenary it heard while it scans', () => {
+		expect(statusLine(slice('scanning', null, 'Fennik, of Unshakeable Faith'))).toBe(
+			'heard Fennik, of Unshakeable Faith · scanning for the recruit window…'
+		);
+	});
+
+	// Scan now arms a burst that heard nobody. A prefix there would invent a
+	// speaker the trigger never had.
+	it('drops the prefix for a scan that heard nobody', () => {
+		expect(statusLine(slice('scanning', null, null))).not.toContain('heard');
+	});
+
+	it('keeps the stale mark under a named scan', () => {
+		expect(statusLine(slice('scanning', capture([row(0, ['matched'])]), 'Fennik'))).toBe(
+			'heard Fennik · ' + SCANNING_LINE + STALE_VERDICT_SUFFIX
+		);
+	});
+
+	// The whole point of the pause: nothing more will change on this strip, so
+	// the decision in front of the player is the final one.
+	it('says the read is done rather than claiming it is still reading', () => {
+		expect(statusLine(slice('done', capture([row(0, ['matched', 'confirmed'])])))).toBe(
+			'done · 1 row · all icons read'
+		);
+	});
+
+	it('counts the rows of a finished read', () => {
+		expect(
+			statusLine(slice('done', capture([row(0, ['matched']), row(1, ['confirmed'])])))
+		).toBe('done · 2 rows · all icons read');
+	});
+
+	// `done` is Rust's claim that everything was read. The line checks it
+	// against the capture rather than repeating it, so a slice that arrived
+	// with both cannot print "all icons read" over an unread cell.
+	it('counts an unread icon under a done status rather than repeating the claim', () => {
+		expect(statusLine(slice('done', capture([row(0, ['matched', 'unknown'])])))).toBe(
+			'done · 1 row · 1 icon unread — hover to confirm'
+		);
 	});
 
 	it('counts the rows and the icons still needing a hover', () => {
@@ -231,6 +289,13 @@ describe('marking a capture whose window is gone', () => {
 		expect(captureRetired(slice('scanning', capture([row(0, ['matched'])])))).toBe(true);
 	});
 
+	// `done` means READ, not gone: the OCR stopped and the window did not. The
+	// window-gone marker over a window the player is looking at would be the
+	// same lie in the other direction.
+	it('does not mark a capture the module has merely finished reading', () => {
+		expect(captureRetired(slice('done', capture([row(0, ['matched'])])))).toBe(false);
+	});
+
 	it('has nothing to mark when there is no capture', () => {
 		expect(captureRetired(slice('idle', null))).toBe(false);
 	});
@@ -260,75 +325,120 @@ describe('the header line', () => {
 	});
 });
 
-describe('one line per enabled guide', () => {
-	it('words a passing guide as WORTH', () => {
-		const lines = guideLines(
-			verdict([source('guide-a', 'Guide A', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)])])
+describe('the one guides line', () => {
+	// The smoke complaint: the strip spent two lines saying "Guide A SKIP" and
+	// "Guide B SKIP". Which guide said no is not a decision the player makes
+	// differently — the page keeps the per-guide breakdown.
+	it('says SKIP once however many guides decided against it', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'skip'), source('guide-b', 'Guide B', 'skip')]),
+			capture([])
 		);
-		expect(lines).toHaveLength(1);
-		expect(lines[0].headline).toBe('WORTH');
-		expect(lines[0].label).toBe('Guide A');
+		expect(line).toEqual({ text: SKIP_LINE, tone: 'fail' });
 	});
 
-	// The tier is the point of the ladder: WORTH alone does not say whether this
-	// is the cheapest rung or the top one, which is what the player pays on.
-	it('names the tier the mercenary passed at', () => {
-		const lines = guideLines(
+	// The one case where naming guides earns its line: this is what the player
+	// is about to pay for.
+	it('names only the guides that said WORTH', () => {
+		const line = guidesLine(
 			verdict([
-				source(
-					'guide-b',
-					'Guide B',
-					'worth',
-					['kinetist-mid'],
-					[
-						ruleset('kinetist-mv', 'Kinetist', 'minimum viable'),
-						ruleset('kinetist-mid', 'Kinetist', 'mid')
-					]
-				)
-			])
+				source('guide-a', 'Guide A', 'skip'),
+				source('guide-b', 'Guide B', 'worth', ['kinetist-mid'], [
+					ruleset('kinetist-mv', 'Kinetist', 'minimum viable'),
+					ruleset('kinetist-mid', 'Kinetist', 'mid')
+				])
+			]),
+			capture([])
 		);
-		expect(lines[0].detail).toBe('Kinetist (mid)');
+		expect(line).toEqual({ text: 'WORTH · Guide B (Kinetist mid)', tone: 'pass' });
 	});
 
-	it('names every passing ruleset when more than one applies', () => {
-		const lines = guideLines(
+	it('names every guide that said WORTH when more than one did', () => {
+		const line = guidesLine(
 			verdict([
-				source(
-					'guide-a',
-					'Guide A',
-					'worth',
-					['manyshot', 'combatant'],
-					[ruleset('manyshot', 'Manyshot', null), ruleset('combatant', 'Combatant', null)]
-				)
-			])
+				source('guide-a', 'Guide A', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)]),
+				source('guide-b', 'Guide B', 'worth', ['kinetist-mid'], [
+					ruleset('kinetist-mid', 'Kinetist', 'mid')
+				])
+			]),
+			capture([])
 		);
-		expect(lines[0].detail).toBe('Manyshot, Combatant');
+		expect(line?.text).toBe('WORTH · Guide A (Manyshot), Guide B (Kinetist mid)');
 	});
 
-	it('leaves a SKIP with nothing to name', () => {
-		const lines = guideLines(
-			verdict([source('guide-a', 'Guide A', 'skip', [], [ruleset('manyshot', 'Manyshot', null)])])
+	// A WORTH outranks a SKIP beside it: one guide paying for this mercenary is
+	// the actionable fact, and hiding it behind the other guide's no would lose
+	// the play entirely.
+	it('reports a WORTH even when another guide said SKIP', () => {
+		const line = guidesLine(
+			verdict([
+				source('guide-a', 'Guide A', 'skip'),
+				source('guide-b', 'Guide B', 'worth', ['manyshot'], [ruleset('manyshot', 'Manyshot', null)])
+			]),
+			capture([])
 		);
-		expect(lines[0].headline).toBe('SKIP');
-		expect(lines[0].detail).toBe('');
+		expect(line?.tone).toBe('pass');
 	});
 
-	it('words a guide that cannot decide as UNKNOWN rather than as a SKIP', () => {
-		const lines = guideLines(verdict([source('guide-a', 'Guide A', 'unknown')]));
-		expect(lines[0].headline).toBe('UNKNOWN');
+	// Nothing decided, and the reason is on the same line: a hover would change
+	// this answer, which is not true of a SKIP.
+	it('says unknown with the unread count when no guide could decide', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'unknown'), source('guide-b', 'Guide B', 'unknown')]),
+			capture([row(0, ['unknown', 'ambiguous'])])
+		);
+		expect(line).toEqual({ text: 'unknown — 2 icons unread', tone: 'unknown' });
 	});
 
-	// The strip has no room for a line that only ever says OFF, and the engine's
-	// own `off` headline is the one place the enabled set is read.
-	it('leaves out a guide the user switched off', () => {
-		const lines = guideLines(
-			verdict([source('guide-a', 'Guide A', 'off'), source('guide-b', 'Guide B', 'skip')])
+	it('counts one unread icon in the singular', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'unknown')]),
+			capture([row(0, ['unknown', 'matched'])])
 		);
-		expect(lines.map((line) => line.id)).toEqual(['guide-b']);
+		expect(line?.text).toBe('unknown — 1 icon unread');
+	});
+
+	// An unknown with nothing to hover is an unread SKILL name, not an unread
+	// icon — so the line must not offer a hover that would settle nothing.
+	it('leaves the count off an unknown with every icon read', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'unknown')]),
+			capture([row(0, ['matched'])])
+		);
+		expect(line?.text).toBe(UNKNOWN_LINE);
+	});
+
+	// A guide DID decide. The strip's live status line carries the unread count
+	// either way, so the shorter wording hides nothing.
+	it('reads a mixed SKIP and unknown as a SKIP', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'skip'), source('guide-b', 'Guide B', 'unknown')]),
+			capture([row(0, ['unknown'])])
+		);
+		expect(line?.text).toBe(SKIP_LINE);
+	});
+
+	// The engine's own `off` headline is the one place the enabled set is read,
+	// so a switched-off guide takes no part in the line.
+	it('ignores a guide the user switched off', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'off'), source('guide-b', 'Guide B', 'skip')]),
+			capture([])
+		);
+		expect(line?.text).toBe(SKIP_LINE);
+	});
+
+	// Drawing SKIP here would put a verdict on screen that no guide gave.
+	it('says so when every guide is switched off rather than drawing a SKIP', () => {
+		const line = guidesLine(
+			verdict([source('guide-a', 'Guide A', 'off'), source('guide-b', 'Guide B', 'off')]),
+			capture([])
+		);
+		expect(line).toEqual({ text: NO_GUIDES_NOTE, tone: 'muted' });
 	});
 
 	it('has nothing to say before anything is captured', () => {
-		expect(guideLines(null)).toEqual([]);
+		expect(guidesLine(null, null)).toBeNull();
 	});
 });
 
@@ -382,6 +492,12 @@ describe('the unread line', () => {
 		expect(unreadNote(slice('live', capture([row(0, ['unknown', 'unknown'])])))).toBeNull();
 	});
 
+	// Same rule under `done`: that line counts too, and a strip that prints the
+	// same total twice teaches the reader to skip both lines.
+	it('leaves the count to the status line under a finished read too', () => {
+		expect(unreadNote(slice('done', capture([row(0, ['unknown', 'unknown'])])))).toBeNull();
+	});
+
 	it('has nothing to say before anything is captured', () => {
 		expect(unreadNote(slice('idle', null))).toBeNull();
 	});
@@ -390,18 +506,46 @@ describe('the unread line', () => {
 describe('the per-row glyphs', () => {
 	it('names the skill and marks every support cell', () => {
 		expect(rowGlyphs(capture([row(0, ['matched', 'low_confidence', 'unknown'])]))).toEqual([
-			{ index: 0, skill: 'Ice Shot', glyphs: '✓ ? ✕' }
+			{
+				index: 0,
+				skill: 'Ice Shot',
+				glyphs: [
+					{ glyph: '✓', tone: 'pass' },
+					{ glyph: '?', tone: 'unknown' },
+					{ glyph: '✕', tone: 'fail' }
+				],
+				note: null
+			}
 		]);
+	});
+
+	// The smoke complaint: `✓ ✓ ? ✕` was one colour, so the cell that needed a
+	// hover had to be found by reading the run character by character.
+	it('paints a read cell, an unsure one and an unread one in three tones', () => {
+		const tones = rowGlyphs(capture([row(0, ['matched', 'ambiguous', 'unknown'])]))[0].glyphs.map(
+			(cell) => cell.tone
+		);
+		expect(new Set(tones).size).toBe(3);
 	});
 
 	// A hover confirmation reads the same as a match — the point of hovering is
 	// that the glyph stops asking for one.
 	it('marks a hover-confirmed cell as read', () => {
-		expect(rowGlyphs(capture([row(0, ['confirmed'])]))[0].glyphs).toBe('✓');
+		expect(rowGlyphs(capture([row(0, ['confirmed'])]))[0].glyphs).toEqual([
+			{ glyph: '✓', tone: 'pass' }
+		]);
 	});
 
 	it('marks an ambiguous cell as unsure rather than as read', () => {
-		expect(rowGlyphs(capture([row(0, ['ambiguous'])]))[0].glyphs).toBe('?');
+		expect(rowGlyphs(capture([row(0, ['ambiguous'])]))[0].glyphs).toEqual([
+			{ glyph: '?', tone: 'unknown' }
+		]);
+	});
+
+	// A low-confidence read is the same question a hover answers, so it wears
+	// the same colour as an ambiguous one and NOT the red of a cell nobody read.
+	it('does not paint a low-confidence cell as unread', () => {
+		expect(rowGlyphs(capture([row(0, ['low_confidence'])]))[0].glyphs[0].tone).toBe('unknown');
 	});
 
 	it('keeps every row of the capture', () => {
@@ -417,15 +561,30 @@ describe('the per-row glyphs', () => {
 	});
 
 	it('glyphs each row against its own cells', () => {
-		expect(rowGlyphs(capture([row(0, ['matched']), row(1, ['unknown'])])).map((r) => r.glyphs)).toEqual(
-			['✓', '✕']
-		);
+		expect(
+			rowGlyphs(capture([row(0, ['matched']), row(1, ['unknown'])])).map((r) =>
+				r.glyphs.map((cell) => cell.glyph).join('')
+			)
+		).toEqual(['✓', '✕']);
 	});
 
-	// An empty glyph run would render as a skill that HAS no supports, which is
-	// a different and wrong claim about the recruit window.
-	it('says a row had no cells rather than drawing an empty run', () => {
-		expect(rowGlyphs(capture([row(0, [])]))[0].glyphs).toBe(NO_CELLS_NOTE);
+	// An empty glyph run would render as a skill whose cells simply did not
+	// draw, which is a different and wrong claim about the recruit window.
+	it('marks a row that has no cells rather than drawing an empty run', () => {
+		const [only] = rowGlyphs(capture([row(0, [])]));
+		expect(only.glyphs).toEqual([]);
+		expect(only.note).toBe(NO_CELLS_NOTE);
+	});
+
+	// The 2026-08-25 smoke read "no cells read", which claims the reader FAILED
+	// on this row. Nothing failed: the panel shows this skill without supports,
+	// and the `✕` next to it is what a cell nobody could read looks like.
+	it('does not word a row without cells as a failed read', () => {
+		expect(NO_CELLS_NOTE).not.toMatch(/read|unread|fail/i);
+	});
+
+	it('leaves a row that HAS cells unmarked', () => {
+		expect(rowGlyphs(capture([row(0, ['matched'])]))[0].note).toBeNull();
 	});
 
 	it('says a skill name was not read rather than printing nothing', () => {
@@ -439,9 +598,16 @@ describe('the per-row glyphs', () => {
 	});
 });
 
-describe('the live gate on the glyph rows', () => {
+describe('the on-screen gate on the glyph rows', () => {
 	it('draws the rows of a window that is on screen', () => {
 		expect(liveRowGlyphs(slice('live', capture([row(0, ['matched'])])))).toHaveLength(1);
+	});
+
+	// A fully-read window is still ON SCREEN — the OCR stopped, the window did
+	// not. Dropping the rows here would blank the strip at the exact moment the
+	// player is deciding on a finished read.
+	it('keeps drawing the rows of a capture the module has finished reading', () => {
+		expect(liveRowGlyphs(slice('done', capture([row(0, ['matched'])])))).toHaveLength(1);
 	});
 
 	// A retired capture's cells cannot be hovered any more, so offering them

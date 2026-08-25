@@ -211,6 +211,239 @@ fn resolve_cell(
     }
 }
 
+// ---------------------------------------------------------------------------
+// The sticky header (2026-08-25 smoke)
+// ---------------------------------------------------------------------------
+
+/// Fold a re-read header into the one already on screen.
+///
+/// MEASURED on the 2026-08-25 Windows smoke: with the re-detect running every
+/// 2 s, the strip's header BLINKED between `Fennik, of Unshakeable Faith ·
+/// class not read · lvl 83` and `@ Fallen Reverend · @ Fallen Reverend · lvl
+/// 83`. Nothing on screen changed between those ticks — the OCR simply read
+/// the same pixels differently, and the loop published the newest read
+/// whatever it said. A header that rewrites itself twice a minute is unusable
+/// for the one thing it exists for: telling the player who this is.
+///
+/// So a live capture's header only ever gets BETTER:
+///
+/// - a field that was read once is never un-read — `None` never overwrites
+///   `Some`, because "not read this tick" is not evidence that the panel stopped
+///   showing it;
+/// - a field that was read is replaced only by a STRICTLY better read, which is
+///   [`better_read`]'s two-part rule: no leading glyph beats a leading glyph,
+///   and at equal cleanliness more alphanumeric content beats less.
+///
+/// The numbers are on a different footing and take the newer read whenever
+/// there is one: a level has no "content quality" to compare, so the only
+/// sticky rule that applies to it is the first one. A mercenary's level does
+/// not change while the window is open, so a differing re-read is OCR noise
+/// either way — but "prefer the older" and "prefer the newer" are equally
+/// arbitrary there, and preferring the newer keeps the rule to one sentence.
+///
+/// Pure so the rule is testable without a screen: the loop hands it the header
+/// it published last and the header this detect produced.
+pub fn merge_header(prev: &super::MercHeader, next: &super::MercHeader) -> super::MercHeader {
+    let class = merge_text(prev.class.as_deref(), next.class.as_deref());
+    let name = merge_text(prev.name.as_deref(), next.name.as_deref());
+    super::MercHeader {
+        // A merged name that equals the merged class is the smoke's
+        // `@ Fallen Reverend · @ Fallen Reverend` arriving by a second route:
+        // the parse rejects a title that IS the class line, but a name kept
+        // from an earlier tick can collide with a class read for the first
+        // time this one. The previous name is tried, and a field with nothing
+        // uncollided to show goes back to `None` — "not read" is a true
+        // statement, "the class" is not.
+        name: match (&name, &class) {
+            (Some(name), Some(class)) if same_field(name, class) => {
+                prev.name.clone().filter(|kept| !same_field(kept, class))
+            }
+            _ => name,
+        },
+        class,
+        // FIRST wins for the numbers, the opposite of the text rule. A level
+        // does not change while one window is open, so a differing re-read is
+        // noise — and keeping the first reading means the strip's level stops
+        // moving once it has one, which is the whole point of the sticky
+        // header. Taking the newer would have left `lvl 83` flicking to `88`
+        // on a bad tick. Safe because a panel SWAP no longer merges at all
+        // (see [`fold_header`]), so first-wins cannot outlive its window.
+        level: prev.level.or(next.level),
+        wager: prev.wager.or(next.wager),
+    }
+}
+
+/// Whether two header fields are the same reading, for the name/class clash.
+///
+/// Cleaned and case-folded, because the two fields come off different OCR
+/// lines: `@ Fallen Reverend` and `fallen reverend` are the same claim, and a
+/// byte comparison would let the collision through.
+fn same_field(a: &str, b: &str) -> bool {
+    super::geometry::clean_header_text(a).to_lowercase()
+        == super::geometry::clean_header_text(b).to_lowercase()
+}
+
+/// The header for a re-read, plus whether the panel is a DIFFERENT window.
+///
+/// The sticky merge above is only ever correct for ONE recruit window. A
+/// REMATCH swaps the mercenary behind an identical-looking panel, and since
+/// the liveness pause the loop can take ~20 s to notice a window that closed —
+/// so "a capture exists" is not evidence that the capture is of the same
+/// mercenary. Without this gate the new mercenary would inherit the old one's
+/// name, class and (first-wins) level: a confident, wrong header on the surface
+/// the player pays from.
+///
+/// So identity is checked first ([`same_panel`]) and only a match merges. A
+/// different panel returns the fresh header VERBATIM and `true`, which is the
+/// loop's signal to drop everything it remembered about the old window.
+pub fn fold_header(previous: Option<&MercCapture>, next: &MercCapture) -> (super::MercHeader, bool) {
+    match previous {
+        Some(prev) if panel_replaced(prev, next) => (next.header.clone(), true),
+        Some(prev) => (merge_header(&prev.header, &next.header), false),
+        None => (next.header.clone(), false),
+    }
+}
+
+/// How many rows each read must have NAMED before their skill sets are allowed
+/// to argue about identity.
+///
+/// One named row is not enough on either side: a single misread name would then
+/// be a "different mercenary", and the panel's whole memory would be thrown away
+/// on the sort of tick this module sees constantly.
+const REPLACEMENT_ROW_EVIDENCE: usize = 2;
+
+/// Whether `next` is a read of a DIFFERENT recruit window than `prev`.
+///
+/// **Positive evidence only, and the asymmetry is the whole design.** The two
+/// answers cost very different things:
+///
+/// - saying "same window" when it is not inherits the last mercenary's name,
+///   class and level — a confident, wrong header;
+/// - saying "different window" when it is not throws away the remembered
+///   confirmations, including the AMBIGUOUS resolutions that only live in this
+///   session (the template store cannot hold "which of these two names"), and
+///   lets one bad tick's header through verbatim.
+///
+/// Both are real, so the rule refuses to decide on absence: an unreadable tick
+/// ABSTAINS and everything is kept. Only two facts are evidence of a swap:
+///
+/// - **two levels that disagree.** Both must be read; a level of `None` proves
+///   nothing, since the header line is missed often;
+/// - **two skill sets that are DISJOINT**, with at least
+///   [`REPLACEMENT_ROW_EVIDENCE`] named rows on each side. Sets, not positions:
+///   a dropped or misread row shifts every later index, and an index-wise
+///   comparison read that as a different mercenary — the failure this rule
+///   replaces. Sharing even one skill is enough to keep the window, because a
+///   rematch rolls a whole new skill list.
+///
+/// A REMATCH clears both bars easily (different level, or six different
+/// skills). A bad tick clears neither.
+pub fn panel_replaced(prev: &MercCapture, next: &MercCapture) -> bool {
+    if let (Some(before), Some(now)) = (prev.header.level, next.header.level) {
+        if before != now {
+            return true;
+        }
+    }
+    let before = named_skills(prev);
+    let now = named_skills(next);
+    before.len() >= REPLACEMENT_ROW_EVIDENCE
+        && now.len() >= REPLACEMENT_ROW_EVIDENCE
+        && before.is_disjoint(&now)
+}
+
+/// The skills a capture actually named, as a set. Unread rows are not in it —
+/// they are the absence this rule refuses to reason from.
+fn named_skills(capture: &MercCapture) -> std::collections::HashSet<&str> {
+    capture
+        .rows
+        .iter()
+        .filter_map(|row| row.skill.name.as_deref())
+        .collect()
+}
+
+/// One text field's sticky rule. See [`merge_header`].
+fn merge_text(prev: Option<&str>, next: Option<&str>) -> Option<String> {
+    match (prev, next) {
+        (Some(prev), Some(next)) if better_read(prev, next) => Some(next.to_string()),
+        (Some(prev), _) => Some(prev.to_string()),
+        (None, next) => next.map(str::to_string),
+    }
+}
+
+/// Whether `next` is a strictly better read of the same header field than
+/// `prev`.
+///
+/// Two signals, in order, both measured on the smoke screenshots:
+///
+/// 1. **A leading non-alphanumeric is a bad read.** `@ Fallen Reverend` is the
+///    class ICON read as a glyph. [`super::geometry::clean_header_text`] strips
+///    it at parse time, so this is the backstop for a producer that does not —
+///    a clean read beats a glyphed one whatever their lengths.
+/// 2. **More content is a better read.** At equal cleanliness, the read with
+///    more alphanumeric characters won: OCR drops characters off a bad read far
+///    more often than it invents them, so `Fennik, of Unshakeable Faith` beats
+///    `Fennik, of Unshak`. Ties lose — a different read of the same length is
+///    not evidence of anything, and swapping on it is the blink itself.
+fn better_read(prev: &str, next: &str) -> bool {
+    let clean_prev = starts_clean(prev);
+    let clean_next = starts_clean(next);
+    if clean_prev != clean_next {
+        return clean_next;
+    }
+    alnum_len(next) > alnum_len(prev)
+}
+
+fn starts_clean(text: &str) -> bool {
+    text.trim()
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric())
+}
+
+fn alnum_len(text: &str) -> usize {
+    text.chars().filter(|c| c.is_alphanumeric()).count()
+}
+
+// ---------------------------------------------------------------------------
+// When there is nothing left to read
+// ---------------------------------------------------------------------------
+
+/// Whether a capture has nothing left for another OCR pass to improve.
+///
+/// Every row's skill name confident, every support cell the panel SHOWS
+/// confident, and the three header fields the strip prints all read. `wager` is
+/// deliberately not part of it: it is absent from the OCR on real dumps (see
+/// `geometry.rs`'s Windows-dump test) and nothing in the module reads it, so
+/// requiring it would mean the module never stops reading.
+///
+/// A row with no support cells at all is complete — an empty `supports` is a
+/// skill the panel shows without supports, not a row that failed (`build_capture`
+/// stops at the first unoccupied slot, so a cell that IS in the list is a cell
+/// that is on screen).
+///
+/// This is what lets the DETECT stop: at complete there is no better read
+/// available from another full-screen pass, so the 2 s re-detect is pure heat
+/// over the game and only the liveness check (is the window still there?) has
+/// anything left to find out. The hover tick keeps running — a tooltip can
+/// still contradict a confident wrong match, which no re-detect ever would.
+pub fn capture_complete(capture: &MercCapture) -> bool {
+    header_complete(&capture.header)
+        && capture.rows.iter().all(|row| {
+            confident(row.skill.state) && row.supports.iter().all(|cell| confident(cell.state))
+        })
+}
+
+/// The header fields the strip prints, all read. See [`capture_complete`].
+pub fn header_complete(header: &super::MercHeader) -> bool {
+    header.name.is_some() && header.class.is_some() && header.level.is_some()
+}
+
+/// The two states a hover cannot improve. The same pair the verdict engine
+/// treats as confident (`verdict.ts`'s `CONFIDENT_STATES`).
+fn confident(state: ReadState) -> bool {
+    matches!(state, ReadState::Matched | ReadState::Confirmed)
+}
+
 /// The colour crop a template is learned from and the dump shows. `None` when
 /// the rect does not lie wholly inside the image.
 pub fn crop_rgba(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option<RgbaImage> {
@@ -562,5 +795,457 @@ mod tests {
         let texts = pass2_texts(&img, &layout, &MercGeometry::default());
 
         assert_eq!(texts, vec!["Ice Shot".to_string(), "Conductivity".to_string()]);
+    }
+
+    // -- the sticky header -------------------------------------------------
+
+    use crate::mercenary::MercHeader;
+
+    fn header(name: Option<&str>, class: Option<&str>, level: Option<u32>) -> MercHeader {
+        MercHeader {
+            name: name.map(str::to_string),
+            class: class.map(str::to_string),
+            level,
+            wager: None,
+        }
+    }
+
+    /// The blink, in one assertion. A tick that read nothing is not evidence
+    /// that the panel stopped showing a name — and on the 2026-08-25 smoke
+    /// that tick was every other one.
+    #[test]
+    fn a_field_that_was_not_read_this_tick_keeps_the_read_before_it() {
+        let prev = header(Some("Fennik, of Unshakeable Faith"), Some("Fallen Reverend"), Some(83));
+
+        let merged = merge_header(&prev, &header(None, None, None));
+
+        assert_eq!(merged.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+        assert_eq!(merged.level, Some(83));
+    }
+
+    /// The other half of the blink: a SHORTER read of the same field is the
+    /// OCR dropping characters, not the panel changing.
+    #[test]
+    fn a_read_with_less_content_does_not_replace_the_one_on_screen() {
+        let prev = header(Some("Fennik, of Unshakeable Faith"), None, None);
+
+        let merged = merge_header(&prev, &header(Some("Fennik, of Unshak"), None, None));
+
+        assert_eq!(merged.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+    }
+
+    /// Sticky is not frozen: a read that recovered characters the last one
+    /// missed is the better read and wins.
+    #[test]
+    fn a_read_with_more_content_replaces_the_one_on_screen() {
+        let prev = header(Some("Fennik, of Unshak"), None, None);
+
+        let merged = merge_header(&prev, &header(Some("Fennik, of Unshakeable Faith"), None, None));
+
+        assert_eq!(merged.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+    }
+
+    /// The class-icon glyph, at the merge seam. It is longer than the clean
+    /// read by one character, so a rule that only counted length would let the
+    /// glyphed read win — which is the `@ Fallen Reverend` the smoke showed.
+    #[test]
+    fn a_read_carrying_a_leading_glyph_never_beats_a_clean_one() {
+        let prev = header(None, Some("Fallen Reverend"), None);
+
+        let merged = merge_header(&prev, &header(None, Some("@ Fallen Reverend"), None));
+
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+    }
+
+    /// And the same rule the other way: a clean read replaces a glyphed one
+    /// even when it is no longer, because the glyph is what makes it worse.
+    #[test]
+    fn a_clean_read_replaces_a_glyphed_one_of_the_same_content() {
+        let prev = header(None, Some("@ Fallen Reverend"), None);
+
+        let merged = merge_header(&prev, &header(None, Some("Fallen Reverend"), None));
+
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+    }
+
+    /// A different read of the SAME length is not evidence of anything, and
+    /// swapping on it is the blink itself: two readings of equal length would
+    /// alternate every tick forever.
+    #[test]
+    fn a_read_of_the_same_length_does_not_replace_the_one_on_screen() {
+        let prev = header(Some("Fennik, of Unshakeable Faith"), None, None);
+
+        let merged = merge_header(&prev, &header(Some("Fennlk, of Unshakeable Falth"), None, None));
+
+        assert_eq!(merged.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+    }
+
+    /// FIRST wins for the level, the opposite of the text rule: the number does
+    /// not change while one window is open, so a re-read that disagrees is OCR
+    /// noise — and taking the newer would leave `lvl 83` flicking to `88`.
+    #[test]
+    fn a_level_that_was_already_read_is_not_replaced_by_a_re_read() {
+        let prev = header(None, None, Some(83));
+
+        let merged = merge_header(&prev, &header(None, None, Some(88)));
+
+        assert_eq!(merged.level, Some(83));
+    }
+
+    /// The name/class collision arriving by the second route: the parse rejects
+    /// a title that IS the class line, but a name KEPT from an earlier tick can
+    /// collide with a class read for the first time on this one.
+    #[test]
+    fn a_merged_name_that_equals_the_merged_class_falls_back_to_the_previous_name() {
+        // The earlier tick got a SHORT name — short enough that the class line
+        // would win the length rule and land in both fields. Without the clash
+        // check the strip would print `Fallen Reverend · Fallen Reverend`,
+        // which is what the smoke screenshots showed.
+        let prev = header(Some("Fennik"), None, None);
+
+        // This tick read the class for the first time, and read the title as
+        // that same class line.
+        let merged = merge_header(&prev, &header(Some("Fallen Reverend"), Some("Fallen Reverend"), None));
+
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+        assert_eq!(
+            merged.name.as_deref(),
+            Some("Fennik"),
+            "a short true name beats the class standing in for one",
+        );
+    }
+
+    /// …and with nothing uncollided to fall back to, the name goes back to
+    /// unread. "Not read" is a true statement; "the class" is not.
+    #[test]
+    fn a_name_that_can_only_be_the_class_goes_back_to_unread() {
+        let prev = header(Some("@ Fallen Reverend"), None, None);
+
+        let merged = merge_header(&prev, &header(Some("Fallen Reverend"), Some("Fallen Reverend"), None));
+
+        assert_eq!(merged.name, None);
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+    }
+
+    /// A field nobody has read yet takes whatever the new tick found — the
+    /// stickiness is about not LOSING a read, not about refusing new ones.
+    #[test]
+    fn a_field_read_for_the_first_time_is_taken() {
+        let merged = merge_header(&header(Some("Fennik"), None, None), &header(None, Some("Fallen Reverend"), Some(83)));
+
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+        assert_eq!(merged.level, Some(83));
+    }
+
+    // -- panel identity ----------------------------------------------------
+
+    fn named_row(index: u8, name: &str) -> MercRow {
+        MercRow {
+            index,
+            skill: MercSkillRead {
+                raw: name.into(),
+                ids: vec![format!("mercenary.skill_{name}")],
+                name: Some(name.to_string()),
+                score: 0.99,
+                state: ReadState::Matched,
+            },
+            supports: Vec::new(),
+        }
+    }
+
+    fn panel(rows: &[&str], header_of: MercHeader) -> MercCapture {
+        MercCapture {
+            captured_at_ms: 1_700_000_000_000,
+            live: true,
+            scale: 1.0,
+            screen: [2560, 1440],
+            header: header_of,
+            rows: rows
+                .iter()
+                .enumerate()
+                .map(|(i, name)| named_row(i as u8, name))
+                .collect(),
+        }
+    }
+
+    /// THE REMATCH. The panel stays on screen and the mercenary behind it
+    /// changes — and since the liveness pause the loop can take ~20 s to notice
+    /// a window that closed, so "a capture exists" is not evidence that it is
+    /// the same one. Inheriting here would put a confident, wrong name, class
+    /// and level on the surface the player pays from.
+    #[test]
+    fn a_rematch_to_a_different_mercenary_replaces_the_whole_header() {
+        let before = panel(
+            &["Ice Shot", "Conductivity", "Frostbolt"],
+            header(Some("Fennik, of Unshakeable Faith"), Some("Fallen Reverend"), Some(83)),
+        );
+        let after = panel(
+            &["Cyclone", "Enfeeble", "Flame Dash"],
+            header(Some("Cai, the Lout"), Some("Shock Ambusher"), Some(68)),
+        );
+
+        let (folded, replaced) = fold_header(Some(&before), &after);
+
+        assert!(replaced, "a disjoint skill list is a different window");
+        assert_eq!(folded.name.as_deref(), Some("Cai, the Lout"));
+        assert_eq!(folded.class.as_deref(), Some("Shock Ambusher"));
+        assert_eq!(folded.level, Some(68));
+    }
+
+    /// A rematch that rolled the SAME level is still a rematch: the skill sets
+    /// carry it on their own.
+    #[test]
+    fn a_rematch_at_the_same_level_is_caught_by_the_skill_sets() {
+        let before = panel(&["Ice Shot", "Conductivity"], header(Some("Fennik"), None, Some(83)));
+        let after = panel(&["Cyclone", "Enfeeble"], header(Some("Cai, the Lout"), None, Some(83)));
+
+        let (folded, replaced) = fold_header(Some(&before), &after);
+
+        assert!(replaced);
+        assert_eq!(folded.name.as_deref(), Some("Cai, the Lout"));
+    }
+
+    /// …and a rematch whose skills happen to overlap is carried by the LEVEL,
+    /// which is the other half of the evidence.
+    #[test]
+    fn a_rematch_at_a_different_level_is_caught_by_the_level() {
+        let before = panel(&["Ice Shot", "Conductivity"], header(Some("Fennik"), None, Some(83)));
+        let after = panel(&["Ice Shot", "Conductivity"], header(Some("Cai, the Lout"), None, Some(68)));
+
+        let (folded, replaced) = fold_header(Some(&before), &after);
+
+        assert!(replaced);
+        assert_eq!(folded.name.as_deref(), Some("Cai, the Lout"));
+        assert_eq!(folded.level, Some(68));
+    }
+
+    /// The case the POSITIONAL rule got wrong: OCR dropped the first row, so
+    /// every later row shifted up an index. Nothing about the window changed —
+    /// and calling this a replacement would throw away the remembered
+    /// confirmations, including ambiguous resolutions that only live in the
+    /// session.
+    #[test]
+    fn a_read_that_dropped_a_row_still_merges_into_the_same_window() {
+        let before = panel(
+            &["Ice Shot", "Conductivity", "Frostbolt"],
+            header(Some("Fennik, of Unshakeable Faith"), Some("Fallen Reverend"), Some(83)),
+        );
+        let after = panel(&["Conductivity", "Frostbolt"], header(None, None, None));
+
+        let (folded, replaced) = fold_header(Some(&before), &after);
+
+        assert!(!replaced, "a shifted row list is the same skills, not a new mercenary");
+        assert_eq!(folded.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+        assert_eq!(folded.class.as_deref(), Some("Fallen Reverend"));
+        assert_eq!(folded.level, Some(83));
+    }
+
+    /// The abstention rule, at its sharpest: a tick that named NOTHING is not
+    /// evidence of anything. It must merge — and because it merges, the loop
+    /// keeps the confirmations it made on this window.
+    #[test]
+    fn a_tick_that_read_nothing_keeps_the_window_it_had() {
+        let before = panel(
+            &["Ice Shot", "Conductivity"],
+            header(Some("Fennik, of Unshakeable Faith"), Some("Fallen Reverend"), Some(83)),
+        );
+        let mut after = panel(&["Ice Shot", "Conductivity"], header(None, None, None));
+        for row in &mut after.rows {
+            row.skill.name = None;
+            row.skill.state = ReadState::Unknown;
+        }
+
+        let (folded, replaced) = fold_header(Some(&before), &after);
+
+        assert!(!replaced);
+        assert_eq!(folded.name.as_deref(), Some("Fennik, of Unshakeable Faith"));
+        assert_eq!(folded.level, Some(83));
+    }
+
+    /// One named row on a side is below the evidence bar: a single misread name
+    /// would otherwise be enough to declare a different mercenary and wipe the
+    /// session's confirmations.
+    #[test]
+    fn one_named_row_is_not_enough_evidence_to_replace_a_window() {
+        let before = panel(&["Ice Shot", "Conductivity"], header(None, None, None));
+        let mut after = panel(&["Cyclone", "Enfeeble"], header(None, None, None));
+        after.rows[1].skill.name = None;
+
+        assert!(!panel_replaced(&before, &after));
+    }
+
+    /// Sharing even ONE skill keeps the window. A rematch rolls a whole new
+    /// list, so an overlap of one is a misread, not a new mercenary.
+    #[test]
+    fn skill_sets_that_share_one_name_are_the_same_window() {
+        let before = panel(&["Ice Shot", "Conductivity", "Frostbolt"], header(None, None, None));
+        let after = panel(&["Ice Shot", "Enfeeble", "Cyclone"], header(None, None, None));
+
+        assert!(!panel_replaced(&before, &after));
+    }
+
+    /// A level nobody read proves nothing — the header line is missed often
+    /// enough that holding it against the panel would replace the window on
+    /// every tick that lost it.
+    #[test]
+    fn a_level_this_tick_did_not_read_does_not_replace_the_window() {
+        let before = panel(&["Ice Shot", "Conductivity"], header(None, None, Some(83)));
+        let after = panel(&["Ice Shot", "Conductivity"], header(None, None, None));
+
+        assert!(!panel_replaced(&before, &after));
+    }
+
+    /// A capture that has never been folded against anything keeps its own
+    /// header and is not a replacement — nothing was there to replace.
+    #[test]
+    fn the_first_capture_of_a_window_is_taken_as_read() {
+        let first = panel(&["Ice Shot"], header(Some("Cai, the Lout"), None, Some(68)));
+
+        let (folded, replaced) = fold_header(None, &first);
+
+        assert!(!replaced);
+        assert_eq!(folded.name.as_deref(), Some("Cai, the Lout"));
+    }
+
+    // -- when there is nothing left to read --------------------------------
+
+    fn read_at(state: ReadState) -> MercSupportRead {
+        MercSupportRead {
+            slot: 0,
+            rect: [0, 0, 44, 44],
+            family: Some("Pierce".into()),
+            tier: Some(3),
+            ids: vec!["mercenary.support_1".into()],
+            name: Some("Greater Pierce (Tier 3)".into()),
+            score: 0.95,
+            state,
+            candidates: Vec::new(),
+        }
+    }
+
+    fn capture_of(rows: Vec<MercRow>, header: MercHeader) -> MercCapture {
+        MercCapture {
+            captured_at_ms: 1_700_000_000_000,
+            live: true,
+            scale: 1.0,
+            screen: [2560, 1440],
+            header,
+            rows,
+        }
+    }
+
+    fn skill(state: ReadState) -> MercSkillRead {
+        MercSkillRead {
+            raw: "Ice Shot".into(),
+            ids: vec!["mercenary.skill_11495".into()],
+            name: Some("Ice Shot".into()),
+            score: 0.99,
+            state,
+        }
+    }
+
+    #[test]
+    fn a_capture_with_every_read_confident_and_a_full_header_is_complete() {
+        let capture = capture_of(
+            vec![MercRow {
+                index: 0,
+                skill: skill(ReadState::Matched),
+                supports: vec![read_at(ReadState::Matched), read_at(ReadState::Confirmed)],
+            }],
+            header(Some("Fennik"), Some("Fallen Reverend"), Some(83)),
+        );
+
+        assert!(capture_complete(&capture));
+    }
+
+    /// The cell the player would hover. While one is unread there IS something
+    /// another pass can find, so the loop must not pause.
+    #[test]
+    fn one_unread_cell_keeps_the_capture_incomplete() {
+        let capture = capture_of(
+            vec![MercRow {
+                index: 0,
+                skill: skill(ReadState::Matched),
+                supports: vec![read_at(ReadState::Matched), read_at(ReadState::Unknown)],
+            }],
+            header(Some("Fennik"), Some("Fallen Reverend"), Some(83)),
+        );
+
+        assert!(!capture_complete(&capture));
+    }
+
+    /// An ambiguous cell has a family and a tier but two possible names — the
+    /// hover is what settles it, so it is not read.
+    #[test]
+    fn an_ambiguous_cell_keeps_the_capture_incomplete() {
+        let capture = capture_of(
+            vec![MercRow {
+                index: 0,
+                skill: skill(ReadState::Matched),
+                supports: vec![read_at(ReadState::Ambiguous)],
+            }],
+            header(Some("Fennik"), Some("Fallen Reverend"), Some(83)),
+        );
+
+        assert!(!capture_complete(&capture));
+    }
+
+    #[test]
+    fn an_unread_skill_name_keeps_the_capture_incomplete() {
+        let capture = capture_of(
+            vec![MercRow {
+                index: 0,
+                skill: skill(ReadState::LowConfidence),
+                supports: vec![read_at(ReadState::Matched)],
+            }],
+            header(Some("Fennik"), Some("Fallen Reverend"), Some(83)),
+        );
+
+        assert!(!capture_complete(&capture));
+    }
+
+    /// The header is on the strip, so a missing class is a field another pass
+    /// could still fill in.
+    #[test]
+    fn a_header_field_nobody_read_keeps_the_capture_incomplete() {
+        let rows = vec![MercRow {
+            index: 0,
+            skill: skill(ReadState::Matched),
+            supports: vec![read_at(ReadState::Matched)],
+        }];
+
+        assert!(!capture_complete(&capture_of(rows.clone(), header(Some("Fennik"), None, Some(83)))));
+        assert!(!capture_complete(&capture_of(rows.clone(), header(None, Some("Fallen Reverend"), Some(83)))));
+        assert!(!capture_complete(&capture_of(rows, header(Some("Fennik"), Some("Fallen Reverend"), None))));
+    }
+
+    /// The wager is absent from real OCR dumps and nothing reads it. Requiring
+    /// it would mean the module never stops reading.
+    #[test]
+    fn a_missing_wager_does_not_hold_a_capture_open() {
+        let capture = capture_of(
+            vec![MercRow {
+                index: 0,
+                skill: skill(ReadState::Matched),
+                supports: vec![read_at(ReadState::Matched)],
+            }],
+            header(Some("Fennik"), Some("Fallen Reverend"), Some(83)),
+        );
+
+        assert_eq!(capture.header.wager, None);
+        assert!(capture_complete(&capture));
+    }
+
+    /// A skill the panel shows without supports is read, not broken —
+    /// `build_capture` only lists cells that are actually on screen.
+    #[test]
+    fn a_row_the_panel_shows_with_no_supports_is_complete() {
+        let capture = capture_of(
+            vec![MercRow { index: 0, skill: skill(ReadState::Matched), supports: Vec::new() }],
+            header(Some("Fennik"), Some("Fallen Reverend"), Some(83)),
+        );
+
+        assert!(capture_complete(&capture));
     }
 }

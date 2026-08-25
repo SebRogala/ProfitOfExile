@@ -3,8 +3,11 @@
  *
  * The overlay is the surface the player reads WHILE the recruit window is open,
  * so it carries the same wording rules the page does and one extra: it is the
- * compact form. One line per enabled guide, one header line, one honesty line
- * for what the reader could not settle. Nothing here decides anything —
+ * compact form. One status line, one header line, ONE line for all the enabled
+ * guides together, one glyph line per row, one honesty line for what the reader
+ * could not settle. Every line has to earn the screen space it takes over the
+ * game — the 2026-08-25 smoke spent two of them saying SKIP twice. Nothing here
+ * decides anything —
  * `verdict.ts` owns every outcome and `capture-view.ts` owns the vocabulary
  * (`HEADLINE_LABEL`, `HEADLINE_TONE`), which this file reuses rather than
  * respells.
@@ -26,14 +29,28 @@
  * on top of it once there is a capture to word. An idle module used to draw
  * NOTHING, which is indistinguishable from an overlay that never got built.
  *
- * Each fact appears on exactly ONE line. The live status line carries the
+ * Each fact appears on exactly ONE line. The on-screen status line carries the
  * unread count, so [`unreadNote`] withholds it there rather than printing it
  * twice — a strip that repeats itself teaches the reader to skip both lines.
+ *
+ * **`done` is a read that finished, never a window that closed.** When Rust has
+ * nothing left to read it pauses the OCR and says `done`; the window is still
+ * on screen and the player is still deciding on it, so everything here that
+ * asks "can they still hover this?" asks [`onScreen`] rather than comparing to
+ * `live`.
  */
 
 import { isConfident, type MercSourceVerdict, type MercVerdict } from './verdict';
-import { HEADLINE_LABEL, HEADLINE_TONE, READ_GLYPH, type OutcomeTone } from './capture-view';
-import type { MercCapture, MercStatus, MercenarySlice } from './capture';
+import {
+	captureOnScreen,
+	HEADLINE_LABEL,
+	HEADLINE_TONE,
+	READ_GLYPH,
+	READ_TONE,
+	type OutcomeTone,
+	type ReadTone
+} from './capture-view';
+import type { MercCapture, MercStatus, MercenarySlice, ReadState } from './capture';
 
 /**
  * The statuses in which the overlay has something worth drawing.
@@ -44,7 +61,21 @@ import type { MercCapture, MercStatus, MercenarySlice } from './capture';
  * `idle`, which is where the loop returns after a capture is retired, and where
  * the "window gone" marker does its work.
  */
-export const OVERLAY_VISIBLE_STATUSES: MercStatus[] = ['idle', 'scanning', 'live'];
+export const OVERLAY_VISIBLE_STATUSES: MercStatus[] = ['idle', 'scanning', 'live', 'done'];
+
+/**
+ * Whether the capture in the slice is a window that is still on screen.
+ *
+ * `capture-view.ts` owns the set (`CAPTURE_ON_SCREEN_STATUSES`) because the
+ * PAGE asks the same question of the same statuses — a `done` capture is a
+ * paused read, not a window that went away, and the two surfaces must not
+ * disagree about that. Everything here that asks "can the player still hover
+ * this?" goes through this; everything that asks "is the module still working?"
+ * reads the status directly.
+ */
+function onScreen(slice: MercenarySlice): boolean {
+	return captureOnScreen(slice.status);
+}
 
 /**
  * Whether the overlay draws ANYTHING — the outer gate.
@@ -88,7 +119,7 @@ export function overlayShowsVerdict(slice: MercenarySlice): boolean {
  */
 export function captureRetired(slice: MercenarySlice): boolean {
 	if (slice.capture === null) return false;
-	return !(slice.status === 'live' && slice.capture.live === true);
+	return !(onScreen(slice) && slice.capture.live === true);
 }
 
 /** What the strip says about a capture whose window is gone. */
@@ -163,27 +194,64 @@ function unreadPhrase(unread: number): string | null {
 export function statusLine(slice: MercenarySlice): string | null {
 	if (!overlayVisible(slice)) return null;
 	const capture = slice.capture;
-	if (capture !== null && slice.status === 'live') return liveLine(capture);
-	if (slice.status === 'scanning') {
-		return captureRetired(slice) ? SCANNING_LINE + STALE_VERDICT_SUFFIX : SCANNING_LINE;
-	}
+	if (capture !== null && slice.status === 'live') return countedLine(READING_PREFIX, capture);
+	if (capture !== null && slice.status === 'done') return countedLine(DONE_PREFIX, capture);
+	if (slice.status === 'scanning') return scanningLine(slice);
 	if (captureRetired(slice)) return WINDOW_GONE_NOTE;
 	return IDLE_LINE;
 }
 
 /**
- * The live line: how much was read, and how much of it is trustworthy.
+ * The scanning line, with the speaker when the module heard one.
+ *
+ * Naming the mercenary is what separates "the module caught the voice line you
+ * just heard" from "something is scanning" — the 2026-08-25 report was that the
+ * strip sat on "waiting" through the voice line and then jumped straight to
+ * reading, which looked like a missed trigger. Scan now names nobody, so the
+ * prefix is dropped rather than faked.
+ */
+function scanningLine(slice: MercenarySlice): string {
+	const heard = slice.burstSpeaker === null ? '' : `${HEARD_PREFIX}${slice.burstSpeaker} · `;
+	const stale = captureRetired(slice) ? STALE_VERDICT_SUFFIX : '';
+	return `${heard}${SCANNING_LINE}${stale}`;
+}
+
+/** What the strip says it is doing while it re-reads a window on screen. */
+export const READING_PREFIX = 'reading';
+
+/**
+ * What the strip says once the window is fully read and the OCR has PAUSED.
+ *
+ * A distinct word rather than a quieter "reading", because it is a distinct
+ * fact the player acts on: nothing more will change on this strip, so the
+ * decision in front of them is the final one and hovering will not improve it.
+ * The 2026-08-25 smoke had the opposite problem — a strip that kept saying it
+ * was working while the numbers under it never moved.
+ */
+export const DONE_PREFIX = 'done';
+
+/** What the strip says before the name of the mercenary that armed a scan. */
+export const HEARD_PREFIX = 'heard ';
+
+/**
+ * The counted line: how much was read, and how much of it is trustworthy.
  *
  * The row count is there because it is the cheap sanity check the player can
  * make against the screen — a six-row recruit window read as two rows is a
  * geometry problem, and the strip is where they will notice it. `all icons
  * read` is stated rather than left blank: silence would be indistinguishable
  * from a line that forgot to update.
+ *
+ * Shared by `reading` and `done` so the two can never drift into two different
+ * ways of counting the same capture. The count is asked of the capture rather
+ * than assumed from the status: `done` is Rust's claim that everything is read,
+ * and a strip that printed "all icons read" over a capture with an unread cell
+ * would be repeating a claim instead of checking it.
  */
-function liveLine(capture: MercCapture): string {
+function countedLine(prefix: string, capture: MercCapture): string {
 	const rows = capture.rows.length;
 	const unread = unreadPhrase(unreadIconCount(capture));
-	return `reading · ${rows} ${rows === 1 ? 'row' : 'rows'} · ${unread ?? 'all icons read'}`;
+	return `${prefix} · ${rows} ${rows === 1 ? 'row' : 'rows'} · ${unread ?? 'all icons read'}`;
 }
 
 /**
@@ -202,43 +270,72 @@ export function headerLine(capture: MercCapture): string {
 	].join(' · ');
 }
 
-/** One guide's line on the strip. */
-export interface OverlayGuideLine {
-	id: string;
-	/** The guide's own name — `Guide A`. */
-	label: string;
-	/** `WORTH` / `SKIP` / `UNKNOWN`, from the page's own vocabulary. */
-	headline: string;
-	/** The page's colour bucket for that headline. */
+/** The one line the strip gives every enabled guide, together. */
+export interface OverlayGuidesLine {
+	/** The whole line, already worded. */
+	text: string;
+	/** The page's colour bucket for it. */
 	tone: OutcomeTone;
-	/**
-	 * What passed, for a WORTH: the ruleset names with their tiers, joined.
-	 * Empty for every other headline — there is nothing to name.
-	 */
-	detail: string;
 }
 
+/** What the line says when every guide is switched off in Settings. */
+export const NO_GUIDES_NOTE = 'no guides enabled';
+
+/** What the line says when no enabled guide found anything worth paying for. */
+export const SKIP_LINE = 'SKIP';
+
+/** What the line says when the read was not good enough to decide on. */
+export const UNKNOWN_LINE = 'unknown';
+
 /**
- * One line per ENABLED guide, in the order the guides are declared.
+ * ONE line for every enabled guide, not one line per guide (2026-08-25 smoke).
  *
- * A guide the user switched off is left out entirely rather than shown as OFF:
- * the page has room to say "switched off in Settings", the strip over the game
- * does not, and a line that is only ever the word OFF costs a line of the
- * player's screen for nothing. The verdict's own `off` headline is what this
- * filters on, so the page and the overlay agree about which guides are in play
- * without either re-deriving the enabled set.
+ * The strip used to print `Guide A SKIP` and `Guide B SKIP` on two lines, which
+ * is two lines of the player's screen spent saying "no" twice. The player's
+ * question is not "what did each guide think" — that is the page, which keeps
+ * its full per-guide view — it is "do I pay for this one".
+ *
+ * So the line answers that, and only names guides when naming them tells the
+ * player something:
+ *
+ * - **any WORTH** — the passing guides are named WITH what they passed on,
+ *   because that is what the player is about to act on and the tier is the
+ *   difference between the cheapest rung and the top one;
+ * - **no WORTH, and something decided it** — a single `SKIP`. Which guide said
+ *   no is not a decision the player makes differently;
+ * - **nothing decided** — `unknown`, with the unread-icon count that is the
+ *   reason, because that is the one case where a hover would change the answer;
+ * - **no guides at all** — say so, rather than drawing a SKIP the guides never
+ *   gave.
+ *
+ * A mixed SKIP-and-unknown reads as SKIP: some guide DID decide, and the strip's
+ * live status line carries the unread count either way, so nothing is hidden by
+ * the shorter wording.
  */
-export function guideLines(verdict: MercVerdict | null): OverlayGuideLine[] {
-	if (verdict === null) return [];
-	return verdict.sources
-		.filter((source) => source.headline !== 'off')
-		.map((source) => ({
-			id: source.id,
-			label: source.label,
-			headline: HEADLINE_LABEL[source.headline],
-			tone: HEADLINE_TONE[source.headline],
-			detail: bestDetail(source)
-		}));
+export function guidesLine(
+	verdict: MercVerdict | null,
+	capture: MercCapture | null
+): OverlayGuidesLine | null {
+	if (verdict === null || capture === null) return null;
+	const enabled = verdict.sources.filter((source) => source.headline !== 'off');
+	if (enabled.length === 0) return { text: NO_GUIDES_NOTE, tone: HEADLINE_TONE.off };
+
+	const worth = enabled.filter((source) => source.headline === 'worth');
+	if (worth.length > 0) {
+		const named = worth.map((source) => {
+			const detail = bestDetail(source);
+			return detail === '' ? source.label : `${source.label} (${detail})`;
+		});
+		return { text: `${HEADLINE_LABEL.worth} · ${named.join(', ')}`, tone: HEADLINE_TONE.worth };
+	}
+
+	if (enabled.every((source) => source.headline === 'unknown')) {
+		const unread = unreadIconCount(capture);
+		const why = unread === 0 ? '' : ` — ${unread} ${unread === 1 ? 'icon' : 'icons'} unread`;
+		return { text: `${UNKNOWN_LINE}${why}`, tone: HEADLINE_TONE.unknown };
+	}
+
+	return { text: SKIP_LINE, tone: HEADLINE_TONE.skip };
 }
 
 /**
@@ -247,12 +344,16 @@ export function guideLines(verdict: MercVerdict | null): OverlayGuideLine[] {
  * The tier is the point on guide B's ladder: "WORTH" alone does not tell the
  * player whether this is the cheapest rung or the top one, which is the whole
  * question when deciding what to pay. Untiered rulesets print their bare name.
+ *
+ * The tier rides after the name with no bracket of its own: the whole detail
+ * already sits inside the guide's brackets on the strip, and nesting a second
+ * pair there is noise on the one line the player reads under pressure.
  */
 function bestDetail(source: MercSourceVerdict): string {
 	if (source.headline !== 'worth') return '';
 	return source.rulesets
 		.filter((ruleset) => source.best.includes(ruleset.id))
-		.map((ruleset) => (ruleset.tier ? `${ruleset.label} (${ruleset.tier})` : ruleset.label))
+		.map((ruleset) => (ruleset.tier ? `${ruleset.label} ${ruleset.tier}` : ruleset.label))
 		.join(', ');
 }
 
@@ -285,8 +386,16 @@ export function unreadIconCount(capture: MercCapture): number {
  * repeat itself on the one status where it has the most to say.
  */
 export function unreadNote(slice: MercenarySlice): string | null {
-	if (slice.capture === null || slice.status === 'live') return null;
+	if (slice.capture === null || onScreen(slice)) return null;
 	return unreadPhrase(unreadIconCount(slice.capture));
+}
+
+/** One support cell as the strip draws it: the mark, and the colour it wears. */
+export interface OverlayGlyph {
+	/** One [`READ_GLYPH`] — `✓`, `?` or `✕`. */
+	glyph: string;
+	/** The page's colour bucket for that state — the route's CSS class suffix. */
+	tone: OutcomeTone;
 }
 
 /** One row's compact read, for the glyph strip under a live verdict. */
@@ -295,15 +404,49 @@ export interface OverlayRowGlyphs {
 	index: number;
 	/** The skill name, or the marker for a name the OCR did not resolve. */
 	skill: string;
-	/**
-	 * One [`READ_GLYPH`] per support cell, space-separated — `✓ ✓ ? ✕`.
-	 * [`NO_CELLS_NOTE`] when the row has no cells at all.
-	 */
-	glyphs: string;
+	/** One entry per support cell, in slot order. EMPTY when the row has none. */
+	glyphs: OverlayGlyph[];
+	/** [`NO_CELLS_NOTE`] when the row has no cells at all, null otherwise. */
+	note: string | null;
 }
 
-/** What a row with no support cells says instead of an empty glyph run. */
-export const NO_CELLS_NOTE = 'no cells read';
+/**
+ * What a row with no support cells shows instead of an empty glyph run.
+ *
+ * An em dash, not a sentence (2026-08-25 smoke: the strip read "no cells read",
+ * which says the reader FAILED on this row). A row with no cells is a skill the
+ * panel shows without supports — nothing failed and nothing is missing, so the
+ * marker has to be quieter than the `✕` that means "there is a cell here and I
+ * could not read it". Those two claims looking alike is what sent the reader
+ * hunting for a capture bug.
+ */
+export const NO_CELLS_NOTE = '—';
+
+/**
+ * The colour a read state wears on the strip.
+ *
+ * Keyed on [`READ_TONE`]'s three buckets rather than on the five read states,
+ * so the page and the strip cannot end up disagreeing about which states are
+ * confident: a state added to `ReadState` must be given a bucket in
+ * `capture-view.ts`, and it arrives here already sorted.
+ *
+ * The buckets map onto the SAME three tones the headlines use, which is what
+ * the route already paints (`tone-pass` / `tone-unknown` / `tone-fail`): a read
+ * cell is a settled fact, an unsure one is the amber "hover would settle this",
+ * and an unread one is the red that says the verdict above it is missing an
+ * input. Before this the glyphs were all one colour and `✓ ✓ ? ✕` had to be
+ * read character by character.
+ */
+export const READ_TONE_COLOUR: Record<ReadTone, OutcomeTone> = {
+	read: 'pass',
+	unsure: 'unknown',
+	unread: 'fail'
+};
+
+/** One cell's mark and colour. */
+function glyphOf(state: ReadState): OverlayGlyph {
+	return { glyph: READ_GLYPH[state], tone: READ_TONE_COLOUR[READ_TONE[state]] };
+}
 
 /**
  * The per-row glyphs the live strip draws under the verdict (POE-199 smoke).
@@ -314,22 +457,19 @@ export const NO_CELLS_NOTE = 'no cells read';
  * which one. `READ_GLYPH` is reused rather than respelled so the strip and the
  * page cannot drift into two vocabularies for the same three states.
  *
- * Empty unless the module is `live` WITH a capture, and that gate is here
- * rather than in the route for the reason every gate in this file is: a
- * `.svelte` file has no unit-test harness in this app. The glyphs describe a
- * window that is on screen — a retired capture's cells cannot be hovered any
- * more, so offering them would be an instruction the player cannot follow.
+ * Empty unless the captured window is ON SCREEN (`live` or `done`), and that
+ * gate is here rather than in the route for the reason every gate in this file
+ * is: a `.svelte` file has no unit-test harness in this app. The glyphs describe
+ * a window the player can still put a cursor on — a retired capture's cells
+ * cannot be hovered any more, so offering them would be an instruction the
+ * player cannot follow.
  *
  * A row whose skill name did not resolve says so rather than printing its raw
  * OCR text: the raw string is noise on a compact strip, and a blank there would
  * read as a row with no skill.
- *
- * An empty `supports` is a real capture shape (a row the reader found but whose
- * cells it could not place), and an empty glyph string would render as a skill
- * with no supports — a different and wrong claim. Hence the marker.
  */
 export function liveRowGlyphs(slice: MercenarySlice): OverlayRowGlyphs[] {
-	if (slice.capture === null || slice.status !== 'live') return [];
+	if (slice.capture === null || !onScreen(slice)) return [];
 	return rowGlyphs(slice.capture);
 }
 
@@ -339,14 +479,16 @@ export function liveRowGlyphs(slice: MercenarySlice): OverlayRowGlyphs[] {
  * [`liveRowGlyphs`] is the gate the route uses; this is the mapping under it,
  * exported separately because the two are different things to get wrong and a
  * test for the glyph vocabulary should not have to build a slice.
+ *
+ * An empty `supports` is a real capture shape — a skill the panel shows without
+ * supports — and it is marked rather than left blank, because an empty run
+ * would render as a row whose cells simply did not draw.
  */
 export function rowGlyphs(capture: MercCapture): OverlayRowGlyphs[] {
 	return capture.rows.map((row) => ({
 		index: row.index,
 		skill: row.skill.name ?? 'skill not read',
-		glyphs:
-			row.supports.length === 0
-				? NO_CELLS_NOTE
-				: row.supports.map((cell) => READ_GLYPH[cell.state]).join(' ')
+		glyphs: row.supports.map((cell) => glyphOf(cell.state)),
+		note: row.supports.length === 0 ? NO_CELLS_NOTE : null
 	}));
 }

@@ -160,6 +160,38 @@ named path.
   `WS_EX_TRANSPARENT` and the re-assert in `fit_overlay_height` is not working.
 - **Merc strip, first paint**: starting the module must not flash a large empty
   panel. The constructor seed is one line tall and the content replaces it.
+- **Merc header, across re-detects** (added after the 2026-08-25 smoke, where
+  the header blinked between the mercenary's name and its class every two
+  seconds): keep one recruit window open and watch the header line for at least
+  three re-detects. Fields may only be FILLED IN, never blanked or swapped for a
+  shorter or glyph-prefixed reading, and the name must never equal the class. A
+  header that changes back and forth means the sticky merge (`read.rs`'s
+  `merge_header`, applied in `run.rs`'s detect tick) is not being applied to the
+  published capture.
+- **Merc strip, the done state**: with a recruit window open, hover every cell
+  the strip marks `?` or `✕` until the status line reads `done · N rows · all
+  icons read`. From then on the log says `capture complete — OCR paused` once,
+  the strip must stay on screen with its verdict, and closing the window must
+  still retire it (up to ~20 s later, two liveness checks). A strip that blanks
+  at `done`, or a status that never reaches it on a fully-read window, means the
+  on-screen status set (`live` + `done`) or `capture_complete` disagrees with
+  what the reader produced. **Hover still corrects a wrong read while `done`**:
+  park the cursor on a cell the module matched WRONG and confirm the tooltip
+  replaces it — the detect is what paused, not the hover. The re-read of an
+  already-matched cell is capped per cell (`HoverBudget`, 3 per capture), so the
+  correction has to land within the first few ticks of the hover; moving off the
+  cell and back does NOT refill it.
+- **Merc rematch / fast swap**: with a capture on screen, press REMATCH (or
+  close the window and open a different mercenary within ~20 s, before the
+  liveness check retires the first). The header must switch to the NEW
+  mercenary's name, class and level in one step, and the log must say `recruit
+  window replaced`. A header that keeps the previous mercenary's name — or an
+  old level under a new name — means the panel-identity gate (`panel_replaced` /
+  `fold_header`) is not being consulted before the sticky merge. The gate wants
+  POSITIVE evidence (two levels that disagree, or two disjoint skill sets), so
+  the inverse check matters too: a tick that merely read the panel badly must
+  NOT log `recruit window replaced`, because that log line means the session's
+  hover confirmations were just thrown away.
 
 ## Adding an overlay
 
