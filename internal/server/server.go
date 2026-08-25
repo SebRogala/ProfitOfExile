@@ -214,6 +214,17 @@ func NewRouter(pinger handlers.Pinger, frontendFS fs.FS, cfg RouterConfig) http.
 	// ExchangeCache as cold, so registration never depends on the wiring.
 	r.Get("/api/currency-exchange/plays", handlers.CurrencyExchangePlays(cfg.ExchangeCache))
 
+	// Entitlements come from the device record the middleware attached, so this
+	// route needs no repository and is registered UNCONDITIONALLY — outside the
+	// `cfg.DeviceRepo != nil` block below. With no device repository the
+	// middleware above is never installed, the handler sees no device, and the
+	// answer is stable/no-features: the same answer an unrecognised role gets.
+	// The desktop app calls this once at startup and gates its beta module on
+	// the reply, so the handler has no error path of its own. DeviceMiddleware
+	// still applies when it is installed and can reject first — 400 on a
+	// malformed X-Device-ID, 403 on a banned device.
+	r.Get("/api/device/me", handlers.DeviceMe())
+
 	if cfg.DeviceRepo != nil {
 		r.Post("/api/device/identify", handlers.DeviceIdentify(cfg.DeviceRepo))
 	}
