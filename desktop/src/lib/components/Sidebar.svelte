@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { nav } from '$lib/stores/navigation.svelte';
 	import { ssot, setModuleEnabled } from '$lib/stores/ssot.svelte';
+	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
 
 	// --- Modules (SSOT) ---
 	// User-facing names for the Rust module registry (src-tauri/src/modules.rs).
@@ -19,6 +20,29 @@
 		// PAGE is a nav item and stays reachable with this off.
 		temple: '🏛️ Temple reader',
 	};
+
+	/**
+	 * The feature a module's controls are hidden behind, when it has one
+	 * (POE-203). A module absent from this map is visible to every device; the
+	 * merc module is visible only where the server granted `merc`.
+	 */
+	const MODULE_FEATURES: Record<string, string> = {
+		mercenary: MERC_FEATURE,
+	};
+
+	/** Whether this device may see the Mercenaries page and the Merc OCR switch. */
+	const mercGranted = $derived(hasFeature(MERC_FEATURE));
+
+	/**
+	 * The module switches this device may see, in registry order. Derived rather
+	 * than filtered inline so the collapsed rail and the expanded panel cannot
+	 * disagree about which switches exist.
+	 */
+	const moduleEntries = $derived(
+		Object.entries(MODULE_LABELS).filter(
+			([id]) => !MODULE_FEATURES[id] || hasFeature(MODULE_FEATURES[id])
+		)
+	);
 
 	/** The longer tooltip for a module whose one-line label cannot say it all. */
 	const MODULE_TITLES: Record<string, string> = {
@@ -72,10 +96,13 @@
 		<button class="collapsed-item" class:active={currentPath === '/'} title="Lab Farming" onclick={() => nav.go('/')}>
 			<img src="/lab-icon.png" alt="Lab" class="lab-icon" />
 		</button>
-		<!-- Outside the DEV block on purpose: this one ships. -->
-		<button class="collapsed-item" class:active={currentPath === '/mercenaries'} title="Mercenaries" onclick={() => nav.go('/mercenaries')}>
-			<span class="icon">&#x2694;&#xFE0F;</span>
-		</button>
+		<!-- Outside the DEV block on purpose: this one ships — to the devices the
+		     server granted `merc` (POE-203). -->
+		{#if mercGranted}
+			<button class="collapsed-item" class:active={currentPath === '/mercenaries'} title="Mercenaries" onclick={() => nav.go('/mercenaries')}>
+				<span class="icon">&#x2694;&#xFE0F;</span>
+			</button>
+		{/if}
 		<button class="collapsed-item" class:active={currentPath === '/temple'} title="Temple of Atzoatl" onclick={() => nav.go('/temple')}>
 			<span class="icon">&#x1F3DB;&#xFE0F;</span>
 		</button>
@@ -126,7 +153,7 @@
 			<span class="icon">&#x23F1;&#xFE0F;</span>
 			<span class="indicator" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}></span>
 		</button>
-		{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
+		{#each moduleEntries as [id, label] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="collapsed-overlay" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
 				<span class="icon">{label.split(' ')[0]}</span>
@@ -145,10 +172,12 @@
 				<img src="/lab-icon.png" alt="Lab" class="lab-icon-expanded" />
 				<span>Lab Farming</span>
 			</button>
-			<button class="nav-item" class:active={currentPath === '/mercenaries'} onclick={() => nav.go('/mercenaries')}>
-				<span class="icon">&#x2694;&#xFE0F;</span>
-				<span>Mercenaries</span>
-			</button>
+			{#if mercGranted}
+				<button class="nav-item" class:active={currentPath === '/mercenaries'} onclick={() => nav.go('/mercenaries')}>
+					<span class="icon">&#x2694;&#xFE0F;</span>
+					<span>Mercenaries</span>
+				</button>
+			{/if}
 			<button class="nav-item" class:active={currentPath === '/temple'} onclick={() => nav.go('/temple')}>
 				<span class="icon">&#x1F3DB;&#xFE0F;</span>
 				<span>Temple</span>
@@ -213,7 +242,7 @@
 			<span class="mode" class:off={!timerActive} class:always={timerActive && gameFocused} class:auto={timerActive && !gameFocused}>{timerActive ? (gameFocused ? 'on' : 'hidden') : 'off'}</span>
 		</button>
 		<div class="label">Modules</div>
-		{#each Object.entries(MODULE_LABELS) as [id, label] (id)}
+		{#each moduleEntries as [id, label] (id)}
 			{@const on = ssot.modules[id] ?? false}
 			<button class="overlay-row clickable" title={moduleTitle(id, label, on)} onclick={() => setModuleEnabled(id, !on)}>
 				<span>{label}</span>

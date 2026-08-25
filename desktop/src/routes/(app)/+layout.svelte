@@ -9,6 +9,7 @@
 	import { ssot, startSsotStore } from '$lib/stores/ssot.svelte';
 	import { startRunRecorder } from '$lib/run-recorder';
 	import { nav, viewToPath } from '$lib/stores/navigation.svelte';
+	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
 	import {
 		MERCENARY_MODULE_ID,
 		MERCENARY_WINDOW_LABEL,
@@ -32,6 +33,25 @@
 
 	// Sidebar state: driven by store.status.sidebar_open (persisted in Rust settings).
 	let sidebarOpen = $derived(store.status?.sidebar_open ?? true);
+
+	/**
+	 * Whether the server granted this device the merc feature (POE-203). Gates
+	 * the Mercenaries page, its nav entry (in `Sidebar`) and the verdict overlay
+	 * — hiding, not securing: the code ships in every build.
+	 */
+	let mercGranted = $derived(hasFeature(MERC_FEATURE));
+
+	/**
+	 * The view actually on screen.
+	 *
+	 * `nav.view` restores the persisted `navView` pref, which can name a view
+	 * this device may no longer see — and does on EVERY launch of an entitled
+	 * device, because entitlements default to none until `/api/device/me`
+	 * answers. Falling back here rather than calling `nav.go('/')` is deliberate:
+	 * a write would persist the fallback and cost an entitled user their last
+	 * tool the first time they launched offline.
+	 */
+	let visibleView = $derived(nav.view === 'mercenaries' && !mercGranted ? 'lab' : nav.view);
 
 	function toggleSidebar() {
 		const next = !sidebarOpen;
@@ -791,7 +811,15 @@
 	$effect(() => {
 		const enabled = ssot.modules[MERCENARY_MODULE_ID];
 		if (enabled === undefined) return;
-		mercenaryOverlay.setDesired(enabled);
+		// The feature gate is ANDed in rather than short-circuiting the effect:
+		// a device that loses the grant with the module flag still set must have
+		// the window taken down, not left standing (POE-203).
+		//
+		// This takes the WINDOW down, not the module: the Rust merc module keeps
+		// running (and scanning) on its own flag, because the gate is hiding and
+		// not securing. Pushing the revocation into Rust is recorded as a
+		// follow-up on POE-203, not done here.
+		mercenaryOverlay.setDesired(enabled && mercGranted);
 	});
 
 	// --- Lab overlays category toggle ---
@@ -849,7 +877,7 @@
 
 	// Ctrl+Shift+F12 toggles debug mode (devtools + force-show overlays)
 	let debugMode = $state(false);
-	// Ctrl+Shift+I opens the identify dialog (device alias registration)
+	// Ctrl+Shift+F11 opens the identify dialog (device alias registration)
 	let identifyOpen = $state(false);
 
 	$effect(() => {
@@ -868,7 +896,7 @@
 					console.log('[debug] Debug mode OFF');
 				}
 			}
-			if (e.ctrlKey && e.shiftKey && e.key === 'I') {
+			if (e.ctrlKey && e.shiftKey && e.key === 'F11') {
 				e.preventDefault();
 				identifyOpen = !identifyOpen;
 			}
@@ -1076,7 +1104,7 @@
 <div class="app-shell">
 	<TopBar status={store.status} />
 	<div class="app-body">
-		<Sidebar open={sidebarOpen} currentPath={viewToPath(nav.view)} onToggle={toggleSidebar}
+		<Sidebar open={sidebarOpen} currentPath={viewToPath(visibleView)} onToggle={toggleSidebar}
 			comparatorActive={comparatorActive} gameFocused={store.status?.game_focused ?? false} onToggleComparator={toggleComparatorOverlay}
 			compassActive={compassActive} onToggleCompass={toggleCompassOverlay}
 			pathstripActive={pathstripActive} pathstripHasData={pathstripHasData} onTogglePathstrip={togglePathstripOverlay}
@@ -1086,23 +1114,25 @@
 			<div class="route-render-placeholder" aria-hidden="true">
 				{@render children()}
 			</div>
-			<div class:view-hidden={nav.view !== 'lab'}>
+			<div class:view-hidden={visibleView !== 'lab'}>
 				<LabPage />
 			</div>
-			<div class:view-hidden={nav.view !== 'settings'}>
+			<div class:view-hidden={visibleView !== 'settings'}>
 				<SettingsPage />
 			</div>
-			<div class:view-hidden={nav.view !== 'mercenaries'}>
-				<MercenariesPage />
-			</div>
-			<div class:view-hidden={nav.view !== 'temple'}>
+			{#if mercGranted}
+				<div class:view-hidden={visibleView !== 'mercenaries'}>
+					<MercenariesPage />
+				</div>
+			{/if}
+			<div class:view-hidden={visibleView !== 'temple'}>
 				<TemplePage />
 			</div>
-			<div class:view-hidden={nav.view !== 'currency-exchange'}>
+			<div class:view-hidden={visibleView !== 'currency-exchange'}>
 				<CurrencyExchangePage />
 			</div>
 			{#if import.meta.env.DEV}
-				<div class:view-hidden={nav.view !== 'dev'}>
+				<div class:view-hidden={visibleView !== 'dev'}>
 					<DevPage />
 				</div>
 			{/if}

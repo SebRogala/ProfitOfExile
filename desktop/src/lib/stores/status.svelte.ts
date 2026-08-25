@@ -11,6 +11,8 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { loadEntitlements } from '$lib/stores/entitlements.svelte';
+import { checkForUpdate } from '$lib/updater/check';
 
 /** Shape of the Rust AppStatus struct emitted via "status-changed" events. */
 export interface AppStatus {
@@ -83,9 +85,14 @@ export async function initStatusStore(): Promise<() => void> {
 		console.warn('[store] initial get_logs failed:', e);
 	}
 
-	// Check for updates on startup + every 30 minutes.
-	checkForUpdates();
-	const updateInterval = setInterval(checkForUpdates, 30 * 60 * 1000);
+	// Entitlements + update check on startup and every 30 minutes. FIRED, not
+	// awaited: `loadEntitlements()` retries against an unreachable server for
+	// as long as the app runs, so awaiting it here would hold the interval's
+	// registration — and this function's cleanup handle — behind a network
+	// that may never come up. The interval is armed unconditionally; only the
+	// check inside waits for entitlements, and only up to a bound.
+	void refreshEntitlementsThenCheck();
+	const updateInterval = setInterval(refreshEntitlementsThenCheck, 30 * 60 * 1000);
 
 	return () => {
 		unlistenStatus();
@@ -94,14 +101,47 @@ export async function initStatusStore(): Promise<() => void> {
 	};
 }
 
-/** Silently check for app updates and update the store. */
+/**
+ * How long a check waits for `/api/device/me` before it runs anyway.
+ *
+ * The channel decides WHICH manifests get asked, so a check that runs before
+ * entitlements land asks the stable one alone — hence a wait. The wait is
+ * bounded because `loadEntitlements()` keeps retrying an unreachable server
+ * for the life of the app, and a check that waited on that would never run.
+ */
+const ENTITLEMENTS_FIRST_CHECK_WAIT_MS = 10_000;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Refresh entitlements, then check for updates — waiting at most
+ * `ENTITLEMENTS_FIRST_CHECK_WAIT_MS` for the refresh.
+ *
+ * Used for the startup check AND the 30-minute tick, so a device promoted on
+ * the server picks its channel and features up without a restart (POE-203).
+ * Never rejects: both halves swallow their own failures.
+ */
+async function refreshEntitlementsThenCheck(): Promise<void> {
+	await Promise.race([loadEntitlements(), sleep(ENTITLEMENTS_FIRST_CHECK_WAIT_MS)]);
+	await checkForUpdates();
+}
+
+/**
+ * Silently check for app updates and update the store.
+ *
+ * Channel-aware through `checkForUpdate` — a beta device is offered whichever
+ * of the two manifests is higher. Only the version is kept here, so the offer
+ * itself is released; Settings re-checks before it installs anything.
+ */
 async function checkForUpdates() {
 	try {
-		const { check } = await import('@tauri-apps/plugin-updater');
-		const update = await check();
+		const update = await checkForUpdate();
 		if (update) {
 			store.updateAvailable = true;
 			store.updateVersion = update.version;
+			await update.close().catch(e => console.warn('[updater] could not release the offer:', e));
 		} else {
 			store.updateAvailable = false;
 			store.updateVersion = '';

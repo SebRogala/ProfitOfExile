@@ -2,9 +2,10 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-	import { check } from '@tauri-apps/plugin-updater';
+	import { checkForUpdate } from '$lib/updater/check';
 	import { relaunch } from '@tauri-apps/plugin-process';
 	import { store } from '$lib/stores/status.svelte';
+	import { hasFeature, MERC_FEATURE } from '$lib/stores/entitlements.svelte';
 	import { ssot } from '$lib/stores/ssot.svelte';
 	import { MERC_OVERLAY_DEFAULTS, physicalGeometry } from '$lib/overlay/overlay-defaults';
 	import Tooltip from '$lib/components/Tooltip.svelte';
@@ -56,7 +57,7 @@
 		updateStatus = 'checking';
 		updateError = '';
 		try {
-			const update = await check();
+			const update = await checkForUpdate();
 			if (update) {
 				updateStatus = 'available';
 				updateVersion = update.version;
@@ -74,7 +75,7 @@
 		updateStatus = 'downloading';
 		updateError = '';
 		try {
-			const update = await check();
+			const update = await checkForUpdate();
 			if (!update) return;
 			await update.downloadAndInstall((progress: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
 				if (progress.event === 'Started' && progress.data?.contentLength) {
@@ -362,6 +363,23 @@
 		// `lockConfigHeight` below.
 		mercenary: { label: 'overlay-mercenary-pos', syncParam: 'mercenary', getCommand: 'get_mercenary_overlay_settings', setCommand: 'set_mercenary_overlay_settings', defaultW: MERC_OVERLAY_DEFAULTS.w, defaultH: MERC_OVERLAY_DEFAULTS.h, defaultUnit: 'css' },
 	};
+
+	/**
+	 * The Overlay Positions rows, in display order.
+	 *
+	 * The merc strip's row belongs to the merc MODULE, and a device without the
+	 * `merc` feature never sees that module (POE-203) — a control that places an
+	 * overlay it can never open is a dead row, so it is left out entirely rather
+	 * than disabled. `$derived`, not a constant: the entitlement answer lands
+	 * after this page is already mounted.
+	 */
+	const overlayRows = $derived([
+		{ name: 'comparator', label: 'Gems Compare' },
+		{ name: 'compass', label: 'Lab Compass' },
+		{ name: 'pathstrip', label: 'Lab Map' },
+		{ name: 'timer', label: 'Lab Timer' },
+		...(hasFeature(MERC_FEATURE) ? [{ name: 'mercenary', label: 'Merc Verdict' }] : [])
+	]);
 
 	// Per-overlay state
 	let overlaySettings = $state<Record<string, { x: number; y: number; width: number; height: number } | null>>({
@@ -681,13 +699,7 @@
 		<section>
 			<h2>Overlay Positions</h2>
 
-			{#each [
-				{ name: 'comparator', label: 'Gems Compare' },
-				{ name: 'compass', label: 'Lab Compass' },
-				{ name: 'pathstrip', label: 'Lab Map' },
-				{ name: 'timer', label: 'Lab Timer' },
-				{ name: 'mercenary', label: 'Merc Verdict' },
-			] as cfg (cfg.name)}
+			{#each overlayRows as cfg (cfg.name)}
 				<div class="setting-row">
 					<span class="setting-label">{cfg.label}</span>
 					{#if positionOverlays[cfg.name]}
