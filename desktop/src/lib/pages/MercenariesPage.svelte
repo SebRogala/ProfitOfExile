@@ -165,9 +165,12 @@
 		{ value: '3', label: 'exact' }
 	];
 
-	/** What Rust said no to, shown where it was said. Both setters echo the
-	 *  accepted value onto the slice, so neither control moves until the round
-	 *  trip lands — the merc overlay reads the same fields. */
+	/** What Rust said no to, shown where it was said. Both setters write through
+	 *  Rust and re-read the slice, so the value the overlay reads is the same
+	 *  one. The segmented buttons render straight off `merc.tierFloor` and so
+	 *  never move ahead of it; the checkbox is the browser's own control and
+	 *  does flip on click, which is why a refusal has to be shown rather than
+	 *  left for the next poll to explain. */
 	let tradeError = $state<string | null>(null);
 
 	async function setTradeAuto(on: boolean): Promise<void> {

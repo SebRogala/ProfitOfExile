@@ -11,7 +11,7 @@
  * the clock, the store, or the DOM.
  */
 
-import type { MercTradeResult } from '$lib/tradeApi';
+import { formatListingAmount, type MercTradeResult } from '$lib/tradeApi';
 import type { MercTradeState } from './capture';
 import type { OutcomeTone } from './capture-view';
 
@@ -149,17 +149,11 @@ function describeFound(result: MercTradeResult): string {
 	const count = `${result.total} ${result.total === 1 ? 'listing' : 'listings'}`;
 	const cheapest = result.listings[0];
 	if (cheapest === undefined) return count;
-	return `${count} · from ${formatAmount(cheapest.amount)} ${cheapest.currency}`;
+	return `${count} · from ${formatListingAmount(cheapest.amount)} ${cheapest.currency}`;
 }
 
 /** Rust's `CANCELLED` marker (`trade/client.rs`), the one error string that is
  *  not a failure. */
 function isCancelled(state: MercTradeState): boolean {
 	return state.error === 'cancelled';
-}
-
-/** Seller amounts are whole numbers far more often than not; a trailing `.0`
- *  on every price reads as precision the listing does not have. */
-function formatAmount(amount: number): string {
-	return Number.isInteger(amount) ? amount.toString() : amount.toFixed(1);
 }
