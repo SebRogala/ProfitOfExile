@@ -101,7 +101,14 @@ export interface TradeQueueDisplay {
  * rendered by the caller's detail snippet, keyed by row index.
  */
 export interface TradeListingRow {
-	/** Price normalized to chaos. */
+	/**
+	 * Price normalized to chaos — but only where a rate existed to normalize
+	 * with. A gem row's is a real conversion (the Comparator reads a divine
+	 * rate off the market page); a mercenary row's is not, because Rust
+	 * normalizes merc listings with a rate of 0 and hands back the seller's own
+	 * `amount`. Cross-currency comparison on this field is only meaningful for
+	 * gem rows.
+	 */
 	chaosPrice: number;
 	/** Raw seller currency. */
 	currency: string;
@@ -129,5 +136,19 @@ export function mercListingRow(listing: MercTradeListing): TradeListingRow {
 		account: listing.account,
 		indexedAt: listing.indexedAt
 	};
+}
+
+/**
+ * How a seller's raw ask is written — the one place, because the same number
+ * is printed twice on one card: once in the mercenary headline ("from 5
+ * divine") and once in the row below it. A trailing `.0` on every whole price
+ * reads as precision the listing does not have.
+ *
+ * NOT `$lib/price.svelte.ts`: that formats amounts the app COMPUTED in chaos
+ * and picks its own unit. A listing carries the currency its seller asked in,
+ * and rewriting either half misreports what is on offer.
+ */
+export function formatListingAmount(amount: number): string {
+	return Number.isInteger(amount) ? amount.toString() : amount.toFixed(1);
 }
 

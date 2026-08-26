@@ -130,7 +130,10 @@ export interface MercSyncStatus {
  *
  * Wire strings, not Rust variant names: the Rust enum carries
  * `#[serde(rename_all = "kebab-case")]`, so `waiting-league` is spelled with a
- * hyphen here and a serde test pins the same string from the other side.
+ * hyphen here. Unlike `MercStatus` and `ReadState` — pinned from the other side
+ * by `mercenary/mod.rs`'s `every_read_state_and_status_wire_string_is_pinned` —
+ * these strings have no Rust-side pin yet, so a `rename_all` drop would leave
+ * both sides compiling while the badge goes blank.
  *
  * `off` is not one of the search's own states — it is the module being off,
  * written by `compose_snapshot` over whatever the trade state held. Only the

@@ -15,7 +15,7 @@
 	 * the middle column entirely rather than leaving an empty one.
 	 */
 	import type { Snippet } from 'svelte';
-	import type { TradeListingRow } from '$lib/tradeApi';
+	import { formatListingAmount, type TradeListingRow } from '$lib/tradeApi';
 
 	let {
 		rows,
@@ -41,10 +41,6 @@
 		rawCurrency?: boolean;
 	} = $props();
 
-	function fmtPrice(v: number): string {
-		return Number.isInteger(v) ? v.toString() : v.toFixed(1);
-	}
-
 	function formatTimeAgo(isoString: string): string {
 		const diff = Date.now() - new Date(isoString).getTime();
 		const mins = Math.floor(diff / 60000);
@@ -66,13 +62,13 @@
 			<div class="trade-listing-row" class:with-detail={!!detail}>
 				<span class="tl-col-price">
 					{#if rawCurrency}
-						{fmtPrice(row.amount)}
+						{formatListingAmount(row.amount)}
 						{row.currency}
 					{:else if row.currency === 'divine'}
-						{fmtPrice(row.amount)} div
-						<span class="tl-original">({fmtPrice(row.chaosPrice)}c)</span>
+						{formatListingAmount(row.amount)} div
+						<span class="tl-original">({formatListingAmount(row.chaosPrice)}c)</span>
 					{:else}
-						{fmtPrice(row.amount)}c
+						{formatListingAmount(row.amount)}c
 					{/if}
 				</span>
 				{#if detail}

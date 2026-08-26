@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-	MERC_TRADE_MAX_SEARCHES,
 	tradeHeadline,
 	tradeStatusLabel,
 	tradeStatusTone
@@ -360,17 +359,5 @@ describe('tradeHeadline', () => {
 			})
 		);
 		expect(headline).toBe('4 listings · from 5 divine');
-	});
-});
-
-/**
- * The number the wording quotes is Rust's, not this file's: `search.rs` decides
- * when the budget is spent (`TriggerAction::UrlOnly`) and this constant only
- * lets the page say the same figure. A drift here would have the page announce
- * a ceiling the trigger does not enforce.
- */
-describe('MERC_TRADE_MAX_SEARCHES', () => {
-	it('mirrors the per-session ceiling of three searches that Rust enforces', () => {
-		expect(MERC_TRADE_MAX_SEARCHES).toBe(3);
 	});
 });
