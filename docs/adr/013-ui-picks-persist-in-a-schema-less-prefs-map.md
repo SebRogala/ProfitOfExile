@@ -58,12 +58,17 @@ Key naming: camelCase, surface-prefixed — `rankingsSort`, `rankingsColor`,
 - `show_low_confidence` predates this decision and keeps its typed field; the
   migration is not worth the settings-file churn. New view-only picks must not
   follow its pattern.
-- The 2026-08-25 amendment has one instance: `mercSourcesOff` (which guides take
+- The 2026-08-25 amendment's first instance is `mercSourcesOff` (which guides take
   part in the merc verdict) became `Settings.merc_sources_off`, echoed into the
   `mercenary` SSOT slice, when the verdict overlay started reading it. The map's
   fetch-once-per-webview, notify-nobody delivery is the reason — the page and the
   overlay could have printed different headlines for one mercenary. The old key
   seeds the new field once and is ignored afterwards.
+- The amendment's second instance is POE-202: `merc_trade_auto` and
+  `merc_tier_floor` are typed `Settings` fields echoed onto the `mercenary`
+  slice as `tradeAuto` / `tierFloor`, because the Rust trigger loop reads
+  both on every tick and the merc overlay is expected to read the state they
+  produce.
 - The desktop map loads asynchronously after mount, so components start on
   defaults and snap to the stored value when the load lands (the same
   start-default-then-overwrite pattern the low-confidence toggle established).

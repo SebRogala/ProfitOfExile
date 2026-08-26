@@ -100,6 +100,25 @@ Automatic lookup is disabled by default. When enabled, the desktop comparator ex
 
 This setting controls when the user's desktop performs native GGG lookup requests. It is separate from contribution consent, server cache retention, and analysis trade-data freshness weighting.
 
+### Mercenary capture auto-search
+
+**Current behavior:** Implemented (POE-202). Desktop-only; the server knows nothing about mercenary listings.
+
+This is the second automatic path through the native lookup, and it is not governed by the stale-refresh setting above. When the mercenary module has fully read a recruit window, the desktop builds a trade query for that exact mercenary and searches for it without the user asking.
+
+- It has its own toggle, `merc_trade_auto`, default **on**. It is independent of the comparator's automatic stale refresh (default off) and of contribution consent.
+- A trade session opens at the capture's first complete edge, not at the first detect: a half-read panel builds a query for a mercenary nobody has. Retiring the recruit window closes the session and cancels a lookup that is still queued or in flight; a search that had already answered keeps its result on the slice, because the retired capture's verdict stays on screen and the listings are part of it.
+- The policy is re-evaluated on the capture loop's own cadence — every 100 ms with the game focused, every second without — so the bounds are what keep it from searching on every tick:
+  - at most three searches per capture session; once the budget is spent the app stops asking GGG and hands the user the trade-site link instead;
+  - a changed query hash must hold still for two seconds before it is worth a search, because hover-confirms keep correcting cells after the capture settles;
+  - results are cached by query hash for fifteen minutes, so retiring and re-detecting the same window is answered from the cache rather than out of the new session's budget.
+- An unresolved league is not enqueued. The state is `waiting-league`; the lookup never guesses a league.
+- The path is local by construction: it calls `TradeApiClient::lookup_query(TradeSource::Mercenary)` directly rather than the `trade_lookup` command, so no branch in it can reach `/api/trade/submit`. Mercenary results are never contributed to the shared pool, and no server feature flag governs them.
+- Mercenary and gem lookups share the one native queue and limiter. Queue events carry a `source` (`gem` or `mercenary`) and each surface ignores the other's. The queue's `Done` event means the fetch succeeded — not that a caller accepted or displayed the result.
+- Prices come back as the sellers' own amounts in the sellers' own currencies. There is no divine-to-chaos rate on the Rust side, so `chaos_price` is the raw seller number and the row order is left as GGG returned it under `sort.price=asc` — the only value ordering in this path computed by a party that knows the rates.
+
+**Deferred:** the native lookup path answers a GGG 429 with an error message and does not read the response's `Retry-After` header; the only wait it observes is its own limiter's. That was deferred deliberately under POE-202 and is tracked as a follow-up.
+
 ## 3. Desktop contribution to the shared pool
 
 **Current behavior:** Successful native lookups make a best-effort, fire-and-forget server submission.  
