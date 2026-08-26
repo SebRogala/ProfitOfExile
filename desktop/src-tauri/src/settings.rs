@@ -666,6 +666,86 @@ mod tests {
         assert_eq!(slice.profile, settings.temple_profile);
     }
 
+    /// A file written before POE-202 carries neither trade field. The
+    /// auto-search must come up ON and the floor at "exactly as read" — a
+    /// `bool`/`u8` default would give false and 0, which is a tier that does
+    /// not exist.
+    #[test]
+    fn a_settings_file_without_the_trade_fields_loads_the_shipped_defaults() {
+        let parsed: Settings = serde_json::from_str(r#"{"server_url":"https://kept.example"}"#)
+            .expect("an older file must still parse");
+        let state = test_app_state();
+
+        let _ = apply_to_state(&parsed, &state);
+
+        assert!(*state.merc_trade_auto.lock().unwrap(), "the auto-search ships on");
+        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 3);
+    }
+
+    /// A hand-edited 0 is a user asking for the loosest search there is.
+    /// Clamped UP to the loosest tier that exists — resetting to the shipped 3
+    /// would answer "as loose as possible" with the tightest query there is —
+    /// and reported, because the file and the running value now disagree.
+    #[test]
+    fn a_tier_floor_below_the_lowest_tier_is_clamped_to_it_and_reported() {
+        let settings = Settings { merc_tier_floor: 0, ..Settings::default() };
+        let state = test_app_state();
+
+        let rejected = apply_to_state(&settings, &state);
+
+        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 1);
+        assert!(
+            rejected.iter().any(|line| line.contains("tier floor 0") && line.contains("using 1")),
+            "the disagreement must be surfaced: {rejected:?}",
+        );
+    }
+
+    /// …and the other end, where the clamp goes the other way.
+    #[test]
+    fn a_tier_floor_above_the_highest_tier_is_clamped_to_it_and_reported() {
+        let settings = Settings { merc_tier_floor: 9, ..Settings::default() };
+        let state = test_app_state();
+
+        let rejected = apply_to_state(&settings, &state);
+
+        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 3);
+        assert!(
+            rejected.iter().any(|line| line.contains("tier floor 9") && line.contains("using 3")),
+            "the disagreement must be surfaced: {rejected:?}",
+        );
+    }
+
+    /// The clamp must not touch a tier that IS a tier, and must say nothing
+    /// about it — a rejection line for a legal value would train the user to
+    /// ignore the list.
+    #[test]
+    fn a_tier_floor_inside_the_range_is_applied_as_written() {
+        let settings = Settings { merc_tier_floor: 2, ..Settings::default() };
+        let state = test_app_state();
+
+        let rejected = apply_to_state(&settings, &state);
+
+        assert_eq!(*state.merc_tier_floor.lock().unwrap(), 2);
+        assert!(!rejected.iter().any(|line| line.contains("tier floor")), "{rejected:?}");
+    }
+
+    /// The two commands persist through this path, so a user who switches the
+    /// auto-search off and loosens the floor must find both still set on the
+    /// next launch.
+    #[test]
+    fn the_trade_toggle_and_floor_round_trip_through_state() {
+        let state = test_app_state();
+        *state.merc_trade_auto.lock().unwrap() = false;
+        *state.merc_tier_floor.lock().unwrap() = 1;
+
+        let saved = from_state(&state);
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        assert!(!*reloaded.merc_trade_auto.lock().unwrap());
+        assert_eq!(*reloaded.merc_tier_floor.lock().unwrap(), 1);
+    }
+
     /// A settings file written before POE-199 carries the guide set only in
     /// the ADR-013 preference map. Loading it must move the user's choice
     /// across once, or every guide they switched off comes back on.

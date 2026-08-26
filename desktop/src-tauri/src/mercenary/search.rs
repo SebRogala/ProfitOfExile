@@ -823,10 +823,7 @@ pub fn close_session(app: &AppHandle) {
     let state = app.state::<AppState>();
     let in_flight = {
         let slice = state.mercenary.lock().unwrap_or_else(|e| e.into_inner());
-        matches!(
-            slice.trade.status,
-            MercTradeStatus::Queued | MercTradeStatus::Searching
-        )
+        cancels_on_close(slice.trade.status)
     };
     if in_flight {
         state.trade_client.cancel(TradeSource::Mercenary);
@@ -867,11 +864,7 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                     // page shows two states.
                     if matches!(event, TradeQueueEvent::Fetching { .. }) {
                         publish(&emit_app, |slice| {
-                            if slice.trade.query_hash.as_deref() == Some(emit_hash.as_str())
-                                && slice.trade.status == MercTradeStatus::Queued
-                            {
-                                slice.trade.status = MercTradeStatus::Searching;
-                            }
+                            note_fetching(&mut slice.trade, &emit_hash)
                         });
                     }
                     use tauri::Emitter;
@@ -918,17 +911,7 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                         if result.truncated { " (truncated query)" } else { "" },
                     ),
                 );
-                publish(&app, |slice| {
-                    // A result that no longer answers the slice's question is
-                    // dropped whole: the capture moved on while this was in
-                    // flight (a hover-confirm, a rematch, a tier-floor change).
-                    if slice.trade.query_hash.as_deref() != Some(hash.as_str()) {
-                        return;
-                    }
-                    slice.trade.status = MercTradeStatus::Done;
-                    slice.trade.result = Some(result);
-                    slice.trade.error = None;
-                });
+                publish(&app, |slice| accept_result(&mut slice.trade, &hash, result));
             }
             // A cancel normally comes with its own publish — `close_session`
             // sets `Idle` before this task wakes — so the canceller owns the
@@ -942,25 +925,76 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                 if e != CANCELLED {
                     crate::app_log(&app, format!("Merc trade error: {label} — {e}"));
                 }
-                publish(&app, |slice| {
-                    if slice.trade.query_hash.as_deref() != Some(hash.as_str()) {
-                        return;
-                    }
-                    if e == CANCELLED
-                        && !matches!(
-                            slice.trade.status,
-                            MercTradeStatus::Queued | MercTradeStatus::Searching
-                        )
-                    {
-                        return;
-                    }
-                    slice.trade.status = MercTradeStatus::Error;
-                    slice.trade.error = Some(e);
-                    slice.trade.result = None;
-                });
+                publish(&app, |slice| accept_error(&mut slice.trade, &hash, e));
             }
         }
     });
+}
+
+/// Whether a retiring capture has a lookup on the shared queue worth
+/// cancelling.
+///
+/// The two in-flight statuses and no others. Not because a needless
+/// `cancel(Mercenary)` would latch — it bumps an epoch only queued lookups
+/// compare against — but because [`close_session`] publishes `Idle` in the
+/// same breath, and doing that from `Done` would throw away the retired
+/// capture's answer.
+fn cancels_on_close(status: MercTradeStatus) -> bool {
+    matches!(
+        status,
+        MercTradeStatus::Queued | MercTradeStatus::Searching
+    )
+}
+
+/// The queue says this lookup's request is going out now.
+///
+/// The hash guard is what keeps a slow lookup from relabelling the capture
+/// that replaced it, and the `Queued` guard keeps the event from reviving a
+/// session something else has already finished, cancelled or failed.
+fn note_fetching(trade: &mut crate::mercenary::MercTradeState, hash: &str) {
+    if trade.query_hash.as_deref() == Some(hash) && trade.status == MercTradeStatus::Queued {
+        trade.status = MercTradeStatus::Searching;
+    }
+}
+
+/// A lookup came back with listings.
+///
+/// A result that no longer answers the slice's question is dropped whole: the
+/// capture moved on while this was in flight (a hover-confirm, a rematch, a
+/// tier-floor change), and showing one mercenary's prices under another's link
+/// is worse than showing none.
+fn accept_result(
+    trade: &mut crate::mercenary::MercTradeState,
+    hash: &str,
+    result: MercTradeResult,
+) {
+    if trade.query_hash.as_deref() != Some(hash) {
+        return;
+    }
+    trade.status = MercTradeStatus::Done;
+    trade.result = Some(result);
+    trade.error = None;
+}
+
+/// A lookup came back with an error.
+///
+/// Dropped on a stale hash for the same reason a result is. A cancel normally
+/// comes with its own publish — [`close_session`] sets `Idle` before this task
+/// wakes — so the canceller owns the state and this leaves it alone. The one
+/// case it must NOT leave alone is a slice still reading `Queued`/`Searching`:
+/// the cancel epoch can stop a lookup whose session never published anything
+/// about it (a cancel landing between the enqueue and the snapshot), and
+/// without this that session waits for a result that is never coming.
+fn accept_error(trade: &mut crate::mercenary::MercTradeState, hash: &str, error: String) {
+    if trade.query_hash.as_deref() != Some(hash) {
+        return;
+    }
+    if error == CANCELLED && !cancels_on_close(trade.status) {
+        return;
+    }
+    trade.status = MercTradeStatus::Error;
+    trade.error = Some(error);
+    trade.result = None;
 }
 
 /// Shape one [`RawSearch`] into the result the slice carries, plus how many
@@ -1129,4 +1163,922 @@ pub fn merc_set_tier_floor(floor: u8, app: AppHandle) -> Result<(), String> {
     crate::ssot::emit_ssot(&app);
     crate::app_log(&app, format!("Merc: trade tier floor set to {accepted}"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mercenary::vocab::{MercRole, MercStat};
+    use crate::mercenary::{MercSkillRead, MercSupportRead, MercTradeState, ReadState};
+
+    // -----------------------------------------------------------------------
+    // Fixtures
+    // -----------------------------------------------------------------------
+
+    fn skill(id: &str) -> MercSkillRead {
+        MercSkillRead {
+            raw: "Ice Shot".to_string(),
+            ids: vec![id.to_string()],
+            name: Some("Ice Shot".to_string()),
+            score: 0.99,
+            state: ReadState::Matched,
+        }
+    }
+
+    fn support(
+        ids: &[&str],
+        family: Option<&str>,
+        tier: Option<u8>,
+        state: ReadState,
+    ) -> MercSupportRead {
+        MercSupportRead {
+            slot: 0,
+            rect: [0, 0, 0, 0],
+            family: family.map(|f| f.to_string()),
+            tier,
+            ids: ids.iter().map(|id| id.to_string()).collect(),
+            name: None,
+            score: 0.95,
+            state,
+            candidates: Vec::new(),
+        }
+    }
+
+    fn row(index: u8, skill_id: &str, supports: Vec<MercSupportRead>) -> MercRow {
+        MercRow {
+            index,
+            skill: skill(skill_id),
+            supports,
+        }
+    }
+
+    fn capture(rows: Vec<MercRow>) -> MercCapture {
+        MercCapture {
+            rows,
+            ..Default::default()
+        }
+    }
+
+    /// A vocabulary with nothing in it — every builder test that is not about
+    /// tier loosening uses this, so a cell contributes exactly what was read.
+    fn no_vocab() -> MercVocab {
+        MercVocab::from_stats(Vec::new())
+    }
+
+    fn stat(id: &str, family: &str, tier: u8) -> MercStat {
+        MercStat {
+            id: id.to_string(),
+            name: format!("{family} (Tier {tier})"),
+            qualified: family.to_string(),
+            family: family.to_string(),
+            role: MercRole::Support,
+            tier: Some(tier),
+        }
+    }
+
+    /// One family across all three grades, with the tier-3 collision the icon
+    /// read cannot resolve on its own (Greater vs Gilded).
+    fn chain_vocab() -> MercVocab {
+        MercVocab::from_stats(vec![
+            stat("sup_lesser_chain", "Chain", 1),
+            stat("sup_chain", "Chain", 2),
+            stat("sup_greater_chain", "Chain", 3),
+            stat("sup_gilded_chain", "Chain", 3),
+        ])
+    }
+
+    fn groups(query: &CaptureQuery) -> Vec<Value> {
+        query.body["query"]["stats"]
+            .as_array()
+            .expect("the body carries a stats array")
+            .clone()
+    }
+
+    fn group_ids(group: &Value) -> Vec<String> {
+        group["filters"]
+            .as_array()
+            .expect("a group carries filters")
+            .iter()
+            .map(|f| f["id"].as_str().expect("a filter carries an id").to_string())
+            .collect()
+    }
+
+    fn group_min(group: &Value) -> u64 {
+        group["value"]["min"].as_u64().expect("a row group carries value.min")
+    }
+
+    // -----------------------------------------------------------------------
+    // The query builder
+    // -----------------------------------------------------------------------
+
+    /// The probe's arithmetic: one `mercenary` group per row, and the minimum
+    /// counts CELLS. A group asking for 3 of 3 ids matches nothing the moment
+    /// one cell resolves to a set.
+    #[test]
+    fn a_row_becomes_one_group_whose_minimum_counts_its_cells() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![
+                support(&["sup_a"], None, None, ReadState::Matched),
+                support(&["sup_b"], None, None, ReadState::Confirmed),
+            ],
+        )]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("a confident row builds");
+
+        let groups = groups(&query);
+        assert_eq!(groups.len(), 1, "one group per row, never an `and`: {groups:?}");
+        assert_eq!(groups[0]["type"], "mercenary");
+        assert_eq!(group_min(&groups[0]), 3, "the skill and both supports");
+        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a", "sup_b"]);
+        assert_eq!(query.filter_count, 3);
+        assert!(!query.truncated, "nothing was dropped");
+    }
+
+    /// Every row is its own group. Folding two rows into one would comp row
+    /// 1's skill against row 2's support — a mercenary nobody has.
+    #[test]
+    fn each_row_gets_its_own_group() {
+        let capture = capture(vec![
+            row(0, "skill_a", vec![support(&["sup_a"], None, None, ReadState::Matched)]),
+            row(1, "skill_b", vec![support(&["sup_b"], None, None, ReadState::Matched)]),
+        ]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("both rows build");
+
+        let groups = groups(&query);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a"]);
+        assert_eq!(group_ids(&groups[1]), ["skill_b", "sup_b"]);
+    }
+
+    /// A cell the icon read could not narrow to one support contributes all of
+    /// its ids and still counts ONCE: at most one of them is on the row, so a
+    /// minimum that counted ids would make the row unmatchable.
+    #[test]
+    fn a_cell_that_reads_as_several_ids_contributes_all_of_them_and_counts_once() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_a1", "sup_a2"], None, None, ReadState::Matched)],
+        )]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("a confident row builds");
+
+        let groups = groups(&query);
+        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a1", "sup_a2"]);
+        assert_eq!(group_min(&groups[0]), 2, "the skill and ONE support cell");
+    }
+
+    /// Defensive path — `read::capture_complete` only calls a capture complete
+    /// when every cell is confident, so the settle edge never carries one of
+    /// these. A caller that asks earlier must still get a query that means
+    /// what it says: an unread cell asks for nothing rather than for anything.
+    #[test]
+    fn a_support_that_was_not_confidently_read_is_left_out_of_its_row() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![
+                support(&["sup_a"], None, None, ReadState::Matched),
+                support(&["sup_b"], None, None, ReadState::Unknown),
+                support(&["sup_c"], None, None, ReadState::LowConfidence),
+                support(&["sup_d"], None, None, ReadState::Ambiguous),
+            ],
+        )]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("the confident cells build");
+
+        let groups = groups(&query);
+        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a"]);
+        assert_eq!(group_min(&groups[0]), 2, "three unread cells raise no minimum");
+    }
+
+    /// Defensive path, same reason. The skill is what makes a row a row: a
+    /// group of supports with no skill comps every mercenary carrying those
+    /// links, so the row is dropped whole rather than weakened.
+    #[test]
+    fn a_row_whose_skill_was_not_confidently_read_is_dropped_whole() {
+        let mut second = row(1, "skill_b", vec![support(&["sup_b"], None, None, ReadState::Matched)]);
+        second.skill.state = ReadState::LowConfidence;
+        let capture = capture(vec![
+            row(0, "skill_a", vec![support(&["sup_a"], None, None, ReadState::Matched)]),
+            second,
+        ]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("the confident row builds");
+
+        let groups = groups(&query);
+        assert_eq!(groups.len(), 1, "the unread row must not become a support-only group");
+        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a"]);
+    }
+
+    /// Nothing expressible is not an empty search — an empty `stats` array
+    /// would ask GGG for every mercenary in the league.
+    #[test]
+    fn a_capture_with_no_readable_row_has_no_query_at_all() {
+        let mut only = row(0, "skill_a", vec![support(&["sup_a"], None, None, ReadState::Matched)]);
+        only.skill.state = ReadState::Unknown;
+
+        assert!(build_capture_query(&capture(vec![only]), &no_vocab(), 3).is_none());
+    }
+
+    /// The floor is where the loosening stops. At 1 the row accepts every
+    /// weaker grade of the family — and NOT the other tier-3 grade, which is a
+    /// different support the hover confirmed this cell is not.
+    #[test]
+    fn a_confirmed_tier_3_cell_at_floor_1_gains_the_weaker_grades_but_not_its_tier_3_sibling() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_greater_chain"], Some("Chain"), Some(3), ReadState::Confirmed)],
+        )]);
+
+        let query = build_capture_query(&capture, &chain_vocab(), 1).expect("the row builds");
+
+        let groups = groups(&query);
+        assert_eq!(
+            group_ids(&groups[0]),
+            ["skill_a", "sup_greater_chain", "sup_lesser_chain", "sup_chain"],
+        );
+        assert!(
+            !group_ids(&groups[0]).contains(&"sup_gilded_chain".to_string()),
+            "re-widening a confirmed grade would undo the hover that confirmed it",
+        );
+        assert_eq!(group_min(&groups[0]), 2, "a loosened cell is still one cell");
+    }
+
+    /// The shipped default: the mercenary exactly as read, nothing added.
+    #[test]
+    fn the_exact_floor_asks_only_for_what_was_read() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_greater_chain"], Some("Chain"), Some(3), ReadState::Confirmed)],
+        )]);
+
+        let query = build_capture_query(&capture, &chain_vocab(), 3).expect("the row builds");
+
+        assert_eq!(group_ids(&groups(&query)[0]), ["skill_a", "sup_greater_chain"]);
+    }
+
+    /// The boundary between the two: a floor of 2 names tier 2 and stops. The
+    /// range is `floor..tier`, so an off-by-one at either end shows up here.
+    #[test]
+    fn a_floor_of_2_adds_the_middle_grade_and_not_the_lowest() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_greater_chain"], Some("Chain"), Some(3), ReadState::Confirmed)],
+        )]);
+
+        let query = build_capture_query(&capture, &chain_vocab(), 2).expect("the row builds");
+
+        assert_eq!(
+            group_ids(&groups(&query)[0]),
+            ["skill_a", "sup_greater_chain", "sup_chain"],
+        );
+    }
+
+    /// A floor outside 1..=3 is clamped rather than refused — the settings
+    /// loader clamps too, and a query builder that panicked or widened without
+    /// bound on a hand-edited file would take the whole capture down with it.
+    #[test]
+    fn a_floor_below_the_lowest_tier_is_clamped_to_it() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_greater_chain"], Some("Chain"), Some(3), ReadState::Confirmed)],
+        )]);
+
+        let floor_0 = build_capture_query(&capture, &chain_vocab(), 0).expect("the row builds");
+        let floor_1 = build_capture_query(&capture, &chain_vocab(), 1).expect("the row builds");
+
+        assert_eq!(floor_0.hash, floor_1.hash, "0 must ask exactly what 1 asks");
+    }
+
+    /// Five families' worth of loosening blows the 35-filter cap. The app's own
+    /// widening goes first — the user did not read those grades off the panel,
+    /// and every cell they DID read is still in the query afterwards.
+    #[test]
+    fn a_query_over_the_cap_drops_the_loosening_before_any_cell() {
+        let vocab = MercVocab::from_stats(
+            (0..5)
+                .flat_map(|f| {
+                    (1..=2).flat_map(move |t| {
+                        (0..3).map(move |n| stat(&format!("sup_f{f}_t{t}_{n}"), &format!("F{f}"), t))
+                    })
+                })
+                .collect(),
+        );
+        let rows = (0..2)
+            .map(|r| {
+                row(
+                    r,
+                    &format!("skill_{r}"),
+                    (0..4)
+                        .map(|f| {
+                            support(
+                                &[&format!("sup_read_{r}_{f}")],
+                                Some(&format!("F{f}")),
+                                Some(3),
+                                ReadState::Matched,
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let capture = capture(rows);
+
+        let loose = build_capture_query(&capture, &vocab, 1).expect("the rows build");
+
+        assert!(loose.truncated, "the user must be told the search was widened less than asked");
+        assert_eq!(loose.filter_count, 10, "2 rows of skill + 4 read cells");
+        let groups = groups(&loose);
+        assert_eq!(group_min(&groups[0]), 5, "every cell the capture read is kept");
+        assert_eq!(group_min(&groups[1]), 5);
+        assert!(
+            !group_ids(&groups[0]).iter().any(|id| id.starts_with("sup_f")),
+            "no expanded grade may survive the cap: {:?}",
+            group_ids(&groups[0]),
+        );
+    }
+
+    /// Still over the cap with no loosening left to drop: support cells go
+    /// from the LAST row inward, and every row keeps its skill.
+    #[test]
+    fn a_query_over_the_cap_at_the_exact_floor_drops_cells_from_the_last_row_inward() {
+        let rows = (0..5)
+            .map(|r| {
+                row(
+                    r,
+                    &format!("skill_{r}"),
+                    (0..7)
+                        .map(|c| support(&[&format!("sup_{r}_{c}")], None, None, ReadState::Matched))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        let query = build_capture_query(&capture(rows), &no_vocab(), 3).expect("the rows build");
+
+        assert!(query.truncated);
+        assert_eq!(query.filter_count, MAX_FILTERS, "degraded to the cap, not past it");
+        let groups = groups(&query);
+        assert_eq!(group_min(&groups[0]), 8, "the first row is untouched");
+        assert_eq!(group_min(&groups[4]), 3, "five cells came off the last row");
+        assert_eq!(group_ids(&groups[4])[0], "skill_4", "a row never loses its skill");
+    }
+
+    /// The query the whole feature is built on: securable, priced, cheapest
+    /// first. An ilvl filter or a `collapse` would answer a different question
+    /// than "what does THIS mercenary sell for".
+    #[test]
+    fn the_query_asks_for_securable_priced_listings_cheapest_first() {
+        let capture = capture(vec![row(0, "skill_a", vec![])]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("a bare skill row builds");
+
+        assert_eq!(query.body["query"]["status"]["option"], "securable");
+        assert_eq!(
+            query.body["query"]["filters"]["trade_filters"]["filters"]["sale_type"]["option"],
+            "priced",
+        );
+        assert_eq!(query.body["sort"]["price"], "asc");
+        assert!(
+            query.body["query"]["filters"]["misc_filters"].is_null(),
+            "no ilvl floor: {}",
+            query.body,
+        );
+    }
+
+    /// The hash is the capture's identity across the cache, the dedupe and the
+    /// late-result discard. Two captures asking the same question share it.
+    #[test]
+    fn two_captures_asking_the_same_question_share_a_hash() {
+        let one = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_a"], None, None, ReadState::Matched)],
+        )]);
+        let two = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_a"], None, None, ReadState::Confirmed)],
+        )]);
+
+        let one = build_capture_query(&one, &no_vocab(), 3).expect("builds");
+        let two = build_capture_query(&two, &no_vocab(), 3).expect("builds");
+
+        assert_eq!(
+            one.hash, two.hash,
+            "a hover-confirm of a cell already matched asks the same question",
+        );
+    }
+
+    /// …and a capture asking a different one does not, or a hover-confirm that
+    /// corrects a cell would be answered out of the cache with the wrong
+    /// mercenary's listings.
+    #[test]
+    fn a_corrected_cell_changes_the_hash() {
+        let before = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_a"], None, None, ReadState::Matched)],
+        )]);
+        let after = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_b"], None, None, ReadState::Confirmed)],
+        )]);
+
+        let before = build_capture_query(&before, &no_vocab(), 3).expect("builds");
+        let after = build_capture_query(&after, &no_vocab(), 3).expect("builds");
+
+        assert_ne!(before.hash, after.hash);
+    }
+
+    /// Row order is part of the question: the hash must not collapse two
+    /// different mercenaries onto one cache entry.
+    #[test]
+    fn two_captures_whose_rows_differ_do_not_share_a_hash() {
+        let one = capture(vec![row(0, "skill_a", vec![]), row(1, "skill_b", vec![])]);
+        let two = capture(vec![row(0, "skill_b", vec![]), row(1, "skill_a", vec![])]);
+
+        let one = build_capture_query(&one, &no_vocab(), 3).expect("builds");
+        let two = build_capture_query(&two, &no_vocab(), 3).expect("builds");
+
+        assert_ne!(one.hash, two.hash, "the stats array is ordered data");
+    }
+
+    // -----------------------------------------------------------------------
+    // The trade-site link
+    // -----------------------------------------------------------------------
+
+    /// `%XX` back to bytes — the inverse of the JS `encodeURIComponent` the
+    /// link is built with.
+    fn percent_decode(raw: &str) -> String {
+        let bytes = raw.as_bytes();
+        let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("ascii hex");
+                out.push(u8::from_str_radix(hex, 16).expect("a percent escape is hex"));
+                i += 3;
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).expect("the encoding is UTF-8")
+    }
+
+    /// Parity with `derivedSearchUrl` (`lib/mercenaries/trade-links.ts`): the
+    /// `q` parameter carries `{"query": ...}` and NO `sort`, because the trade
+    /// site owns the sort control. Compared as JSON, not as text — `serde_json`
+    /// renders keys sorted while the TS object literal keeps insertion order,
+    /// so the two encoded strings name one search without matching byte for
+    /// byte.
+    #[test]
+    fn the_link_carries_the_same_query_object_the_typescript_builder_sends() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_a"], None, None, ReadState::Matched)],
+        )]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        let url = capture_url("Allflame", &query);
+
+        let (base, encoded) = url.split_once("?q=").expect("the link carries a q parameter");
+        assert_eq!(base, "https://www.pathofexile.com/trade/search/Allflame");
+        let decoded: Value =
+            serde_json::from_str(&percent_decode(encoded)).expect("q decodes to JSON");
+        assert_eq!(
+            decoded,
+            json!({
+                "query": {
+                    "stats": [{
+                        "type": "mercenary",
+                        "value": {"min": 2},
+                        "filters": [{"id": "skill_a"}, {"id": "sup_a"}],
+                    }],
+                    "status": {"option": "securable"},
+                    "filters": {"trade_filters": {"filters": {"sale_type": {"option": "priced"}}}},
+                }
+            }),
+        );
+        assert!(
+            decoded.get("sort").is_none(),
+            "the request body's sort must not ride along into the link",
+        );
+    }
+
+    /// The league is a path segment encoded the way `encodeURIComponent` does
+    /// it — a raw space would make the link 404 on a two-word league.
+    #[test]
+    fn a_league_with_a_space_is_percent_encoded_in_the_link() {
+        let capture = capture(vec![row(0, "skill_a", vec![])]);
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+
+        let url = capture_url("Hardcore Allflame", &query);
+
+        assert!(
+            url.starts_with("https://www.pathofexile.com/trade/search/Hardcore%20Allflame?q="),
+            "got {url}",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The trigger policy
+    // -----------------------------------------------------------------------
+
+    fn query_of(tag: &str) -> CaptureQuery {
+        CaptureQuery {
+            body: json!({"query": {"stats": [tag]}}),
+            hash: format!("hash-{tag}"),
+            filter_count: 1,
+            truncated: false,
+        }
+    }
+
+    /// The ordinary input: auto on, league known, nothing cached.
+    fn live(query: &CaptureQuery) -> TriggerInput<'_> {
+        TriggerInput {
+            auto: true,
+            query: Some(query),
+            league_resolved: true,
+            cached: false,
+        }
+    }
+
+    /// Hand the session a query and let the debounce window pass, returning
+    /// what it settles on. Only valid where the first call debounces.
+    fn after_debounce(
+        session: &mut MercTradeSession,
+        query: &CaptureQuery,
+        at: u64,
+    ) -> TriggerAction {
+        assert_eq!(
+            decide(session, live(query), at),
+            TriggerAction::Debounce,
+            "precondition: a query that has just moved is not acted on",
+        );
+        decide(session, live(query), at + DEBOUNCE_MS)
+    }
+
+    /// Every hover-confirm moves the hash. Searching each one would spend the
+    /// session's whole budget correcting a single capture, so the changes
+    /// coalesce: only the query that stopped moving is searched for.
+    #[test]
+    fn several_hash_changes_inside_the_debounce_window_cost_one_search() {
+        let mut session = MercTradeSession::new();
+        let (first, second, third) = (query_of("a"), query_of("b"), query_of("c"));
+
+        assert_eq!(decide(&mut session, live(&first), 0), TriggerAction::Debounce);
+        assert_eq!(decide(&mut session, live(&second), 500), TriggerAction::Debounce);
+        assert_eq!(decide(&mut session, live(&third), 1_000), TriggerAction::Debounce);
+        assert_eq!(decide(&mut session, live(&third), 3_000), TriggerAction::Enqueue);
+
+        assert_eq!(session.searches_used, 1, "three corrections, one search");
+    }
+
+    /// The loop asks ten times a second. A hash already answered asks for
+    /// nothing at all — not a re-publish, and certainly not a second search.
+    #[test]
+    fn a_hash_the_session_has_already_acted_on_asks_for_nothing() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+
+        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::None);
+        assert_eq!(session.searches_used, 1);
+    }
+
+    /// The ceiling: after three searches the session stops asking GGG and
+    /// hands the user the link instead.
+    #[test]
+    fn the_fourth_query_of_a_session_is_answered_with_the_link_instead_of_a_search() {
+        let mut session = MercTradeSession::new();
+        let queries = [query_of("a"), query_of("b"), query_of("c"), query_of("d")];
+        let mut at = 0;
+        for query in &queries[..MAX_SEARCHES as usize] {
+            assert_eq!(after_debounce(&mut session, query, at), TriggerAction::Enqueue);
+            at += 10_000;
+        }
+
+        let action = after_debounce(&mut session, &queries[3], at);
+
+        assert_eq!(action, TriggerAction::UrlOnly);
+        assert_eq!(session.searches_used, MAX_SEARCHES, "the ceiling holds");
+    }
+
+    /// A re-detected window asks the same question as the one that retired;
+    /// the cache answers it for free, so the fresh budget stays unspent.
+    #[test]
+    fn a_cached_hash_is_published_without_spending_a_search() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+
+        let action = decide(
+            &mut session,
+            TriggerInput { cached: true, ..live(&query) },
+            0,
+        );
+
+        assert_eq!(action, TriggerAction::PublishCached);
+        assert_eq!(session.searches_used, 0, "a cache hit is not a search");
+    }
+
+    /// The user's toggle. Published once — the caller asks at the capture
+    /// loop's cadence, and a re-publish is a slice clone ten times a second.
+    #[test]
+    fn auto_off_publishes_idle_once() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        let off = TriggerInput { auto: false, ..live(&query) };
+
+        assert_eq!(decide(&mut session, off, 0), TriggerAction::SetIdle);
+        assert_eq!(decide(&mut session, off, 100), TriggerAction::None);
+    }
+
+    /// No league, no search: the trade site cannot be addressed without one,
+    /// and guessing comps the capture against another economy.
+    #[test]
+    fn an_unresolved_league_waits_instead_of_searching() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        let no_league = TriggerInput { league_resolved: false, ..live(&query) };
+
+        assert_eq!(decide(&mut session, no_league, 0), TriggerAction::SetWaitingLeague);
+        assert_eq!(decide(&mut session, no_league, 100), TriggerAction::None);
+        assert_eq!(session.searches_used, 0);
+    }
+
+    /// A capture that stops being expressible has to clear its link and
+    /// listings, and only the `NoQuery` refusal does that. Deduplicating it
+    /// against a standing auto-off would leave the previous capture's answer
+    /// on screen.
+    #[test]
+    fn a_capture_that_stops_being_expressible_publishes_again_under_a_standing_auto_off() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(
+            decide(&mut session, TriggerInput { auto: false, ..live(&query) }, 0),
+            TriggerAction::SetIdle,
+        );
+
+        let action = decide(
+            &mut session,
+            TriggerInput { auto: false, query: None, ..live(&query) },
+            1_000,
+        );
+
+        assert_eq!(action, TriggerAction::SetIdle, "the clear must not be swallowed");
+    }
+
+    /// A failed lookup is not an answer, so the hash it failed on is not one
+    /// either: the next publish may retry — against the same ceiling.
+    #[test]
+    fn the_hash_a_lookup_failed_on_is_searched_again() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+
+        session.state = MercTradeStatus::Error;
+
+        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::Enqueue);
+        assert_eq!(session.searches_used, 2, "a retry is still a search");
+    }
+
+    /// Leaving a settled refusal re-decides from scratch. Without that, the
+    /// `Idle` published over the answer would stand for the rest of the
+    /// capture and switching the toggle back on would go silent.
+    #[test]
+    fn switching_the_auto_search_back_on_republishes_the_answer() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+        assert_eq!(
+            decide(&mut session, TriggerInput { auto: false, ..live(&query) }, 5_000),
+            TriggerAction::SetIdle,
+        );
+
+        let action = decide(
+            &mut session,
+            TriggerInput { cached: true, ..live(&query) },
+            6_000,
+        );
+
+        assert_eq!(action, TriggerAction::PublishCached);
+    }
+
+    /// The budget belongs to the capture, not to the app run: the window that
+    /// replaces this one gets its own three searches.
+    #[test]
+    fn a_new_session_starts_with_a_full_search_budget() {
+        let mut spent = MercTradeSession::new();
+        let queries = [query_of("a"), query_of("b"), query_of("c"), query_of("d")];
+        let mut at = 0;
+        for query in &queries[..MAX_SEARCHES as usize] {
+            after_debounce(&mut spent, query, at);
+            at += 10_000;
+        }
+        assert_eq!(after_debounce(&mut spent, &queries[3], at), TriggerAction::UrlOnly);
+
+        let mut fresh = MercTradeSession::new();
+
+        assert_eq!(after_debounce(&mut fresh, &queries[3], at), TriggerAction::Enqueue);
+        assert_eq!(fresh.searches_used, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // What a finished lookup does to the slice
+    // -----------------------------------------------------------------------
+
+    fn merc_result(hash: &str) -> MercTradeResult {
+        MercTradeResult {
+            query_hash: hash.to_string(),
+            league: "Allflame".to_string(),
+            total: 7,
+            listings: Vec::new(),
+            floor_chaos: 0.0,
+            median_chaos: 0.0,
+            fetched_at_ms: 0,
+            truncated: false,
+        }
+    }
+
+    fn waiting_on(hash: &str, status: MercTradeStatus) -> MercTradeState {
+        MercTradeState {
+            status,
+            query_hash: Some(hash.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_result_for_the_hash_the_slice_is_waiting_on_lands_as_done() {
+        let mut trade = waiting_on("hash-a", MercTradeStatus::Searching);
+
+        accept_result(&mut trade, "hash-a", merc_result("hash-a"));
+
+        assert_eq!(trade.status, MercTradeStatus::Done);
+        assert_eq!(trade.result, Some(merc_result("hash-a")));
+    }
+
+    /// The capture moved on while the lookup was in flight — a hover-confirm,
+    /// a rematch, a tier-floor change. Showing those listings would put one
+    /// mercenary's prices under another's link.
+    #[test]
+    fn a_result_answering_a_question_the_capture_has_moved_on_from_is_discarded() {
+        let mut trade = waiting_on("hash-new", MercTradeStatus::Searching);
+
+        accept_result(&mut trade, "hash-old", merc_result("hash-old"));
+
+        assert_eq!(trade.status, MercTradeStatus::Searching, "the newer lookup still owns the slice");
+        assert_eq!(trade.result, None);
+    }
+
+    /// The retire published `Idle` before this task woke, so the canceller
+    /// owns the state. Writing `cancelled` over it would show a failure under
+    /// a link that works.
+    #[test]
+    fn a_cancel_that_lands_on_a_settled_slice_changes_nothing() {
+        let mut trade = waiting_on("hash-a", MercTradeStatus::Idle);
+
+        accept_error(&mut trade, "hash-a", CANCELLED.to_string());
+
+        assert_eq!(trade.status, MercTradeStatus::Idle);
+        assert_eq!(trade.error, None);
+    }
+
+    /// The case it must NOT leave alone: a cancel can stop a lookup whose
+    /// session never published anything about it, and that slice would
+    /// otherwise wait for a result that is never coming.
+    #[test]
+    fn a_cancel_that_lands_while_the_slice_still_waits_ends_the_wait() {
+        let mut trade = waiting_on("hash-a", MercTradeStatus::Queued);
+
+        accept_error(&mut trade, "hash-a", CANCELLED.to_string());
+
+        assert_eq!(trade.status, MercTradeStatus::Error);
+        assert_eq!(trade.error.as_deref(), Some(CANCELLED));
+    }
+
+    /// The deference is to CANCELS only. A real failure is reported wherever
+    /// the slice stands, or a lookup that errored after a cached publish would
+    /// leave stale listings looking live.
+    #[test]
+    fn a_real_failure_is_reported_over_a_settled_slice() {
+        let mut trade = waiting_on("hash-a", MercTradeStatus::Done);
+        trade.result = Some(merc_result("hash-a"));
+
+        accept_error(&mut trade, "hash-a", "Rate limited by GGG (429)".to_string());
+
+        assert_eq!(trade.status, MercTradeStatus::Error);
+        assert_eq!(trade.error.as_deref(), Some("Rate limited by GGG (429)"));
+        assert_eq!(trade.result, None, "the listings did not survive their own error");
+    }
+
+    #[test]
+    fn a_failure_answering_a_stale_hash_is_discarded() {
+        let mut trade = waiting_on("hash-new", MercTradeStatus::Queued);
+
+        accept_error(&mut trade, "hash-old", "boom".to_string());
+
+        assert_eq!(trade.status, MercTradeStatus::Queued);
+        assert_eq!(trade.error, None);
+    }
+
+    /// `Fetching` is the queue saying the request is going out now — the
+    /// difference between "waiting behind the rate limiter" and "asking GGG".
+    #[test]
+    fn the_fetching_event_moves_a_queued_lookup_to_searching() {
+        let mut trade = waiting_on("hash-a", MercTradeStatus::Queued);
+
+        note_fetching(&mut trade, "hash-a");
+
+        assert_eq!(trade.status, MercTradeStatus::Searching);
+    }
+
+    /// A slow lookup must not relabel the capture that replaced it.
+    #[test]
+    fn the_fetching_event_of_a_superseded_lookup_leaves_the_slice_alone() {
+        let mut trade = waiting_on("hash-new", MercTradeStatus::Queued);
+
+        note_fetching(&mut trade, "hash-old");
+
+        assert_eq!(trade.status, MercTradeStatus::Queued);
+    }
+
+    /// …nor revive a session something else has already finished or cancelled.
+    #[test]
+    fn the_fetching_event_does_not_revive_a_slice_that_is_no_longer_queued() {
+        let mut trade = waiting_on("hash-a", MercTradeStatus::Error);
+
+        note_fetching(&mut trade, "hash-a");
+
+        assert_eq!(trade.status, MercTradeStatus::Error);
+    }
+
+    /// A retire cancels the shared queue only from the two statuses that have
+    /// something on it.
+    #[test]
+    fn a_retire_cancels_the_queue_while_a_lookup_is_in_flight() {
+        assert!(cancels_on_close(MercTradeStatus::Queued));
+        assert!(cancels_on_close(MercTradeStatus::Searching));
+    }
+
+    /// From anywhere else the cancel is not just needless: `close_session`
+    /// publishes `Idle` alongside it, and doing that from `Done` would throw
+    /// away the retired capture's answer — which the page goes on showing.
+    #[test]
+    fn a_retire_leaves_a_settled_status_alone() {
+        for status in [
+            MercTradeStatus::Off,
+            MercTradeStatus::Idle,
+            MercTradeStatus::WaitingLeague,
+            MercTradeStatus::Done,
+            MercTradeStatus::Error,
+        ] {
+            assert!(!cancels_on_close(status), "{status:?} has nothing on the queue");
+        }
+    }
+
+    /// The merc lookup reaches `TradeApiClient` directly and never the
+    /// `trade_lookup` command, whose result POST feeds the server's shared GEM
+    /// cache keyed by (gem, variant) — a mercenary search has neither, and the
+    /// design's "fully local" promise is this file not knowing the server
+    /// exists.
+    ///
+    /// Asserted over the source because there is no seam to count calls
+    /// through: the submit is written inline in `lib.rs`'s `trade_lookup`
+    /// command body, not behind a helper a test could stub. Comment lines are
+    /// stripped so the doc comment that EXPLAINS the rule (on `spawn_lookup`)
+    /// does not trip it, and the needle is assembled at runtime so this test
+    /// does not match itself.
+    #[test]
+    fn the_mercenary_lookup_path_never_reaches_the_servers_submit_endpoint() {
+        let source = include_str!("search.rs");
+        let production = source
+            .split("\n#[cfg(test)]")
+            .next()
+            .expect("the file has a production half");
+        let code: String = production
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for needle in [format!("trade/{}", "submit"), "server_http".to_string(), "server_url".to_string()] {
+            assert!(
+                !code.contains(&needle),
+                "the mercenary trade path must not reach the server ({needle})",
+            );
+        }
+    }
 }
