@@ -35,6 +35,82 @@ impl OcrLineBox {
     }
 }
 
+/// Where a grabbed frame sits on the screen.
+///
+/// A detect frame is not always the whole screen: once the panel's rect is
+/// known the loop OCRs a crop of it ([`detect_crop_bounds`]), and Windows OCR
+/// reports line boxes in the pixels it was handed — CROP-relative. Every rule
+/// downstream of the OCR is screen-absolute: [`rows_land_in_known_panel`]
+/// weighs rows against the last known panel rect, [`panel_bounds`] and
+/// [`header_guard_bounds`] feed `run.rs`'s cursor tests, and the cell rects
+/// end up in `MercCapture` where the hover tick hit-tests them against the
+/// real cursor. Mixing the two spaces would not fail loudly: it would read as
+/// "the panel moved", every frame, for ever.
+///
+/// So this type is the ONE seam between them. [`Self::to_screen`] moves an
+/// OCR box out of the frame the moment it leaves the OCR call, and
+/// [`Self::local`] moves a screen rect back in for the one thing that still
+/// indexes the image — the pixel reads in `read::build_capture`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Frame {
+    /// The grabbed image's top-left corner in screen px. `(0, 0)` for a full
+    /// grab, which is what makes the full path arithmetically identical to the
+    /// one that existed before crops.
+    origin: (i32, i32),
+    /// The WHOLE screen's size, never the image's. `read::build_capture`
+    /// publishes it as `MercCapture::screen`, and `run::hover_region` clamps
+    /// the tooltip crop to it — a crop's own dimensions there would clamp the
+    /// hover to the panel.
+    screen: [u32; 2],
+    cropped: bool,
+}
+
+impl Frame {
+    /// A frame that IS the screen.
+    pub fn full(screen: [u32; 2]) -> Self {
+        Self { origin: (0, 0), screen, cropped: false }
+    }
+
+    /// A frame cropped out of the screen at `origin`.
+    pub fn cropped(origin: (i32, i32), screen: [u32; 2]) -> Self {
+        Self { origin, screen, cropped: true }
+    }
+
+    /// The whole screen's size in px.
+    pub fn screen(&self) -> [u32; 2] {
+        self.screen
+    }
+
+    /// `crop` or `full`, for the log.
+    pub fn describe(&self) -> &'static str {
+        if self.cropped {
+            "crop"
+        } else {
+            "full"
+        }
+    }
+
+    /// OCR boxes as the engine returned them (frame-local) moved into screen
+    /// coordinates. Called on the line vector the instant it comes back, so
+    /// nothing downstream ever sees a frame-local box.
+    pub fn to_screen(&self, mut lines: Vec<OcrLineBox>) -> Vec<OcrLineBox> {
+        if !self.cropped {
+            return lines;
+        }
+        for line in &mut lines {
+            line.x += self.origin.0;
+            line.y += self.origin.1;
+        }
+        lines
+    }
+
+    /// A screen rect in this frame's own pixels — the inverse of
+    /// [`Self::to_screen`], for the pixel reads that still index the image.
+    pub fn local(&self, rect: [i32; 4]) -> [i32; 4] {
+        [rect[0] - self.origin.0, rect[1] - self.origin.1, rect[2], rect[3]]
+    }
+}
+
 /// One detected skill row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MercLayoutRow {
@@ -464,6 +540,130 @@ const HEADER_GUARD_FOOTER_PITCHES: f32 = 1.0;
 /// `None` for a layout with no rows, exactly as [`panel_bounds`].
 pub fn header_guard_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32; 4]> {
     bounds(layout, g, HEADER_GUARD_FOOTER_PITCHES)
+}
+
+/// How far ABOVE the panel rect a cropped re-detect reaches, in row pitches.
+///
+/// The header band is far taller than the panel rect's own one-pitch top
+/// margin, and a crop that clips it would silently stop the loop ever reading
+/// a name — the capture would never complete, the cadence would never settle,
+/// and no trade session would open. MEASURED on `scratchpad/recruit-cai.png`,
+/// the reference every geometry test is built from: the title `Cai, the Lout`
+/// is centred at y 30, the class/level line at 73, the wager at 173 and row 1
+/// at 620, with a pitch of 48. The title is 12.3 pitches above row 1 and
+/// [`bounds`] already spends one of them, so 13 covers the whole band with a
+/// pitch of slack.
+const CROP_HEADER_PITCHES: f32 = 13.0;
+
+/// How far to either SIDE of the panel rect a cropped re-detect reaches, in
+/// row pitches.
+///
+/// Not a guess: it is [`parse_header`]'s own x-window. That filter keeps a
+/// header line whose CENTRE is within four pitches of the grid — the wager on
+/// the reference panel starts at x 80, left of the grid's own left edge — so a
+/// narrower crop would hand `parse_header` a smaller candidate set than the
+/// full-screen path had, which is a behaviour change hiding inside an
+/// optimisation. The residue is a line admissible by its centre that extends
+/// more than four pitches past the grid; nothing on the reference panel does.
+const CROP_SIDE_PITCHES: f32 = 4.0;
+
+/// The rect a re-detect of a KNOWN panel grabs and OCRs: the panel rect (with
+/// its footer) plus the header band above and [`parse_header`]'s x-window
+/// either side, clamped to the screen.
+///
+/// The point is cost. A full-screen OCR of a 1920×1200 desktop is the tick's
+/// dominant expense (app.log 2026-08-26 09:40:06: 4504 ms for a tick built out
+/// of two of them), and once the panel has been found the answer to "is it
+/// still there, and what does it say" lives inside this rect. The frame is
+/// still translated back to screen coordinates before any rule reads it — see
+/// [`Frame`] — so the known-panel anchor, the column-x test and the cell rects
+/// all keep meaning exactly what they meant on a full frame.
+///
+/// `None` for a layout with no rows, exactly as [`panel_bounds`].
+pub fn detect_crop_bounds(
+    layout: &MercLayout,
+    g: &MercGeometry,
+    screen: [u32; 2],
+) -> Option<[i32; 4]> {
+    let [x, y, w, h] = panel_bounds(layout, g)?;
+    let pitch = if layout.row_pitch > 0.0 {
+        layout.row_pitch
+    } else {
+        g.row_pitch * layout.scale
+    };
+    let side = (pitch * CROP_SIDE_PITCHES).round() as i32;
+    let above = (pitch * CROP_HEADER_PITCHES).round() as i32;
+
+    let x0 = (x - side).max(0);
+    let y0 = (y - above).max(0);
+    let x1 = (x + w + side).min(screen[0] as i32);
+    let y1 = (y + h).min(screen[1] as i32);
+    Some([x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)])
+}
+
+/// Whether `outer` fully contains `inner` (`[x, y, w, h]`).
+pub fn encloses(outer: [i32; 4], inner: [i32; 4]) -> bool {
+    inner[0] >= outer[0]
+        && inner[1] >= outer[1]
+        && inner[0] + inner[2] <= outer[0] + outer[2]
+        && inner[1] + inner[3] <= outer[1] + outer[3]
+}
+
+/// Whether a cropped detect has to be re-taken on the full screen before its
+/// result is believed.
+///
+/// `crop` is the rect the frame was cut from, `None` when the frame WAS the
+/// screen. `found` is [`panel_bounds`] of whatever the frame detected, `None`
+/// when it detected nothing.
+///
+/// Two ways a crop can lie, and neither is a closed window:
+///
+/// - it found nothing. The panel may have MOVED out of the rect the last
+///   detect measured — the player dragged the window, or the UI scale changed
+///   — and a crop cut around the old position cannot see the new one. Counting
+///   that as a miss would retire an open window in two cadences, which is the
+///   phantom retire WI-A exists to stop, walking back in through the crop;
+/// - it found a panel that does not FIT. The cells past the crop edge are not
+///   in the image, `occupied` reads them as empty slots and the row stops
+///   there, so a partial panel would publish as a mercenary with fewer
+///   supports than they have.
+///
+/// A full frame answers for itself: there is nowhere else on the screen to
+/// look, so `None` crop is never a re-take.
+///
+/// The FIT test is on the panel's on-screen part, which is why `screen` is a
+/// parameter. [`panel_bounds`] reaches [`PANEL_FOOTER_PITCHES`] below the last
+/// row and [`PANEL_MARGIN_CELLS`] either side, and none of that is clamped —
+/// it is a rect for cursor tests, where a bound past the screen edge costs
+/// nothing. [`detect_crop_bounds`] IS clamped, because a crop has to be a
+/// region of a real image. So a recruit window opened near the bottom or the
+/// side of the screen produces a panel rect the crop provably cannot contain,
+/// on every single tick: without the clamp the loop would take the crop, find
+/// the panel, decide it does not fit, and pay a second full-screen OCR for
+/// ever — the exact cost the crop was added to remove. Pixels outside the
+/// screen are in no frame, cropped or full, so they are not evidence that the
+/// crop missed anything.
+pub fn crop_needs_full_look(
+    crop: Option<[i32; 4]>,
+    found: Option<[i32; 4]>,
+    screen: [u32; 2],
+) -> bool {
+    let Some(crop) = crop else {
+        return false;
+    };
+    match found {
+        None => true,
+        Some(panel) => !encloses(crop, on_screen(panel, screen)),
+    }
+}
+
+/// `rect` clipped to the screen: the part of it any grab could have seen.
+fn on_screen(rect: [i32; 4], screen: [u32; 2]) -> [i32; 4] {
+    let x0 = rect[0].max(0);
+    let y0 = rect[1].max(0);
+    let x1 = (rect[0] + rect[2]).min(screen[0] as i32);
+    let y1 = (rect[1] + rect[3]).min(screen[1] as i32);
+    [x0, y0, (x1 - x0).max(0), (y1 - y0).max(0)]
 }
 
 /// The shared rect construction: the grid plus [`PANEL_MARGIN_CELLS`] either
@@ -1780,5 +1980,186 @@ mod tests {
         let layout = layout_of(&[], 0.0, 100, &g);
 
         assert_eq!(panel_bounds(&layout, &g), None);
+    }
+
+    // -- cropped detect frames ---------------------------------------------
+
+    /// The reference panel's lines as a CROP would report them: the same screen
+    /// re-expressed in the crop's own pixels, which is what Windows OCR hands
+    /// back when it is given a cropped image.
+    fn crop_relative(lines: Vec<OcrLineBox>, origin: (i32, i32)) -> Vec<OcrLineBox> {
+        lines
+            .into_iter()
+            .map(|l| OcrLineBox { x: l.x - origin.0, y: l.y - origin.1, ..l })
+            .collect()
+    }
+
+    /// The translation itself: a box the OCR reported inside a crop comes back
+    /// out at the screen position it was cut from, size untouched.
+    #[test]
+    fn a_crops_ocr_boxes_come_back_at_the_screen_position_they_were_cut_from() {
+        let origin = (112, 22);
+        let screen = [1920, 1200];
+
+        let out = Frame::cropped(origin, screen).to_screen(crop_relative(reference_lines(), origin));
+
+        assert_eq!(out, reference_lines());
+    }
+
+    /// The inverse, for the one thing that still indexes the image: a screen
+    /// rect in the crop's own pixels.
+    #[test]
+    fn a_screen_rect_maps_back_into_the_crops_own_pixels() {
+        let frame = Frame::cropped((112, 22), [1920, 1200]);
+
+        assert_eq!(frame.local([200, 100, 44, 44]), [88, 78, 44, 44]);
+    }
+
+    /// Why the translation is load-bearing rather than tidy. Untranslated, a
+    /// crop's rows are reported hundreds of px left of where they are, and the
+    /// known-panel anchor's column-x test — the ONE thing left pinning the
+    /// horizontal axis on a frame whose chrome a tooltip deleted — reads them
+    /// as a different window. The same lines translated anchor.
+    #[test]
+    fn a_crops_untranslated_rows_miss_the_known_panels_column() {
+        let g = MercGeometry::default();
+        let rect = panel_bounds(
+            &detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel"),
+            &g,
+        )
+        .expect("the reference panel has bounds");
+        let origin = (112, 22);
+        let stripped: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+        let raw = crop_relative(stripped, origin);
+
+        assert!(
+            detect(&raw, &g, &vocab(), Some(rect)).is_none(),
+            "the crop's own pixels are not the screen's, and the column test must say so",
+        );
+        assert!(
+            detect(&Frame::cropped(origin, [1920, 1200]).to_screen(raw), &g, &vocab(), Some(rect))
+                .is_some(),
+            "translated, the same frame is the panel the session already knows",
+        );
+    }
+
+    /// The crop has to clear the HEADER band, which sits far above the panel
+    /// rect's own one-pitch margin: on the reference panel the title is at
+    /// y 30 and the wager at 173 while row 1 is at 620. A crop that cut them
+    /// off would leave `parse_header` with no name, no class and no level —
+    /// the capture would never complete and no trade session would ever open.
+    #[test]
+    fn the_re_detect_crop_covers_the_header_band_and_the_footer() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let panel = panel_bounds(&layout, &g).expect("six rows have bounds");
+
+        let crop = detect_crop_bounds(&layout, &g, [1920, 1200]).expect("six rows have a crop");
+
+        for header in reference_lines().iter().filter(|l| l.centre_y() < 600.0) {
+            assert!(
+                encloses(crop, [header.x, header.y, header.w, header.h]),
+                "the crop must hold the whole of {:?}",
+                header.text,
+            );
+        }
+        assert!(encloses(crop, panel), "and the panel rect, footer included");
+    }
+
+    /// It is a CROP, not the screen: a rect that reached the whole desktop
+    /// would buy nothing, and the point of the whole exercise is the OCR cost.
+    #[test]
+    fn the_re_detect_crop_is_smaller_than_the_screen_it_came_from() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+
+        let crop = detect_crop_bounds(&layout, &g, [1920, 1200]).expect("six rows have a crop");
+
+        assert!(crop[2] * crop[3] * 2 < 1920 * 1200, "crop was {crop:?}");
+    }
+
+    /// Clamped, not merely computed: a panel near the screen edge would
+    /// otherwise produce a rect starting at a negative x and `crop_imm` would
+    /// panic on it.
+    #[test]
+    fn a_crop_never_reaches_outside_the_screen() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+
+        let crop = detect_crop_bounds(&layout, &g, [700, 900]).expect("six rows have a crop");
+
+        assert!(encloses([0, 0, 700, 900], crop), "crop was {crop:?}");
+    }
+
+    /// A screen big enough that none of the rects below touch its edges — the
+    /// clamp is the subject of its own two tests further down.
+    const SCREEN: [u32; 2] = [1920, 1200];
+
+    /// A crop that found nothing is not evidence the window closed: it may have
+    /// MOVED out of the rect the last detect measured. One full look first.
+    #[test]
+    fn a_cropped_frame_that_found_nothing_takes_a_full_look_first() {
+        assert!(crop_needs_full_look(Some([100, 100, 400, 400]), None, SCREEN));
+    }
+
+    /// A FULL frame that found nothing has already looked everywhere. Making
+    /// this true too would mean no detect could ever count as a miss, and no
+    /// closed window would ever retire.
+    #[test]
+    fn a_full_frame_that_found_nothing_is_the_answer() {
+        assert!(!crop_needs_full_look(None, None, SCREEN));
+    }
+
+    /// The ordinary hit: the panel is where it was, wholly inside the crop.
+    #[test]
+    fn a_cropped_frame_that_found_the_whole_panel_is_believed() {
+        assert!(!crop_needs_full_look(
+            Some([100, 100, 400, 400]),
+            Some([150, 150, 200, 200]),
+            SCREEN,
+        ));
+    }
+
+    /// A panel hanging over the crop's edge is only PARTLY in the image: the
+    /// cells past the edge are not there to be read, `occupied` rejects them
+    /// and the row stops short, so the capture would claim a mercenary with
+    /// fewer supports than they have.
+    #[test]
+    fn a_panel_hanging_out_of_the_crop_takes_a_full_look_first() {
+        assert!(crop_needs_full_look(
+            Some([100, 100, 400, 400]),
+            Some([150, 150, 400, 200]),
+            SCREEN,
+        ));
+    }
+
+    /// The screen-edge case, and the reason the FIT test is on the panel's
+    /// on-screen part. A recruit window opened low puts `panel_bounds`'
+    /// three-pitch footer reach past the bottom of the screen, where
+    /// `detect_crop_bounds` is clamped and cannot follow — so an unclamped
+    /// comparison fails on every tick and the loop pays a second full-screen
+    /// OCR for ever.
+    #[test]
+    fn a_panel_whose_footer_reach_runs_off_the_screen_is_still_believed() {
+        let screen = [1920, 1200];
+        let crop = [100, 700, 800, 500];
+
+        assert!(!crop_needs_full_look(Some(crop), Some([150, 750, 700, 600]), screen));
+    }
+
+    /// …and the clamp is only downward. A panel over the crop's edge INSIDE
+    /// the screen is still a partial read, and still takes the full look.
+    #[test]
+    fn the_clamp_does_not_excuse_a_panel_that_overruns_the_crop_on_screen() {
+        let screen = [1920, 1200];
+
+        assert!(crop_needs_full_look(
+            Some([100, 100, 400, 400]),
+            Some([150, 150, 400, 200]),
+            screen,
+        ));
     }
 }
