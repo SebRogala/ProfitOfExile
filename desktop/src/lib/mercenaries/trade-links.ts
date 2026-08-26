@@ -49,11 +49,21 @@ export interface TradeStatGroup {
  * fixtures carry under their own `query` key. No `sort`: none of the seven
  * saved searches has one, and adding one here would make the derived search
  * order differently from the search it was derived from.
+ *
+ * Both filter blocks are optional because the app builds queries from two
+ * places and each names one of them: `rulesetQuery` below carries a guide's
+ * `ilvl` floor, and Rust's captured-mercenary query
+ * (`mercenary/search.rs::build_capture_query`) carries the `priced` sale type
+ * and no ilvl floor at all. `derivedSearchUrl` links both, so the type has to
+ * describe both — see the parity fixture in `__fixtures__`.
  */
 export interface TradeQuery {
 	stats: TradeStatGroup[];
 	status: { option: string };
-	filters?: { misc_filters: { filters: { ilvl: { min: number } } } };
+	filters?: {
+		misc_filters?: { filters: { ilvl: { min: number } } };
+		trade_filters?: { filters: { sale_type: { option: string } } };
+	};
 }
 
 /**

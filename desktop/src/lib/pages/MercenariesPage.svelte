@@ -562,18 +562,27 @@
 			{/if}
 		</div>
 
-		<!-- Rendered whatever the status, module off included: Rust keeps the
-		     link and the listings on the slice through a force-off, and dropping
-		     them here would throw away an answer that is still true about the
-		     capture the rest of the page is still showing. -->
-		{#if tradeLine}
-			<p class="trade-headline">{tradeLine}</p>
+		<!-- No capture, nothing to say. Safe as an `else` over the whole answer
+		     because Rust only ever clears `capture` back to the slice default
+		     (`MercenarySlice::default`), and that default carries no trade
+		     result either — a RETIRED capture stays on the slice, listings and
+		     all, and takes the branch below. -->
+		{#if capture === null}
+			<p class="stub">Nothing captured to search for yet.</p>
+		{:else}
+			<!-- Rendered whatever the status, module off included: Rust keeps the
+			     link and the listings on the slice through a force-off, and dropping
+			     them here would throw away an answer that is still true about the
+			     capture the rest of the page is still showing. -->
+			{#if tradeLine}
+				<p class="trade-headline">{tradeLine}</p>
+			{/if}
+			<!-- Prices are the sellers' own numbers in the sellers' own currency:
+			     this page has no divine rate, so there is nothing to convert with
+			     and a converted column would be invented. The order is GGG's
+			     `price asc`, which IS a value order. -->
+			<TradeListings rows={tradeRows} rawCurrency />
 		{/if}
-		<!-- Prices are the sellers' own numbers in the sellers' own currency:
-		     this page has no divine rate, so there is nothing to convert with
-		     and a converted column would be invented. The order is GGG's
-		     `price asc`, which IS a value order. -->
-		<TradeListings rows={tradeRows} rawCurrency />
 
 		<!-- Both settings stay rendered with the module off (ADR-014): the page is
 		     browsable either way. -->

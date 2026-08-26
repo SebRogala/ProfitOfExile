@@ -275,8 +275,8 @@ pub struct MercTradeSession {
     ///
     /// The caller MUST write it back before the next `decide`: the `Error`
     /// clause below makes the session forget its last hash, so a session left
-    /// on `Error` after a successful retry re-enqueues the same query on every
-    /// publish — bounded only by [`MAX_SEARCHES`].
+    /// on `Error` after a successful retry re-enqueues the same query once per
+    /// debounce window — bounded only by [`MAX_SEARCHES`].
     pub state: MercTradeStatus,
     /// The hash-independent verdict last handed to the caller, if the last one
     /// was hash-independent. The other refusals are deduplicated by
@@ -352,10 +352,11 @@ pub enum TriggerAction {
 ///
 /// Ordered so the refusals come first and nothing below them has to re-check
 /// them — `NoQuery` ahead of `AutoOff` for the reason given at the check. The
-/// one non-obvious rule is the `Error` clause: a failed
-/// lookup makes the session forget what it searched for, so the very next
-/// publish of the same capture may retry — still against the same ceiling, so a
-/// persistently failing query costs at most [`MAX_SEARCHES`] attempts.
+/// one non-obvious rule is the `Error` clause: a failed lookup makes the
+/// session forget what it searched for, so a later publish of the same capture
+/// may retry — one debounce window later, and still against the same ceiling,
+/// so a persistently failing query costs at most [`MAX_SEARCHES`] attempts
+/// spread over at least that many windows.
 ///
 /// Every verdict is returned ONCE per condition. The hash-driven ones dedupe
 /// against [`MercTradeSession::last_hash`]; the three that never look at a hash
@@ -403,13 +404,25 @@ pub fn decide(
     }
 
     // A failed lookup is not an answer, so the hash it failed on is not one
-    // either.
-    let acted = if session.state == MercTradeStatus::Error {
-        None
-    } else {
-        session.last_hash.as_deref()
-    };
-    if acted == Some(query.hash.as_str()) {
+    // either: forgetting it is what lets the next pass retry.
+    //
+    // The failure is folded into the debounce clock in the same breath, so the
+    // retry has to survive the same quiet window a fresh query does. Without
+    // it the whole budget goes in one burst — the error arrives, the very next
+    // tick (100 ms later) re-enqueues, and three transient failures are spent
+    // inside half a second, which is the shape of an outage rather than a
+    // retry.
+    //
+    // Fires ONCE per failure because folding it also clears the record that
+    // made it visible. Resetting on every tick that observes `Error` would
+    // push the deadline forward faster than the window closes and the session
+    // would never retry at all — the same trap `pending_hash` exists to avoid
+    // for hash changes.
+    if session.state == MercTradeStatus::Error && session.last_hash.is_some() {
+        session.last_hash = None;
+        session.last_change_ms = now_ms;
+    }
+    if session.last_hash.as_deref() == Some(query.hash.as_str()) {
         return TriggerAction::None;
     }
 
@@ -686,10 +699,20 @@ pub fn tick(
     // Taken BEFORE `decide`, not looked up after it: `decide` is told whether a
     // cached answer exists, and a lookup that raced the check would leave the
     // caller told "cached" with nothing to publish.
-    let cached = session
-        .built_query
-        .as_ref()
-        .and_then(|q| cache_get(&state, &q.hash, now_ms));
+    //
+    // No league, no cache read: the cache is keyed by league (see
+    // [`cache_get`]), and an unresolved league is on its way to
+    // `SetWaitingLeague` anyway.
+    let cached = match (&league, session.built_query.as_ref()) {
+        (Some(league), Some(query)) => {
+            let cache = state
+                .merc_trade_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            cache_get(&cache, league, &query.hash, now_ms)
+        }
+        _ => None,
+    };
 
     // Moved out and straight back: `decide` takes `&mut session` while
     // `TriggerInput` borrows the query out of that same session.
@@ -893,7 +916,11 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                 }
                 {
                     let state = app.state::<AppState>();
-                    cache_insert(&state, now_ms(), result.clone());
+                    let mut cache = state
+                        .merc_trade_cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    cache_insert(&mut cache, now_ms(), result.clone());
                 }
                 // The CHEAPEST LISTING, in the seller's own currency — the first
                 // row of a `sort.price=asc` fetch. Not `floor_chaos`: with no
@@ -1070,30 +1097,51 @@ fn parse_listing(item: &Value) -> Option<MercTradeListing> {
     })
 }
 
-/// The cached result for `hash`, if one is still young enough to serve.
-fn cache_get(state: &AppState, hash: &str, now_ms: u64) -> Option<MercTradeResult> {
-    let cache = state
-        .merc_trade_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+/// The merc result cache behind `AppState::merc_trade_cache`, keyed by
+/// `(league, query hash)` and carrying the unix ms each result was fetched at.
+///
+/// Named here rather than spelled out at the field, so the key stays one
+/// decision: the two functions below are the only readers and writers.
+pub type MercResultCache = std::collections::HashMap<(String, String), (u64, MercTradeResult)>;
+
+/// The cached result for this league's `hash`, if one is still young enough to
+/// serve.
+///
+/// The league is half the key because the hash is not computed over it —
+/// [`build_capture_query`] hashes the request BODY, and the league only ever
+/// appears as a path segment ([`capture_url`]). Keyed on the hash alone, a
+/// league switch inside [`RESULT_TTL_MS`] would answer the new league's link
+/// with the old economy's prices.
+///
+/// Takes the map rather than the `AppState` that owns it: the caller holds the
+/// lock for exactly its own read, and the age rule and the key are then
+/// testable without an app handle.
+fn cache_get(
+    cache: &MercResultCache,
+    league: &str,
+    hash: &str,
+    now_ms: u64,
+) -> Option<MercTradeResult> {
     cache
-        .get(hash)
+        .get(&(league.to_string(), hash.to_string()))
         .filter(|(at, _)| now_ms.saturating_sub(*at) < RESULT_TTL_MS)
         .map(|(_, result)| result.clone())
 }
 
-/// Store a result under its own hash, dropping every entry that has aged out.
+/// Store a result under its own league and hash, dropping every entry that has
+/// aged out.
+///
+/// The league comes off the RESULT rather than off the request: `raw.league` is
+/// what GGG answered in, so a result can never be filed under a league it does
+/// not describe.
 ///
 /// Pruned on insert rather than on a timer: the map only ever grows on this
 /// path, so the write is the one moment it is worth walking, and a user who
 /// captures nothing pays nothing.
-fn cache_insert(state: &AppState, now_ms: u64, result: MercTradeResult) {
-    let mut cache = state
-        .merc_trade_cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+fn cache_insert(cache: &mut MercResultCache, now_ms: u64, result: MercTradeResult) {
     cache.retain(|_, (at, _)| now_ms.saturating_sub(*at) < RESULT_TTL_MS);
-    cache.insert(result.query_hash.clone(), (now_ms, result));
+    let key = (result.league.clone(), result.query_hash.clone());
+    cache.insert(key, (now_ms, result));
 }
 
 // ---------------------------------------------------------------------------
@@ -1233,6 +1281,38 @@ mod tests {
             stat("sup_chain", "Chain", 2),
             stat("sup_greater_chain", "Chain", 3),
             stat("sup_gilded_chain", "Chain", 3),
+        ])
+    }
+
+    /// The one capture the cross-language parity fixture was built from
+    /// (`lib/mercenaries/__fixtures__/capture-query.expected.json`), together
+    /// with [`chain_vocab`] and a tier floor of 2.
+    ///
+    /// Deliberately not the simplest capture that builds: it carries two rows
+    /// (so the fixture pins group ORDER), a cell the icon read could not narrow
+    /// to one id (so it pins that a set still counts once), and a confirmed
+    /// tier-3 cell under a floor of 2 (so it pins the loosening range and the
+    /// order the expanded ids join the group in).
+    fn parity_capture() -> MercCapture {
+        capture(vec![
+            row(
+                0,
+                "skill_a",
+                vec![
+                    support(&["sup_a"], None, None, ReadState::Matched),
+                    support(&["sup_b1", "sup_b2"], None, None, ReadState::Matched),
+                ],
+            ),
+            row(
+                1,
+                "skill_b",
+                vec![support(
+                    &["sup_greater_chain"],
+                    Some("Chain"),
+                    Some(3),
+                    ReadState::Confirmed,
+                )],
+            ),
         ])
     }
 
@@ -1433,8 +1513,13 @@ mod tests {
     /// A floor outside 1..=3 is clamped rather than refused — the settings
     /// loader clamps too, and a query builder that panicked or widened without
     /// bound on a hand-edited file would take the whole capture down with it.
+    ///
+    /// Asserted on the EXPANDED id set and not on the hash alone: two illegal
+    /// floors that clamp to the same wrong tier still share a hash, so hash
+    /// equality says the clamp is a function of its input and nothing about
+    /// which tier it lands on. The set is what pins the bound.
     #[test]
-    fn a_floor_below_the_lowest_tier_is_clamped_to_it() {
+    fn a_floor_below_the_lowest_tier_asks_what_the_lowest_tier_asks() {
         let capture = capture(vec![row(
             0,
             "skill_a",
@@ -1444,7 +1529,35 @@ mod tests {
         let floor_0 = build_capture_query(&capture, &chain_vocab(), 0).expect("the row builds");
         let floor_1 = build_capture_query(&capture, &chain_vocab(), 1).expect("the row builds");
 
+        assert_eq!(
+            group_ids(&groups(&floor_0)[0]),
+            ["skill_a", "sup_greater_chain", "sup_lesser_chain", "sup_chain"],
+            "floor 0 must ask for tier 1 and up, exactly as floor 1 does",
+        );
         assert_eq!(floor_0.hash, floor_1.hash, "0 must ask exactly what 1 asks");
+    }
+
+    /// The other end of the same clamp, its own test because a bound is its own
+    /// boundary: a clamp narrowed to `1..=2` leaves the floor-0 case above
+    /// passing and only shows up here, as a tier-2 grade the user never asked
+    /// for.
+    #[test]
+    fn a_floor_above_the_highest_tier_asks_what_the_highest_tier_asks() {
+        let capture = capture(vec![row(
+            0,
+            "skill_a",
+            vec![support(&["sup_greater_chain"], Some("Chain"), Some(3), ReadState::Confirmed)],
+        )]);
+
+        let floor_9 = build_capture_query(&capture, &chain_vocab(), 9).expect("the row builds");
+        let floor_3 = build_capture_query(&capture, &chain_vocab(), 3).expect("the row builds");
+
+        assert_eq!(
+            group_ids(&groups(&floor_9)[0]),
+            ["skill_a", "sup_greater_chain"],
+            "floor 9 must ask for the mercenary exactly as read, as floor 3 does",
+        );
+        assert_eq!(floor_9.hash, floor_3.hash, "9 must ask exactly what 3 asks");
     }
 
     /// Five families' worth of loosening blows the 35-filter cap. The app's own
@@ -1625,20 +1738,28 @@ mod tests {
         String::from_utf8(out).expect("the encoding is UTF-8")
     }
 
-    /// Parity with `derivedSearchUrl` (`lib/mercenaries/trade-links.ts`): the
-    /// `q` parameter carries `{"query": ...}` and NO `sort`, because the trade
-    /// site owns the sort control. Compared as JSON, not as text — `serde_json`
-    /// renders keys sorted while the TS object literal keeps insertion order,
-    /// so the two encoded strings name one search without matching byte for
-    /// byte.
+    /// Cross-language parity, pinned by a SHARED fixture rather than by two
+    /// literals that can drift apart:
+    /// `lib/mercenaries/__fixtures__/capture-query.expected.json` is the query
+    /// object [`parity_capture`] builds, and `trade-links.test.ts` sends that
+    /// same file through `derivedSearchUrl` and asserts the same round trip. A
+    /// change to either side's envelope now fails on its own side.
+    ///
+    /// The `q` parameter carries `{"query": ...}` and NO `sort`, because the
+    /// trade site owns the sort control — the strict comparison below is what
+    /// says so: a `sort` riding along out of the request body would be an
+    /// extra key.
+    ///
+    /// Compared as JSON, not as text — `serde_json` renders keys sorted while
+    /// the TS object literal keeps insertion order, so the two encoded strings
+    /// name one search without matching byte for byte.
     #[test]
-    fn the_link_carries_the_same_query_object_the_typescript_builder_sends() {
-        let capture = capture(vec![row(
-            0,
-            "skill_a",
-            vec![support(&["sup_a"], None, None, ReadState::Matched)],
-        )]);
-        let query = build_capture_query(&capture, &no_vocab(), 3).expect("builds");
+    fn the_link_carries_the_shared_fixture_query_under_a_bare_query_envelope() {
+        let query = build_capture_query(&parity_capture(), &chain_vocab(), 2).expect("builds");
+        let expected: Value = serde_json::from_str(include_str!(
+            "../../../src/lib/mercenaries/__fixtures__/capture-query.expected.json"
+        ))
+        .expect("the parity fixture is JSON");
 
         let url = capture_url("Allflame", &query);
 
@@ -1646,24 +1767,7 @@ mod tests {
         assert_eq!(base, "https://www.pathofexile.com/trade/search/Allflame");
         let decoded: Value =
             serde_json::from_str(&percent_decode(encoded)).expect("q decodes to JSON");
-        assert_eq!(
-            decoded,
-            json!({
-                "query": {
-                    "stats": [{
-                        "type": "mercenary",
-                        "value": {"min": 2},
-                        "filters": [{"id": "skill_a"}, {"id": "sup_a"}],
-                    }],
-                    "status": {"option": "securable"},
-                    "filters": {"trade_filters": {"filters": {"sale_type": {"option": "priced"}}}},
-                }
-            }),
-        );
-        assert!(
-            decoded.get("sort").is_none(),
-            "the request body's sort must not ride along into the link",
-        );
+        assert_eq!(decoded, json!({ "query": expected }));
     }
 
     /// The league is a path segment encoded the way `encodeURIComponent` does
@@ -1830,7 +1934,11 @@ mod tests {
     }
 
     /// A failed lookup is not an answer, so the hash it failed on is not one
-    /// either: the next publish may retry — against the same ceiling.
+    /// either: a later publish retries it — against the same ceiling.
+    ///
+    /// The retry has to arrive: the failure moves the debounce clock once, and
+    /// a version that moved it on every tick that observes `Error` would sit
+    /// behind a window that never closes.
     #[test]
     fn the_hash_a_lookup_failed_on_is_searched_again() {
         let mut session = MercTradeSession::new();
@@ -1839,8 +1947,29 @@ mod tests {
 
         session.state = MercTradeStatus::Error;
 
-        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::Enqueue);
+        assert_eq!(after_debounce(&mut session, &query, 9_000), TriggerAction::Enqueue);
         assert_eq!(session.searches_used, 2, "a retry is still a search");
+    }
+
+    /// …but not immediately. The lookup task publishes `Error` and the capture
+    /// loop comes back 100 ms later, so a retry that ignored the debounce
+    /// would spend the whole three-search budget on one transient failure
+    /// inside half a second.
+    #[test]
+    fn a_retry_waits_out_the_debounce_window_the_failure_started() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+
+        session.state = MercTradeStatus::Error;
+
+        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::Debounce);
+        assert_eq!(
+            decide(&mut session, live(&query), 9_000 + DEBOUNCE_MS - 1),
+            TriggerAction::Debounce,
+            "the window is measured from the failure, not from the last search",
+        );
+        assert_eq!(session.searches_used, 1, "nothing is spent inside the window");
     }
 
     /// Leaving a settled refusal re-decides from scratch. Without that, the
@@ -1899,6 +2028,72 @@ mod tests {
             fetched_at_ms: 0,
             truncated: false,
         }
+    }
+
+    /// The cache's two contracts: what a hit is, and what ages out.
+    ///
+    /// `league` is on the key because the hash is not computed over it — the
+    /// query body names the mercenary, and nothing in it says which economy the
+    /// prices came from.
+    fn cached_in(league: &str, hash: &str) -> MercTradeResult {
+        MercTradeResult {
+            league: league.to_string(),
+            ..merc_result(hash)
+        }
+    }
+
+    #[test]
+    fn a_result_is_served_back_for_the_league_and_hash_it_was_stored_under() {
+        let mut cache = MercResultCache::new();
+        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-a"));
+
+        let hit = cache_get(&cache, "Allflame", "hash-a", 2_000);
+
+        assert_eq!(hit, Some(cached_in("Allflame", "hash-a")));
+    }
+
+    /// The regression the league half of the key exists for: the same
+    /// mercenary hashes the same in every league, so a standard-league capture
+    /// would otherwise be answered with the temp league's prices for a quarter
+    /// of an hour.
+    #[test]
+    fn the_same_hash_in_another_league_is_not_a_cache_hit() {
+        let mut cache = MercResultCache::new();
+        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-a"));
+
+        assert_eq!(cache_get(&cache, "Standard", "hash-a", 2_000), None);
+    }
+
+    /// The TTL is what stops a re-detected window from quoting a price the
+    /// market has moved past. Read at the boundary: one ms inside the window
+    /// still serves.
+    #[test]
+    fn a_result_older_than_the_ttl_is_not_served() {
+        let mut cache = MercResultCache::new();
+        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-a"));
+
+        assert!(cache_get(&cache, "Allflame", "hash-a", 1_000 + RESULT_TTL_MS - 1).is_some());
+        assert_eq!(cache_get(&cache, "Allflame", "hash-a", 1_000 + RESULT_TTL_MS), None);
+    }
+
+    /// The map only grows on the insert path, so the insert is where it is
+    /// walked — an app left running all league would otherwise hold every
+    /// mercenary it ever comped.
+    #[test]
+    fn an_insert_drops_the_entries_that_have_aged_out() {
+        let mut cache = MercResultCache::new();
+        cache_insert(&mut cache, 1_000, cached_in("Allflame", "hash-old"));
+
+        cache_insert(
+            &mut cache,
+            1_000 + RESULT_TTL_MS,
+            cached_in("Allflame", "hash-new"),
+        );
+
+        assert_eq!(
+            cache.keys().collect::<Vec<_>>(),
+            [&("Allflame".to_string(), "hash-new".to_string())],
+        );
     }
 
     fn waiting_on(hash: &str, status: MercTradeStatus) -> MercTradeState {

@@ -120,8 +120,14 @@ pub enum MercTradeStatus {
 }
 
 impl Default for MercTradeStatus {
+    /// `Off`, for the reason [`MercenarySlice::default`] gives about its own
+    /// status: the module ships disabled, so a window that polls before the
+    /// capture loop has published anything must not be told the search is
+    /// idle-but-running. It matches the TS pre-poll default
+    /// (`lib/mercenaries/capture.ts`) as well, so the page's first paint says
+    /// the same thing whichever side it came from.
     fn default() -> Self {
-        MercTradeStatus::Idle
+        MercTradeStatus::Off
     }
 }
 
@@ -776,12 +782,14 @@ mod tests {
         assert_eq!(cell["candidates"][1], "Gilded Pierce (Tier 3)");
     }
 
-    /// Every `ReadState` and `MercStatus` variant's wire string, pinned one by
-    /// one. The verdict engine treats `low_confidence` / `unknown` /
-    /// `ambiguous` as UNKNOWN and `matched` / `confirmed` as presence, so a
-    /// silent rename flips verdicts rather than erroring.
+    /// Every slice enum variant's wire string, pinned one by one. The verdict
+    /// engine treats `low_confidence` / `unknown` / `ambiguous` as UNKNOWN and
+    /// `matched` / `confirmed` as presence, and `trade-view.ts` switches on
+    /// every `MercTradeStatus` spelling to pick a label and a tone — so a
+    /// silent rename flips verdicts or blanks the trade badge rather than
+    /// erroring.
     #[test]
-    fn every_read_state_and_status_wire_string_is_pinned() {
+    fn every_slice_enum_wire_string_is_pinned() {
         let states = [
             (ReadState::Matched, "matched"),
             (ReadState::LowConfidence, "low_confidence"),
@@ -804,16 +812,37 @@ mod tests {
         for (status, wire) in statuses {
             assert_eq!(serde_json::to_value(status).unwrap(), wire);
         }
+
+        // POE-202. `waiting-league` is the one kebab-cased spelling here, so
+        // the rename_all attribute itself is pinned and not just the variant
+        // names.
+        let trade = [
+            (MercTradeStatus::Off, "off"),
+            (MercTradeStatus::Idle, "idle"),
+            (MercTradeStatus::WaitingLeague, "waiting-league"),
+            (MercTradeStatus::Queued, "queued"),
+            (MercTradeStatus::Searching, "searching"),
+            (MercTradeStatus::Done, "done"),
+            (MercTradeStatus::Error, "error"),
+        ];
+        for (status, wire) in trade {
+            assert_eq!(serde_json::to_value(status).unwrap(), wire);
+        }
     }
 
     /// A window polling before the loop has published anything must be told
     /// the module is OFF, not idle-but-running: `idle` reads as "on and
-    /// watching", which would make the page's empty state a lie.
+    /// watching", which would make the page's empty state a lie. The trade
+    /// status says it too — `mercenarySliceDefault()` in
+    /// `lib/mercenaries/capture.ts` opens on `off`, and a Rust default of
+    /// `idle` would make the badge change wording on the first poll without
+    /// anything having happened.
     #[test]
     fn default_slice_is_off_with_no_capture() {
         let slice = MercenarySlice::default();
 
         assert_eq!(slice.status, MercStatus::Off);
+        assert_eq!(slice.trade.status, MercTradeStatus::Off);
         assert!(slice.capture.is_none());
         assert_eq!(slice.geometry_source, "default");
         assert!(slice.learned_families.is_empty());
