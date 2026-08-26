@@ -46,7 +46,7 @@ export interface TradeStatGroup {
 
 /**
  * The `query` object of a trade search — the same shape the saved-search
- * fixtures carry under their own `query` key. No `sort`: none of the seven
+ * fixtures carry under their own `query` key. No `sort`: none of the eleven
  * saved searches has one, and adding one here would make the derived search
  * order differently from the search it was derived from.
  *

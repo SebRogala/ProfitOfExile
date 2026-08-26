@@ -3,7 +3,7 @@
  *
  * This is a VIEW module, not part of the data model: `rulesets.ts` declares what
  * the saved searches say, this file reshapes that into what the page draws —
- * quantifier prose, kind wording, and the guide-b Kinetist tier matrix. Nothing
+ * quantifier prose, kind wording, and the guide-b tier matrices. Nothing
  * here invents a rule: every per-tier state is `entryKind`'s answer for the
  * matching group/entry in that rung, so the type-first denial rule survives the
  * transposition instead of being re-derived from the switches.
@@ -13,10 +13,16 @@
  * derivation is the one part of the page that can be wrong quietly.
  */
 
-import { entryKind, type MercFilterGroup, type MercRuleset, type MercTier } from './rulesets';
+import {
+	entryKind,
+	type MercFilterEntry,
+	type MercFilterGroup,
+	type MercRuleset,
+	type MercTier
+} from './rulesets';
 import type { MercRulesetResult, RulesetOutcome } from './verdict';
 
-/** Column heads of the Kinetist ladder, in `TIERS` order. */
+/** Column heads of a tier ladder, in `TIERS` order. */
 export const TIER_LABELS: Record<MercTier, string> = {
 	mv: 'minimum viable',
 	mid: 'mid',
@@ -28,9 +34,12 @@ export type MercEntryKind = ReturnType<typeof entryKind>;
 
 /**
  * One matrix cell. `absent` is not a rule — it means the rung has no such group
- * or no such entry. The ladder rungs are test-pinned to share one skeleton, so
- * it should never render today; it exists so a future rung that drifts shows a
- * hole instead of borrowing the neighbouring column's state.
+ * or no such entry.
+ *
+ * It renders: the Manyshot ladder's rungs do NOT share one skeleton (its GG rung
+ * has no "carries Vaal Ice Shot" group, merges the projectile and damage groups,
+ * and drops a parked entry), so those holes are drawn as holes rather than
+ * borrowing the neighbouring column's state.
  */
 export type LadderCell = MercEntryKind | 'absent';
 
@@ -133,24 +142,29 @@ export type LadderRow = LadderGroupRow | LadderEntryRow;
  * agree, "at least 2 · 2 · 3 · 2 of:" when only the number moves, and the
  * sentences joined in column order for any other disagreement.
  *
- * Rungs that PARK the group (`enabledInSearch: false` on a positive group) are
- * excluded from the wording: their state is already carried by the row's
- * "off in <rung>" badge, and letting them vote produced noise like
+ * Two kinds of rung are excluded from the wording, because each already carries
+ * its own state elsewhere in the row. A rung that PARKS the group
+ * (`enabledInSearch: false` on a positive group) is carried by the "off in
+ * <rung>" badge, and letting it vote produced noise like
  * "all of: · when enabled: · all of: · all of:" for a group that reads
- * "all of:" everywhere it is actually live. A rung the group is ABSENT from
- * still contributes its hole marker — that is skeleton drift, not a switch.
+ * "all of:" everywhere it is actually live. A rung the group is ABSENT from is
+ * carried by the — cells under it, and letting it vote produced the same noise
+ * one step worse ("all of: · all of: · all of: · —" for the Manyshot
+ * `has-vaal` group, which asks the same thing in every rung that has it).
  */
 function ladderQuantifier(perRung: (MercFilterGroup | undefined)[]): string {
-	const voting = perRung.filter((g) => g === undefined || g.enabledInSearch || g.type === 'not');
-	const sentences = voting.map((g) => (g ? quantifier(g) : ABSENT_QUANTIFIER));
+	const voting = perRung.filter(
+		(g): g is MercFilterGroup => g !== undefined && (g.enabledInSearch || g.type === 'not')
+	);
+	const sentences = voting.map((g) => quantifier(g));
 	if (sentences.length === 0) return quantifier(perRung.find((g) => g !== undefined)!);
 	const agreed = sharedValue(sentences);
 	if (agreed !== null) return agreed;
 
-	const parts = voting.map((g) => (g ? quantifierParts(g) : null));
-	const mins = parts.map((p) => p?.min ?? null);
-	const prefix = sharedValue(parts.map((p) => p?.prefix ?? null));
-	const suffix = sharedValue(parts.map((p) => p?.suffix ?? null));
+	const parts = voting.map((g) => quantifierParts(g));
+	const mins = parts.map((p) => p.min);
+	const prefix = sharedValue(parts.map((p) => p.prefix));
+	const suffix = sharedValue(parts.map((p) => p.suffix));
 	if (prefix !== null && suffix !== null && mins.every((m) => m !== null)) {
 		return `${prefix} ${mins.join(' · ')} ${suffix}`;
 	}
@@ -158,19 +172,52 @@ function ladderQuantifier(perRung: (MercFilterGroup | undefined)[]): string {
 }
 
 /**
- * Transpose the ladder into matrix rows: the first rung supplies the skeleton
+ * The row skeleton: every group id any rung declares, in first-appearance order
+ * across the rungs, each carrying every entry id any rung puts under it.
+ *
+ * The UNION rather than the first rung's own groups, because a rung is allowed
+ * to drift: the Manyshot ladder's cheapest rung has no aura group at all, and
+ * taking the skeleton from it alone would drop the aura rows off the matrix
+ * entirely — silently, since the higher rungs' columns would still render.
+ *
+ * A slot's `label` is resolved the way `ladderQuantifier` resolves the
+ * quantifier, not taken from the first rung that declares the id: the Manyshot
+ * `projectiles` group is 'Ice Shot + projectile links' on three rungs and
+ * 'Ice Shot + projectile and damage links' on the GG rung that merged the
+ * damage vocabulary into it, and heading the merged rows with the first
+ * declarer's label would tell the reader the GG rung asks for something it
+ * does not.
+ */
+function skeletonOf(rungs: MercRuleset[]): { id: string; label: string; entries: MercFilterEntry[] }[] {
+	const slots = new Map<string, { id: string; labels: string[]; entries: MercFilterEntry[] }>();
+	for (const rung of rungs) {
+		for (const group of rung.groups) {
+			const slot = slots.get(group.id) ?? { id: group.id, labels: [], entries: [] };
+			slot.labels.push(group.label);
+			for (const entry of group.entries) {
+				if (!slot.entries.some((known) => known.id === entry.id)) slot.entries.push(entry);
+			}
+			slots.set(group.id, slot);
+		}
+	}
+	return [...slots.values()].map((slot) => ({
+		id: slot.id,
+		label: sharedValue(slot.labels) ?? [...new Set(slot.labels)].join(' · '),
+		entries: slot.entries
+	}));
+}
+
+/**
+ * Transpose the ladder into matrix rows: the rungs together supply the skeleton
  * (group order, then entry order), every rung supplies one column.
  *
  * Lookups go by group id then entry id rather than by position, so a rung that
- * ever stops matching the skeleton reports `absent` in its own column instead of
+ * does not carry a skeleton slot reports `absent` in its own column instead of
  * shifting every state one row up.
  */
 export function ladderRows(rungs: MercRuleset[]): LadderRow[] {
-	const skeleton = rungs[0];
-	if (!skeleton) return [];
-
 	const rows: LadderRow[] = [];
-	for (const group of skeleton.groups) {
+	for (const group of skeletonOf(rungs)) {
 		const perRung = rungs.map((rung) => rung.groups.find((g) => g.id === group.id));
 		const offIn = rungs
 			.filter((_, i) => perRung[i]?.enabledInSearch === false)

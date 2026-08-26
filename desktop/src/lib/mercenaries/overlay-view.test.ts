@@ -81,6 +81,7 @@ function ruleset(id: string, label: string, tier: string | null): MercRulesetRes
 	return {
 		id,
 		label,
+		ladder: null,
 		tier,
 		outcome: 'pass',
 		groups: [],

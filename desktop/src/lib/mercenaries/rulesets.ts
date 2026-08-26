@@ -10,13 +10,30 @@
  * (GGG's Mercenary stat vocabulary), `(Tier N)` suffix included. They are display
  * text, not keys: two different ids can share one name.
  *
- * The four guide-b Kinetist rungs share a group skeleton and are still written out
- * one by one. Generating them from a shared factory would make "the four rungs are
- * the same search with different switches" true by construction, and that is a fact
+ * Guide-b is Nerotox's YouTube CHANNEL, not one video: the source URL is the
+ * channel and every tiered ruleset carries the `guideUrl` of the video whose
+ * description published its trade link. Two ladders are transcribed so far — the
+ * Kinetist ladder (video 2026-08-08) and the Manyshot ladder (video 2026-07-29).
+ * Audited 2026-08-26: each description's only rules are the links themselves plus
+ * prose notes, all reflected — Barrage as an acceptable secondary (the Kinetist
+ * `secondary` count group), Haste tuned to the buyer's spectres, and the two GG
+ * rungs' `authorNote`, which `verdict.ts` relays verbatim on a pass. The Haste
+ * ruling is `buyerContextual` wherever the search gates on it — all four
+ * Kinetist rungs here, and guide-a's Manyshot aura group; the only place Haste
+ * is a plain switched-off bonus is the Manyshot mid rung, whose search simply
+ * does not ask for it.
+ *
+ * The rungs of a ladder are written out one by one even where they share a group
+ * skeleton. Generating them from a shared factory would make "the rungs are the
+ * same search with different switches" true by construction, and that is a fact
  * about the saved searches that the tests are supposed to be able to disprove.
  *
- * The floor prose on the guide-a rulesets is Sebastian's own market read (POE-165),
- * not something derivable from the saved search.
+ * The floor prose on the guide-a rulesets is the guide author's (ckaiba, wealthyexile
+ * strategy 7062, "Worthy Mercenaries" section, last updated 2026-08-01), transcribed —
+ * not something derivable from the saved search. Audited against the page 2026-08-26:
+ * the three deny lists and required links match; the saved searches carry extras the
+ * prose does not mention (Frigid Forkshot and Barrage denied, aura toggles), and the
+ * search wins because it is what the author actually comps against.
  */
 
 import type { MercSavedSearch } from './trade-links';
@@ -27,7 +44,10 @@ export type MercSourceId = (typeof SOURCE_IDS)[number];
 export const ARCHETYPES = ['manyshot', 'kinetist', 'combatant'] as const;
 export type MercArchetype = (typeof ARCHETYPES)[number];
 
-/** Rungs of the guide-b Kinetist ladder, cheapest first. */
+/**
+ * Rungs of a guide-b tier ladder, cheapest first — the ranking order for every
+ * ladder, not a claim that a ladder has exactly four rungs or one rung per tier.
+ */
 export const TIERS = ['mv', 'mid', 'end', 'gg'] as const;
 export type MercTier = (typeof TIERS)[number];
 
@@ -56,7 +76,9 @@ export interface MercFilterEntry {
 export interface MercFilterGroup {
 	/**
 	 * Stable position key, shared across rulesets that express the same slot —
-	 * the four Kinetist rungs use one id sequence so they can be diffed rung to rung.
+	 * a ladder's rungs reuse one id per slot so they can be diffed rung to rung,
+	 * including where a rung merges two slots into one group (the Manyshot GG
+	 * rung's `projectiles`) or drops one entirely.
 	 */
 	id: string;
 	/** Human header for the group. */
@@ -76,13 +98,34 @@ export interface MercRuleset {
 	id: string;
 	label: string;
 	archetype: MercArchetype;
+	/**
+	 * Which tier ladder this ruleset is a rung of — set on every tiered ruleset,
+	 * absent on the untiered ones.
+	 *
+	 * NOT the archetype: one author can publish two ladders for the same
+	 * archetype (Nerotox's Combatant video has a Frost Blades ladder and a Wild
+	 * Strike one), so the archetype cannot key the grouping.
+	 */
+	ladder?: string;
 	tier?: MercTier;
 	savedSearch: MercSavedSearch;
+	/**
+	 * The guide page or video that published THIS ruleset's trade link, when it
+	 * is not simply the source's own URL. A source whose rulesets all come from
+	 * one page leaves this absent and inherits `MercSource.guideUrl`.
+	 */
+	guideUrl?: string;
+	/**
+	 * A note the guide's author wrote about this specific search, verbatim.
+	 * `verdict.ts` relays it on a pass — it is the author speaking, not a rule
+	 * the app derived, so it is never paraphrased and never computed.
+	 */
+	authorNote?: string;
 	/** `query.status.option`, e.g. 'securable'. */
 	status: string;
 	/** `query.filters.misc_filters.filters.ilvl.min`. */
 	ilvlMin?: number;
-	/** Sebastian's prose price floor for a mercenary matching this ruleset. */
+	/** The guide author's prose price floor for a mercenary matching this ruleset. */
 	floor?: string;
 	groups: MercFilterGroup[];
 }
@@ -141,6 +184,11 @@ export function entryKind(
 }
 
 const ALLFLAME = 'Allflame';
+
+/** "How to search for a good Kineticist Mercenary | PoE 3.29 Allflame", 2026-08-08. */
+const NEROTOX_KINETIST_VIDEO = 'https://www.youtube.com/watch?v=HKTVN4sENvg';
+/** "How to search for a good Manyshot Mercenary | PoE 3.29 Allflame", 2026-07-29. */
+const NEROTOX_MANYSHOT_VIDEO = 'https://www.youtube.com/watch?v=ljaXlGLdyxM';
 
 const GUIDE_A_MANYSHOT: MercRuleset = {
 	id: 'guide-a-manyshot',
@@ -337,8 +385,10 @@ const GUIDE_B_KINETIST_MV: MercRuleset = {
 	id: 'guide-b-kinetist-mv',
 	label: 'Kinetist',
 	archetype: 'kinetist',
+	ladder: 'kinetist',
 	tier: 'mv',
 	savedSearch: { league: ALLFLAME, hash: '7nRvBzl2S5' },
+	guideUrl: NEROTOX_KINETIST_VIDEO,
 	status: 'securable',
 	ilvlMin: 83,
 	groups: [
@@ -486,8 +536,10 @@ const GUIDE_B_KINETIST_MID: MercRuleset = {
 	id: 'guide-b-kinetist-mid',
 	label: 'Kinetist',
 	archetype: 'kinetist',
+	ladder: 'kinetist',
 	tier: 'mid',
 	savedSearch: { league: ALLFLAME, hash: 'BgzkZKGQF8' },
+	guideUrl: NEROTOX_KINETIST_VIDEO,
 	status: 'securable',
 	ilvlMin: 83,
 	groups: [
@@ -627,8 +679,10 @@ const GUIDE_B_KINETIST_END: MercRuleset = {
 	id: 'guide-b-kinetist-end',
 	label: 'Kinetist',
 	archetype: 'kinetist',
+	ladder: 'kinetist',
 	tier: 'end',
 	savedSearch: { league: ALLFLAME, hash: 'LgkGrPO5Fn' },
+	guideUrl: NEROTOX_KINETIST_VIDEO,
 	status: 'securable',
 	ilvlMin: 83,
 	groups: [
@@ -768,8 +822,13 @@ const GUIDE_B_KINETIST_GG: MercRuleset = {
 	id: 'guide-b-kinetist-gg',
 	label: 'Kinetist',
 	archetype: 'kinetist',
+	ladder: 'kinetist',
 	tier: 'gg',
 	savedSearch: { league: ALLFLAME, hash: 'zbrQyEqah4' },
+	guideUrl: NEROTOX_KINETIST_VIDEO,
+	// Verbatim from the video description's GG line, joined into one note.
+	authorNote:
+		'look at damage links still - these are 4L not even 5L. 5L mercs nearly never exist for KB in gg setups, a 5L with barrage can beat a 4L with greater KB',
 	status: 'securable',
 	ilvlMin: 83,
 	groups: [
@@ -905,22 +964,549 @@ const GUIDE_B_KINETIST_GG: MercRuleset = {
 	]
 };
 
+/**
+ * Nerotox's Manyshot ladder (video 2026-07-29, `ljaXlGLdyxM`). The author's own
+ * rung names are Earlygame / Midgame / Endgame / GG; `mv` is the `TIERS` key
+ * this file spells "Earlygame" with, so the two ladders share one column order.
+ *
+ * Two facts about these searches that the Kinetist ladder does not have:
+ *
+ * 1. NO ilvl floor. All four omit `filters` entirely, so `ilvlMin` is absent
+ *    rather than 83 — the guide-a searches and the Kinetist ladder set one.
+ * 2. The Earlygame rung has EVERY `mercenary` group switched off. Its only live
+ *    gates are "has Vaal Ice Shot" and "no Icicle Rain", so it passes any Vaal
+ *    Ice Shot mercenary. That is what the saved search says, not a transcription
+ *    slip: the rung is the author's widest net, and its parked groups are the
+ *    vocabulary the higher rungs switch on.
+ */
+const GUIDE_B_MANYSHOT_MV: MercRuleset = {
+	id: 'guide-b-manyshot-mv',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	ladder: 'manyshot',
+	tier: 'mv',
+	savedSearch: { league: ALLFLAME, hash: '4mP3V2jQT9' },
+	guideUrl: NEROTOX_MANYSHOT_VIDEO,
+	status: 'securable',
+	groups: [
+		{
+			id: 'has-vaal',
+			label: 'Carries Vaal Ice Shot',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true }]
+		},
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			id: 'vaal-damage',
+			label: 'Vaal Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'vaal-return',
+			label: 'Vaal Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'projectiles',
+			label: 'Ice Shot + projectile links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+const GUIDE_B_MANYSHOT_MID: MercRuleset = {
+	id: 'guide-b-manyshot-mid',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	ladder: 'manyshot',
+	tier: 'mid',
+	savedSearch: { league: ALLFLAME, hash: 'Z6Em09GmHQ' },
+	guideUrl: NEROTOX_MANYSHOT_VIDEO,
+	status: 'securable',
+	groups: [
+		{
+			id: 'has-vaal',
+			label: 'Carries Vaal Ice Shot',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true }]
+		},
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			id: 'vaal-damage',
+			label: 'Vaal Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'vaal-return',
+			label: 'Vaal Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'projectiles',
+			label: 'Ice Shot + projectile links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'auras',
+			label: 'Auras',
+			type: 'count',
+			enabledInSearch: true,
+			min: 1,
+			entries: [
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: true },
+				{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: false },
+				{ id: 'mercenary.skill_24482', name: 'Hatred', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_B_MANYSHOT_END: MercRuleset = {
+	id: 'guide-b-manyshot-end',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	ladder: 'manyshot',
+	tier: 'end',
+	savedSearch: { league: ALLFLAME, hash: 'JBnK2YKRFl' },
+	guideUrl: NEROTOX_MANYSHOT_VIDEO,
+	status: 'securable',
+	groups: [
+		{
+			id: 'has-vaal',
+			label: 'Carries Vaal Ice Shot',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true }]
+		},
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			id: 'vaal-damage',
+			label: 'Vaal Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'vaal-return',
+			label: 'Vaal Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'projectiles',
+			label: 'Ice Shot + projectile links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'auras',
+			label: 'Auras',
+			type: 'count',
+			enabledInSearch: true,
+			min: 1,
+			entries: [
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: true },
+				{ id: 'mercenary.skill_24482', name: 'Hatred', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+/**
+ * The GG rung DRIFTS from the other three, and every difference below is
+ * transcribed, not tidied:
+ *
+ * - the aura `count` group comes FIRST and carries a third option (Frost Bomb);
+ * - there is no `and` "carries Vaal Ice Shot" group at all — the live
+ *   `vaal-damage` and `vaal-return` groups already require the skill;
+ * - `vaal-damage` drops the parked Return entry and asks for 3, not 2;
+ * - `projectiles` and `damage` are MERGED into one parked `min: 4` group over
+ *   both vocabularies, transcribed under the `projectiles` id it holds the
+ *   position of — so the matrix shows the damage entries as holes in the other
+ *   three rungs and no `damage` row for this one;
+ * - `core` (Ice Shot + Return) is the last group and the only one this rung
+ *   switches ON out of the Ice-Shot pair.
+ */
+const GUIDE_B_MANYSHOT_GG: MercRuleset = {
+	id: 'guide-b-manyshot-gg',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	ladder: 'manyshot',
+	tier: 'gg',
+	savedSearch: { league: ALLFLAME, hash: 'd86ymvXRsJ' },
+	guideUrl: NEROTOX_MANYSHOT_VIDEO,
+	authorNote: 'manually check for clear links on ice shot',
+	status: 'securable',
+	groups: [
+		{
+			id: 'auras',
+			label: 'Auras',
+			type: 'count',
+			enabledInSearch: true,
+			min: 1,
+			entries: [
+				{ id: 'mercenary.skill_24482', name: 'Hatred', enabledInSearch: true },
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: true },
+				{ id: 'mercenary.skill_10557', name: 'Frost Bomb', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			id: 'vaal-damage',
+			label: 'Vaal Ice Shot + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'vaal-return',
+			label: 'Vaal Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'projectiles',
+			label: 'Ice Shot + projectile and damage links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 4,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'core',
+			label: 'Ice Shot + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
 		label: 'Guide A',
-		guideUrl: null,
+		guideUrl: 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing',
 		rulesets: [GUIDE_A_MANYSHOT, GUIDE_A_KINETIST_V1, GUIDE_A_COMBATANT]
 	},
 	{
 		id: 'guide-b',
 		label: 'Guide B',
-		guideUrl: null,
+		// The CHANNEL: this source's ladders come from different videos, and each
+		// rung names its own (`MercRuleset.guideUrl`).
+		guideUrl: 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA',
 		rulesets: [
 			GUIDE_B_KINETIST_MV,
 			GUIDE_B_KINETIST_MID,
 			GUIDE_B_KINETIST_END,
-			GUIDE_B_KINETIST_GG
+			GUIDE_B_KINETIST_GG,
+			GUIDE_B_MANYSHOT_MV,
+			GUIDE_B_MANYSHOT_MID,
+			GUIDE_B_MANYSHOT_END,
+			GUIDE_B_MANYSHOT_GG
 		]
 	}
 ];
@@ -930,7 +1516,28 @@ export function allRulesets(): MercRuleset[] {
 	return MERC_SOURCES.flatMap((source) => source.rulesets);
 }
 
-/** The guide-b Kinetist ladder, cheapest rung first — the cross-tier comparison set. */
-export function kinetistLadder(): MercRuleset[] {
-	return allRulesets().filter((r) => r.tier !== undefined);
+/**
+ * A source's tier ladders: one array per `ladder` key, rungs cheapest first.
+ *
+ * Ladders come back in the order their first rung is declared, and the rungs of
+ * each are sorted by `TIERS` — a stable sort, so two rungs sharing one tier keep
+ * their declaration order rather than one of them winning arbitrarily. Nothing
+ * here assumes four rungs or one rung per tier: Nerotox's Combatant video
+ * publishes two Endgame links for the same ladder.
+ *
+ * A ruleset with a tier but no ladder key is NOT a rung of anything — it would
+ * have no column set to be compared in. `rulesets.test.ts` pins that no such
+ * ruleset is declared.
+ */
+export function ladders(source: MercSource): MercRuleset[][] {
+	const byKey = new Map<string, MercRuleset[]>();
+	for (const ruleset of source.rulesets) {
+		if (ruleset.ladder === undefined || ruleset.tier === undefined) continue;
+		const rungs = byKey.get(ruleset.ladder);
+		if (rungs) rungs.push(ruleset);
+		else byKey.set(ruleset.ladder, [ruleset]);
+	}
+	return [...byKey.values()].map((rungs) =>
+		[...rungs].sort((a, b) => TIERS.indexOf(a.tier!) - TIERS.indexOf(b.tier!))
+	);
 }
