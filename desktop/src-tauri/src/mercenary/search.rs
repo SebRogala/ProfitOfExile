@@ -51,12 +51,13 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
-use crate::trade::client::CANCELLED;
-use crate::trade::{MercTradeListing, MercTradeResult, RawSearch, TradeQueueEvent, TradeSource};
+use crate::trade::{
+    MercTradeListing, MercTradeResult, RawSearch, TradeQueueEvent, TradeSource, CANCELLED,
+};
 use crate::AppState;
 
 use super::read::confident;
-use super::run::publish;
+use super::run::{now_ms, publish};
 use super::vocab::MercVocab;
 use super::{MercCapture, MercRow};
 
@@ -630,7 +631,9 @@ fn label_for(capture: &MercCapture) -> String {
 ///   times a second for a capture that has not moved.
 /// - The `!auto` refusal returns before publishing anything once the slice
 ///   already says `Idle`, and [`decide`] hands each hash-independent verdict
-///   back once (see [`Settled`]), so the steady state does no work at all.
+///   back once (see [`Settled`]), so the steady state publishes nothing. What
+///   it does still pay every tick is the [`cache_get`] below: it clones the
+///   stored result whether or not an arm goes on to use it.
 /// - [`capture_url`] renders and percent-encodes the whole body, so it is built
 ///   per arm rather than up front.
 ///
@@ -823,7 +826,7 @@ pub fn close_session(app: &AppHandle) {
     let state = app.state::<AppState>();
     let in_flight = {
         let slice = state.mercenary.lock().unwrap_or_else(|e| e.into_inner());
-        cancels_on_close(slice.trade.status)
+        awaiting_lookup(slice.trade.status)
     };
     if in_flight {
         state.trade_client.cancel(TradeSource::Mercenary);
@@ -913,14 +916,8 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
                 );
                 publish(&app, |slice| accept_result(&mut slice.trade, &hash, result));
             }
-            // A cancel normally comes with its own publish — `close_session`
-            // sets `Idle` before this task wakes — so the canceller owns the
-            // state and this arm leaves it alone. The one case it must NOT
-            // leave alone is a slice still reading `Queued`/`Searching`: the
-            // cancel epoch can stop a lookup whose session never published
-            // anything about it (a cancel that lands in the gap between the
-            // enqueue and the snapshot), and without this that session waits
-            // for a result that is never coming.
+            // A cancel is not logged as a failure; what it does to the slice
+            // is [`accept_error`]'s rule, stated there.
             Err(e) => {
                 if e != CANCELLED {
                     crate::app_log(&app, format!("Merc trade error: {label} — {e}"));
@@ -931,15 +928,13 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
     });
 }
 
-/// Whether a retiring capture has a lookup on the shared queue worth
-/// cancelling.
+/// Whether this status still has a lookup outstanding on the shared queue.
 ///
-/// The two in-flight statuses and no others. Not because a needless
-/// `cancel(Mercenary)` would latch — it bumps an epoch only queued lookups
-/// compare against — but because [`close_session`] publishes `Idle` in the
-/// same breath, and doing that from `Done` would throw away the retired
-/// capture's answer.
-fn cancels_on_close(status: MercTradeStatus) -> bool {
+/// The two questions both callers ask: [`close_session`] cancels only from
+/// here (for the reason stated there), and [`accept_error`] absorbs a
+/// `cancelled` only from here, because anywhere else something has already
+/// settled the slice.
+fn awaiting_lookup(status: MercTradeStatus) -> bool {
     matches!(
         status,
         MercTradeStatus::Queued | MercTradeStatus::Searching
@@ -989,7 +984,7 @@ fn accept_error(trade: &mut crate::mercenary::MercTradeState, hash: &str, error:
     if trade.query_hash.as_deref() != Some(hash) {
         return;
     }
-    if error == CANCELLED && !cancels_on_close(trade.status) {
+    if error == CANCELLED && !awaiting_lookup(trade.status) {
         return;
     }
     trade.status = MercTradeStatus::Error;
@@ -1099,12 +1094,6 @@ fn cache_insert(state: &AppState, now_ms: u64, result: MercTradeResult) {
         .unwrap_or_else(|e| e.into_inner());
     cache.retain(|_, (at, _)| now_ms.saturating_sub(*at) < RESULT_TTL_MS);
     cache.insert(result.query_hash.clone(), (now_ms, result));
-}
-
-/// Unix ms. Re-exported from the loop so both writers of the trade state read
-/// one clock.
-fn now_ms() -> u64 {
-    super::run::now_ms()
 }
 
 // ---------------------------------------------------------------------------
@@ -2029,8 +2018,8 @@ mod tests {
     /// something on it.
     #[test]
     fn a_retire_cancels_the_queue_while_a_lookup_is_in_flight() {
-        assert!(cancels_on_close(MercTradeStatus::Queued));
-        assert!(cancels_on_close(MercTradeStatus::Searching));
+        assert!(awaiting_lookup(MercTradeStatus::Queued));
+        assert!(awaiting_lookup(MercTradeStatus::Searching));
     }
 
     /// From anywhere else the cancel is not just needless: `close_session`
@@ -2045,7 +2034,7 @@ mod tests {
             MercTradeStatus::Done,
             MercTradeStatus::Error,
         ] {
-            assert!(!cancels_on_close(status), "{status:?} has nothing on the queue");
+            assert!(!awaiting_lookup(status), "{status:?} has nothing on the queue");
         }
     }
 
@@ -2057,10 +2046,13 @@ mod tests {
     ///
     /// Asserted over the source because there is no seam to count calls
     /// through: the submit is written inline in `lib.rs`'s `trade_lookup`
-    /// command body, not behind a helper a test could stub. Comment lines are
-    /// stripped so the doc comment that EXPLAINS the rule (on `spawn_lookup`)
-    /// does not trip it, and the needle is assembled at runtime so this test
-    /// does not match itself.
+    /// command body, not behind a helper a test could stub. `trade_lookup` is
+    /// a needle in its own right — it is reachable from here (a private item
+    /// of the crate root is visible to every descendant module), so scanning
+    /// only for the server strings would miss the one call that actually
+    /// reintroduces the submit. Comment lines are stripped so the doc comments
+    /// that EXPLAIN the rule do not trip it; the test half is split off
+    /// before the scan, so these needles cannot match themselves.
     #[test]
     fn the_mercenary_lookup_path_never_reaches_the_servers_submit_endpoint() {
         let source = include_str!("search.rs");
@@ -2074,9 +2066,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        for needle in [format!("trade/{}", "submit"), "server_http".to_string(), "server_url".to_string()] {
+        for needle in ["trade/submit", "trade_lookup", "server_http", "server_url"] {
             assert!(
-                !code.contains(&needle),
+                !code.contains(needle),
                 "the mercenary trade path must not reach the server ({needle})",
             );
         }

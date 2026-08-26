@@ -891,7 +891,7 @@ async fn trade_lookup(
         }
     }).await
         .map_err(|e| {
-            if e == trade::client::CANCELLED {
+            if e == trade::CANCELLED {
                 return e; // Don't log cancellations as errors
             }
             app_log(&app, format!("Trade error: {}", e));

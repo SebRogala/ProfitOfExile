@@ -4,5 +4,5 @@ pub mod rate_limiter;
 pub mod signals;
 pub mod types;
 
-pub use client::{RawSearch, TradeApiClient, TradeQueueEvent, TradeSource};
+pub use client::{RawSearch, TradeApiClient, TradeQueueEvent, TradeSource, CANCELLED};
 pub use types::{MercTradeListing, MercTradeResult, TradeLookupResult};
