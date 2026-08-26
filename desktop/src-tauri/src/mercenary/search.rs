@@ -1,36 +1,84 @@
 //! Trade query for the mercenary AS CAPTURED, and the pure trigger policy that
 //! decides whether to spend a search on it (POE-202).
 //!
-//! # The probe that fixed the query shape
+//! # The probes that fixed the query shape
 //!
-//! The row-group arithmetic was measured against the live API rather than
-//! reasoned about, because the two candidate readings (count matched filters vs
-//! count filled slots) produce the same query for an unambiguous read and
-//! different ones for every ambiguous or tier-loosened cell. Verbatim from the
-//! task's design summary:
+//! The shape was measured against the live API rather than reasoned about,
+//! twice — and the second measurement overturned the first shape.
 //!
-//! > **Probe result (2026-08-26, live Allflame, 4 spaced searches):** a
-//! > `mercenary` group counts matched filters within one row with union
-//! > semantics — `[KBoC, MP-T1, GMP-T3] min 2` = 7774 = `[KBoC, GMP-T3] min 2`
-//! > (7774) + `[KBoC, MP-T1] min 2` (0); the same three ids with `min 3` = 0, so
-//! > a row never holds two tiers of one family. Expanded ids stay inside the row
-//! > group with `value.min = contributing cell count`. No sibling `count` group.
-//! > Audit CONFIRM Q2 closed.
+//! ## Complexity: a budget of 35, and a `mercenary` group costs 21 of it
 //!
-//! Two consequences the builder leans on:
+//! **Probe result (2026-08-26, 50 spaced anonymous searches — anonymous is what
+//! the app is).** GGG's 400 "Query is too complex" is not a filter count. It is
+//! a per-group budget of **35**, and each group type is priced differently:
 //!
-//! - A cell that resolves to a SET of ids — a confident read (`Matched |
-//!   Confirmed`) whose `ids.len() > 1`, or a tier loosened down to the floor —
-//!   puts every id in the same row group and still counts **once** toward the
-//!   minimum, because at most one of them can be on the row. That is why a
-//!   multi-id read and tier loosening are one mechanism and not two.
-//!   `ReadState::Ambiguous` is not that case: it is filtered out with every
-//!   other non-confident state, and it cannot reach the `note_complete` edge
-//!   anyway, because `read::capture_complete` (`read.rs:484-489`) only calls a
-//!   capture complete when every skill and support cell is confident.
-//! - One `mercenary` group per row, never an `and` group: `and` matches the
-//!   skill of row 1 against the support of row 3 and comps a mercenary nobody
-//!   has.
+//! | group | cost |
+//! |---|---|
+//! | `and` | 1 per filter, no fixed cost |
+//! | `count` | 3 + 2 per filter |
+//! | `mercenary` | 21 + 2 per filter |
+//! | `not` | assumed 1 per filter (never over budget in a probe) |
+//!
+//! Evidence, `f` = filters in the group: and35 = 35 ok; and5 + 5×count2 = 40
+//! fails; and20 + count4 = 31 ok; and12 + count5 = 25 ok; count6 alone = 15 ok;
+//! 4×count3 = 36 fails; and20 + 2×count3 = 38 fails; and5 + 3×count3 = 32 ok;
+//! and10 + 3×count3 = 37 fails; merc7 = 35 ok and merc8 = 37 fails; merc3 + and8
+//! = 35 ok and merc3 + and9 = 36 fails.
+//!
+//! Two consequences the shape turns on. A `mercenary` group's 21 leaves 14 for
+//! everything else, and TWO of them cannot fit at any size — which is what
+//! killed the shipped "one `mercenary` group per row": a captured panel is four
+//! or five rows, and the same error came back from the browser link. What
+//! survives the budget, and what [`build_capture_query`] now emits:
+//!
+//! - ONE `and` group holding every cell that resolves to exactly one id — every
+//!   single-id skill read and every support cell whose expanded set is a
+//!   singleton;
+//! - ONE `count` group with `value.min = 1` per cell that resolves to SEVERAL —
+//!   an ambiguous read (`ids.len() > 1`) or a support loosened down to the tier
+//!   floor.
+//!
+//! `min 1` is the whole of the second group's job: at most one of a cell's
+//! candidate ids can be on the mercenary, so a cell contributes one match
+//! however many ids express it. That is why a multi-id read and tier loosening
+//! are one mechanism and not two. `ReadState::Ambiguous` is not that case: it is
+//! filtered out with every other non-confident state, and it cannot reach the
+//! `note_complete` edge anyway, because `read::capture_complete`
+//! (`read.rs:484-489`) only calls a capture complete when every skill and
+//! support cell is confident.
+//!
+//! ## Over budget: what the app drops, and what it tells the user
+//!
+//! A `count` group's 3 + 2·f is what makes the budget reachable in normal play:
+//! five rows of four unnarrowed cells is 20 groups before any tier loosening.
+//! [`build_capture_query`] degrades in two stages, and only the second is
+//! reported to the user as a looser query ([`CaptureQuery::cells_dropped`]):
+//!
+//! - **tier loosening first** ([`CaptureQuery::loosening_dropped`]) — the app's
+//!   own widening, which the user never read off the panel. Dropping it leaves a
+//!   query that asks for exactly what was captured, so there is nothing to
+//!   caveat;
+//! - **then support cells, from the last row inward** — now the query asks for
+//!   less than the panel showed, and a "no listings" from it is a weaker signal
+//!   than a complete query's.
+//!
+//! ## Row scoping is dropped, deliberately
+//!
+//! Nothing in the query above says which row a support sits on, so a mercenary
+//! carrying the same skills and the same links **arranged across different
+//! rows** also matches. That is an accepted false-positive class, not an
+//! oversight: the only construct that expresses a row is the `mercenary` group,
+//! and a query may hold one of those.
+//!
+//! ## History: union semantics inside a `mercenary` group
+//!
+//! Kept because it is what the dropped per-row shape was built on, and because
+//! it is still the measured truth about that group type. **Probe result
+//! (2026-08-26, live Allflame, 4 spaced searches):** a `mercenary` group counts
+//! matched filters within one row with union semantics — `[KBoC, MP-T1, GMP-T3]
+//! min 2` = 7774 = `[KBoC, GMP-T3] min 2` (7774) + `[KBoC, MP-T1] min 2` (0);
+//! the same three ids with `min 3` = 0, so a row never holds two tiers of one
+//! family.
 //!
 //! # What is deliberately absent from the query
 //!
@@ -66,11 +114,20 @@ use super::{MercCapture, MercRow};
 /// the slice's wire types.
 pub use super::MercTradeStatus;
 
-/// GGG rejects a search carrying more than this many stat filters
-/// (`docs/RESEARCH-poe-trade-api.md:65`). A 5-row mercenary with 4 supports a
-/// row is 25 cells before any tier loosening, so the cap is reachable in normal
-/// play once the floor drops below 3.
-const MAX_FILTERS: usize = 35;
+/// GGG's query-complexity budget, the number [`complexity`] is measured
+/// against. Over it the API answers 400 "Query is too complex".
+///
+/// Probe-measured, not documented by GGG — the evidence line is in the head
+/// doc.
+const MAX_COMPLEXITY: u32 = 35;
+
+/// What one `count` group costs before its filters. The `and` group has no
+/// counterpart: its filters cost 1 each and the group itself is free.
+const COUNT_GROUP_COST: u32 = 3;
+
+/// What each filter inside a `count` group costs on top of
+/// [`COUNT_GROUP_COST`].
+const COUNT_FILTER_COST: u32 = 2;
 
 /// A hash change has to hold still this long before it is worth a search. The
 /// capture is settled when the session opens, but every hover-confirm after
@@ -92,21 +149,29 @@ pub struct CaptureQuery {
     /// identity for dedupe, caching and late-result discard — two captures that
     /// ask the same question share it.
     pub hash: String,
-    /// Stat filters across every row group, after any cap degradation.
-    pub filter_count: usize,
-    /// The query asks for less than the capture and the floor called for: tier
-    /// loosening was dropped, or support cells were, to fit [`MAX_FILTERS`].
-    /// Surfaced to the user — a truncated search's "no listings" is not the
-    /// same signal as a complete one's.
-    pub truncated: bool,
+    /// What this body costs against [`MAX_COMPLEXITY`], after any degradation.
+    /// Never over the budget — a query that cannot be brought under it is not
+    /// built at all.
+    pub complexity: u32,
+    /// The app's own tier loosening was dropped to fit the budget. NOT surfaced
+    /// to the user: what is left asks for exactly the supports the panel showed,
+    /// which is the question the user would have asked without a floor setting.
+    pub loosening_dropped: bool,
+    /// Support cells the capture actually READ were dropped to fit the budget.
+    /// This is the one the user is told about ([`MercTradeResult::truncated`]):
+    /// the listings answer a looser question than the panel, so their "no
+    /// listings" is not the same signal as a complete query's.
+    pub cells_dropped: bool,
 }
 
 /// One row's contribution to the query: the skill's ids, and one id set per
 /// support cell that survived confidence filtering and tier expansion.
 ///
-/// Kept as sets rather than a flat filter list so the cap can drop a whole cell
-/// (which lowers the row's minimum by exactly one) instead of an id (which
-/// would narrow a set and silently make the row unmatchable).
+/// Kept per row, and as sets rather than a flat filter list, for the cap: the
+/// degradation drops a whole CELL from a named row, and dropping an id instead
+/// would narrow a set and silently make the query unmatchable. The rows
+/// themselves say nothing about the emitted query — [`lower`] folds them flat,
+/// because the shape has no way to express a row (head doc).
 #[derive(Debug, Clone)]
 struct RowPlan {
     skill_ids: Vec<String>,
@@ -114,31 +179,99 @@ struct RowPlan {
 }
 
 impl RowPlan {
-    /// Every id in this row's group, in cell order, deduplicated.
-    ///
-    /// Deduplication is defensive — two cells of one row cannot share an id,
-    /// since skills and supports use different id prefixes and a row holds one
-    /// tier of one family. A repeated id would inflate `filter_count` against a
-    /// cap that GGG enforces, so it is removed rather than trusted not to
-    /// happen. A cell whose ids are ALL already on the row is not deduped here
-    /// but dropped in [`plan_row`], so it stops counting toward [`Self::min`]
-    /// too: keeping the count while deduping the filters would ask the row to
-    /// match one id twice, which no row can do.
-    fn ids(&self) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        for id in self.skill_ids.iter().chain(self.supports.iter().flatten()) {
-            if !out.iter().any(|seen| seen == id) {
-                out.push(id.clone());
+    /// The row's cells in emission order: the skill, then each surviving
+    /// support.
+    fn cells(&self) -> impl Iterator<Item = &Vec<String>> {
+        std::iter::once(&self.skill_ids).chain(self.supports.iter())
+    }
+}
+
+/// The two kinds of group a capture lowers to, holding no row information at
+/// all — that loss is the shape's accepted cost (head doc).
+#[derive(Debug, Clone)]
+struct GroupPlan {
+    /// Cells that resolve to exactly one id. One `and` group, one filter each.
+    exact: Vec<String>,
+    /// Cells that resolve to several. One `count` group of `value.min = 1`
+    /// each, in cell order.
+    sets: Vec<Vec<String>>,
+}
+
+/// What a plan costs against [`MAX_COMPLEXITY`].
+///
+/// The `and` group is free and its filters cost 1 each; every `count` group
+/// costs [`COUNT_GROUP_COST`] plus [`COUNT_FILTER_COST`] per filter. A
+/// `mercenary` group would cost 21 + 2 per filter and this builder emits none —
+/// see the head doc for the probes behind all three numbers.
+fn complexity(plan: &GroupPlan) -> u32 {
+    let and = plan.exact.len() as u32;
+    let counts: u32 = plan
+        .sets
+        .iter()
+        .map(|set| COUNT_GROUP_COST + COUNT_FILTER_COST * set.len() as u32)
+        .sum();
+    and + counts
+}
+
+/// Fold every row's cells into the one `and` group and the `count` groups.
+///
+/// Three things are dropped on the way, all of them for the same reason: they
+/// cost [`complexity`] and constrain nothing. Row scoping is what makes them
+/// droppable — under the retired per-row shape each would have been a real
+/// question about a particular row.
+///
+/// - An id the `and` group already carries. Asking twice for one stat is the
+///   same question.
+/// - A `count` group whose ids are already an earlier `count` group's, exactly.
+/// - A `count` group holding ANY id the `and` group requires: `and` guarantees
+///   that id, which satisfies `min 1` on its own. `any`, not `all` — one shared
+///   id is enough to make the whole group vacuous.
+fn lower(rows: &[RowPlan]) -> GroupPlan {
+    let mut exact: Vec<String> = Vec::new();
+    for ids in rows.iter().flat_map(RowPlan::cells) {
+        if let [id] = ids.as_slice() {
+            if !exact.iter().any(|seen| seen == id) {
+                exact.push(id.clone());
             }
         }
-        out
     }
 
-    /// The group minimum: how many of this row's cells must match. One for the
-    /// skill plus one per surviving support — never the id count, per the probe.
-    fn min(&self) -> usize {
-        1 + self.supports.len()
+    let mut sets: Vec<Vec<String>> = Vec::new();
+    for ids in rows.iter().flat_map(RowPlan::cells) {
+        if ids.len() < 2 {
+            continue;
+        }
+        if ids.iter().any(|id| exact.iter().any(|seen| seen == id)) {
+            continue;
+        }
+        if sets.iter().any(|seen| seen == ids) {
+            continue;
+        }
+        sets.push(ids.clone());
     }
+
+    GroupPlan { exact, sets }
+}
+
+/// The rows with the named `(row, support index)` cells left out.
+///
+/// Indices are into the ORIGINAL rows and stay valid however many cells are
+/// dropped, which is what lets the degradation walk put a candidate back: a
+/// mutating `pop` would renumber everything behind it.
+fn without(rows: &[RowPlan], dropped: &[(usize, usize)]) -> Vec<RowPlan> {
+    rows.iter()
+        .enumerate()
+        .map(|(r, row)| RowPlan {
+            skill_ids: row.skill_ids.clone(),
+            supports: row
+                .supports
+                .iter()
+                .enumerate()
+                .filter(|(c, _)| !dropped.contains(&(r, *c)))
+                .map(|(_, ids)| ids.clone())
+                .collect(),
+        })
+        .collect()
 }
 
 /// Build the trade query for a capture, or `None` when no row can be expressed.
@@ -158,45 +291,78 @@ pub fn build_capture_query(
         return None;
     }
 
-    let mut truncated = false;
-    let mut count = count_filters(&rows);
+    let mut loosening_dropped = false;
+    let mut cells_dropped = false;
+    let mut plan = lower(&rows);
 
     // Degradation order: loosening first, because it is the app's own
     // widening and the user did not read it off the panel. Only then do we
     // start dropping cells the capture actually saw.
-    if count > MAX_FILTERS && floor < 3 {
+    if complexity(&plan) > MAX_COMPLEXITY && floor < 3 {
         rows = plan_rows(capture, vocab, 3);
-        truncated = true;
-        count = count_filters(&rows);
+        loosening_dropped = true;
+        plan = lower(&rows);
     }
 
-    // Then support cells from the last row inward. The last row is the one a
-    // mercenary is least often bought for, and the skill of every row is kept
-    // whatever happens — a row without its skill comps nothing.
-    while count > MAX_FILTERS {
-        let Some(row) = rows.iter_mut().rev().find(|row| !row.supports.is_empty()) else {
-            // Only skills left and still over the cap. Unreachable with the
-            // 5-row panel the game shows. There is nothing left to degrade, and
-            // an over-cap body is a search GGG rejects — so the capture has no
-            // expressible query, which is exactly what `None` means to the
-            // caller (publish `Idle`, no failed lookup, no spent search).
-            return None;
-        };
-        row.supports.pop();
-        truncated = true;
-        count = count_filters(&rows);
-    }
-
-    let stats: Vec<Value> = rows
+    // Then support cells, the last row's last cell first and inward from there.
+    // The last row is the one a mercenary is least often bought for, and the
+    // skill of every row is kept whatever happens — a query without a row's
+    // skill comps nothing.
+    //
+    // A candidate is dropped only if dropping it actually costs less. Not every
+    // one does: a cell already covered by the `and` group costs nothing to
+    // begin with, and dropping the ONLY cell that put id X in the `and` group
+    // RESURRECTS every `count` group X was suppressing — 3 + 2 per filter back
+    // in exchange for the 1 the cell cost. A candidate that fails the test is
+    // put back and the walk moves inward, so the plan only ever improves and
+    // the walk terminates on the candidate list.
+    let candidates: Vec<(usize, usize)> = rows
         .iter()
-        .map(|row| {
-            json!({
-                "type": "mercenary",
-                "value": {"min": row.min()},
-                "filters": row.ids().into_iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
-            })
-        })
+        .enumerate()
+        .rev()
+        .flat_map(|(r, row)| (0..row.supports.len()).rev().map(move |c| (r, c)))
         .collect();
+    let mut dropped: Vec<(usize, usize)> = Vec::new();
+    let mut next_candidate = candidates.iter();
+    while complexity(&plan) > MAX_COMPLEXITY {
+        let Some(&candidate) = next_candidate.next() else {
+            break;
+        };
+        dropped.push(candidate);
+        let next = lower(&without(&rows, &dropped));
+        if complexity(&next) < complexity(&plan) {
+            plan = next;
+            cells_dropped = true;
+        } else {
+            dropped.pop();
+        }
+    }
+    if complexity(&plan) > MAX_COMPLEXITY {
+        // Nothing left to drop, or nothing left whose dropping helps.
+        // Unreachable with the 5-row panel the game shows. An over-budget body
+        // is a search GGG rejects, so the capture has no expressible query —
+        // which is exactly what `None` means to the caller (publish `Idle`, no
+        // failed lookup, no spent search).
+        return None;
+    }
+
+    // The `and` group leads, then one `count` group per multi-id cell. The
+    // `and` group is omitted when nothing resolved to a single id — an empty
+    // group is a filter-free question GGG would answer with the whole league.
+    let mut stats: Vec<Value> = Vec::new();
+    if !plan.exact.is_empty() {
+        stats.push(json!({
+            "type": "and",
+            "filters": plan.exact.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
+        }));
+    }
+    for set in &plan.sets {
+        stats.push(json!({
+            "type": "count",
+            "value": {"min": 1},
+            "filters": set.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(),
+        }));
+    }
 
     let body = json!({
         "query": {
@@ -218,8 +384,9 @@ pub fn build_capture_query(
     Some(CaptureQuery {
         body,
         hash,
-        filter_count: count,
-        truncated,
+        complexity: complexity(&plan),
+        loosening_dropped,
+        cells_dropped,
     })
 }
 
@@ -278,6 +445,11 @@ pub struct MercTradeSession {
     /// on `Error` after a successful retry re-enqueues the same query once per
     /// debounce window — bounded only by [`MAX_SEARCHES`].
     pub state: MercTradeStatus,
+    /// The slice's `trade.terminal_hash`, re-read with [`Self::state`]: the
+    /// hash GGG rejected outright, which [`decide`] must not retry. Written by
+    /// the caller for the same reason `state` is — the lookup task learns of
+    /// the rejection long after `decide` returned.
+    pub terminal_hash: Option<String>,
     /// The hash-independent verdict last handed to the caller, if the last one
     /// was hash-independent. The other refusals are deduplicated by
     /// [`Self::last_hash`]; these three have no hash to dedupe against and the
@@ -358,6 +530,18 @@ pub enum TriggerAction {
 /// so a persistently failing query costs at most [`MAX_SEARCHES`] attempts
 /// spread over at least that many windows.
 ///
+/// A REJECTED query is not retried at all, and that is an INDEPENDENT gate
+/// rather than a qualifier on the `Error` clause. When the failure was a 4xx,
+/// [`accept_error`] records the hash on the slice; the gate reads it back and
+/// refuses the hash whatever else the session believes — GGG's answer to that
+/// exact body will not change, and every 4xx counts toward its separate
+/// invalid-request ban. Independence is what covers the two paths that reach
+/// `decide` with the `Error` clause out of the picture: the toggle going off and
+/// back on (which clears `last_hash`), and a retire-then-re-detect handing the
+/// same capture to a FRESH session — both re-read `terminal_hash` off the slice,
+/// which is why it lives there and not on the session. 5xx and transport
+/// failures keep the debounced retry.
+///
 /// Every verdict is returned ONCE per condition. The hash-driven ones dedupe
 /// against [`MercTradeSession::last_hash`]; the three that never look at a hash
 /// dedupe against [`MercTradeSession::settled`], because the caller asks at the
@@ -396,6 +580,27 @@ pub fn decide(
         session.last_hash = None;
     }
 
+    // GGG rejected this exact body. Nothing below this line may spend anything
+    // on it: a 4xx is a verdict on the query, identical every time it is asked,
+    // and every 4xx counts toward GGG's separate invalid-request ban. It cost
+    // the app a whole three-search budget in one second before the refusal
+    // existed (2026-08-26 live log: three 400 "Query is too complex" in 6 s).
+    //
+    // A GATE of its own, ahead of every other clause, because two paths reach
+    // here with no memory of the rejection on the session at all: the toggle
+    // going off and back on clears `last_hash` two lines up, and a retired
+    // window that is detected again arrives on a FRESH session. Both re-read
+    // `terminal_hash` off the slice (see [`tick`]), which is what makes the
+    // refusal survive them.
+    //
+    // `last_hash` is recorded so the caller is told once and then left alone:
+    // the slice already carries the `Error` and the message this refusal is
+    // about, and the tick asks ten times a second.
+    if session.terminal_hash.as_deref() == Some(query.hash.as_str()) {
+        session.last_hash = Some(query.hash.clone());
+        return TriggerAction::None;
+    }
+
     // Track when the query stopped moving before anything acts on it, so the
     // debounce measures the age of the CHANGE and not of the last poll.
     if session.pending_hash.as_deref() != Some(query.hash.as_str()) {
@@ -404,7 +609,8 @@ pub fn decide(
     }
 
     // A failed lookup is not an answer, so the hash it failed on is not one
-    // either: forgetting it is what lets the next pass retry.
+    // either: forgetting it is what lets the next pass retry. Only a 5xx or a
+    // transport failure gets here — a rejection returned at the gate above.
     //
     // The failure is folded into the debounce clock in the same breath, so the
     // retry has to survive the same quiet window a fresh query does. Without
@@ -461,14 +667,13 @@ fn settle(
     action
 }
 
-/// One row group per confident row, with every support cell expanded to the
-/// floor.
+/// One plan per confident row, with every support cell expanded to the floor.
 ///
 /// A row whose SKILL is not confident is skipped entirely: the skill is what
-/// makes the row a row, and a group of supports with no skill comps every
-/// mercenary that happens to carry those links. At the settle edge every cell is
-/// confident by construction (`read::capture_complete`), so this is a guard
-/// against a caller that asks earlier, not a path normal play takes.
+/// makes the row a row, and its supports alone would comp every mercenary that
+/// happens to carry those links. At the settle edge every cell is confident by
+/// construction (`read::capture_complete`), so this is a guard against a caller
+/// that asks earlier, not a path normal play takes.
 fn plan_rows(capture: &MercCapture, vocab: &MercVocab, floor: u8) -> Vec<RowPlan> {
     capture.rows.iter().filter_map(|row| plan_row(row, vocab, floor)).collect()
 }
@@ -480,20 +685,12 @@ fn plan_row(row: &MercRow, vocab: &MercVocab, floor: u8) -> Option<RowPlan> {
     let mut supports: Vec<Vec<String>> = Vec::new();
     for cell in row.supports.iter().filter(|cell| confident(cell.state)) {
         let ids = expand(cell.family.as_deref(), cell.tier, &cell.ids, vocab, floor);
-        // An empty set is not a cell: it would raise the row's minimum by one
-        // with nothing that can satisfy it, making the whole row unmatchable.
+        // An empty set is not a cell: it would emit a `count min 1` group with
+        // nothing that can satisfy it, and the query would match no mercenary
+        // at all. Redundant cells are dropped later, in [`lower`], because
+        // whether one is redundant is a question about the whole capture now
+        // that rows have no meaning in the query.
         if ids.is_empty() {
-            continue;
-        }
-        // Nor is a cell that repeats what the row already asks for. Defensive
-        // (see [`RowPlan::ids`]), and dropped whole rather than deduped: the
-        // duplicate must stop counting toward the minimum as well, since the
-        // row would have to match the same id twice to satisfy it.
-        let covered = ids.iter().all(|id| {
-            row.skill.ids.iter().any(|seen| seen == id)
-                || supports.iter().flatten().any(|seen| seen == id)
-        });
-        if covered {
             continue;
         }
         supports.push(ids);
@@ -542,10 +739,6 @@ fn expand(
     out
 }
 
-fn count_filters(rows: &[RowPlan]) -> usize {
-    rows.iter().map(|row| row.ids().len()).sum()
-}
-
 /// SHA-256 (hex) of the body rendered with every object's keys sorted.
 ///
 /// Sorting is explicit rather than inherited from `serde_json`'s default map:
@@ -568,9 +761,10 @@ fn canonicalise(value: &Value) -> Value {
                 .collect();
             Value::Object(sorted.into_iter().collect())
         }
-        // Arrays are ordered data — `stats` order is the row order, and the
-        // filter order inside a group is the cell order. Sorting them would
-        // make two different captures hash alike.
+        // Arrays are ordered data — the `and` group leads `stats` and the
+        // `count` groups follow in cell order, and the filter order inside a
+        // group is the order the capture was read in. Sorting them would make
+        // two different captures hash alike.
         Value::Array(items) => Value::Array(items.iter().map(canonicalise).collect()),
         other => other.clone(),
     }
@@ -678,9 +872,9 @@ pub fn tick(
         session.built_key = Some(key);
     }
 
-    session.state = {
+    (session.state, session.terminal_hash) = {
         let slice = state.mercenary.lock().unwrap_or_else(|e| e.into_inner());
-        slice.trade.status
+        (slice.trade.status, slice.trade.terminal_hash.clone())
     };
 
     // Auto off and the slice already saying so: there is nothing left to
@@ -947,7 +1141,21 @@ fn spawn_lookup(app: &AppHandle, label: String, query: CaptureQuery) {
             // is [`accept_error`]'s rule, stated there.
             Err(e) => {
                 if e != CANCELLED {
-                    crate::app_log(&app, format!("Merc trade error: {label} — {e}"));
+                    // The "not retried" half is the part a live log has to
+                    // carry: a rejected query looks identical to a transient
+                    // failure in the log line, and the two differ in whether
+                    // the session's remaining budget is about to be spent.
+                    crate::app_log(
+                        &app,
+                        format!(
+                            "Merc trade error: {label} — {e}{}",
+                            if crate::trade::is_client_error(&e) {
+                                " (rejected by GGG; not retried)"
+                            } else {
+                                ""
+                            },
+                        ),
+                    );
                 }
                 publish(&app, |slice| accept_error(&mut slice.trade, &hash, e));
             }
@@ -1007,12 +1215,21 @@ fn accept_result(
 /// the cancel epoch can stop a lookup whose session never published anything
 /// about it (a cancel landing between the enqueue and the snapshot), and
 /// without this that session waits for a result that is never coming.
+///
+/// A 4xx is recorded as terminal for this hash. GGG rejected the body, so the
+/// same body gets the same rejection, and [`decide`] must not spend the rest of
+/// the session's budget re-learning it (see that function's `Error` clause).
+/// `terminal_hash` is set only on the rejecting hash and never cleared: it
+/// names the query it is about, so a capture that moves on is unaffected.
 fn accept_error(trade: &mut crate::mercenary::MercTradeState, hash: &str, error: String) {
     if trade.query_hash.as_deref() != Some(hash) {
         return;
     }
     if error == CANCELLED && !awaiting_lookup(trade.status) {
         return;
+    }
+    if crate::trade::is_client_error(&error) {
+        trade.terminal_hash = Some(hash.to_string());
     }
     trade.status = MercTradeStatus::Error;
     trade.error = Some(error);
@@ -1057,7 +1274,12 @@ fn to_result(raw: RawSearch, query: &CaptureQuery, fetched_at_ms: u64) -> (MercT
             median_chaos: crate::trade::signals::median_chaos_price(&chaos),
             listings,
             fetched_at_ms,
-            truncated: query.truncated,
+            // Only a dropped CELL. Dropping the app's own tier loosening
+            // ([`CaptureQuery::loosening_dropped`]) leaves a query that asks
+            // for exactly what the panel showed, so there is nothing about it
+            // to caveat — telling the user it is "looser than the capture"
+            // would be false.
+            truncated: query.cells_dropped,
         },
         skipped,
     )
@@ -1289,10 +1511,10 @@ mod tests {
     /// with [`chain_vocab`] and a tier floor of 2.
     ///
     /// Deliberately not the simplest capture that builds: it carries two rows
-    /// (so the fixture pins group ORDER), a cell the icon read could not narrow
-    /// to one id (so it pins that a set still counts once), and a confirmed
-    /// tier-3 cell under a floor of 2 (so it pins the loosening range and the
-    /// order the expanded ids join the group in).
+    /// (so the fixture pins that they fold into ONE `and` group, in read
+    /// order), a cell the icon read could not narrow to one id, and a confirmed
+    /// tier-3 cell under a floor of 2 — so it pins both kinds of `count` group,
+    /// the loosening range, and the order the groups are emitted in.
     fn parity_capture() -> MercCapture {
         capture(vec![
             row(
@@ -1316,11 +1538,22 @@ mod tests {
         ])
     }
 
+    /// The query's stat groups, in order.
+    ///
+    /// Every builder test reads them through here, so the one rule that holds
+    /// for every query the builder can produce is asserted here once: no
+    /// `mercenary` group. A single one of those is the whole complexity budget
+    /// (head doc), and a captured panel is four or five rows.
     fn groups(query: &CaptureQuery) -> Vec<Value> {
-        query.body["query"]["stats"]
+        let groups = query.body["query"]["stats"]
             .as_array()
             .expect("the body carries a stats array")
-            .clone()
+            .clone();
+        assert!(
+            groups.iter().all(|group| group["type"] != "mercenary"),
+            "a `mercenary` group makes the query too complex to run: {groups:?}",
+        );
+        groups
     }
 
     fn group_ids(group: &Value) -> Vec<String> {
@@ -1332,19 +1565,46 @@ mod tests {
             .collect()
     }
 
-    fn group_min(group: &Value) -> u64 {
-        group["value"]["min"].as_u64().expect("a row group carries value.min")
+    /// The ids of the one `and` group, in order.
+    ///
+    /// Asserts the group's identity as well as its contents: exactly one, and
+    /// leading the array. A second `and` group would be a filter set the
+    /// builder never means to emit.
+    fn and_ids(query: &CaptureQuery) -> Vec<String> {
+        let groups = groups(query);
+        let ands: Vec<&Value> = groups.iter().filter(|g| g["type"] == "and").collect();
+        assert_eq!(ands.len(), 1, "exactly one `and` group: {groups:?}");
+        assert_eq!(groups[0]["type"], "and", "the `and` group leads: {groups:?}");
+        group_ids(ands[0])
+    }
+
+    /// The ids of every `count` group, in order.
+    ///
+    /// `value.min` is asserted here rather than per test: a `count` group
+    /// asking for anything but ONE of its ids is a different question from the
+    /// one a multi-id cell poses, and no test would have to say so twice.
+    fn count_sets(query: &CaptureQuery) -> Vec<Vec<String>> {
+        groups(query)
+            .iter()
+            .filter(|g| g["type"] == "count")
+            .map(|g| {
+                assert_eq!(
+                    g["value"]["min"], 1,
+                    "a cell asks for ONE of its candidate ids: {g:?}",
+                );
+                group_ids(g)
+            })
+            .collect()
     }
 
     // -----------------------------------------------------------------------
     // The query builder
     // -----------------------------------------------------------------------
 
-    /// The probe's arithmetic: one `mercenary` group per row, and the minimum
-    /// counts CELLS. A group asking for 3 of 3 ids matches nothing the moment
-    /// one cell resolves to a set.
+    /// The base shape: every cell that names one support becomes one `and`
+    /// filter, and nothing else is emitted.
     #[test]
-    fn a_row_becomes_one_group_whose_minimum_counts_its_cells() {
+    fn every_cell_that_names_one_support_becomes_one_and_filter() {
         let capture = capture(vec![row(
             0,
             "skill_a",
@@ -1356,19 +1616,18 @@ mod tests {
 
         let query = build_capture_query(&capture, &no_vocab(), 3).expect("a confident row builds");
 
-        let groups = groups(&query);
-        assert_eq!(groups.len(), 1, "one group per row, never an `and`: {groups:?}");
-        assert_eq!(groups[0]["type"], "mercenary");
-        assert_eq!(group_min(&groups[0]), 3, "the skill and both supports");
-        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a", "sup_b"]);
-        assert_eq!(query.filter_count, 3);
-        assert!(!query.truncated, "nothing was dropped");
+        assert_eq!(and_ids(&query), ["skill_a", "sup_a", "sup_b"]);
+        assert!(count_sets(&query).is_empty(), "nothing here is ambiguous");
+        assert_eq!(query.complexity, 3, "three `and` filters at 1 each");
+        assert!(!query.loosening_dropped && !query.cells_dropped, "nothing was dropped");
     }
 
-    /// Every row is its own group. Folding two rows into one would comp row
-    /// 1's skill against row 2's support — a mercenary nobody has.
+    /// Every row folds into the SAME `and` group. The retired shape gave each
+    /// row a `mercenary` group of its own; four of those is a query GGG
+    /// answers with 400 "Query is too complex", so the rows are flattened and
+    /// the false positives that costs are accepted (head doc).
     #[test]
-    fn each_row_gets_its_own_group() {
+    fn the_rows_of_a_capture_fold_into_one_and_group() {
         let capture = capture(vec![
             row(0, "skill_a", vec![support(&["sup_a"], None, None, ReadState::Matched)]),
             row(1, "skill_b", vec![support(&["sup_b"], None, None, ReadState::Matched)]),
@@ -1376,17 +1635,15 @@ mod tests {
 
         let query = build_capture_query(&capture, &no_vocab(), 3).expect("both rows build");
 
-        let groups = groups(&query);
-        assert_eq!(groups.len(), 2);
-        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a"]);
-        assert_eq!(group_ids(&groups[1]), ["skill_b", "sup_b"]);
+        assert_eq!(groups(&query).len(), 1, "one group for the whole capture");
+        assert_eq!(and_ids(&query), ["skill_a", "sup_a", "skill_b", "sup_b"]);
     }
 
-    /// A cell the icon read could not narrow to one support contributes all of
-    /// its ids and still counts ONCE: at most one of them is on the row, so a
-    /// minimum that counted ids would make the row unmatchable.
+    /// A cell the icon read could not narrow to one support becomes a `count`
+    /// group of its candidates: at most one of them is on the mercenary, so
+    /// `and`-ing them would ask for a mercenary that cannot exist.
     #[test]
-    fn a_cell_that_reads_as_several_ids_contributes_all_of_them_and_counts_once() {
+    fn a_cell_that_reads_as_several_ids_becomes_a_count_group_of_its_candidates() {
         let capture = capture(vec![row(
             0,
             "skill_a",
@@ -1395,9 +1652,93 @@ mod tests {
 
         let query = build_capture_query(&capture, &no_vocab(), 3).expect("a confident row builds");
 
-        let groups = groups(&query);
-        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a1", "sup_a2"]);
-        assert_eq!(group_min(&groups[0]), 2, "the skill and ONE support cell");
+        assert_eq!(and_ids(&query), ["skill_a"]);
+        assert_eq!(count_sets(&query), [["sup_a1", "sup_a2"]]);
+    }
+
+    /// One support on two rows is one filter. Under the retired per-row shape
+    /// each row asked for it separately; flattened, the second ask is the same
+    /// question and spends the filter budget the whole reshape exists to save.
+    #[test]
+    fn a_support_two_rows_share_is_asked_for_once() {
+        let capture = capture(vec![
+            row(0, "skill_a", vec![support(&["sup_a"], None, None, ReadState::Matched)]),
+            row(1, "skill_b", vec![support(&["sup_a"], None, None, ReadState::Matched)]),
+        ]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("both rows build");
+
+        assert_eq!(and_ids(&query), ["skill_a", "sup_a", "skill_b"]);
+        assert_eq!(query.complexity, 3, "the repeat costs nothing");
+    }
+
+    /// Same rule for the ambiguous kind: two rows reading the same pair of
+    /// candidates pose one question once the rows are gone.
+    #[test]
+    fn an_ambiguous_cell_two_rows_share_becomes_one_count_group() {
+        let capture = capture(vec![
+            row(0, "skill_a", vec![support(&["sup_a1", "sup_a2"], None, None, ReadState::Matched)]),
+            row(1, "skill_b", vec![support(&["sup_a1", "sup_a2"], None, None, ReadState::Matched)]),
+        ]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("both rows build");
+
+        assert_eq!(count_sets(&query), [["sup_a1", "sup_a2"]]);
+        assert_eq!(
+            query.complexity, 9,
+            "two `and` filters, and one `count` group of two at 3 + 2 each",
+        );
+    }
+
+    /// A `count` group sharing ANY id with the `and` group asks for nothing:
+    /// `and` already guarantees that id, which satisfies `min 1` on its own.
+    /// It is dropped rather than carried, because the filters it costs are the
+    /// scarce thing.
+    #[test]
+    fn a_count_group_the_and_group_already_satisfies_is_left_out() {
+        let capture = capture(vec![
+            row(0, "skill_a", vec![support(&["sup_chain"], None, None, ReadState::Confirmed)]),
+            row(
+                1,
+                "skill_b",
+                vec![support(&["sup_greater_chain"], Some("Chain"), Some(3), ReadState::Confirmed)],
+            ),
+        ]);
+
+        // Floor 2 loosens row 1's cell to {greater, chain} — and `sup_chain` is
+        // already required outright by row 0.
+        let query = build_capture_query(&capture, &chain_vocab(), 2).expect("both rows build");
+
+        assert_eq!(and_ids(&query), ["skill_a", "sup_chain", "skill_b"]);
+        assert!(
+            count_sets(&query).is_empty(),
+            "a group `and` already answers spends filters for nothing: {:?}",
+            count_sets(&query),
+        );
+    }
+
+    /// Nothing resolved to a single id, so there is no `and` group to emit. An
+    /// empty one would be a filter-free question GGG answers with the league.
+    #[test]
+    fn a_capture_whose_every_cell_is_a_candidate_set_carries_no_and_group() {
+        let mut only = row(
+            0,
+            "skill_a",
+            vec![support(&["sup_a1", "sup_a2"], None, None, ReadState::Matched)],
+        );
+        only.skill.ids = vec!["skill_a1".to_string(), "skill_a2".to_string()];
+
+        let query = build_capture_query(&capture(vec![only]), &no_vocab(), 3).expect("builds");
+
+        assert!(
+            groups(&query).iter().all(|g| g["type"] != "and"),
+            "an empty `and` group must not be emitted: {:?}",
+            groups(&query),
+        );
+        assert_eq!(
+            count_sets(&query),
+            [["skill_a1", "skill_a2"], ["sup_a1", "sup_a2"]],
+        );
     }
 
     /// Defensive path — `read::capture_complete` only calls a capture complete
@@ -1405,7 +1746,7 @@ mod tests {
     /// these. A caller that asks earlier must still get a query that means
     /// what it says: an unread cell asks for nothing rather than for anything.
     #[test]
-    fn a_support_that_was_not_confidently_read_is_left_out_of_its_row() {
+    fn a_support_that_was_not_confidently_read_is_left_out() {
         let capture = capture(vec![row(
             0,
             "skill_a",
@@ -1419,14 +1760,13 @@ mod tests {
 
         let query = build_capture_query(&capture, &no_vocab(), 3).expect("the confident cells build");
 
-        let groups = groups(&query);
-        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a"]);
-        assert_eq!(group_min(&groups[0]), 2, "three unread cells raise no minimum");
+        assert_eq!(and_ids(&query), ["skill_a", "sup_a"]);
+        assert!(count_sets(&query).is_empty(), "an unread cell is not a candidate set");
     }
 
-    /// Defensive path, same reason. The skill is what makes a row a row: a
-    /// group of supports with no skill comps every mercenary carrying those
-    /// links, so the row is dropped whole rather than weakened.
+    /// Defensive path, same reason. The skill is what makes a row a row: its
+    /// supports alone comp every mercenary carrying those links, so the row is
+    /// dropped whole rather than weakened.
     #[test]
     fn a_row_whose_skill_was_not_confidently_read_is_dropped_whole() {
         let mut second = row(1, "skill_b", vec![support(&["sup_b"], None, None, ReadState::Matched)]);
@@ -1438,9 +1778,11 @@ mod tests {
 
         let query = build_capture_query(&capture, &no_vocab(), 3).expect("the confident row builds");
 
-        let groups = groups(&query);
-        assert_eq!(groups.len(), 1, "the unread row must not become a support-only group");
-        assert_eq!(group_ids(&groups[0]), ["skill_a", "sup_a"]);
+        assert_eq!(
+            and_ids(&query),
+            ["skill_a", "sup_a"],
+            "the unread row's support must not join the query on its own",
+        );
     }
 
     /// Nothing expressible is not an empty search — an empty `stats` array
@@ -1453,7 +1795,7 @@ mod tests {
         assert!(build_capture_query(&capture(vec![only]), &no_vocab(), 3).is_none());
     }
 
-    /// The floor is where the loosening stops. At 1 the row accepts every
+    /// The floor is where the loosening stops. At 1 the query accepts every
     /// weaker grade of the family — and NOT the other tier-3 grade, which is a
     /// different support the hover confirmed this cell is not.
     #[test]
@@ -1466,19 +1808,16 @@ mod tests {
 
         let query = build_capture_query(&capture, &chain_vocab(), 1).expect("the row builds");
 
-        let groups = groups(&query);
+        assert_eq!(and_ids(&query), ["skill_a"]);
         assert_eq!(
-            group_ids(&groups[0]),
-            ["skill_a", "sup_greater_chain", "sup_lesser_chain", "sup_chain"],
+            count_sets(&query),
+            [["sup_greater_chain", "sup_lesser_chain", "sup_chain"]],
+            "re-widening a confirmed grade with its tier-3 sibling would undo the hover",
         );
-        assert!(
-            !group_ids(&groups[0]).contains(&"sup_gilded_chain".to_string()),
-            "re-widening a confirmed grade would undo the hover that confirmed it",
-        );
-        assert_eq!(group_min(&groups[0]), 2, "a loosened cell is still one cell");
     }
 
-    /// The shipped default: the mercenary exactly as read, nothing added.
+    /// The shipped default: the mercenary exactly as read, nothing added — so
+    /// the cell names one support and stays in the `and` group.
     #[test]
     fn the_exact_floor_asks_only_for_what_was_read() {
         let capture = capture(vec![row(
@@ -1489,7 +1828,8 @@ mod tests {
 
         let query = build_capture_query(&capture, &chain_vocab(), 3).expect("the row builds");
 
-        assert_eq!(group_ids(&groups(&query)[0]), ["skill_a", "sup_greater_chain"]);
+        assert_eq!(and_ids(&query), ["skill_a", "sup_greater_chain"]);
+        assert!(count_sets(&query).is_empty(), "an unloosened cell is not a candidate set");
     }
 
     /// The boundary between the two: a floor of 2 names tier 2 and stops. The
@@ -1504,10 +1844,7 @@ mod tests {
 
         let query = build_capture_query(&capture, &chain_vocab(), 2).expect("the row builds");
 
-        assert_eq!(
-            group_ids(&groups(&query)[0]),
-            ["skill_a", "sup_greater_chain", "sup_chain"],
-        );
+        assert_eq!(count_sets(&query), [["sup_greater_chain", "sup_chain"]]);
     }
 
     /// A floor outside 1..=3 is clamped rather than refused — the settings
@@ -1530,8 +1867,8 @@ mod tests {
         let floor_1 = build_capture_query(&capture, &chain_vocab(), 1).expect("the row builds");
 
         assert_eq!(
-            group_ids(&groups(&floor_0)[0]),
-            ["skill_a", "sup_greater_chain", "sup_lesser_chain", "sup_chain"],
+            count_sets(&floor_0),
+            [["sup_greater_chain", "sup_lesser_chain", "sup_chain"]],
             "floor 0 must ask for tier 1 and up, exactly as floor 1 does",
         );
         assert_eq!(floor_0.hash, floor_1.hash, "0 must ask exactly what 1 asks");
@@ -1553,16 +1890,18 @@ mod tests {
         let floor_3 = build_capture_query(&capture, &chain_vocab(), 3).expect("the row builds");
 
         assert_eq!(
-            group_ids(&groups(&floor_9)[0]),
+            and_ids(&floor_9),
             ["skill_a", "sup_greater_chain"],
             "floor 9 must ask for the mercenary exactly as read, as floor 3 does",
         );
         assert_eq!(floor_9.hash, floor_3.hash, "9 must ask exactly what 3 asks");
     }
 
-    /// Five families' worth of loosening blows the 35-filter cap. The app's own
+    /// Five families' worth of loosening blows the budget. The app's own
     /// widening goes first — the user did not read those grades off the panel,
-    /// and every cell they DID read is still in the query afterwards.
+    /// and every cell they DID read is still in the query afterwards. Because
+    /// nothing the capture saw was lost, this degradation is NOT reported to the
+    /// user as a looser query.
     #[test]
     fn a_query_over_the_cap_drops_the_loosening_before_any_cell() {
         let vocab = MercVocab::from_stats(
@@ -1596,22 +1935,29 @@ mod tests {
 
         let loose = build_capture_query(&capture, &vocab, 1).expect("the rows build");
 
-        assert!(loose.truncated, "the user must be told the search was widened less than asked");
-        assert_eq!(loose.filter_count, 10, "2 rows of skill + 4 read cells");
-        let groups = groups(&loose);
-        assert_eq!(group_min(&groups[0]), 5, "every cell the capture read is kept");
-        assert_eq!(group_min(&groups[1]), 5);
+        assert!(loose.loosening_dropped, "the widening the user asked for did not fit");
         assert!(
-            !group_ids(&groups[0]).iter().any(|id| id.starts_with("sup_f")),
+            !loose.cells_dropped,
+            "nothing the capture read was lost, so there is nothing to caveat",
+        );
+        assert_eq!(loose.complexity, 10, "2 skills and the 8 cells the capture read");
+        assert!(
+            count_sets(&loose).is_empty(),
             "no expanded grade may survive the cap: {:?}",
-            group_ids(&groups[0]),
+            count_sets(&loose),
+        );
+        assert!(
+            and_ids(&loose).contains(&"sup_read_1_3".to_string()),
+            "every cell the capture read is kept: {:?}",
+            and_ids(&loose),
         );
     }
 
-    /// Still over the cap with no loosening left to drop: support cells go
-    /// from the LAST row inward, and every row keeps its skill.
+    /// Still over the budget with no loosening left to drop: support cells go
+    /// from the LAST row's last cell inward, one at a time, and the walk stops
+    /// the moment the query fits. Every row keeps its skill whatever happens.
     #[test]
-    fn a_query_over_the_cap_at_the_exact_floor_drops_cells_from_the_last_row_inward() {
+    fn a_query_over_the_budget_at_the_exact_floor_drops_cells_from_the_last_row_inward() {
         let rows = (0..5)
             .map(|r| {
                 row(
@@ -1626,12 +1972,71 @@ mod tests {
 
         let query = build_capture_query(&capture(rows), &no_vocab(), 3).expect("the rows build");
 
-        assert!(query.truncated);
-        assert_eq!(query.filter_count, MAX_FILTERS, "degraded to the cap, not past it");
-        let groups = groups(&query);
-        assert_eq!(group_min(&groups[0]), 8, "the first row is untouched");
-        assert_eq!(group_min(&groups[4]), 3, "five cells came off the last row");
-        assert_eq!(group_ids(&groups[4])[0], "skill_4", "a row never loses its skill");
+        assert!(query.cells_dropped, "the user must be told the query lost cells");
+        assert!(!query.loosening_dropped, "there was no loosening at floor 3 to drop");
+        assert_eq!(
+            query.complexity, MAX_COMPLEXITY,
+            "degraded to the budget, not past it",
+        );
+        let ids = and_ids(&query);
+        assert!(ids.contains(&"skill_4".to_string()), "a row never loses its skill: {ids:?}");
+        assert!(
+            !ids.contains(&"sup_4_6".to_string()) && !ids.contains(&"sup_4_2".to_string()),
+            "the last row's cells go first, from its end: {ids:?}",
+        );
+        assert!(
+            ids.contains(&"sup_4_1".to_string()),
+            "the walk stops the moment the query fits — 40 over 35 costs 5 cells: {ids:?}",
+        );
+        assert!(
+            ids.contains(&"sup_3_6".to_string()),
+            "no earlier row is touched while the last one still has cells: {ids:?}",
+        );
+        assert!(
+            ids.contains(&"sup_0_6".to_string()),
+            "the first row is untouched: {ids:?}",
+        );
+    }
+
+    /// Not every candidate is worth dropping. `sup_p` is the only cell putting
+    /// that id in the `and` group, and the id is what SUPPRESSES the
+    /// `[sup_p, sup_q]` pair — dropping the cell saves 1 and resurrects a
+    /// `count` group costing 3 + 2 + 2, so the query gets worse. The walk puts
+    /// the candidate back and moves inward to one that helps.
+    ///
+    /// Reachable in play: an unnarrowed icon read and a confident read of one
+    /// of its candidates are ordinary things to find on one panel.
+    #[test]
+    fn a_cell_whose_drop_would_resurrect_a_suppressed_count_group_is_kept() {
+        let mut first = vec![support(&["sup_p", "sup_q"], None, None, ReadState::Matched)];
+        // 33 fillers: with the two skills and `sup_p` the plan costs 36, one
+        // over the budget, and the suppressed pair costs nothing while it lasts.
+        first.extend(
+            (0..33).map(|c| support(&[&format!("sup_f{c}")], None, None, ReadState::Matched)),
+        );
+        let capture = capture(vec![
+            row(0, "skill_0", first),
+            row(1, "skill_1", vec![support(&["sup_p"], None, None, ReadState::Matched)]),
+        ]);
+
+        let query = build_capture_query(&capture, &no_vocab(), 3).expect("the rows build");
+
+        assert_eq!(query.complexity, MAX_COMPLEXITY, "one cell over, one cell dropped");
+        assert!(
+            and_ids(&query).contains(&"sup_p".to_string()),
+            "the cell holding the pair down is kept: {:?}",
+            and_ids(&query),
+        );
+        assert!(
+            count_sets(&query).is_empty(),
+            "the group it suppresses must not come back: {:?}",
+            count_sets(&query),
+        );
+        assert!(
+            !and_ids(&query).contains(&"sup_f32".to_string()),
+            "the cell actually dropped is the next one inward: {:?}",
+            and_ids(&query),
+        );
     }
 
     /// The query the whole feature is built on: securable, priced, cheapest
@@ -1702,17 +2107,22 @@ mod tests {
         assert_ne!(before.hash, after.hash);
     }
 
-    /// Row order is part of the question: the hash must not collapse two
-    /// different mercenaries onto one cache entry.
+    /// The two searches are the same search — row scoping is gone — but the
+    /// hash is over the rendered body, and the `and` group's filter order is
+    /// the order the rows were read in. Pinned so nobody "tidies" the hash by
+    /// sorting the array: the cost of that is two DIFFERENT captures hashing
+    /// alike, which serves one mercenary's listings under another's link.
     #[test]
-    fn two_captures_whose_rows_differ_do_not_share_a_hash() {
+    fn reordered_rows_render_a_different_hash() {
         let one = capture(vec![row(0, "skill_a", vec![]), row(1, "skill_b", vec![])]);
         let two = capture(vec![row(0, "skill_b", vec![]), row(1, "skill_a", vec![])]);
 
         let one = build_capture_query(&one, &no_vocab(), 3).expect("builds");
         let two = build_capture_query(&two, &no_vocab(), 3).expect("builds");
 
-        assert_ne!(one.hash, two.hash, "the stats array is ordered data");
+        assert_eq!(and_ids(&one), ["skill_a", "skill_b"]);
+        assert_eq!(and_ids(&two), ["skill_b", "skill_a"]);
+        assert_ne!(one.hash, two.hash, "the filter array is ordered data");
     }
 
     // -----------------------------------------------------------------------
@@ -1793,8 +2203,9 @@ mod tests {
         CaptureQuery {
             body: json!({"query": {"stats": [tag]}}),
             hash: format!("hash-{tag}"),
-            filter_count: 1,
-            truncated: false,
+            complexity: 1,
+            loosening_dropped: false,
+            cells_dropped: false,
         }
     }
 
@@ -1951,6 +2362,163 @@ mod tests {
         assert_eq!(session.searches_used, 2, "a retry is still a search");
     }
 
+    /// A 4xx is GGG's verdict on the body, not a hiccup: the same query earns
+    /// the same rejection, and every 4xx counts toward GGG's separate
+    /// invalid-request ban. Before this rule the live log showed three 400
+    /// "Query is too complex" inside six seconds — a whole session budget spent
+    /// re-learning one answer.
+    #[test]
+    fn the_hash_ggg_rejected_is_never_searched_again() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+        let mut trade = waiting_on(&query.hash, MercTradeStatus::Searching);
+
+        accept_error(
+            &mut trade,
+            &query.hash,
+            "Trade search failed (400): Query is too complex".to_string(),
+        );
+        session.state = trade.status;
+        session.terminal_hash = trade.terminal_hash.clone();
+
+        assert_eq!(decide(&mut session, live(&query), 9_000), TriggerAction::None);
+        assert_eq!(decide(&mut session, live(&query), 20_000), TriggerAction::None);
+        assert_eq!(
+            session.searches_used, 1,
+            "the rest of the budget must not go on a query GGG will reject again",
+        );
+    }
+
+    /// The other side of the same branch: a 503 is the server having a bad
+    /// moment and says nothing about the body, so the debounced retry stands.
+    /// The only difference from the test above is the status in the message.
+    #[test]
+    fn the_hash_a_server_error_failed_on_is_searched_again() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+        let mut trade = waiting_on(&query.hash, MercTradeStatus::Searching);
+
+        accept_error(
+            &mut trade,
+            &query.hash,
+            "Trade search failed (503): upstream unavailable".to_string(),
+        );
+        session.state = trade.status;
+        session.terminal_hash = trade.terminal_hash.clone();
+
+        assert_eq!(after_debounce(&mut session, &query, 9_000), TriggerAction::Enqueue);
+        assert_eq!(session.searches_used, 2, "a transient failure is still worth a retry");
+    }
+
+    /// The rejection is remembered for the ONE body it is about. A hover-confirm
+    /// asks a different question, and THAT question's own transient failure
+    /// must still earn the debounced retry: a session that remembered merely
+    /// that something had been rejected would stay silent for the rest of its
+    /// life.
+    #[test]
+    fn a_rejection_is_remembered_for_its_own_hash_only() {
+        let mut session = MercTradeSession::new();
+        let rejected = query_of("a");
+        assert_eq!(after_debounce(&mut session, &rejected, 0), TriggerAction::Enqueue);
+        let mut trade = waiting_on(&rejected.hash, MercTradeStatus::Searching);
+        accept_error(
+            &mut trade,
+            &rejected.hash,
+            "Trade search failed (400): Query is too complex".to_string(),
+        );
+        session.state = trade.status;
+        session.terminal_hash = trade.terminal_hash.clone();
+
+        // A hover-confirm corrects a cell. The new query is searched for, and
+        // this one comes back with a 503 — transient, and about a hash the
+        // rejection was never about.
+        let corrected = query_of("b");
+        assert_eq!(after_debounce(&mut session, &corrected, 9_000), TriggerAction::Enqueue);
+        trade.query_hash = Some(corrected.hash.clone());
+        trade.status = MercTradeStatus::Searching;
+        accept_error(
+            &mut trade,
+            &corrected.hash,
+            "Trade search failed (503): upstream unavailable".to_string(),
+        );
+        session.state = trade.status;
+        session.terminal_hash = trade.terminal_hash.clone();
+
+        assert_eq!(after_debounce(&mut session, &corrected, 20_000), TriggerAction::Enqueue);
+        assert_eq!(session.searches_used, 3, "the corrected query keeps its own retry");
+    }
+
+    /// A rejected hash the session has never itself acted on is still refused.
+    /// `terminal_hash` is the whole reason the refusal is a gate and not a
+    /// qualifier on the `Error` clause: this session has no `Error` and no
+    /// `last_hash` to reason from, and the answer is the same anyway.
+    #[test]
+    fn a_hash_rejected_before_this_session_existed_is_refused_by_it_too() {
+        let query = query_of("a");
+        // Everything a retire-then-re-detect resets: budget, hashes, state. The
+        // slice's `terminal_hash` is what survives it, so `tick` re-reads it
+        // onto the fresh session.
+        let mut fresh = MercTradeSession {
+            terminal_hash: Some(query.hash.clone()),
+            ..MercTradeSession::new()
+        };
+
+        assert_eq!(decide(&mut fresh, live(&query), 0), TriggerAction::None);
+        assert_eq!(decide(&mut fresh, live(&query), 30_000), TriggerAction::None);
+        assert_eq!(
+            fresh.searches_used, 0,
+            "a new session must not re-learn a rejection the slice already carries",
+        );
+    }
+
+    /// Switching the toggle off and back on clears `last_hash` — deliberately,
+    /// so a real answer is re-published. The rejection gate sits after that
+    /// clear for exactly this case: without it the re-decide reads as a fresh
+    /// hash and spends a search on the body GGG has already refused.
+    #[test]
+    fn a_rejected_hash_is_not_re_sent_when_the_auto_search_goes_off_and_on() {
+        let mut session = MercTradeSession::new();
+        let query = query_of("a");
+        assert_eq!(after_debounce(&mut session, &query, 0), TriggerAction::Enqueue);
+        let mut trade = waiting_on(&query.hash, MercTradeStatus::Searching);
+        accept_error(
+            &mut trade,
+            &query.hash,
+            "Trade search failed (400): Query is too complex".to_string(),
+        );
+        session.state = trade.status;
+        session.terminal_hash = trade.terminal_hash.clone();
+
+        assert_eq!(
+            decide(&mut session, TriggerInput { auto: false, ..live(&query) }, 5_000),
+            TriggerAction::SetIdle,
+        );
+
+        assert_eq!(decide(&mut session, live(&query), 20_000), TriggerAction::None);
+        assert_eq!(
+            session.searches_used, 1,
+            "the toggle is not a way to spend the budget on a rejected body",
+        );
+    }
+
+    /// The gate is keyed on the HASH, not on "something was rejected". A
+    /// capture that moves on is a different question and gets its search.
+    #[test]
+    fn a_hash_the_rejection_is_not_about_is_still_enqueued() {
+        let rejected = query_of("a");
+        let mut session = MercTradeSession {
+            terminal_hash: Some(rejected.hash.clone()),
+            ..MercTradeSession::new()
+        };
+
+        let corrected = query_of("b");
+
+        assert_eq!(after_debounce(&mut session, &corrected, 0), TriggerAction::Enqueue);
+        assert_eq!(session.searches_used, 1);
+    }
+
     /// …but not immediately. The lookup task publishes `Error` and the capture
     /// loop comes back 100 ms later, so a retry that ignored the debounce
     /// would spend the whole three-search budget on one transient failure
@@ -2016,6 +2584,40 @@ mod tests {
     // -----------------------------------------------------------------------
     // What a finished lookup does to the slice
     // -----------------------------------------------------------------------
+
+    fn raw_search(league: &str) -> RawSearch {
+        RawSearch {
+            query_id: "qid".to_string(),
+            total: 7,
+            items: Vec::new(),
+            league: league.to_string(),
+        }
+    }
+
+    /// The user is told the answer is looser than the panel only when the panel
+    /// is what was cut. A dropped support CELL is that; dropping the app's own
+    /// tier loosening is not — what survives it asks for exactly the supports
+    /// the capture read, so the caveat would be false.
+    #[test]
+    fn only_a_dropped_cell_marks_the_result_as_a_looser_query() {
+        let cells = CaptureQuery {
+            cells_dropped: true,
+            ..query_of("a")
+        };
+        let loosening = CaptureQuery {
+            loosening_dropped: true,
+            ..query_of("a")
+        };
+
+        let (from_cells, _) = to_result(raw_search("Allflame"), &cells, 0);
+        let (from_loosening, _) = to_result(raw_search("Allflame"), &loosening, 0);
+
+        assert!(from_cells.truncated, "a cell the capture read was dropped");
+        assert!(
+            !from_loosening.truncated,
+            "the query still asks for exactly what the panel showed",
+        );
+    }
 
     fn merc_result(hash: &str) -> MercTradeResult {
         MercTradeResult {
@@ -2209,19 +2811,21 @@ mod tests {
         assert_eq!(trade.status, MercTradeStatus::Error);
     }
 
-    /// A retire cancels the shared queue only from the two statuses that have
-    /// something on it.
+    /// `Queued` and `Searching` are the two statuses with something on the
+    /// shared queue, and the predicate is what `close_session` cancels from and
+    /// what [`accept_error`] absorbs a `cancelled` from.
     #[test]
-    fn a_retire_cancels_the_queue_while_a_lookup_is_in_flight() {
+    fn a_lookup_is_outstanding_while_the_slice_reads_queued_or_searching() {
         assert!(awaiting_lookup(MercTradeStatus::Queued));
         assert!(awaiting_lookup(MercTradeStatus::Searching));
     }
 
-    /// From anywhere else the cancel is not just needless: `close_session`
-    /// publishes `Idle` alongside it, and doing that from `Done` would throw
-    /// away the retired capture's answer — which the page goes on showing.
+    /// From anywhere else there is nothing outstanding, and the cancel that
+    /// would follow is not just needless: `close_session` publishes `Idle`
+    /// alongside it, and doing that from `Done` would throw away the retired
+    /// capture's answer — which the page goes on showing.
     #[test]
-    fn a_retire_leaves_a_settled_status_alone() {
+    fn a_settled_status_has_no_lookup_outstanding() {
         for status in [
             MercTradeStatus::Off,
             MercTradeStatus::Idle,

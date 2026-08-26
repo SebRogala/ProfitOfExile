@@ -54,8 +54,20 @@ that module's `chain_vocab()` and a tier floor of **2**):
 | 0 | `skill_a` | `sup_a`; `sup_b1` + `sup_b2` (one cell the icon read could not narrow) |
 | 1 | `skill_b` | `sup_greater_chain`, family `Chain` tier 3, hover-confirmed |
 
-The floor of 2 is what puts `sup_chain` in row 1's group: loosening adds the family's ids
+The floor of 2 is what adds `sup_chain` to row 1's cell: loosening adds the family's ids
 at every tier from the floor up to, but not including, the tier read.
+
+**The shape the rows lower to** (amended 2026-08-26; the file previously carried one
+`mercenary` group per row, which GGG answers with 400 "Query is too complex" — a query
+may hold ONE `mercenary` group, and a captured panel is four or five rows):
+
+- one `and` group with every cell that names exactly one support — `skill_a`, `sup_a`,
+  `skill_b`, in read order, rows folded together;
+- one `count` group of `value.min = 1` per cell that names several — `sup_b1`/`sup_b2`
+  (the unnarrowed read) and `sup_greater_chain`/`sup_chain` (the loosened one).
+
+Nothing in the query says which row a support sat on. That is deliberate and costs a
+known false-positive class; `mercenary/search.rs`'s head doc carries the probe numbers.
 
 Who reads it:
 

@@ -137,10 +137,11 @@ function retainedHeadline(state: MercTradeState): string | null {
  *  quote — still not "none found", which is a claim about the market. */
 function resultHeadline(result: MercTradeResult): string {
 	const found = describeFound(result);
-	// `truncated` means the 35-filter cap dropped tier loosening or whole
-	// support cells, so these listings answer a LOOSER question than the
-	// capture — worth saying as a caveat about the query, not as an apology
-	// for the search.
+	// `truncated` means the complexity budget cost the query support cells the
+	// capture read, so these listings answer a LOOSER question than the panel
+	// showed — worth saying as a caveat about the query, not as an apology for
+	// the search. Dropping the app's own tier loosening does NOT set it: what
+	// survives that asks for exactly what was read.
 	return result.truncated ? `${found} · looser query — fewer filters than the capture` : found;
 }
 

@@ -34,6 +34,58 @@ const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Appl
 /// error toast.
 pub const CANCELLED: &str = "cancelled";
 
+/// The HTTP status a lookup error carries, when it carries one.
+///
+/// This whole path is `Result<_, String>` — the queue, the gem command, the
+/// merc lookup task and `CANCELLED` all trade in messages — so a status travels
+/// inside the message, as the `(NNN)` marker the four failure sites below write
+/// (`Trade search failed (400): …`, `Trade fetch failed (503): …`, and the two
+/// `Trade search/fetch rate limited by GGG (429). …` returns). This is the only
+/// reader of that marker and it sits in the same file as every writer, with
+/// tests that drive a real 400, 429 and 503 through both ends.
+///
+/// `None` for everything else: a transport failure, a parse failure and a
+/// cancel have no status, and none of them is a decision the caller can make
+/// about GGG's answer. The parse is what rejects them — reqwest's message
+/// parenthesises the URL it failed on, and a URL is not a number.
+pub fn error_status(error: &str) -> Option<u16> {
+    let open = error.find('(')?;
+    let rest = &error[open + 1..];
+    let close = rest.find(')')?;
+    rest[..close].parse().ok()
+}
+
+/// Whether GGG rejected the REQUEST rather than failing to serve it.
+///
+/// 400–428 and 430–499 are verdicts on the body: the same request earns the same
+/// answer however many times it is asked, so a caller that retries one spends
+/// its budget for nothing.
+///
+/// **429 is the deliberate odd one out.** It is a verdict on TIMING, not on the
+/// body — the same request would succeed later — and this function still calls
+/// it terminal. Two reasons, in this order. First, every 4xx counts toward GGG's
+/// separate invalid-request ban, 429 explicitly included
+/// (`docs/RESEARCH-poe-trade-api.md:269-274`, quoting GGG: "Invalid requests
+/// include any response codes in the HTTP 4xx range. This includes 401, 403, and
+/// 429"), so answering one with a retry is not merely wasted but actively
+/// harmful. Second, `rate_limiter` exists precisely so this client never
+/// produces a 429; one that arrives anyway means the limiter's model of GGG's
+/// budget is wrong, and retrying against a wrong model is how the ban is earned.
+/// Honouring `Retry-After` is the principled alternative and is deliberately NOT
+/// implemented — it would be a second, contradictory scheduler beside the
+/// limiter.
+///
+/// "Terminal" is scoped to the rejected BODY, not to the caller: the merc path
+/// records the rejected hash on its slice (`mercenary::search::accept_error`),
+/// so a corrected capture is searched for normally while the rejected body stays
+/// refused — by the session that earned the rejection and by the fresh one a
+/// re-detect opens alike.
+///
+/// 5xx and transport failures are the transient case and stay retryable.
+pub fn is_client_error(error: &str) -> bool {
+    matches!(error_status(error), Some(400..=499))
+}
+
 // ---------------------------------------------------------------------------
 // GGG API response shapes (private)
 // ---------------------------------------------------------------------------
@@ -566,7 +618,14 @@ impl TradeApiClient {
 
         let status_code = response.status().as_u16();
         if status_code == 429 {
-            return Err("Rate limited by GGG (429). Try again in a moment.".to_string());
+            // Says what happened, and does not promise what does not happen:
+            // this lookup is dropped, not retried. Retrying is what earns the
+            // invalid-request ban (see [`is_client_error`]), and the limiter —
+            // not a retry here — is what is supposed to keep 429s from
+            // happening at all.
+            return Err(
+                "Trade search rate limited by GGG (429). Dropped, not retried.".to_string(),
+            );
         }
 
         // Only record successful requests toward rate limit budget
@@ -579,7 +638,9 @@ impl TradeApiClient {
             return Err(format!(
                 "Trade search failed ({}): {}",
                 status_code,
-                &body_text[..body_text.len().min(300)]
+                // By CHARS, not bytes: GGG's error bodies are UTF-8 and slicing
+                // one at byte 300 panics whenever that lands mid-codepoint.
+                body_text.chars().take(300).collect::<String>()
             ));
         }
 
@@ -627,7 +688,10 @@ impl TradeApiClient {
 
         let status_code = response.status().as_u16();
         if status_code == 429 {
-            return Err("Rate limited by GGG (429). Try again in a moment.".to_string());
+            // Same honesty rule as the search leg: dropped, not retried.
+            return Err(
+                "Trade fetch rate limited by GGG (429). Dropped, not retried.".to_string(),
+            );
         }
 
         self.rate_limiter.record("fetch");
@@ -638,7 +702,8 @@ impl TradeApiClient {
             return Err(format!(
                 "Trade fetch failed ({}): {}",
                 status_code,
-                &body[..body.len().min(300)]
+                // By CHARS, not bytes — see the search leg.
+                body.chars().take(300).collect::<String>()
             ));
         }
 
@@ -862,6 +927,142 @@ mod tests {
             }
         }
         String::from_utf8_lossy(&buf).to_string()
+    }
+
+    /// A loopback server answering every request with one canned status line
+    /// and body — the failing counterpart to [`stub_api`], which always
+    /// answers 200.
+    async fn stub_api_status(status: u16, reason: &str, body: impl Into<String>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback bind");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let head = format!("HTTP/1.1 {status} {reason}");
+        let body = body.into();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                read_request(&mut sock).await;
+                let response = format!(
+                    "{head}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                let _ = sock.write_all(response.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        base_url
+    }
+
+    /// The whole point of [`is_client_error`]: a rejection GGG actually sent,
+    /// read back through the message the client actually formats. The two ends
+    /// are a `format!` and a parser, so only a test that drives a real 400
+    /// through both can say they still agree.
+    #[tokio::test]
+    async fn a_search_ggg_rejects_reads_back_as_a_client_error() {
+        let base_url =
+            stub_api_status(400, "Bad Request", r#"{"error":{"message":"Query is too complex"}}"#)
+                .await;
+        let mut client = TradeApiClient::new();
+        client.base_url = base_url;
+        client.set_league("Allflame".to_string());
+
+        let error = client
+            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .await
+            .expect_err("the stub rejects the search");
+
+        assert!(error.contains("Query is too complex"), "got {error}");
+        assert!(
+            is_client_error(&error),
+            "a 400 the caller cannot recognise is a 400 it will retry: {error}",
+        );
+    }
+
+    /// The error body is cut to 300 CHARACTERS, not 300 bytes. GGG's bodies are
+    /// UTF-8, and `&body[..300]` panics whenever byte 300 lands inside a
+    /// codepoint — taking down the lookup task rather than returning the error
+    /// it was formatting. The stub puts a two-byte `é` across exactly that
+    /// boundary.
+    #[tokio::test]
+    async fn a_rejection_body_is_cut_on_a_character_boundary() {
+        let body = format!("{}é tail", "x".repeat(299));
+        let base_url = stub_api_status(400, "Bad Request", body).await;
+        let mut client = TradeApiClient::new();
+        client.base_url = base_url;
+        client.set_league("Allflame".to_string());
+
+        let error = client
+            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .await
+            .expect_err("the stub rejects the search");
+
+        assert!(error.ends_with(&format!("{}é", "x".repeat(299))), "got {error}");
+        assert!(!error.contains("tail"), "the body is still cut at 300: {error}");
+    }
+
+    /// A 5xx is the server failing, not the request being wrong, so it stays
+    /// retryable — the discriminator callers branch on. Driven through the stub
+    /// for the same reason the 400 is: a hand-written message proves the parser
+    /// and nothing about what this client emits.
+    #[tokio::test]
+    async fn a_search_the_server_failed_to_serve_reads_back_as_retryable() {
+        let base_url = stub_api_status(503, "Service Unavailable", "upstream unavailable").await;
+        let mut client = TradeApiClient::new();
+        client.base_url = base_url;
+        client.set_league("Allflame".to_string());
+
+        let error = client
+            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .await
+            .expect_err("the stub fails the search");
+
+        assert_eq!(error_status(&error), Some(503), "got {error}");
+        assert!(
+            !is_client_error(&error),
+            "a 503 read as a rejection is a retry the caller never makes: {error}",
+        );
+    }
+
+    /// 429 is deliberately counted with the rest of the 4xx range: GGG's docs
+    /// put it inside the invalid-request threshold
+    /// (`docs/RESEARCH-poe-trade-api.md:269-274`), so answering one with an
+    /// immediate retry is the behaviour that earns a ban. Driven through the
+    /// stub so the message this client actually writes is the one parsed.
+    #[tokio::test]
+    async fn a_rate_limited_search_reads_back_as_a_client_error() {
+        let base_url = stub_api_status(429, "Too Many Requests", "").await;
+        let mut client = TradeApiClient::new();
+        client.base_url = base_url;
+        client.set_league("Allflame".to_string());
+
+        let error = client
+            .lookup_query(TradeSource::Mercenary, "merc", serde_json::json!({}), |_| {})
+            .await
+            .expect_err("the stub rate-limits the search");
+
+        assert!(
+            is_client_error(&error),
+            "a 429 read as transient is the retry that earns the ban: {error}",
+        );
+        assert!(
+            !error.contains("Try again"),
+            "the message must not promise a retry the client does not make: {error}",
+        );
+    }
+
+    /// A transport failure has no status, and reqwest's message carries a
+    /// parenthesised URL — the shape most likely to fool a marker reader into
+    /// inventing one.
+    #[test]
+    fn a_transport_failure_carries_no_status() {
+        let error = "Trade search request failed: error sending request for url \
+             (http://127.0.0.1:9/api/trade/search/Allflame)";
+        assert_eq!(error_status(error), None);
+        assert_eq!(error_status(CANCELLED), None);
     }
 
     /// A client pointed at the stub, with the league already resolved.

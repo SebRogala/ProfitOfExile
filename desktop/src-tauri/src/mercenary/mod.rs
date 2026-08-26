@@ -155,6 +155,20 @@ pub struct MercTradeState {
     /// Why the last lookup failed. Set only alongside
     /// [`MercTradeStatus::Error`].
     pub error: Option<String>,
+    /// The hash GGG REJECTED — a 4xx, which is the same answer however often
+    /// it is asked. `search::decide` refuses to retry it; a 5xx or a transport
+    /// failure leaves this `None` and keeps the debounced retry.
+    ///
+    /// Off the wire (`serde(skip)`) because it is policy, not display: the page
+    /// shows the failure through [`Self::error`], and the only reader is the
+    /// trade session, which re-reads the slice on every tick. It rides on the
+    /// slice rather than on the session because the lookup task that learns of
+    /// the rejection can reach the slice and not the session.
+    ///
+    /// Self-invalidating: it names a hash, so a capture that moves on is never
+    /// blocked by it and one that moves back is blocked again, correctly.
+    #[serde(skip)]
+    pub terminal_hash: Option<String>,
     /// Searches this capture session has spent, out of
     /// [`search::MAX_SEARCHES`]. Shown so a user who sees a stale price knows
     /// why the app stopped asking.

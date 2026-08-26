@@ -117,8 +117,10 @@ pub struct MercTradeResult {
     pub floor_chaos: f64,
     pub median_chaos: f64,
     pub fetched_at_ms: u64,
-    /// Set when the 35-filter cap forced the query to drop tier loosening or
-    /// support cells — the listings answer a LOOSER question than the capture.
+    /// Set when GGG's complexity budget forced the query to drop support cells
+    /// the capture READ — the listings answer a LOOSER question than the panel
+    /// showed. Dropping the app's own tier loosening does not set it
+    /// (`mercenary::search::CaptureQuery`).
     pub truncated: bool,
 }
 

@@ -240,13 +240,15 @@ describe('captured-mercenary query parity', () => {
 		expect(JSON.parse(new URL(url).searchParams.get('q') ?? '')).toEqual({ query: captureQuery });
 	});
 
-	it('keeps every row of the capture as its own group in link order', () => {
+	it('keeps the and group and both count groups in link order', () => {
 		const url = derivedSearchUrl('Allflame', query);
 		const linked = JSON.parse(new URL(url).searchParams.get('q') ?? '').query as TradeQuery;
+		expect(linked.stats.map((group) => group.type)).toEqual(['and', 'count', 'count']);
 		expect(linked.stats.map((group) => group.filters.map((f) => f.id))).toEqual([
-			['skill_a', 'sup_a', 'sup_b1', 'sup_b2'],
-			['skill_b', 'sup_greater_chain', 'sup_chain']
+			['skill_a', 'sup_a', 'skill_b'],
+			['sup_b1', 'sup_b2'],
+			['sup_greater_chain', 'sup_chain']
 		]);
-		expect(linked.stats.map((group) => group.value?.min)).toEqual([3, 2]);
+		expect(linked.stats.map((group) => group.value?.min)).toEqual([undefined, 1, 1]);
 	});
 });
