@@ -168,6 +168,12 @@ pub enum TradeQueueEvent {
 /// requests from bypassing the rate limiter (TOCTOU race fix).
 pub struct TradeApiClient {
     http_client: reqwest::Client,
+    /// Origin every request is built against. Always [`TRADE_API_BASE_URL`] in
+    /// a shipped build — a field rather than the constant only so the unit
+    /// tests can point one client at a local stub server and exercise the
+    /// two-phase path (queue events, cancel checkpoints, result shaping)
+    /// without reaching GGG.
+    base_url: String,
     /// Resolved league name. `None` means **not yet resolved** — trade lookups
     /// fail closed (error out) rather than silently querying the wrong league.
     /// No hardcoded default; written only via `set_league` once resolved
@@ -211,6 +217,7 @@ impl TradeApiClient {
 
         Self {
             http_client,
+            base_url: TRADE_API_BASE_URL.to_string(),
             league: Mutex::new(None),
             rate_limiter: TradeRateLimiter::new(),
             lookup_mutex: tokio::sync::Mutex::new(()),
@@ -537,7 +544,7 @@ impl TradeApiClient {
     ) -> Result<SearchResponse, String> {
         let url = format!(
             "{}/api/trade/search/{}",
-            TRADE_API_BASE_URL, league
+            self.base_url, league
         );
 
         log::info!("Trade search: {} → {}", label, url);
@@ -601,7 +608,7 @@ impl TradeApiClient {
         let ids_to_fetch: Vec<&str> = result_ids.iter().take(10).map(|s| s.as_str()).collect();
         let url = format!(
             "{}/api/trade/fetch/{}?query={}",
-            TRADE_API_BASE_URL,
+            self.base_url,
             ids_to_fetch.join(","),
             query_id
         );
@@ -764,5 +771,376 @@ mod tests {
                 .any(|e| matches!(e, TradeQueueEvent::Fetching { .. })),
             "must not reach the network (no Fetching) when league is unset"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Two-phase lookup against a loopback stub (POE-202)
+    // -----------------------------------------------------------------------
+    //
+    // `base_url` is a field for exactly this: the queue's observable behaviour
+    // — the event sequence, both cancel checkpoints, the shaped result — only
+    // exists on the far side of two HTTP calls, and a test that reached
+    // pathofexile.com would be neither deterministic nor allowed.
+
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A loopback HTTP/1.1 server answering the two trade endpoints with canned
+    /// JSON, and recording every request it was sent.
+    struct StubApi {
+        base_url: String,
+        requests: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl StubApi {
+        /// Every request received so far, head and body, oldest first.
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        }
+    }
+
+    /// Serve `search` to `/api/trade/search/...` and `fetch` to
+    /// `/api/trade/fetch/...`, for as many requests as arrive.
+    async fn stub_api(search: serde_json::Value, fetch: serde_json::Value) -> StubApi {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback bind");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let request = read_request(&mut sock).await;
+                let body = if request.contains("/api/trade/search/") {
+                    search.clone()
+                } else {
+                    fetch.clone()
+                };
+                seen.lock().unwrap_or_else(|e| e.into_inner()).push(request);
+                let payload = serde_json::to_string(&body).unwrap();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload,
+                );
+                let _ = sock.write_all(response.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        StubApi { base_url, requests }
+    }
+
+    /// Read one request: headers, then as many body bytes as `content-length`
+    /// announced. Answering before the body is in would race the client's
+    /// write.
+    async fn read_request(sock: &mut tokio::net::TcpStream) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 2048];
+        loop {
+            let Ok(n) = sock.read(&mut chunk).await else {
+                break;
+            };
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&buf).to_string();
+            let Some(head_end) = text.find("\r\n\r\n") else {
+                continue;
+            };
+            let len = text[..head_end]
+                .lines()
+                .find(|line| line.to_ascii_lowercase().starts_with("content-length:"))
+                .and_then(|line| line.split(':').nth(1))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if buf.len() >= head_end + 4 + len {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&buf).to_string()
+    }
+
+    /// A client pointed at the stub, with the league already resolved.
+    fn stub_client(stub: &StubApi) -> Arc<TradeApiClient> {
+        let mut client = TradeApiClient::new();
+        client.base_url = stub.base_url.clone();
+        client.set_league("Allflame".to_string());
+        Arc::new(client)
+    }
+
+    fn search_ok() -> serde_json::Value {
+        serde_json::json!({"id": "qid-1", "result": ["r1"], "total": 42})
+    }
+
+    fn fetch_ok() -> serde_json::Value {
+        serde_json::json!({"result": [{
+            "listing": {
+                "indexed": "2026-08-26T10:00:00Z",
+                "account": {"name": "Seller"},
+                "price": {"amount": 12.5, "currency": "chaos"},
+            },
+            "item": {
+                "corrupted": true,
+                "properties": [
+                    {"name": "Level", "values": [["20", 0]]},
+                    {"name": "Quality", "values": [["+23%", 0]]},
+                ],
+            },
+        }]})
+    }
+
+    /// The `kind` of every event, in order — the wire tag the two webview
+    /// consumers switch on.
+    fn kinds(events: &[TradeQueueEvent]) -> Vec<String> {
+        events
+            .iter()
+            .map(|e| serde_json::to_value(e).unwrap()["kind"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Wait until `want` lookups have joined the queue, so a cancel lands on
+    /// parked lookups rather than on an empty queue.
+    async fn park_until(client: &TradeApiClient, want: usize) {
+        for _ in 0..10_000 {
+            if client.pending() >= want {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("only {} of {want} lookups reached the queue", client.pending());
+    }
+
+    /// Gem-path regression (POE-202 moved the queue body into `lookup_query`):
+    /// the sequence a Comparator renders its progress from is still
+    /// queued → fetching → done, all tagged `gem`. A `waiting` may not appear
+    /// here — the rate limiter of a fresh client owes no wait.
+    #[tokio::test]
+    async fn a_gem_lookup_still_reports_queued_then_fetching_then_done() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        let events = Mutex::new(Vec::new());
+
+        client
+            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |e| {
+                events.lock().unwrap().push(e)
+            })
+            .await
+            .expect("the stub answers both phases");
+
+        let events = events.into_inner().unwrap();
+        assert_eq!(kinds(&events), ["queued", "fetching", "done"]);
+        assert!(
+            events
+                .iter()
+                .all(|e| serde_json::to_value(e).unwrap()["source"] == "gem"),
+            "every gem-lookup event must be tagged gem: {events:?}",
+        );
+    }
+
+    /// Gem-path regression: `lookup_query` returns raw JSON entries and the gem
+    /// path parses them, so the level/quality/corrupted decoding must survive
+    /// the refactor along with the identity fields `build_result` stamps on.
+    #[tokio::test]
+    async fn a_gem_lookup_still_returns_the_parsed_listing_and_its_identity() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+
+        let result = client
+            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |_| {})
+            .await
+            .expect("the stub answers both phases");
+
+        assert_eq!(result.gem, "Empower Support");
+        assert_eq!(result.variant, "20/20");
+        assert_eq!(result.total, 42);
+        assert_eq!(result.trade_url, "https://www.pathofexile.com/trade/search/Allflame/qid-1");
+        assert_eq!(result.listings.len(), 1);
+        let listing = &result.listings[0];
+        assert_eq!(listing.price, 12.5);
+        assert_eq!(listing.currency, "chaos");
+        assert_eq!(listing.account, "Seller");
+        assert_eq!(listing.gem_level, 20);
+        assert_eq!(listing.gem_quality, 23);
+        assert!(listing.corrupted);
+    }
+
+    /// The gem query still reaches GGG: the body the gem builder produced is
+    /// POSTed to the resolved league's search endpoint. Guards the refactor's
+    /// one silent failure mode — a `lookup_query` that runs the queue but
+    /// forwards the wrong body.
+    #[tokio::test]
+    async fn a_gem_lookup_posts_its_built_query_to_the_resolved_leagues_endpoint() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+
+        client
+            .lookup_gem_with_mode("Empower Support", "20/20", 0.0, false, |_| {})
+            .await
+            .expect("the stub answers both phases");
+
+        let requests = stub.requests();
+        assert_eq!(requests.len(), 2, "one search and one fetch: {requests:?}");
+        assert!(
+            requests[0].starts_with("POST /api/trade/search/Allflame "),
+            "search must be POSTed to the resolved league: {}",
+            requests[0],
+        );
+        assert!(
+            requests[0].contains("Empower Support"),
+            "the gem's own query body must be the one sent: {}",
+            requests[0],
+        );
+        assert!(
+            requests[1].starts_with("GET /api/trade/fetch/r1?query=qid-1 "),
+            "the fetch must carry the search's ids and query id: {}",
+            requests[1],
+        );
+    }
+
+    /// Per-consumer cancel (POE-202): a mercenary retire cancels the merc
+    /// queue. A gem lookup parked behind it must still run — before the
+    /// per-source split, one `cancel` emptied the Comparator's queue too.
+    #[tokio::test]
+    async fn cancelling_the_mercenary_queue_leaves_a_queued_gem_lookup_running() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        let held = client.lookup_mutex.lock().await;
+
+        let merc_client = client.clone();
+        let merc = tokio::spawn(async move {
+            merc_client
+                .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+                .await
+        });
+        let gem_client = client.clone();
+        let gem = tokio::spawn(async move {
+            gem_client
+                .lookup_query(TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
+                .await
+        });
+        park_until(&client, 2).await;
+
+        client.cancel(TradeSource::Mercenary);
+        drop(held);
+
+        assert_eq!(
+            merc.await.unwrap().unwrap_err(),
+            CANCELLED,
+            "the cancelled source must bail out",
+        );
+        let gem = gem.await.unwrap().expect("the gem lookup must survive a mercenary cancel");
+        assert_eq!(gem.total, 42);
+    }
+
+    /// The mirror, and the drain case with it: the mercenary lookup is queued
+    /// BEHIND the gem one, so the gem lookup runs to completion and drains the
+    /// queue in between the cancel and the mercenary's checkpoint. The cancel
+    /// must still be waiting for it there.
+    #[tokio::test]
+    async fn a_mercenary_cancel_outlives_a_gem_lookup_draining_the_queue() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        let held = client.lookup_mutex.lock().await;
+
+        let gem_client = client.clone();
+        let gem = tokio::spawn(async move {
+            gem_client
+                .lookup_query(TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
+                .await
+        });
+        let merc_client = client.clone();
+        let merc = tokio::spawn(async move {
+            merc_client
+                .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+                .await
+        });
+        park_until(&client, 2).await;
+
+        client.cancel(TradeSource::Mercenary);
+        drop(held);
+
+        let gem = gem.await.unwrap().expect("the gem lookup must not see the mercenary cancel");
+        assert_eq!(gem.total, 42);
+        assert_eq!(
+            merc.await.unwrap().unwrap_err(),
+            CANCELLED,
+            "a completed gem lookup must not un-cancel the mercenary queue",
+        );
+    }
+
+    /// `cancel` reports how many of ITS OWN source's lookups were pending —
+    /// the number `trade_cancel` shows the user. The shared `pending_count`
+    /// would say two here.
+    #[tokio::test]
+    async fn cancel_reports_only_its_own_sources_pending_lookups() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+        let held = client.lookup_mutex.lock().await;
+
+        let merc_client = client.clone();
+        let merc = tokio::spawn(async move {
+            merc_client
+                .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+                .await
+        });
+        let gem_client = client.clone();
+        let gem = tokio::spawn(async move {
+            gem_client
+                .lookup_query(TradeSource::Gem, "Spark", serde_json::json!({}), |_| {})
+                .await
+        });
+        park_until(&client, 2).await;
+
+        assert_eq!(client.cancel(TradeSource::Mercenary), 1);
+        assert_eq!(client.cancel(TradeSource::Gem), 1);
+
+        drop(held);
+        let _ = merc.await;
+        let _ = gem.await;
+    }
+
+    /// The cancel epoch must not latch: a cancel over an empty queue is about
+    /// lookups that no longer exist, and the next lookup — a re-detect of the
+    /// same recruit window seconds later — has to run.
+    #[tokio::test]
+    async fn a_lookup_enqueued_after_its_source_was_cancelled_still_runs() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let client = stub_client(&stub);
+
+        assert_eq!(client.cancel(TradeSource::Mercenary), 0, "nothing is pending yet");
+
+        let result = client
+            .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |_| {})
+            .await
+            .expect("a cancel with nothing pending must not stop the next lookup");
+
+        assert_eq!(result.total, 42);
+    }
+
+    /// The mercenary path fails closed on an unresolved league exactly like the
+    /// gem path, and its Error event is tagged `mercenary` — a merc failure
+    /// rendered in the Comparator is the bug the discriminator exists to stop.
+    #[tokio::test]
+    async fn lookup_query_fails_closed_on_an_unset_league_without_reaching_the_api() {
+        let stub = stub_api(search_ok(), fetch_ok()).await;
+        let mut client = TradeApiClient::new();
+        client.base_url = stub.base_url.clone();
+        let events = Mutex::new(Vec::new());
+
+        let result = client
+            .lookup_query(TradeSource::Mercenary, "Kaom", serde_json::json!({}), |e| {
+                events.lock().unwrap().push(e)
+            })
+            .await;
+
+        assert!(result.is_err(), "an unresolved league must not be guessed at");
+        assert!(stub.requests().is_empty(), "nothing may be sent: {:?}", stub.requests());
+        let events = events.into_inner().unwrap();
+        assert_eq!(kinds(&events), ["error"]);
+        assert_eq!(serde_json::to_value(&events[0]).unwrap()["source"], "mercenary");
     }
 }
