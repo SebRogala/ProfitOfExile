@@ -116,6 +116,12 @@ change to the Rust command rather than a second wait in each creation path.
 - Client.txt uses filesystem notifications with a five-second polling fallback.
 - Font panel scanning begins from the `LabFinished` navigation event. The third
   Aspirant's Trial is logged but is not the scan trigger.
+- The merc verdict overlay does not render `mercenary.trade` yet (POE-202).
+  The search state reaches every window on the slice regardless, and both
+  pieces the Mercenaries page draws it with are already cross-window for that
+  reason: `$lib/components/TradeListings.svelte` rather than a component
+  beside the Comparator, and `$lib/mercenaries/trade-view.ts` rather than
+  wording inside the page.
 
 Do not summarize the desktop architecture as “no polling.” Use the mechanism
 owned by the specific state path.
