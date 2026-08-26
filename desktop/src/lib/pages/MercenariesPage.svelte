@@ -3,7 +3,7 @@
 	import {
 		MERC_SOURCES,
 		entryKind,
-		kinetistLadder,
+		ladders,
 		type MercRuleset,
 		type MercSourceId,
 	} from '$lib/mercenaries/rulesets';
@@ -263,31 +263,39 @@
 	// --- Rulesets (slice 1) ---------------------------------------------------
 
 	/**
-	 * The tier matrix is guide-b's presentation, not a generic capability — a
-	 * future source with rungs of its own gets this treatment when it exists, not
-	 * speculatively now.
+	 * One tier matrix per ladder the selected source declares. Not a guide-b
+	 * special case any more: a source states which of its rulesets are rungs by
+	 * giving them a `ladder` key, and everything else falls through to a card.
 	 */
-	const ladder = $derived(
-		source.id === 'guide-b' ? kinetistLadder().filter((r) => source.rulesets.includes(r)) : []
+	const sourceLadders = $derived(ladders(source));
+	const ladderCards = $derived(
+		sourceLadders.map((rungs) => ({
+			key: rungs[0].ladder as string,
+			// The rungs of one ladder share a label — that IS the ladder's name.
+			title: `${sharedValue(rungs.map((r) => r.label)) ?? rungs[0].label} — tier ladder`,
+			rungs,
+			rows: ladderRows(rungs),
+			outcomes: rungOutcomes(rungs, results),
+			/** Status + item level as one line, printed once when every rung agrees. */
+			meta: sharedValue(rungs.map(metaText)),
+			/** The video that published this ladder's links, when the rungs agree on one. */
+			guideUrl: sharedValue(rungs.map((r) => r.guideUrl ?? null)),
+			/** The rungs mostly share an entry skeleton, so their "not in these rules"
+			 *  lists repeat — the matrix prints the union once per ladder. */
+			notInRules: notInRulesNames(
+				results.filter((result) => rungs.some((rung) => rung.id === result.id))
+			)
+		}))
 	);
-	const rows = $derived(ladderRows(ladder));
-	const cards = $derived(source.rulesets.filter((r) => !ladder.includes(r)));
-	const ladderVerdict = $derived(rungOutcomes(ladder, results));
-	/** The rungs share one entry skeleton, so their "not in these rules" lists
-	 *  repeat — the matrix prints the union once instead of four identical lines. */
-	const ladderNotInRules = $derived(
-		notInRulesNames(results.filter((result) => ladder.some((rung) => rung.id === result.id)))
+	const cards = $derived(
+		source.rulesets.filter((r) => !sourceLadders.some((rungs) => rungs.includes(r)))
 	);
 
-	/** Status + item level as one line — identical across all four rungs today, so
-	 *  the matrix prints it once instead of four times. */
 	function metaText(ruleset: MercRuleset): string {
 		return ruleset.ilvlMin === undefined
 			? ruleset.status
 			: `${ruleset.status} · ilvl ${ruleset.ilvlMin}+`;
 	}
-
-	const ladderMeta = $derived(sharedValue(ladder.map(metaText)));
 
 	/**
 	 * Wording for a matrix cell — `absent` is a hole in the skeleton, not a rule.
@@ -626,14 +634,21 @@
 		</header>
 
 		<div class="grid">
-			{#if rows.length > 0}
+			{#each ladderCards as card (card.key)}
+				{@const ladder = card.rungs}
 				<article class="card matrix-card">
 					<header class="card-head">
-						<h3 class="card-title">Kinetist — tier ladder</h3>
-						{#if ladderMeta}<span class="meta">{ladderMeta}</span>{/if}
+						<h3 class="card-title">{card.title}</h3>
+						{#if card.meta}<span class="meta">{card.meta}</span>{/if}
+						{#if card.guideUrl}
+							<!-- The ladder's own video: this source's ladders come from different
+							     ones, so the source header's link is the channel, not this. -->
+							<a class="guide-link" href={card.guideUrl} target="_blank">video ↗</a>
+						{/if}
 					</header>
 					<p class="matrix-hint">
-						One search, four rungs. Highlighted rows are the ones that move between them.
+						One search, {ladder.length} rungs. Highlighted rows are the ones that move between
+						them.
 					</p>
 
 					<!-- Never wraps: the columns hold their width and the card scrolls. -->
@@ -655,7 +670,7 @@
 											>
 												↗
 											</a>
-											{#if !ladderMeta}<span class="meta">{metaText(rung)}</span>{/if}
+											{#if !card.meta}<span class="meta">{metaText(rung)}</span>{/if}
 											{#if rung.floor}<span class="floor">{rung.floor}</span>{/if}
 										</th>
 									{/each}
@@ -673,7 +688,7 @@
 												<span class="meta">— derived links need an active league</span>
 											{/if}
 										</th>
-										{#each ladderVerdict as outcome, i (ladder[i].id)}
+										{#each card.outcomes as outcome, i (ladder[i].id)}
 											<td class="tier-verdict">
 												{#if outcome === null}
 													<span class="meta">—</span>
@@ -700,7 +715,7 @@
 								{/if}
 							</thead>
 							<tbody>
-								{#each rows as row (row.id)}
+								{#each card.rows as row (row.id)}
 									{#if row.kind === 'group'}
 										<tr class="group-row" class:varies={row.varies}>
 											<th class="group-cell" colspan={ladder.length + 1} scope="colgroup">
@@ -749,11 +764,11 @@
 						</table>
 					</div>
 
-					{#if ladderNotInRules.length > 0}
-						<p class="not-in-rules">Not in these rules: {ladderNotInRules.join(', ')}</p>
+					{#if card.notInRules.length > 0}
+						<p class="not-in-rules">Not in these rules: {card.notInRules.join(', ')}</p>
 					{/if}
 				</article>
-			{/if}
+			{/each}
 
 			{#each cards as ruleset (ruleset.id)}
 				{@const result = resultOf(ruleset)}

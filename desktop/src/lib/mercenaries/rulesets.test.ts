@@ -4,13 +4,14 @@ import {
 	SOURCE_IDS,
 	TIERS,
 	allRulesets,
-	kinetistLadder,
+	ladders,
 	entryKind,
 	entryRole,
 	entryTier,
 	type MercFilterEntry,
 	type MercFilterGroup,
-	type MercRuleset
+	type MercRuleset,
+	type MercSource
 } from './rulesets';
 import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
 import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
@@ -19,6 +20,10 @@ import n7nRvBzl2S5 from './__fixtures__/7nRvBzl2S5.json';
 import BgzkZKGQF8 from './__fixtures__/BgzkZKGQF8.json';
 import LgkGrPO5Fn from './__fixtures__/LgkGrPO5Fn.json';
 import zbrQyEqah4 from './__fixtures__/zbrQyEqah4.json';
+import n4mP3V2jQT9 from './__fixtures__/4mP3V2jQT9.json';
+import Z6Em09GmHQ from './__fixtures__/Z6Em09GmHQ.json';
+import JBnK2YKRFl from './__fixtures__/JBnK2YKRFl.json';
+import d86ymvXRsJ from './__fixtures__/d86ymvXRsJ.json';
 import mercenaryStats from './__fixtures__/mercenary-stats.json';
 
 /**
@@ -41,7 +46,8 @@ interface RawSavedSearch {
 	query: {
 		stats: RawStatGroup[];
 		status: { option: string };
-		filters: { misc_filters: { filters: { ilvl: { min: number } } } };
+		/** Absent on the guide-b Manyshot searches: they set no item-level floor. */
+		filters?: { misc_filters?: { filters: { ilvl: { min: number } } } };
 	};
 }
 
@@ -57,7 +63,11 @@ const FIXTURES: Record<string, RawSavedSearch> = {
 	'7nRvBzl2S5': n7nRvBzl2S5 as unknown as RawSavedSearch,
 	BgzkZKGQF8: BgzkZKGQF8 as unknown as RawSavedSearch,
 	LgkGrPO5Fn: LgkGrPO5Fn as unknown as RawSavedSearch,
-	zbrQyEqah4: zbrQyEqah4 as unknown as RawSavedSearch
+	zbrQyEqah4: zbrQyEqah4 as unknown as RawSavedSearch,
+	'4mP3V2jQT9': n4mP3V2jQT9 as unknown as RawSavedSearch,
+	Z6Em09GmHQ: Z6Em09GmHQ as unknown as RawSavedSearch,
+	JBnK2YKRFl: JBnK2YKRFl as unknown as RawSavedSearch,
+	d86ymvXRsJ: d86ymvXRsJ as unknown as RawSavedSearch
 };
 
 /** GGG's Mercenary stat vocabulary: stat id -> display text. */
@@ -84,7 +94,7 @@ function fromFixture(fixture: RawSavedSearch) {
 	return {
 		hash: fixture.id,
 		status: fixture.query.status.option,
-		ilvlMin: fixture.query.filters.misc_filters.filters.ilvl.min,
+		ilvlMin: fixture.query.filters?.misc_filters?.filters.ilvl.min,
 		groups: fixture.query.stats.map((group) => ({
 			type: group.type,
 			enabled: group.disabled !== true,
@@ -97,6 +107,15 @@ function fromFixture(fixture: RawSavedSearch) {
 function rulesetById(id: string): MercRuleset {
 	const found = allRulesets().find((r) => r.id === id);
 	if (!found) throw new Error(`no ruleset declared with id ${id}`);
+	return found;
+}
+
+const GUIDE_B = MERC_SOURCES.find((s) => s.id === 'guide-b') as MercSource;
+
+/** The rungs of one guide-b ladder, cheapest first. */
+function ladderNamed(key: string): MercRuleset[] {
+	const found = ladders(GUIDE_B).find((rungs) => rungs[0].ladder === key);
+	if (!found) throw new Error(`guide-b declares no ladder ${key}`);
 	return found;
 }
 
@@ -278,7 +297,7 @@ describe('required-versus-denied invariant', () => {
 
 	it('carries the Pierce pair in both Kinetist groups, live on at most one side per rung', () => {
 		const pair = ['mercenary.support_56267', 'mercenary.support_27970'];
-		const rows = kinetistLadder().flatMap((ruleset) =>
+		const rows = ladderNamed('kinetist').flatMap((ruleset) =>
 			pair.map((id) => {
 				const required =
 					groupOf(ruleset, 'behavior')?.enabledInSearch === true &&
@@ -377,23 +396,23 @@ describe('Kinetist ladder', () => {
 	}
 
 	it('lists the four rungs cheapest first', () => {
-		expect(kinetistLadder().map((r) => r.tier)).toEqual([...TIERS]);
+		expect(ladderNamed('kinetist').map((r) => r.tier)).toEqual([...TIERS]);
 	});
 
 	it('gives every rung the same group ids in the saved-search order', () => {
-		expect(kinetistLadder().map((r) => r.groups.map((g) => g.id))).toEqual(
-			kinetistLadder().map(() => KINETIST_GROUP_IDS)
+		expect(ladderNamed('kinetist').map((r) => r.groups.map((g) => g.id))).toEqual(
+			ladderNamed('kinetist').map(() => KINETIST_GROUP_IDS)
 		);
 	});
 
 	it('gives every rung the same entry ids in every group', () => {
 		const perGroupIds = (ruleset: MercRuleset) => ruleset.groups.map((g) => g.entries.map((e) => e.id));
-		const [first, ...rest] = kinetistLadder();
+		const [first, ...rest] = ladderNamed('kinetist');
 		expect(rest.map(perGroupIds)).toEqual(rest.map(() => perGroupIds(first)));
 	});
 
 	it('differs between rungs only where the tier table says it does', () => {
-		const flattened = kinetistLadder().map(flatten);
+		const flattened = ladderNamed('kinetist').map(flatten);
 		const keys = [...new Set(flattened.flatMap((f) => Object.keys(f)))].sort();
 		const actual: Record<string, unknown[]> = {};
 		for (const key of keys) {
@@ -401,6 +420,277 @@ describe('Kinetist ladder', () => {
 			if (values.some((v) => v !== values[0])) actual[key] = values;
 		}
 		expect(actual).toEqual(DECLARED_DELTAS);
+	});
+});
+
+/**
+ * The Manyshot ladder is NOT written as one skeleton with switches: its GG rung
+ * is a differently shaped search, and pretending otherwise would make the matrix
+ * borrow a neighbouring rung's state for the slots GG does not have. So what is
+ * pinned here is the group-id MAPPING — the one thing the fixture-fidelity tests
+ * above cannot see, because group ids exist only in this file.
+ */
+describe('Manyshot ladder', () => {
+	/** `<groupId> <type> enabled=<bool> min=<n|->`, in the saved search's own order. */
+	function shape(ruleset: MercRuleset): string[] {
+		return ruleset.groups.map(
+			(g) => `${g.id} ${g.type} enabled=${g.enabledInSearch} min=${g.min ?? '-'}`
+		);
+	}
+
+	it('lists the four rungs cheapest first', () => {
+		expect(ladderNamed('manyshot').map((r) => r.id)).toEqual([
+			'guide-b-manyshot-mv',
+			'guide-b-manyshot-mid',
+			'guide-b-manyshot-end',
+			'guide-b-manyshot-gg'
+		]);
+	});
+
+	// Earlygame and Midgame differ by exactly two things — Midgame switches the
+	// Vaal-Ice-Shot-plus-Return group on and adds the aura group.
+	it('opens the Earlygame rung with every mercenary group parked', () => {
+		expect(shape(rulesetById('guide-b-manyshot-mv'))).toEqual([
+			'has-vaal and enabled=true min=-',
+			'deny not enabled=true min=-',
+			'vaal-damage mercenary enabled=false min=2',
+			'vaal-return mercenary enabled=false min=2',
+			'core mercenary enabled=false min=-',
+			'projectiles mercenary enabled=false min=2',
+			'damage mercenary enabled=false min=2'
+		]);
+	});
+
+	it('pins the Midgame rung shape: Earlygame plus a live Vaal-Return group, plus auras', () => {
+		expect(shape(rulesetById('guide-b-manyshot-mid'))).toEqual([
+			'has-vaal and enabled=true min=-',
+			'deny not enabled=true min=-',
+			'vaal-damage mercenary enabled=false min=2',
+			'vaal-return mercenary enabled=true min=2',
+			'core mercenary enabled=false min=-',
+			'projectiles mercenary enabled=false min=2',
+			'damage mercenary enabled=false min=2',
+			'auras count enabled=true min=1'
+		]);
+	});
+
+	it('pins the Endgame rung shape: the Ice Shot groups live, projectiles lifted to 3', () => {
+		expect(shape(rulesetById('guide-b-manyshot-end'))).toEqual([
+			'has-vaal and enabled=true min=-',
+			'deny not enabled=true min=-',
+			'vaal-damage mercenary enabled=true min=2',
+			'vaal-return mercenary enabled=true min=2',
+			'core mercenary enabled=false min=2',
+			'projectiles mercenary enabled=true min=3',
+			'damage mercenary enabled=true min=2',
+			'auras count enabled=true min=1'
+		]);
+	});
+
+	// The drift, transcribed rather than tidied: auras lead, the `and`
+	// Vaal-Ice-Shot gate is gone, the projectile and damage vocabularies are one
+	// parked `min: 4` group, and `core` is last and live.
+	it('reshapes the search at GG instead of switching the same groups', () => {
+		expect(shape(rulesetById('guide-b-manyshot-gg'))).toEqual([
+			'auras count enabled=true min=1',
+			'deny not enabled=true min=-',
+			'vaal-damage mercenary enabled=true min=3',
+			'vaal-return mercenary enabled=true min=2',
+			'projectiles mercenary enabled=false min=4',
+			'core mercenary enabled=true min=-'
+		]);
+	});
+
+	it('carries the damage vocabulary inside the GG rung’s merged projectiles group', () => {
+		expect(groupOf(rulesetById('guide-b-manyshot-gg'), 'projectiles')?.entries.map((e) => e.id)).toEqual([
+			'mercenary.skill_11495',
+			'mercenary.support_49419',
+			'mercenary.support_32052',
+			'mercenary.support_31052',
+			'mercenary.support_44886',
+			'mercenary.support_28416',
+			'mercenary.support_38571',
+			'mercenary.support_53145'
+		]);
+	});
+
+	// Every other rung parks Return inside this group; GG leaves the entry out.
+	it('drops the parked Return entry from the GG rung’s Vaal damage group', () => {
+		expect(
+			ladderNamed('manyshot').map(
+				(rung) =>
+					`${rung.tier} ${entryOf(rung, 'vaal-damage', 'mercenary.support_5293') === undefined ? 'absent' : 'declared'}`
+			)
+		).toEqual(['mv declared', 'mid declared', 'end declared', 'gg absent']);
+	});
+
+	// The aura group is the reason the matrix skeleton is a union: the cheapest
+	// rung has no such group, and the option list grows up the ladder.
+	it('grows the aura options up the ladder, from a rung that has none', () => {
+		expect(
+			ladderNamed('manyshot').map(
+				(rung) => `${rung.tier} ${groupOf(rung, 'auras')?.entries.map((e) => e.name).join('/') ?? 'no aura group'}`
+			)
+		).toEqual([
+			'mv no aura group',
+			'mid Grace/Haste/Hatred',
+			'end Grace/Hatred',
+			'gg Hatred/Grace/Frost Bomb'
+		]);
+	});
+
+	it('sets no item-level floor on any rung, unlike every other saved search', () => {
+		expect(ladderNamed('manyshot').map((r) => r.ilvlMin)).toEqual([
+			undefined,
+			undefined,
+			undefined,
+			undefined
+		]);
+	});
+});
+
+describe('ladder keys', () => {
+	it('groups guide-b into its two ladders, first-declared first', () => {
+		expect(ladders(GUIDE_B).map((rungs) => rungs.map((r) => r.id))).toEqual([
+			[
+				'guide-b-kinetist-mv',
+				'guide-b-kinetist-mid',
+				'guide-b-kinetist-end',
+				'guide-b-kinetist-gg'
+			],
+			[
+				'guide-b-manyshot-mv',
+				'guide-b-manyshot-mid',
+				'guide-b-manyshot-end',
+				'guide-b-manyshot-gg'
+			]
+		]);
+	});
+
+	it('reports no ladders for a source whose rulesets carry no tier', () => {
+		expect(ladders(MERC_SOURCES.find((s) => s.id === 'guide-a') as MercSource)).toEqual([]);
+	});
+
+	/** Tiered rulesets carrying no ladder key — rungs of nothing. */
+	function orphanRungs(rulesets: MercRuleset[]): string[] {
+		return rulesets.filter((r) => r.tier !== undefined && r.ladder === undefined).map((r) => r.id);
+	}
+
+	/**
+	 * Positive control for the sweep below: that sweep is green against an
+	 * `orphanRungs` that never reports anything, because every real tiered
+	 * ruleset carries a key. This synthetic one is the case the helper exists
+	 * to catch.
+	 */
+	it('reports the id of a ruleset that carries a tier without a ladder key', () => {
+		const orphan: MercRuleset = {
+			id: 'synthetic-orphan',
+			label: 'Synthetic',
+			archetype: 'kinetist',
+			tier: 'gg',
+			savedSearch: { league: 'Allflame', hash: 'synthetic' },
+			status: 'securable',
+			groups: []
+		};
+		expect(orphanRungs([orphan])).toEqual(['synthetic-orphan']);
+	});
+
+	// A rung with a tier but no ladder key has no column set to be compared in:
+	// `ladders()` would drop it and the page would silently render it as a card.
+	it('gives every tiered ruleset a ladder key', () => {
+		expect(orphanRungs(allRulesets())).toEqual([]);
+	});
+
+	// Nerotox's Combatant video publishes a Frost Blades ladder AND a Wild Strike
+	// ladder — same archetype, two searches. Keying the grouping on the archetype
+	// would fuse them into one matrix whose columns come from two different
+	// searches, and no real data can catch that yet: guide-b's two ladders happen
+	// to have one archetype each.
+	it('keeps two ladders of the same archetype apart', () => {
+		const rung = (id: string, ladder: string, tier: MercRuleset['tier']): MercRuleset => ({
+			id,
+			label: ladder,
+			archetype: 'combatant',
+			ladder,
+			tier,
+			savedSearch: { league: 'Allflame', hash: id },
+			status: 'securable',
+			groups: []
+		});
+		const source: MercSource = {
+			id: 'guide-b',
+			label: 'Synthetic',
+			guideUrl: null,
+			rulesets: [
+				rung('frost-mv', 'frost-blades', 'mv'),
+				rung('wild-mv', 'wild-strike', 'mv'),
+				rung('frost-gg', 'frost-blades', 'gg')
+			]
+		};
+		expect(ladders(source).map((rungs) => rungs.map((r) => r.id))).toEqual([
+			['frost-mv', 'frost-gg'],
+			['wild-mv']
+		]);
+	});
+
+	it('orders a ladder’s rungs by TIERS even when they are declared out of order', () => {
+		const rung = (tier: MercRuleset['tier']): MercRuleset => ({
+			id: `synthetic-${tier}`,
+			label: 'Synthetic',
+			archetype: 'combatant',
+			ladder: 'synthetic',
+			tier,
+			savedSearch: { league: 'Allflame', hash: `synthetic-${tier}` },
+			status: 'securable',
+			groups: []
+		});
+		const source: MercSource = {
+			id: 'guide-b',
+			label: 'Synthetic',
+			guideUrl: null,
+			rulesets: [rung('gg'), rung('mv'), rung('end'), rung('mid')]
+		};
+		expect(ladders(source)[0].map((r) => r.tier)).toEqual(['mv', 'mid', 'end', 'gg']);
+	});
+
+	// Nerotox's Combatant video publishes two Endgame links for one ladder, so
+	// the ranking must not assume one rung per tier — and the tie has to resolve
+	// to the guide's own order rather than to whichever the sort happens to move.
+	it('keeps two rungs sharing a tier in declaration order', () => {
+		const rung = (id: string, tier: MercRuleset['tier']): MercRuleset => ({
+			id,
+			label: 'Synthetic',
+			archetype: 'combatant',
+			ladder: 'synthetic',
+			tier,
+			savedSearch: { league: 'Allflame', hash: id },
+			status: 'securable',
+			groups: []
+		});
+		const source: MercSource = {
+			id: 'guide-b',
+			label: 'Synthetic',
+			guideUrl: null,
+			rulesets: [rung('end-no-return', 'end'), rung('end-return', 'end'), rung('mv', 'mv')]
+		};
+		expect(ladders(source)[0].map((r) => r.id)).toEqual(['mv', 'end-no-return', 'end-return']);
+	});
+});
+
+describe('author notes', () => {
+	// Verbatim from the two video descriptions — the app never paraphrases them.
+	it('carries each GG rung’s note exactly as its author wrote it', () => {
+		expect(
+			allRulesets()
+				.filter((r) => r.authorNote !== undefined)
+				.map((r) => [r.id, r.authorNote])
+		).toEqual([
+			[
+				'guide-b-kinetist-gg',
+				'look at damage links still - these are 4L not even 5L. 5L mercs nearly never exist for KB in gg setups, a 5L with barrage can beat a 4L with greater KB'
+			],
+			['guide-b-manyshot-gg', 'manually check for clear links on ice shot']
+		]);
 	});
 });
 

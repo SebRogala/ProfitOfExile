@@ -113,6 +113,8 @@ export interface MercCaptured {
 export interface MercRulesetResult {
 	id: string;
 	label: string;
+	/** The ladder key this rung belongs to, or null for an untiered ruleset. */
+	ladder: string | null;
 	tier: string | null;
 	outcome: RulesetOutcome;
 	groups: MercGroupResult[];
@@ -133,7 +135,7 @@ export interface MercSourceVerdict {
 	id: MercSourceId;
 	label: string;
 	headline: SourceHeadline;
-	/** Ruleset ids to comp against: the highest passing rung, plus every passing untiered ruleset. */
+	/** Ruleset ids to comp against: the highest passing rung of EACH ladder, plus every passing untiered ruleset. */
 	best: string[];
 	reasons: string[];
 	/** Empty when the source is switched off — a disabled source is not evaluated. */
@@ -457,10 +459,16 @@ function groupReasons(group: MercGroupResult): string[] {
 }
 
 /**
- * The guide-b saved searches are 4-link searches (POE-165, tier ladder: "a
- * 5-link GG merc prices above the GG comps — look at damage links still").
- * On a GG pass, say how many supports the core row actually carries so the
- * reader knows the comps are a floor, not the price.
+ * On a GG pass, say how many supports the core row actually carries.
+ *
+ * A GG saved search asks for fewer links than a top mercenary can have, so its
+ * comps are a floor rather than the price. HOW MANY fewer is the guide author's
+ * claim, not this engine's — the Kinetist ladder's author says "these are 4L not
+ * even 5L", the Manyshot one says to eyeball the Ice Shot links — so the number
+ * lives in that rung's `authorNote` and this line stays archetype-neutral.
+ *
+ * The core row is found by the group id `core`, which every ladder gives to the
+ * group carrying its main skill and its links.
  */
 function ggLinkCaveat(ruleset: MercRuleset, groups: MercGroupResult[], capture: MercCapture): string[] {
 	if (ruleset.tier !== 'gg') return [];
@@ -470,7 +478,7 @@ function ggLinkCaveat(ruleset: MercRuleset, groups: MercGroupResult[], capture: 
 		: capture.rows.find((candidate) => candidate.index === core.rowIndex);
 	const links = row ? row.supports.length : null;
 	const carried = links === null ? '' : ` — this core skill row carries ${links} supports`;
-	return [`GG comps are 4-link searches; a merc with more links prices above them${carried}`];
+	return [`GG comps are a floor, not the price: a merc with more links prices above them${carried}`];
 }
 
 function passReasons(ruleset: MercRuleset, groups: MercGroupResult[], capture: MercCapture): string[] {
@@ -482,6 +490,9 @@ function passReasons(ruleset: MercRuleset, groups: MercGroupResult[], capture: M
 	const contextual = positions.filter((position) => position.outcome === 'contextual-present');
 	if (contextual.length > 0) reasons.push(`Buyer-contextual present: ${namesOf(contextual)}`);
 	reasons.push(...ggLinkCaveat(ruleset, groups, capture));
+	// The author speaking about THIS search, verbatim and last — it is the line
+	// that outranks anything computed above it when the two disagree.
+	if (ruleset.authorNote) reasons.push(`Author: ${ruleset.authorNote}`);
 	return reasons;
 }
 
@@ -525,7 +536,7 @@ function evaluateRuleset(
 	// A fail outranks an unknown: a mercenary carrying a forbidden stat is out
 	// whatever else could not be read. A ruleset with NOTHING applied — every
 	// group parked or contextual — has asked the mercenary for nothing, so it is
-	// unknown rather than a pass nobody earned. None of the seven saved searches
+	// unknown rather than a pass nobody earned. None of the eleven saved searches
 	// is in that state; a future one could be.
 	const outcome: RulesetOutcome =
 		applied.length === 0
@@ -544,6 +555,7 @@ function evaluateRuleset(
 	return {
 		id: ruleset.id,
 		label: ruleset.label,
+		ladder: ruleset.ladder ?? null,
 		tier: ruleset.tier ?? null,
 		outcome,
 		groups,
@@ -561,22 +573,30 @@ function evaluateRuleset(
 /**
  * Which passing rulesets to comp against.
  *
- * A tiered ladder is answered by its HIGHEST passing rung — the rungs are
- * nested, so the cheaper ones would only comp the same mercenary lower.
- * Untiered rulesets are separate archetypes, so every passing one is listed.
+ * EACH ladder is answered by its own highest passing rung — the rungs of one
+ * ladder are nested, so the cheaper ones would only comp the same mercenary
+ * lower, but two ladders are two different searches and a pass on one must
+ * neither suppress nor be suppressed by the other. Rulesets in no ladder are
+ * independent searches too, so every passing one is listed.
+ *
+ * Ties on `TIERS` index keep the earlier rung: a ladder may publish two rungs at
+ * one tier (Nerotox's Combatant video has two Endgame links), and declaration
+ * order is the guide's own order.
  */
 function bestOf(results: MercRulesetResult[]): string[] {
 	const passing = results.filter((result) => result.outcome === 'pass');
-	const untiered = passing.filter((result) => result.tier === null).map((result) => result.id);
-	const tiered = passing.filter((result) => result.tier !== null);
-	if (tiered.length === 0) return untiered;
-	const highest = tiered.reduce((winner, candidate) =>
-		TIERS.indexOf(candidate.tier as (typeof TIERS)[number]) >
-		TIERS.indexOf(winner.tier as (typeof TIERS)[number])
-			? candidate
-			: winner
-	);
-	return [...untiered, highest.id];
+	const best: string[] = [];
+	const highestPerLadder = new Map<string, MercRulesetResult>();
+	for (const result of passing) {
+		if (result.ladder === null) {
+			best.push(result.id);
+			continue;
+		}
+		const winner = highestPerLadder.get(result.ladder);
+		const rank = (r: MercRulesetResult) => TIERS.indexOf(r.tier as (typeof TIERS)[number]);
+		if (!winner || rank(result) > rank(winner)) highestPerLadder.set(result.ladder, result);
+	}
+	return [...best, ...[...highestPerLadder.values()].map((result) => result.id)];
 }
 
 function titleOf(result: MercRulesetResult): string {

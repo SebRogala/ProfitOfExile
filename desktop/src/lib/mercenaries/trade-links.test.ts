@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { derivedSearchUrl, rulesetQuery, savedSearchUrl, type TradeQuery } from './trade-links';
-import { MERC_SOURCES, allRulesets, type MercRuleset } from './rulesets';
+import { MERC_SOURCES, allRulesets, type MercRuleset, type MercSource } from './rulesets';
 import captureQuery from './__fixtures__/capture-query.expected.json';
 import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
 import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
@@ -9,6 +9,10 @@ import n7nRvBzl2S5 from './__fixtures__/7nRvBzl2S5.json';
 import BgzkZKGQF8 from './__fixtures__/BgzkZKGQF8.json';
 import LgkGrPO5Fn from './__fixtures__/LgkGrPO5Fn.json';
 import zbrQyEqah4 from './__fixtures__/zbrQyEqah4.json';
+import n4mP3V2jQT9 from './__fixtures__/4mP3V2jQT9.json';
+import Z6Em09GmHQ from './__fixtures__/Z6Em09GmHQ.json';
+import JBnK2YKRFl from './__fixtures__/JBnK2YKRFl.json';
+import d86ymvXRsJ from './__fixtures__/d86ymvXRsJ.json';
 
 /** Keyed by the hash the ruleset declares — the `rulesets.test.ts` idiom. */
 const FIXTURES: Record<string, { id: string; query: unknown }> = {
@@ -18,7 +22,11 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	'7nRvBzl2S5': n7nRvBzl2S5,
 	BgzkZKGQF8,
 	LgkGrPO5Fn,
-	zbrQyEqah4
+	zbrQyEqah4,
+	'4mP3V2jQT9': n4mP3V2jQT9,
+	Z6Em09GmHQ,
+	JBnK2YKRFl,
+	d86ymvXRsJ
 };
 
 /**
@@ -75,13 +83,39 @@ describe('savedSearchUrl', () => {
 });
 
 describe('source guide links', () => {
-	// Finding 17: pinned as the CURRENT state, not as a permanent rule. When
-	// Sebastian supplies the guide URLs this becomes an https + host assertion.
-	it('has no guide URL for either source yet', () => {
+	// Both identified 2026-08-26: each source's saved-search hashes are exactly the
+	// trade links on its page / in its video descriptions. Guide B's URL is the
+	// CHANNEL, because its ladders come from different videos of it — pointing the
+	// source at one of those videos would misattribute the other's links.
+	it('points each source at the page its saved searches were taken from', () => {
 		expect(MERC_SOURCES.map((s) => [s.id, s.guideUrl])).toEqual([
-			['guide-a', null],
-			['guide-b', null]
+			['guide-a', 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing'],
+			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA']
 		]);
+	});
+});
+
+const GUIDE_B = MERC_SOURCES.find((s) => s.id === 'guide-b') as MercSource;
+
+describe('per-ruleset guide URLs', () => {
+	// The source URL is the CHANNEL; each rung names the video its link came from.
+	it('points every guide-b rung at the video whose description published it', () => {
+		expect(GUIDE_B.rulesets.map((r) => `${r.id} ${r.guideUrl ?? 'none'}`)).toEqual([
+			'guide-b-kinetist-mv https://www.youtube.com/watch?v=HKTVN4sENvg',
+			'guide-b-kinetist-mid https://www.youtube.com/watch?v=HKTVN4sENvg',
+			'guide-b-kinetist-end https://www.youtube.com/watch?v=HKTVN4sENvg',
+			'guide-b-kinetist-gg https://www.youtube.com/watch?v=HKTVN4sENvg',
+			'guide-b-manyshot-mv https://www.youtube.com/watch?v=ljaXlGLdyxM',
+			'guide-b-manyshot-mid https://www.youtube.com/watch?v=ljaXlGLdyxM',
+			'guide-b-manyshot-end https://www.youtube.com/watch?v=ljaXlGLdyxM',
+			'guide-b-manyshot-gg https://www.youtube.com/watch?v=ljaXlGLdyxM'
+		]);
+	});
+
+	// Guide A's rulesets all come off one page, so they inherit the source URL.
+	it('leaves the guide-a rulesets without a URL of their own', () => {
+		const guideA = MERC_SOURCES.find((s) => s.id === 'guide-a') as MercSource;
+		expect(guideA.rulesets.map((r) => r.guideUrl)).toEqual([undefined, undefined, undefined]);
 	});
 });
 

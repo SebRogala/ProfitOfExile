@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateCapture, type MercGroupResult, type MercVerdict } from './verdict';
-import { MERC_SOURCES, SOURCE_IDS, type MercSource, type MercSourceId } from './rulesets';
+import {
+	MERC_SOURCES,
+	SOURCE_IDS,
+	type MercRuleset,
+	type MercSource,
+	type MercSourceId
+} from './rulesets';
 import type { MercCapture, MercRow, MercSkillRead, MercSupportRead, ReadState } from './capture';
 import mercenaryStats from './__fixtures__/mercenary-stats.json';
 
@@ -29,6 +35,7 @@ const KINETIC_BLAST_OF_CLUSTERING = 'mercenary.skill_16356';
 const GREATER_KINETIC_BLAST = 'mercenary.skill_44258';
 const BARRAGE = 'mercenary.skill_1356';
 const HASTE = 'mercenary.skill_52155';
+const HATRED = 'mercenary.skill_24482';
 const RETURN = 'mercenary.support_5293';
 const GMP = 'mercenary.support_49419';
 const COOLDOWN_RECOVERY = 'mercenary.support_48875';
@@ -37,6 +44,7 @@ const PIERCE = 'mercenary.support_56267';
 const GREATER_FORK = 'mercenary.support_32052';
 const CHAIN = 'mercenary.support_31052';
 const GREATER_EDWA = 'mercenary.support_28416';
+const HYPOTHERMIA = 'mercenary.support_38571';
 const CRITICAL_DAMAGE = 'mercenary.support_32189';
 const GILDED_EXTRA_TARGETS = ['mercenary.support_58471', 'mercenary.support_37259'];
 
@@ -179,6 +187,30 @@ function manyshotCapture(row0Supports: string[] = []): MercCapture {
 		row(0, skillRead(ICE_SHOT), supportsOf([RETURN, ...row0Supports])),
 		row(1, skillRead(VAAL_ICE_SHOT), supportsOf([RETURN]))
 	]);
+}
+
+/**
+ * A mercenary the guide-b Manyshot GG rung wants: Ice Shot carrying Return on one
+ * row, Vaal Ice Shot carrying Return and two damage links on another, and Hatred
+ * for the aura count group that rung leads with.
+ */
+function manyshotGgCapture(): MercCapture {
+	return captureOf([
+		row(0, skillRead(ICE_SHOT), supportsOf([RETURN])),
+		row(1, skillRead(VAAL_ICE_SHOT), supportsOf([RETURN, GREATER_EDWA, HYPOTHERMIA])),
+		row(2, skillRead(HATRED))
+	]);
+}
+
+/**
+ * The Kinetist ladder's mercenary with a Vaal Ice Shot row bolted on — a capture
+ * that is a rung of BOTH guide-b ladders at once (Kinetist End, and the Manyshot
+ * Earlygame rung, whose only live gates are "has Vaal Ice Shot" and "no Icicle
+ * Rain"). Contrived, and it has to be: the two ladders exist to be answered
+ * separately, so the regression they can have needs one capture on both.
+ */
+function twoLadderCapture(): MercCapture {
+	return captureOf([...kinetistCapture().rows, row(2, skillRead(VAAL_ICE_SHOT))]);
 }
 
 describe('row scoping of `mercenary` groups', () => {
@@ -386,19 +418,90 @@ describe('ladder selection', () => {
 		expect(rulesetOf(verdict, 'guide-b', 'guide-b-kinetist-gg').outcome).toBe('fail');
 	});
 
-	it('caveats a GG pass with the 4-link nature of the search and the core row link count', () => {
+	it('caveats a GG pass with the core row link count', () => {
 		// GMP on the core row completes the GG rung: 6 supports on Kinetic Blast.
+		// The line says nothing about HOW many links the search asks for — that
+		// number is the guide author's, and it travels in the authorNote below.
 		const gg = rulesetOf(verdictOf(kinetistCapture([GMP])), 'guide-b', 'guide-b-kinetist-gg');
 		expect(gg.outcome).toBe('pass');
 		expect(gg.reasons).toContain(
-			'GG comps are 4-link searches; a merc with more links prices above them — this core skill row carries 6 supports'
+			'GG comps are a floor, not the price: a merc with more links prices above them — this core skill row carries 6 supports'
+		);
+	});
+
+	it("relays the Kinetist author's GG note verbatim on a GG pass", () => {
+		const gg = rulesetOf(verdictOf(kinetistCapture([GMP])), 'guide-b', 'guide-b-kinetist-gg');
+		expect(gg.reasons).toContain(
+			'Author: look at damage links still - these are 4L not even 5L. 5L mercs nearly never exist for KB in gg setups, a 5L with barrage can beat a 4L with greater KB'
+		);
+	});
+
+	it("relays the Manyshot author's own GG note, not the Kinetist one", () => {
+		const gg = rulesetOf(verdictOf(manyshotGgCapture()), 'guide-b', 'guide-b-manyshot-gg');
+		expect(gg.outcome).toBe('pass');
+		expect(gg.reasons).toContain('Author: manually check for clear links on ice shot');
+		// Spelled out rather than matched on a prefix: a module-level GG note
+		// relayed by every ladder is exactly the regression this guards, and it
+		// would carry this text verbatim.
+		expect(gg.reasons).not.toContain(
+			'Author: look at damage links still - these are 4L not even 5L. 5L mercs nearly never exist for KB in gg setups, a 5L with barrage can beat a 4L with greater KB'
 		);
 	});
 
 	it('does not put the GG link caveat on a lower rung', () => {
 		const end = rulesetOf(verdictOf(kinetistCapture()), 'guide-b', 'guide-b-kinetist-end');
 		expect(end.outcome).toBe('pass');
-		expect(end.reasons.some((reason) => reason.includes('4-link'))).toBe(false);
+		expect(end.reasons.some((reason) => reason.startsWith('GG comps'))).toBe(false);
+		expect(end.reasons.some((reason) => reason.startsWith('Author:'))).toBe(false);
+	});
+
+	// Nerotox's Combatant video publishes two Endgame links for one ladder, so
+	// the ranking cannot assume one rung per tier — and the tie has to resolve to
+	// the guide's own declaration order. No real ladder has a tie yet, so this is
+	// the only place the rule can be observed.
+	it('keeps the earlier-declared rung when two rungs of one ladder share a tier', () => {
+		const tiedRung = (id: string): MercRuleset => ({
+			id,
+			label: 'Synthetic',
+			archetype: 'combatant',
+			ladder: 'synthetic',
+			tier: 'end',
+			savedSearch: { league: 'Allflame', hash: id },
+			status: 'securable',
+			// One live denial the capture below does not trip: enough to make the
+			// rung APPLY something, so both rungs land on a pass and tie.
+			groups: [
+				{
+					id: 'deny',
+					label: 'Denied skills',
+					type: 'not',
+					enabledInSearch: true,
+					entries: [{ id: WILD_STRIKE, name: textOf(WILD_STRIKE), enabledInSearch: true }]
+				}
+			]
+		});
+		const source: MercSource = {
+			id: 'guide-b',
+			label: 'Synthetic',
+			guideUrl: null,
+			rulesets: [tiedRung('end-first'), tiedRung('end-second')]
+		};
+		const verdict = evaluateCapture(
+			captureOf([row(0, skillRead(ICE_SHOT))]),
+			[source],
+			new Set<MercSourceId>(['guide-b']),
+			LEAGUE
+		);
+		expect(verdict.sources[0].best).toEqual(['end-first']);
+	});
+
+	// A merc can only be one archetype in practice, but the rule is per ladder:
+	// two ladders are two searches, and neither may suppress the other's answer.
+	it('names the highest passing rung of every ladder, not one for the whole source', () => {
+		expect(sourceOf(verdictOf(twoLadderCapture()), 'guide-b').best).toEqual([
+			'guide-b-kinetist-end',
+			'guide-b-manyshot-mv'
+		]);
 	});
 
 	it('lists every passing archetype for an untiered source', () => {

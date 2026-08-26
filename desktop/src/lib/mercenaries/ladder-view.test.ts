@@ -11,10 +11,12 @@ import {
 	type LadderRow
 } from './ladder-view';
 import {
-	kinetistLadder,
+	MERC_SOURCES,
+	ladders,
 	type MercFilterEntry,
 	type MercFilterGroup,
-	type MercRuleset
+	type MercRuleset,
+	type MercSource
 } from './rulesets';
 import type { MercRulesetResult } from './verdict';
 
@@ -43,6 +45,15 @@ function rung(id: string, groups: MercFilterGroup[]): MercRuleset {
 		status: 'securable',
 		groups
 	};
+}
+
+const GUIDE_B = MERC_SOURCES.find((s) => s.id === 'guide-b') as MercSource;
+
+/** The rungs of one guide-b ladder, cheapest first. */
+function ladderNamed(key: string): MercRuleset[] {
+	const found = ladders(GUIDE_B).find((rungs) => rungs[0].ladder === key);
+	if (!found) throw new Error(`guide-b declares no ladder ${key}`);
+	return found;
 }
 
 function entryRow(rows: LadderRow[], id: string): LadderEntryRow {
@@ -117,12 +128,12 @@ describe('sharedValue', () => {
 
 describe('columnLabel', () => {
 	it('heads a rung column with its tier, not its (shared) ruleset label', () => {
-		expect(kinetistLadder().map(columnLabel)).toEqual(['minimum viable', 'mid', 'endgame', 'GG']);
+		expect(ladderNamed('kinetist').map(columnLabel)).toEqual(['minimum viable', 'mid', 'endgame', 'GG']);
 	});
 });
 
 describe('ladderRows over the Kinetist ladder', () => {
-	const rows = ladderRows(kinetistLadder());
+	const rows = ladderRows(ladderNamed('kinetist'));
 
 	it('opens with the first rung group followed by its own entries', () => {
 		expect(rows.slice(0, 4).map((r) => r.id)).toEqual([
@@ -206,12 +217,15 @@ describe('ladderRows over rungs that do not share a skeleton', () => {
 		expect(entryRow(rows, 'core/b').cells).toEqual(['required', 'absent']);
 	});
 
-	it('reports a hole in the quantifier for a group a rung has dropped', () => {
+	// The dropped rung's state is the — cell under it; letting it vote in the
+	// wording too printed the hole twice and buried the sentence the live rungs
+	// agree on.
+	it('leaves a rung that dropped the group out of the quantifier line', () => {
 		const rows = ladderRows([
 			rung('full', [group({ id: 'core', entries: [entry('a')] })]),
 			rung('short', [])
 		]);
-		expect(groupRow(rows, 'core').quantifier).toBe('all of: · —');
+		expect(groupRow(rows, 'core').quantifier).toBe('all of:');
 	});
 
 	it('has no rows at all when there are no rungs', () => {
@@ -268,6 +282,7 @@ describe('rungOutcomes', () => {
 		return {
 			id,
 			label: id,
+			ladder: null,
 			tier: null,
 			outcome,
 			groups: [],
@@ -298,5 +313,102 @@ describe('rungOutcomes', () => {
 
 	it('reports no columns at all when there are no rungs', () => {
 		expect(rungOutcomes([], [result('mv', 'pass')])).toEqual([]);
+	});
+});
+
+/**
+ * The Manyshot ladder is the drift case in production data: its cheapest rung has
+ * no aura group, its GG rung has no "carries Vaal Ice Shot" group and merges the
+ * projectile and damage vocabularies into one. Every hole below must render as a
+ * hole — a matrix that borrowed the neighbouring column's state here would tell a
+ * seller a rung asks for something it does not ask for.
+ */
+describe('ladderRows over the Manyshot ladder', () => {
+	const rows = ladderRows(ladderNamed('manyshot'));
+
+	it('keeps a group only the higher rungs declare, rather than dropping the row', () => {
+		expect(rows.filter((r) => r.kind === 'group').map((r) => r.id)).toEqual([
+			'has-vaal',
+			'deny',
+			'vaal-damage',
+			'vaal-return',
+			'core',
+			'projectiles',
+			'damage',
+			'auras'
+		]);
+	});
+
+	it('holes the aura row in the rung that has no aura group', () => {
+		expect(entryRow(rows, 'auras/mercenary.skill_2792').cells).toEqual([
+			'absent',
+			'required',
+			'required',
+			'required'
+		]);
+	});
+
+	it('holes an aura option in every rung but the one that offers it', () => {
+		expect(entryRow(rows, 'auras/mercenary.skill_10557').cells).toEqual([
+			'absent',
+			'absent',
+			'absent',
+			'required'
+		]);
+	});
+
+	it('holes the Vaal Ice Shot gate in the GG rung, which does not carry that group', () => {
+		expect(entryRow(rows, 'has-vaal/mercenary.skill_16381').cells).toEqual([
+			'required',
+			'required',
+			'required',
+			'absent'
+		]);
+	});
+
+	it('holes an entry the GG rung leaves out of a group it does declare', () => {
+		// Return is parked inside the Vaal damage group on the other three rungs;
+		// GG simply has no such filter, which is not the same as parking it.
+		expect(entryRow(rows, 'vaal-damage/mercenary.support_5293').cells).toEqual([
+			'bonus',
+			'bonus',
+			'bonus',
+			'absent'
+		]);
+	});
+
+	it('shows the merged GG damage entries as holes under the projectiles group', () => {
+		expect(entryRow(rows, 'projectiles/mercenary.support_44886').cells).toEqual([
+			'absent',
+			'absent',
+			'absent',
+			'bonus'
+		]);
+	});
+
+	// The GG rung merged the damage vocabulary into `projectiles` and renamed the
+	// group to say so. Heading the merged rows with the first declarer's label
+	// alone would tell a seller the GG rung asks only for projectile links.
+	it('heads a slot the rungs label differently with every distinct label', () => {
+		expect(groupRow(rows, 'projectiles').label).toBe(
+			'Ice Shot + projectile links · Ice Shot + projectile and damage links'
+		);
+	});
+
+	it('collapses the quantifier of a group the GG rung does not carry', () => {
+		expect(groupRow(rows, 'has-vaal').quantifier).toBe('all of:');
+	});
+
+	it('collapses the quantifier of a group the cheapest rung does not carry', () => {
+		expect(groupRow(rows, 'auras').quantifier).toBe('at least 1 of:');
+	});
+
+	it('holes the whole damage group in the GG rung that merged it away', () => {
+		expect(entryRow(rows, 'damage/mercenary.support_38571').cells).toEqual([
+			'bonus',
+			'bonus',
+			'required',
+			'absent'
+		]);
 	});
 });

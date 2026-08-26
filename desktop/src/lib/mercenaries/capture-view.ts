@@ -150,10 +150,11 @@ export function capturedAt(capture: MercCapture, site: CaptureSite | null): stri
 /**
  * Lookup key for one rule position.
  *
- * The ruleset id is part of the key because guide B's four rungs share one group
- * id sequence, and the group id is part of it because sibling groups legitimately
- * repeat an entry id (GMP sits in several). Keying on less than all three would
- * show one rung's outcome in another's row.
+ * The ruleset id is part of the key because guide B's eight rungs reuse the same
+ * group ids across both its ladders (`core`, `deny`, `auras`, `damage` all recur),
+ * and the group id is part of it because sibling groups legitimately repeat an
+ * entry id (GMP sits in several). Keying on less than all three would show one
+ * rung's outcome in another's row.
  */
 export function positionKey(rulesetId: string, groupId: string, entryId: string): string {
 	return `${rulesetId}/${groupId}/${entryId}`;

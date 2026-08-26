@@ -263,6 +263,7 @@ function rulesetResult(id: string, groups: MercGroupResult[]): MercRulesetResult
 	return {
 		id,
 		label: id,
+		ladder: null,
 		tier: null,
 		outcome: 'pass',
 		groups,
