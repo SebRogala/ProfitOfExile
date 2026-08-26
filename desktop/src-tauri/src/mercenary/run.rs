@@ -20,11 +20,17 @@
 //! # Nothing runs until something asks
 //!
 //! The loop does NO screen work of its own (POE-198). A Client.txt voice line
-//! or the page's Scan now button arms a burst in [`super::trigger`]; only then
-//! does the detect cadence run, and only while the game is the foreground
-//! window. The first detected window disarms the burst and the live behaviour
-//! below takes over unchanged; a burst that finds nothing expires and the loop
-//! goes back to waiting.
+//! or the page's Scan now button arms the gate in [`super::trigger`]; only then
+//! does it look, and only while the game is the foreground window.
+//!
+//! The two asks buy different looks (POE-204 WI-C). A voice line buys two
+//! [`probe_tick`]s — a band OCR at 500 ms and, if that saw nothing, one more at
+//! 1.5 s — and then the gate stands down, because a mercenary speaks on
+//! approach as often as on click and most lines are for a window nobody opened.
+//! Scan now buys one full [`detect_tick`], because a person asking has already
+//! answered the question the probe would ask. Either way, the first detected
+//! window disarms the gate and the live behaviour below takes over unchanged;
+//! a gate that finds nothing says so once and the loop goes back to waiting.
 //!
 //! # A tooltip is not a closed window
 //!
@@ -73,11 +79,15 @@ use super::{
 /// Loop quantum. Every wait is built out of these so a stop signal is honoured
 /// within one of them, whatever the cadence above it says.
 const TICK: Duration = Duration::from_millis(100);
-/// Detect cadence while a burst is armed and no window is captured (D6).
+/// Detect cadence while no window is captured (D6).
 ///
-/// Since POE-198 this cadence only runs INSIDE a burst — the loop no longer
-/// hunts for a window on its own. A burst that finds nothing therefore costs
-/// [`trigger::BURST_TTL_MS`] / this, and only while the game is in front.
+/// Since POE-204 WI-C almost nothing runs at it. The gate answers a voice line
+/// with two band probes rather than a cadence of detects, and Scan now with one
+/// detect; what is left for this constant is the SECOND detect of a hunt that
+/// has not landed yet — a probe hit whose detect found nothing, on the tick
+/// after. It is kept at 1 s because the backoff below still measures against
+/// it, and because a hunt with nothing to hunt for now ends in one iteration
+/// rather than ten seconds of them.
 const DETECT_INTERVAL: Duration = Duration::from_millis(1000);
 /// Detect cadence after the backoff has fired.
 const DETECT_INTERVAL_SLOW: Duration = Duration::from_millis(3000);
@@ -336,8 +346,8 @@ pub struct LoopState {
     /// The live capture is fully read — every row, every cell, the header.
     ///
     /// NOT sticky, unlike [`Self::backed_off`]: it is a statement about the
-    /// capture on screen, so it is cleared when that capture retires and when a
-    /// new burst asks for another look ([`Self::resume`]).
+    /// capture on screen, so it is cleared when that capture retires and when
+    /// Scan now asks for another look ([`Self::resume`]).
     pub complete: bool,
 }
 
@@ -404,26 +414,33 @@ impl LoopState {
         became
     }
 
-    /// Something asked for another look at the captured window — a voice line
-    /// or Scan now. `true` when this actually resumed a paused read, so the
-    /// caller logs the transition and not every armed tick.
+    /// **Scan now** asked for another look at the captured window. `true` when
+    /// this actually resumed a paused read, so the caller logs the transition
+    /// and not every armed tick.
+    ///
+    /// One caller, and it is the gate's `FullDetect` step (`run_loop`). A VOICE
+    /// LINE cannot reach here: `trigger::capture_held` drops a line arriving
+    /// over a `live`/`done` capture before it can arm, and `trigger::
+    /// disarm_probe` takes the slot away on every live tick for the line that
+    /// races that check. So the only thing that resumes a paused read is a
+    /// person pressing the button — which is the whole of what "scan a window
+    /// that is already open" can mean.
     ///
     /// The miss counter is cleared WHEN THIS RESUMES SOMETHING, because that is
     /// the moment the cadence changes and [`RETIRE_AFTER`] counts ticks, not
-    /// time.
-    /// MEASURED 2026-08-26 (app.log 09:41:52 → 09:41:57): one miss at the 10 s
-    /// liveness cadence, a burst arming four seconds later, and the first
-    /// re-detect at the 2 s cadence made two — "window gone" while the recruit
-    /// window was on screen, and it was restored seven seconds later. Two
-    /// misses are meant to be evidence of a window that closed; a miss from
-    /// before the cadence changed is not part of that evidence.
-    /// The clear happens on the TRANSITION only. A burst arms this on every
-    /// voice line and every Scan now, including while the loop is already
-    /// hunting at the re-detect cadence — and there the misses ARE the
-    /// evidence: they were counted at the cadence still running, two of them
-    /// mean the window closed, and zeroing them on each arm would let a
-    /// mercenary who speaks once a second hold a retired window's capture on
-    /// screen for as long as they keep talking.
+    /// time. MEASURED 2026-08-26 (app.log 09:41:52 → 09:41:57), on the shape
+    /// this replaced: one miss at the 10 s liveness cadence, an arm four
+    /// seconds later, and the first re-detect at the 2 s cadence made two —
+    /// "window gone" while the recruit window was on screen, restored seven
+    /// seconds afterwards. Two misses are meant to be evidence of a window that
+    /// closed; a miss counted before the cadence changed is not part of that
+    /// evidence.
+    ///
+    /// The clear happens on the TRANSITION only, so a Scan now over a capture
+    /// that is NOT paused leaves the misses alone. There they are the evidence:
+    /// they were counted at the cadence still running, two of them mean the
+    /// window closed, and zeroing them on each press would let a player leaning
+    /// on the button hold a closed window's capture on screen indefinitely.
     pub fn resume(&mut self) -> bool {
         let was = self.complete;
         self.complete = false;
@@ -565,6 +582,24 @@ pub struct DetectTick {
     /// `crop→full` re-take that carries two OCRs, are both excluded. See
     /// [`SLOW_TICK`].
     pub full_frame: bool,
+}
+
+impl DetectTick {
+    /// What a PROBE reports, whatever it saw.
+    ///
+    /// `full_frame: false` is the load-bearing half: a band OCR says nothing
+    /// about what a full-screen hunt costs on this machine, and the probe runs
+    /// twice per voice line in an arena full of mercenaries — reporting `true`
+    /// would decay a backoff the hunt earned, on evidence about a cheaper
+    /// question, within seconds. `outcome: None` rather than
+    /// [`DetectOutcome::Missed`]: a probe that saw no chrome has not detected
+    /// anything and has not missed anything either.
+    ///
+    /// Named here rather than written inline at [`probe_tick`]'s two return
+    /// sites so both say the same thing and a test can read the claim.
+    pub fn probe() -> Self {
+        Self { outcome: None, full_frame: false }
+    }
 }
 
 /// Whether the cursor was over a rect, given THIS frame's rect and the one the
@@ -709,42 +744,138 @@ pub fn header_log_line(header: &MercHeader, last: &Option<String>) -> Option<Str
 pub enum LoopStep {
     /// The game is not the foreground window — nothing on screen to read.
     Unfocused,
-    /// The game is in front, but nothing has asked for a scan.
+    /// The game is in front, and nothing has asked for a scan.
     Idle,
-    /// Detect (and hover-confirm) this iteration.
+    /// The gate is armed but its next probe is not due yet.
+    ///
+    /// A third state rather than a second `Idle`, and it exists for one number:
+    /// [`IDLE_NAP`] is 250 ms, so a probe due at [`trigger::PROBE_DELAY_MS`]
+    /// would be served at the next 250 ms boundary — a 500 ms probe fired at
+    /// 750 ms, half again late on a gate whose whole design is two deadlines.
+    /// Waiting naps [`TICK`] instead.
+    Waiting,
+    /// Look at the screen this iteration.
     Work,
 }
 
 /// Whether this iteration does any screen work, and why not when it does not.
 ///
-/// The two negative answers are deliberately different states rather than one
+/// The three negative answers are deliberately different states rather than one
 /// "skip": they nap for different lengths (a focus check can wait a second, an
-/// armed burst cannot), and they are the whole of POE-198's promise — no OCR
-/// runs unless a burst is armed or a capture is already live. A predicate
-/// rather than an `if` chain in the loop body so that promise is testable
-/// without a screen.
-pub fn next_step(live: bool, scanning: bool, focused: bool) -> LoopStep {
+/// armed gate cannot wait a quarter of one), and they are the whole of
+/// POE-198's promise — no OCR runs unless the gate asked or a capture is
+/// already live. A predicate rather than an `if` chain in the loop body so that
+/// promise is testable without a screen.
+///
+/// A LIVE capture works whatever the gate says: retirement takes two misses and
+/// the liveness check is a detect like any other, so dropping to Idle under a
+/// resting gate would strand a window on screen for good.
+pub fn next_step(live: bool, gate: trigger::GateStep, focused: bool) -> LoopStep {
     if !focused {
         LoopStep::Unfocused
-    } else if live || scanning {
+    } else if live
+        || matches!(gate, trigger::GateStep::Probe | trigger::GateStep::FullDetect)
+    {
         LoopStep::Work
+    } else if gate == trigger::GateStep::Waiting {
+        LoopStep::Waiting
     } else {
         LoopStep::Idle
     }
 }
 
-/// Whether a detect tick's outcome means the armed burst found what it was
-/// armed for.
+/// What a working iteration points at the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Look {
+    /// Nothing this iteration — the live cadence is not up.
+    None,
+    /// The gate's cheap anchor band ([`probe_tick`]).
+    Probe,
+    /// A full detect ([`detect_tick`]).
+    Detect,
+}
+
+/// Which of the two looks this iteration takes, if either.
+///
+/// The precedence is what keeps the probe cheap. Read top to bottom:
+///
+/// - **Scan now first.** A person asked for a full detect; the band probe could
+///   only turn their answer into a stand-down, and the full detect answers the
+///   probe's question as a side effect.
+/// - **A live capture next, on its own cadence.** [`detect_step`] owns that
+///   cadence and its hold, and a gate armed over a live window (which
+///   `trigger::capture_held` makes rare, not impossible — a line can land in
+///   the gap between the arm and the detect that captures) must not displace a
+///   re-detect with a probe that has nothing to add.
+/// - **Then the probe.** This is the only branch that reaches [`probe_tick`],
+///   which is what makes "a voice line costs one band OCR" a property of one
+///   function rather than of the loop body's shape.
+pub fn look_step(live: bool, gate: trigger::GateStep, detect: DetectStep) -> Look {
+    if gate == trigger::GateStep::FullDetect {
+        Look::Detect
+    } else if live {
+        if detect == DetectStep::Run {
+            Look::Detect
+        } else {
+            Look::None
+        }
+    } else if gate == trigger::GateStep::Probe {
+        Look::Probe
+    } else {
+        Look::None
+    }
+}
+
+/// Whether a detect tick's outcome means the gate found what it was armed for.
 ///
 /// NOT `LoopState::live`, which is still true after the first of the two misses
-/// that retire a capture: a burst armed for a SECOND mercenary while the first
+/// that retire a capture: a gate armed for a SECOND mercenary while the first
 /// one's window was still on screen would disarm itself on a tick that found
-/// nothing. `None` is a tick that bailed on the stop signal without detecting.
+/// nothing. `None` is a tick that bailed on the stop signal without detecting —
+/// and it is also what a probe that saw no chrome reports, which is the same
+/// claim: nothing was detected and nothing was missed.
 pub fn burst_satisfied(outcome: Option<DetectOutcome>) -> bool {
     matches!(
         outcome,
         Some(DetectOutcome::Captured) | Some(DetectOutcome::Refreshed)
     )
+}
+
+/// The rect one probe OCRs.
+///
+/// `remembered` is [`geometry::probe_band_bounds`] of the last panel this
+/// SESSION saw — not `Session::panel`, which a retire clears. A window that was
+/// on screen a minute ago is overwhelmingly likely to reopen where it was, and
+/// remembering the band is what makes the ordinary probe 7% of a screen instead
+/// of 40%.
+///
+/// **The retry drops it.** `attempt` 0 uses the remembered band; every later
+/// one uses [`geometry::default_probe_band`]. The remembered band has exactly
+/// one failure mode — the player moved the window, or changed the UI scale —
+/// and it is silent: the probe looks at empty screen, sees no chrome, and the
+/// gate stands down on a window that is plainly open. The retry exists to cover
+/// lag, and covering a moved window with it costs nothing that was not already
+/// being spent.
+///
+/// `attempt` is [`trigger::BurstGate::looks`] — probes spent by this ARMING,
+/// across every voice line that re-armed it — and not the current line's own
+/// count. A new line resets that one, so keying the band on it would let a
+/// mercenary who talks every second hold the probe on the remembered rect for
+/// the whole of the gate's life, which is precisely the case whose window is
+/// most likely to have moved.
+///
+/// **A band from a different SCREEN is dropped outright**, not left to the
+/// retry. The band survives retires by design and so it survives a resolution
+/// change too, and a rect past the new screen's edge is not merely a bad guess:
+/// `crop_imm` clamps it to nothing, `recognize_lines` fails on the empty image,
+/// and the player gets an OCR error on the slice for walking past a mercenary
+/// after changing their display settings. One `encloses` is cheaper than that
+/// diagnosis.
+pub fn probe_band(remembered: Option<[i32; 4]>, screen: [u32; 2], attempt: u32) -> [i32; 4] {
+    remembered
+        .filter(|_| attempt == 0)
+        .filter(|band| geometry::encloses([0, 0, screen[0] as i32, screen[1] as i32], *band))
+        .unwrap_or_else(|| geometry::default_probe_band(screen))
 }
 
 /// How many times a cell that ALREADY reads as `Matched` may be re-OCR'd by the
@@ -1185,13 +1316,16 @@ pub fn live_status(complete: bool) -> MercStatus {
 
 /// Publish `Scanning` together with the mercenary the burst heard.
 ///
-/// The reconciliation path's counterpart to the arming site's own publish. A
-/// retire drops the slice back to a waiting status and clears the speaker, so a
-/// burst that was armed WHILE a window was still on screen — the ordinary case
-/// for a mercenary who speaks twice — would otherwise come back as an anonymous
-/// "scanning" even though the loop knows exactly who it is looking for. The
-/// name is read off the gate rather than remembered here, so it cannot outlive
-/// the burst it belongs to.
+/// The reconciliation path's counterpart to the arming site's own publish.
+/// [`trigger::scan_outranks`] lets that site announce over `Idle` and nothing
+/// else, so a gate armed while the slice held any other status is announced
+/// HERE instead — on the first tick after the slice falls back to a waiting
+/// status, with the gate still armed and still owed its probes.
+///
+/// The name is read off the GATE rather than remembered here, which is why it
+/// is an argument and not a field: a speaker kept on this side would outlive
+/// the line it belongs to and the strip would go on naming a mercenary the
+/// module stopped looking for.
 pub fn publish_scanning(app: &AppHandle, speaker: Option<String>) {
     publish(app, |slice| {
         slice.status = MercStatus::Scanning;
@@ -1281,6 +1415,15 @@ struct Session {
     /// [`geometry::detect_crop_bounds`]. `None` — no known panel, so the next
     /// detect takes the whole screen. Cleared with `panel` on retire.
     crop: Option<[i32; 4]>,
+    /// The band the next PROBE OCRs, from [`geometry::probe_band_bounds`].
+    ///
+    /// Deliberately NOT cleared on retire, unlike every other rect on this
+    /// struct. The three above are statements about a capture the loop is
+    /// holding and must not outlive it; this one is a statement about where
+    /// recruit windows appear on this player's screen, and its whole value is
+    /// that it survives the window it was measured on — the probe that uses it
+    /// runs when nothing is captured, by construction. See [`probe_band`].
+    probe_band: Option<[i32; 4]>,
     /// The open run of detects the panel was covered for. See [`OcclusionRun`].
     occlusion: OcclusionRun,
     /// The header line as last LOGGED — the once-per-change gate for
@@ -1314,6 +1457,14 @@ struct Session {
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     crate::app_log(&app, "Merc: capture loop started".to_string());
     crate::report_ocr_engine(&app);
+
+    // The gate outlives the loop — it is `AppState`, and the module can be
+    // switched off and on again inside one session. Whatever it was holding
+    // when the last loop stopped is about a screen from before the module was
+    // off: an armed probe would fire on this loop's first tick for a window
+    // that closed minutes ago, and a Scan now would be served long after the
+    // player stopped waiting for it. A fresh loop starts owing nothing.
+    trigger::disarm(&app);
 
     let data_dir = app.path().app_data_dir().ok();
     let (geometry, geometry_source, geometry_err) = match &data_dir {
@@ -1457,6 +1608,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         panel: None,
         header_guard: None,
         crop: None,
+        probe_band: None,
         occlusion: OcclusionRun::default(),
         header_logged: None,
         retained: None,
@@ -1474,50 +1626,66 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             break;
         }
 
-        // Burst bookkeeping runs BEFORE the focus gate: a burst armed while the
-        // player is reading this app must still expire on its own schedule, and
-        // the badge must say "scanning" while it waits for the game to come
+        // Gate bookkeeping runs BEFORE the focus gate: a gate armed while the
+        // player is reading this app must still give up on its own schedule,
+        // and the badge must say "scanning" while it waits for the game to come
         // back — that wait is the alt-tab case the trigger exists to cover.
         let now = now_ms();
-        if let Some(expired) = trigger::take_expired(&app, now) {
-            crate::app_log(&app, expired.expiry_line());
-            // A burst can expire while a window is on screen — a manual scan
-            // armed over a capture, or a voice line from a mercenary the player
-            // never opened. The waiting-status reconciliation below only runs
-            // when nothing is live, so without this the slice would keep
-            // whatever the burst left behind and the strip would go on
-            // reporting a scan that is over.
+        // A LIVE capture takes the voice-line slot away first. `capture_held`
+        // keeps a line from arming over a window on screen, but it reads the
+        // PUBLISHED status from the log-watcher thread — so a line landing
+        // between the detect that captures and the publish that says so arms a
+        // gate this loop will never probe (a live re-detect outranks the probe,
+        // `look_step`), and ten seconds later that gate would print a
+        // stand-down for a window the player is looking at. The Scan now slot
+        // survives: its grace is a promise to the player, and `take_stood_down`
+        // below is what still reports it.
+        if session.state.live {
+            trigger::disarm_probe(&app);
+        }
+        if let Some(stood_down) = trigger::take_stood_down(&app, now) {
+            crate::app_log(&app, stood_down.line());
+            // A Scan now can give up while a window is on screen. The
+            // waiting-status reconciliation below only runs when nothing is
+            // live, so without this the slice would keep whatever the gate left
+            // behind and the strip would go on reporting a scan that is over.
             if session.state.live {
                 publish_status(&app, live_status(session.state.complete));
             }
         }
-        let scanning = trigger::scanning(&app, now);
-        // A burst armed over a fully-read window means something changed on
-        // screen that the paused loop would not have looked for — the player
-        // recruited, rematched, or a second mercenary spoke. Resuming here
-        // rather than in the detect keeps the pause a property of the STATE
-        // machine, which is where its cadence is decided.
-        if scanning && session.state.resume() {
+        let gate = trigger::step(&app, now);
+        // Scan now over a fully-read window means the player believes something
+        // changed on screen that the paused loop would not have looked for —
+        // they recruited, or rematched. Resuming here rather than in the detect
+        // keeps the pause a property of the STATE machine, which is where its
+        // cadence is decided.
+        //
+        // A VOICE LINE no longer reaches this: `trigger::capture_held` drops it
+        // before it can arm (rule 5). MEASURED 2026-08-26 09:41:52-09:41:57 —
+        // the arm resumed the read, the resumed cadence spent its first tick on
+        // a frame a tooltip was covering, and "window gone" was published over
+        // a window that was plainly open.
+        if gate == trigger::GateStep::FullDetect && session.state.resume() {
             crate::app_log(
                 &app,
-                "Merc: new burst over a completed capture — OCR resumed".to_string(),
+                "Merc: Scan now over a completed capture — OCR resumed".to_string(),
             );
         }
         if !session.state.live {
             // Read before writing: `publish` clones the whole slice to tell
             // whether anything changed, and this runs several times a second in
             // the state where the module is supposed to be doing nothing.
-            let want = if scanning {
-                MercStatus::Scanning
-            } else {
+            let want = if gate == trigger::GateStep::Resting {
                 MercStatus::Idle
+            } else {
+                MercStatus::Scanning
             };
             if status(&app) != want {
                 if want == MercStatus::Scanning {
                     // Off the GATE, not remembered: this branch is reached
-                    // after a retire cleared the speaker, and the burst that is
-                    // still armed is the one that knows whose voice line it is.
-                    publish_scanning(&app, trigger::speaker(&app, now));
+                    // after a retire cleared the speaker, and the line that is
+                    // still armed is the one that knows whose voice it was.
+                    publish_scanning(&app, trigger::speaker(&app));
                 } else {
                     publish_status(&app, want);
                 }
@@ -1548,7 +1716,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             }
         }
 
-        match next_step(session.state.live, scanning, game_focused(&app)) {
+        match next_step(session.state.live, gate, game_focused(&app)) {
             // No capture while alt-tabbed: the recruit window is not on screen,
             // and a full-screen OCR every second would be pure heat.
             LoopStep::Unfocused => {
@@ -1568,14 +1736,17 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
                 }
                 continue;
             }
+            // A voice line is armed and its probe is not due yet. One quantum,
+            // not an idle nap: see [`LoopStep::Waiting`].
+            LoopStep::Waiting => {
+                session.miss_logged = false;
+                if !nap(&cancel, TICK) {
+                    break;
+                }
+                continue;
+            }
             LoopStep::Work => {}
         }
-
-        // The game is in front. A Scan-now burst has been waiting for exactly
-        // this to start counting — the click that armed it put OUR window in
-        // front, so its window would otherwise have burned down while the loop
-        // napped on the focus gate above.
-        trigger::begin(&app, now);
 
         // ONE cursor read per iteration, and it happens FIRST — the claim is
         // now true (POE-204 WI-B review: `detect_tick` used to take a second
@@ -1591,7 +1762,14 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // exactly the one whose header a tooltip corrupts (2026-08-26), and
         // that read needs the cursor with nothing captured yet.
         let hover_due = session.state.live && last_hover.elapsed() >= HOVER_INTERVAL;
-        let detect_due = last_detect.elapsed() >= session.state.detect_interval();
+        // The gate's two asks count as "due" alongside the live cadence. A Scan
+        // now over a PAUSED capture is the case that needs saying: its detect
+        // runs off the gate rather than off `detect_interval`, so keying the
+        // cursor read on the cadence alone would hand that detect a `None`
+        // cursor and switch the header-withholding rule off for exactly the
+        // frame a player is most likely to have a tooltip open on.
+        let detect_due = last_detect.elapsed() >= session.state.detect_interval()
+            || matches!(gate, trigger::GateStep::Probe | trigger::GateStep::FullDetect);
         let cursor = if hover_due || detect_due {
             read_cursor(&app, &mut session)
         } else {
@@ -1629,27 +1807,69 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             break;
         }
 
+        // What this iteration points at the screen: the gate's band, the live
+        // cadence's detect, or nothing. See [`look_step`] for the precedence.
+        let look = look_step(
+            session.state.live,
+            gate,
+            detect_step(
+                &session.state,
+                on_cell,
+                session.occlusion.is_open(),
+                last_detect.elapsed(),
+            ),
+        );
+
+        // The probe, and the frame it hands on when it saw the chrome. A hit
+        // runs the full detect in THIS iteration rather than the next one:
+        // waiting a cadence is the 2-4 s of "nothing happening" WI-B measured,
+        // and the probe has already paid for the grab.
+        let mut probed: Option<image::DynamicImage> = None;
+        // When the probe's GRAB started, on the iterations a hit hands that
+        // grab to the detect below. See the timing comment there.
+        let mut probe_started: Option<Instant> = None;
+        if look == Look::Probe {
+            let started = Instant::now();
+            let (tick, image) = probe_tick(&app, &mut session);
+            trigger::note_probe(&app, now);
+            // Reported for the same reason a detect is, and it is always a
+            // no-op: a band OCR carries `full_frame: false`, which is precisely
+            // the duration the backoff must not read. Going through the state
+            // machine anyway is what stops a later reader deciding the probe is
+            // the exempt path.
+            session.state.note_tick_duration(tick.full_frame, Duration::ZERO);
+            probed = image;
+            probe_started = probed.is_some().then_some(started);
+        }
+
         // Timed around the DETECT alone. The hover above is not part of what
         // "this machine cannot hunt at 1 Hz" measures, and folding it in is
         // what latched the backoff on 2026-08-26. The tick then says whether
         // its frame was the whole screen, which is the other half of the same
         // rule — see [`SLOW_TICK`].
-        if detect_step(
-            &session.state,
-            on_cell,
-            session.occlusion.is_open(),
-            last_detect.elapsed(),
-        ) == DetectStep::Run
-        {
-            let started = Instant::now();
-            let tick = detect_tick(&app, &mut session, cursor, &cancel);
+        //
+        // On the PROBE-HIT path the clock starts before the probe's grab, not
+        // here: the detect then runs on that grab instead of taking one of its
+        // own, so a clock started here would report a full-screen detect at OCR
+        // cost only. That reading feeds the backoff (a probe hit on an unknown
+        // panel OCRs the whole screen, so it carries `full_frame: true`), and a
+        // machine that cannot hunt at 1 Hz would look like one that can for
+        // exactly the ticks that hunt.
+        if look == Look::Detect || probed.is_some() {
+            let started = probe_started.unwrap_or_else(Instant::now);
+            let tick = detect_tick(&app, &mut session, cursor, &cancel, probed);
             let took = started.elapsed();
             last_detect = Instant::now();
-            trigger::note_looked(&app);
+            // A Scan now is owed ONE detect, and this was it — whatever it
+            // found. Leaving it armed on a miss would turn the button into the
+            // 60 s hunt the gate exists to remove.
+            if gate == trigger::GateStep::FullDetect {
+                trigger::note_full_detect(&app);
+            }
             if burst_satisfied(tick.outcome) {
-                // The burst did its job. Disarming here rather than letting it
-                // run out is what keeps the expiry log honest, and what sends
-                // the loop back to waiting once this window retires.
+                // The gate did its job. Disarming here rather than letting it
+                // stand down is what keeps the stand-down log honest, and what
+                // sends the loop back to waiting once this window retires.
                 trigger::disarm(&app);
             }
             match session.state.note_tick_duration(tick.full_frame, took) {
@@ -1756,7 +1976,7 @@ fn template_generation(app: &AppHandle) -> u64 {
     generation
 }
 
-fn debug_mode(app: &AppHandle) -> bool {
+pub(super) fn debug_mode(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
     let debug = *state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
     debug
@@ -1843,6 +2063,74 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
     outcome
 }
 
+/// One targeted probe: is the recruit window's chrome on screen?
+///
+/// The voice-line gate's whole screen cost (POE-204 WI-C). It grabs the screen
+/// like a detect does — the platform layer captures a monitor, not a region —
+/// and then OCRs [`probe_band`] alone: on the 2026-08-24 dump's geometry that
+/// is 7% of the pixels a detect reads, and the OCR is the expensive half.
+///
+/// On a HIT it returns the image it grabbed, so the full detect that follows
+/// runs on the SAME frame rather than waiting a cadence for one of its own.
+/// That is the difference between "the probe found the window" and "the probe
+/// found the window and the player saw it a second later".
+///
+/// Its tick reports `full_frame: false` whatever it saw. A band OCR says
+/// nothing about what a full-screen hunt costs on this machine, and feeding one
+/// to the backoff would decay a cadence on evidence about a cheaper question —
+/// the same rule the cropped re-detect follows ([`SLOW_TICK`]).
+///
+/// `outcome` is `None` on a miss, never [`DetectOutcome::Missed`]: a probe that
+/// saw no chrome has not detected anything and has not MISSED anything either,
+/// and routing it through [`LoopState::on_detect`] would let a probe advance
+/// the retire counter of a capture it was never asked about.
+fn probe_tick(app: &AppHandle, session: &mut Session) -> (DetectTick, Option<image::DynamicImage>) {
+    let tick = DetectTick::probe();
+
+    let started = Instant::now();
+    let img = match crate::capture::capture_screen() {
+        Ok(img) => img,
+        Err(e) => {
+            fail(app, session, format!("Merc: screen capture failed — {e}"));
+            return (tick, None);
+        }
+    };
+    let (iw, ih) = {
+        use image::GenericImageView;
+        img.dimensions()
+    };
+    let screen = [iw, ih];
+    let band = probe_band(session.probe_band, screen, trigger::looks(app));
+    let cropped = img.crop_imm(band[0] as u32, band[1] as u32, band[2] as u32, band[3] as u32);
+    let frame = geometry::Frame::probe((band[0], band[1]), screen);
+
+    // Through the frame like every other OCR result, though nothing downstream
+    // of `probe_hit` reads a box: ONE seam between OCR space and screen space,
+    // taken by every line vector that leaves the engine, is what keeps the next
+    // reader from being the exempt one (`geometry::Frame`).
+    let lines = match crate::ocr::recognize_lines(&cropped) {
+        Ok(lines) => frame.to_screen(lines),
+        Err(e) => {
+            fail(app, session, format!("Merc: OCR failed — {e}"));
+            return (tick, None);
+        }
+    };
+    let hit = geometry::probe_hit(&lines, &session.geometry);
+    if debug_mode(app) {
+        crate::app_log(
+            app,
+            format!(
+                "Merc: probe on the {} frame {band:?} took {} ms, {} lines — {}",
+                frame.describe(),
+                started.elapsed().as_millis(),
+                lines.len(),
+                if hit { "chrome found" } else { "no chrome" },
+            ),
+        );
+    }
+    (tick, hit.then_some(img))
+}
+
 /// One detect tick: grab the screen, OCR it, and publish what it holds.
 ///
 /// `cursor` is the loop's ONE read for this iteration, taken before the hover
@@ -1852,11 +2140,18 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 /// one iteration let the hold decision and the withholding decision disagree
 /// about where the cursor is, and a disagreement there publishes a tooltip's
 /// text as the mercenary's name.
+///
+/// `grabbed` is the frame a probe has already taken this iteration. Passing it
+/// in is what makes a probe hit cost one grab rather than two, and — the part
+/// that matters — what makes the detect read the SAME pixels the probe accepted
+/// on. Re-grabbing would leave a window that closed in the millisecond between
+/// them looking like a probe that lied.
 fn detect_tick(
     app: &AppHandle,
     session: &mut Session,
     cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
+    grabbed: Option<image::DynamicImage>,
 ) -> DetectTick {
     // A KNOWN panel is re-read on a crop of itself. The full-screen OCR is the
     // tick's dominant cost, and once the panel has been found the whole answer
@@ -1871,12 +2166,15 @@ fn detect_tick(
     let report = |outcome: Option<DetectOutcome>| DetectTick { outcome, full_frame };
 
     let started = Instant::now();
-    let img = match crate::capture::capture_screen() {
-        Ok(img) => img,
-        Err(e) => {
-            fail(app, session, format!("Merc: screen capture failed — {e}"));
-            return report(Some(miss(app, session, true)));
-        }
+    let img = match grabbed {
+        Some(img) => img,
+        None => match crate::capture::capture_screen() {
+            Ok(img) => img,
+            Err(e) => {
+                fail(app, session, format!("Merc: screen capture failed — {e}"));
+                return report(Some(miss(app, session, true)));
+            }
+        },
     };
     let (iw, ih) = {
         use image::GenericImageView;
@@ -1997,6 +2295,9 @@ fn detect_tick(
     // The next re-detect's crop, from the layout that has the pitch and the
     // scale to size it.
     let next_crop = geometry::detect_crop_bounds(&layout, &session.geometry, screen);
+    // And the band the next voice line's probe will look in. Same layout, a
+    // different question — see `geometry::probe_band_bounds`.
+    let next_band = geometry::probe_band_bounds(&layout, &session.geometry, screen);
 
     // Pass 2 is up to `max_rows` more OCR calls. A stop signal that arrived
     // during pass 1 stops here, leaving the state exactly as it was.
@@ -2099,6 +2400,11 @@ fn detect_tick(
     session.panel = panel;
     session.header_guard = header_guard;
     session.crop = next_crop;
+    // Only ever replaced by a better measurement, never cleared: a band from
+    // the window that just closed is the best guess available for the next one.
+    if next_band.is_some() {
+        session.probe_band = next_band;
+    }
     session.occlusion.on_hit();
 
     // The header as the player will see it, once per CHANGE. Every tick would
@@ -2679,6 +2985,27 @@ mod tests {
         assert_eq!(st.detect_interval(), DETECT_INTERVAL, "the hunt is untouched");
     }
 
+    /// The PROBE is on the same side of that gate, and it is the one that
+    /// would break it fastest: a band OCR is nearly free and the gate fires two
+    /// of them per voice line, so a probe reporting `full_frame: true` would
+    /// take a backoff off within seconds of walking through an arena — on
+    /// evidence about 7% of the screen.
+    #[test]
+    fn a_probes_tick_never_decays_the_backoff() {
+        let mut st = LoopState::default();
+        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW, "arrange: backed off");
+
+        for _ in 0..BACKOFF_DECAY_DETECTS * 2 {
+            assert_eq!(
+                st.note_tick_duration(DetectTick::probe().full_frame, Duration::ZERO),
+                None,
+            );
+        }
+
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
+    }
+
     /// …and the same in the other direction: fast crops must not decay a
     /// backoff the full-screen hunt earned, or the cadence would recover on
     /// evidence about a cheaper question.
@@ -3063,8 +3390,10 @@ mod tests {
         assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
     }
 
-    /// A voice line or Scan now over a completed capture means something on
-    /// screen changed that the paused loop would not have looked for.
+    /// Scan now over a completed capture means the player believes something on
+    /// screen changed that the paused loop would not have looked for — they
+    /// recruited, or rematched. It is the only caller: a voice line over a
+    /// held capture never arms (`trigger::capture_held`, `disarm_probe`).
     #[test]
     fn a_new_burst_resumes_a_paused_capture() {
         let mut st = LoopState::default();
@@ -3074,15 +3403,16 @@ mod tests {
         assert!(st.resume(), "the resume is announced only when it resumed something");
 
         assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
-        assert!(!st.resume(), "a burst over a capture already being read says nothing");
+        assert!(!st.resume(), "a second press over a capture being read says nothing");
     }
 
     /// A resume changes the CADENCE, and [`RETIRE_AFTER`] counts ticks rather
     /// than time — so a miss accumulated at the 10 s liveness cadence is not
     /// part of the evidence that a window seen 2 s ago has closed. MEASURED
-    /// 2026-08-26 (app.log 09:41:52 → 09:41:57): one liveness miss, a burst
-    /// four seconds later, one re-detect miss, "window gone" — with the
-    /// recruit window still open, and restored seven seconds afterwards.
+    /// 2026-08-26 (app.log 09:41:52 → 09:41:57) on the shape this replaced: one
+    /// liveness miss, an arm four seconds later, one re-detect miss, "window
+    /// gone" — with the recruit window still open, and restored seven seconds
+    /// afterwards.
     #[test]
     fn a_resume_clears_the_misses_the_previous_cadence_counted() {
         let mut st = LoopState::default();
@@ -3100,11 +3430,12 @@ mod tests {
         assert!(st.live);
     }
 
-    /// A burst that resumes NOTHING must leave the miss counter alone. Voice
-    /// lines arrive while the loop is already hunting, and there the misses are
-    /// the evidence: they were counted at the cadence still running, and two of
-    /// them mean the window closed. Zeroing on every arm would let a mercenary
-    /// who keeps talking hold a closed window's capture on screen indefinitely.
+    /// A resume that resumes NOTHING must leave the miss counter alone. Scan
+    /// now is reachable while the loop is already re-detecting, and there the
+    /// misses are the evidence: they were counted at the cadence still running,
+    /// and two of them mean the window closed. Zeroing on every press would let
+    /// a player leaning on the button hold a closed window's capture on screen
+    /// indefinitely.
     #[test]
     fn a_burst_over_a_capture_already_being_read_keeps_its_misses() {
         let mut st = LoopState::default();
@@ -3617,35 +3948,56 @@ mod tests {
         }
     }
 
-    /// POE-198's promise in one assertion: with no capture live and no burst
-    /// armed, the loop does no screen work at all.
+    /// POE-198's promise in one assertion: with no capture live and a resting
+    /// gate, the loop does no screen work at all.
     #[test]
     fn a_focused_loop_with_nothing_asked_of_it_does_no_work() {
-        assert_eq!(next_step(false, false, true), LoopStep::Idle);
+        assert_eq!(next_step(false, trigger::GateStep::Resting, true), LoopStep::Idle);
     }
 
     #[test]
-    fn an_armed_burst_makes_a_focused_loop_work() {
-        assert_eq!(next_step(false, true, true), LoopStep::Work);
+    fn a_due_probe_makes_a_focused_loop_work() {
+        assert_eq!(next_step(false, trigger::GateStep::Probe, true), LoopStep::Work);
     }
 
-    /// The burst waits for the game rather than being spent on our own window —
+    #[test]
+    fn a_scan_now_makes_a_focused_loop_work() {
+        assert_eq!(next_step(false, trigger::GateStep::FullDetect, true), LoopStep::Work);
+    }
+
+    /// The state IDLE_NAP would round up. A gate waiting for a 500 ms probe
+    /// naps a quantum, so the probe lands within 100 ms of its deadline rather
+    /// than at the next 250 ms boundary — and it must not be Work either, or an
+    /// armed gate would grab the screen at 10 Hz for the half second before its
+    /// probe is due.
+    #[test]
+    fn a_gate_waiting_for_its_probe_neither_works_nor_takes_the_idle_nap() {
+        assert_eq!(next_step(false, trigger::GateStep::Waiting, true), LoopStep::Waiting);
+    }
+
+    /// The gate waits for the game rather than being spent on our own window —
     /// the alt-tab case the trigger exists to cover.
     #[test]
-    fn an_armed_burst_does_not_work_while_the_game_is_not_in_front() {
-        assert_eq!(next_step(false, true, false), LoopStep::Unfocused);
+    fn an_armed_gate_does_not_work_while_the_game_is_not_in_front() {
+        for gate in [
+            trigger::GateStep::Probe,
+            trigger::GateStep::FullDetect,
+            trigger::GateStep::Waiting,
+        ] {
+            assert_eq!(next_step(false, gate, false), LoopStep::Unfocused, "{gate:?}");
+        }
     }
 
-    /// A live capture keeps its own cadence with no burst behind it: retirement
+    /// A live capture keeps its own cadence with a resting gate: retirement
     /// takes two misses, and dropping to Idle after one would strand it.
     #[test]
-    fn a_live_capture_keeps_working_without_a_burst() {
-        assert_eq!(next_step(true, false, true), LoopStep::Work);
+    fn a_live_capture_keeps_working_without_a_gate() {
+        assert_eq!(next_step(true, trigger::GateStep::Resting, true), LoopStep::Work);
     }
 
     #[test]
     fn an_unfocused_game_stops_a_live_capture_too() {
-        assert_eq!(next_step(true, true, false), LoopStep::Unfocused);
+        assert_eq!(next_step(true, trigger::GateStep::FullDetect, false), LoopStep::Unfocused);
     }
 
     /// A paused capture still WORKS — the liveness check is a detect tick like
@@ -3655,8 +4007,121 @@ mod tests {
     fn a_completed_capture_still_works_so_the_liveness_check_can_run() {
         let paused = LoopState { live: true, complete: true, ..LoopState::default() };
 
-        assert_eq!(next_step(paused.live, false, true), LoopStep::Work);
+        assert_eq!(next_step(paused.live, trigger::GateStep::Resting, true), LoopStep::Work);
         assert_eq!(paused.detect_interval(), LIVENESS_INTERVAL);
+    }
+
+    // -- what a working iteration points at the screen ----------------------
+
+    /// The gate's own promise, in the one function that can break it: a voice
+    /// line buys the BAND, never the 39-line full screen. Anything that reached
+    /// `Look::Detect` here would be the burst back, one probe at a time.
+    #[test]
+    fn a_due_probe_looks_at_the_band_and_not_the_screen() {
+        assert_eq!(
+            look_step(false, trigger::GateStep::Probe, DetectStep::Run),
+            Look::Probe,
+        );
+    }
+
+    /// Scan now bypasses the band. A person asking has already answered the
+    /// question the probe would ask, and the probe could only turn that answer
+    /// into a stand-down.
+    #[test]
+    fn scan_now_looks_at_the_whole_screen() {
+        assert_eq!(
+            look_step(false, trigger::GateStep::FullDetect, DetectStep::Wait),
+            Look::Detect,
+        );
+    }
+
+    /// Over a HELD capture Scan now is a full RE-detect and nothing else — it
+    /// runs even where the live cadence says wait, which is the whole of what
+    /// "scan a window that is already open" can mean.
+    #[test]
+    fn scan_now_re_detects_a_held_capture_off_cadence() {
+        assert_eq!(
+            look_step(true, trigger::GateStep::FullDetect, DetectStep::Wait),
+            Look::Detect,
+        );
+    }
+
+    /// A live capture keeps its own cadence: `detect_step` owns the hold and
+    /// the liveness interval, and the gate must not displace a re-detect with a
+    /// probe that has nothing to add.
+    #[test]
+    fn a_live_capture_re_detects_rather_than_probing() {
+        assert_eq!(
+            look_step(true, trigger::GateStep::Probe, DetectStep::Run),
+            Look::Detect,
+        );
+    }
+
+    #[test]
+    fn a_live_capture_that_is_holding_for_a_confirm_looks_at_nothing() {
+        assert_eq!(
+            look_step(true, trigger::GateStep::Resting, DetectStep::HoldForConfirm),
+            Look::None,
+        );
+    }
+
+    /// POE-198's promise at the other end of the loop: a resting gate with
+    /// nothing captured touches the screen not at all.
+    #[test]
+    fn a_resting_gate_over_no_capture_looks_at_nothing() {
+        assert_eq!(
+            look_step(false, trigger::GateStep::Resting, DetectStep::Run),
+            Look::None,
+        );
+    }
+
+    // -- which band a probe reads -------------------------------------------
+
+    /// A window reopens where it opened last, so the remembered band is the
+    /// cheap one: 7% of the screen against the default's 40%.
+    #[test]
+    fn the_first_probe_reads_the_band_the_last_panel_left() {
+        let remembered = [650, 900, 651, 240];
+
+        assert_eq!(probe_band(Some(remembered), [1920, 1200], 0), remembered);
+    }
+
+    /// The remembered band has exactly one failure mode — the player moved the
+    /// window or changed the UI scale — and it is SILENT: the probe reads empty
+    /// screen, sees no chrome, and the gate stands down on a window that is
+    /// plainly open. The retry is already being spent, so widening it there
+    /// costs nothing and covers the case.
+    #[test]
+    fn the_retry_widens_to_the_default_band() {
+        let remembered = [650, 900, 651, 240];
+
+        assert_eq!(
+            probe_band(Some(remembered), [1920, 1200], 1),
+            geometry::default_probe_band([1920, 1200]),
+        );
+    }
+
+    /// The band outlives the capture it was measured on, so it outlives a
+    /// resolution change too. A rect past the new screen's edge crops to
+    /// nothing and the OCR call FAILS on the empty image — the player would get
+    /// "Merc: OCR failed" on the slice for walking past a mercenary after
+    /// changing their display settings.
+    #[test]
+    fn a_band_from_a_bigger_screen_is_dropped_rather_than_cropped_to_nothing() {
+        let remembered = [1600, 900, 300, 240];
+
+        assert_eq!(
+            probe_band(Some(remembered), [1280, 1024], 0),
+            geometry::default_probe_band([1280, 1024]),
+        );
+    }
+
+    #[test]
+    fn a_session_that_has_never_seen_a_panel_reads_the_default_band() {
+        assert_eq!(
+            probe_band(None, [1920, 1200], 0),
+            geometry::default_probe_band([1920, 1200]),
+        );
     }
 
     /// A burst armed for a SECOND mercenary while the first one's window is
@@ -4124,6 +4589,7 @@ mod tests {
             header_guard: None,
             crop: None,
             occlusion: OcclusionRun::default(),
+            probe_band: None,
             header_logged: None,
             retained: None,
             trade: None,
