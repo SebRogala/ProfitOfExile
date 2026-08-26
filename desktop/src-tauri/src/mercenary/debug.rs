@@ -28,7 +28,7 @@ use image::{DynamicImage, GenericImageView};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use super::geometry::{self, OcrLineBox};
+use super::geometry::{self, Frame, OcrLineBox};
 use super::read::{build_capture, crop_rgba, pass2_texts, CellDebug};
 use super::run::{now_ms, publish};
 use super::vocab::MercVocab;
@@ -352,7 +352,10 @@ fn debug_capture_blocking(
         }
         Some(layout) => {
             let started = Instant::now();
-            let texts = pass2_texts(&img, layout, &g);
+            // The dump always reads a WHOLE screen (a grab or a saved PNG):
+            // it never takes the loop's cropped re-detect path.
+            let frame = Frame::full([iw, ih]);
+            let texts = pass2_texts(&img, frame, layout, &g);
             report.timings.push(timing("pass2", started));
 
             let started = Instant::now();
@@ -363,7 +366,7 @@ fn debug_capture_blocking(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
                 report.learned_templates = store.len();
-                build_capture(&img, layout, &texts, now_ms(), &g, &vocab, &store)
+                build_capture(&img, frame, layout, &texts, now_ms(), &g, &vocab, &store)
             };
             report.timings.push(timing("read", started));
 
@@ -484,15 +487,20 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
     let dir = templates_dir(&app)?;
     let (learned, pooled) = {
         let state = app.state::<AppState>();
-        let mut store = state
-            .merc_templates
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if !store.forget(&family, tier) {
-            return Err(format!("no learned template for {family} (tier {tier})"));
-        }
-        store.save(&dir)?;
-        (store.learned_keys(), store.pooled_keys())
+        // The user's un-poison click writes the same directory the loop's
+        // off-tick writer and the pool's merge do. See
+        // `icons::writing_icons_dir`.
+        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+            let mut store = state
+                .merc_templates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !store.forget(&family, tier) {
+                return Err(format!("no learned template for {family} (tier {tier})"));
+            }
+            store.save(&dir)?;
+            Ok((store.learned_keys(), store.pooled_keys()))
+        })?
     };
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: forgot template {family} (tier {tier})"));
@@ -522,14 +530,16 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
     let dir = templates_dir(&app)?;
     let count = {
         let state = app.state::<AppState>();
-        let mut store = state
-            .merc_templates
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let count = store.len();
-        store.reset();
-        store.save(&dir)?;
-        count
+        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+            let mut store = state
+                .merc_templates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let count = store.len();
+            store.reset();
+            store.save(&dir)?;
+            Ok::<usize, String>(count)
+        })?
     };
     super::sync::forget_etag(&app);
     bump_generation(&app);

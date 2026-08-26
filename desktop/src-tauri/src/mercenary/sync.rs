@@ -820,23 +820,30 @@ pub fn apply_corpus(
 
     let (outcome, learned, pooled, pooled_samples, save_err) = {
         let state = app.state::<AppState>();
-        let mut store = state
-            .merc_templates
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let outcome = store.merge_pulled(corpus, &suppressed, thresholds);
-        let save_err = if outcome.changed() {
-            store.save(dir).err()
-        } else {
-            None
-        };
-        (
-            outcome,
-            store.learned_keys(),
-            store.pooled_keys(),
-            store.pooled_samples(),
-            save_err,
-        )
+        // The DIRECTORY lock around the whole merge-and-write, outside the
+        // store's own mutex: the loop's off-tick writer holds the store's mutex
+        // only long enough to clone, so this write and that one would otherwise
+        // interleave in the same directory. See `icons::writing_icons_dir` for
+        // the lock order and what the interleave costs.
+        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+            let mut store = state
+                .merc_templates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let outcome = store.merge_pulled(corpus, &suppressed, thresholds);
+            let save_err = if outcome.changed() {
+                store.save(dir).err()
+            } else {
+                None
+            };
+            (
+                outcome,
+                store.learned_keys(),
+                store.pooled_keys(),
+                store.pooled_samples(),
+                save_err,
+            )
+        })
     };
 
     crate::app_log(app, merge_line(&outcome));
@@ -1079,19 +1086,22 @@ fn mark_uploaded(app: &AppHandle, batch: &[PendingSample]) {
     };
     let save_err = {
         let state = app.state::<AppState>();
-        let mut store = state
-            .merc_templates
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut touched = false;
-        for sample in batch {
-            touched |= store.mark_uploaded(&sample.family, sample.tier, &sample.gray);
-        }
-        if touched {
-            store.save(&dir).err()
-        } else {
-            None
-        }
+        // Inside the directory lock, like every other writer of it.
+        super::icons::writing_icons_dir(&state.merc_icons_write, || {
+            let mut store = state
+                .merc_templates
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut touched = false;
+            for sample in batch {
+                touched |= store.mark_uploaded(&sample.family, sample.tier, &sample.gray);
+            }
+            if touched {
+                store.save(&dir).err()
+            } else {
+                None
+            }
+        })
     };
     if let Some(e) = save_err {
         crate::app_log(app, format!("Merc: upload flags not saved — {e}"));

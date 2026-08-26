@@ -180,9 +180,22 @@ pub struct AppState {
     /// Learned support-icon templates (POE-165 D4). Shared because two owners
     /// need it: the capture loop matches and learns through it, and the
     /// `merc_forget_template` / `merc_reset_templates` commands are the
-    /// un-poison path a user reaches for while that loop is running. Acquired
-    /// alone, never inside a module lock (lock order — see src/modules.rs).
+    /// un-poison path a user reaches for while that loop is running. Never
+    /// acquired inside a module lock (lock order — see src/modules.rs); the one
+    /// lock it IS taken inside is `merc_icons_write` below, on the four paths
+    /// that write the directory.
     pub merc_templates: Mutex<mercenary::icons::TemplateStore>,
+    /// Serialises WRITES of the icon-template DIRECTORY (POE-204 WI-B).
+    ///
+    /// A second owner because there are two questions, not one: `merc_templates`
+    /// guards the store in memory, this guards the files on disk. The loop's
+    /// off-tick writer drops the store mutex before it writes — holding it
+    /// across the PNG writes would move the detect stall rather than remove it
+    /// — so the store mutex cannot be what keeps two `TemplateStore::save`
+    /// calls from interleaving. See `mercenary::icons::writing_icons_dir`,
+    /// which is the only way to take it, and which states the lock order: this
+    /// one first, `merc_templates` inside it.
+    pub merc_icons_write: Mutex<()>,
     /// Which guides take NO part in the merc verdict (POE-199) — the single
     /// owner of the enabled-guide set, in `mercenary::sources::SOURCE_IDS`
     /// order. Echoed onto the `mercenary` slice by `ssot::compose_snapshot`,
@@ -3443,6 +3456,7 @@ pub fn run() {
         modules_shutting_down: AtomicBool::new(false),
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
         merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
+        merc_icons_write: Mutex::new(()),
         merc_sources_off: Mutex::new(Vec::new()),
         merc_trade_auto: Mutex::new(mercenary::DEFAULT_TRADE_AUTO),
         merc_tier_floor: Mutex::new(mercenary::DEFAULT_TIER_FLOOR),

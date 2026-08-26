@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
 
-use super::geometry::{inner_rect, occupied, stddev, MercLayout};
+use super::geometry::{inner_rect, occupied, stddev, Frame, MercLayout};
 use super::icons::{normalize_cell, read_tier, CellSig, TemplateStore};
 use super::vocab::{classify_resolution, MercVocab};
 use super::{
@@ -66,6 +66,7 @@ pub struct ReadResult {
 /// would sign whatever UI sits beyond the panel's right edge.
 pub fn build_capture(
     img: &DynamicImage,
+    frame: Frame,
     layout: &MercLayout,
     row_texts: &[String],
     captured_at_ms: u64,
@@ -73,7 +74,6 @@ pub fn build_capture(
     vocab: &MercVocab,
     store: &TemplateStore,
 ) -> ReadResult {
-    let (iw, ih) = img.dimensions();
     let mut cells_debug = Vec::new();
     let mut sigs = HashMap::new();
     let mut rows = Vec::with_capacity(layout.rows.len());
@@ -91,8 +91,14 @@ pub fn build_capture(
 
         let mut supports = Vec::new();
         for (slot, rect) in row.cells.iter().enumerate() {
-            let sd = stddev(img, inner_rect(*rect, g));
-            let is_occupied = occupied(img, *rect, g);
+            // The layout is screen-absolute; the IMAGE may be a crop of the
+            // screen. `local` is the only place the two spaces meet — the rect
+            // that goes into the capture, the debug dump and the signature
+            // cache stays absolute, because that is what the hover tick
+            // hit-tests the real cursor against.
+            let px = frame.local(*rect);
+            let sd = stddev(img, inner_rect(px, g));
+            let is_occupied = occupied(img, px, g);
             if !is_occupied {
                 cells_debug.push(CellDebug {
                     row: row.index,
@@ -109,8 +115,8 @@ pub fn build_capture(
                 break;
             }
 
-            let sig = normalize_cell(img, *rect, g);
-            let tier = read_tier(img, *rect, g);
+            let sig = normalize_cell(img, px, g);
+            let tier = read_tier(img, px, g);
             let icon = match &sig {
                 Some(s) => store.match_family(s, &g.thresholds),
                 // Unreachable while `occupied` and `normalize_cell` share the
@@ -145,7 +151,7 @@ pub fn build_capture(
             });
 
             if let Some(s) = sig {
-                sigs.insert((row.index, slot as u8), (s, crop_rgba(img, *rect, g)));
+                sigs.insert((row.index, slot as u8), (s, crop_rgba(img, px, g)));
             }
         }
 
@@ -161,7 +167,11 @@ pub fn build_capture(
             captured_at_ms,
             live: true,
             scale: layout.scale,
-            screen: [iw, ih],
+            // The SCREEN, not the image: a cropped detect frame is smaller
+            // than the desktop, and `run::hover_region` clamps the tooltip
+            // crop to this — clamping it to the panel would cut every tooltip
+            // that opens outside the grid.
+            screen: frame.screen(),
             header: layout.header.clone(),
             rows,
         },
@@ -549,7 +559,12 @@ pub fn crop_rgba(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> Option
 /// The `max_rows` bound is what keeps ONE tick's cost bounded: this is a
 /// per-row OCR call, and a mis-clustered detect could otherwise produce
 /// arbitrarily many rows inside a single tick.
-pub fn pass2_texts(img: &DynamicImage, layout: &MercLayout, g: &MercGeometry) -> Vec<String> {
+pub fn pass2_texts(
+    img: &DynamicImage,
+    frame: Frame,
+    layout: &MercLayout,
+    g: &MercGeometry,
+) -> Vec<String> {
     let (iw, ih) = img.dimensions();
     let budget = pass2_row_budget(layout.rows.len(), g);
     layout
@@ -560,7 +575,7 @@ pub fn pass2_texts(img: &DynamicImage, layout: &MercLayout, g: &MercGeometry) ->
             if i >= budget {
                 return row.text.clone();
             }
-            let [x, y, w, h] = name_band(row.name_rect, layout, g);
+            let [x, y, w, h] = frame.local(name_band(row.name_rect, layout, g));
             if x < 0 || y < 0 || w <= 0 || h <= 0 || (x + w) as u32 > iw || (y + h) as u32 > ih {
                 return row.text.clone();
             }
@@ -638,6 +653,13 @@ mod tests {
         }
     }
 
+    /// The test images ARE the screen — every read.rs test predates crops and
+    /// must keep meaning what it meant.
+    fn whole(img: &DynamicImage) -> Frame {
+        let (w, h) = img.dimensions();
+        Frame::full([w, h])
+    }
+
     fn layout_of() -> MercLayout {
         detect(&reference_lines(), &MercGeometry::default(), &vocab(), None)
             .expect("the reference lines detect as a panel")
@@ -651,7 +673,7 @@ mod tests {
         let layout = layout_of();
         let g = MercGeometry::default();
 
-        let out = build_capture(&img, &layout, &[], 1_700_000_000_000, &g, &vocab(), &TemplateStore::new());
+        let out = build_capture(&img, whole(&img), &layout, &[], 1_700_000_000_000, &g, &vocab(), &TemplateStore::new());
 
         assert_eq!(out.capture.rows.len(), 2);
         assert_eq!(out.capture.rows[0].skill.name.as_deref(), Some("Ice Shot"));
@@ -673,6 +695,7 @@ mod tests {
 
         let out = build_capture(
             &img,
+            whole(&img),
             &layout,
             &["Frostbolt".to_string(), "Conductivity".to_string()],
             0,
@@ -699,7 +722,7 @@ mod tests {
         let layout = layout_of();
         let g = MercGeometry::default();
 
-        let out = build_capture(&img, &layout, &[], 0, &g, &vocab(), &TemplateStore::new());
+        let out = build_capture(&img, whole(&img), &layout, &[], 0, &g, &vocab(), &TemplateStore::new());
 
         assert!(out.capture.rows.iter().all(|r| r.supports.is_empty()));
         assert!(out.sigs.is_empty(), "no signature is cached for an empty slot");
@@ -721,7 +744,7 @@ mod tests {
         fill_noise(&mut raw, first);
         let img = DynamicImage::ImageRgba8(raw);
 
-        let out = build_capture(&img, &layout, &[], 0, &g, &vocab(), &TemplateStore::new());
+        let out = build_capture(&img, whole(&img), &layout, &[], 0, &g, &vocab(), &TemplateStore::new());
 
         let supports = &out.capture.rows[0].supports;
         assert_eq!(supports.len(), 1, "scanning stops at the empty second slot");
@@ -732,6 +755,51 @@ mod tests {
             out.sigs.contains_key(&(0, 0)),
             "the pre-hover crop must be cached so a later confirm can learn it",
         );
+    }
+
+    /// The whole point of [`Frame`], end to end. The same screen read twice —
+    /// once whole, once as a crop of itself — must produce the SAME capture:
+    /// the cell rects the hover tick hit-tests the real cursor against are
+    /// screen-absolute, and the screen size the tooltip crop is clamped to is
+    /// the desktop's, not the crop's. Reading the crop's pixels at the screen's
+    /// coordinates would land the occupancy test tens of px off the icon and
+    /// the cell would read empty.
+    #[test]
+    fn a_crop_of_the_screen_reads_the_same_capture_as_the_whole_screen() {
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        let g = MercGeometry::default();
+        let layout = layout_of();
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        fill_noise(&mut raw, layout.rows[1].cells[0]);
+        let img = DynamicImage::ImageRgba8(raw);
+        let origin = (50, 30);
+        let cropped = img.crop_imm(origin.0 as u32, origin.1 as u32, 850, 270);
+        let frame = Frame::cropped(origin, [900, 300]);
+
+        let whole_read =
+            build_capture(&img, whole(&img), &layout, &[], 7, &g, &vocab(), &TemplateStore::new());
+        let crop_read =
+            build_capture(&cropped, frame, &layout, &[], 7, &g, &vocab(), &TemplateStore::new());
+
+        assert_eq!(
+            whole_read.capture.rows[0].supports.len(),
+            1,
+            "arrange: the whole-screen read finds the painted cell",
+        );
+        assert_eq!(crop_read.capture, whole_read.capture);
+        assert_eq!(crop_read.capture.screen, [900, 300], "the SCREEN, not the crop");
+        assert_eq!(
+            crop_read.capture.rows[0].supports[0].rect,
+            layout.rows[0].cells[0],
+            "the published rect is where the cell is on the SCREEN",
+        );
+        let sorted = |r: &ReadResult| {
+            let mut keys: Vec<(u8, u8)> = r.sigs.keys().copied().collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(sorted(&crop_read), sorted(&whole_read));
+        assert_eq!(sorted(&crop_read), vec![(0, 0), (1, 0)], "both painted cells cached a crop");
     }
 
     /// The reader stops at the FIRST empty slot: a filled slot 1 behind an
@@ -746,6 +814,7 @@ mod tests {
 
         let out = build_capture(
             &img,
+            whole(&img),
             &layout,
             &[],
             0,
@@ -865,7 +934,7 @@ mod tests {
         let img = flat_screen(900, 300);
         let layout = layout_of();
 
-        let texts = pass2_texts(&img, &layout, &MercGeometry::default());
+        let texts = pass2_texts(&img, whole(&img), &layout, &MercGeometry::default());
 
         assert_eq!(texts, vec!["Ice Shot".to_string(), "Conductivity".to_string()]);
     }

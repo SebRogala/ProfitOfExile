@@ -511,6 +511,7 @@ mod tests {
             modules_shutting_down: AtomicBool::new(false),
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
+            merc_icons_write: Mutex::new(()),
             merc_sources_off: Mutex::new(Vec::new()),
             merc_trade_auto: Mutex::new(crate::mercenary::DEFAULT_TRADE_AUTO),
             merc_tier_floor: Mutex::new(crate::mercenary::DEFAULT_TIER_FLOOR),

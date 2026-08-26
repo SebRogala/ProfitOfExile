@@ -94,9 +94,37 @@ const REDETECT_INTERVAL: Duration = Duration::from_millis(2000);
 const LIVENESS_INTERVAL: Duration = Duration::from_millis(10_000);
 /// Hover-confirm cadence while a window is captured.
 const HOVER_INTERVAL: Duration = Duration::from_millis(400);
-/// A capture tick (detect, plus the hover confirm that follows it in the same
-/// iteration) slower than this backs the detect cadence off.
+/// A FULL-frame detect slower than this backs the detect cadence off.
+///
+/// Two things are excluded from the measurement, and both for one reason: what
+/// the backoff decides is [`DETECT_INTERVAL`] vs [`DETECT_INTERVAL_SLOW`], and
+/// those two cadences govern nothing but the full-screen HUNT for a window.
+///
+/// - **Not the hover confirm** that shares the iteration with the detect.
+///   MEASURED 2026-08-26 (app.log 09:40:06): one 4504 ms reading of
+///   detect+hover latched the backoff for the life of the thread, so every
+///   FIRST detect after a voice line waited [`DETECT_INTERVAL_SLOW`] — 3 s of
+///   "nothing happening" bought by a number that was mostly a tooltip OCR the
+///   backoff has no say over.
+/// - **Not a cropped re-detect** (POE-204 WI-B review). A crop of a known panel
+///   is a fraction of a full-screen OCR by construction, so feeding those in
+///   would decay the backoff on evidence about a cheaper question — and the
+///   `crop→full` re-take is the opposite bias, a tick carrying two OCRs. Both
+///   run only while a window is live, where the cadence is
+///   [`REDETECT_INTERVAL`] and the backoff has no say either way. See
+///   [`LoopState::note_tick_duration`].
 const SLOW_TICK: Duration = Duration::from_millis(1500);
+/// Consecutive detects at or under [`SLOW_TICK`] that clear the backoff.
+///
+/// The backoff used to be sticky for the life of the thread, on the reasoning
+/// that "this machine is slow" does not become false. The cropped re-detect
+/// (POE-204 WI-B) makes it false on purpose — the same machine that took
+/// 4.5 s on a full-screen tick reads a crop of the known panel in a fraction
+/// of it — and a slow FIRST detect would otherwise hold the 3 s hunt cadence
+/// over every later window of the session. Three in a row rather than one so a
+/// single fast frame between slow ones cannot flap the cadence, and with it the
+/// log line that announces the cadence.
+const BACKOFF_DECAY_DETECTS: u8 = 3;
 /// How long to idle between focus checks while the game is not focused.
 const UNFOCUSED_NAP: Duration = Duration::from_millis(1000);
 /// How long to idle between gate checks while nothing has asked for a scan
@@ -259,6 +287,17 @@ impl OcclusionRun {
         self.reset();
     }
 
+    /// Whether a run is open — a detect has already come back with no layout
+    /// while the cursor sat on the panel, and none of the four things that end
+    /// a run has happened since.
+    ///
+    /// Read by [`detect_step`], which stops holding the re-detect once this is
+    /// true: the hold's premise is that the cursor makes the detect redundant,
+    /// and an open run is that premise already disproved.
+    pub fn is_open(&self) -> bool {
+        self.started.is_some()
+    }
+
     /// The once-per-run log gate: `true` the first time it is asked in each
     /// run, `false` for every later tick of that same run.
     pub fn announce(&mut self) -> bool {
@@ -287,12 +326,13 @@ pub struct LoopState {
     pub live: bool,
     /// Consecutive failed detections since the last successful one.
     pub misses: u8,
-    /// The slow-tick backoff has fired.
+    /// The slow-detect backoff has fired.
     ///
-    /// Sticky for the life of the thread: it means "this machine takes over
-    /// 1.5 s to OCR a screen", which does not become false again. Flapping
-    /// between cadences would also flap the log line that announces it.
+    /// NOT sticky since POE-204 WI-B — see [`BACKOFF_DECAY_DETECTS`].
     pub backed_off: bool,
+    /// Consecutive detects at or under [`SLOW_TICK`] while backed off. Reset by
+    /// any slow detect, and by the decay it feeds.
+    pub fast_detects: u8,
     /// The live capture is fully read — every row, every cell, the header.
     ///
     /// NOT sticky, unlike [`Self::backed_off`]: it is a statement about the
@@ -393,18 +433,138 @@ impl LoopState {
         was
     }
 
-    /// Record how long a whole capture tick took — the detect AND the hover
-    /// confirm that ran after it, because both are screen grabs plus OCR and
-    /// both are what "this machine is too slow to hunt at 1 Hz" is measuring.
-    /// `true` the one time the backoff fires, so the caller logs it once.
-    pub fn note_tick_duration(&mut self, took: Duration) -> bool {
-        if took > SLOW_TICK && !self.backed_off {
-            self.backed_off = true;
-            true
-        } else {
-            false
+    /// Record how long a DETECT took — not the hover confirm that shares the
+    /// iteration with it, which is why the loop times `detect_tick` alone and
+    /// runs the hover before it.
+    ///
+    /// `full_frame` is the gate, not a label: a tick that OCR'd a crop of a
+    /// known panel says nothing about what a full-screen hunt costs on this
+    /// machine, in either direction, so it moves neither the backoff nor the
+    /// decay run behind it. See [`SLOW_TICK`].
+    ///
+    /// `Some` on the ticks the cadence actually moves, so the caller logs each
+    /// transition once and nothing in between.
+    pub fn note_tick_duration(
+        &mut self,
+        full_frame: bool,
+        took: Duration,
+    ) -> Option<BackoffChange> {
+        if !full_frame {
+            return None;
         }
+        if took > SLOW_TICK {
+            self.fast_detects = 0;
+            return (!std::mem::replace(&mut self.backed_off, true))
+                .then_some(BackoffChange::BackedOff);
+        }
+        if !self.backed_off {
+            return None;
+        }
+        self.fast_detects += 1;
+        if self.fast_detects < BACKOFF_DECAY_DETECTS {
+            return None;
+        }
+        self.backed_off = false;
+        self.fast_detects = 0;
+        Some(BackoffChange::Recovered)
     }
+}
+
+/// A move of the detect cadence, reported by [`LoopState::note_tick_duration`]
+/// so the log carries both directions and neither is printed twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackoffChange {
+    /// A slow detect put the hunt on [`DETECT_INTERVAL_SLOW`].
+    BackedOff,
+    /// [`BACKOFF_DECAY_DETECTS`] fast detects took it back off again.
+    Recovered,
+}
+
+/// What one loop iteration does about the detect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectStep {
+    /// Detect this iteration.
+    Run,
+    /// The cadence is not up yet.
+    Wait,
+    /// The cursor is inside a captured cell: the player is reading a tooltip,
+    /// and the hover confirm is the work that matters. See [`detect_step`].
+    HoldForConfirm,
+}
+
+/// Whether this iteration detects, and why not when it does not.
+///
+/// The hold is the latency fix of POE-204 WI-B. MEASURED 2026-08-26 (app.log
+/// 09:40:06-09:40:57): confirms landed 4-10 s apart while the player hovered
+/// cell after cell, because each one had to wait behind a re-detect of a panel
+/// that had not moved — a full-screen grab and a full-screen OCR, 4.5 s on the
+/// measured machine, for an answer the cursor already gave. A cursor inside a
+/// captured cell is proof the window is on screen, so the detect it would
+/// displace has nothing to add.
+///
+/// **A hold is not a miss.** It does not reach [`LoopState::on_detect`] at all,
+/// so it cannot advance the retire counter — which matters, because the hold
+/// fires exactly when a tooltip is up and that is the frame the detect fails on
+/// (WI-A's phantom retire). Holding is the stronger version of that fix: the
+/// frame is never taken.
+///
+/// **The hold has a ceiling**, and it is [`LIVENESS_INTERVAL`]. A cursor parked
+/// on a cell must not stop the loop ever noticing a window that closed — the
+/// player can alt-tab, or close the panel with the mouse still over where it
+/// was — so once a whole liveness interval has passed since the last detect,
+/// the detect runs whatever the cursor is doing. The `since_detect` clock is
+/// NOT reset by a hold, which is what makes that ceiling arrive.
+///
+/// **An open occlusion run cancels the hold** (`occluded`, POE-204 WI-B
+/// review). The hold rests on the cursor being proof the window is on screen;
+/// once a detect has come back with no layout while the cursor was on the
+/// panel, that proof is exactly what is in question, and holding turns the
+/// answer into a 10 s cadence. Composed with [`OcclusionRun`]'s own cap the
+/// arithmetic was: ceiling detect, then [`OCCLUDED_MAX`] of held ticks at 10 s
+/// each, then two more 10 s ticks to retire — 40 s of `done` verdict for a
+/// window that closed. Dropping the hold puts those ticks back on
+/// [`REDETECT_INTERVAL`], which is the cadence the cap was sized against, and
+/// the same close retires in 28 s. It costs one cropped re-detect every 2 s
+/// while a tooltip is up, and only after one has already failed.
+pub fn detect_step(
+    state: &LoopState,
+    cursor_on_cell: bool,
+    occluded: bool,
+    since_detect: Duration,
+) -> DetectStep {
+    if since_detect < state.detect_interval() {
+        DetectStep::Wait
+    } else if state.live && cursor_on_cell && !occluded && since_detect < LIVENESS_INTERVAL {
+        DetectStep::HoldForConfirm
+    } else {
+        DetectStep::Run
+    }
+}
+
+/// The rect a detect tick OCRs, or `None` for the whole screen.
+///
+/// One place answers "is there a known panel to re-read", rather than every
+/// reader of `Session::crop` re-deriving it. The two fields are cleared
+/// together on retire, so the filter looks redundant — it is not: the crop is
+/// a rect measured from a layout, and using it while nothing is live would
+/// hunt for a new window inside the last one's outline and never find one
+/// anywhere else on screen.
+pub fn detect_frame(crop: Option<[i32; 4]>, panel: Option<[i32; 4]>) -> Option<[i32; 4]> {
+    crop.filter(|_| panel.is_some())
+}
+
+/// What one detect tick reports back to the loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DetectTick {
+    /// What it did to the capture state. `None` when the tick bailed on the
+    /// stop signal after pass 1 — neither a hit nor a miss (see
+    /// [`burst_satisfied`]).
+    pub outcome: Option<DetectOutcome>,
+    /// Whether this tick OCR'd the WHOLE screen and nothing else — the only
+    /// kind of tick whose duration the backoff may read. A crop, and the
+    /// `crop→full` re-take that carries two OCRs, are both excluded. See
+    /// [`SLOW_TICK`].
+    pub full_frame: bool,
 }
 
 /// Whether the cursor was over a rect, given THIS frame's rect and the one the
@@ -489,6 +649,37 @@ pub fn publishable_header(header: MercHeader, cursor_in_header_guard: bool) -> M
     } else {
         header
     }
+}
+
+/// The header a detected frame may publish, and the header-guard rect it
+/// leaves for the next frame.
+///
+/// The rect CHOICE lives here rather than at the call site, which is the whole
+/// point of the extraction (WI-A review carry-over). Two rects come off one
+/// layout — [`geometry::panel_bounds`] reaches over the footer so a cursor on
+/// TAKE ITEM holds the capture, [`geometry::header_guard_bounds`] stops a pitch
+/// below the last row because that is as far as a tooltip can be and still put
+/// lines in the header band — and handing the occlusion rect to
+/// [`publishable_header`] would throw away every clean header read taken while
+/// the player's cursor rests on the button that ends the window. The two rects
+/// are one `bounds` call apart and the miswiring is invisible at a call site;
+/// inside a function it is one test.
+///
+/// `last_guard` is the previous detect's rect. Both count, for the reason
+/// [`cursor_on_panel`] states: a tooltip over the lower rows shrinks THIS
+/// frame's rect above the very cursor that caused it.
+pub fn publishable_header_for(
+    layout: &geometry::MercLayout,
+    g: &MercGeometry,
+    last_guard: Option<[i32; 4]>,
+    cursor: Option<(i32, i32)>,
+    header: MercHeader,
+) -> (MercHeader, Option<[i32; 4]>) {
+    let guard = geometry::header_guard_bounds(layout, g);
+    (
+        publishable_header(header, cursor_on_panel(guard, last_guard, cursor)),
+        guard,
+    )
 }
 
 /// The log line for a header parse, or `None` when it would repeat `last`.
@@ -660,6 +851,63 @@ impl OnceLog {
 /// be wrong.
 ///
 /// `None` when the clamped box is empty — a cursor off the captured screen.
+/// A serialised, off-tick writer.
+///
+/// `TemplateStore::save` writes one PNG per sample plus the index, and it used
+/// to run inline on the hover confirm — the read the player is waiting on. The
+/// first Windows smoke measured a 4 s tick, and every confirm paid a whole
+/// store rewrite into it.
+///
+/// One worker thread and one channel, so two confirms landing back to back
+/// cannot write the same directory at once: the second request waits for the
+/// first write to finish rather than racing it. A burst of requests coalesces
+/// into one write, which is correct because `save` writes the WHOLE store —
+/// the write that follows the last request has the last request's state in it.
+///
+/// The worker exits when the queue is dropped, which is what the loop's own
+/// exit does; a request already in the channel is still written.
+pub struct SaveQueue {
+    tx: std::sync::mpsc::Sender<()>,
+}
+
+impl SaveQueue {
+    /// Spawn the worker. `save` runs on it, never on the caller's thread.
+    pub fn spawn(mut save: impl FnMut() + Send + 'static) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            while rx.recv().is_ok() {
+                // Coalesce the burst: the write is of the whole store, so one
+                // after the last request says everything the queued ones did.
+                while rx.try_recv().is_ok() {}
+                // A PANICKING save must not take the queue with it. `save`
+                // walks learned art into an image encoder and a JSON
+                // serialiser; if one of those ever panics on a particular
+                // sample, an uncaught unwind ends this thread, every later
+                // `request` finds a dead channel, and the store silently stops
+                // reaching disk for the rest of the session — over a confirm
+                // the player watched succeed. Caught, the same sample fails
+                // again next time and everything else is still written. The
+                // panic message is already on stderr and in the app's own
+                // panic hook; this thread has no handle to log through.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&mut save));
+            }
+        });
+        Self { tx }
+    }
+
+    /// Ask for a write and RETURN — the point of the type.
+    ///
+    /// `false` when the worker is gone, which is the one thing the caller can
+    /// usefully know: the store is still correct in memory and the next start
+    /// reloads what is on disk, but nothing this session confirms will be
+    /// written, and that is worth saying once. The caller says it — through
+    /// [`OnceLog`], because a hover confirm repeats.
+    #[must_use]
+    pub fn request(&self) -> bool {
+        self.tx.send(()).is_ok()
+    }
+}
+
 pub fn hover_region(
     cursor: (i32, i32),
     scale: f32,
@@ -1013,8 +1261,9 @@ struct Session {
     /// The template-store generation this session's `confirmed` map agrees
     /// with. See [`generation_changed`].
     template_generation: u64,
-    /// Where the template store lives, when there is an app data dir at all.
-    icons_dir: Option<std::path::PathBuf>,
+    /// The off-tick writer for the template store. `None` when there is no directory
+    /// to write to. See [`SaveQueue`].
+    saves: Option<SaveQueue>,
     /// Whether the first clean miss of this focus session has been logged.
     /// Reset when the game loses focus, so each return to the game says once
     /// what the loop saw.
@@ -1028,6 +1277,10 @@ struct Session {
     /// knows the pitch. See [`super::geometry::header_guard_bounds`] and
     /// [`publishable_header`]. Cleared with `panel` on retire.
     header_guard: Option<[i32; 4]>,
+    /// The rect the next re-detect grabs and OCRs, from
+    /// [`geometry::detect_crop_bounds`]. `None` — no known panel, so the next
+    /// detect takes the whole screen. Cleared with `panel` on retire.
+    crop: Option<[i32; 4]>,
     /// The open run of detects the panel was covered for. See [`OcclusionRun`].
     occlusion: OcclusionRun,
     /// The header line as last LOGGED — the once-per-change gate for
@@ -1168,10 +1421,42 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         confirmed: HashMap::new(),
         hover_budget: HoverBudget::default(),
         template_generation: template_generation(&app),
-        icons_dir,
+        saves: icons_dir.clone().map(|dir| {
+            let app = app.clone();
+            // The worker's own once-sink. A store directory that cannot be
+            // written fails the same way on every confirm, and this thread has
+            // no `Session` to reach the loop's [`OnceLog`] through.
+            let mut errors = OnceLog::default();
+            SaveQueue::spawn(move || {
+                let state = app.state::<AppState>();
+                // SNAPSHOT under the store's mutex, WRITE outside it: the
+                // detect tick's `match_family` runs against the same mutex, and
+                // holding it across the PNG writes would move the stall rather
+                // than remove it. Both halves sit inside the DIRECTORY lock,
+                // which is what stops `sync`'s writes interleaving with this
+                // one — and what stops the snapshot going stale between being
+                // taken and being written. See [`icons::writing_icons_dir`].
+                let result = super::icons::writing_icons_dir(&state.merc_icons_write, || {
+                    let snapshot = {
+                        let store =
+                            state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+                        store.clone()
+                    };
+                    snapshot.save(&dir)
+                });
+                if let Err(e) = result {
+                    let msg = format!("Merc: template store save failed — {e}");
+                    if let Some(line) = errors.admit(&msg) {
+                        crate::app_log(&app, line);
+                    }
+                    publish(&app, |slice| slice.last_error = Some(msg));
+                }
+            })
+        }),
         miss_logged: false,
         panel: None,
         header_guard: None,
+        crop: None,
         occlusion: OcclusionRun::default(),
         header_logged: None,
         retained: None,
@@ -1292,52 +1577,98 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // napped on the focus gate above.
         trigger::begin(&app, now);
 
-        // Timed from before the detect to after the hover: they are one tick's
-        // work, two screen grabs and two OCR calls, and the backoff is about
-        // how long that whole thing takes on this machine.
-        let mut tick_started = None;
-        if last_detect.elapsed() >= session.state.detect_interval() {
-            tick_started = Some(Instant::now());
-            let outcome = detect_tick(&app, &mut session, &cancel);
+        // ONE cursor read per iteration, and it happens FIRST — the claim is
+        // now true (POE-204 WI-B review: `detect_tick` used to take a second
+        // read of its own). THREE readers depend on it: the hover confirm, the
+        // detect gate below, and the detect's own header-withholding rule,
+        // which asks where the cursor was while the frame was taken. Reading it
+        // twice inside one iteration lets them answer about different
+        // positions.
+        //
+        // Only on the iterations one of them actually asks, so the loop's
+        // 100 ms quantum does not turn into a 10 Hz cursor poll. NOT gated on a
+        // live capture, unlike the hover: the FIRST detect of a window is
+        // exactly the one whose header a tooltip corrupts (2026-08-26), and
+        // that read needs the cursor with nothing captured yet.
+        let hover_due = session.state.live && last_hover.elapsed() >= HOVER_INTERVAL;
+        let detect_due = last_detect.elapsed() >= session.state.detect_interval();
+        let cursor = if hover_due || detect_due {
+            read_cursor(&app, &mut session)
+        } else {
+            None
+        };
+        // An unreadable cursor is not an excuse: no evidence the player is
+        // confirming means the detect runs, exactly as `cursor_on_panel`
+        // refuses to excuse a miss it cannot prove.
+        let on_cell = match (session.current.as_ref(), cursor) {
+            (Some(capture), Some(c)) => cell_at(capture, c).is_some(),
+            _ => false,
+        };
+
+        // HOVER BEFORE DETECT. It used to run after, so a confirm got at most
+        // one slot per detect and the detect was costing 4.5 s — measured
+        // 2026-08-26, confirms 4-10 s apart while the player hovered cell
+        // after cell. The hover is the read the player is waiting on; the
+        // detect is a question the cursor has already answered.
+        //
+        // It keeps running over a COMPLETED capture, unlike the detect: "every
+        // cell was read" is not "every cell was read right", and the tooltip is
+        // the only thing that can correct a confident wrong match. Its idle
+        // cost is one cursor read per 400 ms — the grab and the OCR are behind
+        // the cursor hit-test — and the re-read of a cell that already matched
+        // is bounded by [`HoverBudget`].
+        if let Some(c) = cursor.filter(|_| hover_due) {
+            hover_tick(&app, &mut session, c);
+            last_hover = Instant::now();
+        }
+
+        // A stop that arrived during the hover must not buy a screen grab and
+        // an OCR call: the detect is as expensive as the hover, and a detached
+        // thread cannot be aborted out of it.
+        if *cancel.borrow() {
+            break;
+        }
+
+        // Timed around the DETECT alone. The hover above is not part of what
+        // "this machine cannot hunt at 1 Hz" measures, and folding it in is
+        // what latched the backoff on 2026-08-26. The tick then says whether
+        // its frame was the whole screen, which is the other half of the same
+        // rule — see [`SLOW_TICK`].
+        if detect_step(
+            &session.state,
+            on_cell,
+            session.occlusion.is_open(),
+            last_detect.elapsed(),
+        ) == DetectStep::Run
+        {
+            let started = Instant::now();
+            let tick = detect_tick(&app, &mut session, cursor, &cancel);
+            let took = started.elapsed();
             last_detect = Instant::now();
             trigger::note_looked(&app);
-            if burst_satisfied(outcome) {
+            if burst_satisfied(tick.outcome) {
                 // The burst did its job. Disarming here rather than letting it
                 // run out is what keeps the expiry log honest, and what sends
                 // the loop back to waiting once this window retires.
                 trigger::disarm(&app);
             }
-        }
-
-        // A stop that arrived during the detect must not buy another screen
-        // grab and another OCR call: the hover tick is as expensive as the
-        // detect, and a detached thread cannot be aborted out of it.
-        if *cancel.borrow() {
-            break;
-        }
-
-        // The hover tick keeps running over a COMPLETED capture, unlike the
-        // detect: "every cell was read" is not "every cell was read right", and
-        // the tooltip is the only thing that can correct a confident wrong
-        // match. Its idle cost is one cursor read per 400 ms — the grab and the
-        // OCR are behind the cursor hit-test — and the re-read of a cell that
-        // already matched is bounded by [`HoverBudget`].
-        if session.state.live && last_hover.elapsed() >= HOVER_INTERVAL {
-            hover_tick(&app, &mut session);
-            last_hover = Instant::now();
-        }
-
-        if let Some(started) = tick_started {
-            let took = started.elapsed();
-            if session.state.note_tick_duration(took) {
-                crate::app_log(
+            match session.state.note_tick_duration(tick.full_frame, took) {
+                Some(BackoffChange::BackedOff) => crate::app_log(
                     &app,
                     format!(
                         "Merc: capture tick took {} ms — detect cadence backing off to {} s",
                         took.as_millis(),
                         DETECT_INTERVAL_SLOW.as_secs()
                     ),
-                );
+                ),
+                Some(BackoffChange::Recovered) => crate::app_log(
+                    &app,
+                    format!(
+                        "Merc: {BACKOFF_DECAY_DETECTS} fast detects — detect cadence back to {} s",
+                        DETECT_INTERVAL.as_secs()
+                    ),
+                ),
+                None => {}
             }
         }
 
@@ -1476,6 +1807,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
         };
         session.panel = None;
         session.header_guard = None;
+        session.crop = None;
         session.sigs.clear();
         // The budget dies with the window. Cancels a merc lookup still on the
         // shared queue — and only then, see `search::close_session`. The
@@ -1513,29 +1845,61 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
 
 /// One detect tick: grab the screen, OCR it, and publish what it holds.
 ///
-/// `None` when the tick bailed on the stop signal after pass 1 — the loop's
-/// capture state was not touched, so it is neither a hit nor a miss and must
-/// not be read as either (see [`burst_satisfied`]).
+/// `cursor` is the loop's ONE read for this iteration, taken before the hover
+/// confirm and so before this grab — which is what the header-withholding rule
+/// below needs it to be. It is up to one hover-OCR older than the frame it
+/// judges, and that is the honest trade against a second read: two reads inside
+/// one iteration let the hold decision and the withholding decision disagree
+/// about where the cursor is, and a disagreement there publishes a tooltip's
+/// text as the mercenary's name.
 fn detect_tick(
     app: &AppHandle,
     session: &mut Session,
+    cursor: Option<(i32, i32)>,
     cancel: &watch::Receiver<bool>,
-) -> Option<DetectOutcome> {
-    // Read the cursor BEFORE the grab, so the crop-merge rule below judges the
-    // frame by where the cursor was while it was being taken.
-    let cursor = crate::capture_mouse_position().ok();
+) -> DetectTick {
+    // A KNOWN panel is re-read on a crop of itself. The full-screen OCR is the
+    // tick's dominant cost, and once the panel has been found the whole answer
+    // lives inside `geometry::detect_crop_bounds`. The grab stays full — the
+    // platform layer captures a monitor, not a region — so what the crop buys
+    // is the OCR, which is the expensive half.
+    //
+    // Decided before the grab so every exit below, the failed ones included,
+    // reports the same frame kind to the backoff.
+    let crop = detect_frame(session.crop, session.panel);
+    let full_frame = crop.is_none();
+    let report = |outcome: Option<DetectOutcome>| DetectTick { outcome, full_frame };
+
+    let started = Instant::now();
     let img = match crate::capture::capture_screen() {
         Ok(img) => img,
         Err(e) => {
             fail(app, session, format!("Merc: screen capture failed — {e}"));
-            return Some(miss(app, session, true));
+            return report(Some(miss(app, session, true)));
         }
     };
-    let lines = match crate::ocr::recognize_lines(&img) {
-        Ok(lines) => lines,
+    let (iw, ih) = {
+        use image::GenericImageView;
+        img.dimensions()
+    };
+    let screen = [iw, ih];
+
+    let cropped = crop.map(|r| img.crop_imm(r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32));
+    let mut view = cropped.as_ref().unwrap_or(&img);
+    let mut frame = match crop {
+        Some(r) => geometry::Frame::cropped((r[0], r[1]), screen),
+        None => geometry::Frame::full(screen),
+    };
+
+    // TRANSLATED THE INSTANT IT COMES BACK. Windows OCR reports boxes in the
+    // pixels it was handed, and every rule below this line — the known-panel
+    // anchor, the column-x test, the cell rects the hover tick hit-tests the
+    // real cursor against — is screen-absolute. See `geometry::Frame`.
+    let mut lines = match crate::ocr::recognize_lines(view) {
+        Ok(lines) => frame.to_screen(lines),
         Err(e) => {
             fail(app, session, format!("Merc: OCR failed — {e}"));
-            return Some(miss(app, session, true));
+            return report(Some(miss(app, session, true)));
         }
     };
 
@@ -1543,8 +1907,48 @@ fn detect_tick(
     // anchor line this frame would otherwise need, and rows landing in the rect
     // the panel was last measured at say the same thing the missing line did.
     // See `geometry::rows_land_in_known_panel`.
-    let Some(layout) = geometry::detect(&lines, &session.geometry, &session.vocab, session.panel)
-    else {
+    let mut layout = geometry::detect(&lines, &session.geometry, &session.vocab, session.panel);
+
+    // A crop that came back empty — or with a panel that does not FIT inside it
+    // — has not seen the whole screen, and a window that MOVED is not a window
+    // that closed. One full look before any of this counts. It costs the OCR
+    // again but not the grab: the full frame is already in hand.
+    let mut retook = false;
+    if geometry::crop_needs_full_look(
+        crop,
+        layout.as_ref().and_then(|l| geometry::panel_bounds(l, &session.geometry)),
+        screen,
+    ) {
+        view = &img;
+        frame = geometry::Frame::full(screen);
+        // Through `to_screen` like the first pass, though this frame IS the
+        // screen and the translation is the identity: ONE seam between OCR
+        // space and screen space, taken by every line vector that leaves the
+        // engine. A second, exempt path is how the next frame kind gets it
+        // wrong (`geometry::Frame`).
+        lines = match crate::ocr::recognize_lines(view) {
+            Ok(lines) => frame.to_screen(lines),
+            Err(e) => {
+                fail(app, session, format!("Merc: OCR failed — {e}"));
+                return report(Some(miss(app, session, true)));
+            }
+        };
+        layout = geometry::detect(&lines, &session.geometry, &session.vocab, session.panel);
+        retook = true;
+    }
+
+    let took = started.elapsed().as_millis();
+    // `crop→full` is its own state in the log, not a plain `full`: it is what a
+    // window that MOVED looks like from here, and it costs two OCRs.
+    let how = if retook { "crop→full" } else { frame.describe() };
+    if debug_mode(app) {
+        crate::app_log(
+            app,
+            format!("Merc: detect on the {how} frame took {took} ms, {} lines", lines.len()),
+        );
+    }
+
+    let Some(layout) = layout else {
         // A tooltip the player just opened sits ON the panel and hides the rows
         // the detect needs. The cursor is the proof — the game opens one only
         // under it — so this tick is not evidence the window closed.
@@ -1559,7 +1963,7 @@ fn detect_tick(
                     "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
                 );
             }
-            return Some(DetectOutcome::Occluded);
+            return report(Some(DetectOutcome::Occluded));
         }
         // Logged once per focus session: a loop that never detects would
         // otherwise leave no trace of having looked at all.
@@ -1575,13 +1979,14 @@ fn detect_tick(
             crate::app_log(
                 app,
                 format!(
-                    "Merc: looked, no recruit window — {} OCR lines, {} skill candidates",
+                    "Merc: looked, no recruit window — {} OCR lines, {} skill candidates \
+                     ({how} frame, {took} ms)",
                     lines.len(),
                     skills
                 ),
             );
         }
-        return Some(miss(app, session, false));
+        return report(Some(miss(app, session, false)));
     };
 
     // From the LAYOUT, not the capture: the capture drops the cells past the
@@ -1589,30 +1994,22 @@ fn detect_tick(
     // Computed here rather than at the end of the tick because the header fold
     // below needs to know whether the cursor is on the panel.
     let panel = geometry::panel_bounds(&layout, &session.geometry);
-    // TWO rects, because the two questions have different answers. Occlusion
-    // asks "could something be drawn over the panel", and its rect reaches over
-    // the footer so a cursor on TAKE ITEM counts. Header withholding asks
-    // "could a tooltip have reached the header band", and a cursor on the
-    // footer is nowhere near it — see `geometry::header_guard_bounds`.
-    let header_guard = geometry::header_guard_bounds(&layout, &session.geometry);
-    // The cursor was read before the grab, so this says where it was WHILE the
-    // frame was taken. Both this frame's rect and the session's count: a
-    // tooltip over the lower rows shrinks this frame's, which would otherwise
-    // put the cursor that caused it outside the guard and publish the tooltip's
-    // own lines as the name.
-    let in_header_guard = cursor_on_panel(header_guard, session.header_guard, cursor);
+    // The next re-detect's crop, from the layout that has the pitch and the
+    // scale to size it.
+    let next_crop = geometry::detect_crop_bounds(&layout, &session.geometry, screen);
 
     // Pass 2 is up to `max_rows` more OCR calls. A stop signal that arrived
     // during pass 1 stops here, leaving the state exactly as it was.
     if *cancel.borrow() {
-        return None;
+        return report(None);
     }
-    let texts = pass2_texts(&img, &layout, &session.geometry);
+    let texts = pass2_texts(view, frame, &layout, &session.geometry);
     let mut result = {
         let state = app.state::<AppState>();
         let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
         build_capture(
-            &img,
+            view,
+            frame,
             &layout,
             &texts,
             now_ms(),
@@ -1622,9 +2019,18 @@ fn detect_tick(
         )
     };
     // Before ANY use of this frame's header — the fold below, and the
-    // completeness check that opens a trade session with it.
-    result.capture.header =
-        publishable_header(std::mem::take(&mut result.capture.header), in_header_guard);
+    // completeness check that opens a trade session with it. The cursor was
+    // read before the grab, so it says where it was WHILE the frame was taken;
+    // the rect the withholding keys on is chosen inside
+    // [`publishable_header_for`], never here.
+    let (published, header_guard) = publishable_header_for(
+        &layout,
+        &session.geometry,
+        session.header_guard,
+        cursor,
+        std::mem::take(&mut result.capture.header),
+    );
+    result.capture.header = published;
     // A forget/reset while this capture was live means the user disowned a
     // confirmation; re-applying it here is exactly what the un-poison button
     // was pressed to stop.
@@ -1677,7 +2083,7 @@ fn detect_tick(
         crate::app_log(
             app,
             format!(
-                "Merc: recruit window detected ({} rows, scale {:.3})",
+                "Merc: recruit window detected ({} rows, scale {:.3}) — {how} frame, {took} ms",
                 result.capture.rows.len(),
                 result.capture.scale
             ),
@@ -1692,6 +2098,7 @@ fn detect_tick(
     session.revision += 1;
     session.panel = panel;
     session.header_guard = header_guard;
+    session.crop = next_crop;
     session.occlusion.on_hit();
 
     // The header as the player will see it, once per CHANGE. Every tick would
@@ -1738,7 +2145,7 @@ fn detect_tick(
         slice.capture = Some(result.capture);
         slice.last_error = None;
     });
-    Some(outcome)
+    report(Some(outcome))
 }
 
 /// Whether a retired capture's confirmations may be re-applied to `next`.
@@ -1817,15 +2224,29 @@ fn restore_retained(session: &mut Session, next: &MercCapture) -> Restore {
     Restore::Applied(restored)
 }
 
+/// The cursor, with a failed read surfaced once.
+///
+/// One reader for the whole iteration: the hover confirm and the detect gate
+/// ([`detect_step`]) are two questions about the same cursor, and two reads
+/// would let them answer about different positions.
+fn read_cursor(app: &AppHandle, session: &mut Session) -> Option<(i32, i32)> {
+    match crate::capture_mouse_position() {
+        Ok(c) => Some(c),
+        Err(e) => {
+            fail(app, session, format!("Merc: cursor position failed — {e}"));
+            None
+        }
+    }
+}
+
 /// One hover tick: if the cursor sits in an unconfirmed captured cell, read the
 /// tooltip and let it name the cell (D5).
-fn hover_tick(app: &AppHandle, session: &mut Session) {
+///
+/// `cursor` comes from the loop, not from a read of its own — see
+/// [`read_cursor`].
+fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) {
     let Some(capture) = session.current.clone() else {
         return;
-    };
-    let cursor = match crate::capture_mouse_position() {
-        Ok(c) => c,
-        Err(e) => return fail(app, session, format!("Merc: cursor position failed — {e}")),
     };
     let Some((ri, si)) = cell_at(&capture, cursor) else {
         return;
@@ -1902,7 +2323,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
 
     let row_index = capture.rows[ri].index;
     let cached = session.sigs.get(&(row_index, cell.slot)).cloned();
-    let (learned, save_err, offer) = match cached {
+    let (learned, needs_save, offer) = match cached {
         Some((sig, raw)) => {
             // The bytes the pool gets, taken before the signature is moved into
             // the store. Copied here rather than read back out of the store so
@@ -1915,18 +2336,13 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
             // reached this cell (D5): a hovered cell may be drawn highlighted,
             // and a template learned from the highlight matches nothing later.
             let learned = store.learn(&family, tier, sig, raw, &session.geometry.thresholds);
-            let err = session
-                .icons_dir
-                .as_ref()
-                .filter(|_| learned)
-                .and_then(|dir| store.save(dir).err());
             (
                 if learned {
                     Learned::Saved
                 } else {
                     Learned::AlreadyKnown
                 },
-                err,
+                learned,
                 // Only a sample the store actually took: art it already had was
                 // offered to the pool when it was first learned.
                 learned.then(|| sync::PendingSample {
@@ -1939,10 +2355,24 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
         // The confirmation still stands — it names the cell. Only the template
         // is missing, and saying so is the difference between "we already knew
         // this art" and "we never had the crop".
-        None => (Learned::NoCrop, None, None),
+        None => (Learned::NoCrop, false, None),
     };
-    if let Some(e) = save_err {
-        fail(app, session, format!("Merc: template store save failed — {e}"));
+    // Off the tick, like the pool upload below it: the write is one PNG per
+    // sample plus the index, and the player is waiting on this read. The queue
+    // is what keeps two confirms in a row from writing the directory at once —
+    // see [`SaveQueue`].
+    if needs_save {
+        // Said once per session, not once per confirm: a writer that has
+        // stopped stops for every later confirm too, and `fail` is the loop's
+        // de-duplicating sink.
+        if session.saves.as_ref().map(SaveQueue::request) == Some(false) {
+            fail(
+                app,
+                session,
+                "Merc: the template-store writer stopped — confirmations hold until a restart"
+                    .to_string(),
+            );
+        }
     }
     // Off the tick: `enqueue` parks the sample and returns, the POST happens on
     // a task. A synchronous upload here would stall the read the user is
@@ -2158,18 +2588,429 @@ mod tests {
         assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
     }
 
+    /// A detect that OCR'd the whole screen — the only frame kind the backoff
+    /// is allowed to read. See [`SLOW_TICK`].
+    const FULL: bool = true;
+    /// A detect that OCR'd a crop of a known panel.
+    const CROP: bool = false;
+
     /// The backoff fires once and only once, and only above the threshold.
     #[test]
     fn a_slow_detect_tick_backs_the_idle_cadence_off_once() {
         let mut st = LoopState::default();
 
-        assert!(!st.note_tick_duration(SLOW_TICK), "at the threshold is not over it");
+        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None, "at the threshold is not over it");
         assert_eq!(st.detect_interval(), DETECT_INTERVAL);
-        assert!(st.note_tick_duration(SLOW_TICK + Duration::from_millis(1)));
+        assert_eq!(
+            st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1)),
+            Some(BackoffChange::BackedOff),
+        );
         assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
-        assert!(
-            !st.note_tick_duration(Duration::from_secs(9)),
+        assert_eq!(
+            st.note_tick_duration(FULL, Duration::from_secs(9)),
+            None,
             "the backoff line is logged once, not on every slow tick",
+        );
+    }
+
+    /// The decay. MEASURED 2026-08-26 (app.log 09:40:06): ONE 4504 ms reading
+    /// latched the backoff for the life of the thread, and every first detect
+    /// after a voice line from then on waited 3 s. Once the machine is
+    /// demonstrably keeping up again — which the cropped re-detect is what
+    /// makes possible — the hunt goes back to 1 Hz.
+    #[test]
+    fn a_run_of_fast_detects_takes_the_backoff_off_again() {
+        let mut st = LoopState::default();
+        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW, "arrange: backed off");
+
+        for _ in 1..BACKOFF_DECAY_DETECTS {
+            assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None, "one fast detect is not a trend");
+            assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
+        }
+
+        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), Some(BackoffChange::Recovered));
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL);
+    }
+
+    /// The run has to be CONSECUTIVE, or a machine alternating fast and slow
+    /// detects would flap the cadence — and with it the log line that
+    /// announces it.
+    #[test]
+    fn a_slow_detect_restarts_the_run_the_decay_counts() {
+        let mut st = LoopState::default();
+        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
+        for _ in 1..BACKOFF_DECAY_DETECTS {
+            st.note_tick_duration(FULL, SLOW_TICK);
+        }
+
+        assert_eq!(
+            st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1)),
+            None,
+            "already backed off — nothing to announce",
+        );
+
+        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None, "the run starts over");
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
+    }
+
+    /// Recovery is announced once, exactly like the backoff.
+    #[test]
+    fn a_recovered_cadence_is_not_announced_again_on_the_next_fast_detect() {
+        let mut st = LoopState::default();
+        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
+        for _ in 0..BACKOFF_DECAY_DETECTS {
+            st.note_tick_duration(FULL, SLOW_TICK);
+        }
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL, "arrange: recovered");
+
+        assert_eq!(st.note_tick_duration(FULL, SLOW_TICK), None);
+    }
+
+    /// The crop gate. A cropped re-detect is a fraction of a full-screen OCR by
+    /// construction, so a slow one is not evidence that hunting at 1 Hz is
+    /// unaffordable — and the cadence it would slow down does not run while a
+    /// panel is known anyway.
+    #[test]
+    fn a_slow_cropped_re_detect_does_not_back_the_hunt_off() {
+        let mut st = LoopState::default();
+
+        assert_eq!(st.note_tick_duration(CROP, Duration::from_secs(9)), None);
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL, "the hunt is untouched");
+    }
+
+    /// …and the same in the other direction: fast crops must not decay a
+    /// backoff the full-screen hunt earned, or the cadence would recover on
+    /// evidence about a cheaper question.
+    #[test]
+    fn fast_cropped_re_detects_do_not_decay_the_backoff() {
+        let mut st = LoopState::default();
+        st.note_tick_duration(FULL, SLOW_TICK + Duration::from_millis(1));
+
+        for _ in 0..BACKOFF_DECAY_DETECTS * 2 {
+            assert_eq!(st.note_tick_duration(CROP, Duration::from_millis(50)), None);
+        }
+
+        assert_eq!(st.detect_interval(), DETECT_INTERVAL_SLOW);
+    }
+
+    // -- whether an iteration detects at all --------------------------------
+
+    /// No occlusion run is open: the detect the hold would displace has not yet
+    /// failed. Every hold test below is in this state.
+    const CLEAR: bool = false;
+    /// A detect HAS already come back with no layout while the cursor sat on
+    /// the panel.
+    const OCCLUDED: bool = true;
+
+    /// The cadence still gates everything: a hold is a decision taken when a
+    /// detect was otherwise DUE, not a reason to look early.
+    #[test]
+    fn an_iteration_inside_the_cadence_waits_whatever_the_cursor_is_doing() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+
+        assert_eq!(
+            detect_step(&st, true, CLEAR, REDETECT_INTERVAL - Duration::from_millis(1)),
+            DetectStep::Wait,
+        );
+    }
+
+    /// The latency fix. MEASURED 2026-08-26 (app.log 09:40:06-09:40:57):
+    /// confirms landed 4-10 s apart because each waited behind a 4.5 s
+    /// re-detect of a panel that had not moved. A cursor inside a captured cell
+    /// is proof the window is on screen.
+    #[test]
+    fn a_cursor_inside_a_captured_cell_holds_the_re_detect() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+
+        assert_eq!(detect_step(&st, true, CLEAR, REDETECT_INTERVAL), DetectStep::HoldForConfirm);
+    }
+
+    /// With the cursor off the grid there is nothing being confirmed, and the
+    /// re-detect is the only thing watching the window.
+    #[test]
+    fn a_cursor_off_the_grid_does_not_hold_the_re_detect() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+
+        assert_eq!(detect_step(&st, false, CLEAR, REDETECT_INTERVAL), DetectStep::Run);
+    }
+
+    /// Nothing captured means no cell to be inside and nothing to confirm — the
+    /// hunt must not be holdable, or an armed burst could never find a window.
+    #[test]
+    fn nothing_live_is_never_held() {
+        let st = LoopState::default();
+
+        assert_eq!(detect_step(&st, true, CLEAR, DETECT_INTERVAL), DetectStep::Run);
+    }
+
+    /// The ceiling. A cursor parked on a cell must not stop the loop ever
+    /// noticing a window that closed, so a whole liveness interval without a
+    /// detect ends the hold whatever the cursor is doing.
+    #[test]
+    fn a_cursor_parked_on_a_cell_still_gets_its_liveness_re_detect() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+
+        assert_eq!(detect_step(&st, true, CLEAR, LIVENESS_INTERVAL), DetectStep::Run);
+    }
+
+    /// A hold is NOT a miss. Composed the way the loop composes them: the hold
+    /// never reaches `on_detect`, so it cannot advance the retire counter — and
+    /// it fires exactly when a tooltip is up, which is the frame the detect
+    /// fails on. Without the hold these two iterations are two misses and the
+    /// capture the player is confirming retires under them.
+    #[test]
+    fn holding_the_re_detect_while_the_player_confirms_never_retires_the_capture() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        let mut since = Duration::ZERO;
+
+        for _ in 0..RETIRE_AFTER {
+            since += REDETECT_INTERVAL;
+            if detect_step(&st, true, CLEAR, since) == DetectStep::Run {
+                // What a detect under a tooltip returns.
+                st.on_detect(false);
+                since = Duration::ZERO;
+            }
+        }
+
+        assert!(st.live, "the window the player is hovering is still on screen");
+        assert_eq!(st.misses, 0, "a held iteration is not evidence of a closed window");
+    }
+
+    /// A cursor parked on a cell must not hold a CLOSED window's verdict on
+    /// screen for ever — and the schedule it comes off on is the composition of
+    /// three rules, not `detect_step`'s ceiling alone. Composed here the way
+    /// the loop composes it, because the arithmetic over `detect_step` and
+    /// `on_detect` by themselves describes a path no closed window takes: a
+    /// cursor on a cell is a cursor inside the panel, so every failed detect
+    /// goes through [`OcclusionRun`] first and is HELD, not counted, until the
+    /// cap.
+    ///
+    /// The 28 s is [`LIVENESS_INTERVAL`] for the held ceiling to arrive
+    /// (10 s), then [`OCCLUDED_MAX`] of occluded ticks rounded up to the
+    /// [`REDETECT_INTERVAL`] grid the hold-suppression puts them back on
+    /// (16 s), then one more cadence for the second of [`RETIRE_AFTER`]
+    /// misses (2 s). Without the suppression those last three ticks are 10 s
+    /// apart and the same close takes 40 s.
+    #[test]
+    fn a_window_closed_under_a_parked_cursor_retires_once_the_occlusion_cap_has_passed() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        let mut run = OcclusionRun::default();
+        let start = Instant::now();
+        let (mut since, mut elapsed, mut retired_at) = (Duration::ZERO, Duration::ZERO, None);
+
+        // The loop's own quantum, so the cadences fall where they really fall.
+        while elapsed < Duration::from_secs(120) {
+            since += TICK;
+            elapsed += TICK;
+            if detect_step(&st, true, run.is_open(), since) != DetectStep::Run {
+                continue;
+            }
+            since = Duration::ZERO;
+            // A detect that found no layout, with the cursor inside the panel:
+            // exactly what `detect_tick` does with one.
+            if run.on_occluded(st.live, true, start + elapsed) == MissKind::Occluded {
+                continue;
+            }
+            if st.on_detect(false) == DetectOutcome::Retired {
+                run.on_retired();
+                retired_at = Some(elapsed);
+                break;
+            }
+        }
+
+        assert_eq!(retired_at, Some(Duration::from_secs(28)));
+        assert!(!st.live);
+    }
+
+    /// The hold's premise is that the cursor proves the window is on screen. A
+    /// detect that already came back with no layout under that cursor is that
+    /// premise disproved, so the loop stops holding and goes back to the
+    /// re-detect cadence — which is the cadence [`OCCLUDED_MAX`] is sized
+    /// against.
+    #[test]
+    fn an_open_occlusion_run_ends_the_hold() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+
+        assert_eq!(detect_step(&st, true, OCCLUDED, REDETECT_INTERVAL), DetectStep::Run);
+    }
+
+    // -- which frame a detect takes -----------------------------------------
+
+    /// The crop is a rect measured from a layout that is no longer on screen.
+    /// Re-using it with nothing captured would hunt for the NEXT recruit window
+    /// inside the last one's outline and never look anywhere else.
+    #[test]
+    fn a_leftover_crop_is_not_taken_when_no_panel_is_known() {
+        assert_eq!(detect_frame(Some([100, 100, 400, 400]), None), None);
+    }
+
+    /// The ordinary re-detect: a known panel is re-read on a crop of itself,
+    /// which is what takes the full-screen OCR out of the tick.
+    #[test]
+    fn a_known_panels_crop_is_the_frame_the_re_detect_takes() {
+        let crop = [100, 100, 400, 400];
+
+        assert_eq!(detect_frame(Some(crop), Some([150, 150, 200, 200])), Some(crop));
+    }
+
+    /// A panel known but no crop measured for it — the state a layout with no
+    /// bounds leaves — is the full screen, not a panic and not a stale rect.
+    #[test]
+    fn a_known_panel_with_no_crop_measured_takes_the_full_screen() {
+        assert_eq!(detect_frame(None, Some([150, 150, 200, 200])), None);
+    }
+
+    // -- the off-tick template-store write ----------------------------------
+
+    /// The point of the queue: the caller does not wait for the write. The
+    /// save here blocks until the test lets it go, and `request` still returns.
+    #[test]
+    fn a_save_request_returns_without_waiting_for_the_write() {
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let queue = SaveQueue::spawn(move || {
+            started_tx.send(()).ok();
+            release_rx.recv().ok();
+        });
+
+        assert!(queue.request(), "the worker is alive");
+
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the write runs on the worker, not on the caller");
+        release_tx.send(()).ok();
+    }
+
+    /// A save that panics must not take the queue with it. Uncaught, the worker
+    /// thread dies and every later confirm is silently never written — the
+    /// store would be correct in memory and empty on disk until the next start.
+    #[test]
+    fn a_panicking_save_does_not_take_the_queue_with_it() {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<u8>();
+        let calls = AtomicU8::new(0);
+        let queue = SaveQueue::spawn(move || {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                panic!("an image encoder gave up on one sample");
+            }
+            done_tx.send(n).ok();
+        });
+
+        assert!(queue.request(), "the first write is asked for");
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "arrange: the first save panicked instead of finishing",
+        );
+        assert!(queue.request(), "the queue is still there to ask");
+
+        assert_eq!(
+            done_rx.recv_timeout(Duration::from_secs(5)),
+            Ok(2),
+            "the confirm after the panic is written",
+        );
+    }
+
+    /// …and when the worker IS gone, the caller is told rather than left
+    /// believing its confirmation reached disk. `hover_tick` turns this into
+    /// one log line per session.
+    #[test]
+    fn a_request_with_no_worker_left_says_so() {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        drop(rx);
+        let queue = SaveQueue { tx };
+
+        assert!(!queue.request());
+    }
+
+    /// Two confirms back to back must not write the store directory at once,
+    /// and each must be written: the second confirm's sample is only on disk
+    /// if a write ran after it.
+    #[test]
+    fn two_confirms_in_a_row_are_written_one_after_the_other() {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        use std::sync::{Arc, Mutex};
+        let learned = Arc::new(AtomicU8::new(0));
+        let in_flight = Arc::new(AtomicU8::new(0));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let queue = {
+            let (learned, in_flight, seen) = (learned.clone(), in_flight.clone(), seen.clone());
+            SaveQueue::spawn(move || {
+                assert_eq!(
+                    in_flight.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "two writes of the same directory overlapped",
+                );
+                let store = learned.load(Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(10));
+                seen.lock().unwrap().push(store);
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                done_tx.send(()).ok();
+            })
+        };
+
+        learned.store(1, Ordering::SeqCst);
+        assert!(queue.request(), "the worker is alive");
+        done_rx.recv_timeout(Duration::from_secs(5)).expect("the first confirm is written");
+        learned.store(2, Ordering::SeqCst);
+        assert!(queue.request(), "the worker is alive");
+        done_rx.recv_timeout(Duration::from_secs(5)).expect("the second confirm is written too");
+
+        assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
+    }
+
+    /// Confirms that land WHILE a write is running collapse into one more
+    /// write — the write is of the whole store, so one after the last request
+    /// says everything the queued ones did. What must not happen is the burst
+    /// being swallowed: the last confirm's sample would never reach disk, and
+    /// the next start would re-learn art the player already confirmed.
+    #[test]
+    fn a_burst_of_confirms_ends_in_one_write_of_the_last_one() {
+        use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+        use std::sync::{Arc, Mutex};
+        let learned = Arc::new(AtomicU8::new(0));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let queue = {
+            let (learned, seen) = (learned.clone(), seen.clone());
+            let first = AtomicBool::new(true);
+            SaveQueue::spawn(move || {
+                let store = learned.load(Ordering::SeqCst);
+                if first.swap(false, Ordering::SeqCst) {
+                    started_tx.send(()).ok();
+                    gate_rx.recv().ok();
+                }
+                seen.lock().unwrap().push(store);
+                done_tx.send(()).ok();
+            })
+        };
+
+        learned.store(1, Ordering::SeqCst);
+        assert!(queue.request(), "the worker is alive");
+        started_rx.recv_timeout(Duration::from_secs(5)).expect("the first write started");
+        learned.store(2, Ordering::SeqCst);
+        assert!(queue.request(), "the worker is alive");
+        learned.store(3, Ordering::SeqCst);
+        assert!(queue.request(), "the worker is alive");
+        gate_tx.send(()).ok();
+
+        done_rx.recv_timeout(Duration::from_secs(5)).expect("the held write finishes");
+        done_rx.recv_timeout(Duration::from_secs(5)).expect("the burst is written");
+        assert_eq!(*seen.lock().unwrap(), vec![1, 3]);
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "two queued confirms are one write, not two",
         );
     }
 
@@ -2178,7 +3019,7 @@ mod tests {
     #[test]
     fn the_backoff_does_not_slow_a_live_capture() {
         let mut st = LoopState::default();
-        st.note_tick_duration(Duration::from_secs(3));
+        st.note_tick_duration(FULL, Duration::from_secs(3));
         st.on_detect(true);
 
         assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
@@ -2812,7 +3653,7 @@ mod tests {
     /// Idling here instead would leave a retired window on screen for good.
     #[test]
     fn a_completed_capture_still_works_so_the_liveness_check_can_run() {
-        let paused = LoopState { live: true, misses: 0, backed_off: false, complete: true };
+        let paused = LoopState { live: true, complete: true, ..LoopState::default() };
 
         assert_eq!(next_step(paused.live, false, true), LoopStep::Work);
         assert_eq!(paused.detect_interval(), LIVENESS_INTERVAL);
@@ -2823,7 +3664,7 @@ mod tests {
     /// capture is STILL live, so liveness cannot stand in for a hit.
     #[test]
     fn a_missed_tick_under_a_live_capture_does_not_satisfy_the_burst() {
-        let mut state = LoopState { live: true, misses: 0, backed_off: false, complete: false };
+        let mut state = LoopState { live: true, ..LoopState::default() };
 
         let outcome = state.on_detect(false);
 
@@ -2841,14 +3682,14 @@ mod tests {
 
     #[test]
     fn a_re_read_of_a_live_window_satisfies_the_burst() {
-        let mut state = LoopState { live: true, misses: 0, backed_off: false, complete: false };
+        let mut state = LoopState { live: true, ..LoopState::default() };
 
         assert!(burst_satisfied(Some(state.on_detect(true))));
     }
 
     #[test]
     fn a_retiring_tick_does_not_satisfy_the_burst() {
-        let mut state = LoopState { live: true, misses: RETIRE_AFTER - 1, backed_off: false, complete: false };
+        let mut state = LoopState { live: true, misses: RETIRE_AFTER - 1, ..LoopState::default() };
 
         assert_eq!(state.on_detect(false), DetectOutcome::Retired);
         assert!(!burst_satisfied(Some(DetectOutcome::Retired)));
@@ -2988,6 +3829,128 @@ mod tests {
         };
 
         assert_eq!(publishable_header(header.clone(), false), header);
+    }
+
+    // -- the rect the header rule keys on ----------------------------------
+
+    /// A two-row panel, built the way the loop builds one: from OCR lines
+    /// through `geometry::detect`, so the rects under test are the rects the
+    /// real layout produces.
+    fn detected_layout() -> geometry::MercLayout {
+        let lines = vec![
+            OcrLineBox { text: "Wager: 1 028".into(), x: 100, y: 40, w: 90, h: 16 },
+            OcrLineBox { text: "Ice Shot".into(), x: 100, y: 92, w: 64, h: 16 },
+            OcrLineBox { text: "Conductivity".into(), x: 100, y: 141, w: 96, h: 16 },
+        ];
+        geometry::detect(&lines, &MercGeometry::default(), &vocab(), None)
+            .expect("the reference lines detect as a panel")
+    }
+
+    fn named_header() -> MercHeader {
+        MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: Some("Fallen Reverend".into()),
+            level: Some(83),
+            wager: Some(1028),
+        }
+    }
+
+    /// The WI-A review carry-over, as a test. The occlusion rect and the header
+    /// guard are one `bounds` call apart, and wiring this to `panel_bounds`
+    /// would blank the name at the exact moment the player's cursor is on TAKE
+    /// ITEM — the click that ends the window and the moment the name matters
+    /// most. A cursor on the footer is inside the panel and outside the guard,
+    /// and the header it read stands.
+    #[test]
+    fn a_cursor_on_the_footer_still_publishes_the_header_the_frame_read() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let panel = geometry::panel_bounds(&layout, &g).expect("two rows have bounds");
+        let guard = geometry::header_guard_bounds(&layout, &g).expect("two rows have a guard");
+        let on_footer = (panel[0] + panel[2] / 2, guard[1] + guard[3] + 4);
+        assert!(geometry::contains(panel, on_footer), "arrange: the cursor is on the footer");
+        assert!(!geometry::contains(guard, on_footer), "arrange: and below the header guard");
+
+        let (published, _) =
+            publishable_header_for(&layout, &g, None, Some(on_footer), named_header());
+
+        assert_eq!(published, named_header());
+    }
+
+    /// The other half of the same choice: a cursor inside the guard IS a
+    /// tooltip that could have put lines in the header band, and the name and
+    /// class it read are withheld.
+    #[test]
+    fn a_cursor_inside_the_header_guard_withholds_the_name_and_class() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let guard = geometry::header_guard_bounds(&layout, &g).expect("two rows have a guard");
+        let on_grid = (guard[0] + guard[2] / 2, guard[1] + guard[3] / 2);
+
+        let (published, _) = publishable_header_for(
+            &layout,
+            &g,
+            None,
+            Some(on_grid),
+            MercHeader {
+                name: Some(geometry::TOOLTIP_NAME.into()),
+                ..named_header()
+            },
+        );
+
+        assert_eq!(published.name, None);
+        assert_eq!(published.class, None);
+        assert_eq!(published.level, Some(83), "the level survives — it is how a REMATCH is seen");
+    }
+
+    /// The rect handed back for the next frame is the HEADER guard. The session
+    /// unions it with the next frame's own, so returning the footer-extended
+    /// rect here would widen the withholding rule one frame later — the same
+    /// miswiring, delayed.
+    ///
+    /// Measured against the panel rect rather than against another call of the
+    /// function under test: the two differ by exactly the footer reach
+    /// `geometry` keeps out of the header question
+    /// (`PANEL_FOOTER_PITCHES` 3 less `HEADER_GUARD_FOOTER_PITCHES` 1), and
+    /// the same box everywhere else.
+    #[test]
+    fn the_rect_left_for_the_next_frame_is_the_header_guard_not_the_panel() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let panel = geometry::panel_bounds(&layout, &g).expect("two rows have a panel rect");
+
+        let (_, guard) = publishable_header_for(&layout, &g, None, None, named_header());
+
+        let guard = guard.expect("two rows have a guard rect");
+        assert_eq!(
+            [guard[0], guard[1], guard[2]],
+            [panel[0], panel[1], panel[2]],
+            "the same box left, right and on top",
+        );
+        assert_eq!(
+            panel[3] - guard[3],
+            (layout.row_pitch * 2.0).round() as i32,
+            "and two pitches shorter — the footer the header rule does not want",
+        );
+    }
+
+    /// The union with the LAST frame's guard, inside the unit now. A tooltip
+    /// over the lower rows costs the detect those rows, so this frame's guard
+    /// stops above the cursor that caused it; the session's rect is the last
+    /// frame that saw the whole panel.
+    #[test]
+    fn a_cursor_below_this_frames_guard_but_inside_the_last_one_still_withholds() {
+        let g = MercGeometry::default();
+        let layout = detected_layout();
+        let guard = geometry::header_guard_bounds(&layout, &g).expect("two rows have a guard");
+        let taller = [guard[0], guard[1], guard[2], guard[3] * 3];
+        let below = (guard[0] + guard[2] / 2, guard[1] + guard[3] + 10);
+        assert!(!geometry::contains(guard, below), "arrange: outside this frame's guard");
+
+        let (published, _) =
+            publishable_header_for(&layout, &g, Some(taller), Some(below), named_header());
+
+        assert_eq!(published.name, None);
     }
 
     /// The log line exists to date a header that went wrong, so it prints the
@@ -3155,10 +4118,11 @@ mod tests {
             confirmed: HashMap::new(),
             hover_budget: HoverBudget::default(),
             template_generation: 0,
-            icons_dir: None,
+            saves: None,
             miss_logged: false,
             panel: None,
             header_guard: None,
+            crop: None,
             occlusion: OcclusionRun::default(),
             header_logged: None,
             retained: None,

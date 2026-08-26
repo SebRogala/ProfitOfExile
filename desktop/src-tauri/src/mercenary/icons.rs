@@ -43,6 +43,29 @@ const MASK_H_FRAC: f32 = 0.35;
 /// Index file naming the templates in a store directory.
 const INDEX_FILE: &str = "index.json";
 
+/// Run one write of the template directory, serialised against every other
+/// writer of it (POE-204 WI-B).
+///
+/// [`TemplateStore::save`] writes one PNG per sample and THEN `index.json`, and
+/// four owners call it: the loop's off-tick `run::SaveQueue` worker,
+/// `sync::apply_corpus` when the pool's art lands, `sync::mark_uploaded` when a
+/// batch is placed, and the forget/reset commands. The in-memory store's mutex
+/// does not serialise them — the worker drops it before writing on purpose, so
+/// the PNG writes do not stall the detect tick — and two overlapping writes end
+/// with one caller's `index.json` over the other's PNGs: pooled art on disk
+/// that no index names, under an ETag that says the pool already served it, so
+/// every later pull answers 304 and the art never comes back.
+///
+/// **Lock order: this lock FIRST, then `AppState::merc_templates`.** Every
+/// writer takes it around the whole read-modify-write, which is also what stops
+/// a snapshot going stale between being taken and being written. Taking the
+/// store's mutex first anywhere would close a cycle with the callers that hold
+/// this one across it.
+pub fn writing_icons_dir<T>(lock: &std::sync::Mutex<()>, write: impl FnOnce() -> T) -> T {
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    write()
+}
+
 /// A normalized cell signature: 24×24 grayscale, zero-mean and unit-stddev
 /// over its unmasked cells, with the badge corner zeroed.
 #[derive(Debug, Clone, PartialEq)]
@@ -315,7 +338,15 @@ impl MergeOutcome {
 }
 
 /// The learned icon templates, keyed by `(family, tier)`.
-#[derive(Debug, Default)]
+///
+/// `Clone` so the off-tick writer can take a SNAPSHOT under the mutex and do
+/// its disk I/O outside it. [`Self::save`] writes one PNG per sample plus the
+/// index, and holding the store's lock across that would put every
+/// [`Self::match_family`] call on the detect tick behind the filesystem — the
+/// stall the off-tick save exists to remove, moved rather than fixed. The copy
+/// is cheap next to the write it replaces: a full store is
+/// [`Self::MAX_SAMPLES_PER_KEY`] × 24×24 grayscale plus the 44×44 raw crops.
+#[derive(Debug, Default, Clone)]
 pub struct TemplateStore {
     templates: Vec<Template>,
 }
@@ -2060,5 +2091,60 @@ mod tests {
         assert_eq!(loaded.learned_keys(), ["Chain--2"]);
         assert!(loaded.pooled_keys().is_empty(), "an old sample is the user's own");
         assert_eq!(loaded.pending_uploads().len(), 1, "and is owed to the pool");
+    }
+
+    // -- the directory write lock -------------------------------------------
+
+    /// The two writers of one directory — the loop's off-tick `SaveQueue`
+    /// worker and `sync`'s corpus merge — must not be inside `save` at the same
+    /// time. The store's own mutex does not answer this: the worker drops it
+    /// before writing. Composed as a handshake rather than with sleeps, so the
+    /// overlap window is real and the test is not timing-dependent: the sync
+    /// write is asked for while the worker is provably still inside its own.
+    #[test]
+    fn a_pool_merge_cannot_write_the_directory_while_the_off_tick_worker_is_in_it() {
+        use std::sync::mpsc::channel;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+        let lock = Arc::new(Mutex::new(()));
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let (worker_in_tx, worker_in_rx) = channel::<()>();
+        let (release_tx, release_rx) = channel::<()>();
+        let (merge_done_tx, merge_done_rx) = channel::<()>();
+
+        let worker = {
+            let (lock, order) = (lock.clone(), order.clone());
+            std::thread::spawn(move || {
+                writing_icons_dir(&lock, || {
+                    worker_in_tx.send(()).ok();
+                    release_rx.recv().ok();
+                    order.lock().unwrap().push("worker");
+                })
+            })
+        };
+        worker_in_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the worker is inside its write");
+        let merge = {
+            let (lock, order) = (lock.clone(), order.clone());
+            std::thread::spawn(move || {
+                writing_icons_dir(&lock, || {
+                    order.lock().unwrap().push("merge");
+                    merge_done_tx.send(()).ok();
+                })
+            })
+        };
+
+        assert!(
+            merge_done_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the merge wrote the directory while the worker was still in it",
+        );
+        release_tx.send(()).ok();
+        merge_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the merge writes once the worker is out");
+        worker.join().expect("worker");
+        merge.join().expect("merge");
+        assert_eq!(*order.lock().unwrap(), ["worker", "merge"]);
     }
 }
