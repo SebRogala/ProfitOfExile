@@ -51,9 +51,22 @@
 	import { enabledSources, withSourceEnabled } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
 	import { savedSearchUrl } from '$lib/mercenaries/trade-links';
+	import {
+		MERC_TRADE_MAX_SEARCHES,
+		tradeHeadline,
+		tradeStatusLabel,
+		tradeStatusTone
+	} from '$lib/mercenaries/trade-view';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Button from '$lib/components/Button.svelte';
-	import { setMercSourcesOff, ssot } from '$lib/stores/ssot.svelte';
+	import TradeListings from '$lib/components/TradeListings.svelte';
+	import { mercListingRow } from '$lib/tradeApi';
+	import {
+		setMercSourcesOff,
+		setMercTierFloor,
+		setMercTradeAuto,
+		ssot
+	} from '$lib/stores/ssot.svelte';
 
 	// Every rule shown here is read from `$lib/mercenaries/rulesets` — the page
 	// renders the rulesets, it never re-derives them. In particular the glyph and
@@ -130,6 +143,39 @@
 	 *  would put this page one poll ahead of the overlay. */
 	async function setSourceEnabled(id: MercSourceId, on: boolean): Promise<void> {
 		sourcesError = await setMercSourcesOff(withSourceEnabled(merc.sourcesOff, id, on));
+	}
+
+	// --- Trade (POE-202) ------------------------------------------------------
+
+	/** Rust owns the search; the page shows what it decided. `trade.status` is
+	 *  `off` whenever the module is off, but `compose_snapshot` forces only the
+	 *  STATUS and leaves `result` and `url` on the slice — so the whole section
+	 *  keeps rendering either way, exactly as the capture and verdict cards keep
+	 *  showing the retired capture. Only the badge changes. */
+	const trade = $derived(merc.trade);
+	const tradeRows = $derived((trade.result?.listings ?? []).map(mercListingRow));
+	const tradeLine = $derived(tradeHeadline(trade));
+
+	/** The tier the query comps down to. 3 is the mercenary exactly as read;
+	 *  lower floors add the weaker grades of each support's own family, which is
+	 *  a wider — and cheaper — market than the capture. */
+	const TIER_FLOOR_OPTIONS = [
+		{ value: '1', label: 'any tier' },
+		{ value: '2', label: 'tier 2+' },
+		{ value: '3', label: 'exact' }
+	];
+
+	/** What Rust said no to, shown where it was said. Both setters echo the
+	 *  accepted value onto the slice, so neither control moves until the round
+	 *  trip lands — the merc overlay reads the same fields. */
+	let tradeError = $state<string | null>(null);
+
+	async function setTradeAuto(on: boolean): Promise<void> {
+		tradeError = await setMercTradeAuto(on);
+	}
+
+	async function setTierFloor(floor: string): Promise<void> {
+		tradeError = await setMercTierFloor(Number(floor));
 	}
 
 	// --- Module commands ------------------------------------------------------
@@ -494,6 +540,65 @@
 		{/if}
 	</section>
 
+	<!-- 4. Trade: what this exact mercenary is going for, searched automatically. -->
+	<section class="card trade-card">
+		<div class="card-head">
+			<h2 class="card-title">Trade</h2>
+			<span class="badge tone-{tradeStatusTone(trade)}">{tradeStatusLabel(trade)}</span>
+			{#if trade.searchesUsed > 0}
+				<span
+					class="meta"
+					title="The app searches at most {MERC_TRADE_MAX_SEARCHES} times per captured mercenary. Once the budget is spent the link still works."
+				>
+					{trade.searchesUsed}/{MERC_TRADE_MAX_SEARCHES} searches this capture
+				</span>
+			{/if}
+			<span class="spacer"></span>
+			{#if trade.url}
+				<a class="guide-link" href={trade.url} target="_blank">trade ↗</a>
+			{/if}
+		</div>
+
+		<!-- Rendered whatever the status, module off included: Rust keeps the
+		     link and the listings on the slice through a force-off, and dropping
+		     them here would throw away an answer that is still true about the
+		     capture the rest of the page is still showing. -->
+		{#if tradeLine}
+			<p class="trade-headline">{tradeLine}</p>
+		{/if}
+		<!-- Prices are the sellers' own numbers in the sellers' own currency:
+		     this page has no divine rate, so there is nothing to convert with
+		     and a converted column would be invented. The order is GGG's
+		     `price asc`, which IS a value order. -->
+		<TradeListings rows={tradeRows} rawCurrency />
+
+		<!-- Both settings stay rendered with the module off (ADR-014): the page is
+		     browsable either way. -->
+		<div class="trade-settings">
+			<label class="source-toggle">
+				<input
+					type="checkbox"
+					checked={merc.tradeAuto}
+					onchange={(e) => setTradeAuto(e.currentTarget.checked)}
+				/>
+				<span>Search automatically</span>
+			</label>
+			<span class="trade-floor">
+				<span class="meta">Support tiers</span>
+				<SegmentedButtons
+					value={String(merc.tierFloor)}
+					options={TIER_FLOOR_OPTIONS}
+					onselect={setTierFloor}
+					title="How far below the read tier the search comps. Exact prices the mercenary as captured; a lower floor also matches the weaker grades of each support, which is a wider and cheaper market."
+				/>
+			</span>
+		</div>
+
+		{#if tradeError}
+			<p class="settings-error">{tradeError}</p>
+		{/if}
+	</section>
+
 	<section class="panel">
 		<header class="panel-head">
 			<h2>{source.label}</h2>
@@ -735,7 +840,7 @@
 		</div>
 	</section>
 
-	<!-- 4. Settings: which sources take part in the verdict. -->
+	<!-- 5. Settings: which sources take part in the verdict. -->
 	<section class="card settings-card">
 		<h2 class="card-title">Settings</h2>
 		<p class="meta">
@@ -826,8 +931,29 @@
 	.status-card,
 	.capture-card,
 	.verdict-card,
+	.trade-card,
 	.settings-card {
 		margin-bottom: 1rem;
+	}
+
+	.trade-headline {
+		font-size: 0.82rem;
+		color: var(--color-lab-text);
+		margin-top: 0.5rem;
+	}
+
+	.trade-settings {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 1rem;
+		margin-top: 0.75rem;
+	}
+
+	.trade-floor {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 	}
 
 	.settings-card {

@@ -20,11 +20,25 @@
 	let {
 		rows,
 		detail,
-		detailLabel = 'Detail'
+		detailLabel = 'Detail',
+		rawCurrency = false
 	}: {
 		rows: TradeListingRow[];
 		detail?: Snippet<[number]>;
 		detailLabel?: string;
+		/**
+		 * Print `amount currency` exactly as the seller wrote it, instead of the
+		 * chaos-denominated default.
+		 *
+		 * The default assumes what the gem surface has: every listing is priced
+		 * in chaos or divine, and `chaosPrice` is a REAL conversion, because the
+		 * Comparator reads a divine rate off the market page. The mercenary
+		 * result (POE-202) has neither — Rust normalises with a rate of 0, so
+		 * `chaosPrice` is just the seller's own number, and the currency can be
+		 * any of GGG's. Printing "1 div (1c)", or "5c" for 5 exalted, would be
+		 * an exchange rate nobody computed.
+		 */
+		rawCurrency?: boolean;
 	} = $props();
 
 	function fmtPrice(v: number): string {
@@ -51,7 +65,10 @@
 		{#each rows as row, i}
 			<div class="trade-listing-row" class:with-detail={!!detail}>
 				<span class="tl-col-price">
-					{#if row.currency === 'divine'}
+					{#if rawCurrency}
+						{fmtPrice(row.amount)}
+						{row.currency}
+					{:else if row.currency === 'divine'}
 						{fmtPrice(row.amount)} div
 						<span class="tl-original">({fmtPrice(row.chaosPrice)}c)</span>
 					{:else}

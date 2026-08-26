@@ -588,6 +588,16 @@ describe('mercenary slice', () => {
 				queuedUploads: 0,
 				lastError: null,
 			},
+			trade: {
+				status: 'idle',
+				queryHash: null,
+				url: null,
+				result: null,
+				error: null,
+				searchesUsed: 0,
+			},
+			tradeAuto: true,
+			tierFloor: 3,
 		};
 	}
 
@@ -648,6 +658,16 @@ describe('mercenary slice', () => {
 					queuedUploads: 0,
 					lastError: null,
 				},
+				trade: {
+					status: 'idle',
+					queryHash: null,
+					url: null,
+					result: null,
+					error: null,
+					searchesUsed: 0,
+				},
+				tradeAuto: true,
+				tierFloor: 3,
 			},
 		});
 		expect(mod.ssot.mercenary.status).toBe('idle');
