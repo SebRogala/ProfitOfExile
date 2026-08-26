@@ -37,6 +37,7 @@ pub mod geometry;
 pub mod icons;
 pub mod read;
 pub mod run;
+pub mod search;
 pub mod sources;
 pub mod sync;
 pub mod trigger;

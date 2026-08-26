@@ -495,7 +495,7 @@ pub fn header_complete(header: &super::MercHeader) -> bool {
 
 /// The two states a hover cannot improve. The same pair the verdict engine
 /// treats as confident (`verdict.ts`'s `CONFIDENT_STATES`).
-fn confident(state: ReadState) -> bool {
+pub(super) fn confident(state: ReadState) -> bool {
     matches!(state, ReadState::Matched | ReadState::Confirmed)
 }
 
