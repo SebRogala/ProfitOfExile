@@ -735,6 +735,145 @@ describe('mercenary slice', () => {
 			msg: expect.stringContaining('merc_set_sources_off failed'),
 		});
 	});
+
+	/**
+	 * The trade half (POE-202) rides the same whole-slice apply as the rest, and
+	 * every field below differs from the empty default on purpose — a dropped
+	 * field would land on its default and pass a laxer assertion by coincidence.
+	 */
+	function tradedSlice(): MercenarySlice {
+		return {
+			...liveSlice(),
+			trade: {
+				status: 'done',
+				queryHash: 'a1b2c3',
+				url: 'https://www.pathofexile.com/trade/search/Mirage/abc',
+				result: {
+					queryHash: 'a1b2c3',
+					league: 'Mirage',
+					total: 87,
+					listings: [
+						{
+							chaosPrice: 1250,
+							currency: 'divine',
+							amount: 5,
+							account: 'SellerOne',
+							indexedAt: '2026-08-26T01:00:00Z',
+						},
+					],
+					floorChaos: 1250,
+					medianChaos: 1400,
+					fetchedAtMs: 1_700_000_000_000,
+					truncated: true,
+				},
+				error: null,
+				searchesUsed: 2,
+			},
+			tradeAuto: false,
+			tierFloor: 1,
+		};
+	}
+
+	/**
+	 * The trade state is STORED on the Rust slice rather than composed from
+	 * settings, and the merc overlay is expected to read the same one — so a
+	 * field this apply drops is a field two windows disagree about.
+	 */
+	it('applies the trade state the snapshot carries', () => {
+		mod.applySnapshot({ league, mercenary: tradedSlice() });
+		expect(mod.ssot.mercenary.trade.status).toBe('done');
+		expect(mod.ssot.mercenary.trade.queryHash).toBe('a1b2c3');
+		expect(mod.ssot.mercenary.trade.url).toContain('/trade/search/Mirage/abc');
+		expect(mod.ssot.mercenary.trade.result?.total).toBe(87);
+		expect(mod.ssot.mercenary.trade.result?.truncated).toBe(true);
+		expect(mod.ssot.mercenary.trade.searchesUsed).toBe(2);
+	});
+
+	/**
+	 * Both settings echoes default to the permissive end (`true` / `3`), so an
+	 * apply that skipped them would silently re-arm an auto-search the user
+	 * switched off and re-tighten a floor they widened.
+	 */
+	it('applies the auto-search and tier-floor echoes the snapshot carries', () => {
+		mod.applySnapshot({ league, mercenary: tradedSlice() });
+		expect(mod.ssot.mercenary.tradeAuto).toBe(false);
+		expect(mod.ssot.mercenary.tierFloor).toBe(1);
+	});
+
+	/**
+	 * Fail-closed on absence, same rule as the capture: a payload that does not
+	 * carry the slice is a malformed or older one, and blanking the listings
+	 * the reader is looking at would be a lie about what the search found.
+	 */
+	it('keeps the last known trade result when the snapshot carries no mercenary field', () => {
+		mod.applySnapshot({ league, mercenary: tradedSlice() });
+		mod.applySnapshot({ league });
+		expect(mod.ssot.mercenary.trade.result?.total).toBe(87);
+		expect(mod.ssot.mercenary.tradeAuto).toBe(false);
+		expect(mod.ssot.mercenary.tierFloor).toBe(1);
+	});
+
+	/**
+	 * The trigger loop in Rust reads the toggle every tick, so the write goes
+	 * to Rust and the echo comes back through a re-fetch. A local optimistic
+	 * write would let the page believe the auto-search is off while the loop
+	 * that actually decides is still searching.
+	 */
+	it('sends the auto flag to Rust and re-fetches rather than writing the rune', async () => {
+		const core = await import('@tauri-apps/api/core');
+		const invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockResolvedValue({ league });
+
+		const rejection = await mod.setMercTradeAuto(false);
+
+		expect(rejection).toBeNull();
+		expect(invokeMock.mock.calls.filter((c) => c[0] === 'merc_set_trade_auto')).toEqual([
+			['merc_set_trade_auto', { auto: false }],
+		]);
+		expect(invokeMock.mock.calls.some((c) => c[0] === 'get_ssot')).toBe(true);
+	});
+
+	/**
+	 * Same round trip for the floor, and the argument NAME is the contract:
+	 * Tauri matches command parameters by name, so a renamed key reaches Rust
+	 * as a missing argument and the control silently does nothing.
+	 */
+	it('sends the tier floor to Rust and re-fetches rather than writing the rune', async () => {
+		const core = await import('@tauri-apps/api/core');
+		const invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockResolvedValue({ league });
+
+		const rejection = await mod.setMercTierFloor(1);
+
+		expect(rejection).toBeNull();
+		expect(invokeMock.mock.calls.filter((c) => c[0] === 'merc_set_tier_floor')).toEqual([
+			['merc_set_tier_floor', { floor: 1 }],
+		]);
+		expect(invokeMock.mock.calls.some((c) => c[0] === 'get_ssot')).toBe(true);
+	});
+
+	/**
+	 * Rust clamps the floor to 1..=3 and refuses anything else. The refusal has
+	 * to come back to the caller AND reach the app log — the only error channel
+	 * a shipped build can open — or the select silently snaps back on the next
+	 * poll with no explanation.
+	 */
+	it('returns the rejection and logs it when Rust refuses the tier floor', async () => {
+		const core = await import('@tauri-apps/api/core');
+		const invokeMock = vi.mocked(core.invoke);
+		invokeMock.mockImplementation(async (command: string) => {
+			if (command === 'merc_set_tier_floor') throw new Error('tier floor must be 1..=3, got 7');
+			return { league };
+		});
+
+		const rejection = await mod.setMercTierFloor(7);
+
+		expect(rejection).toContain('tier floor must be 1..=3');
+		const logged = invokeMock.mock.calls.find((c) => c[0] === 'app_log_from_frontend');
+		expect(logged?.[1]).toMatchObject({
+			msg: expect.stringContaining('merc_set_tier_floor failed'),
+		});
+	});
 });
 
 
