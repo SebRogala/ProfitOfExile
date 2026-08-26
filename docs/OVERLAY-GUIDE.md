@@ -56,8 +56,9 @@ COUPLED TO A MODULE FLAG rather than to an overlay setting: the module toggle
 creates and destroys the window, and `desktop/src/lib/overlay/module-lifecycle.ts`
 orders those transitions so a fast off→on→off cannot strand a transparent
 always-on-top window. They still appear in the Rust focus poller's game-focus
-show/hide list and in `force_show_overlays`. Persisted geometry is independent
-of the coupling: temple has none, the merc strip has `mercenary_overlay`.
+show/hide list and in `set_debug_mode`'s force-show branch. Persisted geometry
+is independent of the coupling: temple has none, the merc strip has
+`mercenary_overlay`.
 
 The merc strip's **height follows content; width and position are persisted**
 (owner decision, 2026-08-25). Its route observes its own panel with a

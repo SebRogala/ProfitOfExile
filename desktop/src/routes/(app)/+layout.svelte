@@ -920,13 +920,14 @@
 				// Devtools has no JS API in Tauri 2 — `openDevtools()` on the window
 				// object is not a function and threw before the .catch could apply.
 				invoke('set_devtools', { open: debugMode }).catch((e: any) => console.warn('[debug] set_devtools failed:', e));
-				if (debugMode) {
-					// Force-show overlays regardless of game focus
-					invoke('force_show_overlays').catch((e: any) => console.warn('[debug] force_show_overlays failed:', e));
-					console.log('[debug] Debug mode ON — overlays force-shown');
-				} else {
-					console.log('[debug] Debug mode OFF');
-				}
+				// EVERY press, with the state we want — not only the ON one. The
+				// command used to be an argument-less toggle called on the ON
+				// transition alone, so Rust's debug flag flipped once per two
+				// presses and went silent while this handler said it was on
+				// (2026-08-26 smoke). On ON it also force-shows the overlays
+				// regardless of game focus.
+				invoke('set_debug_mode', { on: debugMode }).catch((e: any) => console.warn('[debug] set_debug_mode failed:', e));
+				console.log(debugMode ? '[debug] Debug mode ON — overlays force-shown' : '[debug] Debug mode OFF');
 			}
 			if (e.ctrlKey && e.shiftKey && e.key === 'F11') {
 				e.preventDefault();

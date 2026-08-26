@@ -1412,7 +1412,7 @@ struct Session {
     /// [`publishable_header`]. Cleared with `panel` on retire.
     header_guard: Option<[i32; 4]>,
     /// The rect the next re-detect grabs and OCRs, from
-    /// [`geometry::detect_crop_bounds`]. `None` — no known panel, so the next
+    /// [`geometry::crop_around`]. `None` — no known panel, so the next
     /// detect takes the whole screen. Cleared with `panel` on retire.
     crop: Option<[i32; 4]>,
     /// The band the next PROBE OCRs, from [`geometry::probe_band_bounds`].
@@ -1796,8 +1796,32 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // the cursor hit-test — and the re-read of a cell that already matched
         // is bounded by [`HoverBudget`].
         if let Some(c) = cursor.filter(|_| hover_due) {
-            hover_tick(&app, &mut session, c);
+            // STAMPED BEFORE THE CALL. Stamping it after made the hover's
+            // period `HOVER_INTERVAL` PLUS the tick's own grab, preprocess and
+            // OCR — measured at 4-10 s between confirmations on 2026-08-26,
+            // for a cadence that reads 400 ms. The clock the player feels is
+            // how often the cursor is looked at, not how long the last look
+            // took.
+            //
+            // A hover whose read overruns 400 ms is then due again the instant
+            // it returns, and `HoverBudget` does NOT bound that on its own: it
+            // charges `Confirmed` and `Matched` cells, and an `Unknown` cell —
+            // exactly the cell a player rests on while waiting for a tooltip —
+            // is unlimited. Stamped before and never after, the loop would sit
+            // on a tooltip-less cell at a 100% duty cycle, one full-screen grab
+            // and one OCR after another.
+            //
+            // So the stamp is REPLACED when the tick confirmed nothing. That
+            // splits the two cases the player cares about, and gives each the
+            // clock it wants: a cell with no tooltip yet is re-read every
+            // 400 ms PLUS the read, an idle poll with a bounded duty cycle; a
+            // cell whose tooltip DID answer keeps the before-stamp, so the
+            // next read of it is due immediately and the budget is what stops
+            // it — which is the case the budget was written for.
             last_hover = Instant::now();
+            if !hover_tick(&app, &mut session, c) {
+                last_hover = Instant::now();
+            }
         }
 
         // A stop that arrived during the hover must not buy a screen grab and
@@ -2155,7 +2179,7 @@ fn detect_tick(
 ) -> DetectTick {
     // A KNOWN panel is re-read on a crop of itself. The full-screen OCR is the
     // tick's dominant cost, and once the panel has been found the whole answer
-    // lives inside `geometry::detect_crop_bounds`. The grab stays full — the
+    // lives inside `geometry::crop_around`. The grab stays full — the
     // platform layer captures a monitor, not a region — so what the crop buys
     // is the OCR, which is the expensive half.
     //
@@ -2204,8 +2228,14 @@ fn detect_tick(
     // The last known panel rect goes IN: a tooltip over the footer deletes the
     // anchor line this frame would otherwise need, and rows landing in the rect
     // the panel was last measured at say the same thing the missing line did.
-    // See `geometry::rows_land_in_known_panel`.
-    let mut layout = geometry::detect(&lines, &session.geometry, &session.vocab, session.panel);
+    // It is the UNION of every rect this capture has been measured at, so a
+    // partial read cannot shrink the anchor out from under the next full one.
+    // See `geometry::panel_anchor` and `geometry::union_rect`.
+    //
+    // `detect_reason`, not `detect`: the miss branch below prints the step that
+    // gave up, and a `None` cannot say which one it was.
+    let mut layout =
+        geometry::detect_reason(&lines, &session.geometry, &session.vocab, session.panel);
 
     // A crop that came back empty — or with a panel that does not FIT inside it
     // — has not seen the whole screen, and a window that MOVED is not a window
@@ -2214,7 +2244,7 @@ fn detect_tick(
     let mut retook = false;
     if geometry::crop_needs_full_look(
         crop,
-        layout.as_ref().and_then(|l| geometry::panel_bounds(l, &session.geometry)),
+        layout.as_ref().ok().and_then(|l| geometry::panel_bounds(l, &session.geometry)),
         screen,
     ) {
         view = &img;
@@ -2231,7 +2261,8 @@ fn detect_tick(
                 return report(Some(miss(app, session, true)));
             }
         };
-        layout = geometry::detect(&lines, &session.geometry, &session.vocab, session.panel);
+        layout =
+            geometry::detect_reason(&lines, &session.geometry, &session.vocab, session.panel);
         retook = true;
     }
 
@@ -2246,45 +2277,63 @@ fn detect_tick(
         );
     }
 
-    let Some(layout) = layout else {
-        // A tooltip the player just opened sits ON the panel and hides the rows
-        // the detect needs. The cursor is the proof — the game opens one only
-        // under it — so this tick is not evidence the window closed.
-        // No layout means no rect from THIS frame; the session's is all there
-        // is. See [`cursor_on_panel`].
-        let in_panel = cursor_on_panel(None, session.panel, cursor);
-        let live = session.state.live;
-        if session.occlusion.on_occluded(live, in_panel, Instant::now()) == MissKind::Occluded {
-            if session.occlusion.announce() {
+    let layout = match layout {
+        Ok(layout) => layout,
+        Err(why) => {
+            // Every number the 2026-08-26 smoke wanted and did not have, on the
+            // frame that lost the window: which rect the anchor was weighed
+            // against, which frame the OCR ran on, how many skill names came back,
+            // where their column sat, and which step of `detect_reason` returned.
+            // Debug-gated because a miss is the ordinary state of a loop watching
+            // an empty screen.
+            if debug_mode(app) {
                 crate::app_log(
                     app,
-                    "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
+                    format!(
+                        "Merc: no layout on the {how} frame — {why}; known panel {:?}, cursor {:?}",
+                        session.panel, cursor
+                    ),
                 );
             }
-            return report(Some(DetectOutcome::Occluded));
+            // A tooltip the player just opened sits ON the panel and hides the rows
+            // the detect needs. The cursor is the proof — the game opens one only
+            // under it — so this tick is not evidence the window closed.
+            // No layout means no rect from THIS frame; the session's is all there
+            // is. See [`cursor_on_panel`].
+            let in_panel = cursor_on_panel(None, session.panel, cursor);
+            let live = session.state.live;
+            if session.occlusion.on_occluded(live, in_panel, Instant::now()) == MissKind::Occluded {
+                if session.occlusion.announce() {
+                    crate::app_log(
+                        app,
+                        "Merc: panel occluded (cursor over it) — holding the capture".to_string(),
+                    );
+                }
+                return report(Some(DetectOutcome::Occluded));
+            }
+            // Logged once per focus session: a loop that never detects would
+            // otherwise leave no trace of having looked at all.
+            if !session.miss_logged {
+                session.miss_logged = true;
+                let skills = lines
+                    .iter()
+                    .filter(|l| {
+                        session.vocab.match_skill(&l.text, &session.geometry.thresholds).state
+                            != ReadState::Unknown
+                    })
+                    .count();
+                crate::app_log(
+                    app,
+                    format!(
+                        "Merc: looked, no recruit window — {} OCR lines, {} skill candidates \
+                         ({how} frame, {took} ms)",
+                        lines.len(),
+                        skills
+                    ),
+                );
+            }
+            return report(Some(miss(app, session, false)));
         }
-        // Logged once per focus session: a loop that never detects would
-        // otherwise leave no trace of having looked at all.
-        if !session.miss_logged {
-            session.miss_logged = true;
-            let skills = lines
-                .iter()
-                .filter(|l| {
-                    session.vocab.match_skill(&l.text, &session.geometry.thresholds).state
-                        != ReadState::Unknown
-                })
-                .count();
-            crate::app_log(
-                app,
-                format!(
-                    "Merc: looked, no recruit window — {} OCR lines, {} skill candidates \
-                     ({how} frame, {took} ms)",
-                    lines.len(),
-                    skills
-                ),
-            );
-        }
-        return report(Some(miss(app, session, false)));
     };
 
     // From the LAYOUT, not the capture: the capture drops the cells past the
@@ -2292,10 +2341,7 @@ fn detect_tick(
     // Computed here rather than at the end of the tick because the header fold
     // below needs to know whether the cursor is on the panel.
     let panel = geometry::panel_bounds(&layout, &session.geometry);
-    // The next re-detect's crop, from the layout that has the pitch and the
-    // scale to size it.
-    let next_crop = geometry::detect_crop_bounds(&layout, &session.geometry, screen);
-    // And the band the next voice line's probe will look in. Same layout, a
+    // The band the next voice line's probe will look in. Same layout, a
     // different question — see `geometry::probe_band_bounds`.
     let next_band = geometry::probe_band_bounds(&layout, &session.geometry, screen);
 
@@ -2367,6 +2413,10 @@ fn detect_tick(
         session.confirmed.clear();
         session.hover_budget.clear();
         session.sigs.clear();
+        // The rects are NOT cleared here. `replaced` is carried down to
+        // [`geometry::next_panel`], which is the one place that decides
+        // whether a remembered rect may be grown by this frame — see its doc
+        // for why a replaced panel takes the fresh measurement alone.
     }
     // AFTER the identity check: a confirmation belongs to the window it was
     // made on, and re-applying the old window's cells to a new mercenary's rows
@@ -2397,9 +2447,32 @@ fn detect_tick(
     );
     session.current = Some(result.capture.clone());
     session.revision += 1;
-    session.panel = panel;
-    session.header_guard = header_guard;
-    session.crop = next_crop;
+    // GROW-ONLY within one live capture. A partial read under a tooltip
+    // measures a shorter panel, and writing that rect over the full one turns
+    // the known-panel anchor against the next FULL read — six row centres, a
+    // rect that holds two — which is how a window still on screen retired at
+    // 16:08:28 in the 2026-08-26 smoke. The two exceptions — a REPLACED window
+    // and a panel whose column moved — are the fold's own, not the caller's:
+    // see [`geometry::next_panel`]. Cleared on retire, so nothing here can
+    // span two windows the fold never saw.
+    let column_tolerance = geometry::column_tolerance(&session.geometry, layout.scale);
+    session.panel = geometry::next_panel(session.panel, panel, replaced, column_tolerance);
+    session.header_guard =
+        geometry::next_panel(session.header_guard, header_guard, replaced, column_tolerance);
+    // FROM THE RECT THE LOOP NOW HOLDS, never from this frame's layout. The
+    // crop is what the NEXT re-detect gets to see, and the rect above is the
+    // panel the next anchor will be measured against; deriving the crop from a
+    // partial layout instead would hand the next full read a frame cropped out
+    // of the rows it is expected to find. [`geometry::crop_around`] reaches
+    // outward on every axis, so a crop built from the held rect encloses it —
+    // and the header band above it — by construction.
+    session.crop = session.panel.map(|held| {
+        geometry::crop_around(
+            held,
+            geometry::effective_pitch(&layout, &session.geometry),
+            screen,
+        )
+    });
     // Only ever replaced by a better measurement, never cleared: a band from
     // the window that just closed is the best guess available for the next one.
     if next_band.is_some() {
@@ -2550,12 +2623,17 @@ fn read_cursor(app: &AppHandle, session: &mut Session) -> Option<(i32, i32)> {
 ///
 /// `cursor` comes from the loop, not from a read of its own — see
 /// [`read_cursor`].
-fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) {
+///
+/// Returns whether this tick actually CONFIRMED a cell. The loop uses that to
+/// decide which clock the next hover is due on: see the stamp at the call
+/// site. Every early exit — no capture, no cell under the cursor, a spent
+/// budget, a failed grab, a tooltip that named nothing — is a `false`.
+fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> bool {
     let Some(capture) = session.current.clone() else {
-        return;
+        return false;
     };
     let Some((ri, si)) = cell_at(&capture, cursor) else {
-        return;
+        return false;
     };
     // The budget is charged HERE, before the screen grab and the OCR that
     // follow it — everything above this line is one cursor read, which is what
@@ -2565,25 +2643,30 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) {
         .hover_budget
         .take(cell_key, capture.rows[ri].supports[si].state)
     {
-        return;
+        return false;
     }
     let Some(region) = hover_region(cursor, capture.scale, &session.geometry.thresholds, capture.screen)
     else {
-        return;
+        return false;
     };
 
     // A FRESH grab: the tooltip is only on screen now, and was not in the
     // detect frame. The template still comes from the detect frame's crop.
+    let grab_started = Instant::now();
     let img = match crate::capture::capture_screen() {
         Ok(img) => img,
-        Err(e) => return fail(app, session, format!("Merc: hover capture failed — {e}")),
+        Err(e) => {
+            fail(app, session, format!("Merc: hover capture failed — {e}"));
+            return false;
+        }
     };
+    let grab_ms = grab_started.elapsed().as_millis();
     let (iw, ih) = {
         use image::GenericImageView;
         img.dimensions()
     };
     if (region[0] + region[2]) as u32 > iw || (region[1] + region[3]) as u32 > ih {
-        return;
+        return false;
     }
     let crop = img.crop_imm(
         region[0] as u32,
@@ -2591,14 +2674,40 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) {
         region[2] as u32,
         region[3] as u32,
     );
-    let processed = crate::capture::preprocess_for_ocr(&crop);
+    // The FAST preprocess, not the detect path's. See
+    // [`crate::capture::preprocess_for_ocr_fast`]: this runs at the cursor's
+    // pace over large tooltip type, which is where the sharper resampler buys
+    // least.
+    let preprocess_started = Instant::now();
+    let processed = crate::capture::preprocess_for_ocr_fast(&crop);
+    let preprocess_ms = preprocess_started.elapsed().as_millis();
     // RECTS, not just strings: the region deliberately overlaps the panel, so
     // which line is nearest the cursor is the only thing separating the tooltip
     // title from the skill column behind it.
+    let ocr_started = Instant::now();
     let ocr_lines = match crate::ocr::recognize_lines(&processed) {
         Ok(lines) => lines,
-        Err(e) => return fail(app, session, format!("Merc: hover OCR failed — {e}")),
+        Err(e) => {
+            fail(app, session, format!("Merc: hover OCR failed — {e}"));
+            return false;
+        }
     };
+    let ocr_ms = ocr_started.elapsed().as_millis();
+    // Where the 400 ms cadence actually goes. Three numbers rather than one
+    // total: the grab is a whole-screen copy the loop cannot avoid, the
+    // preprocess is the part this change traded accuracy for, and the OCR is
+    // the part that scales with the region — which is why the region's size is
+    // on the line too.
+    if debug_mode(app) {
+        crate::app_log(
+            app,
+            format!(
+                "Merc: hover read {}×{} px — grab {grab_ms} ms, preprocess {preprocess_ms} ms, \
+                 OCR {ocr_ms} ms",
+                region[2], region[3]
+            ),
+        );
+    }
     let upscale = (
         processed.width() as f32 / crop.width().max(1) as f32,
         processed.height() as f32 / crop.height().max(1) as f32,
@@ -2622,7 +2731,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) {
                 ),
             );
         }
-        return;
+        return false;
     };
     let family = confirmation.family.clone();
     let tier = confirmation.tier;
@@ -2714,6 +2823,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) {
         slice.learned_families = learned_families;
         slice.pooled_families = pooled_families;
     });
+    true
 }
 
 /// What a hover-confirm did to the template store.
