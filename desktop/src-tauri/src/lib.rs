@@ -189,6 +189,25 @@ pub struct AppState {
     /// so the page and the verdict overlay evaluate one capture against one
     /// set. Acquired alone, like every other merc-owned Mutex.
     pub merc_sources_off: Mutex<Vec<String>>,
+    /// Whether the captured mercenary is auto-searched on the trade site
+    /// (POE-202) — the single owner of the toggle. Read by the capture loop's
+    /// trade tick, echoed onto the `mercenary` slice by
+    /// `ssot::compose_snapshot`. Acquired alone, like every other merc Mutex.
+    pub merc_trade_auto: Mutex<bool>,
+    /// The lowest support tier that search accepts, 1..=3 (POE-202). Its own
+    /// owner beside `merc_trade_auto` rather than a field of one struct: the
+    /// two have separate commands and separate defaults, and neither is ever
+    /// read without the other being available anyway.
+    pub merc_tier_floor: Mutex<u8>,
+    /// Merc trade results keyed by query hash, with the unix ms they were
+    /// fetched at (POE-202).
+    ///
+    /// What makes a retire-and-re-detect of the same recruit window free: the
+    /// new capture session gets a fresh 3-search budget, but the question it
+    /// asks is byte-identical, so the cache answers it without spending any.
+    /// Entries past `mercenary::search::RESULT_TTL_MS` are dropped on the next
+    /// insert — the map only grows on that path.
+    pub merc_trade_cache: Mutex<std::collections::HashMap<String, (u64, trade::MercTradeResult)>>,
     /// The shared icon-template pool conversation (POE-201) — the upload queue,
     /// the single-flight pull flags, and the status the page shows. Its own
     /// owner rather than a corner of `merc_templates` because the uploader and
@@ -872,7 +891,7 @@ async fn trade_lookup(
         }
     }).await
         .map_err(|e| {
-            if e == "cancelled" {
+            if e == trade::client::CANCELLED {
                 return e; // Don't log cancellations as errors
             }
             app_log(&app, format!("Trade error: {}", e));
@@ -3420,6 +3439,9 @@ pub fn run() {
         mercenary: Mutex::new(mercenary::MercenarySlice::default()),
         merc_templates: Mutex::new(mercenary::icons::TemplateStore::new()),
         merc_sources_off: Mutex::new(Vec::new()),
+        merc_trade_auto: Mutex::new(mercenary::DEFAULT_TRADE_AUTO),
+        merc_tier_floor: Mutex::new(mercenary::DEFAULT_TIER_FLOOR),
+        merc_trade_cache: Mutex::new(std::collections::HashMap::new()),
         merc_sync: Mutex::new(mercenary::sync::SyncState::default()),
         merc_burst: Mutex::new(mercenary::trigger::BurstGate::default()),
         merc_template_generation: AtomicU64::new(0),
@@ -3469,6 +3491,8 @@ pub fn run() {
             mercenary::debug::merc_forget_template,
             mercenary::debug::merc_reset_templates,
             mercenary::sources::merc_set_sources_off,
+            mercenary::search::merc_set_trade_auto,
+            mercenary::search::merc_set_tier_floor,
             temple::commands::temple_set_keys,
             temple::commands::temple_set_config,
             temple::commands::temple_set_profile,

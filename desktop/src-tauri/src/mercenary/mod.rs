@@ -90,6 +90,98 @@ pub enum MercStatus {
     Unavailable,
 }
 
+/// Where the merc trade auto-search stands, as the page and the overlay read
+/// it (POE-202).
+///
+/// Lives here rather than in `search.rs` because it is a SLICE type: the
+/// windows read it off [`MercenarySlice::trade`], and every other wire type
+/// the slice carries is declared in this file. `search` re-exports it so the
+/// trigger policy reads as one vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MercTradeStatus {
+    /// The module is off — nothing to say.
+    Off,
+    /// Nothing to search: no capture, no query, or the user turned the
+    /// auto-search off.
+    Idle,
+    /// A query exists but the league is not resolved yet, so nothing was
+    /// enqueued. Distinct from `Error`: nothing failed, the app just cannot
+    /// address a trade site without a league.
+    WaitingLeague,
+    /// Handed to the trade queue, waiting for its turn behind the rate limiter.
+    Queued,
+    /// In flight.
+    Searching,
+    /// A result is on the slice.
+    Done,
+    /// The lookup failed; the message is on the slice.
+    Error,
+}
+
+impl Default for MercTradeStatus {
+    fn default() -> Self {
+        MercTradeStatus::Idle
+    }
+}
+
+/// Everything the windows need to render the captured mercenary's own trade
+/// search (POE-202).
+///
+/// # The one invariant
+///
+/// [`Self::query_hash`] is the hash of the query [`Self::result`] and
+/// [`Self::url`] describe — never "the newest hash the loop has seen". That is
+/// what makes a late result safe to accept: a lookup that comes back carrying
+/// a different hash is answering a question the capture has already moved on
+/// from, and is dropped. Every transition that moves the hash therefore clears
+/// the result in the same write.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MercTradeState {
+    pub status: MercTradeStatus,
+    /// The capture identity the rest of this struct answers for.
+    pub query_hash: Option<String>,
+    /// The trade-site link for that query. `None` until the league resolves —
+    /// a URL cannot name a search without one.
+    pub url: Option<String>,
+    pub result: Option<crate::trade::MercTradeResult>,
+    /// Why the last lookup failed. Set only alongside
+    /// [`MercTradeStatus::Error`].
+    pub error: Option<String>,
+    /// Searches this capture session has spent, out of
+    /// [`search::MAX_SEARCHES`]. Shown so a user who sees a stale price knows
+    /// why the app stopped asking.
+    pub searches_used: u8,
+}
+
+/// The shipped default for `merc_trade_auto`: the auto-search is ON.
+///
+/// Unlike the gem path's `auto_trade_enabled` (off by default,
+/// `docs/TRADE-LIFECYCLE.md` §2) this one is opt-OUT, because it is bounded by
+/// construction: at most [`search::MAX_SEARCHES`] searches per captured
+/// mercenary, only while the merc module — itself default-off — is running.
+pub const DEFAULT_TRADE_AUTO: bool = true;
+
+/// The shipped default for `merc_tier_floor`: 3, the mercenary exactly as
+/// read. Lowering it comps the capture against weaker grades of the same
+/// links.
+pub const DEFAULT_TIER_FLOOR: u8 = 3;
+
+/// `merc_tier_floor` as a support tier, or the reason it is not one.
+///
+/// A separate function from the clamp in
+/// [`search::build_capture_query`] on purpose: a COMMAND must refuse a value
+/// the user's UI should never have sent, while a value already on disk is
+/// clamped and reported rather than failing the whole settings load.
+pub fn validate_tier_floor(floor: u8) -> Result<u8, String> {
+    if (1..=3).contains(&floor) {
+        Ok(floor)
+    } else {
+        Err(format!("tier floor {floor} is not a support tier (1..=3)"))
+    }
+}
+
 /// How confident a single read (skill name or support cell) is.
 ///
 /// Wire strings are pinned by a serde test here AND by a TS union literal in
@@ -249,6 +341,26 @@ pub struct MercenarySlice {
     /// the capture loop.
     #[serde(default)]
     pub sync: sync::MercSyncStatus,
+    /// The captured mercenary's own trade search (POE-202) — status, link and
+    /// listings.
+    ///
+    /// Unlike [`Self::sources_off`] and [`Self::sync`] this is STORED, not
+    /// composed: the capture loop's trade tick and the lookup task both write
+    /// it through `run::publish`, so the slice keeps the writer it already
+    /// had. Only `trade.status` is overridden at read time, and only to `Off`
+    /// when the module is disabled.
+    #[serde(default)]
+    pub trade: MercTradeState,
+    /// Whether the auto-search runs at all — a settings ECHO of
+    /// `AppState.merc_trade_auto`, composed like [`Self::sources_off`] and for
+    /// the same reason: the page renders the toggle from it while the module
+    /// is off and no loop will ever publish it.
+    #[serde(default)]
+    pub trade_auto: bool,
+    /// The lowest support tier the search accepts, 1..=3 — a settings ECHO of
+    /// `AppState.merc_tier_floor`, composed like [`Self::trade_auto`].
+    #[serde(default)]
+    pub tier_floor: u8,
 }
 
 impl Default for MercenarySlice {
@@ -266,6 +378,11 @@ impl Default for MercenarySlice {
             geometry_source: GEOMETRY_SOURCE_DEFAULT.to_string(),
             sources_off: Vec::new(),
             sync: sync::MercSyncStatus::default(),
+            trade: MercTradeState::default(),
+            // The shipped values, so a snapshot read before `compose_snapshot`
+            // has echoed the owners still says what the app actually does.
+            trade_auto: DEFAULT_TRADE_AUTO,
+            tier_floor: DEFAULT_TIER_FLOOR,
         }
     }
 }
@@ -615,6 +732,12 @@ mod tests {
                 queued_uploads: 2,
                 last_error: None,
             },
+            // POE-202. The wire strings these carry are pinned by the chunk-4
+            // tests; here they only keep the literal exhaustive, which is what
+            // makes a new slice field a decision rather than a default.
+            trade: MercTradeState::default(),
+            trade_auto: DEFAULT_TRADE_AUTO,
+            tier_floor: DEFAULT_TIER_FLOOR,
         };
 
         let v = serde_json::to_value(&slice).expect("slice serializes");
