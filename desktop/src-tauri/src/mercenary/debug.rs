@@ -515,9 +515,15 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
 /// Drop every learned template (D10 §1).
 ///
 /// The template PNGs of the forgotten samples stay on disk; `index.json` is
-/// rewritten empty, and the store loads from the index, so they are inert. They
-/// are left rather than deleted because a wrongly-reset store is otherwise
-/// unrecoverable, and the directory is a debug surface anyway.
+/// rewritten to `{"formatVersion": 2, "entries": []}`, and the store loads from
+/// the index, so they are inert. They are left rather than deleted because a
+/// wrongly-reset store is otherwise unrecoverable, and the directory is a debug
+/// surface anyway.
+///
+/// The version in that empty index is load-bearing (POE-207): an index without
+/// one reads as format 1, and the next module start's
+/// `icons::purge_stale_store` would take a reset store for a stale one and
+/// unlink the very PNGs this comment promises are still there.
 ///
 /// **Local only** (POE-201): nothing is tombstoned and nothing is sent. A reset
 /// says "start my store over", not "this art is wrong for everyone" — the

@@ -1454,6 +1454,75 @@ struct Session {
     revision: u64,
 }
 
+/// What a store purge says in the log.
+///
+/// The version the old index declared, not a hard-coded "format 1": that is
+/// the case every current install hits, but a downgrade meets a later index
+/// and a half-written one parses as nothing, and the three have different
+/// causes. A line that named the wrong one would send the next reader after
+/// an upgrade that never happened.
+fn purge_log_line(purged: &super::icons::PurgedStore) -> String {
+    match purged.version {
+        Some(version) => format!(
+            "Merc: dropped {} format-{version} template(s) (format {})",
+            purged.dropped,
+            sync::FORMAT_VERSION,
+        ),
+        None => format!(
+            "Merc: dropped an unreadable template index (format {})",
+            sync::FORMAT_VERSION,
+        ),
+    }
+}
+
+/// What the icon matcher is running with, and whether the user has moved it
+/// off the numbers format 2 was measured on (POE-207).
+///
+/// The first line always goes to the log: when a cell reads `?` the first
+/// question is which thresholds were in force, and a log that only says so
+/// when they are unusual makes the usual case unanswerable.
+///
+/// The warnings exist because `merc-geometry.json` is the user's file and
+/// stays the user's — nothing here clamps or overrides it. But two of its
+/// blocks silently un-measure the matcher. The thresholds ARE the measurement
+/// (0.88/0.78/0.05 was attainable only after the format-2 derivation).
+///
+/// And `cellSize`/`cellInset` decide the inner crop the alignment window is
+/// cut out of. At the live scale 0.974 the cell is 43 px, the default inset 2
+/// leaves 39 px of inner crop, and the ±3 px margin leaves a 33 px window —
+/// which is the window every pooled signature was derived from. Move either
+/// number and the derivation moves with it: at `cellInset` 6 the window is
+/// 25 px, still aligned but no longer the same signature as the pool's, so
+/// every shared template stops matching. At 7 it is 23 px, under `SIG_DIM`,
+/// and `icons::shift_window` gives up the alignment entirely. Both read as
+/// "the matcher stopped working" rather than as "I edited a geometry file".
+fn matcher_geometry_warnings(g: &MercGeometry) -> Vec<String> {
+    let d = MercGeometry::default();
+    let (t, dt) = (&g.thresholds, &d.thresholds);
+    let mut out = vec![format!(
+        "Merc: icon thresholds match {:.2} / low {:.2} / lead {:.2}",
+        t.icon_match, t.icon_low, t.icon_lead,
+    )];
+    if t.icon_match != dt.icon_match || t.icon_low != dt.icon_low || t.icon_lead != dt.icon_lead {
+        out.push(format!(
+            "Merc: icon thresholds overridden — format {} was measured at {:.2}/{:.2}/{:.2}",
+            sync::FORMAT_VERSION, dt.icon_match, dt.icon_low, dt.icon_lead,
+        ));
+    }
+    if g.cell_size != d.cell_size || g.cell_inset != d.cell_inset {
+        out.push(format!(
+            "Merc: cell geometry overridden (size {:.1} / inset {:.1}) — the ±{} px alignment \
+             window is cut out of size − 2·inset, measured at {:.1}/{:.1}",
+            g.cell_size,
+            g.cell_inset,
+            super::icons::SHIFT_MAX,
+            d.cell_size,
+            d.cell_inset,
+        ));
+    }
+    out
+}
+
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     crate::app_log(&app, "Merc: capture loop started".to_string());
     crate::report_ocr_engine(&app);
@@ -1482,12 +1551,31 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         &app,
         format!("Merc: geometry source {geometry_source} (row pitch {:.1})", geometry.row_pitch),
     );
+    for warning in matcher_geometry_warnings(&geometry) {
+        crate::app_log(&app, warning);
+    }
 
     // Load the learned templates before the first detect, so a restart does not
     // re-report every already-confirmed cell as unknown.
     let icons_dir = data_dir.as_ref().map(|d| d.join(super::ICONS_DIR));
     let mut template_problems = Vec::new();
     if let Some(dir) = &icons_dir {
+        // THE PURGE COMES FIRST (POE-207). A store written by format 1 holds
+        // luma signatures this build cannot correlate against anything, and
+        // both the pull below and the load after it would otherwise merge into
+        // it. Dropping it here — before the session begins, so the pull's ETag
+        // is asked for on an empty store — is what makes the format bump a
+        // clean restart rather than a poisoned mix.
+        let purged = {
+            let state = app.state::<AppState>();
+            super::icons::writing_icons_dir(&state.merc_icons_write, || {
+                super::icons::purge_stale_store(dir)
+            })
+        };
+        if let Some(purged) = purged {
+            crate::app_log(&app, purge_log_line(&purged));
+        }
+
         // Ask the shared pool BEFORE reading the disk, so the round-trip
         // overlaps the load instead of following it (POE-201). One pull per
         // module start, single-flight inside `spawn_pull`.
@@ -2744,7 +2832,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
             // the store. Copied here rather than read back out of the store so
             // the payload is built from memory on the one path that has it
             // (POE-201 L4) — the store directory is never walked.
-            let gray = sig.gray().to_vec();
+            let bytes = sig.bytes().to_vec();
             let state = app.state::<AppState>();
             let mut store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
             // The crop is the DETECT frame's, cached before the cursor ever
@@ -2763,7 +2851,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
                 learned.then(|| sync::PendingSample {
                     family: family.clone(),
                     tier,
-                    gray,
+                    bytes,
                 }),
             )
         }
@@ -3838,10 +3926,10 @@ mod tests {
     /// A signature whose pixel values are a deterministic function of `seed`,
     /// so two of them are distinguishable and neither is flat.
     fn sig(seed: u8) -> CellSig {
-        let gray: Vec<u8> = (0..24u32 * 24)
+        let bytes: Vec<u8> = (0..super::super::icons::SIG_BYTES as u32)
             .map(|i| (i as u8).wrapping_mul(7).wrapping_add(seed))
             .collect();
-        CellSig::from_gray(gray).expect("a gradient signature is not flat")
+        CellSig::from_rgb(bytes).expect("a gradient signature is not flat")
     }
 
     fn cache(entries: &[((u8, u8), u8)]) -> SigCache {
@@ -5017,5 +5105,114 @@ mod tests {
     #[test]
     fn a_closed_run_announces_nothing() {
         assert!(!OcclusionRun::default().announce());
+    }
+
+    // -- the store purge's log line (POE-207) --------------------------------
+
+    /// The upgrade case: the line names the version the index actually
+    /// declared, so the log says which store was dropped and which one this
+    /// build reads.
+    #[test]
+    fn a_purged_format_one_store_is_logged_with_its_version_and_count() {
+        let line = purge_log_line(&super::super::icons::PurgedStore {
+            version: Some(1),
+            dropped: 61,
+        });
+
+        assert_eq!(line, "Merc: dropped 61 format-1 template(s) (format 2)");
+    }
+
+    /// A downgrade meets an index from a LATER version, and it must not be
+    /// reported as the format-1 upgrade — the causes are opposite (an old
+    /// store this build replaces, versus a newer store this build destroys)
+    /// and only one of them is expected.
+    #[test]
+    fn a_purged_store_from_a_later_version_is_logged_with_that_version() {
+        let line = purge_log_line(&super::super::icons::PurgedStore {
+            version: Some(3),
+            dropped: 7,
+        });
+
+        assert!(line.contains("format-3"), "{line}");
+    }
+
+    /// An index that parsed as nothing has no version and no count. Saying
+    /// "dropped 0 format-1 templates" would be two wrong facts about a
+    /// half-written or corrupt file.
+    #[test]
+    fn a_purged_unreadable_index_is_logged_as_unreadable() {
+        let line = purge_log_line(&super::super::icons::PurgedStore {
+            version: None,
+            dropped: 0,
+        });
+
+        assert_eq!(line, "Merc: dropped an unreadable template index (format 2)");
+    }
+
+    // -- the matcher's geometry warning (POE-207) ----------------------------
+
+    /// Default geometry says the thresholds in force and warns about nothing.
+    ///
+    /// The "warns about nothing" half is the one that matters: a warning that
+    /// fires on every start is a warning nobody reads, and the smoke checklist
+    /// for the format-2 build is "no override warning with default geometry".
+    #[test]
+    fn default_geometry_logs_the_thresholds_and_warns_about_nothing() {
+        let lines = matcher_geometry_warnings(&MercGeometry::default());
+
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0], "Merc: icon thresholds match 0.88 / low 0.78 / lead 0.05");
+    }
+
+    /// An overridden threshold is named as an override, with the numbers
+    /// format 2 was measured at — the answer to "why is nothing matching any
+    /// more" for a user who edited `merc-geometry.json` months ago.
+    #[test]
+    fn an_overridden_icon_threshold_is_warned_about() {
+        let mut g = MercGeometry::default();
+        g.thresholds.icon_match = 0.80;
+
+        let lines = matcher_geometry_warnings(&g);
+
+        assert_eq!(lines[0], "Merc: icon thresholds match 0.80 / low 0.78 / lead 0.05");
+        assert!(
+            lines.iter().skip(1).any(|l| l.contains("overridden") && l.contains("0.88/0.78/0.05")),
+            "no override warning naming the measured defaults: {lines:?}",
+        );
+    }
+
+    /// A `cellInset` override is warned about too, because it is what decides
+    /// what the alignment window IS. At the live 43 px cell, inset 6 leaves a
+    /// 25 px window — still aligned, but no longer the 33 px window every
+    /// pooled signature was derived from, so the shared corpus stops matching
+    /// while nothing looks broken. (Inset 7 is the harder break: a 23 px
+    /// window is under `SIG_DIM` and alignment is dropped altogether —
+    /// `icons::tests::corpus` pins both sides of that boundary.)
+    #[test]
+    fn an_overridden_cell_inset_is_warned_about() {
+        let mut g = MercGeometry::default();
+        g.cell_inset = 6.0;
+
+        let lines = matcher_geometry_warnings(&g);
+
+        assert!(
+            lines.iter().any(|l| l.contains("cell geometry overridden") && l.contains("inset 6.0")),
+            "no cell-geometry warning: {lines:?}",
+        );
+    }
+
+    /// The two overrides are independent: an untouched threshold block must
+    /// not be reported as overridden just because the cell geometry was.
+    #[test]
+    fn a_cell_geometry_override_does_not_report_the_thresholds_as_overridden() {
+        let mut g = MercGeometry::default();
+        g.cell_size = 40.0;
+
+        let lines = matcher_geometry_warnings(&g);
+
+        assert!(
+            !lines.iter().any(|l| l.contains("thresholds overridden")),
+            "{lines:?}",
+        );
     }
 }

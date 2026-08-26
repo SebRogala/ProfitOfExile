@@ -7,8 +7,8 @@
 //!
 //! # What travels
 //!
-//! Exactly `(family, tier, 576 grayscale bytes)` plus the format version. The
-//! payload is built from [`super::icons::CellSig::gray`] in memory and the wire
+//! Exactly `(family, tier, 1728 RGB bytes)` plus the format version. The
+//! payload is built from [`super::icons::CellSig::bytes`] in memory and the wire
 //! types below have no field for anything else — the colour crop `save` writes
 //! next to each template is GGG's art and never leaves the device, and nothing
 //! here walks the store directory. What comes back names no device either; the
@@ -41,31 +41,39 @@ use crate::AppState;
 /// (`internal/mercenary/pool.go`) — the upload endpoint refuses any other
 /// value outright, and the merge below refuses a corpus that declares one.
 ///
-/// Version 1 is: a 24×24 grayscale crop of a support cell ([`super::icons::SIG_DIM`]),
-/// the luma from `geometry::luma`, the badge corner masked at 0.45 × 0.35, and
-/// zero-mean unit-stddev normalisation over the unmasked positions. Changing
-/// ANY of those numbers is version 2, not a tweak to version 1: signatures from
-/// the two do not correlate, so a shared pool that mixed them would poison every
-/// device's matcher at once.
+/// Version 2 (POE-207) is: the cell's inner crop shrunk by
+/// [`super::icons::SHIFT_MAX`] screen px per side, resized to 24×24 RGB
+/// ([`super::icons::SIG_DIM`], Triangle filter), everything outside a
+/// 0.36 × 24 disc and inside the 0.45 × 0.35 badge corner masked out, and
+/// zero-mean unit-stddev normalisation JOINTLY over the 657 kept channels.
+/// 1728 bytes. Version 1 was 576 bytes of luma over the whole inner crop with
+/// no disc and no alignment; it is not decoded anywhere any more.
+///
+/// Changing ANY of those numbers is version 3, not a tweak to version 2:
+/// signatures from two versions do not correlate, so a shared pool that mixed
+/// them would poison every device's matcher at once.
 ///
 /// **What a bump means:** the pool refills. Version 2 starts empty on the
 /// server, every device re-learns from hovers, and the version-1 rows stay
 /// readable by version-1 clients until they are gone. Nothing has to be
 /// migrated and nothing has to be deleted — that is the whole reason the
-/// version is part of the key rather than a note in a changelog.
-pub const FORMAT_VERSION: u16 = 1;
+/// version is part of the key rather than a note in a changelog. On the
+/// DEVICE the bump is not so gentle: `icons::purge_stale_store` unlinks the
+/// version-1 store outright, because a device runs one build and that build
+/// reads one format.
+pub const FORMAT_VERSION: u16 = 2;
 
 /// Templates per upload request.
 ///
 /// Sized against the BODY cap, not against the server's stated ceiling of 64.
-/// The server's own comment estimates "roughly 40 templates" from the signature
-/// alone; the JSON around it is what the estimate misses. One template is 768
-/// base64 characters plus the key and the punctuation — 841 bytes for the
-/// longest family the vocabulary carries (`Power Charge on Critical Strike`,
-/// 31 characters). Forty of those is 33,675 bytes, over the 32,768 cap: a full
-/// first publish would 413 on every batch and place nothing.
+/// One format-2 template is 2,304 base64 characters (1728 bytes) plus the key
+/// and the punctuation — 2,377 bytes for the longest family the vocabulary
+/// carries (`Power Charge on Critical Strike`, 31 characters). Thirty-two of
+/// those is 76,064 bytes, which is why the server's cap went to 128 KB in the
+/// same change (`mercTemplateBodyLimit`): at the version-1 cap of 32 KB a
+/// batch of 32 would 413 on every request and place nothing.
 ///
-/// 32 leaves ~5.8 KB of headroom, which is what absorbs a longer family name
+/// 32 leaves ~54 KB of headroom, which is what absorbs a longer family name
 /// arriving with a future league without a desktop release. The cost is a
 /// request per 32 samples — a whole 792-sample store is 25 requests against a
 /// budget of 60 per ten minutes.
@@ -79,7 +87,7 @@ pub const MAX_TEMPLATES_PER_BATCH: usize = 32;
 /// one — a test-only constant because the check IS the test: production never
 /// measures its own body, it only sends batches the check has already sized.
 #[cfg(test)]
-const SERVER_BODY_LIMIT: usize = 32 * 1024;
+const SERVER_BODY_LIMIT: usize = 128 * 1024;
 
 /// Attempts per batch and per tombstone before it is left for the next module
 /// start.
@@ -357,10 +365,10 @@ impl SyncFile {
 pub struct PendingSample {
     pub family: String,
     pub tier: u8,
-    /// The 576 signature bytes, copied out of the store while its mutex was
+    /// The 1728 signature bytes, copied out of the store while its mutex was
     /// held. Copied rather than referenced on purpose: the uploader outlives
     /// the lock, and a forget may drop the sample while a batch is in flight.
-    pub gray: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
 /// The pool conversation's live state — `AppState.merc_sync`.
@@ -458,7 +466,7 @@ fn wire_template(sample: &PendingSample) -> WireTemplate {
     WireTemplate {
         family: sample.family.clone(),
         tier: sample.tier,
-        signature_b64: BASE64.encode(&sample.gray),
+        signature_b64: BASE64.encode(&sample.bytes),
     }
 }
 
@@ -499,7 +507,7 @@ fn decode_corpus(body: CorpusBody) -> (PooledCorpus, usize) {
             dropped += 1;
             continue;
         };
-        let Some(sig) = CellSig::from_gray(bytes) else {
+        let Some(sig) = CellSig::from_rgb(bytes) else {
             dropped += 1;
             continue;
         };
@@ -1047,7 +1055,7 @@ async fn send_batch(app: &AppHandle, batch: &[PendingSample]) -> Option<UploadAc
             }
             // A 4xx that is not the rate limit is this build's problem — a
             // format version the server refuses, a body it cannot read, or a 413
-            // for a batch over the 32 KB cap. Retrying sends the identical bytes
+            // for a batch over the 128 KB cap. Retrying sends the identical bytes
             // and gets the identical answer, so the batch is dropped and left
             // owed on disk; a 413 in particular would come back at the SAME size,
             // because nothing here re-splits a rejected batch. The guard against
@@ -1094,7 +1102,7 @@ fn mark_uploaded(app: &AppHandle, batch: &[PendingSample]) {
                 .unwrap_or_else(|e| e.into_inner());
             let mut touched = false;
             for sample in batch {
-                touched |= store.mark_uploaded(&sample.family, sample.tier, &sample.gray);
+                touched |= store.mark_uploaded(&sample.family, sample.tier, &sample.bytes);
             }
             if touched {
                 store.save(&dir).err()
@@ -1121,7 +1129,7 @@ pub fn enqueue_backfill(app: &AppHandle) {
         store
             .pending_uploads()
             .into_iter()
-            .map(|(family, tier, gray)| PendingSample { family, tier, gray })
+            .map(|(family, tier, bytes)| PendingSample { family, tier, bytes })
             .collect()
     };
     if pending.is_empty() {
@@ -1346,7 +1354,7 @@ mod tests {
         PendingSample {
             family: family.to_string(),
             tier,
-            gray: vec![fill; (super::super::icons::SIG_DIM * super::super::icons::SIG_DIM) as usize],
+            bytes: vec![fill; super::super::icons::SIG_BYTES],
         }
     }
 
@@ -1370,22 +1378,22 @@ mod tests {
         assert_eq!(keys, ["family", "signature_b64", "tier"]);
     }
 
-    /// The signature on the wire is the store's bytes, base64 of exactly 576 of
-    /// them — the server rejects any other length outright.
+    /// The signature on the wire is the store's bytes, base64 of exactly 1728
+    /// of them — the server rejects any other length outright.
     #[test]
-    fn an_upload_template_encodes_the_576_signature_bytes() {
+    fn an_upload_template_encodes_the_1728_signature_bytes() {
         let body = &build_batches(&[sample("Chain", 2, 7)])[0];
 
         let decoded = BASE64
             .decode(body.templates[0].signature_b64.as_bytes())
             .expect("round-trips");
 
-        assert_eq!(decoded.len(), 576);
+        assert_eq!(decoded.len(), 1728);
         assert!(decoded.iter().all(|b| *b == 7), "the store's own bytes");
     }
 
     /// The batch boundary is what keeps a full first publish under the server's
-    /// 32 KB body cap.
+    /// 128 KB body cap.
     #[test]
     fn a_full_store_is_split_into_batches_at_the_cap() {
         let samples: Vec<PendingSample> = (0..MAX_TEMPLATES_PER_BATCH + 1)
@@ -1659,7 +1667,7 @@ mod tests {
             templates: vec![WireTemplate {
                 family: "Chain".to_string(),
                 tier: 2,
-                signature_b64: BASE64.encode(vec![9u8; 576]),
+                signature_b64: BASE64.encode(vec![9u8; 1728]),
             }],
             ..CorpusBody::default()
         };
@@ -1670,9 +1678,11 @@ mod tests {
         assert!(corpus.samples.is_empty());
     }
 
-    /// 576 bytes with real variance, so `CellSig::from_gray` accepts them.
+    /// 1728 bytes with real variance, so `CellSig::from_rgb` accepts them.
     fn gradient() -> Vec<u8> {
-        (0..576u32).map(|i| (i % 251) as u8).collect()
+        (0..super::super::icons::SIG_BYTES as u32)
+            .map(|i| (i % 251) as u8)
+            .collect()
     }
 
     // -----------------------------------------------------------------------

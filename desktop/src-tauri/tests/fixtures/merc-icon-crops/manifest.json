@@ -1,0 +1,392 @@
+{
+ "source": "Sebastian PC merc-icons store 2026-08-27, scale 0.974, 39x39 inner crops",
+ "crops": [
+  {
+   "file": "increased-area-of-effect--t2-raw.png",
+   "family": "Increased Area of Effect",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as area-of-effect/curse-effect"
+  },
+  {
+   "file": "less-duration--t2-raw.png",
+   "family": "Less Duration",
+   "tier": 2,
+   "poisoned": true,
+   "why": "tooltip text crop"
+  },
+  {
+   "file": "spell-cascade--t1-raw.png",
+   "family": "Spell Cascade",
+   "tier": 1,
+   "poisoned": false
+  },
+  {
+   "file": "swift-affliction--t3-raw.png",
+   "family": "Swift Affliction",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "ailment-effect--t2-raw.png",
+   "family": "Ailment Effect",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "brittle-chance--t3-raw.png",
+   "family": "Brittle Chance",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as physical-as-extra-chaos"
+  },
+  {
+   "file": "more-duration--t2-raw.png",
+   "family": "More Duration",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "cooldown-recovery--t2-raw.png",
+   "family": "Cooldown Recovery",
+   "tier": 2,
+   "poisoned": true,
+   "why": "tooltip text crop"
+  },
+  {
+   "file": "faster-casting--t2-raw.png",
+   "family": "Faster Casting",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "critical-chance--t3-raw.png",
+   "family": "Critical Chance",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "added-cold--t3-raw.png",
+   "family": "Added Cold",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "area-of-effect--t3-raw.png",
+   "family": "Area of Effect",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as increased-area-of-effect"
+  },
+  {
+   "file": "less-duration--t2-2-raw.png",
+   "family": "Less Duration",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "more-duration--t2-2-raw.png",
+   "family": "More Duration",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "faster-casting--t2-2-raw.png",
+   "family": "Faster Casting",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "more-duration--t2-3-raw.png",
+   "family": "More Duration",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "cooldown-recovery--t2-2-raw.png",
+   "family": "Cooldown Recovery",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as dot-multiplier/swift-affliction"
+  },
+  {
+   "file": "minion-life--t3-raw.png",
+   "family": "Minion Life",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "lightning-penetration--t3-raw.png",
+   "family": "Lightning Penetration",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "critical-chance--t2-raw.png",
+   "family": "Critical Chance",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "added-lightning--t3-raw.png",
+   "family": "Added Lightning",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "faster-attacks--t2-raw.png",
+   "family": "Faster Attacks",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as ailment-damage--t2-3"
+  },
+  {
+   "file": "physical-as-extra--t3-raw.png",
+   "family": "Physical as Extra",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "multiple-projectiles--t3-raw.png",
+   "family": "Multiple Projectiles",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as ignite-chance--t3"
+  },
+  {
+   "file": "cooldown-recovery--t2-3-raw.png",
+   "family": "Cooldown Recovery",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as dot-multiplier/swift-affliction"
+  },
+  {
+   "file": "warcry-speed--t3-raw.png",
+   "family": "Warcry Speed",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "fire-penetration--t2-raw.png",
+   "family": "Fire Penetration",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "return--t3-raw.png",
+   "family": "Return",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "ignite-chance--t2-raw.png",
+   "family": "Ignite Chance",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "swift-affliction--t2-raw.png",
+   "family": "Swift Affliction",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "swift-affliction--t3-2-raw.png",
+   "family": "Swift Affliction",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as dot-multiplier/cooldown-recovery"
+  },
+  {
+   "file": "elemental-damage-with-attacks--t2-raw.png",
+   "family": "Elemental Damage with Attacks",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "fire-penetration--t2-2-raw.png",
+   "family": "Fire Penetration",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "dot-multiplier--t2-raw.png",
+   "family": "DoT Multiplier",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as swift-affliction/cooldown-recovery"
+  },
+  {
+   "file": "ignite-chance--t3-raw.png",
+   "family": "Ignite Chance",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as multiple-projectiles"
+  },
+  {
+   "file": "area-of-effect--t3-2-raw.png",
+   "family": "Area of Effect",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as increased-area-of-effect/curse-effect"
+  },
+  {
+   "file": "elemental-focus--t3-raw.png",
+   "family": "Elemental Focus",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "curse-effect--t3-raw.png",
+   "family": "Curse Effect",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as area-of-effect"
+  },
+  {
+   "file": "increased-area-of-effect--t3-raw.png",
+   "family": "Increased Area of Effect",
+   "tier": 3,
+   "poisoned": true,
+   "why": "Fork art"
+  },
+  {
+   "file": "faster-projectiles--t2-raw.png",
+   "family": "Faster Projectiles",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "ailment-damage--t2-raw.png",
+   "family": "Ailment Damage",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "infused-channelling--t3-raw.png",
+   "family": "Infused Channelling",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "ignite-chance--t2-2-raw.png",
+   "family": "Ignite Chance",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "increased-area-of-effect--t2-2-raw.png",
+   "family": "Increased Area of Effect",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as area-of-effect/curse-effect"
+  },
+  {
+   "file": "arrow-nova--t3-raw.png",
+   "family": "Arrow Nova",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "elemental-damage-with-attacks--t3-raw.png",
+   "family": "Elemental Damage with Attacks",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "extra-targets--t3-raw.png",
+   "family": "Extra Targets",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "added-lightning--t3-2-raw.png",
+   "family": "Added Lightning",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "faster-attacks--t2-2-raw.png",
+   "family": "Faster Attacks",
+   "tier": 2,
+   "poisoned": true,
+   "why": "same art as ailment-damage--t2-3"
+  },
+  {
+   "file": "concentrated-effect--t3-raw.png",
+   "family": "Concentrated Effect",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "fork--t3-raw.png",
+   "family": "Fork",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as increased-area-of-effect--t3"
+  },
+  {
+   "file": "multistrike--t3-raw.png",
+   "family": "Multistrike",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "ailment-damage--t2-2-raw.png",
+   "family": "Ailment Damage",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "ailment-damage--t2-3-raw.png",
+   "family": "Ailment Damage",
+   "tier": 2,
+   "poisoned": true,
+   "why": "Faster Attacks art"
+  },
+  {
+   "file": "added-chaos--t2-raw.png",
+   "family": "Added Chaos",
+   "tier": 2,
+   "poisoned": false
+  },
+  {
+   "file": "second-wind--t3-raw.png",
+   "family": "Second Wind",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "physical-as-extra-chaos--t3-raw.png",
+   "family": "Physical as Extra Chaos",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as brittle-chance"
+  },
+  {
+   "file": "faster-projectiles--t3-raw.png",
+   "family": "Faster Projectiles",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "chance-to-poison--t3-raw.png",
+   "family": "Chance to Poison",
+   "tier": 3,
+   "poisoned": false
+  },
+  {
+   "file": "dot-multiplier--t3-raw.png",
+   "family": "DoT Multiplier",
+   "tier": 3,
+   "poisoned": true,
+   "why": "same art as swift-affliction/cooldown-recovery"
+  },
+  {
+   "file": "chance-to-poison--t3-2-raw.png",
+   "family": "Chance to Poison",
+   "tier": 3,
+   "poisoned": false
+  }
+ ]
+}
