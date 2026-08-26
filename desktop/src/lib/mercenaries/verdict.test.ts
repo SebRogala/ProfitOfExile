@@ -36,6 +36,8 @@ const GREATER_KINETIC_BLAST = 'mercenary.skill_44258';
 const BARRAGE = 'mercenary.skill_1356';
 const HASTE = 'mercenary.skill_52155';
 const HATRED = 'mercenary.skill_24482';
+const HERALD_OF_ICE = 'mercenary.skill_32807';
+const INSPIRING_CRY = 'mercenary.skill_65473';
 const RETURN = 'mercenary.support_5293';
 const GMP = 'mercenary.support_49419';
 const COOLDOWN_RECOVERY = 'mercenary.support_48875';
@@ -43,7 +45,11 @@ const MULTISTRIKE = 'mercenary.support_62638';
 const PIERCE = 'mercenary.support_56267';
 const GREATER_FORK = 'mercenary.support_32052';
 const CHAIN = 'mercenary.support_31052';
+const EDWA = 'mercenary.support_44886';
 const GREATER_EDWA = 'mercenary.support_28416';
+const GREATER_HYPOTHERMIA = 'mercenary.support_53145';
+const GREATER_FASTER_ATTACKS = 'mercenary.support_50485';
+const FASTER_ATTACKS = 'mercenary.support_987';
 const HYPOTHERMIA = 'mercenary.support_38571';
 const CRITICAL_DAMAGE = 'mercenary.support_32189';
 const GILDED_EXTRA_TARGETS = ['mercenary.support_58471', 'mercenary.support_37259'];
@@ -165,6 +171,29 @@ function derivedGroup(url: string | null, index: number) {
 }
 
 /**
+ * The groups of a derived query that ask for more filters than they leave
+ * switched ON — `{"value":{"min":2}}` over one enabled filter is a search the
+ * trade site can never answer, so a derived link carrying one is a dead comp.
+ * Reported as strings so a failure names the offending group instead of a
+ * boolean.
+ */
+function unsatisfiableGroups(rulesetId: string, url: string | null): string[] {
+	return derivedQueryOf(url)
+		.stats.map((group) => ({
+			type: group.type,
+			min: group.value?.min ?? 0,
+			enabled: group.filters.filter((filter) => filter.disabled !== true).length
+		}))
+		.filter((group) => group.min > group.enabled)
+		.map((group) => `${rulesetId}: ${group.type} asks ${group.min} of ${group.enabled} enabled`);
+}
+
+/** Every passing ruleset of one source, in declaration order. */
+function passingOf(verdict: MercVerdict, sourceId: MercSourceId) {
+	return sourceOf(verdict, sourceId).rulesets.filter((result) => result.outcome === 'pass');
+}
+
+/**
  * A mercenary the guide-b ladder wants: Kinetic Blast of Clustering carrying
  * Return, a behaviour link and two damage links, with Greater Kinetic Blast as
  * the second skill. Satisfies MV, Mid and End; GG fails on the Greater Multiple
@@ -199,6 +228,65 @@ function manyshotGgCapture(): MercCapture {
 		row(0, skillRead(ICE_SHOT), supportsOf([RETURN])),
 		row(1, skillRead(VAAL_ICE_SHOT), supportsOf([RETURN, GREATER_EDWA, HYPOTHERMIA])),
 		row(2, skillRead(HATRED))
+	]);
+}
+
+/**
+ * A Combatant mercenary as Nerotox's Frost Blades ladder reads one: the three
+ * skills every rung's `and` group requires, plus a Frost Blades row carrying
+ * Chain and the two Tier-3 damage links every rung above Minimum asks for.
+ *
+ * `frostBladesLinks` is the whole variable: adding Greater Faster Attacks
+ * answers the `speed` group, adding Return answers the `return` group, and
+ * those two groups are the only difference between the ladder's five rungs.
+ */
+function frostBladesCapture(frostBladesLinks: string[] = []): MercCapture {
+	return captureOf([
+		row(
+			0,
+			skillRead(FROST_BLADES),
+			supportsOf([CHAIN, GREATER_EDWA, GREATER_HYPOTHERMIA, ...frostBladesLinks])
+		),
+		row(1, skillRead(HERALD_OF_ICE)),
+		row(2, skillRead(INSPIRING_CRY)),
+		row(3, skillRead(STATIC_STRIKE))
+	]);
+}
+
+/**
+ * The same three required skills with a Wild Strike row instead — enough links
+ * on it for the GG rung, whose `damage` group wants three of five, `greater`
+ * two of three, `speed` two of three and `return` both of its entries.
+ */
+function wildStrikeCapture(): MercCapture {
+	return captureOf([
+		row(
+			0,
+			skillRead(WILD_STRIKE),
+			supportsOf([GREATER_EDWA, GREATER_HYPOTHERMIA, GREATER_FASTER_ATTACKS, RETURN])
+		),
+		row(1, skillRead(HERALD_OF_ICE)),
+		row(2, skillRead(INSPIRING_CRY)),
+		row(3, skillRead(STATIC_STRIKE))
+	]);
+}
+
+/**
+ * The same Wild Strike mercenary carrying Faster Attacks (Tier 2) instead of the
+ * Tier-3 link, and no Return. Midgame parks the Tier-2 entry INSIDE its live
+ * `speed` group, so this mercenary answers the rungs either side of Midgame and
+ * not Midgame itself.
+ */
+function wildStrikeTierTwoSpeedCapture(): MercCapture {
+	return captureOf([
+		row(
+			0,
+			skillRead(WILD_STRIKE),
+			supportsOf([GREATER_EDWA, GREATER_HYPOTHERMIA, FASTER_ATTACKS])
+		),
+		row(1, skillRead(HERALD_OF_ICE)),
+		row(2, skillRead(INSPIRING_CRY)),
+		row(3, skillRead(STATIC_STRIKE))
 	]);
 }
 
@@ -504,6 +592,81 @@ describe('ladder selection', () => {
 		]);
 	});
 
+	// The Frost Blades ladder seats TWO rungs at `end`, and `bestOf` breaks the
+	// tie by declaration order. These three pin why that tie is harmless: the two
+	// Endgame rungs are Midgame plus one switch each, so a capture answering both
+	// answers GG too and the tie never has to be broken on a real search.
+	it('names the Endgame (no return) rung when the merc has the speed link and no Return', () => {
+		const verdict = verdictOf(frostBladesCapture([GREATER_FASTER_ATTACKS]));
+		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-frost-blades-end-noreturn']);
+	});
+
+	it('fails the Endgame (return) rung on the Return that same merc lacks', () => {
+		const verdict = verdictOf(frostBladesCapture([GREATER_FASTER_ATTACKS]));
+		expect(rulesetOf(verdict, 'guide-b', 'guide-b-frost-blades-end-return').outcome).toBe('fail');
+	});
+
+	it('names the Endgame (return) rung when the merc has Return and no speed link', () => {
+		const verdict = verdictOf(frostBladesCapture([RETURN]));
+		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-frost-blades-end-return']);
+	});
+
+	it('fails the Endgame (no return) rung on the speed link that same merc lacks', () => {
+		const verdict = verdictOf(frostBladesCapture([RETURN]));
+		expect(rulesetOf(verdict, 'guide-b', 'guide-b-frost-blades-end-noreturn').outcome).toBe('fail');
+	});
+
+	it('names GG, not either Endgame rung, when the merc answers both of them', () => {
+		const verdict = verdictOf(frostBladesCapture([GREATER_FASTER_ATTACKS, RETURN]));
+		expect(
+			['end-noreturn', 'end-return', 'gg'].map(
+				(rung) => `${rung} ${rulesetOf(verdict, 'guide-b', `guide-b-frost-blades-${rung}`).outcome}`
+			)
+		).toEqual(['end-noreturn pass', 'end-return pass', 'gg pass']);
+		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-frost-blades-gg']);
+	});
+
+	// The caveat names the row the rung's main skill sits on. The Wild Strike
+	// searches declare no `core` group at all, so the row has to come from the
+	// first live `mercenary` group — its damage group — instead.
+	it('caveats a GG pass on a ladder with no core group using its first live mercenary group', () => {
+		const gg = rulesetOf(verdictOf(wildStrikeCapture()), 'guide-b', 'guide-b-wild-strike-gg');
+		expect(gg.outcome).toBe('pass');
+		expect(gg.reasons).toContain(
+			'GG comps are a floor, not the price: a merc with more links prices above them — this core skill row carries 4 supports'
+		);
+	});
+
+	// The fallback must stay a fallback: the Manyshot GG rung DOES declare `core`
+	// but does not lead with it, and its own authorNote sends the reader to the
+	// Ice Shot links — the row `core` answers, not the row its first live
+	// mercenary group (`vaal-damage`, three supports) answers.
+	it('keeps counting the declared core group’s row when a rung leads with another', () => {
+		const gg = rulesetOf(verdictOf(manyshotGgCapture()), 'guide-b', 'guide-b-manyshot-gg');
+		expect(gg.reasons).toContain(
+			'GG comps are a floor, not the price: a merc with more links prices above them — this core skill row carries 1 support'
+		);
+	});
+
+	// `bestOf` ranks by TIERS and nothing else — it does NOT assume a ladder's
+	// rungs are nested. Wild Strike Midgame parks Faster Attacks (Tier 2) inside
+	// a live `speed` group, so a mercenary carrying the Tier-2 link and not the
+	// Tier-3 one answers the rungs either side of Midgame and not Midgame itself.
+	it('passes the Minimum and Endgame rungs while the Midgame rung between them fails', () => {
+		const verdict = verdictOf(wildStrikeTierTwoSpeedCapture());
+		expect(
+			['mv', 'mid', 'end', 'gg'].map(
+				(rung) => `${rung} ${rulesetOf(verdict, 'guide-b', `guide-b-wild-strike-${rung}`).outcome}`
+			)
+		).toEqual(['mv pass', 'mid fail', 'end pass', 'gg fail']);
+	});
+
+	it('names the Endgame rung best even though the Midgame rung below it failed', () => {
+		expect(sourceOf(verdictOf(wildStrikeTierTwoSpeedCapture()), 'guide-b').best).toEqual([
+			'guide-b-wild-strike-end'
+		]);
+	});
+
 	it('lists every passing archetype for an untiered source', () => {
 		// Ice Shot + Vaal Ice Shot passes Manyshot; nothing here passes the other two.
 		const verdict = verdictOf(manyshotCapture());
@@ -536,6 +699,162 @@ describe('bonus channel', () => {
 	it('switches an absent buyer-contextual entry off in the derived query', () => {
 		const url = rulesetOf(verdictOf(kinetistCapture()), 'guide-b', 'guide-b-kinetist-mv').derivedUrl;
 		expect(derivedGroup(url, 5).filters).toEqual([{ id: HASTE, disabled: true }]);
+	});
+});
+
+describe('the row anchor of a `mercenary` group', () => {
+	// A `mercenary` group is row-scoped to its own skill, so that skill is there
+	// whenever the group can say anything at all. Reading it as a fired bonus made
+	// every parked group of the ladder "fire" on any capture carrying the skill.
+	it('reads a parked group’s own skill as present rather than as a fired bonus', () => {
+		const verdict = verdictOf(frostBladesCapture());
+		expect(groupOf(verdict, 'guide-b', 'guide-b-frost-blades-mv', 'speed').outcome).toBe(
+			'not-applied'
+		);
+		expect(
+			positionOf(verdict, 'guide-b', 'guide-b-frost-blades-mv', 'speed', FROST_BLADES).outcome
+		).toBe('pass');
+	});
+
+	it('leaves the main skill out of the bonuses a passing rung reports', () => {
+		const mv = rulesetOf(verdictOf(frostBladesCapture()), 'guide-b', 'guide-b-frost-blades-mv');
+		expect(mv.outcome).toBe('pass');
+		expect(mv.reasons.filter((reason) => reason.startsWith('Bonuses fired'))).toEqual([]);
+	});
+
+	// The rule is scoped to `mercenary` groups: guide-a's Manyshot aura group is
+	// an `and` group of three parked SKILLS, and those are real bonuses about the
+	// mercenary rather than a label for a row.
+	it('still fires a parked skill bonus in an `and` group', () => {
+		const verdict = verdictOf(manyshotGgCapture());
+		expect(positionOf(verdict, 'guide-a', 'guide-a-manyshot', 'auras', HATRED).outcome).toBe(
+			'bonus-fired'
+		);
+	});
+
+	/**
+	 * Every capture this file builds, swept across BOTH sources. The invariant is
+	 * general — no derived link may carry a group asking for more filters than it
+	 * leaves switched on — so the sweep is over everything rather than the two
+	 * ladders whose bugs found it.
+	 *
+	 * Two ways this went wrong, both measured 2026-08-26: a parked group revived
+	 * by its own row anchor (Frost Blades Minimum's `speed`, `min: 2` over one
+	 * enabled filter) and a parked group revived by fewer bonuses than its `min`
+	 * (the Manyshot GG rung's `projectiles`, `min: 4` over three).
+	 */
+	const SWEPT_CAPTURES: [string, MercCapture][] = [
+		['kinetist', kinetistCapture()],
+		['kinetist + GMP', kinetistCapture([GMP])],
+		['kinetist + Pierce', kinetistCapture([PIERCE])],
+		['manyshot', manyshotCapture()],
+		['manyshot + GMP', manyshotCapture([GMP])],
+		['manyshot GG', manyshotGgCapture()],
+		['frost blades', frostBladesCapture()],
+		['frost blades + Faster Attacks', frostBladesCapture([FASTER_ATTACKS])],
+		['frost blades + speed', frostBladesCapture([GREATER_FASTER_ATTACKS])],
+		['frost blades + Return', frostBladesCapture([RETURN])],
+		['frost blades + both', frostBladesCapture([GREATER_FASTER_ATTACKS, RETURN])],
+		['wild strike', wildStrikeCapture()],
+		['wild strike tier-2 speed', wildStrikeTierTwoSpeedCapture()],
+		['two ladders', twoLadderCapture()]
+	];
+
+	function sweep(): { visited: string[]; offenders: string[] } {
+		const visited: string[] = [];
+		const offenders: string[] = [];
+		for (const [what, capture] of SWEPT_CAPTURES) {
+			const verdict = verdictOf(capture);
+			for (const sourceId of SOURCE_IDS) {
+				for (const result of passingOf(verdict, sourceId)) {
+					visited.push(result.id);
+					offenders.push(...unsatisfiableGroups(`${what} / ${result.id}`, result.derivedUrl));
+				}
+			}
+		}
+		return { visited, offenders };
+	}
+
+	// A sweep that stopped passing anything would report no offenders and look
+	// green, so what it reached is asserted as well as what it found. Every
+	// guide-b ladder and both untiered guide-a rulesets that any of these
+	// captures can answer are in here.
+	it('sweeps a passing rung of every ladder and both guide-a archetypes', () => {
+		expect([...new Set(sweep().visited)].sort()).toEqual([
+			'guide-a-combatant',
+			'guide-a-kinetist-v1',
+			'guide-a-manyshot',
+			'guide-b-frost-blades-end-noreturn',
+			'guide-b-frost-blades-end-return',
+			'guide-b-frost-blades-gg',
+			'guide-b-frost-blades-mid',
+			'guide-b-frost-blades-mv',
+			'guide-b-kinetist-end',
+			'guide-b-kinetist-gg',
+			'guide-b-kinetist-mid',
+			'guide-b-kinetist-mv',
+			'guide-b-manyshot-gg',
+			'guide-b-manyshot-mid',
+			'guide-b-manyshot-mv',
+			'guide-b-wild-strike-end',
+			'guide-b-wild-strike-gg',
+			'guide-b-wild-strike-mid',
+			'guide-b-wild-strike-mv'
+		]);
+	});
+
+	it('leaves no derived group asking for more filters than it has switched on', () => {
+		expect(sweep().offenders).toEqual([]);
+	});
+
+	// The clamp, at the one rung that needs it: `projectiles` is parked with a
+	// `min` written for all eight of its links, and this mercenary fires two of
+	// them, so the revived group asks for the three filters it actually has.
+	it('clamps a revived group’s minimum down to the filters that survived the revival', () => {
+		const gg = rulesetOf(verdictOf(manyshotGgCapture()), 'guide-b', 'guide-b-manyshot-gg');
+		const projectiles = derivedGroup(gg.derivedUrl, 4);
+		expect(projectiles.disabled).toBeUndefined();
+		expect([projectiles.value, projectiles.filters]).toEqual([
+			{ min: 3 },
+			[
+				{ id: ICE_SHOT },
+				{ id: GMP, disabled: true },
+				{ id: GREATER_FORK, disabled: true },
+				{ id: CHAIN, disabled: true },
+				{ id: EDWA, disabled: true },
+				{ id: GREATER_EDWA },
+				{ id: HYPOTHERMIA },
+				{ id: GREATER_HYPOTHERMIA, disabled: true }
+			]
+		]);
+	});
+
+	// A group the flips left alone keeps the guide's own number: the Manyshot GG
+	// rung's live `vaal-damage` asks 3 of 5, nothing in it toggled, and it still
+	// asks 3.
+	it('leaves a group the flips did not touch on the guide’s own minimum', () => {
+		const gg = rulesetOf(verdictOf(manyshotGgCapture()), 'guide-b', 'guide-b-manyshot-gg');
+		expect(derivedGroup(gg.derivedUrl, 2).value).toEqual({ min: 3 });
+	});
+
+	// The revival path itself still works: a REAL bonus inside the parked group
+	// switches the group on, and the anchor stays enabled so the `min` can be met.
+	it('revives a parked group with its anchor still switched on', () => {
+		const mv = rulesetOf(
+			verdictOf(frostBladesCapture([FASTER_ATTACKS])),
+			'guide-b',
+			'guide-b-frost-blades-mv'
+		);
+		const speed = derivedGroup(mv.derivedUrl, 4);
+		expect(speed.disabled).toBeUndefined();
+		expect([speed.value, speed.filters]).toEqual([
+			{ min: 2 },
+			[
+				{ id: FROST_BLADES },
+				{ id: FASTER_ATTACKS },
+				{ id: GREATER_FASTER_ATTACKS, disabled: true }
+			]
+		]);
 	});
 });
 
@@ -641,9 +960,46 @@ describe('reasons', () => {
 		]);
 	});
 
+	// All four Kinetist rungs pass this capture; only GG is best, and only GG
+	// speaks. The rung count is asserted first because `every` over an empty list
+	// is true — a silent pass is what this test exists to not do.
 	it('speaks only for the rungs it calls best', () => {
-		const reasons = sourceOf(verdictOf(kinetistCapture()), 'guide-b').reasons;
-		expect(reasons.every((reason) => reason.startsWith('Kinetist (end):'))).toBe(true);
+		const verdict = verdictOf(kinetistCapture([GMP]));
+		expect(passingOf(verdict, 'guide-b').map((result) => result.id)).toEqual([
+			'guide-b-kinetist-mv',
+			'guide-b-kinetist-mid',
+			'guide-b-kinetist-end',
+			'guide-b-kinetist-gg'
+		]);
+		const reasons = sourceOf(verdict, 'guide-b').reasons;
+		expect(reasons.length).toBeGreaterThan(0);
+		expect(reasons.every((reason) => reason.startsWith('Kinetist (gg):'))).toBe(true);
+	});
+
+	// Two rungs of the Frost Blades ladder are both `end`; the tier key alone
+	// would head both reason lines 'Frost Blades (end)'. A capture that passes
+	// NOTHING is what makes all five rungs speak at once, which is the only way
+	// to see the two Endgame titles side by side.
+	it('titles a rung’s reasons with its own tier wording when the tier is shared', () => {
+		const reasons = sourceOf(verdictOf(captureOf([row(0, skillRead(ICE_SHOT))])), 'guide-b').reasons;
+		const titles = reasons
+			.filter((reason) => reason.startsWith('Frost Blades'))
+			.map((reason) => reason.split(':')[0]);
+		expect([...new Set(titles)]).toEqual([
+			'Frost Blades (mv)',
+			'Frost Blades (mid)',
+			'Frost Blades (endgame (no return))',
+			'Frost Blades (endgame (return))',
+			'Frost Blades (gg)'
+		]);
+	});
+
+	// The other side of the same rule: a rung that does not spell its tier out
+	// still reads exactly as it did before `tierLabel` existed.
+	it('titles a rung with no wording of its own with the bare tier key', () => {
+		const reasons = sourceOf(verdictOf(manyshotGgCapture()), 'guide-b').reasons;
+		expect(reasons.length).toBeGreaterThan(0);
+		expect(reasons.every((reason) => reason.startsWith('Manyshot (gg):'))).toBe(true);
 	});
 });
 
@@ -732,6 +1088,75 @@ describe('synthetic rulesets', () => {
 		);
 		const core = groupOf(verdict, 'guide-a', 'synthetic', 'core');
 		expect([core.outcome, core.need, core.confident]).toEqual(['pass', 2, 2]);
+	});
+
+	/**
+	 * The clamp is keyed on the flips having ALTERED the group, not on the group
+	 * having been revived: a group that was live all along still loses a filter
+	 * when a buyer-contextual entry the mercenary lacks switches off, and `min: 2`
+	 * over the one filter left is the same dead comp a revived group produces.
+	 *
+	 * Synthetic because no shipped ruleset can show it: the Kinetist `secondary`
+	 * count group is the only live group carrying both a `min` and a
+	 * buyer-contextual entry, and its `min` is 1, so clamping it is a no-op.
+	 */
+	function contextualGroupSource(): MercSource {
+		return oneGroup({
+			id: 'core',
+			label: 'Core',
+			type: 'count',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: KINETIC_BLAST_OF_CLUSTERING, name: textOf(KINETIC_BLAST_OF_CLUSTERING), enabledInSearch: true },
+				{ id: HASTE, name: textOf(HASTE), enabledInSearch: true, buyerContextual: true }
+			]
+		});
+	}
+
+	it('clamps a live group’s minimum when a contextual entry switched off', () => {
+		const verdict = evaluateCapture(
+			captureOf([row(0, skillRead(KINETIC_BLAST_OF_CLUSTERING))]),
+			[contextualGroupSource()],
+			ALL_SOURCES,
+			LEAGUE
+		);
+		const core = derivedGroup(rulesetOf(verdict, 'guide-a', 'synthetic').derivedUrl, 0);
+		expect(core.disabled).toBeUndefined();
+		expect([core.value, core.filters]).toEqual([
+			{ min: 1 },
+			[{ id: KINETIC_BLAST_OF_CLUSTERING }, { id: HASTE, disabled: true }]
+		]);
+	});
+
+	// The mirror, and the reason the clamp is conditional at all: this group's
+	// `min: 2` already exceeds the one entry its guide switched on, and NOTHING
+	// the flips do touches it — the Haste is a parked bonus the mercenary does not
+	// have, so no entry moves. The guide's saved search asks 2 of 1, and the
+	// derived link reproduces it rather than correcting it.
+	it('leaves an untouched group’s minimum alone even where it already exceeds its filters', () => {
+		const source = oneGroup({
+			id: 'core',
+			label: 'Core',
+			type: 'count',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: KINETIC_BLAST_OF_CLUSTERING, name: textOf(KINETIC_BLAST_OF_CLUSTERING), enabledInSearch: true },
+				{ id: HASTE, name: textOf(HASTE), enabledInSearch: false }
+			]
+		});
+		const verdict = evaluateCapture(
+			captureOf([row(0, skillRead(KINETIC_BLAST_OF_CLUSTERING))]),
+			[source],
+			ALL_SOURCES,
+			LEAGUE
+		);
+		const core = derivedGroup(rulesetOf(verdict, 'guide-a', 'synthetic').derivedUrl, 0);
+		expect([core.value, core.filters]).toEqual([
+			{ min: 2 },
+			[{ id: KINETIC_BLAST_OF_CLUSTERING }, { id: HASTE, disabled: true }]
+		]);
 	});
 
 	// Asking a mercenary for nothing is not the same as a mercenary passing.

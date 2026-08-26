@@ -348,12 +348,18 @@ export function guidesLine(
  * The tier rides after the name with no bracket of its own: the whole detail
  * already sits inside the guide's brackets on the strip, and nesting a second
  * pair there is noise on the one line the player reads under pressure.
+ *
+ * A rung that spells its own tier out prints that wording instead of the key:
+ * one ladder can seat two rungs at one tier, and "Frost Blades end" would not
+ * say which of the two searches the player is being sent to.
  */
 function bestDetail(source: MercSourceVerdict): string {
 	if (source.headline !== 'worth') return '';
 	return source.rulesets
 		.filter((ruleset) => source.best.includes(ruleset.id))
-		.map((ruleset) => (ruleset.tier ? `${ruleset.label} ${ruleset.tier}` : ruleset.label))
+		.map((ruleset) =>
+			ruleset.tier ? `${ruleset.label} ${ruleset.tierLabel ?? ruleset.tier}` : ruleset.label
+		)
 		.join(', ');
 }
 

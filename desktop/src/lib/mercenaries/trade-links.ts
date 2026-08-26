@@ -46,7 +46,7 @@ export interface TradeStatGroup {
 
 /**
  * The `query` object of a trade search — the same shape the saved-search
- * fixtures carry under their own `query` key. No `sort`: none of the eleven
+ * fixtures carry under their own `query` key. No `sort`: none of the twenty
  * saved searches has one, and adding one here would make the derived search
  * order differently from the search it was derived from.
  *
@@ -84,6 +84,8 @@ export interface QueryFlips {
 	 * this to Haste) cannot be comped through an entry flip alone, because the
 	 * trade site ignores every filter of a disabled group. `not` groups are never
 	 * in here: a parked denial stays parked.
+	 *
+	 * A revived group's `min` is clamped by `rulesetQuery` — see the note there.
 	 */
 	enableGroups?: ReadonlySet<string>;
 }
@@ -126,17 +128,45 @@ function entryEnabled(
  * `disabled: false`, so the round-trip test owns the normaliser that makes both
  * sides comparable; putting that normalisation here would let the builder
  * launder a transcription error into a match.
+ *
+ * ONE number moves, on any group the flips ALTERED — revived from parked, or
+ * left live with an entry toggled. Both cases drop filters the guide's `min` was
+ * written for, so the group can end up asking for more filters than it still has
+ * switched on: a search the trade site can never answer. Measured 2026-08-26 on
+ * the Manyshot GG rung's parked `projectiles` group (`min: 4` over the three
+ * filters that survived revival); a live group whose buyer-contextual entry
+ * switches off reaches the same dead end by the other door. An altered group's
+ * `min` is therefore clamped DOWN to its enabled-filter count.
+ *
+ * Down, never up. The derived link asks for "mercenaries like this one", so the
+ * floor is what this one actually carries; raising a `min` would comp against a
+ * mercenary nobody captured.
+ *
+ * A group the flips did not touch keeps the guide's own number even where that
+ * number already exceeds what the search has switched on — that is the guide's
+ * saved search, faithfully reproduced, and not this builder's to correct. A
+ * group with no `min` stays without one. So a no-flips call, which is what the
+ * fixture-fidelity tests make, is byte-for-byte the saved search.
  */
 export function rulesetQuery(ruleset: MercRuleset, flips?: QueryFlips): TradeQuery {
 	const stats: TradeStatGroup[] = ruleset.groups.map((group) => {
-		const built: TradeStatGroup = {
-			type: group.type,
-			filters: group.entries.map((entry) =>
-				entryEnabled(group, entry, flips) ? { id: entry.id } : { id: entry.id, disabled: true }
-			)
-		};
-		if (group.min !== undefined) built.value = { min: group.min };
-		if (!groupEnabled(group, flips)) built.disabled = true;
+		const entryStates = group.entries.map((entry) => ({
+			entry,
+			on: entryEnabled(group, entry, flips)
+		}));
+		const filters = entryStates.map(({ entry, on }) =>
+			on ? { id: entry.id } : { id: entry.id, disabled: true }
+		);
+		const enabled = groupEnabled(group, flips);
+		const altered =
+			enabled !== group.enabledInSearch ||
+			entryStates.some(({ entry, on }) => on !== entry.enabledInSearch);
+		const built: TradeStatGroup = { type: group.type, filters };
+		if (group.min !== undefined) {
+			const on = entryStates.filter((state) => state.on).length;
+			built.value = { min: altered ? Math.min(group.min, on) : group.min };
+		}
+		if (!enabled) built.disabled = true;
 		return built;
 	});
 

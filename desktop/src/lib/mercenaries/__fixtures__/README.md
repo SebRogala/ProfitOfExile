@@ -31,10 +31,21 @@ its own hash in the top-level `id` field. The human-facing page for the same sea
 | `Z6Em09GmHQ.json` | guide-b | Manyshot ladder — Mid |
 | `JBnK2YKRFl.json` | guide-b | Manyshot ladder — End |
 | `d86ymvXRsJ.json` | guide-b | Manyshot ladder — GG |
+| `Kld4gv0Pi5.json` | guide-b | Frost Blades ladder — Minimum |
+| `Kld4gM7yi5.json` | guide-b | Frost Blades ladder — Midgame |
+| `q9l6yK0psg.json` | guide-b | Frost Blades ladder — Endgame (no return) |
+| `OglBJZoQIE.json` | guide-b | Frost Blades ladder — Endgame (return) |
+| `PPaX7lLqUL.json` | guide-b | Frost Blades ladder — GG Merc |
+| `3q6awYZPc5.json` | guide-b | Wild Strike ladder — Minimum |
+| `mkgR2DbeS6.json` | guide-b | Wild Strike ladder — Midgame |
+| `jWRDpypkCX.json` | guide-b | Wild Strike ladder — Endgame |
+| `bGDrZYZaCL.json` | guide-b | Wild Strike ladder — GG Merc |
 
-**Decoded:** the four Manyshot files 2026-08-26. Unlike every other saved search here
-they carry no `filters` block at all — no item-level floor — so `rulesets.ts` leaves
-`ilvlMin` absent on those rungs and the fidelity test reads the key as optional.
+**Decoded:** the four Manyshot files and the nine Combatant files, 2026-08-26. The four
+Manyshot files are the only ones here that carry no `filters` block at all — no
+item-level floor — so `rulesets.ts` leaves `ilvlMin` absent on those rungs and the
+fidelity test reads the key as optional. The nine Combatant files set `ilvl` 83 like
+everything else.
 
 ### Guide URLs
 
@@ -44,12 +55,22 @@ re-fetchable if you can find the search it came from again.
 - guide-a — one page, all three searches:
   <https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing>
 - guide-b — Nerotox's channel, <https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA>,
-  one video per ladder:
+  one video per ladder, except the Combatant video which publishes two:
   - Kinetist ladder (2026-08-08): <https://www.youtube.com/watch?v=HKTVN4sENvg>
   - Manyshot ladder (2026-07-29): <https://www.youtube.com/watch?v=ljaXlGLdyxM>
+  - Frost Blades AND Wild Strike ladders, one video (2026-08-08):
+    <https://www.youtube.com/watch?v=45aM9242Umo>
 
-Each video's description is the only place its four trade links exist; the rung-level
-`guideUrl` in `rulesets.ts` names which video published which link.
+Each video's description is the only place its trade links exist; the rung-level
+`guideUrl` in `rulesets.ts` names which video published which link. It is one video
+per LADDER for the first two and one video for BOTH Combatant ladders, so the guide
+URL cannot be derived from the ladder key.
+
+The Combatant description carries one prose note, about all nine searches rather than
+any one of them, so no rung takes it as an `authorNote`: "Please play around yourself
+with the trade filters as well to search for greater supports, these are only starting
+points, you can definitely optimize the searches for whatever you are looking for still
+(moveskill/auras)".
 
 Re-fetch one (read-only GET; pace repeated calls at least 2s apart to stay inside GGG's
 rate limits):

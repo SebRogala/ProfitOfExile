@@ -51,10 +51,10 @@ function enabledEntries(group: MercFilterGroup) {
 }
 
 /**
- * The quantifier split into its pieces, so the matrix can collapse four rungs
- * that differ only in the number ("at least 2 · 2 · 3 · 2 of:") without parsing
- * the rendered sentence back apart. `min` is null for the wordings that carry no
- * number.
+ * The quantifier split into its pieces, so the matrix can collapse a row of
+ * rungs that differ only in the number ("at least 2 · 2 · 3 · 2 of:") without
+ * parsing the rendered sentence back apart. `min` is null for the wordings that
+ * carry no number.
  */
 export interface QuantifierParts {
 	prefix: string;
@@ -102,8 +102,16 @@ export function sharedValue<T>(values: T[]): T | null {
 	return values.every((v) => v === values[0]) ? values[0] : null;
 }
 
-/** Head text for a rung's column: its tier, falling back to its own label. */
+/**
+ * Head text for a rung's column: the rung's own `tierLabel` when it has one,
+ * else its tier, falling back to its own label.
+ *
+ * `tierLabel` comes first because a ladder may seat two rungs at one tier —
+ * Nerotox's Frost Blades ladder has two `end` rungs — and two columns headed
+ * 'endgame' would tell the reader the matrix is showing one search twice.
+ */
 export function columnLabel(ruleset: MercRuleset): string {
+	if (ruleset.tierLabel) return ruleset.tierLabel;
 	return ruleset.tier ? TIER_LABELS[ruleset.tier] : ruleset.label;
 }
 

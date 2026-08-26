@@ -77,12 +77,18 @@ function slice(
 	return { ...mercenarySliceDefault(), status, capture: taken, burstSpeaker };
 }
 
-function ruleset(id: string, label: string, tier: string | null): MercRulesetResult {
+function ruleset(
+	id: string,
+	label: string,
+	tier: string | null,
+	tierLabel: string | null = null
+): MercRulesetResult {
 	return {
 		id,
 		label,
 		ladder: null,
 		tier,
+		tierLabel,
 		outcome: 'pass',
 		groups: [],
 		notInRules: [],
@@ -352,6 +358,20 @@ describe('the one guides line', () => {
 			capture([])
 		);
 		expect(line).toEqual({ text: 'WORTH · Guide B (Kinetist mid)', tone: 'pass' });
+	});
+
+	// A ladder can seat two rungs at one tier, and the strip is the line the
+	// player acts on: 'Frost Blades end' would not say which search to open.
+	it('names a rung sharing its tier by the wording that tells the two apart', () => {
+		const line = guidesLine(
+			verdict([
+				source('guide-b', 'Guide B', 'worth', ['fb-end-return'], [
+					ruleset('fb-end-return', 'Frost Blades', 'end', 'endgame (return)')
+				])
+			]),
+			capture([])
+		);
+		expect(line?.text).toBe('WORTH · Guide B (Frost Blades endgame (return))');
 	});
 
 	it('names every guide that said WORTH when more than one did', () => {
