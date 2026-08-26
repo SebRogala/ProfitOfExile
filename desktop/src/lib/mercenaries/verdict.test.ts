@@ -32,11 +32,15 @@ const FROST_BLADES = 'mercenary.skill_22105';
 const STATIC_STRIKE = 'mercenary.skill_24931';
 const WILD_STRIKE = 'mercenary.skill_40957';
 const KINETIC_BLAST_OF_CLUSTERING = 'mercenary.skill_16356';
+const KINETIC_BOLT = 'mercenary.skill_12583';
+const SPECTRAL_HELIX_OF_TRARTHUS = 'mercenary.skill_28988';
+const SPECTRAL_HELIX = 'mercenary.skill_37916';
 const GREATER_KINETIC_BLAST = 'mercenary.skill_44258';
 const BARRAGE = 'mercenary.skill_1356';
 const HASTE = 'mercenary.skill_52155';
 const HATRED = 'mercenary.skill_24482';
 const HERALD_OF_ICE = 'mercenary.skill_32807';
+const GRACE = 'mercenary.skill_2792';
 const INSPIRING_CRY = 'mercenary.skill_65473';
 const RETURN = 'mercenary.support_5293';
 const GMP = 'mercenary.support_49419';
@@ -52,6 +56,8 @@ const GREATER_FASTER_ATTACKS = 'mercenary.support_50485';
 const FASTER_ATTACKS = 'mercenary.support_987';
 const HYPOTHERMIA = 'mercenary.support_38571';
 const CRITICAL_DAMAGE = 'mercenary.support_32189';
+const MULTIPLE_TRAPS = 'mercenary.support_2555';
+const GREATER_SLOWER_PROJECTILES = 'mercenary.support_44952';
 const GILDED_EXTRA_TARGETS = ['mercenary.support_58471', 'mercenary.support_37259'];
 
 function skillRead(id: string, state: ReadState = 'matched'): MercSkillRead {
@@ -297,6 +303,18 @@ function wildStrikeTierTwoSpeedCapture(): MercCapture {
  * Rain"). Contrived, and it has to be: the two ladders exist to be answered
  * separately, so the regression they can have needs one capture on both.
  */
+/**
+ * A Blade Ambusher as CaptainLance describes one: the Trarthus transfigure with
+ * two of the three support families he names. No guide-a ruleset and no guide-b
+ * ladder mentions this skill, so this capture exists for guide-c alone.
+ */
+function bladeAmbusherCapture(skill: string = SPECTRAL_HELIX_OF_TRARTHUS): MercCapture {
+	return captureOf([
+		row(0, skillRead(skill), supportsOf([MULTIPLE_TRAPS, GREATER_SLOWER_PROJECTILES])),
+		row(1, skillRead(GRACE))
+	]);
+}
+
 function twoLadderCapture(): MercCapture {
 	return captureOf([...kinetistCapture().rows, row(2, skillRead(VAAL_ICE_SHOT))]);
 }
@@ -487,7 +505,11 @@ describe('sources are evaluated independently', () => {
 		const verdict = verdictOf(capture);
 		expect(verdict.sources.map((s) => [s.id, s.headline])).toEqual([
 			['guide-a', 'skip'],
-			['guide-b', 'worth']
+			['guide-b', 'worth'],
+			// Guide C asks this archetype for the skill row and no Kinetic Bolt,
+			// and says nothing about Barrage either way — a third opinion, not a
+			// tie-breaker between the first two.
+			['guide-c', 'worth']
 		]);
 		expect(sourceOf(verdict, 'guide-b').best).toEqual(['guide-b-kinetist-mv']);
 	});
@@ -733,7 +755,7 @@ describe('the row anchor of a `mercenary` group', () => {
 	});
 
 	/**
-	 * Every capture this file builds, swept across BOTH sources. The invariant is
+	 * Every capture this file builds, swept across every source. The invariant is
 	 * general — no derived link may carry a group asking for more filters than it
 	 * leaves switched on — so the sweep is over everything rather than the two
 	 * ladders whose bugs found it.
@@ -757,7 +779,10 @@ describe('the row anchor of a `mercenary` group', () => {
 		['frost blades + both', frostBladesCapture([GREATER_FASTER_ATTACKS, RETURN])],
 		['wild strike', wildStrikeCapture()],
 		['wild strike tier-2 speed', wildStrikeTierTwoSpeedCapture()],
-		['two ladders', twoLadderCapture()]
+		['two ladders', twoLadderCapture()],
+		// The only archetype no guide-b ladder and no guide-a ruleset covers, so
+		// without it the sweep would never reach guide-c's Blade Ambusher at all.
+		['blade ambusher', bladeAmbusherCapture()]
 	];
 
 	function sweep(): { visited: string[]; offenders: string[] } {
@@ -777,9 +802,9 @@ describe('the row anchor of a `mercenary` group', () => {
 
 	// A sweep that stopped passing anything would report no offenders and look
 	// green, so what it reached is asserted as well as what it found. Every
-	// guide-b ladder and both untiered guide-a rulesets that any of these
-	// captures can answer are in here.
-	it('sweeps a passing rung of every ladder and both guide-a archetypes', () => {
+	// guide-b ladder, both untiered guide-a rulesets and all four guide-c
+	// rulesets that any of these captures can answer are in here.
+	it('sweeps a passing rung of every ladder, both guide-a archetypes and all four guide-c rulesets', () => {
 		expect([...new Set(sweep().visited)].sort()).toEqual([
 			'guide-a-combatant',
 			'guide-a-kinetist-v1',
@@ -799,7 +824,11 @@ describe('the row anchor of a `mercenary` group', () => {
 			'guide-b-wild-strike-end',
 			'guide-b-wild-strike-gg',
 			'guide-b-wild-strike-mid',
-			'guide-b-wild-strike-mv'
+			'guide-b-wild-strike-mv',
+			'guide-c-blade-ambusher',
+			'guide-c-combatant',
+			'guide-c-kinetist',
+			'guide-c-manyshot'
 		]);
 	});
 
@@ -1270,5 +1299,132 @@ describe('parked groups in the derived query', () => {
 	it('leaves a parked group parked when nothing inside it fired', () => {
 		const url = rulesetOf(verdictOf(kinetistCapture()), 'guide-b', 'guide-b-kinetist-mid').derivedUrl;
 		expect(derivedGroup(url, 5).disabled).toBe(true);
+	});
+});
+
+/**
+ * Guide C is transcribed from prose, and the modelling ruling behind it makes it
+ * behave unlike the other two: the SKILL row is the whole gate, every support the
+ * author listed is a switched-off bonus, and the two denials are the only places
+ * the guide says no. So a pass here is a low bar on purpose, and the verdict's
+ * information is in what it lists as fired rather than in the pass itself.
+ */
+describe('guide C — a ruleset transcribed from prose', () => {
+	/** A Kinetist row with whatever links the test wants on it, and nothing else. */
+	function idealKinetist(supports: string[] = [], skill = KINETIC_BLAST_OF_CLUSTERING) {
+		return captureOf([row(0, skillRead(skill), supportsOf(supports))]);
+	}
+
+	// The bar the ruling sets: the author asks for links, he does not say a merc
+	// without them is worthless — so the skill row alone passes.
+	it('passes a Kinetist merc carrying the skill and not one of the ideal links', () => {
+		const kinetist = rulesetOf(verdictOf(idealKinetist()), 'guide-c', 'guide-c-kinetist');
+		expect(kinetist.outcome).toBe('pass');
+	});
+
+	// Nothing computed to say: no floor (the guide quotes no prices) and no bonus
+	// fired. What remains is the author's own line about the archetype.
+	it('says only what the author said when a bare skill row passes', () => {
+		const kinetist = rulesetOf(verdictOf(idealKinetist()), 'guide-c', 'guide-c-kinetist');
+		expect(kinetist.reasons).toEqual(['Author: BiS Clear Merc']);
+	});
+
+	// "do NOT get Kinetic Bolt - this will brick merc ai to not use clustering
+	// properly" — the one guide-c gate that can turn a merc down.
+	it('fails a Kinetist merc carrying the skill the guide denies', () => {
+		const capture = captureOf([
+			row(0, skillRead(KINETIC_BLAST_OF_CLUSTERING), supportsOf([RETURN])),
+			row(1, skillRead(KINETIC_BOLT))
+		]);
+		const kinetist = rulesetOf(verdictOf(capture), 'guide-c', 'guide-c-kinetist');
+		expect(kinetist.outcome).toBe('fail');
+		expect(kinetist.reasons).toEqual(['Kinetic Bolt present — forbidden']);
+	});
+
+	// The links the merc actually has, in the guide's own tier order — and NOT
+	// the Kinetic Blast the group is row-scoped to, which is present in every
+	// capture this group can speak about and so says nothing about the merc.
+	it('lists the ideal links that fired without listing the skill row they hang on', () => {
+		const kinetist = rulesetOf(
+			verdictOf(idealKinetist([GMP, RETURN])),
+			'guide-c',
+			'guide-c-kinetist'
+		);
+		expect(kinetist.reasons).toContain(
+			'Bonuses fired: Greater Multiple Projectiles (Tier 3), Return (Tier 3)'
+		);
+	});
+
+	// "Vaal Ice Shot(single target needed)" — the author names it as the skill
+	// the merc cannot do the job without, so both rows are required and an Ice
+	// Shot merc without the Vaal row is a fail rather than a partial pass.
+	it('fails the Manyshot ruleset on the Vaal Ice Shot row when the merc has only Ice Shot', () => {
+		const capture = captureOf([row(0, skillRead(ICE_SHOT), supportsOf([RETURN]))]);
+		const verdict = verdictOf(capture);
+		expect(groupOf(verdict, 'guide-c', 'guide-c-manyshot', 'core').outcome).toBe('pass');
+		expect(groupOf(verdict, 'guide-c', 'guide-c-manyshot', 'secondary').outcome).toBe('fail');
+	});
+
+	// Spectral Helix of Trarthus is `skill_28988`; plain Spectral Helix is
+	// `skill_37916`, a different stat that guide A's Combatant search actively
+	// denies. Matching on the base skill would call the wrong merc ideal.
+	it('does not read plain Spectral Helix as the Trarthus transfigure the guide names', () => {
+		const core = groupOf(
+			verdictOf(bladeAmbusherCapture(SPECTRAL_HELIX)),
+			'guide-c',
+			'guide-c-blade-ambusher',
+			'core'
+		);
+		expect(core.outcome).toBe('fail');
+	});
+
+	it('reads the Trarthus transfigure as the skill the Blade Ambusher core asks for', () => {
+		const core = groupOf(
+			verdictOf(bladeAmbusherCapture()),
+			'guide-c',
+			'guide-c-blade-ambusher',
+			'core'
+		);
+		expect(core.outcome).toBe('pass');
+	});
+
+	// Nothing to open: the guide published no trade link, so the page and the
+	// overlay have no "saved search" to offer. Null rather than a fabricated
+	// hash-shaped URL, which would 404 on the trade site.
+	it('reports no saved link for a ruleset transcribed from prose', () => {
+		const kinetist = rulesetOf(verdictOf(idealKinetist()), 'guide-c', 'guide-c-kinetist');
+		expect(kinetist.savedUrl).toBeNull();
+	});
+
+	// The control for that null: a ruleset in the SAME verdict that does have a
+	// hash still gets its link, so the null is the authored case and not the
+	// engine having stopped building saved links.
+	it('still reports the saved link of a ruleset that has a hash', () => {
+		const manyshot = rulesetOf(verdictOf(idealKinetist()), 'guide-a', 'guide-a-manyshot');
+		expect(manyshot.savedUrl).toBe('https://www.pathofexile.com/trade/search/Allflame/WvKGjV8Kfm');
+	});
+
+	// The derived link is what survives the missing hash — it is built from the
+	// data model, so an authored ruleset can still be comped against the market.
+	it('still builds the derived link for a ruleset with no saved search', () => {
+		const kinetist = rulesetOf(verdictOf(idealKinetist([RETURN])), 'guide-c', 'guide-c-kinetist');
+		expect(derivedQueryOf(kinetist.derivedUrl).stats[0].filters).toContainEqual({ id: RETURN });
+	});
+
+	// The prose lists buff skills as upside, never as a requirement, so the group
+	// must not read as a gate the merc cleared — the same shape (and the same
+	// outcome) as guide A's parked aura lists.
+	it('applies nothing for the buff-skill group', () => {
+		const buffs = groupOf(verdictOf(idealKinetist()), 'guide-c', 'guide-c-kinetist', 'buffs');
+		expect(buffs.outcome).toBe('not-applied');
+	});
+
+	it('fires a buff skill the merc has as a bonus', () => {
+		const capture = captureOf([
+			row(0, skillRead(KINETIC_BLAST_OF_CLUSTERING)),
+			row(1, skillRead(HASTE))
+		]);
+		const kinetist = rulesetOf(verdictOf(capture), 'guide-c', 'guide-c-kinetist');
+		expect(kinetist.reasons).toContain('Bonuses fired: Haste');
 	});
 });

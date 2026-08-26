@@ -387,6 +387,24 @@ describe('the one guides line', () => {
 		expect(line?.text).toBe('WORTH · Guide A (Manyshot), Guide B (Kinetist mid)');
 	});
 
+	// Three guides now, and the strip is still ONE line: the two saying no cost
+	// it nothing, and the third is named because it is what the player acts on.
+	// An untiered guide-c ruleset prints its bare label, so "CaptainLance
+	// (Kinetist)" is the whole detail with no tier word trailing it.
+	it('names the one guide that said WORTH when the other two skipped', () => {
+		const line = guidesLine(
+			verdict([
+				source('guide-a', 'Guide A', 'skip'),
+				source('guide-b', 'Guide B', 'skip'),
+				source('guide-c', 'CaptainLance', 'worth', ['guide-c-kinetist'], [
+					ruleset('guide-c-kinetist', 'Kinetist', null)
+				])
+			]),
+			capture([])
+		);
+		expect(line).toEqual({ text: 'WORTH · CaptainLance (Kinetist)', tone: 'pass' });
+	});
+
 	// A WORTH outranks a SKIP beside it: one guide paying for this mercenary is
 	// the actionable fact, and hiding it behind the other guide's no would lose
 	// the play entirely.

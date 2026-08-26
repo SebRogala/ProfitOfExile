@@ -318,7 +318,10 @@
 	function otherLeagues(rulesets: MercRuleset[]): string[] {
 		if (ssot.league === null) return [];
 		const league = ssot.league;
-		return [...new Set(rulesets.map((r) => r.savedSearch.league))].filter((l) => l !== league);
+		// A ruleset transcribed from prose belongs to no league at all — it has no
+		// saved search to have been saved in one — so it can never be a mismatch.
+		const saved = rulesets.flatMap((r) => (r.savedSearch ? [r.savedSearch.league] : []));
+		return [...new Set(saved)].filter((l) => l !== league);
 	}
 </script>
 
@@ -632,6 +635,12 @@
 				<span class="league-badge">saved in {league}</span>
 			{/each}
 		</header>
+		{#if source.description}
+			<!-- Whose rules these are and which side of the trade they take. The
+			     sources disagree on purpose, so the reader needs it before the
+			     cards, not after them. -->
+			<p class="source-description">{source.description}</p>
+		{/if}
 
 		<div class="grid">
 			{#each ladderCards as card (card.key)}
@@ -660,16 +669,20 @@
 									{#each ladder as rung (rung.id)}
 										<th class="tier-col" scope="col">
 											<span class="tier-name">{columnLabel(rung)}</span>
-											<a
-												class="search-link"
-												href={savedSearchUrl(rung.savedSearch)}
-												target="_blank"
-												aria-label="open saved search — {source.label} {rung.label} {columnLabel(
-													rung
-												)}"
-											>
-												↗
-											</a>
+											{#if rung.savedSearch}
+												<!-- Every ladder rung so far is a saved search; a ladder transcribed
+												     from prose would have no hash to link. -->
+												<a
+													class="search-link"
+													href={savedSearchUrl(rung.savedSearch)}
+													target="_blank"
+													aria-label="open saved search — {source.label} {rung.label} {columnLabel(
+														rung
+													)}"
+												>
+													↗
+												</a>
+											{/if}
 											{#if !card.meta}<span class="meta">{metaText(rung)}</span>{/if}
 											{#if rung.floor}<span class="floor">{rung.floor}</span>{/if}
 										</th>
@@ -780,14 +793,20 @@
 								>{RULESET_OUTCOME_LABEL[result.outcome]}</span
 							>
 						{/if}
-						<a
-							class="search-link"
-							href={savedSearchUrl(ruleset.savedSearch)}
-							target="_blank"
-							aria-label="open saved search — {source.label} {ruleset.label}"
-						>
-							open saved search ↗
-						</a>
+						{#if ruleset.savedSearch}
+							<a
+								class="search-link"
+								href={savedSearchUrl(ruleset.savedSearch)}
+								target="_blank"
+								aria-label="open saved search — {source.label} {ruleset.label}"
+							>
+								open saved search ↗
+							</a>
+						{:else}
+							<!-- Transcribed from prose: this guide published no trade link, so
+							     there is no saved search to open. The derived link still works. -->
+							<span class="meta">no saved search — transcribed from the guide's prose</span>
+						{/if}
 						{#if result}
 							{#if result.derivedUrl}
 								<a
@@ -1282,6 +1301,12 @@
 		font-size: 1.05rem;
 		font-weight: 600;
 		color: var(--color-lab-text);
+	}
+
+	.source-description {
+		font-size: 0.75rem;
+		color: var(--color-lab-text-secondary);
+		margin: -0.4rem 0 0.75rem;
 	}
 
 	.grid {

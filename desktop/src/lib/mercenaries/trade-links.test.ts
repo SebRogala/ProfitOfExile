@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { derivedSearchUrl, rulesetQuery, savedSearchUrl, type TradeQuery } from './trade-links';
-import { MERC_SOURCES, allRulesets, type MercRuleset, type MercSource } from './rulesets';
+import {
+	MERC_SOURCES,
+	allRulesets,
+	oracleFixture,
+	type MercRuleset,
+	type MercSource
+} from './rulesets';
 import captureQuery from './__fixtures__/capture-query.expected.json';
 import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
 import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
@@ -22,8 +28,12 @@ import n3q6awYZPc5 from './__fixtures__/3q6awYZPc5.json';
 import mkgR2DbeS6 from './__fixtures__/mkgR2DbeS6.json';
 import jWRDpypkCX from './__fixtures__/jWRDpypkCX.json';
 import bGDrZYZaCL from './__fixtures__/bGDrZYZaCL.json';
+import guideCKinetist from './__fixtures__/guide-c-kinetist.json';
+import guideCManyshot from './__fixtures__/guide-c-manyshot.json';
+import guideCBladeAmbusher from './__fixtures__/guide-c-blade-ambusher.json';
+import guideCCombatant from './__fixtures__/guide-c-combatant.json';
 
-/** Keyed by the hash the ruleset declares — the `rulesets.test.ts` idiom. */
+/** Keyed by the oracle the ruleset declares — the `rulesets.test.ts` idiom. */
 const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	WvKGjV8Kfm,
 	LgkKKmllTn,
@@ -44,7 +54,11 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	'3q6awYZPc5': n3q6awYZPc5,
 	mkgR2DbeS6,
 	jWRDpypkCX,
-	bGDrZYZaCL
+	bGDrZYZaCL,
+	'guide-c-kinetist': guideCKinetist,
+	'guide-c-manyshot': guideCManyshot,
+	'guide-c-blade-ambusher': guideCBladeAmbusher,
+	'guide-c-combatant': guideCCombatant
 };
 
 /**
@@ -94,21 +108,64 @@ describe('savedSearchUrl', () => {
 		expect(new URL(url).search).toBe('');
 	});
 
-	it('links each declared ruleset to its own saved search', () => {
-		const linked = allRulesets().map((r) => searchPathSegments(savedSearchUrl(r.savedSearch)));
-		expect(linked).toEqual(allRulesets().map((r) => r.savedSearch));
+	it('links each GGG-saved ruleset to its own saved search', () => {
+		const saved = allRulesets().filter((ruleset) => ruleset.savedSearch !== undefined);
+		expect(saved.map((r) => searchPathSegments(savedSearchUrl(r.savedSearch!)))).toEqual(
+			saved.map((r) => r.savedSearch)
+		);
+	});
+});
+
+/**
+ * The other half of that sweep: guide-c's rulesets are transcribed from PROSE,
+ * so there is no saved search to link and nothing may render an "open saved
+ * search" for them. The DERIVED link is unaffected — `rulesetQuery` builds from
+ * the data model and never needs a hash — which is the whole reason the two
+ * addressing schemes live in different fields instead of one being a hash
+ * nobody can fetch.
+ */
+describe('rulesets transcribed from prose', () => {
+	const AUTHORED = allRulesets().filter((ruleset) => ruleset.authored !== undefined);
+	const SAVED = allRulesets().filter((ruleset) => ruleset.savedSearch !== undefined);
+
+	it('names the four authored rulesets, and only those', () => {
+		expect(AUTHORED.map((r) => r.id)).toEqual([
+			'guide-c-kinetist',
+			'guide-c-manyshot',
+			'guide-c-blade-ambusher',
+			'guide-c-combatant'
+		]);
+	});
+
+	// The positive control the assertion above needs: the other twenty rulesets
+	// DO carry a hash, so an empty authored list would not be the two sides
+	// agreeing that nothing is authored.
+	it('leaves the twenty saved searches addressable by hash', () => {
+		expect(SAVED.length).toBe(20);
+		expect(SAVED.every((r) => r.authored === undefined)).toBe(true);
+	});
+
+	it("carries an authored ruleset's built query through the derived link's q parameter", () => {
+		const linked = AUTHORED.map((ruleset) => {
+			const url = derivedSearchUrl('Allflame', rulesetQuery(ruleset));
+			return JSON.parse(new URL(url).searchParams.get('q') ?? '').query;
+		});
+		expect(linked).toEqual(AUTHORED.map((ruleset) => rulesetQuery(ruleset)));
 	});
 });
 
 describe('source guide links', () => {
-	// Both identified 2026-08-26: each source's saved-search hashes are exactly the
-	// trade links on its page / in its video descriptions. Guide B's URL is the
-	// CHANNEL, because its ladders come from different videos of it — pointing the
-	// source at one of those videos would misattribute the other's links.
-	it('points each source at the page its saved searches were taken from', () => {
+	// All three identified 2026-08-26. Guide A's and guide B's saved-search hashes
+	// are exactly the trade links on that page / in those video descriptions;
+	// guide B's URL is the CHANNEL, because its ladders come from different videos
+	// of it and pointing the source at one would misattribute the others' links.
+	// Guide C's page publishes no links at all — the URL is where the PROSE is, so
+	// a reader can re-check the transcription against the sentences it came from.
+	it('points each source at the page its rules were taken from', () => {
 		expect(MERC_SOURCES.map((s) => [s.id, s.guideUrl])).toEqual([
 			['guide-a', 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing'],
-			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA']
+			['guide-b', 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA'],
+			['guide-c', 'https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot']
 		]);
 	});
 });
@@ -141,10 +198,21 @@ describe('per-ruleset guide URLs', () => {
 		]);
 	});
 
-	// Guide A's rulesets all come off one page, so they inherit the source URL.
-	it('leaves the guide-a rulesets without a URL of their own', () => {
-		const guideA = MERC_SOURCES.find((s) => s.id === 'guide-a') as MercSource;
-		expect(guideA.rulesets.map((r) => r.guideUrl)).toEqual([undefined, undefined, undefined]);
+	// Guide A's and guide C's rulesets each come off ONE page, so they inherit
+	// the source URL rather than repeating it per ruleset.
+	it('leaves a one-page source’s rulesets without a URL of their own', () => {
+		const onePage = ['guide-a', 'guide-c'].flatMap(
+			(id) => (MERC_SOURCES.find((s) => s.id === id) as MercSource).rulesets
+		);
+		expect(onePage.map((r) => `${r.id} ${r.guideUrl ?? 'inherits the source URL'}`)).toEqual([
+			'guide-a-manyshot inherits the source URL',
+			'guide-a-kinetist-v1 inherits the source URL',
+			'guide-a-combatant inherits the source URL',
+			'guide-c-kinetist inherits the source URL',
+			'guide-c-manyshot inherits the source URL',
+			'guide-c-blade-ambusher inherits the source URL',
+			'guide-c-combatant inherits the source URL'
+		]);
 	});
 });
 
@@ -194,11 +262,14 @@ describe('round-trip normaliser', () => {
 
 describe('rulesetQuery', () => {
 	for (const ruleset of allRulesets()) {
-		// The oracle is the saved search itself: the builder walks the typed data
-		// model, and what comes out has to be the JSON GGG returned for that hash.
-		it(`rebuilds the saved search ${ruleset.savedSearch.hash} from the ${ruleset.id} data model`, () => {
+		// For the twenty saved searches the oracle is GGG's own JSON: the builder
+		// walks the typed data model, and what comes out has to be the response
+		// returned for that hash. For guide-c's four the fixture is this builder's
+		// own output — a weaker check, and the only one available, since there is
+		// no saved search to disagree with (see `__fixtures__/README.md`).
+		it(`rebuilds ${oracleFixture(ruleset)} from the ${ruleset.id} data model`, () => {
 			expect(withoutExplicitFalses(rulesetQuery(ruleset))).toEqual(
-				withoutExplicitFalses(FIXTURES[ruleset.savedSearch.hash].query)
+				withoutExplicitFalses(FIXTURES[oracleFixture(ruleset)].query)
 			);
 		});
 	}

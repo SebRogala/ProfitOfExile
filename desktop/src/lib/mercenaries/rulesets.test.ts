@@ -5,6 +5,7 @@ import {
 	TIERS,
 	allRulesets,
 	ladders,
+	oracleFixture,
 	entryKind,
 	entryRole,
 	entryTier,
@@ -33,12 +34,22 @@ import n3q6awYZPc5 from './__fixtures__/3q6awYZPc5.json';
 import mkgR2DbeS6 from './__fixtures__/mkgR2DbeS6.json';
 import jWRDpypkCX from './__fixtures__/jWRDpypkCX.json';
 import bGDrZYZaCL from './__fixtures__/bGDrZYZaCL.json';
+import guideCKinetist from './__fixtures__/guide-c-kinetist.json';
+import guideCManyshot from './__fixtures__/guide-c-manyshot.json';
+import guideCBladeAmbusher from './__fixtures__/guide-c-blade-ambusher.json';
+import guideCCombatant from './__fixtures__/guide-c-combatant.json';
 import mercenaryStats from './__fixtures__/mercenary-stats.json';
 
 /**
  * The saved-search JSON as GGG returns it. TypeScript infers a per-file literal
  * type from each import (unions of "has `disabled`" and "doesn't"), so each one is
  * widened through `unknown` into this single shape — the room-presets.ts idiom.
+ *
+ * The four `guide-c-*.json` files are not GGG's — they are this app's own
+ * transcription of CaptainLance's prose, written in the same body shape so they
+ * go through the same reader. What that buys is a typed-model edit failing
+ * against a committed artifact instead of against nothing; what it cannot buy is
+ * a check on whether the prose was read correctly. See `__fixtures__/README.md`.
  */
 interface RawFilter {
 	id: string;
@@ -61,8 +72,9 @@ interface RawSavedSearch {
 }
 
 /**
- * Keyed by the hash the ruleset declares, NOT by the hash inside the file — that
- * is the point of the fixture-identity test below: a file copied to the wrong name
+ * Keyed by the oracle the ruleset declares — its saved-search hash, or the file
+ * an authored query names — and NOT by the `id` inside the file. That is the
+ * point of the fixture-identity test below: a file copied to the wrong name
  * fails there instead of silently validating a ruleset against another's search.
  */
 const FIXTURES: Record<string, RawSavedSearch> = {
@@ -85,7 +97,11 @@ const FIXTURES: Record<string, RawSavedSearch> = {
 	'3q6awYZPc5': n3q6awYZPc5 as unknown as RawSavedSearch,
 	mkgR2DbeS6: mkgR2DbeS6 as unknown as RawSavedSearch,
 	jWRDpypkCX: jWRDpypkCX as unknown as RawSavedSearch,
-	bGDrZYZaCL: bGDrZYZaCL as unknown as RawSavedSearch
+	bGDrZYZaCL: bGDrZYZaCL as unknown as RawSavedSearch,
+	'guide-c-kinetist': guideCKinetist as unknown as RawSavedSearch,
+	'guide-c-manyshot': guideCManyshot as unknown as RawSavedSearch,
+	'guide-c-blade-ambusher': guideCBladeAmbusher as unknown as RawSavedSearch,
+	'guide-c-combatant': guideCCombatant as unknown as RawSavedSearch
 };
 
 /** GGG's Mercenary stat vocabulary: stat id -> display text. */
@@ -93,10 +109,10 @@ const VOCABULARY = new Map(
 	(mercenaryStats as { entries: { id: string; text: string }[] }).entries.map((e) => [e.id, e.text])
 );
 
-/** Everything the transcription is allowed to claim about a saved search. */
+/** Everything the transcription is allowed to claim about its query. */
 function fromRuleset(ruleset: MercRuleset) {
 	return {
-		hash: ruleset.savedSearch.hash,
+		oracle: oracleFixture(ruleset),
 		status: ruleset.status,
 		ilvlMin: ruleset.ilvlMin,
 		groups: ruleset.groups.map((group) => ({
@@ -110,7 +126,7 @@ function fromRuleset(ruleset: MercRuleset) {
 
 function fromFixture(fixture: RawSavedSearch) {
 	return {
-		hash: fixture.id,
+		oracle: fixture.id,
 		status: fixture.query.status.option,
 		ilvlMin: fixture.query.filters?.misc_filters?.filters.ilvl.min,
 		groups: fixture.query.stats.map((group) => ({
@@ -156,15 +172,15 @@ function shape(ruleset: MercRuleset): string[] {
 	);
 }
 
-describe('saved-search transcription', () => {
+describe('query transcription', () => {
 	for (const ruleset of allRulesets()) {
 		describe(ruleset.id, () => {
-			it('reads the fixture that carries its own declared hash', () => {
-				expect(FIXTURES[ruleset.savedSearch.hash]?.id).toBe(ruleset.savedSearch.hash);
+			it('reads the fixture that carries its own declared oracle name', () => {
+				expect(FIXTURES[oracleFixture(ruleset)]?.id).toBe(oracleFixture(ruleset));
 			});
 
-			it('matches the saved search group for group and entry for entry', () => {
-				expect(fromRuleset(ruleset)).toEqual(fromFixture(FIXTURES[ruleset.savedSearch.hash]));
+			it('matches its fixture group for group and entry for entry', () => {
+				expect(fromRuleset(ruleset)).toEqual(fromFixture(FIXTURES[oracleFixture(ruleset)]));
 			});
 		});
 	}
@@ -358,6 +374,135 @@ describe('guide-a rulesets', () => {
 		expect(Object.fromEntries(guideA.map((r) => [r.id, r.groups.map((g) => g.id)]))).toEqual(
 			GUIDE_A_GROUP_IDS
 		);
+	});
+});
+
+describe('guide-c rulesets', () => {
+	const GUIDE_C = MERC_SOURCES.find((s) => s.id === 'guide-c') as MercSource;
+
+	const GUIDE_C_GROUP_IDS: Record<string, string[]> = {
+		'guide-c-kinetist': ['core', 'deny', 'buffs'],
+		'guide-c-manyshot': ['core', 'secondary', 'deny', 'buffs'],
+		'guide-c-blade-ambusher': ['core', 'buffs'],
+		'guide-c-combatant': ['core', 'secondary', 'buffs']
+	};
+
+	// Two of the four archetypes carry no denial at all — the prose says "do not"
+	// about Kinetic Bolt and Icicle Rain and about nothing else, and inventing a
+	// third deny list would be this app putting words in the author's mouth.
+	it('gives each ruleset the group ids its prose is transcribed under', () => {
+		expect(Object.fromEntries(GUIDE_C.rulesets.map((r) => [r.id, r.groups.map((g) => g.id)]))).toEqual(
+			GUIDE_C_GROUP_IDS
+		);
+	});
+
+	/**
+	 * The modelling ruling, stated as data: in every guide-c `mercenary` group the
+	 * SKILL is the one live filter and every support the author listed is switched
+	 * off. That is what makes a guide-c pass mean "has the skill row, carries no
+	 * denied skill" and every listed link a bonus rather than a gate.
+	 *
+	 * Pinned here rather than left to the fixture-fidelity test above, because
+	 * that test compares this module against a file this module generated — both
+	 * sides move together when a switch flips, so it cannot see this rule break.
+	 */
+	it('leaves the skill as the only live filter of every mercenary group', () => {
+		const live = GUIDE_C.rulesets.flatMap((ruleset) =>
+			ruleset.groups
+				.filter((group) => group.type === 'mercenary')
+				.map(
+					(group) =>
+						`${ruleset.id}/${group.id}: ${group.entries
+							.filter((entry) => entry.enabledInSearch)
+							.map((entry) => entry.name)
+							.join(', ')}`
+				)
+		);
+		expect(live).toEqual([
+			'guide-c-kinetist/core: Kinetic Blast of Clustering',
+			'guide-c-manyshot/core: Ice Shot',
+			'guide-c-manyshot/secondary: Vaal Ice Shot',
+			'guide-c-blade-ambusher/core: Spectral Helix of Trarthus',
+			'guide-c-combatant/core: Static Strike',
+			'guide-c-combatant/secondary: Frost Blades'
+		]);
+	});
+
+	// A `min` would turn the author's "and these links" into "at least N of
+	// these", which is a rule he never wrote — and the derived-query clamp in
+	// `trade-links.ts` exists precisely because a `min` over parked filters is
+	// the one thing that hands out a dead comp link.
+	it('sets no minimum on any group', () => {
+		const withMin = GUIDE_C.rulesets.flatMap((ruleset) =>
+			ruleset.groups.filter((group) => group.min !== undefined).map((group) => `${ruleset.id}/${group.id}`)
+		);
+		expect(withMin).toEqual([]);
+	});
+
+	// The prose sets no item-level floor, so neither does the transcription. The
+	// guide-b Manyshot rungs are the only other searches without one.
+	it('sets no item-level floor on any ruleset', () => {
+		expect(GUIDE_C.rulesets.map((r) => `${r.id} ilvl=${r.ilvlMin ?? 'none'}`)).toEqual([
+			'guide-c-kinetist ilvl=none',
+			'guide-c-manyshot ilvl=none',
+			'guide-c-blade-ambusher ilvl=none',
+			'guide-c-combatant ilvl=none'
+		]);
+	});
+
+	// The Trarthus transfigure and plain Spectral Helix are different stat ids,
+	// and guide-a's Combatant search DENIES the plain one — transcribing the
+	// wrong id would make this ruleset ask for a skill its own author rejects.
+	it('asks for the Trarthus transfigure of Spectral Helix, not the base skill', () => {
+		const core = groupOf(rulesetById('guide-c-blade-ambusher'), 'core');
+		expect(core?.entries[0]).toEqual({
+			id: 'mercenary.skill_28988',
+			name: 'Spectral Helix of Trarthus',
+			enabledInSearch: true
+		});
+	});
+
+	// Untiered by construction: the prose ranks nothing, so the page has to draw
+	// these as cards. A rung with no ladder would silently vanish from `ladders`.
+	it('declares no tier ladder', () => {
+		expect(ladders(GUIDE_C)).toEqual([]);
+	});
+});
+
+describe('the oracle a ruleset is checked against', () => {
+	/**
+	 * `savedSearch` and `authored` are the two kinds of ground truth, and the type
+	 * admits exactly one per ruleset. The split is what stops `savedSearchUrl`
+	 * from being handed a guide-c ruleset and building a trade link to a hash GGG
+	 * never issued — so which rulesets are on which side is pinned, not implied.
+	 */
+	it('gives the two saved-search guides a hash and guide-c a fixture file', () => {
+		const byKind = allRulesets().map(
+			(r) => `${r.id} ${r.savedSearch ? `saved=${r.savedSearch.hash}` : `authored=${r.authored?.file}`}`
+		);
+		expect(byKind.filter((row) => row.includes('authored='))).toEqual([
+			'guide-c-kinetist authored=guide-c-kinetist',
+			'guide-c-manyshot authored=guide-c-manyshot',
+			'guide-c-blade-ambusher authored=guide-c-blade-ambusher',
+			'guide-c-combatant authored=guide-c-combatant'
+		]);
+		expect(byKind.filter((row) => row.includes('saved=')).length).toBe(20);
+	});
+
+	it('resolves a saved ruleset to its GGG hash', () => {
+		expect(oracleFixture(rulesetById('guide-b-kinetist-mv'))).toBe('7nRvBzl2S5');
+	});
+
+	it('resolves an authored ruleset to the fixture file it names', () => {
+		expect(oracleFixture(rulesetById('guide-c-manyshot'))).toBe('guide-c-manyshot');
+	});
+
+	// Every saved search here is Allflame's; an authored query belongs to no
+	// league at all, which is why it cannot carry a `savedSearch` with a made-up
+	// hash and an inherited league.
+	it('binds a saved search to a league and an authored query to none', () => {
+		expect(rulesetById('guide-b-kinetist-mv').savedSearch?.league).toBe('Allflame');
+		expect(rulesetById('guide-c-manyshot').savedSearch).toBeUndefined();
 	});
 });
 
@@ -879,8 +1024,10 @@ describe('ladder keys', () => {
 });
 
 describe('author notes', () => {
-	// Verbatim from the two video descriptions — the app never paraphrases them.
-	it('carries each GG rung’s note exactly as its author wrote it', () => {
+	// Verbatim from the two video descriptions and CaptainLance's four role lines
+	// — the app never paraphrases them. Guide-c's are the whole verdict a passing
+	// ruleset has to offer: there is no floor and no tier behind them.
+	it('carries each note exactly as its author wrote it', () => {
 		expect(
 			allRulesets()
 				.filter((r) => r.authorNote !== undefined)
@@ -890,7 +1037,14 @@ describe('author notes', () => {
 				'guide-b-kinetist-gg',
 				'look at damage links still - these are 4L not even 5L. 5L mercs nearly never exist for KB in gg setups, a 5L with barrage can beat a 4L with greater KB'
 			],
-			['guide-b-manyshot-gg', 'manually check for clear links on ice shot']
+			['guide-b-manyshot-gg', 'manually check for clear links on ice shot'],
+			['guide-c-kinetist', 'BiS Clear Merc'],
+			['guide-c-manyshot', 'Good Clear / Single Target'],
+			['guide-c-blade-ambusher', 'Good Bossing / Single Target Merc'],
+			[
+				'guide-c-combatant',
+				'Good All rounder / Starter Merc (better clear option as armour stack setup late game)'
+			]
 		]);
 	});
 });
@@ -903,6 +1057,18 @@ describe('source registry', () => {
 	it('gives every ruleset an id of its own', () => {
 		const ids = allRulesets().map((r) => r.id);
 		expect([...new Set(ids)]).toEqual(ids);
+	});
+
+	// The line under each source's name on the page. It has to say WHOSE rules
+	// these are and which side of the trade they are written from, because the
+	// three sources disagree on purpose and a reader comparing three headlines
+	// cannot otherwise tell a seller's floor from a buyer's shopping list.
+	it('says whose rules each source carries and which side of the trade they take', () => {
+		expect(MERC_SOURCES.map((s) => `${s.label}: ${s.description ?? 'none'}`)).toEqual([
+			"Guide A: ckaiba's seller-side floors — wealthyexile strategy 7062",
+			"Guide B: Nerotox's tiered saved searches — three videos, four ladders",
+			"CaptainLance: CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors"
+		]);
 	});
 });
 
