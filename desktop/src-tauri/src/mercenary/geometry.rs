@@ -62,18 +62,40 @@ pub struct Frame {
     /// the tooltip crop to it — a crop's own dimensions there would clamp the
     /// hover to the panel.
     screen: [u32; 2],
-    cropped: bool,
+    kind: FrameKind,
+}
+
+/// Which of the three grabs a [`Frame`] describes.
+///
+/// A LABEL for the log and the one bit `to_screen` branches on, in one field
+/// rather than two booleans: the probe band (POE-204 WI-C) is a crop like the
+/// re-detect's, so a `cropped: bool` would have made the two indistinguishable
+/// in the log at the exact moment the reader needs to tell a 500 ms anchor look
+/// from a re-read of a known panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// The whole screen.
+    Full,
+    /// A crop of a KNOWN panel, re-read on the live cadence.
+    Crop,
+    /// The voice-line gate's anchor band — see [`probe_band_bounds`].
+    Probe,
 }
 
 impl Frame {
     /// A frame that IS the screen.
     pub fn full(screen: [u32; 2]) -> Self {
-        Self { origin: (0, 0), screen, cropped: false }
+        Self { origin: (0, 0), screen, kind: FrameKind::Full }
     }
 
     /// A frame cropped out of the screen at `origin`.
     pub fn cropped(origin: (i32, i32), screen: [u32; 2]) -> Self {
-        Self { origin, screen, cropped: true }
+        Self { origin, screen, kind: FrameKind::Crop }
+    }
+
+    /// The gate's anchor band, cut out of the screen at `origin`.
+    pub fn probe(origin: (i32, i32), screen: [u32; 2]) -> Self {
+        Self { origin, screen, kind: FrameKind::Probe }
     }
 
     /// The whole screen's size in px.
@@ -81,12 +103,12 @@ impl Frame {
         self.screen
     }
 
-    /// `crop` or `full`, for the log.
+    /// `full`, `crop` or `probe`, for the log.
     pub fn describe(&self) -> &'static str {
-        if self.cropped {
-            "crop"
-        } else {
-            "full"
+        match self.kind {
+            FrameKind::Full => "full",
+            FrameKind::Crop => "crop",
+            FrameKind::Probe => "probe",
         }
     }
 
@@ -94,7 +116,7 @@ impl Frame {
     /// coordinates. Called on the line vector the instant it comes back, so
     /// nothing downstream ever sees a frame-local box.
     pub fn to_screen(&self, mut lines: Vec<OcrLineBox>) -> Vec<OcrLineBox> {
-        if !self.cropped {
+        if self.kind == FrameKind::Full {
             return lines;
         }
         for line in &mut lines {
@@ -599,6 +621,125 @@ pub fn detect_crop_bounds(
     let x1 = (x + w + side).min(screen[0] as i32);
     let y1 = (y + h).min(screen[1] as i32);
     Some([x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)])
+}
+
+/// How far outside the panel rect the PROBE band reaches, in row pitches.
+///
+/// The band's job is to find the footer buttons again on a window the loop is
+/// no longer tracking, so it is sized against the thing that can have moved:
+/// nothing, in the ordinary case (the panel opens where it opened last), and a
+/// few px of UI jitter otherwise. One pitch either way is slack for that
+/// without turning the band back into a screen.
+const PROBE_BAND_SLACK_PITCHES: f32 = 1.0;
+
+/// The band a [`crate::mercenary::trigger`] probe OCRs when the panel's
+/// geometry is known: the last row and the whole footer strip under it, the
+/// panel's own width, one pitch of slack on every side, clamped to the screen.
+///
+/// This is NOT [`detect_crop_bounds`]. That rect answers "re-read the panel I
+/// am already holding" and reaches thirteen pitches UP for the header band,
+/// because the answer it owes includes the mercenary's name. The probe owes one
+/// bit — is the recruit window's chrome on screen at all — and the chrome that
+/// answers it is [`is_button_line`]'s TAKE ITEM / REMATCH, which lives under
+/// the grid. Everything above the last row is cost with no bearing on that bit.
+///
+/// MEASURED on the 2026-08-24 Windows dump (1920×1200, six rows, scale 0.974):
+/// the panel rect is `[698, 615, 555, 477]`, the grid bottom is y 948, and both
+/// buttons OCR at y 979. The band this produces is `[650, 900, 651, 240]` —
+/// 6.8% of the screen's pixels, with the buttons 79 px inside its top edge and
+/// 148 px inside its bottom one.
+///
+/// The skill column is inside it by construction: the band spans the panel
+/// rect's width, and that rect starts [`PANEL_MARGIN_CELLS`] LEFT of
+/// `column_x0`. A probe that saw the buttons but not the column would still
+/// accept — the column is not part of the accept test — but the band carries it
+/// so the full detect the probe hands its frame to has the same evidence.
+///
+/// `None` for a layout with no rows, exactly as [`panel_bounds`].
+pub fn probe_band_bounds(
+    layout: &MercLayout,
+    g: &MercGeometry,
+    screen: [u32; 2],
+) -> Option<[i32; 4]> {
+    let panel = panel_bounds(layout, g)?;
+    // Footer reach 0: the same rect construction stopped at the grid's own
+    // bottom edge, which is where the footer strip starts.
+    let grid = bounds(layout, g, 0.0)?;
+    let pitch = if layout.row_pitch > 0.0 {
+        layout.row_pitch
+    } else {
+        g.row_pitch * layout.scale
+    };
+    let slack = (pitch * PROBE_BAND_SLACK_PITCHES).round() as i32;
+
+    let x0 = (panel[0] - slack).max(0);
+    let y0 = (grid[1] + grid[3] - slack).max(0);
+    let x1 = (panel[0] + panel[2] + slack).min(screen[0] as i32);
+    let y1 = (panel[1] + panel[3] + slack).min(screen[1] as i32);
+    Some([x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)])
+}
+
+/// Where the DEFAULT probe band starts, as a fraction of the screen's height.
+///
+/// The fallback for the first recruit window of a session, when no panel has
+/// ever been measured and there is no pitch to build a band out of.
+///
+/// MEASURED, once: the 2026-08-24 Windows dump, 1920×1200, one machine, one
+/// resolution. Both footer buttons sit at y 979, which is 0.816 of the height.
+/// That is the whole of the evidence.
+///
+/// **How the panel is ANCHORED is not measured.** Whether 0.816 holds at
+/// another resolution, another aspect ratio or another UI scale is unknown, and
+/// one dump cannot say. An earlier version of this comment claimed PoE centres
+/// the recruit window and derived the fraction's stability from that; the same
+/// dump contradicts it — [`panel_bounds`] of that layout is
+/// `[698, 615, 555, 477]`, whose vertical centre is y 853 on a 1200-high
+/// screen, which is not the middle of anything.
+///
+/// So the fraction is SLACK against an unknown rather than a derivation. 0.45
+/// leaves 0.366 H — 439 px at 1200 — above the measured footer, and the whole
+/// of the screen below it. It is only ever the FIRST look of a session: once a
+/// panel has been seen, every probe uses the band measured off it
+/// ([`probe_band_bounds`]), and the cost of this one being wrong is a single
+/// stand-down on a window Scan now can still capture.
+///
+/// FULL width, deliberately. The horizontal position has the same one dump
+/// behind it and the same unknown anchoring, and height is where the saving is:
+/// a little over half the pixels of a full-screen OCR, for a look that only has
+/// to answer whether the chrome is there.
+const DEFAULT_PROBE_BAND_TOP_FRAC: f32 = 0.45;
+
+/// The probe band for a session that has never seen a panel. See
+/// [`DEFAULT_PROBE_BAND_TOP_FRAC`].
+pub fn default_probe_band(screen: [u32; 2]) -> [i32; 4] {
+    let h = screen[1] as f32;
+    let y0 = (h * DEFAULT_PROBE_BAND_TOP_FRAC).round().max(0.0) as i32;
+    [0, y0, (screen[0] as i32).max(1), (screen[1] as i32 - y0).max(1)]
+}
+
+/// Whether an anchor-band OCR saw the recruit window's chrome.
+///
+/// The probe's whole verdict, and deliberately a predicate [`detect`]'s own
+/// anchor step also accepts — a probe that accepted on something the detect
+/// does not would hand its frame to a detect that then found nothing, which is
+/// a stand-down dressed up as a hit.
+///
+/// No positional test. [`detect`] pairs its anchor with the rows (above row 1,
+/// or below the last row, within `wager_search_pitches`); the probe has no rows
+/// to pair anything with — finding them is the full detect's job, and the band
+/// is the position test. What is left is the text, and [`is_button_line`] is
+/// already tight: exact equality after normalisation.
+///
+/// **[`detect`]'s OTHER anchor, the wager line, is deliberately not here.** It
+/// sits ABOVE the grid, and both bands a probe can read start at or below it:
+/// [`probe_band_bounds`] begins at the grid's bottom edge, and
+/// [`default_probe_band`] begins at [`DEFAULT_PROBE_BAND_TOP_FRAC`] of the
+/// height against a wager measured at 0.144 H. No probe frame can hold the
+/// line, so testing for it is a predicate per OCR line that can only ever
+/// answer false — and one a later reader would take as evidence that the band
+/// reaches further up than it does.
+pub fn probe_hit(lines: &[OcrLineBox], g: &MercGeometry) -> bool {
+    lines.iter().any(|l| is_button_line(&l.text, g))
 }
 
 /// Whether `outer` fully contains `inner` (`[x, y, w, h]`).
@@ -2161,5 +2302,219 @@ mod tests {
             Some([150, 150, 400, 200]),
             screen,
         ));
+    }
+
+    // -- the voice-line gate's probe band (POE-204 WI-C) --------------------
+
+    /// The band's whole job: hold the chrome [`probe_hit`] accepts on. Both
+    /// buttons of the MEASURED panel, and the skill column beside them, on the
+    /// dump the rest of this module is calibrated against.
+    #[test]
+    fn the_probe_band_covers_the_footer_buttons_of_the_measured_panel() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+
+        let band = probe_band_bounds(&layout, &g, [1920, 1200]).expect("six rows have a band");
+
+        for button in windows_dump_lines()
+            .iter()
+            .filter(|l| is_button_line(&l.text, &g))
+        {
+            assert!(
+                encloses(band, [button.x, button.y, button.w, button.h]),
+                "the band must hold {:?}, band was {band:?}",
+                button.text,
+            );
+        }
+        assert!(
+            contains(band, (layout.column_x0, layout.rows[5].centre_y.round() as i32)),
+            "and the last row's column, band was {band:?}",
+        );
+    }
+
+    /// The reason the band exists at all. A full-screen OCR is the tick's
+    /// dominant cost and the probe runs twice per voice line, in an arena full
+    /// of mercenaries — a band that read most of the screen would be the burst
+    /// this replaced, wearing a different name.
+    #[test]
+    fn the_probe_band_reads_a_small_fraction_of_the_screen() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+
+        let band = probe_band_bounds(&layout, &g, [1920, 1200]).expect("six rows have a band");
+
+        assert!(band[2] * band[3] * 8 < 1920 * 1200, "band was {band:?}");
+    }
+
+    /// It is NOT the re-detect crop. That one reaches thirteen pitches up for
+    /// the header band because the answer it owes includes the mercenary's
+    /// name; the probe owes one bit and everything above the last row is cost
+    /// with no bearing on it.
+    #[test]
+    fn the_probe_band_is_shorter_than_the_re_detect_crop() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+
+        let band = probe_band_bounds(&layout, &g, [1920, 1200]).expect("a band");
+        let crop = detect_crop_bounds(&layout, &g, [1920, 1200]).expect("a crop");
+
+        assert!(band[3] < crop[3], "band {band:?} vs crop {crop:?}");
+    }
+
+    /// Clamped, not merely computed: `crop_imm` is handed these four numbers,
+    /// and a panel near an edge would otherwise produce a negative origin or a
+    /// width past the image.
+    #[test]
+    fn a_probe_band_never_reaches_outside_the_screen() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+
+        let band = probe_band_bounds(&layout, &g, [800, 1000]).expect("a band");
+
+        assert!(encloses([0, 0, 800, 1000], band), "band was {band:?}");
+    }
+
+    /// The fallback for the first recruit window of a session, when no panel
+    /// has ever been measured. It has to hold the same buttons — this is the
+    /// band a probe uses when it has nothing better, and a miss here is a
+    /// stand-down on a window that is open.
+    #[test]
+    fn the_default_band_covers_the_measured_panels_footer_too() {
+        let g = MercGeometry::default();
+
+        let band = default_probe_band([1920, 1200]);
+
+        for button in windows_dump_lines()
+            .iter()
+            .filter(|l| is_button_line(&l.text, &g))
+        {
+            assert!(
+                encloses(band, [button.x, button.y, button.w, button.h]),
+                "the default band must hold {:?}, band was {band:?}",
+                button.text,
+            );
+        }
+    }
+
+    /// Still a saving, or the fallback would be the full-screen OCR the gate
+    /// exists to avoid. At most three fifths of the height — 0.45 leaves 0.55,
+    /// and a fraction pushed lower to buy more slack against the unmeasured
+    /// anchoring would stop being a probe and start being the burst.
+    #[test]
+    fn the_default_band_reads_at_most_three_fifths_of_the_height() {
+        let band = default_probe_band([1920, 1200]);
+
+        assert!(band[3] * 5 <= 1200 * 3, "band was {band:?}");
+        assert!(encloses([0, 0, 1920, 1200], band), "band was {band:?}");
+    }
+
+    /// The whole WIDTH, because the horizontal position has one dump behind it
+    /// and no model of how the panel is anchored — see
+    /// [`DEFAULT_PROBE_BAND_TOP_FRAC`].
+    #[test]
+    fn the_default_band_is_the_full_width() {
+        let band = default_probe_band([1920, 1200]);
+
+        assert_eq!((band[0], band[2]), (0, 1920));
+    }
+
+    /// The slack the fraction buys, stated as the thing it is slack AGAINST:
+    /// the one measured footer, at 0.816 of the height. A fraction raised until
+    /// it grazed that measurement would stand the gate down on the first
+    /// recruit window of every session whose panel sits a little higher.
+    #[test]
+    fn the_default_band_starts_well_above_the_measured_footer() {
+        let band = default_probe_band([1920, 1200]);
+
+        assert!(band[1] < 979 - 400, "band was {band:?}, footer at y 979");
+    }
+
+    // -- what a probe accepts on -------------------------------------------
+
+    /// The dump as OCR returned it, wager line and all: the probe accepts.
+    #[test]
+    fn a_band_holding_a_footer_button_is_a_hit() {
+        assert!(probe_hit(&windows_dump_lines(), &MercGeometry::default()));
+    }
+
+    /// The 2026-08-24 measurement that shaped the whole anchor rule: Windows
+    /// OCR returned NO line for the wager, and both buttons read clean. Either
+    /// one alone has to be enough.
+    #[test]
+    fn either_button_alone_is_a_hit() {
+        let g = MercGeometry::default();
+
+        for text in ["TAKE ITEM", "REMATCH"] {
+            let lines = vec![OcrLineBox { text: text.into(), x: 830, y: 979, w: 87, h: 13 }];
+            assert!(probe_hit(&lines, &g), "{text} must accept");
+        }
+    }
+
+    /// [`detect`]'s other anchor, and NOT the probe's. The wager line is above
+    /// the grid; the remembered band starts at the grid's bottom edge and the
+    /// default band at [`DEFAULT_PROBE_BAND_TOP_FRAC`] of the height, against a
+    /// wager measured at y 173 of 1200. A probe frame cannot hold it, so a hit
+    /// on it would be a hit on a line that is not in the image.
+    #[test]
+    fn the_wager_line_alone_is_not_a_hit() {
+        let lines = vec![OcrLineBox { text: "Wager: 8 831".into(), x: 80, y: 173, w: 120, h: 17 }];
+
+        assert!(is_wager_line(&lines[0].text, &MercGeometry::default()), "arrange: it IS a wager");
+        assert!(!probe_hit(&lines, &MercGeometry::default()));
+    }
+
+    /// …and neither band reaches it, which is the reason the predicate is gone.
+    /// Measured on the same dump the module is calibrated against.
+    #[test]
+    fn no_probe_band_reaches_the_wager_line() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        let wager_y = 173;
+
+        let remembered = probe_band_bounds(&layout, &g, [1920, 1200]).expect("a band");
+        let default = default_probe_band([1920, 1200]);
+
+        assert!(remembered[1] > wager_y, "remembered band was {remembered:?}");
+        assert!(default[1] > wager_y, "default band was {default:?}");
+    }
+
+    /// The rejection that matters: skill names are what a gem tooltip and the
+    /// character panel are full of, and the probe runs while the player is
+    /// walking through an arena. Accepting on those would hand a full detect to
+    /// every voice line, which is the burst back.
+    #[test]
+    fn a_band_holding_only_skill_names_is_not_a_hit() {
+        let g = MercGeometry::default();
+        let lines: Vec<OcrLineBox> = windows_dump_lines()
+            .into_iter()
+            .filter(|l| !is_button_line(&l.text, &g) && !is_wager_line(&l.text, &g))
+            .collect();
+
+        assert!(!lines.is_empty(), "arrange: the dump still has its skill rows");
+        assert!(!probe_hit(&lines, &g));
+    }
+
+    #[test]
+    fn an_empty_band_is_not_a_hit() {
+        assert!(!probe_hit(&[], &MercGeometry::default()));
+    }
+
+    /// The probe's frame names itself, so the debug line that reports a band
+    /// OCR is distinguishable from the detect's own crop in the log.
+    #[test]
+    fn a_probe_frame_names_itself() {
+        assert_eq!(Frame::probe((650, 900), [1920, 1200]).describe(), "probe");
+    }
+
+    /// And it translates like the re-detect's crop — one seam out of OCR space,
+    /// whichever grab produced the boxes.
+    #[test]
+    fn a_probe_frame_translates_like_a_crop() {
+        let frame = Frame::probe((650, 900), [1920, 1200]);
+
+        assert_eq!(
+            frame.to_screen(vec![OcrLineBox { text: "TAKE ITEM".into(), x: 180, y: 79, w: 87, h: 13 }]),
+            vec![OcrLineBox { text: "TAKE ITEM".into(), x: 830, y: 979, w: 87, h: 13 }],
+        );
     }
 }
