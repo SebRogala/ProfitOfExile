@@ -38,9 +38,9 @@
  * `authorNote` that two of the four GG rungs carry, which `verdict.ts` relays
  * verbatim on a pass. The Haste
  * ruling is `buyerContextual` wherever the search gates on it — all four
- * Kinetist rungs here, and guide-a's Manyshot aura group; the only place Haste
- * is a plain switched-off bonus is the Manyshot mid rung, whose search simply
- * does not ask for it.
+ * Kinetist rungs here, and guide-a's Kinetist aura group; Haste is a plain
+ * switched-off bonus where a source simply does not gate on it — the Manyshot
+ * mid rung's search, and guide-c's Kinetist buff group.
  *
  * The Combatant description carries one prose note and NO rung takes it as an
  * `authorNote`, because it is about the nine searches together rather than any
