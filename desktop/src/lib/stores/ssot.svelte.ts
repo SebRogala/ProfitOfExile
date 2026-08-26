@@ -559,6 +559,30 @@ export function setMercSourcesOff(sourcesOff: string[]): Promise<string | null> 
 	return sliceCommand('merc', 'merc_set_sources_off', { sourcesOff });
 }
 
+/**
+ * Turn the captured mercenary's auto trade search on or off (POE-202).
+ *
+ * Same reasoning as `setMercSourcesOff`: the value is Rust's, the page only
+ * asks. It is not an ADR-013 view preference — the trigger loop in Rust reads
+ * it every tick, so a webview-local copy would be able to disagree with the
+ * loop that actually decides whether to search.
+ */
+export function setMercTradeAuto(auto: boolean): Promise<string | null> {
+	return sliceCommand('merc', 'merc_set_trade_auto', { auto });
+}
+
+/**
+ * Set how far below the read tier the merc query comps (1..=3, POE-202).
+ *
+ * Rust validates the range and refuses anything else, so the rejection comes
+ * back to be shown rather than thrown — the same contract as the guide
+ * toggles above. Changing it changes the query hash, which is what makes the
+ * next tick search again.
+ */
+export function setMercTierFloor(floor: number): Promise<string | null> {
+	return sliceCommand('merc', 'merc_set_tier_floor', { floor });
+}
+
 function templeCommand(command: string, args: Record<string, unknown>): Promise<string | null> {
 	return sliceCommand('temple', command, args);
 }

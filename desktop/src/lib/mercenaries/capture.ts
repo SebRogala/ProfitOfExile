@@ -31,6 +31,8 @@
  * "watching", and `done` does not mean the window is gone: a `done` capture is
  * on screen exactly as a `live` one is.
  */
+import type { MercTradeResult } from '$lib/tradeApi';
+
 export type MercStatus = 'off' | 'idle' | 'scanning' | 'live' | 'done' | 'unavailable';
 
 /**
@@ -123,6 +125,49 @@ export interface MercSyncStatus {
 	lastError: string | null;
 }
 
+/**
+ * Where the captured mercenary's own trade search stands (POE-202).
+ *
+ * Wire strings, not Rust variant names: the Rust enum carries
+ * `#[serde(rename_all = "kebab-case")]`, so `waiting-league` is spelled with a
+ * hyphen here and a serde test pins the same string from the other side.
+ *
+ * `off` is not one of the search's own states — it is the module being off,
+ * written by `compose_snapshot` over whatever the trade state held. Only the
+ * status is forced: a retained `result`/`url` still renders on `off` (like the
+ * capture and verdict cards), the badge says "module off", and the two
+ * settings stay browsable (ADR-014).
+ */
+export type MercTradeStatus =
+	| 'off'
+	| 'idle'
+	| 'waiting-league'
+	| 'queued'
+	| 'searching'
+	| 'done'
+	| 'error';
+
+/**
+ * The trade half of the merc slice — Rust-owned like everything else here.
+ *
+ * `queryHash` is the identity `result` and `url` answer for, never "the newest
+ * hash the loop has seen": Rust discards a lookup that comes back carrying a
+ * different hash, so a state whose `result` is set is always describing the
+ * query named by `queryHash`.
+ */
+export interface MercTradeState {
+	status: MercTradeStatus;
+	/** The capture identity `result` and `url` answer for. */
+	queryHash: string | null;
+	/** The trade-site link for that query, or null until the league resolves. */
+	url: string | null;
+	result: MercTradeResult | null;
+	/** Why the last lookup failed. Set only alongside `status: 'error'`. */
+	error: string | null;
+	/** Searches this capture session has spent, out of Rust's ceiling of 3. */
+	searchesUsed: number;
+}
+
 export interface MercenarySlice {
 	status: MercStatus;
 	/** The last capture, live or retired. Null until the module has seen one. */
@@ -165,6 +210,23 @@ export interface MercenarySlice {
 	 * loop, so the slice keeps a single writer.
 	 */
 	sync: MercSyncStatus;
+	/**
+	 * The captured mercenary's own trade search (POE-202).
+	 *
+	 * Unlike `sourcesOff` and `sync` this is STORED on the Rust slice rather
+	 * than composed from settings at read time — it is the trigger's own state
+	 * machine, not a settings echo. The overlay is expected to render it later,
+	 * which is why it reaches every window through the slice instead of a
+	 * page-local fetch.
+	 */
+	trade: MercTradeState;
+	/** Whether the auto-search runs at all — Rust's `merc_trade_auto` echo,
+	 *  composed like `sourcesOff`. Write it through `setMercTradeAuto`. */
+	tradeAuto: boolean;
+	/** How far below the read tier the query comps — Rust's `merc_tier_floor`
+	 *  echo. 3 is the mercenary exactly as read. Write it through
+	 *  `setMercTierFloor`. */
+	tierFloor: 1 | 2 | 3;
 }
 
 /** What the store shows before Rust has answered a poll. */
@@ -184,6 +246,16 @@ export function mercenarySliceDefault(): MercenarySlice {
 			pooledSamples: 0,
 			queuedUploads: 0,
 			lastError: null
-		}
+		},
+		trade: {
+			status: 'off',
+			queryHash: null,
+			url: null,
+			result: null,
+			error: null,
+			searchesUsed: 0
+		},
+		tradeAuto: true,
+		tierFloor: 3
 	};
 }

@@ -158,7 +158,7 @@ fn compose_snapshot(
         // `scanning`; the force-off is the one path the loop never gets to run.
         mercenary.burst_speaker = None;
         // The trade state's own force-off, for the reason the status has one:
-        // `off` is the page's signal to hide the section entirely, and a
+        // `off` tells the page the module is not running (badge only) — a
         // module that is not running is not going to search anything. Only the
         // STATUS is forced — the link and the listings stay, so switching the
         // module back on does not lose an answer that is still young enough to
