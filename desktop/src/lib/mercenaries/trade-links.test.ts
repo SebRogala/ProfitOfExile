@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { derivedSearchUrl, rulesetQuery, savedSearchUrl } from './trade-links';
+import { derivedSearchUrl, rulesetQuery, savedSearchUrl, type TradeQuery } from './trade-links';
 import { MERC_SOURCES, allRulesets, type MercRuleset } from './rulesets';
+import captureQuery from './__fixtures__/capture-query.expected.json';
 import WvKGjV8Kfm from './__fixtures__/WvKGjV8Kfm.json';
 import LgkKKmllTn from './__fixtures__/LgkKKmllTn.json';
 import n5nd22GvKCa from './__fixtures__/5nd22GvKCa.json';
@@ -213,5 +214,39 @@ describe('derivedSearchUrl', () => {
 	it('percent-encodes a league containing a space', () => {
 		const url = derivedSearchUrl('Hardcore Allflame', rulesetQuery(MANYSHOT));
 		expect(new URL(url).pathname).toBe('/trade/search/Hardcore%20Allflame');
+	});
+});
+
+/**
+ * The capture path's half of the cross-language parity check.
+ *
+ * The fixture is what Rust's `build_capture_query` produces for one fixed
+ * capture (`__fixtures__/README.md` names it), and `search.rs`'s
+ * `the_link_carries_the_shared_fixture_query_under_a_bare_query_envelope`
+ * asserts the Rust link against the same file. Both sides read one artifact, so
+ * a query shape that changes on one side without the other fails here rather
+ * than at the trade site.
+ *
+ * Typed as `TradeQuery` on purpose — the same type `rulesetQuery` returns. That
+ * is the part a compile catches: a filter block Rust sends and the TS type
+ * cannot express stops `derivedSearchUrl` from being able to link a captured
+ * mercenary at all.
+ */
+describe('captured-mercenary query parity', () => {
+	const query: TradeQuery = captureQuery;
+
+	it('links the query object Rust built without changing it', () => {
+		const url = derivedSearchUrl('Allflame', query);
+		expect(JSON.parse(new URL(url).searchParams.get('q') ?? '')).toEqual({ query: captureQuery });
+	});
+
+	it('keeps every row of the capture as its own group in link order', () => {
+		const url = derivedSearchUrl('Allflame', query);
+		const linked = JSON.parse(new URL(url).searchParams.get('q') ?? '').query as TradeQuery;
+		expect(linked.stats.map((group) => group.filters.map((f) => f.id))).toEqual([
+			['skill_a', 'sup_a', 'sup_b1', 'sup_b2'],
+			['skill_b', 'sup_greater_chain', 'sup_chain']
+		]);
+		expect(linked.stats.map((group) => group.value?.min)).toEqual([3, 2]);
 	});
 });

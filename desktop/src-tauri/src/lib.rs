@@ -199,15 +199,20 @@ pub struct AppState {
     /// two have separate commands and separate defaults, and neither is ever
     /// read without the other being available anyway.
     pub merc_tier_floor: Mutex<u8>,
-    /// Merc trade results keyed by query hash, with the unix ms they were
-    /// fetched at (POE-202).
+    /// Merc trade results keyed by `(league, query hash)`, with the unix ms
+    /// they were fetched at (POE-202).
     ///
     /// What makes a retire-and-re-detect of the same recruit window free: the
     /// new capture session gets a fresh 3-search budget, but the question it
     /// asks is byte-identical, so the cache answers it without spending any.
     /// Entries past `mercenary::search::RESULT_TTL_MS` are dropped on the next
     /// insert — the map only grows on that path.
-    pub merc_trade_cache: Mutex<std::collections::HashMap<String, (u64, trade::MercTradeResult)>>,
+    ///
+    /// The league is half the key because the hash is not computed over it: the
+    /// query body names the mercenary, and the league is a path segment of the
+    /// search. A league switch inside one TTL would otherwise serve the old
+    /// economy's prices under the new league's link.
+    pub merc_trade_cache: Mutex<mercenary::search::MercResultCache>,
     /// The shared icon-template pool conversation (POE-201) — the upload queue,
     /// the single-flight pull flags, and the status the page shows. Its own
     /// owner rather than a corner of `merc_templates` because the uploader and
