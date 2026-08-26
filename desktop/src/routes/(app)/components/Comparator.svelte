@@ -2,6 +2,7 @@
 	import { fetchGemNames, fetchCompare, DEDICATION_VARIANTS, VARIANTS, type CompareGem } from '$lib/api';
 	import { baseGemName, baseGemTradeUrl } from '$lib/trade-utils';
 	import type { TradeLookupResult, TradeSignals, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
+	import { isSource, toListingRow } from '$lib/tradeApi';
 	import { SIGNAL_TOOLTIPS } from '$lib/tooltips';
 	import { formatPrice, formatPriceSigned } from '$lib/price.svelte';
 	import { showsDoubleCorruptCard, doubleCorruptHeadline } from '$lib/double-corrupt-card';
@@ -14,6 +15,7 @@
 	import GemIcon from './GemIcon.svelte';
 	import SegmentedButtons from '$lib/components/SegmentedButtons.svelte';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import TradeListings from '$lib/components/TradeListings.svelte';
 
 	const SIGNAL_COLORS: Record<string, string> = {
 		STABLE: '#5eead4', UNCERTAIN: '#9ca3af', HERD: '#eab308',
@@ -188,6 +190,10 @@
 		const tradeQueuePromise = listen<TradeQueueEvent>('trade-queue', (event) => {
 			if (cancelled) return;
 			const e = event.payload;
+			// One queue, several consumers (POE-202): a mercenary auto-search
+			// shares this client and would otherwise show up as the Comparator's
+			// own progress and clear its queue row.
+			if (!isSource(e, 'gem')) return;
 			switch (e.kind) {
 				case 'queued':
 					tradeQueueStale = false;
@@ -199,7 +205,7 @@
 					tradeQueue = {
 						gem: e.gem, position: e.position, total: e.total,
 						status: e.kind === 'waiting' ? 'waiting' : 'fetching',
-						waitSecs: e.kind === 'waiting' ? (e as any).waitSecs ?? 0 : 0,
+						waitSecs: e.kind === 'waiting' ? e.waitSecs : 0,
 					};
 					break;
 				case 'cancelled':
@@ -545,15 +551,6 @@
 		return 'signal-green';
 	}
 
-	function formatTimeAgo(isoString: string): string {
-		const diff = Date.now() - new Date(isoString).getTime();
-		const mins = Math.floor(diff / 60000);
-		if (mins < 60) return `${mins}m ago`;
-		const hours = Math.floor(mins / 60);
-		if (hours < 24) return `${hours}h ago`;
-		return `${Math.floor(hours / 24)}d ago`;
-	}
-
 	function toggleExpanded(gem: string) {
 		tradeExpanded[gem] = !tradeExpanded[gem];
 	}
@@ -797,30 +794,13 @@
 									</span>
 								</div>
 								{#if td.listings.length > 0}
-									<div class="trade-listings-table">
-										<div class="trade-listings-header">
-											<span class="tl-col-price">Price</span>
-											<span class="tl-col-detail">Lvl/Qual</span>
-											<span class="tl-col-time">Listed</span>
-										</div>
-										{#each td.listings as listing}
-											<div class="trade-listing-row">
-												<span class="tl-col-price">
-													{#if listing.currency === 'divine'}
-														{fmtPrice(listing.price)} div
-														<span class="tl-original">({fmtPrice(listing.chaosPrice)}c)</span>
-													{:else}
-														{fmtPrice(listing.price)}c
-													{/if}
-												</span>
-												<span class="tl-col-detail">
-													{listing.gemLevel}/{listing.gemQuality}
-													{#if listing.corrupted}<span class="tl-corrupted">C</span>{/if}
-												</span>
-												<span class="tl-col-time">{formatTimeAgo(listing.indexedAt)}</span>
-											</div>
-										{/each}
-									</div>
+									<TradeListings rows={td.listings.map(toListingRow)} detailLabel="Lvl/Qual">
+										{#snippet detail(i)}
+											{@const listing = td.listings[i]}
+											{listing.gemLevel}/{listing.gemQuality}
+											{#if listing.corrupted}<span class="tl-corrupted">C</span>{/if}
+										{/snippet}
+									</TradeListings>
 								{/if}
 							</div>
 						{/if}
@@ -1624,48 +1604,12 @@
 		font-size: 0.625rem;
 	}
 
-	.trade-listings-table {
-		margin-top: 6px;
-		font-size: 0.75rem;
-		border: 1px solid var(--color-lab-border);
-		overflow: hidden;
-	}
-	.trade-listings-header {
-		display: grid;
-		grid-template-columns: 1.4fr 0.7fr 0.6fr;
-		gap: 4px;
-		padding: 6px 8px;
-		background: rgba(42, 45, 55, 0.6);
-		color: var(--color-lab-text-secondary);
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-		font-size: 0.625rem;
-	}
-	.trade-listing-row {
-		display: grid;
-		grid-template-columns: 1.4fr 0.7fr 0.6fr;
-		gap: 4px;
-		padding: 5px 8px;
-		border-top: 1px solid rgba(42, 45, 55, 0.4);
-		color: var(--color-lab-text);
-	}
-	.trade-listing-row:hover {
-		background: rgba(59, 130, 246, 0.05);
-	}
-	.tl-col-time {
-		color: var(--color-lab-text-secondary);
-	}
+	/* The listings table itself lives in $lib/components/TradeListings.svelte;
+	   only the gem detail cell is still rendered here, as its snippet. */
 	.tl-corrupted {
 		color: var(--color-lab-red);
 		font-weight: 700;
 		margin-left: 2px;
-	}
-
-	.tl-original {
-		color: var(--color-lab-text-secondary);
-		font-size: 0.7rem;
-		margin-left: 4px;
 	}
 
 	/* Price context section */

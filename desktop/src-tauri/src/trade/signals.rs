@@ -39,12 +39,10 @@ pub fn build_result(
     };
 
     let (price_floor, price_ceiling, price_spread, median) = if !listings.is_empty() {
-        let floor = listings[0].chaos_price;
-        let ceiling = listings
-            .iter()
-            .map(|l| l.chaos_price)
-            .fold(0.0f64, f64::max);
-        (floor, ceiling, ceiling - floor, median_chaos_price(&listings))
+        let chaos: Vec<f64> = listings.iter().map(|l| l.chaos_price).collect();
+        let floor = floor_chaos_price(&chaos);
+        let ceiling = chaos.iter().copied().fold(0.0f64, f64::max);
+        (floor, ceiling, ceiling - floor, median_chaos_price(&chaos))
     } else {
         (0.0, 0.0, 0.0, 0.0)
     };
@@ -93,7 +91,8 @@ pub fn compute_signals(listings: &[TradeListingDetail]) -> TradeSignals {
         _ => CheapestStaleness::Stale,
     };
 
-    let median = median_chaos_price(listings);
+    let chaos: Vec<f64> = listings.iter().map(|l| l.chaos_price).collect();
+    let median = median_chaos_price(&chaos);
     let outlier = listings[0].chaos_price < median * 0.5;
 
     TradeSignals {
@@ -104,11 +103,14 @@ pub fn compute_signals(listings: &[TradeListingDetail]) -> TradeSignals {
     }
 }
 
-fn median_chaos_price(listings: &[TradeListingDetail]) -> f64 {
-    if listings.is_empty() {
+/// Median of a set of chaos prices. Takes bare prices rather than listings so
+/// the mercenary result path can reuse it without a gem-shaped listing type
+/// (POE-202).
+pub(crate) fn median_chaos_price(prices: &[f64]) -> f64 {
+    if prices.is_empty() {
         return 0.0;
     }
-    let mut prices: Vec<f64> = listings.iter().map(|l| l.chaos_price).collect();
+    let mut prices: Vec<f64> = prices.to_vec();
     prices.sort_by(|a, b| a.total_cmp(b));
     let n = prices.len();
     if n % 2 == 0 {
@@ -116,4 +118,17 @@ fn median_chaos_price(listings: &[TradeListingDetail]) -> f64 {
     } else {
         prices[n / 2]
     }
+}
+
+/// Cheapest of a set of chaos prices, or 0.0 when there are none.
+///
+/// Ordered with `total_cmp`, the same total order the listing sort in
+/// `build_result` uses, so the floor is the first row of the rendered table
+/// whether the caller pre-sorted or not.
+pub(crate) fn floor_chaos_price(prices: &[f64]) -> f64 {
+    prices
+        .iter()
+        .copied()
+        .min_by(|a, b| a.total_cmp(b))
+        .unwrap_or(0.0)
 }

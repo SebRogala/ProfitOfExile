@@ -781,14 +781,18 @@ fn stop_scanning(app: AppHandle) {
     emit_status(&app);
 }
 
-/// Cancel all pending trade lookups. In-flight request completes but
+/// Cancel the pending GEM trade lookups. In-flight request completes but
 /// queued lookups bail out without making GGG requests.
+///
+/// Scoped to `TradeSource::Gem`: this is the Comparator's cancel button, and
+/// before POE-202 it also killed every other consumer's queued lookups.
 #[tauri::command]
 fn trade_cancel(app: AppHandle) {
     let state = app.state::<AppState>();
-    let remaining = state.trade_client.cancel();
+    let source = trade::TradeSource::Gem;
+    let remaining = state.trade_client.cancel(source);
     use tauri::Emitter;
-    if let Err(e) = app.emit("trade-queue", trade::TradeQueueEvent::Cancelled { remaining }) {
+    if let Err(e) = app.emit("trade-queue", trade::TradeQueueEvent::Cancelled { source, remaining }) {
         log::warn!("emit trade-queue Cancelled failed: {}", e);
     }
     app_log(&app, format!("Trade queue cancelled ({} pending)", remaining));

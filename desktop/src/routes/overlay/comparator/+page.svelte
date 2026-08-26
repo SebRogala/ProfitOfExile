@@ -6,6 +6,7 @@
 	import type { CompareGem } from '$lib/api';
 	import { defaultSelectedGem } from '$lib/comparator-selection';
 	import type { TradeLookupResult, TradeQueueEvent, TradeQueueDisplay } from '$lib/tradeApi';
+	import { isSource } from '$lib/tradeApi';
 	import GemIcon from '../../(app)/components/GemIcon.svelte';
 
 	// Staleness thresholds — read from polled Rust status, with sensible defaults
@@ -106,6 +107,9 @@
 		const unlistenPromise = listen<TradeQueueEvent>('trade-queue', (event) => {
 			if (cancelled) return;
 			const e = event.payload;
+			// This overlay mirrors the Comparator's gem queue only — a mercenary
+			// auto-search shares the same client and event channel (POE-202).
+			if (!isSource(e, 'gem')) return;
 			switch (e.kind) {
 				case 'queued':
 					tradeQueueStale = false;
@@ -117,7 +121,7 @@
 					tradeQueue = {
 						position: e.position, total: e.total,
 						status: e.kind === 'waiting' ? 'waiting' : 'fetching',
-						waitSecs: e.kind === 'waiting' ? (e as any).waitSecs ?? 0 : 0,
+						waitSecs: e.kind === 'waiting' ? e.waitSecs : 0,
 					};
 					break;
 				case 'cancelled':

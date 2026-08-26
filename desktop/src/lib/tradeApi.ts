@@ -39,15 +39,51 @@ export interface TradeSignals {
 	uniqueAccounts: number;
 }
 
+// --- Mercenary trade result (mirrors Rust MercTradeResult) ---
+// Desktop-only: the server knows nothing about mercenary listings, so unlike
+// TradeLookupResult these types mirror no Go struct.
+
+export interface MercTradeListing {
+	chaosPrice: number;
+	currency: string;
+	amount: number;
+	account: string;
+	indexedAt: string;
+}
+
+export interface MercTradeResult {
+	queryHash: string;
+	league: string;
+	total: number;
+	listings: MercTradeListing[];
+	floorChaos: number;
+	medianChaos: number;
+	fetchedAtMs: number;
+	/** The 35-filter cap forced a looser query than the capture describes. */
+	truncated: boolean;
+}
+
 // --- Trade queue events (mirrors Rust TradeQueueEvent) ---
 
+/** Which consumer a queued lookup belongs to (mirrors Rust `TradeSource`). */
+export type TradeSource = 'gem' | 'mercenary';
+
 export type TradeQueueEvent =
-	| { kind: 'queued'; gem: string; position: number; total: number }
-	| { kind: 'waiting'; gem: string; waitSecs: number; position: number; total: number }
-	| { kind: 'fetching'; gem: string; position: number; total: number }
-	| { kind: 'done'; gem: string }
-	| { kind: 'error'; gem: string; error: string }
-	| { kind: 'cancelled'; remaining: number };
+	| { kind: 'queued'; source: TradeSource; gem: string; position: number; total: number }
+	| { kind: 'waiting'; source: TradeSource; gem: string; waitSecs: number; position: number; total: number }
+	| { kind: 'fetching'; source: TradeSource; gem: string; position: number; total: number }
+	| { kind: 'done'; source: TradeSource; gem: string }
+	| { kind: 'error'; source: TradeSource; gem: string; error: string }
+	| { kind: 'cancelled'; source: TradeSource; remaining: number };
+
+/**
+ * One queue, several consumers: every listener must drop the events that are
+ * not its own or it renders another window's progress. Shared so the two gem
+ * surfaces (Comparator and its overlay) cannot drift apart on the rule.
+ */
+export function isSource(event: TradeQueueEvent, source: TradeSource): boolean {
+	return event.source === source;
+}
 
 export interface TradeQueueDisplay {
 	gem?: string;
@@ -55,5 +91,43 @@ export interface TradeQueueDisplay {
 	total: number;
 	status: 'queued' | 'waiting' | 'fetching';
 	waitSecs: number;
+}
+
+// --- Listings table row ---
+
+/**
+ * One row of the shared listings table — the fields both a gem listing and a
+ * mercenary listing carry. Anything type-specific (a gem's level/quality) is
+ * rendered by the caller's detail snippet, keyed by row index.
+ */
+export interface TradeListingRow {
+	/** Price normalized to chaos. */
+	chaosPrice: number;
+	/** Raw seller currency. */
+	currency: string;
+	/** Raw seller amount in `currency`. */
+	amount: number;
+	account: string;
+	indexedAt: string;
+}
+
+export function toListingRow(detail: TradeListingDetail): TradeListingRow {
+	return {
+		chaosPrice: detail.chaosPrice,
+		currency: detail.currency,
+		amount: detail.price,
+		account: detail.account,
+		indexedAt: detail.indexedAt
+	};
+}
+
+export function mercListingRow(listing: MercTradeListing): TradeListingRow {
+	return {
+		chaosPrice: listing.chaosPrice,
+		currency: listing.currency,
+		amount: listing.amount,
+		account: listing.account,
+		indexedAt: listing.indexedAt
+	};
 }
 

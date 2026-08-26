@@ -37,9 +37,11 @@ struct GggSearchResponse {
     total: i32,
 }
 
+/// The fetch envelope. Entries stay as raw JSON so one lookup path can serve
+/// consumers that shape them differently (gem listings, mercenary listings).
 #[derive(Debug, Deserialize)]
 struct GggFetchResponse {
-    result: Vec<GggFetchEntry>,
+    result: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,18 +83,67 @@ struct GggItemProperty {
 }
 
 // ---------------------------------------------------------------------------
+// Consumers of the shared trade queue
+// ---------------------------------------------------------------------------
+
+/// Who a lookup belongs to.
+///
+/// One `TradeApiClient` (one IP, one rate-limit budget) serves every consumer,
+/// so the queue itself stays shared — but cancellation and event routing must
+/// not be. Without this discriminator a mercenary retire cancels the
+/// Comparator's gem queue and every window renders every other window's queue
+/// progress (POE-202).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TradeSource {
+    Gem,
+    Mercenary,
+}
+
+impl TradeSource {
+    /// Index into the per-source flag/counter arrays.
+    fn index(self) -> usize {
+        match self {
+            TradeSource::Gem => 0,
+            TradeSource::Mercenary => 1,
+        }
+    }
+}
+
+/// Raw two-phase lookup output: what GGG returned, before any consumer has
+/// shaped it. `items` are the untouched fetch entries — the gem path parses
+/// them into `TradeListingDetail`, the mercenary path into its own listing
+/// type (POE-202).
+#[derive(Debug, Clone)]
+pub struct RawSearch {
+    pub query_id: String,
+    pub total: u32,
+    pub items: Vec<serde_json::Value>,
+    pub league: String,
+}
+
+// ---------------------------------------------------------------------------
 // Trade queue events (emitted to frontend via Tauri)
 // ---------------------------------------------------------------------------
 
+/// `gem` is the lookup's display label, not necessarily a gem: for
+/// `TradeSource::Mercenary` it carries the captured mercenary's label. The
+/// field name is kept because the payload is a wire contract with two webview
+/// consumers (Comparator, overlay comparator). Every consumer must filter on
+/// `source` first.
+///
+/// `rename_all` on the enum renames variants only, so `Waiting` carries its own
+/// field-level `rename_all` to keep `waitSecs` matching `tradeApi.ts`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TradeQueueEvent {
-    Queued { gem: String, position: usize, total: usize },
-    Waiting { gem: String, wait_secs: f64, position: usize, total: usize },
-    Fetching { gem: String, position: usize, total: usize },
-    Done { gem: String },
-    Error { gem: String, error: String },
-    Cancelled { remaining: usize },
+    Queued { source: TradeSource, gem: String, position: usize, total: usize },
+    #[serde(rename_all = "camelCase")]
+    Waiting { source: TradeSource, gem: String, wait_secs: f64, position: usize, total: usize },
+    Fetching { source: TradeSource, gem: String, position: usize, total: usize },
+    Done { source: TradeSource, gem: String },
+    Error { source: TradeSource, gem: String, error: String },
+    Cancelled { source: TradeSource, remaining: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -118,10 +169,16 @@ pub struct TradeApiClient {
     rate_limiter: TradeRateLimiter,
     /// Serializes all lookup_gem calls — one search+fetch pair at a time.
     lookup_mutex: tokio::sync::Mutex<()>,
-    /// Number of lookups waiting to acquire the mutex + the one in flight.
+    /// Number of lookups waiting to acquire the mutex + the one in flight,
+    /// across every source. Drives the shared queue position/total the UI shows.
     pending_count: AtomicUsize,
-    /// Set by trade_cancel command; checked after acquiring mutex.
-    cancel_flag: AtomicBool,
+    /// Same count, split per source — the granularity a per-source cancel
+    /// needs to know when its own flag may be cleared.
+    pending_by_source: [AtomicUsize; 2],
+    /// One cancel flag per source; checked after acquiring the mutex against
+    /// the in-flight lookup's own source. Cancelling one consumer must leave
+    /// the other consumer's queued lookups running.
+    cancel_flags: [AtomicBool; 2],
     /// Counter of enqueued lookups in the current batch. Reset when queue drains.
     enqueued: AtomicUsize,
     /// Counter of completed/cancelled lookups in the current batch. Reset when queue drains.
@@ -142,7 +199,8 @@ impl TradeApiClient {
             rate_limiter: TradeRateLimiter::new(),
             lookup_mutex: tokio::sync::Mutex::new(()),
             pending_count: AtomicUsize::new(0),
-            cancel_flag: AtomicBool::new(false),
+            pending_by_source: [AtomicUsize::new(0), AtomicUsize::new(0)],
+            cancel_flags: [AtomicBool::new(false), AtomicBool::new(false)],
             enqueued: AtomicUsize::new(0),
             completed: AtomicUsize::new(0),
         }
@@ -172,16 +230,27 @@ impl TradeApiClient {
         })
     }
 
-    /// Cancel all pending trade lookups. In-flight request completes but
-    /// queued lookups bail out with Err("cancelled") without making GGG requests.
-    pub fn cancel(&self) -> usize {
-        self.cancel_flag.store(true, Ordering::SeqCst);
-        let remaining = self.pending_count.load(Ordering::SeqCst);
-        log::info!("Trade queue: cancel requested ({} pending)", remaining);
+    /// Cancel `source`'s pending trade lookups. An in-flight request completes
+    /// but that source's queued lookups bail out with Err("cancelled") without
+    /// making GGG requests. Other sources are untouched.
+    ///
+    /// Returns how many lookups of `source` were pending.
+    pub fn cancel(&self, source: TradeSource) -> usize {
+        let remaining = self.pending_by_source[source.index()].load(Ordering::SeqCst);
+        if remaining > 0 {
+            // Read-then-set is not atomic: a lookup enqueued between this load
+            // and the store is cancelled with the batch, and one enqueued right
+            // after a zero read is not cancelled at all. Tolerated — the flag is
+            // cleared again at the top of the next `lookup_query` for a source
+            // with nothing else pending, so neither case can latch.
+            self.cancel_flags[source.index()].store(true, Ordering::SeqCst);
+        }
+        log::info!("Trade queue: cancel requested for {:?} ({} pending)", source, remaining);
         remaining
     }
 
-    /// Number of lookups currently pending (queued + in-flight).
+    /// Number of lookups currently pending (queued + in-flight), all sources.
+    #[allow(dead_code)]
     pub fn pending(&self) -> usize {
         self.pending_count.load(Ordering::Relaxed)
     }
@@ -209,6 +278,66 @@ impl TradeApiClient {
         dedication: bool,
         emit: impl Fn(TradeQueueEvent),
     ) -> Result<TradeLookupResult, String> {
+        let query_body = super::query::build_search_query_with_mode(gem_name, variant, dedication);
+
+        // `lookup_query` logs the shared `label` only; the variant is gem-path
+        // detail, so it is logged here rather than widening `label` (which is
+        // the `gem` key on every emitted event).
+        log::info!("Trade gem lookup: {} ({}), dedication={}", gem_name, variant, dedication);
+
+        let raw = self
+            .lookup_query(TradeSource::Gem, gem_name, query_body, &emit)
+            .await?;
+
+        let mut listings = Vec::with_capacity(raw.items.len());
+        for item in raw.items {
+            match serde_json::from_value::<GggFetchEntry>(item) {
+                Ok(entry) => listings.push(parse_listing_entry(entry)),
+                Err(e) => {
+                    let error = format!("Trade fetch parse failed: {}", e);
+                    emit(TradeQueueEvent::Error {
+                        source: TradeSource::Gem,
+                        gem: gem_name.to_string(),
+                        error: error.clone(),
+                    });
+                    return Err(error);
+                }
+            }
+        }
+
+        Ok(build_result(
+            gem_name,
+            variant,
+            &raw.league,
+            &raw.query_id,
+            raw.total as i32,
+            listings,
+            divine_chaos_rate,
+        ))
+    }
+
+    /// Run one two-phase lookup for `source` against a caller-supplied search
+    /// body: serialize -> rate-limit -> search -> rate-limit -> fetch.
+    ///
+    /// This owns everything that makes the queue a queue — the serializing
+    /// mutex, the fail-closed league read, both rate-limit waits, the cancel
+    /// checks and the shared counters — so that every consumer shares one rate
+    /// limit budget (a second client means a second IP-less budget and the ban
+    /// that came with it, commit e359be7). Consumers only shape `RawSearch`.
+    ///
+    /// `label` is the display name carried on every emitted queue event.
+    ///
+    /// The emitted `Done` event means **the fetch succeeded**, not that the
+    /// lookup succeeded: consumers that parse `RawSearch::items` can still fail
+    /// afterwards. Derive terminal state from the returned `RawSearch` (or the
+    /// `Err`), never from the event stream.
+    pub async fn lookup_query(
+        &self,
+        source: TradeSource,
+        label: &str,
+        query_body: serde_json::Value,
+        emit: impl Fn(TradeQueueEvent),
+    ) -> Result<RawSearch, String> {
         // Fail closed on an unresolved league — do this before touching queue
         // counters or awaiting anything, so an unknown league never reaches the
         // GGG API and no bookkeeping needs unwinding. `league()` locks, clones
@@ -217,7 +346,8 @@ impl TradeApiClient {
             Ok(l) => l,
             Err(e) => {
                 emit(TradeQueueEvent::Error {
-                    gem: gem_name.to_string(),
+                    source,
+                    gem: label.to_string(),
                     error: e.clone(),
                 });
                 return Err(e);
@@ -225,11 +355,22 @@ impl TradeApiClient {
         };
 
         let pending = self.pending_count.fetch_add(1, Ordering::SeqCst) + 1;
+        // Clear a cancel that never had anything to cancel. `cancel` can be
+        // called for a source with nothing pending, and nothing would drain to
+        // clear the flag — the next lookup of that source would then bail out.
+        // Only this lookup being the source's first makes that safe: with
+        // others still pending the flag belongs to a live batch.
+        if self.pending_by_source[source.index()].fetch_add(1, Ordering::SeqCst) == 0 {
+            self.cancel_flags[source.index()].store(false, Ordering::SeqCst);
+        }
         self.enqueued.fetch_add(1, Ordering::SeqCst);
-        let position = pending - self.completed.load(Ordering::SeqCst);
+        // `completed` can already have overtaken `pending` when a batch drains
+        // concurrently; saturate rather than underflow-panic in dev builds.
+        let position = pending.saturating_sub(self.completed.load(Ordering::SeqCst));
 
         emit(TradeQueueEvent::Queued {
-            gem: gem_name.to_string(),
+            source,
+            gem: label.to_string(),
             position,
             total: pending,
         });
@@ -237,16 +378,9 @@ impl TradeApiClient {
         // Serialize: wait for previous lookup to finish.
         let _guard = self.lookup_mutex.lock().await;
 
-        // Check cancel flag after acquiring mutex.
-        if self.cancel_flag.load(Ordering::SeqCst) {
-            let remaining = self.pending_count.fetch_sub(1, Ordering::SeqCst) - 1;
-            self.completed.fetch_add(1, Ordering::SeqCst);
-            // Last cancelled lookup resets the flag and counters.
-            if remaining == 0 {
-                self.cancel_flag.store(false, Ordering::SeqCst);
-                self.enqueued.store(0, Ordering::SeqCst);
-                self.completed.store(0, Ordering::SeqCst);
-            }
+        // Check this source's cancel flag after acquiring mutex.
+        if self.cancel_flags[source.index()].load(Ordering::SeqCst) {
+            self.drain_one(source);
             return Err("cancelled".to_string());
         }
 
@@ -257,7 +391,8 @@ impl TradeApiClient {
         let search_wait = self.rate_limiter.estimate_wait("search");
         if !search_wait.is_zero() {
             emit(TradeQueueEvent::Waiting {
-                gem: gem_name.to_string(),
+                source,
+                gem: label.to_string(),
                 wait_secs: search_wait.as_secs_f64(),
                 position: current_pos,
                 total: current_pending,
@@ -267,22 +402,20 @@ impl TradeApiClient {
         }
 
         emit(TradeQueueEvent::Fetching {
-            gem: gem_name.to_string(),
+            source,
+            gem: label.to_string(),
             position: current_pos,
             total: current_pending,
         });
 
-        let search_result = self
-            .execute_search_with_mode(gem_name, variant, dedication, &league)
-            .await;
+        let search_result = self.execute_search(label, &query_body, &league).await;
         let search_response = match search_result {
             Ok(r) => r,
             Err(e) => {
-                self.pending_count.fetch_sub(1, Ordering::SeqCst);
-                self.completed.fetch_add(1, Ordering::SeqCst);
-                self.maybe_reset_counters();
+                self.drain_one(source);
                 emit(TradeQueueEvent::Error {
-                    gem: gem_name.to_string(),
+                    source,
+                    gem: label.to_string(),
                     error: e.clone(),
                 });
                 return Err(e);
@@ -290,26 +423,22 @@ impl TradeApiClient {
         };
 
         if search_response.ids.is_empty() {
-            self.pending_count.fetch_sub(1, Ordering::SeqCst);
-            self.completed.fetch_add(1, Ordering::SeqCst);
-            self.maybe_reset_counters();
-            emit(TradeQueueEvent::Done { gem: gem_name.to_string() });
-            return Ok(build_result(
-                gem_name,
-                variant,
-                &league,
-                &search_response.query_id,
-                search_response.total,
-                vec![],
-                divine_chaos_rate,
-            ));
+            self.drain_one(source);
+            emit(TradeQueueEvent::Done {
+                source,
+                gem: label.to_string(),
+            });
+            return Ok(RawSearch {
+                query_id: search_response.query_id,
+                total: search_response.total as u32,
+                items: vec![],
+                league,
+            });
         }
 
         // Check cancel between search and fetch — no point fetching if cancelled.
-        if self.cancel_flag.load(Ordering::SeqCst) {
-            self.pending_count.fetch_sub(1, Ordering::SeqCst);
-            self.completed.fetch_add(1, Ordering::SeqCst);
-            self.maybe_reset_counters();
+        if self.cancel_flags[source.index()].load(Ordering::SeqCst) {
+            self.drain_one(source);
             return Err("cancelled".to_string());
         }
 
@@ -317,7 +446,8 @@ impl TradeApiClient {
         let fetch_wait = self.rate_limiter.estimate_wait("fetch");
         if !fetch_wait.is_zero() {
             emit(TradeQueueEvent::Waiting {
-                gem: gem_name.to_string(),
+                source,
+                gem: label.to_string(),
                 wait_secs: fetch_wait.as_secs_f64(),
                 position: current_pos,
                 total: current_pending,
@@ -330,26 +460,25 @@ impl TradeApiClient {
             .fetch_listing_details(&search_response.query_id, &search_response.ids)
             .await;
 
-        self.pending_count.fetch_sub(1, Ordering::SeqCst);
-        self.completed.fetch_add(1, Ordering::SeqCst);
-        self.maybe_reset_counters();
+        self.drain_one(source);
 
         match listings_result {
-            Ok(listings) => {
-                emit(TradeQueueEvent::Done { gem: gem_name.to_string() });
-                Ok(build_result(
-                    gem_name,
-                    variant,
-                    &league,
-                    &search_response.query_id,
-                    search_response.total,
-                    listings,
-                    divine_chaos_rate,
-                ))
+            Ok(items) => {
+                emit(TradeQueueEvent::Done {
+                    source,
+                    gem: label.to_string(),
+                });
+                Ok(RawSearch {
+                    query_id: search_response.query_id,
+                    total: search_response.total as u32,
+                    items,
+                    league,
+                })
             }
             Err(e) => {
                 emit(TradeQueueEvent::Error {
-                    gem: gem_name.to_string(),
+                    source,
+                    gem: label.to_string(),
                     error: e.clone(),
                 });
                 Err(e)
@@ -357,37 +486,53 @@ impl TradeApiClient {
         }
     }
 
-    /// Reset counters and cancel flag when queue fully drains.
-    fn maybe_reset_counters(&self) {
+    /// One lookup leaves the queue: shared counters first, then this source's
+    /// own counter, then the reset check.
+    fn drain_one(&self, source: TradeSource) {
+        self.pending_count.fetch_sub(1, Ordering::SeqCst);
+        self.pending_by_source[source.index()].fetch_sub(1, Ordering::SeqCst);
+        self.completed.fetch_add(1, Ordering::SeqCst);
+        self.maybe_reset_counters(source);
+    }
+
+    /// Clear `source`'s cancel flag once that source has drained, and reset the
+    /// shared batch counters once the whole queue has.
+    ///
+    /// The two conditions are deliberately different. The counters describe one
+    /// shared queue — "position 2 of 5" is a fact about every consumer's wait —
+    /// so they may only reset when nothing at all is pending. A cancel flag
+    /// describes one consumer, so a draining gem batch must not clear a
+    /// mercenary cancel that still has queued lookups to stop.
+    fn maybe_reset_counters(&self, source: TradeSource) {
+        if self.pending_by_source[source.index()].load(Ordering::SeqCst) == 0 {
+            self.cancel_flags[source.index()].store(false, Ordering::SeqCst);
+        }
         if self.pending_count.load(Ordering::SeqCst) == 0 {
-            self.cancel_flag.store(false, Ordering::SeqCst);
             self.enqueued.store(0, Ordering::SeqCst);
             self.completed.store(0, Ordering::SeqCst);
         }
     }
 
     /// POST /api/trade/search/{league}
-    async fn execute_search_with_mode(
+    async fn execute_search(
         &self,
-        gem_name: &str,
-        variant: &str,
-        dedication: bool,
+        label: &str,
+        query_body: &serde_json::Value,
         league: &str,
     ) -> Result<SearchResponse, String> {
-        let query_body = super::query::build_search_query_with_mode(gem_name, variant, dedication);
         let url = format!(
             "{}/api/trade/search/{}",
             TRADE_API_BASE_URL, league
         );
 
-        log::info!("Trade search: {} ({}) → {}", gem_name, variant, url);
-        log::info!("Trade query body: {}", serde_json::to_string(&query_body).unwrap_or_default());
+        log::info!("Trade search: {} → {}", label, url);
+        log::info!("Trade query body: {}", serde_json::to_string(query_body).unwrap_or_default());
 
         let response = self
             .http_client
             .post(&url)
             .header("accept", "application/json")
-            .json(&query_body)
+            .json(query_body)
             .send()
             .await
             .map_err(|e| format!("Trade search request failed: {}", e))?;
@@ -437,7 +582,7 @@ impl TradeApiClient {
         &self,
         query_id: &str,
         result_ids: &[String],
-    ) -> Result<Vec<TradeListingDetail>, String> {
+    ) -> Result<Vec<serde_json::Value>, String> {
         let ids_to_fetch: Vec<&str> = result_ids.iter().take(10).map(|s| s.as_str()).collect();
         let url = format!(
             "{}/api/trade/fetch/{}?query={}",
@@ -480,15 +625,9 @@ impl TradeApiClient {
             .await
             .map_err(|e| format!("Trade fetch parse failed: {}", e))?;
 
-        log::info!("Trade fetch OK: {} listings", parsed.result.len());
+        log::info!("Trade fetch OK: {} entries fetched", parsed.result.len());
 
-        let listings = parsed
-            .result
-            .into_iter()
-            .map(parse_listing_entry)
-            .collect();
-
-        Ok(listings)
+        Ok(parsed.result)
     }
 }
 
@@ -547,6 +686,27 @@ mod tests {
     fn league_returns_err_when_unset() {
         let client = TradeApiClient::new();
         assert!(client.league().is_err());
+    }
+
+    /// The `Waiting` payload is a wire contract with `tradeApi.ts`, which reads
+    /// `waitSecs`. `rename_all` on the enum only renames variants, so without a
+    /// field-level `rename_all` this serializes as `wait_secs` and every
+    /// consumer silently reads `undefined`. Mutation check: dropping the
+    /// variant's `#[serde(rename_all)]` fails both assertions.
+    #[test]
+    fn waiting_event_serializes_fields_in_camel_case() {
+        let json = serde_json::to_value(TradeQueueEvent::Waiting {
+            source: TradeSource::Gem,
+            gem: "Spark".to_string(),
+            wait_secs: 2.5,
+            position: 1,
+            total: 3,
+        })
+        .unwrap();
+        assert_eq!(json["kind"], "waiting");
+        assert_eq!(json["source"], "gem");
+        assert_eq!(json["waitSecs"], 2.5);
+        assert!(json.get("wait_secs").is_none(), "snake_case key must not be present: {}", json);
     }
 
     /// Once resolved via `set_league`, the clone-helper returns that exact name.
