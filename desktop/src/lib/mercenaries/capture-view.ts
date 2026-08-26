@@ -489,9 +489,9 @@ export const GROUP_OUTCOME_TONE: Record<GroupOutcome, OutcomeTone> = {
  * name and in capture order.
  *
  * The rungs of a ladder share one entry skeleton, so their `notInRules` lists
- * repeat; the page shows ONE line under the matrix rather than four identical
- * ones. Deduplication is by display name because that is what the line prints —
- * two reads of the same stat on different rows are one thing to report.
+ * repeat; the page shows ONE line under the matrix rather than one identical
+ * line per rung. Deduplication is by display name because that is what the line
+ * prints — two reads of the same stat on different rows are one thing to report.
  */
 export function notInRulesNames(rulesets: MercRulesetResult[]): string[] {
 	const names: string[] = [];

@@ -684,7 +684,7 @@
 											{#if ssot.league === null}
 												<!-- The rungs are columns, not cards, so this is where guide B's
 												     missing-league note has to live. Once, not per column: the
-												     league is one fact about the app, not four about the rungs. -->
+												     league is one fact about the app, not one per rung. -->
 												<span class="meta">— derived links need an active league</span>
 											{/if}
 										</th>
@@ -1408,6 +1408,10 @@
 		font-weight: 600;
 		color: var(--color-lab-purple);
 		margin-right: 0.3rem;
+		/* A rung may spell its own tier out ('endgame (no return)'). Breaking that
+		   across two lines mid-parenthesis reads as two headings; the card already
+		   scrolls horizontally, so widening the column is the cheaper cost. */
+		white-space: nowrap;
 	}
 
 	.tier-col .meta,

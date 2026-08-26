@@ -12,16 +12,27 @@
  *
  * Guide-b is Nerotox's YouTube CHANNEL, not one video: the source URL is the
  * channel and every tiered ruleset carries the `guideUrl` of the video whose
- * description published its trade link. Two ladders are transcribed so far — the
- * Kinetist ladder (video 2026-08-08) and the Manyshot ladder (video 2026-07-29).
+ * description published its trade link. Three videos, four ladders so far — the
+ * Kinetist ladder (2026-08-08), the Manyshot ladder (2026-07-29), and the Frost
+ * Blades and Wild Strike ladders that ONE Combatant video (2026-08-08) publishes
+ * between them.
  * Audited 2026-08-26: each description's only rules are the links themselves plus
  * prose notes, all reflected — Barrage as an acceptable secondary (the Kinetist
- * `secondary` count group), Haste tuned to the buyer's spectres, and the two GG
- * rungs' `authorNote`, which `verdict.ts` relays verbatim on a pass. The Haste
+ * `secondary` count group), Haste tuned to the buyer's spectres, and the
+ * `authorNote` that two of the four GG rungs carry, which `verdict.ts` relays
+ * verbatim on a pass. The Haste
  * ruling is `buyerContextual` wherever the search gates on it — all four
  * Kinetist rungs here, and guide-a's Manyshot aura group; the only place Haste
  * is a plain switched-off bonus is the Manyshot mid rung, whose search simply
  * does not ask for it.
+ *
+ * The Combatant description carries one prose note and NO rung takes it as an
+ * `authorNote`, because it is about the nine searches together rather than any
+ * one of them: "Please play around yourself with the trade filters as well to
+ * search for greater supports, these are only starting points, you can
+ * definitely optimize the searches for whatever you are looking for still
+ * (moveskill/auras)." An `authorNote` rides a single rung's verdict, so relaying
+ * it there would put a video-wide caveat on whichever rung happened to pass.
  *
  * The rungs of a ladder are written out one by one even where they share a group
  * skeleton. Generating them from a shared factory would make "the rungs are the
@@ -108,6 +119,17 @@ export interface MercRuleset {
 	 */
 	ladder?: string;
 	tier?: MercTier;
+	/**
+	 * Column head and verdict wording for a rung whose tier key does not name it
+	 * on its own, spelt the way the guide spells it. Absent wherever the tier
+	 * already names the rung, and a rung without it reads exactly as it did
+	 * before this key existed.
+	 *
+	 * It exists because a ladder may publish TWO rungs at one tier: Nerotox's
+	 * Frost Blades ladder has an "Endgame (no return)" and an "Endgame (return)",
+	 * and `TIERS` spells both of them 'endgame'.
+	 */
+	tierLabel?: string;
 	savedSearch: MercSavedSearch;
 	/**
 	 * The guide page or video that published THIS ruleset's trade link, when it
@@ -183,12 +205,34 @@ export function entryKind(
 	return 'required';
 }
 
+/**
+ * Is this entry the ROW ANCHOR of its group — the skill a `mercenary` group is
+ * row-scoped to?
+ *
+ * A `mercenary` group asks about one skill row (`verdict.ts::rowSatisfies`), and
+ * its skill entry is what names that row. Such an entry is present in every
+ * capture the group can say anything about, so it carries no information about
+ * the mercenary: reading it as a fired bonus made every parked `mercenary` group
+ * fire on any capture carrying the skill, which revived the group in the derived
+ * search with its `min` intact over the one filter that had actually fired —
+ * a query no listing can satisfy (measured 2026-08-26 on Frost Blades Minimum).
+ *
+ * Only `mercenary` groups. A skill in an `and` or `count` group is a real bonus
+ * about the whole mercenary, not a row label — guide-a's parked Manyshot aura
+ * trio is exactly that, and it must keep firing.
+ */
+export function isRowAnchor(groupType: MercGroupType, entryId: string): boolean {
+	return groupType === 'mercenary' && entryRole(entryId) === 'skill';
+}
+
 const ALLFLAME = 'Allflame';
 
 /** "How to search for a good Kineticist Mercenary | PoE 3.29 Allflame", 2026-08-08. */
 const NEROTOX_KINETIST_VIDEO = 'https://www.youtube.com/watch?v=HKTVN4sENvg';
 /** "How to search for a good Manyshot Mercenary | PoE 3.29 Allflame", 2026-07-29. */
 const NEROTOX_MANYSHOT_VIDEO = 'https://www.youtube.com/watch?v=ljaXlGLdyxM';
+/** "How to search for a good Combatant Mercenary | PoE 3.29 Allflame", 2026-08-08. */
+const NEROTOX_COMBATANT_VIDEO = 'https://www.youtube.com/watch?v=45aM9242Umo';
 
 const GUIDE_A_MANYSHOT: MercRuleset = {
 	id: 'guide-a-manyshot',
@@ -967,7 +1011,8 @@ const GUIDE_B_KINETIST_GG: MercRuleset = {
 /**
  * Nerotox's Manyshot ladder (video 2026-07-29, `ljaXlGLdyxM`). The author's own
  * rung names are Earlygame / Midgame / Endgame / GG; `mv` is the `TIERS` key
- * this file spells "Earlygame" with, so the two ladders share one column order.
+ * this file spells "Earlygame" with, so all four ladders share one column
+ * order.
  *
  * Two facts about these searches that the Kinetist ladder does not have:
  *
@@ -1485,6 +1530,950 @@ const GUIDE_B_MANYSHOT_GG: MercRuleset = {
 	]
 };
 
+/**
+ * Nerotox's Combatant video (2026-08-08, `45aM9242Umo`) publishes TWO ladders;
+ * this is the first. Frost Blades, five rungs — the author's own names are
+ * Minimum / Midgame / Endgame (no return) / Endgame (return) / GG Merc.
+ *
+ * It is NOT four rungs one per tier: the two Endgame links are SIBLINGS at
+ * `end`, not one nested inside the other. Each is Midgame plus exactly one
+ * extra live group — `speed` on one, `return` on the other — and GG is the rung
+ * that switches both on, so a mercenary passing both Endgame rungs necessarily
+ * passes GG. `tierLabel` is what keeps the two columns and the two verdict
+ * lines apart, since `TIERS` alone spells both of them 'endgame'.
+ *
+ * All five rungs share ONE six-group skeleton in one order, and the only things
+ * that move across them are the `damage` minimum and those two switches.
+ */
+const GUIDE_B_FROST_BLADES_MV: MercRuleset = {
+	id: 'guide-b-frost-blades-mv',
+	label: 'Frost Blades',
+	archetype: 'combatant',
+	ladder: 'frost-blades',
+	tier: 'mv',
+	savedSearch: { league: ALLFLAME, hash: 'Kld4gv0Pi5' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Frost Blades + Chain',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-pierce',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Frost Blades + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Frost Blades + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_B_FROST_BLADES_MID: MercRuleset = {
+	id: 'guide-b-frost-blades-mid',
+	label: 'Frost Blades',
+	archetype: 'combatant',
+	ladder: 'frost-blades',
+	tier: 'mid',
+	savedSearch: { league: ALLFLAME, hash: 'Kld4gM7yi5' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Frost Blades + Chain',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-pierce',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Frost Blades + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Frost Blades + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_B_FROST_BLADES_END_NORETURN: MercRuleset = {
+	id: 'guide-b-frost-blades-end-noreturn',
+	label: 'Frost Blades',
+	archetype: 'combatant',
+	ladder: 'frost-blades',
+	tier: 'end',
+	tierLabel: 'endgame (no return)',
+	savedSearch: { league: ALLFLAME, hash: 'q9l6yK0psg' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Frost Blades + Chain',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-pierce',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Frost Blades + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Frost Blades + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_B_FROST_BLADES_END_RETURN: MercRuleset = {
+	id: 'guide-b-frost-blades-end-return',
+	label: 'Frost Blades',
+	archetype: 'combatant',
+	ladder: 'frost-blades',
+	tier: 'end',
+	tierLabel: 'endgame (return)',
+	savedSearch: { league: ALLFLAME, hash: 'OglBJZoQIE' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Frost Blades + Chain',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-pierce',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Frost Blades + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Frost Blades + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_B_FROST_BLADES_GG: MercRuleset = {
+	id: 'guide-b-frost-blades-gg',
+	label: 'Frost Blades',
+	archetype: 'combatant',
+	ladder: 'frost-blades',
+	tier: 'gg',
+	savedSearch: { league: ALLFLAME, hash: 'PPaX7lLqUL' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'core',
+			label: 'Frost Blades + Chain',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-pierce',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.support_27970', name: 'Greater Pierce (Tier 3)', enabledInSearch: true },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Frost Blades + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Frost Blades + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Frost Blades + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+/**
+ * The Combatant video's second ladder: Wild Strike, four rungs (Minimum /
+ * Midgame / Endgame / GG Merc). A different search from the Frost Blades one,
+ * not the same search with the skill swapped:
+ *
+ * - NO group carries the id `core`, so the first live `mercenary` group is the
+ *   damage group. Not because no group asks for the skill plus a single link —
+ *   `return` is exactly that — but because that group sits below the damage one
+ *   and is parked on every rung below GG;
+ * - the deny list sits AFTER the speed and return groups instead of before the
+ *   damage one, and denies Multistrike rather than Pierce;
+ * - the Minimum rung has five groups. Midgame and up add a sixth, `greater`,
+ *   asking for the Tier-3 halves of the damage vocabulary on their own.
+ *
+ * `speed` is the only group that also moves by ENTRY: Minimum parks the whole
+ * group, Midgame and GG keep it live while parking Faster Attacks (Tier 2), so
+ * those two rungs ask for Greater Faster Attacks specifically.
+ */
+const GUIDE_B_WILD_STRIKE_MV: MercRuleset = {
+	id: 'guide-b-wild-strike-mv',
+	label: 'Wild Strike',
+	archetype: 'combatant',
+	ladder: 'wild-strike',
+	tier: 'mv',
+	savedSearch: { league: ALLFLAME, hash: '3q6awYZPc5' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Wild Strike + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Wild Strike + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: false,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Wild Strike + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-multistrike',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.support_25973',
+					name: 'Greater Multistrike (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_62638', name: 'Multistrike (Tier 2)', enabledInSearch: true }
+			]
+		}
+	]
+};
+
+const GUIDE_B_WILD_STRIKE_MID: MercRuleset = {
+	id: 'guide-b-wild-strike-mid',
+	label: 'Wild Strike',
+	archetype: 'combatant',
+	ladder: 'wild-strike',
+	tier: 'mid',
+	savedSearch: { league: ALLFLAME, hash: 'mkgR2DbeS6' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Wild Strike + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Wild Strike + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Wild Strike + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-multistrike',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.support_25973',
+					name: 'Greater Multistrike (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_62638', name: 'Multistrike (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'greater',
+			label: 'Wild Strike + greater damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+const GUIDE_B_WILD_STRIKE_END: MercRuleset = {
+	id: 'guide-b-wild-strike-end',
+	label: 'Wild Strike',
+	archetype: 'combatant',
+	ladder: 'wild-strike',
+	tier: 'end',
+	savedSearch: { league: ALLFLAME, hash: 'jWRDpypkCX' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Wild Strike + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Wild Strike + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Wild Strike + Return',
+			type: 'mercenary',
+			enabledInSearch: false,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-multistrike',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.support_25973',
+					name: 'Greater Multistrike (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_62638', name: 'Multistrike (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'greater',
+			label: 'Wild Strike + greater damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
+const GUIDE_B_WILD_STRIKE_GG: MercRuleset = {
+	id: 'guide-b-wild-strike-gg',
+	label: 'Wild Strike',
+	archetype: 'combatant',
+	ladder: 'wild-strike',
+	tier: 'gg',
+	savedSearch: { league: ALLFLAME, hash: 'bGDrZYZaCL' },
+	guideUrl: NEROTOX_COMBATANT_VIDEO,
+	status: 'securable',
+	ilvlMin: 83,
+	groups: [
+		{
+			id: 'required-skills',
+			label: 'Required skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_32807', name: 'Herald of Ice', enabledInSearch: true },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: true },
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'damage',
+			label: 'Wild Strike + damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 3,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_38571', name: 'Hypothermia (Tier 2)', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'speed',
+			label: 'Wild Strike + attack speed links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_987', name: 'Faster Attacks (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_50485',
+					name: 'Greater Faster Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		},
+		{
+			id: 'return',
+			label: 'Wild Strike + Return',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'deny-multistrike',
+			label: 'Denied support links',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.support_25973',
+					name: 'Greater Multistrike (Tier 3)',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_62638', name: 'Multistrike (Tier 2)', enabledInSearch: true }
+			]
+		},
+		{
+			id: 'greater',
+			label: 'Wild Strike + greater damage links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			min: 2,
+			entries: [
+				{ id: 'mercenary.skill_40957', name: 'Wild Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_53145',
+					name: 'Greater Hypothermia (Tier 3)',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: true
+				}
+			]
+		}
+	]
+};
+
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
@@ -1506,7 +2495,16 @@ export const MERC_SOURCES: MercSource[] = [
 			GUIDE_B_MANYSHOT_MV,
 			GUIDE_B_MANYSHOT_MID,
 			GUIDE_B_MANYSHOT_END,
-			GUIDE_B_MANYSHOT_GG
+			GUIDE_B_MANYSHOT_GG,
+			GUIDE_B_FROST_BLADES_MV,
+			GUIDE_B_FROST_BLADES_MID,
+			GUIDE_B_FROST_BLADES_END_NORETURN,
+			GUIDE_B_FROST_BLADES_END_RETURN,
+			GUIDE_B_FROST_BLADES_GG,
+			GUIDE_B_WILD_STRIKE_MV,
+			GUIDE_B_WILD_STRIKE_MID,
+			GUIDE_B_WILD_STRIKE_END,
+			GUIDE_B_WILD_STRIKE_GG
 		]
 	}
 ];

@@ -29,6 +29,7 @@ import {
 	TIERS,
 	entryKind,
 	entryRole,
+	isRowAnchor,
 	type MercFilterEntry,
 	type MercFilterGroup,
 	type MercGroupType,
@@ -116,6 +117,12 @@ export interface MercRulesetResult {
 	/** The ladder key this rung belongs to, or null for an untiered ruleset. */
 	ladder: string | null;
 	tier: string | null;
+	/**
+	 * The rung's own wording for its tier, or null when the tier names it. Two
+	 * rungs of one ladder can share a tier, and the verdict has to be able to say
+	 * which of them answered.
+	 */
+	tierLabel: string | null;
 	outcome: RulesetOutcome;
 	groups: MercGroupResult[];
 	notInRules: MercCaptured[];
@@ -218,11 +225,13 @@ function presenceOf(scope: Scope, entryId: string): Sighting {
 }
 
 function outcomeOfPosition(
+	group: MercFilterGroup,
+	entry: MercFilterEntry,
 	kind: 'required' | 'forbidden' | 'bonus',
-	groupApplied: boolean,
-	buyerContextual: boolean,
 	presence: Presence
 ): PositionOutcome {
+	const groupApplied = group.enabledInSearch;
+	const buyerContextual = entry.buyerContextual === true;
 	if (kind === 'forbidden') {
 		// A parked denial is still a denial (see `entryKind`), but a parked group
 		// filters nothing: report the hit and let the verdict stand.
@@ -230,7 +239,11 @@ function outcomeOfPosition(
 		if (presence === 'present') return 'fail';
 		return presence === 'unknown' ? 'unknown' : 'pass';
 	}
-	if (kind === 'bonus') {
+	// A `mercenary` group's own skill is its ROW ANCHOR, not a bonus it fired
+	// (`isRowAnchor`): it reads as plainly present or absent, so nothing
+	// downstream can mistake "this is the row" for "this mercenary earned
+	// something". Every other parked entry is a bonus as before.
+	if (kind === 'bonus' && !isRowAnchor(group.type, entry.id)) {
 		if (presence === 'present') return 'bonus-fired';
 		return presence === 'unknown' ? 'unknown' : 'absent';
 	}
@@ -298,7 +311,7 @@ function evaluateGroupOver(rows: MercRow[], group: MercFilterGroup): GroupEvalua
 			buyerContextual: entry.buyerContextual === true,
 			counted: poolIds.has(entry.id),
 			presence,
-			outcome: outcomeOfPosition(kind, applied, entry.buyerContextual === true, presence),
+			outcome: outcomeOfPosition(group, entry, kind, presence),
 			site
 		};
 	});
@@ -467,17 +480,34 @@ function groupReasons(group: MercGroupResult): string[] {
  * even 5L", the Manyshot one says to eyeball the Ice Shot links — so the number
  * lives in that rung's `authorNote` and this line stays archetype-neutral.
  *
- * The core row is found by the group id `core`, which every ladder gives to the
- * group carrying its main skill and its links.
+ * The core row is the one answered by the group id `core`, which is the id a
+ * ladder gives the group carrying its main skill and that skill's links. Not
+ * every ladder has such a group: Nerotox's Wild Strike searches give that id to
+ * no group at all, so their first live `mercenary` group is the damage group.
+ * (They are not short of a skill-plus-one-link group — `return` is one — it just
+ * is not the group they lead with, and every rung below GG parks it.) Those fall
+ * back to the first LIVE `mercenary` group, which is row-scoped to the main
+ * skill's row for the same reason.
+ *
+ * `core` is looked for first rather than the fallback being the whole rule,
+ * because a rung can declare `core` without leading with it: the Manyshot GG
+ * rung's first live `mercenary` group is `vaal-damage`, and the fallback alone
+ * would point this line at the Vaal Ice Shot row while that rung's own
+ * `authorNote` tells the reader to check the links on Ice Shot.
  */
 function ggLinkCaveat(ruleset: MercRuleset, groups: MercGroupResult[], capture: MercCapture): string[] {
 	if (ruleset.tier !== 'gg') return [];
-	const core = groups.find((group) => group.id === 'core');
+	const core =
+		groups.find((group) => group.id === 'core') ??
+		groups.find((group) => group.type === 'mercenary' && group.applied);
 	const row = core?.rowIndex === null || core?.rowIndex === undefined
 		? undefined
 		: capture.rows.find((candidate) => candidate.index === core.rowIndex);
 	const links = row ? row.supports.length : null;
-	const carried = links === null ? '' : ` — this core skill row carries ${links} supports`;
+	const carried =
+		links === null
+			? ''
+			: ` — this core skill row carries ${links} support${links === 1 ? '' : 's'}`;
 	return [`GG comps are a floor, not the price: a merc with more links prices above them${carried}`];
 }
 
@@ -514,6 +544,10 @@ function flipsFor(groups: MercGroupResult[]): QueryFlips {
 		const revive = !group.applied && fired.length > 0;
 		if (revive) enableGroups.add(group.id);
 		for (const position of group.positions) {
+			// The row anchor is never flipped either way: it is the skill the group
+			// is scoped to, so switching it off would leave a revived group asking
+			// for links on nothing at all.
+			if (isRowAnchor(group.type, position.entryId)) continue;
 			const key = flipKey(group.id, position.entryId);
 			if (position.outcome === 'bonus-fired' || position.outcome === 'contextual-present') {
 				enable.add(key);
@@ -536,7 +570,7 @@ function evaluateRuleset(
 	// A fail outranks an unknown: a mercenary carrying a forbidden stat is out
 	// whatever else could not be read. A ruleset with NOTHING applied — every
 	// group parked or contextual — has asked the mercenary for nothing, so it is
-	// unknown rather than a pass nobody earned. None of the eleven saved searches
+	// unknown rather than a pass nobody earned. None of the twenty saved searches
 	// is in that state; a future one could be.
 	const outcome: RulesetOutcome =
 		applied.length === 0
@@ -557,6 +591,7 @@ function evaluateRuleset(
 		label: ruleset.label,
 		ladder: ruleset.ladder ?? null,
 		tier: ruleset.tier ?? null,
+		tierLabel: ruleset.tierLabel ?? null,
 		outcome,
 		groups,
 		notInRules: notInRules(capture, ruleset),
@@ -573,11 +608,15 @@ function evaluateRuleset(
 /**
  * Which passing rulesets to comp against.
  *
- * EACH ladder is answered by its own highest passing rung — the rungs of one
- * ladder are nested, so the cheaper ones would only comp the same mercenary
- * lower, but two ladders are two different searches and a pass on one must
- * neither suppress nor be suppressed by the other. Rulesets in no ladder are
- * independent searches too, so every passing one is listed.
+ * EACH ladder is answered by the passing rung with the highest `TIERS` rank,
+ * and that is the whole rule — a ladder's rungs are NOT assumed to be nested.
+ * Wild Strike is the counter-example: a mercenary carrying Faster Attacks
+ * (Tier 2) and no Greater Faster Attacks passes Minimum and Endgame while
+ * failing Midgame, whose `speed` group parks the Tier-2 entry inside a live
+ * group, and Endgame is still what this names. Two ladders are two different
+ * searches, and a pass on one must neither suppress nor be suppressed by the
+ * other. Rulesets in no ladder are independent searches too, so every passing
+ * one is listed.
  *
  * Ties on `TIERS` index keep the earlier rung: a ladder may publish two rungs at
  * one tier (Nerotox's Combatant video has two Endgame links), and declaration
@@ -599,8 +638,17 @@ function bestOf(results: MercRulesetResult[]): string[] {
 	return [...best, ...[...highestPerLadder.values()].map((result) => result.id)];
 }
 
+/**
+ * Who is speaking, in front of every reason line.
+ *
+ * A rung that spells its own tier out says so — two rungs of the Frost Blades
+ * ladder are both `end`, and "Frost Blades (end)" twice would leave the reader
+ * unable to tell which search answered. A rung with no `tierLabel` reads exactly
+ * as it always has.
+ */
 function titleOf(result: MercRulesetResult): string {
-	return result.tier ? `${result.label} (${result.tier})` : result.label;
+	if (!result.tier) return result.label;
+	return `${result.label} (${result.tierLabel ?? result.tier})`;
 }
 
 function evaluateSource(

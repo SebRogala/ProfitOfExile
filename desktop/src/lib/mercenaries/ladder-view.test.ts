@@ -130,6 +130,18 @@ describe('columnLabel', () => {
 	it('heads a rung column with its tier, not its (shared) ruleset label', () => {
 		expect(ladderNamed('kinetist').map(columnLabel)).toEqual(['minimum viable', 'mid', 'endgame', 'GG']);
 	});
+
+	// The Frost Blades ladder seats two rungs at `end`. Heading both 'endgame'
+	// would tell the reader the matrix is showing one search twice.
+	it('heads two rungs sharing a tier with the wordings the guide gave them', () => {
+		expect(ladderNamed('frost-blades').map(columnLabel)).toEqual([
+			'minimum viable',
+			'mid',
+			'endgame (no return)',
+			'endgame (return)',
+			'GG'
+		]);
+	});
 });
 
 describe('ladderRows over the Kinetist ladder', () => {
@@ -284,6 +296,7 @@ describe('rungOutcomes', () => {
 			label: id,
 			ladder: null,
 			tier: null,
+			tierLabel: null,
 			outcome,
 			groups: [],
 			notInRules: [],

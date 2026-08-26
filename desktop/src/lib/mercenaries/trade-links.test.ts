@@ -13,6 +13,15 @@ import n4mP3V2jQT9 from './__fixtures__/4mP3V2jQT9.json';
 import Z6Em09GmHQ from './__fixtures__/Z6Em09GmHQ.json';
 import JBnK2YKRFl from './__fixtures__/JBnK2YKRFl.json';
 import d86ymvXRsJ from './__fixtures__/d86ymvXRsJ.json';
+import Kld4gv0Pi5 from './__fixtures__/Kld4gv0Pi5.json';
+import Kld4gM7yi5 from './__fixtures__/Kld4gM7yi5.json';
+import q9l6yK0psg from './__fixtures__/q9l6yK0psg.json';
+import OglBJZoQIE from './__fixtures__/OglBJZoQIE.json';
+import PPaX7lLqUL from './__fixtures__/PPaX7lLqUL.json';
+import n3q6awYZPc5 from './__fixtures__/3q6awYZPc5.json';
+import mkgR2DbeS6 from './__fixtures__/mkgR2DbeS6.json';
+import jWRDpypkCX from './__fixtures__/jWRDpypkCX.json';
+import bGDrZYZaCL from './__fixtures__/bGDrZYZaCL.json';
 
 /** Keyed by the hash the ruleset declares — the `rulesets.test.ts` idiom. */
 const FIXTURES: Record<string, { id: string; query: unknown }> = {
@@ -26,7 +35,16 @@ const FIXTURES: Record<string, { id: string; query: unknown }> = {
 	'4mP3V2jQT9': n4mP3V2jQT9,
 	Z6Em09GmHQ,
 	JBnK2YKRFl,
-	d86ymvXRsJ
+	d86ymvXRsJ,
+	Kld4gv0Pi5,
+	Kld4gM7yi5,
+	q9l6yK0psg,
+	OglBJZoQIE,
+	PPaX7lLqUL,
+	'3q6awYZPc5': n3q6awYZPc5,
+	mkgR2DbeS6,
+	jWRDpypkCX,
+	bGDrZYZaCL
 };
 
 /**
@@ -99,6 +117,8 @@ const GUIDE_B = MERC_SOURCES.find((s) => s.id === 'guide-b') as MercSource;
 
 describe('per-ruleset guide URLs', () => {
 	// The source URL is the CHANNEL; each rung names the video its link came from.
+	// Not one video per ladder: the Combatant video publishes the Frost Blades and
+	// the Wild Strike links together, so nine rungs share `45aM9242Umo`.
 	it('points every guide-b rung at the video whose description published it', () => {
 		expect(GUIDE_B.rulesets.map((r) => `${r.id} ${r.guideUrl ?? 'none'}`)).toEqual([
 			'guide-b-kinetist-mv https://www.youtube.com/watch?v=HKTVN4sENvg',
@@ -108,7 +128,16 @@ describe('per-ruleset guide URLs', () => {
 			'guide-b-manyshot-mv https://www.youtube.com/watch?v=ljaXlGLdyxM',
 			'guide-b-manyshot-mid https://www.youtube.com/watch?v=ljaXlGLdyxM',
 			'guide-b-manyshot-end https://www.youtube.com/watch?v=ljaXlGLdyxM',
-			'guide-b-manyshot-gg https://www.youtube.com/watch?v=ljaXlGLdyxM'
+			'guide-b-manyshot-gg https://www.youtube.com/watch?v=ljaXlGLdyxM',
+			'guide-b-frost-blades-mv https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-frost-blades-mid https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-frost-blades-end-noreturn https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-frost-blades-end-return https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-frost-blades-gg https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-wild-strike-mv https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-wild-strike-mid https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-wild-strike-end https://www.youtube.com/watch?v=45aM9242Umo',
+			'guide-b-wild-strike-gg https://www.youtube.com/watch?v=45aM9242Umo'
 		]);
 	});
 
