@@ -903,8 +903,10 @@ struct Session {
     /// session and gets a new budget; the result cache is what stops it paying
     /// twice for the same question.
     trade: Option<MercTradeSession>,
-    /// Bumped every time [`Self::current`] is written — by the detect tick and
-    /// by a hover confirmation, the only two writers.
+    /// Bumped by the detect tick and by a hover confirmation — the two writes
+    /// of [`Self::current`] that outlive the iteration that made them.
+    /// (`restore_retained` also writes it, mid-detect, and is overwritten by
+    /// the same tick's own write a few lines later.)
     ///
     /// A version, not a change detector: `MercCapture` carries
     /// `captured_at_ms`, so two equal readings of one panel are never equal

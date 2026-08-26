@@ -79,7 +79,11 @@ impl Default for TradeSignals {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MercTradeListing {
-    /// Seller price normalized to chaos.
+    /// Seller price normalized to chaos — EXCEPT on the mercenary path, which
+    /// has no divine rate on the Rust side and so normalizes with a rate of 0,
+    /// leaving this equal to [`Self::amount`]. Named for the field it mirrors
+    /// on the gem listing; read [`Self::amount`] with [`Self::currency`] when
+    /// the number has to mean a price.
     pub chaos_price: f64,
     /// Raw seller currency, kept because the Mercenaries page has no divine
     /// rate and shows what the seller actually asked for.
@@ -107,6 +111,9 @@ pub struct MercTradeResult {
     pub league: String,
     pub total: u32,
     pub listings: Vec<MercTradeListing>,
+    /// Cheapest and middle `chaos_price` of [`Self::listings`] — statistics
+    /// over raw seller amounts, not a value floor and not a value median, for
+    /// the reason given on [`MercTradeListing::chaos_price`].
     pub floor_chaos: f64,
     pub median_chaos: f64,
     pub fetched_at_ms: u64,
