@@ -330,7 +330,14 @@ fn debug_capture_blocking(
         .map(|l| l.text.clone());
 
     let started = Instant::now();
-    let layout = geometry::detect(&lines, &g, &vocab);
+    // `None`, always: a debug capture is a one-shot grab with no session behind
+    // it, so it has no last-known panel rect to offer. That makes the dump
+    // STRICTER than the live loop, not equivalent to it — a frame whose chrome
+    // anchor was covered reports "no layout" here while the running loop, which
+    // does hold a rect, would have detected it. A dump that says no layout is
+    // therefore not evidence the live loop missed the panel; reproduce that
+    // claim against the loop's own log, not against this report.
+    let layout = geometry::detect(&lines, &g, &vocab, None);
     report.timings.push(timing("detect", started));
 
     let (capture, cells, rows, pass1): (

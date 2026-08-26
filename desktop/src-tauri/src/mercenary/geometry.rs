@@ -95,7 +95,17 @@ fn median(values: &mut [f32]) -> f32 {
 /// a 1920×1200 screen: Windows OCR returned NO line for `Wager: 8 831` (small
 /// gold text on the dark panel) while both buttons read cleanly, so the wager
 /// alone is not a reliable anchor.
-pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Option<MercLayout> {
+///
+/// `known_panel` is the rect the LAST detect of the capture still on screen
+/// produced ([`panel_bounds`]), and it is a third anchor — see
+/// [`rows_land_in_known_panel`]. `None` means there is no live capture, and
+/// then a frame anchors on its own chrome or not at all.
+pub fn detect(
+    lines: &[OcrLineBox],
+    g: &MercGeometry,
+    vocab: &MercVocab,
+    known_panel: Option<[i32; 4]>,
+) -> Option<MercLayout> {
     // 1. Skill-name candidates seed the column.
     let candidates: Vec<&OcrLineBox> = lines
         .iter()
@@ -191,20 +201,23 @@ pub fn detect(lines: &[OcrLineBox], g: &MercGeometry, vocab: &MercVocab) -> Opti
 
     // 4. The panel anchor, checked once the pitch is known: a line above row 1
     //    within `wager_search_pitches` of it reading "Wager", or a button line
-    //    below the last row within the same reach.
+    //    below the last row within the same reach — unless the rows are sitting
+    //    in a panel we already found, which is an anchor in its own right.
     let first_centre = centres[0];
     let last_centre = centres[centres.len() - 1];
-    let reach = if row_pitch > 0.0 {
-        g.wager_search_pitches * row_pitch
-    } else {
-        g.wager_search_pitches * g.row_pitch * scale
-    };
-    let anchor = lines.iter().find(|l| {
-        let c = l.centre_y();
-        (c < first_centre && first_centre - c <= reach && is_wager_line(&l.text, g))
-            || (c > last_centre && c - last_centre <= reach && is_button_line(&l.text, g))
-    });
-    anchor?;
+    if !rows_land_in_known_panel(known_panel, &centres, column_x0, g, scale) {
+        let reach = if row_pitch > 0.0 {
+            g.wager_search_pitches * row_pitch
+        } else {
+            g.wager_search_pitches * g.row_pitch * scale
+        };
+        let anchor = lines.iter().find(|l| {
+            let c = l.centre_y();
+            (c < first_centre && first_centre - c <= reach && is_wager_line(&l.text, g))
+                || (c > last_centre && c - last_centre <= reach && is_button_line(&l.text, g))
+        });
+        anchor?;
+    }
 
     // 5. Rows with their cell rects.
     let cell_size = (g.cell_size * scale).round().max(1.0) as i32;
@@ -298,11 +311,92 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
     lower == "take item" || lower == "rematch"
 }
 
+/// Whether this frame's clustered rows sit inside the panel rect the last
+/// detect produced — the third anchor, and the only one available on a frame
+/// the game has drawn a tooltip over.
+///
+/// MEASURED 2026-08-26 (app.log 09:14:51, 09:41:52): with the recruit window
+/// plainly on screen, `detect` returned `None` on frames carrying 12 and 6
+/// skill candidates. The rows were read; the ANCHOR was not. The anchor is one
+/// line — the wager (which OCR drops outright, see above) or an exact-equality
+/// button label — so a tooltip drawn over the footer, or one glyph error in
+/// `TAKE ITEM`, deletes it and the whole capture retires two ticks later.
+///
+/// A tooltip can delete a text line. It CANNOT move the skill rows: they are
+/// where the panel is, and the panel does not slide while it is open. So rows
+/// landing in the rect the panel was last measured at is positive evidence of
+/// the same panel, of exactly the kind the missing chrome line was standing in
+/// for.
+///
+/// The rect is only ever `Some` while a capture is LIVE — `run.rs`'s retire
+/// clears `session.panel` — so this cannot resurrect a window that closed: a
+/// closed window's rows are not on screen to land anywhere.
+///
+/// Two things must hold, and they constrain different axes.
+///
+/// EVERY row centre must be inside the rect, not merely one: a genuinely new
+/// panel that overlaps the old one's footprint by a row is not the old panel.
+///
+/// The all-quantifier does NOT, on its own, catch a window that MOVED — the
+/// claim this doc used to make. [`contains`] tests the column x against the
+/// rect's whole width, and the rect is as wide as the grid (~570 px at the
+/// reference scale), so a panel dragged 200 px sideways keeps every row
+/// "inside" and would inherit the old rect's identity. What the all-quantifier
+/// actually pins is the VERTICAL span. The horizontal one needs its own test:
+/// the skill column has to be where the old panel's column was, within half a
+/// cell.
+///
+/// `rect[0] + margin` reconstructs the `column_x0` the rect was built from (see
+/// [`panel_bounds`]) — exactly, except for a panel far enough left that the
+/// rect's `.max(0)` clamp bit, which is worth at most [`PANEL_MARGIN_CELLS`] of
+/// error against a tolerance of half a cell.
+fn rows_land_in_known_panel(
+    rect: Option<[i32; 4]>,
+    centres: &[f32],
+    column_x0: f32,
+    g: &MercGeometry,
+    scale: f32,
+) -> bool {
+    let Some(rect) = rect else {
+        return false;
+    };
+    if centres.is_empty() {
+        return false;
+    }
+    let x = column_x0.round() as i32;
+    let margin = (g.cell_size * scale * PANEL_MARGIN_CELLS).round() as i32;
+    let tolerance = (g.cell_size * scale / 2.0).round().max(1.0) as i32;
+    if (x - (rect[0] + margin)).abs() > tolerance {
+        return false;
+    }
+    centres
+        .iter()
+        .all(|&centre| contains(rect, (x, centre.round() as i32)))
+}
+
 /// How far past the skill column and the last cell the panel rect reaches, in
 /// cell widths. Half a cell at the reference scale is ~22 px — enough to cover
 /// the panel's frame either side of the grid without claiming screen the panel
 /// does not own.
 const PANEL_MARGIN_CELLS: f32 = 0.5;
+
+/// How far below the last row's cells the panel rect reaches, in row pitches.
+///
+/// The recruit window's footer — TAKE ITEM and REMATCH — sits under the last
+/// row, and it is the ONE part of the panel the player is guaranteed to put
+/// the cursor on: it is what closes the window. One pitch (the old value)
+/// stopped short of the buttons on the reference panel, so a cursor on TAKE
+/// ITEM read as OUTSIDE the panel, and a detect that lost its anchor to the
+/// button's own tooltip counted as a MISS instead of an occlusion — two of
+/// those retire the capture with the window still open (app.log 2026-08-26
+/// 09:14:51 → 09:14:54).
+///
+/// Three pitches clears the footer on the 2026-08-24 Windows dump (last row
+/// centre 926, button baseline 985, pitch ~48.6) with room for the frame under
+/// it. The over-reach it buys — a band of dead screen below a window that
+/// really did close — costs at most `run.rs`'s `OCCLUDED_MAX` of held capture,
+/// which is the cap that exists for exactly this trade.
+const PANEL_FOOTER_PITCHES: f32 = 3.0;
 
 /// Whether `p` lies inside `rect` (`[x, y, w, h]`), right/bottom exclusive.
 pub fn contains(rect: [i32; 4], p: (i32, i32)) -> bool {
@@ -317,20 +411,64 @@ pub fn contains(rect: [i32; 4], p: (i32, i32)) -> bool {
 /// OVER the panel, not a window that closed. `None` for a layout with no rows,
 /// which [`detect`] never produces.
 ///
+/// This is NOT the rect the header-withholding rule keys on — see
+/// [`header_guard_bounds`] for why the two questions need different bottoms.
+///
 /// Horizontally the rect spans the skill column's left edge to the rightmost
 /// candidate cell — ALL slots, occupied or not, because the panel is as wide as
 /// its grid whether or not the mercenary filled it — plus
 /// [`PANEL_MARGIN_CELLS`] either side, scaled with the capture.
 ///
-/// Vertically it runs one row pitch above the first row to one pitch below the
-/// last, which UNDER-reaches the real panel: the wager line can sit up to
-/// `wager_search_pitches` (12) above row 1, and the buttons sit below the last.
-/// The asymmetry is deliberate. This rect is evidence that the cursor is over
-/// the panel, and the two errors cost differently — under-reaching costs a
-/// tolerated miss on a cursor parked in the chrome, while over-reaching would
-/// hold a dead capture alive for every cursor that happens to rest in the band
-/// where the panel used to be.
+/// Vertically it runs one row pitch above the first row to
+/// [`PANEL_FOOTER_PITCHES`] below the last. It still UNDER-reaches upward — the
+/// wager line can sit up to `wager_search_pitches` (12) above row 1 — and the
+/// asymmetry is deliberate. This rect is evidence that the cursor is over the
+/// panel, and the two errors cost differently: under-reaching costs a tolerated
+/// miss on a cursor parked in the chrome, while over-reaching holds a dead
+/// capture alive for a cursor resting in the band where the panel used to be.
+/// `run.rs`'s `OCCLUDED_MAX` (15 s) is what bounds the over-reach downward, and
+/// the footer is where the cursor demonstrably IS — see
+/// [`PANEL_FOOTER_PITCHES`].
 pub fn panel_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32; 4]> {
+    bounds(layout, g, PANEL_FOOTER_PITCHES)
+}
+
+/// How far below the last row's cells the HEADER-guard rect reaches, in row
+/// pitches — the one-pitch bottom [`panel_bounds`] had before the footer
+/// extension, kept here because the header rule never wanted the footer.
+const HEADER_GUARD_FOOTER_PITCHES: f32 = 1.0;
+
+/// The rect the header-withholding rule keys on (`run.rs`'s
+/// `publishable_header`): the grid with one row pitch of chrome above and
+/// below, and NOT the footer.
+///
+/// The occlusion rect and this one answer different questions, and giving both
+/// to [`panel_bounds`] would silently answer the second with the first's shape:
+///
+/// - Occlusion asks *could the game have drawn something over the panel?* That
+///   has to include the footer. TAKE ITEM and REMATCH are where the cursor
+///   demonstrably is, and the tooltip they open is what costs the frame its
+///   anchor — the whole reason [`PANEL_FOOTER_PITCHES`] is 3.
+/// - Withholding asks *could a tooltip have put lines in the HEADER BAND,
+///   above row 0, where `parse_header` looks?* The game draws a tooltip at the
+///   cursor. A cursor three pitches below the LAST row is most of a panel's
+///   height away from the header band, and nothing drawn there reaches it.
+///
+/// Keying the header rule on the footer-extended rect would therefore throw
+/// away every clean header read taken while the player's cursor rests on TAKE
+/// ITEM — which is precisely when the name is wanted, because that click is
+/// what ends the window. One pitch below the last row is the band inside which
+/// a tooltip is close enough to the header to be a plausible source of its
+/// lines.
+///
+/// `None` for a layout with no rows, exactly as [`panel_bounds`].
+pub fn header_guard_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32; 4]> {
+    bounds(layout, g, HEADER_GUARD_FOOTER_PITCHES)
+}
+
+/// The shared rect construction: the grid plus [`PANEL_MARGIN_CELLS`] either
+/// side, one pitch above the first row and `footer_pitches` below the last.
+fn bounds(layout: &MercLayout, g: &MercGeometry, footer_pitches: f32) -> Option<[i32; 4]> {
     if layout.rows.is_empty() {
         return None;
     }
@@ -360,7 +498,7 @@ pub fn panel_bounds(layout: &MercLayout, g: &MercGeometry) -> Option<[i32; 4]> {
     let x0 = (layout.column_x0 - margin).max(0);
     let y0 = ((top as f32 - pitch).round() as i32).max(0);
     let x1 = right + margin;
-    let y1 = (bottom as f32 + pitch).round() as i32;
+    let y1 = (bottom as f32 + pitch * footer_pitches).round() as i32;
     Some([x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)])
 }
 
@@ -451,10 +589,67 @@ fn parse_header(
     let name = candidates
         .into_iter()
         .map(|(_, l)| clean_header_text(&l.text))
-        .filter(|text| !text.is_empty())
+        .filter(|text| is_name_shaped(text))
         .find(|text| class_key.as_deref() != Some(text.to_lowercase().as_str()));
 
     MercHeader { name, class, level, wager }
+}
+
+/// The longest a mercenary name is allowed to be, in characters.
+///
+/// `Fennik, of Unshakeable Faith` is 28 and is the longest real name measured
+/// so far; 40 leaves the epithet room to grow without admitting a sentence.
+const NAME_MAX_CHARS: usize = 40;
+
+/// The most whitespace-separated words a mercenary name may have.
+///
+/// The generated shape is `Given, the Epithet` / `Given, of the Epithet` — four
+/// words at the outside. Five is one word of slack for an OCR split.
+const NAME_MAX_WORDS: usize = 5;
+
+/// Whether a string has the SHAPE of a mercenary's name.
+///
+/// MEASURED 2026-08-26 (app.log 09:41:09): the module sent GGG a trade search
+/// labelled `SUPPORTED SKILLS PENETRATE 100/GlRE`. A support-gem tooltip was
+/// open over the panel; its lines are inside the header band and taller than
+/// the title, so [`parse_header`]'s tallest-line rule picked one. From there
+/// the corruption is permanent — `read::better_read` scores 31 alphanumerics
+/// over `Arith, the Quickshot`'s 18, and the sticky header keeps the winner.
+///
+/// The rule is a shape test, not a vocabulary: names are generated, so there is
+/// no list to check against. What the panel's title always is, and a gem
+/// tooltip line never is:
+///
+/// - short — at most [`NAME_MAX_CHARS`] characters;
+/// - a few words — at most [`NAME_MAX_WORDS`];
+/// - free of digits. A name has none. Inside the header band the two lines that
+///   legitimately carry digits are the level and the wager, both of which
+///   [`parse_header`] identifies by their own rules, and a tooltip's numbers
+///   (`100/GlRE`, `+25%`, `Tier 3`) are what mark it as not the title.
+///
+/// The digit rule has a cost, and it is accepted deliberately. Windows OCR
+/// confuses `I`→`1` and `O`→`0` on the panel's small gold-on-dark title, so a
+/// real name can come back with a digit in it (`Ar1th, the Quickshot`) and be
+/// rejected. That read STALLS: the name stays `None`, `header_complete` keeps
+/// the capture incomplete, and the loop reads again until a frame OCRs the
+/// title cleanly. The trade is a stall against a poisoned label — and the
+/// poisoned label is the worse half, because it does not stay in the app: a
+/// complete header opens the trade session (POE-202) and the name goes to GGG
+/// as the query's label, which is where `SUPPORTED SKILLS PENETRATE 100/GlRE`
+/// went on 2026-08-26. A stall costs ticks; a poisoned label costs a wrong
+/// search and a wrong string on the strip, and the sticky merge makes it
+/// permanent.
+///
+/// Rejecting is cheap and accepting is not: a rejected name is `None`, which
+/// [`super::read::merge_header`] reads as "not read this tick" and the next
+/// clean frame supplies, while an accepted one becomes the label on a GGG
+/// query and on the strip over the game.
+pub fn is_name_shaped(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && text.chars().count() <= NAME_MAX_CHARS
+        && text.split_whitespace().count() <= NAME_MAX_WORDS
+        && !text.chars().any(|c| c.is_ascii_digit())
 }
 
 /// One header field's OCR text with the glyph noise cut off both ends.
@@ -489,6 +684,18 @@ fn parse_trailing_number(text: &str) -> Option<u64> {
     }
     digits.parse().ok()
 }
+
+/// The exact string the module published as a mercenary's name on 2026-08-26
+/// (app.log 09:41:09) and sent to GGG as a trade query's label: the title line
+/// of a support-gem tooltip drawn over the recruit panel.
+///
+/// 31 alphanumerics against `Arith, the Quickshot`'s 18, which is why
+/// [`super::read::better_read`] preferred it once it had won the parse, and why
+/// the sticky header then kept it for the rest of the window's life. Shared by
+/// the header tests in this module, `read.rs` and `run.rs` so all three argue
+/// about the SAME string the log caught.
+#[cfg(test)]
+pub(crate) const TOOLTIP_NAME: &str = "SUPPORTED SKILLS PENETRATE 100/GlRE";
 
 /// Whether a support slot holds an icon.
 ///
@@ -561,6 +768,8 @@ pub fn luma(r: u8, gch: u8, b: u8) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
     use crate::mercenary::vocab::MercVocab;
     use image::{DynamicImage, Rgba, RgbaImage};
 
@@ -620,7 +829,8 @@ mod tests {
     #[test]
     fn the_reference_panel_detects_six_rows_at_the_pitch_its_centres_imply() {
         let lines = reference_lines();
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("panel detected");
+        let layout =
+            detect(&lines, &MercGeometry::default(), &vocab(), None).expect("panel detected");
 
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.row_pitch, 48.0);
@@ -640,7 +850,7 @@ mod tests {
     #[test]
     fn a_wrapped_name_is_one_row_centred_between_its_two_lines() {
         let layout =
-            detect(&reference_lines(), &MercGeometry::default(), &vocab()).expect("detected");
+            detect(&reference_lines(), &MercGeometry::default(), &vocab(), None).expect("detected");
 
         let wrapped = &layout.rows[3];
         assert_eq!(wrapped.text, "Ball Lightning of Orbiting Trap");
@@ -662,7 +872,7 @@ mod tests {
             }
         }
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.rows.len(), 6, "the nudged row must stay in the column");
         assert_eq!(
@@ -677,7 +887,7 @@ mod tests {
     #[test]
     fn cell_rects_are_the_reference_offsets_scaled_by_the_derived_scale() {
         let g = MercGeometry::default();
-        let layout = detect(&reference_lines(), &g, &vocab()).expect("detected");
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("detected");
         let s = layout.scale;
 
         let row0 = &layout.rows[0];
@@ -715,7 +925,7 @@ mod tests {
         let mut lines = reference_lines();
         lines.push(line("has entered the area", 134, 1200));
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.row_pitch, 48.0);
@@ -729,7 +939,7 @@ mod tests {
         let mut lines = reference_lines();
         lines.push(line("Inventory", 134, 400));
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.rows[0].text, "Conductivity");
@@ -748,7 +958,7 @@ mod tests {
         }
         lines.push(line("Trap", 134, 880));
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.rows[5].text, "Ball Lightning of Orbiting Trap");
@@ -764,7 +974,7 @@ mod tests {
             .filter(|l| !l.text.starts_with("Wager"))
             .collect();
 
-        assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+        assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
     /// Without a readable wager line, a recruit button under the rows anchors
@@ -780,7 +990,8 @@ mod tests {
         lines.push(line("TAKE ITEM", 250, 880));
         lines.push(line("REMATCH", 420, 880));
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("anchored by button");
+        let layout =
+            detect(&lines, &MercGeometry::default(), &vocab(), None).expect("anchored by button");
         assert_eq!(layout.header.wager, None, "no wager line was read");
         assert!(layout.rows.len() >= 3);
     }
@@ -795,7 +1006,7 @@ mod tests {
             .filter(|l| !l.text.starts_with("Wager"))
             .collect();
         lines.push(line("REMATCH", 420, 814 + (20.0 * 48.0) as i32));
-        assert!(detect(&lines, &g, &vocab()).is_none(), "out of reach");
+        assert!(detect(&lines, &g, &vocab(), None).is_none(), "out of reach");
 
         assert!(!is_button_line("Take items", &g));
         assert!(!is_button_line("Rematches", &g));
@@ -803,11 +1014,144 @@ mod tests {
         assert!(is_button_line("REMATCH", &g));
     }
 
-    /// The 2026-08-24 Windows dump (1920×1200, merc-debug/1787604709231):
-    /// the wager line is absent from OCR, both buttons are present, six rows.
+    /// The phantom retire, at its source. MEASURED 2026-08-26 (app.log
+    /// 09:14:51, 09:41:52): the recruit window was on screen and 12 (then 6)
+    /// skill candidates were read, but the ONE anchor line was not, so `detect`
+    /// answered "no recruit window" and two of those retired the capture.
+    ///
+    /// A tooltip deletes a text line; it cannot move the rows. So rows landing
+    /// in the rect the panel was last measured at anchor the frame themselves.
     #[test]
-    fn the_first_windows_dump_detects_by_the_recruit_buttons() {
-        let lines = vec![
+    fn rows_inside_the_last_known_panel_anchor_a_frame_whose_chrome_is_gone() {
+        let g = MercGeometry::default();
+        let rect = panel_bounds(
+            &detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel"),
+            &g,
+        )
+        .expect("the reference panel has bounds");
+        let stripped: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+
+        let layout = detect(&stripped, &g, &vocab(), Some(rect)).expect("the rect anchors it");
+
+        assert_eq!(layout.rows.len(), 6);
+    }
+
+    /// The FIRST detect has no rect, and it still needs the chrome: the anchor
+    /// is what separates a recruit window from a gem tooltip or the character
+    /// panel, and nothing may capture one of those.
+    #[test]
+    fn a_frame_with_no_known_rect_still_needs_its_chrome_line() {
+        let stripped: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+
+        assert!(detect(&stripped, &MercGeometry::default(), &vocab(), None).is_none());
+    }
+
+    /// A rect is evidence only while the rows are IN it. A window the player
+    /// dragged elsewhere — or a skill column on some other surface, with the
+    /// last panel's rect still on the session — falls back to the chrome
+    /// anchor rather than inheriting an identity from where a panel used to be.
+    #[test]
+    fn a_known_rect_the_rows_are_not_inside_does_not_anchor() {
+        let stripped: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+        // The reference rows run from y 620 to 862 at x 134.
+        let elsewhere = [1000, 100, 400, 300];
+
+        assert!(detect(&stripped, &MercGeometry::default(), &vocab(), Some(elsewhere)).is_none());
+    }
+
+    /// EVERY row must be inside, not merely one. A rect covering the top half
+    /// of the column is a panel that moved or resized, and half its rows
+    /// landing in the old footprint is not evidence that it is the same window.
+    #[test]
+    fn a_rect_that_holds_only_some_of_the_rows_does_not_anchor() {
+        let g = MercGeometry::default();
+        let stripped: Vec<OcrLineBox> = reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect();
+        // Rows sit at 620, 669, 717, 766, 814, 862; this stops after the third.
+        let half = [80, 560, 600, 180];
+
+        assert!(detect(&stripped, &g, &vocab(), Some(half)).is_none());
+    }
+
+    /// The all-quantifier pins the VERTICAL span and almost nothing else. The
+    /// rect is as wide as the grid, so a panel dragged sideways keeps every row
+    /// "inside" it and would inherit the old panel's identity on the strength
+    /// of a band of screen. The column has to be where the old column was.
+    #[test]
+    fn a_rect_displaced_only_horizontally_does_not_anchor() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
+        let moved = [rect[0] - 200, rect[1], rect[2], rect[3]];
+        let stripped: Vec<OcrLineBox> = windows_dump_lines()
+            .into_iter()
+            .filter(|l| !is_button_line(&l.text, &g))
+            .collect();
+        assert!(
+            layout.rows.iter().all(|r| {
+                contains(moved, (layout.column_x0 as i32, r.name_rect[1] + r.name_rect[3] / 2))
+            }),
+            "arrange: every row still lands inside the displaced rect",
+        );
+
+        assert!(
+            detect(&stripped, &g, &vocab(), None).is_none(),
+            "arrange: with the buttons gone this frame has no chrome anchor left",
+        );
+        assert!(detect(&stripped, &g, &vocab(), Some(moved)).is_none());
+        assert!(
+            detect(&stripped, &g, &vocab(), Some(rect)).is_some(),
+            "the same frame against the UNMOVED rect still anchors",
+        );
+    }
+
+    /// Two rows inside the old footprint but in another column are not the old
+    /// panel. This is the case the vertical test cannot see: the cluster is
+    /// short enough to fit the band whatever it is, so the column is the only
+    /// thing left that says which window it belongs to.
+    #[test]
+    fn a_two_row_cluster_in_another_column_does_not_anchor_inside_the_old_footprint() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
+        let pair: Vec<OcrLineBox> = windows_dump_lines()
+            .into_iter()
+            .filter(|l| l.text == "FROST BOMB" || l.text == "FROSTBITE")
+            .collect();
+        let shifted: Vec<OcrLineBox> = pair
+            .iter()
+            .map(|l| OcrLineBox { x: l.x + 200, ..l.clone() })
+            .collect();
+        assert!(
+            shifted
+                .iter()
+                .all(|l| contains(rect, (l.x, l.centre_y().round() as i32))),
+            "arrange: the shifted pair is still inside the old rect",
+        );
+
+        assert!(detect(&shifted, &g, &vocab(), Some(rect)).is_none());
+        assert!(
+            detect(&pair, &g, &vocab(), Some(rect)).is_some(),
+            "the same two rows in the panel's OWN column do anchor",
+        );
+    }
+
+    /// The 2026-08-24 Windows dump (1920×1200, merc-debug/1787604709231) as
+    /// OCR returned it: the wager line absent, both footer buttons present,
+    /// six rows, and the quest tracker's own tall text off to the right.
+    fn windows_dump_lines() -> Vec<OcrLineBox> {
+        vec![
             OcrLineBox { text: "Nytra, the Cyaxan Loner".into(), x: 813, y: 84, w: 273, h: 26 },
             OcrLineBox { text: "Infamous Frosthand".into(), x: 775, y: 129, w: 164, h: 15 },
             OcrLineBox { text: "LVI 83".into(), x: 980, y: 129, w: 44, h: 16 },
@@ -841,8 +1185,15 @@ mod tests {
             OcrLineBox { text: "709".into(), x: 1837, y: 928, w: 31, h: 15 },
             OcrLineBox { text: "TAKE ITEM".into(), x: 830, y: 979, w: 87, h: 13 },
             OcrLineBox { text: "REMATCH".into(), x: 989, y: 979, w: 81, h: 13 },
-        ];
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        ]
+    }
+
+    /// Six rows off a real screen, anchored by the buttons because the wager
+    /// line never reached the OCR.
+    #[test]
+    fn the_first_windows_dump_detects_by_the_recruit_buttons() {
+        let lines = windows_dump_lines();
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
         assert_eq!(layout.rows.len(), 6);
         assert_eq!(layout.header.name.as_deref(), Some("Nytra, the Cyaxan Loner"));
         assert_eq!(layout.header.level, Some(83));
@@ -851,7 +1202,7 @@ mod tests {
         // outside the panel and must not win the name.
         let mut lines = lines;
         lines.push(OcrLineBox { text: "SpeakrgVohÅn for a reward".into(), x: 1520, y: 350, w: 300, h: 30 });
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
         assert_eq!(layout.header.name.as_deref(), Some("Nytra, the Cyaxan Loner"));
         assert!((layout.scale - 1.0).abs() < 0.05, "scale {}", layout.scale);
     }
@@ -868,7 +1219,7 @@ mod tests {
                 l.h = 30;
             }
         }
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
         assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
     }
 
@@ -885,7 +1236,7 @@ mod tests {
             }
         }
 
-        assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+        assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
     /// A near-miss word is NOT the anchor. "Wagner has entered the area" is an
@@ -901,7 +1252,7 @@ mod tests {
             }
         }
 
-        assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+        assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
     /// The same for the plural and for the shorter root — 0.967 and 0.960,
@@ -918,7 +1269,7 @@ mod tests {
             }
 
             assert!(
-                detect(&lines, &MercGeometry::default(), &vocab()).is_none(),
+                detect(&lines, &MercGeometry::default(), &vocab(), None).is_none(),
                 "{word:?} must not anchor a capture",
             );
         }
@@ -938,7 +1289,7 @@ mod tests {
             }
 
             assert!(
-                detect(&lines, &MercGeometry::default(), &vocab()).is_some(),
+                detect(&lines, &MercGeometry::default(), &vocab(), None).is_some(),
                 "{label:?} must anchor a capture",
             );
         }
@@ -954,7 +1305,7 @@ mod tests {
             }
         }
 
-        assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+        assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
     /// One skill name is not a panel — D2 needs two, so a stray gem name in a
@@ -963,7 +1314,7 @@ mod tests {
     fn a_single_skill_name_is_not_enough_to_detect_a_panel() {
         let lines = vec![line("Wager: 1 028", 80, 173), line("Conductivity", 134, 620)];
 
-        assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+        assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
     /// No skill names at all: the detector must not fall back to "any column".
@@ -975,7 +1326,7 @@ mod tests {
             line("Stash", 134, 669),
         ];
 
-        assert!(detect(&lines, &MercGeometry::default(), &vocab()).is_none());
+        assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
     /// The single-row fallback: with one cluster there is no inter-row gap, so
@@ -990,7 +1341,7 @@ mod tests {
             tall("Ball Lightning of Orbiting Trap", 134, 624, 24),
         ];
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.rows.len(), 1);
         assert_eq!(layout.row_pitch, 0.0, "no pitch is measurable from one row");
@@ -1005,9 +1356,9 @@ mod tests {
             .into_iter()
             .map(|l| OcrLineBox { x: l.x * 2, y: l.y * 2, w: l.w * 2, h: l.h * 2, ..l })
             .collect();
-        let base = detect(&reference_lines(), &MercGeometry::default(), &vocab()).unwrap();
+        let base = detect(&reference_lines(), &MercGeometry::default(), &vocab(), None).unwrap();
 
-        let layout = detect(&doubled, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&doubled, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert!((layout.scale - base.scale * 2.0).abs() < 1e-4, "scale {}", layout.scale);
         assert_eq!(layout.rows[0].cells[0][2], base.rows[0].cells[0][2] * 2);
@@ -1019,7 +1370,7 @@ mod tests {
     #[test]
     fn the_header_reads_name_class_level_and_a_spaced_wager() {
         let layout =
-            detect(&reference_lines(), &MercGeometry::default(), &vocab()).expect("detected");
+            detect(&reference_lines(), &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.header.level, Some(70));
         assert_eq!(layout.header.wager, Some(1028));
@@ -1039,7 +1390,7 @@ mod tests {
             }
         }
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
     }
@@ -1056,7 +1407,7 @@ mod tests {
             }
         }
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.header.class.as_deref(), Some("Shock Ambusher"));
     }
@@ -1073,7 +1424,7 @@ mod tests {
             }
         }
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
     }
@@ -1095,10 +1446,63 @@ mod tests {
             }
         }
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.header.class.as_deref(), Some("Shock Ambusher"));
         assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
+    }
+
+    /// The header corruption of 2026-08-26, at its source. A support-gem
+    /// tooltip drawn over the panel puts its own lines in the header band, and
+    /// they are set taller than the title — so the tallest-line rule picked
+    /// one, `merge_header` made it permanent, and it went to GGG as the label
+    /// on a trade query (app.log 09:41:09).
+    #[test]
+    fn a_tooltip_line_in_the_header_band_does_not_become_the_name() {
+        let mut lines = reference_lines();
+        // The title is set larger than the rest of the header, as it is on
+        // screen; the tooltip's line is larger still, which is the whole
+        // problem — height alone ranks it first.
+        for l in lines.iter_mut() {
+            if l.text.starts_with("Cai") {
+                l.h = 26;
+            }
+        }
+        lines.push(OcrLineBox { text: TOOLTIP_NAME.into(), x: 300, y: 100, w: 280, h: 40 });
+
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
+
+        assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
+    }
+
+    /// The tooltip line is 35 characters and four words — inside both counting
+    /// rules — so the digits are what reject it. Nothing in a mercenary's name
+    /// is a digit; inside the header band the lines that carry them are the
+    /// level and the wager, which this parse finds by their own labels.
+    #[test]
+    fn a_candidate_carrying_digits_is_not_a_name() {
+        assert!(!is_name_shaped(TOOLTIP_NAME));
+        assert!(is_name_shaped("Arith, the Quickshot"));
+    }
+
+    /// The length cap, at its boundary. A name is a title, not a sentence —
+    /// the longest measured is `Fennik, of Unshakeable Faith` at 28. The
+    /// lengths are spelled out rather than taken from `NAME_MAX_CHARS`, so
+    /// moving the cap moves this test red instead of moving it along.
+    #[test]
+    fn a_candidate_longer_than_forty_characters_is_not_a_name() {
+        assert!(is_name_shaped(&"a".repeat(40)));
+        assert!(!is_name_shaped(&"a".repeat(41)));
+    }
+
+    /// The word cap, at its boundary. The generated shape is `Given, the
+    /// Epithet` — four words at the outside, five here for an OCR split — and
+    /// a body-text line that fits in forty characters does not have it.
+    #[test]
+    fn a_candidate_of_more_than_five_words_is_not_a_name() {
+        assert!(is_name_shaped("Fennik, of the Unshakeable Faith"));
+        // Six words, 25 characters — under the length cap, over the word cap.
+        assert!(!is_name_shaped("and of the many that lost"));
     }
 
     /// Header fields the panel does not show stay `None`. Guessing a level
@@ -1110,7 +1514,7 @@ mod tests {
             .filter(|l| !l.text.starts_with("Lvl"))
             .collect();
 
-        let layout = detect(&lines, &MercGeometry::default(), &vocab()).expect("detected");
+        let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
         assert_eq!(layout.header.level, None);
         assert_eq!(layout.header.class, None, "the class is located BY the level line");
@@ -1230,19 +1634,20 @@ mod tests {
     }
 
     /// The rect, edge by edge: half a cell either side of the grid, one row
-    /// pitch above the first row and below the last. Written out because every
-    /// edge is a separate decision the occlusion rule depends on — a rect that
-    /// stops at the skill text would call a cursor on a support cell "outside".
+    /// pitch above the first row and `PANEL_FOOTER_PITCHES` below the last.
+    /// Written out because every edge is a separate decision the occlusion rule
+    /// depends on — a rect that stops at the skill text would call a cursor on
+    /// a support cell "outside".
     #[test]
-    fn the_panel_rect_wraps_the_grid_by_a_margin_and_a_pitch() {
+    fn the_panel_rect_wraps_the_grid_by_a_margin_a_pitch_and_the_footer() {
         let g = MercGeometry::default();
         let layout = layout_of(&[200.0, 249.0], 49.0, 100, &g);
 
         let rect = panel_bounds(&layout, &g).expect("a two-row layout has bounds");
 
         // column 100 − 22 margin; row-0 cell top 178 − 49 pitch.
-        // last cell right 583 + 44 + 22; row-1 cell bottom 271 + 49.
-        assert_eq!(rect, [78, 129, 571, 191]);
+        // last cell right 583 + 44 + 22; row-1 cell bottom 271 + 3 × 49.
+        assert_eq!(rect, [78, 129, 571, 289]);
     }
 
     /// The consumer's question, asked directly: the cursor that provokes the
@@ -1287,6 +1692,86 @@ mod tests {
 
         assert!(contains(rect, (layout.column_x0, cell_top - g.row_pitch as i32 + 1)));
         assert!(!contains(rect, (layout.column_x0, cell_top - g.row_pitch as i32 - 5)));
+    }
+
+    /// The footer is the one part of the panel the player is CERTAIN to put the
+    /// cursor on: TAKE ITEM is how the window is closed and REMATCH is how it
+    /// is rerolled, and both open a tooltip that can cost the frame its anchor.
+    /// A cursor there has to read as occlusion, or the two detects it costs
+    /// retire a window that is still on screen (app.log 2026-08-26 09:14).
+    ///
+    /// Measured against the 2026-08-24 Windows dump, whose buttons OCR at
+    /// y 979-992 — the label. The button's own box carries on below its text,
+    /// which is where the old one-pitch rect stopped.
+    #[test]
+    fn a_cursor_on_the_footer_below_the_button_label_holds_the_capture() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
+        // The TAKE ITEM label's centre, one row pitch further down the button.
+        let cursor = (873, 985 + layout.row_pitch as i32);
+
+        assert_eq!(
+            crate::mercenary::run::miss_kind(true, contains(rect, cursor), Duration::ZERO),
+            crate::mercenary::run::MissKind::Occluded,
+        );
+    }
+
+    /// …and the band stops. Below the footer is the skill bar and the globes,
+    /// where a cursor rests for minutes at a time — a rect reaching there would
+    /// hold a closed window's verdict on screen for the whole of `OCCLUDED_MAX`
+    /// every time the player parked the mouse.
+    #[test]
+    fn a_cursor_a_long_way_below_the_footer_is_outside_the_panel() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
+
+        assert!(!contains(rect, (873, 985 + 4 * layout.row_pitch as i32)));
+    }
+
+    /// The two rects answer different questions and must not share a bottom.
+    /// A cursor on TAKE ITEM is INSIDE the panel — that is the whole point of
+    /// `PANEL_FOOTER_PITCHES`, and it is what holds the capture through the
+    /// button's own tooltip. It is OUTSIDE the header guard, because a tooltip
+    /// drawn three pitches below the last row cannot put lines in the header
+    /// band, and withholding on it would blank the name at the exact moment the
+    /// player is about to take the mercenary.
+    #[test]
+    fn a_cursor_on_the_footer_is_inside_the_panel_but_outside_the_header_guard() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        // The TAKE ITEM label's centre, one row pitch further down the button.
+        let cursor = (873, 985 + layout.row_pitch as i32);
+
+        assert!(contains(panel_bounds(&layout, &g).expect("six rows have bounds"), cursor));
+        assert!(!contains(
+            header_guard_bounds(&layout, &g).expect("six rows have bounds"),
+            cursor
+        ));
+    }
+
+    /// …and the guard is not a degenerate rect. It still wraps the grid and the
+    /// chrome one pitch above row 0 — the band a tooltip has to be drawn in to
+    /// reach `parse_header`'s candidates at all.
+    #[test]
+    fn the_header_guard_covers_the_grid_and_the_pitch_above_the_first_row() {
+        let g = MercGeometry::default();
+        let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
+        let first = layout.rows[0].cells[0];
+
+        let guard = header_guard_bounds(&layout, &g).expect("six rows have bounds");
+
+        assert!(contains(guard, (first[0] + first[2] / 2, first[1] + first[3] / 2)));
+        assert!(contains(guard, (layout.column_x0 as i32, first[1] - layout.row_pitch as i32 + 1)));
+    }
+
+    #[test]
+    fn a_layout_with_no_rows_has_no_header_guard_rect() {
+        let g = MercGeometry::default();
+        let layout = layout_of(&[], 0.0, 100, &g);
+
+        assert_eq!(header_guard_bounds(&layout, &g), None);
     }
 
     #[test]

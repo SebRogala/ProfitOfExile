@@ -66,8 +66,8 @@ use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
 use super::sync;
 use super::trigger;
 use super::{
-    MercCapture, MercGeometry, MercSkillRead, MercStatus, MercSupportRead, MercenarySlice,
-    ReadState,
+    MercCapture, MercGeometry, MercHeader, MercSkillRead, MercStatus, MercSupportRead,
+    MercenarySlice, ReadState,
 };
 
 /// Loop quantum. Every wait is built out of these so a stop signal is honoured
@@ -192,9 +192,14 @@ pub fn miss_kind(live: bool, cursor_in_panel: bool, occluded_for: Duration) -> M
 /// stays OPEN.** Clearing it on the miss it just produced restarts the clock,
 /// so the next tick is occluded again and the two-miss retire needs two full
 /// caps to land — ~30 s at the 2 s re-detect cadence and ~50 s at the liveness
-/// cadence. TAKE ITEM sits inside [`super::geometry::panel_bounds`], so that
-/// bug left a closed window's `done` verdict on screen for the better part of a
-/// minute while the cursor rested on the button that closed it.
+/// cadence. TAKE ITEM sits inside [`super::geometry::panel_bounds`] — since
+/// `PANEL_FOOTER_PITCHES` extended that rect over the footer, and NOT before:
+/// the one-pitch rect this comment was written against stopped above the
+/// buttons, so a cursor on TAKE ITEM was outside the panel and the bug it
+/// describes could not fire from there. It can now, which is what the cap is
+/// for: without the open-run rule a closed window's `done` verdict would stay
+/// on screen for the better part of a minute while the cursor rested on the
+/// button that closed it.
 ///
 /// The run ends on the four things that actually end it: the panel is found
 /// again ([`Self::on_hit`]), the cursor leaves the panel (handled inside
@@ -362,9 +367,29 @@ impl LoopState {
     /// Something asked for another look at the captured window — a voice line
     /// or Scan now. `true` when this actually resumed a paused read, so the
     /// caller logs the transition and not every armed tick.
+    ///
+    /// The miss counter is cleared WHEN THIS RESUMES SOMETHING, because that is
+    /// the moment the cadence changes and [`RETIRE_AFTER`] counts ticks, not
+    /// time.
+    /// MEASURED 2026-08-26 (app.log 09:41:52 → 09:41:57): one miss at the 10 s
+    /// liveness cadence, a burst arming four seconds later, and the first
+    /// re-detect at the 2 s cadence made two — "window gone" while the recruit
+    /// window was on screen, and it was restored seven seconds later. Two
+    /// misses are meant to be evidence of a window that closed; a miss from
+    /// before the cadence changed is not part of that evidence.
+    /// The clear happens on the TRANSITION only. A burst arms this on every
+    /// voice line and every Scan now, including while the loop is already
+    /// hunting at the re-detect cadence — and there the misses ARE the
+    /// evidence: they were counted at the cadence still running, two of them
+    /// mean the window closed, and zeroing them on each arm would let a
+    /// mercenary who speaks once a second hold a retired window's capture on
+    /// screen for as long as they keep talking.
     pub fn resume(&mut self) -> bool {
         let was = self.complete;
         self.complete = false;
+        if was {
+            self.misses = 0;
+        }
         was
     }
 
@@ -380,6 +405,112 @@ impl LoopState {
             false
         }
     }
+}
+
+/// Whether the cursor was over a rect, given THIS frame's rect and the one the
+/// last detect left on the session.
+///
+/// Both, because either is the wrong answer on its own. This frame's rect is
+/// missing entirely on the occlusion path — a detect that found no layout has
+/// nothing to measure — and it is SHRUNKEN when the detect found only part of
+/// the panel: a tooltip over rows 3-6 leaves a two-row layout whose rect stops
+/// above the very cursor that caused it, so keying on this frame alone reads
+/// "cursor off the panel" at the exact moment the cursor is provably on it.
+/// The session's rect is the last frame that saw the whole panel, and the
+/// window does not move while it is open, so the union of the two is the
+/// honest answer.
+///
+/// The union is safe in the direction that matters: the session's rect is
+/// cleared on retire, so it cannot vote for a window that closed.
+pub fn cursor_on_panel(
+    this: Option<[i32; 4]>,
+    last: Option<[i32; 4]>,
+    cursor: Option<(i32, i32)>,
+) -> bool {
+    let Some(c) = cursor else {
+        return false;
+    };
+    [this, last]
+        .into_iter()
+        .flatten()
+        .any(|rect| geometry::contains(rect, c))
+}
+
+/// The header a frame is allowed to publish, given where the cursor was when
+/// it was grabbed.
+///
+/// A cursor on the panel means the game has drawn a tooltip there — it opens
+/// one nowhere else — and a tooltip's lines land in the header band set TALLER
+/// than the title, which is exactly how `geometry::parse_header` ranks
+/// candidates. MEASURED 2026-08-26 (app.log 09:41:09): `SUPPORTED SKILLS
+/// PENETRATE 100/GlRE` became the mercenary's name and went to GGG as a trade
+/// query's label.
+///
+/// So an occluded frame's name and class are WITHHELD rather than published.
+/// The rows and cells it read are still good — the tooltip covers a corner of
+/// the panel, not the grid — but its header is a read of the wrong pixels, and
+/// `None` is precisely what [`super::read::merge_header`] treats as "not read
+/// this tick": the last clean frame's header stands, and a FIRST detect under a
+/// tooltip publishes no name rather than the tooltip's.
+///
+/// The zone is [`super::geometry::header_guard_bounds`], NOT the occlusion
+/// rect: the question here is whether a tooltip could have landed lines in the
+/// header band, and a cursor down on the footer — three pitches below the last
+/// row, which the occlusion rect deliberately covers — is nowhere near it. The
+/// two rects are separate functions so that widening the occlusion reach can
+/// never silently widen this one.
+///
+/// A FIRST read taken entirely under a tooltip therefore publishes no name at
+/// all, and that is the intended outcome rather than a gap: `read::
+/// header_complete` refuses the capture, no trade session opens, and the loop
+/// keeps reading until a clean frame supplies the name. The diagnostic is
+/// [`header_log_line`], which prints `name ?` for exactly that state.
+///
+/// The withholding is NOT conditional on there being an older name to protect.
+/// Making it overwrite-only — publish the tooltip's line when the header is
+/// still empty, withhold it only when a good name already exists — would hand
+/// the corrupt read the one case it actually caused damage in: 2026-08-26's
+/// `SUPPORTED SKILLS PENETRATE 100/GlRE` WAS the first name the capture had.
+///
+/// The shape test in `geometry::is_name_shaped` and this rule catch the same
+/// bug from opposite ends and neither subsumes the other: a tooltip line that
+/// happens to look like a name gets through the shape test, and a tooltip the
+/// cursor has already left (the frame after the player moved on) gets through
+/// this one.
+///
+/// The level and the wager stay. They are digits behind their own labels: the
+/// tooltip either covers them, in which case they are `None` already, or it
+/// does not. Dropping the level would also blind
+/// [`super::read::panel_replaced`] to a REMATCH, which is the one thing that
+/// must never be missed.
+pub fn publishable_header(header: MercHeader, cursor_in_header_guard: bool) -> MercHeader {
+    if cursor_in_header_guard {
+        MercHeader { name: None, class: None, ..header }
+    } else {
+        header
+    }
+}
+
+/// The log line for a header parse, or `None` when it would repeat `last`.
+///
+/// The three fields the strip prints, and the three the corruption of
+/// 2026-08-26 was invisible in: the only trace `SUPPORTED SKILLS PENETRATE
+/// 100/GlRE` left in the log was a trade error, minutes after the parse that
+/// produced it. An unread field prints as `?` rather than being omitted, so the
+/// line has a fixed shape and "the class was not read" and "the class read as
+/// nothing" are the same visible claim.
+///
+/// Gated on the RENDERED line, not on the header value: the header also carries
+/// the wager, which this does not print, and a wager that changed alone would
+/// otherwise reprint an identical line.
+pub fn header_log_line(header: &MercHeader, last: &Option<String>) -> Option<String> {
+    let line = format!(
+        "Merc: header — name {}, class {}, lvl {}",
+        header.name.as_deref().unwrap_or("?"),
+        header.class.as_deref().unwrap_or("?"),
+        header.level.map_or_else(|| "?".to_string(), |l| l.to_string()),
+    );
+    (last.as_deref() != Some(line.as_str())).then_some(line)
 }
 
 /// What the loop does with one iteration.
@@ -891,8 +1022,18 @@ struct Session {
     /// The live capture's panel rect in screen px, from the layout that
     /// produced it. `None` when nothing is captured. See [`miss_kind`].
     panel: Option<[i32; 4]>,
+    /// The live capture's HEADER-guard rect — the same grid without the footer
+    /// band. A separate field rather than a shrink of [`Self::panel`] because
+    /// the two are built from different footer reaches and only the layout
+    /// knows the pitch. See [`super::geometry::header_guard_bounds`] and
+    /// [`publishable_header`]. Cleared with `panel` on retire.
+    header_guard: Option<[i32; 4]>,
     /// The open run of detects the panel was covered for. See [`OcclusionRun`].
     occlusion: OcclusionRun,
+    /// The header line as last LOGGED — the once-per-change gate for
+    /// [`header_log_line`], so a re-detect does not reprint the same three
+    /// fields every cadence.
+    header_logged: Option<String>,
     /// What the last retire left for a re-detect of the same panel.
     retained: Option<Retained>,
     /// The trade-search budget for the capture on screen (POE-202).
@@ -1030,7 +1171,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         icons_dir,
         miss_logged: false,
         panel: None,
+        header_guard: None,
         occlusion: OcclusionRun::default(),
+        header_logged: None,
         retained: None,
         trade: None,
         revision: 0,
@@ -1332,6 +1475,7 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
             _ => None,
         };
         session.panel = None;
+        session.header_guard = None;
         session.sigs.clear();
         // The budget dies with the window. Cancels a merc lookup still on the
         // shared queue — and only then, see `search::close_session`. The
@@ -1395,14 +1539,18 @@ fn detect_tick(
         }
     };
 
-    let Some(layout) = geometry::detect(&lines, &session.geometry, &session.vocab) else {
+    // The last known panel rect goes IN: a tooltip over the footer deletes the
+    // anchor line this frame would otherwise need, and rows landing in the rect
+    // the panel was last measured at say the same thing the missing line did.
+    // See `geometry::rows_land_in_known_panel`.
+    let Some(layout) = geometry::detect(&lines, &session.geometry, &session.vocab, session.panel)
+    else {
         // A tooltip the player just opened sits ON the panel and hides the rows
         // the detect needs. The cursor is the proof — the game opens one only
         // under it — so this tick is not evidence the window closed.
-        let in_panel = match (session.panel, cursor) {
-            (Some(rect), Some(c)) => geometry::contains(rect, c),
-            _ => false,
-        };
+        // No layout means no rect from THIS frame; the session's is all there
+        // is. See [`cursor_on_panel`].
+        let in_panel = cursor_on_panel(None, session.panel, cursor);
         let live = session.state.live;
         if session.occlusion.on_occluded(live, in_panel, Instant::now()) == MissKind::Occluded {
             if session.occlusion.announce() {
@@ -1436,6 +1584,24 @@ fn detect_tick(
         return Some(miss(app, session, false));
     };
 
+    // From the LAYOUT, not the capture: the capture drops the cells past the
+    // first empty slot, and the panel is as wide as its grid either way.
+    // Computed here rather than at the end of the tick because the header fold
+    // below needs to know whether the cursor is on the panel.
+    let panel = geometry::panel_bounds(&layout, &session.geometry);
+    // TWO rects, because the two questions have different answers. Occlusion
+    // asks "could something be drawn over the panel", and its rect reaches over
+    // the footer so a cursor on TAKE ITEM counts. Header withholding asks
+    // "could a tooltip have reached the header band", and a cursor on the
+    // footer is nowhere near it — see `geometry::header_guard_bounds`.
+    let header_guard = geometry::header_guard_bounds(&layout, &session.geometry);
+    // The cursor was read before the grab, so this says where it was WHILE the
+    // frame was taken. Both this frame's rect and the session's count: a
+    // tooltip over the lower rows shrinks this frame's, which would otherwise
+    // put the cursor that caused it outside the guard and publish the tooltip's
+    // own lines as the name.
+    let in_header_guard = cursor_on_panel(header_guard, session.header_guard, cursor);
+
     // Pass 2 is up to `max_rows` more OCR calls. A stop signal that arrived
     // during pass 1 stops here, leaving the state exactly as it was.
     if *cancel.borrow() {
@@ -1455,6 +1621,10 @@ fn detect_tick(
             &store,
         )
     };
+    // Before ANY use of this frame's header — the fold below, and the
+    // completeness check that opens a trade session with it.
+    result.capture.header =
+        publishable_header(std::mem::take(&mut result.capture.header), in_header_guard);
     // A forget/reset while this capture was live means the user disowned a
     // confirmation; re-applying it here is exactly what the un-poison button
     // was pressed to stop.
@@ -1520,10 +1690,19 @@ fn detect_tick(
     );
     session.current = Some(result.capture.clone());
     session.revision += 1;
-    // From the LAYOUT, not the capture: the capture drops the cells past the
-    // first empty slot, and the panel is as wide as its grid either way.
-    session.panel = geometry::panel_bounds(&layout, &session.geometry);
+    session.panel = panel;
+    session.header_guard = header_guard;
     session.occlusion.on_hit();
+
+    // The header as the player will see it, once per CHANGE. Every tick would
+    // be a line every 2 s saying the same three fields; nothing would be a
+    // header that silently went wrong (2026-08-26) with no record of when. The
+    // gate is the rendered line, so a wager the loop does not print cannot
+    // trigger a duplicate.
+    if let Some(line) = header_log_line(&result.capture.header, &session.header_logged) {
+        crate::app_log(app, line.clone());
+        session.header_logged = Some(line);
+    }
 
     // Nothing left for a DETECT to find: the cadence drops to the liveness
     // check (2026-08-25 smoke). The hover tick stays on — it is the only path
@@ -2055,6 +2234,49 @@ mod tests {
 
         assert_eq!(st.detect_interval(), REDETECT_INTERVAL);
         assert!(!st.resume(), "a burst over a capture already being read says nothing");
+    }
+
+    /// A resume changes the CADENCE, and [`RETIRE_AFTER`] counts ticks rather
+    /// than time — so a miss accumulated at the 10 s liveness cadence is not
+    /// part of the evidence that a window seen 2 s ago has closed. MEASURED
+    /// 2026-08-26 (app.log 09:41:52 → 09:41:57): one liveness miss, a burst
+    /// four seconds later, one re-detect miss, "window gone" — with the
+    /// recruit window still open, and restored seven seconds afterwards.
+    #[test]
+    fn a_resume_clears_the_misses_the_previous_cadence_counted() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        st.note_complete(true);
+        st.on_detect(false);
+
+        st.resume();
+
+        assert_eq!(
+            st.on_detect(false),
+            DetectOutcome::Missed,
+            "the first miss after a resume is the first miss, not the second",
+        );
+        assert!(st.live);
+    }
+
+    /// A burst that resumes NOTHING must leave the miss counter alone. Voice
+    /// lines arrive while the loop is already hunting, and there the misses are
+    /// the evidence: they were counted at the cadence still running, and two of
+    /// them mean the window closed. Zeroing on every arm would let a mercenary
+    /// who keeps talking hold a closed window's capture on screen indefinitely.
+    #[test]
+    fn a_burst_over_a_capture_already_being_read_keeps_its_misses() {
+        let mut st = LoopState::default();
+        st.on_detect(true);
+        st.on_detect(false);
+
+        assert!(!st.resume(), "arrange: nothing was paused, so nothing resumed");
+
+        assert_eq!(
+            st.on_detect(false),
+            DetectOutcome::Retired,
+            "the second consecutive miss still retires",
+        );
     }
 
     /// The completeness belongs to the capture, not to the thread: the next
@@ -2654,6 +2876,184 @@ mod tests {
         assert_eq!(row_key(&skill), "ba11 lightning");
     }
 
+    // -- the header a frame may publish ------------------------------------
+
+    /// The corruption of 2026-08-26, end to end over the two pure pieces that
+    /// stop it: a tooltip frame's header is withheld, and the sticky merge
+    /// reads the withheld fields as "not read this tick" and keeps the good
+    /// name. Without the withholding, `better_read` scores the tooltip's 31
+    /// alphanumerics over `Arith, the Quickshot`'s 18 and the name is gone for
+    /// the life of the window.
+    #[test]
+    fn an_occluded_frames_header_does_not_overwrite_a_good_name() {
+        let good = MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: Some("Fallen Reverend".into()),
+            level: Some(83),
+            wager: None,
+        };
+        let under_tooltip = MercHeader {
+            name: Some(crate::mercenary::geometry::TOOLTIP_NAME.into()),
+            class: Some("SUPPORTED SKILLS".into()),
+            ..good.clone()
+        };
+
+        let merged = crate::mercenary::read::merge_header(
+            &good,
+            &publishable_header(under_tooltip, true),
+        );
+
+        assert_eq!(merged.name.as_deref(), Some("Arith, the Quickshot"));
+        assert_eq!(merged.class.as_deref(), Some("Fallen Reverend"));
+    }
+
+    /// The case this needs two rects for. A tooltip over the lower rows costs
+    /// the detect those rows, so the frame comes back as a TWO-row layout whose
+    /// rect stops ABOVE the cursor that caused it. Keyed on this frame alone
+    /// the cursor reads as off the panel, the header is published, and the
+    /// tooltip's own lines become the mercenary's name — the 2026-08-26 bug
+    /// walking in through the door the withholding rule was built to shut.
+    #[test]
+    fn a_cursor_below_a_shrunken_frame_rect_is_still_on_the_panel_the_session_knows() {
+        let six_rows = [100, 200, 500, 300];
+        let two_rows = [100, 200, 500, 100];
+        let on_row_six = (300, 460);
+        assert!(
+            !geometry::contains(two_rows, on_row_six),
+            "arrange: this frame's rect stops above the cursor",
+        );
+
+        assert!(cursor_on_panel(Some(two_rows), Some(six_rows), Some(on_row_six)));
+    }
+
+    /// The FIRST detect has no session rect, and its own is the whole answer.
+    #[test]
+    fn the_frames_own_rect_answers_when_the_session_has_none() {
+        assert!(cursor_on_panel(Some([100, 200, 500, 300]), None, Some((300, 300))));
+    }
+
+    /// A detect that found nothing has no rect of its own — the occlusion path
+    /// — and the session's is what decides whether the miss is a tooltip.
+    #[test]
+    fn the_session_rect_answers_when_the_frame_found_no_layout() {
+        assert!(cursor_on_panel(None, Some([100, 200, 500, 300]), Some((300, 300))));
+    }
+
+    /// Neither rect holding the cursor is the ordinary case, and it has to stay
+    /// negative: this bool is what excuses a miss, and an excuse the cursor did
+    /// not earn is a window that never retires.
+    #[test]
+    fn a_cursor_in_neither_rect_is_off_the_panel() {
+        assert!(!cursor_on_panel(
+            Some([100, 200, 500, 100]),
+            Some([100, 200, 500, 300]),
+            Some((300, 900)),
+        ));
+    }
+
+    /// No cursor reading is not evidence of a cursor on the panel. The excuse
+    /// has to be earned by a positive fix, however big the rects are.
+    #[test]
+    fn an_unreadable_cursor_is_not_on_the_panel() {
+        assert!(!cursor_on_panel(Some([0, 0, 4000, 4000]), Some([0, 0, 4000, 4000]), None));
+    }
+
+    /// The level survives the withholding: it is what
+    /// [`super::super::read::panel_replaced`] uses to notice a REMATCH, and a
+    /// tooltip over the grid is no reason to stop watching for one.
+    #[test]
+    fn an_occluded_frame_still_reports_the_level_it_read() {
+        let header = MercHeader {
+            name: Some(crate::mercenary::geometry::TOOLTIP_NAME.into()),
+            class: None,
+            level: Some(83),
+            wager: Some(1028),
+        };
+
+        let published = publishable_header(header, true);
+
+        assert_eq!(published.level, Some(83));
+        assert_eq!(published.wager, Some(1028));
+    }
+
+    /// A frame the cursor was NOWHERE near publishes what it read. The rule is
+    /// about tooltips, not a blanket distrust of the header parse.
+    #[test]
+    fn a_frame_read_with_the_cursor_off_the_panel_publishes_its_header() {
+        let header = MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: Some("Fallen Reverend".into()),
+            level: Some(83),
+            wager: None,
+        };
+
+        assert_eq!(publishable_header(header.clone(), false), header);
+    }
+
+    /// The log line exists to date a header that went wrong, so it prints the
+    /// three fields the strip shows and marks the ones nothing read.
+    #[test]
+    fn the_header_line_names_every_field_and_marks_the_unread_ones() {
+        let header = MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: None,
+            level: Some(83),
+            wager: None,
+        };
+
+        assert_eq!(
+            header_log_line(&header, &None).as_deref(),
+            Some("Merc: header — name Arith, the Quickshot, class ?, lvl 83"),
+        );
+    }
+
+    /// Once per CHANGE, not per tick: the re-detect runs every 2 s and the
+    /// header is the same three fields each time.
+    #[test]
+    fn an_unchanged_header_is_not_logged_again() {
+        let header = MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: Some("Fallen Reverend".into()),
+            level: Some(83),
+            wager: None,
+        };
+        let last = header_log_line(&header, &None);
+
+        assert_eq!(header_log_line(&header, &last), None);
+    }
+
+    /// …and a field that CHANGED is logged, which is the whole point of
+    /// keeping the line at all.
+    #[test]
+    fn a_header_whose_class_arrived_is_logged_again() {
+        let mut header = MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: None,
+            level: Some(83),
+            wager: None,
+        };
+        let last = header_log_line(&header, &None);
+        header.class = Some("Fallen Reverend".into());
+
+        assert!(header_log_line(&header, &last).is_some());
+    }
+
+    /// The wager is not on the line, so a wager the OCR only just read cannot
+    /// reprint an identical one.
+    #[test]
+    fn a_wager_arriving_alone_does_not_reprint_the_header() {
+        let mut header = MercHeader {
+            name: Some("Arith, the Quickshot".into()),
+            class: Some("Fallen Reverend".into()),
+            level: Some(83),
+            wager: None,
+        };
+        let last = header_log_line(&header, &None);
+        header.wager = Some(1028);
+
+        assert_eq!(header_log_line(&header, &last), None);
+    }
+
     // -- occlusion: a tooltip is not a closed window -----------------------
 
     /// MEASURED 2026-08-25: the hover the user just made opened a tooltip over
@@ -2758,7 +3158,9 @@ mod tests {
             icons_dir: None,
             miss_logged: false,
             panel: None,
+            header_guard: None,
             occlusion: OcclusionRun::default(),
+            header_logged: None,
             retained: None,
             trade: None,
             revision: 0,

@@ -489,8 +489,26 @@ pub fn capture_complete(capture: &MercCapture) -> bool {
 }
 
 /// The header fields the strip prints, all read. See [`capture_complete`].
+///
+/// The name must also have the SHAPE of a name
+/// ([`super::geometry::is_name_shaped`]), not merely be `Some`. This is the
+/// backstop, not the guard: the parse already refuses a tooltip-shaped
+/// candidate, but a name can also arrive here from a retained capture restored
+/// across a retire (`run.rs`'s `restore_retained`) or from an earlier tick the
+/// sticky merge kept — both paths pre-date the parse guard and neither
+/// re-checks. What this gate protects is the edge `capture_complete` fires:
+/// completeness is what opens the trade session (POE-202) and sends the name to
+/// GGG as the query's label, which is where `SUPPORTED SKILLS PENETRATE
+/// 100/GlRE` actually went on 2026-08-26. A capture whose name fails the shape
+/// test is not complete, so the loop keeps reading until a clean frame gives it
+/// one.
 pub fn header_complete(header: &super::MercHeader) -> bool {
-    header.name.is_some() && header.class.is_some() && header.level.is_some()
+    header
+        .name
+        .as_deref()
+        .is_some_and(super::geometry::is_name_shaped)
+        && header.class.is_some()
+        && header.level.is_some()
 }
 
 /// The two states a hover cannot improve. The same pair the verdict engine
@@ -621,7 +639,7 @@ mod tests {
     }
 
     fn layout_of() -> MercLayout {
-        detect(&reference_lines(), &MercGeometry::default(), &vocab())
+        detect(&reference_lines(), &MercGeometry::default(), &vocab(), None)
             .expect("the reference lines detect as a panel")
     }
 
@@ -1273,6 +1291,34 @@ mod tests {
         assert!(!capture_complete(&capture_of(rows.clone(), header(Some("Fennik"), None, Some(83)))));
         assert!(!capture_complete(&capture_of(rows.clone(), header(None, Some("Fallen Reverend"), Some(83)))));
         assert!(!capture_complete(&capture_of(rows, header(Some("Fennik"), Some("Fallen Reverend"), None))));
+    }
+
+    /// A name that is not name-SHAPED is not a read name. Completeness is what
+    /// opens the trade session (POE-202) and hands GGG the label, so this is
+    /// the last gate the corruption of 2026-08-26 had to pass — and it did:
+    /// `SUPPORTED SKILLS PENETRATE 100/GlRE` was `Some`, and three `is_some()`
+    /// calls had nothing else to say about it.
+    #[test]
+    fn a_tooltip_shaped_name_keeps_the_capture_incomplete() {
+        let rows = vec![MercRow {
+            index: 0,
+            skill: skill(ReadState::Matched),
+            supports: vec![read_at(ReadState::Matched)],
+        }];
+        let corrupted = header(
+            Some(crate::mercenary::geometry::TOOLTIP_NAME),
+            Some("Fallen Reverend"),
+            Some(83),
+        );
+
+        assert!(!capture_complete(&capture_of(rows.clone(), corrupted)));
+        assert!(
+            capture_complete(&capture_of(
+                rows,
+                header(Some("Arith, the Quickshot"), Some("Fallen Reverend"), Some(83)),
+            )),
+            "a real name still completes the capture",
+        );
     }
 
     /// The wager is absent from real OCR dumps and nothing reads it. Requiring
