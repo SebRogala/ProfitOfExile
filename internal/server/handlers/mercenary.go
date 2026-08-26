@@ -17,11 +17,18 @@ import (
 	"profitofexile/internal/server/middleware"
 )
 
-// mercTemplateBodyLimit caps an upload body, matching the font-session
-// precedent. At ~770 bytes per base64 signature this admits roughly 40
-// templates per request, so a device publishing a full local store batches
-// instead of sending one giant body.
-const mercTemplateBodyLimit = 32 * 1024
+// mercTemplateBodyLimit caps an upload body, so a device publishing a full
+// local store batches instead of sending one giant body.
+//
+// 128 KB, raised from 32 KB when the signature became format 2 (POE-207). A
+// format-2 signature is 1728 bytes, which is 2304 base64 characters, and with
+// the family, tier and JSON punctuation around it one wire template runs to
+// ~2.4 KB. The desktop's batch is MAX_TEMPLATES_PER_BATCH = 32, so a full batch
+// is 32 x ~2.4 KB = ~76 KB. The cap sits above that with room for the longest
+// family names rather than exactly on it: a batch that just tipped over would
+// answer 413 to a client that had already obeyed its own batch size, and the
+// client has no way to see which of the two limits it hit.
+const mercTemplateBodyLimit = 128 * 1024
 
 // MercTemplateStore is the slice of the template pool the HTTP layer needs.
 // Declared here as an interface rather than taking *mercenary.Repository so the
@@ -34,8 +41,9 @@ type MercTemplateStore interface {
 }
 
 // mercTemplateItem is one template on the wire, in both directions. The
-// signature is base64 of exactly 576 grayscale bytes; nothing else about the
-// hovered cell travels — no colour crop, and on the way out no device id.
+// signature is base64 of exactly mercenary.SigBytes bytes — the 24x24 RGB disc
+// samples, badge corner and frame already zeroed. Nothing else about the
+// hovered cell travels: no raw GGG crop, and on the way out no device id.
 type mercTemplateItem struct {
 	Family       string `json:"family"`
 	Tier         int    `json:"tier"`
@@ -213,7 +221,7 @@ func newMercCorpusEntry(body []byte) *mercCorpusEntry {
 func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter, cache *MercCorpusCache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Identity and budget are checked before the body is read: a client
-		// that may not write should not get 32 KB of parsing done on its
+		// that may not write should not get 128 KB of parsing done on its
 		// behalf.
 		dev := middleware.DeviceFromContext(r.Context())
 		if dev == nil {
@@ -225,7 +233,7 @@ func MercTemplatesUpload(store MercTemplateStore, limiter *mercenary.RateLimiter
 		}
 
 		var body mercUploadRequest
-		if !decodeMercBody(w, r, &body, "body exceeds 32 KB — send fewer templates") {
+		if !decodeMercBody(w, r, &body, "body exceeds 128 KB — send fewer templates") {
 			return
 		}
 
@@ -460,7 +468,7 @@ func MercTemplatesTombstone(store MercTemplateStore, limiter *mercenary.RateLimi
 		}
 
 		var body mercTombstoneRequest
-		if !decodeMercBody(w, r, &body, "body exceeds 32 KB") {
+		if !decodeMercBody(w, r, &body, "body exceeds 128 KB") {
 			return
 		}
 		if body.FormatVersion < 1 || body.FormatVersion > 32767 {

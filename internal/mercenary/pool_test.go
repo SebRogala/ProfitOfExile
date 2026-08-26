@@ -6,31 +6,31 @@ import (
 	"testing"
 )
 
-// flipped perturbs the splitHalf base pattern by moving k lo positions to hi
-// and k hi positions to lo. The result stays balanced (244/244), so its
-// z-scores are still exactly ±1 and its correlation against the base is exact:
-// 2k of 488 positions disagree, so NCC = 1 - 4k/488.
+// flipped perturbs the firstThird base pattern by moving k hi slots to lo and k
+// lo slots to hi. The hi count stays at 219 of 657, so the mean and stddev are
+// unchanged and the correlation against the base is exact arithmetic: 2k of the
+// 657 slots disagree, and for a 219/438 split that comes to NCC = 1 - k/146.
 func flipped(k int) func(int) bool {
 	return func(ordinal int) bool {
 		switch {
 		case ordinal < k:
-			return true
-		case ordinal >= 244 && ordinal < 244+k:
 			return false
+		case ordinal >= 219 && ordinal < 219+k:
+			return true
 		default:
-			return splitHalf(ordinal)
+			return firstThird(ordinal)
 		}
 	}
 }
 
 func perturbed(t *testing.T, k int) Signature {
 	t.Helper()
-	return mustSignature(t, balancedGray(flipped(k), 1, 255, 200))
+	return mustSignature(t, patternRGB(flipped(k), 1, 255, 200))
 }
 
 func baseSignature(t *testing.T) Signature {
 	t.Helper()
-	return mustSignature(t, balancedGray(splitHalf, 1, 255, 200))
+	return mustSignature(t, patternRGB(firstThird, 1, 255, 200))
 }
 
 // The dedupe threshold is a contract shared with the desktop's `icon_match`.
@@ -42,14 +42,14 @@ func TestDedupeThreshold_MatchesTheDesktopIconMatchValue(t *testing.T) {
 	}
 }
 
-// Just ABOVE the threshold: 28 of 488 positions disagree, NCC ≈ 0.8852. The
+// Just ABOVE the threshold: 34 of 657 slots disagree, NCC ≈ 0.8836. The
 // comparison is >=, so this is the same art.
 func TestDecide_CorrelationAboveThreshold_ReportsDuplicate(t *testing.T) {
 	stored := baseSignature(t)
-	candidate := perturbed(t, 14)
+	candidate := perturbed(t, 17)
 
 	ncc := stored.NCC(candidate)
-	if want := float32(1 - 56.0/488.0); math.Abs(float64(ncc-want)) > 1e-6 {
+	if want := float32(1 - 17.0/146.0); math.Abs(float64(ncc-want)) > 1e-6 {
 		t.Fatalf("test setup: NCC = %v, want %v", ncc, want)
 	}
 	if ncc < DedupeThreshold {
@@ -61,15 +61,15 @@ func TestDecide_CorrelationAboveThreshold_ReportsDuplicate(t *testing.T) {
 	}
 }
 
-// Just BELOW the threshold: 30 of 488 positions disagree, NCC ≈ 0.8770. Two
-// positions further apart than the case above, and the pool must now keep it —
-// this is the second sample that repairs a mistimed first hover.
+// Just BELOW the threshold: 36 of 657 slots disagree, NCC ≈ 0.8767. One slot
+// pair further apart than the case above, and the pool must now keep it — this
+// is the second sample that repairs a mistimed first hover.
 func TestDecide_CorrelationBelowThreshold_ReportsStored(t *testing.T) {
 	stored := baseSignature(t)
-	candidate := perturbed(t, 15)
+	candidate := perturbed(t, 18)
 
 	ncc := stored.NCC(candidate)
-	if want := float32(1 - 60.0/488.0); math.Abs(float64(ncc-want)) > 1e-6 {
+	if want := float32(1 - 18.0/146.0); math.Abs(float64(ncc-want)) > 1e-6 {
 		t.Fatalf("test setup: NCC = %v, want %v", ncc, want)
 	}
 	if ncc >= DedupeThreshold {
@@ -91,8 +91,8 @@ func TestDecide_EmptyKey_ReportsStored(t *testing.T) {
 // duplicate here sits behind two unrelated samples.
 func TestDecide_MatchesAnyLiveSample_ReportsDuplicate(t *testing.T) {
 	duplicateOf := baseSignature(t)
-	unrelatedA := mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200))
-	unrelatedB := mustSignature(t, balancedGray(func(o int) bool { return o%3 == 0 }, 1, 255, 200))
+	unrelatedA := mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200))
+	unrelatedB := mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200))
 
 	state := KeyState{Live: []Signature{unrelatedA, unrelatedB, duplicateOf}}
 	if got := Decide(state, duplicateOf); got != Duplicate {
@@ -103,8 +103,8 @@ func TestDecide_MatchesAnyLiveSample_ReportsDuplicate(t *testing.T) {
 // The third sample still fits — the cap is three, not two.
 func TestDecide_ThirdNovelSample_ReportsStored(t *testing.T) {
 	state := KeyState{Live: []Signature{
-		mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
-		mustSignature(t, balancedGray(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
 	}}
 
 	if got := Decide(state, baseSignature(t)); got != Stored {
@@ -116,9 +116,9 @@ func TestDecide_ThirdNovelSample_ReportsStored(t *testing.T) {
 // put in front of everyone else for a single key.
 func TestDecide_FourthNovelSample_ReportsCapped(t *testing.T) {
 	state := KeyState{Live: []Signature{
-		mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
-		mustSignature(t, balancedGray(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
-		mustSignature(t, balancedGray(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
 	}}
 
 	if got := Decide(state, baseSignature(t)); got != Capped {
@@ -132,8 +132,8 @@ func TestDecide_FourthNovelSample_ReportsCapped(t *testing.T) {
 func TestDecide_DuplicateOnAFullKey_ReportsDuplicate(t *testing.T) {
 	known := baseSignature(t)
 	state := KeyState{Live: []Signature{
-		mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
-		mustSignature(t, balancedGray(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
 		known,
 	}}
 
@@ -159,7 +159,7 @@ func TestDecide_MatchesRetiredArt_ReportsTombstoned(t *testing.T) {
 // after a rename orphans a key.
 func TestDecide_NovelArtUnderARetiredKey_ReportsStored(t *testing.T) {
 	retired := baseSignature(t)
-	novel := mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200))
+	novel := mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200))
 	if ncc := retired.NCC(novel); ncc >= DedupeThreshold {
 		t.Fatalf("test setup: the 'novel' sample correlates at %v with the retired one", ncc)
 	}
@@ -170,12 +170,12 @@ func TestDecide_NovelArtUnderARetiredKey_ReportsStored(t *testing.T) {
 	}
 }
 
-// The same threshold governs retirement matching as governs dedupe: 30 of 488
-// positions apart is a different picture, so it is stored rather than read as a
+// The same threshold governs retirement matching as governs dedupe: 36 of 657
+// slots apart is a different picture, so it is stored rather than read as a
 // republish of the retired one.
 func TestDecide_CorrelationWithRetiredArtBelowThreshold_ReportsStored(t *testing.T) {
 	retired := baseSignature(t)
-	candidate := perturbed(t, 15)
+	candidate := perturbed(t, 18)
 
 	ncc := retired.NCC(candidate)
 	if ncc >= DedupeThreshold {
@@ -192,9 +192,9 @@ func TestDecide_CorrelationWithRetiredArtBelowThreshold_ReportsStored(t *testing
 // retirement exists to avoid.
 func TestDecide_CapCountsLiveSamplesOnly(t *testing.T) {
 	state := KeyState{Retired: []Signature{
-		mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
-		mustSignature(t, balancedGray(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
-		mustSignature(t, balancedGray(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%3 == 0 }, 1, 255, 200)),
+		mustSignature(t, patternRGB(func(o int) bool { return o%5 == 0 }, 1, 255, 200)),
 	}}
 
 	if got := Decide(state, baseSignature(t)); got != Stored {

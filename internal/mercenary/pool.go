@@ -9,18 +9,33 @@ import (
 
 // SupportedFormatVersion is the ONE signature format this server understands.
 //
-// Version 1 is: a 24x24 grayscale crop of a support cell (SigDim), luma from
-// the desktop's geometry helper, the badge corner masked out at 0.45 x 0.35 of
-// the cell, then zero-mean unit-stddev normalisation over the unmasked
-// positions. Anything that changes any of those numbers is version 2, not a
-// tweak to version 1: signatures from the two are not comparable, and the whole
-// point of carrying the version in the key is that such a change starts an
-// empty pool instead of poisoning every device's matcher at once.
+// Version 2 is: the cell's ALIGNMENT WINDOW — the frame-inset inner rect the
+// desktop cuts, shrunk by SHIFT_MAX (3) SCREEN pixels on every side, so 33x33
+// at the live 0.974 scale and 34x34 on the 1:1 reference fixture. The margin
+// given up is not waste: detected cell rects land 1-3 px off per cell, and that
+// margin is the room the matcher slides the window over at match time. It is
+// bought here rather than by growing the rect, which would pull the
+// neighbouring cell's art in at the extremes. The window is then resized to
+// 24x24 RGB (SigDim, SigChannels) with a triangle filter; the positions kept
+// are those whose PIXEL CENTRE (x+0.5, y+0.5) lies within 0.36 x SigDim of the
+// cell centre AND outside the 0.45 x 0.35 tier-badge corner — 219 positions,
+// 657 channel values; then a single zero-mean unit-stddev normalisation applied
+// JOINTLY across all 657.
+// The stored form is the full 1728 bytes with every masked position zeroed, so
+// a reload reproduces the signature byte for byte. Version 1 was 576 grayscale
+// bytes with no disc, and is gone: the shared gold frame it kept dominated the
+// correlation, so visibly different families scored 0.97-0.99 against each
+// other (POE-207).
+//
+// Anything that changes any of those numbers is version 3, not a tweak to
+// version 2: signatures from the two are not comparable, and the whole point of
+// carrying the version in the key is that such a change starts an empty pool
+// instead of poisoning every device's matcher at once.
 //
 // Uploads declaring any other version are refused. Reads are NOT gated on it —
 // see the serve handler for why a client may legitimately ask for an older
 // version.
-const SupportedFormatVersion int16 = 1
+const SupportedFormatVersion int16 = 2
 
 // DedupeThreshold is the correlation at or above which a candidate is the same
 // art as a sample already pooled under its key. It is the desktop's default
@@ -36,10 +51,22 @@ const SupportedFormatVersion int16 = 1
 const DedupeThreshold float32 = 0.88
 
 // MaxSamplesPerKey caps how many live samples one (family, tier) may hold,
-// mirroring TemplateStore::MAX_SAMPLES_PER_KEY (icons.rs:270). More than one
-// sample exists because a mistimed hover can save art that later matches
-// nothing and a second confirm has to be able to repair it; the cap is what
-// stops a jittery hover — or an abusive client — from filling the pool.
+// mirroring TemplateStore::MAX_SAMPLES_PER_KEY (icons.rs). More than one sample
+// exists because a mistimed hover can save art that later matches nothing and a
+// second confirm has to be able to repair it; the cap is what stops a jittery
+// hover — or an abusive client — from filling the pool.
+//
+// From format 2 the cap carries a second, load-bearing job: bounding near-
+// duplicates the dedupe rule cannot see. What a device stores and uploads is
+// the UNSHIFTED window signature; alignment is a match-time search over the
+// 49 shifts, and none of it is baked into what goes on the wire. Two devices
+// whose detected rects sit 1-3 px apart therefore upload signatures of the SAME
+// art that correlate at only ~0.45-0.70 (measured, POE-207) — far below
+// DedupeThreshold — so the pool keeps both. That is by design: an unshifted
+// signature is exactly what the shift search needs as its input, and a
+// server-side alignment pass would both cost the server work it has no reason
+// to do and call art a duplicate that the devices themselves do not. Three
+// slots is the bound on how many such per-rect variants one key accumulates.
 const MaxSamplesPerKey = 3
 
 // RetiredMatchWindow is how long a retired sample keeps refusing a re-upload of
@@ -64,7 +91,7 @@ const RetiredMatchWindow = 30 * 24 * time.Hour
 const MaxFamilyLen = 128
 
 // MaxTemplatesPerUpload bounds how many templates one request may carry. The
-// 32 KB body cap already limits this to roughly 40, but a stated ceiling makes
+// 128 KB body cap already limits this to roughly 55, but a stated ceiling makes
 // the bound an intent rather than an accident of the encoding.
 const MaxTemplatesPerUpload = 64
 
