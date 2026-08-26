@@ -61,6 +61,7 @@ use crate::AppState;
 use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, TemplateStore};
 use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
+use super::search::{self, MercTradeSession};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
 use super::sync;
 use super::trigger;
@@ -894,6 +895,24 @@ struct Session {
     occlusion: OcclusionRun,
     /// What the last retire left for a re-detect of the same panel.
     retained: Option<Retained>,
+    /// The trade-search budget for the capture on screen (POE-202).
+    ///
+    /// `Some` from the tick a capture becomes COMPLETE until the tick it
+    /// retires, which is what makes the 3-search ceiling a per-mercenary
+    /// budget rather than a per-app-run one. A re-detected window opens a new
+    /// session and gets a new budget; the result cache is what stops it paying
+    /// twice for the same question.
+    trade: Option<MercTradeSession>,
+    /// Bumped every time [`Self::current`] is written — by the detect tick and
+    /// by a hover confirmation, the only two writers.
+    ///
+    /// A version, not a change detector: `MercCapture` carries
+    /// `captured_at_ms`, so two equal readings of one panel are never equal
+    /// values, and there is nothing cheaper than the trade query itself to
+    /// compare. What it buys is the difference between rebuilding that query
+    /// once per detect (1 Hz, or 0.1 Hz once the capture settles) and
+    /// rebuilding it on every 100 ms trade tick — see `search::tick`.
+    revision: u64,
 }
 
 fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
@@ -1011,6 +1030,8 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         panel: None,
         occlusion: OcclusionRun::default(),
         retained: None,
+        trade: None,
+        revision: 0,
     };
 
     // Backdated so the first iteration detects immediately rather than after a
@@ -1070,6 +1091,30 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
                 } else {
                     publish_status(&app, want);
                 }
+            }
+        }
+
+        // The trade tick, BEFORE the focus gate and on every iteration.
+        //
+        // Before the gate because the results are read in THIS app: the player
+        // alt-tabs to the Mercenaries page to look at them, which is exactly
+        // when `game_focused` goes false — a tick behind the gate would stall
+        // the debounce for as long as the user was reading. Every iteration
+        // because that is what makes the debounce work without a timer; see
+        // `search::tick`, which does nothing at all until the query has
+        // actually moved.
+        //
+        // Gated on COMPLETE, not merely on an open session: `LoopState::resume`
+        // puts a fully-read capture back on the working cadence when a new
+        // burst arms over it, and the re-read that follows passes through
+        // half-filled rows. A query built from one of those describes a
+        // mercenary nobody has, and it would cost one of three searches to
+        // learn that.
+        if session.state.complete {
+            if let (Some(capture), Some(trade)) =
+                (session.current.as_ref(), session.trade.as_mut())
+            {
+                search::tick(&app, capture, &session.vocab, trade, session.revision, now);
             }
         }
 
@@ -1160,6 +1205,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
     // by contract: on app exit the process is gone before this runs, which is
     // why `status` — forced to `off` by the SSOT composer once the module is
     // disabled — is what the page trusts.
+    // Same reason a retire does it: a queued merc lookup outliving the module
+    // that asked for it would publish into a slice nothing is reading.
+    search::close_session(&app);
     publish(&app, |slice| {
         slice.status = MercStatus::Idle;
         slice.burst_speaker = None;
@@ -1283,6 +1331,13 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
         };
         session.panel = None;
         session.sigs.clear();
+        // The budget dies with the window. Cancels a merc lookup still on the
+        // shared queue — and only then, see `search::close_session`. The
+        // `trade` state itself stays on the slice, like the capture it belongs
+        // to: the page keeps showing the retired mercenary's verdict, and the
+        // listings are part of that verdict.
+        session.trade = None;
+        search::close_session(app);
         crate::app_log(app, "Merc: window gone".to_string());
     }
     if !retired && errored {
@@ -1462,6 +1517,7 @@ fn detect_tick(
         hovered_key(&result.capture, cursor),
     );
     session.current = Some(result.capture.clone());
+    session.revision += 1;
     // From the LAYOUT, not the capture: the capture drops the cells past the
     // first empty slot, and the panel is as wide as its grid either way.
     session.panel = geometry::panel_bounds(&layout, &session.geometry);
@@ -1479,6 +1535,20 @@ fn detect_tick(
                 LIVENESS_INTERVAL.as_secs()
             ),
         );
+        // The settle edge OPENS a trade session if this capture has none yet
+        // (POE-202). Here rather than at the first detect because a half-read
+        // panel builds a query for a mercenary nobody has, and each of those
+        // would cost one of three searches.
+        //
+        // `get_or_insert_with`, never a fresh session: `note_complete` is a
+        // rising edge, but `LoopState::resume` drops `complete` whenever a new
+        // voice line or a Scan now arms over a finished window, so one capture
+        // crosses this edge as often as the player triggers a re-read. A new
+        // session per edge would hand that capture a new 3-search budget each
+        // time, which is unbounded searching dressed up as a ceiling. ONE
+        // session per capture: opened here, cleared only by the retire in
+        // [`miss`].
+        session.trade.get_or_insert_with(MercTradeSession::new);
     }
     publish(app, |slice| {
         slice.status = live_status(complete);
@@ -1716,6 +1786,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session) {
     let mut updated = capture;
     apply_one(&mut updated.rows[ri].supports[si], &confirmation);
     session.current = Some(updated.clone());
+    session.revision += 1;
     let learned_families = learned_keys(app);
     // A hover on a key the pool taught makes it locally-known, so the pooled
     // list has to move with the learned one — they are two readings of one
@@ -2687,6 +2758,8 @@ mod tests {
             panel: None,
             occlusion: OcclusionRun::default(),
             retained: None,
+            trade: None,
+            revision: 0,
         }
     }
 

@@ -145,6 +145,8 @@ fn compose_snapshot(
     mut mercenary: crate::mercenary::MercenarySlice,
     merc_sources_off: Vec<String>,
     merc_sync: crate::mercenary::sync::MercSyncStatus,
+    merc_trade_auto: bool,
+    merc_tier_floor: u8,
     mut temple: crate::temple::slice::TempleSlice,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
@@ -155,6 +157,13 @@ fn compose_snapshot(
         // scan that is not running. The loop clears it on every other exit from
         // `scanning`; the force-off is the one path the loop never gets to run.
         mercenary.burst_speaker = None;
+        // The trade state's own force-off, for the reason the status has one:
+        // `off` is the page's signal to hide the section entirely, and a
+        // module that is not running is not going to search anything. Only the
+        // STATUS is forced — the link and the listings stay, so switching the
+        // module back on does not lose an answer that is still young enough to
+        // be true.
+        mercenary.trade.status = crate::mercenary::MercTradeStatus::Off;
     }
     // The settings echo, written AFTER the force-off for the reason the temple
     // slice keeps its own echo through `force_off`: what the user set is not
@@ -166,6 +175,12 @@ fn compose_snapshot(
     // the slice keeps one writer and this is where their state joins it. Kept
     // when the module is off so the page can still say what the last pull did.
     mercenary.sync = merc_sync;
+    // Two more settings echoes, composed after the force-off like the guide set
+    // and for the same reason: the page renders the auto toggle and the tier
+    // select from them while the module is switched off and no loop will ever
+    // publish them.
+    mercenary.trade_auto = merc_trade_auto;
+    mercenary.tier_floor = merc_tier_floor;
     if modules.get(TEMPLE_MODULE_ID) != Some(&true) {
         crate::temple::slice::force_off(&mut temple);
     }
@@ -216,6 +231,9 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // Its own lone acquisition too — `sync::status` takes and drops the
     // `merc_sync` guard inside one statement.
     let merc_sync = crate::mercenary::sync::status(state);
+    // Lone acquisitions again, each ending with its own statement.
+    let merc_trade_auto = *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner());
+    let merc_tier_floor = *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner());
     // Same discipline again: the temple guard ends with this statement, so it
     // is never held alongside the merc one or across the compose.
     let temple = state.temple.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -228,6 +246,8 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         mercenary,
         merc_sources_off,
         merc_sync,
+        merc_trade_auto,
+        merc_tier_floor,
         temple,
     )
 }
@@ -718,6 +738,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -743,6 +765,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -774,6 +798,8 @@ mod tests {
             slice,
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -807,6 +833,8 @@ mod tests {
             slice,
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -838,6 +866,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             vec!["guide-a".to_string()],
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -862,6 +892,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             vec!["guide-b".to_string()],
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -888,6 +920,8 @@ mod tests {
             slice,
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -919,6 +953,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             slice,
         );
 
@@ -957,6 +993,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             slice,
         );
 
@@ -983,6 +1021,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice {
                 status: crate::temple::slice::TempleStatus::Read,
                 ..Default::default()
@@ -1035,6 +1075,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 
@@ -1057,6 +1099,8 @@ mod tests {
             crate::mercenary::MercenarySlice::default(),
             Vec::new(),
             crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
         );
 

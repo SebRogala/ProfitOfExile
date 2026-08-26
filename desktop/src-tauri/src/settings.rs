@@ -126,6 +126,34 @@ pub struct Settings {
     /// `Some(vec![])`, which means the user chose "every guide on".
     #[serde(default)]
     pub merc_sources_off: Option<Vec<String>>,
+    /// Whether the captured mercenary is auto-searched on the trade site
+    /// (POE-202).
+    ///
+    /// TYPED for the same reason as `merc_sources_off`: the page and the
+    /// verdict overlay both render off the merc slice, and the Rust capture
+    /// loop is the thing that has to READ this to decide whether to spend a
+    /// search — a `ui_prefs` entry lives in the webview and the loop cannot see
+    /// it. Default ON (`mercenary::DEFAULT_TRADE_AUTO`).
+    #[serde(default = "default_merc_trade_auto")]
+    pub merc_trade_auto: bool,
+    /// The lowest support tier the captured search accepts, 1..=3 (POE-202).
+    /// Typed for the same reason as `merc_trade_auto`. CLAMPED on load, not
+    /// refused and not reset: a hand-edited 0 means "as loose as it goes" and
+    /// becomes 1, a 9 means "exactly as read" and becomes 3, which is what the
+    /// query builder would do with either anyway. Reported, because the file
+    /// and the running value now disagree.
+    #[serde(default = "default_merc_tier_floor")]
+    pub merc_tier_floor: u8,
+}
+
+/// The shipped auto-search default — ON, see `mercenary::DEFAULT_TRADE_AUTO`.
+fn default_merc_trade_auto() -> bool {
+    crate::mercenary::DEFAULT_TRADE_AUTO
+}
+
+/// The shipped tier floor — 3, the mercenary exactly as read.
+fn default_merc_tier_floor() -> u8 {
+    crate::mercenary::DEFAULT_TIER_FLOOR
 }
 
 /// The common case: one opening stone. `u8`'s own default is 0, which is a
@@ -252,6 +280,8 @@ impl Default for Settings {
             // `None`, not the empty list: never written is what the one-time
             // migration from the `mercSourcesOff` preference keys on.
             merc_sources_off: None,
+            merc_trade_auto: default_merc_trade_auto(),
+            merc_tier_floor: default_merc_tier_floor(),
         }
     }
 }
@@ -399,6 +429,8 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         merc_sources_off: Some(
             state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         ),
+        merc_trade_auto: *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()),
+        merc_tier_floor: *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()),
     }
 }
 
@@ -480,6 +512,9 @@ mod tests {
             mercenary: Mutex::new(crate::mercenary::MercenarySlice::default()),
             merc_templates: Mutex::new(crate::mercenary::icons::TemplateStore::new()),
             merc_sources_off: Mutex::new(Vec::new()),
+            merc_trade_auto: Mutex::new(crate::mercenary::DEFAULT_TRADE_AUTO),
+            merc_tier_floor: Mutex::new(crate::mercenary::DEFAULT_TIER_FLOOR),
+            merc_trade_cache: Mutex::new(std::collections::HashMap::new()),
             merc_sync: Mutex::new(crate::mercenary::sync::SyncState::default()),
             merc_burst: Mutex::new(crate::mercenary::trigger::BurstGate::default()),
             merc_template_generation: AtomicU64::new(0),
@@ -1029,6 +1064,26 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
         }
         *state.merc_sources_off.lock().unwrap_or_else(|e| e.into_inner()) = accepted;
     }
+
+    // The trade auto-search (POE-202). The floor is CLAMPED rather than
+    // refused: a file holding a tier that is not a tier still describes a user
+    // who wants loosening, and failing the load over it would take every other
+    // preference in the file with it.
+    //
+    // Clamped to the nearest legal tier and NOT reset to the default: 0 is a
+    // user asking for the loosest search there is, and answering it with 3 —
+    // the tightest — inverts what the file says. Reported either way, because
+    // the file and the running value now disagree.
+    *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()) = settings.merc_trade_auto;
+    *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()) =
+        match crate::mercenary::validate_tier_floor(settings.merc_tier_floor) {
+            Ok(floor) => floor,
+            Err(why) => {
+                let clamped = settings.merc_tier_floor.clamp(1, 3);
+                rejected.push(format!("merc settings: {why}, using {clamped}"));
+                clamped
+            }
+        };
 
     // Seed the slice's settings echo, so the page and the overlay render the
     // persisted key count, flags and profile from the first poll — including

@@ -76,9 +76,7 @@ impl Default for TradeSignals {
 /// `gem_level`/`gem_quality`. A mercenary listing is desktop-only and prices a
 /// mercenary, so it gets its own type rather than widening a mirrored one
 /// (POE-202).
-/// Constructed in chunk 3, where the merc lookup task maps `RawSearch`.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MercTradeListing {
     /// Seller price normalized to chaos.
@@ -98,9 +96,11 @@ pub struct MercTradeListing {
 /// `query_hash` is the capture identity a late result is discarded by: a
 /// result whose hash no longer matches the slice's is answering a question
 /// the capture has already moved on from.
-/// Constructed in chunk 3, where the merc lookup task maps `RawSearch`.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `PartialEq` because the merc SSOT slice carries it and `run::publish`
+/// emits only on a real change — an equality that stopped being structural
+/// would turn every liveness tick into an `ssot-changed` fan-out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MercTradeResult {
     pub query_hash: String,

@@ -11,7 +11,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -25,6 +25,14 @@ const TRADE_CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Browser-like User-Agent. GGG blocks non-browser UAs.
 /// Awakened PoE Trade uses Electron's default Chromium UA — same idea.
 const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+
+/// The `Err` a lookup returns when its source was cancelled while it waited.
+///
+/// A named constant because it is a control signal two callers branch on
+/// (`lib.rs`'s gem command, `mercenary::search`'s lookup task) to tell a user
+/// action apart from a failure — a typo on either side turns a cancel into an
+/// error toast.
+pub const CANCELLED: &str = "cancelled";
 
 // ---------------------------------------------------------------------------
 // GGG API response shapes (private)
@@ -172,13 +180,21 @@ pub struct TradeApiClient {
     /// Number of lookups waiting to acquire the mutex + the one in flight,
     /// across every source. Drives the shared queue position/total the UI shows.
     pending_count: AtomicUsize,
-    /// Same count, split per source — the granularity a per-source cancel
-    /// needs to know when its own flag may be cleared.
+    /// Same count, split per source — what [`Self::cancel`] reports back as
+    /// "this many were stopped".
     pending_by_source: [AtomicUsize; 2],
-    /// One cancel flag per source; checked after acquiring the mutex against
-    /// the in-flight lookup's own source. Cancelling one consumer must leave
-    /// the other consumer's queued lookups running.
-    cancel_flags: [AtomicBool; 2],
+    /// One monotonic cancel counter per source. [`Self::cancel`] bumps its
+    /// source's; a lookup snapshots it when it joins the queue and treats
+    /// itself as cancelled only if the value MOVED since. Cancelling one
+    /// consumer leaves the other consumer's queued lookups running.
+    ///
+    /// An epoch rather than a flag because a flag has no way to say WHICH
+    /// lookups a cancel was about: it latched over an empty queue and stopped
+    /// the next unrelated lookup, and every rule for clearing it again raced
+    /// the next enqueue in the other direction. An epoch answers the question
+    /// the checkpoint actually asks — "was I cancelled?" — with no clearing
+    /// step to race.
+    cancel_epochs: [AtomicU64; 2],
     /// Counter of enqueued lookups in the current batch. Reset when queue drains.
     enqueued: AtomicUsize,
     /// Counter of completed/cancelled lookups in the current batch. Reset when queue drains.
@@ -200,7 +216,7 @@ impl TradeApiClient {
             lookup_mutex: tokio::sync::Mutex::new(()),
             pending_count: AtomicUsize::new(0),
             pending_by_source: [AtomicUsize::new(0), AtomicUsize::new(0)],
-            cancel_flags: [AtomicBool::new(false), AtomicBool::new(false)],
+            cancel_epochs: [AtomicU64::new(0), AtomicU64::new(0)],
             enqueued: AtomicUsize::new(0),
             completed: AtomicUsize::new(0),
         }
@@ -231,22 +247,26 @@ impl TradeApiClient {
     }
 
     /// Cancel `source`'s pending trade lookups. An in-flight request completes
-    /// but that source's queued lookups bail out with Err("cancelled") without
+    /// but that source's queued lookups bail out with [`CANCELLED`] without
     /// making GGG requests. Other sources are untouched.
+    ///
+    /// Bumping the epoch is unconditional and cannot latch: it stops exactly
+    /// the lookups that snapshotted an earlier value — every lookup already in
+    /// the queue — and nothing that enqueues afterwards. Calling this with
+    /// nothing pending is therefore a no-op rather than a trap for the next
+    /// lookup.
     ///
     /// Returns how many lookups of `source` were pending.
     pub fn cancel(&self, source: TradeSource) -> usize {
         let remaining = self.pending_by_source[source.index()].load(Ordering::SeqCst);
-        if remaining > 0 {
-            // Read-then-set is not atomic: a lookup enqueued between this load
-            // and the store is cancelled with the batch, and one enqueued right
-            // after a zero read is not cancelled at all. Tolerated — the flag is
-            // cleared again at the top of the next `lookup_query` for a source
-            // with nothing else pending, so neither case can latch.
-            self.cancel_flags[source.index()].store(true, Ordering::SeqCst);
-        }
+        self.cancel_epochs[source.index()].fetch_add(1, Ordering::SeqCst);
         log::info!("Trade queue: cancel requested for {:?} ({} pending)", source, remaining);
         remaining
+    }
+
+    /// Whether `source` was cancelled since a lookup snapshotted `since`.
+    fn cancelled_since(&self, source: TradeSource, since: u64) -> bool {
+        self.cancel_epochs[source.index()].load(Ordering::SeqCst) != since
     }
 
     /// Number of lookups currently pending (queued + in-flight), all sources.
@@ -354,15 +374,15 @@ impl TradeApiClient {
             }
         };
 
+        // The cancel epoch AS THIS LOOKUP JOINS THE QUEUE. Every checkpoint
+        // below asks whether it moved since, so a cancel that fired before this
+        // lookup existed cannot be about this lookup, and one that fires after
+        // always is. Snapshotted before the counters so no cancel can slip into
+        // the gap unnoticed.
+        let cancel_epoch = self.cancel_epochs[source.index()].load(Ordering::SeqCst);
+
         let pending = self.pending_count.fetch_add(1, Ordering::SeqCst) + 1;
-        // Clear a cancel that never had anything to cancel. `cancel` can be
-        // called for a source with nothing pending, and nothing would drain to
-        // clear the flag — the next lookup of that source would then bail out.
-        // Only this lookup being the source's first makes that safe: with
-        // others still pending the flag belongs to a live batch.
-        if self.pending_by_source[source.index()].fetch_add(1, Ordering::SeqCst) == 0 {
-            self.cancel_flags[source.index()].store(false, Ordering::SeqCst);
-        }
+        self.pending_by_source[source.index()].fetch_add(1, Ordering::SeqCst);
         self.enqueued.fetch_add(1, Ordering::SeqCst);
         // `completed` can already have overtaken `pending` when a batch drains
         // concurrently; saturate rather than underflow-panic in dev builds.
@@ -378,10 +398,10 @@ impl TradeApiClient {
         // Serialize: wait for previous lookup to finish.
         let _guard = self.lookup_mutex.lock().await;
 
-        // Check this source's cancel flag after acquiring mutex.
-        if self.cancel_flags[source.index()].load(Ordering::SeqCst) {
+        // Check for a cancel of this source after acquiring the mutex.
+        if self.cancelled_since(source, cancel_epoch) {
             self.drain_one(source);
-            return Err("cancelled".to_string());
+            return Err(CANCELLED.to_string());
         }
 
         let current_pending = self.pending_count.load(Ordering::SeqCst);
@@ -437,9 +457,9 @@ impl TradeApiClient {
         }
 
         // Check cancel between search and fetch — no point fetching if cancelled.
-        if self.cancel_flags[source.index()].load(Ordering::SeqCst) {
+        if self.cancelled_since(source, cancel_epoch) {
             self.drain_one(source);
-            return Err("cancelled".to_string());
+            return Err(CANCELLED.to_string());
         }
 
         // Phase 2: Fetch top 10 (rate-limit → request)
@@ -492,21 +512,16 @@ impl TradeApiClient {
         self.pending_count.fetch_sub(1, Ordering::SeqCst);
         self.pending_by_source[source.index()].fetch_sub(1, Ordering::SeqCst);
         self.completed.fetch_add(1, Ordering::SeqCst);
-        self.maybe_reset_counters(source);
+        self.maybe_reset_counters();
     }
 
-    /// Clear `source`'s cancel flag once that source has drained, and reset the
-    /// shared batch counters once the whole queue has.
+    /// Reset the shared batch counters once the whole queue has drained.
     ///
-    /// The two conditions are deliberately different. The counters describe one
-    /// shared queue — "position 2 of 5" is a fact about every consumer's wait —
-    /// so they may only reset when nothing at all is pending. A cancel flag
-    /// describes one consumer, so a draining gem batch must not clear a
-    /// mercenary cancel that still has queued lookups to stop.
-    fn maybe_reset_counters(&self, source: TradeSource) {
-        if self.pending_by_source[source.index()].load(Ordering::SeqCst) == 0 {
-            self.cancel_flags[source.index()].store(false, Ordering::SeqCst);
-        }
+    /// Shared, not per source: the counters describe one queue — "position 2 of
+    /// 5" is a fact about every consumer's wait — so they may only reset when
+    /// nothing at all is pending. Cancellation has nothing to reset here; a
+    /// cancel epoch is never cleared, only compared (see [`Self::cancel`]).
+    fn maybe_reset_counters(&self) {
         if self.pending_count.load(Ordering::SeqCst) == 0 {
             self.enqueued.store(0, Ordering::SeqCst);
             self.completed.store(0, Ordering::SeqCst);
