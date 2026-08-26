@@ -59,7 +59,8 @@ export interface MercTradeResult {
 	floorChaos: number;
 	medianChaos: number;
 	fetchedAtMs: number;
-	/** The 35-filter cap forced a looser query than the capture describes. */
+	/** The complexity budget forced the query to drop support cells the capture
+	 *  read, so it asks a looser question than the panel showed. */
 	truncated: boolean;
 }
 

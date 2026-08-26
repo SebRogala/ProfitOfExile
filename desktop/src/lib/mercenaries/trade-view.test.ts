@@ -235,9 +235,9 @@ describe('tradeHeadline', () => {
 	});
 
 	/**
-	 * `truncated` means the 35-filter cap dropped tier loosening or whole
-	 * support cells, so these listings answer a looser question than the
-	 * capture describes. Without the caveat the user reads them as exact.
+	 * `truncated` means the complexity budget cost the query support cells the
+	 * capture read, so these listings answer a looser question than the panel
+	 * showed. Without the caveat the user reads them as exact.
 	 */
 	it('warns that a capped query was loosened', () => {
 		const headline = tradeHeadline(
