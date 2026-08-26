@@ -69,6 +69,52 @@ impl Default for TradeSignals {
     }
 }
 
+/// One mercenary trade listing.
+///
+/// Deliberately NOT `TradeListingDetail`: that type mirrors Go's exactly (see
+/// the invariant on `TradeLookupResult` above) and is gem-shaped down to
+/// `gem_level`/`gem_quality`. A mercenary listing is desktop-only and prices a
+/// mercenary, so it gets its own type rather than widening a mirrored one
+/// (POE-202).
+/// Constructed in chunk 3, where the merc lookup task maps `RawSearch`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MercTradeListing {
+    /// Seller price normalized to chaos.
+    pub chaos_price: f64,
+    /// Raw seller currency, kept because the Mercenaries page has no divine
+    /// rate and shows what the seller actually asked for.
+    pub currency: String,
+    /// Raw seller amount in `currency`.
+    pub amount: f64,
+    pub account: String,
+    /// ISO-8601 timestamp as GGG returned it.
+    pub indexed_at: String,
+}
+
+/// The result of one auto-search for a captured mercenary (POE-202).
+///
+/// `query_hash` is the capture identity a late result is discarded by: a
+/// result whose hash no longer matches the slice's is answering a question
+/// the capture has already moved on from.
+/// Constructed in chunk 3, where the merc lookup task maps `RawSearch`.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MercTradeResult {
+    pub query_hash: String,
+    pub league: String,
+    pub total: u32,
+    pub listings: Vec<MercTradeListing>,
+    pub floor_chaos: f64,
+    pub median_chaos: f64,
+    pub fetched_at_ms: u64,
+    /// Set when the 35-filter cap forced the query to drop tier loosening or
+    /// support cells — the listings answer a LOOSER question than the capture.
+    pub truncated: bool,
+}
+
 /// SearchResponse holds parsed GGG trade search results.
 #[derive(Debug, Clone)]
 pub struct SearchResponse {
