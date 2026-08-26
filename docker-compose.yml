@@ -88,6 +88,14 @@ services:
     container_name: profitofexile_desktop
     volumes:
       - ./desktop:/app/desktop
+      # The merc signature parity golden (POE-207), for the same reason and by
+      # the same rule: `crop.png` + `signature.bin` are the ONE artefact the Go
+      # and Rust derivations of format 2 are both checked against, so there is
+      # exactly one copy and both suites read it from its canonical path.
+      # Writable (not `:ro`): the RUST side regenerates it
+      # under `MERC_SIG_UPDATE=1` and does so from inside this container. Go
+      # only ever reads it. Regenerating is a deliberate format change.
+      - ./internal/mercenary/testdata/merc-sig-v2:/app/internal/mercenary/testdata/merc-sig-v2
       - desktop_cargo_registry:/usr/local/cargo/registry
       - desktop_cargo_git:/usr/local/cargo/git
       - desktop_target:/app/desktop/src-tauri/target

@@ -16,7 +16,7 @@ use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
 
 use super::geometry::{inner_rect, occupied, stddev, Frame, MercLayout};
-use super::icons::{normalize_cell, read_tier, CellSig, TemplateStore};
+use super::icons::{cell_candidates, read_tier, CellSig, TemplateStore};
 use super::vocab::{classify_resolution, MercVocab};
 use super::{
     MercCapture, MercGeometry, MercRow, MercSkillRead, MercSupportRead, ReadState,
@@ -115,11 +115,15 @@ pub fn build_capture(
                 break;
             }
 
-            let sig = normalize_cell(img, px, g);
+            // Built ONCE per occupied cell and matched against every template
+            // (POE-207): the 49 aligned signatures are the expensive half, and
+            // rebuilding them per template is what would put the aligned
+            // search out of reach at the pool's ceiling.
+            let aligned = cell_candidates(img, px, g);
             let tier = read_tier(img, px, g);
-            let icon = match &sig {
-                Some(s) => store.match_family(s, &g.thresholds),
-                // Unreachable while `occupied` and `normalize_cell` share the
+            let icon = match &aligned {
+                Some(c) => store.match_family(c, &g.thresholds),
+                // Unreachable while `occupied` and `cell_candidates` share the
                 // same gate, but a rect that passes one and not the other must
                 // still produce a read rather than a panic.
                 None => super::icons::IconMatch::unknown(),
@@ -150,8 +154,11 @@ pub fn build_capture(
                 state,
             });
 
-            if let Some(s) = sig {
-                sigs.insert((row.index, slot as u8), (s, crop_rgba(img, px, g)));
+            // The UNSHIFTED signature is what a hover-confirm learns: an
+            // aligned one carries this capture's rect jitter, and the next
+            // capture's rect does not reproduce it.
+            if let Some(c) = aligned {
+                sigs.insert((row.index, slot as u8), (c.into_centre(), crop_rgba(img, px, g)));
             }
         }
 

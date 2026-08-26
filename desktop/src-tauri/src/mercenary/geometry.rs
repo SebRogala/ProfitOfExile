@@ -1328,9 +1328,11 @@ pub fn stddev(img: &image::DynamicImage, rect: [i32; 4]) -> Option<f32> {
 /// which is most of a PoE icon. Every number measured against this function
 /// (the occupancy stddevs, the badge ink floor) was measured with BT.601, so
 /// switching to `to_luma8` here means re-deriving them, not just swapping a
-/// call. `icons::normalize_cell` deliberately goes through `to_luma8` instead:
-/// its output is normalized to zero mean and unit stddev, so the weighting
-/// cancels out of the correlation.
+/// call. `icons::normalize_cell` does not reduce to luma at ALL since format 2
+/// (POE-207) — it keeps RGB, because the gold frame every cell shares dominates
+/// any single-channel reduction and made visibly different icons correlate at
+/// 0.97-0.99. `icons::read_tier` still calls this: the badge's ink mask is a
+/// brightness threshold, and it was measured against THIS weighting.
 pub fn luma(r: u8, gch: u8, b: u8) -> u8 {
     ((r as u32 * 299 + gch as u32 * 587 + b as u32 * 114) / 1000).min(255) as u8
 }

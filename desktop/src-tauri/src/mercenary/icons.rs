@@ -16,19 +16,76 @@
 //! [`TemplateStore::match_family`] still searches ALL samples and reports the
 //! best one's family, so a family learned at one tier immediately recognises
 //! its other tiers — the tier comes from the badge, not from the template.
+//!
+//! # The signature, format 2 (POE-207)
+//!
+//! A cell reduces to 24×24 RGB over a disc that excludes the shared gold
+//! frame, with the badge corner masked, normalised jointly over the 657 kept
+//! channels — [`normalize_cell`] is the one place that derivation lives.
+//! Matching then slides the CELL, not the template: [`cell_candidates`] builds
+//! the same signature at all 49 alignments in ±[`SHIFT_MAX`] px, because the
+//! rects `geometry::detect` emits land 1-3 px off per cell and an unaligned
+//! comparison of one art against itself scored 0.45-0.70.
+//!
+//! Format 1 was 24×24 luma of the whole inner crop with no disc and no
+//! alignment. It is not read anywhere: [`purge_stale_store`] unlinks a
+//! version-1 store on the first start of a version-2 build, and the pool keys
+//! on the version so the two corpora never mix.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use image::{DynamicImage, GenericImageView, GrayImage, RgbaImage};
+use image::{DynamicImage, GenericImageView, RgbImage, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 use super::geometry::{inner_rect, luma, occupied};
 use super::{BadgeGeometry, MercGeometry, ReadState, Thresholds};
 
-/// Signature side length. 24×24 keeps the icon's silhouette and colour
+/// Signature side length. 24×24 keeps the icon's silhouette and its colour
 /// gradient while discarding the per-pixel noise a 44 px crop carries.
 pub const SIG_DIM: u32 = 24;
+
+/// Channels per signature position — RGB, since format 2 (POE-207).
+///
+/// Grayscale was version 1 and it could not be tuned into working: the gold
+/// frame every cell shares dominates the luma, so visibly different icons
+/// correlated 0.97-0.99 across families and `Matched` was unreachable for half
+/// the store (measured on Sebastian's 61-template store, 2026-08-26). Colour
+/// plus the disc mask below drops the genuine cross-family maximum to 0.818.
+pub const SIG_CHANNELS: usize = 3;
+
+/// Bytes in one stored/wire signature.
+pub const SIG_BYTES: usize = (SIG_DIM * SIG_DIM) as usize * SIG_CHANNELS;
+
+/// Radius of the kept disc, as a fraction of [`SIG_DIM`].
+///
+/// The cell's gold frame is identical on every cell, so anything it reaches is
+/// shared signal that inflates every correlation equally. 0.36 keeps the art
+/// and excludes the frame: at `SIG_DIM` 24 the disc is 8.64 px of a 12 px
+/// half-width, which leaves the corners — where the frame lives — out.
+const DISC_R_FRAC: f32 = 0.36;
+
+/// Alignment margin, in SCREEN pixels per side, never scaled.
+///
+/// The cell rects `geometry::detect` emits land 1-3 px off per cell (the
+/// column origin and the pitch are both fractional), and the same art in two
+/// cells scored 0.45-0.70 without alignment — under `icon_low`, so a cell the
+/// store already knew still read as unknown. The jitter is measured in screen
+/// px and does not shrink with the panel, so this margin does not scale with
+/// it either: the signature is built from the inner crop shrunk by this much
+/// per side, and the matcher slides that window over the whole ±3 px range.
+pub const SHIFT_MAX: i32 = 3;
+
+/// Shifts per axis — `-SHIFT_MAX ..= SHIFT_MAX`.
+pub const SHIFT_SPAN: i32 = 2 * SHIFT_MAX + 1;
+
+/// The per-axis shifts stage one of the match search scores.
+///
+/// Every second offset, so nine of the 49 alignments cover the whole ±3 px
+/// range at a 2 px grid. A correlation surface over a 1-3 px misalignment is
+/// broad enough that the coarse maximum is within a step of the true one; the
+/// fine stage is what turns "within a step" into the exact number.
+const COARSE_STEPS: [i32; 3] = [-2, 0, 2];
 
 /// The badge corner masked out of a signature, as fractions of the cell.
 ///
@@ -49,7 +106,8 @@ const INDEX_FILE: &str = "index.json";
 /// [`TemplateStore::save`] writes one PNG per sample and THEN `index.json`, and
 /// four owners call it: the loop's off-tick `run::SaveQueue` worker,
 /// `sync::apply_corpus` when the pool's art lands, `sync::mark_uploaded` when a
-/// batch is placed, and the forget/reset commands. The in-memory store's mutex
+/// batch is placed, and the forget/reset commands. [`purge_stale_store`] is the
+/// fifth writer, and the one that unlinks rather than overwrites. The in-memory store's mutex
 /// does not serialise them — the worker drops it before writing on purpose, so
 /// the PNG writes do not stall the detect tick — and two overlapping writes end
 /// with one caller's `index.json` over the other's PNGs: pooled art on disk
@@ -66,38 +124,59 @@ pub fn writing_icons_dir<T>(lock: &std::sync::Mutex<()>, write: impl FnOnce() ->
     write()
 }
 
-/// A normalized cell signature: 24×24 grayscale, zero-mean and unit-stddev
-/// over its unmasked cells, with the badge corner zeroed.
+/// A normalized cell signature: 24×24 RGB, zero-mean and unit-stddev jointly
+/// over its unmasked channels, with the badge corner and everything outside
+/// the disc zeroed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellSig {
-    /// The pre-normalization grayscale, kept so a template round-trips
-    /// through a PNG on disk without storing floats. Masked positions are
-    /// zeroed here too, so the saved template shows exactly the pixels that
-    /// take part in the correlation and a reload reproduces the signature
-    /// byte for byte.
-    gray: Vec<u8>,
+    /// The pre-normalization RGB, kept so a template round-trips through a PNG
+    /// on disk without storing floats. Masked positions are zeroed here too,
+    /// so the saved template shows exactly the pixels that take part in the
+    /// correlation and a reload reproduces the signature byte for byte.
+    bytes: Vec<u8>,
     /// Zero-mean unit-stddev values; exactly 0.0 at masked positions, which
     /// makes them contribute nothing to the correlation.
     norm: Vec<f32>,
-    /// How many positions are unmasked — the correlation's divisor.
+    /// How many CHANNELS are unmasked — the correlation's divisor. 657 under
+    /// the default mask (219 kept positions × 3).
     active: usize,
 }
 
-/// Whether a signature cell is inside the masked badge corner.
+/// Whether a signature position is masked out: inside the badge corner, or
+/// outside the kept disc.
+///
+/// Two rules, one gate. The badge corner carries the tier numeral, which is
+/// not part of the family's identity. Outside the disc is the cell frame,
+/// which every cell shares — keeping it would make every pair of icons
+/// correlate on the frame rather than on the art.
 fn masked(x: u32, y: u32) -> bool {
     let mask_x0 = SIG_DIM - (SIG_DIM as f32 * MASK_W_FRAC).round() as u32;
     let mask_y0 = SIG_DIM - (SIG_DIM as f32 * MASK_H_FRAC).round() as u32;
-    x >= mask_x0 && y >= mask_y0
+    if x >= mask_x0 && y >= mask_y0 {
+        return true;
+    }
+    // Pixel CENTRES against the signature's centre — the convention the
+    // corpus band was measured with, and the one the server's mask repeats.
+    let centre = SIG_DIM as f32 / 2.0;
+    let dx = x as f32 + 0.5 - centre;
+    let dy = y as f32 + 0.5 - centre;
+    dx.hypot(dy) > DISC_R_FRAC * SIG_DIM as f32
 }
 
 impl CellSig {
-    /// Build a signature from a `SIG_DIM × SIG_DIM` grayscale buffer.
+    /// Build a signature from a `SIG_DIM × SIG_DIM` RGB buffer.
+    ///
+    /// The three channels normalise JOINTLY — one mean and one stddev over
+    /// all [`Self::active`] kept channels, not one per channel. Per-channel
+    /// normalisation would rescale each channel to unit variance and throw
+    /// away the ratios between them, which is most of what separates two
+    /// icons that share a silhouette.
     ///
     /// `None` when the unmasked region is flat: an empty slot has no gradient
     /// to normalize, and dividing by its zero stddev would make every
     /// comparison NaN.
-    pub fn from_gray(gray: Vec<u8>) -> Option<Self> {
-        if gray.len() != (SIG_DIM * SIG_DIM) as usize {
+    pub fn from_rgb(bytes: Vec<u8>) -> Option<Self> {
+        if bytes.len() != SIG_BYTES {
             return None;
         }
         let mut sum = 0.0f64;
@@ -108,10 +187,13 @@ impl CellSig {
                 if masked(x, y) {
                     continue;
                 }
-                let v = gray[(y * SIG_DIM + x) as usize] as f64;
-                sum += v;
-                sum_sq += v * v;
-                active += 1;
+                let base = ((y * SIG_DIM + x) as usize) * SIG_CHANNELS;
+                for c in 0..SIG_CHANNELS {
+                    let v = bytes[base + c] as f64;
+                    sum += v;
+                    sum_sq += v * v;
+                    active += 1;
+                }
             }
         }
         if active == 0 {
@@ -124,19 +206,33 @@ impl CellSig {
             return None;
         }
         let sd = var.sqrt();
-        let mut gray = gray;
-        let mut norm = vec![0.0f32; gray.len()];
+        let mut bytes = bytes;
+        let mut norm = vec![0.0f32; bytes.len()];
         for y in 0..SIG_DIM {
             for x in 0..SIG_DIM {
-                let i = (y * SIG_DIM + x) as usize;
+                let base = ((y * SIG_DIM + x) as usize) * SIG_CHANNELS;
                 if masked(x, y) {
-                    gray[i] = 0;
+                    for c in 0..SIG_CHANNELS {
+                        bytes[base + c] = 0;
+                    }
                     continue;
                 }
-                norm[i] = ((gray[i] as f64 - mean) / sd) as f32;
+                for c in 0..SIG_CHANNELS {
+                    norm[base + c] = ((bytes[base + c] as f64 - mean) / sd) as f32;
+                }
             }
         }
-        Some(Self { gray, norm, active })
+        Some(Self {
+            bytes,
+            norm,
+            active,
+        })
+    }
+
+    /// How many channels take part in the correlation. 657 under the default
+    /// mask; two signatures with different counts never correlate.
+    pub fn active(&self) -> usize {
+        self.active
     }
 
     /// Normalized cross-correlation with another signature: 1.0 for identical
@@ -154,29 +250,38 @@ impl CellSig {
         dot / self.active as f32
     }
 
-    /// The stored grayscale — masked positions zeroed, exactly the bytes a
-    /// reload reproduces the signature from.
+    /// The stored RGB — masked positions zeroed, exactly the bytes a reload
+    /// reproduces the signature from.
     ///
     /// This is also the ONLY thing that goes on the wire to the shared pool
     /// (POE-201): the upload payload is built from these bytes in memory, so
     /// the colour crop `save` writes next to a template never leaves the
     /// device and no code path has to walk the store directory to publish.
-    pub fn gray(&self) -> &[u8] {
-        &self.gray
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
-    /// The stored grayscale as an image, for `save` and for eyeballing.
-    pub fn to_image(&self) -> GrayImage {
-        GrayImage::from_raw(SIG_DIM, SIG_DIM, self.gray.clone())
-            .expect("a signature always holds SIG_DIM² samples")
+    /// The stored RGB as an image, for `save` and for eyeballing.
+    pub fn to_image(&self) -> RgbImage {
+        RgbImage::from_raw(SIG_DIM, SIG_DIM, self.bytes.clone())
+            .expect("a signature always holds SIG_BYTES samples")
     }
 }
 
-/// Reduce a support cell to a signature.
+/// Reduce a support cell to its UNSHIFTED signature — THE derivation.
 ///
-/// Takes the cell's OUTER rect (what [`super::geometry::detect`] emits) and
-/// reads its inner region, so the cell frame — identical on every cell — never
-/// reaches the correlation.
+/// One named definition of "the signature of this cell", because three things
+/// have to agree on it byte for byte: what `learn` stores, what goes on the
+/// wire to the pool, and what the server derives from the same crop
+/// (`internal/mercenary/signature.go`, checked by the parity golden). The
+/// aligned search in [`cell_candidates`] is built on top of this, not beside
+/// it.
+///
+/// Takes the cell's OUTER rect (what [`super::geometry::detect`] emits), reads
+/// its inner region and then gives up [`SHIFT_MAX`] px per side of that — the
+/// alignment window. What is left of the cell frame after the inset is outside
+/// the disc mask, so the frame — identical on every cell — never reaches the
+/// correlation.
 ///
 /// `None` when the rect is off-image, or when the cell is not
 /// [`occupied`]. The occupancy gate is here rather than only at the call sites
@@ -188,7 +293,48 @@ pub fn normalize_cell(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> O
     if !occupied(img, rect, g) {
         return None;
     }
-    let [x, y, w, h] = inner_rect(rect, g);
+    let (win, _) = shift_window(rect, g);
+    window_sig(img, win, 0, 0)
+}
+
+/// Warned once per process when the geometry leaves no alignment room.
+static NARROW_WINDOW: std::sync::Once = std::sync::Once::new();
+
+/// The UNSHIFTED signature window of a cell, and whether shifting it is safe.
+///
+/// The window is the inner crop shrunk by [`SHIFT_MAX`] screen px per side —
+/// 33×33 at the live scale 0.974, 34×34 on the 1:1 reference fixture. The
+/// margin it gives up is what the matcher slides over, so the alignment room
+/// is bought here rather than by growing the rect (which would pull the
+/// neighbouring cell's art in at the extremes).
+///
+/// A `cellInset` override can make the inner crop too small to shrink. That is
+/// the user's geometry, not a bug, so the signature falls back to the whole
+/// inner crop and the matcher runs unaligned — the version-1 behaviour, which
+/// worked badly rather than not at all. Warned once, because the loop would
+/// otherwise say it on every cell of every tick.
+fn shift_window(rect: [i32; 4], g: &MercGeometry) -> ([i32; 4], bool) {
+    let [ix, iy, iw, ih] = inner_rect(rect, g);
+    let (ww, wh) = (iw - 2 * SHIFT_MAX, ih - 2 * SHIFT_MAX);
+    if ww < SIG_DIM as i32 || wh < SIG_DIM as i32 {
+        NARROW_WINDOW.call_once(|| {
+            log::warn!(
+                "Merc: cell inner crop {iw}×{ih} leaves no room for the ±{SHIFT_MAX} px \
+                 alignment window — matching unaligned (check cellInset/cellSize)"
+            );
+        });
+        return ([ix, iy, iw, ih], false);
+    }
+    ([ix + SHIFT_MAX, iy + SHIFT_MAX, ww, wh], true)
+}
+
+/// One shifted window of a cell, resized to a signature.
+///
+/// `None` when the window falls outside the image, or when what it holds is
+/// too flat to normalise.
+fn window_sig(img: &DynamicImage, win: [i32; 4], dx: i32, dy: i32) -> Option<CellSig> {
+    let [wx, wy, w, h] = win;
+    let (x, y) = (wx + dx, wy + dy);
     if x < 0 || y < 0 || w <= 0 || h <= 0 {
         return None;
     }
@@ -196,14 +342,120 @@ pub fn normalize_cell(img: &DynamicImage, rect: [i32; 4], g: &MercGeometry) -> O
     if (x + w) as u32 > iw || (y + h) as u32 > ih {
         return None;
     }
-    let crop = img.crop_imm(x as u32, y as u32, w as u32, h as u32).to_luma8();
+    let crop = img.crop_imm(x as u32, y as u32, w as u32, h as u32).to_rgb8();
     let resized = image::imageops::resize(
         &crop,
         SIG_DIM,
         SIG_DIM,
         image::imageops::FilterType::Triangle,
     );
-    CellSig::from_gray(resized.into_raw())
+    CellSig::from_rgb(resized.into_raw())
+}
+
+/// Every alignment of one cell, built once and matched many times (POE-207).
+///
+/// The rects `geometry::detect` emits are 1-3 px off per cell, so a template
+/// learned in one cell scores 0.45-0.70 against the same art in another. The
+/// fix is to let the CELL move, not the template: this holds the signature of
+/// the cell's window at all 49 shifts in `-SHIFT_MAX..=SHIFT_MAX`², and
+/// [`TemplateStore::match_family`] takes each template's best over them.
+///
+/// Built once per occupied cell per detect — 49 small crops and resizes — and
+/// then reused for every template, which is what keeps the aligned search
+/// affordable at the 792-sample pool ceiling.
+#[derive(Debug, Clone)]
+pub struct CellCandidates {
+    /// Every shift whose window normalised.
+    shifted: Vec<CellSig>,
+    /// Indices into [`Self::shifted`] of the coarse subset, `dx,dy ∈ {-2,0,2}`.
+    coarse: Vec<usize>,
+    /// Index into [`Self::shifted`] of the unshifted `(0,0)` signature.
+    centre: usize,
+}
+
+impl CellCandidates {
+    /// A cell with exactly one alignment — what a `cellInset` override that
+    /// leaves no margin produces, and what the tests use when the shift is
+    /// not the thing under test.
+    pub fn unaligned(sig: CellSig) -> Self {
+        Self {
+            shifted: vec![sig],
+            coarse: vec![0],
+            centre: 0,
+        }
+    }
+
+    /// The unshifted signature — what `learn` stores and what the pool gets.
+    ///
+    /// Learning the aligned best would store a template built from a window
+    /// the NEXT capture's rect does not reproduce, so the stored art would
+    /// carry this capture's jitter into every later comparison. Equal, byte
+    /// for byte, to what [`normalize_cell`] returns for the same rect — the
+    /// derivation the wire and the server share.
+    ///
+    /// Consuming rather than borrowing on purpose: there is exactly one
+    /// accessor for this alignment, so "which one did we learn" has one
+    /// answer and one test. The other 48 exist only to be matched against.
+    pub fn into_centre(mut self) -> CellSig {
+        self.shifted.swap_remove(self.centre)
+    }
+
+    /// Every alignment, for the fine stage.
+    pub fn all(&self) -> &[CellSig] {
+        &self.shifted
+    }
+
+    /// The coarse alignments, for stage one.
+    pub fn coarse(&self) -> impl Iterator<Item = &CellSig> {
+        self.coarse.iter().map(|&i| &self.shifted[i])
+    }
+}
+
+/// Every alignment of a support cell's signature.
+///
+/// Same gates as [`normalize_cell`] — occupancy first, then the window's own
+/// bounds and flatness checks — so a cell either yields candidates whose
+/// [`CellCandidates::into_centre`] is exactly what `normalize_cell` would
+/// have returned, or yields nothing.
+pub fn cell_candidates(
+    img: &DynamicImage,
+    rect: [i32; 4],
+    g: &MercGeometry,
+) -> Option<CellCandidates> {
+    let centre_sig = normalize_cell(img, rect, g)?;
+    let (win, shiftable) = shift_window(rect, g);
+    if !shiftable {
+        return Some(CellCandidates::unaligned(centre_sig));
+    }
+
+    let mut shifted = Vec::with_capacity((SHIFT_SPAN * SHIFT_SPAN) as usize);
+    let mut coarse = Vec::with_capacity(9);
+    let mut centre = 0usize;
+    for dy in -SHIFT_MAX..=SHIFT_MAX {
+        for dx in -SHIFT_MAX..=SHIFT_MAX {
+            let sig = if dx == 0 && dy == 0 {
+                Some(centre_sig.clone())
+            } else {
+                window_sig(img, win, dx, dy)
+            };
+            let Some(sig) = sig else {
+                continue;
+            };
+            let i = shifted.len();
+            shifted.push(sig);
+            if dx == 0 && dy == 0 {
+                centre = i;
+            }
+            if COARSE_STEPS.contains(&dx) && COARSE_STEPS.contains(&dy) {
+                coarse.push(i);
+            }
+        }
+    }
+    Some(CellCandidates {
+        shifted,
+        coarse,
+        centre,
+    })
 }
 
 /// Where a stored sample came from (POE-201).
@@ -231,7 +483,7 @@ pub struct Template {
     pub sig: CellSig,
     /// The colour crop the sample was learned from, kept so the debug dump can
     /// show what the store actually holds. Never used in matching, and never
-    /// uploaded — see [`CellSig::gray`].
+    /// uploaded — see [`CellSig::bytes`].
     pub raw: Option<RgbaImage>,
     pub origin: Origin,
     /// Whether this sample has been offered to the shared pool.
@@ -271,16 +523,31 @@ impl IconMatch {
     }
 }
 
+/// `index.json` as format 2 writes it (POE-207).
+///
+/// `deny_unknown_fields` is what makes the two shapes tell themselves apart:
+/// without it a bare array would still fail to deserialise here (an array is
+/// not an object), but a FUTURE index that grew a field would silently parse
+/// as this one and be read with that field's meaning dropped. The version is
+/// the contract; an unexpected key means the file is not this contract.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoreIndex {
+    format_version: u16,
+    entries: Vec<IndexEntry>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct IndexEntry {
     family: String,
     tier: u8,
     file: String,
-    /// Both POE-201 fields default, so an `index.json` written before the
-    /// shared pool existed still loads: every sample already on disk was
-    /// hover-learned (`Local`) and was never offered to a pool that did not
-    /// exist (`uploaded: false`), which is exactly what the defaults say and
-    /// exactly what the first module start after the upgrade should act on.
+    /// Both POE-201 fields default. Not for old indexes any more — a
+    /// pre-pool index is a bare array, which is format 1 and is purged
+    /// unread — but forwards: an entry written by a build that has not
+    /// learned about provenance yet still loads, as the user's own
+    /// unpublished sample, which is the safe reading of "we do not know".
+    /// Dropping the defaults would make one missing key discard the index.
     #[serde(default)]
     origin: Origin,
     #[serde(default)]
@@ -345,7 +612,7 @@ impl MergeOutcome {
 /// [`Self::match_family`] call on the detect tick behind the filesystem — the
 /// stall the off-tick save exists to remove, moved rather than fixed. The copy
 /// is cheap next to the write it replaces: a full store is
-/// [`Self::MAX_SAMPLES_PER_KEY`] × 24×24 grayscale plus the 44×44 raw crops.
+/// [`Self::MAX_SAMPLES_PER_KEY`] × 24×24 RGB plus the 44×44 raw crops.
 #[derive(Debug, Default, Clone)]
 pub struct TemplateStore {
     templates: Vec<Template>,
@@ -497,7 +764,7 @@ impl TemplateStore {
         self.templates
             .iter()
             .filter(|t| t.origin == Origin::Local && !t.uploaded)
-            .map(|t| (t.family.clone(), t.tier, t.sig.gray().to_vec()))
+            .map(|t| (t.family.clone(), t.tier, t.sig.bytes().to_vec()))
             .collect()
     }
 
@@ -508,14 +775,14 @@ impl TemplateStore {
     /// three samples offered in three different requests, and marking the key
     /// would tell the next module start that samples the pool never saw are
     /// already published.
-    pub fn mark_uploaded(&mut self, family: &str, tier: u8, gray: &[u8]) -> bool {
+    pub fn mark_uploaded(&mut self, family: &str, tier: u8, bytes: &[u8]) -> bool {
         let mut marked = false;
         for sample in &mut self.templates {
             if sample.family == family
                 && sample.tier == tier
                 && sample.origin == Origin::Local
                 && !sample.uploaded
-                && sample.sig.gray() == gray
+                && sample.sig.bytes() == bytes
             {
                 sample.uploaded = true;
                 marked = true;
@@ -629,29 +896,102 @@ impl TemplateStore {
         self.templates.clear();
     }
 
-    /// Best family for a signature, across every stored sample.
+    /// Templates rescored over all 49 alignments in stage two, per side.
+    ///
+    /// Measured on the 61-crop corpus (POE-207): with the 40 non-poisoned
+    /// crops as the store and each of them as a probe, the two-stage result at
+    /// 12 equals the full 49-shift result — family, score AND runner-up — on
+    /// 40/40 probes, and the true best other-family template is inside the
+    /// refined set every time. At 8 one probe differs, and it differs towards
+    /// `LowConfidence`, never towards a wrong family.
+    pub const REFINE_K: usize = 12;
+
+    /// Best family for a cell, over every alignment of it.
+    ///
+    /// Two stages, because the plain search is 49 × templates × 657 MACs —
+    /// 1.8 G at the 792-sample pool ceiling, which does not fit a 2 s detect
+    /// tick. Stage one scores every template against the nine coarse
+    /// alignments. Stage two rescores over all 49 both the top
+    /// [`Self::REFINE_K`] templates and the top [`Self::REFINE_K`] among
+    /// families OTHER than the stage-one winner's; every other template keeps
+    /// its coarse score.
+    ///
+    /// The other-family half is not an optimisation — it is what keeps the
+    /// verdict honest. A coarse score is a maximum over nine alignments and
+    /// therefore UNDER-estimates the 49-alignment truth, so refining only the
+    /// leaders would compare an exact winner against an under-estimated
+    /// runner-up, inflate the lead, and promote a `LowConfidence` cell to a
+    /// confidently wrong `Matched`.
     ///
     /// `Matched` needs `icon_match` with an `icon_lead` lead over the best
     /// sample of a DIFFERENT family — two tiers of the same family competing
     /// with each other is agreement, not ambiguity. `LowConfidence` at
     /// `icon_low`. Anything else is `Unknown`, which the page renders as
     /// "unknown — hover to confirm".
-    pub fn match_family(&self, sig: &CellSig, t: &Thresholds) -> IconMatch {
-        let mut best: Option<(&Template, f32)> = None;
-        for template in &self.templates {
-            let score = template.sig.ncc(sig);
-            if best.is_none_or(|(_, b)| score > b) {
-                best = Some((template, score));
-            }
-        }
-        let Some((winner, score)) = best else {
+    pub fn match_family(&self, cell: &CellCandidates, t: &Thresholds) -> IconMatch {
+        self.match_with_refinement(cell, t, Self::REFINE_K)
+    }
+
+    /// The unrefined search: every template against every alignment.
+    ///
+    /// The ground truth [`Self::match_family`] approximates, and the reason
+    /// the two-stage search can be trusted at all. Test-only: at the 792-sample
+    /// pool ceiling it is 1.84 G MACs per cell, which is what the two stages
+    /// exist to avoid — shipping it would give a caller a way to reintroduce
+    /// the cost the design rejected.
+    #[cfg(test)]
+    pub fn match_family_exhaustive(&self, cell: &CellCandidates, t: &Thresholds) -> IconMatch {
+        let scores: Vec<f32> = self
+            .templates
+            .iter()
+            .map(|tpl| best_over(&tpl.sig, cell.all()))
+            .collect();
+        self.verdict(scores, t)
+    }
+
+    fn match_with_refinement(
+        &self,
+        cell: &CellCandidates,
+        t: &Thresholds,
+        k: usize,
+    ) -> IconMatch {
+        if self.templates.is_empty() {
             return IconMatch::unknown();
-        };
+        }
+        let coarse: Vec<&CellSig> = cell.coarse().collect();
+        let mut scores: Vec<f32> = self
+            .templates
+            .iter()
+            .map(|tpl| best_over_refs(&tpl.sig, &coarse))
+            .collect();
+
+        let leader = argmax(&scores);
+        let leader_family = self.templates[leader].family.clone();
+        let mut refine = top_k(&scores, k, |_| true);
+        refine.extend(top_k(&scores, k, |i| self.templates[i].family != leader_family));
+        refine.sort_unstable();
+        refine.dedup();
+        for i in refine {
+            scores[i] = best_over(&self.templates[i].sig, cell.all());
+        }
+
+        self.verdict(scores, t)
+    }
+
+    /// Turn per-template scores into the read, in the store's own order.
+    fn verdict(&self, scores: Vec<f32>, t: &Thresholds) -> IconMatch {
+        if self.templates.is_empty() {
+            return IconMatch::unknown();
+        }
+        let best = argmax(&scores);
+        let winner = &self.templates[best];
+        let score = scores[best];
         let runner_up = self
             .templates
             .iter()
-            .filter(|t| t.family != winner.family)
-            .map(|t| t.sig.ncc(sig))
+            .zip(&scores)
+            .filter(|(tpl, _)| tpl.family != winner.family)
+            .map(|(_, &s)| s)
             .fold(f32::NEG_INFINITY, f32::max);
         let runner_up = if runner_up.is_finite() { runner_up } else { 0.0 };
 
@@ -675,10 +1015,14 @@ impl TemplateStore {
         }
     }
 
-    /// Write the store to `dir`: one 24×24 PNG per sample, the raw crop
+    /// Write the store to `dir`: one 24×24 RGB PNG per sample, the raw crop
     /// alongside when there is one, and an index naming them (family names
     /// carry spaces, so the file names are slugs and the index is what maps
     /// them back).
+    ///
+    /// The index carries `formatVersion` (POE-207). Version 1 wrote a bare
+    /// array, so the shape itself says which derivation the PNGs next to it
+    /// hold — and [`purge_stale_store`], not this, is what acts on that.
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut index = Vec::with_capacity(self.templates.len());
@@ -707,32 +1051,51 @@ impl TemplateStore {
                 uploaded: t.uploaded,
             });
         }
-        let json = serde_json::to_string_pretty(&index).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(&StoreIndex {
+            format_version: super::sync::FORMAT_VERSION,
+            entries: index,
+        })
+        .map_err(|e| e.to_string())?;
         std::fs::write(dir.join(INDEX_FILE), json).map_err(|e| e.to_string())
     }
 
     /// Read a store back. A missing directory is an empty store (the normal
     /// first-run case); an entry whose PNG will not load is SKIPPED and
     /// reported, so one corrupt file cannot take the whole store down.
+    ///
+    /// **Read-only, always.** A store written by another format version is
+    /// reported and yields nothing; it is NOT rewritten or cleaned here.
+    /// [`purge_stale_store`] is the one writer that acts on the version, and
+    /// it runs before the loop starts, inside the directory's write lock —
+    /// putting the unlink here would make every reader a writer.
     pub fn load(dir: &Path) -> (Self, Vec<String>) {
         let mut problems = Vec::new();
         let raw = match std::fs::read_to_string(dir.join(INDEX_FILE)) {
             Ok(raw) => raw,
             Err(_) => return (Self::new(), problems),
         };
-        let index: Vec<IndexEntry> = match serde_json::from_str(&raw) {
-            Ok(i) => i,
-            Err(e) => {
-                problems.push(format!("{INDEX_FILE} did not parse: {e}"));
+        let index = match read_index(&raw) {
+            Ok(index) => index,
+            Err(problem) => {
+                problems.push(problem);
                 return (Self::new(), problems);
             }
         };
+        if index.format_version != super::sync::FORMAT_VERSION {
+            problems.push(format!(
+                "{INDEX_FILE} is format {} — {} template(s) ignored, format {} is what this build reads",
+                index.format_version,
+                index.entries.len(),
+                super::sync::FORMAT_VERSION,
+            ));
+            return (Self::new(), problems);
+        }
         let mut store = Self::new();
-        for entry in index {
+        for entry in index.entries {
             match image::open(dir.join(&entry.file)) {
                 Ok(img) => {
-                    let gray = img.to_luma8();
-                    match CellSig::from_gray(gray.into_raw()) {
+                    let rgb = img.to_rgb8();
+                    match CellSig::from_rgb(rgb.into_raw()) {
                         Some(sig) => {
                             store.push_sample(
                                 &entry.family,
@@ -754,6 +1117,141 @@ impl TemplateStore {
         }
         (store, problems)
     }
+}
+
+/// Parse an `index.json` of either shape.
+///
+/// A version-1 index is a bare ARRAY of entries — the shape `save` wrote
+/// before `formatVersion` existed. Reading it as format 1 rather than
+/// rejecting it as unparseable is what lets the purge count what it drops and
+/// what lets `load` say how many templates it is ignoring.
+fn read_index(raw: &str) -> Result<StoreIndex, String> {
+    if let Ok(index) = serde_json::from_str::<StoreIndex>(raw) {
+        return Ok(index);
+    }
+    match serde_json::from_str::<Vec<IndexEntry>>(raw) {
+        Ok(entries) => Ok(StoreIndex {
+            format_version: 1,
+            entries,
+        }),
+        Err(e) => Err(format!("{INDEX_FILE} did not parse: {e}")),
+    }
+}
+
+/// Drop a store this build cannot read, so the next `load` starts clean.
+///
+/// The signature derivation changed in format 2 (POE-207), and a version-1
+/// template correlates against a version-2 cell at nothing meaningful — it
+/// would not merely mismatch, it would sit in the store dragging every
+/// runner-up around. There is no migration: the pixels a version-1 PNG holds
+/// are 24×24 luma of the WHOLE inner crop, and no amount of arithmetic turns
+/// that into the RGB disc of a 33 px window.
+///
+/// So the unlink is total: every `*.png` in the directory goes, the indexed
+/// signatures AND the un-indexed `-raw.png` colour crops beside them, because
+/// the raw crops are the GGG art the signatures were derived from and keeping
+/// orphans of a format nothing reads is just a directory that never shrinks.
+/// `pool-sync.json` is left alone — `sync::SyncFile::load` already discards a
+/// file from another format version, which drops the version-1 pending
+/// tombstones on purpose: a version-1 key names nothing in the version-2
+/// keyspace.
+///
+/// Returns what was dropped, or `None` when there was nothing to purge (no
+/// index at all, or one this build reads).
+///
+/// **Caller holds the directory write lock.** This is a writer, and it must
+/// not interleave with [`TemplateStore::save`] — see [`writing_icons_dir`].
+pub fn purge_stale_store(dir: &Path) -> Option<PurgedStore> {
+    let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).ok()?;
+    let purged = match read_index(&raw) {
+        Ok(index) if index.format_version == super::sync::FORMAT_VERSION => return None,
+        Ok(index) => PurgedStore {
+            version: Some(index.format_version),
+            dropped: index.entries.len(),
+        },
+        // An index that parses as neither shape is still not a format-2 store,
+        // and the PNGs beside it are still unreadable art. Purge, and say that
+        // is what happened rather than reporting "0 format-1 templates" — the
+        // two have different causes and only one of them is an upgrade.
+        Err(_) => PurgedStore {
+            version: None,
+            dropped: 0,
+        },
+    };
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    let empty = StoreIndex {
+        format_version: super::sync::FORMAT_VERSION,
+        entries: Vec::new(),
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&empty) {
+        let _ = std::fs::write(dir.join(INDEX_FILE), json);
+    }
+    Some(purged)
+}
+
+/// What one [`purge_stale_store`] dropped, for the log line.
+///
+/// The version is carried rather than assumed: "format 1" is the case that
+/// will happen on every current install, but a downgrade meets a format-3
+/// index and an interrupted write meets one that parses as nothing, and a log
+/// line that called all three "format-1 templates" would send the next reader
+/// looking for the wrong cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PurgedStore {
+    /// The version the index declared, or `None` when it did not parse.
+    pub version: Option<u16>,
+    /// How many templates that index named.
+    pub dropped: usize,
+}
+
+/// The best correlation of one template against a set of alignments.
+fn best_over(template: &CellSig, cell: &[CellSig]) -> f32 {
+    cell.iter()
+        .map(|s| template.ncc(s))
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
+/// [`best_over`] over borrowed alignments — the coarse subset's shape.
+fn best_over_refs(template: &CellSig, cell: &[&CellSig]) -> f32 {
+    cell.iter()
+        .map(|s| template.ncc(s))
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
+/// Index of the largest score. Ties go to the FIRST, which is store order —
+/// the same rule the version-1 search used, so a tie is broken the same way
+/// whichever stage produced the scores.
+fn argmax(scores: &[f32]) -> usize {
+    let mut best = 0usize;
+    for (i, &s) in scores.iter().enumerate() {
+        if s > scores[best] {
+            best = i;
+        }
+    }
+    best
+}
+
+/// Indices of the `k` highest scores among those the predicate admits.
+///
+/// Ties broken by index, so the refined set is a pure function of the scores
+/// and does not depend on sort stability.
+fn top_k(scores: &[f32], k: usize, admit: impl Fn(usize) -> bool) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..scores.len()).filter(|&i| admit(i)).collect();
+    idx.sort_unstable_by(|&a, &b| {
+        scores[b]
+            .partial_cmp(&scores[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.cmp(&b))
+    });
+    idx.truncate(k);
+    idx
 }
 
 /// File-name-safe form of a family name.
@@ -1266,6 +1764,12 @@ mod tests {
             .unwrap_or_else(|| panic!("row {row} slot {slot} normalizes"))
     }
 
+    /// Every alignment of a fixture cell — what the matcher takes.
+    fn cands_of(img: &DynamicImage, row: usize, slot: u8) -> CellCandidates {
+        cell_candidates(img, cell(row, slot), &MercGeometry::default())
+            .unwrap_or_else(|| panic!("row {row} slot {slot} normalizes"))
+    }
+
     /// A signature correlates perfectly with itself — the identity the whole
     /// matcher rests on. Not a tautology: it exercises the normalization (a
     /// wrong divisor or an unmasked cell mismatch drops it off 1.0).
@@ -1315,12 +1819,14 @@ mod tests {
     }
 
     /// MATCH's floor: the WORST case over all 66 pairs — the closest pair of
-    /// genuinely different icons must still sit below it. Measured 0.8552,
-    /// row 3 slot 0 (a plain silver gem) against row 4 slot 2 (a silver gem
-    /// under crossed golden shafts): two supports, one palette. D4's
-    /// provisional 0.80 would have called them one family, and with only one
-    /// of the two learned the read would have been confidently WRONG rather
-    /// than merely unknown.
+    /// genuinely different icons must still sit below it. Measured 0.5746
+    /// under format 2, row 3 slot 0 (a plain silver gem) against row 4 slot 2
+    /// (a silver gem under crossed golden shafts): two supports, one palette.
+    ///
+    /// Version 1 scored that same pair at 0.8552 — under the threshold, but
+    /// only just, and on the whole 61-crop corpus its equivalent went over.
+    /// The disc mask is what moved it: the silver both icons share is mostly
+    /// frame, and the frame is now outside the correlation.
     #[test]
     fn the_closest_pair_of_different_icons_stays_below_the_match_threshold() {
         let img = fixture();
@@ -1337,13 +1843,15 @@ mod tests {
 
     /// MATCH's ceiling: the WORST case again, from the other side — the
     /// loosest pair of cells showing the SAME art must still clear it.
-    /// Measured 0.9034, row 3 slot 1 against row 4 slot 1 (one blue
-    /// double-orb, a px of rect misalignment apart).
+    /// Measured 0.9442 under format 2, row 3 slot 1 against row 4 slot 1 (one
+    /// blue double-orb, a px of rect misalignment apart).
     ///
     /// With the test above this brackets `icon_match` into the measured
-    /// 0.8552..0.9034 band — moving it below 0.8552 or above 0.9034 fails one
-    /// of the two, and the band is what the first Windows dump should
-    /// re-derive on a bigger sample.
+    /// 0.5746..0.9442 band — moving it below 0.5746 or above 0.9442 fails one
+    /// of the two. The band is the REFERENCE PANEL's, at scale 1.0 and a 34 px
+    /// alignment window; the corpus module's band is the live panel's, at
+    /// 0.974 and 33 px, and the two are deliberately separate constants
+    /// measured on separate art.
     #[test]
     fn the_loosest_pair_of_identical_icons_clears_the_match_threshold() {
         let img = fixture();
@@ -1384,11 +1892,144 @@ mod tests {
         let mut store = TemplateStore::new();
         store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
-        let m = store.match_family(&sig_of(&img, 1, 0), &t);
+        let m = store.match_family(&cands_of(&img, 1, 0), &t);
 
         assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
         assert_eq!(m.family.as_deref(), Some("Chain"));
         assert_eq!(m.learned_tier, Some(2));
+    }
+
+    /// The alignment tests below all learn ONE template from row 1 slot 0 and
+    /// then probe a cell rect nudged off it. The nudge stands in for what the
+    /// live loop actually produces: `geometry::detect` builds the rect from a
+    /// fractional column origin and pitch, so the same art lands 1-3 px
+    /// differently in different cells of one panel.
+    fn store_of_one(img: &DynamicImage) -> TemplateStore {
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Chain",
+            2,
+            sig_of(img, 1, 0),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+        store
+    }
+
+    /// The cell rect of row 1 slot 0, nudged `dx` px right.
+    fn nudged(dx: i32) -> [i32; 4] {
+        let mut rect = cell(1, 0);
+        rect[0] += dx;
+        rect
+    }
+
+    fn match_nudged(img: &DynamicImage, store: &TemplateStore, dx: i32) -> IconMatch {
+        let g = MercGeometry::default();
+        let cands = cell_candidates(img, nudged(dx), &g)
+            .unwrap_or_else(|| panic!("the cell nudged {dx} px still normalizes"));
+        store.match_family(&cands, &g.thresholds)
+    }
+
+    /// THE learn-path invariant: the alignment a confirmation stores is the
+    /// UNSHIFTED one.
+    ///
+    /// `read.rs` caches `cell_candidates(..).into_centre()` and `run.rs` hands
+    /// that to `store.learn`, so this equality is what makes a learned
+    /// template the same derivation the pool, the server and
+    /// [`normalize_cell`] all agree on. Store an ALIGNED best instead and the
+    /// template carries this capture's rect jitter: it would match the cell it
+    /// came from and drift against every other sample of the same art, and
+    /// nothing downstream could tell.
+    #[test]
+    fn the_alignment_a_confirmation_learns_is_the_unshifted_one() {
+        let img = fixture();
+
+        let learned = cands_of(&img, 1, 0).into_centre();
+
+        assert_eq!(learned, sig_of(&img, 1, 0));
+    }
+
+    /// A cell carries every one of the 49 alignments. Nine of them are the
+    /// coarse stage's; the other forty are what the fine stage is for, and a
+    /// build loop that stopped early would silently shrink the search range
+    /// the whole design rests on.
+    #[test]
+    fn a_cell_carries_all_forty_nine_alignments() {
+        let img = fixture();
+
+        let cands = cands_of(&img, 1, 0);
+
+        assert_eq!(cands.all().len(), (SHIFT_SPAN * SHIFT_SPAN) as usize);
+    }
+
+    /// And they are genuinely different windows, not 49 copies.
+    ///
+    /// The negative half of the test above: a builder that ignored `dx`/`dy`
+    /// would still produce 49 entries, and every alignment test in this file
+    /// would keep passing while the matcher had stopped aligning.
+    #[test]
+    fn the_shifted_alignments_are_not_copies_of_the_unshifted_one() {
+        let img = fixture();
+        let centre = sig_of(&img, 1, 0);
+
+        let cands = cands_of(&img, 1, 0);
+
+        let distinct = cands.all().iter().filter(|s| **s != centre).count();
+        assert_eq!(
+            distinct,
+            cands.all().len() - 1,
+            "only {distinct} of {} alignments differ from the unshifted one",
+            cands.all().len(),
+        );
+    }
+
+    /// Two pixels of rect jitter — the common case — must not cost the match.
+    /// Under version 1 this scored 0.45-0.70 and the cell read as unknown,
+    /// which is why a confirmed support still had to be hovered in every other
+    /// row it appeared in.
+    #[test]
+    fn a_learned_template_matches_its_cell_shifted_two_pixels() {
+        let img = fixture();
+        let store = store_of_one(&img);
+
+        let m = match_nudged(&img, &store, 2);
+
+        assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
+        assert_eq!(m.family.as_deref(), Some("Chain"));
+    }
+
+    /// Three pixels is the edge of the measured jitter and the edge of
+    /// [`SHIFT_MAX`] — the alignment window is sized so the worst observed
+    /// offset is still inside it, not merely most of them.
+    #[test]
+    fn a_learned_template_matches_its_cell_shifted_three_pixels() {
+        let img = fixture();
+        let store = store_of_one(&img);
+
+        let m = match_nudged(&img, &store, 3);
+
+        assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
+        assert_eq!(m.family.as_deref(), Some("Chain"));
+    }
+
+    /// Five pixels is past the window, and the search must NOT reach it.
+    ///
+    /// The negative half of the alignment contract. A search that slid far
+    /// enough to recover this would also be sliding onto the NEIGHBOURING
+    /// cell's art at the panel's pitch of 49 px against a cell of 44 — so
+    /// "recovering" a 5 px miss is how a matcher starts reporting the support
+    /// in the next slot. Measured 0.8247: `LowConfidence`, which asks for a
+    /// hover, rather than `Matched`.
+    #[test]
+    fn a_learned_template_does_not_match_its_cell_shifted_five_pixels() {
+        let img = fixture();
+        let t = MercGeometry::default().thresholds;
+        let store = store_of_one(&img);
+
+        let m = match_nudged(&img, &store, 5);
+
+        assert_ne!(m.state, ReadState::Matched, "match was {m:?}");
+        assert!(m.score < t.icon_match, "scored {} at 5 px", m.score);
     }
 
     /// A cell whose family was never confirmed stays unknown. Handing it the
@@ -1400,7 +2041,7 @@ mod tests {
         let mut store = TemplateStore::new();
         store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
-        let m = store.match_family(&sig_of(&img, 2, 2), &t);
+        let m = store.match_family(&cands_of(&img, 2, 2), &t);
 
         assert_eq!(m.state, ReadState::Unknown, "match was {m:?}");
         assert!(m.family.is_none());
@@ -1413,7 +2054,7 @@ mod tests {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
 
-        let m = TemplateStore::new().match_family(&sig_of(&img, 0, 0), &t);
+        let m = TemplateStore::new().match_family(&cands_of(&img, 0, 0), &t);
 
         assert_eq!(m.state, ReadState::Unknown);
         assert_eq!(m.score, 0.0);
@@ -1430,7 +2071,7 @@ mod tests {
         store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
         store.learn("Chain", 3, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
-        let m = store.match_family(&sig_of(&img, 1, 0), &t);
+        let m = store.match_family(&cands_of(&img, 1, 0), &t);
 
         assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
         assert_eq!(m.family.as_deref(), Some("Chain"));
@@ -1471,7 +2112,7 @@ mod tests {
         assert_eq!(store.len(), 2);
         assert_eq!(store.learned_keys(), ["Chain--2"], "one key, two samples");
         assert_eq!(
-            store.match_family(&sig_of(&img, 2, 2), &t).family.as_deref(),
+            store.match_family(&cands_of(&img, 2, 2), &t).family.as_deref(),
             Some("Chain"),
             "the second sample is matched"
         );
@@ -1548,7 +2189,7 @@ mod tests {
 
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(loaded.learned_keys(), ["Caustic Conversion--3"]);
-        let m = loaded.match_family(&sig_of(&img, 2, 2), &t);
+        let m = loaded.match_family(&cands_of(&img, 2, 2), &t);
         assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
         assert_eq!(m.family.as_deref(), Some("Caustic Conversion"));
     }
@@ -1749,7 +2390,7 @@ mod tests {
         assert_eq!(out.added, 1);
         assert_eq!(store.learned_keys(), ["Chain--2"]);
         assert_eq!(
-            store.match_family(&sig_of(&img, 1, 0), &t).family.as_deref(),
+            store.match_family(&cands_of(&img, 1, 0), &t).family.as_deref(),
             Some("Chain"),
             "a pooled sample matches exactly like a hovered one"
         );
@@ -1822,7 +2463,7 @@ mod tests {
         assert_eq!(out.added, 1, "the served one took its place");
         assert_eq!(store.len(), 1);
         assert_eq!(
-            store.match_family(&sig_of(&img, 2, 2), &t).family.as_deref(),
+            store.match_family(&cands_of(&img, 2, 2), &t).family.as_deref(),
             Some("Chain"),
             "the served art is what matches now"
         );
@@ -1903,18 +2544,28 @@ mod tests {
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
         store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
-        let foreign = PooledCorpus {
-            format_version: super::super::sync::FORMAT_VERSION + 1,
-            samples: vec![pooled("Pierce", 1, sig_of(&img, 2, 2))],
-            tombstones: vec![("Chain".to_string(), 2)],
-        };
+        // BOTH directions. A newer server is the case that will happen next;
+        // an OLDER one is the case that is happening now — format-1 rows are
+        // still in the pool, and a client that merged them would be pulling
+        // luma signatures into an RGB matcher.
+        for version in [
+            super::super::sync::FORMAT_VERSION - 1,
+            super::super::sync::FORMAT_VERSION + 1,
+        ] {
+            let mut store = store.clone();
+            let foreign = PooledCorpus {
+                format_version: version,
+                samples: vec![pooled("Pierce", 1, sig_of(&img, 2, 2))],
+                tombstones: vec![("Chain".to_string(), 2)],
+            };
 
-        let out = store.merge_pulled(&foreign, &[], &t);
+            let out = store.merge_pulled(&foreign, &[], &t);
 
-        assert!(out.foreign_version);
-        assert_eq!(out.added, 0);
-        assert_eq!(out.replaced, 0, "a foreign tombstone must not delete either");
-        assert_eq!(store.learned_keys(), ["Chain--2"]);
+            assert!(out.foreign_version, "format {version} was merged");
+            assert_eq!(out.added, 0, "format {version}");
+            assert_eq!(out.replaced, 0, "format {version}: a foreign tombstone must not delete either");
+            assert_eq!(store.learned_keys(), ["Chain--2"], "format {version}");
+        }
     }
 
     /// Provenance is what tells the page "you taught this" from "the pool did",
@@ -1974,7 +2625,7 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].0, "Chain");
         assert_eq!(pending[0].1, 2);
-        assert_eq!(pending[0].2.len(), 576, "the wire payload is the signature");
+        assert_eq!(pending[0].2.len(), SIG_BYTES, "the wire payload is the signature");
     }
 
     /// Marking is per SAMPLE, not per key: three samples offered in three
@@ -1986,7 +2637,7 @@ mod tests {
         let mut store = TemplateStore::new();
         store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
         store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
-        let first = sig_of(&img, 1, 0).gray().to_vec();
+        let first = sig_of(&img, 1, 0).bytes().to_vec();
 
         assert!(store.mark_uploaded("Chain", 2, &first));
 
@@ -2009,7 +2660,7 @@ mod tests {
             &MercGeometry::default().thresholds,
         );
 
-        assert!(!store.mark_uploaded("Chain", 2, &[0u8; 576]));
+        assert!(!store.mark_uploaded("Chain", 2, &[0u8; SIG_BYTES]));
     }
 
     /// Provenance and the upload flag survive a restart. Without this an app
@@ -2027,7 +2678,7 @@ mod tests {
             &[],
             &t,
         );
-        store.mark_uploaded("Chain", 2, &sig_of(&img, 1, 0).gray().to_vec());
+        store.mark_uploaded("Chain", 2, &sig_of(&img, 1, 0).bytes().to_vec());
         store.save(&dir).expect("save");
 
         let (loaded, problems) = TemplateStore::load(&dir);
@@ -2066,7 +2717,7 @@ mod tests {
     /// module start after the upgrade publish the store instead of disowning
     /// it.
     #[test]
-    fn an_index_without_the_pool_fields_loads_as_an_unpublished_local_sample() {
+    fn a_bare_array_index_is_read_as_format_one_and_loads_nothing() {
         let img = fixture();
         let dir = temp_dir("legacy-index");
         let mut store = TemplateStore::new();
@@ -2078,7 +2729,9 @@ mod tests {
             &MercGeometry::default().thresholds,
         );
         store.save(&dir).expect("save");
-        // Exactly the shape POE-165 shipped: three fields, no provenance.
+        // Exactly the shape POE-165 shipped: a bare array, no version. The PNG
+        // beside it is a REAL format-2 signature, so the emptiness this test
+        // asserts comes from the version and not from an unreadable file.
         std::fs::write(
             dir.join("index.json"),
             r#"[{"family":"Chain","tier":2,"file":"chain--t2.png"}]"#,
@@ -2087,10 +2740,70 @@ mod tests {
 
         let (loaded, problems) = TemplateStore::load(&dir);
 
+        assert!(loaded.is_empty(), "loaded {:?}", loaded.learned_keys());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains("format 1") && problems[0].contains("1 template(s)"),
+            "the problem must name the version and the count: {problems:?}",
+        );
+    }
+
+    /// The other half of the version gate: an index the CURRENT build wrote
+    /// loads its samples. Without this the test above passes just as well
+    /// against a `load` that reads nothing at all.
+    #[test]
+    fn an_index_of_this_format_version_loads_its_samples() {
+        let img = fixture();
+        let dir = temp_dir("v2-index");
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Chain",
+            2,
+            sig_of(&img, 1, 0),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+        store.save(&dir).expect("save");
+
+        let (loaded, problems) = TemplateStore::load(&dir);
+
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(loaded.learned_keys(), ["Chain--2"]);
-        assert!(loaded.pooled_keys().is_empty(), "an old sample is the user's own");
+        assert!(loaded.pooled_keys().is_empty(), "a hovered sample is the user's own");
         assert_eq!(loaded.pending_uploads().len(), 1, "and is owed to the pool");
+    }
+
+    /// An index from a version this build does not read is reported, not
+    /// silently half-loaded — the same rule as the bare array, reached by the
+    /// other door (a FUTURE version, where the shape parses and the number
+    /// does not match).
+    #[test]
+    fn an_index_from_a_later_format_version_loads_nothing() {
+        let img = fixture();
+        let dir = temp_dir("future-index");
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Chain",
+            2,
+            sig_of(&img, 1, 0),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+        store.save(&dir).expect("save");
+        let raw = std::fs::read_to_string(dir.join("index.json")).expect("read");
+        std::fs::write(
+            dir.join("index.json"),
+            raw.replace(
+                &format!("\"formatVersion\": {}", super::super::sync::FORMAT_VERSION),
+                &format!("\"formatVersion\": {}", super::super::sync::FORMAT_VERSION + 1),
+            ),
+        )
+        .expect("rewrite the version");
+
+        let (loaded, problems) = TemplateStore::load(&dir);
+
+        assert!(loaded.is_empty(), "loaded {:?}", loaded.learned_keys());
+        assert_eq!(problems.len(), 1, "{problems:?}");
     }
 
     // -- the directory write lock -------------------------------------------
@@ -2146,5 +2859,1047 @@ mod tests {
         worker.join().expect("worker");
         merge.join().expect("merge");
         assert_eq!(*order.lock().unwrap(), ["worker", "merge"]);
+    }
+
+    // -- the format-2 mask and the store's version gate -----------------------
+
+    /// The mask's kept-position count, derived from the FORMULA rather than
+    /// from the implementation.
+    ///
+    /// 219 positions (657 channels) is a wire contract, not an implementation
+    /// detail: [`CellSig::ncc`] returns 0.0 — a silent non-match, not an error
+    /// — when two signatures disagree about it, so a desktop and a server that
+    /// count differently would produce a pool where nothing ever matches and
+    /// nothing ever complains. The server pins the same number from its own
+    /// independent derivation (`internal/mercenary/signature_test.go`).
+    #[test]
+    fn the_format_two_mask_keeps_two_hundred_and_nineteen_positions() {
+        let radius = 0.36 * SIG_DIM as f32;
+        let centre = SIG_DIM as f32 / 2.0;
+        let badge_x0 = SIG_DIM - (SIG_DIM as f32 * 0.45).round() as u32;
+        let badge_y0 = SIG_DIM - (SIG_DIM as f32 * 0.35).round() as u32;
+
+        let kept = (0..SIG_DIM)
+            .flat_map(|y| (0..SIG_DIM).map(move |x| (x, y)))
+            .filter(|&(x, y)| !(x >= badge_x0 && y >= badge_y0))
+            .filter(|&(x, y)| {
+                let (dx, dy) = (x as f32 + 0.5 - centre, y as f32 + 0.5 - centre);
+                dx.hypot(dy) <= radius
+            })
+            .count();
+
+        assert_eq!(kept, 219, "the formula keeps {kept} positions");
+        let img = fixture();
+        assert_eq!(sig_of(&img, 1, 0).active(), kept * SIG_CHANNELS);
+    }
+
+    /// A signature is refused unless it is exactly [`SIG_BYTES`] long — the
+    /// version-1 length included.
+    ///
+    /// This is the boundary the format bump rests on: a 576-byte payload is a
+    /// version-1 signature, and decoding it as a short version-2 one would
+    /// build a signature over a disc that covers most of the buffer and
+    /// correlate it against real ones at whatever the arithmetic happened to
+    /// produce.
+    #[test]
+    fn a_signature_of_the_wrong_length_is_refused() {
+        for len in [576usize, SIG_BYTES - 1, SIG_BYTES + 1] {
+            let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+
+            assert!(
+                CellSig::from_rgb(bytes).is_none(),
+                "{len} bytes was accepted as a signature",
+            );
+        }
+    }
+
+    /// A round trip must reproduce the NORMALISED values, not just the PNG.
+    ///
+    /// The bytes are what a reload rebuilds from, but the correlation runs on
+    /// the floats, and equality of the floats is what says the rebuild
+    /// produced the same signature rather than a same-looking one. Compared
+    /// through `ncc` at exactly 1.0 with the divisor asserted too, because two
+    /// signatures with different `active` counts correlate at 0.0 and would
+    /// otherwise fail this test for an unrelated reason.
+    #[test]
+    fn a_reloaded_template_reproduces_the_signature_it_was_saved_from() {
+        let img = fixture();
+        let dir = temp_dir("roundtrip-values");
+        let original = sig_of(&img, 2, 2);
+        let mut store = TemplateStore::new();
+        store.learn(
+            "Caustic Conversion",
+            3,
+            original.clone(),
+            None,
+            &MercGeometry::default().thresholds,
+        );
+        store.save(&dir).expect("save");
+
+        let (loaded, problems) = TemplateStore::load(&dir);
+
+        assert!(problems.is_empty(), "{problems:?}");
+        let reloaded = &loaded.templates()[0].sig;
+        assert_eq!(reloaded.active(), original.active());
+        assert_eq!(reloaded.bytes(), original.bytes());
+        assert!(
+            (reloaded.ncc(&original) - 1.0).abs() < 1e-6,
+            "reloaded correlated with the original at {}",
+            reloaded.ncc(&original),
+        );
+    }
+
+    // -- the format-1 purge ---------------------------------------------------
+
+    /// A store from format 1 is unlinked whole — index, signature PNGs and the
+    /// `-raw.png` colour crops beside them.
+    ///
+    /// The raw crops are in scope on purpose: they are not indexed, so nothing
+    /// else would ever remove them, and they are the art the dead signatures
+    /// were derived from.
+    #[test]
+    fn purging_a_format_one_store_removes_every_png() {
+        let dir = temp_dir("purge-v1");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("index.json"),
+            r#"[{"family":"Chain","tier":2,"file":"chain--t2.png"},
+                {"family":"Pierce","tier":1,"file":"pierce--t1.png"}]"#,
+        )
+        .expect("write a version-1 index");
+        for file in ["chain--t2.png", "pierce--t1.png", "chain--t2-raw.png"] {
+            image::GrayImage::new(24, 24).save(dir.join(file)).expect("write a png");
+        }
+        std::fs::write(dir.join("pool-sync.json"), "{}").expect("write the sync file");
+
+        let dropped = purge_stale_store(&dir);
+
+        assert_eq!(
+            dropped,
+            Some(PurgedStore { version: Some(1), dropped: 2 }),
+            "the log line names the version it read and what it dropped",
+        );
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .expect("read the dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".png"))
+            .collect();
+        assert!(left.is_empty(), "png left behind: {left:?}");
+        assert!(dir.join("pool-sync.json").exists(), "the sync file is not ours to delete");
+        let (store, problems) = TemplateStore::load(&dir);
+        assert!(store.is_empty());
+        assert!(problems.is_empty(), "the purged index reads clean: {problems:?}");
+    }
+
+    /// A store this build wrote is left alone — every file, and the index
+    /// unchanged.
+    ///
+    /// The purge runs on EVERY module start, so "recognises its own store" is
+    /// the property that keeps it from being a wipe-on-launch. `merc_reset_
+    /// templates` leans on the same thing: it writes an empty format-2 index,
+    /// and the PNGs its doc promises are still on disk survive because of this.
+    #[test]
+    fn purging_leaves_a_store_of_this_format_version_untouched() {
+        let img = fixture();
+        let dir = temp_dir("purge-v2");
+        let mut store = TemplateStore::new();
+        store.learn("Chain", 2, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
+        store.save(&dir).expect("save");
+        let before = std::fs::read_to_string(dir.join("index.json")).expect("read");
+
+        let dropped = purge_stale_store(&dir);
+
+        assert_eq!(dropped, None);
+        assert!(dir.join("chain--t2.png").exists(), "the signature was unlinked");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("index.json")).expect("read"),
+            before,
+        );
+    }
+
+    /// An empty format-2 index — exactly what `merc_reset_templates` writes —
+    /// is not a stale store, so a reset does not turn into a delete on the
+    /// next module start.
+    #[test]
+    fn purging_leaves_a_reset_store_untouched() {
+        let dir = temp_dir("purge-reset");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        TemplateStore::new().save(&dir).expect("save an empty store");
+        image::GrayImage::new(24, 24)
+            .save(dir.join("chain--t2.png"))
+            .expect("a forgotten sample's png stays on disk");
+
+        let dropped = purge_stale_store(&dir);
+
+        assert_eq!(dropped, None);
+        assert!(dir.join("chain--t2.png").exists(), "a reset must not delete the pngs");
+    }
+
+    /// A directory with no index at all is a first run, not a stale store.
+    #[test]
+    fn purging_a_store_that_was_never_written_does_nothing() {
+        let dir = temp_dir("purge-absent");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+
+        assert_eq!(purge_stale_store(&dir), None);
+    }
+
+    /// The parity golden: the ONE artefact both sides of the format-2
+    /// signature are checked against (POE-207).
+    ///
+    /// `internal/mercenary/testdata/merc-sig-v2/crop.png` is a real GGG cell
+    /// crop — the Multistrike support at tier 3, the 39×39 inner rect the
+    /// desktop cuts at `cell_inset` 2 and the live scale 0.974.
+    /// `signature.bin` is the 1728 bytes it must reduce to. Go derives it in
+    /// `parity_golden_test.go`; this derives it through the production
+    /// [`normalize_cell`]. Neither side generates the file for the other in a
+    /// normal run — both compare against the same committed bytes, so a port
+    /// that drifts fails on the side that drifted.
+    ///
+    /// Regenerate deliberately, never to make this pass:
+    ///
+    /// ```text
+    /// MERC_SIG_UPDATE=1 docker compose run --rm -w /app/desktop/src-tauri \
+    ///     desktop cargo test --lib parity
+    /// ```
+    mod parity {
+        use super::*;
+
+        const DIR: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../internal/mercenary/testdata/merc-sig-v2"
+        );
+        const UPDATE_ENV: &str = "MERC_SIG_UPDATE";
+
+        /// Whether this run is regenerating the golden rather than checking
+        /// it. Both tests ask, because they share the file.
+        fn updating() -> bool {
+            std::env::var(UPDATE_ENV).as_deref() == Ok("1")
+        }
+
+        /// Replace the golden atomically: write a sibling temp file, then
+        /// rename over it.
+        ///
+        /// `fs::write` truncates and then fills, so a reader that arrives in
+        /// between — the sibling test, the Go suite, an interrupted run —
+        /// sees a short or empty file and reports a format error for a golden
+        /// that is fine. A rename inside one directory is atomic on every
+        /// platform this repo builds for.
+        fn write_golden(path: &std::path::Path, bytes: &[u8]) {
+            std::fs::create_dir_all(DIR).expect("create the golden directory");
+            let tmp = path.with_extension("bin.tmp");
+            std::fs::write(&tmp, bytes).expect("write the golden");
+            std::fs::rename(&tmp, path).expect("swap the golden in");
+        }
+
+        /// The committed crop, run through the whole production derivation:
+        /// mounted as a cell, inner rect, alignment window, resize, mask,
+        /// normalise.
+        fn derived() -> CellSig {
+            let path = std::path::Path::new(DIR).join("crop.png");
+            let crop = image::open(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+                .to_rgba8();
+            assert_eq!(
+                crop.dimensions(),
+                (39, 39),
+                "the parity crop is not a 39×39 inner rect",
+            );
+            let mut canvas = RgbaImage::from_pixel(43, 43, Rgba([0, 0, 0, 255]));
+            image::imageops::replace(&mut canvas, &crop, 2, 2);
+            normalize_cell(
+                &DynamicImage::ImageRgba8(canvas),
+                [0, 0, 43, 43],
+                &MercGeometry::default(),
+            )
+            .expect("the parity crop normalizes")
+        }
+
+        #[test]
+        fn the_committed_crop_reduces_to_the_committed_signature() {
+            let got = derived().bytes().to_vec();
+            assert_eq!(got.len(), SIG_BYTES);
+            let golden_path = std::path::Path::new(DIR).join("signature.bin");
+
+            if updating() {
+                write_golden(&golden_path, &got);
+                panic!(
+                    "{UPDATE_ENV}=1: rewrote {} ({} bytes). Re-run without the flag to verify, \
+                     and re-run the Go parity test before committing.",
+                    golden_path.display(),
+                    got.len(),
+                );
+            }
+
+            let want = std::fs::read(&golden_path).unwrap_or_else(|e| {
+                panic!(
+                    "read {} (generate it with {UPDATE_ENV}=1): {e}",
+                    golden_path.display()
+                )
+            });
+            assert_eq!(
+                want.len(),
+                SIG_BYTES,
+                "{} is not a format-2 signature",
+                golden_path.display(),
+            );
+            if got != want {
+                let first = got
+                    .iter()
+                    .zip(&want)
+                    .position(|(a, b)| a != b)
+                    .expect("lengths already agree");
+                let (position, channel) = (first / SIG_CHANNELS, first % SIG_CHANNELS);
+                let (x, y) = (position as u32 % SIG_DIM, position as u32 / SIG_DIM);
+                let differing = got.iter().zip(&want).filter(|(a, b)| a != b).count();
+                panic!(
+                    "derived signature differs from {} in {differing}/{SIG_BYTES} bytes; first at \
+                     {first} (position ({x},{y}), channel {channel}, masked={}): got {}, want {}",
+                    golden_path.display(),
+                    masked(x, y),
+                    got[first],
+                    want[first],
+                );
+            }
+        }
+
+        /// The golden is a signature, not a blob: it decodes, it carries the
+        /// format's divisor, and it correlates with a fresh derivation at
+        /// exactly 1.0. A golden that byte-matched but could not be decoded
+        /// would still be useless to every device that pulled it.
+        #[test]
+        fn the_golden_signature_decodes_and_self_correlates() {
+            if updating() {
+                // The sibling test is mid-rewrite of this very file. Reading
+                // it now races that write, and the answer would be about a
+                // half-written golden either way.
+                return;
+            }
+            let raw = match std::fs::read(std::path::Path::new(DIR).join("signature.bin")) {
+                Ok(raw) => raw,
+                Err(e) => panic!("read the golden (generate it with {UPDATE_ENV}=1): {e}"),
+            };
+            let golden = CellSig::from_rgb(raw).expect("the golden decodes as a signature");
+
+            assert_eq!(golden.active(), 657);
+            assert!(
+                (golden.ncc(&derived()) - 1.0).abs() < 1e-6,
+                "the golden correlated with a fresh derivation at {}",
+                golden.ncc(&derived()),
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // The 61-crop corpus (POE-207)
+    // -----------------------------------------------------------------------
+
+    /// Sebastian's whole `merc-icons` store as it stood on 2026-08-27: the 61
+    /// raw 39×39 colour crops the samples were learned from, with a manifest
+    /// naming each one's family, its tier, and whether the confirmation that
+    /// produced it was WRONG.
+    ///
+    /// This is the only many-icon ground truth the module has — the committed
+    /// reference panel carries twelve cells and three repeated arts, which is
+    /// not enough to say anything about cross-family separation. Every number
+    /// the format-2 derivation was chosen on was measured here.
+    mod corpus {
+        use super::*;
+
+        const DIR: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/merc-icon-crops"
+        );
+
+        #[derive(serde::Deserialize)]
+        struct Manifest {
+            crops: Vec<Crop>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct Crop {
+            file: String,
+            family: String,
+            /// The tier the confirmation was filed under. Carried into the
+            /// store the equivalence tests build, so the corpus exercises the
+            /// real `(family, tier)` keyspace rather than a flattened one.
+            tier: u8,
+            #[serde(default)]
+            poisoned: bool,
+            #[serde(default)]
+            why: Option<String>,
+        }
+
+        fn manifest() -> Manifest {
+            let raw = std::fs::read_to_string(std::path::Path::new(DIR).join("manifest.json"))
+                .expect("the corpus manifest is committed next to the crops");
+            serde_json::from_str(&raw).expect("the corpus manifest parses")
+        }
+
+        /// The crops a matcher may learn from — the mislabels excluded.
+        fn clean() -> Vec<Crop> {
+            manifest().crops.into_iter().filter(|c| !c.poisoned).collect()
+        }
+
+        /// Mount a raw crop in a cell the production geometry reads.
+        ///
+        /// The crops ARE inner rects: 39×39, which is `cell_size` 43 at the
+        /// live scale 0.974 minus 2 px of `cell_inset` per side. Pasting one
+        /// into a 43×43 canvas and handing `[0, 0, 43, 43]` to the production
+        /// entry points is what makes these numbers the numbers the loop gets
+        /// — occupancy gate, inner rect, alignment window and all — rather
+        /// than numbers from a private derivation that only the test knows.
+        fn mounted(file: &str) -> DynamicImage {
+            let crop = image::open(std::path::Path::new(DIR).join(file))
+                .unwrap_or_else(|e| panic!("{file}: {e}"))
+                .to_rgba8();
+            assert_eq!(
+                crop.dimensions(),
+                (39, 39),
+                "{file} is not a 39×39 inner crop",
+            );
+            let mut canvas = RgbaImage::from_pixel(43, 43, Rgba([0, 0, 0, 255]));
+            image::imageops::replace(&mut canvas, &crop, 2, 2);
+            DynamicImage::ImageRgba8(canvas)
+        }
+
+        const OUTER: [i32; 4] = [0, 0, 43, 43];
+
+        /// Every alignment of one crop — a probe.
+        fn probe(file: &str) -> CellCandidates {
+            cell_candidates(&mounted(file), OUTER, &MercGeometry::default())
+                .unwrap_or_else(|| panic!("{file} normalizes"))
+        }
+
+        /// The unshifted signature of one crop — a stored template.
+        fn template(file: &str) -> CellSig {
+            normalize_cell(&mounted(file), OUTER, &MercGeometry::default())
+                .unwrap_or_else(|| panic!("{file} normalizes"))
+        }
+
+        /// Derived once: the crops, their signatures, and the full
+        /// probe × template score matrix. 40 crops × 49 alignments is the
+        /// expensive part and every test below reads the same numbers out of
+        /// it, so it is paid once per test binary rather than once per test.
+        struct Corpus {
+            crops: Vec<Crop>,
+            probes: Vec<CellCandidates>,
+            templates: Vec<CellSig>,
+            /// `scores[i][j]`: crop `i` as a cell, crop `j` as a template.
+            scores: Vec<Vec<f32>>,
+        }
+
+        impl Corpus {
+            /// One number per unordered pair — the better of the two
+            /// directions. Either crop could be the learned one, so a pair is
+            /// only as bad as its better direction.
+            fn pair(&self, i: usize, j: usize) -> f32 {
+                self.scores[i][j].max(self.scores[j][i])
+            }
+
+            /// Indices of the same-family pairs, `i < j`.
+            fn same_family_pairs(&self) -> Vec<(usize, usize)> {
+                let mut out = Vec::new();
+                for i in 0..self.crops.len() {
+                    for j in i + 1..self.crops.len() {
+                        if self.crops[i].family == self.crops[j].family {
+                            out.push((i, j));
+                        }
+                    }
+                }
+                out
+            }
+
+            /// For each crop, the best score it reaches against a template of
+            /// any OTHER family, and that template's index.
+            fn best_other_family(&self) -> Vec<(usize, usize, f32)> {
+                (0..self.crops.len())
+                    .map(|i| {
+                        let (mut at, mut best) = (i, f32::NEG_INFINITY);
+                        for j in 0..self.crops.len() {
+                            if self.crops[i].family == self.crops[j].family {
+                                continue;
+                            }
+                            if self.scores[i][j] > best {
+                                best = self.scores[i][j];
+                                at = j;
+                            }
+                        }
+                        (i, at, best)
+                    })
+                    .collect()
+            }
+
+            /// A store holding every clean crop EXCEPT `probe` — what the
+            /// device would hold when it meets that cell for the first time.
+            fn store_without(&self, probe: usize) -> TemplateStore {
+                let mut store = TemplateStore::new();
+                for (i, crop) in self.crops.iter().enumerate() {
+                    if i == probe {
+                        continue;
+                    }
+                    // `push_sample`, not `learn`: `learn` refuses a sample a
+                    // stored one already matches, and the corpus deliberately
+                    // holds near-duplicate samples of one family.
+                    store.push_sample(
+                        &crop.family,
+                        crop.tier,
+                        self.templates[i].clone(),
+                        None,
+                        Origin::Local,
+                        false,
+                    );
+                }
+                store
+            }
+        }
+
+        fn corpus() -> &'static Corpus {
+            static CORPUS: std::sync::OnceLock<Corpus> = std::sync::OnceLock::new();
+            CORPUS.get_or_init(|| {
+                let crops = clean();
+                let probes: Vec<CellCandidates> = crops.iter().map(|c| probe(&c.file)).collect();
+                let templates: Vec<CellSig> =
+                    crops.iter().map(|c| template(&c.file)).collect();
+                let scores = probes
+                    .iter()
+                    .map(|p| templates.iter().map(|t| best_over(t, p.all())).collect())
+                    .collect();
+                Corpus {
+                    crops,
+                    probes,
+                    templates,
+                    scores,
+                }
+            })
+        }
+
+        /// The manifest names every file in the directory, and the directory
+        /// holds nothing the manifest does not name.
+        ///
+        /// Every band in this module is measured over "the crops the manifest
+        /// calls clean". A stray PNG dropped into the fixture would be
+        /// invisible to all of them — it would join no pair, raise no
+        /// cross-family score, and change no count — while the directory
+        /// quietly stopped being the store it claims to be a copy of.
+        #[test]
+        fn the_manifest_and_the_fixture_directory_name_the_same_crops() {
+            let mut named: Vec<String> =
+                manifest().crops.into_iter().map(|c| c.file).collect();
+            named.sort();
+
+            let mut on_disk: Vec<String> = std::fs::read_dir(DIR)
+                .expect("the fixture directory is committed")
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".png"))
+                .collect();
+            on_disk.sort();
+
+            assert_eq!(named.len(), 61, "the corpus is Sebastian's 61-template store");
+            assert_eq!(named, on_disk);
+        }
+
+        // -- the narrow-window fallback -------------------------------------
+
+        /// The boundary `cellInset` crosses, from the safe side.
+        ///
+        /// At the live 43 px cell an inset of 6 leaves a 31 px inner crop and
+        /// a 25 px window — over `SIG_DIM`, so all 49 alignments are still
+        /// built. This is the half that says the guard is a real boundary and
+        /// not a blanket "any override drops alignment".
+        #[test]
+        fn a_cell_inset_that_still_leaves_a_window_keeps_every_alignment() {
+            let mut g = MercGeometry::default();
+            g.cell_inset = 6.0;
+
+            let cands = cell_candidates(&mounted("multistrike--t3-raw.png"), OUTER, &g)
+                .expect("normalizes");
+
+            assert_eq!(cands.all().len(), (SHIFT_SPAN * SHIFT_SPAN) as usize);
+        }
+
+        /// And from the other side: an inset of 7 leaves a 29 px inner crop
+        /// and a 23 px window, under `SIG_DIM`.
+        ///
+        /// The matcher must FALL BACK to the unaligned inner crop, not refuse
+        /// the cell and not silently resize a window smaller than the
+        /// signature. That is the user's geometry, and version-1 behaviour —
+        /// working badly — beats a module that reads nothing at all.
+        #[test]
+        fn a_cell_inset_that_leaves_no_window_falls_back_to_one_alignment() {
+            let mut g = MercGeometry::default();
+            g.cell_inset = 7.0;
+
+            let cands = cell_candidates(&mounted("multistrike--t3-raw.png"), OUTER, &g)
+                .expect("normalizes");
+
+            assert_eq!(cands.all().len(), 1);
+        }
+
+        /// The fallback window is the WHOLE inner crop — same origin, same
+        /// size — not a shifted sub-rect of it.
+        ///
+        /// Derived here from the documented rule (`inner = outer − 2·inset`)
+        /// rather than read back out of `shift_window`, because the failure
+        /// this guards is self-concealing: a fallback that moved its origin
+        /// moves it for the template and the probe alike, so every match test
+        /// still passes while the signature this device stores stops being the
+        /// signature the pool and the server derive from the same pixels.
+        #[test]
+        fn the_unaligned_fallback_reads_the_whole_inner_crop() {
+            let mut g = MercGeometry::default();
+            g.cell_inset = 7.0;
+            let img = mounted("multistrike--t3-raw.png");
+            let inset = g.cell_inset.round() as i32;
+            let side = OUTER[2] - 2 * inset;
+            let crop = img
+                .crop_imm(inset as u32, inset as u32, side as u32, side as u32)
+                .to_rgb8();
+            let resized = image::imageops::resize(
+                &crop,
+                SIG_DIM,
+                SIG_DIM,
+                image::imageops::FilterType::Triangle,
+            );
+            let expected = CellSig::from_rgb(resized.into_raw()).expect("normalizes");
+
+            let got = normalize_cell(&img, OUTER, &g).expect("normalizes");
+
+            assert_eq!(got, expected);
+        }
+
+        /// The fallback is still a working matcher: the one alignment it keeps
+        /// recognises the cell it was learned from.
+        ///
+        /// Without this, the test above is satisfied by a fallback that
+        /// produces one USELESS signature — a window of the wrong size, or the
+        /// shifted origin applied to an unshiftable crop.
+        #[test]
+        fn the_unaligned_fallback_still_recognises_its_own_cell() {
+            let mut g = MercGeometry::default();
+            g.cell_inset = 7.0;
+            let img = mounted("multistrike--t3-raw.png");
+            let sig = normalize_cell(&img, OUTER, &g).expect("normalizes");
+            let mut store = TemplateStore::new();
+            store.push_sample("Multistrike", 3, sig, None, Origin::Local, false);
+
+            let m = store.match_family(
+                &cell_candidates(&img, OUTER, &g).expect("normalizes"),
+                &Thresholds::default(),
+            );
+
+            assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
+            assert_eq!(m.family.as_deref(), Some("Multistrike"));
+        }
+
+        /// The 21 wrong templates, by name.
+        ///
+        /// Pinned rather than counted: the corpus is only ground truth while
+        /// the manifest agrees with what was actually diagnosed on 2026-08-26
+        /// (2 tooltip-text crops and 19 same-art-two-families mislabels from a
+        /// cursor sweep the tooltip lagged). A count would let a later edit
+        /// swap a genuinely poisoned crop for a clean one and keep passing,
+        /// and every band below is measured over the complement of this list.
+        const POISONED: [&str; 21] = [
+            "ailment-damage--t2-3-raw.png",
+            "area-of-effect--t3-2-raw.png",
+            "area-of-effect--t3-raw.png",
+            "brittle-chance--t3-raw.png",
+            "cooldown-recovery--t2-2-raw.png",
+            "cooldown-recovery--t2-3-raw.png",
+            "cooldown-recovery--t2-raw.png",
+            "curse-effect--t3-raw.png",
+            "dot-multiplier--t2-raw.png",
+            "dot-multiplier--t3-raw.png",
+            "faster-attacks--t2-2-raw.png",
+            "faster-attacks--t2-raw.png",
+            "fork--t3-raw.png",
+            "ignite-chance--t3-raw.png",
+            "increased-area-of-effect--t2-2-raw.png",
+            "increased-area-of-effect--t2-raw.png",
+            "increased-area-of-effect--t3-raw.png",
+            "less-duration--t2-raw.png",
+            "multiple-projectiles--t3-raw.png",
+            "physical-as-extra-chaos--t3-raw.png",
+            "swift-affliction--t3-2-raw.png",
+        ];
+
+        #[test]
+        fn the_manifest_marks_exactly_the_twenty_one_diagnosed_mislabels() {
+            let mut marked: Vec<String> = manifest()
+                .crops
+                .into_iter()
+                .filter(|c| c.poisoned)
+                .map(|c| c.file)
+                .collect();
+            marked.sort();
+
+            assert_eq!(marked, POISONED);
+        }
+
+        /// Every poisoned crop must say WHY it is poisoned. The reason is what
+        /// a later reader needs to decide whether a re-diagnosis moved it, and
+        /// an unexplained exclusion is indistinguishable from a crop somebody
+        /// dropped to make a band pass.
+        #[test]
+        fn every_mislabelled_crop_carries_its_diagnosis() {
+            let unexplained: Vec<String> = manifest()
+                .crops
+                .into_iter()
+                .filter(|c| c.poisoned && c.why.as_deref().unwrap_or("").trim().is_empty())
+                .map(|c| c.file)
+                .collect();
+
+            assert!(unexplained.is_empty(), "no reason given for {unexplained:?}");
+        }
+
+        /// The clean corpus's shape: 40 crops carrying 13 pairs of same-family
+        /// art. Both halves of the band below are measured over exactly these,
+        /// so a manifest edit that quietly drops a hard pair — the honest way
+        /// to make a threshold test pass — fails here instead.
+        #[test]
+        fn the_clean_corpus_holds_forty_crops_in_thirteen_same_family_pairs() {
+            let c = corpus();
+
+            assert_eq!(c.crops.len(), 40);
+            assert_eq!(c.same_family_pairs().len(), 13);
+        }
+
+        /// The one same-family pair format 2 does NOT resolve, named.
+        ///
+        /// Two "Ailment Damage" tier-2 confirms of visibly the same skull at
+        /// 0.833: over `icon_low`, under `icon_match`, so the cell reads `?`
+        /// and asks for a hover instead of guessing. Pinned by name and
+        /// bracketed on both sides — a derivation that pushed it to `Matched`
+        /// would be claiming a confidence this art does not support, and one
+        /// that pushed it under `icon_low` would throw the cell away.
+        #[test]
+        fn the_hardest_pair_of_same_family_art_lands_in_the_low_confidence_band() {
+            let c = corpus();
+            let t = Thresholds::default();
+            let i = index_of(c, "ailment-damage--t2-raw.png");
+            let j = index_of(c, "ailment-damage--t2-2-raw.png");
+
+            let score = c.pair(i, j);
+
+            assert!(
+                score >= t.icon_low && score < t.icon_match,
+                "the Ailment Damage pair scored {score}, outside [{}, {})",
+                t.icon_low,
+                t.icon_match,
+            );
+        }
+
+        /// Every OTHER same-family pair clears `icon_match` on its own — the
+        /// half that says one hover teaches the rest of the panel. Measured
+        /// weakest 0.924 (the two Fire Penetration crops).
+        #[test]
+        fn every_other_pair_of_same_family_art_clears_the_match_threshold() {
+            let c = corpus();
+            let t = Thresholds::default();
+            let hardest = (
+                index_of(c, "ailment-damage--t2-raw.png"),
+                index_of(c, "ailment-damage--t2-2-raw.png"),
+            );
+
+            let failures: Vec<(String, String, f32)> = c
+                .same_family_pairs()
+                .into_iter()
+                .filter(|&p| p != hardest)
+                .map(|(i, j)| (c.crops[i].file.clone(), c.crops[j].file.clone(), c.pair(i, j)))
+                .filter(|(_, _, s)| *s < t.icon_match)
+                .collect();
+
+            assert!(failures.is_empty(), "under MATCH {}: {failures:?}", t.icon_match);
+        }
+
+        /// The same-family half from the other side: the MEDIAN pair sits well
+        /// clear of the threshold, not just over it. Measured 0.9885.
+        ///
+        /// This is the half a smaller disc breaks first. Masking more away
+        /// raises cross-family separation (the test below keeps passing) while
+        /// draining the signal that makes one family's two samples agree —
+        /// without this bound, a derivation that scored every pair at 0.88 and
+        /// every non-pair at 0.10 would look like an improvement.
+        #[test]
+        fn the_median_pair_of_same_family_art_stays_well_clear_of_the_threshold() {
+            let c = corpus();
+            let mut scores: Vec<f32> = c
+                .same_family_pairs()
+                .into_iter()
+                .map(|(i, j)| c.pair(i, j))
+                .collect();
+            scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+            let median = scores[scores.len() / 2];
+
+            assert!(median >= 0.95, "median same-family pair was {median}");
+        }
+
+        /// The cross-family half: no crop reaches another family close enough
+        /// for the matcher to call it. `icon_match − icon_lead` is the real
+        /// ceiling — a template that scored above it could be the runner-up
+        /// that denies a correct winner its lead. Measured worst 0.818 against
+        /// a ceiling of 0.83.
+        #[test]
+        fn no_crop_comes_within_the_matchers_lead_of_another_family() {
+            let c = corpus();
+            let t = Thresholds::default();
+            let ceiling = t.icon_match - t.icon_lead;
+
+            let over: Vec<(String, String, f32)> = c
+                .best_other_family()
+                .into_iter()
+                .filter(|&(_, _, s)| s >= ceiling)
+                .map(|(i, j, s)| (c.crops[i].file.clone(), c.crops[j].file.clone(), s))
+                .collect();
+
+            assert!(over.is_empty(), "at or over {ceiling}: {over:?}");
+        }
+
+        /// And the cross-family half from the other side: the closest pair of
+        /// DIFFERENT families still correlates at 0.70+.
+        ///
+        /// Support icons share a palette, a frame and a lighting direction, so
+        /// a derivation that put the closest unrelated pair near zero has
+        /// stopped measuring the art and started measuring noise — which is
+        /// exactly what a disc small enough to keep the same-family half honest
+        /// would do. Measured 0.818.
+        #[test]
+        fn the_closest_pair_of_different_families_is_not_trivially_far_apart() {
+            let c = corpus();
+
+            let closest = c
+                .best_other_family()
+                .into_iter()
+                .map(|(_, _, s)| s)
+                .fold(f32::NEG_INFINITY, f32::max);
+
+            assert!(closest >= 0.70, "the closest different families scored {closest}");
+        }
+
+        /// The two-stage search IS the full search, on every crop.
+        ///
+        /// `match_family` refines only `REFINE_K` templates per side; the
+        /// other 27 keep a coarse score that under-estimates their true best.
+        /// This compares it against `match_family_exhaustive` — the same
+        /// verdict computed over all 49 alignments of every template — for
+        /// every clean crop probed against a store of the other 39. Family,
+        /// score AND runner-up, because a K too small shows up first as a
+        /// runner-up that is too low, which inflates the lead before it ever
+        /// changes the winner.
+        #[test]
+        fn the_two_stage_search_returns_the_full_searchs_verdict_for_every_crop() {
+            let c = corpus();
+            let t = Thresholds::default();
+
+            let mut disagreements = Vec::new();
+            for i in 0..c.crops.len() {
+                let store = c.store_without(i);
+                let fast = store.match_family(&c.probes[i], &t);
+                let full = store.match_family_exhaustive(&c.probes[i], &t);
+                if fast.family != full.family
+                    || (fast.score - full.score).abs() > 1e-6
+                    || (fast.runner_up - full.runner_up).abs() > 1e-6
+                    || fast.state != full.state
+                {
+                    disagreements.push((c.crops[i].file.clone(), fast, full));
+                }
+            }
+
+            assert!(disagreements.is_empty(), "{disagreements:#?}");
+        }
+
+        /// The OTHER-FAMILY half of the refinement set, isolated.
+        ///
+        /// The equivalence test above does not reach it: with 39 templates and
+        /// `REFINE_K` 12, the plain top-12 already holds the best other-family
+        /// template for every crop of this corpus, so removing the
+        /// other-family pass leaves that test green. That is a property of the
+        /// corpus, not of the search — one family can hold a dozen samples
+        /// (three per key, and a family spans tiers, and the pool merges other
+        /// devices' samples), and then the true runner-up sits outside the
+        /// top-K and ONLY the other-family pass refines it.
+        ///
+        /// So the case is constructed: the twelve templates stage one ranks
+        /// highest are relabelled into one family, which pushes the best rival
+        /// past rank K in the ranking STAGE ONE ACTUALLY USES — the coarse-9
+        /// maximum, not the 49-shift one. Asserted as a precondition, because
+        /// ranking by the wrong score is exactly how this test would stop
+        /// covering the thing it names.
+        ///
+        /// Then both halves of the effect: the rival's refined score is
+        /// strictly higher than its coarse one (so the refinement moved
+        /// something), and the two-stage verdict equals the full search's.
+        /// Without the other-family pass the runner-up keeps the coarse
+        /// under-estimate, the lead comes out too wide, and that is how a
+        /// `LowConfidence` cell becomes a confidently wrong `Matched`.
+        #[test]
+        fn the_runner_up_is_refined_even_when_it_ranks_below_the_top_k() {
+            let c = corpus();
+            let t = Thresholds::default();
+            let probe = index_of(c, "multistrike--t3-raw.png");
+            // Stage one's own ranking: the coarse-9 maximum per template.
+            let coarse: Vec<&CellSig> = c.probes[probe].coarse().collect();
+            let mut ranked: Vec<usize> = (0..c.crops.len()).filter(|&i| i != probe).collect();
+            ranked.sort_by(|&a, &b| {
+                let (sa, sb) = (
+                    best_over_refs(&c.templates[a], &coarse),
+                    best_over_refs(&c.templates[b], &coarse),
+                );
+                sb.partial_cmp(&sa).unwrap().then(a.cmp(&b))
+            });
+            let mut store = TemplateStore::new();
+            for (rank, &i) in ranked.iter().enumerate() {
+                let family = if rank < TemplateStore::REFINE_K {
+                    "Crowded Family".to_string()
+                } else {
+                    c.crops[i].family.clone()
+                };
+                store.push_sample(&family, 2, c.templates[i].clone(), None, Origin::Local, false);
+            }
+
+            let fast = store.match_family(&c.probes[probe], &t);
+            let coarse_only = store.match_with_refinement(&c.probes[probe], &t, 0);
+            let full = store.match_family_exhaustive(&c.probes[probe], &t);
+
+            assert_eq!(
+                fast.family.as_deref(),
+                Some("Crowded Family"),
+                "precondition: stage one's leader is the crowded family, so every \
+                 rival sits outside the plain top-{}",
+                TemplateStore::REFINE_K,
+            );
+            assert_eq!(
+                coarse_only.family.as_deref(),
+                Some("Crowded Family"),
+                "precondition: the two runner-ups below are taken over the same family set",
+            );
+            assert!(
+                coarse_only.runner_up < fast.runner_up - 1e-6,
+                "the other-family pass changed nothing: coarse runner-up {} vs refined {}",
+                coarse_only.runner_up,
+                fast.runner_up,
+            );
+            assert_eq!(fast, full);
+        }
+
+        /// The refinement is what buys that agreement — not the coarse stage
+        /// on its own. Without it the equivalence test above would pass
+        /// against a `REFINE_K` of zero and prove nothing about the constant.
+        ///
+        /// Measured: with no refinement at all, the nine coarse alignments
+        /// under-estimate at least one crop's verdict.
+        #[test]
+        fn the_coarse_stage_alone_does_not_reproduce_the_full_search() {
+            let c = corpus();
+            let t = Thresholds::default();
+
+            let differing = (0..c.crops.len())
+                .filter(|&i| {
+                    let store = c.store_without(i);
+                    let coarse = store.match_with_refinement(&c.probes[i], &t, 0);
+                    let full = store.match_family_exhaustive(&c.probes[i], &t);
+                    coarse != full
+                })
+                .count();
+
+            assert!(differing > 0, "the coarse stage alone matched the full search everywhere");
+        }
+
+        /// THE PERF GATE (POE-207). Ignored by default; a RELEASE-mode run:
+        ///
+        /// ```text
+        /// docker compose run --rm -w /app/desktop/src-tauri desktop \
+        ///     cargo test --release --lib the_full_panel_match -- --ignored --nocapture
+        /// ```
+        ///
+        /// Ignored rather than dropped because a wall-clock assertion in the
+        /// ordinary suite is a flake generator — a debug build is ~20× slower
+        /// and CI machines are shared — but "is the aligned search affordable"
+        /// is the question the whole two-stage design answers, and an
+        /// unreproducible one-off measurement in a commit body cannot be
+        /// re-asked when `REFINE_K` or the pool ceiling moves.
+        ///
+        /// 792 templates is the pool ceiling (264 `(family, tier)` keys × 3
+        /// samples per key); 12 cells is a full recruit panel. 250 ms is the
+        /// budget: the detect tick runs at 2 s, and the match has to leave
+        /// room for the OCR that precedes it.
+        ///
+        /// Measured 2026-08-27 in docker, release: build 10.8 ms + match
+        /// 104.7 ms = 115.0 ms. At half the budget, `REFINE_K` stays 12; if a
+        /// later change pushes this over, the documented fallback is K = 8
+        /// (measured: one probe lands `LowConfidence` instead of `Matched`,
+        /// never a wrong family).
+        #[test]
+        #[ignore = "wall-clock; release-mode only — see the doc comment"]
+        fn the_full_panel_match_stays_inside_the_detect_tick_budget() {
+            const BUDGET: std::time::Duration = std::time::Duration::from_millis(250);
+            const POOL_CEILING: usize = 792;
+            let c = corpus();
+            let g = MercGeometry::default();
+            let t = Thresholds::default();
+
+            // A synthetic store at the ceiling: the corpus art, re-keyed into
+            // as many families as it takes. Distinct families on purpose —
+            // the runner-up scan and the other-family refinement both walk
+            // them, so collapsing them would measure a cheaper search.
+            let mut store = TemplateStore::new();
+            while store.len() < POOL_CEILING {
+                let batch = store.len() / c.crops.len();
+                for (i, crop) in c.crops.iter().enumerate() {
+                    if store.len() == POOL_CEILING {
+                        break;
+                    }
+                    store.push_sample(
+                        &format!("{} {batch}", crop.family),
+                        crop.tier,
+                        c.templates[i].clone(),
+                        None,
+                        Origin::Local,
+                        false,
+                    );
+                }
+            }
+            assert_eq!(store.len(), POOL_CEILING);
+
+            let img = super::fixture();
+            let cells: Vec<[i32; 4]> = super::OCCUPIED_CELLS
+                .iter()
+                .map(|&(row, slot, _)| super::cell(row, slot))
+                .collect();
+            // Warm the caches the way a second detect tick would find them.
+            for rect in &cells {
+                let cands = cell_candidates(&img, *rect, &g).expect("normalizes");
+                let _ = store.match_family(&cands, &t);
+            }
+
+            let start = std::time::Instant::now();
+            for rect in &cells {
+                let cands = cell_candidates(&img, *rect, &g).expect("normalizes");
+                let _ = store.match_family(&cands, &t);
+            }
+            let elapsed = start.elapsed();
+
+            println!(
+                "PERF: {} cells × {} templates = {elapsed:?} (budget {BUDGET:?})",
+                cells.len(),
+                store.len(),
+            );
+            assert!(
+                elapsed < BUDGET,
+                "a full panel took {elapsed:?}, over the {BUDGET:?} budget — \
+                 drop REFINE_K to 8 and re-measure the corpus tests",
+            );
+        }
+
+        fn index_of(c: &Corpus, file: &str) -> usize {
+            c.crops
+                .iter()
+                .position(|crop| crop.file == file)
+                .unwrap_or_else(|| panic!("{file} is not in the clean corpus"))
+        }
     }
 }
