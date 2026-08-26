@@ -3,14 +3,18 @@
 Committed ground truth for `lib/mercenaries/rulesets.ts`. The typed rulesets are a
 transcription of these files; `rulesets.test.ts` asserts the transcription against
 them, so a typo in the data module fails against raw GGG JSON rather than against
-itself.
+itself — for the 20 GGG-saved files. The four authored `guide-c-*.json` files are the
+builder's own output, and what that check is worth for them is stated under "Authored
+queries (guide-c)".
 
 **Decoded:** 2026-08-17. **League:** `Allflame`.
 
-Every file here except `capture-query.expected.json` is a verbatim copy of an API
-response body — no reformatting, no pretty-printing, no key reordering. Re-fetch output
-is byte-comparable with the committed file. `capture-query.expected.json` is the one the
-app BUILDS rather than fetches; see "Captured-mercenary query parity" below.
+Two kinds of file here are NOT GGG's, and neither is ground truth in the same sense:
+`capture-query.expected.json` is the one the app BUILDS rather than fetches (see
+"Captured-mercenary query parity"), and the four `guide-c-*.json` files are queries this
+app AUTHORED from a guide's prose (see "Authored queries (guide-c)"). Every other file is
+a verbatim copy of an API response body — no reformatting, no pretty-printing, no key
+reordering. Re-fetch output is byte-comparable with the committed file.
 
 ## Saved searches
 
@@ -60,6 +64,9 @@ re-fetchable if you can find the search it came from again.
   - Manyshot ladder (2026-07-29): <https://www.youtube.com/watch?v=ljaXlGLdyxM>
   - Frost Blades AND Wild Strike ladders, one video (2026-08-08):
     <https://www.youtube.com/watch?v=45aM9242Umo>
+- guide-c — one page, no searches at all:
+  <https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot>, section
+  "Ideal Merc Options". See "Authored queries (guide-c)" below.
 
 Each video's description is the only place its trade links exist; the rung-level
 `guideUrl` in `rulesets.ts` names which video published which link. It is one video
@@ -83,6 +90,51 @@ curl -H 'User-Agent: ProfitOfExile/0.7 (contact: sebrogala@gmail.com)' \
 A saved search is the only oracle for its own contents: to verify a fixture, re-fetch it
 by hash and diff. Note that a saved search is mutable at its author's end — a diff means
 the search changed upstream, not necessarily that the fixture was wrong when captured.
+
+## Authored queries (guide-c)
+
+`guide-c-kinetist.json`, `guide-c-manyshot.json`, `guide-c-blade-ambusher.json` and
+`guide-c-combatant.json` are **not** GGG responses and are **not re-fetchable**. They are
+THIS APP'S transcription of CaptainLance9's "Ideal Merc Options" section, which names
+skills and support links in sentences and publishes no trade link for any of them.
+
+They are written in the same body shape a saved search comes back in — `{"id": …,
+"query": {…}}`, with the `id` naming the file rather than a hash and no `filters` block,
+because the prose sets no item-level floor — so `rulesets.test.ts` reads them through the
+same `fromFixture` reader as the other twenty and the fidelity sweep covers all
+twenty-four.
+
+**What that check is worth, and what it is not.** It fails on a typed-model edit nobody
+meant to make. It cannot fail on a MISREADING of the guide: both sides of the comparison
+come from this repository, so if `rulesets.ts` asks for the wrong stat id the fixture
+asks for it too. The only oracle for the reading is the page itself, so each guide-c
+group in `rulesets.ts` carries the sentence it was transcribed from — re-check against
+those. The live page 403s to bots; a Wayback snapshot dated 2026-07-28 exists, and the
+verbatim prose was pasted by the owner 2026-08-26.
+
+Regenerate after a deliberate data-model change rather than hand-editing — the builder's
+output IS the file:
+
+```ts
+// a throwaway vitest file anywhere under desktop/src
+import { writeFileSync } from 'node:fs';
+import { it } from 'vitest';
+import { allRulesets } from '$lib/mercenaries/rulesets';
+import { rulesetQuery } from '$lib/mercenaries/trade-links';
+
+it('rewrites the authored fixtures', () => {
+	for (const ruleset of allRulesets()) {
+		if (ruleset.authored === undefined) continue;
+		writeFileSync(
+			`src/lib/mercenaries/__fixtures__/${ruleset.authored.file}.json`,
+			JSON.stringify({ id: ruleset.authored.file, query: rulesetQuery(ruleset) })
+		);
+	}
+});
+```
+
+Note what regenerating does NOT do: it makes the fidelity test green by construction, so
+it is only ever correct after a change that was checked against the prose by a human.
 
 ## Captured-mercenary query parity
 

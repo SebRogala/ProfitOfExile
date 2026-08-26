@@ -128,7 +128,15 @@ export interface MercRulesetResult {
 	notInRules: MercCaptured[];
 	reasons: string[];
 	floor: string | null;
-	savedUrl: string;
+	/**
+	 * The guide's own saved search, or NULL for a ruleset transcribed from PROSE
+	 * — guide-c publishes no trade links, so there is nothing to open. Null
+	 * rather than a fabricated URL: a hash-shaped link to a search GGG never
+	 * saved would 404, and a link back to the article would be a different kind
+	 * of thing wearing the "open saved search" label. The derived link below is
+	 * unaffected — `rulesetQuery` builds from the data model and needs no hash.
+	 */
+	savedUrl: string | null;
 	/**
 	 * The same search with this mercenary's bonuses and contextual entries
 	 * flipped, or null when the active league is not known yet — a derived
@@ -599,7 +607,8 @@ function evaluateRuleset(
 		floor: ruleset.floor ?? null,
 		// The saved link stays bound to the league its hash was saved in; the
 		// derived link is a live search, so it belongs to the league being played.
-		savedUrl: savedSearchUrl(ruleset.savedSearch),
+		savedUrl:
+			ruleset.savedSearch === undefined ? null : savedSearchUrl(ruleset.savedSearch),
 		derivedUrl:
 			league === null ? null : derivedSearchUrl(league, rulesetQuery(ruleset, flipsFor(groups)))
 	};

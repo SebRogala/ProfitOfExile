@@ -9,6 +9,9 @@
  * — GGG never assigned it a hash. The saved link stays the primary one; the
  * derived link is what you open to comp a specific mercenary.
  *
+ * A ruleset transcribed from PROSE has no saved search at all (guide-c), so it
+ * gets the derived link and nothing else — see `MercAuthoredQuery`.
+ *
  * Distinct from `lib/trade-utils.ts`, which builds gem searches.
  */
 
@@ -18,6 +21,24 @@ import type { MercFilterEntry, MercFilterGroup, MercRuleset } from './rulesets';
 export interface MercSavedSearch {
 	league: string;
 	hash: string;
+}
+
+/**
+ * A query this app WROTE, from a guide whose author published prose instead of
+ * trade links — guide-c is the case: CaptainLance lists ideal skill and support
+ * combinations and saves no searches.
+ *
+ * It names a committed fixture file rather than a GGG hash, and that difference
+ * is not cosmetic. A saved search is re-fetchable and is its own oracle; an
+ * authored query's fixture is OUR transcription of the prose, so the only thing
+ * it can prove is that the typed data model still says what it said when a human
+ * checked it against the guide. Carrying both in one hash-shaped string would
+ * let `savedSearchUrl` build a trade link to a hash GGG never issued, so the two
+ * live in different fields and `MercRuleset` carries exactly one of them.
+ */
+export interface MercAuthoredQuery {
+	/** `__fixtures__/<file>.json`, without the directory or the extension. */
+	file: string;
 }
 
 /**

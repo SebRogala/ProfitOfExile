@@ -1,10 +1,26 @@
 /**
  * Mercenary rulesets — the declarative data model behind the Mercenaries view page.
  *
- * Every ruleset here is a transcription of a GGG trade saved search. The raw
- * responses live in `__fixtures__/<hash>.json` (see that directory's README for
- * provenance and re-fetch commands) and `rulesets.test.ts` asserts this file
- * against them, so the fixtures — not this file — are the ground truth.
+ * THREE sources, and they do not all come from the same kind of thing. Guide-a
+ * and guide-b are transcriptions of GGG trade SAVED SEARCHES: the raw responses
+ * live in `__fixtures__/<hash>.json` (see that directory's README for provenance
+ * and re-fetch commands) and `rulesets.test.ts` asserts this file against them,
+ * so the fixtures — not this file — are the ground truth. Guide-c is a
+ * transcription of PROSE: CaptainLance's "Ideal Merc Options" names skills and
+ * support links in sentences and publishes no trade link at all, so those four
+ * rulesets carry an `authored` fixture instead of a `savedSearch` and their
+ * fixture is OUR OWN output, not GGG's. It is committed and asserted like the
+ * others because it still catches a typed-model edit nobody meant to make, but
+ * it cannot catch a MISREADING of the guide — only a human re-reading the page
+ * can, and the prose is quoted in the group comments below so that re-read is
+ * possible without leaving the file.
+ *
+ * The two kinds also point in opposite directions. Guide-a's rulesets are
+ * seller-side (its author states price floors), guide-b's are a buyer's tier
+ * ladder, and guide-c is a buyer's IDEAL: CaptainLance is telling a Luminary
+ * merc-bot player what links to look for, with no prices and no floors. So a
+ * guide-c pass says "this mercenary is what the build wants", never "this is
+ * what it is worth".
  *
  * Entry `name` values are copied verbatim from `__fixtures__/mercenary-stats.json`
  * (GGG's Mercenary stat vocabulary), `(Tier N)` suffix included. They are display
@@ -45,14 +61,18 @@
  * the three deny lists and required links match; the saved searches carry extras the
  * prose does not mention (Frigid Forkshot and Barrage denied, aura toggles), and the
  * search wins because it is what the author actually comps against.
+ *
+ * Guide-c has no such audit to do: there is no saved search to disagree with the
+ * prose, so the prose IS the transcription and every guide-c group carries the
+ * sentence it came from.
  */
 
-import type { MercSavedSearch } from './trade-links';
+import type { MercAuthoredQuery, MercSavedSearch } from './trade-links';
 
-export const SOURCE_IDS = ['guide-a', 'guide-b'] as const;
+export const SOURCE_IDS = ['guide-a', 'guide-b', 'guide-c'] as const;
 export type MercSourceId = (typeof SOURCE_IDS)[number];
 
-export const ARCHETYPES = ['manyshot', 'kinetist', 'combatant'] as const;
+export const ARCHETYPES = ['manyshot', 'kinetist', 'combatant', 'blade-ambusher'] as const;
 export type MercArchetype = (typeof ARCHETYPES)[number];
 
 /**
@@ -105,7 +125,14 @@ export interface MercFilterGroup {
 	entries: MercFilterEntry[];
 }
 
-export interface MercRuleset {
+/**
+ * Everything a ruleset says that does not depend on where its query came from.
+ *
+ * Split out of `MercRuleset` so the saved-versus-authored distinction can be a
+ * UNION rather than two optional fields: a ruleset must name exactly one oracle,
+ * and "neither" or "both" have to fail to compile. See `MercRuleset`.
+ */
+interface MercRulesetFacts {
 	id: string;
 	label: string;
 	archetype: MercArchetype;
@@ -130,7 +157,6 @@ export interface MercRuleset {
 	 * and `TIERS` spells both of them 'endgame'.
 	 */
 	tierLabel?: string;
-	savedSearch: MercSavedSearch;
 	/**
 	 * The guide page or video that published THIS ruleset's trade link, when it
 	 * is not simply the source's own URL. A source whose rulesets all come from
@@ -152,9 +178,40 @@ export interface MercRuleset {
 	groups: MercFilterGroup[];
 }
 
+/**
+ * One ruleset, plus the ONE oracle it is checked against.
+ *
+ * `savedSearch` — the GGG search this is a transcription of, addressed by the
+ * hash GGG issued. Re-fetchable, and the fixture under that hash is the ground
+ * truth for every switch below.
+ *
+ * `authored` — a query this app WROTE from a guide's prose, addressed by the
+ * fixture file it is committed as (`MercAuthoredQuery`). There is no saved
+ * search to link, so `verdict.ts` reports a null `savedUrl` for these and the
+ * page draws no "open saved search" link; the DERIVED link still works, because
+ * `rulesetQuery` builds from the data model and never needs a hash.
+ *
+ * Exactly one, enforced by the type: a ruleset naming both would have two
+ * disagreeing oracles, and one naming neither could not be checked at all.
+ */
+export type MercRuleset = MercRulesetFacts &
+	(
+		| { savedSearch: MercSavedSearch; authored?: never }
+		| { authored: MercAuthoredQuery; savedSearch?: never }
+	);
+
 export interface MercSource {
 	id: MercSourceId;
 	label: string;
+	/**
+	 * What this source IS, in one line, shown under its name on the page.
+	 *
+	 * Whose rules these are and which side of the trade they are written from —
+	 * the three sources disagree on purpose (`verdict.ts` never merges them), and
+	 * a reader looking at three headlines needs to know that guide-a quotes
+	 * seller floors while guide-c quotes a buyer's shopping list.
+	 */
+	description?: string;
 	/** Null until a public guide URL is supplied. */
 	guideUrl: string | null;
 	rulesets: MercRuleset[];
@@ -223,6 +280,19 @@ export function entryKind(
  */
 export function isRowAnchor(groupType: MercGroupType, entryId: string): boolean {
 	return groupType === 'mercenary' && entryRole(entryId) === 'skill';
+}
+
+/**
+ * Which `__fixtures__/<name>.json` is this ruleset's oracle — its saved-search
+ * hash, or the file an authored query names.
+ *
+ * One function rather than one per test file: `rulesets.test.ts` and
+ * `trade-links.test.ts` both look a ruleset's fixture up, and two copies of
+ * "hash, unless authored" is exactly where a guide-c ruleset would end up
+ * validated against a guide-b search.
+ */
+export function oracleFixture(ruleset: MercRuleset): string {
+	return ruleset.savedSearch !== undefined ? ruleset.savedSearch.hash : ruleset.authored.file;
 }
 
 const ALLFLAME = 'Allflame';
@@ -2474,16 +2544,409 @@ const GUIDE_B_WILD_STRIKE_GG: MercRuleset = {
 	]
 };
 
+/**
+ * CaptainLance9's "Ideal Merc Options" (Mobalytics, Luminary Merc Bot build,
+ * league Allflame 3.29) — the source that publishes no trade links.
+ *
+ * The live page refuses bots; the prose below was pasted by the owner
+ * 2026-08-26 and a Wayback snapshot dated 2026-07-28 exists. Each ruleset's
+ * groups carry the author's own sentence, so the transcription can be re-checked
+ * against the guide without leaving this file — that re-check is the ONLY oracle
+ * these four have, because their `__fixtures__` files are this builder's output
+ * rather than GGG's.
+ *
+ * One modelling ruling covers all four (Sebastian, 2026-08-26). The author names
+ * a skill and then the links he wants on it, without saying that a mercenary
+ * missing one is worthless — so the SKILL is required and every listed support
+ * is a switched-off bonus, at every tier its family has. The denials are the two
+ * places the prose does say "do not", so those are live `not` groups. Buff skills
+ * are the same kind of upside as the supports and ride in a parked `and` group,
+ * the shape guide-a already uses for its aura lists.
+ *
+ * Consequence worth naming: a guide-c pass is a low bar by construction — the
+ * skill row and no denied skill. The verdict earns its detail from the bonus
+ * list, which is the part that says how close to ideal this mercenary is.
+ */
+const CAPTAINLANCE_BUILD = 'https://mobalytics.gg/poe/builds/captainlance9-luminary-merc-bot';
+
+const GUIDE_C_KINETIST: MercRuleset = {
+	id: 'guide-c-kinetist',
+	label: 'Kinetist',
+	archetype: 'kinetist',
+	authored: { file: 'guide-c-kinetist' },
+	authorNote: 'BiS Clear Merc',
+	status: 'securable',
+	groups: [
+		{
+			// "Kinetic Blast of Clustering - Multiple Projectiles Support -
+			// Returning Projectiles Support - Clear Support(pierce/chain/ect)".
+			// The parenthesis is why three whole families are here rather than the
+			// one link a saved search would have pinned: the author asks for A
+			// clear support and names two examples, so every tier of Pierce, Chain
+			// and Fork counts as the thing he asked for.
+			id: 'core',
+			label: 'Kinetic Blast of Clustering + ideal links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_16356',
+					name: 'Kinetic Blast of Clustering',
+					enabledInSearch: true
+				},
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_6040', name: 'Lesser Pierce (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_56267', name: 'Pierce (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_27970',
+					name: 'Greater Pierce (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_10482', name: 'Gilded Pierce (Tier 3)', enabledInSearch: false },
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_32052', name: 'Greater Fork (Tier 3)', enabledInSearch: false }
+			]
+		},
+		{
+			// "do NOT get Kinetic Bolt - this will brick merc ai to not use
+			// clustering properly"
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_12583', name: 'Kinetic Bolt', enabledInSearch: true }]
+		},
+		{
+			// "Buff Skills: Haste / Inspiring Cry"
+			id: 'buffs',
+			label: 'Buff skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_52155', name: 'Haste', enabledInSearch: false },
+				{ id: 'mercenary.skill_65473', name: 'Inspiring Cry', enabledInSearch: false }
+			]
+		}
+	]
+};
+
+const GUIDE_C_MANYSHOT: MercRuleset = {
+	id: 'guide-c-manyshot',
+	label: 'Manyshot',
+	archetype: 'manyshot',
+	authored: { file: 'guide-c-manyshot' },
+	authorNote: 'Good Clear / Single Target',
+	status: 'securable',
+	groups: [
+		{
+			// "Ice Shot - Multiple Projectiles Support - Returning Projectiles
+			// Support - Elemental Damage with Attacks Support"
+			id: 'core',
+			label: 'Ice Shot + ideal links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_11495', name: 'Ice Shot', enabledInSearch: true },
+				{
+					id: 'mercenary.support_12054',
+					name: 'Multiple Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_49419',
+					name: 'Greater Multiple Projectiles (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "Vaal Ice Shot(single target needed) - Returning Projectiles Support
+			// - Elemental Damage with Attacks Support - Cooldown Recovery Support".
+			// "single target needed" is why this row is REQUIRED rather than a
+			// second option: the author is naming the skill the merc cannot do the
+			// job without, so both rows have to be there.
+			id: 'secondary',
+			label: 'Vaal Ice Shot + ideal links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_16381', name: 'Vaal Ice Shot', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_30881',
+					name: 'Lesser Cooldown Recovery (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_48875',
+					name: 'Cooldown Recovery (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_10608',
+					name: 'Greater Cooldown Recovery (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "AVOID \"icicle rain\" this skill does bad damage and interrupts vaal
+			// ice shot from occurring properly"
+			id: 'deny',
+			label: 'Denied skills',
+			type: 'not',
+			enabledInSearch: true,
+			entries: [{ id: 'mercenary.skill_24409', name: 'Icicle Rain', enabledInSearch: true }]
+		},
+		{
+			// "Buff Skills: Grace / Hatred / Frost Bomb"
+			id: 'buffs',
+			label: 'Buff skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: false },
+				{ id: 'mercenary.skill_24482', name: 'Hatred', enabledInSearch: false },
+				{ id: 'mercenary.skill_10557', name: 'Frost Bomb', enabledInSearch: false }
+			]
+		}
+	]
+};
+
+const GUIDE_C_BLADE_AMBUSHER: MercRuleset = {
+	id: 'guide-c-blade-ambusher',
+	label: 'Blade Ambusher',
+	archetype: 'blade-ambusher',
+	authored: { file: 'guide-c-blade-ambusher' },
+	authorNote: 'Good Bossing / Single Target Merc',
+	status: 'securable',
+	groups: [
+		{
+			// "Spectral Helix of Trarthus - Multiple Traps Support - Trap and Mine
+			// Damage Support - Slower Projectiles Support".
+			// The TRARTHUS transfigure (skill_28988), not plain Spectral Helix
+			// (skill_37916): different stat ids, and guide-a's Combatant search
+			// actively DENIES the plain one.
+			id: 'core',
+			label: 'Spectral Helix of Trarthus + ideal links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{
+					id: 'mercenary.skill_28988',
+					name: 'Spectral Helix of Trarthus',
+					enabledInSearch: true
+				},
+				{ id: 'mercenary.support_2555', name: 'Multiple Traps (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_49954',
+					name: 'Lesser Trap and Mine Damage (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_31171',
+					name: 'Trap and Mine Damage (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_59079',
+					name: 'Greater Trap and Mine Damage (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_15866',
+					name: 'Lesser Slower Projectiles (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_2210',
+					name: 'Slower Projectiles (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44952',
+					name: 'Greater Slower Projectiles (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "Buff Skills: Grace / Summon Skitterbots"
+			id: 'buffs',
+			label: 'Buff skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_2792', name: 'Grace', enabledInSearch: false },
+				{ id: 'mercenary.skill_44296', name: 'Summon Skitterbots', enabledInSearch: false }
+			]
+		}
+	]
+};
+
+const GUIDE_C_COMBATANT: MercRuleset = {
+	id: 'guide-c-combatant',
+	label: 'Combatant',
+	archetype: 'combatant',
+	authored: { file: 'guide-c-combatant' },
+	authorNote:
+		'Good All rounder / Starter Merc (better clear option as armour stack setup late game)',
+	status: 'securable',
+	groups: [
+		{
+			// "Static Strike - Elemental Damage with Attacks Support - More
+			// Duration Support - Chain Support"
+			id: 'core',
+			label: 'Static Strike + ideal links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_24931', name: 'Static Strike', enabledInSearch: true },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_2602',
+					name: 'Lesser More Duration (Tier 1)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_50222', name: 'More Duration (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_26568',
+					name: 'Greater More Duration (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "Frost Blades - Returning Projectiles Support - Elemental Damage with
+			// Attacks Support - Chain Support/".
+			// Two skill rows, both required: the author lists them as one merc's
+			// setup rather than as alternatives, the way he lists Ice Shot and Vaal
+			// Ice Shot. The trailing slash is his, and means nothing.
+			id: 'secondary',
+			label: 'Frost Blades + ideal links',
+			type: 'mercenary',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_22105', name: 'Frost Blades', enabledInSearch: true },
+				{ id: 'mercenary.support_5293', name: 'Return (Tier 3)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_59712',
+					name: 'Lesser Elemental Damage with Attacks (Tier 1)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_44886',
+					name: 'Elemental Damage with Attacks (Tier 2)',
+					enabledInSearch: false
+				},
+				{
+					id: 'mercenary.support_28416',
+					name: 'Greater Elemental Damage with Attacks (Tier 3)',
+					enabledInSearch: false
+				},
+				{ id: 'mercenary.support_14317', name: 'Lesser Chain (Tier 1)', enabledInSearch: false },
+				{ id: 'mercenary.support_31052', name: 'Chain (Tier 2)', enabledInSearch: false },
+				{
+					id: 'mercenary.support_31571',
+					name: 'Gilded Chain Distance (Tier 3)',
+					enabledInSearch: false
+				}
+			]
+		},
+		{
+			// "Buff Skills: Wrath / Purity of Ice"
+			id: 'buffs',
+			label: 'Buff skills',
+			type: 'and',
+			enabledInSearch: true,
+			entries: [
+				{ id: 'mercenary.skill_38326', name: 'Wrath', enabledInSearch: false },
+				{ id: 'mercenary.skill_13693', name: 'Purity of Ice', enabledInSearch: false }
+			]
+		}
+	]
+};
+
 export const MERC_SOURCES: MercSource[] = [
 	{
 		id: 'guide-a',
 		label: 'Guide A',
+		description: "ckaiba's seller-side floors — wealthyexile strategy 7062",
 		guideUrl: 'https://wealthyexile.com/strategies/7062/alchgo_astrolabe__merc_boss_rushing',
 		rulesets: [GUIDE_A_MANYSHOT, GUIDE_A_KINETIST_V1, GUIDE_A_COMBATANT]
 	},
 	{
 		id: 'guide-b',
 		label: 'Guide B',
+		description: "Nerotox's tiered saved searches — three videos, four ladders",
 		// The CHANNEL: this source's ladders come from different videos, and each
 		// rung names its own (`MercRuleset.guideUrl`).
 		guideUrl: 'https://www.youtube.com/channel/UCqIRIXItoDOlET2oeFn6WKA',
@@ -2505,6 +2968,21 @@ export const MERC_SOURCES: MercSource[] = [
 			GUIDE_B_WILD_STRIKE_MID,
 			GUIDE_B_WILD_STRIKE_END,
 			GUIDE_B_WILD_STRIKE_GG
+		]
+	},
+	{
+		id: 'guide-c',
+		label: 'CaptainLance',
+		description:
+			"CaptainLance's buyer-side ideal links for a Luminary merc bot — no prices, no floors",
+		// One page, one section, four archetypes — so no ruleset here carries a
+		// `guideUrl` of its own.
+		guideUrl: CAPTAINLANCE_BUILD,
+		rulesets: [
+			GUIDE_C_KINETIST,
+			GUIDE_C_MANYSHOT,
+			GUIDE_C_BLADE_AMBUSHER,
+			GUIDE_C_COMBATANT
 		]
 	}
 ];
