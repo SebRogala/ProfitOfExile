@@ -3,6 +3,7 @@
 package mercenary
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"sync"
@@ -17,10 +18,16 @@ import (
 // a retired sample stops being served. These tests are the only place those are
 // exercised end to end; the pure decision rule is covered in pool_test.go.
 //
-// The helpers balancedGray/splitHalf/mustSignature come from signature_test.go,
+// The helpers patternRGB/firstThird/mustSignature come from signature_test.go,
 // which compiles into this build too.
 
-const integrationVersion int16 = 1
+// integrationVersion is the format version these tests write. It tracks
+// SupportedFormatVersion rather than pinning a literal: the signature length
+// CHECK is version-conditional (POE-207), so a literal here would insert
+// 1728-byte signatures under a version whose branch of the CHECK expects 576
+// and every write would fail on the constraint rather than on the behaviour
+// under test.
+const integrationVersion = SupportedFormatVersion
 
 func integrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -109,7 +116,7 @@ func candidate(t *testing.T, family string, tier int, hi func(int) bool) Candida
 	if err != nil {
 		t.Fatalf("NewKey(%q, %d): %v", family, tier, err)
 	}
-	return Candidate{Key: key, Signature: mustSignature(t, balancedGray(hi, 1, 255, 200))}
+	return Candidate{Key: key, Signature: mustSignature(t, patternRGB(hi, 1, 255, 200))}
 }
 
 // distinctPatterns are four signatures no two of which correlate at the dedupe
@@ -117,7 +124,7 @@ func candidate(t *testing.T, family string, tier int, hi func(int) bool) Candida
 // because its "different" samples were duplicates.
 func distinctPatterns() []func(int) bool {
 	return []func(int) bool{
-		splitHalf,
+		firstThird,
 		func(o int) bool { return o%2 == 0 },
 		func(o int) bool { return o%3 == 0 },
 		func(o int) bool { return o%5 == 0 },
@@ -159,7 +166,7 @@ func TestRepository_Accept_SecondDeviceUploadingTheSameArt_IsADuplicate(t *testi
 	ctx := context.Background()
 
 	first, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)})
+		[]Candidate{candidate(t, family, 1, firstThird)})
 	if err != nil {
 		t.Fatalf("first Accept: %v", err)
 	}
@@ -168,7 +175,7 @@ func TestRepository_Accept_SecondDeviceUploadingTheSameArt_IsADuplicate(t *testi
 	}
 
 	second, err := repo.Accept(ctx, "device-b", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)})
+		[]Candidate{candidate(t, family, 1, firstThird)})
 	if err != nil {
 		t.Fatalf("second Accept: %v", err)
 	}
@@ -223,8 +230,8 @@ func TestRepository_Accept_RepeatedArtWithinOneBatch_TakesOneSlot(t *testing.T) 
 	ctx := context.Background()
 
 	result, err := repo.Accept(ctx, "device-a", integrationVersion, []Candidate{
-		candidate(t, family, 1, splitHalf),
-		candidate(t, family, 1, splitHalf),
+		candidate(t, family, 1, firstThird),
+		candidate(t, family, 1, firstThird),
 	})
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
@@ -247,12 +254,12 @@ func TestRepository_Accept_TiersOfOneFamilyAreSeparateKeys(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)}); err != nil {
+		[]Candidate{candidate(t, family, 1, firstThird)}); err != nil {
 		t.Fatalf("Accept tier 1: %v", err)
 	}
 
 	result, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 3, splitHalf)})
+		[]Candidate{candidate(t, family, 3, firstThird)})
 	if err != nil {
 		t.Fatalf("Accept tier 3: %v", err)
 	}
@@ -318,7 +325,7 @@ func TestRepository_Tombstone_BlocksAReUploadOfTheRetiredKey(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)}); err != nil {
+		[]Candidate{candidate(t, family, 1, firstThird)}); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	key, _ := NewKey(family, 1)
@@ -327,7 +334,7 @@ func TestRepository_Tombstone_BlocksAReUploadOfTheRetiredKey(t *testing.T) {
 	}
 
 	again, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)})
+		[]Candidate{candidate(t, family, 1, firstThird)})
 	if err != nil {
 		t.Fatalf("re-upload Accept: %v", err)
 	}
@@ -403,7 +410,7 @@ func TestRepository_Tombstone_UnknownKey_RetiresNothing(t *testing.T) {
 	}
 
 	result, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 2, splitHalf)})
+		[]Candidate{candidate(t, family, 2, firstThird)})
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
@@ -421,32 +428,45 @@ func TestRepository_Corpus_KeepsFormatVersionsApart(t *testing.T) {
 	family := reserveFamily(t, pool, "Brittle Chance")
 	ctx := context.Background()
 
-	const otherVersion int16 = 2
-	if _, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)}); err != nil {
-		t.Fatalf("Accept v1: %v", err)
+	// A legacy format-1 row, planted raw: Accept cannot make one any more —
+	// NewSignature refuses 576 bytes — and this is the real post-POE-207 state,
+	// a pool holding both formats at once for the same key.
+	const legacyVersion int16 = 1
+	if err := insertRawLength(t, pool, family, legacyVersion, 576); err != nil {
+		t.Fatalf("plant a format-1 row: %v", err)
 	}
-	other, err := repo.Accept(ctx, "device-a", otherVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)})
+
+	stored, err := repo.Accept(ctx, "device-a", integrationVersion,
+		[]Candidate{candidate(t, family, 1, firstThird)})
 	if err != nil {
 		t.Fatalf("Accept v2: %v", err)
 	}
-	if other.Stored != 1 {
-		t.Fatalf("identical art under another format version = %+v, want 1 stored", other)
+	if stored.Stored != 1 {
+		t.Fatalf("a v2 upload over an occupied v1 key = %+v, want 1 stored — the v1 sample "+
+			"must not dedupe against it or count toward its cap", stored)
 	}
 
-	corpus, err := repo.Corpus(ctx, otherVersion)
-	if err != nil {
-		t.Fatalf("Corpus v2: %v", err)
-	}
-	seen := 0
-	for _, sample := range corpus.Templates {
-		if sample.Key.Family == family {
-			seen++
+	countFamily := func(version int16) int {
+		t.Helper()
+		corpus, err := repo.Corpus(ctx, version)
+		if err != nil {
+			t.Fatalf("Corpus v%d: %v", version, err)
 		}
+		seen := 0
+		for _, sample := range corpus.Templates {
+			if sample.Key.Family == family {
+				seen++
+			}
+		}
+		return seen
 	}
-	if seen != 1 {
-		t.Errorf("version-2 corpus holds %d samples of %q, want 1", seen, family)
+	if got := countFamily(integrationVersion); got != 1 {
+		t.Errorf("version-%d corpus holds %d samples of %q, want 1 (its own)",
+			integrationVersion, got, family)
+	}
+	if got := countFamily(legacyVersion); got != 1 {
+		t.Errorf("version-1 corpus holds %d samples of %q, want 1 (the legacy row, still served)",
+			got, family)
 	}
 }
 
@@ -458,7 +478,7 @@ func TestRepository_Corpus_ServesTheStoredSignatureBytes(t *testing.T) {
 	family := reserveFamily(t, pool, "Cascade Count")
 	ctx := context.Background()
 
-	uploaded := candidate(t, family, 1, splitHalf)
+	uploaded := candidate(t, family, 1, firstThird)
 	if _, err := repo.Accept(ctx, "device-a", integrationVersion, []Candidate{uploaded}); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
@@ -471,12 +491,19 @@ func TestRepository_Corpus_ServesTheStoredSignatureBytes(t *testing.T) {
 		if sample.Key.Family != family {
 			continue
 		}
-		served, err := NewSignature(sample.Signature)
-		if err != nil {
-			t.Fatalf("served signature is unreadable: %v", err)
+		// bytes.Equal, not a correlation: the promise this test makes is
+		// byte-for-byte, and a correlation cannot see the difference. Two
+		// buffers that differ by one grey level everywhere still correlate at
+		// 1.0, so an NCC check would pass a round trip that rescaled or
+		// re-encoded the stored bytes — exactly the regression the promise
+		// exists to catch.
+		if !bytes.Equal(sample.Signature, uploaded.Signature.Bytes()) {
+			t.Fatalf("served signature differs from the uploaded bytes (%d vs %d bytes)",
+				len(sample.Signature), len(uploaded.Signature.Bytes()))
 		}
-		if ncc := served.NCC(uploaded.Signature); ncc < 0.999 {
-			t.Fatalf("served signature correlates at %v with what was uploaded, want 1.0", ncc)
+		// It is also still a decodable signature, not just a matching blob.
+		if _, err := NewSignature(sample.Signature); err != nil {
+			t.Fatalf("served signature is unreadable: %v", err)
 		}
 		return
 	}
@@ -494,7 +521,7 @@ func TestRepository_Accept_RetirementOlderThanTheWindow_NoLongerRefusesTheArt(t 
 	ctx := context.Background()
 
 	if _, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)}); err != nil {
+		[]Candidate{candidate(t, family, 1, firstThird)}); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	key, _ := NewKey(family, 1)
@@ -505,7 +532,7 @@ func TestRepository_Accept_RetirementOlderThanTheWindow_NoLongerRefusesTheArt(t 
 	// While the retirement is in force the art is refused — the control that
 	// makes the expiry below mean something.
 	blocked, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)})
+		[]Candidate{candidate(t, family, 1, firstThird)})
 	if err != nil {
 		t.Fatalf("Accept while retired: %v", err)
 	}
@@ -516,7 +543,7 @@ func TestRepository_Accept_RetirementOlderThanTheWindow_NoLongerRefusesTheArt(t 
 	backdateRetirement(t, pool, family, expiredRetirementAge)
 
 	after, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)})
+		[]Candidate{candidate(t, family, 1, firstThird)})
 	if err != nil {
 		t.Fatalf("Accept after the window: %v", err)
 	}
@@ -537,7 +564,7 @@ func TestRepository_Corpus_DropsTombstonesOlderThanTheWindow(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := repo.Accept(ctx, "device-a", integrationVersion,
-		[]Candidate{candidate(t, family, 1, splitHalf)}); err != nil {
+		[]Candidate{candidate(t, family, 1, firstThird)}); err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
 	key, _ := NewKey(family, 1)
@@ -638,8 +665,8 @@ func TestRepository_Accept_OverlappingKeysInOppositeOrder_DoNotDeadlock(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	forward := []Candidate{candidate(t, first, 1, splitHalf), candidate(t, second, 1, splitHalf)}
-	backward := []Candidate{candidate(t, second, 2, splitHalf), candidate(t, first, 2, splitHalf)}
+	forward := []Candidate{candidate(t, first, 1, firstThird), candidate(t, second, 1, firstThird)}
+	backward := []Candidate{candidate(t, second, 2, firstThird), candidate(t, first, 2, firstThird)}
 
 	results := make([]AcceptResult, 2)
 	errs := make([]error, 2)
@@ -707,9 +734,9 @@ func TestRepository_Tombstone_RetiresAFamilyTheVocabularyNoLongerCarries(t *test
 	family := reserveOrphanFamily(t, pool, "Formerly A Support")
 	ctx := context.Background()
 
-	insertRawSample(t, pool, family, 1, mustSignature(t, balancedGray(splitHalf, 1, 255, 200)))
+	insertRawSample(t, pool, family, 1, mustSignature(t, patternRGB(firstThird, 1, 255, 200)))
 	insertRawSample(t, pool, family, 1,
-		mustSignature(t, balancedGray(func(o int) bool { return o%2 == 0 }, 1, 255, 200)))
+		mustSignature(t, patternRGB(func(o int) bool { return o%2 == 0 }, 1, 255, 200)))
 
 	key, err := ParseKey(family, 1)
 	if err != nil {

@@ -209,8 +209,13 @@ func loadState(ctx context.Context, tx pgx.Tx, version int16, keys []Key, cutoff
 		}
 		sig, err := NewSignature(raw)
 		if err != nil {
-			// The column has a length CHECK and every row was validated on the
-			// way in, so this means the stored bytes are not what we think.
+			// From POE-207 the column's length CHECK is version-CONDITIONAL
+			// (576 for format 1, 1728 for format 2), so a stored row being
+			// well-formed no longer means it is well-formed FOR THIS decode.
+			// The realistic cause is a format-1 row reaching a format-2 read —
+			// which the `WHERE format_version = $1` filter above is supposed to
+			// make impossible, so reaching here means that filter was dropped
+			// or the version was mis-plumbed, not that bytes rotted on disk.
 			// Skipping a live sample costs a redundant store; skipping a
 			// retired one lets the art it recorded back in. Both are worse the
 			// other way round: failing the upload would cost every device the

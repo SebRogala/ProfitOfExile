@@ -24,14 +24,22 @@ import (
 
 const mercTestFingerprint = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 
-// mercSignatureB64 is a valid wire signature: 576 bytes with enough variance to
-// normalise. The handler tests care about transport, not about which art it is.
+// mercBatchSize mirrors MAX_TEMPLATES_PER_BATCH in
+// desktop/src-tauri/src/mercenary/sync.rs — the batch the desktop actually
+// sends, which is what the body cap has to admit. It is well under the server's
+// own mercenary.MaxTemplatesPerUpload; the body cap, not the count, is the
+// limit a full batch runs into.
+const mercBatchSize = 32
+
+// mercSignatureB64 is a valid wire signature: mercenary.SigBytes of RGB with
+// enough variance to normalise. The handler tests care about transport, not
+// about which art it is.
 func mercSignatureB64(seed int) string {
-	gray := make([]byte, mercenary.SigBytes)
-	for i := range gray {
-		gray[i] = byte((i*7 + seed*13) % 251)
+	rgb := make([]byte, mercenary.SigBytes)
+	for i := range rgb {
+		rgb[i] = byte((i*7 + seed*13) % 251)
 	}
-	return mercenary.EncodeSignature(gray)
+	return mercenary.EncodeSignature(rgb)
 }
 
 type fakeMercStore struct {
@@ -197,9 +205,9 @@ func TestMercTemplatesUpload_UnreadableTemplate_IsRejectedWithoutLosingTheOthers
 	}
 }
 
-// A template whose signature is the wrong length is rejected the same way: 576
-// bytes is the format, and a short one would change the correlation's divisor
-// on every device that pulled it.
+// A template whose signature is the wrong length is rejected the same way:
+// mercenary.SigBytes is the format, and a short one would change the
+// correlation's divisor on every device that pulled it.
 func TestMercTemplatesUpload_WrongLengthSignature_IsRejected(t *testing.T) {
 	store := &fakeMercStore{}
 	short := mercenary.EncodeSignature(make([]byte, mercenary.SigBytes-1))
@@ -281,8 +289,19 @@ func TestMercTemplatesUpload_OversizedBody_Returns413(t *testing.T) {
 		templates = append(templates, templateJSON("Chain", 1, mercSignatureB64(i)))
 	}
 	body := validUploadBody(templates...)
-	if len(body) <= 32*1024 {
-		t.Fatalf("test setup: body is %d bytes, expected it to exceed the 32 KB cap", len(body))
+	// A LITERAL 129 KB, deliberately not derived from mercTemplateBodyLimit.
+	// Sizing the oversize body from the constant makes this test follow the cap
+	// wherever it goes: raise the limit to 1 MB and the setup would just build
+	// a bigger body and stay green, while every real client's 413 disappeared.
+	// The literal is what turns a cap change into a failing test.
+	const overCap = 129 * 1024
+	if mercTemplateBodyLimit != 128*1024 {
+		t.Fatalf("mercTemplateBodyLimit = %d, want 128 KB — the cap moved, so the "+
+			"desktop's batch arithmetic and this test's literal both need re-deriving",
+			mercTemplateBodyLimit)
+	}
+	if len(body) <= overCap {
+		t.Fatalf("test setup: body is %d bytes, expected it to exceed %d", len(body), overCap)
 	}
 
 	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
@@ -295,6 +314,72 @@ func TestMercTemplatesUpload_OversizedBody_Returns413(t *testing.T) {
 	}
 	if store.acceptCalls != 0 {
 		t.Errorf("store was called for an oversized body")
+	}
+}
+
+// The cap has to admit the batch the desktop actually sends, or the raise did
+// nothing. MAX_TEMPLATES_PER_BATCH is 32, a format-2 signature is
+// mercenary.SigBytes -> 2304 base64 characters, and the longest family in the
+// vocabulary is "Power Charge on Critical Strike" — so this body is the
+// worst-case batch a conforming client can produce.
+//
+// It is also the test that says WHY the cap moved: the same batch is asserted
+// to be over the old 32 KB limit. Format 2 tripled the signature, and a client
+// obeying its own batch size would have started answering 413 on every publish.
+func TestMercTemplatesUpload_AFullWorstCaseBatch_IsUnderTheBodyCap(t *testing.T) {
+	const longestFamily = "Power Charge on Critical Strike"
+	store := &fakeMercStore{}
+	templates := make([]string, 0, mercBatchSize)
+	for i := 0; i < mercBatchSize; i++ {
+		templates = append(templates, templateJSON(longestFamily, i%3+1, mercSignatureB64(i)))
+	}
+	body := validUploadBody(templates...)
+
+	if len(body) <= 32*1024 {
+		t.Fatalf("test setup: a full format-2 batch is %d bytes, which the OLD 32 KB cap "+
+			"would have admitted — this test no longer says why the cap moved", len(body))
+	}
+	if len(body) > mercTemplateBodyLimit {
+		t.Fatalf("a full %d-template batch is %d bytes, over the %d byte cap: a conforming "+
+			"client cannot publish", mercBatchSize, len(body), mercTemplateBodyLimit)
+	}
+
+	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if got := decodeCounts(t, w)["rejected"]; got != 0 {
+		t.Fatalf("rejected = %d, want 0 — every template in the batch is well-formed", got)
+	}
+	if len(store.gotCandidates) != mercBatchSize {
+		t.Fatalf("candidates reaching the pool = %d, want %d", len(store.gotCandidates), mercBatchSize)
+	}
+}
+
+// One byte past the cap is refused. The boundary gets its own test because the
+// cap is the only thing standing between the server and an unbounded JSON
+// decode, and an off-by-one that read the limit as "greater than" would leave
+// that hole open with every other test still green.
+func TestMercTemplatesUpload_BodyJustPastTheCap_Returns413(t *testing.T) {
+	store := &fakeMercStore{}
+	// One well-formed template plus padding inside an ignored field, grown
+	// until the body is exactly one byte over the limit.
+	shell := fmt.Sprintf(`{"format_version":%d,"pad":"%%s","templates":[%s]}`,
+		mercenary.SupportedFormatVersion, templateJSON("Chain", 1, mercSignatureB64(1)))
+	body := fmt.Sprintf(shell, strings.Repeat("x", mercTemplateBodyLimit+1-len(fmt.Sprintf(shell, ""))))
+	if len(body) != mercTemplateBodyLimit+1 {
+		t.Fatalf("test setup: body is %d bytes, want exactly %d", len(body), mercTemplateBodyLimit+1)
+	}
+
+	w := mercPost(t, mercRouter(store, nil, nil), "/api/desktop/merc-templates", body, true)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d for a body one byte over the cap, want 413; body: %s",
+			w.Code, w.Body.String())
+	}
+	if store.acceptCalls != 0 {
+		t.Errorf("store was called for a body over the cap")
 	}
 }
 
