@@ -40,9 +40,43 @@ pub use platform::*;
 /// - Convert to grayscale
 /// - Increase contrast
 /// - Scale up 2x for small text
+///
+/// Lanczos3 on the upscale — the sharpest of the resamplers `image` offers,
+/// and the right trade for its callers, which all read small UI text on a
+/// cadence measured in seconds: the gem scan and the font scan (`lib.rs`), the
+/// temple panel reads (`temple::panel`, `temple::commands`, `temple::run`), the
+/// merc HEADER band (`mercenary::read`), and the `test_ocr_on_image` debug
+/// command. A path that runs at the cursor's pace wants
+/// [`preprocess_for_ocr_fast`] instead.
+///
+/// The merc DETECT path is on neither list: it hands `ocr::recognize_lines` the
+/// frame (or its panel crop) exactly as grabbed and preprocesses nothing — see
+/// `mercenary::run::detect_tick`.
 pub fn preprocess_for_ocr(img: &image::DynamicImage) -> image::DynamicImage {
-    use image::imageops::FilterType;
+    preprocess_with(img, image::imageops::FilterType::Lanczos3)
+}
 
+/// [`preprocess_for_ocr`] with a Triangle (bilinear) upscale instead of
+/// Lanczos3 — same grayscale, same contrast stretch, same 2× factor.
+///
+/// For the merc hover tick, which is on the player's critical path: it fires
+/// every 400 ms while the cursor rests on a cell, and the tooltip it reads is
+/// what the player is waiting to see confirmed. Lanczos3 is a separable 6-tap
+/// kernel and Triangle a 2-tap one, so the resample costs a fraction as much
+/// on the same crop. The tooltip text it feeds OCR is large, high-contrast UI
+/// type at 2×, which is the case where the sharper kernel buys least.
+///
+/// Deliberately NOT the default: [`preprocess_for_ocr`]'s callers read small UI
+/// text — gem and font panel crops, temple room names, the merc header band —
+/// and nothing measured says Triangle is as accurate on type that size.
+pub fn preprocess_for_ocr_fast(img: &image::DynamicImage) -> image::DynamicImage {
+    preprocess_with(img, image::imageops::FilterType::Triangle)
+}
+
+fn preprocess_with(
+    img: &image::DynamicImage,
+    filter: image::imageops::FilterType,
+) -> image::DynamicImage {
     let gray = img.to_luma8();
     let (w, h) = gray.dimensions();
 
@@ -76,14 +110,23 @@ pub fn preprocess_for_ocr(img: &image::DynamicImage) -> image::DynamicImage {
     // primary monitor, so dimensions stay bounded. (The test_ocr_on_image debug
     // command can feed an arbitrary image — a 2× buffer of it is the accepted
     // cost of not special-casing a debug path.)
-    let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, FilterType::Lanczos3);
+    let upscaled = image::imageops::resize(&contrasted, w * 2, h * 2, filter);
     image::DynamicImage::ImageLuma8(upscaled)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::preprocess_for_ocr;
+    use super::{preprocess_for_ocr, preprocess_for_ocr_fast};
     use image::{DynamicImage, ImageBuffer, Luma};
+
+    /// A vertical step edge: the left half `dark`, the right half `light`.
+    /// The one input that separates two resamplers — a flat field upscales
+    /// identically under any filter.
+    fn step_edge(w: u32, h: u32, dark: u8, light: u8) -> DynamicImage {
+        DynamicImage::ImageLuma8(ImageBuffer::from_fn(w, h, |x, _| {
+            Luma([if x < w / 2 { dark } else { light }])
+        }))
+    }
 
     /// Build a solid-gray Luma8 image of the given size. Content is irrelevant to
     /// the upscale gate — these tests pin OUTPUT DIMENSIONS only.
@@ -134,5 +177,42 @@ mod tests {
     fn upscaling_preserves_the_source_aspect_ratio() {
         let out = preprocess_for_ocr(&gray(300, 200));
         assert_eq!((out.width(), out.height()), (600, 400));
+    }
+
+    // The merc hover path (POE-204 smoke) trades the resampler, and NOTHING
+    // else: the 2× upscale is what makes small UI text readable, and a fast
+    // path that skipped it would be a silent accuracy regression on the one
+    // read the player is waiting for.
+    #[test]
+    fn the_fast_path_upscales_2x_like_the_quality_one() {
+        let out = preprocess_for_ocr_fast(&gray(300, 200));
+        assert_eq!((out.width(), out.height()), (600, 400));
+    }
+
+    // The other half of "nothing else": the contrast stretch. A tooltip read
+    // off a dark panel arrives as a narrow band of greys, and OCR needs it
+    // opened out to the full range — the same as every other crop.
+    #[test]
+    fn the_fast_path_stretches_contrast_like_the_quality_one() {
+        let out = preprocess_for_ocr_fast(&step_edge(64, 8, 100, 110)).to_luma8();
+        let min = out.pixels().map(|p| p.0[0]).min().expect("a non-empty image");
+        let max = out.pixels().map(|p| p.0[0]).max().expect("a non-empty image");
+
+        assert_eq!((min, max), (0, 255));
+    }
+
+    // The change itself. Triangle is a 2-tap kernel and Lanczos3 a 6-tap one,
+    // so on a step edge they resolve the transition differently — which is the
+    // only observable difference between the two functions, and the one thing
+    // a revert to Lanczos3 on the hover path would erase.
+    #[test]
+    fn the_fast_path_does_not_resample_with_the_detect_paths_filter() {
+        let img = step_edge(64, 8, 0, 255);
+
+        let fast = preprocess_for_ocr_fast(&img).to_luma8();
+        let quality = preprocess_for_ocr(&img).to_luma8();
+
+        assert_eq!(fast.dimensions(), quality.dimensions(), "same crop, same size");
+        assert_ne!(fast.into_raw(), quality.into_raw());
     }
 }

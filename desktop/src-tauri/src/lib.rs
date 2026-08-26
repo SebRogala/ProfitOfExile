@@ -1510,14 +1510,41 @@ fn set_overlay_clickthrough(label: String, interactive_width: i32, app: AppHandl
     }
 }
 
+/// Write `on` into the debug-mode flag.
+///
+/// The state half of the [`set_debug_mode`] command, split out because it is
+/// the half that can be tested without an `AppHandle`.
+///
+/// IDEMPOTENT, and that is the contract. The command used to be a toggle with
+/// no argument while its only caller — the Ctrl+Shift+F12 handler in
+/// `(app)/+layout.svelte` — invoked it on the ON press alone. The UI's own
+/// `debugMode` therefore flipped on every press and Rust's flipped on every
+/// other one, so the second time debug mode was switched on, `debug_mode`
+/// was already true, the command turned it OFF, and every debug-gated log line
+/// in the app went silent while the UI reported debug mode ON (2026-08-26
+/// smoke). A command that is told the state to be in cannot drift from the
+/// state its caller thinks it is in.
+///
+/// Poison is recovered rather than propagated, as everywhere else this flag is
+/// touched: a panicking reader must not cost the user their debug logging.
+fn write_debug_mode(flag: &std::sync::Mutex<bool>, on: bool) {
+    *flag.lock().unwrap_or_else(|e| e.into_inner()) = on;
+}
+
+/// Put debug mode into the state the caller asks for: the flag every
+/// debug-gated log line reads, and — on `true` — every overlay force-shown
+/// regardless of game focus.
+///
+/// Named for the flag rather than the overlays because the flag is the part
+/// that binds on BOTH values of `on`; the force-show is what the `true` branch
+/// additionally does. The old name (`force_show_overlays`) described a
+/// one-directional side effect of an idempotent setter and read as a no-op on
+/// the off press.
 #[tauri::command]
-fn force_show_overlays(app: AppHandle) {
+fn set_debug_mode(app: AppHandle, on: bool) {
     let state = app.state::<AppState>();
-    let mut debug_guard = state.debug_mode.lock().unwrap_or_else(|e| e.into_inner());
-    let was_debug = *debug_guard;
-    *debug_guard = !was_debug;
-    drop(debug_guard);
-    if !was_debug {
+    write_debug_mode(&state.debug_mode, on);
+    if on {
         // Turning debug ON — show all overlays
         if let Some(win) = app.get_webview_window("comparator") {
             if let Err(e) = win.show() {
@@ -3517,7 +3544,7 @@ pub fn run() {
             temple::commands::temple_set_profile,
             temple::commands::temple_rearm,
             temple::commands::temple_debug_capture,
-            force_show_overlays,
+            set_debug_mode,
             set_devtools,
             set_comparator_data,
             set_overlay_has_content,
@@ -3788,9 +3815,53 @@ pub fn run() {
 mod tests {
     use super::{
         body_excerpt, clamp_overlay_height, dictionary_reject_reason, is_resizable_overlay_label,
-        min_overlay_height, ocr_warning_field, retry_after_delay,
+        min_overlay_height, ocr_warning_field, retry_after_delay, write_debug_mode,
     };
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    /// The bug the `on` argument exists for. The command was an
+    /// argument-less toggle, and the Ctrl+Shift+F12 handler invoked it only on
+    /// the press that turned debug mode ON — so the second such press found
+    /// the flag already true and turned it off, silencing every debug-gated
+    /// log line while the UI said debug mode was on (2026-08-26 smoke).
+    /// Setting the state asked for is idempotent; flipping it is not.
+    #[test]
+    fn asking_for_debug_mode_twice_leaves_it_on() {
+        let flag = Mutex::new(false);
+
+        write_debug_mode(&flag, true);
+        write_debug_mode(&flag, true);
+
+        assert!(*flag.lock().expect("an unpoisoned flag"));
+    }
+
+    /// The off press, from the state the on press left.
+    #[test]
+    fn asking_for_debug_mode_off_turns_it_off() {
+        let flag = Mutex::new(true);
+
+        write_debug_mode(&flag, false);
+
+        assert!(!*flag.lock().expect("an unpoisoned flag"));
+    }
+
+    /// A panic anywhere else that touched this flag must not cost the user
+    /// their debug logging — every other reader of `debug_mode` recovers the
+    /// poison rather than propagating it, and the writer has to agree.
+    #[test]
+    fn a_poisoned_flag_is_still_written() {
+        let flag = Mutex::new(false);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = flag.lock().expect("the first lock succeeds");
+            panic!("a reader panicked while holding the flag");
+        }));
+        assert!(poisoned.is_err(), "the flag must actually be poisoned");
+
+        write_debug_mode(&flag, true);
+
+        assert!(*flag.lock().unwrap_or_else(|e| e.into_inner()));
+    }
 
     #[test]
     fn the_status_ocr_warning_field_reports_the_cached_warning() {

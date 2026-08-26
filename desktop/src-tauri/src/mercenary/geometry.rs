@@ -38,9 +38,9 @@ impl OcrLineBox {
 /// Where a grabbed frame sits on the screen.
 ///
 /// A detect frame is not always the whole screen: once the panel's rect is
-/// known the loop OCRs a crop of it ([`detect_crop_bounds`]), and Windows OCR
+/// known the loop OCRs a crop of it ([`crop_around`]), and Windows OCR
 /// reports line boxes in the pixels it was handed — CROP-relative. Every rule
-/// downstream of the OCR is screen-absolute: [`rows_land_in_known_panel`]
+/// downstream of the OCR is screen-absolute: [`panel_anchor`]
 /// weighs rows against the last known panel rect, [`panel_bounds`] and
 /// [`header_guard_bounds`] feed `run.rs`'s cursor tests, and the cell rects
 /// end up in `MercCapture` where the hover tick hit-tests them against the
@@ -196,7 +196,7 @@ fn median(values: &mut [f32]) -> f32 {
 ///
 /// `known_panel` is the rect the LAST detect of the capture still on screen
 /// produced ([`panel_bounds`]), and it is a third anchor — see
-/// [`rows_land_in_known_panel`]. `None` means there is no live capture, and
+/// [`panel_anchor`]. `None` means there is no live capture, and
 /// then a frame anchors on its own chrome or not at all.
 pub fn detect(
     lines: &[OcrLineBox],
@@ -204,6 +204,24 @@ pub fn detect(
     vocab: &MercVocab,
     known_panel: Option<[i32; 4]>,
 ) -> Option<MercLayout> {
+    detect_reason(lines, g, vocab, known_panel).ok()
+}
+
+/// [`detect`], with the reason a miss missed.
+///
+/// A miss is the failure mode that costs a capture: two of them retire the
+/// window, and the log line the loop prints for one ("looked, no recruit
+/// window") says only how many lines and candidates were read. That was not
+/// enough to tell a panel that had closed from a partial read that lost its
+/// anchor (app.log 2026-08-26 16:08:25 → 16:08:28, the window still open at
+/// 16:08:37), so the stage that returned `None` is reported instead of
+/// discarded. `run.rs` prints it under debug mode; nothing branches on it.
+pub fn detect_reason(
+    lines: &[OcrLineBox],
+    g: &MercGeometry,
+    vocab: &MercVocab,
+    known_panel: Option<[i32; 4]>,
+) -> Result<MercLayout, DetectMiss> {
     // 1. Skill-name candidates seed the column.
     let candidates: Vec<&OcrLineBox> = lines
         .iter()
@@ -213,7 +231,11 @@ pub fn detect(
         })
         .collect();
     if candidates.len() < g.min_skill_candidates {
-        return None;
+        return Err(DetectMiss {
+            candidates: candidates.len(),
+            column_x0: None,
+            stage: DetectStage::TooFewCandidates { needed: g.min_skill_candidates },
+        });
     }
 
     let mut xs: Vec<f32> = candidates.iter().map(|l| l.x as f32).collect();
@@ -277,7 +299,11 @@ pub fn detect(
         }
     }
     if clusters.is_empty() {
-        return None;
+        return Err(DetectMiss {
+            candidates: candidates.len(),
+            column_x0: Some(column_x0),
+            stage: DetectStage::NoRowClusters,
+        });
     }
 
     // 3. Pitch and scale. With one row there is no inter-row gap to measure,
@@ -294,7 +320,11 @@ pub fn detect(
         (0.0, line_height / g.ref_line_height)
     };
     if !scale.is_finite() || scale <= 0.0 {
-        return None;
+        return Err(DetectMiss {
+            candidates: candidates.len(),
+            column_x0: Some(column_x0),
+            stage: DetectStage::BadScale { scale },
+        });
     }
 
     // 4. The panel anchor, checked once the pitch is known: a line above row 1
@@ -303,7 +333,8 @@ pub fn detect(
     //    in a panel we already found, which is an anchor in its own right.
     let first_centre = centres[0];
     let last_centre = centres[centres.len() - 1];
-    if !rows_land_in_known_panel(known_panel, &centres, column_x0, g, scale) {
+    let panel = panel_anchor(known_panel, &centres, column_x0, g, scale);
+    if panel != PanelAnchor::Anchored {
         let reach = if row_pitch > 0.0 {
             g.wager_search_pitches * row_pitch
         } else {
@@ -314,7 +345,13 @@ pub fn detect(
             (c < first_centre && first_centre - c <= reach && is_wager_line(&l.text, g))
                 || (c > last_centre && c - last_centre <= reach && is_button_line(&l.text, g))
         });
-        anchor?;
+        if anchor.is_none() {
+            return Err(DetectMiss {
+                candidates: candidates.len(),
+                column_x0: Some(column_x0),
+                stage: DetectStage::NoAnchor { rows: centres.len(), panel },
+            });
+        }
     }
 
     // 5. Rows with their cell rects.
@@ -355,13 +392,100 @@ pub fn detect(
         })
         .collect();
 
-    Some(MercLayout {
+    Ok(MercLayout {
         scale,
         column_x0: column_x0.round() as i32,
         row_pitch,
         header: parse_header(lines, first_centre, &rows, column_x0, row_pitch.max(g.row_pitch * scale)),
         rows,
     })
+}
+
+/// Why [`detect_reason`] found no layout on a frame.
+///
+/// Diagnostic only — every field is here to be printed. The three numbers are
+/// the ones that separate the failure modes the smoke log could not tell
+/// apart: how many skill names the frame read at all, where their column was,
+/// and which step threw the frame away.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetectMiss {
+    /// Skill-name candidates the frame produced — the seed set of step 1.
+    pub candidates: usize,
+    /// The candidates' median left edge, once there were enough to take one.
+    pub column_x0: Option<f32>,
+    /// The step that returned.
+    pub stage: DetectStage,
+}
+
+/// The step of [`detect_reason`] that gave up.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DetectStage {
+    /// Step 1: fewer skill names than `min_skill_candidates`. The ordinary
+    /// shape of "no recruit window on screen".
+    TooFewCandidates { needed: usize },
+    /// Step 2: the column clustered to nothing, which the candidate filter
+    /// makes unreachable in practice.
+    NoRowClusters,
+    /// Step 3: the pitch or the line height gave a scale that is not a
+    /// positive finite number.
+    BadScale { scale: f32 },
+    /// Step 4: rows were read and nothing anchored them — no wager line, no
+    /// button line, and `panel` says why the known-panel anchor abstained.
+    /// This is the shape a tooltip over the footer produces.
+    NoAnchor { rows: usize, panel: PanelAnchor },
+}
+
+impl std::fmt::Display for DetectMiss {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} candidate(s)", self.candidates)?;
+        match self.column_x0 {
+            Some(x) => write!(f, " at column x0 {x:.0}")?,
+            None => write!(f, ", no column")?,
+        }
+        write!(f, " — ")?;
+        match &self.stage {
+            DetectStage::TooFewCandidates { needed } => write!(f, "fewer than the {needed} needed"),
+            DetectStage::NoRowClusters => write!(f, "the column clustered to no rows"),
+            DetectStage::BadScale { scale } => write!(f, "unusable scale {scale}"),
+            DetectStage::NoAnchor { rows, panel } => {
+                write!(f, "{rows} row(s), no wager or button line, known panel: {panel}")
+            }
+        }
+    }
+}
+
+/// What the known-panel anchor made of this frame's rows — [`panel_anchor`]'s
+/// answer, and the sub-predicate that said no when it said no.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PanelAnchor {
+    /// Every row centre is inside the known rect and the column is where that
+    /// rect's column was. The frame is anchored.
+    Anchored,
+    /// No live capture, so no rect to weigh anything against.
+    NoKnownRect,
+    /// A rect, but no rows to place in it.
+    NoRows,
+    /// The skill column is not where the known rect's column was, by more than
+    /// half a cell — a different panel, or the same one moved.
+    ColumnMoved { column_x: i32, expected_x: i32, tolerance: i32 },
+    /// A row centre falls outside the known rect. The all-quantifier: one is
+    /// enough, and this is the one.
+    RowOutside { centre: i32 },
+}
+
+impl std::fmt::Display for PanelAnchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PanelAnchor::Anchored => write!(f, "anchored"),
+            PanelAnchor::NoKnownRect => write!(f, "none known"),
+            PanelAnchor::NoRows => write!(f, "no rows"),
+            PanelAnchor::ColumnMoved { column_x, expected_x, tolerance } => write!(
+                f,
+                "column at {column_x}, expected {expected_x} ±{tolerance}"
+            ),
+            PanelAnchor::RowOutside { centre } => write!(f, "row centre {centre} outside it"),
+        }
+    }
 }
 
 /// Whether a line reads as the panel's "Wager" label.
@@ -410,8 +534,9 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
 }
 
 /// Whether this frame's clustered rows sit inside the panel rect the last
-/// detect produced — the third anchor, and the only one available on a frame
-/// the game has drawn a tooltip over.
+/// detects produced ([`union_rect`]) — the third anchor, and the only one
+/// available on a frame the game has drawn a tooltip over — and, when they do
+/// not, which of the two sub-predicates said no.
 ///
 /// MEASURED 2026-08-26 (app.log 09:14:51, 09:41:52): with the recruit window
 /// plainly on screen, `detect` returned `None` on frames carrying 12 and 6
@@ -427,8 +552,9 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
 /// for.
 ///
 /// The rect is only ever `Some` while a capture is LIVE — `run.rs`'s retire
-/// clears `session.panel` — so this cannot resurrect a window that closed: a
-/// closed window's rows are not on screen to land anywhere.
+/// clears `session.panel`, and so does a REPLACED panel — so this cannot
+/// resurrect a window that closed: a closed window's rows are not on screen to
+/// land anywhere.
 ///
 /// Two things must hold, and they constrain different axes.
 ///
@@ -448,28 +574,119 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
 /// [`panel_bounds`]) — exactly, except for a panel far enough left that the
 /// rect's `.max(0)` clamp bit, which is worth at most [`PANEL_MARGIN_CELLS`] of
 /// error against a tolerance of half a cell.
-fn rows_land_in_known_panel(
+pub(super) fn panel_anchor(
     rect: Option<[i32; 4]>,
     centres: &[f32],
     column_x0: f32,
     g: &MercGeometry,
     scale: f32,
-) -> bool {
+) -> PanelAnchor {
     let Some(rect) = rect else {
-        return false;
+        return PanelAnchor::NoKnownRect;
     };
     if centres.is_empty() {
-        return false;
+        return PanelAnchor::NoRows;
     }
     let x = column_x0.round() as i32;
     let margin = (g.cell_size * scale * PANEL_MARGIN_CELLS).round() as i32;
-    let tolerance = (g.cell_size * scale / 2.0).round().max(1.0) as i32;
-    if (x - (rect[0] + margin)).abs() > tolerance {
-        return false;
+    let tolerance = column_tolerance(g, scale);
+    let expected_x = rect[0] + margin;
+    if (x - expected_x).abs() > tolerance {
+        return PanelAnchor::ColumnMoved { column_x: x, expected_x, tolerance };
     }
-    centres
+    match centres
         .iter()
-        .all(|&centre| contains(rect, (x, centre.round() as i32)))
+        .find(|&&centre| !contains(rect, (x, centre.round() as i32)))
+    {
+        Some(&centre) => PanelAnchor::RowOutside { centre: centre.round() as i32 },
+        None => PanelAnchor::Anchored,
+    }
+}
+
+/// The two rects a live capture's panel has been measured at, as one.
+///
+/// GROW-ONLY, and that is the whole point (app.log 2026-08-26 16:08:25). A
+/// tooltip over the lower rows leaves a two-row layout, whose
+/// [`panel_bounds`] is two rows tall. Writing that over the six-row rect the
+/// same window produced a tick earlier makes [`panel_anchor`]'s
+/// all-quantifier reject the NEXT full read — six centres, a rect that holds
+/// two — and with the chrome still hidden the frame has no anchor left at all.
+/// Both the crop and the full retake come back empty and the capture retires
+/// with the window plainly on screen.
+///
+/// The union cannot creep across windows: `run.rs` clears the rect on retire
+/// and on a REPLACED panel, so everything unioned here is one window's own
+/// measurements. Within one window the union grows almost entirely downward —
+/// the left edge is `column_x0 - margin` and the column does not move while
+/// the panel is open, which is what keeps [`panel_anchor`]'s reconstruction of
+/// `column_x0` from the rect exact.
+pub fn union_rect(a: Option<[i32; 4]>, b: Option<[i32; 4]>) -> Option<[i32; 4]> {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            let x = a[0].min(b[0]);
+            let y = a[1].min(b[1]);
+            let right = (a[0] + a[2]).max(b[0] + b[2]);
+            let bottom = (a[1] + a[3]).max(b[1] + b[3]);
+            Some([x, y, right - x, bottom - y])
+        }
+        (some, None) | (None, some) => some,
+    }
+}
+
+/// Half a cell at this capture's scale: how far the skill column may sit from
+/// where a remembered rect says it should be and still be the same panel.
+///
+/// ONE definition, because two consumers ask the same question of the same
+/// number and a drift between them would be silent. [`panel_anchor`] uses it to
+/// decide whether a frame's rows belong to the remembered rect; [`next_panel`]
+/// uses it to decide whether the remembered rect may be GROWN by this frame's
+/// measurement at all. A tolerance that admitted a frame for the first and
+/// rejected it for the second would leave the loop anchoring on a rect it
+/// refuses to update.
+pub(super) fn column_tolerance(g: &MercGeometry, scale: f32) -> i32 {
+    (g.cell_size * scale / 2.0).round().max(1.0) as i32
+}
+
+/// The panel rect the loop holds after a detect: what it remembered and what
+/// this frame measured, folded per the rule the two of them are evidence for.
+///
+/// Three outcomes, and the middle one is why the call site is not [`union_rect`]
+/// on its own:
+///
+/// - **`replaced`** — the header fold says a DIFFERENT mercenary is behind a
+///   panel that looks the same (a REMATCH). The grown rect belongs to the
+///   window that is gone, and carrying a retired mercenary's footprint onto the
+///   one that replaced it is the same inheritance the confirmations are dropped
+///   for. This frame's measurement, alone.
+/// - **the column MOVED** — the two rects disagree about the skill column's x
+///   by more than [`column_tolerance`], so the panel was dragged. A union here
+///   would be actively harmful rather than merely stale: the hull's left edge
+///   would stay the OLD column's, and [`panel_anchor`] reconstructs its
+///   `expected_x` from `rect[0]` — so every later frame of the moved panel
+///   would be measured against the position the panel left, for the whole life
+///   of the capture, since nothing else ever narrows the rect. This frame's
+///   measurement, alone.
+/// - **otherwise** — [`union_rect`], the grow-only rule a partial read under a
+///   tooltip needs.
+///
+/// `remembered[0]` and `fresh[0]` are both `column_x0 - margin` at the same
+/// scale (see [`bounds`]), so their difference IS the column's, except for a
+/// panel far enough left that the `.max(0)` clamp bit.
+pub fn next_panel(
+    remembered: Option<[i32; 4]>,
+    fresh: Option<[i32; 4]>,
+    replaced: bool,
+    column_tolerance: i32,
+) -> Option<[i32; 4]> {
+    if replaced {
+        return fresh;
+    }
+    match (remembered, fresh) {
+        (Some(held), Some(measured)) if (measured[0] - held[0]).abs() > column_tolerance => {
+            Some(measured)
+        }
+        (held, measured) => union_rect(held, measured),
+    }
 }
 
 /// How far past the skill column and the last cell the panel rect reaches, in
@@ -601,18 +818,16 @@ const CROP_SIDE_PITCHES: f32 = 4.0;
 /// [`Frame`] — so the known-panel anchor, the column-x test and the cell rects
 /// all keep meaning exactly what they meant on a full frame.
 ///
-/// `None` for a layout with no rows, exactly as [`panel_bounds`].
-pub fn detect_crop_bounds(
-    layout: &MercLayout,
-    g: &MercGeometry,
-    screen: [u32; 2],
-) -> Option<[i32; 4]> {
-    let [x, y, w, h] = panel_bounds(layout, g)?;
-    let pitch = if layout.row_pitch > 0.0 {
-        layout.row_pitch
-    } else {
-        g.row_pitch * layout.scale
-    };
+/// **Takes the RECT, not the layout, and that is the contract.** The rect the
+/// loop holds is [`next_panel`]'s, which a partial read under a tooltip grows
+/// rather than shrinks; a layout's own [`panel_bounds`] is only what THAT frame
+/// could see. Built from the layout, a two-row read under a tooltip installed a
+/// two-row crop, and the next full read was handed a frame cropped out of the
+/// four rows it was expected to find. Built from the held rect, the crop
+/// encloses it — and the header band above it — by construction, because every
+/// reach below is outward.
+pub fn crop_around(panel: [i32; 4], pitch: f32, screen: [u32; 2]) -> [i32; 4] {
+    let [x, y, w, h] = panel;
     let side = (pitch * CROP_SIDE_PITCHES).round() as i32;
     let above = (pitch * CROP_HEADER_PITCHES).round() as i32;
 
@@ -620,7 +835,21 @@ pub fn detect_crop_bounds(
     let y0 = (y - above).max(0);
     let x1 = (x + w + side).min(screen[0] as i32);
     let y1 = (y + h).min(screen[1] as i32);
-    Some([x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)])
+    [x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)]
+}
+
+/// The pitch every rect construction measures its reaches in: the observed one,
+/// or the reference pitch at this capture's scale when there is none.
+///
+/// [`detect`] reports a pitch of 0.0 for a single-row layout — there is no
+/// inter-row gap to measure — and a reach of zero px would collapse whichever
+/// rect used it.
+pub fn effective_pitch(layout: &MercLayout, g: &MercGeometry) -> f32 {
+    if layout.row_pitch > 0.0 {
+        layout.row_pitch
+    } else {
+        g.row_pitch * layout.scale
+    }
 }
 
 /// How far outside the panel rect the PROBE band reaches, in row pitches.
@@ -636,7 +865,7 @@ const PROBE_BAND_SLACK_PITCHES: f32 = 1.0;
 /// geometry is known: the last row and the whole footer strip under it, the
 /// panel's own width, one pitch of slack on every side, clamped to the screen.
 ///
-/// This is NOT [`detect_crop_bounds`]. That rect answers "re-read the panel I
+/// This is NOT [`crop_around`]. That rect answers "re-read the panel I
 /// am already holding" and reaches thirteen pitches UP for the header band,
 /// because the answer it owes includes the mercenary's name. The probe owes one
 /// bit — is the recruit window's chrome on screen at all — and the chrome that
@@ -776,7 +1005,7 @@ pub fn encloses(outer: [i32; 4], inner: [i32; 4]) -> bool {
 /// parameter. [`panel_bounds`] reaches [`PANEL_FOOTER_PITCHES`] below the last
 /// row and [`PANEL_MARGIN_CELLS`] either side, and none of that is clamped —
 /// it is a rect for cursor tests, where a bound past the screen edge costs
-/// nothing. [`detect_crop_bounds`] IS clamped, because a crop has to be a
+/// nothing. [`crop_around`] IS clamped, because a crop has to be a
 /// region of a real image. So a recruit window opened near the bottom or the
 /// side of the screen produces a panel rect the crop provably cannot contain,
 /// on every single tick: without the clamp the loop would take the crop, find
@@ -1419,10 +1648,364 @@ mod tests {
             .into_iter()
             .filter(|l| !l.text.starts_with("Wager"))
             .collect();
+        // The full panel's rect, cut off below the third row. Its LEFT EDGE is
+        // the real one — a rect at some other x is rejected by the column test
+        // before the all-quantifier is ever reached, which is not what this
+        // test is about.
+        let full = panel_bounds(
+            &detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel"),
+            &g,
+        )
+        .expect("six rows have bounds");
         // Rows sit at 620, 669, 717, 766, 814, 862; this stops after the third.
-        let half = [80, 560, 600, 180];
+        let half = [full[0], full[1], full[2], 740 - full[1]];
+        assert_eq!(
+            panel_anchor(
+                Some(half),
+                &[620.0, 669.0, 717.0, 766.0, 814.0, 862.0],
+                134.0,
+                &g,
+                48.0 / g.row_pitch
+            ),
+            PanelAnchor::RowOutside { centre: 766 },
+            "the rect must be rejected by the all-quantifier, not by the column test"
+        );
 
         assert!(detect(&stripped, &g, &vocab(), Some(half)).is_none());
+    }
+
+    /// The reference panel as a TOOLTIP leaves it: the header and the wager
+    /// line, and only the top two of its six skill rows. This is the shape the
+    /// 2026-08-26 smoke produced — the game draws the tooltip over the lower
+    /// rows, OCR reads what is left, and `detect` returns a two-row layout for
+    /// a six-row window.
+    fn partially_covered_reference_lines() -> Vec<OcrLineBox> {
+        reference_lines()
+            .into_iter()
+            .filter(|l| l.x != 134 || l.centre_y() <= 700.0)
+            .collect()
+    }
+
+    /// The reference panel with its wager line gone — what a tooltip over the
+    /// chrome leaves, and the frame that has nothing but the known rect to
+    /// anchor on.
+    fn chromeless_reference_lines() -> Vec<OcrLineBox> {
+        reference_lines()
+            .into_iter()
+            .filter(|l| !l.text.starts_with("Wager"))
+            .collect()
+    }
+
+    /// The rect the loop remembers must GROW, never shrink to whatever the
+    /// last frame could see. A tooltip over the lower rows measures a panel
+    /// two rows tall; writing that over the six-row rect loses the bottom of
+    /// the window, and the rect is the anchor the NEXT frame needs.
+    #[test]
+    fn the_grown_rect_covers_every_row_the_full_read_measured() {
+        let g = MercGeometry::default();
+        let full = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let full_rect = panel_bounds(&full, &g).expect("six rows have bounds");
+        let partial = detect(&partially_covered_reference_lines(), &g, &vocab(), None)
+            .expect("two rows and the wager still detect");
+        let partial_rect = panel_bounds(&partial, &g).expect("two rows have bounds");
+        let bottom_row = full.rows.last().expect("six rows").centre_y.round() as i32;
+        // The precondition the bug is made of. Without it the union below
+        // would be covering rows the partial rect already held.
+        assert!(
+            !contains(partial_rect, (full.column_x0, bottom_row)),
+            "the two-row rect {partial_rect:?} must stop short of row 6 at {bottom_row}"
+        );
+
+        let grown = union_rect(Some(full_rect), Some(partial_rect)).expect("two rects union");
+
+        for row in &full.rows {
+            assert!(
+                contains(grown, (full.column_x0, row.centre_y.round() as i32)),
+                "row {} at {} fell outside the grown rect {grown:?}",
+                row.index,
+                row.centre_y
+            );
+        }
+    }
+
+    /// The retire the smoke recorded, in one assertion pair: with the chrome
+    /// hidden the rect is the only anchor left, the shrunken one rejects the
+    /// full read, and the grown one carries it.
+    #[test]
+    fn a_full_read_anchors_on_the_grown_rect_the_shrunken_one_rejects() {
+        let g = MercGeometry::default();
+        let full_rect =
+            panel_bounds(&detect(&reference_lines(), &g, &vocab(), None).expect("six rows"), &g)
+                .expect("six rows have bounds");
+        let partial_rect = panel_bounds(
+            &detect(&partially_covered_reference_lines(), &g, &vocab(), None).expect("two rows"),
+            &g,
+        )
+        .expect("two rows have bounds");
+        let chromeless = chromeless_reference_lines();
+        // The precondition: this is the frame that retired a window still on
+        // screen (app.log 2026-08-26 16:08:25 → 16:08:28).
+        assert!(
+            detect(&chromeless, &g, &vocab(), Some(partial_rect)).is_none(),
+            "the shrunken rect must not anchor six rows — otherwise this proves nothing"
+        );
+
+        let grown = union_rect(Some(full_rect), Some(partial_rect));
+
+        assert_eq!(
+            detect(&chromeless, &g, &vocab(), grown).map(|l| l.rows.len()),
+            Some(6)
+        );
+    }
+
+    /// The FIRST detect of a window has nothing remembered, and the rect it
+    /// measures must survive the union unchanged — otherwise the grow-only
+    /// rule would leave the loop permanently without an anchor.
+    #[test]
+    fn growing_from_nothing_keeps_the_rect_just_measured() {
+        assert_eq!(union_rect(None, Some([100, 200, 300, 400])), Some([100, 200, 300, 400]));
+    }
+
+    /// A layout with no rows has no bounds, and a frame that produced none
+    /// must not erase the rect the loop is holding.
+    #[test]
+    fn growing_onto_nothing_keeps_the_remembered_rect() {
+        assert_eq!(union_rect(Some([100, 200, 300, 400]), None), Some([100, 200, 300, 400]));
+    }
+
+    // -- the fold the loop actually applies ([`next_panel`]) ---------------
+
+    /// The grow-only rule, through the fold rather than the union directly:
+    /// nothing about this frame says the panel changed, so a partial read under
+    /// a tooltip must not shrink the rect the next full read anchors on.
+    #[test]
+    fn an_unchanged_panel_grows_the_remembered_rect() {
+        let g = MercGeometry::default();
+        let full = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let full_rect = panel_bounds(&full, &g).expect("six rows have bounds");
+        let partial = detect(&partially_covered_reference_lines(), &g, &vocab(), None)
+            .expect("two rows and the wager still detect");
+        let partial_rect = panel_bounds(&partial, &g).expect("two rows have bounds");
+        let bottom_row = full.rows.last().expect("six rows").centre_y.round() as i32;
+        // The precondition the bug is made of: this frame's own rect does not
+        // reach row 6, so a fold that took it alone would lose the row.
+        assert!(
+            !contains(partial_rect, (full.column_x0, bottom_row)),
+            "the two-row rect {partial_rect:?} must stop short of row 6 at {bottom_row}"
+        );
+
+        let held = next_panel(
+            Some(full_rect),
+            Some(partial_rect),
+            false,
+            column_tolerance(&g, partial.scale),
+        )
+        .expect("two rects fold");
+
+        for row in &full.rows {
+            assert!(
+                contains(held, (full.column_x0, row.centre_y.round() as i32)),
+                "row {} at {} fell outside the held rect {held:?}",
+                row.index,
+                row.centre_y
+            );
+        }
+    }
+
+    /// The exception a union cannot express, and the one that would poison the
+    /// anchor for the rest of the capture: a panel the player DRAGGED. Its rows
+    /// still land inside a hull as wide as the grid, so the hull keeps the OLD
+    /// column's left edge — and [`panel_anchor`] rebuilds its `expected_x` from
+    /// that edge, pinning every later frame to a column the panel has left.
+    #[test]
+    fn a_panel_whose_column_moved_replaces_the_remembered_rect() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let remembered = panel_bounds(&layout, &g).expect("six rows have bounds");
+        // Two cells right — the same displacement the moved-column anchor test
+        // uses, and well past the half-cell tolerance.
+        let shift = (g.cell_size * layout.scale * 2.0).round() as i32;
+        let moved = [remembered[0] + shift, remembered[1], remembered[2], remembered[3]];
+
+        let held = next_panel(
+            Some(remembered),
+            Some(moved),
+            false,
+            column_tolerance(&g, layout.scale),
+        )
+        .expect("two rects fold");
+
+        assert_eq!(held, moved);
+        // Named rather than implied: the hull is what this rule refuses, and it
+        // is what the fold produced before the column test existed.
+        assert_ne!(
+            held,
+            union_rect(Some(remembered), Some(moved)).expect("two rects union"),
+            "the fold must not hand back the hull of the old position and the new"
+        );
+    }
+
+    /// A REMATCH puts a DIFFERENT mercenary behind a panel that looks the same.
+    /// The rect the loop grew belongs to the window that is gone, and a hull
+    /// spanning both would carry a retired mercenary's footprint onto the one
+    /// that replaced it — the same inheritance the confirmations are dropped
+    /// for.
+    #[test]
+    fn a_replaced_panel_takes_this_frames_rect_alone() {
+        let remembered = [100, 200, 300, 400];
+        let fresh = [100, 260, 300, 150];
+
+        assert_eq!(next_panel(Some(remembered), Some(fresh), true, 20), Some(fresh));
+    }
+
+    /// The FIRST detect of a window has nothing remembered, and the rect it
+    /// just measured has to come through the fold unchanged — otherwise the
+    /// loop would never acquire an anchor at all.
+    #[test]
+    fn a_first_detect_keeps_the_rect_it_just_measured() {
+        assert_eq!(
+            next_panel(None, Some([100, 200, 300, 400]), false, 20),
+            Some([100, 200, 300, 400])
+        );
+    }
+
+    /// The reason the log needs when the column test is what said no: a panel
+    /// dragged sideways keeps every row inside a rect as wide as the grid, so
+    /// this is the only sub-predicate that can catch it — and the line has to
+    /// say so rather than blaming a row.
+    #[test]
+    fn the_anchor_reports_a_moved_column_with_both_positions() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
+        let centres: Vec<f32> = layout.rows.iter().map(|r| r.centre_y).collect();
+        // Two cells right of where the rect was built — well past the
+        // half-cell tolerance, and still inside the rect's own width.
+        let moved = layout.column_x0 as f32 + g.cell_size * layout.scale * 2.0;
+
+        let why = panel_anchor(Some(rect), &centres, moved, &g, layout.scale);
+
+        match why {
+            PanelAnchor::ColumnMoved { column_x, expected_x, tolerance } => {
+                assert_eq!(column_x, moved.round() as i32);
+                // The rect reconstructs the column it was built from.
+                assert_eq!(expected_x, layout.column_x0);
+                assert!(
+                    (column_x - expected_x).abs() > tolerance,
+                    "{column_x} vs {expected_x} must exceed the tolerance {tolerance} that \
+                     rejected it"
+                );
+            }
+            other => panic!("expected ColumnMoved, got {other:?}"),
+        }
+    }
+
+    /// The other sub-predicate: the line must name a row centre that fell out,
+    /// because that is what says the rect is too SHORT rather than in the wrong
+    /// place — and it must name the FIRST of them, the top of what was lost,
+    /// which is where the rect stops rather than where the panel ends.
+    ///
+    /// The rect a tooltip leaves cannot show that: [`PANEL_FOOTER_PITCHES`]
+    /// makes a two-row rect reach past rows 3-5, so exactly one centre falls
+    /// out of it and first, last and any are the same answer. A panel DRAGGED
+    /// DOWN with its column unchanged is the case that separates them — the
+    /// column test passes, and every centre past the remembered rect's bottom
+    /// is outside it.
+    #[test]
+    fn the_anchor_reports_the_first_row_that_fell_outside() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let remembered = panel_bounds(&layout, &g).expect("six rows have bounds");
+        // Far enough that row 4's centre lands one px past the remembered
+        // rect's bottom edge, which puts rows 4, 5 and 6 outside it.
+        let drop = (remembered[1] + remembered[3]) as f32 - layout.rows[3].centre_y + 1.0;
+        let dropped: Vec<f32> = layout.rows.iter().map(|r| r.centre_y + drop).collect();
+        let outside: Vec<i32> = dropped
+            .iter()
+            .filter(|&&c| !contains(remembered, (layout.column_x0, c.round() as i32)))
+            .map(|c| c.round() as i32)
+            .collect();
+        // Without this the assertion below would hold for "the last row that
+        // fell outside", or for any of them, and would prove nothing about
+        // WHICH one the reason names.
+        assert!(
+            outside.len() > 1,
+            "more than one row must fall outside {remembered:?} or `first` is not exercised, \
+             dropped centres were {dropped:?}"
+        );
+
+        let why = panel_anchor(Some(remembered), &dropped, layout.column_x0 as f32, &g, layout.scale);
+
+        assert_eq!(why, PanelAnchor::RowOutside { centre: outside[0] });
+    }
+
+    /// No live capture is not the same answer as a rect the rows missed, and
+    /// the log has to tell them apart: one says the loop had nothing to weigh
+    /// against, the other says it weighed and rejected.
+    #[test]
+    fn the_anchor_reports_a_missing_rect_rather_than_a_row() {
+        let g = MercGeometry::default();
+
+        let why = panel_anchor(None, &[620.0, 669.0], 134.0, &g, 1.0);
+
+        assert_eq!(why, PanelAnchor::NoKnownRect);
+    }
+
+    /// A rect with nothing to place in it — the frame read no rows at all.
+    #[test]
+    fn the_anchor_reports_no_rows_when_the_frame_clustered_none() {
+        let g = MercGeometry::default();
+
+        let why = panel_anchor(Some([80, 560, 600, 400]), &[], 134.0, &g, 1.0);
+
+        assert_eq!(why, PanelAnchor::NoRows);
+    }
+
+    /// The positive answer, which is what `detect` branches on.
+    #[test]
+    fn the_anchor_reports_anchored_when_the_rows_are_where_the_rect_is() {
+        let g = MercGeometry::default();
+        let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
+        let centres: Vec<f32> = layout.rows.iter().map(|r| r.centre_y).collect();
+
+        let why = panel_anchor(Some(rect), &centres, layout.column_x0 as f32, &g, layout.scale);
+
+        assert_eq!(why, PanelAnchor::Anchored);
+    }
+
+    /// The miss the smoke could not explain: rows read, chrome gone, nothing
+    /// remembered. Every field on the report is one the log line prints.
+    #[test]
+    fn a_chromeless_frame_with_no_rect_misses_at_the_anchor_step() {
+        let g = MercGeometry::default();
+
+        let why = detect_reason(&chromeless_reference_lines(), &g, &vocab(), None)
+            .expect_err("no anchor, no layout");
+
+        assert_eq!(why.column_x0, Some(134.0));
+        assert_eq!(
+            why.stage,
+            DetectStage::NoAnchor { rows: 6, panel: PanelAnchor::NoKnownRect }
+        );
+    }
+
+    /// The ordinary miss — an empty screen — must report the candidate step,
+    /// not the anchor step, so a log full of these is legible as "nothing on
+    /// screen" rather than "the panel keeps losing its anchor".
+    #[test]
+    fn a_frame_with_no_skill_names_misses_for_want_of_candidates() {
+        let g = MercGeometry::default();
+
+        let why = detect_reason(&[line("Vika has entered the area", 10, 10)], &g, &vocab(), None)
+            .expect_err("no candidates, no layout");
+
+        assert_eq!(why.candidates, 0);
+        assert_eq!(why.column_x0, None);
+        assert_eq!(
+            why.stage,
+            DetectStage::TooFewCandidates { needed: g.min_skill_candidates }
+        );
     }
 
     /// The all-quantifier pins the VERTICAL span and almost nothing else. The
@@ -2187,6 +2770,16 @@ mod tests {
         );
     }
 
+    /// The crop the loop takes off a layout, as [`crop_around`]'s callers build
+    /// it: the rect that layout measured, at that layout's own pitch.
+    fn crop_of(layout: &MercLayout, g: &MercGeometry, screen: [u32; 2]) -> [i32; 4] {
+        crop_around(
+            panel_bounds(layout, g).expect("a layout with rows has bounds"),
+            effective_pitch(layout, g),
+            screen,
+        )
+    }
+
     /// The crop has to clear the HEADER band, which sits far above the panel
     /// rect's own one-pitch margin: on the reference panel the title is at
     /// y 30 and the wager at 173 while row 1 is at 620. A crop that cut them
@@ -2198,7 +2791,7 @@ mod tests {
         let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
         let panel = panel_bounds(&layout, &g).expect("six rows have bounds");
 
-        let crop = detect_crop_bounds(&layout, &g, [1920, 1200]).expect("six rows have a crop");
+        let crop = crop_of(&layout, &g, [1920, 1200]);
 
         for header in reference_lines().iter().filter(|l| l.centre_y() < 600.0) {
             assert!(
@@ -2210,6 +2803,48 @@ mod tests {
         assert!(encloses(crop, panel), "and the panel rect, footer included");
     }
 
+    /// The crop follows the rect the LOOP HOLDS, not the layout of the frame
+    /// that produced it — which is the whole reason [`crop_around`] takes a
+    /// rect. A partial read under a tooltip measures a two-row panel; a crop
+    /// built from that layout is two rows tall, and the next full read is then
+    /// handed a frame cropped out of the rows it is expected to find, on a
+    /// window plainly on screen.
+    #[test]
+    fn the_crop_after_a_partial_read_still_covers_every_row_the_full_read_measured() {
+        let g = MercGeometry::default();
+        let full = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
+        let partial = detect(&partially_covered_reference_lines(), &g, &vocab(), None)
+            .expect("two rows and the wager still detect");
+        let bottom_row = full.rows.last().expect("six rows").centre_y.round() as i32;
+        // The precondition, and the bug: this frame's OWN crop loses row 6.
+        let from_this_frame = crop_of(&partial, &g, SCREEN);
+        assert!(
+            !contains(from_this_frame, (full.column_x0, bottom_row)),
+            "the two-row layout's own crop {from_this_frame:?} must stop short of row 6 at \
+             {bottom_row}, or this test proves nothing"
+        );
+        // What the tick does: the held rect grows first, and the crop is taken
+        // off THAT.
+        let held = next_panel(
+            panel_bounds(&full, &g),
+            panel_bounds(&partial, &g),
+            false,
+            column_tolerance(&g, partial.scale),
+        )
+        .expect("two rects fold");
+
+        let crop = crop_around(held, effective_pitch(&partial, &g), SCREEN);
+
+        for row in &full.rows {
+            assert!(
+                contains(crop, (full.column_x0, row.centre_y.round() as i32)),
+                "row {} at {} fell outside the crop {crop:?}",
+                row.index,
+                row.centre_y
+            );
+        }
+    }
+
     /// It is a CROP, not the screen: a rect that reached the whole desktop
     /// would buy nothing, and the point of the whole exercise is the OCR cost.
     #[test]
@@ -2217,7 +2852,7 @@ mod tests {
         let g = MercGeometry::default();
         let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
 
-        let crop = detect_crop_bounds(&layout, &g, [1920, 1200]).expect("six rows have a crop");
+        let crop = crop_of(&layout, &g, [1920, 1200]);
 
         assert!(crop[2] * crop[3] * 2 < 1920 * 1200, "crop was {crop:?}");
     }
@@ -2230,7 +2865,7 @@ mod tests {
         let g = MercGeometry::default();
         let layout = detect(&reference_lines(), &g, &vocab(), None).expect("the reference panel");
 
-        let crop = detect_crop_bounds(&layout, &g, [700, 900]).expect("six rows have a crop");
+        let crop = crop_of(&layout, &g, [700, 900]);
 
         assert!(encloses([0, 0, 700, 900], crop), "crop was {crop:?}");
     }
@@ -2280,7 +2915,7 @@ mod tests {
     /// The screen-edge case, and the reason the FIT test is on the panel's
     /// on-screen part. A recruit window opened low puts `panel_bounds`'
     /// three-pitch footer reach past the bottom of the screen, where
-    /// `detect_crop_bounds` is clamped and cannot follow — so an unclamped
+    /// `crop_around` is clamped and cannot follow — so an unclamped
     /// comparison fails on every tick and the loop pays a second full-screen
     /// OCR for ever.
     #[test]
@@ -2356,7 +2991,7 @@ mod tests {
         let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
 
         let band = probe_band_bounds(&layout, &g, [1920, 1200]).expect("a band");
-        let crop = detect_crop_bounds(&layout, &g, [1920, 1200]).expect("a crop");
+        let crop = crop_of(&layout, &g, [1920, 1200]);
 
         assert!(band[3] < crop[3], "band {band:?} vs crop {crop:?}");
     }
