@@ -2,8 +2,9 @@
 //!
 //! The Linux-testable core of the Merc OCR module: the vocabulary
 //! (`vocab`), the pure panel geometry over OCR line rects (`geometry`), the
-//! support-icon templates and the roman tier badge (`icons`), and the
-//! `mercenary` SSOT slice published to every window (this file).
+//! support-icon templates and the roman tier badge (`icons`), the gem-art
+//! seeds those templates start from (`seed`), and the `mercenary` SSOT slice
+//! published to every window (this file).
 //!
 //! # What lives where
 //!
@@ -38,6 +39,7 @@ pub mod icons;
 pub mod read;
 pub mod run;
 pub mod search;
+pub mod seed;
 pub mod sources;
 pub mod sync;
 pub mod trigger;

@@ -122,5 +122,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build desktop image
         run: docker compose build desktop
+      # The merc seed-art fixture is NOT committed (GPL-3 repo, CC-BY-NC-SA
+      # icons — see desktop/src-tauri/tests/fixtures/merc-seed-art/README.md),
+      # so the Rust suite has to fetch it first or every calibration test in
+      # mercenary::seed fails. Against PROD, whose cache already holds all 223
+      # support icons; a dev server would fetch each one from the wiki. The
+      # target exits non-zero on any failure, so a bad fetch stops here with a
+      # readable cause instead of surfacing as a wall of test failures.
+      - name: Fetch merc seed art
+        run: make merc-seed-art POE_SERVER_URL=https://profitofexile.top
       - name: Cargo test
         run: docker compose run --rm -w /app/desktop/src-tauri desktop cargo test

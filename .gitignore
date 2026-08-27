@@ -23,6 +23,14 @@ data/gem-icons-cache/
 # are copied into the production volumes. Same copyrighted bytes, outside data/.
 gem-icons-cache/
 currency-exchange-icons-cache/
+# The merc seed-art test fixture (POE-208): the SAME copyrighted bytes as
+# above, reached through the same route, so the same rule applies. Unlike the
+# 39x39 crops in ../merc-icon-crops (screenshots of a running game), these are
+# complete, reusable CC-BY-NC-SA inventory icons, and this repository is
+# GPL-3.0 — vendoring them would relicense what cannot be relicensed. Fetch
+# them with `make merc-seed-art`; the README stays committed and says so.
+desktop/src-tauri/tests/fixtures/merc-seed-art/*
+!desktop/src-tauri/tests/fixtures/merc-seed-art/README.md
 desktop/src-tauri/target/
 desktop/node_modules/
 desktop/.svelte-kit/

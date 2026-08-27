@@ -3535,6 +3535,7 @@ pub fn run() {
             mercenary::debug::merc_debug_capture,
             mercenary::debug::merc_scan_now,
             mercenary::debug::merc_forget_template,
+            mercenary::debug::merc_forget_seed,
             mercenary::debug::merc_reset_templates,
             mercenary::sources::merc_set_sources_off,
             mercenary::search::merc_set_trade_auto,
