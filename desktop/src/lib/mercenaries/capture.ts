@@ -183,6 +183,25 @@ export interface MercenarySlice {
 	 * shape, so one parse serves both lists.
 	 */
 	pooledFamilies: string[];
+	/**
+	 * Families the store knows only from the gem art it seeded itself with
+	 * (POE-208) — FAMILY NAMES, not `"<family>--<tier>"` keys, because a seed is
+	 * installed once per family under the family's lowest vocabulary tier and
+	 * that tier is the store's business, not a read the player made.
+	 *
+	 * Not a subset of `learnedFamilies`: a hover confirm of a seeded family
+	 * stores a local sample beside the seed, so the same family legitimately
+	 * appears in both lists and gets a chip in both groups — one ✕ per thing
+	 * that can be removed. The seed's own door is `merc_forget_seed(family)`.
+	 *
+	 * Declared REQUIRED, like `pooledFamilies`, because that is what every
+	 * publisher of this slice sends. A Rust build older than POE-208 omits it,
+	 * and `templateGroups` (`capture-view.ts`) defends against that at runtime
+	 * rather than the type carrying an optionality no current writer produces —
+	 * the store applies the slice WHOLE, so there is no field-wise place to
+	 * default it either.
+	 */
+	seededFamilies: string[];
 	lastError: string | null;
 	/**
 	 * Who the module HEARD, for the burst it is scanning under (2026-08-25).
@@ -239,6 +258,7 @@ export function mercenarySliceDefault(): MercenarySlice {
 		capture: null,
 		learnedFamilies: [],
 		pooledFamilies: [],
+		seededFamilies: [],
 		lastError: null,
 		burstSpeaker: null,
 		geometrySource: 'default',

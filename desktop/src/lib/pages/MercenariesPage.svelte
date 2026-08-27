@@ -33,6 +33,7 @@
 		STATUS_LABEL,
 		STATUS_TONE,
 		captureOnScreen,
+		canResetTemplates,
 		capturedAt,
 		describeDebugResult,
 		groupKey,
@@ -42,11 +43,13 @@
 		POOLED_CHIP_MARK,
 		poolSyncView,
 		positionKey,
+		RESET_TEMPLATES_TITLE,
+		seedGroupLabel,
 		skillText,
 		skillTitle,
 		supportText,
 		supportTitle,
-		templateChip,
+		templateGroups,
 	} from '$lib/mercenaries/capture-view';
 	import { enabledSources, withSourceEnabled } from '$lib/mercenaries/merc-prefs';
 	import { evaluateCapture } from '$lib/mercenaries/verdict';
@@ -183,10 +186,13 @@
 
 	// --- Module commands ------------------------------------------------------
 
-	const pooledKeys = $derived(new Set(merc.pooledFamilies));
-	const templates = $derived(
-		merc.learnedFamilies.map((raw) => ({ raw, ...templateChip(raw, pooledKeys) }))
-	);
+	/** Both chip groups, from the slice's three lists (POE-208). `seeded` is not
+	 *  a subset of `learned` and neither subtracts from the other: a confirm of
+	 *  a seeded family stores a local sample beside the seed, so that family has
+	 *  a chip — and a ✕ — in each group. */
+	const chipGroups = $derived(templateGroups(merc));
+	const templates = $derived(chipGroups.learned);
+	const seeded = $derived(chipGroups.seeded);
 	/** The shared pool's line (POE-201). `Date.now()` is read here rather than
 	 *  kept in state: the slice is re-polled every 3 s and the age is worded to
 	 *  the minute, so a ticking clock would buy nothing and churn the DOM. */
@@ -246,6 +252,19 @@
 		templateError = null;
 		try {
 			await invoke('merc_forget_template', { family, tier });
+		} catch (e) {
+			templateError = `${e}`;
+		}
+	}
+
+	/** The seed's own door (POE-208). Family-level and local: it removes the
+	 *  derived seed and blocklists the family so the next module start does not
+	 *  re-derive the same art. No tombstone — a seed was never confirmed here
+	 *  and was never offered to the pool, so there is nothing to retire. */
+	async function forgetSeed(family: string): Promise<void> {
+		templateError = null;
+		try {
+			await invoke('merc_forget_seed', { family });
 		} catch (e) {
 			templateError = `${e}`;
 		}
@@ -416,11 +435,36 @@
 						</li>
 					{/each}
 				</ul>
-				<Button
-					variant="danger"
-					onclick={resetTemplates}
-					title="Forget every learned template. Use this when a mistimed hover poisoned the store."
-				>
+			{/if}
+			<!-- A SEPARATE group (POE-208), not a marker on the list above: a seed
+			     is a different thing from a learned template. Nobody confirmed it,
+			     it carries no tier anyone read, and its ✕ has no shared
+			     consequence — so it gets its own head, its own count and its own
+			     command rather than borrowing the learned chip's wording. -->
+			{#if seeded.length > 0}
+				<span class="templates-head seed-head">{seedGroupLabel(seeded.length)}</span>
+				<ul class="template-list">
+					{#each seeded as chip (chip.family)}
+						<li class="template seeded" title={chip.hint}>
+							<span>{chip.label}</span>
+							<button
+								class="forget"
+								onclick={() => forgetSeed(chip.family)}
+								aria-label="forget the seeded template for {chip.label}"
+								title={chip.hint}
+							>
+								✕
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			<!-- Outside BOTH lists: the reset is the only door to the seed
+			     blocklist and the art cache, and a fresh device has seeds with no
+			     learned chips at all. Inside the learned list's `{:else}` it was
+			     invisible in exactly the state that needs it. -->
+			{#if canResetTemplates(templates.length, seeded.length)}
+				<Button variant="danger" onclick={resetTemplates} title={RESET_TEMPLATES_TITLE}>
 					Reset learned templates
 				</Button>
 			{/if}
@@ -1081,6 +1125,18 @@
 
 	.template.pooled {
 		border-style: dashed;
+	}
+
+	/* The seeded group starts its own row: it is a second list under a second
+	   head, and letting it flow onto the learned list's line would read as one
+	   list with two headings. */
+	.seed-head {
+		flex-basis: 100%;
+	}
+
+	.template.seeded {
+		border-style: dotted;
+		color: var(--color-lab-text-muted);
 	}
 
 	/* Visually hidden, still read aloud — the provenance must not be a

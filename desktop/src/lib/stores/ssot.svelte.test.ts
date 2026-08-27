@@ -578,6 +578,7 @@ describe('mercenary slice', () => {
 			},
 			learnedFamilies: ['Return--3'],
 			pooledFamilies: ['Return--3'],
+			seededFamilies: ['Fork'],
 			lastError: 'ocr engine slow',
 			geometrySource: 'file',
 			sourcesOff: ['guide-a'],
@@ -624,6 +625,9 @@ describe('mercenary slice', () => {
 		// The pool's two fields ride the same whole-slice apply as the rest —
 		// they are what the page's chips and its pool line read.
 		expect(mod.ssot.mercenary.pooledFamilies).toEqual(['Return--3']);
+		// The gem-art seeds ride the same apply (POE-208) — family names, not
+		// `--<tier>` keys, and their own chip group reads them.
+		expect(mod.ssot.mercenary.seededFamilies).toEqual(['Fork']);
 		expect(mod.ssot.mercenary.sync.lastPull).toBe('merged');
 		expect(mod.ssot.mercenary.sync.pooledSamples).toBe(1);
 	});
@@ -648,6 +652,7 @@ describe('mercenary slice', () => {
 				capture: null,
 				learnedFamilies: [],
 				pooledFamilies: [],
+				seededFamilies: [],
 				lastError: null,
 				geometrySource: 'default',
 				sourcesOff: [],
@@ -677,6 +682,10 @@ describe('mercenary slice', () => {
 		// field-wise merge would leave the previous device's pooled chips and a
 		// stale "merged" line standing under the new slice.
 		expect(mod.ssot.mercenary.pooledFamilies).toEqual([]);
+		// Same whole-slice rule for the seeds: a family-wise merge would leave
+		// a chip for a seed the new store no longer holds, and its ✕ would
+		// blocklist a family nothing had seeded.
+		expect(mod.ssot.mercenary.seededFamilies).toEqual([]);
 		expect(mod.ssot.mercenary.sync.lastPull).toBe('never');
 		expect(mod.ssot.mercenary.learnedFamilies).toEqual([]);
 		expect(mod.ssot.mercenary.sourcesOff).toEqual([]);

@@ -485,7 +485,7 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
         return Err(format!("template key for {family:?} carries no tier"));
     };
     let dir = templates_dir(&app)?;
-    let (learned, pooled, tombstone, lost_seeds) = {
+    let (learned, pooled, seeded_now, tombstone) = {
         let state = app.state::<AppState>();
         // The user's un-poison click writes the same directory the loop's
         // off-tick writer and the pool's merge do. See
@@ -507,15 +507,23 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
             // The same seam the pull's merge uses to name what it evicted, so
             // there is one answer to "which families owe a blocklist entry".
             let lost = store.seeds_lost_since(&seeded);
+            // Blocked here, under the same acquisition as the eviction, for the
+            // reason `merc_forget_seed` gives: a pass installing between the
+            // two would put the evicted seed back. Lock order dir lock → store
+            // mutex → blocklist lock, which is the directory-first order the
+            // merge path already keeps.
+            for lost_family in &lost {
+                block_seed(&app, &dir, lost_family);
+            }
             store.save(&dir)?;
-            Ok((store.learned_keys(), store.pooled_keys(), tombstone, lost))
+            Ok((
+                store.learned_keys(),
+                store.pooled_keys(),
+                store.seeded_families(),
+                tombstone,
+            ))
         })?
     };
-    // Every seed eviction blocklists, whichever door it came through, or the
-    // next module start re-derives it from the art still in the cache.
-    for lost in &lost_seeds {
-        block_seed(&app, &dir, lost);
-    }
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: forgot template {family} (tier {tier})"));
     if tombstone {
@@ -524,6 +532,11 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
     publish(&app, |slice| {
         slice.learned_families = learned;
         slice.pooled_families = pooled;
+        // This door can evict a seed too (the forgotten key may have held
+        // one), so the page's seed group is republished from the same read as
+        // the other two — a chip left behind would offer a `merc_forget_seed`
+        // for a seed that is already gone.
+        slice.seeded_families = seeded_now;
     });
     Ok(())
 }
@@ -549,7 +562,7 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
 #[tauri::command]
 pub fn merc_forget_seed(family: String, app: AppHandle) -> Result<(), String> {
     let dir = templates_dir(&app)?;
-    {
+    let seeded_now = {
         let state = app.state::<AppState>();
         let mut store = state
             .merc_templates
@@ -558,10 +571,24 @@ pub fn merc_forget_seed(family: String, app: AppHandle) -> Result<(), String> {
         if !store.forget_seed(&family) {
             return Err(format!("no seeded template for {family}"));
         }
-    }
-    block_seed(&app, &dir, &family);
+        // Under the SAME acquisition as the removal, and only AFTER it
+        // succeeded: an installing pass that takes this mutex between the two
+        // would put the family straight back and the ✕ would read as broken,
+        // and blocking FIRST would let a click on a stale chip blocklist a
+        // family this device never seeded. Lock order store mutex → blocklist
+        // lock (`seed::SEED_BLOCKLIST_LOCK`); `writing_icons_dir` stays out of
+        // it, because no template file is written here. It is a small JSON
+        // write under the store mutex, once, on a click.
+        block_seed(&app, &dir, &family);
+        store.seeded_families()
+    };
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: forgot the seeded template for {family}"));
+    // Read under the same lock as the removal and published here, like the two
+    // forget/reset doors above: the capture loop republishes on its own ticks
+    // only, so a module sitting idle would leave the dismissed chip on the page
+    // with nothing to explain it.
+    publish(&app, |slice| slice.seeded_families = seeded_now);
     Ok(())
 }
 
@@ -571,7 +598,7 @@ pub fn merc_forget_seed(family: String, app: AppHandle) -> Result<(), String> {
 /// Fail-LOUD, unlike most of this module's disk writes: a blocklist that did
 /// not persist means the seed comes back on the next start, and the user who
 /// just dismissed it has no way to tell that from the app ignoring them.
-fn block_seed(app: &AppHandle, dir: &Path, family: &str) {
+pub(super) fn block_seed(app: &AppHandle, dir: &Path, family: &str) {
     match super::seed::block_family(dir, family) {
         Ok(true) => crate::app_log(app, format!("Merc: {family} will not be seeded again")),
         Ok(false) => {}
@@ -633,6 +660,9 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
     publish(&app, |slice| {
         slice.learned_families = Vec::new();
         slice.pooled_families = Vec::new();
+        // The reset deleted the blocklist AND the cached art, so nothing is
+        // seeded until the next module start fetches and re-derives.
+        slice.seeded_families = Vec::new();
     });
     Ok(())
 }

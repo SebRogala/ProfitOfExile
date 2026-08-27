@@ -364,6 +364,116 @@ export function templateChip(raw: string, pooledKeys: ReadonlySet<string>): Temp
 /** The marker a pooled chip carries. */
 export const POOLED_CHIP_MARK = '⇄';
 
+/** One seeded family, as the page shows it and forgets it (POE-208). */
+export interface SeedChip {
+	/** The argument `merc_forget_seed(family)` takes — a family name, never a key. */
+	family: string;
+	/** What the chip prints. No tier: the store's key tier is not a read. */
+	label: string;
+	/** The chip's `title`. */
+	hint: string;
+}
+
+/**
+ * What a SEED chip's ✕ does — deliberately NOT [`FORGET_HINT`].
+ *
+ * A seed was never confirmed by anybody and was never offered to the pool, so
+ * there is nothing to retire for anyone else; saying so would promise a shared
+ * effect this button does not have. What it does have is a local one worth
+ * naming: the family is blocklisted, because every seed eviction blocklists
+ * (otherwise the next module start re-derives the same wrong art from the same
+ * cached PNG and the ✕ looks broken).
+ */
+const SEED_FORGET_HINT =
+	'The ✕ removes it on this device and blocklists the family, so it is not seeded again; a hover confirmation still teaches it for real.';
+
+/**
+ * Word one seeded family's chip.
+ *
+ * Its provenance is the whole reason it needs words: nothing on this device
+ * confirmed it, so a chip that read like a learned one would claim a hover that
+ * never happened — and the art it came from is a guess by NAME, which is the
+ * failure mode the ✕ exists for.
+ */
+export function seedChip(family: string): SeedChip {
+	return {
+		family,
+		label: family,
+		hint: `Seeded from the support gem's own inventory art, not from a hover. ${SEED_FORGET_HINT}`
+	};
+}
+
+/**
+ * The seeded chips, in the order Rust listed them.
+ *
+ * `undefined` is a Rust build older than POE-208, not an empty store, and both
+ * render the same way — as no group at all. It is defended HERE rather than in
+ * the store because `applySnapshot` takes the mercenary slice whole (one writer,
+ * no field-wise merge), so this is the first place that can supply a default.
+ */
+function seedChips(seededFamilies: readonly string[] | undefined): SeedChip[] {
+	return (seededFamilies ?? []).map(seedChip);
+}
+
+/** The seeded group's heading, count included. */
+export function seedGroupLabel(count: number): string {
+	return `seeded from art — ${count} ${count === 1 ? 'family' : 'families'}`;
+}
+
+/**
+ * Whether the page offers "Reset learned templates" at all.
+ *
+ * Not `learned.length > 0` (POE-208): `merc_reset_templates` is also the ONLY
+ * door to the seed blocklist and the cached gem art, and the state where that
+ * matters most — a fresh device after the format-2 purge — has seeds and zero
+ * learned chips. Gating on the learned list alone would leave a player who
+ * dismissed every seed chip with no way to get any of them back.
+ */
+export function canResetTemplates(learnedCount: number, seededCount: number): boolean {
+	return learnedCount > 0 || seededCount > 0;
+}
+
+/**
+ * What the reset button says it does — both halves, because the second one is
+ * the surprise: the click also clears the seed blocklist and the art cache.
+ */
+export const RESET_TEMPLATES_TITLE =
+	'Forget every learned template. Use this when a mistimed hover poisoned the store. It also clears the seed blocklist and the cached gem art, so the next module start re-seeds from scratch.';
+
+/** The three lists of the merc slice the chips are derived from. */
+export interface MercTemplateLists {
+	learnedFamilies: readonly string[];
+	pooledFamilies: readonly string[];
+	/** Absent on a Rust build older than POE-208. */
+	seededFamilies?: readonly string[];
+}
+
+/** The chip groups the page renders, one per thing that can be forgotten. */
+export interface TemplateGroups {
+	/** Hover-confirmed and pool-merged keys — `merc_forget_template(family, tier)`. */
+	learned: (TemplateChip & { raw: string })[];
+	/** Gem-art seeds — `merc_forget_seed(family)`. */
+	seeded: SeedChip[];
+}
+
+/**
+ * Split the slice's three lists into the groups the page draws (POE-208).
+ *
+ * The two groups are derived from DIFFERENT lists and neither subtracts from
+ * the other, which is the contract worth stating: `seededFamilies` is not a
+ * subset of `learnedFamilies`, and a family in both belongs in both — a confirm
+ * of a seeded family stores a local sample BESIDE the seed, so there are two
+ * separate things on this device and two separate ✕ buttons that remove them.
+ * Hiding either would leave the player unable to remove the one that is wrong.
+ */
+export function templateGroups(lists: MercTemplateLists): TemplateGroups {
+	const pooledKeys = new Set(lists.pooledFamilies);
+	return {
+		learned: lists.learnedFamilies.map((raw) => ({ raw, ...templateChip(raw, pooledKeys) })),
+		seeded: seedChips(lists.seededFamilies)
+	};
+}
+
 /** What the page prints about the shared pool. */
 export interface PoolSyncView {
 	label: string;
