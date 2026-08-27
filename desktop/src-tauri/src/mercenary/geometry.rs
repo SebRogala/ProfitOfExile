@@ -14,6 +14,7 @@
 //! image.
 
 use image::GenericImageView;
+use serde::{Deserialize, Serialize};
 
 use super::vocab::MercVocab;
 use super::{MercGeometry, MercHeader, ReadState};
@@ -199,15 +200,23 @@ fn median(values: &mut [f32]) -> f32 {
 /// fails: fewer than [`MercGeometry::min_skill_candidates`] skill-name
 /// candidates, or no panel anchor. The anchor is the discriminator against
 /// every other PoE surface that lists skill names (a gem tooltip, the
-/// character panel): those have skill text but no wager and no recruit
-/// buttons. Either chrome line anchors: "Wager" above row 1, or a
-/// "TAKE ITEM" / "REMATCH" button below the last row. Measured 2026-08-24 on
-/// a 1920×1200 screen: Windows OCR returned NO line for `Wager: 8 831` (small
-/// gold text on the dark panel) while both buttons read cleanly, so the wager
-/// alone is not a reliable anchor.
+/// character panel): those have skill text but no wager, no recruit verdict
+/// and no recruit buttons. Any of THREE chrome lines anchors — see
+/// [`AnchorKind`]: "Wager" above row 1 ([`is_wager_line`]), the recruit
+/// verdict above row 1 ([`is_recruit_verdict_line`]), or a
+/// "TAKE ITEM" / "REMATCH" button below the last row ([`is_button_line`]).
+///
+/// Each of the three has been measured missing on its own, which is why there
+/// are three:
+///
+/// - 2026-08-24, 1920×1200: Windows OCR returned NO line for `Wager: 8 831`
+///   (small gold text on the dark panel) while both buttons read cleanly;
+/// - 2026-08-27, 1920×1080 (POE-217): the buttons were HIDDEN under the
+///   player's skill bar and the wager read `Waggr: 6 231`, while
+///   `Should Recruit` read clean.
 ///
 /// `known_panel` is the rect the LAST detect of the capture still on screen
-/// produced ([`panel_bounds`]), and it is a third anchor — see
+/// produced ([`panel_bounds`]), and it is a fourth anchor — see
 /// [`panel_anchor`]. `None` means there is no live capture, and
 /// then a frame anchors on its own chrome or not at all.
 pub fn detect(
@@ -340,9 +349,10 @@ pub fn detect_reason(
     }
 
     // 4. The panel anchor, checked once the pitch is known: a line above row 1
-    //    within `wager_search_pitches` of it reading "Wager", or a button line
-    //    below the last row within the same reach — unless the rows are sitting
-    //    in a panel we already found, which is an anchor in its own right.
+    //    within `wager_search_pitches` of it reading "Wager" or the recruit
+    //    verdict, or a button line below the last row within the same reach —
+    //    unless the rows are sitting in a panel we already found, which is an
+    //    anchor in its own right.
     let first_centre = centres[0];
     let last_centre = centres[centres.len() - 1];
     let panel = panel_anchor(known_panel, &centres, column_x0, g, scale);
@@ -352,11 +362,9 @@ pub fn detect_reason(
         } else {
             g.wager_search_pitches * g.row_pitch * scale
         };
-        let anchor = lines.iter().find(|l| {
-            let c = l.centre_y();
-            (c < first_centre && first_centre - c <= reach && is_wager_line(&l.text, g))
-                || (c > last_centre && c - last_centre <= reach && is_button_line(&l.text, g))
-        });
+        let anchor = lines
+            .iter()
+            .find_map(|l| text_anchor_at(l, first_centre, last_centre, reach, g));
         if anchor.is_none() {
             return Err(DetectMiss {
                 candidates: candidates.len(),
@@ -445,8 +453,9 @@ pub enum DetectStage {
     /// positive finite number.
     BadScale { scale: f32 },
     /// Step 4: rows were read and nothing anchored them — no wager line, no
-    /// button line, and `panel` says why the known-panel anchor abstained.
-    /// This is the shape a tooltip over the footer produces.
+    /// recruit-verdict line, no button line, and `panel` says why the
+    /// known-panel anchor abstained. This is the shape a tooltip over the
+    /// footer produces.
     NoAnchor { rows: usize, panel: PanelAnchor },
 }
 
@@ -463,7 +472,10 @@ impl std::fmt::Display for DetectMiss {
             DetectStage::NoRowClusters => write!(f, "the column clustered to no rows"),
             DetectStage::BadScale { scale } => write!(f, "unusable scale {scale}"),
             DetectStage::NoAnchor { rows, panel } => {
-                write!(f, "{rows} row(s), no wager or button line, known panel: {panel}")
+                write!(
+                    f,
+                    "{rows} row(s), no wager, recruit-verdict or button line, known panel: {panel}"
+                )
             }
         }
     }
@@ -512,23 +524,108 @@ impl std::fmt::Display for PanelAnchor {
 ///   barely over the bar, and OCR noise in the amount pushes it under. So the
 ///   LEADING WORD is what is scored, cut at the first non-alphanumeric
 ///   character so `Wager:` and `Wager:1` both reduce to `wager` (1.000);
-/// - 0.85 is far too loose for a five-letter word. `Wagers` scores 0.967,
-///   `Wage` 0.960 and `Wagner` 0.961 — and "Wagner has entered the area" is an
-///   ordinary PoE chat line, which at 0.85 would anchor a capture. The bar is
-///   `thresholds.wager_anchor` (0.98), which admits only a clean read.
+/// - the whole-line bar was far too loose for a five-letter word, so the score
+///   is taken against the head alone and the bar is
+///   `thresholds.wager_anchor`. That threshold's own doc carries the measured
+///   scores and why it now sits at 0.90 rather than 0.98 (POE-217).
+///
+/// The head score is not the whole test. The label the panel draws is ALWAYS
+/// followed by an amount, so what is left of the line after the head word must
+/// carry at least one ASCII digit. That is what refuses the words the 0.90 bar
+/// admits — `Wagner` (0.961), `Wagers` (0.972), `Wage` (0.960) — as they
+/// appear in prose and in chat, and it refuses a bare `Wager` too: a wager
+/// label with no amount is not the line this panel draws.
 pub fn is_wager_line(text: &str, g: &MercGeometry) -> bool {
-    let lower = text.trim().to_lowercase();
-    let head: String = lower
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take_while(|c| c.is_alphanumeric())
-        .collect();
-    if head.is_empty() {
+    match head_and_rest(text) {
+        Some((head, rest)) => {
+            strsim::jaro_winkler(&head, "wager") as f32 >= g.thresholds.wager_anchor
+                && rest.chars().any(|c| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+/// The line's head word — cut exactly as [`anchor_words`] cuts it — paired
+/// with the rest of the line, starting the character after that word's
+/// alphanumeric run.
+///
+/// `None` when the line holds no word at all. Split out from [`anchor_words`]
+/// because [`is_wager_line`] asks two different questions of the two halves:
+/// the head is fuzzy-matched against the label, the tail is searched for the
+/// amount. The cut falls INSIDE the token, not at the whitespace after it, so
+/// a `Wager:1028` OCR returned with no space still has its amount in the tail.
+fn head_and_rest(text: &str) -> Option<(String, &str)> {
+    let mut offset = 0;
+    while offset < text.len() {
+        let start = text.len() - text[offset..].trim_start().len();
+        let token_end = text[start..]
+            .find(char::is_whitespace)
+            .map_or(text.len(), |i| start + i);
+        let run: usize = text[start..token_end]
+            .chars()
+            .take_while(|c| c.is_alphanumeric())
+            .map(char::len_utf8)
+            .sum();
+        if run > 0 {
+            return Some((text[start..start + run].to_lowercase(), &text[start + run..]));
+        }
+        offset = token_end;
+    }
+    None
+}
+
+/// A line's words, lowercased and each cut at its first non-alphanumeric
+/// character, with the empties dropped.
+///
+/// The cut is what makes `Wager:` and `Wager:1` both reduce to `wager`, and
+/// what lets `Recruit.` still read as `recruit`. Dropping the empties is what
+/// keeps a leading glyph OCR read as punctuation ("/ Infamous Earthshaker")
+/// from becoming the head word.
+fn anchor_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|w| {
+            w.to_lowercase()
+                .chars()
+                .take_while(|c| c.is_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Jaro-Winkler bar the recruit verdict's two anchor words must each clear.
+///
+/// MEASURED 2026-08-27 (POE-217, 1920×1080): the line itself OCR'd clean as
+/// `Should Recruit`, so the fuzz is not paying for an observed error — it is
+/// slack for the SAME one-glyph substitution class the same dump produced on
+/// the wager (`Wager` → `Waggr`). At 0.90 a one-glyph error in either word is
+/// still admitted (`shou1d` 0.933, `recrult` 0.952) while the words this panel
+/// actually sits among are nowhere near: `complete` scores 0.528 against
+/// "should" and `incursions` 0.574 against "recruit".
+const RECRUIT_VERDICT_FUZZ: f32 = 0.90;
+
+/// Whether a line reads as the recruit panel's verdict, "Should Recruit" or
+/// "Should Not Recruit".
+///
+/// The THIRD text anchor, added because the 2026-08-27 dump had neither of the
+/// other two: the footer buttons were hidden under the player's skill bar and
+/// the wager read `Waggr: 6 231`. This line was still clean, and it is chrome
+/// the recruit window alone draws.
+///
+/// Scored on the FIRST and LAST words only, each against
+/// [`RECRUIT_VERDICT_FUZZ`], so that the "Not" of the refusal wording — and
+/// anything else the panel wraps between them — costs nothing. Two words are
+/// required: "Recruit" on its own is an inventory verb and an ordinary chat
+/// word, and scoring a single token as both ends would let it through.
+pub fn is_recruit_verdict_line(text: &str, _g: &MercGeometry) -> bool {
+    let words = anchor_words(text);
+    if words.len() < 2 {
         return false;
     }
-    strsim::jaro_winkler(&head, "wager") as f32 >= g.thresholds.wager_anchor
+    let first = &words[0];
+    let last = &words[words.len() - 1];
+    strsim::jaro_winkler(first, "should") as f32 >= RECRUIT_VERDICT_FUZZ
+        && strsim::jaro_winkler(last, "recruit") as f32 >= RECRUIT_VERDICT_FUZZ
 }
 
 /// Whether a line reads as one of the panel's footer buttons, "TAKE ITEM" or
@@ -548,9 +645,82 @@ pub fn is_button_line(text: &str, _g: &MercGeometry) -> bool {
     lower == "take item" || lower == "rematch"
 }
 
+/// Which of [`detect`]'s three TEXT anchors a line answered as.
+///
+/// A label, for the debug report and the log line — nothing branches on it.
+/// It exists because "no anchor" and "anchored" were the only two things a
+/// dump could say, and the POE-217 incident turned on WHICH of the three had
+/// survived the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AnchorKind {
+    /// [`is_wager_line`], above row 1.
+    Wager,
+    /// [`is_recruit_verdict_line`], above row 1.
+    RecruitVerdict,
+    /// [`is_button_line`], below the last row.
+    Button,
+}
+
+impl std::fmt::Display for AnchorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnchorKind::Wager => write!(f, "wager"),
+            AnchorKind::RecruitVerdict => write!(f, "recruit verdict"),
+            AnchorKind::Button => write!(f, "button"),
+        }
+    }
+}
+
+/// Which text anchor a line reads as WITHOUT the positional test — the whole
+/// of [`detect`]'s step 4 rule except "is it near the rows".
+///
+/// Split out for the one caller that has no rows to measure against: the debug
+/// dump reports the anchor a frame carried even when the detect went on to
+/// reject it, and reporting "missing" for a line that was there but misplaced
+/// sent POE-217's diagnosis at the wrong predicate.
+pub fn text_anchor(text: &str, g: &MercGeometry) -> Option<AnchorKind> {
+    if is_wager_line(text, g) {
+        Some(AnchorKind::Wager)
+    } else if is_recruit_verdict_line(text, g) {
+        Some(AnchorKind::RecruitVerdict)
+    } else if is_button_line(text, g) {
+        Some(AnchorKind::Button)
+    } else {
+        None
+    }
+}
+
+/// [`text_anchor`] plus [`detect`]'s positional test: the wager and the
+/// recruit verdict must sit ABOVE row 1 within `reach`, a button BELOW the
+/// last row within the same reach.
+///
+/// The side matters. Both above-lines are panel chrome drawn over the header
+/// band, and both buttons live under the grid; accepting either on the wrong
+/// side would let a line from whatever the game drew below the panel stand in
+/// for the panel's own.
+fn text_anchor_at(
+    l: &OcrLineBox,
+    first_centre: f32,
+    last_centre: f32,
+    reach: f32,
+    g: &MercGeometry,
+) -> Option<AnchorKind> {
+    let c = l.centre_y();
+    let above = c < first_centre && first_centre - c <= reach;
+    let below = c > last_centre && c - last_centre <= reach;
+    match text_anchor(&l.text, g)? {
+        AnchorKind::Wager if above => Some(AnchorKind::Wager),
+        AnchorKind::RecruitVerdict if above => Some(AnchorKind::RecruitVerdict),
+        AnchorKind::Button if below => Some(AnchorKind::Button),
+        _ => None,
+    }
+}
+
 /// Whether this frame's clustered rows sit inside the panel rect the last
-/// detects produced ([`union_rect`]) — the third anchor, and the only one
-/// available on a frame the game has drawn a tooltip over — and, when they do
+/// detects produced ([`union_rect`]) — the anchor of last resort, and the only
+/// one available on a frame the game has drawn a tooltip over the whole of the
+/// panel's chrome ([`AnchorKind`] is the other three) — and, when they do
 /// not, which of the two sub-predicates said no.
 ///
 /// MEASURED 2026-08-26 (app.log 09:14:51, 09:41:52): with the recruit window
@@ -755,8 +925,9 @@ pub fn contains(rect: [i32; 4], p: (i32, i32)) -> bool {
 /// [`PANEL_MARGIN_CELLS`] either side, scaled with the capture.
 ///
 /// Vertically it runs one row pitch above the first row to
-/// [`PANEL_FOOTER_PITCHES`] below the last. It still UNDER-reaches upward — the
-/// wager line can sit up to `wager_search_pitches` (12) above row 1 — and the
+/// [`PANEL_FOOTER_PITCHES`] below the last. It still UNDER-reaches upward — an
+/// above-the-rows text anchor (the wager line, the recruit verdict) can sit up
+/// to `wager_search_pitches` (12) above row 1 — and the
 /// asymmetry is deliberate. This rect is evidence that the cursor is over the
 /// panel, and the two errors cost differently: under-reaching costs a tolerated
 /// miss on a cursor parked in the chrome, while over-reaching holds a dead
@@ -979,14 +1150,15 @@ pub fn default_probe_band(screen: [u32; 2]) -> [i32; 4] {
 /// is the position test. What is left is the text, and [`is_button_line`] is
 /// already tight: exact equality after normalisation.
 ///
-/// **[`detect`]'s OTHER anchor, the wager line, is deliberately not here.** It
-/// sits ABOVE the grid, and both bands a probe can read start at or below it:
-/// [`probe_band_bounds`] begins at the grid's bottom edge, and
-/// [`default_probe_band`] begins at [`DEFAULT_PROBE_BAND_TOP_FRAC`] of the
-/// height against a wager measured at 0.144 H. No probe frame can hold the
-/// line, so testing for it is a predicate per OCR line that can only ever
-/// answer false — and one a later reader would take as evidence that the band
-/// reaches further up than it does.
+/// **[`detect`]'s OTHER two anchors, the wager line and the recruit verdict,
+/// are deliberately not here.** Both sit ABOVE the grid, and both bands a
+/// probe can read start at or below it: [`probe_band_bounds`] begins at the
+/// grid's bottom edge, and [`default_probe_band`] begins at
+/// [`DEFAULT_PROBE_BAND_TOP_FRAC`] of the height against a wager measured at
+/// 0.144 H and a verdict at 0.196 H (2026-08-27, 1920×1080). No probe frame
+/// can hold either line, so testing for them is a predicate per OCR line that
+/// can only ever answer false — and one a later reader would take as evidence
+/// that the band reaches further up than it does.
 pub fn probe_hit(lines: &[OcrLineBox], g: &MercGeometry) -> bool {
     lines.iter().any(|l| is_button_line(&l.text, g))
 }
@@ -2072,9 +2244,12 @@ mod tests {
         let layout = detect(&windows_dump_lines(), &g, &vocab(), None).expect("the dump detects");
         let rect = panel_bounds(&layout, &g).expect("six rows have bounds");
         let moved = [rect[0] - 200, rect[1], rect[2], rect[3]];
+        // EVERY text anchor, not just the buttons: this dump also carries a
+        // "Should Recruit" line, and the frame this test needs is one whose
+        // only remaining candidate anchor is the known rect.
         let stripped: Vec<OcrLineBox> = windows_dump_lines()
             .into_iter()
-            .filter(|l| !is_button_line(&l.text, &g))
+            .filter(|l| text_anchor(&l.text, &g).is_none())
             .collect();
         assert!(
             layout.rows.iter().all(|r| {
@@ -2201,6 +2376,243 @@ mod tests {
         assert_eq!(layout.header.name.as_deref(), Some("Cai, the Lout"));
     }
 
+    /// The 2026-08-27 Windows dump (1920×1080, POE-217,
+    /// merc-debug/1787863871932) as OCR returned it. The frame the incident
+    /// was reported on: BOTH of the anchors that existed at v0.8.0 were gone —
+    /// the footer buttons were hidden under the player's skill bar and the
+    /// wager label read `Waggr: 6 231` (head score 0.907, under the 0.98 bar
+    /// of the day) — while `Should Recruit` read clean. `detect` answered
+    /// `NoAnchor` and the capture was lost.
+    ///
+    /// All 55 lines, unedited, including the quest tracker and the map mods
+    /// down the right-hand side: the noise is the point, since it is what a
+    /// widened anchor rule has to keep refusing.
+    fn koparu_dump_lines() -> Vec<OcrLineBox> {
+        vec![
+            OcrLineBox { text: "Koparu, the Keitan Chainbreaker".into(), x: 788, y: 75, w: 326, h: 24 },
+            OcrLineBox { text: "/ Infamous Earthshaker".into(), x: 768, y: 117, w: 172, h: 17 },
+            OcrLineBox { text: "LVI 83".into(), x: 979, y: 117, w: 40, h: 15 },
+            OcrLineBox { text: ",LTH BOOTS".into(), x: 0, y: 115, w: 106, h: 17 },
+            OcrLineBox { text: "EN WAND".into(), x: 4, y: 149, w: 87, h: 15 },
+            OcrLineBox { text: "'065/3065".into(), x: 102, y: 809, w: 90, h: 22 },
+            OcrLineBox { text: "Life".into(), x: 46, y: 811, w: 27, h: 14 },
+            OcrLineBox { text: "Shield 2 0112229".into(), x: 45, y: 832, w: 145, h: 25 },
+            OcrLineBox { text: "Str".into(), x: 1131, y: 118, w: 20, h: 13 },
+            OcrLineBox { text: "Fighting in chains taught Koparu everything he needed - including how to".into(), x: 766, y: 144, w: 464, h: 16 },
+            OcrLineBox { text: "break chem.".into(), x: 959, y: 161, w: 75, h: 13 },
+            OcrLineBox { text: "Waggr: 6 231".into(), x: 708, y: 209, w: 102, h: 19 },
+            OcrLineBox { text: "INTIMIDATINC CRY".into(), x: 743, y: 611, w: 119, h: 11 },
+            OcrLineBox { text: "LEAP SIAM".into(), x: 743, y: 654, w: 64, h: 11 },
+            OcrLineBox { text: "EARTHQUAKE OF AMPLI FICATION".into(), x: 743, y: 698, w: 199, h: 13 },
+            OcrLineBox { text: "TECTONIC CASCADE".into(), x: 742, y: 741, w: 120, h: 11 },
+            OcrLineBox { text: "DETERMINATION".into(), x: 743, y: 785, w: 103, h: 11 },
+            OcrLineBox { text: "VAAL VITALITY".into(), x: 742, y: 828, w: 89, h: 11 },
+            OcrLineBox { text: "Should Recruit".into(), x: 1060, y: 204, w: 123, h: 17 },
+            OcrLineBox { text: "0:56".into(), x: 1663, y: 74, w: 25, h: 12 },
+            OcrLineBox { text: "Allflame League".into(), x: 1782, y: 98, w: 123, h: 17 },
+            OcrLineBox { text: "Short Allocation".into(), x: 1781, y: 121, w: 124, h: 13 },
+            OcrLineBox { text: "Frankfurt (ELI) Realm".into(), x: 1742, y: 145, w: 162, h: 17 },
+            OcrLineBox { text: "„More than 50 monsters remain".into(), x: 1659, y: 169, w: 246, h: 16 },
+            OcrLineBox { text: "AREA HAS INCREASED MONSTER VARIEft'".into(), x: 1658, y: 237, w: 256, h: 12 },
+            OcrLineBox { text: "AREA CONTAINS MANY TOTEMS".into(), x: 1712, y: 255, w: 202, h: 12 },
+            OcrLineBox { text: "38% MORE MONSTER LIFE".into(), x: 1748, y: 273, w: 167, h: 13 },
+            OcrLineBox { text: "MONSTERS CANNOT BE STUNNED".into(), x: 1701, y: 291, w: 214, h: 12 },
+            OcrLineBox { text: "MERCENARIES FOUND IN AREA ARE ACCOMPANIED BY TWO WILD MERCENARIES".into(), x: 1404, y: 309, w: 511, h: 12 },
+            OcrLineBox { text: "MERCENARIES FOUND IN AREA ARE INFAMOUS".into(), x: 1618, y: 328, w: 297, h: 12 },
+            OcrLineBox { text: "MONSTERS HAVE 64% INCREASED ACCURACY RATING".into(), x: 1574, y: 346, w: 340, h: 13 },
+            OcrLineBox { text: "MONSTERS HAVE +76% CHANCE TO SUPPRESS SPELL DAMAGE".into(), x: 1522, y: 364, w: 393, h: 13 },
+            OcrLineBox { text: "MONSTERS POWER, FRENZY AND ENDURANCE CHARGES ON HIT".into(), x: 1470, y: 382, w: 446, h: 13 },
+            OcrLineBox { text: "PLAYERS HAVE 76% LESS RECOVERY RATE OF LIFE AND ENERGY SHIELD".into(), x: 1468, y: 401, w: 446, h: 13 },
+            OcrLineBox { text: "window — lEt".into(), x: 1499, y: 430, w: 92, h: 8 },
+            OcrLineBox { text: "PLAY".into(), x: 1422, y: 437, w: 30, h: 11 },
+            OcrLineBox { text: "Zethara, the Bardiyan Rose • Infamous Kineticist • Ivl 83".into(), x: 1468, y: 446, w: 339, h: 13 },
+            OcrLineBox { text: "unknown — 8 icons unread".into(), x: 1468, y: 465, w: 154, h: 9 },
+            OcrLineBox { text: "8 — to".into(), x: 1468, y: 484, w: 117, h: 8 },
+            OcrLineBox { text: "AREA IS CORRUPTED".into(), x: 1787, y: 510, w: 127, h: 12 },
+            OcrLineBox { text: "DELIRIUM.REWARD TYPES IN YOUR MAPS GAIN +1 TO COUNT ON DEFEATING A UNIQUE DELIRIUM Boss".into(), x: 1250, y: 528, w: 665, h: 14 },
+            OcrLineBox { text: "DELIRIUM ENCOUNTERS CONTAIN ALL UNIQUE DELIRIUM BOSSES".into(), x: 1491, y: 546, w: 423, h: 14 },
+            OcrLineBox { text: "DELIRIUM ENCOUNTERS GENERATE 6 ADDITIONAL REWARD TYPES".into(), x: 1499, y: 565, w: 416, h: 12 },
+            OcrLineBox { text: "ALVA, MASTER EXPLORER".into(), x: 1531, y: 607, w: 187, h: 17 },
+            OcrLineBox { text: "Complete the temporal Incursiohs (2/3)".into(), x: 1557, y: 628, w: 287, h: 17 },
+            OcrLineBox { text: "KiNCSMARCH PROSPECTING'(OPTIONAL)".into(), x: 1533, y: 649, w: 306, h: 18 },
+            OcrLineBox { text: "Speak to Johan for a reward".into(), x: 1557, y: 670, w: 205, h: 17 },
+            OcrLineBox { text: "THREADS OF THE ORIGINATOR".into(), x: 1531, y: 691, w: 228, h: 13 },
+            OcrLineBox { text: "Explore Memory Vaults in different Atlas".into(), x: 1557, y: 710, w: 300, h: 18 },
+            OcrLineBox { text: "drants (2/4)".into(), x: 1585, y: 730, w: 82, h: 17 },
+            OcrLineBox { text: "Mana 4921801".into(), x: 1733, y: 811, w: 142, h: 19 },
+            OcrLineBox { text: "Reserved ăŻ".into(), x: 1732, y: 828, w: 122, h: 27 },
+            OcrLineBox { text: "09".into(), x: 1855, y: 835, w: 19, h: 14 },
+            OcrLineBox { text: "2251".into(), x: 329, y: 944, w: 36, h: 14 },
+            OcrLineBox { text: "MENU".into(), x: 241, y: 1041, w: 48, h: 14 },        ]
+    }
+
+    /// The dump's lines minus the one whose text is `text`, with an arrange
+    /// guard that it was actually there — the tests below turn on which chrome
+    /// line is absent, and a typo would silently make them assert nothing.
+    fn without(lines: Vec<OcrLineBox>, text: &str) -> Vec<OcrLineBox> {
+        let before = lines.len();
+        let kept: Vec<OcrLineBox> = lines.into_iter().filter(|l| l.text != text).collect();
+        assert!(
+            kept.len() < before,
+            "arrange: {text:?} must have been in the dump to be removed from it",
+        );
+        kept
+    }
+
+    /// The lines of `lines` that read as one of the three text anchors, in the
+    /// order OCR returned them.
+    fn anchor_lines<'a>(lines: &'a [OcrLineBox], g: &MercGeometry) -> Vec<&'a OcrLineBox> {
+        lines.iter().filter(|l| text_anchor(&l.text, g).is_some()).collect()
+    }
+
+    /// The incident frame, whole, now detects — and the geometry it reports is
+    /// the one its own line centres imply, not a constant echoed back. The six
+    /// skill lines sit at x 742-743 with centres 616.5, 659.5, 704.5, 746.5,
+    /// 790.5 and 833.5, whose five gaps (43, 45, 42, 44, 43) have median 43.
+    #[test]
+    fn the_koparu_dump_detects_six_rows_at_the_pitch_its_centres_imply() {
+        let g = MercGeometry::default();
+
+        let layout = detect(&koparu_dump_lines(), &g, &vocab(), None)
+            .expect("the POE-217 frame must detect");
+
+        assert_eq!(layout.rows.len(), 6);
+        assert_eq!(layout.row_pitch, 43.0);
+        assert!(
+            (layout.scale - 43.0 / g.row_pitch).abs() < 1e-6,
+            "scale must be 43 / 49.3 = 0.8722, was {}",
+            layout.scale,
+        );
+        assert_eq!(layout.column_x0, 743);
+    }
+
+    /// The recruit verdict anchors on its own. With the mangled wager taken
+    /// out, `Should Recruit` is the only chrome line the frame has left — the
+    /// footer buttons never reached this OCR at all — so the detect that
+    /// follows can only have come through the new rule.
+    #[test]
+    fn the_recruit_verdict_alone_anchors_a_frame_with_no_wager_and_no_buttons() {
+        let g = MercGeometry::default();
+        let lines = without(koparu_dump_lines(), "Waggr: 6 231");
+        let anchors = anchor_lines(&lines, &g);
+        assert_eq!(anchors.len(), 1, "arrange: one chrome line left, got {anchors:?}");
+        assert_eq!(anchors[0].text, "Should Recruit");
+
+        let layout = detect(&lines, &g, &vocab(), None)
+            .expect("the recruit verdict must anchor the frame on its own");
+
+        assert_eq!(layout.rows.len(), 6);
+    }
+
+    /// And the loosened wager bar anchors on its own. With `Should Recruit`
+    /// taken out, `Waggr: 6 231` is the only chrome left; at the 0.98 bar it
+    /// scored 0.907 and this is exactly the frame that was lost.
+    #[test]
+    fn the_mangled_wager_alone_anchors_a_frame_with_no_verdict_and_no_buttons() {
+        let g = MercGeometry::default();
+        let lines = without(koparu_dump_lines(), "Should Recruit");
+        let anchors = anchor_lines(&lines, &g);
+        assert_eq!(anchors.len(), 1, "arrange: one chrome line left, got {anchors:?}");
+        assert_eq!(anchors[0].text, "Waggr: 6 231");
+
+        let layout = detect(&lines, &g, &vocab(), None)
+            .expect("the mangled wager must anchor the frame on its own");
+
+        assert_eq!(layout.rows.len(), 6);
+    }
+
+    /// With both gone the frame carries no chrome at all, and it is still
+    /// refused: POE-217 widened WHAT anchors, it did not drop the requirement.
+    /// Six rows of real skill names and 49 lines of map mods and quest text
+    /// are not a recruit window.
+    #[test]
+    fn the_koparu_dump_stripped_of_both_chrome_lines_misses_at_the_anchor_step() {
+        let g = MercGeometry::default();
+        let lines = without(without(koparu_dump_lines(), "Waggr: 6 231"), "Should Recruit");
+        assert!(anchor_lines(&lines, &g).is_empty(), "arrange: no chrome left");
+
+        let miss = detect_reason(&lines, &g, &vocab(), None)
+            .expect_err("a frame with no chrome is not a recruit window");
+
+        assert_eq!(
+            miss.stage,
+            DetectStage::NoAnchor { rows: 6, panel: PanelAnchor::NoKnownRect },
+        );
+    }
+
+    /// The verdict anchors ABOVE the rows only. Below the last row the one
+    /// piece of chrome the panel draws is a footer button, and accepting a
+    /// verdict there would let whatever the game drew under the panel stand in
+    /// for the panel's own.
+    #[test]
+    fn a_recruit_verdict_below_the_rows_is_not_an_anchor() {
+        let g = MercGeometry::default();
+        let mut lines = without(koparu_dump_lines(), "Waggr: 6 231");
+        for l in lines.iter_mut() {
+            if l.text == "Should Recruit" {
+                // The last row's centre is 833.5; one pitch under it.
+                l.y = 877;
+            }
+        }
+
+        assert!(detect(&lines, &g, &vocab(), None).is_none());
+    }
+
+    /// …and NEAR them. Row 1's centre is 616.5 and the pitch 43, so the reach
+    /// ends 516 px up at 100.5; a verdict-shaped line past that belongs to some
+    /// other surface, exactly as a wager line does.
+    #[test]
+    fn a_recruit_verdict_out_of_reach_above_the_panel_is_not_an_anchor() {
+        let g = MercGeometry::default();
+        let mut lines = without(koparu_dump_lines(), "Waggr: 6 231");
+        for l in lines.iter_mut() {
+            if l.text == "Should Recruit" {
+                // Thirteen pitches above row 1 rather than twelve.
+                l.y = 616 - (13.0 * 43.0) as i32;
+            }
+        }
+
+        assert!(detect(&lines, &g, &vocab(), None).is_none());
+    }
+
+    /// The verdict predicate reads both wordings the panel uses, in any case,
+    /// and survives one glyph going wrong in either anchor word — `shou1d`
+    /// scores 0.933 against "should" and `recrult` 0.952 against "recruit",
+    /// both over the 0.90 bar. The refusal wording puts a word BETWEEN the
+    /// two, which is why only the first and the last are scored.
+    #[test]
+    fn the_recruit_verdict_reads_both_wordings_and_a_one_glyph_error_in_either() {
+        let g = MercGeometry::default();
+
+        for text in ["Should Recruit", "SHOULD RECRUIT", "Should Not Recruit", "Shou1d Recrult"] {
+            assert!(is_recruit_verdict_line(text, &g), "{text:?} must read as the verdict");
+        }
+    }
+
+    /// Neither anchor word carries the line on its own, and the quest tracker
+    /// that sits beside the panel on this very screen does not either:
+    /// `complete` scores 0.528 against "should", `incursions` 0.574 against
+    /// "recruit".
+    #[test]
+    fn a_single_word_or_unrelated_text_is_not_the_recruit_verdict() {
+        let g = MercGeometry::default();
+
+        for text in ["Recruit", "should", "Complete the temporal Incursions", "Should Not", ""] {
+            assert!(!is_recruit_verdict_line(text, &g), "{text:?} must not read as the verdict");
+        }
+    }
+
+    /// Where the wager bar sits since POE-217, by the two spellings that
+    /// bracket it: the incident's own `Waggr` scores 0.907 on the head word and
+    /// is admitted, a `vv` read for the `w` scores 0.822 and is not.
+    #[test]
+    fn the_wager_bar_admits_the_incidents_spelling_and_refuses_a_two_glyph_one() {
+        let g = MercGeometry::default();
+
+        assert!(is_wager_line("Waggr: 6 231", &g), "the POE-217 spelling must anchor");
+        assert!(!is_wager_line("vvager: 6 231", &g), "a two-glyph error must not");
+    }
+
     /// The anchor must be ABOVE the rows and NEAR them. A wager line far up
     /// the screen (past 12 row pitches) belongs to some other surface.
     #[test]
@@ -2219,8 +2631,12 @@ mod tests {
 
     /// A near-miss word is NOT the anchor. "Wagner has entered the area" is an
     /// ordinary PoE chat line whose first word scores 0.961 against "wager" —
-    /// over D2's 0.85 bar, under the 0.98 this uses. Anchoring on it would
-    /// hand the module a capture of whatever window happened to be open.
+    /// over the 0.90 bar this uses since POE-217. Anchoring on it would hand
+    /// the module a capture of whatever window happened to be open.
+    ///
+    /// The line is left exactly where the real label sits, above row 1 and
+    /// inside the reach, so position cannot be what refuses it: the amount is.
+    /// Chat prose carries no digits and the panel's label always does.
     #[test]
     fn a_chat_line_starting_with_a_near_miss_word_is_not_an_anchor() {
         let mut lines = reference_lines();
@@ -2233,12 +2649,49 @@ mod tests {
         assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
 
-    /// The same for the plural and for the shorter root — 0.967 and 0.960,
-    /// both over 0.85, both rejected here. Listed one by one so the failure
-    /// message names the word that got through.
+    /// The amount is half the predicate. Both spellings the panel has actually
+    /// been read as — the clean label and the mangled one the POE-217 capture
+    /// was lost on — carry theirs, and both anchor.
+    #[test]
+    fn a_wager_label_followed_by_its_amount_is_the_anchor() {
+        let g = MercGeometry::default();
+
+        for text in ["Wager: 1 028", "Waggr: 6 231"] {
+            assert!(is_wager_line(text, &g), "{text:?} must read as the label");
+        }
+    }
+
+    /// …and the words the 0.90 bar admits are refused for want of one. All
+    /// three clear the head score — `Wagner` 0.961, `wagers` 0.972, `Wage`
+    /// 0.960 — and all three are ordinary words that PoE draws in chat and in
+    /// item text. Listed one by one so the failure message names the word that
+    /// got through.
+    #[test]
+    fn a_near_miss_word_with_no_amount_after_it_is_not_the_wager_label() {
+        let g = MercGeometry::default();
+
+        for text in ["Wagner", "wagers", "Wage"] {
+            assert!(!is_wager_line(text, &g), "{text:?} must not read as the label");
+        }
+    }
+
+    /// Even the word itself, spelled perfectly, is not the label without an
+    /// amount behind it. The panel has never been seen to draw one without the
+    /// other, so a bare `Wager` is some other surface's text — and this is the
+    /// case the head score cannot refuse, since it scores 1.000.
+    #[test]
+    fn a_bare_wager_word_with_no_amount_is_not_the_label() {
+        assert!(!is_wager_line("Wager", &MercGeometry::default()));
+    }
+
+    /// The bar still has a floor: two glyphs wrong, or a word that only shares
+    /// the shape, and the line is not the label wherever it sits. `Waqer`
+    /// scores 0.893, `vvager` 0.822, `Water` 0.893 and `Manager` 0.791 —
+    /// all under 0.90. Listed one by one so the failure message names the word
+    /// that got through.
     #[test]
     fn other_near_miss_words_are_not_anchors() {
-        for word in ["Wagers", "Wage", "Water", "Manager"] {
+        for word in ["Waqer", "vvager", "Water", "Manager"] {
             let mut lines = reference_lines();
             for l in lines.iter_mut() {
                 if l.text.starts_with("Wager") {

@@ -521,20 +521,44 @@ pub struct Thresholds {
     pub icon_low: f32,
     /// Lead the best family needs over the best OTHER family.
     pub icon_lead: f32,
-    /// Jaro-Winkler score the recruit window's "Wager" label must reach.
+    /// Jaro-Winkler score the recruit window's "Wager" label must reach, taken
+    /// against the line's leading word (`geometry::is_wager_line`).
     ///
-    /// Deliberately far above `name_low`, and set by the words that have to be
-    /// REJECTED rather than the ones that have to pass: a clean `Wager:`
-    /// scores 1.000, but `Wagers` scores 0.967, `Wage` 0.960 and `Wagner`
-    /// 0.961 — and "Wagner has entered the area" is an ordinary PoE chat line.
-    /// At D2's 0.85 all three would anchor a capture. 0.98 admits only a clean
-    /// read of the word.
+    /// 0.90 since POE-217. MEASURED head scores against "wager", all with
+    /// strsim 0.11's unbounded prefix bonus:
     ///
-    /// The cost is that a mangled label (`Wagcr` 0.907, `Waqer` 0.893) misses
-    /// the anchor and no capture happens. That is the cheaper failure: a miss
-    /// is visible and logged, whereas a false anchor produces confident
-    /// verdicts about the wrong window — and the second gate (two skill names
-    /// in a left-aligned column) has to agree either way.
+    /// | head     | score | past this bar |
+    /// |----------|-------|---------------|
+    /// | `wager`  | 1.000 | admitted      |
+    /// | `wagers` | 0.972 | admitted      |
+    /// | `wagger` | 0.961 | admitted      |
+    /// | `wagner` | 0.961 | admitted      |
+    /// | `wage`   | 0.960 | admitted      |
+    /// | `waggr`  | 0.907 | admitted      |
+    /// | `waqer`  | 0.893 | refused       |
+    /// | `vvager` | 0.822 | refused       |
+    ///
+    /// It was 0.98, chosen to refuse `Wagner` because "Wagner has entered the
+    /// area" is an ordinary PoE chat line. 2026-08-27, 1920×1080: OCR returned
+    /// the label as `Waggr: 6 231` (0.907), the footer buttons were hidden
+    /// under the player's skill bar, and the capture was lost. 0.98 was buying
+    /// a rejection the TEXT test does not have to make.
+    ///
+    /// `wagers`, `wagger`, `wagner` and `wage` are admitted BY THIS BAR and
+    /// refused by the rest of `geometry::is_wager_line`: the head score is
+    /// only half the predicate, and the other half is that the line carries an
+    /// amount after the head word. The panel always draws one — the incident's
+    /// own line was `Waggr: 6 231` — and none of "Wagner has entered the
+    /// area", "wagers" or "Wage" does, so the digit rule is what keeps them
+    /// out wherever on the screen they are drawn. That is what made dropping
+    /// the bar from 0.98 affordable: 0.98 existed to refuse `Wagner` by score,
+    /// and the digit rule refuses it on the thing that actually distinguishes
+    /// a label from a word.
+    ///
+    /// Two further gates stand behind both halves. `geometry::detect` reaches
+    /// this predicate only after two skill names have clustered into a
+    /// left-aligned column, and then only accepts the line if it sits ABOVE
+    /// row 1 within `wager_search_pitches` of it.
     pub wager_anchor: f32,
     /// Grayscale stddev above which a cell's inner region counts as occupied.
     /// Measured on the reference panel: occupied 42.7-60.9, empty 1.1-2.0.
@@ -552,7 +576,7 @@ impl Default for Thresholds {
             name_low: 0.85,
             name_lead: 0.03,
             name_no_lead: 0.97,
-            wager_anchor: 0.98,
+            wager_anchor: 0.90,
             icon_match: 0.88,
             icon_low: 0.78,
             icon_lead: 0.05,
@@ -683,7 +707,9 @@ pub struct MercGeometry {
     pub row_cluster_factor: f32,
     /// Skill-name candidates needed before a panel is a panel.
     pub min_skill_candidates: usize,
-    /// How far above row 1 the "Wager" anchor may sit, in row pitches.
+    /// How far from the rows a text anchor may sit, in row pitches: the
+    /// "Wager" and recruit-verdict lines above row 1, a footer button below
+    /// the last row.
     pub wager_search_pitches: f32,
     pub badge: BadgeGeometry,
     pub thresholds: Thresholds,
