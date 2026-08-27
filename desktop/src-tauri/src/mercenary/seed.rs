@@ -1234,7 +1234,8 @@ pub fn rederive_for_window(app: &AppHandle, geometry: &MercGeometry, scale: f32)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mercenary::icons::{cell_candidates, CellCandidates, TemplateStore};
+    use crate::mercenary::geometry::outer_rect_for_inner;
+    use crate::mercenary::icons::{cell_candidates, CellCandidates, TemplateStore, SIG_DIM};
     use crate::mercenary::vocab::{MercRole, MercVocab};
     use crate::mercenary::Thresholds;
 
@@ -1373,22 +1374,33 @@ mod tests {
             .collect()
     }
 
-    /// The outer cell rect a corpus crop is read through — 39×39 inner plus
-    /// 2 px of `cell_inset` per side, the live 0.974 geometry. Its alignment
-    /// window is 33 px, and the SEEDS below are derived at 34: the cross is
-    /// the point, since the fraction form is what has to make both work.
-    const CROP_OUTER: [i32; 4] = [0, 0, 43, 43];
-
     /// Every alignment of one corpus crop, through the production entry point.
+    ///
+    /// The cell is rebuilt from the crop's OWN dimensions through
+    /// [`outer_rect_for_inner`] — `outer = inner + 2 · inset` — rather than
+    /// from a 39/43 pair typed in here, so a crop harvested at another
+    /// machine's UI scale goes through this door unchanged (POE-214 D5).
+    /// Square, and wide enough to leave an alignment window
+    /// (`SIG_DIM + 2 · SHIFT_MAX` = 30), are the two preconditions that
+    /// derivation rests on.
+    ///
+    /// At the corpus's own 39/43 the window is 33 px while the SEEDS below are
+    /// derived at 34: the cross is the point, since the fraction form is what
+    /// has to make both work.
     fn probe(file: &str) -> CellCandidates {
         let crop = image::open(std::path::Path::new(CROP_DIR).join(file))
             .unwrap_or_else(|e| panic!("{file}: {e}"))
             .to_rgba8();
-        assert_eq!(crop.dimensions(), (39, 39), "{file} is not a 39×39 inner crop");
-        let mut canvas = RgbaImage::from_pixel(43, 43, image::Rgba([0, 0, 0, 255]));
-        image::imageops::replace(&mut canvas, &crop, 2, 2);
+        let (w, h) = crop.dimensions();
+        assert_eq!(w, h, "{file} is {w}×{h}, not a square inner crop");
+        let floor = SIG_DIM + 2 * SHIFT_MAX as u32;
+        assert!(w >= floor, "{file} is {w} px, leaving no {floor} px alignment window");
+        let (side, inset) = outer_rect_for_inner(w, &MercGeometry::default());
+        let mut canvas = RgbaImage::from_pixel(side, side, image::Rgba([0, 0, 0, 255]));
+        image::imageops::replace(&mut canvas, &crop, inset as i64, inset as i64);
         let img = DynamicImage::ImageRgba8(canvas);
-        cell_candidates(&img, CROP_OUTER, &MercGeometry::default())
+        let rect = [0, 0, side as i32, side as i32];
+        cell_candidates(&img, rect, &MercGeometry::default())
             .unwrap_or_else(|| panic!("{file} normalizes"))
     }
 

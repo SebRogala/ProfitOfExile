@@ -1362,6 +1362,26 @@ pub fn inner_rect(rect: [i32; 4], g: &MercGeometry) -> [i32; 4] {
     ]
 }
 
+/// The OUTER cell rect an inner crop of `inner_side` px came out of, and the
+/// inset that produced it — [`inner_rect`] run backwards.
+///
+/// The rule, stated once here and referenced everywhere else: **`outer =
+/// inner + 2 · inset`**, where the inset is [`MercGeometry::cell_inset`]
+/// rounded. A reader that holds a stored inner crop and wants to hand it to a
+/// production entry point (which all take OUTER rects) rebuilds the cell that
+/// way instead of hard-coding a pair of numbers, because the pair is different
+/// on every machine: the laptop cuts 39 inside 43 and the PC 36 inside 40.
+///
+/// The alignment window the matcher then gets from that cell is
+/// `window = inner − 2 · SHIFT_MAX` (`icons::shift_window`), so an
+/// inner side under `SIG_DIM + 2 · SHIFT_MAX` leaves no window at all and the
+/// matcher falls back to a single unaligned signature.
+#[allow(dead_code)] // Only the corpus readers reach this; comes off with its first production caller.
+pub(super) fn outer_rect_for_inner(inner_side: u32, g: &MercGeometry) -> (u32, i32) {
+    let inset = g.cell_inset.round() as i32;
+    ((inner_side as i32 + 2 * inset).max(1) as u32, inset)
+}
+
 /// Grayscale standard deviation over a rect. `None` when the rect does not lie
 /// wholly inside the image.
 pub fn stddev(img: &image::DynamicImage, rect: [i32; 4]) -> Option<f32> {
@@ -2555,6 +2575,44 @@ mod tests {
         let img = DynamicImage::ImageRgba8(img);
 
         assert!(!occupied(&img, rect, &g), "the frame must be inset away");
+    }
+
+    /// [`outer_rect_for_inner`] is [`inner_rect`] run backwards, at every UI
+    /// scale and at an inset the player overrode.
+    ///
+    /// The rule is `outer = inner + 2 · inset`, and the corpus readers rebuild
+    /// a cell from a stored inner crop through it (POE-214 D5). The four
+    /// inputs are the geometries that exist: the laptop's fitted cell (44
+    /// outer, 40 inner), the PC's at UI scale 0.90 (40/36), an integral
+    /// `cellInset` override — which has to move the outer rect and leave the
+    /// inner crop alone, so a helper that ignored `g` would pass the first two
+    /// — and a FRACTIONAL one, which is the only input that separates the
+    /// contract's `.round()` from a truncating `as i32`: at 2.5 the inset is
+    /// 3, not 2, and both directions have to agree on that or a reader would
+    /// paste a crop into a canvas one px off on every side.
+    #[test]
+    fn the_outer_rect_of_an_inner_crop_round_trips_back_through_inner_rect() {
+        let g = MercGeometry::default();
+
+        assert_eq!(outer_rect_for_inner(40, &g), (44, 2), "the laptop's fitted cell");
+        assert_eq!(inner_rect([0, 0, 44, 44], &g), [2, 2, 40, 40]);
+
+        assert_eq!(outer_rect_for_inner(36, &g), (40, 2), "the PC's cell at 0.90");
+        assert_eq!(inner_rect([0, 0, 40, 40], &g), [2, 2, 36, 36]);
+
+        let mut wide = MercGeometry::default();
+        wide.cell_inset = 5.0;
+        assert_eq!(outer_rect_for_inner(36, &wide), (46, 5));
+        assert_eq!(inner_rect([0, 0, 46, 46], &wide), [5, 5, 36, 36]);
+
+        let mut half = MercGeometry::default();
+        half.cell_inset = 2.5;
+        assert_eq!(
+            outer_rect_for_inner(39, &half),
+            (45, 3),
+            "a 2.5 px inset ROUNDS to 3, so the cell is 39 + 2 · 3",
+        );
+        assert_eq!(inner_rect([0, 0, 45, 45], &half), [3, 3, 39, 39]);
     }
 
     // -- the panel rect the occlusion rule tests against -------------------
