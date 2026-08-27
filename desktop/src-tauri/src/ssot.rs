@@ -426,7 +426,12 @@ pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice
 /// [`screen_changed`]'s underneath it); both are `AppHandle`-free and tested.
 /// All that is left here is the lock-drop-emit sequence the doc above states,
 /// which is what makes calling this on every detect tick the right thing to do.
-pub fn publish_screen(app: &AppHandle, next: ScreenSlice) {
+///
+/// Returns whether the value CHANGED — the same bool the emit is gated on,
+/// handed back so the caller can gate a persist on it too (WI-B2) without
+/// asking the slot a second question the deadband would have to answer twice.
+/// Ignoring it is an ordinary call, so it is not `#[must_use]`.
+pub fn publish_screen(app: &AppHandle, next: ScreenSlice) -> bool {
     let changed = {
         let state = app.state::<AppState>();
         let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
@@ -435,6 +440,29 @@ pub fn publish_screen(app: &AppHandle, next: ScreenSlice) {
     if changed {
         emit_ssot(app);
     }
+    changed
+}
+
+/// Whether a just-published slice is worth writing to settings (POE-214 WI-B2).
+///
+/// Both halves are load-bearing:
+///
+/// - **`changed`** — [`record_screen`]'s answer, which carries [`UI_SCALE_EPS`],
+///   so the per-tick wobble of a panel that has not moved is not a change.
+///   `crate::persist_settings` is a settings read plus a whole-file write, both
+///   blocking, on the detect thread; without this the loop would pay two disk
+///   ops per tick for as long as a recruit window is open.
+/// - **`MercFrame` only** — the cheap half of one rule that
+///   [`crate::settings::ScreenScaleSetting::from_slice`] owns and states in
+///   full: an OCR-derived scale is not persistable, so triggering a save on one
+///   would spend a whole-file write to null the stored value. `Remembered` is
+///   refused here for a different reason — it is what was just LOADED, and
+///   nothing is learned by writing it straight back.
+///
+/// Pure so the trigger is unit-testable without an `AppHandle`, the same reason
+/// [`should_flag_unreachable`] and [`record_screen`] are extracted.
+pub fn should_remember_screen(changed: bool, source: ScreenScaleSource) -> bool {
+    changed && matches!(source, ScreenScaleSource::MercFrame)
 }
 
 /// The [`ScreenScaleSource`] label a merc-side [`crate::mercenary::ScaleSource`]
@@ -1558,6 +1586,29 @@ mod tests {
         assert_eq!(
             slot.expect("the slot still holds a measurement").measured_at_ms,
             base.measured_at_ms + 5_000
+        );
+    }
+
+    /// The persist trigger, both halves. A tick that re-measures the same
+    /// screen must not spend two blocking disk ops, and a cue that is not
+    /// persistable at all (`MercOcr` — see
+    /// `settings::ScreenScaleSetting::from_slice`) must not spend a write that
+    /// could only null the stored value. `Remembered` is what was just loaded,
+    /// so writing it back learns nothing.
+    #[test]
+    fn only_a_changed_frame_measurement_is_worth_remembering() {
+        assert!(should_remember_screen(true, ScreenScaleSource::MercFrame));
+        assert!(
+            !should_remember_screen(false, ScreenScaleSource::MercFrame),
+            "a re-measurement of the same screen must not reach the disk",
+        );
+        assert!(
+            !should_remember_screen(true, ScreenScaleSource::MercOcr),
+            "the drifting cue is not persistable, so it is not worth a write",
+        );
+        assert!(
+            !should_remember_screen(true, ScreenScaleSource::Remembered),
+            "a just-loaded value has nothing to write back",
         );
     }
 

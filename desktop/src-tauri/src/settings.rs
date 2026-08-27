@@ -144,6 +144,109 @@ pub struct Settings {
     /// and the running value now disagree.
     #[serde(default = "default_merc_tier_floor")]
     pub merc_tier_floor: u8,
+    /// The screen and game-UI scale the merc module last MEASURED on the frame
+    /// (POE-214 D2), remembered across restarts. `None` on a fresh install and
+    /// until the first recruit window is fitted.
+    ///
+    /// Loaded back as [`crate::ssot::ScreenScaleSource::Remembered`], which is
+    /// the label a consumer weighs "not measured this run" by. It is NOT
+    /// self-invalidating the way `temple_calibration` is — nothing re-verifies
+    /// it — so a value carried over from another monitor stays readable until
+    /// the merc module measures this one; see `apply_to_state`.
+    #[serde(default)]
+    pub screen_scale: Option<ScreenScaleSetting>,
+}
+
+/// The persisted form of [`crate::ssot::ScreenSlice`] (POE-214 D2).
+///
+/// snake_case inside, like the rest of this file and unlike the two temple
+/// structs above: nothing sends THIS struct to a webview. A window reads the
+/// scale from `ssot.screen`, which is `ScreenSlice`'s own camelCase.
+///
+/// **No `source` field, deliberately.** Only a frame measurement is ever
+/// written here (see [`Self::from_slice`]) and everything read back is
+/// `Remembered`, so a stored label could only restate one of those two facts —
+/// and a hand-edited one would invite a reader to trust a cue that never
+/// measured anything.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ScreenScaleSetting {
+    /// Screen width in physical px, as captured.
+    pub width: u32,
+    /// Screen height in physical px, as captured.
+    pub height: u32,
+    /// Game-UI px per reference-fixture px — the unit is documented on
+    /// [`crate::ssot::ScreenSlice`], which owns it.
+    pub ui_scale: f32,
+    /// Unix ms the measurement was taken at, carried through unchanged so an
+    /// age survives the restart with the number it belongs to.
+    pub measured_at_ms: u64,
+}
+
+impl ScreenScaleSetting {
+    /// The persistable form of `slice`, or `None` when it must not be stored.
+    ///
+    /// This is the normative answer to "what may be remembered", and the
+    /// persist TRIGGER ([`crate::ssot::should_remember_screen`]) only decides
+    /// when to spend a write.
+    ///
+    /// - `MercFrame` — stored. The gold frame is the cue POE-214 exists to
+    ///   measure.
+    /// - `MercOcr` — refused. It is the line-pitch estimate that sits 6-12 px
+    ///   off the frame, and next session would read it back under the same
+    ///   `remembered` label a real measurement gets, with no way to tell them
+    ///   apart. **Refusing it must not null what is already stored**, and this
+    ///   function cannot tell the difference: `persist_settings` rewrites the
+    ///   whole file from `from_state`, so on its own a `None` here would erase
+    ///   a remembered measurement on the first save after an OCR-only tick —
+    ///   for exactly the users whose frame fit never lands. That is what
+    ///   [`preserve_screen_scale`] exists to prevent; the two are one rule read
+    ///   together.
+    /// - `Remembered` — stored unchanged, which is what lets a session that
+    ///   loaded a value and never measured write back what it loaded instead of
+    ///   nulling it on the first unrelated save.
+    pub fn from_slice(slice: &crate::ssot::ScreenSlice) -> Option<Self> {
+        match slice.source {
+            crate::ssot::ScreenScaleSource::MercOcr => None,
+            crate::ssot::ScreenScaleSource::MercFrame
+            | crate::ssot::ScreenScaleSource::Remembered => Some(Self {
+                width: slice.width,
+                height: slice.height,
+                ui_scale: slice.ui_scale,
+                measured_at_ms: slice.measured_at_ms,
+            }),
+        }
+    }
+
+    /// The stored numbers as a slice, always labelled `Remembered` — a load is
+    /// not a measurement, and the label is the only thing that says so.
+    pub fn to_slice(&self) -> crate::ssot::ScreenSlice {
+        crate::ssot::ScreenSlice {
+            width: self.width,
+            height: self.height,
+            ui_scale: self.ui_scale,
+            source: crate::ssot::ScreenScaleSource::Remembered,
+            measured_at_ms: self.measured_at_ms,
+        }
+    }
+
+    /// Whether these numbers can describe a screen at all.
+    ///
+    /// Every consumer of the slice multiplies a rect by `ui_scale`, so a
+    /// hand-edited `0` would not degrade an answer, it would erase one — and
+    /// unlike `temple_calibration`, which its reader re-verifies against the
+    /// NCC floor on every board, nothing downstream re-checks this value.
+    /// Refused at load instead; see `apply_to_state`.
+    ///
+    /// `> 0.0` already refuses `NaN` (every comparison with it is false), but
+    /// NOT an infinity: serde deserialises an `f32` through `f64` and narrows
+    /// with a saturating `as` cast, so a literal serde_json accepts as f64 yet
+    /// exceeding `f32::MAX` (`1e300`) arrives here as `f32::INFINITY`, which
+    /// is `> 0.0`. Only `1e999`-class literals are refused by the parser. Hence
+    /// the explicit `is_finite()`; the `f32::INFINITY` row of the refusal
+    /// table pins it.
+    fn is_sane(&self) -> bool {
+        self.width > 0 && self.height > 0 && self.ui_scale.is_finite() && self.ui_scale > 0.0
+    }
 }
 
 /// The shipped auto-search default — ON, see `mercenary::DEFAULT_TRADE_AUTO`.
@@ -282,6 +385,7 @@ impl Default for Settings {
             merc_sources_off: None,
             merc_trade_auto: default_merc_trade_auto(),
             merc_tier_floor: default_merc_tier_floor(),
+            screen_scale: None,
         }
     }
 }
@@ -377,6 +481,11 @@ pub fn save(app: &tauri::AppHandle, settings: &Settings) {
 /// Build a Settings struct from the current AppState.
 pub fn from_state(state: &crate::AppState) -> Settings {
     let temple = state.temple_settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // Bound HERE rather than inside the struct literal below: a temporary
+    // guard in a literal lives to the end of the whole statement, and this
+    // mutex is one of the module-owned ones that are taken alone (see
+    // modules.rs "Lock order"). `ScreenSlice` is `Copy`, so the deref copies.
+    let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
     Settings {
         client_txt_path: state.client_txt_path.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         server_url: state.server_url.lock().unwrap_or_else(|e| e.into_inner()).clone(),
@@ -431,6 +540,50 @@ pub fn from_state(state: &crate::AppState) -> Settings {
         ),
         merc_trade_auto: *state.merc_trade_auto.lock().unwrap_or_else(|e| e.into_inner()),
         merc_tier_floor: *state.merc_tier_floor.lock().unwrap_or_else(|e| e.into_inner()),
+        // Read here — beside the temple's calibration and for the same reason:
+        // `persist_settings` rewrites the WHOLE file from this function and
+        // `Settings` has no `skip_serializing_if`, so a field not read here is
+        // nulled by the next save from any unrelated command. What is
+        // persistable at all is `ScreenScaleSetting::from_slice`'s call.
+        //
+        // Unlike every other field here this projection is LOSSY — an
+        // OCR-derived slice maps to `None` — so a `None` from this line means
+        // "nothing to write", never "erase what is stored".
+        // [`preserve_screen_scale`] is the half that says so, and
+        // `persist_settings` runs it over this struct before the write.
+        screen_scale: screen.as_ref().and_then(ScreenScaleSetting::from_slice),
+    }
+}
+
+/// Keep the stored screen scale when this session has nothing to replace it
+/// with (POE-214 WI-B2).
+///
+/// [`from_state`]'s screen-scale projection is the one lossy field in it: an
+/// `MercOcr` slice maps to `None` (see [`ScreenScaleSetting::from_slice`]), and
+/// `crate::persist_settings` rewrites the whole file, so without this merge the
+/// first OCR-only tick would null a remembered measurement on the next save
+/// from ANY of the 33 unrelated commands — silently, and precisely for the
+/// users whose frame fit never lands.
+///
+/// The label is what makes the merge correct rather than merely convenient:
+/// `Remembered` says "not measured this run", so a live OCR estimate does not
+/// falsify the frame measurement that produced the stored number — it just
+/// fails to improve on it.
+///
+/// Deliberately NOT folded into [`persist_overlay_settings`]: that function's
+/// contract is fields no `AppState` mutex owns, and `state.screen` owns this
+/// one. A measurement DOES win — a `MercFrame` slice makes `from_slice` return
+/// `Some`, so `target.screen_scale` is already filled and this leaves it alone,
+/// whatever dimensions the stored value had (latest measurement wins, which is
+/// also why no separate stale-dimensions prune exists; see `apply_to_state`).
+///
+/// A stored value that cannot describe a screen is dropped rather than carried
+/// forward — the same [`ScreenScaleSetting::is_sane`] gate `apply_to_state`
+/// refused it by, so a save does not write a hand-edited `0` back out after the
+/// load already rejected it.
+pub fn preserve_screen_scale(existing: &Settings, target: &mut Settings) {
+    if target.screen_scale.is_none() {
+        target.screen_scale = existing.screen_scale.filter(|stored| stored.is_sane());
     }
 }
 
@@ -666,6 +819,395 @@ mod tests {
         assert_eq!(slice.keys, 2);
         assert_eq!(slice.config, settings.temple_config);
         assert_eq!(slice.profile, settings.temple_profile);
+    }
+
+    /// A frame measurement fixed at a known instant, so a round trip has real
+    /// numbers to lose. 1920x1200 at 1.0 is the reference fixture's own screen
+    /// (see `ssot::ScreenSlice`'s unit note).
+    fn measured_screen(source: crate::ssot::ScreenScaleSource) -> crate::ssot::ScreenSlice {
+        crate::ssot::ScreenSlice {
+            width: 1920,
+            height: 1080,
+            ui_scale: 0.9,
+            source,
+            measured_at_ms: 1_724_000_000_000,
+        }
+    }
+
+    /// The five-touch-point cycle for the screen scale: a frame measurement
+    /// reaches settings.json through `from_state` and comes back through
+    /// `apply_to_state` LABELLED as remembered, with every number intact.
+    /// Fails if either touch point is dropped — the next session would then
+    /// have no idea what this screen's UI scale is until a recruit window
+    /// happened to open, which is the whole point of persisting it.
+    #[test]
+    fn a_frame_measured_screen_scale_round_trips_through_state_as_remembered() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::MercFrame));
+
+        let saved = from_state(&state);
+        let stored = saved
+            .screen_scale
+            .expect("a frame measurement must reach settings.json");
+        assert_eq!((stored.width, stored.height), (1920, 1080));
+        assert_eq!(stored.ui_scale, 0.9);
+        assert_eq!(stored.measured_at_ms, 1_724_000_000_000);
+
+        // Next launch: a fresh state loads that file.
+        let reloaded = test_app_state();
+        let _ = apply_to_state(&saved, &reloaded);
+
+        let loaded = reloaded
+            .screen
+            .lock()
+            .unwrap()
+            .expect("the load must fill the slice");
+        assert_eq!((loaded.width, loaded.height), (1920, 1080));
+        assert_eq!(loaded.ui_scale, 0.9);
+        assert_eq!(
+            loaded.measured_at_ms, 1_724_000_000_000,
+            "the age must survive with the number it belongs to",
+        );
+        assert_eq!(
+            loaded.source,
+            crate::ssot::ScreenScaleSource::Remembered,
+            "a loaded scale was not measured this run and must say so",
+        );
+    }
+
+    /// The OCR-derived scale is never written. It sits 6-12 px off the frame
+    /// (POE-214's diagnosis), and next session would read it back under the
+    /// same `remembered` label a real measurement gets, with nothing to tell
+    /// the two apart.
+    #[test]
+    fn an_ocr_measured_screen_scale_is_not_persisted() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::MercOcr));
+
+        assert_eq!(
+            from_state(&state).screen_scale,
+            None,
+            "the drifting cue must not reach settings.json",
+        );
+    }
+
+    /// A session that loaded a scale and never measured one writes back what
+    /// it loaded. Without this the first save from any command nulls the field
+    /// (the whole file is rewritten from `from_state`) and the remembered
+    /// value is gone for good — the worst case being a user whose merc module
+    /// is off.
+    #[test]
+    fn a_remembered_screen_scale_is_written_back_unchanged() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::Remembered));
+
+        let stored = from_state(&state)
+            .screen_scale
+            .expect("a loaded scale must survive a session that never measured");
+
+        assert_eq!((stored.width, stored.height), (1920, 1080));
+        assert_eq!(stored.ui_scale, 0.9);
+        assert_eq!(stored.measured_at_ms, 1_724_000_000_000);
+    }
+
+    /// A save triggered by some OTHER command must not lose the remembered
+    /// scale — the `test_overlay_settings_survive_persist_cycle` hazard, one
+    /// door along: `persist_settings` rewrites the whole file from
+    /// `from_state`, and `Settings` has no `skip_serializing_if`, so a field
+    /// that function does not read is nulled by the next unrelated save.
+    #[test]
+    fn a_save_from_another_command_keeps_the_remembered_screen_scale() {
+        let state = test_app_state();
+        let loaded = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1200,
+                ui_scale: 1.0,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+        let _ = apply_to_state(&loaded, &state);
+
+        // Another command changes an unrelated preference and persists.
+        *state.sidebar_open.lock().unwrap() = false;
+        let saved = from_state(&state);
+
+        assert!(!saved.sidebar_open, "precondition: the unrelated change is what is being saved");
+        assert_eq!(
+            saved.screen_scale, loaded.screen_scale,
+            "the remembered scale must survive an unrelated save",
+        );
+    }
+
+    /// The on-disk key and its inner keys. The file is hand-editable and
+    /// forward-compatible by convention; renaming either half silently drops
+    /// every user's remembered scale on the next launch.
+    #[test]
+    fn the_remembered_scale_is_stored_under_snake_case_keys() {
+        let settings = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1080,
+                ui_scale: 0.9,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+
+        let json = serde_json::to_value(&settings).expect("settings must serialize");
+
+        assert_eq!(json["screen_scale"]["width"], 1920);
+        assert_eq!(json["screen_scale"]["height"], 1080);
+        assert_eq!(json["screen_scale"]["measured_at_ms"], 1_724_000_000_000u64);
+        assert_eq!(
+            json["screen_scale"]["ui_scale"].as_f64().expect("ui_scale must be a number") as f32,
+            0.9_f32,
+        );
+    }
+
+    /// The measured scale is an `f32` that goes to disk through `f64` JSON and
+    /// comes back. It has to return BIT-EQUAL: a consumer multiplies a rect by
+    /// it, and this test is what says a widened or truncated field would be
+    /// caught rather than showing up as a few px of drift next session.
+    /// 0.8985 is a real fit value, not a round one.
+    #[test]
+    fn a_measured_ui_scale_survives_the_json_text_round_trip_exactly() {
+        let settings = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 2560,
+                height: 1440,
+                ui_scale: 0.8985_f32,
+                measured_at_ms: 1_724_000_000_123,
+            }),
+            ..Settings::default()
+        };
+
+        let text = serde_json::to_string(&settings).expect("settings must serialize");
+        let parsed: Settings = serde_json::from_str(&text).expect("its own output must parse");
+
+        let stored = parsed.screen_scale.expect("the scale must survive the file");
+        assert_eq!((stored.width, stored.height), (2560, 1440));
+        assert_eq!(stored.ui_scale, 0.8985_f32, "the fit must come back bit-equal");
+        assert_eq!(stored.measured_at_ms, 1_724_000_000_123);
+    }
+
+    /// The shape a save from an OCR-only session used to write, and the one a
+    /// hand-edit writes to forget a screen: an explicit `null` is a present key
+    /// with no value, which the container-level `#[serde(default)]` does not
+    /// cover. It must load as unmeasured rather than fail the whole file.
+    #[test]
+    fn an_explicit_null_screen_scale_loads_as_unmeasured() {
+        let parsed: Settings =
+            serde_json::from_str(r#"{"server_url":"https://kept.example","screen_scale":null}"#)
+                .expect("an explicit null must still parse");
+
+        assert_eq!(parsed.server_url, "https://kept.example");
+        assert_eq!(parsed.screen_scale, None);
+    }
+
+    /// A settings.json written before POE-214 carries no `screen_scale`. It
+    /// must load with the field absent, not fail the whole file (which would
+    /// reset every unrelated preference in it). The attribute that holds here
+    /// is the CONTAINER-level `#[serde(default)]` on `Settings` — it fills
+    /// every missing field from `Settings::default()`, so this passes with or
+    /// without the field-level one.
+    #[test]
+    fn a_settings_file_without_a_screen_scale_loads_with_none() {
+        let parsed: Settings = serde_json::from_str(r#"{"server_url":"https://kept.example"}"#)
+            .expect("an older file must still parse");
+        assert_eq!(parsed.server_url, "https://kept.example");
+        assert_eq!(parsed.screen_scale, None);
+
+        let state = test_app_state();
+        let _ = apply_to_state(&parsed, &state);
+
+        assert!(
+            state.screen.lock().unwrap().is_none(),
+            "no stored scale means the slice stays unmeasured, not 1.0",
+        );
+    }
+
+    /// A hand-edited scale that cannot describe a screen is refused at load and
+    /// reported — one row per clause of `is_sane`, because a gate that dropped
+    /// any single clause would still pass the others. Every consumer multiplies
+    /// a rect by `ui_scale`, so loading a 0 would erase the answer rather than
+    /// degrade it, and nothing downstream re-verifies this value the way the
+    /// temple's reader re-verifies its own calibration.
+    #[test]
+    fn a_screen_scale_that_cannot_describe_a_screen_is_refused_and_reported() {
+        for (width, height, ui_scale, what) in [
+            (0_u32, 1080_u32, 0.9_f32, "a zero width"),
+            (1920, 0, 0.9, "a zero height"),
+            (1920, 1080, 0.0, "a zero ui_scale"),
+            (1920, 1080, -1.0, "a negative ui_scale"),
+            (1920, 1080, f32::NAN, "a NaN ui_scale"),
+            (1920, 1080, f32::INFINITY, "an infinite ui_scale"),
+        ] {
+            let settings = Settings {
+                screen_scale: Some(ScreenScaleSetting {
+                    width,
+                    height,
+                    ui_scale,
+                    measured_at_ms: 1_724_000_000_000,
+                }),
+                ..Settings::default()
+            };
+            let state = test_app_state();
+
+            let rejected = apply_to_state(&settings, &state);
+
+            assert!(
+                state.screen.lock().unwrap().is_none(),
+                "{what} must not reach the slice",
+            );
+            let line = rejected
+                .iter()
+                .find(|line| line.contains("screen scale"))
+                .unwrap_or_else(|| panic!("{what} must be reported, not silently dropped"));
+            assert!(
+                line.contains(&format!("{width}x{height}")),
+                "the line must name the refused value, got {line:?}",
+            );
+        }
+    }
+
+    /// The data-loss guard, and the case that motivates it: a session whose
+    /// frame fit never lands still ends up with an `MercOcr` slice, which
+    /// `from_state` projects to `None`. Any of the 33 unrelated
+    /// `persist_settings` call sites then rewrites the whole file, so without
+    /// the merge the remembered measurement is gone — silently, and for exactly
+    /// the users who most need it.
+    #[test]
+    fn preserve_screen_scale_keeps_the_stored_measurement_when_this_session_only_ocr_fitted() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() =
+            Some(measured_screen(crate::ssot::ScreenScaleSource::MercOcr));
+        let existing = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1200,
+                ui_scale: 1.0,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+
+        let mut about_to_save = from_state(&state);
+        assert_eq!(
+            about_to_save.screen_scale, None,
+            "precondition: the OCR estimate is not persistable",
+        );
+
+        preserve_screen_scale(&existing, &mut about_to_save);
+
+        assert_eq!(
+            about_to_save.screen_scale, existing.screen_scale,
+            "an unmeasurable session must write back what it loaded",
+        );
+    }
+
+    /// The other half: the merge is a floor, not a freeze. A frame measurement
+    /// this session fills `from_state`'s field, so the stored value must NOT be
+    /// merged over it — latest measurement wins, whatever it measured.
+    #[test]
+    fn preserve_screen_scale_lets_a_fresh_measurement_replace_the_stored_one() {
+        let state = test_app_state();
+        *state.screen.lock().unwrap() = Some(crate::ssot::ScreenSlice {
+            width: 2560,
+            height: 1440,
+            ui_scale: 1.25,
+            source: crate::ssot::ScreenScaleSource::MercFrame,
+            measured_at_ms: 1_724_000_600_000,
+        });
+        let existing = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1200,
+                ui_scale: 1.0,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+
+        let mut about_to_save = from_state(&state);
+        preserve_screen_scale(&existing, &mut about_to_save);
+
+        let kept = about_to_save.screen_scale.expect("the measurement must be there");
+        assert_eq!((kept.width, kept.height), (2560, 1440));
+        assert_eq!(kept.ui_scale, 1.25);
+        assert_eq!(kept.measured_at_ms, 1_724_000_600_000);
+    }
+
+    /// The merge must not resurrect what the load refused. `apply_to_state`
+    /// drops a hand-edited value that cannot describe a screen, which leaves
+    /// the slice empty — and an empty slice is exactly the condition the merge
+    /// fires on, so an ungated merge would write the bad value straight back
+    /// out and make the refusal permanent noise instead of a one-off.
+    #[test]
+    fn preserve_screen_scale_drops_a_stored_value_that_cannot_describe_a_screen() {
+        let existing = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1080,
+                ui_scale: 0.0,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+        let mut about_to_save = Settings::default();
+
+        preserve_screen_scale(&existing, &mut about_to_save);
+
+        assert_eq!(
+            about_to_save.screen_scale, None,
+            "the load already refused this value; a save must not write it back",
+        );
+    }
+
+    /// Why WI-B2 needs no stale-dimensions prune: `record_screen` stores
+    /// whatever it is handed, so the first frame fit of the real screen
+    /// replaces a value remembered at another monitor's size outright, and the
+    /// same tick is worth a write. A prune at load would only be racing this.
+    #[test]
+    fn a_frame_measurement_of_a_different_screen_replaces_the_remembered_dimensions() {
+        let state = test_app_state();
+        let loaded = Settings {
+            screen_scale: Some(ScreenScaleSetting {
+                width: 1920,
+                height: 1200,
+                ui_scale: 1.0,
+                measured_at_ms: 1_724_000_000_000,
+            }),
+            ..Settings::default()
+        };
+        let _ = apply_to_state(&loaded, &state);
+
+        let measured = crate::ssot::ScreenSlice {
+            width: 2560,
+            height: 1440,
+            ui_scale: 1.25,
+            source: crate::ssot::ScreenScaleSource::MercFrame,
+            measured_at_ms: 1_724_000_600_000,
+        };
+        let changed = {
+            let mut slot = state.screen.lock().unwrap();
+            crate::ssot::record_screen(&mut slot, measured)
+        };
+
+        let stored = from_state(&state)
+            .screen_scale
+            .expect("the new measurement must be persistable");
+        assert_eq!((stored.width, stored.height), (2560, 1440));
+        assert_eq!(stored.ui_scale, 1.25);
+        assert_eq!(stored.measured_at_ms, 1_724_000_600_000);
+        assert!(
+            crate::ssot::should_remember_screen(changed, measured.source),
+            "a screen this different from the remembered one is worth a write",
+        );
     }
 
     /// A file written before POE-202 carries neither trade field. The
@@ -1166,6 +1708,33 @@ pub fn apply_to_state(settings: &Settings, state: &crate::AppState) -> Vec<Strin
                 clamped
             }
         };
+
+    // The remembered screen scale (POE-214 D2), loaded under `Remembered` so a
+    // consumer can see it was not measured this run. Numbers that cannot
+    // describe a screen are refused rather than loaded — and REPORTED, because
+    // the file and the running value now disagree (see `is_sane`).
+    //
+    // **No prune here, and this is the deliberate half of it.** A value stored
+    // at another monitor's size is left in place: `apply_to_state` has no
+    // `AppHandle`, so the primary monitor's size is not cheaply known at this
+    // seam, and inventing a lock order to go and get one would cost more than
+    // the staleness does. The merc tick is the cure — `ssot::record_screen`
+    // stores whatever it is handed, so the first frame measurement of the real
+    // screen overwrites this outright, whatever its dims were. A session that
+    // never measures (merc module off) therefore runs on a `remembered` label,
+    // which is exactly what that label is for: a consumer that cannot afford a
+    // stale screen weighs the label and waits for a measurement.
+    let remembered = match settings.screen_scale {
+        Some(s) if !s.is_sane() => {
+            rejected.push(format!(
+                "screen scale: {}x{} at ui_scale {} is not a screen, ignoring it",
+                s.width, s.height, s.ui_scale
+            ));
+            None
+        }
+        other => other.map(|s| s.to_slice()),
+    };
+    *state.screen.lock().unwrap_or_else(|e| e.into_inner()) = remembered;
 
     // Seed the slice's settings echo, so the page and the overlay render the
     // persisted key count, flags and profile from the first poll — including
