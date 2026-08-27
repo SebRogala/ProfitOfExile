@@ -67,12 +67,16 @@ use crate::AppState;
 use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, TemplateStore};
 use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
+// The row identity lives with the reader that produces it (POE-207): the crop
+// cache is built in `read.rs` and consumed here, and both have to spell the key
+// the same way. Re-exported so `run::row_key` keeps naming it.
+pub use super::read::row_key;
 use super::search::{self, MercTradeSession};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
 use super::sync;
 use super::trigger;
 use super::{
-    MercCapture, MercGeometry, MercHeader, MercSkillRead, MercStatus, MercSupportRead,
+    MercCapture, MercGeometry, MercHeader, MercStatus, MercSupportRead,
     MercenarySlice, ReadState,
 };
 
@@ -881,12 +885,23 @@ pub fn probe_band(remembered: Option<[i32; 4]>, screen: [u32; 2], attempt: u32) 
 /// How many times a cell that ALREADY reads as `Matched` may be re-OCR'd by the
 /// hover tick, per capture.
 ///
-/// Three, not one: the first read can land while the tooltip is still fading in
-/// and the useful confirmation comes a tick later. Not unbounded, because a
-/// cursor parked on a matched cell would otherwise buy a full screen grab plus
-/// an OCR every 400 ms for as long as the player leaves it there — the cost the
-/// completed-capture pause exists to remove.
-pub const MATCHED_HOVER_ATTEMPTS: u8 = 3;
+/// FIVE since POE-207. What a correction actually costs under the two-read
+/// guard ([`fold_pending`]) is THREE charged reads: the fade-in miss that has
+/// always been the first read of a hover, plus the two agreeing reads the guard
+/// now requires — which is the whole of the old budget of three, with nothing
+/// left over for a cell that needs a second look. Reads the guard DISCARDS are
+/// not part of that arithmetic: they change no state, so the tick refunds them
+/// ([`HoverBudget::refund`]) and a run of them cannot exhaust the cell.
+///
+/// The remaining two are deliberate slack for the reads that cost something and
+/// buy nothing — a second fade-in miss, an OCR that reads the skill column
+/// behind the tooltip instead of the tooltip. Three is the floor a test pins;
+/// the slack is a judgement call, not a measurement.
+///
+/// Not unbounded, because a cursor parked on a matched cell would otherwise buy
+/// a full screen grab plus an OCR every 400 ms for as long as the player leaves
+/// it there — the cost the completed-capture pause exists to remove.
+pub const MATCHED_HOVER_ATTEMPTS: u8 = 5;
 
 /// The per-cell hover budget (2026-08-25).
 ///
@@ -925,6 +940,21 @@ impl HoverBudget {
                 true
             }
             _ => true,
+        }
+    }
+
+    /// Give back a charge for a read that changed NOTHING.
+    ///
+    /// The budget is charged before the grab, because that is what makes an
+    /// idle tick cheap — but [`fold_pending`] can then throw the read away
+    /// (a claim on another cell inside [`TOOLTIP_LAG_BOUND`] explains it as a
+    /// lagging tooltip). Those ticks are the guard's cost, not the cell's, and
+    /// charging them would let a run of them exhaust a `Matched` cell's budget
+    /// before the correction the budget exists to buy ever starts. Saturating,
+    /// so a refund without a matching charge cannot wrap the counter.
+    pub fn refund(&mut self, cell: (String, u8)) {
+        if let Some(spent) = self.spent.get_mut(&cell) {
+            *spent = spent.saturating_sub(1);
         }
     }
 
@@ -1084,19 +1114,6 @@ pub struct ConfirmedCell {
     pub score: f32,
 }
 
-/// The key a confirmation is remembered under: the row's skill, plus the slot.
-///
-/// D5: confirmations survive re-detection of the SAME window. The row index is
-/// not stable enough for that on its own — a wrapped name or a missed line
-/// renumbers the rows — so the row's identity is its skill id, falling back to
-/// its raw text when the skill did not resolve.
-pub fn row_key(skill: &MercSkillRead) -> String {
-    match skill.ids.first() {
-        Some(id) => id.clone(),
-        None => skill.raw.trim().to_lowercase(),
-    }
-}
-
 /// Re-apply remembered confirmations to a freshly read capture.
 ///
 /// A confirmed cell outranks whatever the template store said this tick: the
@@ -1125,8 +1142,15 @@ pub fn apply_confirmed(
 }
 
 /// The pre-hover crop cache: one signature (and the colour crop it came from)
-/// per `(row index, slot)`.
-pub type SigCache = HashMap<(u8, u8), (CellSig, Option<image::RgbaImage>)>;
+/// per `(row key, slot)`.
+///
+/// The SAME key a confirmation is stored under ([`row_key`]), and that is the
+/// point (POE-207). Keyed by `row.index` — sequential over the rows a detect
+/// found — a dropped skill line renumbered every row below it, so the crop
+/// looked up under the hovered cell's index was another cell's art and the
+/// store learned it under the hovered cell's family. One of the two mislabel
+/// paths behind the 21 poisoned templates measured on 2026-08-26.
+pub type SigCache = HashMap<(String, u8), (CellSig, Option<image::RgbaImage>)>;
 
 /// Fold a fresh detect's crops into the cached ones, protecting the cell the
 /// cursor is inside.
@@ -1138,10 +1162,14 @@ pub type SigCache = HashMap<(u8, u8), (CellSig, Option<image::RgbaImage>)>;
 /// and gets NO entry when it has none — a confirm then reports `NoCrop` and
 /// learns nothing, which is the honest outcome. Every other cell takes the
 /// fresh crop, so a moved or rescaled window re-caches normally.
-pub fn merge_sigs(mut previous: SigCache, fresh: SigCache, hovered: Option<(u8, u8)>) -> SigCache {
+pub fn merge_sigs(
+    mut previous: SigCache,
+    fresh: SigCache,
+    hovered: Option<(String, u8)>,
+) -> SigCache {
     let mut out = SigCache::with_capacity(fresh.len());
     for (key, sig) in fresh {
-        if Some(key) == hovered {
+        if hovered.as_ref() == Some(&key) {
             if let Some(cold) = previous.remove(&key) {
                 out.insert(key, cold);
             }
@@ -1152,10 +1180,159 @@ pub fn merge_sigs(mut previous: SigCache, fresh: SigCache, hovered: Option<(u8, 
     out
 }
 
-/// The `(row index, slot)` of the cell the cursor is inside, if any.
-pub fn hovered_key(capture: &MercCapture, cursor: Option<(i32, i32)>) -> Option<(u8, u8)> {
+/// The `(row key, slot)` of the cell the cursor is inside, if any.
+pub fn hovered_key(capture: &MercCapture, cursor: Option<(i32, i32)>) -> Option<(String, u8)> {
     let (ri, si) = cell_at(capture, cursor?)?;
-    Some((capture.rows[ri].index, capture.rows[ri].supports[si].slot))
+    Some((row_key(&capture.rows[ri].skill), capture.rows[ri].supports[si].slot))
+}
+
+/// How long an uncorroborated hover read waits for its second opinion.
+///
+/// Ten seconds is a hover the player has walked away from. The pending is not
+/// refreshed by later reads — `at` is stamped at read 1 and never moved — so
+/// this bounds the whole wait, not the gap between reads, and a cell whose
+/// tooltip flickers cannot hold the slot indefinitely.
+pub const PENDING_CONFIRM_TTL: Duration = Duration::from_secs(10);
+
+/// How long a standing claim is allowed to explain a naming read on ANOTHER
+/// cell as its own lagging tooltip.
+///
+/// Measured: the two "Ailment Damage" reads of 2026-08-26 landed at 23:23:21
+/// and 23:23:22 — about one second apart, on adjacent slots, the second of them
+/// the first cell's tooltip arriving over the second cell's crop. Two seconds is
+/// that lag with margin. Past it the tooltip on screen is the cell the cursor is
+/// actually in, so a read there is the player moving on rather than the game
+/// catching up. See [`fold_pending`].
+pub const TOOLTIP_LAG_BOUND: Duration = Duration::from_secs(2);
+
+/// One tooltip read that NAMED a support, held until a second read agrees with
+/// it (POE-207 L8).
+///
+/// The crop travels WITH the claim. A tooltip read is evidence about the cell
+/// the cursor was in at read 1, and the cold crop cached for that cell at that
+/// moment is the art the confirmation is about; looking the crop up again at
+/// apply time would re-open the gap this guard exists to close, because a
+/// re-detect can have replaced the cache in between.
+///
+/// `crop` is `None` when the cache held nothing for the cell — the capture that
+/// cropped it has been replaced since. The confirmation still stands (it names
+/// the cell); only the template is missing, which the apply path reports as
+/// `Learned::NoCrop`.
+#[derive(Debug, Clone)]
+pub struct PendingConfirm {
+    /// `(row key, slot)` — the same identity `Session::confirmed` and
+    /// [`SigCache`] use.
+    pub key: (String, u8),
+    pub family: String,
+    pub tier: u8,
+    pub name: Option<String>,
+    pub ids: Vec<String>,
+    pub score: f32,
+    /// The cold crop as it stood at read 1. See the type doc.
+    pub crop: Option<(CellSig, Option<image::RgbaImage>)>,
+    /// Stamped at read 1 and never refreshed. See [`PENDING_CONFIRM_TTL`].
+    pub at: Instant,
+}
+
+/// Fold a fresh naming read into the held one: `(new pending, apply now)`.
+///
+/// Why a confirmation costs TWO agreeing reads (measured, 2026-08-26 23:23:21
+/// and 23:23:22): the game's tooltip lags a moving cursor, so a hover tick that
+/// grabs the screen a frame after the cursor entered a new cell reads the
+/// PREVIOUS cell's tooltip over the NEW cell's crop. Two "Ailment Damage"
+/// confirms landed one second apart on adjacent slots that way, and the second
+/// of them filed Faster Attacks art under Ailment Damage — 19 of the 21
+/// poisoned templates in Sebastian's store came from that mechanism. A lagging
+/// tooltip names a DIFFERENT cell on each read of a sweep, so requiring two
+/// reads that agree on the same `(row key, slot)` costs a sweep everything and
+/// a deliberate hover one extra 400 ms tick.
+///
+/// The three outcomes:
+///
+/// - same key, same family AND tier — the claim is corroborated: apply the
+///   HELD read (its crop, its score), and the slot is free again;
+/// - same key, different family or tier — the two reads disagree about the
+///   same cell, so neither is evidence: the fresh read replaces the held one
+///   and starts its own wait;
+/// - another key — split on the age of the CLAIM, at [`TOOLTIP_LAG_BOUND`]:
+///   - a claim younger than the bound explains the read as its own lagging
+///     tooltip, so the read is DISCARDED and the claim stands. A sweep is
+///     exactly a run of reads on different keys inside the bound, and letting
+///     each one take the slot would make the guard a one-tick delay instead of
+///     a corroboration rule;
+///   - a claim at least the bound old cannot: the tooltip has had longer than
+///     the measured lag to catch up, so a read on another cell is the player
+///     moving on. The fresh read REPLACES the claim (nothing applied) and the
+///     new cell is confirmable on its own next read.
+///
+/// The residual the split accepts: a tooltip that lags for MORE than two
+/// seconds can still be attributed to the cell the cursor moved to. What bounds
+/// it is the guard's own rule one level down — that misattributed read is only
+/// a claim, and it still needs a second read on the new cell to agree with it
+/// before anything is learned.
+///
+/// An EXPIRED pending is treated as no pending at all — the fresh read takes
+/// the slot. [`PENDING_CONFIRM_TTL`] is the outer bound on the whole wait; the
+/// lag bound above only decides who wins a cross-cell read inside it. Both
+/// checks are here rather than on a timer because nothing else wakes to run
+/// them.
+pub fn fold_pending(
+    pending: Option<PendingConfirm>,
+    read: PendingConfirm,
+) -> (Option<PendingConfirm>, FoldOutcome) {
+    let held = pending.filter(|p| read.at.duration_since(p.at) < PENDING_CONFIRM_TTL);
+    match held {
+        Some(p) if p.key == read.key && p.family == read.family && p.tier == read.tier => {
+            (None, FoldOutcome::Applied(p))
+        }
+        Some(p) if p.key == read.key => (Some(read), FoldOutcome::Replaced),
+        Some(p) if read.at.duration_since(p.at) < TOOLTIP_LAG_BOUND => {
+            let age = read.at.duration_since(p.at);
+            let standing = p.key.clone();
+            (Some(p), FoldOutcome::Discarded { standing, age })
+        }
+        Some(_) => (Some(read), FoldOutcome::Replaced),
+        None => (Some(read), FoldOutcome::Held),
+    }
+}
+
+/// Which branch of [`fold_pending`] fired, so the caller can say what actually
+/// happened rather than lumping three different outcomes under one line.
+#[derive(Debug, Clone)]
+pub enum FoldOutcome {
+    /// A second read agreed with the standing claim: confirm the cell from
+    /// THIS claim — the first read's family, tier, score and crop snapshot.
+    Applied(PendingConfirm),
+    /// There was no claim (or the old one had expired); this read is now the
+    /// claim and the cell needs one more read.
+    Held,
+    /// A claim was displaced — either the same cell disagreeing with itself, or
+    /// a read past [`TOOLTIP_LAG_BOUND`] on a cell the player moved to. The
+    /// fresh read is the claim now; nothing was confirmed.
+    Replaced,
+    /// The read was thrown away: a claim on another cell is still young enough
+    /// to explain it as its own lagging tooltip. Nothing changed — which is why
+    /// the caller refunds the hover budget it charged for this tick.
+    Discarded {
+        /// The claim that won, for the log line.
+        standing: (String, u8),
+        /// How old that claim was when this read arrived.
+        age: Duration,
+    },
+}
+
+/// Drop a pending claim whose row is not in the capture any more.
+///
+/// The claim is about a cell, and a row key the fresh capture does not carry is
+/// a cell that is no longer on screen — a rematch, a different mercenary, or a
+/// skill line the reader now resolves to something else. Corroborating it
+/// against a later read of a row that merely happens to key the same way is
+/// exactly the cross-cell confusion the guard exists to stop, so it goes.
+pub fn drop_pending_off_capture(
+    pending: Option<PendingConfirm>,
+    capture: &MercCapture,
+) -> Option<PendingConfirm> {
+    pending.filter(|p| capture.rows.iter().any(|r| row_key(&r.skill) == p.key.0))
 }
 
 /// Whether the template store changed since `seen`, recording the new value.
@@ -1387,8 +1564,11 @@ struct Session {
     errors: OnceLog,
     /// The capture as last published — the hover tick mutates this copy.
     current: Option<MercCapture>,
-    /// Pre-hover cell crops from the most recent detect, keyed `(row, slot)`.
+    /// Pre-hover cell crops from the most recent detect, keyed `(row key, slot)`.
     sigs: SigCache,
+    /// The one hover read that has NAMED a support but has not been
+    /// corroborated yet. See [`fold_pending`].
+    pending_confirm: Option<PendingConfirm>,
     confirmed: HashMap<(String, u8), ConfirmedCell>,
     /// How much tooltip OCR each already-read cell has been allowed.
     hover_budget: HoverBudget,
@@ -1657,6 +1837,7 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         errors: OnceLog::default(),
         current: None,
         sigs: SigCache::new(),
+        pending_confirm: None,
         confirmed: HashMap::new(),
         hover_budget: HoverBudget::default(),
         template_generation: template_generation(&app),
@@ -2141,6 +2322,10 @@ fn miss(app: &AppHandle, session: &mut Session, errored: bool) -> DetectOutcome 
         session.header_guard = None;
         session.crop = None;
         session.sigs.clear();
+        // With the crops. An uncorroborated claim is about a cell on a window
+        // that is gone, and the confirmations that DO survive a retire survive
+        // because a second read already agreed with them.
+        session.pending_confirm = None;
         // The budget dies with the window. Cancels a merc lookup still on the
         // shared queue — and only then, see `search::close_session`. The
         // `trade` state itself stays on the slice, like the capture it belongs
@@ -2472,6 +2657,9 @@ fn detect_tick(
     if generation_changed(&mut session.template_generation, template_generation(app)) {
         session.confirmed.clear();
         session.hover_budget.clear();
+        // Including the claim that has not been corroborated yet: the un-poison
+        // button disowns a read, and a half-made one is still a read.
+        session.pending_confirm = None;
         // The retained slot holds the same disowned confirmations one retire
         // back. Leaving it would let the un-poison button be undone by the next
         // re-detect.
@@ -2501,6 +2689,10 @@ fn detect_tick(
         session.confirmed.clear();
         session.hover_budget.clear();
         session.sigs.clear();
+        // A REMATCH swaps the mercenary behind a panel that looks the same, so
+        // a claim made on the old one must not be corroborated by a read of the
+        // new one that happens to land on a row keying the same way.
+        session.pending_confirm = None;
         // The rects are NOT cleared here. `replaced` is carried down to
         // [`geometry::next_panel`], which is the one place that decides
         // whether a remembered rect may be grown by this frame — see its doc
@@ -2533,6 +2725,10 @@ fn detect_tick(
         result.sigs,
         hovered_key(&result.capture, cursor),
     );
+    // The capture the pending claim was made against is being replaced right
+    // here — this is the one place that can tell whether its row survived.
+    session.pending_confirm =
+        drop_pending_off_capture(session.pending_confirm.take(), &result.capture);
     session.current = Some(result.capture.clone());
     session.revision += 1;
     // GROW-ONLY within one live capture. A partial read under a tooltip
@@ -2693,9 +2889,14 @@ fn restore_retained(session: &mut Session, next: &MercCapture) -> Restore {
 
 /// The cursor, with a failed read surfaced once.
 ///
-/// One reader for the whole iteration: the hover confirm and the detect gate
-/// ([`detect_step`]) are two questions about the same cursor, and two reads
-/// would let them answer about different positions.
+/// One reader for the whole iteration, with ONE named exception: the hover
+/// confirm and the detect gate ([`detect_step`]) are two questions about the
+/// same cursor, and two reads would let them answer about different positions,
+/// so the loop reads it once at the top and hands the answer to both. The
+/// exception is [`hover_tick`]'s read immediately AFTER its screen grab, which
+/// asks a different question — whether the cursor was still in the cell while
+/// the frame carrying the tooltip was taken — and cannot be answered by a value
+/// read before the grab.
 fn read_cursor(app: &AppHandle, session: &mut Session) -> Option<(i32, i32)> {
     match crate::capture_mouse_position() {
         Ok(c) => Some(c),
@@ -2709,7 +2910,10 @@ fn read_cursor(app: &AppHandle, session: &mut Session) -> Option<(i32, i32)> {
 /// One hover tick: if the cursor sits in an unconfirmed captured cell, read the
 /// tooltip and let it name the cell (D5).
 ///
-/// `cursor` comes from the loop, not from a read of its own — see
+/// `cursor` — the position everything up to the grab is decided on — comes from
+/// the loop, not from a read of this tick's own. The tick then takes ONE read of
+/// its own, straight after the grab, to ask whether the cursor was still in the
+/// cell while the frame was taken; see the comment at that read and
 /// [`read_cursor`].
 ///
 /// Returns whether this tick actually CONFIRMED a cell. The loop uses that to
@@ -2729,7 +2933,7 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     let cell_key = (row_key(&capture.rows[ri].skill), capture.rows[ri].supports[si].slot);
     if !session
         .hover_budget
-        .take(cell_key, capture.rows[ri].supports[si].state)
+        .take(cell_key.clone(), capture.rows[ri].supports[si].state)
     {
         return false;
     }
@@ -2749,6 +2953,24 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
         }
     };
     let grab_ms = grab_started.elapsed().as_millis();
+    // THE DELIBERATE SECOND CURSOR READ (POE-207). The loop reads the cursor
+    // once per iteration on purpose — see [`read_cursor`] — because the hover,
+    // the detect gate and the header-withholding rule must agree about where it
+    // was. This read is not one of those three: it asks a question only
+    // answerable AFTER the grab, namely whether the cursor was still in the
+    // cell while the frame that carries the tooltip was being taken. A cursor
+    // that has moved on means the tooltip in this frame may belong to the cell
+    // it left — the lag that filed 19 wrong templates on 2026-08-26 — so the
+    // read is thrown away before it costs an OCR.
+    //
+    // An UNREADABLE cursor is not evidence of movement, so it does not discard:
+    // the same rule the detect gate applies one level up. `read_cursor` has
+    // already surfaced the failure once.
+    if let Some(after) = read_cursor(app, session) {
+        if cell_at(&capture, after) != Some((ri, si)) {
+            return false;
+        }
+    }
     let (iw, ih) = {
         use image::GenericImageView;
         img.dimensions()
@@ -2821,11 +3043,86 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
         }
         return false;
     };
+    // THE TWO-READ GUARD (POE-207 L8), between the read and everything that
+    // acts on it. The crop is snapshotted HERE, from the cache as it stands at
+    // read 1, so the template that is eventually learned and the tooltip that
+    // named it are statements about the same cell at the same moment — a
+    // re-detect between the two reads cannot slide a different crop under the
+    // claim. See [`fold_pending`].
+    let read = PendingConfirm {
+        key: cell_key.clone(),
+        family: confirmation.family.clone(),
+        tier: confirmation.tier,
+        name: confirmation.name.clone(),
+        ids: confirmation.ids.clone(),
+        score: confirmation.score,
+        crop: session.sigs.get(&cell_key).cloned(),
+        at: Instant::now(),
+    };
+    let (pending, outcome) = fold_pending(session.pending_confirm.take(), read);
+    session.pending_confirm = pending;
+    let agreed = match outcome {
+        FoldOutcome::Applied(agreed) => agreed,
+        outcome => {
+            // Each branch says what it actually did. "Awaiting a second read"
+            // over a DISCARDED read is the opposite of the truth: that read is
+            // gone, and the cell the player is on is not the one being waited
+            // for.
+            let named = confirmation.name.as_deref().unwrap_or(&confirmation.family);
+            let where_ = format!("row {} slot {}", capture.rows[ri].index, cell.slot);
+            if let FoldOutcome::Discarded { standing, age } = &outcome {
+                // NOT charged to the cell: the read changed nothing, and a run
+                // of these would otherwise spend a `Matched` cell's whole
+                // correction budget on the guard's behalf. See
+                // [`HoverBudget::refund`].
+                session.hover_budget.refund(cell_key.clone());
+                if debug_mode(app) {
+                    crate::app_log(
+                        app,
+                        format!(
+                            "Merc: hover read of {named} at {where_} discarded — row key {} slot {}'s claim is \
+                             {} ms old",
+                            standing.0,
+                            standing.1,
+                            age.as_millis(),
+                        ),
+                    );
+                }
+            } else if debug_mode(app) {
+                let what = if matches!(outcome, FoldOutcome::Replaced) {
+                    " replaced the held claim,"
+                } else {
+                    ""
+                };
+                crate::app_log(
+                    app,
+                    format!(
+                        "Merc: hover read of {named} at {where_}{what} — awaiting a second read"
+                    ),
+                );
+            }
+            // Nothing was confirmed, so the hover clock re-stamps and the next
+            // look at this cell is due 400 ms from now — which is exactly the
+            // second read the guard is waiting for.
+            return false;
+        }
+    };
+
+    // From the CORROBORATED read from here down, never from `confirmation`:
+    // the two agree on family and tier by construction, and the held one is the
+    // one whose crop belongs to the cell it was read on.
+    let confirmation = ConfirmedCell {
+        family: agreed.family.clone(),
+        tier: agreed.tier,
+        ids: agreed.ids.clone(),
+        name: agreed.name.clone(),
+        score: agreed.score,
+    };
     let family = confirmation.family.clone();
     let tier = confirmation.tier;
 
     let row_index = capture.rows[ri].index;
-    let cached = session.sigs.get(&(row_index, cell.slot)).cloned();
+    let cached = agreed.crop;
     let (learned, needs_save, offer) = match cached {
         Some((sig, raw)) => {
             // The bytes the pool gets, taken before the signature is moved into
@@ -2894,8 +3191,10 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
         ),
     );
 
-    let key = (row_key(&capture.rows[ri].skill), cell.slot);
-    session.confirmed.insert(key, confirmation.clone());
+    // The CORROBORATED claim's own key, not a re-derivation of it: the two are
+    // equal by construction (the fold applies only on a key match) and taking
+    // it from the claim is what keeps them so.
+    session.confirmed.insert(agreed.key, confirmation.clone());
 
     let mut updated = capture;
     apply_one(&mut updated.rows[ri].supports[si], &confirmation);
@@ -2960,7 +3259,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mercenary::{MercRow, Thresholds};
+    use crate::mercenary::{MercRow, MercSkillRead, Thresholds};
 
     fn vocab() -> MercVocab {
         MercVocab::load().expect("the compiled-in vocabulary parses")
@@ -3709,6 +4008,79 @@ mod tests {
         );
     }
 
+    /// The budget's FLOOR — the arithmetic [`MATCHED_HOVER_ATTEMPTS`] is set
+    /// from (POE-207). A correction of a confidently wrong match costs three
+    /// CHARGED reads: the fade-in miss that is the first read of a hover, then
+    /// the two agreeing reads the two-read guard requires. Reads the guard
+    /// discards are refunded and are not in this count.
+    #[test]
+    fn a_matched_cell_keeps_enough_budget_for_the_fade_in_miss_and_the_agreeing_pair() {
+        let mut budget = HoverBudget::default();
+        let cell = ("mercenary.skill_1".to_string(), 0);
+
+        assert!(budget.take(cell.clone(), ReadState::Matched), "the fade-in miss");
+        assert!(
+            budget.take(cell.clone(), ReadState::Matched),
+            "the first of the agreeing pair",
+        );
+        assert!(
+            budget.take(cell, ReadState::Matched),
+            "the second of the agreeing pair — the read the correction lands on",
+        );
+    }
+
+    /// A read the guard THREW AWAY costs the cell nothing (POE-207 review,
+    /// MEDIUM 2). The budget is charged before the grab, so a run of ticks
+    /// whose reads [`fold_pending`] discards — a claim on another cell inside
+    /// [`TOOLTIP_LAG_BOUND`], at a ~450 ms cycle — would otherwise spend the
+    /// whole correction budget on the guard's behalf and leave a wrongly
+    /// `Matched` cell uncorrectable for the life of the capture.
+    #[test]
+    fn a_read_the_guard_discarded_costs_the_matched_cell_nothing() {
+        let mut budget = HoverBudget::default();
+        let cell = ("mercenary.skill_1".to_string(), 0);
+
+        for _ in 0..MATCHED_HOVER_ATTEMPTS as u32 * 3 {
+            assert!(
+                budget.take(cell.clone(), ReadState::Matched),
+                "a discarded read is charged and then given straight back",
+            );
+            budget.refund(cell.clone());
+        }
+
+        for attempt in 0..MATCHED_HOVER_ATTEMPTS {
+            assert!(
+                budget.take(cell.clone(), ReadState::Matched),
+                "the full budget is still there for the correction: attempt {attempt}",
+            );
+        }
+        assert!(
+            !budget.take(cell, ReadState::Matched),
+            "and the cap still bites once the budget IS spent",
+        );
+    }
+
+    /// A refund without a matching charge must not hand out free reads. The
+    /// counter saturates at zero rather than wrapping a `u8` to 255.
+    #[test]
+    fn refunding_a_cell_that_was_never_charged_does_not_raise_its_budget() {
+        let mut budget = HoverBudget::default();
+        let cell = ("mercenary.skill_1".to_string(), 0);
+
+        budget.take(cell.clone(), ReadState::Matched);
+        budget.refund(cell.clone());
+        budget.refund(cell.clone());
+        budget.refund(cell.clone());
+
+        for _ in 0..MATCHED_HOVER_ATTEMPTS {
+            assert!(budget.take(cell.clone(), ReadState::Matched));
+        }
+        assert!(
+            !budget.take(cell, ReadState::Matched),
+            "three refunds against one charge must not buy a fourth attempt",
+        );
+    }
+
     /// The user already told us what this cell is. Re-reading it could only
     /// disagree with them.
     #[test]
@@ -3932,10 +4304,14 @@ mod tests {
         CellSig::from_rgb(bytes).expect("a gradient signature is not flat")
     }
 
-    fn cache(entries: &[((u8, u8), u8)]) -> SigCache {
+    fn sig_key(row: &str, slot: u8) -> (String, u8) {
+        (row.to_string(), slot)
+    }
+
+    fn cache(entries: &[((&str, u8), u8)]) -> SigCache {
         entries
             .iter()
-            .map(|(key, seed)| (*key, (sig(*seed), None)))
+            .map(|((row, slot), seed)| (sig_key(row, *slot), (sig(*seed), None)))
             .collect()
     }
 
@@ -3945,21 +4321,46 @@ mod tests {
     /// match nothing afterwards.
     #[test]
     fn the_hovered_cells_crop_is_kept_cold_across_a_re_detect() {
-        let previous = cache(&[((0, 0), 1), ((0, 1), 2)]);
-        let fresh = cache(&[((0, 0), 9), ((0, 1), 9)]);
+        let previous = cache(&[(("skill.a", 0), 1), (("skill.a", 1), 2)]);
+        let fresh = cache(&[(("skill.a", 0), 9), (("skill.a", 1), 9)]);
 
-        let merged = merge_sigs(previous, fresh, Some((0, 0)));
+        let merged = merge_sigs(previous, fresh, Some(sig_key("skill.a", 0)));
 
         assert_eq!(
-            merged[&(0, 0)].0,
+            merged[&sig_key("skill.a", 0)].0,
             sig(1),
             "the hovered cell must keep the crop taken before the cursor arrived",
         );
         assert_eq!(
-            merged[&(0, 1)].0,
+            merged[&sig_key("skill.a", 1)].0,
             sig(9),
             "every other cell takes the fresh crop, so a moved window re-caches",
         );
+    }
+
+    /// The renumbering bug in one test (POE-207). A skill line the OCR drops
+    /// moves `skill.b` from row position 1 to row position 0, and the cursor is
+    /// on ITS slot 0. Under the old `(row index, slot)` key the cold crop kept
+    /// for the hovered cell would be `skill.a`'s art — the wrong cell's — and a
+    /// confirm would file it under whatever the tooltip named. Keyed by the
+    /// row's identity, the hovered cell keeps its OWN cold crop and the vanished
+    /// row's cache is dropped.
+    #[test]
+    fn a_dropped_skill_line_cannot_slide_another_cells_crop_under_the_hovered_one() {
+        // Before: two rows, `skill.a` at position 0 and `skill.b` at position 1.
+        let previous = cache(&[(("skill.a", 0), 1), (("skill.b", 0), 2)]);
+        // After: `skill.a`'s line was not read, so `skill.b` is now position 0.
+        let fresh = cache(&[(("skill.b", 0), 9)]);
+
+        let merged = merge_sigs(previous, fresh, Some(sig_key("skill.b", 0)));
+
+        assert_eq!(
+            merged[&sig_key("skill.b", 0)].0,
+            sig(2),
+            "the hovered cell keeps ITS OWN cold crop, not the crop of the row \
+             that used to sit at this position",
+        );
+        assert_eq!(merged.len(), 1, "the row the detect lost takes its cache with it");
     }
 
     /// A cell first seen WHILE hovered has no cold crop to keep. Caching the
@@ -3967,7 +4368,11 @@ mod tests {
     /// `NoCrop` and learn nothing, which is the honest outcome.
     #[test]
     fn a_cell_first_seen_while_hovered_caches_no_crop_at_all() {
-        let merged = merge_sigs(SigCache::new(), cache(&[((0, 0), 9)]), Some((0, 0)));
+        let merged = merge_sigs(
+            SigCache::new(),
+            cache(&[(("skill.a", 0), 9)]),
+            Some(sig_key("skill.a", 0)),
+        );
 
         assert!(merged.is_empty());
     }
@@ -3976,34 +4381,413 @@ mod tests {
     /// the cache must track a window that moved or rescaled.
     #[test]
     fn with_no_cell_hovered_every_crop_is_replaced() {
-        let merged = merge_sigs(cache(&[((0, 0), 1)]), cache(&[((0, 0), 9)]), None);
+        let merged = merge_sigs(
+            cache(&[(("skill.a", 0), 1)]),
+            cache(&[(("skill.a", 0), 9)]),
+            None,
+        );
 
-        assert_eq!(merged[&(0, 0)].0, sig(9));
+        assert_eq!(merged[&sig_key("skill.a", 0)].0, sig(9));
     }
 
     /// Cells the fresh detect no longer sees are dropped: their rects are stale,
     /// and a crop keyed to a rect that no longer exists can only mislearn.
     #[test]
     fn a_cell_the_new_detect_did_not_see_is_dropped_from_the_cache() {
-        let merged = merge_sigs(cache(&[((0, 0), 1), ((5, 3), 2)]), cache(&[((0, 0), 9)]), None);
+        let merged = merge_sigs(
+            cache(&[(("skill.a", 0), 1), (("skill.z", 3), 2)]),
+            cache(&[(("skill.a", 0), 9)]),
+            None,
+        );
 
         assert_eq!(merged.len(), 1);
-        assert!(!merged.contains_key(&(5, 3)));
+        assert!(!merged.contains_key(&sig_key("skill.z", 3)));
     }
 
-    /// The hovered key is the CELL's own `(row index, slot)`, not the vector
-    /// positions `cell_at` answers with — the crop cache is keyed by identity.
+    /// The hovered key is the row's IDENTITY plus the cell's slot (POE-207) —
+    /// not the row's position in the capture, and not the vector positions
+    /// `cell_at` answers with. The crop cache and `Session::confirmed` are
+    /// keyed the same way, and the whole point is that they agree.
     #[test]
-    fn the_hovered_key_is_the_rows_index_and_the_cells_slot() {
+    fn the_hovered_key_is_the_rows_skill_and_the_cells_slot() {
         let capture = capture_with(vec![row(
             4,
             "skill.a",
             vec![cell(2, [100, 100, 44, 44]), cell(3, [149, 100, 44, 44])],
         )]);
 
-        assert_eq!(hovered_key(&capture, Some((160, 110))), Some((4, 3)));
+        assert_eq!(
+            hovered_key(&capture, Some((160, 110))),
+            Some(("skill.a".to_string(), 3)),
+            "the skill id names the row; 3 is the CELL's slot, not its index",
+        );
         assert_eq!(hovered_key(&capture, Some((10, 10))), None);
         assert_eq!(hovered_key(&capture, None), None);
+    }
+
+    /// The claim a fold applied, or `None` for any outcome that applied
+    /// nothing. Lets a test that is about the APPLY say so without spelling out
+    /// the three non-applying variants.
+    fn applied_of(outcome: &FoldOutcome) -> Option<&PendingConfirm> {
+        match outcome {
+            FoldOutcome::Applied(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// One tooltip read that named a support. `seed` distinguishes the crop
+    /// snapshot, which is how the tests tell WHICH of two reads was applied.
+    fn read_of(
+        row: &str,
+        slot: u8,
+        family: &str,
+        tier: u8,
+        seed: u8,
+        at: Instant,
+    ) -> PendingConfirm {
+        PendingConfirm {
+            key: sig_key(row, slot),
+            family: family.to_string(),
+            tier,
+            name: Some(format!("{family} (Tier {tier})")),
+            ids: vec![format!("support.{family}.t{tier}")],
+            score: 0.94,
+            crop: Some((sig(seed), None)),
+            at,
+        }
+    }
+
+    /// The guard's happy path: two reads of the SAME cell that agree on family
+    /// and tier confirm it — and what is applied is the FIRST read, crop and
+    /// all. Applying the second read's crop instead would re-open the gap the
+    /// snapshot exists to close: a re-detect between the two reads can have
+    /// replaced the cache under the cell.
+    #[test]
+    fn two_agreeing_reads_of_one_cell_confirm_it_from_the_first_reads_crop() {
+        let now = Instant::now();
+        let first = read_of("skill.a", 2, "Ailment Damage", 2, 1, now);
+        let second = read_of("skill.a", 2, "Ailment Damage", 2, 9, now);
+
+        let (pending, outcome) = fold_pending(Some(first), second);
+
+        let applied = applied_of(&outcome).expect("two agreeing reads of one cell confirm it");
+        assert_eq!(applied.key, sig_key("skill.a", 2));
+        assert_eq!(applied.family, "Ailment Damage");
+        assert_eq!(
+            applied.crop.as_ref().expect("the held read carried a crop").0,
+            sig(1),
+            "the applied crop is the snapshot taken at READ 1, not the second read's",
+        );
+        assert!(pending.is_none(), "a confirmed claim frees the slot");
+    }
+
+    /// Two reads of one cell that name different FAMILIES are not evidence of
+    /// anything — one of them is a lagging tooltip. Neither is applied, and the
+    /// fresh one starts its own wait rather than the stale one holding the slot.
+    #[test]
+    fn a_second_read_naming_another_family_replaces_the_claim_and_confirms_nothing() {
+        let now = Instant::now();
+        let first = read_of("skill.a", 2, "Ailment Damage", 2, 1, now);
+        let second = read_of("skill.a", 2, "Faster Attacks", 2, 9, now);
+
+        let (pending, outcome) = fold_pending(Some(first), second);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Replaced),
+            "disagreeing reads confirm nothing; the fresh one displaces the claim — got {outcome:?}",
+        );
+        let pending = pending.expect("the fresh read takes the slot");
+        assert_eq!(pending.family, "Faster Attacks");
+        assert_eq!(
+            pending.crop.expect("the fresh read carried a crop").0,
+            sig(9),
+            "the replacement carries its own crop, not the read it displaced",
+        );
+    }
+
+    /// Same family, different TIER is the same disagreement one level down —
+    /// Greater and Gilded share art, and the tier is what the confirmation is
+    /// filed under. A fold that compared only the family would apply this.
+    #[test]
+    fn a_second_read_naming_another_tier_replaces_the_claim_and_confirms_nothing() {
+        let now = Instant::now();
+        let first = read_of("skill.a", 2, "Ailment Damage", 2, 1, now);
+        let second = read_of("skill.a", 2, "Ailment Damage", 3, 9, now);
+
+        let (pending, outcome) = fold_pending(Some(first), second);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Replaced),
+            "a tier disagreement confirms nothing — got {outcome:?}",
+        );
+        assert_eq!(pending.expect("the fresh read takes the slot").tier, 3);
+    }
+
+    /// INSIDE the lag bound, a read on another cell may be the standing claim's
+    /// own tooltip catching up — the measured 2026-08-26 mechanism — so it is
+    /// discarded and the claim stands. This is the sweep rule: letting each read
+    /// of a cursor sweep take the slot would turn the guard into a one-tick
+    /// delay instead of a corroboration rule.
+    #[test]
+    fn a_read_on_another_cell_inside_the_lag_bound_is_discarded() {
+        let now = Instant::now();
+        let held = read_of("skill.a", 2, "Ailment Damage", 2, 1, now);
+        let elsewhere = read_of(
+            "skill.a",
+            3,
+            "Ailment Damage",
+            2,
+            9,
+            now + TOOLTIP_LAG_BOUND - Duration::from_millis(500),
+        );
+
+        let (pending, outcome) = fold_pending(Some(held), elsewhere);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Discarded { .. }),
+            "the read is thrown away, not held — got {outcome:?}",
+        );
+        let pending = pending.expect("the standing claim survives");
+        assert_eq!(pending.key, sig_key("skill.a", 2), "the claim is still the first cell's");
+        assert_eq!(pending.crop.expect("crop").0, sig(1));
+    }
+
+    /// PAST the lag bound the same read means something else. The tooltip has
+    /// had longer than the measured lag to catch up, so a read on another cell
+    /// is the player moving on — the claim is replaced rather than held, which
+    /// is what keeps a half-confirmed cell from locking every other cell out
+    /// for the whole of [`PENDING_CONFIRM_TTL`].
+    #[test]
+    fn a_read_on_another_cell_after_the_lag_bound_replaces_the_claim() {
+        let now = Instant::now();
+        let held = read_of("skill.a", 2, "Ailment Damage", 2, 1, now);
+        let elsewhere = read_of(
+            "skill.a",
+            3,
+            "Ailment Damage",
+            2,
+            9,
+            now + TOOLTIP_LAG_BOUND + Duration::from_millis(500),
+        );
+
+        let (pending, outcome) = fold_pending(Some(held), elsewhere);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Replaced),
+            "one read of the new cell is still not a confirmation — got {outcome:?}",
+        );
+        let pending = pending.expect("the fresh read takes the slot");
+        assert_eq!(pending.key, sig_key("skill.a", 3), "the claim is now the cell the player moved to");
+        assert_eq!(
+            pending.crop.expect("crop").0,
+            sig(9),
+            "and it carries the new cell's crop, not the abandoned one's",
+        );
+    }
+
+    /// EXACTLY at the bound (POE-207 review, LOW 5). The lag bound is the
+    /// longest lag a standing claim may still be blamed for, so a read that
+    /// arrives at exactly that age is past it and replaces the claim. Without
+    /// this case a `<=` in the comparison reads the same as a `<`.
+    #[test]
+    fn a_read_on_another_cell_exactly_at_the_lag_bound_replaces_the_claim() {
+        let now = Instant::now();
+        let held = read_of("skill.a", 2, "Ailment Damage", 2, 1, now);
+        let elsewhere = read_of("skill.a", 3, "Ailment Damage", 2, 9, now + TOOLTIP_LAG_BOUND);
+
+        let (pending, outcome) = fold_pending(Some(held), elsewhere);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Replaced),
+            "at the bound the claim can no longer explain the read — got {outcome:?}",
+        );
+        assert_eq!(
+            pending.expect("the fresh read takes the slot").key,
+            sig_key("skill.a", 3),
+        );
+    }
+
+    /// No lockout, end to end. A player reads cell A once, moves on without
+    /// corroborating it, and settles on cell B three seconds later: B's first
+    /// read takes the slot and B's second read confirms it. Held unconditionally
+    /// on the other-key branch, A's claim would have blocked B for the whole
+    /// ten-second TTL.
+    #[test]
+    fn a_player_who_leaves_a_cell_after_one_read_can_confirm_the_next_cell() {
+        let t0 = Instant::now();
+        let a = read_of("skill.a", 2, "Ailment Damage", 2, 1, t0);
+        let b_first = read_of("skill.b", 0, "Faster Attacks", 3, 5, t0 + Duration::from_secs(3));
+        let b_second = read_of(
+            "skill.b",
+            0,
+            "Faster Attacks",
+            3,
+            9,
+            t0 + Duration::from_millis(3_400),
+        );
+
+        let (pending, _) = fold_pending(None, a);
+        let (pending, on_move) = fold_pending(pending, b_first);
+        assert!(
+            applied_of(&on_move).is_none(),
+            "arrange: B's first read is only a claim — got {on_move:?}",
+        );
+        let (pending, outcome) = fold_pending(pending, b_second);
+
+        let applied =
+            applied_of(&outcome).expect("B's second read confirms it — A must not block B");
+        assert_eq!(applied.key, sig_key("skill.b", 0));
+        assert_eq!(
+            applied.crop.as_ref().expect("crop").0,
+            sig(5),
+            "and it confirms from B's FIRST read's crop",
+        );
+        assert!(pending.is_none(), "the slot is free again");
+    }
+
+    /// The first naming read of a hover. It confirms nothing — that IS the
+    /// guard — and becomes the claim the next read is measured against.
+    ///
+    /// This is also `hover_tick`'s pending-only path in the only form that is
+    /// unit-testable on this host: the tick itself needs an `AppHandle`, a
+    /// screen grab and `Windows.Media.Ocr`, none of which exist here. The
+    /// tick's `return false` is keyed on exactly this `None` — see the
+    /// `let Some(agreed) = agreed else` in `hover_tick`.
+    #[test]
+    fn the_first_naming_read_of_a_cell_confirms_nothing_and_becomes_the_claim() {
+        let read = read_of("skill.a", 2, "Ailment Damage", 2, 1, Instant::now());
+
+        let (pending, outcome) = fold_pending(None, read);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Held),
+            "one read is never a confirmation — got {outcome:?}",
+        );
+        assert_eq!(
+            pending.expect("the read is held").key,
+            sig_key("skill.a", 2),
+        );
+    }
+
+    /// Past [`PENDING_CONFIRM_TTL`] the claim is stale — the player hovered a
+    /// cell, walked away, and came back — so an agreeing read does NOT apply
+    /// it. The fresh read starts over instead, which is what makes a
+    /// ten-minute-old crop unusable rather than merely old.
+    #[test]
+    fn a_claim_older_than_the_ttl_confirms_nothing_and_is_started_over() {
+        let now = Instant::now();
+        let stale = read_of(
+            "skill.a",
+            2,
+            "Ailment Damage",
+            2,
+            1,
+            now - PENDING_CONFIRM_TTL - Duration::from_secs(1),
+        );
+        let fresh = read_of("skill.a", 2, "Ailment Damage", 2, 9, now);
+
+        let (pending, outcome) = fold_pending(Some(stale), fresh);
+
+        assert!(
+            matches!(outcome, FoldOutcome::Held),
+            "an expired claim is not a second opinion, and leaves nothing to displace — \
+             got {outcome:?}",
+        );
+        assert_eq!(
+            pending.expect("the fresh read takes the slot").crop.expect("crop").0,
+            sig(9),
+            "and the claim now carries the CURRENT crop",
+        );
+    }
+
+    /// The other side of the boundary: a claim still inside the TTL confirms
+    /// normally. Without this, a TTL mutated to zero would pass the expiry test
+    /// above and silently make every confirmation impossible.
+    #[test]
+    fn a_claim_just_inside_the_ttl_still_confirms() {
+        let now = Instant::now();
+        let held = read_of(
+            "skill.a",
+            2,
+            "Ailment Damage",
+            2,
+            1,
+            now - PENDING_CONFIRM_TTL + Duration::from_millis(500),
+        );
+        let fresh = read_of("skill.a", 2, "Ailment Damage", 2, 9, now);
+
+        let (_, outcome) = fold_pending(Some(held), fresh);
+
+        assert_eq!(
+            applied_of(&outcome)
+                .expect("a claim inside the TTL is still good")
+                .crop
+                .as_ref()
+                .expect("crop")
+                .0,
+            sig(1),
+        );
+    }
+
+    /// THE REGRESSION (POE-207). Replay of `app.log` 2026-08-26 23:23:21 and
+    /// 23:23:22: two reads one second apart, on ADJACENT slots, both naming
+    /// "Ailment Damage" because the tooltip lagged the cursor sweep. The second
+    /// of them saved Faster Attacks art under Ailment Damage — 19 of the 21
+    /// poisoned templates came from this shape. The sweep must confirm NOTHING,
+    /// so nothing is learned and nothing is offered to the pool.
+    #[test]
+    fn the_lagging_tooltip_sweep_of_2026_08_26_confirms_nothing() {
+        let at_23_23_21 = Instant::now();
+        let at_23_23_22 = at_23_23_21 + Duration::from_secs(1);
+        let sweep = [
+            read_of("skill.a", 2, "Ailment Damage", 2, 1, at_23_23_21),
+            read_of("skill.a", 3, "Ailment Damage", 2, 9, at_23_23_22),
+        ];
+
+        let mut pending = None;
+        let mut applications = Vec::new();
+        for read in sweep {
+            let (next, outcome) = fold_pending(pending, read);
+            pending = next;
+            applications.extend(applied_of(&outcome).map(|p| p.key.clone()));
+        }
+
+        assert!(
+            applications.is_empty(),
+            "a cursor sweep must save nothing; it applied {applications:?}",
+        );
+        assert_eq!(
+            pending.expect("the first cell's claim still stands").key,
+            sig_key("skill.a", 2),
+            "and the claim is still the cell the sweep started on",
+        );
+    }
+
+    /// A claim about a row the fresh capture does not carry is about a cell
+    /// that is no longer on screen. Corroborating it against a later read would
+    /// pair a tooltip with art from a window that is gone.
+    #[test]
+    fn a_claim_whose_row_left_the_capture_is_dropped() {
+        let capture = capture_with(vec![row(0, "skill.b", vec![cell(0, [100, 100, 44, 44])])]);
+        let claim = read_of("skill.a", 0, "Ailment Damage", 2, 1, Instant::now());
+
+        assert!(drop_pending_off_capture(Some(claim), &capture).is_none());
+    }
+
+    /// And a claim whose row IS still there survives the re-detect — the loop
+    /// re-detects every 2 s while the player hovers, so dropping on every
+    /// capture would make a second read unreachable.
+    #[test]
+    fn a_claim_whose_row_is_still_captured_survives_the_re_detect() {
+        let capture = capture_with(vec![
+            row(0, "skill.a", vec![cell(0, [100, 100, 44, 44])]),
+            row(1, "skill.b", vec![cell(0, [100, 160, 44, 44])]),
+        ]);
+        let claim = read_of("skill.a", 0, "Ailment Damage", 2, 1, Instant::now());
+
+        let kept = drop_pending_off_capture(Some(claim), &capture);
+
+        assert_eq!(kept.expect("the row is still on screen").key, sig_key("skill.a", 0));
     }
 
     /// Forgetting a template must also drop the CONFIRMATION the loop is still
@@ -4778,6 +5562,7 @@ mod tests {
             errors: OnceLog::default(),
             current: None,
             sigs: SigCache::new(),
+            pending_confirm: None,
             confirmed: HashMap::new(),
             hover_budget: HoverBudget::default(),
             template_generation: 0,
