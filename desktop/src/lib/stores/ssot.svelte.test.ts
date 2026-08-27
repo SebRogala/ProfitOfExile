@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ssot, applySnapshot } from './ssot.svelte';
+import { ssot, applySnapshot, type ScreenSlice, type SsotSnapshot } from './ssot.svelte';
 import type { MercenarySlice } from '../mercenaries/capture';
 import { templeSliceDefault, type TempleSlice } from '../temple/slice';
 
@@ -1221,5 +1221,54 @@ describe('temple slice', () => {
 			expect(error).toContain('no monitor');
 			expect(callsOf('app_log_from_frontend')).toHaveLength(1);
 		});
+	});
+});
+
+/** The reference measurement — 1920x1200 at 1.0 IS the reference fixture. */
+const referenceScreen: ScreenSlice = {
+	width: 1920,
+	height: 1200,
+	uiScale: 1.0,
+	source: 'merc-frame',
+	measuredAtMs: 1_700_000_000_000
+};
+
+// A `ScreenSlice` carrying a source string Rust never emits. Deliberately not a
+// test case: there is no runtime behaviour to assert (reading back a value the
+// literal just set would be a tautology), and the `@ts-expect-error` below IS
+// the check — `npm run check` (svelte-check, run in CI) fails when an annotated
+// line stops erroring. Widening `ScreenScaleSource` to `string` would let a
+// typo reach the consumers POE-214 names, and would delete this error, which is
+// precisely what `@ts-expect-error` reports as a failure.
+const rejectedScreenSource: ScreenSlice = {
+	...referenceScreen,
+	// @ts-expect-error — the union IS the wire contract (Rust's kebab-case
+	// `ScreenScaleSource`); see the note above.
+	source: 'merc-fram'
+};
+
+describe('screen slice (POE-214)', () => {
+	// Nothing in the webview consumes the slice yet (POE-214 B1 ships the wire
+	// contract; the Lab regions and the temple are the consumers to come), so
+	// what these two pin is the CONTRACT rather than a rune: the literals are
+	// annotated `SsotSnapshot`, which makes `npm run check` fail if the field or
+	// its shape drifts from Rust's, and the runtime assertions catch the day an
+	// `applyScreen` is added that throws on — or short-circuits — a payload,
+	// taking the rest of the snapshot with it.
+
+	it('applies the rest of a snapshot that carries a screen slice', () => {
+		const snap: SsotSnapshot = { league: { name: 'Mirage' }, screen: referenceScreen };
+		applySnapshot(snap);
+		expect(ssot.league).toBe('Mirage');
+	});
+
+	// `screen: null` rather than an absent key, because that is the payload Rust
+	// actually sends: `Option<ScreenSlice>` has no `skip_serializing_if`, so an
+	// unmeasured screen arrives as an explicit null.
+	it('applies the rest of a snapshot whose screen is unmeasured', () => {
+		applySnapshot({ league: { name: 'Mirage' }, screen: referenceScreen });
+		const snap: SsotSnapshot = { league: { name: 'Settlers' }, screen: null };
+		applySnapshot(snap);
+		expect(ssot.league).toBe('Settlers');
 	});
 });

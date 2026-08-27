@@ -522,6 +522,7 @@ mod tests {
             temple: Mutex::new(crate::temple::slice::TempleSlice::default()),
             temple_settings: Mutex::new(crate::temple::slice::TempleSettings::shipped()),
             temple_rearm: AtomicU64::new(0),
+            screen: Mutex::new(None),
         }
     }
 

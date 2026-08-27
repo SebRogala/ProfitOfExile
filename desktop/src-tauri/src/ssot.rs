@@ -58,6 +58,78 @@ pub struct LeagueSlice {
     pub name: Option<String>,
 }
 
+/// Which cue measured [`ScreenSlice::ui_scale`] (POE-214).
+///
+/// A confidence LABEL, not a rank. The merc module is the sole writer and the
+/// latest measurement always wins, so a `MercOcr` reading published after a
+/// `MercFrame` one replaces it rather than losing to it. What the label buys a
+/// reader — and a smoke check — is the ability to tell a scale measured on the
+/// support grid's gold frame from the OCR line-pitch estimate that stood in for
+/// it before POE-214, and drifted 6-12 px doing so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScreenScaleSource {
+    /// Measured off the merc support grid's gold frame
+    /// (`mercenary::cellfit::refine`) — either on this capture, or carried onto
+    /// it from an earlier capture of the same session
+    /// ([`crate::mercenary::ScaleSource::Held`], which is the same frame
+    /// measurement, one or more ticks old).
+    MercFrame,
+    /// Derived from the merc OCR line pitch — the pre-POE-214 cue. Kept as its
+    /// own label rather than folded into `MercFrame` because it is the reading
+    /// a session whose fit never landed is running on, and a consumer that
+    /// cares how exact its rects are has to be able to see that.
+    MercOcr,
+    /// Loaded from settings at startup, not measured this run (WI-B2).
+    Remembered,
+}
+
+/// The screen the game is drawn on and the game-UI scale measured on it
+/// (POE-214).
+///
+/// **Unit.** `ui_scale` is game-UI px per px of the reference fixture:
+/// `desktop/src-tauri/tests/fixtures/merc-skills-panel.png`, cut from a
+/// 1920x1200 screen, is 1.0 by definition, and the 1080p machine measures
+/// 0.90 = 1080/1200 — the game's UI scales with screen HEIGHT. The temple's
+/// `AnchorCalibration::scale` is a DIFFERENT unit (relative to its own
+/// `REFERENCE_SCREEN_WIDTH`, 1374) and the ratio between the two is
+/// **unmeasured**, so the temple cannot read this slice until someone measures
+/// it. Said here rather than implied, because the two fields spell the same
+/// word.
+///
+/// **Reader rule.** A non-merc consumer reads THIS slice, never
+/// `mercenary.capture.scale`. Both are written from the same settled
+/// `MercLayout::scale` on the same tick, so they never disagree — but the
+/// capture is `None` until a recruit window opens and is retired again when it
+/// closes, so a reader keyed on it would lose the screen's scale every time the
+/// player shuts the window. This slice outlives the capture.
+///
+/// **Writer.** The merc detect tick is the SOLE writer, through
+/// [`publish_screen`]; WI-B2 adds the startup load of a persisted value under
+/// [`ScreenScaleSource::Remembered`]. There is no rank between writers because
+/// there is only one: the latest measurement wins.
+///
+/// **No `PartialEq`, deliberately.** Whole-struct equality would compare
+/// `measured_at_ms` and `ui_scale` exactly — the two fields the publish gate
+/// must NOT compare that way (the stamp moves every tick, the scale wobbles;
+/// see [`screen_changed`]). Deriving it would put a `current == next` one-liner
+/// within reach that silently re-emits on every tick, so the derive is left off
+/// and [`screen_changed`] is the only equality question anyone gets to ask.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenSlice {
+    /// Captured screen width in physical px.
+    pub width: u32,
+    /// Captured screen height in physical px.
+    pub height: u32,
+    /// Game-UI px per reference-fixture px — see the unit note above.
+    pub ui_scale: f32,
+    /// What measured `ui_scale`. A label, not a precedence.
+    pub source: ScreenScaleSource,
+    /// Unix ms the measurement was taken at.
+    pub measured_at_ms: u64,
+}
+
 /// Full app-wide SSOT snapshot. Cloned for both the poll response and the
 /// eager event payload, so it stays cheap and `Send`.
 ///
@@ -118,6 +190,12 @@ pub struct AppSsotSnapshot {
     /// a disabled module cannot leave a stale recommendation on screen under an
     /// "off" badge. `Default` is the `Idle` slice with no board.
     pub temple: crate::temple::slice::TempleSlice,
+    /// The screen and its measured game-UI scale (POE-214), projected from the
+    /// owner `AppState.screen`. `None` until something measures one — fail
+    /// closed, and specifically do NOT substitute 1.0: that is a real
+    /// measurement (the 1920x1200 reference) and assuming it would silently
+    /// mis-scale every rect on a 1080p machine by 11%.
+    pub screen: Option<ScreenSlice>,
     // future slices (e.g. account, config) added here as later tasks land.
 }
 
@@ -148,6 +226,7 @@ fn compose_snapshot(
     merc_trade_auto: bool,
     merc_tier_floor: u8,
     mut temple: crate::temple::slice::TempleSlice,
+    screen: Option<ScreenSlice>,
 ) -> AppSsotSnapshot {
     if modules.get(MERCENARY_MODULE_ID) != Some(&true) {
         mercenary.status = crate::mercenary::MercStatus::Off;
@@ -191,6 +270,7 @@ fn compose_snapshot(
         modules,
         mercenary,
         temple,
+        screen,
         ..base
     }
 }
@@ -237,6 +317,10 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
     // Same discipline again: the temple guard ends with this statement, so it
     // is never held alongside the merc one or across the compose.
     let temple = state.temple.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // One more lone acquisition, ending with its own statement — which is what
+    // lets `publish_screen` re-enter here through `emit_ssot` after dropping
+    // its own guard. `ScreenSlice` is `Copy`, so the deref clones it.
+    let screen = *state.screen.lock().unwrap_or_else(|e| e.into_inner());
     compose_snapshot(
         base,
         normal_variant,
@@ -249,6 +333,7 @@ pub fn build_snapshot(state: &AppState) -> AppSsotSnapshot {
         merc_trade_auto,
         merc_tier_floor,
         temple,
+        screen,
     )
 }
 
@@ -265,6 +350,113 @@ fn clear_resolution_flags(ssot: &std::sync::Mutex<AppSsotSnapshot>) {
     let mut guard = ssot.lock().unwrap_or_else(|e| e.into_inner());
     guard.resolving = false;
     guard.unreachable = false;
+}
+
+/// How far [`ScreenSlice::ui_scale`] must move before it counts as a different
+/// screen scale.
+///
+/// The published number is the merc session's SETTLED scale, and settled does
+/// not mean constant: `mercenary::run::next_fitted_scale`'s same-`cell_px` path
+/// returns `..fresh`, so every grid-fitting tick takes the fresh measurement's
+/// scale while holding the cell size. One `cellfit::P_STEP` of the pitch grid
+/// moves that number by **0.0031** — an exact `!=` therefore republishes on a
+/// panel that has not moved a pixel.
+///
+/// 0.01 sits between the two numbers that bound it: above the 0.0031 wobble, and
+/// well below the 1/40 = 0.025 a whole px of cell is worth. So the band swallows
+/// the measurement noise and still catches every scale change a consumer could
+/// cut a different rect from.
+const UI_SCALE_EPS: f32 = 0.01;
+
+/// Whether `next` is worth emitting over what is already published.
+///
+/// The three MEASURED fields and the label: anything a consumer scales a rect
+/// with, or judges the exactness of its rects by. `measured_at_ms` alone is
+/// deliberately NOT one of them — the merc detect tick re-measures the same
+/// screen every few seconds for as long as a recruit window is open, and a
+/// timestamp-only diff would emit `ssot-changed` and spin every overlay's poll
+/// on a value none of them can act on.
+///
+/// `ui_scale` gets the same treatment for the same reason, one step weaker: it
+/// is a MEASUREMENT and it wobbles by 0.0031 between ticks of a panel that has
+/// not moved (see [`UI_SCALE_EPS`]), so it is compared to within that band
+/// rather than exactly. Width, height and the label are discrete and are
+/// compared exactly.
+///
+/// `None` — nothing published yet — is always a change.
+///
+/// Pure so the gate is unit-testable without an `AppHandle`, the same reason
+/// `should_flag_unreachable` and `clear_resolution_flags` are extracted.
+fn screen_changed(current: Option<&ScreenSlice>, next: &ScreenSlice) -> bool {
+    match current {
+        None => true,
+        Some(current) => {
+            current.width != next.width
+                || current.height != next.height
+                || (current.ui_scale - next.ui_scale).abs() >= UI_SCALE_EPS
+                || current.source != next.source
+        }
+    }
+}
+
+/// Store `next` in the screen slot and report whether it is worth emitting.
+///
+/// **Store always, gate only the emit.** The slot is overwritten whatever the
+/// gate says, so `measured_at_ms` tracks the LAST measurement — WI-B2 persists
+/// this slot and an age belonging to an older tick would be a lie, and a
+/// consumer asking "how old is this scale?" would get the wrong answer on every
+/// tick the gate refused. The bool is only about waking the overlays.
+///
+/// Split out of [`publish_screen`] with no `AppHandle` precisely so that rule is
+/// pinned by a test rather than by the prose above it.
+pub(crate) fn record_screen(current: &mut Option<ScreenSlice>, next: ScreenSlice) -> bool {
+    let changed = screen_changed(current.as_ref(), &next);
+    *current = Some(next);
+    changed
+}
+
+/// Publish a screen measurement into the SSOT, emitting only on a real change.
+///
+/// Lock-then-drop-then-emit, the shape `mercenary::run::publish` and
+/// `temple::run::remember_calibration` both use: the `screen` guard is scoped
+/// to the block below, so it is dropped before `emit_ssot` — which re-takes it
+/// inside `build_snapshot` — and no other mutex is held while it is open.
+///
+/// What to store and what to emit is [`record_screen`]'s decision (and
+/// [`screen_changed`]'s underneath it); both are `AppHandle`-free and tested.
+/// All that is left here is the lock-drop-emit sequence the doc above states,
+/// which is what makes calling this on every detect tick the right thing to do.
+pub fn publish_screen(app: &AppHandle, next: ScreenSlice) {
+    let changed = {
+        let state = app.state::<AppState>();
+        let mut current = state.screen.lock().unwrap_or_else(|e| e.into_inner());
+        record_screen(&mut current, next)
+    };
+    if changed {
+        emit_ssot(app);
+    }
+}
+
+/// The [`ScreenScaleSource`] label a merc-side [`crate::mercenary::ScaleSource`]
+/// publishes under.
+///
+/// `Held` maps to [`ScreenScaleSource::MercFrame`], not to a label of its own:
+/// `Held` is a FRAME measurement carried onto a tick that could not see the
+/// frame (`cellfit::apply_held` is what carries it), so the cue behind the
+/// number is the gold frame either way and a reader asking "is this registered
+/// on the art?" gets yes for both. Only a session whose fit has never landed —
+/// [`crate::mercenary::ScaleSource::Ocr`] — reports the line-pitch estimate that
+/// drifts 6-12 px.
+///
+/// Lives here, next to the enum it produces, so the mapping is one testable
+/// decision instead of a `match` buried in the detect tick's struct literal.
+pub fn screen_scale_source(s: crate::mercenary::ScaleSource) -> ScreenScaleSource {
+    match s {
+        crate::mercenary::ScaleSource::Frame | crate::mercenary::ScaleSource::Held => {
+            ScreenScaleSource::MercFrame
+        }
+        crate::mercenary::ScaleSource::Ocr => ScreenScaleSource::MercOcr,
+    }
 }
 
 /// Emit `ssot-changed` with the current snapshot.
@@ -741,6 +933,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.normal_variant, "1/20");
@@ -768,6 +961,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.modules.get("mercenary"), Some(&true));
@@ -801,6 +995,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Live);
@@ -836,6 +1031,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
@@ -869,6 +1065,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.mercenary.sources_off, vec!["guide-a".to_string()]);
@@ -895,6 +1092,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
@@ -923,6 +1121,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.mercenary.status, crate::mercenary::MercStatus::Off);
@@ -956,6 +1155,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             slice,
+            None,
         );
 
         assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Read);
@@ -996,6 +1196,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             slice,
+            None,
         );
 
         assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Off);
@@ -1027,6 +1228,7 @@ mod tests {
                 status: crate::temple::slice::TempleStatus::Read,
                 ..Default::default()
             },
+            None,
         );
 
         assert_eq!(out.temple.status, crate::temple::slice::TempleStatus::Off);
@@ -1078,6 +1280,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         assert_eq!(out.league.name, Some("Mirage".to_string()));
@@ -1102,6 +1305,7 @@ mod tests {
             crate::mercenary::DEFAULT_TRADE_AUTO,
             crate::mercenary::DEFAULT_TIER_FLOOR,
             crate::temple::slice::TempleSlice::default(),
+            None,
         );
 
         let json = serde_json::to_value(&snap).unwrap();
@@ -1144,5 +1348,249 @@ mod tests {
         assert_eq!(snap.normal_variant, "");
         assert_eq!(snap.dedication_variant, "");
         assert_eq!(snap.dedication_pool, "");
+    }
+
+    // --------------------------------------------------------- screen slice --
+
+    /// The reference measurement, as a starting point every screen test edits
+    /// one field of. 1920x1200 at 1.0 IS the reference fixture (POE-214 D3), so
+    /// a test that changes nothing is asking about a real, whole screen.
+    fn reference_screen() -> ScreenSlice {
+        ScreenSlice {
+            width: 1920,
+            height: 1200,
+            ui_scale: 1.0,
+            source: ScreenScaleSource::MercFrame,
+            measured_at_ms: 1_700_000_000_000,
+        }
+    }
+
+    /// Fail-closed default: a snapshot nothing has measured a screen for says
+    /// so, rather than carrying the reference 1.0. A consumer that took a
+    /// default as a measurement would scale every rect 11% wrong on a 1080p
+    /// machine and have no way to know it.
+    #[test]
+    fn default_snapshot_has_no_screen_measurement() {
+        let snap = AppSsotSnapshot::default();
+
+        assert!(snap.screen.is_none(), "a default snapshot has measured nothing");
+    }
+
+    /// The owner's value is projected into the snapshot. Without the projection
+    /// the field falls back to `..base` (always `None`, since nothing writes it
+    /// into `AppState.ssot`) and every window would poll an unmeasured screen
+    /// forever while the merc loop was publishing one.
+    #[test]
+    fn compose_snapshot_projects_the_screen_slice() {
+        let out = compose_snapshot(
+            AppSsotSnapshot::default(),
+            "20/20".to_string(),
+            "21/23".to_string(),
+            "skill".to_string(),
+            std::collections::HashMap::new(),
+            crate::mercenary::MercenarySlice::default(),
+            Vec::new(),
+            crate::mercenary::sync::MercSyncStatus::default(),
+            crate::mercenary::DEFAULT_TRADE_AUTO,
+            crate::mercenary::DEFAULT_TIER_FLOOR,
+            crate::temple::slice::TempleSlice::default(),
+            Some(ScreenSlice { ui_scale: 0.9, ..reference_screen() }),
+        );
+
+        let screen = out.screen.expect("the composed snapshot carries the measurement");
+        assert_eq!(screen.ui_scale, 0.9);
+        assert_eq!(screen.source, ScreenScaleSource::MercFrame);
+    }
+
+    /// The wire contract the TS `ScreenSlice` mirrors: camelCase keys on the
+    /// slice, under the snapshot's own `screen` key. Dropping either
+    /// `rename_all` renames these and the store reads `undefined` in silence.
+    #[test]
+    fn the_snapshot_exposes_the_screen_slice_under_its_camel_case_keys() {
+        let snap = AppSsotSnapshot { screen: Some(reference_screen()), ..Default::default() };
+
+        let json = serde_json::to_value(&snap).unwrap();
+
+        assert_eq!(json["screen"]["width"], 1920);
+        assert_eq!(json["screen"]["height"], 1200);
+        assert_eq!(json["screen"]["uiScale"], 1.0);
+        assert_eq!(json["screen"]["measuredAtMs"], 1_700_000_000_000u64);
+    }
+
+    /// The three source strings, exactly. They are read by a TS union and by
+    /// the WI-B2 settings round-trip, so a rename here is a silent break on
+    /// both sides — and `kebab-case` is the one `rename_all` that produces
+    /// them, so this pins the attribute as much as the variants.
+    #[test]
+    fn the_screen_scale_sources_serialise_as_their_wire_strings() {
+        let wire = |source| {
+            let snap = AppSsotSnapshot {
+                screen: Some(ScreenSlice { source, ..reference_screen() }),
+                ..Default::default()
+            };
+            serde_json::to_value(&snap).unwrap()["screen"]["source"].clone()
+        };
+
+        assert_eq!(wire(ScreenScaleSource::MercFrame), "merc-frame");
+        assert_eq!(wire(ScreenScaleSource::MercOcr), "merc-ocr");
+        assert_eq!(wire(ScreenScaleSource::Remembered), "remembered");
+    }
+
+    /// The first measurement always publishes — there is nothing behind it, so
+    /// nobody downstream knows the screen at all yet.
+    #[test]
+    fn the_first_screen_measurement_is_published() {
+        assert!(screen_changed(None, &reference_screen()));
+    }
+
+    /// The gate's whole purpose: the detect tick re-measures the same screen
+    /// every few seconds for as long as the recruit window is open, and none of
+    /// those repeats may wake an overlay poll.
+    #[test]
+    fn an_identical_screen_measurement_is_not_published() {
+        let current = reference_screen();
+
+        assert!(!screen_changed(Some(&current), &reference_screen()));
+    }
+
+    /// A new timestamp on an otherwise identical measurement is the repeat case
+    /// as it actually arrives — every tick stamps a fresh `measured_at_ms`. If
+    /// this field were compared, the gate would pass every single tick and be
+    /// no gate at all.
+    #[test]
+    fn a_fresh_timestamp_alone_is_not_published() {
+        let current = reference_screen();
+        let next = ScreenSlice { measured_at_ms: current.measured_at_ms + 5_000, ..current };
+
+        assert!(!screen_changed(Some(&current), &next));
+    }
+
+    /// The measurement consumers scale rects with. 0.974 to 1.0 is the exact
+    /// step POE-214's frame fit makes on the reference machine.
+    #[test]
+    fn a_changed_ui_scale_is_published() {
+        let current = ScreenSlice { ui_scale: 0.974, ..reference_screen() };
+
+        assert!(screen_changed(Some(&current), &reference_screen()));
+    }
+
+    /// The wobble [`UI_SCALE_EPS`] exists for: `run::next_fitted_scale`'s
+    /// same-`cell_px` path returns `..fresh`, so the published scale takes the
+    /// fresh measurement on every grid-fitting tick, and one `cellfit::P_STEP`
+    /// of the pitch grid moves it by 0.0031. Compared exactly, that is a second
+    /// `ssot-changed` per tick on a panel that has not moved a pixel.
+    #[test]
+    fn a_ui_scale_wobble_inside_the_band_is_not_published() {
+        let current = reference_screen();
+        let next = ScreenSlice { ui_scale: current.ui_scale + 0.003, ..current };
+
+        assert!(!screen_changed(Some(&current), &next));
+    }
+
+    /// The far side of the same band. 0.03 is past the 1/40 = 0.025 a whole px
+    /// of merc cell is worth, so it is a scale a consumer would cut different
+    /// rects from — a band wide enough to swallow it would be hiding a real
+    /// change of screen.
+    #[test]
+    fn a_ui_scale_step_past_the_band_is_published() {
+        let current = reference_screen();
+        let next = ScreenSlice { ui_scale: current.ui_scale + 0.03, ..current };
+
+        assert!(screen_changed(Some(&current), &next));
+    }
+
+    /// A resolution change is a different screen, and every fraction-of-the-
+    /// screen rect derived from the slice moves with it. Width and height are
+    /// asserted apart so a gate that compares only one names which.
+    #[test]
+    fn a_changed_screen_width_is_published() {
+        let current = reference_screen();
+        let next = ScreenSlice { width: 2560, ..current };
+
+        assert!(screen_changed(Some(&current), &next));
+    }
+
+    /// The half of the resolution the game's UI scale actually follows.
+    #[test]
+    fn a_changed_screen_height_is_published() {
+        let current = reference_screen();
+        let next = ScreenSlice { height: 1080, ..current };
+
+        assert!(screen_changed(Some(&current), &next));
+    }
+
+    /// The label moving at an unchanged scale is still news: a consumer that
+    /// weighs how exact its rects are reads `source`, and a session that fell
+    /// back from the frame to the OCR cue has to be able to say so even when
+    /// the two agreed on the number.
+    #[test]
+    fn a_changed_screen_scale_source_is_published() {
+        let current = reference_screen();
+        let next = ScreenSlice { source: ScreenScaleSource::MercOcr, ..current };
+
+        assert!(screen_changed(Some(&current), &next));
+    }
+
+    /// The emit half of "store always, gate only the emit": a repeat of the
+    /// measurement already in the slot is not worth waking every overlay's
+    /// poll, however fresh its stamp.
+    #[test]
+    fn record_screen_reports_no_change_for_a_repeat_measurement() {
+        let base = reference_screen();
+        let mut slot = Some(base);
+        let next = ScreenSlice { measured_at_ms: base.measured_at_ms + 5_000, ..base };
+
+        assert!(!record_screen(&mut slot, next));
+    }
+
+    /// The store half, and the one WI-B2 depends on: the slot takes the refused
+    /// measurement anyway, so `measured_at_ms` is the age of the last
+    /// MEASUREMENT. Gated storage would make it the age of the last CHANGE, and
+    /// a persisted scale would then claim to be hours older than it is.
+    #[test]
+    fn a_refused_screen_measurement_is_still_stored() {
+        let base = reference_screen();
+        let mut slot = Some(base);
+        let next = ScreenSlice { measured_at_ms: base.measured_at_ms + 5_000, ..base };
+
+        record_screen(&mut slot, next);
+
+        assert_eq!(
+            slot.expect("the slot still holds a measurement").measured_at_ms,
+            base.measured_at_ms + 5_000
+        );
+    }
+
+    /// `Frame` is the plain case: this tick measured the gold frame, so the
+    /// slice says the frame measured it.
+    #[test]
+    fn a_frame_fit_publishes_under_the_frame_label() {
+        assert_eq!(
+            screen_scale_source(crate::mercenary::ScaleSource::Frame),
+            ScreenScaleSource::MercFrame
+        );
+    }
+
+    /// The arm with the argument behind it. `Held` is a FRAME measurement
+    /// carried onto a tick that could not see the frame, so it publishes the
+    /// frame label — folding it into `MercOcr` would tell a consumer the number
+    /// came from the 6-12 px line-pitch estimate it never came from.
+    #[test]
+    fn a_held_frame_scale_publishes_under_the_frame_label() {
+        assert_eq!(
+            screen_scale_source(crate::mercenary::ScaleSource::Held),
+            ScreenScaleSource::MercFrame
+        );
+    }
+
+    /// The one arm that must not report the frame: a session whose fit has
+    /// never landed is running on the line-pitch estimate, and the label is the
+    /// only way a consumer judging how exact its rects are can tell.
+    #[test]
+    fn an_ocr_only_scale_publishes_under_the_ocr_label() {
+        assert_eq!(
+            screen_scale_source(crate::mercenary::ScaleSource::Ocr),
+            ScreenScaleSource::MercOcr
+        );
     }
 }
