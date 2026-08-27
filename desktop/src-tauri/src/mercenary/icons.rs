@@ -8,7 +8,7 @@
 //!
 //! # Why the store is keyed on `(family, tier)`
 //!
-//! 58 of the 154 families span more than one tier, and whether the art differs
+//! 58 of the 153 families span more than one tier, and whether the art differs
 //! between tiers is unknown. Keying on the family alone would let a tier-1
 //! confirmation overwrite a tier-3 sample (or vice versa) with art that may
 //! not be the same picture; keying on the pair means one confirmation
@@ -808,7 +808,7 @@ impl TemplateStore {
     /// trailing `--<digits>` back into the two arguments of
     /// `merc_forget_template(family, tier)`. The split is unambiguous because
     /// no family name in the vocabulary contains a hyphen or ends in a digit
-    /// (154 families, checked by the test below), so the LAST `--` is always
+    /// (153 families, checked by the test below), so the LAST `--` is always
     /// the separator.
     ///
     /// One producer on purpose: a second, prettier label would eventually be
@@ -1228,10 +1228,14 @@ impl TemplateStore {
     ///      cluster empties whatever its size: without that, a third family
     ///      claiming the same art would meet the store the first two had just
     ///      emptied and install into it, and which family survived would be
-    ///      the server's listing order. Two such three-family clusters are in
-    ///      the committed corpus. What holds is therefore stronger than "the
-    ///      same shape either way": for one art, the MERGED STORE ITSELF is
-    ///      the same in every ordering — no family holds it.
+    ///      the server's listing order. ONE such three-family cluster is in
+    ///      the committed corpus — DoT Multiplier / Swift Affliction /
+    ///      Cooldown Recovery. The corpus' second cluster became two families
+    ///      when POE-211 folded `Increased Area of Effect` into
+    ///      `Area of Effect`, and two is what the pairwise arm already
+    ///      handles. What holds is therefore stronger than "the same shape
+    ///      either way": for one art, the MERGED STORE ITSELF is the same in
+    ///      every ordering — no family holds it.
     /// 4. **Everything else is a union**, deduped by the same NCC the local
     ///    `learn` uses and capped by the same [`Self::MAX_SAMPLES_PER_KEY`]:
     ///    the cap applies to the MERGED set, so a pull cannot push a key past
@@ -1279,10 +1283,13 @@ impl TemplateStore {
         // a cluster's members arrive one at a time, and once two of them have
         // knocked each other out the THIRD meets an empty store and installs —
         // surviving as a confident wrong `Matched` chosen by the server's
-        // listing order. The fixture holds two real three-family clusters
-        // (DoT Multiplier / Swift Affliction / Cooldown Recovery, and Area of
-        // Effect / Increased Area of Effect / Curse Effect), so this is
-        // observed shape, not a hypothetical.
+        // listing order. The fixture holds a real three-family cluster (DoT
+        // Multiplier / Swift Affliction / Cooldown Recovery), so this is
+        // observed shape, not a hypothetical. Its second cluster was Area of
+        // Effect / Increased Area of Effect / Curse Effect until POE-211
+        // folded the first two into one family; two families is what the
+        // pairwise arm already handles, so the third-family argument now rests
+        // on the DoT cluster alone.
         //
         // Keyed on the ART ALONE, with no family part: a disputed art is
         // disputed under every name, including the ones already in the
@@ -4679,7 +4686,7 @@ mod tests {
         /// other out and the third meets the store they just emptied, installs
         /// into it, and survives as a confident wrong `Matched` picked by
         /// listing order. `DoT Multiplier` / `Swift Affliction` /
-        /// `Cooldown Recovery` is one of two such clusters in the committed
+        /// `Cooldown Recovery` is the one such cluster in the committed
         /// corpus, so the shape is observed rather than imagined.
         ///
         /// `conflicting` is 3 — one per family that claimed the art: two from

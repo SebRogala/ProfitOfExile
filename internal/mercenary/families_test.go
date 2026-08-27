@@ -23,15 +23,17 @@ const vocabFixturePath = "../../desktop/src/lib/mercenaries/__fixtures__/mercena
 
 // supportIDPrefix marks a support-link entry. Skills carry no tier and are
 // never read from a cell icon, so they contribute no families
-// (vocab.rs:42-45).
+// (vocab.rs:40-43).
 const supportIDPrefix = "mercenary.support_"
 
 // gradePrefixes are the grade words a support name can lead with. Stripping one
 // is what collapses `Lesser Chain (Tier 1)`, `Chain (Tier 2)` and
-// `Gilded Chain (Tier 3)` onto the single family `Chain` (vocab.rs:49).
+// `Gilded Chain (Tier 3)` onto the single family `Chain` (vocab.rs:49); the
+// alias table below then folds that result onto its destination family, which
+// is the third and last step of the derivation.
 var gradePrefixes = []string{"Lesser ", "Greater ", "Gilded "}
 
-// splitTier drops a trailing " (Tier N)", mirroring vocab.rs:110-122: the
+// splitTier drops a trailing " (Tier N)", mirroring vocab.rs:131-145: the
 // suffix counts only when the text ends in ')' and the characters between are
 // digits.
 func splitTier(text string) string {
@@ -47,7 +49,7 @@ func splitTier(text string) string {
 	return trimmed[:open]
 }
 
-// stripGrade removes one leading grade word, mirroring vocab.rs:125-131.
+// stripGrade removes one leading grade word, mirroring vocab.rs:147-155.
 func stripGrade(name string) string {
 	for _, prefix := range gradePrefixes {
 		if rest, found := strings.CutPrefix(name, prefix); found {
@@ -57,7 +59,25 @@ func stripGrade(name string) string {
 	return name
 }
 
-func familiesFromFixture(t *testing.T) map[string]struct{} {
+// familyAliases folds display names that are two spellings of ONE icon family
+// onto one key, mirroring vocab.rs:51-68. Applied AFTER the grade strip, and an
+// EXACT match on the whole derived name: `Increased Angle` is a real
+// Gilded-only support with no `Angle` sibling, so a generic `Increased ` strip
+// would invent a family the vocabulary does not carry (POE-211).
+var familyAliases = map[string]string{
+	"Increased Area of Effect": "Area of Effect",
+}
+
+// aliasFamily applies familyAliases, mirroring vocab.rs:157-173.
+func aliasFamily(name string) string {
+	if to, ok := familyAliases[name]; ok {
+		return to
+	}
+	return name
+}
+
+// supportTextsFromFixture is every support entry's display text, verbatim.
+func supportTextsFromFixture(t *testing.T) []string {
 	t.Helper()
 
 	raw, err := os.ReadFile(vocabFixturePath)
@@ -77,12 +97,27 @@ func familiesFromFixture(t *testing.T) map[string]struct{} {
 		t.Fatal("the mercenary vocabulary fixture carries no entries")
 	}
 
-	families := make(map[string]struct{})
+	var texts []string
 	for _, entry := range vocab.Entries {
 		if !strings.HasPrefix(entry.ID, supportIDPrefix) {
 			continue
 		}
-		families[stripGrade(splitTier(entry.Text))] = struct{}{}
+		texts = append(texts, entry.Text)
+	}
+	return texts
+}
+
+// derivedFamily is the whole three-step rule, in the order vocab.rs applies it.
+func derivedFamily(displayText string) string {
+	return aliasFamily(stripGrade(splitTier(displayText)))
+}
+
+func familiesFromFixture(t *testing.T) map[string]struct{} {
+	t.Helper()
+
+	families := make(map[string]struct{})
+	for _, text := range supportTextsFromFixture(t) {
+		families[derivedFamily(text)] = struct{}{}
 	}
 	return families
 }
@@ -113,7 +148,7 @@ func TestKnownFamilies_MatchTheShippedVocabularyFixture(t *testing.T) {
 }
 
 // The count is asserted separately so a drift failure names the size change
-// before it names 154 individual strings.
+// before it names 153 individual strings.
 func TestKnownFamilies_CountMatchesTheFixture(t *testing.T) {
 	if got, want := KnownFamilyCount(), len(familiesFromFixture(t)); got != want {
 		t.Fatalf("KnownFamilyCount() = %d, fixture derives %d", got, want)
@@ -130,6 +165,47 @@ func TestKnownFamilies_CollapseGradePrefixesOntoOneFamily(t *testing.T) {
 		if _, ok := knownFamilies[graded]; ok {
 			t.Errorf("%q was kept as its own family; the grade word must be stripped", graded)
 		}
+	}
+}
+
+// The alias folds two display spellings onto one family. GGG names the tiers of
+// one support `Lesser Increased Area of Effect (Tier 1)`,
+// `Increased Area of Effect (Tier 2)` and `Greater Area of Effect (Tier 3)`, so
+// the grade strip alone derived TWO families out of one support and the same
+// art was uploaded under two keys — neither of which could then ever be matched
+// (POE-211).
+func TestKnownFamilies_FoldTheAliasedFamily(t *testing.T) {
+	fixture := make(map[string]struct{})
+	for _, text := range supportTextsFromFixture(t) {
+		fixture[text] = struct{}{}
+	}
+	for _, display := range []string{
+		"Lesser Increased Area of Effect (Tier 1)",
+		"Increased Area of Effect (Tier 2)",
+		"Greater Area of Effect (Tier 3)",
+	} {
+		if _, ok := fixture[display]; !ok {
+			t.Fatalf("precondition: %q is no longer in the vocabulary fixture", display)
+		}
+		if got := derivedFamily(display); got != "Area of Effect" {
+			t.Errorf("%q derives family %q, want %q", display, got, "Area of Effect")
+		}
+	}
+
+	if _, ok := knownFamilies["Area of Effect"]; !ok {
+		t.Error("family \"Area of Effect\" is absent; the fold has no destination")
+	}
+	if _, ok := knownFamilies["Increased Area of Effect"]; ok {
+		t.Error("\"Increased Area of Effect\" is still its own family; the alias must fold it")
+	}
+
+	// The alias matches the whole name, never a prefix: `Increased Angle` is a
+	// real Gilded-only support with no `Angle` sibling to fold onto.
+	if _, ok := knownFamilies["Increased Angle"]; !ok {
+		t.Error("\"Increased Angle\" was folded; the alias table is a closed list of whole names")
+	}
+	if _, ok := knownFamilies["Angle"]; ok {
+		t.Error("\"Angle\" is not a vocabulary family; a prefix strip invented it")
 	}
 }
 

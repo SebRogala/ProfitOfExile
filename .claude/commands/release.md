@@ -47,12 +47,18 @@ Example: `/release 0.1.2` (stable), `/release 0.1.3-beta.1` (beta channel).
 
    **Ordering warning — check before pushing:** if this desktop version calls a
    server API that is not in production yet, or if the release contains a change
-   to `desktop/src/lib/mercenaries/__fixtures__/mercenary-stats.json` (the
-   families gate — `internal/mercenary/families.go` is generated from that
-   fixture and refuses uploads naming a family it does not carry), the server
-   must be LIVE first. Merged is not live: the Coolify swap takes minutes and
+   to `internal/mercenary/families.go` (the compiled families gate — it refuses
+   uploads naming a family it does not carry, and it moves for a GROWTH and for
+   a SHRINK alike) or to `vocab.rs`'s `FAMILY_ALIASES` (which changes what the
+   desktop derives without the fixture moving at all), the server must be LIVE
+   first. Merged is not live: the Coolify swap takes minutes and
    the deploy step is fire-and-forget. Push the server commit, verify it landed
    (docs/DEPLOY.md → *Verifying a deploy landed*), then push the tag.
+
+   The same order — server first — also applies when the change SHRINKS the
+   family set (an alias folding two names into one, a support GGG removed).
+   The server then refuses uploads of the dropped name from older desktops,
+   which is intended: that art can never be matched again.
 
    ```
    git push origin main --tags

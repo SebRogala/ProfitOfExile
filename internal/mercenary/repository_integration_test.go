@@ -244,7 +244,7 @@ func TestRepository_Accept_RepeatedArtWithinOneBatch_TakesOneSlot(t *testing.T) 
 	}
 }
 
-// The two tiers of one family are separate keys: 58 of 154 families span more
+// The two tiers of one family are separate keys: 58 of 153 families span more
 // than one tier and the art may differ, so a tier-1 sample must never fill a
 // tier-3 slot.
 func TestRepository_Accept_TiersOfOneFamilyAreSeparateKeys(t *testing.T) {

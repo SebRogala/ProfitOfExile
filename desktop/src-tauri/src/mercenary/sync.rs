@@ -347,11 +347,40 @@ impl SyncFile {
         std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    /// The suppression list [`super::icons::TemplateStore::merge_pulled`] takes.
-    pub fn suppressed(&self) -> Vec<(String, u8)> {
+    /// The keys still owed to the server, exactly as they were recorded.
+    ///
+    /// The STORED spelling, deliberately: this is the key the pool has to
+    /// retire, and it is also the key [`clear_pending_in`] matches on to stop
+    /// owing it. Folding it here would post a tombstone for the wrong family
+    /// AND leave the record uncleared, so every module start would offer it
+    /// again forever.
+    pub fn owed(&self) -> Vec<(String, u8)> {
         self.pending_tombstones
             .iter()
             .map(|k| (k.family.clone(), k.tier))
+            .collect()
+    }
+
+    /// The suppression list [`super::icons::TemplateStore::merge_pulled`] takes.
+    ///
+    /// Read through [`super::vocab::alias_family`], while [`Self::owed`] —
+    /// the read the WIRE takes — keeps the stored name. The two are
+    /// deliberately different: the merge compares against families
+    /// [`decode_corpus`] has ALREADY folded (POE-211), so without the fold
+    /// here a forget clicked under an old family name would stop suppressing
+    /// the moment the alias landed, and the next pull would serve the art
+    /// straight back under the new key.
+    ///
+    /// The fold's cost is that a ✕ recorded under an OLD name before the
+    /// upgrade suppresses the FOLDED key's pooled rows for that tier — art
+    /// from the destination family included — until the POST is acknowledged
+    /// and the record clears. That is transient and local: nothing is deleted
+    /// for anyone else, and the next pull after the ack restores whatever the
+    /// tombstone did not retire.
+    pub fn suppressed(&self) -> Vec<(String, u8)> {
+        self.pending_tombstones
+            .iter()
+            .map(|k| (super::vocab::alias_family(&k.family).to_string(), k.tier))
             .collect()
     }
 }
@@ -512,7 +541,7 @@ fn decode_corpus(body: CorpusBody) -> (PooledCorpus, usize) {
             continue;
         };
         samples.push(PooledSample {
-            family: item.family,
+            family: super::vocab::alias_family(&item.family).to_string(),
             tier: item.tier,
             sig,
         });
@@ -520,6 +549,18 @@ fn decode_corpus(body: CorpusBody) -> (PooledCorpus, usize) {
     let corpus = PooledCorpus {
         format_version: body.format_version,
         samples,
+        // Tombstones are NOT aliased, and the asymmetry with the templates
+        // above is the whole point (POE-211). A tombstone names the key to
+        // RETIRE; a served one carrying a folded name is retiring the orphan
+        // an older device left behind. Folded, it would name the destination
+        // of the fold instead — and this device's own re-key tombstone comes
+        // back in every later corpus (the ack drops the ETag, so the next pull
+        // is a full 200), so `merge_pulled`'s `retain` would delete the
+        // migrated samples on every single pull. Retiring an old-name pool row
+        // at all therefore depends on WI-B's re-key tombstone firing on the
+        // uploading device; the residual case — a row nobody's upgraded build
+        // ever tombstones — is moot only because prod's v2 pool is empty at the
+        // fold.
         tombstones: body
             .tombstones
             .into_iter()
@@ -1265,7 +1306,7 @@ fn send_and_clear(app: &AppHandle, family: String, tier: u8) {
 /// The forgets a module start owes the server: the keys recorded locally whose
 /// tombstone the pool has not acknowledged.
 pub fn pending_tombstones(dir: &Path) -> Vec<(String, u8)> {
-    SyncFile::load(dir).suppressed()
+    SyncFile::load(dir).owed()
 }
 
 /// Record a forget as owed. `true` when the file changed. App-free so the
@@ -1568,7 +1609,7 @@ mod tests {
         let loaded = SyncFile::load(&dir);
 
         assert_eq!(loaded.etag.as_deref(), Some("\"abc123\""));
-        assert_eq!(loaded.suppressed(), [("Chain".to_string(), 2)]);
+        assert_eq!(loaded.owed(), [("Chain".to_string(), 2)]);
     }
 
     /// A missing file is a fresh conversation, not an error — every first run.
@@ -1659,12 +1700,12 @@ mod tests {
         )
         .expect("parses");
         let newer: CorpusBody = serde_json::from_str(
-            r#"{"format_version":1,"dedupe_threshold":0.88,"known_family_count":154,"templates":[],"tombstones":[]}"#,
+            r#"{"format_version":1,"dedupe_threshold":0.88,"known_family_count":153,"templates":[],"tombstones":[]}"#,
         )
         .expect("parses");
 
         assert_eq!(older.known_family_count, 0);
-        assert_eq!(newer.known_family_count, 154);
+        assert_eq!(newer.known_family_count, 153);
     }
 
     /// A corpus row whose base64 is not a usable signature is dropped, and the
@@ -1676,7 +1717,7 @@ mod tests {
         let body = CorpusBody {
             format_version: FORMAT_VERSION,
             dedupe_threshold: 0.88,
-            known_family_count: 154,
+            known_family_count: 153,
             templates: vec![
                 WireTemplate {
                     family: "Chain".to_string(),
@@ -1727,6 +1768,120 @@ mod tests {
 
         assert_eq!(dropped, 1);
         assert!(corpus.samples.is_empty());
+    }
+
+    /// A corpus row uploaded by a build that derived the OLD family name lands
+    /// under the folded key, so one device's art is the whole pool's art
+    /// across the upgrade (POE-211).
+    ///
+    /// Without it the row keeps a family `vocab::resolve` no longer carries:
+    /// the cell reads unresolved beside a template that matched it perfectly.
+    #[test]
+    fn a_served_row_under_the_old_family_lands_under_the_new_key() {
+        let body = CorpusBody {
+            format_version: FORMAT_VERSION,
+            templates: vec![WireTemplate {
+                family: "Increased Area of Effect".to_string(),
+                tier: 2,
+                signature_b64: BASE64.encode(gradient()),
+            }],
+            ..CorpusBody::default()
+        };
+
+        let (corpus, dropped) = decode_corpus(body);
+
+        assert_eq!(dropped, 0);
+        assert_eq!(corpus.samples.len(), 1);
+        assert_eq!(corpus.samples[0].family, "Area of Effect");
+        assert_eq!(corpus.samples[0].tier, 2, "the tier is not part of the fold");
+    }
+
+    /// A served TOMBSTONE under the old name keeps that name — the one place
+    /// the alias must NOT be applied (POE-211).
+    ///
+    /// Such a tombstone is a device retiring the orphan its own re-key left
+    /// behind. Folded, it would name the fold's destination instead, and
+    /// `merge_pulled` retains-away every sample under that key. It comes back
+    /// in every later corpus too (acknowledging a tombstone drops the ETag, so
+    /// the next pull is a full 200), so the migrated art would be deleted on
+    /// every single pull, for good.
+    #[test]
+    fn a_served_tombstone_under_the_old_name_does_not_retire_the_new_key() {
+        let body = CorpusBody {
+            format_version: FORMAT_VERSION,
+            tombstones: vec![WireKey {
+                family: "Increased Area of Effect".to_string(),
+                tier: 2,
+            }],
+            ..CorpusBody::default()
+        };
+
+        let (corpus, _) = decode_corpus(body);
+
+        assert_eq!(
+            corpus.tombstones,
+            [("Increased Area of Effect".to_string(), 2)],
+        );
+    }
+
+    /// A ✕ clicked under the OLD family name before the upgrade still holds
+    /// the pool's rows out afterwards (POE-211).
+    ///
+    /// The record keeps the old name — that is the key the SERVER must retire
+    /// — but the merge compares against families `decode_corpus` has already
+    /// folded, so `suppressed` reads it through the alias. Get that asymmetry
+    /// wrong either way and the forget silently stops working across the
+    /// upgrade. This test owns the SUPPRESSION half; the wire half — that what
+    /// is offered and cleared keeps the stored spelling — is
+    /// `a_forget_recorded_under_a_folded_name_clears_by_that_name` below.
+    #[test]
+    fn a_pending_forget_under_the_old_name_still_suppresses_the_folded_key() {
+        let dir = temp_dir("suppress-aliased");
+        record_pending_in(&dir, "Increased Area of Effect", 2).expect("record");
+        let (corpus, _) = decode_corpus(CorpusBody {
+            format_version: FORMAT_VERSION,
+            templates: vec![WireTemplate {
+                family: "Increased Area of Effect".to_string(),
+                tier: 2,
+                signature_b64: BASE64.encode(gradient()),
+            }],
+            ..CorpusBody::default()
+        });
+
+        let suppressed = SyncFile::load(&dir).suppressed();
+        let mut store = super::super::icons::TemplateStore::new();
+        let outcome = store.merge_pulled(&corpus, &suppressed, &super::super::Thresholds::default());
+
+        assert_eq!(suppressed, [("Area of Effect".to_string(), 2)]);
+        assert_eq!(outcome.suppressed, 1);
+        assert!(
+            store.templates().is_empty(),
+            "the disowned art was installed anyway: {:?}",
+            store.learned_keys(),
+        );
+    }
+
+    /// The retry cycle converges on a forget recorded under a folded family
+    /// name (POE-211).
+    ///
+    /// `retry_pending_tombstones` offers what `pending_tombstones` reports and
+    /// clears by that same string. Report the ALIASED name and the POST retires
+    /// the fold's destination — everybody's migrated art — while
+    /// `clear_pending_in` matches nothing, so the record is owed again at every
+    /// module start, forever.
+    #[test]
+    fn a_forget_recorded_under_a_folded_name_clears_by_that_name() {
+        let dir = temp_dir("pending-aliased-clear");
+        record_pending_in(&dir, "Increased Area of Effect", 2).expect("record");
+
+        let owed = pending_tombstones(&dir);
+        let (family, tier) = owed.first().cloned().expect("one forget is owed");
+        assert!(
+            clear_pending_in(&dir, &family, tier).expect("clear"),
+            "the offered name {family:?} does not match the recorded one",
+        );
+
+        assert!(pending_tombstones(&dir).is_empty());
     }
 
     /// 1728 bytes with real variance, so `CellSig::from_rgb` accepts them.

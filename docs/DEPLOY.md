@@ -190,17 +190,28 @@ fire-and-forget (see *What a green run actually means* above). Push the server
 commit, verify it landed, then push the tag.
 
 **Concretely, for the mercenary support vocabulary:** the server must ship no
-later than a change to
-`desktop/src/lib/mercenaries/__fixtures__/mercenary-stats.json`. That fixture is
-the single source both sides derive their family list from —
-`internal/mercenary/families.go` is generated from it (and `families_test.go`
-re-derives it, so the two cannot drift silently), and the desktop's
-`vocab.rs` parses the same file. A desktop released first knows families the
+later than a change to `internal/mercenary/families.go` — the compiled gate,
+which moves for a GROWTH and for a SHRINK alike — or to `vocab.rs`'s
+`FAMILY_ALIASES`, which changes what the desktop derives without the fixture
+moving at all. `families.go` is generated from
+`desktop/src/lib/mercenaries/__fixtures__/mercenary-stats.json`, the single
+source both sides derive their family list from (and `families_test.go`
+re-derives it, so the two cannot drift silently); the desktop's `vocab.rs`
+parses that same file. A desktop released first knows families the
 server's `knownFamilies` map does not, and every template upload naming one is
 refused. That is a degradation rather than an outage — the shared icon pool
 simply does not learn the new families — and it is visible, not silent: the
 upload response carries `rejected_unknown_family` and the served corpus carries
 `known_family_count`. `families.go` states the same rule at its declaration.
+
+**The order is UNCHANGED when the change SHRINKS the family set** — an alias
+that folds two display names into one family (POE-211), or a support GGG
+removed: the server ships first either way. What inverts is WHICH SIDE GETS
+REFUSED. On a growth the desktop is the one that can run ahead, and its uploads
+of the new name are refused. On a shrink the server is ahead by construction,
+and it refuses uploads of the DROPPED name from desktops that still derive it —
+that refusal is the intended outcome, because those uploads would key art
+nothing can ever match again.
 
 ## When you need a manual deploy
 
