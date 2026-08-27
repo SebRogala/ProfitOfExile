@@ -64,6 +64,7 @@ use tokio::sync::watch;
 use crate::modules::ModuleJoin;
 use crate::AppState;
 
+use super::cellfit::{self, FitSource, FittedScale};
 use super::geometry::{self, OcrLineBox};
 use super::icons::{CellSig, LearnOutcome, LoadedStore, Origin, Rekeyed, TemplateStore};
 use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
@@ -78,7 +79,7 @@ use super::sync;
 use super::trigger;
 use super::{
     MercCapture, MercGeometry, MercHeader, MercStatus, MercSupportRead,
-    MercenarySlice, ReadState,
+    MercenarySlice, ReadState, ScaleSource,
 };
 
 /// Loop quantum. Every wait is built out of these so a stop signal is honoured
@@ -1188,6 +1189,128 @@ pub fn merge_sigs(
     out
 }
 
+/// Which registration the session holds after a fresh frame fit, and whether
+/// that registration CHANGED.
+///
+/// The fit is a measurement and it wobbles between ticks: the PC's scale sits
+/// 0.0008 above a `cell_px` rounding boundary and one `cellfit::P_STEP` of the
+/// pitch grid moves it by 0.0031, so a rule that adopted every fresh number
+/// would flip the cell size back and forth on a panel that had not moved a
+/// pixel. That is not merely churn — every flip re-derives the seed store, and
+/// (the real cost) tells [`merge_sigs`] the geometry moved, which makes the
+/// hovered cell learn its HIGHLIGHTED crop. Three rules:
+///
+/// - a [`FitSource::OneCell`] fit never replaces a [`FitSource::Grid`] one.
+///   The fallback quantises the scale to 1/43 and can land a px out on a single
+///   ambiguous cell (measured on the PC fixture, where it reports a 39 px cell
+///   against the grid path's 40), so a tooltip covering all but one cell for
+///   one tick must not be able to undo a grid fit. It is a no-op OBSERVATION
+///   rather than a contradiction: the held registration comes back untouched,
+///   its `pending` proposal included, so a proposal a fallback tick interrupts
+///   is still live for the next grid tick to confirm or replace. Clearing it
+///   instead would let a tooltip parked over the panel starve a REAL change of
+///   scale of its second grid tick indefinitely;
+/// - the same `cell_px` is adopted immediately and SILENTLY. The registration
+///   is exact per tick and the crops it cuts are the same size, so taking the
+///   fresh x0/pitch costs nothing and is not a change of registration;
+/// - a different `cell_px` is adopted only when the previous GRID-MEASURING
+///   tick proposed that same size. An oscillation across a rounding boundary
+///   alternates and never gets two in a row; a real change of UI scale — a
+///   second monitor, the game's own slider — adopts on the tick after next.
+///
+/// The bool is the ONLY thing `Session::geometry_changed` may arm on from this
+/// side; see [`registration_changed`] for the other.
+pub fn next_fitted_scale(
+    held: Option<FittedScale>,
+    fresh: FittedScale,
+) -> (FittedScale, bool) {
+    let Some(held) = held else {
+        return (fresh, true);
+    };
+    if fresh.source == FitSource::OneCell && held.source == FitSource::Grid {
+        return (held, false);
+    }
+    if fresh.cell_px == held.cell_px {
+        // The pending proposal, if there was one, is now stale: the size it
+        // proposed has not turned up on two consecutive ticks.
+        return (FittedScale { pending: None, ..fresh }, false);
+    }
+    if held.pending == Some(fresh.cell_px) {
+        return (FittedScale { pending: None, ..fresh }, true);
+    }
+    (FittedScale { pending: Some(fresh.cell_px), ..held }, false)
+}
+
+/// Whether a registration the session settled on has gone STALE against the
+/// OCR's own reading of the panel this tick.
+///
+/// [`FittedScale::scale`] is measured once and then CARRIED across every tick
+/// that cannot see the frame ([`cellfit::apply_held`] is what carries it),
+/// while the OCR's `s_ocr` is re-measured from the line centres on every one of
+/// those ticks. So the two can drift apart without any fit ever landing to
+/// notice: the recruit window moves to a monitor at another DPI, or the game's
+/// UI slider moves, across a run of ticks whose panel is occluded enough that
+/// [`cellfit::refine`] keeps declining. `apply_held` would then rewrite a
+/// correctly scaled layout onto the OLD monitor's registration and cut every
+/// crop at the wrong size — silently, because a held tick logs no measurement.
+///
+/// The gate is [`cellfit::SCALE_BAND`], the same band and the same inclusive
+/// edges [`cellfit::refine`] holds a FRESH measurement to, because it is the
+/// same question asked of the same two cues. What differs is which cue is
+/// suspect, and that is why a [`cellfit::FitDecline::OutOfBand`] must NOT reach
+/// here: there the fresh frame measurement is the untrustworthy one and the
+/// settled registration is the good one, so the session keeps holding. Here it
+/// is the held number that is old.
+pub fn held_is_stale(held_scale: f32, s_ocr: f32) -> bool {
+    let ratio = held_scale / s_ocr;
+    ratio < cellfit::SCALE_BAND.0 || ratio > cellfit::SCALE_BAND.1
+}
+
+/// Whether the layout this tick hands downstream is registered DIFFERENTLY from
+/// the one the last tick handed down.
+///
+/// Two ways, and only two: the session adopted a new `cell_px` (every crop
+/// changes size), or the layout crossed into or out of [`ScaleSource::Ocr`]
+/// (every crop moves the 6-12 px the fit exists to remove). A `Frame` → `Held`
+/// step is neither — [`cellfit::apply_held`] writes the rects the session was
+/// already using — and a same-`cell_px` adoption is neither, because the rects
+/// move by under a px and the crops keep their size.
+///
+/// It matters that this stays narrow: what it arms is one tick of
+/// [`hovered_for_sigs`], and a flag that armed every tick would make the
+/// hovered cell learn a highlighted crop every tick.
+pub fn registration_changed(before: ScaleSource, after: ScaleSource, adopted: bool) -> bool {
+    adopted || (before == ScaleSource::Ocr) != (after == ScaleSource::Ocr)
+}
+
+/// Which cell [`merge_sigs`] must protect on this tick.
+///
+/// Normally the hovered one: the loop re-detects while the cursor sits on a
+/// cell, and the fresh crop of that cell is of HIGHLIGHTED art. But on the tick
+/// the session's REGISTRATION changes, every cached crop was cut at the old
+/// rects — 6-12 px off, or a px larger — and the hovered cell's is the one crop
+/// the merge would otherwise keep, so a confirm on it would teach the store the
+/// very registration that just changed. See [`registration_changed`] for how
+/// narrow that condition is kept.
+///
+/// Clearing the cache instead is the wrong fix (and was the first one tried):
+/// [`merge_sigs`] takes the hovered cell's crop only from `previous` and
+/// inserts nothing on a miss, so an empty cache makes the pointed cell
+/// `Learned::NoCrop` and it learns nothing at all. Passing `None` for one tick
+/// takes the FRESH, correctly registered crop instead. The accepted cost is
+/// that this one crop may carry the cursor highlight — the same trade the
+/// `replaced` path already makes.
+pub fn hovered_for_sigs(
+    geometry_changed: bool,
+    hovered: Option<(String, u8)>,
+) -> Option<(String, u8)> {
+    if geometry_changed {
+        None
+    } else {
+        hovered
+    }
+}
+
 /// The `(row key, slot)` of the cell the cursor is inside, if any.
 pub fn hovered_key(capture: &MercCapture, cursor: Option<(i32, i32)>) -> Option<(String, u8)> {
     let (ri, si) = cell_at(capture, cursor?)?;
@@ -1628,6 +1751,21 @@ struct Session {
     /// session and gets a new budget; the result cache is what stops it paying
     /// twice for the same question.
     trade: Option<MercTradeSession>,
+    /// The frame registration the session has SETTLED on — where the grid is,
+    /// in the terms every rect downstream of a detect is cut at. `None` until
+    /// the first fit lands; never dropped afterwards, because a tick that
+    /// cannot see the frame is not evidence the frame moved. See
+    /// [`next_fitted_scale`] and [`cellfit::apply_held`].
+    fitted: Option<FittedScale>,
+    /// Which cue the LAST tick's layout was registered from, so a step into or
+    /// out of [`ScaleSource::Ocr`] can be seen for what it is.
+    scale_source: ScaleSource,
+    /// Armed when the tick's registration differs from the last one's, and
+    /// consumed by the next [`merge_sigs`] — normally the same tick's, but a
+    /// tick that returns early between the fit and the merge (a cancel) leaves
+    /// it armed for the next one. That is correct rather than merely harmless:
+    /// the crops in the cache are still the ones the old registration cut.
+    geometry_changed: bool,
     /// Bumped by the detect tick and by a hover confirmation — the two writes
     /// of [`Self::current`] that outlive the iteration that made them.
     /// (`restore_retained` also writes it, mid-detect, and is overwritten by
@@ -2062,6 +2200,9 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         header_logged: None,
         retained: None,
         trade: None,
+        fitted: None,
+        scale_source: ScaleSource::Ocr,
+        geometry_changed: false,
         revision: 0,
     };
 
@@ -2797,6 +2938,121 @@ fn detect_tick(
             return report(Some(miss(app, session, false)));
         }
     };
+    // Read BEFORE the fit rewrites `layout.scale`: the log line's whole job is
+    // to show the two cues side by side.
+    let s_ocr = layout.scale;
+
+    // …and the same read is what keeps a HELD registration honest. The session
+    // measures `fitted` once and then carries it across every tick that cannot
+    // see the frame, while `s_ocr` is re-measured here on every one of them, so
+    // a UI-scale change during a run of declines would otherwise be written
+    // back over a correctly scaled layout for as long as the declines last.
+    // Dropped BEFORE the deadband reads it rather than at the `apply_held` call
+    // below, so a number the OCR already contradicts cannot also seed a
+    // `pending` proposal or turn away this tick's fresh fit: with nothing held,
+    // a fit that lands registers on the spot (`adopted`, which arms
+    // `geometry_changed`) and a fit that declines leaves the layout on the OCR's
+    // own scale and rects — `ScaleSource::Ocr`, which arms it the other way.
+    if let Some(held) = session.fitted {
+        if held_is_stale(held.scale, s_ocr) {
+            session.fitted = None;
+            if debug_mode(app) {
+                crate::app_log(
+                    app,
+                    format!(
+                        "Merc: frame registration dropped — session held scale {:.3} but the \
+                         OCR now reads {s_ocr:.3}",
+                        held.scale
+                    ),
+                );
+            }
+        }
+    }
+
+    // POE-214: the OCR line centres put the whole grid 6-12 px left of the gold
+    // frame the icons are actually drawn in, so before ANY rect derived from
+    // this layout is used, measure the frame and rewrite the layout onto it.
+    // Here and not earlier because `crop_needs_full_look` above is deliberately
+    // still on the PRE-fit `panel_bounds`: that test asks whether the crop saw
+    // the whole panel, the fit moves its edges by at most 12 px, and
+    // `CROP_SIDE_PITCHES` already reaches ~175 px past them — re-deriving it
+    // after the fit would cost a second OCR to answer the same question.
+    let refined = cellfit::refine(view, frame, layout, &session.geometry);
+    let mut layout = refined.layout;
+    let adopted = match &refined.fit {
+        Some(fit) => {
+            let fresh = FittedScale::from_fit(fit, layout.column_x0);
+            let (settled, adopted) = next_fitted_scale(session.fitted, fresh);
+            session.fitted = Some(settled);
+            adopted
+        }
+        None => false,
+    };
+    // EVERYTHING downstream reads the SESSION's registration, never the raw
+    // per-tick fit: `panel_bounds`, `probe_band_bounds`, `pass2_texts`,
+    // `seed::rederive_for_window` (whose memo key is the window `layout.scale`
+    // implies), `build_capture` and the `MercCapture.scale` the SSOT publishes
+    // all read this one layout. So a fresh measurement the deadband refused
+    // must not reach them, and a tick whose fit declined must not drop them
+    // back to the OCR's 6-12 px drift while the session knows where the frame
+    // is.
+    if let Some(settled) = session.fitted {
+        // `Frame` whenever THIS tick measured the frame, even on a tick whose
+        // measurement the deadband refused: the cue is still the frame, and the
+        // log line below says which number the session is holding. `Held` is
+        // for a tick that could not see the frame at all.
+        let source = if refined.fit.is_some() { ScaleSource::Frame } else { ScaleSource::Held };
+        cellfit::apply_held(&mut layout, &settled, source);
+    }
+    // Armed, never cleared here: the merge that consumes it clears it, and a
+    // second change landing before then would only re-arm what is already
+    // armed.
+    session.geometry_changed |=
+        registration_changed(session.scale_source, layout.scale_source, adopted);
+    session.scale_source = layout.scale_source;
+    if debug_mode(app) {
+        match (&refined.fit, &refined.declined) {
+            (Some(fit), _) => {
+                // The settled scale is what the capture is READ at; the fit's
+                // own is what this tick measured. They differ on a tick the
+                // deadband refused, and that difference is the thing a smoke
+                // check needs to see.
+                let held = session.fitted.map_or(String::new(), |s| {
+                    if s.scale == fit.scale {
+                        String::new()
+                    } else {
+                        format!(" — session holds {:.3}", s.scale)
+                    }
+                });
+                crate::app_log(
+                    app,
+                    format!(
+                        "Merc: frame fit scale {:.3} (ocr {:.3}) X0 {:.1} pitch {:.2} dark {}, \
+                         {} cells span {}, moved {} px, row-pitch residual {:.1}{held}",
+                        fit.scale,
+                        s_ocr,
+                        fit.x0,
+                        fit.pitch,
+                        fit.dark_side,
+                        fit.cells_used,
+                        fit.slot_span,
+                        fit.moved_px,
+                        fit.residual_row_pitch,
+                    ),
+                );
+            }
+            (None, Some(why)) => {
+                let kept = match session.fitted {
+                    Some(held) => {
+                        format!("holding frame registration (scale {:.3})", held.scale)
+                    }
+                    None => format!("keeping ocr {s_ocr:.3}"),
+                };
+                crate::app_log(app, format!("Merc: frame fit declined — {why}; {kept}"));
+            }
+            (None, None) => {}
+        }
+    }
 
     // From the LAYOUT, not the capture: the capture drops the cells past the
     // first empty slot, and the panel is as wide as its grid either way.
@@ -2908,9 +3164,11 @@ fn detect_tick(
         crate::app_log(
             app,
             format!(
-                "Merc: recruit window detected ({} rows, scale {:.3}) — {how} frame, {took} ms",
+                "Merc: recruit window detected ({} rows, scale {:.3} via {}) — {how} frame, \
+                 {took} ms",
                 result.capture.rows.len(),
-                result.capture.scale
+                result.capture.scale,
+                layout.scale_source.label()
             ),
         );
         // The window opening is the moment another device's hover is worth
@@ -2925,7 +3183,10 @@ fn detect_tick(
     session.sigs = merge_sigs(
         std::mem::take(&mut session.sigs),
         result.sigs,
-        hovered_key(&result.capture, cursor),
+        hovered_for_sigs(
+            std::mem::take(&mut session.geometry_changed),
+            hovered_key(&result.capture, cursor),
+        ),
     );
     // The capture the pending claim was made against is being replaced right
     // here — this is the one place that can tell whether its row survived.
@@ -4722,6 +4983,220 @@ mod tests {
         );
     }
 
+    /// A settled registration with nothing but the numbers the rules read.
+    fn reg(scale: f32, cell_px: i32, source: FitSource) -> FittedScale {
+        FittedScale {
+            scale,
+            cell_px,
+            x0_offset: 6.2,
+            pitch: scale * cellfit::REF_PITCH,
+            source,
+            pending: None,
+        }
+    }
+
+    /// The detect runs at 1 Hz and the fit is a measurement, so its numbers
+    /// WOBBLE between ticks. While the wobble leaves the cell SIZE alone the
+    /// fresh registration is taken — it is exact for this tick and costs
+    /// nothing — but nothing downstream is told the geometry moved, because
+    /// every crop is still cut at the same size within a px of the same place.
+    #[test]
+    fn a_wobble_that_leaves_the_cell_size_alone_is_adopted_silently() {
+        let held = reg(0.9900, 44, FitSource::Grid);
+
+        let (next, adopted) = next_fitted_scale(Some(held), reg(0.9950, 44, FitSource::Grid));
+
+        assert_eq!(next.scale, 0.9950, "the fresh registration is the exact one for this tick");
+        assert_eq!(next.pending, None);
+        assert!(!adopted, "…and a same-size adoption is not a re-registration");
+    }
+
+    /// The store-poisoning case the deadband exists for. A UI scale sitting a
+    /// ten-thousandth from a `cell_px` rounding boundary — the PC's sits 0.0008
+    /// above one — crosses it on the noise of the pitch grid, so `cell_px`
+    /// alternates 40 / 39 / 40 / 39. Adopting each flip would arm
+    /// `geometry_changed` on EVERY tick, and [`hovered_for_sigs`] would then
+    /// feed the hovered cell its HIGHLIGHTED crop every tick, which is the
+    /// store poisoning this whole path is built to avoid. Two consecutive ticks
+    /// never agree, so nothing is ever adopted.
+    #[test]
+    fn a_cell_px_oscillation_is_never_adopted_and_never_re_registers() {
+        let mut held = reg(0.8985, 40, FitSource::Grid);
+
+        for tick in 0..6 {
+            let fresh = if tick % 2 == 0 {
+                reg(0.8977, 39, FitSource::Grid)
+            } else {
+                reg(0.8985, 40, FitSource::Grid)
+            };
+
+            let (next, adopted) = next_fitted_scale(Some(held), fresh);
+
+            assert!(!adopted, "tick {tick} re-registered on a boundary flip");
+            assert_eq!(next.cell_px, 40, "tick {tick} moved the settled cell size");
+            held = next;
+        }
+    }
+
+    /// …and one tick of deadband is the whole difference between that and a
+    /// REAL change of scale — the window dragged to a second monitor, the
+    /// game's UI slider — which is adopted, once, on the second tick that
+    /// proposes it.
+    #[test]
+    fn two_consecutive_ticks_at_a_new_cell_px_adopt_it_once() {
+        let held = reg(0.8985, 40, FitSource::Grid);
+        let fresh = reg(0.8100, 36, FitSource::Grid);
+
+        let (first, adopted) = next_fitted_scale(Some(held), fresh);
+
+        assert!(!adopted, "one tick is a proposal, not a measurement");
+        assert_eq!(first.cell_px, 40, "and the session still reads the old registration");
+        assert_eq!(first.pending, Some(36));
+
+        let (second, adopted) = next_fitted_scale(Some(first), fresh);
+
+        assert!(adopted);
+        assert_eq!(second.cell_px, 36);
+        assert_eq!(second.pending, None, "…and the proposal is spent");
+    }
+
+    /// The one-cell fallback quantises the scale to 1/43 and can land a whole
+    /// px out on a single ambiguous cell (measured on the PC fixture, where it
+    /// reports a 39 px cell against the grid path's 40). A tooltip covering all
+    /// but one cell for one tick must not be able to undo a grid fit.
+    #[test]
+    fn a_one_cell_fit_never_replaces_a_grid_registration() {
+        let held = reg(0.8985, 40, FitSource::Grid);
+        let one_cell = reg(0.8837, 39, FitSource::OneCell);
+
+        let (next, adopted) = next_fitted_scale(Some(held), one_cell);
+
+        assert_eq!(next, held, "the grid registration stands");
+        assert!(!adopted);
+        // …but with nothing settled yet, one cell is better than the OCR's
+        // 6-12 px drift, and it registers on the spot.
+        let (first, adopted) = next_fitted_scale(None, one_cell);
+        assert_eq!(first.cell_px, 39);
+        assert!(adopted);
+    }
+
+    /// …and "never replaces" is the whole of it: a fallback tick is a no-op
+    /// OBSERVATION, so it neither confirms a live proposal nor discards one.
+    /// `40 → 39 → OneCell → 39` therefore adopts on the fourth tick, because
+    /// two grid ticks measured 39 and the tick between them measured nothing
+    /// that bears on the question. The alternative — clearing `pending` for
+    /// literal "previous tick" semantics — would let a tooltip parked over the
+    /// panel starve a real change of scale of its second grid tick for as long
+    /// as the cursor sat there.
+    #[test]
+    fn a_one_cell_tick_between_two_grid_proposals_leaves_the_proposal_live() {
+        let held = reg(0.8985, 40, FitSource::Grid);
+        let grid_39 = reg(0.8977, 39, FitSource::Grid);
+
+        let (proposed, _) = next_fitted_scale(Some(held), grid_39);
+        assert_eq!(proposed.pending, Some(39), "the first grid tick proposes 39");
+
+        let (through, adopted) =
+            next_fitted_scale(Some(proposed), reg(0.8837, 39, FitSource::OneCell));
+
+        assert!(!adopted, "the fallback tick adopts nothing of its own");
+        assert_eq!(through.cell_px, 40, "…and the grid registration still stands");
+        assert_eq!(through.pending, Some(39), "…but the proposal it interrupts survives it");
+
+        let (settled, adopted) = next_fitted_scale(Some(through), grid_39);
+
+        assert!(adopted, "so the next grid tick at 39 is the second one, and confirms it");
+        assert_eq!(settled.cell_px, 39);
+    }
+
+    /// The staleness gate the deadband cannot see. `FittedScale::scale` is
+    /// measured once and then carried across every tick that cannot find the
+    /// frame, while the OCR re-reads its own scale on every one of them — so a
+    /// player who moves the recruit window to a monitor at another DPI during a
+    /// run of declines would have `cellfit::apply_held` write the old
+    /// registration back over a correctly scaled layout, and cut every crop at
+    /// the wrong size. Two cues that far apart mean the HELD one is stale.
+    #[test]
+    fn an_ocr_that_reads_a_different_ui_scale_makes_the_held_registration_stale() {
+        assert!(
+            held_is_stale(1.00, 0.80),
+            "a 25 % disagreement is a UI-scale change, not a measurement wobble",
+        );
+        assert!(
+            !held_is_stale(1.00, 0.974),
+            "…and the wobble the deadband exists for must not drop the registration",
+        );
+    }
+
+    /// The band is `cellfit::refine`'s own, edges included — the same two cues,
+    /// the same tolerance, so a ratio the fresh path would have accepted never
+    /// drops a held registration.
+    #[test]
+    fn the_scale_band_edges_are_held_in_band() {
+        assert!(!held_is_stale(cellfit::SCALE_BAND.0, 1.0), "the low edge is in band");
+        assert!(!held_is_stale(cellfit::SCALE_BAND.1, 1.0), "the high edge is in band");
+        assert!(held_is_stale(cellfit::SCALE_BAND.0 - 0.001, 1.0));
+        assert!(held_is_stale(cellfit::SCALE_BAND.1 + 0.001, 1.0));
+    }
+
+    /// What may arm `geometry_changed`, in six lines. The `Frame` → `Held` step
+    /// is the one that must NOT: a declined tick re-applies the rects the
+    /// session was already using, so every cached crop is still valid. The
+    /// `Frame` → `Ocr` line is defensive — the loop never drops a settled
+    /// registration — and is here so a future path that does cannot make the
+    /// cache lie.
+    #[test]
+    fn only_a_size_adoption_or_an_ocr_crossing_counts_as_a_re_registration() {
+        assert!(
+            registration_changed(ScaleSource::Ocr, ScaleSource::Frame, false),
+            "the first fit moves every rect 6-12 px",
+        );
+        assert!(registration_changed(ScaleSource::Frame, ScaleSource::Ocr, false));
+        assert!(
+            registration_changed(ScaleSource::Frame, ScaleSource::Frame, true),
+            "an adopted cell size changes what every crop is cut at",
+        );
+        assert!(!registration_changed(ScaleSource::Frame, ScaleSource::Held, false));
+        assert!(!registration_changed(ScaleSource::Held, ScaleSource::Frame, false));
+        assert!(!registration_changed(ScaleSource::Frame, ScaleSource::Frame, false));
+    }
+
+    /// The tick the session RE-REGISTERS, every cached crop was cut at the old
+    /// rects — including the hovered cell's, which is the one crop the merge
+    /// normally protects. For that one tick it takes the fresh crop instead, so
+    /// a confirm cannot teach the store the registration that just changed.
+    #[test]
+    fn the_tick_a_fit_lands_takes_the_hovered_cell_from_the_fresh_frame() {
+        let hovered = sig_key("skill.a", 0);
+
+        let merged = merge_sigs(
+            cache(&[(("skill.a", 0), 1)]),
+            cache(&[(("skill.a", 0), 9)]),
+            hovered_for_sigs(true, Some(hovered.clone())),
+        );
+
+        assert_eq!(
+            merged[&hovered].0,
+            sig(9),
+            "the stale crop was cut 6-12 px off the art and must not survive the fit",
+        );
+    }
+
+    /// …and on every other tick the pre-hover rule is untouched: the cold crop
+    /// is what the store learns from, and the fresh one is of highlighted art.
+    #[test]
+    fn an_ordinary_tick_still_keeps_the_hovered_cells_cold_crop() {
+        let hovered = sig_key("skill.a", 0);
+
+        let merged = merge_sigs(
+            cache(&[(("skill.a", 0), 1)]),
+            cache(&[(("skill.a", 0), 9)]),
+            hovered_for_sigs(false, Some(hovered.clone())),
+        );
+
+        assert_eq!(merged[&hovered].0, sig(1));
+    }
+
     /// The renumbering bug in one test (POE-207). A skill line the OCR drops
     /// moves `skill.b` from row position 1 to row position 0, and the cursor is
     /// on ITS slot 0. Under the old `(row index, slot)` key the cold crop kept
@@ -5960,6 +6435,9 @@ mod tests {
             header_logged: None,
             retained: None,
             trade: None,
+            fitted: None,
+            scale_source: ScaleSource::Ocr,
+            geometry_changed: false,
             revision: 0,
         }
     }
