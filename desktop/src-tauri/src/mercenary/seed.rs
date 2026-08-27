@@ -1214,7 +1214,7 @@ mod tests {
     use crate::mercenary::vocab::{MercRole, MercVocab};
     use crate::mercenary::Thresholds;
 
-    /// Committed 78×78 gem art, one file per mapped gem, fetched over the
+    /// Fetched (never committed — see the fixture README) gem art, one file per mapped gem, fetched over the
     /// production route (`/api/gem-icon/{gem}`) so the bytes the tests reason
     /// about are the bytes the app will cache.
     const ART_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/merc-seed-art");
