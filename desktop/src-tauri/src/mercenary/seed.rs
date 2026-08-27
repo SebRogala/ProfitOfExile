@@ -32,24 +32,21 @@
 //! "seed"` in `index.json` fails `deny_unknown_fields`-adjacent expectations
 //! and purges the whole store, and the art is on disk anyway, one resize away.
 
-// The map loader and the derivation have no PRODUCTION caller yet: the fetch,
-// the install seam and the per-window re-derivation are POE-208 WI-B, and this
-// file is WI-A. Everything here is reached by the tests below, so the choice is
-// between this one attribute and eighteen of them.
-//
-// **WI-B deletes this line.** Once `run.rs` installs seeds, a `dead_code`
-// warning in this module means something really is unreachable, and the whole
-// desktop crate is otherwise warning-clean.
-#![allow(dead_code)]
-
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use image::{DynamicImage, RgbaImage};
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+use tokio::sync::watch;
 
-use super::icons::SHIFT_MAX;
-use super::{icons::CellSig, MercGeometry};
+use super::icons::{SeedInstall, TemplateStore, SHIFT_MAX};
+use super::{icons::CellSig, MercGeometry, Thresholds};
+use crate::AppState;
+use tauri::Manager as _;
 
 // ---------------------------------------------------------------------------
 // The family → gem map
@@ -366,9 +363,26 @@ pub const BLOCKLIST_FILE: &str = "seed-blocklist.json";
 /// because the resource is the FILE and two of the writers are deliberately
 /// app-free so the evict → block → skip cycle stays testable.
 ///
-/// **Lock order: the directory lock (`icons::writing_icons_dir`) FIRST, then
-/// this one.** The merge path already holds the directory lock when it
-/// blocklists.
+/// # Lock order — normative, and stated only here
+///
+/// **`icons::writing_icons_dir` → `AppState::merc_templates` → this lock.**
+/// Every seed path takes a PREFIX or a SUFFIX of that chain and never inverts
+/// it; the callers cite this doc rather than arguing the order again:
+///
+/// - `sync::apply_corpus` — directory, then store, then this one after both
+///   are released;
+/// - `debug::merc_forget_template` — directory, then store, then this one
+///   while the store is still held;
+/// - `debug::merc_forget_seed` — store, then this one while it is still held;
+/// - `run.rs`'s hover tick — store, released, then this one; blocking after
+///   the release is safe because the confirmation it evicted for is IN the
+///   store, so a pass racing it yields to that sample rather than re-seeding
+///   (see [`install_all`]);
+/// - [`store_art`] and [`clear_seed_state`] — this lock alone.
+///
+/// [`SeedBlocklist::load`] takes NO lock: [`SeedBlocklist::save`] renames a
+/// finished temporary over the file, so a reader sees one whole version or the
+/// other and can be called from inside the store mutex.
 static SEED_BLOCKLIST_LOCK: Mutex<()> = Mutex::new(());
 
 /// `seed-blocklist.json` — families whose seed was thrown out here.
@@ -444,6 +458,12 @@ pub fn clear_seed_state(icons_dir: &Path) -> Result<(), String> {
     let _guard = SEED_BLOCKLIST_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    // BEFORE the deletion, inside the lock: a fetch pass that captured the old
+    // epoch and is holding bytes it has not written yet must lose the race, and
+    // it decides that by comparing epochs under this same lock. Bumping after
+    // the deletion would leave a window in which a write is still accepted for
+    // a reset that has already emptied the directory. See [`store_art`].
+    SEED_EPOCH.fetch_add(1, Ordering::SeqCst);
     let list = icons_dir.join(BLOCKLIST_FILE);
     if let Err(e) = std::fs::remove_file(&list) {
         if e.kind() != std::io::ErrorKind::NotFound {
@@ -457,6 +477,734 @@ pub fn clear_seed_state(icons_dir: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The fetch (L9) — one request per uncached family, serial, fail-soft
+// ---------------------------------------------------------------------------
+
+/// Counts resets of the seed cache.
+///
+/// [`clear_seed_state`] deletes the art directory; a fetch pass that started
+/// before it may still be holding bytes for a file inside that directory, and
+/// writing them afterwards would leave exactly the art the reset was pressed to
+/// remove. The lock alone cannot decide that — it makes the two operations
+/// atomic, not ordered — so the write carries the epoch it started under and
+/// refuses when the number has moved.
+static SEED_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The reset counter a fetch pass should carry into its writes.
+pub fn seed_epoch() -> u64 {
+    SEED_EPOCH.load(Ordering::SeqCst)
+}
+
+/// Request timeout for one gem-art call.
+///
+/// The same 20 s [`super::sync`] gives a pool call, and for the same reason —
+/// the shared HTTP client sets none. It has to clear the server's own 10 s
+/// poewiki timeout, which is what a DEV server spends on the first request for
+/// an icon its cache volume does not hold yet; prod answers from that volume.
+const ART_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long the load seam waits for the fetch's cache pass.
+///
+/// Mirrors [`super::sync`]'s `STARTUP_WAIT`, and for the same reason: what is
+/// waited for is a directory scan with no network in it, so the steady state
+/// costs microseconds and the bound is only there so a wedged task cannot hold
+/// the loop's first detect.
+const INSTALL_WAIT: Duration = Duration::from_millis(1200);
+
+/// Poll step while waiting out [`INSTALL_WAIT`].
+const INSTALL_POLL: Duration = Duration::from_millis(50);
+
+/// The scale seeds are first derived at — the reference geometry, window 34.
+///
+/// The live panel is whatever the game is running (0.974 on Sebastian's
+/// 1920×1200), and the first detect that reports another window re-derives
+/// through [`rederive_for_window`]. Deriving at 1.0 up front rather than
+/// waiting for a detect is what makes a warm cache seed the FIRST capture.
+const INSTALL_SCALE: f32 = 1.0;
+
+/// What the cache and the blocklist say about the map, before any request.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FetchPlan {
+    /// Rows whose art is already on disk — installable at once, no request.
+    pub cached: Vec<SeedEntry>,
+    /// Rows that need one request each, in map order.
+    pub fetch: Vec<SeedEntry>,
+    /// Enabled rows this device has blocklisted — counted, not fetched.
+    pub blocklisted: usize,
+}
+
+/// Split the map into "already have it", "ask for it" and "never again".
+///
+/// `is_cached` is injected rather than reading the directory here so the split
+/// is testable without a filesystem, and because the fetch loop re-asks the
+/// same question per row just before it spends a request.
+///
+/// A cached file is NEVER re-fetched. The route serves
+/// `Cache-Control: immutable` (ADR-012) and the art is a released game asset;
+/// re-validating it every start would spend 18 requests to learn nothing.
+pub fn plan_fetch(
+    entries: &[SeedEntry],
+    blocked: &SeedBlocklist,
+    mut is_cached: impl FnMut(&SeedEntry) -> bool,
+) -> FetchPlan {
+    let eligible = installable(entries, blocked);
+    // Through `installable`, so "who does this device seed" has ONE answer and
+    // a blocklisted family cannot be re-fetched by a rule that forgot to ask.
+    let blocklisted = entries.iter().filter(|e| e.enabled).count() - eligible.len();
+    let mut plan = FetchPlan {
+        blocklisted,
+        ..Default::default()
+    };
+    for entry in eligible {
+        if is_cached(&entry) {
+            plan.cached.push(entry);
+        } else {
+            plan.fetch.push(entry);
+        }
+    }
+    plan
+}
+
+/// What one gem-art request came back with, before it is judged.
+///
+/// Two variants rather than a `Result<Response>` because the transport failure
+/// and the server's answer are different EVIDENCE even though they get the same
+/// verdict — the log line names which one happened.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArtReply {
+    /// No response at all — offline, DNS, TLS, a timeout.
+    Unreachable(String),
+    /// An HTTP status and whatever body came with it.
+    Response(u16, Vec<u8>),
+}
+
+/// Accept one reply as cacheable art, or say why the family stays unseeded.
+///
+/// **Everything that is not a 200 carrying a decodable PNG is unavailable, and
+/// unavailable means nothing is written.** That absence IS the retry: the next
+/// module start's [`plan_fetch`] finds no cached file and asks again. 404 (the
+/// gem is not in the server's embedded map) and 502 (the server holds the name
+/// but could not produce bytes) deliberately collapse into the same answer —
+/// both are the server's, both can be temporary on a dev server that fetches
+/// the wiki live, and neither is something this device can act on differently.
+///
+/// The format is pinned to PNG rather than sniffed: the route serves PNG, and
+/// a proxy's HTML error page decodes as nothing, but a captive-portal login
+/// screen served as a JPEG would decode as an image and cache as gem art.
+pub fn accept_art(reply: ArtReply) -> Result<Vec<u8>, String> {
+    let (status, body) = match reply {
+        ArtReply::Unreachable(why) => return Err(format!("unreachable — {why}")),
+        ArtReply::Response(status, body) => (status, body),
+    };
+    if status != 200 {
+        return Err(format!("server returned {status}"));
+    }
+    match image::load_from_memory_with_format(&body, image::ImageFormat::Png) {
+        Ok(_) => Ok(body),
+        Err(e) => Err(format!("not a readable PNG — {e}")),
+    }
+}
+
+/// `{server}/api/gem-icon/{gem}`, with the gem percent-encoded as one path
+/// segment.
+///
+/// `server_url` carries no `/api` suffix — the JS `apiBase` does, and a URL
+/// built by pasting the two together 404s. The segment goes through the URL
+/// parser rather than a `format!` because every gem name has spaces in it and
+/// four have none of the other characters that would make a hand-rolled
+/// encoder look wrong until the map grows one.
+///
+/// `None` when `server` is not a parseable absolute URL, which is a
+/// misconfigured device, not a failed fetch — the caller skips the pass.
+pub fn art_url(server: &str, gem: &str) -> Option<String> {
+    let mut url = reqwest::Url::parse(server).ok()?;
+    url.path_segments_mut().ok()?.pop_if_empty().extend(["api", "gem-icon", gem]);
+    Some(url.to_string())
+}
+
+/// Cache one gem's art, unless a reset landed since `epoch`.
+///
+/// Under [`SEED_BLOCKLIST_LOCK`] — the same lock [`clear_seed_state`] holds
+/// while it deletes the directory — so the write and the reset cannot
+/// interleave, and the epoch decides which of them wins when they are
+/// concurrent. `Ok(false)` means the reset won and nothing was written.
+///
+/// Temp-then-rename like every other file this module owns: a half-written PNG
+/// would read as cached and never be fetched again.
+pub fn store_art(icons_dir: &Path, gem: &str, bytes: &[u8], epoch: u64) -> Result<bool, String> {
+    let _guard = SEED_BLOCKLIST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if seed_epoch() != epoch {
+        return Ok(false);
+    }
+    let dir = art_dir(icons_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = art_path(icons_dir, gem);
+    let tmp = path.with_extension("png.tmp");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(true)
+}
+
+/// What one fetch pass did, for the one line it logs.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FetchSummary {
+    pub fetched: usize,
+    pub cached: usize,
+    pub unavailable: usize,
+    pub blocklisted: usize,
+}
+
+impl FetchSummary {
+    /// Families with art on disk when the pass ended — what the headline
+    /// number means, and NOT what the store installed: a seed can still yield
+    /// to a learned sample of another family.
+    pub fn seeded(&self) -> usize {
+        self.fetched + self.cached
+    }
+}
+
+/// The fetch's one summary line.
+pub fn fetch_line(s: &FetchSummary) -> String {
+    format!(
+        "Merc: seeded {} families ({} fetched, {} cached, {} unavailable, {} blocklisted)",
+        s.seeded(),
+        s.fetched,
+        s.cached,
+        s.unavailable,
+        s.blocklisted,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Install (memory only) and the per-window re-derivation
+// ---------------------------------------------------------------------------
+
+/// What one install pass did to the store.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct InstallTally {
+    pub installed: usize,
+    /// Yielded to a stored sample of ANOTHER family — the incumbent wins and
+    /// nothing is blocklisted (see [`TemplateStore::install_seed`]).
+    pub yielded: usize,
+    /// The `(family, tier)` key was already at its sample ceiling.
+    pub key_full: usize,
+    /// Blocklisted between the derivation and the install — the ✕ or a forget
+    /// landed in the gap.
+    pub blocked: usize,
+}
+
+/// Decode one cached art file.
+///
+/// A file that is present but does not decode is DELETED, not just skipped: it
+/// reads as cached forever otherwise, so the family would never be seeded and
+/// never re-fetched either. A truncated download and a half-written file are
+/// the two ways to get one, and both want the same answer — ask again next
+/// start.
+fn read_art(icons_dir: &Path, gem: &str) -> Option<RgbaImage> {
+    let path = art_path(icons_dir, gem);
+    let bytes = std::fs::read(&path).ok()?;
+    match image::load_from_memory_with_format(&bytes, image::ImageFormat::Png) {
+        Ok(img) => Some(img.to_rgba8()),
+        Err(_) => {
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+}
+
+/// One signature per eligible family whose art is cached, at this scale.
+///
+/// The blocklist is applied HERE, through [`installable`], and not only at the
+/// fetch: the art of an evicted family stays in the cache (a reset is the only
+/// thing that removes it), so a pass that skipped this filter would re-install
+/// exactly the seed an eviction threw out.
+///
+/// `memo` holds the signatures already derived AT THIS WINDOW, so a window the
+/// panel oscillates back to costs no derivation. Missing entries are filled in,
+/// which is what makes a partly-filled memo — one late fetch installed on its
+/// own — heal itself rather than lock a family out.
+pub fn derive_installable(
+    icons_dir: &Path,
+    entries: &[SeedEntry],
+    blocked: &SeedBlocklist,
+    g: &MercGeometry,
+    scale: f32,
+    memo: &mut BTreeMap<String, CellSig>,
+) -> Vec<(String, u8, CellSig)> {
+    let mut out = Vec::new();
+    for entry in installable(entries, blocked) {
+        let sig = match memo.get(&entry.family) {
+            Some(sig) => sig.clone(),
+            None => {
+                let Some(sig) = read_art(icons_dir, &entry.gem).and_then(|art| derive(&art, g, scale))
+                else {
+                    continue;
+                };
+                memo.insert(entry.family.clone(), sig.clone());
+                sig
+            }
+        };
+        out.push((entry.family, entry.tier, sig));
+    }
+    out
+}
+
+/// Put `seeds` into the store, one per family.
+///
+/// **Forget-then-install, always**, and that is what makes both callers safe.
+/// [`TemplateStore::install_seed`] refuses a sample of ANOTHER family and a key
+/// already at its ceiling, but it has no opinion about a SECOND seed of its own
+/// family — so the start-up pass and a late fetch that both name one family
+/// would otherwise file two. It is also how the re-derivation replaces: the new
+/// window's signature takes the old one's place instead of joining it.
+///
+/// `blocked` is re-read by the caller UNDER the store mutex and applied here,
+/// not at the derivation: the two forget doors write the blocklist while
+/// holding that same mutex, so a ✕ pressed after this pass derived its
+/// signatures is still seen. The two doors that block AFTER releasing the mutex
+/// — the hover tick's confirm and the pull's merge — can still land in the gap.
+/// Normally that costs nothing: both evicted BECAUSE another family's sample
+/// took that art, and [`TemplateStore::install_seed`] yields to it. The merge
+/// has two paths where the served sample is evicted-for but not installed
+/// (refused after a later collision, or a full key), and NCC does not
+/// transit, so a seed can come back for ONE session there; the blocklist
+/// entry still lands and the next start does not re-derive it.
+///
+/// Memory only. The caller holds the store mutex and NOTHING else — a seed is
+/// never written to `index.json`, so the directory lock this would otherwise
+/// need is not owed, and taking it would put the detect tick behind a PNG
+/// write. Lock order: see [`SEED_BLOCKLIST_LOCK`].
+pub fn install_all(
+    store: &mut TemplateStore,
+    seeds: &[(String, u8, CellSig)],
+    blocked: &SeedBlocklist,
+    t: &Thresholds,
+) -> InstallTally {
+    let mut tally = InstallTally::default();
+    for (family, tier, sig) in seeds {
+        if blocked.blocks(family) {
+            tally.blocked += 1;
+            continue;
+        }
+        store.forget_seed(family);
+        match store.install_seed(family, *tier, sig.clone(), t) {
+            SeedInstall::Installed => tally.installed += 1,
+            SeedInstall::YieldedTo { .. } => tally.yielded += 1,
+            SeedInstall::KeyFull => tally.key_full += 1,
+        }
+    }
+    tally
+}
+
+/// What a detect at some window owes the installed seeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPlan {
+    /// The store's seeds are already derived at this window — nothing to do.
+    Ready,
+    /// Signatures for this window are memoised: re-install them, quietly.
+    Reinstall,
+    /// Nothing is memoised at this window — derive, and say so once.
+    Derive,
+}
+
+/// Decide what a detect reporting `window` costs.
+///
+/// The memo is keyed on the WINDOW IN PIXELS rather than on the scale: two
+/// scales that round to the same window need one derivation, and a scale step
+/// too small to move the window changes nothing the matcher can see. The
+/// panel's scale is measured per detect from the observed row pitch, so it
+/// jitters — a plan that only remembered "this window was done once" would
+/// freeze the store at whichever of 33 and 34 the loop saw first and never
+/// return. Remembering the SIGNATURES instead makes the return trip free and
+/// still derives at most once per window per session.
+pub fn window_plan(current: Option<i32>, memoised: impl Fn(i32) -> bool, window: i32) -> WindowPlan {
+    if current == Some(window) {
+        WindowPlan::Ready
+    } else if memoised(window) {
+        WindowPlan::Reinstall
+    } else {
+        WindowPlan::Derive
+    }
+}
+
+/// Everything the fetch task and the detect path need after the load seam has
+/// installed the store.
+#[derive(Debug, Clone)]
+struct InstallContext {
+    icons_dir: PathBuf,
+    geometry: MercGeometry,
+    /// The scale the seeds are currently derived at — 1.0 until a detect
+    /// reports another window.
+    scale: f32,
+}
+
+/// Session state for the seeding: the single-flight claim, the seam gate, and
+/// the per-window memo.
+#[derive(Default)]
+struct SeedState {
+    /// A fetch pass is running.
+    fetching: bool,
+    /// The running pass has finished its no-network look at the cache, so
+    /// [`wait_for_install`] may stop waiting.
+    cache_scanned: bool,
+    /// `Some` once the load seam has installed the store. Until then a fetch
+    /// that lands must NOT install: the seam's whole-store assignment would
+    /// erase it, which is the writer race POE-207 removed from the pull.
+    install: Option<InstallContext>,
+    /// The window the store's seeds are derived at.
+    window: Option<i32>,
+    /// Window px → the signatures derived at it.
+    derived: BTreeMap<i32, BTreeMap<String, CellSig>>,
+    /// [`SEED_MAP_JSON`] parsed once.
+    ///
+    /// The bytes are `include_str!`, so they cannot change while the process
+    /// runs and re-parsing 51 rows on every window flip buys nothing. NOT
+    /// cleared by [`forget_session`]: a reset throws out this device's state,
+    /// and the map is the build's.
+    map: Option<Vec<SeedEntry>>,
+}
+
+/// A process-wide `static` on the [`SEED_BLOCKLIST_LOCK`] model: the state
+/// belongs to the module's session, not to a window, and three threads reach it
+/// — the capture loop, the fetch task, and whichever tick re-derives.
+///
+/// **Never held across the store mutex.** Every function below takes it, reads
+/// or writes plain data, and drops it before touching `merc_templates`.
+static SEED_STATE: Mutex<SeedState> = Mutex::new(SeedState {
+    fetching: false,
+    cache_scanned: false,
+    install: None,
+    window: None,
+    derived: BTreeMap::new(),
+    map: None,
+});
+
+fn with_seed_state<T>(f: impl FnOnce(&mut SeedState) -> T) -> T {
+    let mut state = SEED_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    f(&mut state)
+}
+
+/// [`load_map`], parsed once per process.
+fn map_once() -> Result<Vec<SeedEntry>, String> {
+    if let Some(map) = with_seed_state(|s| s.map.clone()) {
+        return Ok(map);
+    }
+    let map = load_map()?;
+    with_seed_state(|s| s.map = Some(map.clone()));
+    Ok(map)
+}
+
+/// Throw away everything this session learned about the seeds.
+///
+/// **Called by `merc_reset_templates`**, and it is the half a reset cannot do
+/// by deleting files. The art directory and the blocklist go on disk, but the
+/// DERIVED signatures live here: without this, the next detect at a different
+/// window finds them memoised, re-installs every family from a memo that never
+/// reads the deleted art, passes the (now empty) blocklist, and the store fills
+/// back up while the page's seed group stays empty — no chip, and so no ✕ to
+/// press again.
+///
+/// `install` goes with them, so nothing re-seeds until the next module start
+/// has fetched and re-derived; the fetch claim does not, because a pass in
+/// flight still owns its own release.
+pub fn forget_session() {
+    with_seed_state(|s| {
+        s.install = None;
+        s.window = None;
+        s.derived.clear();
+    });
+}
+
+/// Claim the fetch for this module start. `true` when this caller owns the pass.
+///
+/// Single-flight over the REQUESTS: a module toggled repeatedly gets one pass,
+/// not one per toggle, and the second caller's [`wait_for_install`] waits on
+/// the first's cache scan because the art it is fetching is the same art.
+///
+/// Pure over [`SeedState`] so the claim/release cycle is testable without an
+/// app: a claim that leaked would silence every later session's seeding, and
+/// the only symptom would be families that stop being seeded after a toggle.
+fn claim_fetch(s: &mut SeedState) -> bool {
+    if s.fetching {
+        return false;
+    }
+    s.fetching = true;
+    // The new pass has not looked at the cache yet, so the seam must wait for
+    // it rather than read the last pass's answer.
+    s.cache_scanned = false;
+    true
+}
+
+/// Release the claim, opening the seam whether or not the pass got that far.
+fn release_fetch(s: &mut SeedState) {
+    s.cache_scanned = true;
+    s.fetching = false;
+}
+
+/// Start the module-start fetch, beside the pool pull.
+///
+/// Single-flight: a module toggled repeatedly gets one pass, not one per
+/// toggle. A pass already in flight keeps its claim and the new loop's
+/// [`wait_for_install`] waits on it — the art it is fetching is the same art.
+///
+/// The caller stays on its own thread; this returns immediately.
+pub fn spawn_fetch(app: &AppHandle) {
+    // UNCONDITIONAL, and outside the claim below. The store this loop is about
+    // to install carries no seeds (they are never saved), so the window and the
+    // signatures the last session derived say nothing about it — and a rapid
+    // off→on toggle is exactly the case where the claim is refused, which would
+    // otherwise leave session 2 running on session 1's install context and
+    // memo.
+    forget_session();
+    if !with_seed_state(claim_fetch) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { fetch_pass(app).await });
+}
+
+/// One serial pass over the map: scan the cache, then ask for what is missing.
+///
+/// SERIAL on purpose. A dev server fetches each icon from the wiki on first
+/// request behind a 10 s timeout, so 30 parallel requests would be 30 parallel
+/// wiki fetches; and the cache pass in front means the steady state issues no
+/// request at all.
+async fn fetch_pass(app: AppHandle) {
+    // Released on EVERY exit, including the two below that never reach the
+    // network: `wait_for_install` waits on `cache_scanned`, so a pass that gave
+    // up without setting it would cost the loop the whole bounded window.
+    fn done() {
+        with_seed_state(release_fetch);
+    }
+
+    let Some(dir) = super::sync::icons_dir(&app) else {
+        done();
+        return;
+    };
+    let entries = match map_once() {
+        Ok(entries) => entries,
+        Err(e) => {
+            crate::app_log(&app, format!("Merc: no seeds — {e}"));
+            done();
+            return;
+        }
+    };
+    let blocked = SeedBlocklist::load(&dir);
+    let plan = plan_fetch(&entries, &blocked, |e| art_path(&dir, &e.gem).exists());
+    let mut summary = FetchSummary {
+        cached: plan.cached.len(),
+        blocklisted: plan.blocklisted,
+        ..Default::default()
+    };
+    // The cache pass is over — everything below is network. `wait_for_install`
+    // is released HERE, so a warm start installs without waiting on a request.
+    with_seed_state(|s| s.cache_scanned = true);
+
+    let epoch = seed_epoch();
+    let (server, http) = super::sync::server_and_http(&app);
+    for entry in &plan.fetch {
+        // Re-asked per row rather than trusted from the plan: two rows may name
+        // one gem, and the first of them wrote the file the second would spend
+        // a second request on.
+        if art_path(&dir, &entry.gem).exists() {
+            summary.cached += 1;
+            continue;
+        }
+        let Some(url) = art_url(&server, &entry.gem) else {
+            crate::app_log(
+                &app,
+                format!("Merc: no seeds — {server} is not a usable server address"),
+            );
+            break;
+        };
+        let reply = match http.get(&url).timeout(ART_TIMEOUT).send().await {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                match response.bytes().await {
+                    Ok(body) => ArtReply::Response(status, body.to_vec()),
+                    Err(e) => ArtReply::Unreachable(e.to_string()),
+                }
+            }
+            Err(e) => ArtReply::Unreachable(e.to_string()),
+        };
+        match accept_art(reply).and_then(|bytes| store_art(&dir, &entry.gem, &bytes, epoch)) {
+            Ok(true) => {
+                summary.fetched += 1;
+                // Through the same function the seam uses, so art that lands
+                // late is installed exactly as art that was already cached.
+                install_late(&app, &entry.family);
+            }
+            // The cache was reset under this pass. Everything still to fetch
+            // belongs to a store the user just emptied; the next module start
+            // asks again.
+            Ok(false) => break,
+            Err(why) => {
+                summary.unavailable += 1;
+                crate::app_log(
+                    &app,
+                    format!("Merc: {} will not be seeded this session — {why}", entry.family),
+                );
+            }
+        }
+    }
+    crate::app_log(&app, fetch_line(&summary));
+    done();
+}
+
+
+/// Install one family whose art has just landed, if the seam has opened.
+///
+/// Silent when it has not: the load seam's whole-store assignment is still
+/// ahead, and anything installed before it would be erased by it.
+fn install_late(app: &AppHandle, family: &str) {
+    let Some(ctx) = with_seed_state(|s| s.install.clone()) else {
+        return;
+    };
+    install_pass(app, &ctx, Some(family));
+}
+
+/// Derive and install every eligible family whose art is cached.
+///
+/// The ONE install path — the load seam, a late fetch and the re-derivation all
+/// come through here. `only` narrows it to one family (a late fetch); `None` is
+/// the whole map.
+///
+/// Derivation happens OUTSIDE the store mutex and the install inside one
+/// acquisition of it, so a detect tick waits on the vector work and not on
+/// decoding eighteen PNGs.
+fn install_pass(app: &AppHandle, ctx: &InstallContext, only: Option<&str>) -> InstallTally {
+    let entries = match map_once() {
+        Ok(entries) => entries,
+        Err(_) => return InstallTally::default(),
+    };
+    let entries: Vec<SeedEntry> = match only {
+        Some(family) => entries.into_iter().filter(|e| e.family == family).collect(),
+        None => entries,
+    };
+    // Read once here to keep the derivation off blocked families — the art of
+    // an evicted family stays in the cache, so deriving it would be work spent
+    // on a signature the install below throws away.
+    let blocked = SeedBlocklist::load(&ctx.icons_dir);
+    let window = window_px(&ctx.geometry, ctx.scale);
+
+    let mut memo = with_seed_state(|s| s.derived.get(&window).cloned().unwrap_or_default());
+    let seeds = derive_installable(
+        &ctx.icons_dir,
+        &entries,
+        &blocked,
+        &ctx.geometry,
+        ctx.scale,
+        &mut memo,
+    );
+    with_seed_state(|s| s.derived.entry(window).or_default().extend(memo));
+
+    let state = app.state::<AppState>();
+    let mut store = state
+        .merc_templates
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    // AND AGAIN under the store mutex, which is the read that decides. The
+    // derivation above can take milliseconds, and both forget doors write the
+    // blocklist while HOLDING this mutex — so a ✕ pressed in that gap is
+    // invisible to the first read and seen by this one. See [`install_all`] for
+    // why the two collision doors need no such cover.
+    let blocked = SeedBlocklist::load(&ctx.icons_dir);
+    install_all(&mut store, &seeds, &blocked, &ctx.geometry.thresholds)
+}
+
+/// Install the seeds whose art is already cached, then let later art in.
+///
+/// Sits between the loop's whole-store assignment and `sync::wait_for_pull`:
+/// the store is in place, so this writes into the one the session will use, and
+/// the pull's merge still runs after it under the same mutex.
+///
+/// Blocking, bounded by [`INSTALL_WAIT`] and by `cancel` — the same shape as
+/// `sync::wait_for_pull`, and cheap for the same reason: what it waits for is a
+/// directory scan, and the first detect only matters once a mercenary speaks.
+pub fn wait_for_install(
+    app: &AppHandle,
+    cancel: &watch::Receiver<bool>,
+    icons_dir: &Path,
+    geometry: &MercGeometry,
+) {
+    let deadline = Instant::now() + INSTALL_WAIT;
+    while !with_seed_state(|s| s.cache_scanned) {
+        if Instant::now() >= deadline || *cancel.borrow() {
+            break;
+        }
+        std::thread::sleep(INSTALL_POLL);
+    }
+    let ctx = InstallContext {
+        icons_dir: icons_dir.to_path_buf(),
+        geometry: geometry.clone(),
+        scale: INSTALL_SCALE,
+    };
+    // OPENED FIRST, so art landing during the pass below installs itself rather
+    // than waiting for a re-derivation. Both doors are forget-then-install, so
+    // naming one family twice still leaves one seed.
+    with_seed_state(|s| s.install = Some(ctx.clone()));
+    let tally = install_pass(app, &ctx, None);
+    with_seed_state(|s| s.window = Some(window_px(geometry, INSTALL_SCALE)));
+    if tally.installed + tally.yielded + tally.key_full + tally.blocked > 0 {
+        crate::app_log(
+            app,
+            format!(
+                "Merc: {} seed template(s) installed at window {} ({} yielded to a learned sample, \
+                 {} key(s) already full, {} blocklisted mid-pass)",
+                tally.installed,
+                window_px(geometry, INSTALL_SCALE),
+                tally.yielded,
+                tally.key_full,
+                tally.blocked,
+            ),
+        );
+    }
+}
+
+/// Re-derive the installed seeds when a detect reports a different window (L10).
+///
+/// Called on the detect path BEFORE the frame is matched, so the signatures the
+/// match runs against belong to the panel in front of it. The ±3 px alignment
+/// search cannot stand in for this: it slides the probe, it does not resample
+/// it, and what changes with the scale is the resampling fraction.
+///
+/// Does nothing until the load seam has opened — before that there is no store
+/// to write into that the seam will not overwrite.
+pub fn rederive_for_window(app: &AppHandle, geometry: &MercGeometry, scale: f32) {
+    let Some(mut ctx) = with_seed_state(|s| s.install.clone()) else {
+        return;
+    };
+    let window = window_px(geometry, scale);
+    let plan = with_seed_state(|s| {
+        window_plan(s.window, |w| s.derived.contains_key(&w), window)
+    });
+    if plan == WindowPlan::Ready {
+        return;
+    }
+    // The GEOMETRY the loop is reading with, not the one the seam stored: an
+    // override can only change between sessions, but the seeds must be rendered
+    // into the same cell the detect measured either way.
+    ctx.geometry = geometry.clone();
+    ctx.scale = scale;
+    let tally = install_pass(app, &ctx, None);
+    with_seed_state(|s| {
+        s.window = Some(window);
+        s.install = Some(ctx);
+    });
+    if plan == WindowPlan::Derive {
+        crate::app_log(
+            app,
+            format!(
+                "Merc: re-derived {} seed(s) for a {window} px window (panel scale {scale:.3})",
+                tally.installed,
+            ),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1527,6 +2275,29 @@ mod tests {
 
     // -- the blocklist ------------------------------------------------------
 
+    /// Serialises the tests that move [`SEED_EPOCH`].
+    ///
+    /// The epoch is process-wide, as it must be — one app, one seed cache — so
+    /// a reset in one test invalidates a write another test has already
+    /// approved. Only the tests that RESET take this; the rest cache their art
+    /// through [`write_art`], which does not read the epoch at all.
+    static EPOCH_TESTS: Mutex<()> = Mutex::new(());
+
+    fn epoch_guard() -> std::sync::MutexGuard<'static, ()> {
+        EPOCH_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Serialises the tests that write the process-wide [`SEED_STATE`].
+    ///
+    /// One app, one seeding session, so the state is a `static` — and a test
+    /// that plants a memo in it must not have a neighbour clear it. The
+    /// claim/release tests use a LOCAL [`SeedState`] and take nothing.
+    static SESSION_TESTS: Mutex<()> = Mutex::new(());
+
+    fn session_guard() -> std::sync::MutexGuard<'static, ()> {
+        SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn tmp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("merc-seed-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1534,16 +2305,39 @@ mod tests {
         dir
     }
 
-    /// A blocked family survives a restart and is not blocked twice.
+    /// A blocked family survives a restart — the blocklist is the ONLY seed
+    /// state that does, so an eviction that did not reach the file is an
+    /// eviction the next start undoes.
     #[test]
-    fn blocking_a_family_is_durable_and_idempotent() {
+    fn a_blocked_family_survives_a_restart() {
         let dir = tmp_dir("block");
+
         assert!(block_family(&dir, "Fork").expect("block"));
-        assert!(!block_family(&dir, "Fork").expect("block again"));
+
         let list = SeedBlocklist::load(&dir);
-        assert_eq!(list.families, vec!["Fork".to_string()]);
         assert!(list.blocks("Fork"));
-        assert!(!list.blocks("Multistrike"));
+        assert_eq!(list.families, vec!["Fork".to_string()]);
+    }
+
+    /// Blocking the same family twice reports the second as a no-op, so the
+    /// caller's "will not be seeded again" line is said once.
+    #[test]
+    fn blocking_a_family_twice_is_a_no_op() {
+        let dir = tmp_dir("block-twice");
+        block_family(&dir, "Fork").expect("block");
+
+        assert!(!block_family(&dir, "Fork").expect("block again"));
+
+        assert_eq!(SeedBlocklist::load(&dir).families, vec!["Fork".to_string()]);
+    }
+
+    /// Blocking one family blocks only that one.
+    #[test]
+    fn blocking_a_family_leaves_the_others_seedable() {
+        let dir = tmp_dir("block-one");
+        block_family(&dir, "Fork").expect("block");
+
+        assert!(!SeedBlocklist::load(&dir).blocks("Multistrike"));
     }
 
     /// A blocklisted family is not installed, however enabled its row is.
@@ -1591,22 +2385,42 @@ mod tests {
         assert_eq!(SeedBlocklist::load(&dir), SeedBlocklist::default());
     }
 
-    /// A reset takes both: the blocklist AND the cached art.
+    /// A reset drops the blocklist: nothing is un-seedable once there is no
+    /// store left to explain why.
     #[test]
-    fn clearing_seed_state_removes_the_blocklist_and_the_art() {
-        let dir = tmp_dir("reset");
+    fn clearing_seed_state_removes_the_blocklist() {
+        let _serial = epoch_guard();
+        let dir = tmp_dir("reset-blocklist");
         block_family(&dir, "Fork").expect("block");
+
+        clear_seed_state(&dir).expect("clear");
+
+        assert!(!dir.join(BLOCKLIST_FILE).exists(), "the blocklist file survived");
+        assert!(SeedBlocklist::load(&dir).families.is_empty());
+    }
+
+    /// And the cached art with it — a reset says start over, and leaving the
+    /// art would keep the very pictures the user is resetting away from.
+    #[test]
+    fn clearing_seed_state_removes_the_cached_art() {
+        let _serial = epoch_guard();
+        let dir = tmp_dir("reset-art");
         std::fs::create_dir_all(art_dir(&dir)).expect("art dir");
         let cached = art_path(&dir, "Fork Support");
         std::fs::write(&cached, b"png").expect("write art");
 
         clear_seed_state(&dir).expect("clear");
 
-        assert!(!dir.join(BLOCKLIST_FILE).exists(), "the blocklist survived");
         assert!(!cached.exists(), "the cached art survived");
-        assert!(SeedBlocklist::load(&dir).families.is_empty());
-        // Twice, because a reset on a device that never seeded must not fail.
-        clear_seed_state(&dir).expect("clear again");
+    }
+
+    /// A reset on a device that never seeded is success, not an error.
+    #[test]
+    fn clearing_seed_state_on_an_untouched_device_is_not_an_error() {
+        let _serial = epoch_guard();
+        let dir = tmp_dir("reset-untouched");
+
+        clear_seed_state(&dir).expect("clear an untouched device");
     }
 
     /// The cache path is the slug of the GEM, not of the family: two families
@@ -1620,4 +2434,548 @@ mod tests {
             Path::new("/x/merc-icons/seed/fork-support.png"),
         );
     }
+
+    // -- the fetch (WI-B) ---------------------------------------------------
+
+    /// A map row, spelled out so each fetch test says what it is varying.
+    fn row(family: &str, gem: &str, enabled: bool) -> SeedEntry {
+        SeedEntry {
+            family: family.into(),
+            gem: gem.into(),
+            tier: 3,
+            verified: Verified::Corpus,
+            enabled,
+        }
+    }
+
+    /// The three rows every plan test starts from: two enabled, one disabled.
+    fn plan_rows() -> Vec<SeedEntry> {
+        vec![
+            row("Fork", "Fork Support", true),
+            row("Multistrike", "Multistrike Support", true),
+            row("Chain", "Chain Support", false),
+        ]
+    }
+
+    /// The bytes of a real gem art file — the only PNG in this suite that is
+    /// certainly what the route serves.
+    fn art_bytes(gem: &str) -> Vec<u8> {
+        let path = std::path::Path::new(ART_DIR).join(format!("{}.png", art_slug(gem)));
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e} — {FETCH_HINT}", path.display()))
+    }
+
+    /// Art already on disk costs no request — the whole reason a warm start
+    /// seeds without a network.
+    #[test]
+    fn a_cached_family_is_never_asked_for_again() {
+        let plan = plan_fetch(&plan_rows(), &SeedBlocklist::default(), |e| {
+            e.family == "Fork"
+        });
+
+        assert_eq!(
+            plan.cached.iter().map(|e| e.family.as_str()).collect::<Vec<_>>(),
+            vec!["Fork"],
+        );
+        assert!(
+            !plan.fetch.iter().any(|e| e.family == "Fork"),
+            "the cached family was queued for a request anyway",
+        );
+    }
+
+    /// One request per uncached ENABLED family, and none for a disabled row —
+    /// the requests are the plan's `fetch` list, in map order.
+    #[test]
+    fn every_uncached_enabled_family_is_asked_for_exactly_once() {
+        let plan = plan_fetch(&plan_rows(), &SeedBlocklist::default(), |_| false);
+
+        assert_eq!(
+            plan.fetch.iter().map(|e| e.gem.as_str()).collect::<Vec<_>>(),
+            vec!["Fork Support", "Multistrike Support"],
+        );
+        assert!(plan.cached.is_empty());
+    }
+
+    /// A blocklisted family is counted for the summary and asked for by
+    /// nobody: art it has no cache entry for would otherwise be re-fetched
+    /// every start for a seed that is never installed.
+    #[test]
+    fn a_blocklisted_family_is_counted_and_not_requested() {
+        let blocked = SeedBlocklist {
+            families: vec!["Fork".into()],
+        };
+
+        let plan = plan_fetch(&plan_rows(), &blocked, |_| false);
+
+        assert_eq!(plan.blocklisted, 1);
+        assert_eq!(
+            plan.fetch.iter().map(|e| e.family.as_str()).collect::<Vec<_>>(),
+            vec!["Multistrike"],
+        );
+        assert!(plan.cached.is_empty());
+    }
+
+    /// A server that cannot be reached at all leaves the family unseeded.
+    #[test]
+    fn an_unreachable_server_yields_no_art() {
+        let why = accept_art(ArtReply::Unreachable("dns error".into()))
+            .expect_err("an unreachable server produced art");
+
+        assert!(why.contains("dns error"), "{why}");
+    }
+
+    /// A gem the server's map does not carry answers 404, and 404 is not art.
+    #[test]
+    fn a_404_yields_no_art() {
+        let why = accept_art(ArtReply::Response(404, b"not found".to_vec()))
+            .expect_err("a 404 produced art");
+
+        assert!(why.contains("404"), "{why}");
+    }
+
+    /// A 502 — the server holds the name but could not produce bytes — is the
+    /// same non-answer as a 404, and must not be cached as art.
+    #[test]
+    fn a_502_yields_no_art() {
+        let why = accept_art(ArtReply::Response(502, art_bytes("Fork Support")))
+            .expect_err("a 502 produced art");
+
+        assert!(why.contains("502"), "{why}");
+    }
+
+    /// A 200 carrying something that is not a PNG is refused. A proxy's error
+    /// page arrives exactly like this, and caching it would seed the family
+    /// with a picture of an error.
+    #[test]
+    fn a_body_that_is_not_a_png_yields_no_art() {
+        let why = accept_art(ArtReply::Response(200, b"<html>login</html>".to_vec()))
+            .expect_err("an HTML body produced art");
+
+        assert!(why.contains("PNG"), "{why}");
+    }
+
+    /// A 200 carrying a JPEG is refused too. This is the case the FORMAT PIN
+    /// buys: a sniffing decoder would take it, and the family would be seeded
+    /// with whatever a captive portal or a mis-configured proxy served.
+    #[test]
+    fn a_body_that_is_a_jpeg_yields_no_art() {
+        let mut jpeg = Vec::new();
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(16, 16, image::Rgba([90, 40, 20, 255])))
+            .to_rgb8()
+            .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+            .expect("encode a JPEG");
+
+        let why = accept_art(ArtReply::Response(200, jpeg)).expect_err("a JPEG produced art");
+
+        assert!(why.contains("PNG"), "{why}");
+    }
+
+    /// The accepted path hands back the bytes AS SERVED — the cache holds the
+    /// file the route sent, not a re-encoding of it.
+    #[test]
+    fn a_200_carrying_a_png_is_accepted_byte_for_byte() {
+        let bytes = art_bytes("Fork Support");
+
+        let accepted = accept_art(ArtReply::Response(200, bytes.clone())).expect("accepted");
+
+        assert_eq!(accepted, bytes);
+    }
+
+    /// Unavailable means NOTHING IS WRITTEN, and that absence is the retry:
+    /// the next start plans the same request again. The contrast is the point
+    /// — the family that succeeded is not asked for twice.
+    #[test]
+    fn an_unavailable_family_is_asked_for_again_next_start() {
+        let dir = tmp_dir("retry");
+        let rows = plan_rows();
+        let cached = |e: &SeedEntry| art_path(&dir, &e.gem).exists();
+
+        // First pass: Fork's reply is refused, Multistrike's is accepted.
+        let first = plan_fetch(&rows, &SeedBlocklist::default(), cached);
+        assert_eq!(first.fetch.len(), 2);
+        assert!(accept_art(ArtReply::Response(502, Vec::new())).is_err());
+        let art = accept_art(ArtReply::Response(200, art_bytes("Multistrike Support")))
+            .expect("accepted");
+        write_art(&dir, "Multistrike Support", &art);
+
+        let second = plan_fetch(&rows, &SeedBlocklist::default(), cached);
+
+        assert_eq!(
+            second.fetch.iter().map(|e| e.family.as_str()).collect::<Vec<_>>(),
+            vec!["Fork"],
+            "the refused family was not asked for again",
+        );
+        assert_eq!(
+            second.cached.iter().map(|e| e.family.as_str()).collect::<Vec<_>>(),
+            vec!["Multistrike"],
+        );
+    }
+
+    /// A reset that lands while a pass is holding bytes WINS: the art
+    /// directory the user just emptied does not fill back up behind them.
+    #[test]
+    fn a_reset_under_a_running_fetch_refuses_the_write() {
+        let _serial = epoch_guard();
+        let dir = tmp_dir("reset-race");
+        let epoch = seed_epoch();
+        clear_seed_state(&dir).expect("reset");
+
+        let wrote = store_art(&dir, "Fork Support", &art_bytes("Fork Support"), epoch)
+            .expect("the write is not an error");
+
+        assert!(!wrote, "the write went in over the reset");
+        assert!(!art_path(&dir, "Fork Support").exists());
+        // And the next pass, which carries the new epoch, writes normally.
+        assert!(store_art(&dir, "Fork Support", &art_bytes("Fork Support"), seed_epoch())
+            .expect("write"));
+        assert!(art_path(&dir, "Fork Support").exists());
+    }
+
+    /// The summary line carries all four counts and the headline, which is
+    /// what the Windows smoke reads to know a cold start worked.
+    #[test]
+    fn the_summary_line_reports_every_outcome() {
+        let line = fetch_line(&FetchSummary {
+            fetched: 4,
+            cached: 11,
+            unavailable: 2,
+            blocklisted: 1,
+        });
+
+        assert_eq!(
+            line,
+            "Merc: seeded 15 families (4 fetched, 11 cached, 2 unavailable, 1 blocklisted)",
+        );
+    }
+
+    /// The gem is one percent-encoded path segment under `/api/gem-icon`, and
+    /// `server_url` carries no `/api` of its own.
+    #[test]
+    fn the_art_url_encodes_the_gem_under_the_api_prefix() {
+        assert_eq!(
+            art_url("https://profitofexile.top", "Added Chaos Damage Support").as_deref(),
+            Some("https://profitofexile.top/api/gem-icon/Added%20Chaos%20Damage%20Support"),
+        );
+        // A trailing slash on the configured server must not double up.
+        assert_eq!(
+            art_url("https://profitofexile.top/", "Fork Support").as_deref(),
+            Some("https://profitofexile.top/api/gem-icon/Fork%20Support"),
+        );
+    }
+
+    // -- the live-window re-derivation (L10) --------------------------------
+
+    /// A detect at the window the seeds are already derived at costs nothing.
+    #[test]
+    fn a_detect_at_the_current_window_asks_for_no_work() {
+        assert_eq!(window_plan(Some(34), |_| true, 34), WindowPlan::Ready);
+    }
+
+    /// A window nothing is memoised at derives, and says so once.
+    #[test]
+    fn a_window_never_seen_this_session_derives() {
+        assert_eq!(window_plan(Some(34), |_| false, 33), WindowPlan::Derive);
+    }
+
+    /// A window the panel oscillates BACK to re-installs from the memo — no
+    /// second derivation, and no second log line. The scale is measured per
+    /// detect from the observed row pitch, so 33 and 34 can alternate; a plan
+    /// that only remembered "already done" would freeze the store at whichever
+    /// came first.
+    #[test]
+    fn a_window_returned_to_reinstalls_without_deriving() {
+        assert_eq!(window_plan(Some(33), |w| w == 34, 34), WindowPlan::Reinstall);
+    }
+
+    /// A store with no seeds yet is not "ready" at any window.
+    #[test]
+    fn an_unseeded_store_derives_at_its_first_window() {
+        assert_eq!(window_plan(None, |_| false, 34), WindowPlan::Derive);
+    }
+
+    /// Put one gem's art in the cache without going through [`store_art`] —
+    /// the tests that are not about the reset race must not depend on the
+    /// process-wide epoch a concurrent test can move.
+    fn write_art(dir: &Path, gem: &str, bytes: &[u8]) {
+        std::fs::create_dir_all(art_dir(dir)).expect("art dir");
+        std::fs::write(art_path(dir, gem), bytes).expect("write the art");
+    }
+
+    /// An icons directory holding the cached art for `gems`.
+    fn cached_art_dir(name: &str, gems: &[&str]) -> PathBuf {
+        let dir = tmp_dir(name);
+        for gem in gems {
+            write_art(&dir, gem, &art_bytes(gem));
+        }
+        dir
+    }
+
+    /// A different window yields DIFFERENT signatures — which is the whole
+    /// reason the re-derivation exists. The ±3 px alignment search slides the
+    /// probe; it does not resample it.
+    #[test]
+    fn a_new_window_yields_new_signatures() {
+        let dir = cached_art_dir("window", &["Fork Support"]);
+        let rows = vec![row("Fork", "Fork Support", true)];
+        let g = MercGeometry::default();
+        // 0.974 is Sebastian's measured panel scale: window 33, not 34.
+        assert_ne!(window_px(&g, 1.0), window_px(&g, 0.974));
+
+        let at_one = derive_installable(
+            &dir,
+            &rows,
+            &SeedBlocklist::default(),
+            &g,
+            1.0,
+            &mut BTreeMap::new(),
+        );
+        let at_live = derive_installable(
+            &dir,
+            &rows,
+            &SeedBlocklist::default(),
+            &g,
+            0.974,
+            &mut BTreeMap::new(),
+        );
+
+        assert_eq!(at_one.len(), 1);
+        assert_eq!(at_live.len(), 1);
+        assert_ne!(
+            at_one[0].2.bytes(),
+            at_live[0].2.bytes(),
+            "the two windows produced the same signature",
+        );
+    }
+
+    /// A re-derivation does not put back a family the blocklist holds. The art
+    /// stays in the cache after an eviction — only a reset removes it — so a
+    /// pass that skipped this filter would undo every eviction on the first
+    /// scale change.
+    #[test]
+    fn a_blocklisted_family_is_not_re_derived() {
+        let dir = cached_art_dir("blocked-rederive", &["Fork Support", "Multistrike Support"]);
+        let rows = plan_rows();
+        let blocked = SeedBlocklist {
+            families: vec!["Fork".into()],
+        };
+
+        let seeds = derive_installable(
+            &dir,
+            &rows,
+            &blocked,
+            &MercGeometry::default(),
+            0.974,
+            &mut BTreeMap::new(),
+        );
+
+        assert_eq!(
+            seeds.iter().map(|(f, _, _)| f.as_str()).collect::<Vec<_>>(),
+            vec!["Multistrike"],
+        );
+    }
+
+    /// Cached art that does not decode is DELETED, so the next start fetches
+    /// it again. Left in place it would read as cached forever and the family
+    /// would be neither seeded nor retried.
+    #[test]
+    fn a_corrupt_cache_file_is_dropped_so_the_next_start_refetches() {
+        let dir = cached_art_dir("corrupt-art", &[]);
+        std::fs::create_dir_all(art_dir(&dir)).expect("art dir");
+        std::fs::write(art_path(&dir, "Fork Support"), b"truncated").expect("write");
+        let rows = vec![row("Fork", "Fork Support", true)];
+
+        let seeds = derive_installable(
+            &dir,
+            &rows,
+            &SeedBlocklist::default(),
+            &MercGeometry::default(),
+            1.0,
+            &mut BTreeMap::new(),
+        );
+
+        assert!(seeds.is_empty(), "a truncated file derived a signature");
+        assert!(
+            !art_path(&dir, "Fork Support").exists(),
+            "the unreadable file was left to read as cached forever",
+        );
+    }
+
+    /// A second install of the same family REPLACES its seed. The start-up
+    /// pass and a late fetch can both name one family, and a re-derivation
+    /// names every family that has one — `install_seed` refuses another
+    /// family's art and a full key, but has no opinion about a second seed of
+    /// its own family, so the replacement is the caller's rule.
+    #[test]
+    fn installing_again_replaces_the_seed_rather_than_adding_a_second() {
+        let dir = cached_art_dir("reinstall", &["Fork Support"]);
+        let rows = vec![row("Fork", "Fork Support", true)];
+        let g = MercGeometry::default();
+        let t = Thresholds::default();
+        let first =
+            derive_installable(&dir, &rows, &SeedBlocklist::default(), &g, 1.0, &mut BTreeMap::new());
+        let second =
+            derive_installable(&dir, &rows, &SeedBlocklist::default(), &g, 0.974, &mut BTreeMap::new());
+        assert_ne!(first[0].2.bytes(), second[0].2.bytes(), "the two passes agreed");
+        let mut store = TemplateStore::new();
+
+        let open = SeedBlocklist::default();
+        assert_eq!(install_all(&mut store, &first, &open, &t).installed, 1);
+        assert_eq!(install_all(&mut store, &second, &open, &t).installed, 1);
+
+        assert_eq!(store.seeded_families(), ["Fork"]);
+        assert_eq!(store.len(), 1, "the re-derivation added a second sample");
+    }
+
+    /// A seed yields to a stored sample of another family, and the tally says
+    /// so rather than reporting an install that did not happen.
+    #[test]
+    fn a_seed_that_yields_is_counted_as_yielded() {
+        let dir = cached_art_dir("yield", &["Fork Support"]);
+        let rows = vec![row("Fork", "Fork Support", true)];
+        let g = MercGeometry::default();
+        let t = Thresholds::default();
+        let seeds = derive_installable(&dir, &rows, &SeedBlocklist::default(), &g, 1.0, &mut BTreeMap::new());
+        let mut store = TemplateStore::new();
+        // The same art, already confirmed under ANOTHER family.
+        store.learn("Chain", 1, seeds[0].2.clone(), None, &t);
+
+        let tally = install_all(&mut store, &seeds, &SeedBlocklist::default(), &t);
+
+        assert_eq!(
+            tally,
+            InstallTally { installed: 0, yielded: 1, key_full: 0, blocked: 0 },
+        );
+        assert!(store.seeded_families().is_empty());
+    }
+
+    /// A signature already in the memo is REUSED, not re-derived. The proof is
+    /// an art directory with nothing in it: a pass that ignored the memo would
+    /// find no file and return nothing.
+    #[test]
+    fn a_memoised_signature_is_reused_without_reading_the_art() {
+        let dir = tmp_dir("memo-hit");
+        let rows = vec![row("Fork", "Fork Support", true)];
+        // Deliberately ANOTHER family's art, so the assertion cannot pass by
+        // the memo and the derivation agreeing.
+        let sentinel =
+            derive(&art("Multistrike Support"), &MercGeometry::default(), 1.0).expect("derive");
+        let mut memo = BTreeMap::new();
+        memo.insert("Fork".to_string(), sentinel.clone());
+
+        let seeds = derive_installable(
+            &dir,
+            &rows,
+            &SeedBlocklist::default(),
+            &MercGeometry::default(),
+            1.0,
+            &mut memo,
+        );
+
+        assert_eq!(seeds.len(), 1, "the memo was ignored and the missing art won");
+        assert_eq!(seeds[0].2.bytes(), sentinel.bytes());
+    }
+
+    /// A ✕ pressed between the derivation and the install is honoured. Both
+    /// forget doors write the blocklist while holding the store mutex, and the
+    /// install re-reads it there, so the gap the derivation opens is closed.
+    #[test]
+    fn a_family_blocked_after_the_derivation_is_not_installed() {
+        let dir = cached_art_dir("blocked-midpass", &["Fork Support"]);
+        let rows = vec![row("Fork", "Fork Support", true)];
+        let g = MercGeometry::default();
+        let t = Thresholds::default();
+        let seeds =
+            derive_installable(&dir, &rows, &SeedBlocklist::default(), &g, 1.0, &mut BTreeMap::new());
+        assert_eq!(seeds.len(), 1, "the derivation had nothing to install");
+        // The click lands here.
+        let blocked = SeedBlocklist {
+            families: vec!["Fork".into()],
+        };
+        let mut store = TemplateStore::new();
+
+        let tally = install_all(&mut store, &seeds, &blocked, &t);
+
+        assert_eq!(
+            tally,
+            InstallTally { installed: 0, yielded: 0, key_full: 0, blocked: 1 },
+        );
+        assert!(store.seeded_families().is_empty());
+    }
+
+    /// One fetch pass at a time: a module toggled repeatedly does not issue a
+    /// second set of requests over the first.
+    #[test]
+    fn a_second_fetch_is_refused_while_one_is_running() {
+        let mut state = SeedState::default();
+
+        assert!(claim_fetch(&mut state), "the first pass was refused");
+        assert!(!claim_fetch(&mut state), "a second pass claimed over the first");
+    }
+
+    /// And the claim is given back, or every later session's seeding is
+    /// silently dead for the rest of the process.
+    #[test]
+    fn a_released_claim_lets_the_next_session_fetch() {
+        let mut state = SeedState::default();
+        claim_fetch(&mut state);
+        release_fetch(&mut state);
+
+        assert!(claim_fetch(&mut state));
+    }
+
+    /// A claim re-arms the seam: the new pass has not looked at the cache yet,
+    /// so `wait_for_install` must wait for it rather than read the last pass's
+    /// answer.
+    #[test]
+    fn a_claim_re_arms_the_install_seam() {
+        let mut state = SeedState::default();
+        release_fetch(&mut state);
+        assert!(state.cache_scanned);
+
+        claim_fetch(&mut state);
+
+        assert!(!state.cache_scanned);
+    }
+
+    /// A reset throws out the DERIVED signatures, not just the files. Left in
+    /// memory they re-install every family from a memo that never reads the
+    /// deleted art — the store fills back up while the page's seed group stays
+    /// empty, so there is no chip left to press.
+    #[test]
+    fn a_reset_drops_the_memoised_signatures() {
+        let _serial = session_guard();
+        let dir = tmp_dir("forget-session");
+        let rows = vec![row("Fork", "Fork Support", true)];
+        let g = MercGeometry::default();
+        let window = window_px(&g, 1.0);
+        // A session that has already seeded: art derived, memo warm.
+        let warm = derive(&art("Fork Support"), &g, 1.0).expect("derive");
+        with_seed_state(|s| {
+            s.window = Some(window);
+            s.derived
+                .insert(window, BTreeMap::from([("Fork".to_string(), warm)]));
+            s.install = Some(InstallContext {
+                icons_dir: dir.clone(),
+                geometry: g.clone(),
+                scale: 1.0,
+            });
+        });
+
+        forget_session();
+
+        // `dir` holds no art — the reset deleted it — so the ONLY way a
+        // signature comes back is the memo.
+        let (window_verdict, install, mut memo) = with_seed_state(|s| {
+            (
+                window_plan(s.window, |w| s.derived.contains_key(&w), window),
+                s.install.clone(),
+                s.derived.get(&window).cloned().unwrap_or_default(),
+            )
+        });
+        assert_eq!(window_verdict, WindowPlan::Derive);
+        assert!(install.is_none(), "the install seam survived the reset");
+        let seeds =
+            derive_installable(&dir, &rows, &SeedBlocklist::default(), &g, 1.0, &mut memo);
+        assert!(seeds.is_empty(), "a signature came back from the memo after a reset");
+    }
+
 }

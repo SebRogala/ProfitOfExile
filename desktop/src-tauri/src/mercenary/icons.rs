@@ -665,15 +665,12 @@ pub struct MergeOutcome {
     /// Its own counter, and deliberately NOT part of [`Self::changed`]:
     /// nothing on disk moved, because a seed is never on disk. The generation
     /// still has to be bumped when this is non-zero, or the loop keeps
-    /// matching cells against the seed it just lost — so the caller's
-    /// condition is `changed() || seeds_evicted > 0`, not `changed()`.
+    /// matching cells against the seed it just lost — which is what
+    /// [`super::sync::owes_bump`] is for.
     ///
-    /// The count is what the merge log line will report once WI-B adds it to
-    /// `sync::merge_line` — no line names it today. WHICH families lost a seed
-    /// comes from [`TemplateStore::seeds_lost_since`], and every one of them
-    /// must be blocklisted or the next start re-derives it.
-    // TODO(POE-208 WI-B): report this in `sync::merge_line`, and bump the
-    // generation on `changed() || seeds_evicted > 0` in `sync::apply_corpus`.
+    /// The count is reported by `sync::merge_line`. WHICH families lost a seed
+    /// comes from [`TemplateStore::seeds_lost_since`], and every one of them is
+    /// blocklisted by `sync::apply_corpus` or the next start re-derives it.
     pub seeds_evicted: usize,
     /// The corpus declared a format version this build cannot read — nothing
     /// was merged.

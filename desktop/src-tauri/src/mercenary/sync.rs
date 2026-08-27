@@ -531,14 +531,20 @@ fn decode_corpus(body: CorpusBody) -> (PooledCorpus, usize) {
 
 /// The template directory, or `None` when there is no app data directory —
 /// the same condition under which the store itself is never loaded or saved.
-fn icons_dir(app: &AppHandle) -> Option<PathBuf> {
+pub(super) fn icons_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
         .map(|dir| dir.join(super::ICONS_DIR))
 }
 
-fn server_and_http(app: &AppHandle) -> (String, reqwest::Client) {
+/// The server address and the shared HTTP client.
+///
+/// `pub(super)` for [`super::seed`], which calls the same server over a
+/// different route: one reading of `server_url` for both, so a device pointed
+/// at a dev server fetches its gem art from the same place it pulls the pool
+/// from.
+pub(super) fn server_and_http(app: &AppHandle) -> (String, reqwest::Client) {
     let state = app.state::<AppState>();
     let url = state
         .server_url
@@ -826,7 +832,7 @@ pub fn apply_corpus(
 ) {
     let suppressed = SyncFile::load(dir).suppressed();
 
-    let (outcome, learned, pooled, pooled_samples, save_err) = {
+    let (outcome, learned, pooled, seeded, lost_seeds, pooled_samples, save_err) = {
         let state = app.state::<AppState>();
         // The DIRECTORY lock around the whole merge-and-write, outside the
         // store's own mutex: the loop's off-tick writer holds the store's mutex
@@ -838,7 +844,14 @@ pub fn apply_corpus(
                 .merc_templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
+            // Snapshotted INSIDE the one acquisition that holds the merge:
+            // `MergeOutcome` counts evictions but cannot name them, and a
+            // snapshot taken outside could be separated from the merge by the
+            // hover tick's own eviction — which would then be blocklisted twice
+            // and, worse, attributed to the pool.
+            let seeded = store.seeded_families();
             let outcome = store.merge_pulled(corpus, &suppressed, thresholds);
+            let lost_seeds = store.seeds_lost_since(&seeded);
             let save_err = if outcome.changed() {
                 store.save(dir).err()
             } else {
@@ -848,6 +861,8 @@ pub fn apply_corpus(
                 outcome,
                 store.learned_keys(),
                 store.pooled_keys(),
+                store.seeded_families(),
+                lost_seeds,
                 store.pooled_samples(),
                 save_err,
             )
@@ -855,6 +870,17 @@ pub fn apply_corpus(
     };
 
     crate::app_log(app, merge_line(&outcome));
+    // Every seed eviction blocklists, whichever door it came through (POE-208),
+    // or the next module start re-derives the family from the art still in the
+    // cache and the pool evicts it again. Outside the locks above, like the
+    // hover tick's eviction and for the same reason — the served sample that
+    // evicted the seed is normally in the store, so an install pass racing
+    // this write yields to it; where it is not (refused later, or a full key)
+    // the seed can return for one session and the entry written here retires
+    // it at the next start. Lock order: `seed::SEED_BLOCKLIST_LOCK`.
+    for family in &lost_seeds {
+        super::debug::block_seed(app, dir, family);
+    }
     match save_err {
         // The tag is stored only once the corpus it names is on disk — a tag
         // ahead of the store earns a 304 that keeps the pool's art out for good.
@@ -862,7 +888,7 @@ pub fn apply_corpus(
         Some(e) => crate::app_log(app, format!("Merc: pooled templates not saved — {e}")),
     }
     with_state(app, |s| s.status.pooled_samples = pooled_samples);
-    if bump && outcome.changed() {
+    if bump && owes_bump(&outcome) {
         // The loop is holding confirmations from before the merge, and a
         // tombstoned key it still re-applies is the forget not working.
         super::debug::bump_generation(app);
@@ -870,7 +896,24 @@ pub fn apply_corpus(
     super::run::publish(app, |slice| {
         slice.learned_families = learned;
         slice.pooled_families = pooled;
+        slice.seeded_families = seeded;
     });
+}
+
+/// Whether a finished merge owes the session a generation bump.
+///
+/// `changed()` alone is not enough. It answers "is a SAVE owed" and excludes
+/// [`super::icons::MergeOutcome::seeds_evicted`] on purpose — seeds are never
+/// written to disk, so an eviction moves nothing there. It still moves the
+/// STORE, and the loop is holding confirmations made against the seed that just
+/// went: without the bump they are re-applied on the next detect and the
+/// evicted family keeps answering under the name the pool just contradicted.
+///
+/// In practice the served sample's own install usually sets `added` as well, so
+/// the two agree; the property this function protects is the case where it does
+/// not.
+pub fn owes_bump(outcome: &super::icons::MergeOutcome) -> bool {
+    outcome.changed() || outcome.seeds_evicted > 0
 }
 
 /// One line describing a merge, for the log.
@@ -882,13 +925,15 @@ pub fn merge_line(outcome: &super::icons::MergeOutcome) -> String {
     }
     format!(
         "Merc: pool merged — {} added, {} replaced by a tombstone, {} already known, {} held for a pending forget, \
-         {} refused as one art under two families ({} already-pooled sample(s) dropped with them)",
+         {} refused as one art under two families ({} already-pooled sample(s) dropped with them), \
+         {} seed(s) evicted",
         outcome.added,
         outcome.replaced,
         outcome.skipped,
         outcome.suppressed,
         outcome.conflicting,
         outcome.dropped,
+        outcome.seeds_evicted,
     )
 }
 
@@ -1998,5 +2043,41 @@ mod tests {
 
         assert!(line.contains("2 refused as one art under two families"), "{line}");
         assert!(line.contains("1 already-pooled sample(s) dropped"), "{line}");
+    }
+
+    /// A seed the pool evicted has to reach the log too (POE-208). It is the
+    /// only place the count appears — the eviction writes nothing to disk, so
+    /// the store's size does not move and the family simply stops answering.
+    #[test]
+    fn the_merge_line_reports_evicted_seeds() {
+        let line = merge_line(&super::super::icons::MergeOutcome {
+            added: 1,
+            seeds_evicted: 3,
+            ..Default::default()
+        });
+
+        assert!(line.contains("3 seed(s) evicted"), "{line}");
+    }
+
+    /// An eviction ALONE owes the bump. `changed()` answers a different
+    /// question — is a save owed — and says no here, because a seed was never
+    /// on disk; the loop is still holding confirmations matched against the
+    /// seed that just went.
+    #[test]
+    fn a_merge_that_only_evicted_a_seed_still_owes_the_generation_bump() {
+        let outcome = super::super::icons::MergeOutcome {
+            seeds_evicted: 1,
+            ..Default::default()
+        };
+
+        assert!(!outcome.changed(), "an eviction is not a disk change");
+        assert!(owes_bump(&outcome));
+    }
+
+    /// And a merge that did nothing at all owes nothing — the bump clears the
+    /// loop's confirmations, so a merge that moved no sample must not.
+    #[test]
+    fn a_merge_that_changed_nothing_owes_no_generation_bump() {
+        assert!(!owes_bump(&super::super::icons::MergeOutcome::default()));
     }
 }
