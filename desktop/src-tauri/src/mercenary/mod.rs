@@ -33,6 +33,7 @@
 //! (`MercVocab::stats`, `vocab::default_thresholds`); every other WI-2 item now
 //! has a production caller.
 
+pub mod cellfit;
 pub mod debug;
 pub mod geometry;
 pub mod icons;
@@ -52,6 +53,42 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 // D7 — the `mercenary` SSOT slice wire types
 // ---------------------------------------------------------------------------
+
+/// Which cue produced [`geometry::MercLayout::scale`] (POE-214).
+///
+/// The three are measurements of the same UI scale through different evidence:
+/// `Ocr` is the OCR line pitch divided by [`MercGeometry::row_pitch`], the only
+/// cue there was before the frame fit; `Frame` is the support grid's own gold
+/// frame, measured on the pixels by [`cellfit::refine`] on THIS capture; `Held`
+/// is that same frame measurement from an earlier capture of the same session,
+/// re-applied because this one's fit declined. A capture at `Frame` or `Held`
+/// is registered on the art; one at `Ocr` is the 6-12 px drift POE-214 exists
+/// to remove, and every log line and debug report says which it is so a smoke
+/// check can tell them apart without re-measuring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScaleSource {
+    /// Derived from the OCR line pitch.
+    Ocr,
+    /// Measured off the support grid's gold frame, on this capture.
+    Frame,
+    /// The session's settled frame registration, re-applied to a capture whose
+    /// own fit declined (a tooltip, art too dark for the ring). The rects are
+    /// registered on the art; the measurement behind them is one or more ticks
+    /// old. See [`cellfit::apply_held`].
+    Held,
+}
+
+impl ScaleSource {
+    /// The one word the log line prints after the scale.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ocr => "ocr",
+            Self::Frame => "frame",
+            Self::Held => "held",
+        }
+    }
+}
 
 /// Module status, in precedence order **off > unavailable > live > done >
 /// scanning > idle**.
@@ -658,6 +695,14 @@ impl Default for MercGeometry {
     /// centres yield 48 (`s ≈ 0.974`), which is what a detect over that panel
     /// must report — the two numbers are a reference constant and a
     /// measurement, not a discrepancy.
+    ///
+    /// Two of them are KNOWN HIGH and deliberately left alone here: the
+    /// committed fixture's own gold frame measures a slot pitch of 48.67 and a
+    /// row pitch of 48.4, so `cell_pitch` is 0.7 % and `row_pitch` 1.8 % over
+    /// truth. `cellfit` owns the true unit (`REF_PITCH`) so the frame fit does
+    /// not inherit the error; correcting these two moves the OCR-path window,
+    /// the seed store's memo key and three geometry tests at once, which is its
+    /// own change — see POE-216.
     fn default() -> Self {
         Self {
             row_pitch: 49.3,

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use image::{DynamicImage, GenericImageView, RgbaImage};
 use serde::Serialize;
 
-use super::geometry::{inner_rect, occupied, stddev, Frame, MercLayout};
+use super::geometry::{inner_rect, occupied, stddev, Frame, MercLayout, MercLayoutRow};
 use super::icons::{cell_candidates, read_tier, CellSig, TemplateStore};
 use super::vocab::{classify_resolution, MercVocab};
 use super::{
@@ -650,7 +650,7 @@ pub fn pass2_texts(
             if i >= budget {
                 return row.text.clone();
             }
-            let [x, y, w, h] = frame.local(name_band(row.name_rect, layout, g));
+            let [x, y, w, h] = frame.local(name_band(row, layout, g));
             if x < 0 || y < 0 || w <= 0 || h <= 0 || (x + w) as u32 > iw || (y + h) as u32 > ih {
                 return row.text.clone();
             }
@@ -679,10 +679,23 @@ pub fn pass2_row_budget(rows: usize, g: &MercGeometry) -> usize {
 /// The right edge comes from the CELL column, not from the name's own width: a
 /// pass-1 read that stopped short (the reason we are re-reading at all) would
 /// otherwise crop the very characters it missed.
-fn name_band(name_rect: [i32; 4], layout: &MercLayout, g: &MercGeometry) -> [i32; 4] {
+///
+/// It takes the ROW, not just its `name_rect`, so that edge is the row's own
+/// fitted slot-0 rect rather than a second derivation of it (POE-214 A7). Once
+/// `layout.scale` is the frame-measured one the two differ — measured 0.22 px
+/// on the reference fixture and 1.4 px at the PC — and the rect is the one the
+/// crop must stop short of, since it is where the icon actually starts.
+/// `g` remains the fallback for a layout with no cells at all (`max_slots` 0
+/// through an override).
+fn name_band(row: &MercLayoutRow, layout: &MercLayout, g: &MercGeometry) -> [i32; 4] {
     let pad = (4.0 * layout.scale).round() as i32;
+    let name_rect = row.name_rect;
     let x = name_rect[0] - pad;
-    let cells_x0 = layout.column_x0 + (g.cell_offset_x * layout.scale).round() as i32;
+    let cells_x0 = row
+        .cells
+        .first()
+        .map(|cell| cell[0])
+        .unwrap_or_else(|| layout.column_x0 + (g.cell_offset_x * layout.scale).round() as i32);
     let right = (cells_x0 - pad).max(x + 1);
     [x, name_rect[1] - pad, right - x, name_rect[3] + 2 * pad]
 }
@@ -1091,22 +1104,60 @@ mod tests {
         assert_eq!(candidates.len(), 2);
     }
 
-    /// The pass-2 band is bounded by the CELL column, not by the pass-1 text's
-    /// own right edge — a short pass-1 read must not crop away the characters
-    /// pass 2 exists to recover.
+    /// The pass-2 band is bounded by the row's own slot-0 RECT, not by the
+    /// pass-1 text's right edge and not by a second derivation of the cell
+    /// column: a short pass-1 read must not crop away the characters pass 2
+    /// exists to recover, and the band must stop before the icon that would
+    /// otherwise be OCR'd as a glyph (POE-214 A7).
     #[test]
-    fn the_pass_two_band_reaches_the_support_column() {
+    fn the_pass_two_band_stops_just_short_of_the_rows_first_cell() {
         let g = MercGeometry::default();
-        let layout = layout_of();
+        let mut layout = layout_of();
         // A deliberately SHORT name rect: 20 px of a name that runs much wider.
-        let band = name_band([100, 84, 20, 16], &layout, &g);
+        layout.rows[0].name_rect = [100, 84, 20, 16];
+        // The fit's rewrite, in miniature: slot 0 moved 6 px right of where the
+        // OCR scale put it. The band has to follow the RECT.
+        let derived = layout.column_x0 + (g.cell_offset_x * layout.scale).round() as i32;
+        let fitted = derived + 6;
+        for cell in &mut layout.rows[0].cells {
+            cell[0] += 6;
+        }
 
-        let cells_x0 = layout.column_x0 + (g.cell_offset_x * layout.scale).round() as i32;
-        assert!(
-            band[0] < 100 && band[0] + band[2] >= cells_x0 - 8,
-            "band {band:?} must span from before the name to the cell column at {cells_x0}",
+        let band = name_band(&layout.rows[0], &layout, &g);
+
+        let pad = (4.0 * layout.scale).round() as i32;
+        assert_eq!(band[0], 100 - pad, "the band pads left of the name text");
+        assert_eq!(
+            band[0] + band[2],
+            fitted - pad,
+            "the band's right edge is the row's own slot-0 rect at {fitted}, not the \
+             scale-derived column at {derived}",
         );
-        assert!(band[1] < 84, "the band pads above the text as well");
+        assert_eq!(band[1], 84 - pad, "the band pads above the text as well");
+    }
+
+    /// The fallback branch of that rule, which only an override can reach: a
+    /// layout whose rows carry NO cells (`maxSlots` 0 in `merc-geometry.json`)
+    /// has no fitted rect to stop short of, so the right edge comes from the
+    /// scale-derived column instead. Without it the band would be empty and
+    /// pass 2 would silently stop re-reading names.
+    #[test]
+    fn a_row_with_no_cells_falls_back_to_the_scale_derived_column() {
+        let g = MercGeometry::default();
+        let mut layout = layout_of();
+        layout.rows[0].name_rect = [100, 84, 20, 16];
+        layout.rows[0].cells.clear();
+
+        let band = name_band(&layout.rows[0], &layout, &g);
+
+        let pad = (4.0 * layout.scale).round() as i32;
+        let derived = layout.column_x0 + (g.cell_offset_x * layout.scale).round() as i32;
+        assert_eq!(
+            band[0] + band[2],
+            derived - pad,
+            "with no rect to measure against, the band stops at the derived column",
+        );
+        assert!(band[2] > 0, "and it is still a crop the OCR can be handed");
     }
 
     /// A mis-clustered detect can produce arbitrarily many "rows"; pass 2 is an

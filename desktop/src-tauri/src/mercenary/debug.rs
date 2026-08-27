@@ -75,7 +75,15 @@ pub struct MercDebugReport {
     pub detected: bool,
     pub rows: usize,
     pub occupied_cells: usize,
+    /// The scale the capture was READ at — the frame fit's when it landed, the
+    /// OCR's when it did not. [`Self::scale_source`] says which.
     pub scale: Option<f32>,
+    /// `"ocr"` or `"frame"`. See [`super::ScaleSource`].
+    pub scale_source: Option<String>,
+    /// The frame fit's own measurement, when it landed. A decline leaves this
+    /// `None` and puts its reason in [`Self::notes`] — the dump's existing
+    /// channel for "here is what went wrong and why".
+    pub fit: Option<CellFitReport>,
     pub row_pitch: Option<f32>,
     pub learned_templates: usize,
     pub timings: Vec<DebugTiming>,
@@ -83,6 +91,43 @@ pub struct MercDebugReport {
     /// Whatever the run has to say for itself — an OCR error, a detect that
     /// found lines but no panel, a crop that fell off the image.
     pub notes: Vec<String>,
+}
+
+/// [`super::cellfit::CellFit`] in a serializable shape, for the dump.
+///
+/// A mirror rather than a `Serialize` on the type itself: `CellFit` is a
+/// measurement the detect loop passes around, and making it a wire type would
+/// tie its field names to a JSON contract the page never reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellFitReport {
+    pub x0: f32,
+    pub pitch: f32,
+    pub scale: f32,
+    pub dark_side: i32,
+    pub cell_size: i32,
+    pub cells_used: u8,
+    pub slot_span: u8,
+    pub moved_px: i32,
+    pub row_dy: Vec<i32>,
+    pub residual_row_pitch: f32,
+}
+
+impl From<&super::cellfit::CellFit> for CellFitReport {
+    fn from(fit: &super::cellfit::CellFit) -> Self {
+        Self {
+            x0: fit.x0,
+            pitch: fit.pitch,
+            scale: fit.scale,
+            dark_side: fit.dark_side,
+            cell_size: fit.cell_size,
+            cells_used: fit.cells_used,
+            slot_span: fit.slot_span,
+            moved_px: fit.moved_px,
+            row_dy: fit.row_dy.clone(),
+            residual_row_pitch: fit.residual_row_pitch,
+        }
+    }
 }
 
 /// The dump directory for a capture taken at `unix_ms`.
@@ -193,9 +238,10 @@ pub fn summary_line(r: &MercDebugReport) -> String {
         },
         if r.detected {
             format!(
-                "{} rows at scale {:.3}, {} occupied cells",
+                "{} rows at scale {:.3} via {}, {} occupied cells",
                 r.rows,
                 r.scale.unwrap_or(0.0),
+                r.scale_source.as_deref().unwrap_or("ocr"),
                 r.occupied_cells
             )
         } else {
@@ -278,6 +324,8 @@ fn debug_capture_blocking(
         rows: 0,
         occupied_cells: 0,
         scale: None,
+        scale_source: None,
+        fit: None,
         row_pitch: None,
         learned_templates: 0,
         timings,
@@ -340,6 +388,21 @@ fn debug_capture_blocking(
     let layout = geometry::detect(&lines, &g, &vocab, None);
     report.timings.push(timing("detect", started));
 
+    // The same hook the live loop takes (POE-214), so a dump reports the rects
+    // the loop would have read rather than the OCR's un-registered guess of
+    // them — the cell PNGs below are cut from these.
+    let layout = layout.map(|layout| {
+        let started = Instant::now();
+        // Always a WHOLE screen here, like the crop below.
+        let refined = super::cellfit::refine(&img, Frame::full([iw, ih]), layout, &g);
+        report.timings.push(timing("fit", started));
+        report.fit = refined.fit.as_ref().map(CellFitReport::from);
+        if let Some(why) = refined.declined {
+            notes.push(format!("frame fit declined — {why}"));
+        }
+        refined.layout
+    });
+
     let (capture, cells, rows, pass1): (
         Option<MercCapture>,
         Vec<CellDebug>,
@@ -373,6 +436,7 @@ fn debug_capture_blocking(
             report.detected = true;
             report.rows = result.capture.rows.len();
             report.scale = Some(layout.scale);
+            report.scale_source = Some(layout.scale_source.label().to_string());
             report.row_pitch = Some(layout.row_pitch);
             report.occupied_cells = result.cells.iter().filter(|c| c.occupied).count();
             let rows = layout
@@ -737,6 +801,8 @@ mod tests {
             rows: 6,
             occupied_cells: 12,
             scale: Some(0.986),
+            scale_source: Some("frame".into()),
+            fit: None,
             row_pitch: Some(48.6),
             learned_templates: 3,
             timings: vec![DebugTiming { label: "ocr".into(), ms: 412 }],

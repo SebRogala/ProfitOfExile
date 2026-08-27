@@ -7,8 +7,11 @@
 //! testable on this Linux host — the Windows half (screen grab, OCR call,
 //! tick loop) contributes no logic.
 //!
-//! The one image-touching function here is [`occupied`], which answers whether
-//! a support slot holds an icon at all.
+//! The contract is that [`detect_reason`] is PURE — not that the module is.
+//! [`occupied`] and [`stddev`] both touch pixels, and the frame-anchored fit
+//! that runs after a detect ([`super::cellfit`]) touches many more; it lives in
+//! its own module precisely so `detect_reason` and its 95 tests never need an
+//! image.
 
 use image::GenericImageView;
 
@@ -153,8 +156,17 @@ pub struct MercLayoutRow {
 /// A detected recruit window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MercLayout {
-    /// Runtime scale: observed row pitch ÷ [`MercGeometry::row_pitch`].
+    /// Runtime scale, and the ONE number every derived rect is measured in.
+    ///
+    /// [`detect_reason`] sets it to the observed row pitch ÷
+    /// [`MercGeometry::row_pitch`]. [`super::cellfit::refine`] then REPLACES it
+    /// with the support grid's frame-measured scale when it can find the frame
+    /// (POE-214 D1), which is why [`Self::scale_source`] sits beside it — the
+    /// two cues disagree by ~3 %, and a reader of a log or a debug report has
+    /// no other way to tell which one a capture was read at.
     pub scale: f32,
+    /// Which cue produced [`Self::scale`]. `Ocr` until the frame fit lands.
+    pub scale_source: super::ScaleSource,
     /// The skill-name column's left edge — the ONE x every cell is measured
     /// from. Never a single row's own x: a leading glyph's side bearing
     /// shifts one row by a couple of px and would skew that row's cells.
@@ -394,6 +406,9 @@ pub fn detect_reason(
 
     Ok(MercLayout {
         scale,
+        // The OCR line pitch is the only cue this function has; the frame fit
+        // that overwrites it needs pixels and runs after (`super::cellfit`).
+        scale_source: super::ScaleSource::Ocr,
         column_x0: column_x0.round() as i32,
         row_pitch,
         header: parse_header(lines, first_centre, &rows, column_x0, row_pitch.max(g.row_pitch * scale)),
@@ -643,6 +658,11 @@ pub fn union_rect(a: Option<[i32; 4]>, b: Option<[i32; 4]>) -> Option<[i32; 4]> 
 /// measurement at all. A tolerance that admitted a frame for the first and
 /// rejected it for the second would leave the loop anchoring on a rect it
 /// refuses to update.
+/// Both call sites pass the layout's `scale`, which POE-214 makes the
+/// FRAME-measured one once the fit lands. That moves this tolerance by the
+/// ~3 % the two cues disagree by — under a pixel at half a cell — so the rule
+/// it expresses is unchanged; the field it reads is deliberately the one every
+/// other consumer reads (D1), not a second scale kept in step by hand.
 pub(super) fn column_tolerance(g: &MercGeometry, scale: f32) -> i32 {
     (g.cell_size * scale / 2.0).round().max(1.0) as i32
 }
@@ -1267,6 +1287,48 @@ fn parse_trailing_number(text: &str) -> Option<u64> {
 #[cfg(test)]
 pub(crate) const TOOLTIP_NAME: &str = "SUPPORTED SKILLS PENETRATE 100/GlRE";
 
+/// One OCR line at a centre. Height 16 and width 8·len are the reference
+/// panel's cap height and rough advance — the tests care about the RECTS the
+/// geometry derives, not about glyph metrics.
+#[cfg(test)]
+pub(super) fn test_line(text: &str, x: i32, centre_y: i32) -> OcrLineBox {
+    OcrLineBox {
+        text: text.to_string(),
+        x,
+        y: centre_y - 8,
+        w: text.len() as i32 * 8,
+        h: 16,
+    }
+}
+
+/// The reference panel as the OCR would report it: the measured line centres of
+/// `scratchpad/recruit-cai.png` (full-image px), the wrapped fourth name as the
+/// two lines it really is, and the header lines above. Every geometry assertion
+/// below is derived from THESE inputs, never echoed from `MercGeometry`'s
+/// constants.
+///
+/// `pub(super)` because the committed fixture
+/// `tests/fixtures/merc-skills-panel.png` is the (60,585) crop of that same
+/// screen, so these lines are the OCR half of the ONE real-pixel ground truth
+/// the module has — `cellfit`'s reference test needs both halves.
+#[cfg(test)]
+pub(super) fn reference_lines() -> Vec<OcrLineBox> {
+    vec![
+        test_line("Cai, the Lout", 285, 30),
+        test_line("Shock Ambusher", 200, 73),
+        test_line("Lvl 70", 385, 73),
+        test_line("Dex / Int", 530, 73),
+        test_line("Wager: 1 028", 80, 173),
+        test_line("Conductivity", 134, 620),
+        test_line("Vaal Lightning Trap", 134, 669),
+        test_line("Lightning Spire Trap", 134, 717),
+        test_line("Ball Lightning of Orbiting", 134, 757),
+        test_line("Trap", 134, 775),
+        test_line("Summon Skitterbots", 134, 814),
+        test_line("Flame Dash", 134, 862),
+    ]
+}
+
 /// Whether a support slot holds an icon.
 ///
 /// An empty slot is flat dark panel; an icon is not. The rule is the inner
@@ -1282,9 +1344,14 @@ pub fn occupied(img: &image::DynamicImage, rect: [i32; 4], g: &MercGeometry) -> 
     stddev(img, inner_rect(rect, g)).is_some_and(|sd| sd > g.thresholds.empty_cell_stddev)
 }
 
-/// A cell's inner region — the outer rect minus its frame, which is drawn
-/// identically whether the slot is filled or not and would raise an empty
-/// slot's stddev.
+/// A cell's inner region — the outer rect minus the gold frame drawn around a
+/// FILLED slot, whose bright line would otherwise raise an empty slot's stddev
+/// past the occupancy threshold.
+///
+/// An empty slot carries no frame at all (measured on both committed fixtures:
+/// the dark|light step this inset exists to remove is present only where an
+/// icon is). The inset is applied unconditionally anyway, because occupancy is
+/// decided AFTER it and the rule has to read the same region either way.
 pub fn inner_rect(rect: [i32; 4], g: &MercGeometry) -> [i32; 4] {
     let inset = g.cell_inset.round() as i32;
     [
@@ -1347,41 +1414,6 @@ mod tests {
 
     fn vocab() -> MercVocab {
         MercVocab::load().expect("vocabulary parses")
-    }
-
-    fn line(text: &str, x: i32, centre_y: i32) -> OcrLineBox {
-        // Height 16 and width 8·len are the reference panel's cap height and
-        // rough advance — the tests care about the RECTS the geometry derives,
-        // not about glyph metrics.
-        OcrLineBox {
-            text: text.to_string(),
-            x,
-            y: centre_y - 8,
-            w: text.len() as i32 * 8,
-            h: 16,
-        }
-    }
-
-    /// The reference panel as the OCR would report it: the measured line
-    /// centres of `scratchpad/recruit-cai.png` (full-image px), the wrapped
-    /// fourth name as the two lines it really is, and the header lines above.
-    /// Every geometry assertion below is derived from THESE inputs, never
-    /// echoed from `MercGeometry`'s constants.
-    fn reference_lines() -> Vec<OcrLineBox> {
-        vec![
-            line("Cai, the Lout", 285, 30),
-            line("Shock Ambusher", 200, 73),
-            line("Lvl 70", 385, 73),
-            line("Dex / Int", 530, 73),
-            line("Wager: 1 028", 80, 173),
-            line("Conductivity", 134, 620),
-            line("Vaal Lightning Trap", 134, 669),
-            line("Lightning Spire Trap", 134, 717),
-            line("Ball Lightning of Orbiting", 134, 757),
-            line("Trap", 134, 775),
-            line("Summon Skitterbots", 134, 814),
-            line("Flame Dash", 134, 862),
-        ]
     }
 
     fn tall(text: &str, x: i32, centre_y: i32, h: i32) -> OcrLineBox {
@@ -1495,7 +1527,7 @@ mod tests {
     #[test]
     fn a_left_aligned_line_far_below_the_panel_does_not_join_the_column() {
         let mut lines = reference_lines();
-        lines.push(line("has entered the area", 134, 1200));
+        lines.push(test_line("has entered the area", 134, 1200));
 
         let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
@@ -1509,7 +1541,7 @@ mod tests {
     #[test]
     fn a_left_aligned_line_far_above_the_panel_does_not_join_the_column() {
         let mut lines = reference_lines();
-        lines.push(line("Inventory", 134, 400));
+        lines.push(test_line("Inventory", 134, 400));
 
         let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
@@ -1528,7 +1560,7 @@ mod tests {
                 l.text = "Ball Lightning of Orbiting".to_string();
             }
         }
-        lines.push(line("Trap", 134, 880));
+        lines.push(test_line("Trap", 134, 880));
 
         let layout = detect(&lines, &MercGeometry::default(), &vocab(), None).expect("detected");
 
@@ -1559,8 +1591,8 @@ mod tests {
             .filter(|l| !l.text.starts_with("Wager"))
             .collect();
         // Last row centre is ~814 + 7; the buttons sit about one pitch below.
-        lines.push(line("TAKE ITEM", 250, 880));
-        lines.push(line("REMATCH", 420, 880));
+        lines.push(test_line("TAKE ITEM", 250, 880));
+        lines.push(test_line("REMATCH", 420, 880));
 
         let layout =
             detect(&lines, &MercGeometry::default(), &vocab(), None).expect("anchored by button");
@@ -1577,7 +1609,7 @@ mod tests {
             .into_iter()
             .filter(|l| !l.text.starts_with("Wager"))
             .collect();
-        lines.push(line("REMATCH", 420, 814 + (20.0 * 48.0) as i32));
+        lines.push(test_line("REMATCH", 420, 814 + (20.0 * 48.0) as i32));
         assert!(detect(&lines, &g, &vocab(), None).is_none(), "out of reach");
 
         assert!(!is_button_line("Take items", &g));
@@ -1999,7 +2031,7 @@ mod tests {
     fn a_frame_with_no_skill_names_misses_for_want_of_candidates() {
         let g = MercGeometry::default();
 
-        let why = detect_reason(&[line("Vika has entered the area", 10, 10)], &g, &vocab(), None)
+        let why = detect_reason(&[test_line("Vika has entered the area", 10, 10)], &g, &vocab(), None)
             .expect_err("no candidates, no layout");
 
         assert_eq!(why.candidates, 0);
@@ -2238,7 +2270,7 @@ mod tests {
     /// chat window cannot start a capture.
     #[test]
     fn a_single_skill_name_is_not_enough_to_detect_a_panel() {
-        let lines = vec![line("Wager: 1 028", 80, 173), line("Conductivity", 134, 620)];
+        let lines = vec![test_line("Wager: 1 028", 80, 173), test_line("Conductivity", 134, 620)];
 
         assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
     }
@@ -2247,9 +2279,9 @@ mod tests {
     #[test]
     fn a_screen_with_no_skill_names_detects_nothing() {
         let lines = vec![
-            line("Wager: 1 028", 80, 173),
-            line("Inventory", 134, 620),
-            line("Stash", 134, 669),
+            test_line("Wager: 1 028", 80, 173),
+            test_line("Inventory", 134, 620),
+            test_line("Stash", 134, 669),
         ];
 
         assert!(detect(&lines, &MercGeometry::default(), &vocab(), None).is_none());
@@ -2533,6 +2565,7 @@ mod tests {
         let cell_size = g.cell_size as i32;
         MercLayout {
             scale: 1.0,
+            scale_source: super::super::ScaleSource::Ocr,
             column_x0,
             row_pitch,
             rows: centres
