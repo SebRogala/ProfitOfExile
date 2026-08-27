@@ -507,11 +507,11 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
             // The same seam the pull's merge uses to name what it evicted, so
             // there is one answer to "which families owe a blocklist entry".
             let lost = store.seeds_lost_since(&seeded);
-            // Blocked here, under the same acquisition as the eviction, for the
-            // reason `merc_forget_seed` gives: a pass installing between the
-            // two would put the evicted seed back. Lock order dir lock → store
-            // mutex → blocklist lock, which is the directory-first order the
-            // merge path already keeps.
+            // Blocked here, under the same acquisition as the eviction, so the
+            // install pass — which re-reads the blocklist under this same
+            // mutex before it installs — sees the entry (see
+            // `merc_forget_seed`). Lock order per `seed::SEED_BLOCKLIST_LOCK`:
+            // dir lock → store mutex → blocklist lock.
             for lost_family in &lost {
                 block_seed(&app, &dir, lost_family);
             }
@@ -572,13 +572,16 @@ pub fn merc_forget_seed(family: String, app: AppHandle) -> Result<(), String> {
             return Err(format!("no seeded template for {family}"));
         }
         // Under the SAME acquisition as the removal, and only AFTER it
-        // succeeded: an installing pass that takes this mutex between the two
-        // would put the family straight back and the ✕ would read as broken,
-        // and blocking FIRST would let a click on a stale chip blocklist a
-        // family this device never seeded. Lock order store mutex → blocklist
-        // lock (`seed::SEED_BLOCKLIST_LOCK`); `writing_icons_dir` stays out of
-        // it, because no template file is written here. It is a small JSON
-        // write under the store mutex, once, on a click.
+        // succeeded. That pairing is what an installing pass reads against:
+        // `seed::install_pass` re-reads the blocklist while holding this mutex,
+        // so a ✕ that lands after it derived its signatures is still seen, and
+        // the family is not put straight back. Blocking FIRST would let a click
+        // on a stale chip blocklist a family this device never seeded.
+        //
+        // `writing_icons_dir` stays out of it, because no template file is
+        // written here; the full order is stated once, on
+        // `seed::SEED_BLOCKLIST_LOCK`. It is a small JSON write under the store
+        // mutex, once, on a click.
         block_seed(&app, &dir, &family);
         store.seeded_families()
     };
@@ -655,6 +658,13 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
     if let Err(e) = super::seed::clear_seed_state(&dir) {
         crate::app_log(&app, format!("Merc: seed cache not cleared — {e}"));
     }
+    // And the half that is not on disk (POE-208): the signatures this session
+    // already derived are memoised in memory, and the next detect at a
+    // different window would re-install every family from that memo — never
+    // reading the art just deleted, and passing the blocklist that just went
+    // with it. Outside `clear_seed_state`, and so outside its lock: this
+    // touches no file. See `seed::forget_session`.
+    super::seed::forget_session();
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: reset {count} learned templates"));
     publish(&app, |slice| {

@@ -73,6 +73,7 @@ use super::read::{build_capture, capture_complete, fold_header, same_panel_posit
 pub use super::read::row_key;
 use super::search::{self, MercTradeSession};
 use super::vocab::{classify_resolution, MercVocab, SupportTitleRead};
+use super::seed;
 use super::sync;
 use super::trigger;
 use super::{
@@ -1768,6 +1769,10 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // module start, single-flight inside `spawn_pull`.
         sync::begin_session(&app);
         sync::spawn_pull(&app);
+        // Beside the pull, for the same reason: the network overlaps the disk
+        // load. A warm cache issues no request at all and `wait_for_install`
+        // below is released as soon as the pass has looked at the directory.
+        seed::spawn_fetch(&app);
 
         let (store, problems) = TemplateStore::load(dir);
         template_problems = problems;
@@ -1786,6 +1791,14 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
             *state.merc_templates.lock().unwrap_or_else(|e| e.into_inner()) = store;
         }
         crate::app_log(&app, format!("Merc: {loaded} learned templates loaded"));
+
+        // AFTER the whole-store assignment, BEFORE the pull's merge (POE-208).
+        // A seed is memory-only, so it has to be put into the store the session
+        // will use rather than into the copy the line above replaced — and it
+        // has to be in place before the merge, because a served sample that
+        // collides with a seed evicts it, which is the resolution the eviction
+        // rule describes and not a race.
+        seed::wait_for_install(&app, &cancel, dir, &geometry);
 
         // Bounded, and it releases the seam claim whether or not a corpus
         // arrives — after this line a later corpus applies itself.
@@ -1811,12 +1824,14 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
 
     let learned = learned_keys(&app);
     let pooled = pooled_keys(&app);
+    let seeded = seeded_keys(&app);
     let source = geometry_source.to_string();
     publish(&app, |slice| {
         slice.status = MercStatus::Idle;
         slice.geometry_source = source;
         slice.learned_families = learned;
         slice.pooled_families = pooled;
+        slice.seeded_families = seeded;
         slice.last_error = geometry_err;
     });
 
@@ -2260,6 +2275,15 @@ fn learned_keys(app: &AppHandle) -> Vec<String> {
     store.learned_keys()
 }
 
+/// The families a gem-art seed stands in for (POE-208) — FAMILY NAMES, not
+/// `(family, tier)` keys, because the seed's own door is
+/// `merc_forget_seed(family)`.
+fn seeded_keys(app: &AppHandle) -> Vec<String> {
+    let state = app.state::<AppState>();
+    let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+    store.seeded_families()
+}
+
 /// The keys no local hover taught — the pool's contribution (POE-201).
 fn pooled_keys(app: &AppHandle) -> Vec<String> {
     let state = app.state::<AppState>();
@@ -2631,6 +2655,11 @@ fn detect_tick(
         return report(None);
     }
     let texts = pass2_texts(view, frame, &layout, &session.geometry);
+    // BEFORE the store is read (POE-208 L10). The seeds are rendered art, so
+    // they are only valid at the window they were resampled for, and this frame
+    // reports the window the panel is actually at. Costs nothing on every tick
+    // but the first at a given window — see `seed::window_plan`.
+    seed::rederive_for_window(app, &session.geometry, layout.scale);
     let mut result = {
         let state = app.state::<AppState>();
         let store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
@@ -3145,16 +3174,40 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
             // the payload is built from memory on the one path that has it
             // (POE-201 L4) — the store directory is never walked.
             let bytes = sig.bytes().to_vec();
-            let outcome = {
+            let (outcome, lost_seeds) = {
                 let state = app.state::<AppState>();
                 let mut store =
                     state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+                // Snapshotted under the SAME acquisition as the learn, like the
+                // pull's merge and the forget command: `LearnOutcome` describes
+                // the confirmation, so the only way to name the seed a colliding
+                // confirm evicted is to diff the list across the mutation.
+                let seeded = store.seeded_families();
                 // The crop is the DETECT frame's, cached before the cursor ever
                 // reached this cell (D5): a hovered cell may be drawn
                 // highlighted, and a template learned from the highlight
                 // matches nothing later.
-                store.learn(&family, tier, sig, raw, &session.geometry.thresholds)
+                let outcome =
+                    store.learn(&family, tier, sig, raw, &session.geometry.thresholds);
+                let lost = store.seeds_lost_since(&seeded);
+                (outcome, lost)
             };
+            // Every seed eviction blocklists, whichever door it came through
+            // (POE-208): the art stays in the cache, so without this the next
+            // module start re-derives the seed the player just contradicted.
+            //
+            // AFTER the store mutex is released, unlike the two forget
+            // commands, and that is safe rather than merely convenient: the
+            // confirmation this evicted for is now IN the store, so an install
+            // pass racing this write yields to it instead of re-seeding. Lock
+            // order: `seed::SEED_BLOCKLIST_LOCK`.
+            if !lost_seeds.is_empty() {
+                if let Some(dir) = sync::icons_dir(app) {
+                    for lost in &lost_seeds {
+                        super::debug::block_seed(app, &dir, lost);
+                    }
+                }
+            }
             learn_result(outcome, &family, tier, bytes)
         }
         // The confirmation still stands — it names the cell. Only the template
@@ -3210,10 +3263,14 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     // list has to move with the learned one — they are two readings of one
     // store and a stale second list would leave the chip claiming otherwise.
     let pooled_families = pooled_keys(app);
+    // And the third: a confirm whose art collided with a seed EVICTED it just
+    // above, so the seeded chip group has to move with them.
+    let seeded_families = seeded_keys(app);
     publish(app, |slice| {
         slice.capture = Some(updated);
         slice.learned_families = learned_families;
         slice.pooled_families = pooled_families;
+        slice.seeded_families = seeded_families;
     });
     true
 }
