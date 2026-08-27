@@ -46,13 +46,53 @@ pub struct CellDebug {
 pub struct ReadResult {
     pub capture: MercCapture,
     pub cells: Vec<CellDebug>,
-    /// The PRE-HOVER crop of every occupied cell, keyed `(row, slot)`.
+    /// The PRE-HOVER crop of every occupied cell, keyed `(row key, slot)`.
     ///
     /// D5's rule in data form: the template a hover-confirm learns comes from
     /// the crop taken at DETECT time, never from a fresh grab — by the time the
     /// tooltip is up, the cell underneath may be drawn highlighted, and the
     /// store would learn the highlight.
-    pub sigs: HashMap<(u8, u8), (CellSig, Option<RgbaImage>)>,
+    ///
+    /// Keyed by [`row_key`], not by `row.index` (POE-207): the index is
+    /// sequential over the rows THIS read found, so a skill line the OCR
+    /// dropped renumbers every row below it and the crop cached under `(2, 1)`
+    /// becomes another cell's art. A hover-confirm keys on `(row_key, slot)`,
+    /// so the cache has to as well or the two disagree about which cell they
+    /// are talking about — the second, code-verified mislabel path behind the
+    /// 21 poisoned templates of 2026-08-26.
+    pub sigs: HashMap<(String, u8), (CellSig, Option<RgbaImage>)>,
+}
+
+/// The key a confirmation — and the pre-hover crop it learns from — is
+/// remembered under: the row's skill, plus the slot.
+///
+/// D5: confirmations survive re-detection of the SAME window. The row index is
+/// not stable enough for that on its own — a wrapped name or a missed line
+/// renumbers the rows — so the row's identity is its skill id, falling back to
+/// its raw text when the skill did not resolve.
+///
+/// The key is NOT unique by construction, and the two ways it can collide pull
+/// in opposite directions:
+///
+/// - CHURN — an unresolved row whose raw OCR text differs between detects
+///   produces a new key, so the hovered cell finds no cached crop and the
+///   confirm reports `NoCrop`. That fails safe on its own;
+/// - COLLISION — two rows of one panel whose skills resolve to the SAME id (a
+///   fuzzy match that lands on one skill twice, or two unresolved rows the OCR
+///   read the same way) claim one key, and the later row's crop would overwrite
+///   the earlier one's. That does NOT fail safe: a confirm on the first row
+///   would learn the SECOND row's art under the tooltip's family, and the
+///   two-read hover guard cannot catch it because the guard corroborates the
+///   TOOLTIP, not the crop. [`build_capture`] therefore drops the crops of every
+///   colliding row outright — see the retain at the end of it.
+///
+/// Learning nothing is the honest outcome in both; learning another cell's art
+/// is the bug.
+pub fn row_key(skill: &MercSkillRead) -> String {
+    match skill.ids.first() {
+        Some(id) => id.clone(),
+        None => skill.raw.trim().to_lowercase(),
+    }
 }
 
 /// Read a detected layout into a capture.
@@ -76,6 +116,10 @@ pub fn build_capture(
 ) -> ReadResult {
     let mut cells_debug = Vec::new();
     let mut sigs = HashMap::new();
+    // Every row's key, in layout order — the collision count at the end needs
+    // the keys of rows that cached nothing too, because a row with no occupied
+    // cell still claims its key.
+    let mut row_keys: Vec<String> = Vec::with_capacity(layout.rows.len());
     let mut rows = Vec::with_capacity(layout.rows.len());
 
     for (i, row) in layout.rows.iter().enumerate() {
@@ -88,6 +132,10 @@ pub fn build_capture(
             score: name_read.score,
             state: name_read.state,
         };
+        // The identity the crop cache and the hover-confirm SHARE. Computed
+        // once per row, from the skill the row just resolved to.
+        let key = row_key(&skill);
+        row_keys.push(key.clone());
 
         let mut supports = Vec::new();
         for (slot, rect) in row.cells.iter().enumerate() {
@@ -158,7 +206,7 @@ pub fn build_capture(
             // aligned one carries this capture's rect jitter, and the next
             // capture's rect does not reproduce it.
             if let Some(c) = aligned {
-                sigs.insert((row.index, slot as u8), (c.into_centre(), crop_rgba(img, px, g)));
+                sigs.insert((key.clone(), slot as u8), (c.into_centre(), crop_rgba(img, px, g)));
             }
         }
 
@@ -168,6 +216,25 @@ pub fn build_capture(
             supports,
         });
     }
+
+    // COLLIDING ROWS CACHE NOTHING. `row_key` is a resolved skill id or a
+    // lowercased raw OCR line, and neither is unique across the rows of one
+    // panel: a fuzzy match can land on the same skill twice, and two unread
+    // rows can OCR to the same text. Those rows share one cache key, so the
+    // later one's crop silently overwrites the earlier one's and a confirm on
+    // the earlier row would learn the LATER row's art under the tooltip's
+    // family. The two-read hover guard cannot see it — it corroborates the
+    // tooltip, and both reads of the wrong crop agree.
+    //
+    // Dropping the crops of every colliding row leaves those cells reporting
+    // `NoCrop`: the confirmation still names them, nothing is learned, and the
+    // player can un-collide the panel by nothing at all — the next detect that
+    // reads the skill lines apart caches them again.
+    let mut counts: HashMap<&str, usize> = HashMap::with_capacity(row_keys.len());
+    for key in &row_keys {
+        *counts.entry(key.as_str()).or_insert(0) += 1;
+    }
+    sigs.retain(|(key, _): &(String, u8), _| counts.get(key.as_str()) == Some(&1));
 
     ReadResult {
         capture: MercCapture {
@@ -759,9 +826,124 @@ mod tests {
         assert_eq!(supports[0].state, ReadState::Unknown);
         assert!(supports[0].ids.is_empty());
         assert!(
-            out.sigs.contains_key(&(0, 0)),
+            out.sigs.contains_key(&(row_key(&out.capture.rows[0].skill), 0)),
             "the pre-hover crop must be cached so a later confirm can learn it",
         );
+    }
+
+    /// The crop cache is keyed by the row's IDENTITY, not by where the row
+    /// happened to land in this read (POE-207). `row.index` is sequential over
+    /// the rows a detect found, so a skill line the OCR drops renumbers every
+    /// row below it and the crop the hover-confirm looks up under the cell it
+    /// is standing on is the cell BELOW it — which is how art was learned under
+    /// another family's name. The expected key is the skill's vocabulary id,
+    /// read off the capture rather than through `row_key`, so a production
+    /// change to what the key is made of fails here.
+    #[test]
+    fn the_crop_cache_is_keyed_by_the_rows_skill_not_its_position() {
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        let layout = layout_of();
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        fill_noise(&mut raw, layout.rows[1].cells[0]);
+        let img = DynamicImage::ImageRgba8(raw);
+
+        let out = build_capture(
+            &img,
+            whole(&img),
+            &layout,
+            &[],
+            0,
+            &MercGeometry::default(),
+            &vocab(),
+            &TemplateStore::new(),
+        );
+
+        let second = &out.capture.rows[1];
+        assert_eq!(second.index, 1, "arrange: the second row is at position 1");
+        let id = second.skill.ids.first().expect("Conductivity resolves to a skill id");
+        assert!(
+            out.sigs.contains_key(&(id.clone(), 0)),
+            "the second row's crop must be cached under its skill id, not its index — \
+             keys were {:?}",
+            out.sigs.keys().collect::<Vec<_>>(),
+        );
+        assert!(
+            !out.sigs.contains_key(&(second.index.to_string(), 0)),
+            "and never under a stringified row position",
+        );
+    }
+
+    /// TWO ROWS, ONE KEY (POE-207 review, HIGH 1). `row_key` is a resolved
+    /// skill id or a lowercased raw OCR line, and a panel can produce the same
+    /// one twice — here both rows are re-OCR'd as "Ice Shot", which is exactly
+    /// what a fuzzy pass-2 match landing on one skill twice looks like. The two
+    /// rows then share a cache key, and the later row's crop would overwrite the
+    /// earlier one's: a confirm on row 0 would learn ROW 1's art under whatever
+    /// the tooltip named, and the two-read guard cannot catch it because both
+    /// reads corroborate the tooltip, not the crop.
+    ///
+    /// So a colliding row caches nothing at all. Its cells report `NoCrop`, the
+    /// confirmation still names them, and nothing wrong is learned.
+    #[test]
+    fn two_rows_that_resolve_to_one_key_cache_no_crop_at_all() {
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        let layout = layout_of();
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        fill_noise(&mut raw, layout.rows[1].cells[0]);
+        let img = DynamicImage::ImageRgba8(raw);
+
+        let out = build_capture(
+            &img,
+            whole(&img),
+            &layout,
+            &["Ice Shot".to_string(), "Ice Shot".to_string()],
+            0,
+            &MercGeometry::default(),
+            &vocab(),
+            &TemplateStore::new(),
+        );
+
+        assert_eq!(
+            row_key(&out.capture.rows[0].skill),
+            row_key(&out.capture.rows[1].skill),
+            "arrange: both rows must resolve to the same key for this to be a collision",
+        );
+        assert_eq!(
+            out.capture.rows[0].supports.len(),
+            1,
+            "arrange: both rows still READ their painted cell",
+        );
+        assert!(
+            out.sigs.is_empty(),
+            "a colliding row caches nothing — one of these crops is the other \
+             row's art. Cached: {:?}",
+            out.sigs.keys().collect::<Vec<_>>(),
+        );
+    }
+
+    /// The other side of it: rows that resolve APART keep their crops. Dropping
+    /// on any repeated read rather than on a genuine collision would make the
+    /// cache empty on every ordinary panel.
+    #[test]
+    fn rows_that_resolve_to_different_keys_both_keep_their_crops() {
+        let mut raw = RgbaImage::from_pixel(900, 300, Rgba([12, 12, 14, 255]));
+        let layout = layout_of();
+        fill_noise(&mut raw, layout.rows[0].cells[0]);
+        fill_noise(&mut raw, layout.rows[1].cells[0]);
+        let img = DynamicImage::ImageRgba8(raw);
+
+        let out = build_capture(
+            &img,
+            whole(&img),
+            &layout,
+            &["Ice Shot".to_string(), "Conductivity".to_string()],
+            0,
+            &MercGeometry::default(),
+            &vocab(),
+            &TemplateStore::new(),
+        );
+
+        assert_eq!(out.sigs.len(), 2, "both distinct rows cached their cell");
     }
 
     /// The whole point of [`Frame`], end to end. The same screen read twice —
@@ -801,12 +983,19 @@ mod tests {
             "the published rect is where the cell is on the SCREEN",
         );
         let sorted = |r: &ReadResult| {
-            let mut keys: Vec<(u8, u8)> = r.sigs.keys().copied().collect();
+            let mut keys: Vec<(String, u8)> = r.sigs.keys().cloned().collect();
             keys.sort();
             keys
         };
         assert_eq!(sorted(&crop_read), sorted(&whole_read));
-        assert_eq!(sorted(&crop_read), vec![(0, 0), (1, 0)], "both painted cells cached a crop");
+        let mut expected: Vec<(String, u8)> = whole_read
+            .capture
+            .rows
+            .iter()
+            .map(|row| (row.skill.ids[0].clone(), 0u8))
+            .collect();
+        expected.sort();
+        assert_eq!(sorted(&crop_read), expected, "both painted cells cached a crop");
     }
 
     /// The reader stops at the FIRST empty slot: a filled slot 1 behind an
