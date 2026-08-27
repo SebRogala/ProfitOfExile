@@ -1829,24 +1829,45 @@ fn run_loop(app: AppHandle, cancel: watch::Receiver<bool>) {
         // below is released as soon as the pass has looked at the directory.
         seed::spawn_fetch(&app);
 
-        let LoadedStore { store, problems, rekeyed } = TemplateStore::load(dir);
-        template_problems = problems;
-        let loaded = store.len();
-
+        // READ AND INSTALL UNDER ONE DIRECTORY GUARD (POE-210 fix-in-context).
+        // `apply_corpus` writes `index.json` and the PNGs beside it while
+        // holding `writing_icons_dir`, and a re-pull can now land at any moment
+        // rather than only in this start's own window — so a module toggled on
+        // mid-save would otherwise read a half-written index. The guard covers
+        // the INSTALL as well as the load, because a corpus landing between the
+        // two would merge into the installed store, save, persist its ETag, and
+        // then be erased in memory by the assignment: a 304 promising art
+        // nobody will rewrite. Lock order is unchanged — `writing_icons_dir`
+        // then `merc_templates`, the order every other writer takes.
+        //
         // INSTALL FIRST, MERGE SECOND. The whole-store write happens here, while
         // the seam still holds its pull claim, and every merge — this start's or
         // a later task's — then runs against the INSTALLED store under its
         // mutex. Merging into the local copy first and installing afterwards is
-        // what made this seam a second writer: a corpus that landed in the gap
-        // was saved to disk and then erased by the assignment below, taking its
-        // ETag with it (the next pull answering 304 for art the store no longer
-        // held). The re-key persist below obeys the same discipline: it is a
-        // WRITER of the installed store, so it runs behind this assignment and
-        // saves what the mutex holds, never the local copy.
-        {
+        // what made this seam a second writer, the same erasure described above.
+        // The re-key persist below obeys the same discipline: it is a WRITER of
+        // the installed store, so it runs behind this assignment and saves what
+        // the mutex holds, never the local copy.
+        //
+        // COST: the guard is now held across the whole store load — up to 1377
+        // PNG decodes at the corpus ceiling. A re-pull or a backfill landing
+        // mid-load blocks its tokio worker on a `std::sync::Mutex` for that
+        // long. Degradation, never deadlock: the seam takes no other lock while
+        // holding this one, and the wait it does perform for a corpus
+        // (`sync::wait_for_pull`) is outside the guard entirely.
+        //
+        // The purge above released its guard and the re-key below takes its own
+        // — three sibling scopes, no nesting.
+        let (loaded, problems, rekeyed) = {
             let state = app.state::<AppState>();
-            *state.merc_templates.lock().unwrap_or_else(|e| e.into_inner()) = store;
-        }
+            super::icons::writing_icons_dir(&state.merc_icons_write, || {
+                let LoadedStore { store, problems, rekeyed } = TemplateStore::load(dir);
+                let loaded = store.len();
+                *state.merc_templates.lock().unwrap_or_else(|e| e.into_inner()) = store;
+                (loaded, problems, rekeyed)
+            })
+        };
+        template_problems = problems;
         crate::app_log(&app, format!("Merc: {loaded} learned templates loaded"));
 
         // THE FAMILY RE-KEY IS PERSISTED HERE (POE-211). `load` folded the
@@ -2892,6 +2913,14 @@ fn detect_tick(
                 result.capture.scale
             ),
         );
+        // The window opening is the moment another device's hover is worth
+        // having (POE-210). Off-tick, single-flight with the module-start pull,
+        // and throttled to one attempt per minute — so the churn this branch
+        // also fires on (a retired window re-detected, a panel whose mercenary
+        // was REPLACED) costs nothing. A landed corpus merges under the
+        // template mutex and bumps the generation, which is what clears the
+        // confirmations this session is holding.
+        sync::spawn_repull(app);
     }
     session.sigs = merge_sigs(
         std::mem::take(&mut session.sigs),

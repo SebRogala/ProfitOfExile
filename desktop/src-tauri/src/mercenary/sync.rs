@@ -130,6 +130,22 @@ const STARTUP_POLL: Duration = Duration::from_millis(50);
 /// unbounded pull would hold the startup claim until the OS gave up.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Shortest gap between two pull ATTEMPTS, measured from the moment the last
+/// one started (POE-210).
+///
+/// The re-pull trigger is a recruit window being detected, and that event is
+/// noisier than "the player opened a window": a window whose panel is REPLACED
+/// counts as a fresh capture, and the retire-then-re-detect churn of a window
+/// the loop lost for two ticks produces another. The throttle is what makes
+/// those free — one request per minute per device however many times the
+/// detect fires — so the trigger does not have to be precise.
+///
+/// 60 s rather than the detect cadence: an unchanged pool answers 304 in a
+/// header, so the cost of being generous is small, but the pool only changes
+/// when somebody else hovers, and a device asking every two seconds would be
+/// asking a hundred times per real change.
+const REPULL_THROTTLE_MS: u64 = 60_000;
+
 /// Where the pull's ETag and the unacknowledged tombstones live, inside the
 /// template directory.
 const SYNC_FILE: &str = "pool-sync.json";
@@ -199,6 +215,52 @@ struct UploadAck {
     /// problem. Logged once, named as such.
     #[serde(default)]
     rejected_unknown_family: u32,
+    /// Templates refused because a LIVE sample of ANOTHER family already
+    /// carries that art (POE-210).
+    ///
+    /// Apart from `duplicate` because the two ask opposite things of this
+    /// device: a duplicate means the pool already serves this sample, a
+    /// conflict means it never will until somebody retires the incumbent.
+    #[serde(default)]
+    conflicting: u32,
+    /// Which templates those were, and what already owns their art. The server
+    /// always emits `[]` rather than `null`, because `default` covers a MISSING
+    /// field and not an explicit null.
+    #[serde(default)]
+    conflicts: Vec<UploadConflict>,
+}
+
+/// One refused template, named so the log can tell the player what to forget.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct UploadConflict {
+    /// Position in the REQUEST's `templates` array — NOT in the set the pool
+    /// decided on. The server's decode loop skips a malformed or
+    /// unknown-family item, so the two diverge, and it translates before
+    /// answering.
+    ///
+    /// Signed, and `-1` when the server could not name the template at all: an
+    /// `i64` is what makes that value parse. As a `usize` it would fail the
+    /// WHOLE ack, `ack_from_body` would read the body as "not an
+    /// acknowledgement", and the batch would be dropped unsettled on every
+    /// retry.
+    ///
+    /// A MISSING key defaults to that same unnamed `-1` rather than to serde's
+    /// `0`, which is a valid position: a server that stopped sending the field
+    /// would otherwise settle template 0 of every batch it refused anything in.
+    #[serde(default = "unnamed_conflict")]
+    index: i64,
+    #[serde(default)]
+    family: String,
+    #[serde(default)]
+    tier: u8,
+    /// The family whose live art the refused template collided with.
+    #[serde(default)]
+    incumbent_family: String,
+}
+
+/// See [`UploadConflict::index`] — "the server did not say which template".
+fn unnamed_conflict() -> i64 {
+    -1
 }
 
 /// The served corpus.
@@ -411,6 +473,16 @@ pub struct SyncState {
     /// Whether a pull is in flight. Single-flight: a module toggled repeatedly
     /// must not start a pull storm.
     pulling: bool,
+    /// When the last pull ATTEMPT started, for [`REPULL_THROTTLE_MS`].
+    ///
+    /// Deliberately not `status.last_pull_ms`, which is written when a pull
+    /// FINISHES — including a failed one, and doubling as the page's "checked N
+    /// ago". Throttling on that would let a device whose pulls all time out
+    /// after 20 s ask again 20 s sooner every time. Zero-initialised, so the
+    /// first attempt of a session is never throttled.
+    ///
+    /// Not on [`MercSyncStatus`]: the page has nothing to say about it.
+    last_pull_started_ms: u64,
     /// Whether the capture loop's start is still willing to merge a landed
     /// corpus itself. While set, a finished pull parks its corpus in `landed`
     /// instead of applying it.
@@ -677,46 +749,121 @@ pub async fn pull_once(app: &AppHandle, etag: Option<&str>) -> Option<PullOutcom
 ///
 /// The caller stays on its own thread — this returns immediately.
 pub fn spawn_pull(app: &AppHandle) {
-    let claimed = with_state(app, |s| {
-        // The seam is starting either way; only the request may already be
-        // somebody else's.
-        s.startup_claim = true;
-        if s.pulling {
-            return false;
-        }
-        s.pulling = true;
-        true
-    });
-    if !claimed {
+    if !with_state(app, |s| claim_pull(s, super::run::now_ms())) {
         return;
     }
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let etag = icons_dir(&app).map(|dir| SyncFile::load(&dir)).and_then(|f| f.etag);
-        let outcome = pull_once(&app, etag.as_deref()).await;
-        if let Some((corpus, served_etag)) = finish_pull(&app, outcome) {
-            // The seam had already released its claim, so the store it installs
-            // is in place and this is free to merge into it. Same template mutex
-            // the seam takes, so there is one writer at a time either way — this
-            // path just costs a generation bump the in-seam merge does not.
-            let Ok(data_dir) = app.path().app_data_dir() else {
-                return;
-            };
-            // The user's own `icon_match` decides what counts as art the store
-            // already has, exactly as it does for a hover-learned sample.
-            // Re-read rather than defaulted: a device running a moved threshold
-            // must dedupe the pool with the number it matches with.
-            let thresholds = super::load_override(&data_dir).0.thresholds;
-            apply_corpus(
-                &app,
-                &data_dir.join(super::ICONS_DIR),
-                &corpus,
-                served_etag,
-                &thresholds,
-                true,
-            );
-        }
-    });
+    tauri::async_runtime::spawn(pull_and_apply(app.clone()));
+}
+
+/// Start a pull because a recruit window was just detected (POE-210).
+///
+/// The other half of "a learning made on one machine reaches the others while
+/// both are playing": module start alone means a device sees a hover made ten
+/// minutes ago only after the player restarts the module. Opening the window is
+/// the moment the corpus is worth having, and it is the user's own framing of
+/// "refresh".
+///
+/// Two things it is NOT. It never touches `startup_claim` — that flag belongs
+/// to the load seam, and setting it here would park the corpus for a seam that
+/// finished minutes ago and lose it. And it is throttled by
+/// [`REPULL_THROTTLE_MS`], because the detect it hangs off fires on window
+/// churn as well as on a real open.
+///
+/// EDGE-TRIGGERED, and nothing re-arms it. A detect refused here — by the
+/// in-flight guard or by the throttle — is not remembered and does not fire a
+/// pull once the window passes; the next attempt is the next `Captured`
+/// transition, which means the next time a recruit window is opened (or
+/// replaced, or re-detected after a retire) past the throttle. A player who
+/// opens one window and keeps it open for an hour therefore pulls once. That is
+/// the intended cost of hanging off the transition rather than off a timer: the
+/// corpus is worth having when a window OPENS, and a device that never opens
+/// one has nothing to match against anyway.
+///
+/// The caller stays on its own thread — this returns immediately.
+pub fn spawn_repull(app: &AppHandle) {
+    if !with_state(app, |s| claim_repull(s, super::run::now_ms())) {
+        return;
+    }
+    tauri::async_runtime::spawn(pull_and_apply(app.clone()));
+}
+
+/// Claim the module-start pull. `true` when the caller owns the REQUEST.
+///
+/// Pure over [`SyncState`] because the two claims it takes are the load seam's
+/// half of the handshake `record_pull` and `claim_step` complete, and because
+/// the SEAM claim is set on BOTH answers — a `false` here still means a capture
+/// loop is starting.
+fn claim_pull(state: &mut SyncState, now_ms: u64) -> bool {
+    // The seam is starting either way; only the request may already be
+    // somebody else's.
+    state.startup_claim = true;
+    if state.pulling {
+        return false;
+    }
+    state.pulling = true;
+    // Stamped only when the request was actually taken: the in-flight pull this
+    // one yielded to already stamped its own start, and re-stamping would push
+    // the throttle window out for a request nobody made.
+    state.last_pull_started_ms = now_ms;
+    true
+}
+
+/// Claim a detect-driven re-pull. `true` when the caller owns the request.
+///
+/// Refused while a pull is in flight (the same single-flight rule the startup
+/// pull takes) and inside [`REPULL_THROTTLE_MS`] of the last attempt of EITHER
+/// kind — a re-pull one second after the module start's own pull would ask for
+/// a corpus this device already has.
+///
+/// `saturating_sub`, so a clock that steps backwards reads as "no time has
+/// passed" and stays throttled rather than wrapping into a decade of elapsed
+/// time and letting every detect through.
+///
+/// Never sets `startup_claim`. Pure over [`SyncState`] for the same reason
+/// [`claim_pull`] is.
+fn claim_repull(state: &mut SyncState, now_ms: u64) -> bool {
+    if state.pulling {
+        return false;
+    }
+    if now_ms.saturating_sub(state.last_pull_started_ms) < REPULL_THROTTLE_MS {
+        return false;
+    }
+    state.pulling = true;
+    state.last_pull_started_ms = now_ms;
+    true
+}
+
+/// The tail both spawns share: pull, record, and apply the corpus if the pull
+/// is the one that has to.
+///
+/// One function rather than two, because the seam handshake in `record_pull`
+/// only works if every pull answers it the same way — a re-pull that skipped
+/// the parked-corpus branch would drop a corpus the seam was waiting for.
+async fn pull_and_apply(app: AppHandle) {
+    let etag = icons_dir(&app).map(|dir| SyncFile::load(&dir)).and_then(|f| f.etag);
+    let outcome = pull_once(&app, etag.as_deref()).await;
+    if let Some((corpus, served_etag)) = finish_pull(&app, outcome) {
+        // The seam had already released its claim, so the store it installs
+        // is in place and this is free to merge into it. Same template mutex
+        // the seam takes, so there is one writer at a time either way — this
+        // path just costs a generation bump the in-seam merge does not.
+        let Ok(data_dir) = app.path().app_data_dir() else {
+            return;
+        };
+        // The user's own `icon_match` decides what counts as art the store
+        // already has, exactly as it does for a hover-learned sample.
+        // Re-read rather than defaulted: a device running a moved threshold
+        // must dedupe the pool with the number it matches with.
+        let thresholds = super::load_override(&data_dir).0.thresholds;
+        apply_corpus(
+            &app,
+            &data_dir.join(super::ICONS_DIR),
+            &corpus,
+            served_etag,
+            &thresholds,
+            true,
+        );
+    }
 }
 
 /// Record a finished pull. Returns the corpus (and its ETag) when the caller has
@@ -939,6 +1086,17 @@ pub fn apply_corpus(
         slice.pooled_families = pooled;
         slice.seeded_families = seeded;
     });
+    // `pooled_samples` above is on the SYNC status, which `publish` does not
+    // carry — it emits only when the mercenary slice's own fields moved. A
+    // merge that added samples without adding a KEY (a second sample of a key
+    // the store already had) changed nothing `publish` compares, so the page's
+    // "N samples from the pool" sat on the previous number until something else
+    // emitted. Cheap and unconditional rather than diffed, because the SSOT
+    // snapshot is what decides whether an emit reaches the window at all.
+    //
+    // No lock is held here: the store and directory block closed above, and
+    // `build_snapshot` takes `merc_sync` and `mercenary` only.
+    crate::ssot::emit_ssot(app);
 }
 
 /// Whether a finished merge owes the session a generation bump.
@@ -1035,8 +1193,40 @@ async fn drain_queue(app: AppHandle) {
         // cap (a steady state until someone retires a sample), so the
         // recurring "N at the cap" log line is expected, not a fault.
         if let Some(ack) = send_batch(&app, &batch).await {
+            // A refusal is per SAMPLE, and it is the one outcome the player can
+            // act on: the log names the incumbent so they know which family to
+            // forget on the device that learned it.
+            for conflict in &ack.conflicts {
+                crate::app_log(
+                    &app,
+                    format!(
+                        "Merc: pool refused {} (tier {}) — same art already pooled as {}",
+                        conflict.family, conflict.tier, conflict.incumbent_family,
+                    ),
+                );
+            }
+            let settled = settlement(&ack, &batch);
+            if settled.unnamed > 0 {
+                // The pool refused more than it could place (a `-1`, an index
+                // this batch does not carry, or a count with no detail behind
+                // it). Its own logs call that a server bug; this side answers
+                // it by settling nothing.
+                crate::app_log(
+                    &app,
+                    format!(
+                        "Merc: {} refusal(s) named no template this batch carries — the whole batch stays owed and is re-offered next start; report it if it repeats",
+                        settled.unnamed,
+                    ),
+                );
+            }
             if should_mark_published(&ack) {
-                mark_uploaded(&app, &batch);
+                // The SETTLE SET, never the whole batch: a refused sample stays
+                // `uploaded: false` on disk so `enqueue_backfill` offers it
+                // again at the next module start, which is the retry the
+                // recovery path needs — the moment somebody tombstones the
+                // incumbent, the art stores. Already EMPTY when a refusal went
+                // unnamed, so that case marks nothing.
+                mark_uploaded(&app, &settled.settle);
             }
         }
         crate::ssot::emit_ssot(&app);
@@ -1075,6 +1265,103 @@ fn ack_from_body(bytes: &[u8]) -> Option<UploadAck> {
 /// the identical payload again changes neither.
 fn should_mark_published(ack: &UploadAck) -> bool {
     ack.capped == 0 && ack.rejected_unknown_family == 0
+}
+
+/// Which positions of the batch the pool refused as another family's art.
+///
+/// The verdict above is per BATCH; this is what makes the settlement per
+/// sample. Two kinds of entry are dropped: an index outside the batch, and
+/// `-1` — the server saying its own bookkeeping lost the template's position.
+///
+/// Neither is a panic risk, and the checks are not here to prevent one: an
+/// unchecked `c.index as usize` would turn `-1` into `usize::MAX`, which the
+/// bounds check discards like any other out-of-range value. What they buy is
+/// the COUNT. [`settlement`] compares what the pool said it refused against
+/// what this could actually place, and a refusal it cannot place is what makes
+/// it hold the whole batch owed instead of closing out a sample on a position
+/// nobody could name.
+///
+/// DEDUPED for the same reason. Two refusals naming ONE position are two
+/// templates the pool would not take and one this build can identify, so the
+/// counts must disagree — returning the position twice would make them agree
+/// and settle the sample the second refusal was really about.
+fn conflict_indexes(ack: &UploadAck, batch_len: usize) -> Vec<usize> {
+    let placed: std::collections::BTreeSet<usize> = ack
+        .conflicts
+        .iter()
+        .filter_map(|c| usize::try_from(c.index).ok())
+        .filter(|i| *i < batch_len)
+        .collect();
+    placed.into_iter().collect()
+}
+
+/// What one acknowledgement closes out, per sample.
+#[derive(Debug, Clone, PartialEq)]
+struct Settlement {
+    /// The samples a settled verdict may mark published. EMPTY whenever
+    /// `unnamed` is non-zero — see [`settlement`].
+    settle: Vec<PendingSample>,
+    /// Refusals this build could not place in the batch.
+    unnamed: usize,
+}
+
+/// Decide, per sample, what an acknowledgement closes out (POE-210).
+///
+/// One function rather than a sequence the drain performs itself, because the
+/// rule below is the whole point of the change and a drain that re-derived it
+/// inline would be untestable: the only observable seam is what
+/// `mark_uploaded` is handed, and that call takes an `AppHandle`.
+///
+/// The pool's `conflicting` count is the authority on HOW MANY templates it
+/// refused; `conflicts[]` is the authority on WHICH. They disagree exactly when
+/// the server could not name one — a missing entry, a `-1`, an index this batch
+/// does not carry — so the claim is the larger of the two.
+///
+/// **An unplaceable refusal holds the WHOLE batch owed.** Nothing here can say
+/// which sample the pool kept and which it refused, so none of them is closed
+/// out: the batch takes the `capped` shape — dropped from this session's queue,
+/// still `uploaded: false` on disk, offered again at the next module start. The
+/// samples the pool really did store come back as `duplicate` that time and
+/// settle then, so the cost is one re-offer per module start, and never a
+/// sample retired on art the pool does not hold.
+fn settlement(ack: &UploadAck, batch: &[PendingSample]) -> Settlement {
+    let refused = conflict_indexes(ack, batch.len());
+    let claimed = (ack.conflicting as usize).max(ack.conflicts.len());
+    let unnamed = claimed.saturating_sub(refused.len());
+    if unnamed > 0 {
+        return Settlement {
+            settle: Vec::new(),
+            unnamed,
+        };
+    }
+    Settlement {
+        settle: settle_set(batch, &refused),
+        unnamed: 0,
+    }
+}
+
+/// The batch minus the samples the pool refused — what a settled acknowledgement
+/// may mark published.
+///
+/// D1: a refused sample is dropped from the in-session queue but NOT closed out
+/// on disk, the same shape `capped` already has. It becomes storable the moment
+/// the incumbent is tombstoned, and without the retry the recovery path the
+/// refusal line tells the player about would not exist.
+///
+/// NOTE — the exclusion is by batch POSITION, while `mark_uploaded` matches by
+/// signature BYTES. Two byte-identical entries in one batch would therefore
+/// mis-settle: excluding position 0 would still mark position 1's identical
+/// bytes. Unreachable today, because the server's own-key duplicate check runs
+/// BEFORE its cross-family one, so the second copy comes back `duplicate` and
+/// never `conflicting`. A reorder of the server's `Decide` would make it
+/// reachable, and nothing here would notice.
+fn settle_set(batch: &[PendingSample], refused: &[usize]) -> Vec<PendingSample> {
+    batch
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !refused.contains(i))
+        .map(|(_, sample)| sample.clone())
+        .collect()
 }
 
 /// POST one batch, honouring the rate limit. The acknowledgement when the pool
@@ -1125,8 +1412,8 @@ async fn send_batch(app: &AppHandle, batch: &[PendingSample]) -> Option<UploadAc
                     ));
                 }
                 crate::app_log(app, format!(
-                    "Merc: offered {} template(s) to the pool — {} stored, {} already pooled, {} at the cap, {} retired, {} malformed",
-                    body.templates.len(), ack.stored, ack.duplicate, ack.capped, ack.tombstoned, ack.rejected,
+                    "Merc: offered {} template(s) to the pool — {} stored, {} already pooled, {} at the cap, {} retired, {} refused as another family's art, {} malformed",
+                    body.templates.len(), ack.stored, ack.duplicate, ack.capped, ack.tombstoned, ack.conflicting, ack.rejected,
                 ));
                 return Some(ack);
             }
@@ -1181,6 +1468,12 @@ async fn send_batch(app: &AppHandle, batch: &[PendingSample]) -> Option<UploadAc
 /// Mark a placed batch in the store and persist it, so a restart does not
 /// re-offer what the pool already has.
 fn mark_uploaded(app: &AppHandle, batch: &[PendingSample]) {
+    // An empty settle set is an ordinary answer since POE-210 — a refusal the
+    // pool could not place holds every sample owed — and taking the directory
+    // and store locks to mark nothing is pure cost on the upload task.
+    if batch.is_empty() {
+        return;
+    }
     let Some(dir) = icons_dir(app) else {
         return;
     };
@@ -1704,6 +1997,69 @@ mod tests {
         assert_eq!(ack.rejected, 1, "malformed and unknown-family stay separate");
     }
 
+    /// The same tolerance for POE-210's two keys: a server that has not shipped
+    /// the cross-family refusal yet answers without them, and this build must
+    /// read that as "nothing was refused".
+    #[test]
+    fn an_upload_ack_parses_without_the_conflict_keys() {
+        let ack = ack_from_body(
+            br#"{"stored":2,"duplicate":0,"capped":0,"tombstoned":0,"rejected":0,"rejected_unknown_family":0}"#,
+        )
+        .expect("parses");
+
+        assert_eq!(ack.conflicting, 0);
+        assert!(ack.conflicts.is_empty());
+    }
+
+    /// The wire names of the conflict detail, verbatim. These four keys are what
+    /// the log line and the settlement are built from — a rename on either side
+    /// silently turns every refusal into an unnamed one.
+    #[test]
+    fn an_upload_ack_reads_the_conflict_detail() {
+        let ack = ack_from_body(
+            br#"{"stored":1,"conflicting":1,"conflicts":[{"index":2,"family":"Chain","tier":3,"incumbent_family":"Fork"}]}"#,
+        )
+        .expect("parses");
+
+        assert_eq!(ack.conflicting, 1);
+        assert_eq!(
+            ack.conflicts,
+            vec![UploadConflict {
+                index: 2,
+                family: "Chain".to_string(),
+                tier: 3,
+                incumbent_family: "Fork".to_string(),
+            }]
+        );
+    }
+
+    /// `-1` is the server saying its own bookkeeping lost the template's
+    /// position. It has to PARSE: read into a `usize` the whole ack would fail,
+    /// `ack_from_body` would call the body "not an acknowledgement", and the
+    /// batch would be dropped unsettled every time the pool refused anything.
+    #[test]
+    fn an_upload_ack_parses_a_conflict_the_server_could_not_name() {
+        let ack = ack_from_body(
+            br#"{"conflicting":1,"conflicts":[{"index":-1,"family":"Chain","tier":3,"incumbent_family":"Fork"}]}"#,
+        )
+        .expect("parses");
+
+        assert_eq!(ack.conflicts[0].index, -1);
+    }
+
+    /// A MISSING index is unnamed, not template zero. Serde's own default for an
+    /// integer is 0, which is a valid position — a server that dropped the field
+    /// would settle the first template of every batch it refused anything in.
+    #[test]
+    fn a_conflict_item_missing_its_index_is_not_read_as_the_first_template() {
+        let ack = ack_from_body(
+            br#"{"conflicting":1,"conflicts":[{"family":"Chain","tier":3,"incumbent_family":"Fork"}]}"#,
+        )
+        .expect("parses");
+
+        assert_eq!(ack.conflicts[0].index, -1);
+    }
+
     /// A 2xx carrying something other than an ack — a proxy's error page — is
     /// not an acknowledgement. Reading it as a default one would hand
     /// `should_mark_published` an all-zero ack, which settles, and the batch
@@ -2069,6 +2425,125 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Who may start a pull (POE-210)
+    // -----------------------------------------------------------------------
+
+    /// The module-start pull takes the request and records when it started —
+    /// the clock the re-pull throttle runs on.
+    #[test]
+    fn the_module_start_pull_claims_the_request_and_stamps_its_start() {
+        let mut state = SyncState::default();
+
+        assert!(claim_pull(&mut state, 900_000));
+
+        assert!(state.pulling);
+        assert!(state.startup_claim);
+        assert_eq!(state.last_pull_started_ms, 900_000);
+    }
+
+    /// The SEAM claim is unconditional. An off→on toggle across an in-flight
+    /// pull is exactly the case it exists for: the request is somebody else's,
+    /// but a capture loop IS starting and the corpus must be parked for it.
+    #[test]
+    fn the_module_start_pull_takes_the_seam_claim_even_when_the_request_is_taken() {
+        let mut state = SyncState {
+            pulling: true,
+            last_pull_started_ms: 500_000,
+            ..SyncState::default()
+        };
+
+        assert!(!claim_pull(&mut state, 900_000), "the request was not this one's");
+
+        assert!(state.startup_claim, "but the seam is still starting");
+        assert_eq!(
+            state.last_pull_started_ms, 500_000,
+            "the in-flight pull's start is what the throttle measures from"
+        );
+    }
+
+    /// A window opened seconds after the module started must not ask for a
+    /// corpus this device pulled seconds ago.
+    #[test]
+    fn a_repull_inside_the_throttle_of_the_startup_pull_is_refused() {
+        let mut state = SyncState::default();
+        claim_pull(&mut state, 900_000);
+        state.pulling = false;
+
+        assert!(!claim_repull(&mut state, 900_000 + REPULL_THROTTLE_MS - 1));
+
+        assert!(!state.pulling, "no request was taken");
+    }
+
+    /// And the throttle runs from a re-pull's own start too, or a window
+    /// reopened every ten seconds would pull on every second open.
+    #[test]
+    fn a_repull_inside_the_throttle_of_an_earlier_repull_is_refused() {
+        let mut state = SyncState::default();
+        assert!(claim_repull(&mut state, 900_000));
+        state.pulling = false;
+
+        assert!(!claim_repull(&mut state, 900_000 + REPULL_THROTTLE_MS - 1));
+    }
+
+    /// The boundary itself passes: one attempt per throttle window, not one
+    /// per window plus a millisecond.
+    #[test]
+    fn a_repull_is_allowed_once_the_throttle_has_elapsed() {
+        let mut state = SyncState::default();
+        claim_pull(&mut state, 900_000);
+        state.pulling = false;
+
+        assert!(claim_repull(&mut state, 900_000 + REPULL_THROTTLE_MS));
+
+        assert!(state.pulling);
+        assert_eq!(state.last_pull_started_ms, 900_000 + REPULL_THROTTLE_MS);
+    }
+
+    /// Single-flight, the same rule the startup pull takes: a detect landing
+    /// while a pull is in the air adds nothing but a second request.
+    #[test]
+    fn a_repull_while_a_pull_is_in_flight_is_refused() {
+        let mut state = SyncState {
+            pulling: true,
+            last_pull_started_ms: 100_000,
+            ..SyncState::default()
+        };
+
+        assert!(!claim_repull(&mut state, 900_000));
+
+        assert_eq!(
+            state.last_pull_started_ms, 100_000,
+            "a refused claim moves no clock"
+        );
+    }
+
+    /// `startup_claim` is the load seam's flag. A re-pull setting it would park
+    /// its corpus for a seam that finished minutes ago, and nothing would ever
+    /// pick it up.
+    #[test]
+    fn a_repull_never_takes_the_seam_claim() {
+        let mut state = SyncState::default();
+
+        assert!(claim_repull(&mut state, 900_000));
+
+        assert!(!state.startup_claim);
+    }
+
+    /// A clock that stepped backwards (a resync, a resume from sleep) reads as
+    /// "no time has passed" and stays throttled. Subtracting the other way
+    /// round would wrap into decades of elapsed time and let every detect
+    /// through.
+    #[test]
+    fn a_clock_that_stepped_backwards_does_not_pass_the_throttle() {
+        let mut state = SyncState {
+            last_pull_started_ms: 900_000,
+            ..SyncState::default()
+        };
+
+        assert!(!claim_repull(&mut state, 800_000));
+    }
+
+    // -----------------------------------------------------------------------
     // The tombstone retry cycle
     // -----------------------------------------------------------------------
 
@@ -2199,6 +2674,237 @@ mod tests {
             rejected: 2,
             ..UploadAck::default()
         })));
+    }
+
+    /// A refusal is settled per SAMPLE, not per batch: the samples the pool DID
+    /// take are closed out here, and only the refused one is held back — by the
+    /// settle set below, never by the batch verdict. Making the verdict itself
+    /// unsettled would re-offer the whole batch every module start for as long
+    /// as the incumbent stands.
+    #[test]
+    fn a_conflicting_offer_leaves_the_batch_verdict_alone() {
+        assert!(should_mark_published(&ack(UploadAck {
+            stored: 1,
+            conflicting: 1,
+            conflicts: vec![conflict(0, "Chain", 2, "Fork")],
+            ..UploadAck::default()
+        })));
+    }
+
+    // -----------------------------------------------------------------------
+    // Which SAMPLES a settled acknowledgement closes out (POE-210)
+    // -----------------------------------------------------------------------
+
+    fn conflict(index: i64, family: &str, tier: u8, incumbent: &str) -> UploadConflict {
+        UploadConflict {
+            index,
+            family: family.to_string(),
+            tier,
+            incumbent_family: incumbent.to_string(),
+        }
+    }
+
+    /// The positions the server named, in the batch's own indexing — this is
+    /// what decides which sample stays owed. A SET, not a sequence: both
+    /// consumers ask it for membership and for a count, so it is deduped and
+    /// ascending rather than in the order the ack listed.
+    #[test]
+    fn conflict_indexes_maps_the_positions_the_batch_carries() {
+        let ack = UploadAck {
+            conflicting: 2,
+            conflicts: vec![conflict(2, "Chain", 2, "Fork"), conflict(0, "Pierce", 1, "Split")],
+            ..UploadAck::default()
+        };
+
+        assert_eq!(conflict_indexes(&ack, 3), vec![0, 2]);
+    }
+
+    /// The refused sample is the ONE the batch does not close out. Handing
+    /// `mark_uploaded` the whole batch — what this build did before POE-210 —
+    /// retires art the pool never took, permanently and silently.
+    #[test]
+    fn settlement_excludes_a_named_refusal_from_the_settle_set() {
+        let batch = vec![sample("Chain", 2, 7), sample("Pierce", 1, 9)];
+        let ack = UploadAck {
+            stored: 1,
+            conflicting: 1,
+            conflicts: vec![conflict(0, "Chain", 2, "Fork")],
+            ..UploadAck::default()
+        };
+
+        let settled = settlement(&ack, &batch);
+
+        assert_eq!(settled.settle, vec![sample("Pierce", 1, 9)]);
+        assert_eq!(settled.unnamed, 0);
+    }
+
+    /// And an acknowledgement that refused nothing closes the batch out whole.
+    #[test]
+    fn settlement_settles_the_whole_batch_when_nothing_was_refused() {
+        let batch = vec![sample("Chain", 2, 7), sample("Pierce", 1, 9)];
+
+        let settled = settlement(&UploadAck { stored: 2, ..UploadAck::default() }, &batch);
+
+        assert_eq!(settled.settle, batch);
+        assert_eq!(settled.unnamed, 0);
+    }
+
+    /// A count with no detail behind it. The pool refused SOMETHING and this
+    /// build cannot say which sample, so nothing is closed out — the batch takes
+    /// the `capped` shape and comes back next module start, where whatever the
+    /// pool did store answers `duplicate` and settles then.
+    #[test]
+    fn settlement_holds_the_whole_batch_when_the_pool_named_no_refusal_at_all() {
+        let batch = vec![sample("Chain", 2, 7), sample("Pierce", 1, 9)];
+        let ack = UploadAck {
+            stored: 1,
+            conflicting: 1,
+            ..UploadAck::default()
+        };
+
+        let settled = settlement(&ack, &batch);
+
+        assert_eq!(settled.unnamed, 1);
+        assert!(settled.settle.is_empty(), "no sample is closed out");
+    }
+
+    /// `-1` is the server saying its own bookkeeping lost the position. Same
+    /// answer: the batch stays owed whole rather than one arbitrary sample
+    /// being retired on art the pool may not hold.
+    #[test]
+    fn settlement_holds_the_whole_batch_when_a_refusal_names_no_index() {
+        let batch = vec![sample("Chain", 2, 7), sample("Pierce", 1, 9)];
+        let ack = UploadAck {
+            conflicting: 1,
+            conflicts: vec![conflict(-1, "Chain", 2, "Fork")],
+            ..UploadAck::default()
+        };
+
+        let settled = settlement(&ack, &batch);
+
+        assert_eq!(settled.unnamed, 1);
+        assert!(settled.settle.is_empty());
+    }
+
+    /// Two refusals on ONE position: the pool would not take two templates and
+    /// this build can name one, so the batch stays owed whole. Counting the
+    /// position twice would make the numbers agree and close out the sample the
+    /// second refusal was actually about.
+    #[test]
+    fn settlement_holds_the_whole_batch_when_two_refusals_name_one_template() {
+        let batch = vec![sample("Chain", 2, 7), sample("Pierce", 1, 9)];
+        let ack = UploadAck {
+            conflicting: 2,
+            conflicts: vec![conflict(1, "Chain", 2, "Fork"), conflict(1, "Pierce", 1, "Split")],
+            ..UploadAck::default()
+        };
+
+        let settled = settlement(&ack, &batch);
+
+        assert_eq!(settled.unnamed, 1);
+        assert!(settled.settle.is_empty());
+    }
+
+    /// And an index past the end of the batch, which is the same failure with a
+    /// different number in it.
+    #[test]
+    fn settlement_holds_the_whole_batch_when_a_refusal_names_a_template_it_lacks() {
+        let batch = vec![sample("Chain", 2, 7), sample("Pierce", 1, 9)];
+        let ack = UploadAck {
+            conflicting: 1,
+            conflicts: vec![conflict(7, "Chain", 2, "Fork")],
+            ..UploadAck::default()
+        };
+
+        let settled = settlement(&ack, &batch);
+
+        assert_eq!(settled.unnamed, 1);
+        assert!(settled.settle.is_empty());
+    }
+
+    /// 1728 bytes of uncorrelated art, so a store built from several of them
+    /// exercises the upload flags rather than the collision rules. Deterministic
+    /// (a fixed LCG), and `from_rgb` accepts them because they have real
+    /// variance.
+    fn art(seed: u32) -> CellSig {
+        let mut x = seed.wrapping_mul(2_654_435_761).wrapping_add(12_345);
+        let bytes: Vec<u8> = (0..super::super::icons::SIG_BYTES)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (x >> 24) as u8
+            })
+            .collect();
+        CellSig::from_rgb(bytes).expect("real variance")
+    }
+
+    /// D1 on disk: a refused sample keeps `uploaded: false`, so
+    /// `enqueue_backfill` offers it again at the next module start. That retry
+    /// IS the recovery path the refusal line tells the player about — the art
+    /// stores the moment somebody tombstones the incumbent.
+    #[test]
+    fn a_refused_sample_is_still_owed_after_the_batch_settles() {
+        let t = super::super::MercGeometry::default().thresholds;
+        let mut store = super::super::icons::TemplateStore::new();
+        store.learn("Chain", 2, art(1), None, &t);
+        store.learn("Pierce", 1, art(2), None, &t);
+        let batch: Vec<PendingSample> = store
+            .pending_uploads()
+            .into_iter()
+            .map(|(family, tier, bytes)| PendingSample { family, tier, bytes })
+            .collect();
+        assert_eq!(batch.len(), 2, "both hovers are owed to the pool");
+
+        // The pool took Pierce and refused Chain as art it already serves under
+        // another family.
+        let ack = UploadAck {
+            stored: 1,
+            conflicting: 1,
+            conflicts: vec![conflict(0, "Chain", 2, "Fork")],
+            ..UploadAck::default()
+        };
+        assert!(should_mark_published(&ack), "the batch itself is settled");
+        // Exactly what the drain does with a settled verdict: one call, and the
+        // slice it hands `mark_uploaded` is this one.
+        for settled in settlement(&ack, &batch).settle {
+            store.mark_uploaded(&settled.family, settled.tier, &settled.bytes);
+        }
+
+        let owed = store.pending_uploads();
+        assert_eq!(owed.len(), 1);
+        assert_eq!((owed[0].0.as_str(), owed[0].1), ("Chain", 2));
+    }
+
+    /// A6, named for what it is: `pool-sync.json` is NOT what serialises an
+    /// upload against a merge — the directory and store mutexes are — so what
+    /// the ticket's edge case actually asks for is this store-level invariant.
+    /// A corpus landing on a key this device already published must not reopen
+    /// the offer, or every pull would re-offer art the pool already holds.
+    #[test]
+    fn a_local_samples_uploaded_flag_survives_a_pooled_install_of_the_same_key() {
+        let t = super::super::MercGeometry::default().thresholds;
+        let mut store = super::super::icons::TemplateStore::new();
+        store.learn("Chain", 2, art(1), None, &t);
+        store.learn("Chain", 2, art(2), None, &t);
+        let published = store.pending_uploads()[0].2.clone();
+        assert!(store.mark_uploaded("Chain", 2, &published));
+
+        store.merge_pulled(
+            &PooledCorpus {
+                format_version: FORMAT_VERSION,
+                samples: vec![PooledSample {
+                    family: "Chain".to_string(),
+                    tier: 2,
+                    sig: art(3),
+                }],
+                tombstones: Vec::new(),
+            },
+            &[],
+            &t,
+        );
+
+        let owed = store.pending_uploads();
+        assert_eq!(owed.len(), 1, "only the sample that was never offered");
+        assert_ne!(owed[0].2, published, "and it is not the published one");
     }
 
     /// The foreign-version log line has to name the version this build reads,
