@@ -367,6 +367,18 @@ fn window_sig(img: &DynamicImage, win: [i32; 4], dx: i32, dy: i32) -> Option<Cel
 pub struct CellCandidates {
     /// Every shift whose window normalised.
     shifted: Vec<CellSig>,
+    /// The `(dx, dy)` each entry of [`Self::shifted`] was built at.
+    ///
+    /// Carried rather than recomputed from the index, because the loop below
+    /// SKIPS any shift whose window does not normalise. Off-image is not how
+    /// that happens today — the occupancy gate has already put the whole inner
+    /// rect inside the image, and ±[`SHIFT_MAX`] reaches exactly that rect's
+    /// edges — but a flat window still returns `None`, and an inset override
+    /// could move the arithmetic. One skip and `i` stops being
+    /// `(i % SHIFT_SPAN, i / SHIFT_SPAN)`; a caller that re-derived it that way
+    /// would then report the wrong offset with the right score, which no
+    /// scoring assertion can catch. Two vectors built in one loop cannot drift.
+    shifts: Vec<(i32, i32)>,
     /// Indices into [`Self::shifted`] of the coarse subset, `dx,dy ∈ {-2,0,2}`.
     coarse: Vec<usize>,
     /// Index into [`Self::shifted`] of the unshifted `(0,0)` signature.
@@ -380,6 +392,7 @@ impl CellCandidates {
     pub fn unaligned(sig: CellSig) -> Self {
         Self {
             shifted: vec![sig],
+            shifts: vec![(0, 0)],
             coarse: vec![0],
             centre: 0,
         }
@@ -409,6 +422,17 @@ impl CellCandidates {
     pub fn coarse(&self) -> impl Iterator<Item = &CellSig> {
         self.coarse.iter().map(|&i| &self.shifted[i])
     }
+
+    /// Every alignment with the `(dx, dy)` it was taken at.
+    ///
+    /// The only supported way to ask "which shift won": [`Self::all`] gives no
+    /// answer, and reconstructing one from the index is wrong the moment a
+    /// shift is dropped (see [`Self::shifts`]). The POE-208 calibration tests
+    /// read this — a mis-mapped shift there would move the measured optimum
+    /// without failing anything.
+    pub fn aligned(&self) -> impl Iterator<Item = (&CellSig, (i32, i32))> {
+        self.shifted.iter().zip(self.shifts.iter().copied())
+    }
 }
 
 /// Every alignment of a support cell's signature.
@@ -429,6 +453,7 @@ pub fn cell_candidates(
     }
 
     let mut shifted = Vec::with_capacity((SHIFT_SPAN * SHIFT_SPAN) as usize);
+    let mut shifts = Vec::with_capacity((SHIFT_SPAN * SHIFT_SPAN) as usize);
     let mut coarse = Vec::with_capacity(9);
     let mut centre = 0usize;
     for dy in -SHIFT_MAX..=SHIFT_MAX {
@@ -443,6 +468,7 @@ pub fn cell_candidates(
             };
             let i = shifted.len();
             shifted.push(sig);
+            shifts.push((dx, dy));
             if dx == 0 && dy == 0 {
                 centre = i;
             }
@@ -453,18 +479,21 @@ pub fn cell_candidates(
     }
     Some(CellCandidates {
         shifted,
+        shifts,
         coarse,
         centre,
     })
 }
 
-/// Where a stored sample came from (POE-201).
+/// Where a stored sample came from (POE-201, POE-208).
 ///
 /// Matching does not care — a pooled sample recognises a cell exactly as well
-/// as a hovered one. Two other things do: only `Local` samples are ever
+/// as a hovered one. Three other things do: only `Local` samples are ever
 /// uploaded (a pooled sample re-offered to the pool it came from is pure
-/// traffic), and the page distinguishes the two so "I taught this" and "the
-/// pool gave me this" are not the same chip.
+/// traffic), the page distinguishes them so "I taught this", "the pool gave me
+/// this" and "the gem art seeded this" are three different chips, and `Seed`
+/// is the one provenance that YIELDS to everything else — see
+/// [`TemplateStore::install_seed`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Origin {
@@ -473,17 +502,28 @@ pub enum Origin {
     Local,
     /// Merged in from the shared pool.
     Pooled,
+    /// Derived on this device from the player gem art `/api/gem-icon` serves
+    /// for the family's mapped gem (POE-208).
+    ///
+    /// **Never persisted.** [`TemplateStore::save`] skips it and every module
+    /// start re-derives it from the cached art at the window in force, so this
+    /// variant is only ever seen in memory. The string it serialises to
+    /// therefore has no reader — it exists because the enum is one type, not
+    /// because a `"seed"` is expected in any `index.json`.
+    Seed,
 }
 
 impl Origin {
     /// How a log line names this provenance. Load-bearing in the refusal line
-    /// [`TemplateStore::learn`] produces: "learned here" and "from the pool"
-    /// point the player at two different fixes — their own wrong confirmation,
-    /// or somebody else's arriving through the pool.
+    /// [`TemplateStore::learn`] produces: "learned here", "from the pool" and
+    /// "seeded from gem art" point the player at three different fixes — their
+    /// own wrong confirmation, somebody else's arriving through the pool, or a
+    /// map row that names the wrong gem.
     pub fn describe(self) -> &'static str {
         match self {
             Origin::Local => "learned here",
             Origin::Pooled => "from the pool",
+            Origin::Seed => "seeded from gem art",
         }
     }
 }
@@ -619,14 +659,33 @@ pub struct MergeOutcome {
     /// then dropped is NOT counted — it un-counts itself from `added`, and the
     /// store is back where it started.
     pub dropped: usize,
+    /// SEEDS removed because a served sample of another family carried the
+    /// same art (POE-208).
+    ///
+    /// Its own counter, and deliberately NOT part of [`Self::changed`]:
+    /// nothing on disk moved, because a seed is never on disk. The generation
+    /// still has to be bumped when this is non-zero, or the loop keeps
+    /// matching cells against the seed it just lost — so the caller's
+    /// condition is `changed() || seeds_evicted > 0`, not `changed()`.
+    ///
+    /// The count is what the merge log line will report once WI-B adds it to
+    /// `sync::merge_line` — no line names it today. WHICH families lost a seed
+    /// comes from [`TemplateStore::seeds_lost_since`], and every one of them
+    /// must be blocklisted or the next start re-derives it.
+    // TODO(POE-208 WI-B): report this in `sync::merge_line`, and bump the
+    // generation on `changed() || seeds_evicted > 0` in `sync::apply_corpus`.
+    pub seeds_evicted: usize,
     /// The corpus declared a format version this build cannot read — nothing
     /// was merged.
     pub foreign_version: bool,
 }
 
 impl MergeOutcome {
-    /// Whether the store actually moved, and therefore whether a save and a
-    /// generation bump are owed.
+    /// Whether the store actually moved ON DISK, and therefore whether a save
+    /// is owed.
+    ///
+    /// [`Self::seeds_evicted`] is excluded on purpose — see its doc for the
+    /// generation bump it still owes.
     pub fn changed(&self) -> bool {
         self.added > 0 || self.replaced > 0 || self.dropped > 0
     }
@@ -664,6 +723,26 @@ impl LearnOutcome {
     pub fn stored(&self) -> bool {
         matches!(self, Self::Stored)
     }
+}
+
+/// What one [`TemplateStore::install_seed`] did (POE-208).
+///
+/// Both refusals are ordinary and neither blocklists: a seed that yields has
+/// been overruled by a better authority that may itself be forgotten later,
+/// and a full key is a key that needs no help.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SeedInstall {
+    /// The seed is in the store, for this session.
+    Installed,
+    /// A stored sample of another family already holds this art.
+    YieldedTo {
+        family: String,
+        tier: u8,
+        origin: Origin,
+        score: f32,
+    },
+    /// The key already holds [`TemplateStore::MAX_SAMPLES_PER_KEY`] samples.
+    KeyFull,
 }
 
 /// A stored sample a candidate signature collides with — one art, two families.
@@ -704,6 +783,19 @@ impl TemplateStore {
         self.templates.len()
     }
 
+    /// How many samples [`Self::save`] would write — everything but the seeds.
+    ///
+    /// The number to report to the user whenever the word is "templates": a
+    /// seed is not one they learned, not one the pool gave them, and not one
+    /// the store keeps. Tied to `save`'s own filter so the count and the file
+    /// can never disagree.
+    pub fn persisted_len(&self) -> usize {
+        self.templates
+            .iter()
+            .filter(|t| t.origin != Origin::Seed)
+            .count()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.templates.is_empty()
     }
@@ -725,10 +817,17 @@ impl TemplateStore {
     /// One producer on purpose: a second, prettier label would eventually be
     /// the one wired into the slice, and the page's parse would silently stop
     /// finding a tier.
+    ///
+    /// **Seeds are not in it** (POE-208). The chips this feeds carry a ✕ that
+    /// calls `merc_forget_template(family, tier)`, which tombstones the key in
+    /// the shared pool — and a seed names nothing the pool serves. Seeds have
+    /// their own chip group off [`Self::seeded_families`] and their own
+    /// command.
     pub fn learned_keys(&self) -> Vec<String> {
         let mut out: Vec<String> = self
             .templates
             .iter()
+            .filter(|t| t.origin != Origin::Seed)
             .map(|t| format!("{}--{}", t.family, t.tier))
             .collect();
         out.sort();
@@ -795,6 +894,17 @@ impl TemplateStore {
     /// line filing one cell's art under another cell's family — is covered
     /// locally by keying the crop cache on `row_key` instead of the row index,
     /// not here.
+    ///
+    /// **A SEED never wins here** (POE-208 collision rule a). The
+    /// incumbent-wins rule above is about two claims of comparable authority —
+    /// this player's confirmation and another player's. A seed is neither: it
+    /// is this device's own guess from a name map, and the player looking at
+    /// the tooltip is the better authority by construction. So a colliding
+    /// seed of another family is EVICTED and the confirmation is stored. The
+    /// caller learns which families lost a seed from
+    /// [`Self::seeds_lost_since`] and blocklists them, without which the next
+    /// module start would re-derive the same wrong seed from the same cached
+    /// art.
     pub fn learn(
         &mut self,
         family: &str,
@@ -803,18 +913,30 @@ impl TemplateStore {
         raw: Option<RgbaImage>,
         t: &Thresholds,
     ) -> LearnOutcome {
-        if let Some(other) = self.best_other_family(family, &sig, t) {
-            return LearnOutcome::ConflictsWith {
-                family: other.family,
-                tier: other.tier,
-                origin: other.origin,
-                score: other.score,
-            };
+        // Loop rather than branch: two seeds can hold one art (the map's
+        // pairwise contract bounds the ENABLED rows, and a family may hold a
+        // seed alongside one another door installed). Evicting one and then
+        // reporting a conflict with the next would refuse a confirmation on
+        // the strength of a guess this same call had already overruled.
+        while let Some(c) = self.best_other_family(family, &sig, t) {
+            if c.origin != Origin::Seed {
+                return LearnOutcome::ConflictsWith {
+                    family: c.family,
+                    tier: c.tier,
+                    origin: c.origin,
+                    score: c.score,
+                };
+            }
+            self.templates.remove(c.at);
         }
+        // Seeds are invisible to "already known" (POE-208 tracker AC3): a
+        // confirmation of a family this device only seeded must reach the
+        // store as a LOCAL sample, or it never reaches `pending_uploads` and
+        // the pool never learns what the player just proved.
         let same_key: Vec<&Template> = self
             .templates
             .iter()
-            .filter(|s| s.family == family && s.tier == tier)
+            .filter(|s| s.family == family && s.tier == tier && s.origin != Origin::Seed)
             .collect();
         if same_key.len() >= Self::MAX_SAMPLES_PER_KEY
             || same_key.iter().any(|s| s.sig.ncc(&sig) >= t.icon_match)
@@ -823,6 +945,109 @@ impl TemplateStore {
         }
         self.push_sample(family, tier, sig, raw, Origin::Local, false);
         LearnOutcome::Stored
+    }
+
+    /// Install one derived seed under `(family, map tier)` (POE-208).
+    ///
+    /// **A seed yields to everything.** Any stored sample of ANOTHER family
+    /// that the seed's art reaches at `t.icon_match` wins outright and the
+    /// seed is dropped — no blocklist, because nothing was contradicted: the
+    /// incumbent is a confirmation or a pooled sample, both of which outrank a
+    /// name map, and the family may still be seeded on a later start if the
+    /// incumbent goes. A key already holding
+    /// [`Self::MAX_SAMPLES_PER_KEY`] samples is left alone for the same
+    /// reason.
+    ///
+    /// One seed per family, under the family's LOWEST vocabulary tier: the
+    /// badge supplies the capture's tier and [`Self::match_family`] searches
+    /// every sample, so one sample recognises the family at all three tiers.
+    pub fn install_seed(
+        &mut self,
+        family: &str,
+        tier: u8,
+        sig: CellSig,
+        t: &Thresholds,
+    ) -> SeedInstall {
+        if let Some(c) = self.best_other_family(family, &sig, t) {
+            return SeedInstall::YieldedTo {
+                family: c.family,
+                tier: c.tier,
+                origin: c.origin,
+                score: c.score,
+            };
+        }
+        if self
+            .templates
+            .iter()
+            .filter(|s| s.family == family && s.tier == tier)
+            .count()
+            >= Self::MAX_SAMPLES_PER_KEY
+        {
+            return SeedInstall::KeyFull;
+        }
+        self.push_sample(family, tier, sig, None, Origin::Seed, false);
+        SeedInstall::Installed
+    }
+
+    /// Family names this store holds a seed for, sorted.
+    ///
+    /// Names, not `"<family>--<tier>"` keys: the page's seed chip calls
+    /// `merc_forget_seed(family)`, which is family-level because the seed is —
+    /// one row of the map, one sample, whatever tier it was filed under.
+    pub fn seeded_families(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .templates
+            .iter()
+            .filter(|t| t.origin == Origin::Seed)
+            .map(|t| t.family.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Which of `before`'s families no longer have a seed — the blocklist
+    /// argument of whatever just evicted one.
+    ///
+    /// The one way a caller learns WHICH families to block, shared by both
+    /// eviction doors ([`Self::learn`] and [`Self::merge_pulled`]) because
+    /// neither can name them in its return: `learn`'s outcome describes the
+    /// confirmation, and [`MergeOutcome`] is a set of counters the log line
+    /// formats. The caller snapshots [`Self::seeded_families`] before the
+    /// mutation and passes it here after, under the one lock acquisition that
+    /// holds the mutation.
+    pub fn seeds_lost_since(&self, before: &[String]) -> Vec<String> {
+        let now = self.seeded_families();
+        before
+            .iter()
+            .filter(|f| !now.contains(f))
+            .cloned()
+            .collect()
+    }
+
+    /// Drop this family's seed, whatever tier it was filed under. `true` when
+    /// something went.
+    ///
+    /// Family-level and Seed-only, unlike [`Self::forget`], which drops a whole
+    /// `(family, tier)` key of any provenance: the page's seed chip must not
+    /// be a way to throw out a confirmation that happens to share the family.
+    pub fn forget_seed(&mut self, family: &str) -> bool {
+        let before = self.templates.len();
+        self.templates
+            .retain(|t| !(t.family == family && t.origin == Origin::Seed));
+        self.templates.len() != before
+    }
+
+    /// Whether `(family, tier)` holds a sample that is NOT a seed.
+    ///
+    /// The gate on the pool tombstone a `merc_forget_template` sends: a key
+    /// that only ever held a seed was never uploaded from here and names
+    /// nothing the pool serves, so tombstoning it would retire another
+    /// device's art over this device's guess.
+    pub fn has_non_seed(&self, family: &str, tier: u8) -> bool {
+        self.templates
+            .iter()
+            .any(|t| t.family == family && t.tier == tier && t.origin != Origin::Seed)
     }
 
     /// The stored sample of a family OTHER than `family` that `sig` reaches
@@ -896,6 +1121,11 @@ impl TemplateStore {
     /// listed here. A key the user hovered stays off this list even after the
     /// pool adds samples to it, because the question the chip answers is "did
     /// I teach this", not "does the pool also have it".
+    ///
+    /// The emitting filter is `origin == Pooled`, not "not `Local`"
+    /// (POE-208): with a third provenance in the enum, the old form would have
+    /// marked every seeded key as coming from the pool, which is the one thing
+    /// this list is supposed to be able to say.
     pub fn pooled_keys(&self) -> Vec<String> {
         let local: std::collections::HashSet<(&str, u8)> = self
             .templates
@@ -906,6 +1136,7 @@ impl TemplateStore {
         let mut out: Vec<String> = self
             .templates
             .iter()
+            .filter(|t| t.origin == Origin::Pooled)
             .filter(|t| !local.contains(&(t.family.as_str(), t.tier)))
             .map(|t| format!("{}--{}", t.family, t.tier))
             .collect();
@@ -1077,40 +1308,74 @@ impl TemplateStore {
             }
             // Rule 3, part two, checked against the store AS IT STANDS —
             // local samples plus everything this same pull has already merged.
-            match self.best_other_family(&sample.family, &sample.sig, t) {
-                // The player confirmed the incumbent on their own screen. The
-                // served sample yields to it.
-                Some(c) if c.origin == Origin::Local => {
-                    out.conflicting += 1;
-                    continue;
-                }
-                // Two strangers, and nothing on this device says which is the
-                // mislabel. Both go, so the cell reads `?` rather than a
-                // coin-flip `Matched` on the wrong family — and both arts join
-                // `disputed`, which is what carries the verdict past the pair
-                // to the rest of the cluster. Together those two make the
-                // merged store independent of the order the server listed a
-                // cluster in, at any size: every family that claimed the art
-                // ends the pull holding none of it.
-                Some(c) => {
-                    disputed.push(self.templates[c.at].sig.clone());
-                    disputed.push(sample.sig.clone());
-                    self.templates.remove(c.at);
-                    if c.at >= installed_from {
-                        // Installed by this very pull: un-count it rather than
-                        // report a net change that did not happen.
-                        out.added = out.added.saturating_sub(1);
-                    } else {
-                        // It was on disk before this pull, so the store really
-                        // shrank and a save is owed. The boundary moves with
-                        // the element that came out from under it.
-                        installed_from -= 1;
-                        out.dropped += 1;
+            //
+            // A LOOP rather than one check, since POE-208: the seed arm below
+            // removes an incumbent and does NOT refuse the served sample, so
+            // whatever the seed was hiding — a second seed, or the local or
+            // pooled incumbent it happened to outscore — has to be asked
+            // about before the union runs.
+            let mut refused = false;
+            loop {
+                match self.best_other_family(&sample.family, &sample.sig, t) {
+                    // The player confirmed the incumbent on their own screen.
+                    // The served sample yields to it.
+                    Some(c) if c.origin == Origin::Local => {
+                        out.conflicting += 1;
+                        refused = true;
+                        break;
                     }
-                    out.conflicting += 2;
-                    continue;
+                    // A SEED incumbent loses and the served sample goes on to
+                    // take the normal union path (POE-208 collision rule b).
+                    // Not `disputed`: a seed is this device's own guess from a
+                    // name map, not a second stranger's claim, so there is no
+                    // coin flip to refuse — the pool's sample is a real
+                    // confirmation somebody made on a real screen. The family
+                    // is blocklisted by the caller, because the art it was
+                    // derived from is still cached and the next start would
+                    // install it again.
+                    Some(c) if c.origin == Origin::Seed => {
+                        self.templates.remove(c.at);
+                        // A seed is never installed by a pull, so it is always
+                        // below the boundary; the boundary moves with the
+                        // element that came out from under it.
+                        if c.at < installed_from {
+                            installed_from -= 1;
+                        }
+                        out.seeds_evicted += 1;
+                    }
+                    // Two strangers, and nothing on this device says which is
+                    // the mislabel. Both go, so the cell reads `?` rather than
+                    // a coin-flip `Matched` on the wrong family — and both arts
+                    // join `disputed`, which is what carries the verdict past
+                    // the pair to the rest of the cluster. Together those two
+                    // make the merged store independent of the order the server
+                    // listed a cluster in, at any size: every family that
+                    // claimed the art ends the pull holding none of it.
+                    Some(c) => {
+                        disputed.push(self.templates[c.at].sig.clone());
+                        disputed.push(sample.sig.clone());
+                        self.templates.remove(c.at);
+                        if c.at >= installed_from {
+                            // Installed by this very pull: un-count it rather
+                            // than report a net change that did not happen.
+                            out.added = out.added.saturating_sub(1);
+                        } else {
+                            // It was on disk before this pull, so the store
+                            // really shrank and a save is owed. The boundary
+                            // moves with the element that came out from under
+                            // it.
+                            installed_from -= 1;
+                            out.dropped += 1;
+                        }
+                        out.conflicting += 2;
+                        refused = true;
+                        break;
+                    }
+                    None => break,
                 }
-                None => {}
+            }
+            if refused {
+                continue;
             }
             let same_key = self
                 .templates
@@ -1287,11 +1552,18 @@ impl TemplateStore {
     /// The index carries `formatVersion` (POE-207). Version 1 wrote a bare
     /// array, so the shape itself says which derivation the PNGs next to it
     /// hold — and [`purge_stale_store`], not this, is what acts on that.
+    ///
+    /// **[`Origin::Seed`] samples are not written** (POE-208). They are
+    /// re-derived from the cached art at every module start, at the window
+    /// then in force, so persisting them would store one scale's answer under
+    /// a name the next start reads at another. It also keeps `"seed"` out of
+    /// every `index.json` a downgraded build could meet, where an unknown
+    /// origin would take the whole store down with it.
     pub fn save(&self, dir: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut index = Vec::with_capacity(self.templates.len());
         let mut seen: HashMap<(String, u8), usize> = HashMap::new();
-        for t in &self.templates {
+        for t in self.templates.iter().filter(|t| t.origin != Origin::Seed) {
             // Samples of one key are numbered from the second on, so the first
             // keeps the file name earlier stores wrote.
             let n = seen.entry((t.family.clone(), t.tier)).or_insert(0);
@@ -4538,6 +4810,342 @@ mod tests {
                 "(added, dropped) — one sample left the disk, the other never settled on it: {out:?}",
             );
             assert_eq!(out.conflicting, 4, "two collisions, two families each: {out:?}");
+        }
+
+        // -- seeds (POE-208) ---------------------------------------------
+
+        /// Two clean corpus crops of DIFFERENT families, so a seed and a
+        /// confirmation can be given genuinely different art without either
+        /// being synthetic.
+        const APART: (&str, &str) = (
+            "faster-casting--t2-raw.png",
+            "arrow-nova--t3-raw.png",
+        );
+
+        /// A store holding one SEED, by the back door.
+        fn seeded(family: &str, tier: u8, sig: CellSig) -> TemplateStore {
+            let mut store = TemplateStore::new();
+            store.push_sample(family, tier, sig, None, Origin::Seed, false);
+            store
+        }
+
+        fn temp_dir(tag: &str) -> std::path::PathBuf {
+            let dir = std::env::temp_dir()
+                .join(format!("poe-merc-seed-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+            dir
+        }
+
+        /// A seed is never offered to the pool. It is not this device's
+        /// evidence about anything — it is a guess from a name map that every
+        /// other device can make for itself, and publishing it would fill the
+        /// corpus with art nobody confirmed.
+        #[test]
+        fn a_seed_is_never_offered_to_the_pool() {
+            let store = seeded("Faster Casting", 2, template(APART.0));
+
+            assert!(store.pending_uploads().is_empty(), "a seed reached the uploader");
+        }
+
+        /// A seed is never written to disk, so a round trip loses it — every
+        /// module start re-derives it from the cached art at the window then
+        /// in force.
+        #[test]
+        fn a_seed_does_not_survive_a_save_and_load() {
+            let dir = temp_dir("save");
+            let mut store = seeded("Faster Casting", 2, template(APART.0));
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
+
+            store.save(&dir).expect("save");
+            let (loaded, problems) = TemplateStore::load(&dir);
+
+            assert!(problems.is_empty(), "{problems:?}");
+            assert_eq!(loaded.learned_keys(), ["Arrow Nova--3"]);
+            assert!(loaded.seeded_families().is_empty(), "a seed came back off disk");
+            assert!(
+                !dir.join("faster-casting--t2.png").exists(),
+                "the seed's PNG was written",
+            );
+        }
+
+        /// A seed is not a learned key. The ✕ on a learned chip tombstones the
+        /// key in the shared pool, and a seed names nothing the pool serves —
+        /// its chip has its own group and its own command.
+        #[test]
+        fn a_seed_is_not_a_learned_key() {
+            let mut store = seeded("Faster Casting", 2, template(APART.0));
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
+
+            assert_eq!(store.learned_keys(), ["Arrow Nova--3"]);
+            assert_eq!(store.seeded_families(), ["Faster Casting"]);
+        }
+
+        /// A seed is not "from the pool" either. `pooled_keys` used to emit
+        /// every key with no LOCAL sample, which with a third provenance in the
+        /// enum would have marked every seeded key as the pool's — the one
+        /// thing that list exists to be able to say.
+        #[test]
+        fn a_seed_is_not_a_pooled_key() {
+            let mut store = seeded("Faster Casting", 2, template(APART.0));
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Pooled, false);
+
+            assert_eq!(store.pooled_keys(), ["Arrow Nova--3"]);
+        }
+
+        /// A seed yields to an existing sample of another family — the
+        /// incumbent is a confirmation or a pooled sample, and both outrank a
+        /// name map.
+        #[test]
+        fn installing_a_seed_yields_to_another_familys_sample() {
+            let t = Thresholds::default();
+            let art = template(SAME_ART.0);
+            let mut store = holding("Physical as Extra Chaos", 3, art.clone());
+
+            let outcome = store.install_seed("Brittle Chance", 3, template(SAME_ART.1), &t);
+
+            let SeedInstall::YieldedTo { family, origin, .. } = outcome else {
+                panic!("expected a yield, got {outcome:?}");
+            };
+            assert_eq!(family, "Physical as Extra Chaos");
+            assert_eq!(origin, Origin::Local);
+            assert!(store.seeded_families().is_empty(), "the seed was installed anyway");
+        }
+
+        /// A full key is left alone: three samples is what the matcher was
+        /// sized for, and a seed is the least valuable thing that could take
+        /// the fourth slot.
+        #[test]
+        fn installing_a_seed_skips_a_full_key() {
+            let t = Thresholds::default();
+            let mut store = TemplateStore::new();
+            for _ in 0..TemplateStore::MAX_SAMPLES_PER_KEY {
+                store.push_sample(
+                    "Faster Casting",
+                    2,
+                    template(APART.0),
+                    None,
+                    Origin::Local,
+                    false,
+                );
+            }
+
+            let outcome = store.install_seed("Faster Casting", 2, template(APART.0), &t);
+
+            assert_eq!(outcome, SeedInstall::KeyFull);
+            assert!(store.seeded_families().is_empty());
+        }
+
+        /// A local confirmation EVICTS a colliding seed and is stored — the
+        /// player watching the tooltip outranks the name map, which is why
+        /// POE-207's incumbent-wins rule does not apply to a seed.
+        #[test]
+        fn a_confirmation_evicts_a_colliding_seed_and_is_stored() {
+            let t = Thresholds::default();
+            let mut store = seeded("Physical as Extra Chaos", 3, template(SAME_ART.0));
+            let before = store.seeded_families();
+
+            let outcome = store.learn("Brittle Chance", 3, template(SAME_ART.1), None, &t);
+
+            assert_eq!(outcome, LearnOutcome::Stored);
+            assert_eq!(store.learned_keys(), ["Brittle Chance--3"]);
+            assert!(store.seeded_families().is_empty());
+            assert_eq!(
+                store.seeds_lost_since(&before),
+                ["Physical as Extra Chaos"],
+                "the caller has to be able to name the family to blocklist",
+            );
+        }
+
+        /// A confirmation of a family this device only SEEDED is stored as a
+        /// local sample and reaches the pool (tracker AC3). Without the
+        /// same-key rule ignoring seeds, the seed would answer "already known"
+        /// and the pool would never learn what the player just proved.
+        #[test]
+        fn a_confirmation_of_a_seeded_family_is_stored_and_offered() {
+            let t = Thresholds::default();
+            let art = template(APART.0);
+            let mut store = seeded("Faster Casting", 2, art.clone());
+
+            let outcome = store.learn("Faster Casting", 2, art, None, &t);
+
+            assert_eq!(outcome, LearnOutcome::Stored);
+            assert_eq!(store.learned_keys(), ["Faster Casting--2"]);
+            assert_eq!(
+                store.pending_uploads().len(),
+                1,
+                "the confirmation has to reach the pool",
+            );
+            assert_eq!(
+                store.seeded_families(),
+                ["Faster Casting"],
+                "the seed of the SAME family is not a collision and stays",
+            );
+        }
+
+        /// A served sample colliding with a seed evicts it and then installs
+        /// normally. Counted in its own `seeds_evicted`, NOT in `dropped` and
+        /// NOT in `changed()`: nothing on disk moved, because a seed was never
+        /// on disk — but the generation still has to be bumped, which is why
+        /// the counter exists at all.
+        #[test]
+        fn a_pooled_sample_evicts_a_seed_incumbent_without_a_disk_change() {
+            let t = Thresholds::default();
+            let mut store = seeded("Physical as Extra Chaos", 3, template(SAME_ART.0));
+            let before = store.seeded_families();
+
+            let out = store.merge_pulled(
+                &pull(vec![PooledSample {
+                    family: "Brittle Chance".into(),
+                    tier: 3,
+                    sig: template(SAME_ART.1),
+                }]),
+                &[],
+                &t,
+            );
+
+            assert_eq!(out.seeds_evicted, 1);
+            assert_eq!(out.dropped, 0, "a seed is not a disk drop: {out:?}");
+            assert_eq!(out.conflicting, 0, "the served sample was not refused: {out:?}");
+            assert_eq!(out.added, 1, "the served sample still installs: {out:?}");
+            assert_eq!(store.seeds_lost_since(&before), ["Physical as Extra Chaos"]);
+            assert_eq!(store.pooled_keys(), ["Brittle Chance--3"]);
+            // `changed()` IS true here, and it has to be: the served sample
+            // landed on disk. What must not contribute is the eviction itself
+            // — asserted directly below, because in this arm the served sample
+            // always installs and no store state can hold the two apart.
+            assert!(out.changed());
+        }
+
+        /// The eviction on its own owes no save.
+        ///
+        /// Separated from the arm above because the arm cannot show it: a
+        /// served sample that evicts a seed goes on to install, so `added`
+        /// makes `changed()` true whatever the seed did. The property is about
+        /// the FIELD, so it is tested on the field.
+        #[test]
+        fn evicting_a_seed_is_not_by_itself_a_disk_change() {
+            assert!(
+                !MergeOutcome {
+                    seeds_evicted: 3,
+                    ..Default::default()
+                }
+                .changed(),
+                "a seed was never on disk, so losing one owes no save",
+            );
+            for owed in [
+                MergeOutcome { added: 1, ..Default::default() },
+                MergeOutcome { replaced: 1, ..Default::default() },
+                MergeOutcome { dropped: 1, ..Default::default() },
+            ] {
+                assert!(owed.changed(), "{owed:?}");
+            }
+        }
+
+        /// A seed hiding a LOCAL incumbent must not let the served sample in:
+        /// the eviction uncovers the confirmation, and the loop asks again.
+        ///
+        /// The reachable shape of the arm's loop. Without it the served sample
+        /// would install beside art the player confirmed under another name,
+        /// which is the mislabel POE-207 AC3 exists to refuse.
+        #[test]
+        fn evicting_a_seed_does_not_let_a_sample_past_the_local_incumbent() {
+            let t = Thresholds::default();
+            let mut store = holding("Physical as Extra Chaos", 3, template(SAME_ART.0));
+            store.push_sample("Ailment Damage", 2, template(SAME_ART.1), None, Origin::Seed, false);
+
+            let out = store.merge_pulled(
+                &pull(vec![PooledSample {
+                    family: "Brittle Chance".into(),
+                    tier: 3,
+                    sig: template(SAME_ART.1),
+                }]),
+                &[],
+                &t,
+            );
+
+            assert_eq!(out.seeds_evicted, 1);
+            assert_eq!(out.conflicting, 1, "the local incumbent still refuses it: {out:?}");
+            assert_eq!(out.added, 0, "{out:?}");
+            assert_eq!(store.learned_keys(), ["Physical as Extra Chaos--3"]);
+        }
+
+        /// `forget_seed` is family-level and Seed-only: the page's seed chip
+        /// must not throw out a confirmation that happens to share the family.
+        #[test]
+        fn forgetting_a_seed_leaves_the_familys_confirmations_alone() {
+            let mut store = seeded("Faster Casting", 2, template(APART.0));
+            store.push_sample("Faster Casting", 3, template(APART.0), None, Origin::Local, false);
+
+            assert!(store.forget_seed("Faster Casting"));
+            assert!(!store.forget_seed("Faster Casting"), "nothing left to forget");
+            assert_eq!(store.learned_keys(), ["Faster Casting--3"]);
+            assert!(store.seeded_families().is_empty());
+        }
+
+        /// What the reset line counts is what the store keeps. `len()` counts
+        /// seeds too, and reporting it would tell the user they threw away
+        /// templates that were never theirs and are back on the next start.
+        #[test]
+        fn the_persisted_count_is_the_number_save_writes() {
+            let mut store = seeded("Faster Casting", 2, template(APART.0));
+            store.push_sample("Arrow Nova", 3, template(APART.1), None, Origin::Local, false);
+
+            assert_eq!(store.len(), 2);
+            assert_eq!(store.persisted_len(), 1);
+
+            let dir = temp_dir("persisted");
+            store.save(&dir).expect("save");
+            let (loaded, _) = TemplateStore::load(&dir);
+            assert_eq!(
+                loaded.len(),
+                store.persisted_len(),
+                "the count and the file disagree",
+            );
+        }
+
+        /// `aligned()` enumerates the whole shift grid, in the order the
+        /// signatures were built, and its `(0, 0)` entry is the one `learn`
+        /// stores.
+        ///
+        /// The pairing is the contract: the two vectors are filled in one loop
+        /// that can skip an entry, so the only thing keeping index `i`'s score
+        /// with index `i`'s offset is that they are pushed together. A caller
+        /// deriving the offset from `i` instead would report the wrong shift
+        /// with the right score — invisible to every scoring assertion, and the
+        /// calibration's median-shift measurement is read straight off it.
+        #[test]
+        fn every_alignment_is_paired_with_the_offset_it_was_built_at() {
+            let cell = probe(APART.0);
+
+            let shifts: Vec<(i32, i32)> = cell.aligned().map(|(_, s)| s).collect();
+
+            assert_eq!(shifts.len(), cell.all().len(), "a signature with no offset");
+            let mut expected = Vec::new();
+            for dy in -SHIFT_MAX..=SHIFT_MAX {
+                for dx in -SHIFT_MAX..=SHIFT_MAX {
+                    expected.push((dx, dy));
+                }
+            }
+            assert_eq!(shifts, expected);
+            let centre_at = shifts.iter().position(|&s| s == (0, 0)).unwrap();
+            assert_eq!(
+                cell.all()[centre_at],
+                cell.clone().into_centre(),
+                "aligned() and into_centre() disagree about which one is (0, 0)",
+            );
+        }
+
+        /// The tombstone gate on `merc_forget_template`: a key that only ever
+        /// held a seed names nothing the pool serves, so forgetting it must not
+        /// retire another device's art.
+        #[test]
+        fn a_seed_only_key_holds_nothing_the_pool_gave_it() {
+            let mut store = seeded("Faster Casting", 2, template(APART.0));
+            assert!(!store.has_non_seed("Faster Casting", 2));
+
+            store.push_sample("Faster Casting", 2, template(APART.1), None, Origin::Pooled, false);
+            assert!(store.has_non_seed("Faster Casting", 2));
         }
     }
 }

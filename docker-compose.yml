@@ -104,6 +104,12 @@ services:
 volumes:
   go-pkg:
   frontend_node_modules:
+      # The server's embedded gem-art name map (ADR-012), read-only and by the
+      # same rule again (POE-208): `mercenary/seed-map.json` may only name gems
+      # `/api/gem-icon/{name}` will answer for, and the contract test reads the
+      # SERVER's copy rather than a mirror — a mirror would only ever prove it
+      # agreed with itself, and a name the server dropped would 404 forever.
+      - ./internal/gemicon/gem-icon-urls.json:/app/internal/gemicon/gem-icon-urls.json:ro
   desktop_cargo_registry:
   desktop_cargo_git:
   desktop_target:

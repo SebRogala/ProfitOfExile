@@ -485,7 +485,7 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
         return Err(format!("template key for {family:?} carries no tier"));
     };
     let dir = templates_dir(&app)?;
-    let (learned, pooled) = {
+    let (learned, pooled, tombstone, lost_seeds) = {
         let state = app.state::<AppState>();
         // The user's un-poison click writes the same directory the loop's
         // off-tick writer and the pool's merge do. See
@@ -495,21 +495,91 @@ pub fn merc_forget_template(family: String, tier: Option<u8>, app: AppHandle) ->
                 .merc_templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
+            // Asked BEFORE the forget, because afterwards there is nothing
+            // left to ask: a key that only ever held a seed names nothing the
+            // pool serves, and tombstoning it would retire another device's
+            // art on the strength of this device's guess.
+            let tombstone = store.has_non_seed(&family, tier);
+            let seeded = store.seeded_families();
             if !store.forget(&family, tier) {
                 return Err(format!("no learned template for {family} (tier {tier})"));
             }
+            // The same seam the pull's merge uses to name what it evicted, so
+            // there is one answer to "which families owe a blocklist entry".
+            let lost = store.seeds_lost_since(&seeded);
             store.save(&dir)?;
-            Ok((store.learned_keys(), store.pooled_keys()))
+            Ok((store.learned_keys(), store.pooled_keys(), tombstone, lost))
         })?
     };
+    // Every seed eviction blocklists, whichever door it came through, or the
+    // next module start re-derives it from the art still in the cache.
+    for lost in &lost_seeds {
+        block_seed(&app, &dir, lost);
+    }
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: forgot template {family} (tier {tier})"));
-    super::sync::spawn_tombstone(&app, family, tier);
+    if tombstone {
+        super::sync::spawn_tombstone(&app, family, tier);
+    }
     publish(&app, |slice| {
         slice.learned_families = learned;
         slice.pooled_families = pooled;
     });
     Ok(())
+}
+
+/// Forget the SEED of one family (POE-208 collision rule c′).
+///
+/// The page's seed chip, and a different door from
+/// [`merc_forget_template`]: family-level, because a seed is one row of the
+/// map and one sample whatever tier it was filed under, and tombstone-free,
+/// because a seed is derived here from art the server already serves — it is
+/// not something the pool gave this device and not something to retire for
+/// everybody. `merc_forget_template` keeps requiring a tier and is not the
+/// seed's door.
+///
+/// Nothing is saved: seeds are never in `index.json`. The blocklist is the
+/// whole of the persistence, and without it the next module start would
+/// re-derive the seed from the cached art and undo the click.
+///
+/// The store's mutex ALONE — never `writing_icons_dir`. That lock serialises
+/// writers of the template directory, and this writes no template; taking it
+/// would park the click behind whatever PNG the off-tick save queue is
+/// flushing.
+#[tauri::command]
+pub fn merc_forget_seed(family: String, app: AppHandle) -> Result<(), String> {
+    let dir = templates_dir(&app)?;
+    {
+        let state = app.state::<AppState>();
+        let mut store = state
+            .merc_templates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if !store.forget_seed(&family) {
+            return Err(format!("no seeded template for {family}"));
+        }
+    }
+    block_seed(&app, &dir, &family);
+    bump_generation(&app);
+    crate::app_log(&app, format!("Merc: forgot the seeded template for {family}"));
+    Ok(())
+}
+
+/// Record that this family's seed was thrown out here, and say so if the file
+/// will not take it.
+///
+/// Fail-LOUD, unlike most of this module's disk writes: a blocklist that did
+/// not persist means the seed comes back on the next start, and the user who
+/// just dismissed it has no way to tell that from the app ignoring them.
+fn block_seed(app: &AppHandle, dir: &Path, family: &str) {
+    match super::seed::block_family(dir, family) {
+        Ok(true) => crate::app_log(app, format!("Merc: {family} will not be seeded again")),
+        Ok(false) => {}
+        Err(e) => crate::app_log(
+            app,
+            format!("Merc: could not record the seed block for {family} — {e}"),
+        ),
+    }
 }
 
 /// Drop every learned template (D10 §1).
@@ -541,13 +611,23 @@ pub fn merc_reset_templates(app: AppHandle) -> Result<(), String> {
                 .merc_templates
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let count = store.len();
+            // Seeds excluded: the line says "learned templates", and a seed
+            // is neither learned nor kept — counting them would report a
+            // number nothing on disk or on the page ever showed.
+            let count = store.persisted_len();
             store.reset();
             store.save(&dir)?;
             Ok::<usize, String>(count)
         })?
     };
     super::sync::forget_etag(&app);
+    // A reset means start over, art included (POE-208 collision rule d): the
+    // blocklist AND the cached gem art go, so the next module start re-fetches
+    // and re-seeds from scratch. Leaving the blocklist would keep families
+    // un-seedable with no store left to explain why.
+    if let Err(e) = super::seed::clear_seed_state(&dir) {
+        crate::app_log(&app, format!("Merc: seed cache not cleared — {e}"));
+    }
     bump_generation(&app);
     crate::app_log(&app, format!("Merc: reset {count} learned templates"));
     publish(&app, |slice| {
