@@ -3022,22 +3022,34 @@ fn detect_tick(
     // reads a panel — a tick with no recruit window returns well above here —
     // and `ssot::screen_changed` is what keeps a re-measurement of the same
     // screen from waking every overlay's poll.
-    crate::ssot::publish_screen(
-        app,
-        crate::ssot::ScreenSlice {
-            width: screen[0],
-            height: screen[1],
-            ui_scale: layout.scale,
-            // Which cue this reports, and why `Held` is a frame measurement,
-            // is `ssot::screen_scale_source`'s call and is documented there.
-            source: crate::ssot::screen_scale_source(layout.scale_source),
-            // The tick's own clock read, a few ms before `build_capture` takes
-            // its `captured_at_ms` from the same source: this is when the scale
-            // was MEASURED, and publishing at the settle rather than after
-            // pass 2 keeps a cancelled tick's measurement from being lost.
-            measured_at_ms: now_ms(),
-        },
-    );
+    let published = crate::ssot::ScreenSlice {
+        width: screen[0],
+        height: screen[1],
+        ui_scale: layout.scale,
+        // Which cue this reports, and why `Held` is a frame measurement,
+        // is `ssot::screen_scale_source`'s call and is documented there.
+        source: crate::ssot::screen_scale_source(layout.scale_source),
+        // The tick's own clock read, a few ms before `build_capture` takes
+        // its `captured_at_ms` from the same source: this is when the scale
+        // was MEASURED, and publishing at the settle rather than after
+        // pass 2 keeps a cancelled tick's measurement from being lost.
+        measured_at_ms: now_ms(),
+    };
+    let screen_changed = crate::ssot::publish_screen(app, published);
+    // POE-214 WI-B2: remember a frame measurement across restarts, so the next
+    // session knows this screen's UI scale before — or without — a recruit
+    // window ever opening. What the two-part gate buys, and why an OCR-derived
+    // scale is not written, is `ssot::should_remember_screen`'s doc; the short
+    // of it is that `persist_settings` is two blocking disk ops and the gate's
+    // 0.01 deadband is what keeps them off every tick of an open panel.
+    //
+    // Still no lock held here: `publish_screen` drops its guard before it
+    // returns, and `persist_settings` re-takes the owner mutexes through
+    // `settings::from_state` — the same after-the-drop shape as
+    // `temple::run::remember_calibration`.
+    if crate::ssot::should_remember_screen(screen_changed, published.source) {
+        crate::persist_settings(app);
+    }
     if debug_mode(app) {
         match (&refined.fit, &refined.declined) {
             (Some(fit), _) => {

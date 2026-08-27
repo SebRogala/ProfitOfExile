@@ -307,6 +307,15 @@ fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
     let existing = settings::load(app);
     let mut s = settings::from_state(&state);
+    // Keep the remembered screen scale when this session has nothing to replace
+    // it with. `from_state`'s screen-scale projection is lossy — a `MercOcr`
+    // slice maps to `None` — so without this every one of the call sites below
+    // would null a stored measurement after the first OCR-only tick. Its own
+    // statement, NOT folded into `persist_overlay_settings`: that function's
+    // contract is fields no AppState mutex owns, and `state.screen` owns this
+    // one. `preserve_screen_scale` states the rest of the rule, including why a
+    // `MercFrame` measurement at different dimensions still overwrites.
+    settings::preserve_screen_scale(&existing, &mut s);
     // Preserve fields that are saved separately (not via AppState):
     // window position (saved on close), overlay positions (saved via set_*_overlay_settings).
     // This is DRY — from_state handles AppState fields, persist_overlay_settings handles the rest.
