@@ -475,6 +475,19 @@ pub enum Origin {
     Pooled,
 }
 
+impl Origin {
+    /// How a log line names this provenance. Load-bearing in the refusal line
+    /// [`TemplateStore::learn`] produces: "learned here" and "from the pool"
+    /// point the player at two different fixes — their own wrong confirmation,
+    /// or somebody else's arriving through the pool.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Origin::Local => "learned here",
+            Origin::Pooled => "from the pool",
+        }
+    }
+}
+
 /// One learned sample.
 #[derive(Debug, Clone)]
 pub struct Template {
@@ -591,6 +604,21 @@ pub struct MergeOutcome {
     /// Served entries held back by a local forget the server has not
     /// acknowledged.
     pub suppressed: usize,
+    /// Samples refused because one art turned up under two families — a
+    /// mislabel from another device, refused for the same reason
+    /// [`TemplateStore::learn`] refuses one locally. TWO per collision when
+    /// both sides are pooled, because then both are refused; one when the
+    /// incumbent is local and only the served sample yields.
+    pub conflicting: usize,
+    /// Already-stored POOLED samples removed because a served sample of
+    /// another family carried the same art.
+    ///
+    /// Separate from `conflicting` because it answers a different question:
+    /// `conflicting` counts refusals, this counts the ones that moved the
+    /// store and therefore owe a save. A sample this same pull installed and
+    /// then dropped is NOT counted — it un-counts itself from `added`, and the
+    /// store is back where it started.
+    pub dropped: usize,
     /// The corpus declared a format version this build cannot read — nothing
     /// was merged.
     pub foreign_version: bool,
@@ -600,8 +628,57 @@ impl MergeOutcome {
     /// Whether the store actually moved, and therefore whether a save and a
     /// generation bump are owed.
     pub fn changed(&self) -> bool {
-        self.added > 0 || self.replaced > 0
+        self.added > 0 || self.replaced > 0 || self.dropped > 0
     }
+}
+
+/// What one [`TemplateStore::learn`] did.
+///
+/// An enum rather than the `bool` it replaced because the third answer —
+/// "identical art is already filed under someone else" — has to name WHO, and
+/// a caller that only learns "not stored" cannot tell the player which of the
+/// two families is now unmatchable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LearnOutcome {
+    /// The sample was recorded.
+    Stored,
+    /// Nothing stored: a sample under this exact `(family, tier)` already
+    /// matches the art, or the key is full.
+    AlreadyKnown,
+    /// Nothing stored: a stored sample of ANOTHER family reaches this art at
+    /// `icon_match`. See [`TemplateStore::learn`] for why this is a refusal
+    /// and not a second sample. `origin` says whether the incumbent is this
+    /// player's own confirmation or one the pool taught them — two different
+    /// fixes.
+    ConflictsWith {
+        family: String,
+        tier: u8,
+        origin: Origin,
+        score: f32,
+    },
+}
+
+impl LearnOutcome {
+    /// Whether the store actually took the sample — and therefore whether a
+    /// save and a pool offer are owed.
+    pub fn stored(&self) -> bool {
+        matches!(self, Self::Stored)
+    }
+}
+
+/// A stored sample a candidate signature collides with — one art, two families.
+///
+/// Carries `origin` because the two doors act on it differently:
+/// [`TemplateStore::learn`] only NAMES it (the incumbent wins either way), while
+/// [`TemplateStore::merge_pulled`] evicts a pooled incumbent and leaves a local
+/// one standing. `at` is the index the eviction needs.
+#[derive(Debug, Clone)]
+struct Collision {
+    at: usize,
+    family: String,
+    tier: u8,
+    origin: Origin,
+    score: f32,
 }
 
 /// The learned icon templates, keyed by `(family, tier)`.
@@ -668,14 +745,56 @@ impl TemplateStore {
 
     /// Record a confirmed sample.
     ///
-    /// Returns `false` and changes nothing when a sample already stored under
-    /// `(family, tier)` MATCHES this one (at `t.icon_match`), or when the key
-    /// already holds [`Self::MAX_SAMPLES_PER_KEY`] samples. A sample that no
-    /// stored one reaches is ADDED, never overwriting: the existing sample may
-    /// be good art from another session, and this may be the mistimed hover —
-    /// or the reverse. Matching searches every sample, so either way the cell
-    /// is recognised next time. The un-poison path is [`Self::forget`], which
+    /// Stores nothing and returns [`LearnOutcome::AlreadyKnown`] when a sample
+    /// already stored under `(family, tier)` MATCHES this one (at
+    /// `t.icon_match`), or when the key already holds
+    /// [`Self::MAX_SAMPLES_PER_KEY`] samples. A sample that no stored one
+    /// reaches is ADDED, never overwriting: the existing sample may be good art
+    /// from another session, and this may be the mistimed hover — or the
+    /// reverse. Matching searches every sample, so either way the cell is
+    /// recognised next time. The un-poison path is [`Self::forget`], which
     /// drops the whole key.
+    ///
+    /// **A mislabelled pair is REFUSED, not stored** (POE-207 AC3). Art the
+    /// store already holds under a DIFFERENT family is the one thing a second
+    /// sample cannot repair: `match_family` needs an `icon_lead` lead over the
+    /// best sample of another family, so once one art sits under two families
+    /// BOTH of them stop being `Matched` for good — and a `forget` of either
+    /// one is a guess at which confirmation was the wrong one. This is the
+    /// poison the 2026-08-26 purge found on 19 of 21 samples. The refusal
+    /// names the family already holding the art, because that name is the whole
+    /// of the diagnosis; the confirmation itself still stands and still applies
+    /// to the cell — the player said what it is, and only the template is
+    /// withheld.
+    ///
+    /// The cross-family check runs FIRST, before the same-key one, so a store
+    /// already carrying the mislabel reports it on the next confirm rather than
+    /// answering the innocent "already known". On a clean store the two orders
+    /// are indistinguishable — nothing reaches `icon_match` across families.
+    ///
+    /// **The INCUMBENT wins, whichever side it is on.** A confirmation that
+    /// collides with a pooled sample is refused rather than evicting it, even
+    /// though the player is the better authority: eviction here and a re-merge
+    /// on the next pull is a ping-pong that writes the store every session and
+    /// never settles, because this device cannot tombstone somebody else's
+    /// sample from the learn path. The player's escape is [`Self::forget`] on
+    /// the named key, which DOES tombstone — which is why the refusal names the
+    /// key and its provenance rather than just saying no.
+    ///
+    /// **What this gate does and does not catch.** It is one unshifted
+    /// signature against another, no alignment search — sample-vs-sample, so a
+    /// confirm stays cheap. That catches art that is BYTE-REGISTERED with the
+    /// incumbent: the same cell rect read twice, which is the tooltip-lag
+    /// mislabel and 19 of the 21 poisoned samples of 2026-08-26. It does NOT
+    /// catch the same art cut from a DIFFERENT cell rect, on this device or
+    /// another: `geometry::detect` lands its rects 1-3 px apart, and the same
+    /// art in two cells scores 0.45-0.70 unaligned (see [`SHIFT_MAX`]) — under
+    /// `icon_low`, let alone `icon_match`. Pooled samples are the same case by
+    /// construction, since only the 1728-byte signature travels and this device
+    /// never sees the crop it came from. The renumbering path — a dropped skill
+    /// line filing one cell's art under another cell's family — is covered
+    /// locally by keying the crop cache on `row_key` instead of the row index,
+    /// not here.
     pub fn learn(
         &mut self,
         family: &str,
@@ -683,7 +802,15 @@ impl TemplateStore {
         sig: CellSig,
         raw: Option<RgbaImage>,
         t: &Thresholds,
-    ) -> bool {
+    ) -> LearnOutcome {
+        if let Some(other) = self.best_other_family(family, &sig, t) {
+            return LearnOutcome::ConflictsWith {
+                family: other.family,
+                tier: other.tier,
+                origin: other.origin,
+                score: other.score,
+            };
+        }
         let same_key: Vec<&Template> = self
             .templates
             .iter()
@@ -692,10 +819,52 @@ impl TemplateStore {
         if same_key.len() >= Self::MAX_SAMPLES_PER_KEY
             || same_key.iter().any(|s| s.sig.ncc(&sig) >= t.icon_match)
         {
-            return false;
+            return LearnOutcome::AlreadyKnown;
         }
         self.push_sample(family, tier, sig, raw, Origin::Local, false);
-        true
+        LearnOutcome::Stored
+    }
+
+    /// The stored sample of a family OTHER than `family` that `sig` reaches
+    /// hardest, when it reaches one at `t.icon_match` at all.
+    ///
+    /// One derivation for both doors into the store — [`Self::learn`] and
+    /// [`Self::merge_pulled`] — because a rule that only guarded the local door
+    /// would let the same mislabel walk in from another device through the
+    /// pool, which is the half of AC3 the hover guard does not cover. What the
+    /// gate reaches and what it misses is written out on [`Self::learn`].
+    ///
+    /// Family, not `(family, tier)`: two tiers of ONE family sharing art is the
+    /// normal case the matcher's lead rule already treats as agreement.
+    ///
+    /// Ties go to the FIRST stored sample, which is the oldest: when two
+    /// families already hold the art the earlier confirmation is the one named.
+    fn best_other_family(
+        &self,
+        family: &str,
+        sig: &CellSig,
+        t: &Thresholds,
+    ) -> Option<Collision> {
+        let mut best: Option<Collision> = None;
+        for (at, stored) in self.templates.iter().enumerate() {
+            if stored.family == family {
+                continue;
+            }
+            let score = stored.sig.ncc(sig);
+            if score < t.icon_match {
+                continue;
+            }
+            if best.as_ref().map(|c| c.score).unwrap_or(f32::MIN) < score {
+                best = Some(Collision {
+                    at,
+                    family: stored.family.clone(),
+                    tier: stored.tier,
+                    origin: stored.origin,
+                    score,
+                });
+            }
+        }
+        best
     }
 
     /// Store a sample unconditionally — the load path, where every index
@@ -793,7 +962,7 @@ impl TemplateStore {
 
     /// Fold a pulled corpus into the store (POE-201).
     ///
-    /// Three rules, in this order:
+    /// Four rules, in this order:
     ///
     /// 1. **A foreign format version is never merged.** Signatures from two
     ///    versions are not comparable, so merging them would not "mostly work"
@@ -805,7 +974,37 @@ impl TemplateStore {
     ///    without it, the device that still holds the bad sample would union it
     ///    straight back in on its next pull. A tombstoned key may still carry
     ///    live samples — retiring bad art does not close the key.
-    /// 3. **Everything else is a union**, deduped by the same NCC the local
+    /// 3. **A served sample whose art the store already holds under ANOTHER
+    ///    family is refused**, and WHO ELSE goes with it depends on what the
+    ///    incumbent is. The rule and the reason are [`Self::learn`]'s — one art
+    ///    under two families makes both permanently unmatchable — reached by
+    ///    the other door: the local hover guard cannot see a wrong confirmation
+    ///    made on somebody else's machine, so the pool needs its own copy of
+    ///    the check (POE-207 AC3). The same limit applies as there: this
+    ///    compares one unshifted signature against another, which catches art
+    ///    byte-registered with the incumbent and NOT the same art cut from a
+    ///    different cell rect, which scores 0.45-0.70 unaligned. A pooled
+    ///    sample is always that case — only the 1728-byte signature travels, so
+    ///    this device never has the crop to re-align.
+    ///    - **Against a LOCAL incumbent the served sample yields**, one
+    ///      `conflicting`, and the incumbent stays: it is the art this player
+    ///      confirmed on their own screen, and that is the only ground truth
+    ///      this device has.
+    ///    - **Against a POOLED incumbent BOTH go**, two `conflicting` and one
+    ///      `dropped`, because nothing here says which of the two strangers is
+    ///      the mislabel and keeping either is a coin flip that can read
+    ///      `Matched` on the wrong family. The module's standing preference is
+    ///      to fail towards `LowConfidence`, never towards a wrong family, so
+    ///      the cell goes back to `?` and the player's own hover settles it.
+    ///      The refused art is then remembered FOR THE REST OF THE PULL, so a
+    ///      cluster empties whatever its size: without that, a third family
+    ///      claiming the same art would meet the store the first two had just
+    ///      emptied and install into it, and which family survived would be
+    ///      the server's listing order. Two such three-family clusters are in
+    ///      the committed corpus. What holds is therefore stronger than "the
+    ///      same shape either way": for one art, the MERGED STORE ITSELF is
+    ///      the same in every ordering — no family holds it.
+    /// 4. **Everything else is a union**, deduped by the same NCC the local
     ///    `learn` uses and capped by the same [`Self::MAX_SAMPLES_PER_KEY`]:
     ///    the cap applies to the MERGED set, so a pull cannot push a key past
     ///    what the matcher was sized for.
@@ -843,10 +1042,75 @@ impl TemplateStore {
             out.replaced += before - self.templates.len();
         }
 
+        // Where this pull's own installs begin. Everything below it was in the
+        // store before the loop, and only those owe a save when they are
+        // dropped — see the pooled-incumbent arm.
+        let mut installed_from = self.templates.len();
+        // Art this pull has already thrown out. The store cannot carry this,
+        // because emptying a collision is exactly what removes the evidence:
+        // a cluster's members arrive one at a time, and once two of them have
+        // knocked each other out the THIRD meets an empty store and installs —
+        // surviving as a confident wrong `Matched` chosen by the server's
+        // listing order. The fixture holds two real three-family clusters
+        // (DoT Multiplier / Swift Affliction / Cooldown Recovery, and Area of
+        // Effect / Increased Area of Effect / Curse Effect), so this is
+        // observed shape, not a hypothetical.
+        //
+        // Keyed on the ART ALONE, with no family part: a disputed art is
+        // disputed under every name, including the ones already in the
+        // dispute. Excluding the refused sample's own family would let a
+        // second sample of it back in and hand the art to exactly one family
+        // again, which is the coin flip this rule exists to prevent.
+        let mut disputed: Vec<CellSig> = Vec::new();
         for sample in &corpus.samples {
             if held(&sample.family, sample.tier) {
                 out.suppressed += 1;
                 continue;
+            }
+            // Rule 3, part one: art this pull has already emptied stays empty,
+            // however many families claim it. Checked BEFORE the store,
+            // because by now the collision that disputed it has left no trace
+            // there.
+            if disputed.iter().any(|d| d.ncc(&sample.sig) >= t.icon_match) {
+                out.conflicting += 1;
+                continue;
+            }
+            // Rule 3, part two, checked against the store AS IT STANDS —
+            // local samples plus everything this same pull has already merged.
+            match self.best_other_family(&sample.family, &sample.sig, t) {
+                // The player confirmed the incumbent on their own screen. The
+                // served sample yields to it.
+                Some(c) if c.origin == Origin::Local => {
+                    out.conflicting += 1;
+                    continue;
+                }
+                // Two strangers, and nothing on this device says which is the
+                // mislabel. Both go, so the cell reads `?` rather than a
+                // coin-flip `Matched` on the wrong family — and both arts join
+                // `disputed`, which is what carries the verdict past the pair
+                // to the rest of the cluster. Together those two make the
+                // merged store independent of the order the server listed a
+                // cluster in, at any size: every family that claimed the art
+                // ends the pull holding none of it.
+                Some(c) => {
+                    disputed.push(self.templates[c.at].sig.clone());
+                    disputed.push(sample.sig.clone());
+                    self.templates.remove(c.at);
+                    if c.at >= installed_from {
+                        // Installed by this very pull: un-count it rather than
+                        // report a net change that did not happen.
+                        out.added = out.added.saturating_sub(1);
+                    } else {
+                        // It was on disk before this pull, so the store really
+                        // shrank and a save is owed. The boundary moves with
+                        // the element that came out from under it.
+                        installed_from -= 1;
+                        out.dropped += 1;
+                    }
+                    out.conflicting += 2;
+                    continue;
+                }
+                None => {}
             }
             let same_key = self
                 .templates
@@ -2063,16 +2327,25 @@ mod tests {
     /// Two tiers of ONE family are not competition: the lead rule measures
     /// against a different family, so a family learned at both tiers must
     /// still match, not fall to low-confidence.
+    ///
+    /// The same art at two tiers of one family is the NORMAL case — a support
+    /// keeps its icon across tiers — so the mislabelled-pair refusal
+    /// (`best_other_family`) has to exclude on the family alone. A refusal keyed
+    /// on the whole `(family, tier)` would make the second tier unlearnable and
+    /// leave this match unreachable, which is why the second `learn` is checked
+    /// here and not only the match it feeds.
     #[test]
     fn two_tiers_of_the_same_family_do_not_cancel_each_others_lead() {
         let img = fixture();
         let t = MercGeometry::default().thresholds;
         let mut store = TemplateStore::new();
         store.learn("Chain", 1, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
-        store.learn("Chain", 3, sig_of(&img, 1, 0), None, &MercGeometry::default().thresholds);
 
+        let second = store.learn("Chain", 3, sig_of(&img, 1, 0), None, &t);
+
+        assert_eq!(second, LearnOutcome::Stored, "a second tier of one family is not a collision");
+        assert_eq!(store.len(), 2);
         let m = store.match_family(&cands_of(&img, 1, 0), &t);
-
         assert_eq!(m.state, ReadState::Matched, "match was {m:?}");
         assert_eq!(m.family.as_deref(), Some("Chain"));
     }
@@ -2104,11 +2377,15 @@ mod tests {
         let first = store.get("Chain", 2).unwrap().sig.clone();
 
         let same = store.learn("Chain", 2, sig_of(&img, 1, 0), None, &t);
-        assert!(!same, "the same art again is refused");
+        assert_eq!(same, LearnOutcome::AlreadyKnown, "the same art again is refused");
         assert_eq!(store.len(), 1);
 
         let accepted = store.learn("Chain", 2, sig_of(&img, 2, 2), None, &t);
-        assert!(accepted, "unreached art is added as a second sample");
+        assert_eq!(
+            accepted,
+            LearnOutcome::Stored,
+            "unreached art is added as a second sample",
+        );
         assert_eq!(store.len(), 2);
         assert_eq!(store.learned_keys(), ["Chain--2"], "one key, two samples");
         assert_eq!(
@@ -3251,6 +3528,11 @@ mod tests {
         /// — occupancy gate, inner rect, alignment window and all — rather
         /// than numbers from a private derivation that only the test knows.
         fn mounted(file: &str) -> DynamicImage {
+            mount(crop_of(file))
+        }
+
+        /// One committed 39×39 inner crop, as pixels.
+        fn crop_of(file: &str) -> RgbaImage {
             let crop = image::open(std::path::Path::new(DIR).join(file))
                 .unwrap_or_else(|e| panic!("{file}: {e}"))
                 .to_rgba8();
@@ -3259,9 +3541,40 @@ mod tests {
                 (39, 39),
                 "{file} is not a 39×39 inner crop",
             );
+            crop
+        }
+
+        /// Paste an inner crop into the 43×43 cell canvas [`mounted`]
+        /// describes. Split out so a SYNTHESISED crop reaches the production
+        /// entry points through exactly the same door a committed one does.
+        fn mount(crop: RgbaImage) -> DynamicImage {
             let mut canvas = RgbaImage::from_pixel(43, 43, Rgba([0, 0, 0, 255]));
             image::imageops::replace(&mut canvas, &crop, 2, 2);
             DynamicImage::ImageRgba8(canvas)
+        }
+
+        /// `weight` of `a`'s pixels over `(1 − weight)` of `b`'s.
+        ///
+        /// The corpus holds no clean cross-family pair inside
+        /// `[icon_low, icon_match)` — the whole point of the format-2
+        /// derivation is that real different-family art tops out at 0.759
+        /// unshifted — so the near-miss the refusal must not swallow has to be
+        /// SYNTHESISED. A pixel blend is the honest way to make one: it moves a
+        /// real icon towards another real icon along a continuum, so the
+        /// resulting score is a real correlation between two real arts rather
+        /// than a number written into a fixture.
+        fn blended(a: &str, b: &str, weight: f32) -> DynamicImage {
+            let (pa, pb) = (crop_of(a), crop_of(b));
+            let mut out = pa.clone();
+            for (x, y, px) in out.enumerate_pixels_mut() {
+                let other = pb.get_pixel(x, y);
+                for c in 0..3 {
+                    px[c] = (px[c] as f32 * weight + other[c] as f32 * (1.0 - weight))
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                }
+            }
+            mount(out)
         }
 
         const OUTER: [i32; 4] = [0, 0, 43, 43];
@@ -3900,6 +4213,331 @@ mod tests {
                 .iter()
                 .position(|crop| crop.file == file)
                 .unwrap_or_else(|| panic!("{file} is not in the clean corpus"))
+        }
+
+        // -- the mislabelled-pair refusal (POE-207 AC3) -----------------------
+
+        /// The two crops the 2026-08-26 investigation found carrying the SAME
+        /// art under two different families — the shape of 19 of the 21
+        /// mislabels the purge removed.
+        const SAME_ART: (&str, &str) = (
+            "physical-as-extra-chaos--t3-raw.png",
+            "brittle-chance--t3-raw.png",
+        );
+
+        /// The synthetic near-miss: 60% of Faster Projectiles' pixels over 40%
+        /// of Concentrated Effect's, which correlates with unblended Faster
+        /// Projectiles at 0.838 unshifted (measured 2026-08-27) — inside
+        /// `[icon_low, icon_match)` with margin at both ends.
+        ///
+        /// Synthetic on purpose, and BOTH parents are clean corpus crops. No
+        /// real cross-family pair in the corpus sits in that band: the
+        /// format-2 derivation exists precisely to keep different families
+        /// apart, and the worst clean pair reaches only 0.759 unshifted. So the
+        /// near-miss the refusal must NOT swallow cannot be quoted from the
+        /// fixture and has to be built, by walking one real icon towards
+        /// another real icon until the correlation lands in the band.
+        const NEAR_MISS: (&str, &str, f32) = (
+            "faster-projectiles--t3-raw.png",
+            "concentrated-effect--t3-raw.png",
+            0.60,
+        );
+
+        /// A pull carrying these samples. `super::corpus` because this module
+        /// has its own `corpus()` — the score matrix — and the outer one is the
+        /// `PooledCorpus` builder.
+        fn pull(samples: Vec<PooledSample>) -> PooledCorpus {
+            super::corpus(samples, vec![])
+        }
+
+        /// A store holding one sample under one name, by the back door: `learn`
+        /// is the thing under test.
+        fn holding(family: &str, tier: u8, sig: CellSig) -> TemplateStore {
+            let mut store = TemplateStore::new();
+            store.push_sample(family, tier, sig, None, Origin::Local, false);
+            store
+        }
+
+        /// THE thing POE-207 AC3 asks for. Art already filed under another
+        /// family is refused outright, and the refusal names that family —
+        /// storing it would leave BOTH families under the matcher's lead rule
+        /// and therefore permanently unmatchable, and a later `forget` would be
+        /// a guess at which of the two confirmations was the wrong one.
+        #[test]
+        fn art_a_different_family_already_holds_is_refused_by_name() {
+            let t = Thresholds::default();
+            let stored = template(SAME_ART.0);
+            let confirmed = template(SAME_ART.1);
+            assert!(
+                stored.ncc(&confirmed) >= t.icon_match,
+                "precondition: the fixture pair is the same art, scored {}",
+                stored.ncc(&confirmed),
+            );
+            let mut store = holding("Physical as Extra Chaos", 3, stored);
+
+            let outcome = store.learn("Brittle Chance", 3, confirmed, None, &t);
+
+            let LearnOutcome::ConflictsWith {
+                family,
+                tier,
+                origin,
+                score,
+            } = outcome
+            else {
+                panic!("expected a refusal, got {outcome:?}");
+            };
+            assert_eq!(family, "Physical as Extra Chaos");
+            assert_eq!(tier, 3);
+            assert_eq!(origin, Origin::Local, "the incumbent was hovered on this device");
+            assert!(score >= t.icon_match, "refused on a score of only {score}");
+            assert_eq!(
+                store.learned_keys(),
+                ["Physical as Extra Chaos--3"],
+                "the mislabel must not reach the store",
+            );
+        }
+
+        /// The other side of the threshold, on a SYNTHETIC near-miss (see
+        /// [`NEAR_MISS`]): art that comes within `icon_low` of another family's
+        /// sample but does not reach `icon_match` is still learned.
+        ///
+        /// This is the reason the refusal is bound to `icon_match` and not to
+        /// anything looser. Support icons share a palette, a frame and a
+        /// lighting direction, so neighbouring art correlates high on its own;
+        /// a gate that fired in the `LowConfidence` band would start refusing
+        /// honest confirmations of genuinely different supports, and the player
+        /// would have no way to teach the one the module keeps calling `?`.
+        #[test]
+        fn a_synthetic_near_miss_of_a_different_family_is_still_learned() {
+            let t = Thresholds::default();
+            let (base, other, weight) = NEAR_MISS;
+            let stored = template(base);
+            let confirmed = normalize_cell(
+                &blended(base, other, weight),
+                OUTER,
+                &MercGeometry::default(),
+            )
+            .expect("the blend still reads as an occupied cell");
+            let score = stored.ncc(&confirmed);
+            assert!(
+                score >= t.icon_low && score < t.icon_match,
+                "precondition: the blend scored {score}, outside [{}, {})",
+                t.icon_low,
+                t.icon_match,
+            );
+            let mut store = holding("Faster Projectiles", 3, stored);
+
+            let outcome = store.learn("Concentrated Effect", 3, confirmed, None, &t);
+
+            assert_eq!(outcome, LearnOutcome::Stored, "the blend scored {score}");
+            assert_eq!(
+                store.learned_keys(),
+                ["Concentrated Effect--3", "Faster Projectiles--3"],
+            );
+        }
+
+        /// The half the hover guard cannot reach: a wrong confirmation made on
+        /// SOMEBODY ELSE'S machine, arriving through the pool. Local samples are
+        /// what this player confirmed on their own screen, so the served one
+        /// yields.
+        #[test]
+        fn a_served_sample_colliding_with_a_local_one_of_another_family_is_refused() {
+            let t = Thresholds::default();
+            let mut store = holding("Physical as Extra Chaos", 3, template(SAME_ART.0));
+
+            let out = store.merge_pulled(
+                &pull(vec![pooled("Brittle Chance", 3, template(SAME_ART.1))]),
+                &[],
+                &t,
+            );
+
+            assert_eq!(out.conflicting, 1, "the collision was not counted: {out:?}");
+            assert_eq!(out.added, 0, "the served mislabel was installed: {out:?}");
+            assert!(!out.changed(), "and nothing is owed to disk");
+            assert_eq!(store.learned_keys(), ["Physical as Extra Chaos--3"]);
+        }
+
+        /// Two colliding samples inside ONE pull and no local sample to
+        /// arbitrate: NEITHER is kept.
+        ///
+        /// Nothing on this device says which of the two strangers is the
+        /// mislabel, so keeping the first served would make the surviving
+        /// family a function of the order the server happened to list them in —
+        /// a coin flip that can read `Matched` on the wrong family. The
+        /// module's standing preference is to fail towards `LowConfidence`, so
+        /// the cell goes back to `?` and the player's own hover settles it.
+        #[test]
+        fn two_colliding_served_samples_leave_neither_family_holding_the_art() {
+            let t = Thresholds::default();
+            let first = pooled("Physical as Extra Chaos", 3, template(SAME_ART.0));
+            let second = pooled("Brittle Chance", 3, template(SAME_ART.1));
+
+            let mut forwards = TemplateStore::new();
+            let a = forwards.merge_pulled(&pull(vec![first.clone(), second.clone()]), &[], &t);
+            let mut backwards = TemplateStore::new();
+            let b = backwards.merge_pulled(&pull(vec![second, first]), &[], &t);
+
+            assert!(
+                forwards.is_empty(),
+                "kept {:?} — the surviving family would be the server's listing order",
+                forwards.learned_keys(),
+            );
+            assert!(
+                backwards.is_empty(),
+                "kept {:?} the other way round",
+                backwards.learned_keys(),
+            );
+            assert_eq!(
+                (a.added, a.conflicting),
+                (0, 2),
+                "(added, conflicting) served in this order: {a:?}",
+            );
+            assert_eq!(
+                (b.added, b.conflicting),
+                (0, 2),
+                "(added, conflicting) served the other way round: {b:?}",
+            );
+            assert!(
+                !a.changed(),
+                "the store started empty and ended empty, so no save is owed: {a:?}",
+            );
+        }
+
+        /// One art, THREE families, in every order the server could list them
+        /// in — and none of the three ends up holding it.
+        ///
+        /// The pair rule alone does not reach this: the first two knock each
+        /// other out and the third meets the store they just emptied, installs
+        /// into it, and survives as a confident wrong `Matched` picked by
+        /// listing order. `DoT Multiplier` / `Swift Affliction` /
+        /// `Cooldown Recovery` is one of two such clusters in the committed
+        /// corpus, so the shape is observed rather than imagined.
+        ///
+        /// `conflicting` is 3 — one per family that claimed the art: two from
+        /// the collision that empties the pair, one from the third refused
+        /// against the remembered art.
+        #[test]
+        fn a_three_way_cluster_of_served_samples_leaves_no_family_holding_the_art() {
+            let t = Thresholds::default();
+            let members = [
+                pooled("DoT Multiplier", 2, template("dot-multiplier--t2-raw.png")),
+                pooled("Swift Affliction", 3, template("swift-affliction--t3-2-raw.png")),
+                pooled("Cooldown Recovery", 2, template("cooldown-recovery--t2-2-raw.png")),
+            ];
+            for (i, j) in [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)] {
+                let k = 3 - i - j;
+                let order = [members[i].clone(), members[j].clone(), members[k].clone()];
+                let names = [&order[0].family, &order[1].family, &order[2].family];
+
+                let mut store = TemplateStore::new();
+                let out = store.merge_pulled(&pull(order.to_vec()), &[], &t);
+
+                assert!(
+                    store.is_empty(),
+                    "served {names:?} and kept {:?} — the survivor is the listing order",
+                    store.learned_keys(),
+                );
+                assert_eq!(
+                    (out.added, out.conflicting),
+                    (0, 3),
+                    "(added, conflicting) for {names:?}: {out:?}",
+                );
+            }
+        }
+
+        /// A precondition for the test above, stated so its `is_empty` cannot
+        /// be satisfied by three arts that never collided in the first place.
+        #[test]
+        fn the_three_way_cluster_really_is_one_art_under_three_families() {
+            let t = Thresholds::default();
+            let sigs = [
+                template("dot-multiplier--t2-raw.png"),
+                template("swift-affliction--t3-2-raw.png"),
+                template("cooldown-recovery--t2-2-raw.png"),
+            ];
+
+            for (i, j) in [(0, 1), (0, 2), (1, 2)] {
+                let score = sigs[i].ncc(&sigs[j]);
+                assert!(
+                    score >= t.icon_match,
+                    "cluster members {i} and {j} correlate at only {score}",
+                );
+            }
+        }
+
+        /// The same collision, but the incumbent is one this pull did not
+        /// install: it was already on disk. Both still go — and now the store
+        /// really did shrink, so a save IS owed or the evicted sample comes
+        /// straight back on the next start.
+        #[test]
+        fn evicting_a_previously_pooled_incumbent_owes_a_save() {
+            let t = Thresholds::default();
+            let mut store = TemplateStore::new();
+            store.push_sample(
+                "Physical as Extra Chaos",
+                3,
+                template(SAME_ART.0),
+                None,
+                Origin::Pooled,
+                false,
+            );
+
+            let out = store.merge_pulled(
+                &pull(vec![pooled("Brittle Chance", 3, template(SAME_ART.1))]),
+                &[],
+                &t,
+            );
+
+            assert!(store.is_empty(), "kept {:?}", store.learned_keys());
+            assert_eq!(out.dropped, 1, "{out:?}");
+            assert!(out.changed(), "an evicted sample that is never saved comes back: {out:?}");
+        }
+
+        /// Two evictions in ONE pull, one of a sample that was already on disk
+        /// and one of a sample this pull had just installed, must be counted
+        /// apart — and the boundary between "was here" and "arrived just now"
+        /// slides when the first eviction removes an element from under it.
+        ///
+        /// Get that wrong and both numbers lie in the same breath: `dropped`
+        /// claims two samples left the disk when only one did, so a save is
+        /// owed for a store that is already correct, and `added` still claims
+        /// an install that was undone three lines later. The two arts here are
+        /// two independent collisions — one from each of the corpus's
+        /// same-art pairs — so the second eviction cannot be explained by the
+        /// first.
+        #[test]
+        fn a_pull_that_evicts_before_and_after_its_own_install_counts_them_apart() {
+            let t = Thresholds::default();
+            let mut store = TemplateStore::new();
+            store.push_sample(
+                "Physical as Extra Chaos",
+                3,
+                template(SAME_ART.0),
+                None,
+                Origin::Pooled,
+                false,
+            );
+
+            let out = store.merge_pulled(
+                &pull(vec![
+                    // Installed: nothing in the store reaches it.
+                    pooled("Area of Effect", 3, template("area-of-effect--t3-2-raw.png")),
+                    // Evicts the sample that was ALREADY on disk.
+                    pooled("Brittle Chance", 3, template(SAME_ART.1)),
+                    // Evicts the one installed by this same pull.
+                    pooled("Curse Effect", 3, template("curse-effect--t3-raw.png")),
+                ]),
+                &[],
+                &t,
+            );
+
+            assert!(store.is_empty(), "kept {:?}", store.learned_keys());
+            assert_eq!(
+                (out.added, out.dropped),
+                (0, 1),
+                "(added, dropped) — one sample left the disk, the other never settled on it: {out:?}",
+            );
+            assert_eq!(out.conflicting, 4, "two collisions, two families each: {out:?}");
         }
     }
 }

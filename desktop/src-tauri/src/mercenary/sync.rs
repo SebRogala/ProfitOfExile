@@ -881,8 +881,14 @@ pub fn merge_line(outcome: &super::icons::MergeOutcome) -> String {
         );
     }
     format!(
-        "Merc: pool merged — {} added, {} replaced by a tombstone, {} already known, {} held for a pending forget",
-        outcome.added, outcome.replaced, outcome.skipped, outcome.suppressed
+        "Merc: pool merged — {} added, {} replaced by a tombstone, {} already known, {} held for a pending forget, \
+         {} refused as one art under two families ({} already-pooled sample(s) dropped with them)",
+        outcome.added,
+        outcome.replaced,
+        outcome.skipped,
+        outcome.suppressed,
+        outcome.conflicting,
+        outcome.dropped,
     )
 }
 
@@ -1975,5 +1981,22 @@ mod tests {
 
         assert!(line.contains(&FORMAT_VERSION.to_string()), "{line}");
         assert!(line.contains("nothing merged"), "{line}");
+    }
+
+    /// A refused mislabel has to reach the log. It is the only signal that the
+    /// pool is carrying one art under two families — the merge is otherwise
+    /// silent about it, and a served sample that quietly went nowhere is
+    /// indistinguishable from one the store already had.
+    #[test]
+    fn the_merge_line_reports_samples_refused_as_one_art_under_two_families() {
+        let line = merge_line(&super::super::icons::MergeOutcome {
+            added: 4,
+            conflicting: 2,
+            dropped: 1,
+            ..Default::default()
+        });
+
+        assert!(line.contains("2 refused as one art under two families"), "{line}");
+        assert!(line.contains("1 already-pooled sample(s) dropped"), "{line}");
     }
 }
