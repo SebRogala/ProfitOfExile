@@ -4,11 +4,14 @@ package mercenary
 // DO NOT EDIT by hand — regenerate when the fixture changes.
 //
 // The mercenary support vocabulary's icon FAMILIES, derived exactly the way
-// desktop/src-tauri/src/mercenary/vocab.rs derives them (vocab.rs:110-131):
+// desktop/src-tauri/src/mercenary/vocab.rs derives them (vocab.rs:131-173):
 // take every entry whose id starts with `mercenary.support_`, strip a trailing
-// ` (Tier N)` suffix, then strip a leading grade word (`Lesser `, `Greater `,
-// `Gilded `). `Lesser Chain (Tier 1)`, `Chain (Tier 2)` and
-// `Gilded Chain (Tier 3)` are three tiers of the one family `Chain`.
+// ` (Tier N)` suffix, strip a leading grade word (`Lesser `, `Greater `,
+// `Gilded `), then fold the result through the family alias table
+// (`vocab.rs:51-68`). `Lesser Chain (Tier 1)`, `Chain (Tier 2)` and
+// `Gilded Chain (Tier 3)` are three tiers of the one family `Chain`; the alias
+// table is the only place two different display names become one family, and
+// it is a closed list of whole names rather than a prefix rule (POE-211).
 //
 // Why the server carries this at all: `family` arrives as free text from a
 // spoofable client, and without a closed set one device can create unbounded
@@ -31,6 +34,14 @@ package mercenary
 // — the pool simply does not learn the new families — and it is reported rather
 // than silent: the upload response carries `rejected_unknown_family` and the
 // served corpus carries `known_family_count`.
+//
+// The ORDER is unchanged when the change SHRINKS the set — an alias that folds
+// two families into one, or a support GGG removed: server first either way.
+// What inverts is WHICH SIDE GETS REFUSED. On a growth the desktop is the one
+// that can run ahead, and its uploads of the new name are refused. On a shrink
+// the server is ahead by construction, and it refuses uploads of the DROPPED
+// name from desktops still deriving it — that refusal is the intended outcome,
+// because those uploads would key art nothing will ever match again.
 var knownFamilies = map[string]struct{}{
 	"Added Chaos":                     {},
 	"Added Cold":                      {},
@@ -113,7 +124,6 @@ var knownFamilies = map[string]struct{}{
 	"Impale Chance":                   {},
 	"Impale Extraction":               {},
 	"Increased Angle":                 {},
-	"Increased Area of Effect":        {},
 	"Infused Channelling":             {},
 	"Inhibitor":                       {},
 	"Inversion":                       {},

@@ -3,10 +3,10 @@
  "crops": [
   {
    "file": "increased-area-of-effect--t2-raw.png",
-   "family": "Increased Area of Effect",
+   "family": "Area of Effect",
    "tier": 2,
    "poisoned": true,
-   "why": "same art as area-of-effect/curse-effect"
+   "why": "same art as area-of-effect--t3/curse-effect; the AoE crops are one family since POE-211"
   },
   {
    "file": "less-duration--t2-raw.png",
@@ -76,7 +76,7 @@
    "family": "Area of Effect",
    "tier": 3,
    "poisoned": true,
-   "why": "same art as increased-area-of-effect"
+   "why": "same art as increased-area-of-effect--t2; one family since POE-211"
   },
   {
    "file": "less-duration--t2-2-raw.png",
@@ -228,7 +228,7 @@
    "family": "Area of Effect",
    "tier": 3,
    "poisoned": true,
-   "why": "same art as increased-area-of-effect/curse-effect"
+   "why": "same art as increased-area-of-effect--t2/curse-effect; the AoE crops are one family since POE-211"
   },
   {
    "file": "elemental-focus--t3-raw.png",
@@ -245,10 +245,10 @@
   },
   {
    "file": "increased-area-of-effect--t3-raw.png",
-   "family": "Increased Area of Effect",
+   "family": "Area of Effect",
    "tier": 3,
    "poisoned": true,
-   "why": "Fork art"
+   "why": "Fork art mislabelled as AoE; family folded by POE-211, tier 3 was never an Increased AoE tier"
   },
   {
    "file": "faster-projectiles--t2-raw.png",
@@ -276,10 +276,10 @@
   },
   {
    "file": "increased-area-of-effect--t2-2-raw.png",
-   "family": "Increased Area of Effect",
+   "family": "Area of Effect",
    "tier": 2,
    "poisoned": true,
-   "why": "same art as area-of-effect/curse-effect"
+   "why": "same art as area-of-effect--t3/curse-effect; the AoE crops are one family since POE-211"
   },
   {
    "file": "arrow-nova--t3-raw.png",

@@ -42,11 +42,30 @@ const SKILL_PREFIX: &str = "mercenary.skill_";
 /// Id prefix marking a support-link entry.
 const SUPPORT_PREFIX: &str = "mercenary.support_";
 
-/// Grade prefixes a support name can carry. Stripping them yields the icon
-/// FAMILY, which is what a learned template is keyed on together with the
-/// tier: `Lesser Chain (Tier 1)`, `Chain (Tier 2)` and `Gilded Chain (Tier 3)`
-/// are three tiers of one family.
+/// Grade prefixes a support name can carry. Stripping them, then applying
+/// [`FAMILY_ALIASES`], yields the icon FAMILY, which is what a learned template
+/// is keyed on together with the tier: `Lesser Chain (Tier 1)`,
+/// `Chain (Tier 2)` and `Gilded Chain (Tier 3)` are three tiers of one family.
 const GRADE_PREFIXES: [&str; 3] = ["Lesser ", "Greater ", "Gilded "];
+
+/// Display names that are two spellings of ONE icon family.
+///
+/// A family is derived in three steps, in this order: strip the ` (Tier N)`
+/// suffix ([`split_tier`]), strip a leading grade word ([`strip_grade`]), then
+/// fold the result through this table ([`alias_family`]).
+///
+/// It is a CLOSED LIST of whole names, never a prefix rule. `Increased Angle`
+/// is a real Gilded-only support with no `Angle` sibling, so a generic
+/// `Increased ` strip would invent a family the vocabulary does not carry and
+/// make every `Increased Angle` cell unresolvable.
+///
+/// The one entry (POE-211): GGG names the tiers of one support
+/// `Lesser Increased Area of Effect (Tier 1)`, `Increased Area of Effect
+/// (Tier 2)` and `Greater Area of Effect (Tier 3)`, so the grade strip alone
+/// derives TWO families out of one support. Measured 2026-08-27, a tier-2 and
+/// a tier-3 crop of it correlated at ncc 1.00 — one art under two keys, which
+/// under POE-207's cross-family lead rule leaves both permanently unmatchable.
+const FAMILY_ALIASES: [(&str, &str); 1] = [("Increased Area of Effect", "Area of Effect")];
 
 #[derive(Deserialize)]
 struct RawVocab {
@@ -135,6 +154,24 @@ fn strip_grade(name: &str) -> &str {
     name
 }
 
+/// Fold an aliased family name onto the name the store keys on.
+///
+/// EXACT match on the whole name, applied after [`strip_grade`] — see
+/// [`FAMILY_ALIASES`] for why it is a closed list. Returns its argument
+/// unchanged for every name the table does not carry.
+///
+/// `pub(super)` because the siblings re-key names this build did not derive:
+/// [`super::sync`] folds a served corpus row, and [`super::seed`] folds a
+/// blocklist entry an older build wrote.
+pub(super) fn alias_family(name: &str) -> &str {
+    for (from, to) in FAMILY_ALIASES {
+        if name == from {
+            return to;
+        }
+    }
+    name
+}
+
 /// Drop a trailing " Support" from a tooltip title (fuzzy — OCR mangles that
 /// token as readily as any other). Titles that are ONLY that token are left
 /// alone; there is nothing to match on afterwards.
@@ -193,7 +230,7 @@ impl MercVocab {
                 let (qualified, tier) = split_tier(&e.text);
                 Some(MercStat {
                     id: e.id,
-                    family: strip_grade(qualified).to_string(),
+                    family: alias_family(strip_grade(qualified)).to_string(),
                     qualified: qualified.to_string(),
                     name: e.text,
                     role,
@@ -488,6 +525,91 @@ mod tests {
         assert_eq!(by_name("Chain (Tier 2)").family, "Chain");
         assert_eq!(by_name("Chain (Tier 2)").tier, Some(2));
         assert_eq!(by_name("Gilded Caustic Conversion (Tier 3)").family, "Caustic Conversion");
+    }
+
+    /// One support, two spellings, one family (POE-211).
+    ///
+    /// GGG names the tiers `Lesser Increased Area of Effect (Tier 1)`,
+    /// `Increased Area of Effect (Tier 2)` and `Greater Area of Effect
+    /// (Tier 3)`, so the grade strip alone derives two families out of one
+    /// support and files the same art under two keys — which POE-207's
+    /// cross-family lead rule then makes permanently unmatchable. The alias is
+    /// what makes the three one key with the tier still discriminating.
+    #[test]
+    fn the_alias_folds_the_three_aoe_links_into_one_family() {
+        let v = vocab();
+        let family_of = |n: &str| {
+            v.stats()
+                .iter()
+                .find(|s| s.name == n)
+                .unwrap_or_else(|| panic!("{n} is in the vocabulary"))
+                .family
+                .clone()
+        };
+
+        for name in [
+            "Lesser Increased Area of Effect (Tier 1)",
+            "Increased Area of Effect (Tier 2)",
+            "Greater Area of Effect (Tier 3)",
+        ] {
+            assert_eq!(family_of(name), "Area of Effect", "{name}");
+        }
+        for tier in [1u8, 2, 3] {
+            assert_eq!(
+                v.resolve("Area of Effect", tier).len(),
+                1,
+                "tier {tier} must name exactly one link: {:?}",
+                v.resolve("Area of Effect", tier),
+            );
+        }
+        let stale: Vec<&str> = v
+            .by_role(MercRole::Support)
+            .filter(|s| s.family == "Increased Area of Effect")
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(stale.is_empty(), "the folded family is still derived: {stale:?}");
+    }
+
+    /// The tooltip read POE-211 was reported from. The tier-2 title must name
+    /// the FOLDED family, because that is the key the template store and
+    /// `read::resolve_cell` are both keyed on — a title still naming
+    /// `Increased Area of Effect` would resolve against a family
+    /// [`MercVocab::resolve`] no longer has.
+    #[test]
+    fn the_tier_2_aoe_tooltip_names_the_folded_family_and_its_tier() {
+        let v = vocab();
+
+        let read = v.match_support_title("Increased Area of Effect Support", &t());
+
+        assert_eq!(read.state, ReadState::Matched, "read was {read:?}");
+        assert_eq!(read.family.as_deref(), Some("Area of Effect"));
+        assert_eq!(read.tier, Some(2));
+        assert_eq!(read.name.as_deref(), Some("Increased Area of Effect (Tier 2)"));
+    }
+
+    /// The alias matches the WHOLE derived name, never a prefix. `Increased
+    /// Angle` is a real Gilded-only support with no `Angle` sibling, so a
+    /// generic `Increased ` strip would key its cells under a family the
+    /// vocabulary does not carry.
+    #[test]
+    fn the_alias_folds_only_the_exact_name() {
+        let v = vocab();
+        assert!(
+            v.by_role(MercRole::Support).any(|s| s.family == "Increased Angle"),
+            "precondition: Increased Angle is a real family",
+        );
+        assert!(
+            !v.by_role(MercRole::Support).any(|s| s.family == "Angle"),
+            "precondition: it has no Angle sibling to fold onto",
+        );
+
+        assert_eq!(alias_family("Increased Area of Effect"), "Area of Effect");
+        assert_eq!(alias_family("Increased Angle"), "Increased Angle");
+        assert_eq!(
+            alias_family("Increased Area of Effect Support"),
+            "Increased Area of Effect Support",
+        );
+        assert_eq!(alias_family("Area of Effect"), "Area of Effect");
     }
 
     /// Skills carry no tier — deriving one would let a badge tier "resolve"

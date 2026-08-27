@@ -256,9 +256,10 @@ pub fn build_capture(
 
 /// `(family, tier)` → the vocabulary link(s) it names (D4's resolution table).
 ///
-/// Both halves must be confident: a matched template with NO tier names 154
-/// possible links, so it is `Unknown` with the family recorded, never a guess
-/// at tier 1.
+/// Both halves must be confident: a matched template with NO tier has named
+/// one of the 153 FAMILIES and nothing narrower — which of that family's
+/// up-to-3 tier links it is stays open — so it is `Unknown` with the family
+/// recorded, never a guess at tier 1.
 fn resolve_cell(
     icon: &super::icons::IconMatch,
     tier: Option<u8>,
