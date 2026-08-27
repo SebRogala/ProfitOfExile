@@ -65,7 +65,7 @@ use crate::modules::ModuleJoin;
 use crate::AppState;
 
 use super::geometry::{self, OcrLineBox};
-use super::icons::{CellSig, TemplateStore};
+use super::icons::{CellSig, LearnOutcome, Origin, TemplateStore};
 use super::read::{build_capture, capture_complete, fold_header, same_panel_positive, pass2_texts};
 // The row identity lives with the reader that produces it (POE-207): the crop
 // cache is built in `read.rs` and consumed here, and both have to spell the key
@@ -889,9 +889,16 @@ pub fn probe_band(remembered: Option<[i32; 4]>, screen: [u32; 2], attempt: u32) 
 /// guard ([`fold_pending`]) is THREE charged reads: the fade-in miss that has
 /// always been the first read of a hover, plus the two agreeing reads the guard
 /// now requires — which is the whole of the old budget of three, with nothing
-/// left over for a cell that needs a second look. Reads the guard DISCARDS are
-/// not part of that arithmetic: they change no state, so the tick refunds them
-/// ([`HoverBudget::refund`]) and a run of them cannot exhaust the cell.
+/// left over for a cell that needs a second look. Reads that change NO STATE
+/// are not part of that arithmetic: the tick refunds them
+/// ([`HoverBudget::refund`]) and a run of them cannot exhaust the cell. Two
+/// reads qualify, and the rule is the same one both times — a tick that
+/// produced nothing is the guard's cost, not the cell's:
+///
+/// - the post-grab cursor read finding the cursor has LEFT the cell, which
+///   throws the frame away before it costs an OCR;
+/// - a read [`fold_pending`] DISCARDS, because a claim on another cell inside
+///   [`TOOLTIP_LAG_BOUND`] explains it as a lagging tooltip.
 ///
 /// The remaining two are deliberate slack for the reads that cost something and
 /// buy nothing — a second fade-in miss, an OCR that reads the skill column
@@ -2968,6 +2975,14 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     // already surfaced the failure once.
     if let Some(after) = read_cursor(app, session) {
         if cell_at(&capture, after) != Some((ri, si)) {
+            // NOT charged to the cell, for the same reason a guard-discarded
+            // read is not: this read changed no state at all — it never even
+            // reached the OCR — so it is strictly cheaper than the
+            // `FoldOutcome::Discarded` one below, which IS refunded. A cursor
+            // sweeping across a row would otherwise spend a `Matched` cell's
+            // whole correction budget on ticks that produced nothing. See
+            // [`HoverBudget::refund`].
+            session.hover_budget.refund(cell_key.clone());
             return false;
         }
     }
@@ -3130,27 +3145,17 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
             // the payload is built from memory on the one path that has it
             // (POE-201 L4) — the store directory is never walked.
             let bytes = sig.bytes().to_vec();
-            let state = app.state::<AppState>();
-            let mut store = state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
-            // The crop is the DETECT frame's, cached before the cursor ever
-            // reached this cell (D5): a hovered cell may be drawn highlighted,
-            // and a template learned from the highlight matches nothing later.
-            let learned = store.learn(&family, tier, sig, raw, &session.geometry.thresholds);
-            (
-                if learned {
-                    Learned::Saved
-                } else {
-                    Learned::AlreadyKnown
-                },
-                learned,
-                // Only a sample the store actually took: art it already had was
-                // offered to the pool when it was first learned.
-                learned.then(|| sync::PendingSample {
-                    family: family.clone(),
-                    tier,
-                    bytes,
-                }),
-            )
+            let outcome = {
+                let state = app.state::<AppState>();
+                let mut store =
+                    state.merc_templates.lock().unwrap_or_else(|e| e.into_inner());
+                // The crop is the DETECT frame's, cached before the cursor ever
+                // reached this cell (D5): a hovered cell may be drawn
+                // highlighted, and a template learned from the highlight
+                // matches nothing later.
+                store.learn(&family, tier, sig, raw, &session.geometry.thresholds)
+            };
+            learn_result(outcome, &family, tier, bytes)
         }
         // The confirmation still stands — it names the cell. Only the template
         // is missing, and saying so is the difference between "we already knew
@@ -3213,25 +3218,99 @@ fn hover_tick(app: &AppHandle, session: &mut Session, cursor: (i32, i32)) -> boo
     true
 }
 
+/// Turn one [`TemplateStore::learn`] answer into the three things the confirm
+/// path needs: what to tell the player, whether a disk save is owed, and
+/// whether the pool may be offered the sample.
+///
+/// Pure, and lifted out of the locked block that produces the answer, so the
+/// REFUSAL path has a seam. A sample the store refused must buy neither — and
+/// the offer is the load-bearing half: publishing a mislabel is exactly how one
+/// wrong confirmation would reach every other device, which is the half of
+/// POE-207 AC3 the local hover guard cannot cover.
+///
+/// `confirmed_family` / `confirmed_tier` are the cell's, from the corroborated
+/// read. The family and tier inside [`LearnOutcome::ConflictsWith`] are the
+/// OTHER ones — whoever already holds the art.
+fn learn_result(
+    outcome: LearnOutcome,
+    confirmed_family: &str,
+    confirmed_tier: u8,
+    bytes: Vec<u8>,
+) -> (Learned, bool, Option<sync::PendingSample>) {
+    let stored = outcome.stored();
+    let learned = match outcome {
+        LearnOutcome::Stored => Learned::Saved,
+        LearnOutcome::AlreadyKnown => Learned::AlreadyKnown,
+        LearnOutcome::ConflictsWith {
+            family,
+            tier,
+            origin,
+            score,
+        } => Learned::ConflictsWith {
+            family,
+            tier,
+            origin,
+            score,
+        },
+    };
+    (
+        learned,
+        stored,
+        // Only a sample the store actually took: art it already had was offered
+        // to the pool when it was first learned, and art it REFUSED must never
+        // be published.
+        stored.then(|| sync::PendingSample {
+            family: confirmed_family.to_string(),
+            tier: confirmed_tier,
+            bytes,
+        }),
+    )
+}
+
 /// What a hover-confirm did to the template store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Learned {
     /// A new `(family, tier)` sample was recorded and flushed to disk.
     Saved,
     /// The store already held this pair; a confirmed sample is never
     /// overwritten (`TemplateStore::learn`).
     AlreadyKnown,
+    /// The identical art is already filed under a DIFFERENT family, so the
+    /// template was refused (`TemplateStore::learn`). The cell is still
+    /// confirmed — the player named it — and the line says which family holds
+    /// the art, because that is the key a `forget` would have to target. It
+    /// also says WHERE that sample came from: "learned here" is the player's
+    /// own earlier mistake, "from the pool" is somebody else's, and the two
+    /// read very differently to a player who is sure of what they just hovered.
+    ConflictsWith {
+        family: String,
+        tier: u8,
+        origin: Origin,
+        score: f32,
+    },
     /// No pre-hover crop was cached for the cell — the capture that produced it
     /// has been replaced since. The cell is still confirmed.
     NoCrop,
 }
 
 impl Learned {
-    fn describe(self) -> &'static str {
+    fn describe(&self) -> String {
         match self {
-            Learned::Saved => "template saved",
-            Learned::AlreadyKnown => "template already known",
-            Learned::NoCrop => "no pre-hover crop cached, template not learned",
+            Learned::Saved => "template saved".to_string(),
+            Learned::AlreadyKnown => "template already known".to_string(),
+            Learned::ConflictsWith {
+                family,
+                tier,
+                origin,
+                score,
+            } => format!(
+                "template NOT learned: identical art is already stored as {family} \
+                 (tier {tier}, {}, ncc {score:.2})",
+                origin.describe(),
+            ),
+            Learned::NoCrop => {
+                "no pre-hover crop cached, template not learned".to_string()
+            }
         }
     }
 }
@@ -4027,6 +4106,88 @@ mod tests {
             budget.take(cell, ReadState::Matched),
             "the second of the agreeing pair — the read the correction lands on",
         );
+    }
+
+    /// A template the store REFUSED must not be offered to the pool (POE-207
+    /// AC3). The pool is exactly how one wrong confirmation would reach every
+    /// other device, and an offer here would publish the mislabel that the
+    /// refusal a line earlier just kept off this machine's disk.
+    #[test]
+    fn a_refused_template_is_not_offered_to_the_pool() {
+        let (_, needs_save, offer) = learn_result(
+            LearnOutcome::ConflictsWith {
+                family: "Physical as Extra Chaos".into(),
+                tier: 3,
+                origin: Origin::Local,
+                score: 0.98,
+            },
+            "Brittle Chance",
+            3,
+            vec![7u8; 4],
+        );
+
+        assert!(offer.is_none(), "offered {offer:?}");
+        assert!(!needs_save, "and nothing is owed to disk");
+    }
+
+    /// The accepted path, so the test above is not satisfied by a
+    /// `learn_result` that offers nothing at all.
+    #[test]
+    fn a_stored_template_is_offered_to_the_pool_under_the_confirmed_name() {
+        let (learned, needs_save, offer) =
+            learn_result(LearnOutcome::Stored, "Brittle Chance", 3, vec![7u8; 4]);
+
+        assert_eq!(learned, Learned::Saved);
+        assert!(needs_save);
+        let offer = offer.expect("a stored sample is owed to the pool");
+        assert_eq!(offer.family, "Brittle Chance");
+        assert_eq!(offer.tier, 3);
+        assert_eq!(offer.bytes, vec![7u8; 4]);
+    }
+
+    /// The refusal line is the whole of the diagnosis: it has to say the
+    /// template was NOT learned and name the key that already holds the art,
+    /// because that key is what a `merc_forget_template` would target. A line
+    /// that only said "already known" would send the player looking at the
+    /// family they just confirmed.
+    #[test]
+    fn the_refusal_line_names_the_key_already_holding_the_art() {
+        let line = Learned::ConflictsWith {
+            family: "Physical as Extra Chaos".into(),
+            tier: 3,
+            origin: Origin::Local,
+            score: 0.9849,
+        }
+        .describe();
+
+        assert!(line.contains("NOT learned"), "{line}");
+        assert!(line.contains("Physical as Extra Chaos"), "{line}");
+        assert!(line.contains("tier 3"), "{line}");
+        assert!(line.contains("0.98"), "{line}");
+    }
+
+    /// …and where that sample came from, which is the difference between "you
+    /// confirmed this wrongly earlier" and "somebody else did". The player who
+    /// is sure of the cell in front of them acts on those two differently.
+    #[test]
+    fn the_refusal_line_says_a_pooled_incumbent_came_from_the_pool() {
+        let mine = Learned::ConflictsWith {
+            family: "Physical as Extra Chaos".into(),
+            tier: 3,
+            origin: Origin::Local,
+            score: 0.9849,
+        }
+        .describe();
+        let theirs = Learned::ConflictsWith {
+            family: "Physical as Extra Chaos".into(),
+            tier: 3,
+            origin: Origin::Pooled,
+            score: 0.9849,
+        }
+        .describe();
+
+        assert!(theirs.contains("from the pool"), "{theirs}");
+        assert!(mine.contains("learned here"), "{mine}");
     }
 
     /// A read the guard THREW AWAY costs the cell nothing (POE-207 review,
